@@ -149,7 +149,7 @@ for symbol in __errno_location flock; do
 done
 for unselected in fcntl64 lockf lockf64 fchown preadv2 pwritev2 openat2 \
     open_by_handle_at close_range _Fork vfork \
-    clone execve gettid syscall setfsuid setfsgid malloc free calloc realloc; do
+    clone execve gettid syscall setfsgid malloc free calloc realloc; do
     if grep -Eq "[[:space:]][TW][[:space:]]${unselected}$" "$archive_symbols"; then
         fail "archive accidentally exports unselected ${unselected}"
     fi

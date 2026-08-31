@@ -2147,6 +2147,7 @@ source_owners = [
   "libc/src/c_abi/x86_64/timestamp_updates.rs",
   "libc/src/c_abi/x86_64/credentials.rs",
   "libc/src/c_abi/x86_64/credential_observation.rs",
+  "libc/src/c_abi/x86_64/setfsuid.rs",
   "libc/src/c_abi/x86_64/process_context.rs",
   "libc/src/c_abi/x86_64/environment.rs",
   "libc/src/c_abi/x86_64/startup_security.rs",
@@ -6394,6 +6395,56 @@ x86_abi_prerequisites = [
 x86_header_prerequisites = ["The candidate preprocesses project stddef.h, stdint.h, and inttypes.h. The separate C/C++ gate compares pinned musl's two unconditional intmax arithmetic declarations, imaxdiv_t LP64 layout, and unmangled C++ linkage; it selects no general installed-header, parsing, or C runtime ABI claim."]
 native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-intmax-arithmetic", scope = "Pinned-musl C reference plus a true dependency-free x86 crabc-libc static archive and freestanding C candidate. The gate proves project-header provenance; exact closed archive exports for imaxabs/imaxdiv; no interpreter/DT_NEEDED/unresolved symbol or TLS segment/dynamic TLS resolver; typed C function-pointer calls, LP64 imaxdiv_t aggregate return layout, defined-domain absolute values near signed minimum, positive/negative/zero numerators, truncating quotient, dividend-signed remainder, and reconstruction invariants. It deliberately does not invoke unrepresentable absolute values, zero divisors, or signed-minimum divided by -1. It does not select integer parsing, strtoimax/strtoumax, callbacks, floating-point math, libc.so, general startup, pthreads, allocator, loader, sysroot, or public x86 support." }]
 oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source mapping and declaration/behavior oracle for src/stdlib/imaxabs.c and src/stdlib/imaxdiv.c; their undefined arithmetic domains remain unselected." }, { kind = "elf-abi", source = "System V AMD64 psABI", role = "LP64 intmax_t and small imaxdiv_t aggregate return ABI." }]
+
+[[family.verified_artifact]]
+id = "static-c-setfsuid"
+description = "Private native x86 selected-static-archive one-symbol filesystem-credential compatibility artifact inside planned `libc.posix-runtime`. One dependency-free `crabc-libc` archive exposes exactly `setfsuid(uid_t)`; its freestanding C body first runs through pinned musl 1.2.6 and then through a true `-nostdlib -static` candidate. Pinned musl's `src/linux/setfsuid.c::setfsuid` forwards raw Linux x86 syscall 122 in rdi and preserves Linux's unusual prior-filesystem-UID result in eax instead of inventing a zero-or-error status. An ordinary kernel return does not report whether a requested identity took effect, so the common raw/C body uses all-ones query plus current-effective-ID requests and proves stale initial-TLS `errno` on those ordinary returns. The strict/POSIX/X/Open/GNU C and C++17 matrix keeps the unconditional `int setfsuid(uid_t)` declaration, four-byte unsigned uid_t, x86 syscall macro, and unmangled C linkage. It selects neither `setfsgid`, credential observation/setter families, account data, permission-detection policy, process-wide credential synchronization, process/session control, scheduler state, pthread lifecycle, libc.so, CRT, dynamic TLS lifecycle, loader, sysroot, family completion, promotion, or public x86 support."
+source_owners = [
+  "compat/upstreams.toml",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/setfsuid.rs",
+  "libc/src/c_abi/x86_64/errno.rs",
+  "libc/src/c_abi/x86_64/static_tls.rs",
+  "libc/src/c_abi/x86_64/syscall.rs",
+  "include/errno.h",
+  "include/stdint.h",
+  "include/sys/fsuid.h",
+  "include/sys/syscall.h",
+  "include/bits/syscall.h",
+  "include/sys/types.h",
+  "compat/x86_64/setfsuid_header_abi_probe.c",
+  "compat/x86_64/setfsuid_header_abi_probe.cpp",
+  "compat/x86_64/run_setfsuid_header_abi.sh",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/libc_setfsuid_probe.c",
+  "compat/x86_64/libc_setfsuid_start.S",
+  "compat/x86_64/run_libc_setfsuid.sh",
+  "compat/x86_64/aarch64_parity_inventory.py",
+  "compat/x86_64/aarch64_parity_inventory.json",
+  "compat/x86_64/tests/test_aarch64_parity_inventory.py",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "compat/x86_64/README.md",
+  "STATUS.md",
+  "x86-64.md",
+  "scripts/dev-x86_64.sh",
+  "scripts/check_structure.py",
+]
+x86_abi_prerequisites = [
+  "System V AMD64 passes the unsigned four-byte uid_t argument for int setfsuid(uid_t) in edi and receives its signed four-byte return in eax. Linux x86 raw syscall 122 consumes that same uid word in rdi and returns the prior filesystem UID rather than a zero success status or a detectable refused-change error.",
+  "Pinned musl 1.2.6 `src/linux/setfsuid.c::setfsuid` is the complete MIT source mapping: its sole syscall(SYS_setfsuid, uid) request preserves ordinary prior-UID results and translates only a reserved raw Linux error through __syscall_ret. The closed Rust leaf contains neither setfsgid nor credential observation/setter or synchronization logic.",
+  "The common pinned-musl/candidate C body proves raw and C all-ones uid_t query agreement, stale ERANGE on query, a current-effective-ID request returning the prior UID with stale E2BIG, and the subsequent current-UID query/second request. Its start delegates only archive Static Initial TLS v1 bootstrap required for the latent raw-error errno path; it does not claim CRT or general TLS lifecycle.",
+]
+x86_header_prerequisites = ["The project-first/pinned-musl strict/POSIX/X/Open/GNU C and C++17 matrix proves the unconditional `int setfsuid(uid_t)` spelling from sys/fsuid.h, four-byte align-4 unsigned uid_t, x86 `SYS_setfsuid=122`, and unmangled C++ C linkage. The project trace proves stdint.h, sys/fsuid.h, sys/types.h, sys/syscall.h, and bits/syscall.h provenance. This is a bounded declaration and static C ABI proof, not installed-header, credential-family, or public-support completion."]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-setfsuid", scope = "Pinned-musl 1.2.6 C reference plus strict/POSIX/X/Open/GNU C/C++ header matrix and a true dependency-free x86 crabc-libc archive with a `-nostdlib -static` candidate. The gate checks project-header provenance and exact crate-owned C-object export closure separately from compiler-builtins; rejects interpreter/DT_NEEDED/unresolved symbols/dynamic TLS/unowned runtime, setfsgid, credential observation/setter families, account data, credential synchronization, process/session control, scheduler state, pthread lifecycle, allocator, auxv, and sysconf paths; proves direct initial-TLS errno plus setfsuid disassembly with raw syscall 122 and no paired group syscall; and executes raw/C all-ones query and current-effective-ID contrast with stale errno. It adds no credential-family completion, dynamic libc, CRT, loader, sysroot, promotion, or public x86 support." }]
+oracle = [
+  { kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source, unconditional sys/fsuid.h declaration, uid_t ABI, and behavior oracle for src/linux/setfsuid.c::setfsuid: syscall 122 returns the previous filesystem UID and leaves ordinary errno unchanged." },
+  { kind = "linux-uapi", source = "Linux 5.10 x86-64 syscall ABI", role = "Raw setfsuid syscall 122 consumes the uid word in rdi, returns the prior filesystem UID, and does not provide conventional permission-failure reporting for the selected query/current-effective requests." },
+  { kind = "elf-abi", source = "System V AMD64 psABI", role = "uid_t/int scalar C register ABI, C++ unmangled C linkage, and static initial-exec TLS fixture contract." },
+]
 
 [[family.verified_artifact]]
 id = "static-c-credential-observation"

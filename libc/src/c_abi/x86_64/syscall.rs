@@ -371,6 +371,7 @@ pub(crate) const SYS_GETRESUID: i64 = 118;
 pub(crate) const SYS_SETRESGID: i64 = 119;
 pub(crate) const SYS_GETRESGID: i64 = 120;
 pub(crate) const SYS_GETPGID: i64 = 121;
+pub(crate) const SYS_SETFSUID: i64 = 122;
 pub(crate) const SYS_GETSID: i64 = 124;
 pub(crate) const SYS_RT_SIGPENDING: i64 = 127;
 pub(crate) const SYS_RT_SIGTIMEDWAIT: i64 = 128;

@@ -1755,6 +1755,20 @@ LP64 `cpu_set_t` layout. It does not select affinity mutation, CPU helpers,
 scheduler policy or parameters, pthread affinity/lifecycle, family/platform
 parity, promotion, or public x86 support.
 
+`./scripts/dev-x86_64.sh libc-setfsuid` is a separate private
+`static-c-setfsuid` artifact inside planned `libc.posix-runtime`. Pinned musl
+1.2.6's `src/linux/setfsuid.c::setfsuid` forwards Linux x86 raw syscall 122
+and preserves its unusual prior-filesystem-UID result rather than inventing a
+zero-or-error status. Its true-static project-header C body compares only the
+all-ones query and a current-effective-ID request against the raw syscall, and
+proves stale initial-TLS `errno` on those ordinary returns. The paired
+strict/POSIX/X/Open/GNU C/C++ `<sys/fsuid.h>` gate retains the unconditional
+`int setfsuid(uid_t)` declaration, four-byte unsigned x86 `uid_t`, syscall
+macro, and unmangled C linkage. It excludes `setfsgid`, credential families,
+account data, permission-detection policy, process-wide synchronization,
+process/session or scheduler state, pthread lifecycle, libc.so, CRT, loader,
+sysroot, family/platform parity, promotion, and public x86 support.
+
 `./scripts/dev-x86_64.sh libc-sigaddset-sigdelset-sigfillset` is a separate
 private `static-c-sigset-mutation` artifact inside planned
 `libc.posix-runtime`. Its three-symbol pinned-musl/freestanding-static C proof

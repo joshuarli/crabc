@@ -183,6 +183,8 @@ mod timestamp_updates;
 mod credentials;
 #[path = "credential_observation.rs"]
 mod credential_observation;
+#[path = "setfsuid.rs"]
+mod setfsuid;
 #[path = "memory.rs"]
 mod memory;
 #[path = "memccpy.rs"]

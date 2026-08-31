@@ -251,6 +251,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh float-parse-header-abi
 ./scripts/dev-x86_64.sh getsubopt-header-abi
 ./scripts/dev-x86_64.sh intmax-arithmetic-header-abi
+./scripts/dev-x86_64.sh setfsuid-header-abi
 ./scripts/dev-x86_64.sh credential-observation-header-abi
 ./scripts/dev-x86_64.sh login-name-header-abi
 ./scripts/dev-x86_64.sh child-reaping-header-abi
@@ -523,6 +524,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-float-parse
 ./scripts/dev-x86_64.sh libc-getsubopt
 ./scripts/dev-x86_64.sh libc-intmax-arithmetic
+./scripts/dev-x86_64.sh libc-setfsuid
 ./scripts/dev-x86_64.sh libc-credential-observation
 ./scripts/dev-x86_64.sh libc-ffs
 ./scripts/dev-x86_64.sh libc-thread-pointer
@@ -1236,6 +1238,14 @@ layout, return type, and unmangled C++ linkage. This is compile-only header
 evidence for the arithmetic forms only; it is distinct from the separately
 staged `strtoimax`/`strtoumax` declaration and archive evidence, and does not
 select `crabc-libc` or a general C runtime ABI.
+
+`setfsuid-header-abi` compiles project-first and pinned-musl C/C++
+`<sys/fsuid.h>` declarations for the unconditional Linux extension
+`int setfsuid(uid_t)`. Strict, POSIX, X/Open, and GNU selections ratchet the
+four-byte unsigned x86 `uid_t`, syscall macro 122, and unmangled C++ linkage.
+This is declaration-only evidence for the separately selected filesystem-UID
+artifact; it does not select `setfsgid`, credential mutation policy, account
+data, process-wide synchronization, or a general C-process ABI.
 
 `credential-observation-header-abi` compiles project-first and pinned-musl
 C/C++ `<unistd.h>` declarations for unconditional `getgroups` and GNU-only
@@ -2959,6 +2969,20 @@ the 128-byte align-8 `cpu_set_t`, and unmangled C linkage. It does not select
 `sched_setaffinity`, CPU macro/helper/counting APIs, scheduler policy or
 parameters, pthread affinity/lifecycle, scheduler-family completion, AArch64
 parity, promotion, or public x86 support.
+
+`libc-setfsuid` is a separate `static-c-setfsuid` `verified_artifact` within
+planned `libc.posix-runtime`. Its one-symbol project-header C body first runs
+through pinned musl 1.2.6 and then through a true `-nostdlib -static`
+candidate. It maps only musl's `src/linux/setfsuid.c::setfsuid`: raw x86
+syscall 122 returns the previous filesystem UID instead of a zero-or-error
+status. The common C body uses only the all-ones query and a current-effective
+UID request, proving raw/C prior-ID agreement and stale `errno` on ordinary
+returns without claiming permission-detection policy. The
+strict/POSIX/X/Open/GNU C/C++ matrix retains the unconditional `int
+setfsuid(uid_t)` declaration and unmangled C linkage. It excludes `setfsgid`,
+other credential setters/observers, account data, process-wide synchronization,
+process/session state, scheduler state, pthread lifecycle, dynamic runtime,
+allocator, loader, sysroot, and public x86 support.
 
 `libc-sigaddset-sigdelset-sigfillset` is a separate
 `static-c-sigset-mutation` `verified_artifact` within planned
@@ -5631,7 +5655,7 @@ Apart from the narrowly named `libc-stat-compat`, `libc-credentials`,
 `libc-byte-strings`, `libc-legacy-memory`, `libc-memccpy`, `libc-mempcpy`, `libc-strsep`, `libc-random-entropy`, `libc-memory-search`,
 `libc-string-copy`, `libc-allocator-string-duplication`, `libc-error-strings`,
 `libc-locale-error-strings`, `libc-ctype`, `libc-integer-arithmetic`,
-`libc-integer-parse`, `libc-float-parse`, `libc-getsubopt`, `libc-intmax-arithmetic`, `libc-credential-observation`,
+`libc-integer-parse`, `libc-float-parse`, `libc-getsubopt`, `libc-intmax-arithmetic`, `libc-setfsuid`, `libc-credential-observation`,
 `libc-ffs`, `libc-math-complex`, `libc-math-complex-complete`, `libc-elementary-sqrt-fenv`, and
 `libc-fenv-rounding` static archive harnesses, and the separately scoped
 `static-pie` CRT gate, and the bounded `owned-static-sysroot` installed

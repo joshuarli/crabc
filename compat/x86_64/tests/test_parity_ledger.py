@@ -15662,6 +15662,117 @@ class X86ParityLedgerTests(unittest.TestCase):
         ):
             ledger.validate_ledger(data)
 
+    def test_setfsuid_artifact_keeps_its_musl_static_contract(self) -> None:
+        data = self.data()
+        family = self.family(data, "libc.posix-runtime")
+        self.assertEqual(family["status"], "planned")
+        artifacts = family["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-setfsuid"
+        )
+        self.assertNotIn("capabilities", artifact)
+        for owner in (
+            "libc/src/c_abi/x86_64/setfsuid.rs",
+            "include/sys/fsuid.h",
+            "compat/x86_64/setfsuid_header_abi_probe.c",
+            "compat/x86_64/setfsuid_header_abi_probe.cpp",
+            "compat/x86_64/run_setfsuid_header_abi.sh",
+            "compat/x86_64/libc_setfsuid_probe.c",
+            "compat/x86_64/libc_setfsuid_start.S",
+            "compat/x86_64/run_libc_setfsuid.sh",
+        ):
+            self.assertIn(owner, artifact["source_owners"])
+        self.assertEqual(
+            {evidence["command"] for evidence in artifact["native_evidence"]},
+            {"./scripts/dev-x86_64.sh libc-setfsuid"},
+        )
+        for phrase in (
+            "one-symbol filesystem-credential compatibility artifact",
+            "planned `libc.posix-runtime`",
+            "exactly `setfsuid(uid_t)`",
+            "`src/linux/setfsuid.c::setfsuid`",
+            "prior-filesystem-UID",
+            "all-ones query",
+            "current-effective-ID",
+            "stale initial-TLS `errno`",
+            "strict/POSIX/X/Open/GNU C and C++17",
+            "unconditional `int setfsuid(uid_t)`",
+            "neither `setfsgid`",
+            "credential observation/setter families",
+            "process-wide credential synchronization",
+            "process/session control",
+            "scheduler state",
+            "pthread lifecycle",
+            "family completion, promotion, or public x86 support",
+        ):
+            self.assertIn(phrase, artifact["description"])
+        prerequisites = artifact["x86_abi_prerequisites"]
+        self.assertTrue(
+            any(
+                "uid_t" in prerequisite
+                and "edi" in prerequisite
+                and "eax" in prerequisite
+                and "122" in prerequisite
+                and "prior filesystem UID" in prerequisite
+                for prerequisite in prerequisites
+            )
+        )
+        self.assertTrue(
+            any(
+                "src/linux/setfsuid.c::setfsuid" in prerequisite
+                and "__syscall_ret" in prerequisite
+                and "setfsgid" in prerequisite
+                for prerequisite in prerequisites
+            )
+        )
+        self.assertTrue(
+            any(
+                "all-ones uid_t query" in prerequisite
+                and "stale ERANGE" in prerequisite
+                and "current-effective-ID" in prerequisite
+                and "stale E2BIG" in prerequisite
+                for prerequisite in prerequisites
+            )
+        )
+        self.assertIn("sys/fsuid.h", artifact["x86_header_prerequisites"][0])
+        self.assertIn("SYS_setfsuid=122", artifact["x86_header_prerequisites"][0])
+        self.assertIn(
+            "libc/src/c_abi/x86_64/setfsuid.rs", family["source_owners"]
+        )
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-setfsuid"
+        )
+        artifact["description"] = "private filesystem helper"
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "static-c-setfsuid description omits"
+        ):
+            ledger.validate_ledger(data)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-setfsuid"
+        )
+        evidence = artifact["native_evidence"]
+        assert isinstance(evidence, list) and isinstance(evidence[0], dict)
+        evidence[0]["command"] = "./scripts/dev-x86_64.sh fs-credentials-reference"
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "closed libc-setfsuid command"
+        ):
+            ledger.validate_ledger(data)
+
     def test_sigset_mutation_artifact_keeps_its_closed_static_contract(self) -> None:
         data = self.data()
         artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
