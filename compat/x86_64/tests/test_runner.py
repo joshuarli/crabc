@@ -18155,6 +18155,139 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             runner,
         )
 
+    def test_libc_static_c_abi_sleep_artifact_stays_delegating_and_private(
+        self,
+    ) -> None:
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        implementation = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "sleep.rs"
+        ).read_text(encoding="utf-8")
+        probe = (ROOT / "compat" / "x86_64" / "libc_sleep_probe.c").read_text(
+            encoding="utf-8"
+        )
+        start = (ROOT / "compat" / "x86_64" / "libc_sleep_start.S").read_text(
+            encoding="utf-8"
+        )
+        artifact_runner = (
+            ROOT / "compat" / "x86_64" / "run_libc_sleep.sh"
+        ).read_text(encoding="utf-8")
+        header_runner = (
+            ROOT / "compat" / "x86_64" / "run_sleep_header_abi.sh"
+        ).read_text(encoding="utf-8")
+        header_c = (
+            ROOT / "compat" / "x86_64" / "sleep_header_abi_probe.c"
+        ).read_text(encoding="utf-8")
+        header_cxx = (
+            ROOT / "compat" / "x86_64" / "sleep_header_abi_probe.cpp"
+        ).read_text(encoding="utf-8")
+        static_exports = {
+            line
+            for line in (
+                ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+            ).read_text(encoding="utf-8").splitlines()
+            if line and not line.startswith("#")
+        }
+        parity_ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        runner = RUNNER.read_text(encoding="utf-8")
+
+        self.assertIn('#[path = "sleep.rs"]', static_root)
+        for required in (
+            "Selected static Linux/x86-64 `sleep` C ABI boundary",
+            "musl 1.2.6 release commit",
+            "src/unistd/sleep.c::sleep",
+            "nanosleep(&tv, &tv)",
+            "initial-TLS `errno`",
+            'pub extern "C" fn sleep(seconds: c_uint) -> c_uint',
+            "nanosleep::nanosleep(",
+            "interval.seconds as c_uint",
+        ):
+            self.assertIn(required, implementation)
+        for forbidden in (
+            "raw_syscall::",
+            "errno::",
+            "signal_control::",
+            "clock_nanosleep",
+            "crabc_core",
+            "crabc_mimalloc",
+        ):
+            self.assertNotIn(forbidden, implementation)
+        self.assertIn("sleep", static_exports)
+
+        for required in (
+            "#include <errno.h>",
+            "#include <signal.h>",
+            "#include <unistd.h>",
+            "check_zero_completion",
+            "check_interrupted_remainder",
+            "raw_arm_alarm(20000)",
+            "remaining == 0 || remaining >= requested || errno != EINTR",
+            "CRABC_SLEEP_FREESTANDING",
+        ):
+            self.assertIn(required, probe)
+        for required in (
+            "ARCH_SET_FS",
+            "mov %rsi, %fs:0",
+            "crabc_x86_64_sleep_probe",
+        ):
+            self.assertIn(required, start)
+        for header in (header_c, header_cxx):
+            for required in ("sleep declaration", "CRABC_EXPECT_SLEEP", "sleep_signature"):
+                self.assertIn(required, header)
+        for required in (
+            "sleep_header_abi_probe.c",
+            "sleep_header_abi_probe.cpp",
+            "-D_POSIX_SOURCE",
+            "-D_POSIX_C_SOURCE=200809L",
+            "-D_XOPEN_SOURCE=700",
+            "-D_GNU_SOURCE",
+            "-D_BSD_SOURCE",
+            "retained a mangled sleep reference",
+        ):
+            self.assertIn(required, header_runner)
+        for required in (
+            "run_sleep_header_abi.sh",
+            "static_c_abi_exports.txt",
+            "-nostdlib -static",
+            "-Wl,--no-undefined",
+            "sleep object must depend only on nanosleep",
+            "sleep object lacks its nanosleep delegation relocation",
+            "--disassemble=sleep",
+            "final sleep wrapper lost its nanosleep delegation",
+            "final sleep wrapper must not emit a direct syscall or errno TLS path",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn("--whole-archive", artifact_runner)
+        self.assertIn('id = "static-c-sleep"', parity_ledger)
+        self.assertIn('command = "./scripts/dev-x86_64.sh libc-sleep"', parity_ledger)
+        self.assertIn("run_sleep_header_abi()", runner)
+        self.assertIn(
+            "/workspace/compat/x86_64/run_sleep_header_abi.sh", runner
+        )
+        self.assertIn("run_libc_sleep()", runner)
+        self.assertIn("/workspace/compat/x86_64/run_libc_sleep.sh", runner)
+        self.assertIn(
+            '    sleep-header-abi)\n        [ "$#" -eq 0 ] || fail "sleep-header-abi takes no arguments"',
+            runner,
+        )
+        self.assertIn(
+            '    libc-sleep)\n        [ "$#" -eq 0 ] || fail "libc-sleep takes no arguments"',
+            runner,
+        )
+        for sibling, marker in (
+            ("run_libc_nanosleep.sh", "nanosleep candidate unexpectedly pulls separately selected sleep"),
+            ("run_libc_clock_nanosleep.sh", "clock_nanosleep candidate unexpectedly pulls separately selected sleep"),
+            ("run_libc_thrd_sleep.sh", "thrd_sleep candidate unexpectedly pulls separately selected sleep"),
+            ("run_libc_readiness_waits.sh", "readiness/signal-waits candidate unexpectedly pulls separately selected sleep"),
+        ):
+            sibling_runner = (ROOT / "compat" / "x86_64" / sibling).read_text(
+                encoding="utf-8"
+            )
+            self.assertIn(marker, sibling_runner)
+
     def test_libc_static_c_abi_filesystem_access_artifact_stays_narrow(self) -> None:
         static_root = (
             ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"

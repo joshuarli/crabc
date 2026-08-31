@@ -395,6 +395,8 @@ mod timegm;
 mod time_observation;
 #[path = "nanosleep.rs"]
 mod nanosleep;
+#[path = "sleep.rs"]
+mod sleep;
 #[path = "descriptor_entry.rs"]
 mod descriptor_entry;
 #[path = "filesystem_access.rs"]

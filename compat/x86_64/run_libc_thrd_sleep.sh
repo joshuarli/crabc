@@ -159,7 +159,7 @@ for unselected in pthread_mutexattr_init pthread_mutexattr_destroy \
     pthread_condattr_init pthread_condattr_destroy pthread_condattr_setclock \
     pthread_condattr_getclock pthread_condattr_setpshared pthread_condattr_getpshared \
     pthread_cond_timedwait \
-    sleep usleep clock_settime clock_getcpuclockid \
+    usleep clock_settime clock_getcpuclockid \
     timer_create timer_delete timer_getoverrun timer_gettime timer_settime \
     setitimer alarm ualarm malloc free calloc realloc; do
     if grep -Eq "[[:space:]][TW][[:space:]]${unselected}$" "$archive_symbols"; then
@@ -193,6 +193,9 @@ for symbol in __errno_location thrd_sleep; do
     grep -Eq "[[:space:]]${symbol}$" "$candidate_symbols" ||
         fail "candidate does not define ${symbol}"
 done
+if grep -Eq '[[:space:]]sleep$' "$candidate_symbols"; then
+    fail "thrd_sleep candidate unexpectedly pulls separately selected sleep"
+fi
 unresolved_symbols="$(awk '$7 == "UND" && NF >= 8 { print }' "$candidate_symbols")"
 if [ -n "$unresolved_symbols" ]; then
     printf '%s\n' "$unresolved_symbols" >&2

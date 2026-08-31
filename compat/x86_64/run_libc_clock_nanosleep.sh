@@ -132,7 +132,7 @@ for symbol in __errno_location clock_nanosleep; do
     grep -Eq "[[:space:]][TW][[:space:]]${symbol}$" "$archive_symbols" ||
         fail "archive does not define ${symbol}"
 done
-for unselected in sleep usleep clock_settime \
+for unselected in usleep clock_settime \
     clock_getcpuclockid timer_create timer_delete timer_getoverrun timer_gettime \
     timer_settime setitimer alarm ualarm malloc free \
     calloc realloc; do
@@ -163,6 +163,9 @@ for symbol in __errno_location clock_nanosleep; do
     grep -Eq "[[:space:]]${symbol}$" "$candidate_symbols" ||
         fail "candidate does not define ${symbol}"
 done
+if grep -Eq '[[:space:]]sleep$' "$candidate_symbols"; then
+    fail "clock_nanosleep candidate unexpectedly pulls separately selected sleep"
+fi
 unresolved_symbols="$(awk '$7 == "UND" && NF >= 8 { print }' "$candidate_symbols")"
 if [ -n "$unresolved_symbols" ]; then
     printf '%s\n' "$unresolved_symbols" >&2

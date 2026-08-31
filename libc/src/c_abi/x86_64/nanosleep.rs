@@ -41,6 +41,10 @@ use super::{c_status, raw_syscall};
 /// x86-64 `struct timespec` for the syscall duration. `remaining` must be null
 /// or point to writable storage for the same record. The caller owns signal
 /// delivery, interruption, and both record lifetimes.
+// Keep the separately selected sleep wrapper as an ordinary static C caller
+// whose object has one explicit nanosleep relocation rather than an inlined
+// copy of this raw errno-publishing syscall boundary.
+#[inline(never)]
 #[no_mangle]
 pub unsafe extern "C" fn nanosleep(request: *const c_void, remaining: *mut c_void) -> c_int {
     // SAFETY: the caller owns the complete raw Linux pointer contract. Linux

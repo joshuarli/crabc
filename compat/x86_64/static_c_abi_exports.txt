@@ -776,6 +776,7 @@ sigwaitinfo
 sincosl
 sinhl
 sinl
+sleep
 snprintf
 sockatmark
 socket

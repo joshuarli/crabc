@@ -1443,6 +1443,19 @@ or power-loss durability. It does not select `syncfs`, `sync_file_range`,
 `fsync`, `fdatasync`, pathname or descriptor APIs, filesystem policy,
 family/platform parity, or public x86 support.
 
+`./scripts/dev-x86_64.sh sleep-header-abi` and
+`./scripts/dev-x86_64.sh libc-sleep` are a separate private `static-c-sleep`
+artifact in the same planned family. The default/strict-POSIX/X/Open/GNU/BSD
+C11/C++17 `<unistd.h>` matrix and one pinned-musl/true-static C fixture map
+only musl 1.2.6 `src/unistd/sleep.c`: `sleep(unsigned)` makes one call through
+the already selected direct `nanosleep` seam, returning zero on completion or
+the interrupted local record's truncated whole seconds. It proves stale-errno
+zero duration and a fixture-local SIGALRM/EINTR remainder, plus one wrapper
+object export/relocation with no direct syscall or errno/TLS access. The raw
+timer and saved signal state are test plumbing only. It does not select
+`usleep`, pthread cancellation, wake timing, signal/mask policy, clocks or
+timers, C-runtime/family parity, promotion, or public x86 support.
+
 `./scripts/dev-x86_64.sh libc-fcntl-record-locks` is a separate private
 `static-c-fcntl-record-locks` artifact inside planned `libc.posix-runtime`.
 Its project-header C/C++ gate and pinned-musl/freestanding-static fixture prove

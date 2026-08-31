@@ -1423,6 +1423,7 @@ INET_NTOA_SYMBOLS = ("inet_ntoa",)
 GETHOSTID_SYMBOLS = ("gethostid",)
 GETLOADAVG_SYMBOLS = ("getloadavg",)
 SYNC_SYMBOLS = ("sync",)
+SLEEP_SYMBOLS = ("sleep",)
 
 INET_CLASSFUL_SYMBOLS = ("inet_lnaof", "inet_makeaddr")
 
@@ -19729,7 +19730,7 @@ def require_nanosleep_artifact(family: Mapping[str, Any]) -> None:
         "initial-TLS errno",
         "__syscall_cp",
         "omits cancellation",
-        "`sleep`/`usleep`",
+        "separate `static-c-sleep` artifact",
     ):
         require(
             phrase in description,
@@ -19752,6 +19753,303 @@ def require_nanosleep_artifact(family: Mapping[str, Any]) -> None:
         == {"./scripts/dev-x86_64.sh libc-nanosleep"},
         "static-c-nanosleep must use the closed libc-nanosleep command",
     )
+
+
+def require_sleep_artifact(family: Mapping[str, Any]) -> None:
+    """Keep the musl one-call sleep wrapper private and delegating."""
+
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.posix-runtime].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [entry for entry in artifacts if entry.get("id") == "static-c-sleep"]
+    require(
+        len(matching) == 1,
+        "libc.posix-runtime must contain exactly one static-c-sleep artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-sleep must not promote libc.posix-runtime",
+    )
+    artifact = matching[0]
+    require("capabilities" not in artifact, "static-c-sleep must not carry capabilities")
+
+    description = artifact.get("description")
+    require(isinstance(description, str), "static-c-sleep needs a description")
+    for phrase in (
+        "selected-static-archive `sleep` compatibility artifact",
+        "still-planned `libc.posix-runtime`",
+        "exactly `unsigned int sleep(unsigned int)`",
+        "src/unistd/sleep.c::sleep",
+        "same record as request and remainder",
+        "remaining record's truncated whole seconds",
+        "ordinary EINTR errno/TLS result",
+        "neither retries nor installs handlers, changes signal masks, creates timers",
+        "fixture-local SIGALRM interruption",
+        "`usleep`, clock or timer control, general signal policy",
+        "family completion, promotion, or public x86 support",
+    ):
+        require(phrase in description, f"static-c-sleep description omits {phrase}")
+
+    owners = set(
+        nonempty_strings(artifact.get("source_owners"), "static-c-sleep.source_owners")
+    )
+    for owner in (
+        "compat/upstreams.toml",
+        "libc/Cargo.toml",
+        "libc/src/lib.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/sleep.rs",
+        "libc/src/c_abi/x86_64/nanosleep.rs",
+        "include/unistd.h",
+        "include/features.h",
+        "compat/x86_64/sleep_header_abi_probe.c",
+        "compat/x86_64/sleep_header_abi_probe.cpp",
+        "compat/x86_64/run_sleep_header_abi.sh",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/libc_sleep_probe.c",
+        "compat/x86_64/libc_sleep_start.S",
+        "compat/x86_64/run_libc_sleep.sh",
+        "compat/x86_64/run_libc_nanosleep.sh",
+        "compat/x86_64/run_libc_clock_nanosleep.sh",
+        "compat/x86_64/run_libc_thrd_sleep.sh",
+        "compat/x86_64/run_libc_readiness_waits.sh",
+        "compat/x86_64/aarch64_parity_inventory.py",
+        "compat/x86_64/aarch64_parity_inventory.json",
+        "compat/x86_64/tests/test_aarch64_parity_inventory.py",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/README.md",
+        "STATUS.md",
+        "x86-64.md",
+        "scripts/dev-x86_64.sh",
+        "scripts/check_structure.py",
+    ):
+        require(owner in owners, f"static-c-sleep source owners omit {owner}")
+
+    prerequisites = nonempty_strings(
+        artifact.get("x86_abi_prerequisites"), "static-c-sleep.x86_abi_prerequisites"
+    )
+    require(
+        any(
+            "SysV AMD64" in item
+            and "unsigned int sleep(unsigned int)" in item
+            and "edi" in item
+            and "eax" in item
+            and "16-byte align-8" in item
+            for item in prerequisites
+        ),
+        "static-c-sleep must retain its scalar and local-timespec ABI",
+    )
+    require(
+        any(
+            "9fa28ece75d8a2191de7c5bb53bed224c5947417" in item
+            and "src/unistd/sleep.c::sleep" in item
+            and "nanosleep(&tv, &tv)" in item
+            and "only an ordinary nanosleep relocation" in item
+            for item in prerequisites
+        ),
+        "static-c-sleep must retain its exact musl delegation mapping",
+    )
+    require(
+        any(
+            "setitimer=38" in item
+            and "sleep(2)" in item
+            and "EINTR" in item
+            and "no wake-time" in item
+            for item in prerequisites
+        ),
+        "static-c-sleep must retain its fixture-only interruption boundary",
+    )
+    require(
+        any(
+            "`-nostdlib -static`" in item
+            and "no interpreter" in item
+            and "dynamic TLS model" in item
+            and "sleep disassembly calls nanosleep" in item
+            for item in prerequisites
+        ),
+        "static-c-sleep must retain its standalone static closure",
+    )
+
+    headers = nonempty_strings(
+        artifact.get("x86_header_prerequisites"), "static-c-sleep.x86_header_prerequisites"
+    )
+    require(
+        any(
+            "C11/C++17" in item
+            and "`<unistd.h>`" in item
+            and "`unsigned int sleep(unsigned int)`" in item
+            and "default, strict POSIX, X/Open, GNU, and BSD" in item
+            and "unmangled C++ linkage" in item
+            for item in headers
+        ),
+        "static-c-sleep must retain its focused C/C++ header ABI",
+    )
+
+    evidence = artifact.get("native_evidence")
+    require(isinstance(evidence, list), "static-c-sleep needs evidence")
+    require(
+        {entry.get("command") for entry in evidence if isinstance(entry, Mapping)}
+        == {"./scripts/dev-x86_64.sh libc-sleep"},
+        "static-c-sleep must use the closed libc-sleep command",
+    )
+    scope = evidence[0].get("scope")
+    require(
+        isinstance(scope, str)
+        and all(
+            phrase in scope
+            for phrase in (
+                "Pinned-musl/project default/POSIX/X/Open/GNU/BSD C/C++ header",
+                "one nanosleep relocation without direct syscall/TLS",
+                "zero-duration stale-errno preservation",
+                "fixture-local SIGALRM EINTR branch",
+                "Raw setitimer and selected signal setup are test plumbing",
+                "usleep, pthread cancellation, wake timing, signal/mask policy",
+                "clock/timer control",
+                "family completion, promotion, or public x86 support",
+            )
+        ),
+        "static-c-sleep evidence must retain its narrow static wrapper scope",
+    )
+
+    oracle = artifact.get("oracle")
+    require(isinstance(oracle, list), "static-c-sleep needs an oracle")
+    oracle_text = " ".join(
+        str(entry.get("role", "")) for entry in oracle if isinstance(entry, Mapping)
+    )
+    require(
+        "src/unistd/sleep.c::sleep" in oracle_text
+        and "nanosleep(&tv, &tv)" in oracle_text
+        and "nanosleep=35" in oracle_text
+        and "setitimer=38" in oracle_text
+        and "initial-TLS errno" in oracle_text,
+        "static-c-sleep must retain its source/kernel closure",
+    )
+
+    exports = set(
+        static_c_abi_export_names(
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        )
+    )
+    require(set(SLEEP_SYMBOLS) <= exports, "static-c-sleep must retain its selected export")
+
+    static_root = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+    ).read_text(encoding="utf-8")
+    require(
+        '#[path = "sleep.rs"]\nmod sleep;' in static_root,
+        "x86 static C ABI must compose the sleep leaf",
+    )
+    source = (ROOT / "libc" / "src" / "c_abi" / "x86_64" / "sleep.rs").read_text(
+        encoding="utf-8"
+    )
+    for snippet in (
+        "Selected static Linux/x86-64 `sleep` C ABI boundary",
+        "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+        "src/unistd/sleep.c::sleep",
+        "nanosleep(&tv, &tv)",
+        "initial-TLS `errno`",
+        'pub extern "C" fn sleep(seconds: c_uint) -> c_uint',
+        "nanosleep::nanosleep(",
+        "if result == 0",
+        "interval.seconds as c_uint",
+    ):
+        require(snippet in source, f"sleep implementation omits {snippet}")
+    source_exports = set(
+        re.findall(r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(', source)
+    )
+    require(source_exports == set(SLEEP_SYMBOLS), "sleep leaf must export only sleep")
+    for forbidden in (
+        "raw_syscall::",
+        "errno::",
+        "signal_control::",
+        "clock_nanosleep",
+        "crabc_core",
+        "crabc_mimalloc",
+    ):
+        require(forbidden not in source, f"sleep leaf widens into {forbidden}")
+
+    runner = (ROOT / "compat" / "x86_64" / "run_libc_sleep.sh").read_text(
+        encoding="utf-8"
+    )
+    for snippet in (
+        "run_musl_oracle.sh",
+        "run_sleep_header_abi.sh",
+        "static_c_abi_exports.txt",
+        "-nostdlib -static",
+        "--no-undefined",
+        "sleep object must depend only on nanosleep",
+        "sleep object lacks its nanosleep delegation relocation",
+        "--disassemble=sleep",
+        "final sleep wrapper lost its nanosleep delegation",
+        "final sleep wrapper must not emit a direct syscall or errno TLS path",
+        "CRABC_SLEEP_FREESTANDING",
+    ):
+        require(snippet in runner, f"sleep runner omits {snippet}")
+
+    probe = (ROOT / "compat" / "x86_64" / "libc_sleep_probe.c").read_text(
+        encoding="utf-8"
+    )
+    for snippet in (
+        "unsigned int (*)(unsigned int)",
+        "check_zero_completion",
+        "check_interrupted_remainder",
+        "sleep(0)",
+        "ERANGE",
+        "raw_arm_alarm(20000)",
+        "remaining == 0 || remaining >= requested || errno != EINTR",
+        "CRABC_SLEEP_FREESTANDING",
+    ):
+        require(snippet in probe, f"sleep probe omits {snippet}")
+
+    header_c = (ROOT / "compat" / "x86_64" / "sleep_header_abi_probe.c").read_text(
+        encoding="utf-8"
+    )
+    header_cxx = (
+        ROOT / "compat" / "x86_64" / "sleep_header_abi_probe.cpp"
+    ).read_text(encoding="utf-8")
+    for snippet in ("sleep declaration", "CRABC_EXPECT_SLEEP", "sleep_signature"):
+        require(snippet in header_c, f"sleep C header probe omits {snippet}")
+        require(snippet in header_cxx, f"sleep C++ header probe omits {snippet}")
+
+    header_runner = (ROOT / "compat" / "x86_64" / "run_sleep_header_abi.sh").read_text(
+        encoding="utf-8"
+    )
+    for snippet in (
+        "sleep_header_abi_probe.c",
+        "sleep_header_abi_probe.cpp",
+        "Pinned musl 1.2.6",
+        "-D_POSIX_SOURCE",
+        "-D_POSIX_C_SOURCE=200809L",
+        "-D_XOPEN_SOURCE=700",
+        "-D_GNU_SOURCE",
+        "-D_BSD_SOURCE",
+        "retained a mangled sleep reference",
+    ):
+        require(snippet in header_runner, f"sleep header runner omits {snippet}")
+
+    for sibling, marker in (
+        ("run_libc_nanosleep.sh", "nanosleep candidate unexpectedly pulls separately selected sleep"),
+        ("run_libc_clock_nanosleep.sh", "clock_nanosleep candidate unexpectedly pulls separately selected sleep"),
+        ("run_libc_thrd_sleep.sh", "thrd_sleep candidate unexpectedly pulls separately selected sleep"),
+        ("run_libc_readiness_waits.sh", "readiness/signal-waits candidate unexpectedly pulls separately selected sleep"),
+    ):
+        sibling_runner = (ROOT / "compat" / "x86_64" / sibling).read_text(
+            encoding="utf-8"
+        )
+        require(marker in sibling_runner, f"{sibling} must reject final sleep linkage")
+
+    dispatcher = (ROOT / "scripts" / "dev-x86_64.sh").read_text(encoding="utf-8")
+    for snippet in (
+        "sleep-header-abi)",
+        "run_sleep_header_abi",
+        "libc-sleep)",
+        "run_libc_sleep",
+    ):
+        require(snippet in dispatcher, f"sleep dispatcher omits {snippet}")
 
 
 def require_descriptor_entry_artifact(family: Mapping[str, Any]) -> None:
@@ -40640,6 +40938,7 @@ def validate_ledger(
     require_sigset_mutation_artifact(by_id["libc.posix-runtime"])
     require_clock_nanosleep_artifact(by_id["libc.posix-runtime"])
     require_nanosleep_artifact(by_id["libc.posix-runtime"])
+    require_sleep_artifact(by_id["libc.posix-runtime"])
     require_descriptor_entry_artifact(by_id["libc.posix-runtime"])
     require_lchmod_unsupported_slice(by_id["libc.posix-runtime"])
     require_mkfifo_artifact(by_id["libc.posix-runtime"])

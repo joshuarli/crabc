@@ -4040,7 +4040,7 @@ oracle = [
 
 [[family.verified_artifact]]
 id = "static-c-nanosleep"
-description = "Private native x86 selected-static-archive non-cancellation POSIX nanosleep block. One dependency-free `crabc-libc` archive resolves exactly `nanosleep` into a freestanding C fixture after an equivalent pinned-musl execution. It returns zero on success or `-1/errno` on a raw Linux failure, preserving stale errno on success and publishing EINVAL, EFAULT, and EINTR in the initial-TLS errno slot. The candidate uses Linux x86-64 nanosleep=35 with request and remaining pointers in rdi/rsi. Musl's src/time/nanosleep.c delegates the relative realtime request through src/time/clock_nanosleep.c to the __syscall_cp pthread cancellation point; this direct leaf uses syscall 35 and omits cancellation until x86 pthread/TLS lifecycle exists. The fixture proves zero completion, malformed-timespec and null-request errors, relative EINTR with a positive canonical remainder, static artifact purity, and the narrow time-header declaration. It does not select `sleep`/`usleep`, C clock or timer state, signal policy, pthread cancellation, libc.so, CRT, dynamic TLS lifecycle, loader, sysroot, or public x86 support."
+description = "Private native x86 selected-static-archive non-cancellation POSIX nanosleep block. One dependency-free `crabc-libc` archive resolves exactly `nanosleep` into a freestanding C fixture after an equivalent pinned-musl execution. It returns zero on success or `-1/errno` on a raw Linux failure, preserving stale errno on success and publishing EINVAL, EFAULT, and EINTR in the initial-TLS errno slot. The candidate uses Linux x86-64 nanosleep=35 with request and remaining pointers in rdi/rsi. Musl's src/time/nanosleep.c delegates the relative realtime request through src/time/clock_nanosleep.c to the __syscall_cp pthread cancellation point; this direct leaf uses syscall 35 and omits cancellation until x86 pthread/TLS lifecycle exists. The fixture proves zero completion, malformed-timespec and null-request errors, relative EINTR with a positive canonical remainder, static artifact purity, and the narrow time-header declaration. The separate `static-c-sleep` artifact may delegate to this boundary, but its sleep behavior and all `usleep`, C clock or timer state, signal policy, pthread cancellation, libc.so, CRT, dynamic TLS lifecycle, loader, sysroot, and public x86 support remain excluded here."
 source_owners = [
   "compat/upstreams.toml",
   "libc/Cargo.toml",
@@ -4076,11 +4076,71 @@ x86_abi_prerequisites = [
   "The final static candidate uses the selected initial-TLS errno datum with fixture-local Variant-II %fs:0 setup, has no dynamic TLS model, and does not select a CRT or general thread lifecycle",
 ]
 x86_header_prerequisites = ["The candidate preprocesses project errno.h, signal.h, time.h, sys/types.h, sys/syscall.h, bits/alltypes.h, and bits/syscall.h. Its C body checks the GNU-visible nanosleep declaration and x86 timespec layout against pinned musl; the existing time C/C++ header gate remains a bounded source-only proof, not C time closure."]
-native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-nanosleep", scope = "Pinned-musl C reference plus a true dependency-free x86 crabc-libc static archive and freestanding C candidate. The gate runs the existing project/pinned-musl time header ABI proof; checks exact crate-owned C object-member export closure separately from compiler-builtins; rejects dynamic interpreter/DT_NEEDED/unresolved symbols/dynamic TLS/unowned runtime dependencies; proves emitted nanosleep=35 rdi/rsi and direct initial-TLS errno composition; and executes zero, invalid-timespec, null-request, and relative EINTR-positive-remainder cases. It deliberately omits musl pthread cancellation and does not select sleep/usleep, C clocks/timers, signal policy, libc.so, CRT, dynamic TLS lifecycle, loader, sysroot, or public x86 support." }]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-nanosleep", scope = "Pinned-musl C reference plus a true dependency-free x86 crabc-libc static archive and freestanding C candidate. The gate runs the existing project/pinned-musl time header ABI proof; checks exact crate-owned C object-member export closure separately from compiler-builtins; rejects dynamic interpreter/DT_NEEDED/unresolved symbols/dynamic TLS/unowned runtime dependencies; proves emitted nanosleep=35 rdi/rsi and direct initial-TLS errno composition; and executes zero, invalid-timespec, null-request, and relative EINTR-positive-remainder cases. The aggregate archive now carries the separate static-c-sleep export, while this final candidate rejects it and does not itself evidence sleep/usleep behavior. It deliberately omits musl pthread cancellation and does not select C clocks/timers, signal policy, libc.so, CRT, dynamic TLS lifecycle, loader, sysroot, or public x86 support." }]
 oracle = [
   { kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source mapping and behavior oracle for src/time/nanosleep.c plus its src/time/clock_nanosleep.c delegation, normal -1/errno convention, and __syscall_cp cancellation point." },
   { kind = "kernel-abi", source = "Linux 5.10 x86-64 ABI", role = "nanosleep=35 two-register ABI, timespec pointer/result behavior, EINTR remaining interval, and raw negative errno convention." },
   { kind = "elf-abi", source = "System V AMD64 psABI", role = "C scalar/pointer calling convention and static initial-TLS fixture contract." },
+]
+
+[[family.verified_artifact]]
+id = "static-c-sleep"
+description = "Private native x86 selected-static-archive `sleep` compatibility artifact inside still-planned `libc.posix-runtime`. One dedicated Rust object exports exactly `unsigned int sleep(unsigned int)` and maps pinned musl 1.2.6 `src/unistd/sleep.c::sleep` line-for-line: it builds one local 16-byte `timespec`, calls the separately selected direct `nanosleep` boundary with that same record as request and remainder, returns zero on completion, and otherwise returns the remaining record's truncated whole seconds. The sole dependency publishes the ordinary EINTR errno/TLS result; this wrapper neither retries nor installs handlers, changes signal masks, creates timers, makes wake-timing promises, or selects pthread cancellation. The common pinned-musl/static C body observes zero-duration stale-errno preservation plus fixture-local SIGALRM interruption with one nonzero result less than the original request. Raw setitimer and already-selected simple signal setup exist only to deliver that test interruption. This artifact does not select `usleep`, clock or timer control, general signal policy, libc.so, CRT, loader, sysroot, allocation, family completion, promotion, or public x86 support."
+source_owners = [
+  "compat/upstreams.toml",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/sleep.rs",
+  "libc/src/c_abi/x86_64/nanosleep.rs",
+  "libc/src/c_abi/x86_64/errno.rs",
+  "libc/src/c_abi/x86_64/syscall.rs",
+  "libc/src/c_abi/x86_64/signal_foundation.rs",
+  "libc/src/c_abi/x86_64/signal_control.rs",
+  "include/errno.h",
+  "include/signal.h",
+  "include/unistd.h",
+  "include/features.h",
+  "include/sys/types.h",
+  "include/sys/syscall.h",
+  "include/bits/alltypes.h",
+  "include/bits/syscall.h",
+  "compat/x86_64/sleep_header_abi_probe.c",
+  "compat/x86_64/sleep_header_abi_probe.cpp",
+  "compat/x86_64/run_sleep_header_abi.sh",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/libc_sleep_probe.c",
+  "compat/x86_64/libc_sleep_start.S",
+  "compat/x86_64/run_libc_sleep.sh",
+  "compat/x86_64/run_libc_nanosleep.sh",
+  "compat/x86_64/run_libc_clock_nanosleep.sh",
+  "compat/x86_64/run_libc_thrd_sleep.sh",
+  "compat/x86_64/run_libc_readiness_waits.sh",
+  "compat/x86_64/aarch64_parity_inventory.py",
+  "compat/x86_64/aarch64_parity_inventory.json",
+  "compat/x86_64/tests/test_aarch64_parity_inventory.py",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "compat/x86_64/README.md",
+  "STATUS.md",
+  "x86-64.md",
+  "scripts/dev-x86_64.sh",
+  "scripts/check_structure.py",
+]
+x86_abi_prerequisites = [
+  "The SysV AMD64 `unsigned int sleep(unsigned int)` ABI takes its four-byte request in edi and returns its four-byte unsigned result in eax. The local Linux/x86-64 timespec is 16-byte align-8 signed-long storage with tv_sec/tv_nsec at offsets 0/8, and musl supplies the same record as both the nanosleep request and EINTR remainder.",
+  "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417 maps `src/unistd/sleep.c::sleep` exactly to `struct timespec tv = { .tv_sec = seconds, .tv_nsec = 0 }; if (nanosleep(&tv, &tv)) return tv.tv_sec; return 0;`. The selected Rust object has exactly that one public export and only an ordinary nanosleep relocation; it has no direct syscall or errno/TLS instruction.",
+  "The separate selected nanosleep leaf enters Linux 5.10 x86-64 nanosleep=35 through rdi/rsi, publishes raw EINTR in its initial-TLS errno slot, and deliberately omits musl's pthread cancellation point. The sleep wrapper neither retries nor owns an errno, cancellation, signal, timer, or clock-control path.",
+  "The common pinned-musl/candidate body proves sleep(0) returns zero while preserving stale ERANGE, then fixture-local raw setitimer=38 plus saved/restored selected SIGALRM handling makes sleep(2) return one nonzero whole-second remainder less than two with EINTR. It records no wake-time, timer, handler, mask, or delivery-policy claim.",
+  "The final `-nostdlib -static` candidate has the selected initial-TLS errno dependency but no interpreter, DT_NEEDED, unresolved symbol, dynamic TLS model, allocator, dynamic resolver, clock_nanosleep, usleep, or timer-control dependency. Its direct sleep disassembly calls nanosleep and has no syscall or fs errno access of its own.",
+]
+x86_header_prerequisites = ["The focused pinned-musl/project-first C11/C++17 `<unistd.h>` matrix proves the unconditional POSIX `unsigned int sleep(unsigned int)` declaration in default, strict POSIX, X/Open, GNU, and BSD profiles plus unmangled C++ linkage. It selects neither general unistd coverage, archive linkage, clocks/timers, signal policy, family completion, nor public x86 support."]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-sleep", scope = "Pinned-musl/project default/POSIX/X/Open/GNU/BSD C/C++ header compilation plus one project-header C body through pinned musl and a true x86 `-nostdlib -static` candidate. The gate ratchets the full selected archive surface, extracts the one sleep object to require exactly its sleep export and one nanosleep relocation without direct syscall/TLS, rejects interpreter/DT_NEEDED/unresolved symbols/dynamic TLS/allocator/unowned time dependencies, and proves final sleep-to-nanosleep delegation. The C body proves zero-duration stale-errno preservation and a fixture-local SIGALRM EINTR branch with only a nonzero whole-second remainder below the requested two seconds. Raw setitimer and selected signal setup are test plumbing, not C timer/signal evidence. It does not select usleep, pthread cancellation, wake timing, signal/mask policy, clock/timer control, libc.so, CRT, loader, sysroot, family completion, promotion, or public x86 support." }]
+oracle = [
+  { kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source and declaration/behavior oracle for src/unistd/sleep.c::sleep: one local timespec, one nanosleep(&tv, &tv) call, zero completion, and tv_sec return after interruption." },
+  { kind = "kernel-abi", source = "Linux 5.10 x86-64 ABI", role = "nanosleep=35 rdi/rsi record ABI, EINTR remaining-timespec write, raw setitimer=38 fixture interruption, and initial-TLS errno result consumed only through the separate nanosleep leaf." },
+  { kind = "elf-abi", source = "System V AMD64 psABI", role = "unsigned-int scalar call/return, 16-byte align-8 timespec local, unmangled C++ linkage, and static initial-exec TLS fixture contract." },
 ]
 
 [[family.verified_artifact]]

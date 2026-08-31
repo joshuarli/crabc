@@ -112,6 +112,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   gettext-catalog-header-abi  verify staged x86 libintl/nl_types C/C++ declarations and linkage
   random-entropy-header-abi  compile the staged x86 C/C++ random-source declarations
   time-header-abi  compile the staged x86 C/C++ time header layouts
+  sleep-header-abi  compile the staged x86 C/C++ POSIX sleep declaration
   timerfd-header-abi  verify the selected x86 sys/timerfd.h C/C++ ABI profiles
   signalfd-header-abi  verify the selected x86 sys/signalfd.h C/C++ ABI profiles
   poll-header-abi  compile the staged x86 C/C++ poll header layouts
@@ -331,6 +332,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   qualification-posix-abi-admission  run the closed non-promoting POSIX/ABI artifact admission inventory
   libc-header-layouts-baseline  run the static x86 crabc-libc C/C++ header/layout baseline
   libc-nanosleep  run the static x86 crabc-libc nanosleep slice
+  libc-sleep  run the static x86 crabc-libc sleep wrapper slice
   libc-clock-nanosleep  run the static x86 crabc-libc clock_nanosleep slice
   libc-descriptor-entry  run the static x86 crabc-libc descriptor-entry slice
   libc-descriptor-lifecycle  run the static x86 crabc-libc descriptor lifecycle composition
@@ -1502,8 +1504,18 @@ completion preserves stale errno; malformed and null requests return
 `-1`/`EINVAL` or `EFAULT`; and a fixture-local raw timer produces one
 `-1`/`EINTR` result with a positive remainder. The direct x86 syscall-35 leaf
 uses the selected initial-TLS errno slot and deliberately omits musl's
-pthread-cancellation path. It does not select sleep/usleep, C clocks/timers,
-signal policy, dynamic libc, CRT/TLS lifecycle, loader, sysroot, or public x86
+pthread-cancellation path. The separate `libc-sleep` artifact may delegate to
+this boundary, but this fixture rejects it from its final candidate; `usleep`,
+C clocks/timers, signal policy, dynamic libc, CRT/TLS lifecycle, loader,
+sysroot, and public x86 support remain excluded here.
+`libc-sleep` links that archive into a separate freestanding project-header C
+fixture after an equivalent pinned-musl run. It selects only musl's one-call
+`sleep(unsigned)` wrapper: zero seconds preserve stale errno, while a
+fixture-local SIGALRM interruption publishes EINTR through the selected
+nanosleep boundary and returns its nonzero truncated whole-second remainder.
+It does not retry, install handlers, change masks, create timers, promise wake
+timing, select pthread cancellation or `usleep`, C clock/timer state, signal
+policy, dynamic libc, CRT/TLS lifecycle, loader, sysroot, or public x86
 support.
 `libc-clock-nanosleep` links that archive into a separate freestanding
 project-header C fixture after an equivalent pinned-musl run. It selects only
@@ -2412,6 +2424,10 @@ run_libc_nanosleep() {
     run_in_container bash /workspace/compat/x86_64/run_libc_nanosleep.sh
 }
 
+run_libc_sleep() {
+    run_in_container bash /workspace/compat/x86_64/run_libc_sleep.sh
+}
+
 run_libc_clock_nanosleep() {
     run_in_container bash /workspace/compat/x86_64/run_libc_clock_nanosleep.sh
 }
@@ -2546,6 +2562,10 @@ run_random_entropy_header_abi() {
 
 run_time_header_abi() {
     run_in_container bash /workspace/compat/x86_64/run_time_header_abi.sh
+}
+
+run_sleep_header_abi() {
+    run_in_container bash /workspace/compat/x86_64/run_sleep_header_abi.sh
 }
 
 run_timerfd_header_abi() {
@@ -3805,6 +3825,8 @@ shift
 case "$command" in
     getloadavg-header-abi) ;;
     libc-getloadavg) ;;
+    sleep-header-abi) ;;
+    libc-sleep) ;;
     timerfd-header-abi|signalfd-header-abi) ;;
     libc-timerfd|libc-signalfd|libc-sigpause|libc-sigisemptyset|libc-sigandset-sigorset|libc-sigpending|libc-sigrtmax|libc-sigrtmin|libc-sigaddset-sigdelset-sigfillset) ;;
     libc-sched-yield) ;;
@@ -4280,6 +4302,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "time-header-abi takes no arguments"
         ensure_image
         run_time_header_abi
+        ;;
+    sleep-header-abi)
+        [ "$#" -eq 0 ] || fail "sleep-header-abi takes no arguments"
+        ensure_image
+        run_sleep_header_abi
         ;;
     timerfd-header-abi)
         [ "$#" -eq 0 ] || fail "timerfd-header-abi takes no arguments"
@@ -5580,6 +5607,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "libc-nanosleep takes no arguments"
         ensure_image
         run_libc_nanosleep
+        ;;
+    libc-sleep)
+        [ "$#" -eq 0 ] || fail "libc-sleep takes no arguments"
+        ensure_image
+        run_libc_sleep
         ;;
     libc-clock-nanosleep)
         [ "$#" -eq 0 ] || fail "libc-clock-nanosleep takes no arguments"
