@@ -554,6 +554,13 @@ impl PublishedOsAlignedPage {
             return None;
         }
         let memory = page.memid();
+        // The bounded W03 terminal tail owns normal `MI_MEM_OS` mappings
+        // created by `OsAlignedPageClaim`. Pinned `MI_MEM_OS_HUGE` has its
+        // own `mi_os_free_huge_os_pages` source release. `MI_MEM_OS_REMAP`
+        // falls through the generic upstream release, but this bounded
+        // adapter has no corresponding remap claim/provenance owner, so both
+        // stay fail-closed here rather than treating this clipped `munmap`
+        // capability as theirs.
         if memory.kind() != MemoryKind::Os {
             return None;
         }

@@ -748,6 +748,24 @@ When an internal one-way transition fails after source ownership has moved:
 - use `core::mem::forget` only as part of an explicit terminal-retained type or
   process-abort path, not as routine success/error control flow.
 
+The page-owned owner-exit continuation makes this exception deliberately
+per-claim. `single_thread::continue_post_owner_exit_live_allocation_with_process_page_facts`
+first performs the source page-local `allow_collect=true` publication; it does
+not consult a process marker before that CAS. A `Detached` PageMap observation
+therefore rejects before publication as `RemoteFreeError::NotOwnerAssociated`.
+Only an exact W07 claim that has crossed the source one-way boundary may enter
+the private `ProcessPostOwnerExitTerminalRetained` sink. That type has no
+extraction or retry operation: terminalization records a test-only category,
+sets an exception-only marker for later post-CAS operations, and forgets
+the exact claim plus any post-tail mutation authority. This avoids both a
+process-global owner slot and a pre-CAS scheduler while preserving each
+concurrent claim's unique owner. Terminal callbacks acquire PageMap mutation
+authority only at the source terminal-release tail. The bounded normal-OS
+singleton image additionally accepts an alignment-forced `reserved == 1` page
+(for example a 7-byte request rounded to 4 KiB at 128 KiB alignment) through
+its exact OS layout; `OsHuge` and `OsRemap` remain fail-closed because this
+port does not represent their release owners.
+
 A spin loop requires a source-backed progress argument. Unbounded spinning on
 a registry or process-global scheduler is not acceptable.
 

@@ -124,6 +124,78 @@ impl ClaimedAbandonedRemoteFree {
     pub(crate) const fn published_block(&self) -> NonNull<u8> { self.published_block }
 }
 
+/// One test-only deferred source publication retained through the owner-exit
+/// unown interleaving.
+///
+/// The normal [`RemoteFreeProducer`](crate::single_thread::RemoteFreeProducer)
+/// keeps its atomic producer projection opaque. This token preserves that
+/// boundary for the deterministic owner-exit regression: it may be consumed
+/// only while the source owner still holds the abandoned low bit, and it never
+/// reveals a page or reconstructs a page/block claim.
+#[cfg(test)]
+pub(crate) struct OwnerExitUnownRemoteFreeInjection {
+    producer: PageRemoteFreeProducerState,
+    canonical_block: NonNull<u8>,
+}
+
+#[cfg(test)]
+impl OwnerExitUnownRemoteFreeInjection {
+    /// Creates one deferred publication from the private producer capability.
+    ///
+    /// # Safety
+    ///
+    /// `producer` and `canonical_block` must come from one still-live
+    /// `RemoteFreeProducer`. The test harness must consume this before the
+    /// owner can detach, retire, or release the page.
+    #[inline]
+    pub(crate) const unsafe fn from_live_producer(
+        producer: PageRemoteFreeProducerState,
+        canonical_block: NonNull<u8>,
+    ) -> Self {
+        Self {
+            producer,
+            canonical_block,
+        }
+    }
+
+    /// Returns whether this opaque producer names `page` without exposing its
+    /// atomic fields to the caller.
+    ///
+    /// # Safety
+    ///
+    /// `page` must remain initialized and live for the pending injection.
+    #[inline]
+    pub(crate) unsafe fn matches_page(&self, page: NonNull<Page>) -> bool {
+        // SAFETY: the injection retains the same page lifetime proof as its
+        // originating producer; this creates only the source atomic projection.
+        let page_producer = unsafe { Page::remote_free_producer_state_at(page) };
+        page_producer.xthread_id == self.producer.xthread_id
+            && page_producer.xthread_free == self.producer.xthread_free
+    }
+
+    /// Executes the exact `allow_collect=true` publication after the owner
+    /// observed an empty head and before its unown CAS.
+    ///
+    /// # Safety
+    ///
+    /// The matching source owner must still hold the abandoned low bit. The
+    /// injected block is the exact once-live canonical block retained by this
+    /// token and must not be published through any other path.
+    #[inline]
+    pub(crate) unsafe fn publish_after_unown_observation(
+        self,
+    ) -> Result<AbandonedRemotePush, RemoteFreeError> {
+        // SAFETY: the token's construction and caller contract preserve the
+        // same source producer/block lifetime through this one publication.
+        let was_owned = unsafe { push_source_block_mt(self.producer, self.canonical_block, true) }?;
+        Ok(if was_owned {
+            AbandonedRemotePush::PublishedToExistingOwner
+        } else {
+            AbandonedRemotePush::ClaimedUnownedPage
+        })
+    }
+}
+
 /// Outcome of the source `mi_free_block_mt(..., allow_collect=true)` push for
 /// a pointer that dispatch observed on a live owner-associated page.
 ///
@@ -181,6 +253,86 @@ where
             published_block: block,
         })
     })
+}
+
+/// Publishes a PageMap observation that was already classified as abandoned.
+///
+/// This is the source `mi_free_block_mt(..., allow_collect=true)` front edge
+/// for a coherent [`LiveAllocationPointer`] whose captured identity is
+/// [`LiveAllocationPageState::Abandoned`] or
+/// [`LiveAllocationPageState::AbandonedMapped`].  It deliberately performs
+/// no second identity read before the CAS: a concurrent source reclaim may
+/// already have made the page live again, in which case the same CAS publishes
+/// to that owner and returns [`LiveRemoteFreePublish::PublishedToOwner`].  If
+/// the CAS instead changes an unowned head to owned, its exact non-copyable
+/// [`ClaimedAbandonedRemoteFree`] must move into the post-owner-exit source
+/// continuation.
+///
+/// A caller with a captured live-owner identity must use
+/// [`push_live_allocation`] instead.  A detached observation has no valid
+/// source producer route here.
+///
+/// # Safety
+///
+/// `allocation` must be one current PageMap-derived native allocation whose
+/// page metadata, registration, and canonical block remain live through this
+/// consuming publication. The caller must not access the client or canonical
+/// block after a successful result. A claimed result owns the source low bit
+/// and must be continued rather than re-published or dropped.
+pub(crate) unsafe fn push_abandoned_live_allocation(
+    allocation: LiveAllocationPointer,
+) -> Result<LiveRemoteFreePublish, RemoteFreeError> {
+    let (page, producer, block, page_state) = allocation.live_remote_free_allocation();
+    if !matches!(
+        page_state,
+        LiveAllocationPageState::Abandoned | LiveAllocationPageState::AbandonedMapped
+    ) {
+        return Err(RemoteFreeError::NotOwnerAssociated);
+    }
+    // SAFETY: `allocation` is the one coherent PageMap observation. The
+    // source CAS decides against its current head; do not re-read identity
+    // after the snapshot because a reclaimed live owner is a legal winner.
+    let was_owned = unsafe { push_source_block_mt(producer, block, true) }?;
+    Ok(if was_owned {
+        LiveRemoteFreePublish::PublishedToOwner
+    } else {
+        LiveRemoteFreePublish::ClaimedAbandonedPage(ClaimedAbandonedRemoteFree {
+            page,
+            published_block: block,
+        })
+    })
+}
+
+/// Selects the exact state-qualified pointer publication for a post-owner-exit
+/// free without reconstructing a page/block claim.
+///
+/// The live snapshot arm preserves the ordinary stale-live race through
+/// [`push_live_allocation`]. The abandoned arms use
+/// [`push_abandoned_live_allocation`], which may still publish to a newly
+/// reclaimed live owner. This consuming wrapper is the narrow production
+/// bridge used by the lower process-facts continuation; detached observations
+/// are intentionally rejected rather than routed through a former owner.
+///
+/// # Safety
+///
+/// The `LiveAllocationPointer` must satisfy the same current-allocation
+/// lifetime contract as the two state-specific publication functions.
+pub(crate) unsafe fn push_post_owner_exit_live_allocation(
+    allocation: LiveAllocationPointer,
+) -> Result<LiveRemoteFreePublish, RemoteFreeError> {
+    match allocation.page_state() {
+        LiveAllocationPageState::LiveOwnerAssociated => {
+            // SAFETY: forwarded unchanged to the live state-specific source
+            // publication; it deliberately tolerates an owner-exit CAS race.
+            unsafe { push_live_allocation(allocation) }
+        }
+        LiveAllocationPageState::Abandoned | LiveAllocationPageState::AbandonedMapped => {
+            // SAFETY: forwarded unchanged to the abandoned state-specific
+            // source publication; it deliberately tolerates a reclaim race.
+            unsafe { push_abandoned_live_allocation(allocation) }
+        }
+        LiveAllocationPageState::Detached => Err(RemoteFreeError::NotOwnerAssociated),
+    }
 }
 
 // The following compact lifetime word is retained only as older bounded

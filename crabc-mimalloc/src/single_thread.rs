@@ -131,6 +131,9 @@ use core::marker::PhantomData;
 use core::mem::ManuallyDrop;
 use core::pin::Pin;
 use core::ptr::NonNull;
+use core::sync::atomic::{AtomicBool, Ordering};
+#[cfg(test)]
+use core::sync::atomic::AtomicUsize;
 
 #[cfg(test)]
 use core::ffi::c_void;
@@ -166,13 +169,14 @@ use crate::invariants;
 use crate::os_page::{OsAlignedPageClaim, OsAlignedPageOwner, PublishedOsAlignedPage};
 use crate::page;
 use crate::page_map::PageMap;
+use crate::process_page_map::{LiveAllocationPointer, ProcessPageMapMutationLease};
 use crate::process_arena::{ProcessPageArenaLease, ProcessPageArenaLeaseError};
 use crate::remote_free::{self, RemoteFreeError};
 use crate::size_class;
 use crate::subproc::MainSubprocess;
 use crate::types::{
-    EMPTY_PAGE, HeapOsAbandonedPageListError, LiveThreadId, MemoryId, MemoryKind, Page,
-    PageKind, PageRemoteFreeProducerState, Theap,
+    EMPTY_PAGE, HeapOsAbandonedPageListError, HeapOsAbandonedPageRemovalOutcome,
+    LiveThreadId, MemoryId, MemoryKind, Page, PageKind, PageRemoteFreeProducerState, Theap,
 };
 use crate::types::page_queue::{
     page_is_in_full, page_queue_enqueue_from_full_metadata,
@@ -388,6 +392,1559 @@ fn same_arena_memory(left: MemoryId, right: MemoryId) -> bool {
                 && left.initially_zero() == right.initially_zero()
         }
         _ => false,
+    }
+}
+
+/// A process-owned continuation outcome for one remote free that won the
+/// source abandoned-page low bit after its former owner exited.
+///
+/// This preserves W07's linear capability boundary.  In particular, a
+/// retained regular result contains the original
+/// [`remote_free::ClaimedAbandonedRemoteFree`], while a retained singleton
+/// result contains the terminal wrapper that owns that same claim.  The OS
+/// release variant additionally keeps the exact failed mapping owner; neither
+/// branch permits a caller to rebuild authority from a page or block pointer.
+#[must_use = "a post-owner-exit claim result can retain source page ownership"]
+enum ProcessPostOwnerExitRemoteClaimResult {
+    /// The regular source tail transferred its claimed low-bit owner into a
+    /// terminal release that could not complete. `mutation` exists only when
+    /// the terminal callback had already acquired the exact PageMap mutation
+    /// lease immediately before its unregister step.
+    RegularTerminalRetained {
+        claim: remote_free::ClaimedAbandonedRemoteFree,
+        mutation: Option<ProcessPageMapMutationLease>,
+    },
+    Regular(abandoned::ClaimedPostOwnerExitRegularFreeResult),
+    /// The singleton terminal callback retained W07's exact wrapper. As with
+    /// the regular form, the optional mutation lease begins only at the
+    /// source PageMap/list terminal tail.
+    SingletonTerminalRetained {
+        release: abandoned::ClaimedPostOwnerExitSingletonRelease,
+        mutation: Option<ProcessPageMapMutationLease>,
+    },
+    Singleton(abandoned::ClaimedPostOwnerExitSingletonFreeResult),
+    /// The OS or external terminal tail crossed an irreversible source
+    /// boundary. The returned owner carries the W07 wrapper plus the exact
+    /// non-arena backing facts and last completed stage.
+    SingletonNonArenaTerminalRetained {
+        owner: ProcessPostOwnerExitNonArenaTerminalOwner,
+        mutation: ProcessPageMapMutationLease,
+    },
+    /// The exact page terminal release completed, but releasing its scoped
+    /// PageMap mutation lease visibly failed. No page or mapping owner
+    /// remains; W03 must still report scalar terminal retention.
+    MutationLeaseReleaseFailure,
+}
+
+/// The last source-visible stage completed before a non-arena singleton
+/// terminal release became retained.
+///
+/// This is deliberately an observation, not a retry selector. The enclosing
+/// terminal owner remains opaque because clearing OS aliases can have partial
+/// progress; no caller may reconstruct an OS-list member, raw page/block
+/// claim, or mapping release from this stage alone.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ProcessPostOwnerExitNonArenaTerminalStage {
+    /// `_mi_arenas_page_unabandon` removed the page from the static Heap's OS
+    /// list, but no PageMap transition is known to have completed.
+    OsListRemoved,
+    /// The source-clipped PageMap range was unregistered. Secondary aliases
+    /// may have been cleared partially before the next failure.
+    PageMapUnregistered,
+    /// Secondary metadata aliases were cleared before primary retirement.
+    SecondaryAliasesCleared,
+    /// The primary metadata record was retired; only mapping reclaim remained.
+    PrimaryRetired,
+}
+
+/// One retained non-arena singleton terminal transition after list removal.
+///
+/// `release` is W07's exact singleton wrapper around the original
+/// [`remote_free::ClaimedAbandonedRemoteFree`]. `backing` is either the same
+/// published OS mapping token validated before list removal or the exact
+/// external PageMap span that requires no backing unmap. Keeping them opaque
+/// prevents a post-list failure from losing source authority or exposing an
+/// unsafe partial-release retry API.
+#[must_use = "a non-arena terminal owner must remain intact after list removal"]
+struct ProcessPostOwnerExitNonArenaTerminalOwner {
+    release: abandoned::ClaimedPostOwnerExitSingletonRelease,
+    backing: ProcessPostOwnerExitNonArenaTerminalBacking,
+    stage: ProcessPostOwnerExitNonArenaTerminalStage,
+}
+
+impl ProcessPostOwnerExitNonArenaTerminalOwner {
+    #[inline]
+    const fn stage(&self) -> ProcessPostOwnerExitNonArenaTerminalStage { self.stage }
+}
+
+/// Exact non-arena terminal backing retained with one opaque W07 wrapper.
+///
+/// This is private so the public terminal owner cannot be disassembled into a
+/// mapping release before its PageMap/alias/primary metadata predecessors are
+/// known to have completed.
+enum ProcessPostOwnerExitNonArenaTerminalBacking {
+    Os(OsAlignedPageOwner),
+    External(ExternalPostOwnerExitTerminalFacts),
+}
+
+/// The source PageMap span and immutable memory provenance retained after an
+/// external singleton left the static Heap's private OS list.
+///
+/// External memory has no mapping-release authority (`needs_no_free`), but it
+/// still requires the source list removal, PageMap unregistration, and
+/// metadata retirement sequence. Retaining these facts keeps a post-list
+/// failure explicit instead of silently skipping that terminal tail.
+#[derive(Clone, Copy)]
+struct ExternalPostOwnerExitTerminalFacts {
+    memory: MemoryId,
+    page_map_start: NonNull<u8>,
+    page_map_size: usize,
+}
+
+/// One pre-terminal failure while continuing an exact W07 remote-free claim.
+///
+/// The claim is deliberately private until [`Self::into_parts`] consumes this
+/// error.  No failure branch exposes a raw `(Page, canonical_block)` pair.
+#[must_use = "a post-owner-exit claim failure still owns the source low bit"]
+struct ProcessPostOwnerExitRemoteClaimFailure {
+    claim: remote_free::ClaimedAbandonedRemoteFree,
+    error: ProcessPostOwnerExitRemoteClaimError,
+}
+
+impl ProcessPostOwnerExitRemoteClaimFailure {
+    /// Returns the exact source owner and the boundary that stopped before a
+    /// legal unown, reabandon, or terminal release could complete.
+    #[inline]
+    fn into_parts(
+        self,
+    ) -> (
+        remote_free::ClaimedAbandonedRemoteFree,
+        ProcessPostOwnerExitRemoteClaimError,
+    ) {
+        (self.claim, self.error)
+    }
+}
+
+/// Scalar disposition of one pointer-derived owner-exit free.
+///
+/// This is the only W03 result that crosses from the lower source tail to a
+/// pointer dispatcher.  In particular, it intentionally cannot contain a
+/// `ClaimedAbandonedRemoteFree`, a singleton release wrapper, a mapping owner,
+/// a PageMap view, or a former-Theap fact.  `Retained` means W03 has already
+/// placed the unique exact source owner in its private process-lifetime
+/// terminal retention state; a later caller must not try the source
+/// continuation again after it receives this scalar disposition.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ProcessPostOwnerExitPointerFreeDisposition {
+    PublishedToOwner,
+    StillLive,
+    Released,
+    Retained,
+}
+
+/// A source publication refusal before it changed an unowned remote head.
+///
+/// The caller's allocation remains PageMap-owned and no W07 claim exists.
+/// This is deliberately a scalar error: the caller may obtain a fresh typed
+/// PageMap observation if its enclosing dispatch contract permits it, but it
+/// cannot retain or reconstruct a raw page/block or post-exit owner here.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ProcessPostOwnerExitPointerFreeRejection {
+    Publication(RemoteFreeError),
+}
+
+/// One exact source owner that crossed a W03 one-way boundary.
+///
+/// It remains separate from its PageMap mutation lease so successful scalar
+/// results can release the short exact-range lease while retained paths store
+/// both objects together below.
+#[must_use = "a claimed W03 source owner must be released or sealed terminally"]
+enum ProcessPostOwnerExitClaimTerminalRetained {
+    /// A different exact page already made the process terminal after this
+    /// page's CAS. The claim must remain owned but must not enter a blocked
+    /// PageMap terminal tail.
+    Uncontinued(remote_free::ClaimedAbandonedRemoteFree),
+    Regular {
+        claim: remote_free::ClaimedAbandonedRemoteFree,
+        mutation: Option<ProcessPageMapMutationLease>,
+    },
+    Singleton {
+        release: abandoned::ClaimedPostOwnerExitSingletonRelease,
+        mutation: Option<ProcessPageMapMutationLease>,
+    },
+    NonArenaSingleton {
+        owner: ProcessPostOwnerExitNonArenaTerminalOwner,
+        mutation: ProcessPageMapMutationLease,
+    },
+    Continuation {
+        failure: ProcessPostOwnerExitRemoteClaimFailure,
+        mutation: Option<ProcessPageMapMutationLease>,
+    },
+}
+
+/// One exact terminal source owner sealed after an irreversible W03 tail.
+///
+/// This is private on purpose.  It is the one process-lifetime destination
+/// for W07's non-copy claim, singleton release wrapper, or post-list mapping
+/// owner.  It has no accessor, retry, lookup, or drop surface: §4.7/§4.8 of
+/// `native-mimalloc.md` require one fail-closed owner after a one-way source
+/// transition, not a replacement post-exit route.
+#[must_use = "a terminal W03 source owner must be sealed, never reconstructed"]
+enum ProcessPostOwnerExitTerminalRetained {
+    /// A claim path retained both its W07/source owner and, after the map
+    /// stage began, the exclusive PageMap mutation lease. The latter prevents
+    /// any unfinished map tail from being reopened by a copyable process-pair
+    /// observer. There is no process-global slot: every exact claim is
+    /// terminalized independently by the page-local source low-bit owner.
+    Claimed {
+        owner: ProcessPostOwnerExitClaimTerminalRetained,
+    },
+    /// The exact page tail completed, but releasing the mutation boundary
+    /// itself visibly failed. There is no remaining page/mapping owner to
+    /// retry; this opaque terminal marker prevents a later fresh lifecycle.
+    MutationLeaseReleaseFailure,
+}
+
+/// Test-only category of an opaque per-claim terminal retention event.
+///
+/// This deliberately reports only the retained transition class. It never
+/// exposes the W07 claim, release wrapper, PageMap lease, page address,
+/// block, mapping, or a way to take an owner back out of W03.
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ProcessPostOwnerExitTerminalAuditCategory {
+    UncontinuedClaim,
+    RegularClaim,
+    SingletonClaim,
+    NonArenaSingleton,
+    ContinuationFailure,
+    MutationLeaseReleaseFailure,
+}
+
+#[cfg(test)]
+impl ProcessPostOwnerExitTerminalAuditCategory {
+    const fn bit(self) -> usize {
+        match self {
+            Self::UncontinuedClaim => 1 << 0,
+            Self::RegularClaim => 1 << 1,
+            Self::SingletonClaim => 1 << 2,
+            Self::NonArenaSingleton => 1 << 3,
+            Self::ContinuationFailure => 1 << 4,
+            Self::MutationLeaseReleaseFailure => 1 << 5,
+        }
+    }
+}
+
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct ProcessPostOwnerExitTerminalAuditSnapshot {
+    terminalizations: usize,
+    categories: usize,
+}
+
+/// Isolated observability for one injected marker in a focused W03 test.
+///
+/// Production never reads or stores this data. A test gets a fresh marker
+/// instead of touching the process-global exception marker, so parallel test
+/// workers cannot consume or reset the production state.
+#[cfg(test)]
+struct ProcessPostOwnerExitTerminalAudit {
+    terminalizations: AtomicUsize,
+    categories: AtomicUsize,
+}
+
+#[cfg(test)]
+impl ProcessPostOwnerExitTerminalAudit {
+    const fn new() -> Self {
+        Self {
+            terminalizations: AtomicUsize::new(0),
+            categories: AtomicUsize::new(0),
+        }
+    }
+
+    #[inline]
+    fn record(&self, category: ProcessPostOwnerExitTerminalAuditCategory) {
+        self.terminalizations.fetch_add(1, Ordering::Relaxed);
+        self.categories.fetch_or(category.bit(), Ordering::Relaxed);
+    }
+
+    #[inline]
+    fn snapshot(&self) -> ProcessPostOwnerExitTerminalAuditSnapshot {
+        ProcessPostOwnerExitTerminalAuditSnapshot {
+            terminalizations: self.terminalizations.load(Ordering::Acquire),
+            categories: self.categories.load(Ordering::Acquire),
+        }
+    }
+}
+
+#[cfg(test)]
+impl ProcessPostOwnerExitTerminalRetained {
+    /// Classifies one already-opaque terminal owner without moving any of its
+    /// source authority. This is intentionally test-only audit data, not a
+    /// production accessor or terminal-owner dispatch surface.
+    fn test_audit_category(&self) -> ProcessPostOwnerExitTerminalAuditCategory {
+        match self {
+            Self::Claimed {
+                owner: ProcessPostOwnerExitClaimTerminalRetained::Uncontinued(_),
+            } => ProcessPostOwnerExitTerminalAuditCategory::UncontinuedClaim,
+            Self::Claimed {
+                owner: ProcessPostOwnerExitClaimTerminalRetained::Regular { .. },
+            } => ProcessPostOwnerExitTerminalAuditCategory::RegularClaim,
+            Self::Claimed {
+                owner: ProcessPostOwnerExitClaimTerminalRetained::Singleton { .. },
+            } => ProcessPostOwnerExitTerminalAuditCategory::SingletonClaim,
+            Self::Claimed {
+                owner: ProcessPostOwnerExitClaimTerminalRetained::NonArenaSingleton { .. },
+            } => ProcessPostOwnerExitTerminalAuditCategory::NonArenaSingleton,
+            Self::Claimed {
+                owner: ProcessPostOwnerExitClaimTerminalRetained::Continuation { .. },
+            } => ProcessPostOwnerExitTerminalAuditCategory::ContinuationFailure,
+            Self::MutationLeaseReleaseFailure => {
+                ProcessPostOwnerExitTerminalAuditCategory::MutationLeaseReleaseFailure
+            }
+        }
+    }
+}
+
+impl ProcessPostOwnerExitRemoteClaimResult {
+    /// Separates source-complete scalar dispositions from the exact owners
+    /// that must enter the private terminal store.
+    fn into_scalar_or_terminal(
+        self,
+    ) -> Result<
+        ProcessPostOwnerExitPointerFreeDisposition,
+        ProcessPostOwnerExitClaimTerminalRetained,
+    > {
+        match self {
+            Self::RegularTerminalRetained { claim, mutation } => {
+                Err(ProcessPostOwnerExitClaimTerminalRetained::Regular { claim, mutation })
+            }
+            Self::Regular(
+                abandoned::ClaimedPostOwnerExitRegularFreeResult::PublishedToExistingOwner,
+            ) => Ok(ProcessPostOwnerExitPointerFreeDisposition::PublishedToOwner),
+            Self::Regular(abandoned::ClaimedPostOwnerExitRegularFreeResult::StillLive) => {
+                Ok(ProcessPostOwnerExitPointerFreeDisposition::StillLive)
+            }
+            Self::Regular(abandoned::ClaimedPostOwnerExitRegularFreeResult::Released)
+            | Self::Singleton(abandoned::ClaimedPostOwnerExitSingletonFreeResult::Released) => {
+                Ok(ProcessPostOwnerExitPointerFreeDisposition::Released)
+            }
+            Self::Regular(
+                abandoned::ClaimedPostOwnerExitRegularFreeResult::TerminalReleaseRetained(claim),
+            ) => Err(ProcessPostOwnerExitClaimTerminalRetained::Regular {
+                claim,
+                mutation: None,
+            }),
+            Self::SingletonTerminalRetained { release, mutation } => {
+                Err(ProcessPostOwnerExitClaimTerminalRetained::Singleton { release, mutation })
+            }
+            Self::Singleton(
+                abandoned::ClaimedPostOwnerExitSingletonFreeResult::TerminalReleaseRetained(
+                    release,
+                ),
+            ) => Err(ProcessPostOwnerExitClaimTerminalRetained::Singleton {
+                release,
+                mutation: None,
+            }),
+            Self::SingletonNonArenaTerminalRetained { owner, mutation } => {
+                Err(ProcessPostOwnerExitClaimTerminalRetained::NonArenaSingleton {
+                    owner,
+                    mutation,
+                })
+            }
+            // The outer scalar composition consumes this after its scoped
+            // lease release failed; it has no claim left to normalize.
+            Self::MutationLeaseReleaseFailure => {
+                unreachable!("mutation-lease release failure is handled before claim normalization")
+            }
+        }
+    }
+}
+
+impl ProcessPostOwnerExitRemoteClaimFailure {
+    #[inline]
+    fn into_claim_terminal_retained(
+        self,
+        mutation: Option<ProcessPageMapMutationLease>,
+    ) -> ProcessPostOwnerExitClaimTerminalRetained {
+        ProcessPostOwnerExitClaimTerminalRetained::Continuation { failure: self, mutation }
+    }
+}
+
+/// One-way process observation that a post-CAS W03 tail retained exact source
+/// state.
+///
+/// This is deliberately **not** a publication gate, lock, scheduler, route,
+/// or owner store. Normal `mi_free_block_mt(..., allow_collect=true)` CAS
+/// operations never consult it before publishing. Only an already-claimed
+/// post-CAS tail observes it: after the first exceptional retained owner,
+/// later claims retain their own exact token
+/// instead of entering a PageMap tail whose mutation lease may be held
+/// terminally by the first page. There is no spin or waiting state.
+struct ProcessPostOwnerExitTerminalMarker {
+    retained: AtomicBool,
+    #[cfg(test)]
+    audit: ProcessPostOwnerExitTerminalAudit,
+}
+
+impl ProcessPostOwnerExitTerminalMarker {
+    const fn new() -> Self {
+        Self {
+            retained: AtomicBool::new(false),
+            #[cfg(test)]
+            audit: ProcessPostOwnerExitTerminalAudit::new(),
+        }
+    }
+
+    #[inline]
+    fn is_retained(&self) -> bool { self.retained.load(Ordering::Acquire) }
+
+    #[inline]
+    fn retain(&self) { self.retained.store(true, Ordering::Release) }
+
+    #[cfg(test)]
+    #[inline]
+    fn test_audit_snapshot(&self) -> ProcessPostOwnerExitTerminalAuditSnapshot {
+        self.audit.snapshot()
+    }
+}
+
+static PROCESS_POST_OWNER_EXIT_TERMINAL_MARKER: ProcessPostOwnerExitTerminalMarker =
+    ProcessPostOwnerExitTerminalMarker::new();
+
+/// Seals one exact post-owner-exit terminal state without inventing a global
+/// scheduler, route, or retained-owner registry.
+///
+/// The source claim's low bit, OS-list membership, PageMap lease, and backing
+/// token remain mechanically owned by `owner`; this explicit terminal type is
+/// the only value that may be forgotten under `native-mimalloc.md` §5.2. Each
+/// source page has its own low-bit serialization, so concurrent terminal
+/// failures on distinct pages retain distinct exact owners rather than
+/// contending on a process-wide pre-CAS gate. The marker is published first so
+/// every in-flight later claim bypasses the first page's retained map tail.
+#[inline]
+fn terminalize_post_owner_exit_retained(
+    marker: &ProcessPostOwnerExitTerminalMarker,
+    owner: ProcessPostOwnerExitTerminalRetained,
+) {
+    marker.retain();
+    #[cfg(test)]
+    marker.audit.record(owner.test_audit_category());
+    core::mem::forget(owner);
+}
+
+/// A process-fact or source-continuation rejection that preserves its claim.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ProcessPostOwnerExitRemoteClaimError {
+    /// The copied process PageMap/arena pair could not provide the exact
+    /// process-static source facts needed after the claim.
+    ProcessPageArena(ProcessPageArenaLeaseError),
+    /// The caller joined a PageMap/arena pair to a different process-static
+    /// main Heap.  This is an identity failure, never a request to find a
+    /// different owner or route.
+    MainHeapSubprocessMismatch,
+    /// W07's source continuation stopped while retaining the exact claim.
+    Continuation(AbandonError),
+}
+
+/// Continues an already-published post-owner-exit remote free using only the
+/// process PageMap/arena pair and static-main Heap facts that remain valid
+/// after the former Theap has gone away.
+///
+/// This private lower half receives the exact non-copyable claim returned by
+/// W07 and selects its source continuation. It deliberately has no external
+/// caller: the scalar-only public composition below first runs the source CAS,
+/// moves its exact claim directly here only after that CAS wins the abandoned
+/// low bit, and seals every retained outcome. It accepts no former owner, TLS state, registry, route,
+/// ledger, bare PageMap, or reconstructed page/block pair. The regular branch
+/// feeds W07's `continue_post_owner_exit_remote_claim`; the singleton branch
+/// feeds W07's `continue_post_owner_exit_singleton_remote_claim`. Both
+/// callbacks perform the actual source PageMap/arena/OS terminal transitions.
+///
+/// The W08 owner-exit coordinator force-collects then false-collects the
+/// departing Theap before it publishes an abandoned identity. A pointer may
+/// also arrive from a different valid abandoned source state, so the W07
+/// continuation repeats its narrow post-CAS false-force local-list phase.
+/// That phase is a no-op for coordinator-drained pages and never consults the
+/// departed Theap for a direct abandoned lookup.
+///
+/// # Safety
+///
+/// `claim` must come directly from the current free's W07 claimed-publication
+/// result. `process` and `main_heap` must be copied leases for that same live
+/// process image. The outer scalar composition seals every retained result or
+/// error in its private process-lifetime terminal retention mechanism before
+/// it returns.
+unsafe fn continue_post_owner_exit_remote_claim_with_process_page_facts(
+    claim: remote_free::ClaimedAbandonedRemoteFree,
+    process: ProcessPageArenaLease,
+    main_heap: MainStaticHeapLease<'static>,
+) -> Result<ProcessPostOwnerExitRemoteClaimResult, ProcessPostOwnerExitRemoteClaimFailure> {
+    // The exact W07 claim proves this page's range and lifetime. A PageMap
+    // mutation lease is intentionally *not* acquired here: reabandon,
+    // `StillLive`, and owner-transfer results do not touch plain PageMap
+    // entries. Each terminal callback stages the lease immediately before its
+    // source unregister/list-release work instead.
+    let arena = match process.arena() {
+        Ok(arena) => arena,
+        Err(error) => {
+            return Err(ProcessPostOwnerExitRemoteClaimFailure {
+                claim,
+                error: ProcessPostOwnerExitRemoteClaimError::ProcessPageArena(error),
+            });
+        }
+    };
+    let subprocess = match process.subprocess() {
+        Ok(subprocess) => subprocess,
+        Err(error) => {
+            return Err(ProcessPostOwnerExitRemoteClaimFailure {
+                claim,
+                error: ProcessPostOwnerExitRemoteClaimError::ProcessPageArena(error),
+            });
+        }
+    };
+    if !core::ptr::eq(main_heap.subprocess(), subprocess) {
+        return Err(ProcessPostOwnerExitRemoteClaimFailure {
+            claim,
+            error: ProcessPostOwnerExitRemoteClaimError::MainHeapSubprocessMismatch,
+        });
+    }
+
+    // SAFETY: the claim owns the source low bit. This scalar decides only
+    // which W07 continuation consumes it; each continuation revalidates the
+    // full abandoned identity and geometry before touching mutable state.
+    let singleton = unsafe { Page::abandonment_state_at(claim.page()) }.reserved == 1;
+    if !singleton {
+        let mut retained_mutation = None;
+        let mut mutation_lease_release_failed = false;
+        // SAFETY: the exact claim begins this source tail after publication;
+        // the terminal callback alone acquires the exact PageMap mutation
+        // lease, immediately before it may unregister this page's range.
+        let result = unsafe {
+            abandoned::continue_post_owner_exit_remote_claim(
+                claim,
+                |memory, block_size| {
+                    select_process_main_mapped_abandoned_page(
+                        &arena,
+                        main_heap,
+                        memory,
+                        block_size,
+                    )
+                },
+                |page| abandoned::collect_post_owner_exit_local_free_false(page),
+                |page| {
+                    let mutation = match process.begin_page_lifecycle() {
+                        Ok(mutation) => mutation,
+                        Err(_) => return abandoned::PostOwnerExitTerminalRelease::Retained,
+                    };
+                    let page_map = match mutation.page_map() {
+                        Ok(page_map) => page_map,
+                        Err(_) => {
+                            retained_mutation = Some(mutation);
+                            return abandoned::PostOwnerExitTerminalRelease::Retained;
+                        }
+                    };
+                    match release_claimed_process_regular_arena_page(page_map, &arena, page) {
+                        ClaimedProcessArenaTerminalRelease::Released => {}
+                        ClaimedProcessArenaTerminalRelease::RetainedBeforePageMap => {
+                            // The terminal callback acquired the short map
+                            // lease, but its source validation stopped before
+                            // an unregister attempt.  Releasing the untouched
+                            // boundary is sound; W07 retains the exact claim.
+                            // A failed wake poisons the process-root lease,
+                            // but this W07 claim is still the exact terminal
+                            // source owner. The scalar outer layer will seal
+                            // it and publish the exception marker; do not
+                            // misclassify it as a completed-tail unlock
+                            // failure or trip a debug assertion below.
+                            let _ = unsafe {
+                                mutation.finish_after_exact_post_owner_exit_operation()
+                            };
+                            return abandoned::PostOwnerExitTerminalRelease::Retained;
+                        }
+                        ClaimedProcessArenaTerminalRelease::RetainedAfterPageMapMutation => {
+                            // `unregister_range` may have changed one or more
+                            // plain entries before it reports an error.  Keep
+                            // this exact lease with the W07 claim rather than
+                            // reopening a partially released range.
+                            retained_mutation = Some(mutation);
+                            return abandoned::PostOwnerExitTerminalRelease::Retained;
+                        }
+                    }
+                    // SAFETY: this exact W07 claim serialized every plain
+                    // operation on `page`; terminal release removed its range
+                    // before metadata/slice release, while nonterminal paths
+                    // never acquired this scoped lease.
+                    if unsafe { mutation.finish_after_exact_post_owner_exit_operation() }
+                        .is_err()
+                    {
+                        mutation_lease_release_failed = true;
+                    }
+                    abandoned::PostOwnerExitTerminalRelease::Released
+                },
+            )
+        };
+        return match result {
+            Ok(abandoned::ClaimedPostOwnerExitRegularFreeResult::TerminalReleaseRetained(
+                claim,
+            )) => {
+                debug_assert!(!mutation_lease_release_failed);
+                Ok(ProcessPostOwnerExitRemoteClaimResult::RegularTerminalRetained {
+                    claim,
+                    mutation: retained_mutation,
+                })
+            }
+            Ok(result) if mutation_lease_release_failed => {
+                debug_assert!(retained_mutation.is_none());
+                debug_assert!(matches!(
+                    result,
+                    abandoned::ClaimedPostOwnerExitRegularFreeResult::Released
+                ));
+                Ok(ProcessPostOwnerExitRemoteClaimResult::MutationLeaseReleaseFailure)
+            }
+            Ok(result) => {
+                debug_assert!(retained_mutation.is_none());
+                Ok(ProcessPostOwnerExitRemoteClaimResult::Regular(result))
+            }
+            Err(failure) => {
+                debug_assert!(retained_mutation.is_none());
+                debug_assert!(!mutation_lease_release_failed);
+                let (claim, error) = failure.into_parts();
+                Err(ProcessPostOwnerExitRemoteClaimFailure {
+                    claim,
+                    error: ProcessPostOwnerExitRemoteClaimError::Continuation(error),
+                })
+            }
+        };
+    }
+
+    let mut failed_non_arena_release = None;
+    let mut retained_mutation = None;
+    let mut mutation_lease_release_failed = false;
+    // SAFETY: as above, the W07 claim is consumed exactly once. The terminal
+    // callback receives the same linear owner and stages the PageMap lease
+    // only immediately before its arena unregister or non-arena OS-list tail.
+    let result = unsafe {
+        abandoned::continue_post_owner_exit_singleton_remote_claim(claim, |release| {
+            let mutation = match process.begin_page_lifecycle() {
+                Ok(mutation) => mutation,
+                Err(_) => {
+                    return abandoned::ClaimedPostOwnerExitSingletonFreeResult::TerminalReleaseRetained(
+                        release,
+                    );
+                }
+            };
+            let page_map = match mutation.page_map() {
+                Ok(page_map) => page_map,
+                Err(_) => {
+                    retained_mutation = Some(mutation);
+                    return abandoned::ClaimedPostOwnerExitSingletonFreeResult::TerminalReleaseRetained(
+                        release,
+                    );
+                }
+            };
+            match release.backing() {
+                abandoned::ClaimedPostOwnerExitSingletonBacking::Arena => {
+                    match release_claimed_process_arena_singleton_page(
+                        page_map,
+                        &arena,
+                        release.page(),
+                        release.memory(),
+                    ) {
+                        ClaimedProcessArenaTerminalRelease::Released => {}
+                        ClaimedProcessArenaTerminalRelease::RetainedBeforePageMap => {
+                            // No PageMap entry is known changed. A lock wake
+                            // failure still poisons the short boundary, while
+                            // the exact W07 wrapper remains the retained
+                            // terminal owner returned below.
+                            let _ = unsafe {
+                                mutation.finish_after_exact_post_owner_exit_operation()
+                            };
+                            return abandoned::ClaimedPostOwnerExitSingletonFreeResult::TerminalReleaseRetained(
+                                release,
+                            );
+                        }
+                        ClaimedProcessArenaTerminalRelease::RetainedAfterPageMapMutation => {
+                            // This arena tail can fail after PageMap
+                            // unregister, ordinary-bit clear, retirement, or
+                            // slice release.  The exact W07 wrapper and this
+                            // mutation lease must remain one terminal owner.
+                            retained_mutation = Some(mutation);
+                            return abandoned::ClaimedPostOwnerExitSingletonFreeResult::TerminalReleaseRetained(
+                                release,
+                            );
+                        }
+                    }
+                }
+                abandoned::ClaimedPostOwnerExitSingletonBacking::OsOrExternal => {
+                    match release_claimed_process_non_arena_singleton_page(
+                        page_map,
+                        main_heap,
+                        release.page(),
+                        release.memory(),
+                    ) {
+                        ClaimedProcessNonArenaSingletonRelease::Released => {}
+                        ClaimedProcessNonArenaSingletonRelease::RetainedAfterList(backing) => {
+                            failed_non_arena_release = Some(backing);
+                            // List removal is irreversible, so retain the
+                            // exact mutation lease with its W07 wrapper.
+                            retained_mutation = Some(mutation);
+                            return abandoned::ClaimedPostOwnerExitSingletonFreeResult::TerminalReleaseRetained(
+                                release,
+                            );
+                        }
+                        ClaimedProcessNonArenaSingletonRelease::RetainedBeforeList => {
+                            // No list or PageMap mutation completed. The
+                            // wrapper is still the terminal source owner; a
+                            // failed short-lease wake is terminal but has no
+                            // lease left to retain.
+                            let _ = unsafe {
+                                mutation.finish_after_exact_post_owner_exit_operation()
+                            };
+                            return abandoned::ClaimedPostOwnerExitSingletonFreeResult::TerminalReleaseRetained(
+                                release,
+                            );
+                        }
+                    }
+                }
+            }
+            // SAFETY: this singleton's terminal callback just completed the
+            // source list-or-bitmap/PageMap/metadata/backing tail while this
+            // scoped mutation lease held its plain map entries.
+            if unsafe { mutation.finish_after_exact_post_owner_exit_operation() }
+                .is_err()
+            {
+                mutation_lease_release_failed = true;
+            }
+            abandoned::ClaimedPostOwnerExitSingletonFreeResult::Released
+        })
+    };
+    match result {
+        Ok(abandoned::ClaimedPostOwnerExitSingletonFreeResult::TerminalReleaseRetained(
+            release,
+        )) => match failed_non_arena_release {
+            Some(backing) => Ok(
+                ProcessPostOwnerExitRemoteClaimResult::SingletonNonArenaTerminalRetained {
+                    owner: ProcessPostOwnerExitNonArenaTerminalOwner {
+                        release,
+                        backing: backing.backing,
+                        stage: backing.stage,
+                    },
+                    mutation: retained_mutation
+                        .expect("post-list singleton retention keeps its PageMap mutation lease"),
+                },
+            ),
+            None => Ok(ProcessPostOwnerExitRemoteClaimResult::SingletonTerminalRetained {
+                release,
+                mutation: retained_mutation,
+            }),
+        },
+        Ok(result) if mutation_lease_release_failed => {
+            debug_assert!(retained_mutation.is_none());
+            debug_assert!(failed_non_arena_release.is_none());
+            debug_assert!(matches!(
+                result,
+                abandoned::ClaimedPostOwnerExitSingletonFreeResult::Released
+            ));
+            Ok(ProcessPostOwnerExitRemoteClaimResult::MutationLeaseReleaseFailure)
+        }
+        Ok(result) => {
+            debug_assert!(failed_non_arena_release.is_none());
+            debug_assert!(retained_mutation.is_none());
+            Ok(ProcessPostOwnerExitRemoteClaimResult::Singleton(result))
+        }
+        Err(failure) => {
+            debug_assert!(failed_non_arena_release.is_none());
+            debug_assert!(retained_mutation.is_none());
+            debug_assert!(!mutation_lease_release_failed);
+            let (claim, error) = failure.into_parts();
+            Err(ProcessPostOwnerExitRemoteClaimFailure {
+                claim,
+                error: ProcessPostOwnerExitRemoteClaimError::Continuation(error),
+            })
+        }
+    }
+}
+
+/// Consumes a coherent PageMap pointer observation through the source
+/// post-owner-exit publication and lower process-facts continuation.
+///
+/// This is the sole W03 pointer-facing owner-exit continuation. Every normal
+/// state-qualified `allow_collect=true` source CAS runs first and remains
+/// page-local. Only a CAS that returns W07's exact claim enters the W03
+/// post-CAS tail; that tail takes the scoped PageMap mutation lease only when
+/// it reaches a source map mutation. A retained tail publishes an
+/// exception-only scalar marker and seals its exact claim (and acquired map
+/// lease) independently. The marker never gates or serializes normal CASes.
+///
+/// The caller supplies only the coherent `LiveAllocationPointer` and copied
+/// process PageMap/arena plus main-Heap leases. This boundary never accepts a
+/// former owner, TLS owner, registry, ledger, bare PageMap, route, or raw
+/// page/block pair. A stale live snapshot and an abandoned/mapped snapshot
+/// both obey the current CAS head. A PageMap-valid detached input has no
+/// source producer and is rejected before the CAS; W01 may map that typed,
+/// unsupported boundary to its own scalar runtime disposition, but W03 does
+/// not mark the process terminal or select a legacy route for it.
+///
+/// # Safety
+///
+/// `allocation` must be an exact current native allocation obtained from the
+/// active process PageMap, and its client lifetime must remain live through
+/// this consuming operation. `process` and `main_heap` must be copied leases
+/// for that same active process. On `Released`, the allocation's page and
+/// canonical block may be invalid and must not be accessed again. On
+/// `Retained`, W03 owns the exact terminal source capability internally; a
+/// caller must not re-publish this allocation through a post-exit tail.
+pub(crate) unsafe fn continue_post_owner_exit_live_allocation_with_process_page_facts(
+    allocation: LiveAllocationPointer,
+    process: ProcessPageArenaLease,
+    main_heap: MainStaticHeapLease<'static>,
+) -> Result<
+    ProcessPostOwnerExitPointerFreeDisposition,
+    ProcessPostOwnerExitPointerFreeRejection,
+> {
+    // SAFETY: this is the production process-wide exceptional marker; the
+    // helper keeps it out of the normal source-CAS admission path.
+    unsafe {
+        continue_post_owner_exit_live_allocation_with_terminal_marker(
+            &PROCESS_POST_OWNER_EXIT_TERMINAL_MARKER,
+            allocation,
+            process,
+            main_heap,
+        )
+    }
+}
+
+/// Private scalar composition with an injectable exception marker for focused
+/// W03 regressions. It performs no publication gate or process-wide waiting.
+///
+/// # Safety
+///
+/// Same as [`continue_post_owner_exit_live_allocation_with_process_page_facts`].
+unsafe fn continue_post_owner_exit_live_allocation_with_terminal_marker(
+    marker: &ProcessPostOwnerExitTerminalMarker,
+    allocation: LiveAllocationPointer,
+    process: ProcessPageArenaLease,
+    main_heap: MainStaticHeapLease<'static>,
+) -> Result<
+    ProcessPostOwnerExitPointerFreeDisposition,
+    ProcessPostOwnerExitPointerFreeRejection,
+> {
+    if allocation.page_state() == crate::process_page_map::LiveAllocationPageState::Detached {
+        // Source `mi_free_block_mt` has no detached producer projection. This
+        // is a typed pre-CAS boundary only: preserve the PageMap observation,
+        // leave the remote head untouched, and do not poison the W03 marker.
+        return Err(ProcessPostOwnerExitPointerFreeRejection::Publication(
+            RemoteFreeError::NotOwnerAssociated,
+        ));
+    }
+    // SAFETY: normal source publication is always attempted before consulting
+    // the exception marker. Its atomic head is the only normal page-local
+    // synchronization here; no process terminal state gates this CAS.
+    let publication = match unsafe { remote_free::push_post_owner_exit_live_allocation(allocation) } {
+        Ok(publication) => publication,
+        // No source CAS claimed this page, so the exception-only marker has
+        // no exact owner to retain here. Keep this pre-CAS refusal typed even
+        // if another page has already made the process terminal.
+        Err(error) => return Err(ProcessPostOwnerExitPointerFreeRejection::Publication(error)),
+    };
+    match publication {
+        remote_free::LiveRemoteFreePublish::PublishedToOwner => {
+            // A first terminal claim may have retained the owning source head
+            // while this concurrent publisher was in flight. It did publish
+            // normally, but cannot report a healthy owner after that marker.
+            Ok(if marker.is_retained() {
+                ProcessPostOwnerExitPointerFreeDisposition::Retained
+            } else {
+                ProcessPostOwnerExitPointerFreeDisposition::PublishedToOwner
+            })
+        }
+        remote_free::LiveRemoteFreePublish::ClaimedAbandonedPage(claim) => {
+            if marker.is_retained() {
+                terminalize_post_owner_exit_retained(
+                    marker,
+                    ProcessPostOwnerExitTerminalRetained::Claimed {
+                        owner: ProcessPostOwnerExitClaimTerminalRetained::Uncontinued(claim),
+                    },
+                );
+                return Ok(ProcessPostOwnerExitPointerFreeDisposition::Retained);
+            }
+
+            // SAFETY: the exact claim moved directly out of the source CAS;
+            // no page/block authority is rebuilt. The lower continuation
+            // stages a PageMap mutation lease only if W07 reaches its actual
+            // terminal PageMap/list release callback.
+            let continuation = unsafe {
+                continue_post_owner_exit_remote_claim_with_process_page_facts(
+                    claim, process, main_heap,
+                )
+            };
+            match continuation {
+                Ok(ProcessPostOwnerExitRemoteClaimResult::MutationLeaseReleaseFailure) => {
+                    terminalize_post_owner_exit_retained(
+                        marker,
+                        ProcessPostOwnerExitTerminalRetained::MutationLeaseReleaseFailure,
+                    );
+                    Ok(ProcessPostOwnerExitPointerFreeDisposition::Retained)
+                }
+                Ok(result) => match result.into_scalar_or_terminal() {
+                    Ok(disposition) => {
+                        if marker.is_retained() {
+                            Ok(ProcessPostOwnerExitPointerFreeDisposition::Retained)
+                        } else {
+                            Ok(disposition)
+                        }
+                    }
+                    Err(owner) => {
+                        terminalize_post_owner_exit_retained(
+                            marker,
+                            ProcessPostOwnerExitTerminalRetained::Claimed {
+                                owner,
+                            },
+                        );
+                        Ok(ProcessPostOwnerExitPointerFreeDisposition::Retained)
+                    }
+                },
+                Err(failure) => {
+                    terminalize_post_owner_exit_retained(
+                        marker,
+                        ProcessPostOwnerExitTerminalRetained::Claimed {
+                            owner: failure.into_claim_terminal_retained(None),
+                        },
+                    );
+                    Ok(ProcessPostOwnerExitPointerFreeDisposition::Retained)
+                }
+            }
+        }
+    }
+}
+
+/// Forms the static-main mapped-abandoned bitmap/count capability only after
+/// W07's exact claim lets the source tail read the page's arena provenance.
+fn select_process_main_mapped_abandoned_page(
+    arena: &ArenaView<'static>,
+    main_heap: MainStaticHeapLease<'static>,
+    memory: MemoryId,
+    block_size: usize,
+) -> Result<MainArenaMappedAbandonedPage<'static>, AbandonError> {
+    let Some(arena_memory) = memory.arena_memory() else {
+        return Err(AbandonError::ArenaBitmapDoesNotMatchPage);
+    };
+    if arena_memory.arena != core::ptr::from_ref(arena.arena()).cast_mut()
+        || memory.kind() != MemoryKind::Arena
+    {
+        return Err(AbandonError::ArenaBitmapDoesNotMatchPage);
+    }
+    if !matches!(
+        size_class::page_kind_for_block_size(block_size),
+        Some(PageKind::Small | PageKind::Medium | PageKind::Large)
+    ) {
+        return Err(AbandonError::InvalidPageGeometry);
+    }
+    let Some(bin) = size_class::bin(block_size) else {
+        return Err(AbandonError::InvalidPageGeometry);
+    };
+    if bin >= ARENA_BIN_COUNT || bin == BIN_FULL {
+        return Err(AbandonError::ArenaBitmapDoesNotMatchPage);
+    }
+    let mut heap = main_heap
+        .lock_heap()
+        .map_err(|_| AbandonError::ArenaBitmapDoesNotMatchPage)?;
+    let map = arena
+        .main_heap_abandoned_page(NonNull::from(heap.heap_mut()), bin)
+        .ok_or(AbandonError::ArenaBitmapDoesNotMatchPage);
+    match (map, heap.unlock()) {
+        (Ok(map), Ok(())) => Ok(map),
+        (_, Err(_)) => Err(AbandonError::ArenaBitmapDoesNotMatchPage),
+        (Err(error), Ok(())) => Err(error),
+    }
+}
+
+/// Stage-aware outcome of one arena terminal tail.
+///
+/// `PageMapMutationAttempted` is intentionally conservative: `PageMap`
+/// range clearing can fail after changing a leading sub-range, so the exact
+/// mutation lease must remain sealed with W07's linear owner from the moment
+/// the unregister call begins.  There is deliberately no retry surface for
+/// either retained form.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ClaimedProcessArenaTerminalRelease {
+    Released,
+    RetainedBeforePageMap,
+    RetainedAfterPageMapMutation,
+}
+
+/// Completes `_mi_arenas_page_free` for one all-free claimed regular arena
+/// page after W07 has already discharged any mapped-abandoned identity.
+///
+/// Source terminal order remains PageMap unregister -> ordinary arena bit
+/// clear -> metadata retirement -> exact slice release. The claim keeps the
+/// page valid until this returns; `true` means it may now be invalid.
+unsafe fn release_claimed_process_regular_arena_page(
+    page_map: &PageMap,
+    arena: &ArenaView<'static>,
+    mut page: NonNull<Page>,
+) -> ClaimedProcessArenaTerminalRelease {
+    // SAFETY: W07 retained this exact page's low owner bit through the
+    // all-free result, so its source ordinary fields are stable here.
+    let page_ref = unsafe { page.as_ref() };
+    let memory = page_ref.memid();
+    let Some(arena_memory) = memory.arena_memory() else {
+        return ClaimedProcessArenaTerminalRelease::RetainedBeforePageMap;
+    };
+    if memory.kind() != MemoryKind::Arena
+        || arena_memory.arena != core::ptr::from_ref(arena.arena()).cast_mut()
+    {
+        return ClaimedProcessArenaTerminalRelease::RetainedBeforePageMap;
+    }
+    let slice_index = arena_memory.slice_index as usize;
+    let slice_count = arena_memory.slice_count as usize;
+    let Some(size) = slice_count.checked_mul(ARENA_SLICE_SIZE) else {
+        return ClaimedProcessArenaTerminalRelease::RetainedBeforePageMap;
+    };
+    let Some(slice_start) = arena.slice_start(slice_index) else {
+        return ClaimedProcessArenaTerminalRelease::RetainedBeforePageMap;
+    };
+    let block_size = page_ref.block_size();
+    let kind = match size_class::page_kind_for_block_size(block_size) {
+        Some(PageKind::Small) => PageKind::Small,
+        Some(PageKind::Medium) => PageKind::Medium,
+        Some(PageKind::Large) => PageKind::Large,
+        Some(PageKind::Singleton) | None => {
+            return ClaimedProcessArenaTerminalRelease::RetainedBeforePageMap;
+        }
+    };
+    let Some(bin) = size_class::bin(block_size) else {
+        return ClaimedProcessArenaTerminalRelease::RetainedBeforePageMap;
+    };
+    if bin >= ARENA_BIN_COUNT
+        || bin == BIN_FULL
+        || page_ref.reserved() <= 1
+        || (block_size <= SMALL_SIZE_MAX && page_ref.reserved() < 16)
+        || page_ref.used() != 0
+        || !page_ref.is_queue_detached()
+        || slice_count != page::regular_page_slice_count(kind).unwrap_or(0)
+    {
+        return ClaimedProcessArenaTerminalRelease::RetainedBeforePageMap;
+    }
+    let Some(usable_offset) = page::page_usable_start_offset(block_size) else {
+        return ClaimedProcessArenaTerminalRelease::RetainedBeforePageMap;
+    };
+    let Some(expected_reserved) = page::reserved_object_count(size, usable_offset, block_size)
+    else {
+        return ClaimedProcessArenaTerminalRelease::RetainedBeforePageMap;
+    };
+    let Some(span_end) = slice_start.addr().checked_add(size) else {
+        return ClaimedProcessArenaTerminalRelease::RetainedBeforePageMap;
+    };
+    let Some(expected_start) = slice_start.addr().checked_add(usable_offset) else {
+        return ClaimedProcessArenaTerminalRelease::RetainedBeforePageMap;
+    };
+    if page_ref.reserved() != expected_reserved
+        || expected_start >= span_end
+        || expected_start.checked_sub(page.as_ptr().addr()) != Some(page_ref.page_offset())
+    {
+        return ClaimedProcessArenaTerminalRelease::RetainedBeforePageMap;
+    }
+    let Some(page_map_size) = arena_page_map_size(page, slice_start, size) else {
+        return ClaimedProcessArenaTerminalRelease::RetainedBeforePageMap;
+    };
+    for offset in (0..page_map_size).step_by(ARENA_SLICE_SIZE) {
+        let Some(address) = slice_start.addr().checked_add(offset) else {
+            return ClaimedProcessArenaTerminalRelease::RetainedBeforePageMap;
+        };
+        // SAFETY: the claim's exact lifetime proof serializes this terminal
+        // PageMap range; every source map slice must still name this page.
+        if unsafe { page_map.checked_lookup(address as *const u8) } != page.as_ptr() {
+            return ClaimedProcessArenaTerminalRelease::RetainedBeforePageMap;
+        }
+    }
+    // SAFETY: the preceding exact-range check proves the source PageMap
+    // publication that is removed before any ordinary bitmap/metadata write.
+    if unsafe { page_map.unregister_range(slice_start, page_map_size) }.is_err() {
+        return ClaimedProcessArenaTerminalRelease::RetainedAfterPageMapMutation;
+    }
+    // The ordinary arena bit is separate from the mapped-abandoned identity
+    // W07's source tail may already have cleared.
+    if unsafe { arena.pages() }
+        .and_then(|pages| pages.clear_range(slice_index, 1))
+        != Some(true)
+    {
+        return ClaimedProcessArenaTerminalRelease::RetainedAfterPageMapMutation;
+    }
+    // SAFETY: queue ownership ended during owner exit; no former Theap is
+    // read here, and map/ordinary-bitmap publication now precede retirement.
+    let Some(retired) = (unsafe { page.as_mut().retire_exclusive() }) else {
+        return ClaimedProcessArenaTerminalRelease::RetainedAfterPageMapMutation;
+    };
+    if !same_arena_memory(retired, memory) {
+        return ClaimedProcessArenaTerminalRelease::RetainedAfterPageMapMutation;
+    }
+    // SAFETY: `retired` is the exact arena span after every source-visible
+    // PageMap and metadata predecessor has completed.
+    if unsafe { release_arena_slices(retired) } {
+        ClaimedProcessArenaTerminalRelease::Released
+    } else {
+        ClaimedProcessArenaTerminalRelease::RetainedAfterPageMapMutation
+    }
+}
+
+/// Completes the arena singleton `_mi_arenas_page_unabandon` then
+/// `_mi_arenas_page_free` tail for W07's terminal singleton owner.
+unsafe fn release_claimed_process_arena_singleton_page(
+    page_map: &PageMap,
+    arena: &ArenaView<'static>,
+    mut page: NonNull<Page>,
+    expected_memory: MemoryId,
+) -> ClaimedProcessArenaTerminalRelease {
+    // SAFETY: W07's release wrapper retains the same low-bit claim while the
+    // terminal callback validates the exact arena singleton.
+    let page_ref = unsafe { page.as_ref() };
+    let memory = page_ref.memid();
+    let Some(arena_memory) = memory.arena_memory() else {
+        return ClaimedProcessArenaTerminalRelease::RetainedBeforePageMap;
+    };
+    if memory.kind() != MemoryKind::Arena
+        || !same_arena_memory(memory, expected_memory)
+        || arena_memory.arena != core::ptr::from_ref(arena.arena()).cast_mut()
+    {
+        return ClaimedProcessArenaTerminalRelease::RetainedBeforePageMap;
+    }
+    let slice_index = arena_memory.slice_index as usize;
+    let slice_count = arena_memory.slice_count as usize;
+    let Some(size) = slice_count.checked_mul(ARENA_SLICE_SIZE) else {
+        return ClaimedProcessArenaTerminalRelease::RetainedBeforePageMap;
+    };
+    let Some(slice_start) = arena.slice_start(slice_index) else {
+        return ClaimedProcessArenaTerminalRelease::RetainedBeforePageMap;
+    };
+    let block_size = page_ref.block_size();
+    let Some(expected_slice_count) = page::singleton_page_slice_count(block_size) else {
+        return ClaimedProcessArenaTerminalRelease::RetainedBeforePageMap;
+    };
+    let Some(usable_offset) = page::page_usable_start_offset(block_size) else {
+        return ClaimedProcessArenaTerminalRelease::RetainedBeforePageMap;
+    };
+    let Some(span_end) = slice_start.addr().checked_add(size) else {
+        return ClaimedProcessArenaTerminalRelease::RetainedBeforePageMap;
+    };
+    let Some(expected_start) = slice_start.addr().checked_add(usable_offset) else {
+        return ClaimedProcessArenaTerminalRelease::RetainedBeforePageMap;
+    };
+    if slice_count != expected_slice_count
+        || size_class::page_kind_for_block_size(block_size) != Some(PageKind::Singleton)
+        || size_class::bin(block_size) != Some(BIN_HUGE)
+        || page_ref.reserved() != 1
+        || page_ref.used() != 0
+        || !page_ref.is_queue_detached()
+        || expected_start >= span_end
+        || expected_start.checked_sub(page.as_ptr().addr()) != Some(page_ref.page_offset())
+    {
+        return ClaimedProcessArenaTerminalRelease::RetainedBeforePageMap;
+    }
+    for offset in (0..size).step_by(ARENA_SLICE_SIZE) {
+        let Some(address) = slice_start.addr().checked_add(offset) else {
+            return ClaimedProcessArenaTerminalRelease::RetainedBeforePageMap;
+        };
+        // SAFETY: the W07 terminal owner serializes this exact singleton map
+        // range; all source-visible slices must still identify this page.
+        if unsafe { page_map.checked_lookup(address as *const u8) } != page.as_ptr() {
+            return ClaimedProcessArenaTerminalRelease::RetainedBeforePageMap;
+        }
+    }
+    // Source terminal order is PageMap unregister, one ordinary main-arena
+    // bit clear, metadata retirement, then full singleton slice release.
+    if unsafe { page_map.unregister_range(slice_start, size) }.is_err() {
+        return ClaimedProcessArenaTerminalRelease::RetainedAfterPageMapMutation;
+    }
+    if unsafe { arena.pages() }
+        .and_then(|pages| pages.clear_range(slice_index, 1))
+        != Some(true)
+    {
+        return ClaimedProcessArenaTerminalRelease::RetainedAfterPageMapMutation;
+    }
+    // SAFETY: all queue/list/map predecessors completed under the exact W07
+    // release wrapper; retirement cannot inspect a departed Theap.
+    let Some(retired) = (unsafe { page.as_mut().retire_exclusive() }) else {
+        return ClaimedProcessArenaTerminalRelease::RetainedAfterPageMapMutation;
+    };
+    if !same_arena_memory(retired, expected_memory) {
+        return ClaimedProcessArenaTerminalRelease::RetainedAfterPageMapMutation;
+    }
+    // SAFETY: this is the exact remaining externally managed arena span.
+    if unsafe { release_arena_slices(retired) } {
+        ClaimedProcessArenaTerminalRelease::Released
+    } else {
+        ClaimedProcessArenaTerminalRelease::RetainedAfterPageMapMutation
+    }
+}
+
+/// Terminal disposition after W07 passes its exact singleton release wrapper
+/// to this lower process-owned non-arena seam.
+enum ClaimedProcessNonArenaSingletonRelease {
+    Released,
+    /// No source list mutation completed, so W07 can retain its ordinary
+    /// release wrapper and retry only from the unabandon boundary.
+    RetainedBeforeList,
+    /// The static Heap list mutation did complete. The opaque payload keeps
+    /// the exact backing and stage so the outer result cannot silently drop a
+    /// mapping or restart from a now-invalid list member.
+    RetainedAfterList(RetainedProcessNonArenaSingleton),
+}
+
+/// Private handoff from the terminal callback to its W07 wrapper result.
+struct RetainedProcessNonArenaSingleton {
+    backing: ProcessPostOwnerExitNonArenaTerminalBacking,
+    stage: ProcessPostOwnerExitNonArenaTerminalStage,
+}
+
+/// Validated non-arena facts before `_mi_arenas_page_unabandon` removes the
+/// page from the static Heap list.
+enum ProcessNonArenaSingletonPreflight {
+    Os(PublishedOsAlignedPage),
+    External(ExternalPostOwnerExitTerminalFacts),
+}
+
+/// Returns whether two non-arena source memory IDs retain exactly the same
+/// backing image. `MemoryId` is a C-layout tagged union, so comparison stays
+/// on the valid `os_memory` arm rather than deriving generic equality.
+fn same_non_arena_memory(left: MemoryId, right: MemoryId) -> bool {
+    if left.kind() != right.kind()
+        || left.is_pinned() != right.is_pinned()
+        || left.initially_committed() != right.initially_committed()
+        || left.initially_zero() != right.initially_zero()
+    {
+        return false;
+    }
+    matches!(
+        (left.os_memory(), right.os_memory()),
+        (Some(actual), Some(expected))
+            if actual.base == expected.base && actual.size == expected.size
+    )
+}
+
+/// Checks the non-arena singleton facts that are stable before source list
+/// removal. Queue detachment is intentionally checked only after removal
+/// because the non-arena list itself owns the page's intrusive links until
+/// that point.
+///
+/// This deliberately does not infer singleton identity from the ordinary
+/// size bin. A `MemoryKind::Os` alignment-forced page has `reserved == 1` yet
+/// can retain `PageKind::Small`; its exact [`OsAlignedPageLayout`] provenance
+/// is reconstructed by the OS preflight below. External memory has no such
+/// source layout proof and retains the size-forced check at its own boundary.
+unsafe fn non_arena_singleton_liveness_matches(
+    page: NonNull<Page>,
+    expected_memory: MemoryId,
+) -> bool {
+    // SAFETY: the W07 release wrapper retains this exact claimed page through
+    // the preflight. It grants observation only; no former Theap is read.
+    let page_ref = unsafe { page.as_ref() };
+    same_non_arena_memory(page_ref.memid(), expected_memory)
+        && page_ref.reserved() == 1
+        && page_ref.used() == 0
+}
+
+/// Keeps external singleton release constrained to the existing size-forced
+/// provenance image. Unlike normal OS alignment, external memory has no
+/// `OsAlignedPageLayout` release owner that can prove an ordinary-size
+/// singleton is source-valid.
+#[inline]
+fn external_size_forced_singleton_matches(page: &Page) -> bool {
+    matches!(
+        size_class::page_kind_for_block_size(page.block_size()),
+        Some(PageKind::Singleton)
+    ) && size_class::bin(page.block_size()) == Some(BIN_HUGE)
+}
+
+/// Builds the exact PageMap span retained for an external singleton.
+///
+/// External memory has no `munmap` owner, but it uses the same source
+/// page-map area calculation as any other singleton. Its concrete `MemoryId`
+/// backing begins at the source slice start; map registration includes every
+/// whole leading slice before `mi_page_area(page)` and remains clipped by the
+/// source `page_map_slice_count` calculation.
+unsafe fn external_singleton_terminal_facts(
+    page_map: &PageMap,
+    page: NonNull<Page>,
+    expected_memory: MemoryId,
+) -> Option<ExternalPostOwnerExitTerminalFacts> {
+    if expected_memory.kind() != MemoryKind::External
+        || !unsafe { non_arena_singleton_liveness_matches(page, expected_memory) }
+        || !external_size_forced_singleton_matches(unsafe { page.as_ref() })
+    {
+        return None;
+    }
+    let memory = expected_memory.os_memory()?;
+    let page_map_start = NonNull::new(memory.base)?;
+    let page_ref = unsafe { page.as_ref() };
+    // SAFETY: the validated singleton metadata and W07 release wrapper keep
+    // this one source page area live through the terminal calculation.
+    let page_start = unsafe { page_ref.start() };
+    let page_start_offset = page_start.addr().checked_sub(page_map_start.as_ptr().addr())?;
+    let page_area_size = page::page_area_size(page_ref.block_size(), page_ref.reserved())?;
+    let external_end = page_map_start.as_ptr().addr().checked_add(memory.size)?;
+    let page_area_end = page_start.addr().checked_add(page_area_size)?;
+    if page_start_offset >= memory.size || page_area_end > external_end {
+        return None;
+    }
+    let page_map_size = page::page_map_slice_count(
+        page_ref.block_size(),
+        page_ref.reserved(),
+        page_start_offset,
+    )?
+    .checked_mul(ARENA_SLICE_SIZE)?;
+    if page_map_size == 0 || page_map_size > memory.size {
+        return None;
+    }
+    for offset in (0..page_map_size).step_by(ARENA_SLICE_SIZE) {
+        let address = page_map_start.as_ptr().addr().checked_add(offset)?;
+        // SAFETY: the exact W07 release wrapper serializes the retained
+        // external PageMap span before its source unregistration.
+        if unsafe { page_map.checked_lookup(address as *const u8) } != page.as_ptr() {
+            return None;
+        }
+    }
+    Some(ExternalPostOwnerExitTerminalFacts {
+        memory: expected_memory,
+        page_map_start,
+        page_map_size,
+    })
+}
+
+/// Prevalidates the exact non-arena source backing before list removal makes
+/// the terminal sequence irreversible.
+unsafe fn preflight_non_arena_singleton(
+    page_map: &PageMap,
+    page: NonNull<Page>,
+    expected_memory: MemoryId,
+) -> Option<ProcessNonArenaSingletonPreflight> {
+    match expected_memory.kind() {
+        // This bounded tail owns only normal `MI_MEM_OS` mappings constructed
+        // by `OsAlignedPageClaim`. Pinned `MI_MEM_OS_HUGE` has its distinct
+        // huge-page release path. `MI_MEM_OS_REMAP` falls through generic
+        // upstream OS release, but is outside this adapter's represented
+        // `OsAlignedPageClaim` ownership image. Both therefore retain the W07
+        // terminal wrapper rather than treating a normal `munmap` as theirs.
+        MemoryKind::Os => {
+            // SAFETY: the W07 terminal wrapper retains the page and exact
+            // source low bit while this validates the one published mapping.
+            let published = unsafe {
+                PublishedOsAlignedPage::from_page(page_map.memory_config(), page)
+            }?;
+            if !unsafe { non_arena_singleton_liveness_matches(page, expected_memory) }
+                || !same_non_arena_memory(published.memory_id(), expected_memory)
+                || !unsafe { published.page_map_entries_match(page_map) }
+            {
+                return None;
+            }
+            Some(ProcessNonArenaSingletonPreflight::Os(published))
+        }
+        MemoryKind::External => {
+            unsafe { external_singleton_terminal_facts(page_map, page, expected_memory) }
+                .map(ProcessNonArenaSingletonPreflight::External)
+        }
+        _ => None,
+    }
+}
+
+/// Outcome of the two nested source-lock boundaries around a non-arena list
+/// splice.
+///
+/// Both the Heap's private list lock and the outer static-main Heap projection
+/// can report their wake failure after the splice.  The caller must preserve
+/// that irreversible state as `RemovedUnlockFailed`; treating either error as
+/// a pre-list failure would lose the only mapping/backing terminal owner.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum NonArenaSingletonListRemoval {
+    NotRemoved,
+    Removed,
+    RemovedUnlockFailed,
+}
+
+/// Removes this exact non-arena source list member. A successful list mutation
+/// remains irreversible even when either guard's unlock reports an error;
+/// callers must retain the post-list terminal owner in that case rather than
+/// treating it as an untouched list member.
+unsafe fn remove_non_arena_singleton_from_main_heap(
+    main_heap: MainStaticHeapLease<'static>,
+    page: NonNull<Page>,
+) -> NonArenaSingletonListRemoval {
+    let Ok(mut heap) = main_heap.lock_heap() else {
+        return NonArenaSingletonListRemoval::NotRemoved;
+    };
+    // SAFETY: preflight retained the exact claimed page and this guard
+    // serializes the one `_mi_arenas_page_unabandon` list removal.
+    let removed = unsafe {
+        heap.heap_mut()
+            .remove_os_abandoned_page_with_outcome(page)
+    };
+    let unlock = heap.unlock();
+    match removed {
+        HeapOsAbandonedPageRemovalOutcome::NotRemoved(_) => {
+            NonArenaSingletonListRemoval::NotRemoved
+        }
+        HeapOsAbandonedPageRemovalOutcome::Removed => match unlock {
+            Ok(()) => NonArenaSingletonListRemoval::Removed,
+            Err(_) => NonArenaSingletonListRemoval::RemovedUnlockFailed,
+        },
+        // The inner list lock observed a wake failure only after it spliced
+        // and cleared the links.  An outer unlock error cannot undo that
+        // source-visible transition, so both cases retain the post-list
+        // owner rather than progressing as a healthy release.
+        HeapOsAbandonedPageRemovalOutcome::RemovedUnlockFailed(_) => {
+            NonArenaSingletonListRemoval::RemovedUnlockFailed
+        }
+    }
+}
+
+/// Completes the non-arena `_mi_arenas_page_unabandon` and page-free tail for
+/// a claimed OS or external singleton.
+///
+/// OS backing transfers its exact published mapping token into an opaque
+/// terminal owner immediately after list removal. External backing has no
+/// mapping release, but still executes the same list removal, PageMap
+/// unregistration, and metadata retirement sequence before it reports
+/// `Released`. Every failure after list removal retains a stage-aware opaque
+/// owner; no branch returns `Retained(None)` or silently skips the source tail.
+unsafe fn release_claimed_process_non_arena_singleton_page(
+    page_map: &PageMap,
+    main_heap: MainStaticHeapLease<'static>,
+    mut page: NonNull<Page>,
+    expected_memory: MemoryId,
+) -> ClaimedProcessNonArenaSingletonRelease {
+    let Some(preflight) = (unsafe {
+        preflight_non_arena_singleton(page_map, page, expected_memory)
+    }) else {
+        return ClaimedProcessNonArenaSingletonRelease::RetainedBeforeList;
+    };
+    let list_removal = unsafe { remove_non_arena_singleton_from_main_heap(main_heap, page) };
+    if list_removal == NonArenaSingletonListRemoval::NotRemoved {
+        return ClaimedProcessNonArenaSingletonRelease::RetainedBeforeList;
+    }
+
+    if list_removal == NonArenaSingletonListRemoval::RemovedUnlockFailed {
+        // The list was already spliced, but a source lock boundary reported
+        // failure after that one-way transition.  Do not run PageMap or
+        // backing steps against a lifecycle whose outer lock state is no
+        // longer healthy; retain the exact backing at the first post-list
+        // stage with the callback's mutation lease.
+        return match preflight {
+            ProcessNonArenaSingletonPreflight::Os(published) => {
+                ClaimedProcessNonArenaSingletonRelease::RetainedAfterList(
+                    RetainedProcessNonArenaSingleton {
+                        backing: ProcessPostOwnerExitNonArenaTerminalBacking::Os(
+                            OsAlignedPageOwner::Published(published),
+                        ),
+                        stage: ProcessPostOwnerExitNonArenaTerminalStage::OsListRemoved,
+                    },
+                )
+            }
+            ProcessNonArenaSingletonPreflight::External(facts) => {
+                ClaimedProcessNonArenaSingletonRelease::RetainedAfterList(
+                    RetainedProcessNonArenaSingleton {
+                        backing: ProcessPostOwnerExitNonArenaTerminalBacking::External(facts),
+                        stage: ProcessPostOwnerExitNonArenaTerminalStage::OsListRemoved,
+                    },
+                )
+            }
+        };
+    }
+
+    match preflight {
+        ProcessNonArenaSingletonPreflight::Os(published) => {
+            let retain = |mapping, stage| {
+                ClaimedProcessNonArenaSingletonRelease::RetainedAfterList(
+                    RetainedProcessNonArenaSingleton {
+                        backing: ProcessPostOwnerExitNonArenaTerminalBacking::Os(mapping),
+                        stage,
+                    },
+                )
+            };
+            // SAFETY: list removal released the intrusive link; the W07
+            // wrapper and preflight retain the same page/mapping transition.
+            let page_ref = unsafe { page.as_ref() };
+            if !same_non_arena_memory(page_ref.memid(), expected_memory)
+                || page_ref.used() != 0
+                || !page_ref.is_queue_detached()
+            {
+                return retain(
+                    OsAlignedPageOwner::Published(published),
+                    ProcessPostOwnerExitNonArenaTerminalStage::OsListRemoved,
+                );
+            }
+            let layout = published.layout();
+            // Source terminal order is PageMap unregister, secondary alias
+            // clear, primary retirement, then exact mapping reclaim.
+            if unsafe {
+                page_map.unregister_range(published.slice_start().as_ptr(), layout.page_map_size())
+            }
+            .is_err()
+            {
+                return retain(
+                    OsAlignedPageOwner::Published(published),
+                    ProcessPostOwnerExitNonArenaTerminalStage::OsListRemoved,
+                );
+            }
+            if unsafe { !published.clear_secondary_metadata() } {
+                return retain(
+                    OsAlignedPageOwner::Published(published),
+                    ProcessPostOwnerExitNonArenaTerminalStage::PageMapUnregistered,
+                );
+            }
+            // SAFETY: all source list/map/alias predecessors are complete;
+            // no former Theap is read by retirement.
+            let Some(retired) = (unsafe { page.as_mut().retire_exclusive() }) else {
+                return retain(
+                    OsAlignedPageOwner::Published(published),
+                    ProcessPostOwnerExitNonArenaTerminalStage::SecondaryAliasesCleared,
+                );
+            };
+            debug_assert!(same_non_arena_memory(retired, expected_memory));
+            // SAFETY: `published` now owns the sole raw mapping release
+            // right after every PageMap/metadata predecessor completed.
+            match unsafe { published.reclaim() } {
+                Ok(()) => ClaimedProcessNonArenaSingletonRelease::Released,
+                Err(failure) => retain(
+                    failure.into_owner(),
+                    ProcessPostOwnerExitNonArenaTerminalStage::PrimaryRetired,
+                ),
+            }
+        }
+        ProcessNonArenaSingletonPreflight::External(facts) => {
+            let retain = |stage| {
+                ClaimedProcessNonArenaSingletonRelease::RetainedAfterList(
+                    RetainedProcessNonArenaSingleton {
+                        backing: ProcessPostOwnerExitNonArenaTerminalBacking::External(facts),
+                        stage,
+                    },
+                )
+            };
+            // SAFETY: list removal released the non-arena intrusive link; the
+            // external facts retain the exact PageMap span and source memory.
+            let page_ref = unsafe { page.as_ref() };
+            if !same_non_arena_memory(page_ref.memid(), expected_memory)
+                || page_ref.used() != 0
+                || !page_ref.is_queue_detached()
+            {
+                return retain(ProcessPostOwnerExitNonArenaTerminalStage::OsListRemoved);
+            }
+            if unsafe {
+                page_map.unregister_range(facts.page_map_start.as_ptr(), facts.page_map_size)
+            }
+            .is_err()
+            {
+                return retain(ProcessPostOwnerExitNonArenaTerminalStage::OsListRemoved);
+            }
+            // External storage has no aligned metadata aliases and no mapping
+            // release right. Source `_mi_arenas_page_free` still retires the
+            // primary only after its PageMap entry is gone.
+            let Some(retired) = (unsafe { page.as_mut().retire_exclusive() }) else {
+                return retain(ProcessPostOwnerExitNonArenaTerminalStage::SecondaryAliasesCleared);
+            };
+            debug_assert!(same_non_arena_memory(retired, expected_memory));
+            ClaimedProcessNonArenaSingletonRelease::Released
+        }
     }
 }
 
@@ -35690,8 +37247,11 @@ mod tests {
     use super::*;
     use crate::arena::{ArenaRegistry, CommitHook, manage_external_in_place};
     use crate::dynamic_theap::{DynamicTheapAttachment, DynamicTheapBeginError};
+    use crate::main_theap::{MainStaticAttachmentStorage, MainStaticTheapAttachment};
     use crate::meta::MetaAllocator;
     use crate::owned_tls_key_registry::OwnedThreadLocalKeyRegistry;
+    use crate::process_arena::{ProcessSharedArenaLease, ProcessSharedArenaStorage};
+    use crate::process_page_map::{ProcessPageMapLease, ProcessPageMapStorage};
     use crate::config::{
         ARENA_ALIGNMENT, ARENA_MIN_SIZE, LARGE_MAX_OBJ_SIZE, MAX_ALIGN_SIZE,
         MAX_ALLOC_SIZE, MEDIUM_MAX_OBJ_SIZE, PAGE_MAX_OVERALLOC_ALIGN,
@@ -35699,9 +37259,10 @@ mod tests {
     };
     use crate::os::{MapAccess, Mapping, MemoryConfig, PageSize, fault};
     use crate::tld::ThreadLocalDataOwner;
-    use crate::types::Heap;
+    use crate::types::{Heap, LiveThreadId, MemoryId, Theap, ThreadLocalData, THREAD_ID_DETACHED};
     use crabc_core::Errno;
     use core::ffi::c_void;
+    use core::mem::{align_of, size_of};
     use core::ptr::null_mut;
     use std::alloc::{Layout, alloc_zeroed, dealloc};
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -35922,6 +37483,828 @@ mod tests {
         // before the source-plain map is explicitly dismantled.
         unsafe { page_map.destroy() }.unwrap();
         mapping.unmap().unwrap();
+    }
+
+    fn w03_memory_config() -> MemoryConfig {
+        MemoryConfig::from_observations(
+            PageSize::new(4096).expect("the native page size is valid"),
+            1024 * 1024,
+            false,
+            false,
+        )
+    }
+
+    /// Uses the source rounded singleton geometry rather than an arbitrary
+    /// boundary value. The post-CAS false collector validates the actual
+    /// free-list alignment before it transfers the newly detached block.
+    fn w03_singleton_block_size() -> usize {
+        (LARGE_MAX_OBJ_SIZE + 1 + MAX_ALIGN_SIZE - 1) & !(MAX_ALIGN_SIZE - 1)
+    }
+
+    // Pinned `arena.c:_mi_arenas_page_alloc` sends an alignment above
+    // `MI_PAGE_MAX_OVERALLOC_ALIGN` through `mi_arenas_page_singleton_alloc`
+    // independently of request size. Keep the request deliberately small;
+    // allocation rounds it through `_mi_os_good_alloc_size` before it becomes
+    // a page block, so the source-valid fixture remains link-aligned.
+    const W03_ALIGNMENT_FORCED_OS_REQUEST: usize = 7;
+
+    fn w03_paired_process_owner(
+        config: MemoryConfig,
+        subprocess: &'static MainSubprocess,
+    ) -> (ProcessPageMapLease, ProcessSharedArenaLease) {
+        let page_map = ProcessPageMapStorage::test_static_owner()
+            .initialize(config, subprocess)
+            .expect("the isolated W03 process map initializes");
+        let mapping = Mapping::map_aligned_for_allocator(
+            config,
+            ARENA_MIN_SIZE,
+            ARENA_ALIGNMENT,
+            MapAccess::Committed,
+        )
+        .expect("the isolated W03 process owns one arena mapping");
+        let arena = ProcessSharedArenaStorage::test_static_owner()
+            .install_one_owned_external_arena(page_map, mapping);
+        let arena = match arena {
+            Ok(arena) => arena,
+            Err(_) => panic!("the isolated W03 process publishes one matching arena"),
+        };
+        (page_map, arena)
+    }
+
+    /// Builds one isolated permanent static process page image for direct W03
+    /// pointer-continuation regressions.
+    ///
+    /// The fixture intentionally leaves the static process image retained at
+    /// thread exit. A W03 terminal regression may consume a source page and
+    /// mapping independently, but it must never pretend that this permanent
+    /// ticket-zero session can return to ordinary attachment teardown.
+    fn with_w03_process_page_fixture(
+        operation: impl FnOnce(
+                MemoryConfig,
+                ProcessPageMapLease,
+                ProcessPageArenaLease,
+                MainStaticHeapLease<'static>,
+                &mut MainStaticProcessPageSession,
+            )
+            + Send
+            + 'static,
+    ) {
+        thread::spawn(move || {
+            let config = w03_memory_config();
+            let storage = MainStaticAttachmentStorage::test_static_owner();
+            let subprocess = MainSubprocess::test_static_owner();
+            let (page_map, process_arena) = w03_paired_process_owner(config, subprocess);
+            let pair = ProcessPageArenaLease::join(page_map, process_arena)
+                .expect("the isolated W03 map and arena form one process image");
+            let main = unsafe {
+                MainStaticTheapAttachment::begin_with_test_storage(storage, subprocess)
+            }
+            .expect("the isolated W03 static owner attaches");
+            let mut session = main
+                .begin_process_lifetime_page_session()
+                .expect("the empty static owner becomes one permanent page session");
+            let main_heap = session.shared_main_heap_lease();
+
+            operation(config, page_map, pair, main_heap, &mut session);
+
+            // The process-lifetime session intentionally has no inverse
+            // transition. Keep both fixture owners alive after the direct
+            // post-owner-exit operation instead of forging static teardown.
+            core::mem::forget(session);
+            core::mem::forget(main);
+        })
+        .join()
+        .expect("the W03 fixture stays on its source current thread");
+    }
+
+    /// Creates one current PageMap pointer whose page is deliberately owned
+    /// by a separate local test Theap. It is used only for the W03 Detached
+    /// pre-CAS rejection: the lower process continuation must never inspect
+    /// that owner after the typed pointer says Detached.
+    fn with_w03_detached_pointer_fixture(
+        page_map: ProcessPageMapLease,
+        operation: impl FnOnce(LiveAllocationPointer, NonNull<Page>, NonNull<u8>),
+    ) {
+        let thread_id = LiveThreadId::new(16).expect("the fixture owner is source-valid");
+        let mut heap = Heap::bootstrap_empty();
+        let mut tld = ThreadLocalData::detached();
+        tld.attach_bootstrap_exclusive(thread_id);
+        let mut theap = Theap::empty();
+        assert!(theap.bind_exclusive_single_thread(&mut heap, &mut tld));
+
+        const BLOCK_SIZE: usize = 48;
+        const RESERVED: u16 = 4;
+        let metadata_size =
+            (size_of::<Page>() + align_of::<usize>() - 1) & !(align_of::<usize>() - 1);
+        let page_offset = ARENA_SLICE_SIZE + metadata_size;
+        let layout = Layout::from_size_align(2 * ARENA_SLICE_SIZE, ARENA_SLICE_SIZE)
+            .expect("the separated-metadata fixture layout is valid");
+        // SAFETY: the matching exact-range unregistration and deallocation
+        // happen after the direct typed pointer operation returns.
+        let base = NonNull::new(unsafe { alloc_zeroed(layout) })
+            .expect("the W03 detached fixture allocates two arena slices");
+        let page = base.cast::<Page>();
+        // SAFETY: this fixture owns the metadata, complete block range, and
+        // bound local source owner through its one pointer operation.
+        let mut page = unsafe {
+            Page::publish_fresh_exclusive_at(
+                page,
+                &mut theap,
+                &heap,
+                thread_id,
+                BLOCK_SIZE,
+                page_offset,
+                RESERVED,
+                0,
+                false,
+                MemoryId::external(base.as_ptr(), 2 * ARENA_SLICE_SIZE, true, false, true),
+            )
+        }
+        .expect("the W03 detached fixture page is source-valid");
+        // This fixture hands out exactly its first block, keeping the page
+        // registered and metadata-live through the rejection observation.
+        unsafe { page.as_mut() }.set_exclusive_used(1);
+        let block = NonNull::new(unsafe { base.as_ptr().add(page_offset) })
+            .expect("the W03 detached fixture canonical block is non-null");
+        // SAFETY: this fixture owns the one registered block range and has
+        // no competing PageMap reader or writer.
+        let map = unsafe { page_map.page_map_for_owned_ranges() }
+            .expect("the isolated W03 map serves its exact fixture range");
+        unsafe {
+            map.register_range(block.as_ptr(), usize::from(RESERVED) * BLOCK_SIZE, page)
+                .expect("the W03 detached fixture registers before lookup");
+            Page::remote_free_producer_state_at(page)
+                .xthread_id
+                .as_ref()
+                .store(THREAD_ID_DETACHED, Ordering::Release);
+        }
+        let allocation = unsafe { page_map.lookup_live_allocation(block) }
+            .expect("the W03 detached fixture map remains ready")
+            .expect("the W03 detached fixture pointer resolves");
+        assert_eq!(allocation.page_state(), crate::process_page_map::LiveAllocationPageState::Detached);
+
+        operation(allocation, page, block);
+
+        // SAFETY: the direct rejected operation left the exact registration
+        // and metadata untouched, so the fixture still owns their teardown.
+        unsafe {
+            map.unregister_range(block.as_ptr(), usize::from(RESERVED) * BLOCK_SIZE)
+                .expect("the rejected W03 fixture registration clears exactly once");
+            core::ptr::drop_in_place(page.as_ptr());
+            dealloc(base.as_ptr(), layout);
+        }
+    }
+
+    fn w03_publish_arena_singleton(
+        config: MemoryConfig,
+        pair: ProcessPageArenaLease,
+        session: &mut MainStaticProcessPageSession,
+    ) -> (NonNull<Page>, NonNull<u8>, MemoryId, usize) {
+        let block_size = w03_singleton_block_size();
+        let arena = pair
+            .arena()
+            .expect("the W03 arena singleton has the paired arena view");
+        let slice_count = page::singleton_page_slice_count(block_size)
+            .expect("the W03 singleton has one source slice span");
+        let span_size = slice_count
+            .checked_mul(ARENA_SLICE_SIZE)
+            .expect("the W03 singleton span fits");
+        let claim = arena
+            .try_claim_suitable_slices(ArenaId::none(), slice_count, true, 0)
+            .expect("the isolated W03 arena yields one singleton span");
+        let slice_start = claim.start();
+        let metadata = claim
+            .page_metadata()
+            .expect("the W03 arena singleton has its aligned metadata slot");
+        let memory = claim.memory_id();
+        let usable_offset = page::page_usable_start_offset(block_size)
+            .expect("the W03 singleton has its usable offset");
+        let page_offset = slice_start
+            .addr()
+            .checked_add(usable_offset)
+            .and_then(|start| start.checked_sub(metadata.as_ptr().addr()))
+            .expect("the W03 arena singleton metadata precedes its page area");
+        assert!(
+            session.ensure_arena_pages(&arena, config),
+            "the W03 arena singleton installs the static main bitmap before publication"
+        );
+        // SAFETY: `claim` owns the unregistered arena span and its metadata;
+        // the permanent static session is the only owner of its static Theap.
+        let mut page = unsafe {
+            session.publish_fresh_page(
+                metadata,
+                block_size,
+                page_offset,
+                1,
+                0,
+                memory.initially_zero(),
+                memory,
+            )
+        }
+        .expect("the W03 arena singleton page publishes");
+        assert!(unsafe { page.as_mut() }.set_capacity_reserved(1, 1));
+        unsafe { page.as_mut() }.set_exclusive_used(1);
+        assert!(
+            session.set_arena_page(&arena, memory),
+            "the W03 arena singleton marks its ordinary main-arena bit before PageMap publication"
+        );
+        let page_map_size = arena_page_map_size(page, slice_start, span_size)
+            .expect("the W03 arena singleton has one source-clipped map range");
+        // SAFETY: this helper owns the complete fresh range and no producer
+        // exists until the subsequent typed pointer lookup.
+        let page_map = unsafe { pair.page_map_for_owned_ranges() }
+            .expect("the W03 arena singleton has the paired PageMap");
+        unsafe {
+            page_map
+                .register_range(slice_start, page_map_size, page)
+                .expect("the W03 arena singleton range publishes before lookup");
+        }
+        let block = NonNull::new(unsafe { page.as_ref().start() })
+            .expect("the W03 arena singleton canonical block is non-null");
+        (page, block, memory, memory.arena_memory().unwrap().slice_index as usize)
+    }
+
+    fn w03_publish_external_singleton(
+        pair: ProcessPageArenaLease,
+        session: &mut MainStaticProcessPageSession,
+    ) -> (NonNull<Page>, NonNull<u8>, NonNull<u8>, Layout, usize) {
+        let block_size = w03_singleton_block_size();
+        let page_offset = ARENA_SLICE_SIZE;
+        let page_map_size = page::page_map_slice_count(block_size, 1, page_offset)
+            .and_then(|slices| slices.checked_mul(ARENA_SLICE_SIZE))
+            .expect("the W03 external singleton has its full source map range");
+        let layout = Layout::from_size_align(page_map_size, ARENA_SLICE_SIZE)
+            .expect("the W03 external singleton raw backing is slice aligned");
+        // SAFETY: the test retains this external backing until W03 clears its
+        // map/metadata tail, after which this fixture explicitly deallocates it.
+        let base = NonNull::new(unsafe { alloc_zeroed(layout) })
+            .expect("the W03 external singleton backing allocates");
+        let memory = MemoryId::external(base.as_ptr(), page_map_size, true, false, true);
+        let mut page = unsafe {
+            session.publish_fresh_page(
+                base.cast(),
+                block_size,
+                page_offset,
+                1,
+                0,
+                true,
+                memory,
+            )
+        }
+        .expect("the W03 external singleton primary metadata publishes");
+        assert!(unsafe { page.as_mut() }.set_capacity_reserved(1, 1));
+        unsafe { page.as_mut() }.set_exclusive_used(1);
+        // SAFETY: this helper owns the complete external singleton span and
+        // page lifetime until W03's terminal callback unregisters it.
+        let page_map = unsafe { pair.page_map_for_owned_ranges() }
+            .expect("the W03 external singleton has the paired PageMap");
+        unsafe {
+            page_map
+                .register_range(base.as_ptr(), page_map_size, page)
+                .expect("the W03 external singleton range publishes before lookup");
+        }
+        let block = NonNull::new(unsafe { page.as_ref().start() })
+            .expect("the W03 external singleton canonical block is non-null");
+        (page, block, base, layout, page_map_size)
+    }
+
+    fn w03_publish_os_singleton(
+        config: MemoryConfig,
+        pair: ProcessPageArenaLease,
+        session: &mut MainStaticProcessPageSession,
+    ) -> (NonNull<Page>, NonNull<u8>, NonNull<u8>, usize) {
+        let block_size = config.good_alloc_size(W03_ALIGNMENT_FORCED_OS_REQUEST);
+        assert_eq!(
+            block_size,
+            4 * KIB,
+            "the source OS good-size boundary rounds the 7-byte aligned request"
+        );
+        assert_eq!(
+            size_class::page_kind_for_block_size(block_size),
+            Some(PageKind::Small),
+            "the 128 KiB alignment, not BIN_HUGE sizing, makes this a singleton"
+        );
+        let claim = match OsAlignedPageClaim::allocate(
+            config,
+            block_size,
+            128 * KIB,
+        ) {
+            Ok(claim) => claim,
+            Err(_) => panic!("the W03 OS singleton claim maps its normal OS backing"),
+        };
+        let layout = claim.layout();
+        let metadata = claim
+            .metadata()
+            .expect("the W03 OS singleton has its primary metadata slot");
+        let slice_start = claim
+            .slice_start()
+            .expect("the W03 OS singleton has its clipped PageMap start");
+        let memory = claim
+            .memory_id()
+            .expect("the W03 OS singleton describes its published memory");
+        let mut page = unsafe {
+            session.publish_fresh_page(
+                metadata,
+                layout.block_size(),
+                layout.page_offset(),
+                1,
+                0,
+                memory.initially_zero(),
+                memory,
+            )
+        }
+        .expect("the W03 OS singleton primary metadata publishes");
+        assert_eq!(
+            unsafe { page.as_ref() }.block_size(),
+            block_size,
+            "the page preserves the rounded 7-byte request geometry"
+        );
+        assert!(unsafe { page.as_mut() }.set_capacity_reserved(1, 1));
+        unsafe { page.as_mut() }.set_exclusive_used(1);
+        assert!(
+            unsafe { claim.publish_secondary_metadata(page) },
+            "the W03 OS singleton publishes its secondary metadata before map publication"
+        );
+        // SAFETY: this helper owns the complete published OS singleton span
+        // until W03 unregisters it before reclaiming the mapping.
+        let page_map = unsafe { pair.page_map_for_owned_ranges() }
+            .expect("the W03 OS singleton has the paired PageMap");
+        unsafe {
+            page_map
+                .register_range(slice_start.as_ptr(), layout.page_map_size(), page)
+                .expect("the W03 OS singleton clipped range publishes before lookup");
+        }
+        let published_memory = claim
+            .into_published()
+            .expect("the W03 OS claim transfers exactly once into the page");
+        assert!(
+            same_non_arena_memory(published_memory, memory),
+            "the published OS claim retains exactly the page's copied source memory facts"
+        );
+        let block = NonNull::new(unsafe { page.as_ref().start() })
+            .expect("the W03 OS singleton canonical block is non-null");
+        (page, block, slice_start, layout.page_map_size())
+    }
+
+    fn w03_abandon_non_arena_singleton(page: NonNull<Page>, main_heap: MainStaticHeapLease<'static>) {
+        // SAFETY: the direct fixture still owns this associated singleton's
+        // ordinary fields. The closure is exactly the source publication
+        // between abandoned identity and the common unown CAS.
+        let result = unsafe {
+            abandoned::abandon_unmappable_after_collect_with_before_unown(page, || {
+                let mut heap = main_heap
+                    .lock_heap()
+                    .map_err(|_| AbandonError::PreUnownPublication)?;
+                let pushed = unsafe { heap.heap_mut().push_os_abandoned_page(page) };
+                let unlocked = heap.unlock();
+                if pushed.is_ok() && unlocked.is_ok() {
+                    Ok(())
+                } else {
+                    Err(AbandonError::PreUnownPublication)
+                }
+            })
+        };
+        assert_eq!(
+            result,
+            Ok(AbandonResult::UnownedUnmapped),
+            "non-arena source order is identity, OS-list publication, then unown"
+        );
+    }
+
+    #[test]
+    fn post_owner_exit_pointer_detached_rejects_before_cas_or_terminal_marker() {
+        with_w03_process_page_fixture(|_config, page_map, pair, main_heap, _session| {
+            with_w03_detached_pointer_fixture(page_map, |allocation, page, block| {
+                let marker = ProcessPostOwnerExitTerminalMarker::new();
+                let canonical_block = allocation.canonical_block();
+                // SAFETY: `allocation` came from the exact current fixture
+                // registration and stays live through this typed source
+                // rejection. The process pair and static Heap lease belong
+                // to the same fixture process image.
+                let result = unsafe {
+                    continue_post_owner_exit_live_allocation_with_terminal_marker(
+                        &marker,
+                        allocation,
+                        pair,
+                        main_heap,
+                    )
+                };
+                assert_eq!(
+                    result,
+                    Err(ProcessPostOwnerExitPointerFreeRejection::Publication(
+                        RemoteFreeError::NotOwnerAssociated
+                    )),
+                    "Detached is a valid PageMap observation but has no source remote producer"
+                );
+                assert!(
+                    !marker.is_retained(),
+                    "a pre-CAS Detached rejection must not poison the post-CAS exception marker"
+                );
+                assert_eq!(
+                    marker.test_audit_snapshot(),
+                    ProcessPostOwnerExitTerminalAuditSnapshot {
+                        terminalizations: 0,
+                        categories: 0,
+                    },
+                    "Detached has no terminal claim to retain"
+                );
+                // SAFETY: the rejected source path must not publish or claim
+                // the low owner bit. The fixture owns this exact atomic
+                // producer projection until its post-assertion teardown.
+                let state = unsafe { Page::remote_free_producer_state_at(page) };
+                assert_eq!(
+                    unsafe { state.xthread_id.as_ref() }.load(Ordering::Acquire),
+                    THREAD_ID_DETACHED
+                );
+                assert_eq!(
+                    unsafe { state.xthread_free.as_ref() }.load(Ordering::Acquire),
+                    1,
+                    "the Detached rejection performs no remote-head CAS or legacy route access"
+                );
+                assert_eq!(block, canonical_block);
+            });
+        });
+    }
+
+    #[test]
+    fn post_owner_exit_pointer_arena_singleton_releases_the_exact_terminal_tail() {
+        with_w03_process_page_fixture(|config, page_map, pair, main_heap, session| {
+            let (page, block, memory, slice_index) =
+                w03_publish_arena_singleton(config, pair, session);
+            // SAFETY: the newly published singleton has one exact current
+            // client. This lookup copies only its coherent pointer facts.
+            let allocation = unsafe { page_map.lookup_live_allocation(block) }
+                .expect("the W03 arena singleton PageMap remains ready")
+                .expect("the W03 arena singleton pointer resolves");
+            assert_eq!(
+                allocation.page_state(),
+                crate::process_page_map::LiveAllocationPageState::LiveOwnerAssociated
+            );
+            assert_eq!(
+                unsafe { abandoned::abandon_unmappable_after_collect(page) },
+                Ok(AbandonResult::UnownedUnmapped),
+                "the source owner establishes abandoned identity before unown"
+            );
+
+            let marker = ProcessPostOwnerExitTerminalMarker::new();
+            // SAFETY: `allocation` is the stale live PageMap observation whose
+            // still-live block holds this exact arena singleton registered
+            // through the source unown/CAS/tail operation.
+            let result = unsafe {
+                continue_post_owner_exit_live_allocation_with_terminal_marker(
+                    &marker, allocation, pair, main_heap,
+                )
+            };
+            assert_eq!(
+                result,
+                Ok(ProcessPostOwnerExitPointerFreeDisposition::Released),
+                "the W03 claim consumes the arena singleton's bitmap/map/metadata/slice tail; terminal audit = {:?}",
+                marker.test_audit_snapshot(),
+            );
+            assert!(!marker.is_retained());
+            assert_eq!(
+                marker.test_audit_snapshot(),
+                ProcessPostOwnerExitTerminalAuditSnapshot {
+                    terminalizations: 0,
+                    categories: 0,
+                }
+            );
+            assert!(
+                unsafe {
+                    page_map
+                        .page_map()
+                        .expect("the released arena singleton leaves the process map ready")
+                        .checked_lookup(block.as_ptr())
+                }
+                .is_null(),
+                "PageMap unregister precedes arena metadata/slice release"
+            );
+            let arena = pair.arena().expect("the paired arena stays process-owned");
+            assert_eq!(
+                unsafe { arena.pages() }.unwrap().is_clear_range(slice_index, 1),
+                Some(true),
+                "the exact arena singleton clears its static-main ordinary bit"
+            );
+            let _ = memory;
+        });
+    }
+
+    #[test]
+    fn post_owner_exit_pointer_external_singleton_unabandons_lists_and_retires_metadata() {
+        with_w03_process_page_fixture(|_config, page_map, pair, main_heap, session| {
+            let (page, block, base, layout, page_map_size) =
+                w03_publish_external_singleton(pair, session);
+            // SAFETY: the fresh external singleton's one client pins its map
+            // entry and metadata through the subsequent source CAS/tail.
+            let allocation = unsafe { page_map.lookup_live_allocation(block) }
+                .expect("the W03 external singleton PageMap remains ready")
+                .expect("the W03 external singleton pointer resolves");
+            w03_abandon_non_arena_singleton(page, main_heap);
+            let head = {
+                let mut heap = main_heap
+                    .lock_heap()
+                    .expect("the external singleton observes its source OS list");
+                let head = heap.heap_mut().test_os_abandoned_page_head();
+                heap.unlock()
+                    .expect("the external singleton list observation unlocks");
+                head
+            };
+            assert_eq!(
+                head,
+                page.as_ptr(),
+                "identity is established before the external singleton becomes OS-list visible"
+            );
+
+            let marker = ProcessPostOwnerExitTerminalMarker::new();
+            // SAFETY: this stale live pointer uses W07's exact claim. The
+            // external backing remains owned by the test until the source
+            // list/PageMap/metadata tail completes below.
+            assert_eq!(
+                unsafe {
+                    continue_post_owner_exit_live_allocation_with_terminal_marker(
+                        &marker, allocation, pair, main_heap,
+                    )
+                },
+                Ok(ProcessPostOwnerExitPointerFreeDisposition::Released),
+                "external singleton executes the source unabandon/list/map/metadata tail"
+            );
+            assert!(!marker.is_retained());
+            assert!(
+                unsafe {
+                    page_map
+                        .page_map()
+                        .expect("the external terminal tail leaves the process map ready")
+                        .checked_lookup(base.as_ptr())
+                }
+                .is_null(),
+                "external singleton clears its complete source-clipped PageMap range"
+            );
+            let head = {
+                let mut heap = main_heap
+                    .lock_heap()
+                    .expect("the external singleton observes post-release list state");
+                let head = heap.heap_mut().test_os_abandoned_page_head();
+                heap.unlock()
+                    .expect("the external singleton post-release list observation unlocks");
+                head
+            };
+            assert!(
+                head.is_null(),
+                "external terminal release removes its exact list member before metadata retirement"
+            );
+            assert!(page_map_size >= ARENA_SLICE_SIZE);
+            // SAFETY: W03 retired the page and unregistered every entry; an
+            // external `MemoryId` intentionally has no mapping-release owner,
+            // so this fixture now returns its raw backing itself.
+            unsafe { dealloc(base.as_ptr(), layout) };
+        });
+    }
+
+    #[test]
+    fn post_owner_exit_pointer_os_singleton_unabandons_before_clipped_mapping_release() {
+        with_w03_process_page_fixture(|config, page_map, pair, main_heap, session| {
+            let (page, block, slice_start, page_map_size) =
+                w03_publish_os_singleton(config, pair, session);
+            // SAFETY: the source OS singleton's one live client pins the
+            // mapping/metadata through its coherent pre-exit pointer lookup.
+            let allocation = unsafe { page_map.lookup_live_allocation(block) }
+                .expect("the W03 OS singleton PageMap remains ready")
+                .expect("the W03 OS singleton pointer resolves");
+            w03_abandon_non_arena_singleton(page, main_heap);
+            let head = {
+                let mut heap = main_heap
+                    .lock_heap()
+                    .expect("the OS singleton observes its source OS list");
+                let head = heap.heap_mut().test_os_abandoned_page_head();
+                heap.unlock()
+                    .expect("the OS singleton list observation unlocks");
+                head
+            };
+            assert_eq!(head, page.as_ptr());
+
+            let marker = ProcessPostOwnerExitTerminalMarker::new();
+            // SAFETY: this stale live pointer is consumed by the one W07
+            // claim; after `Released`, its page/mapping must not be accessed.
+            let result = unsafe {
+                continue_post_owner_exit_live_allocation_with_terminal_marker(
+                    &marker, allocation, pair, main_heap,
+                )
+            };
+            assert_eq!(
+                result,
+                Ok(ProcessPostOwnerExitPointerFreeDisposition::Released),
+                "normal OS singleton follows list removal, clipped PageMap, aliases, primary, then reclaim; terminal audit = {:?}",
+                marker.test_audit_snapshot(),
+            );
+            assert!(!marker.is_retained());
+            for offset in (0..page_map_size).step_by(ARENA_SLICE_SIZE) {
+                assert!(
+                    unsafe {
+                        page_map
+                            .page_map()
+                            .expect("the OS terminal tail leaves the process map ready")
+                            .checked_lookup(slice_start.as_ptr().wrapping_add(offset))
+                    }
+                    .is_null(),
+                    "the OS singleton clears each clipped map entry before mapping reclaim"
+                );
+            }
+            let head = {
+                let mut heap = main_heap
+                    .lock_heap()
+                    .expect("the OS singleton observes post-release list state");
+                let head = heap.heap_mut().test_os_abandoned_page_head();
+                heap.unlock()
+                    .expect("the OS singleton post-release list observation unlocks");
+                head
+            };
+            assert!(head.is_null(), "the OS terminal tail unlinked its exact list member");
+        });
+    }
+
+    #[test]
+    fn post_owner_exit_pointer_os_aligned_singleton_failed_unmap_retains_once() {
+        with_w03_process_page_fixture(|config, page_map, pair, main_heap, session| {
+            // The fault plan is process-global test instrumentation. Install
+            // it disabled while this source-valid 7-byte request / 128 KiB
+            // aligned singleton is published and abandoned; only the final
+            // W03 mapping reclaim is allowed to observe `Unmap` failure.
+            let fault = fault::install(fault::Plan::disabled());
+            let (page, block, slice_start, page_map_size) =
+                w03_publish_os_singleton(config, pair, session);
+            // SAFETY: the one current client is registered and keeps the
+            // alignment-forced source singleton/page metadata live through
+            // the claimed W07 continuation below.
+            let allocation = unsafe { page_map.lookup_live_allocation(block) }
+                .expect("the OS-aligned singleton PageMap remains ready")
+                .expect("the OS-aligned singleton pointer resolves");
+            assert_eq!(
+                allocation.page_state(),
+                crate::process_page_map::LiveAllocationPageState::LiveOwnerAssociated
+            );
+            assert_eq!(
+                unsafe { page.as_ref() }.reserved(),
+                1,
+                "the rounded small request is still the source singleton shape"
+            );
+            assert_eq!(
+                size_class::page_kind_for_block_size(unsafe { page.as_ref() }.block_size()),
+                Some(PageKind::Small),
+                "the 128 KiB alignment—not a size-forced huge bin—selects this singleton"
+            );
+            w03_abandon_non_arena_singleton(page, main_heap);
+            fault.set(fault::Plan::at(fault::Point::Unmap, 1, Errno::NOMEM));
+
+            let marker = ProcessPostOwnerExitTerminalMarker::new();
+            // SAFETY: W03 must claim this source current allocation once,
+            // remove its non-arena list/map/metadata predecessors, then
+            // retain the exact W07 wrapper and mapping owner when reclaim
+            // reports this injected one-way failure.
+            assert_eq!(
+                unsafe {
+                    continue_post_owner_exit_live_allocation_with_terminal_marker(
+                        &marker, allocation, pair, main_heap,
+                    )
+                },
+                Ok(ProcessPostOwnerExitPointerFreeDisposition::Retained)
+            );
+            assert!(marker.is_retained());
+            assert_eq!(
+                marker.test_audit_snapshot(),
+                ProcessPostOwnerExitTerminalAuditSnapshot {
+                    terminalizations: 1,
+                    categories: ProcessPostOwnerExitTerminalAuditCategory::NonArenaSingleton
+                        .bit(),
+                },
+                "the failed mapping reclaim seals the exact non-arena W07 owner"
+            );
+            assert_eq!(
+                fault.observed(),
+                1,
+                "the sole W03 terminal continuation reaches mapping reclaim exactly once"
+            );
+            for offset in (0..page_map_size).step_by(ARENA_SLICE_SIZE) {
+                assert!(
+                    unsafe {
+                        page_map
+                            .page_map()
+                            .expect("the retained terminal map remains inspectable")
+                            .checked_lookup(slice_start.as_ptr().wrapping_add(offset))
+                    }
+                    .is_null(),
+                    "the source PageMap range detached before the failed mapping reclaim"
+                );
+            }
+            let head = {
+                let mut heap = main_heap
+                    .lock_heap()
+                    .expect("the retained OS singleton observes its static list");
+                let head = heap.heap_mut().test_os_abandoned_page_head();
+                heap.unlock()
+                    .expect("the retained OS singleton list observation unlocks");
+                head
+            };
+            assert!(
+                head.is_null(),
+                "the source OS-list member detached before its failed mapping reclaim"
+            );
+
+            // `set` resets the test-only observed counter. Disable the global
+            // plan after the single assertion and deliberately do not invoke
+            // a second continuation/reclaim: the opaque terminal owner has no
+            // retry or extraction surface.
+            fault.set(fault::Plan::disabled());
+        });
+    }
+
+    #[test]
+    fn post_owner_exit_marker_is_post_cas_and_retains_each_in_flight_claim() {
+        with_w03_process_page_fixture(|_config, page_map, pair, main_heap, session| {
+            let marker = ProcessPostOwnerExitTerminalMarker::new();
+            // Model the first exceptional page after its source terminal tail
+            // has completed but its short mutation-lease wake failed. This
+            // has no raw page/block authority, yet must publish the same
+            // post-CAS exception observation as a retained exact owner.
+            terminalize_post_owner_exit_retained(
+                &marker,
+                ProcessPostOwnerExitTerminalRetained::MutationLeaseReleaseFailure,
+            );
+            assert!(marker.is_retained());
+            assert_eq!(
+                marker.test_audit_snapshot(),
+                ProcessPostOwnerExitTerminalAuditSnapshot {
+                    terminalizations: 1,
+                    categories: ProcessPostOwnerExitTerminalAuditCategory::MutationLeaseReleaseFailure
+                        .bit(),
+                }
+            );
+
+            let (page, block, base, _layout, page_map_size) =
+                w03_publish_external_singleton(pair, session);
+            // SAFETY: this current external client produces the only coherent
+            // typed pointer used by the second, in-flight source CAS.
+            let allocation = unsafe { page_map.lookup_live_allocation(block) }
+                .expect("the marker fixture PageMap remains ready")
+                .expect("the marker fixture pointer resolves");
+            w03_abandon_non_arena_singleton(page, main_heap);
+
+            // SAFETY: although the marker is already set, W03 must first run
+            // the page-local allow-collect CAS. Only the resulting exact W07
+            // claim observes the marker and is terminalized independently;
+            // it must not enter the first page's potentially retained map tail.
+            assert_eq!(
+                unsafe {
+                    continue_post_owner_exit_live_allocation_with_terminal_marker(
+                        &marker, allocation, pair, main_heap,
+                    )
+                },
+                Ok(ProcessPostOwnerExitPointerFreeDisposition::Retained)
+            );
+            assert_eq!(
+                marker.test_audit_snapshot(),
+                ProcessPostOwnerExitTerminalAuditSnapshot {
+                    terminalizations: 2,
+                    categories: ProcessPostOwnerExitTerminalAuditCategory::MutationLeaseReleaseFailure
+                        .bit()
+                        | ProcessPostOwnerExitTerminalAuditCategory::UncontinuedClaim.bit(),
+                },
+                "each exceptional source claim seals its own opaque terminal owner"
+            );
+            // SAFETY: the successful source CAS leaves its low-bit owner with
+            // W03's terminal type. The map/list must remain untouched because
+            // the marker was observed only after that CAS, before the lower
+            // mutation callback.
+            let producer = unsafe { Page::remote_free_producer_state_at(page) };
+            assert_ne!(
+                unsafe { producer.xthread_free.as_ref() }.load(Ordering::Acquire) & 1,
+                0,
+                "the second page performed its own source CAS before terminal retention"
+            );
+            assert_eq!(
+                unsafe {
+                    page_map
+                        .page_map()
+                        .expect("the marker fixture map remains inspectable")
+                        .checked_lookup(base.as_ptr())
+                },
+                page.as_ptr(),
+                "post-CAS marker retention bypasses PageMap mutation for the second claim"
+            );
+            let head = {
+                let mut heap = main_heap
+                    .lock_heap()
+                    .expect("the marker fixture observes its retained list member");
+                let head = heap.heap_mut().test_os_abandoned_page_head();
+                heap.unlock()
+                    .expect("the marker fixture list observation unlocks");
+                head
+            };
+            assert_eq!(head, page.as_ptr());
+            assert!(page_map_size >= ARENA_SLICE_SIZE);
+            // The second exact claim and its external page/list backing are
+            // intentionally process-lifetime retained by W03. Do not
+            // deallocate `base`: that would falsify the terminal owner proof.
+        });
     }
 
     fn append_unique(requests: &mut [usize], count: &mut usize, request: usize) {

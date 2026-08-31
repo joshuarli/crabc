@@ -212,6 +212,11 @@ pub(crate) enum AbandonError {
     BitmapQuiescenceFailed,
     MappedBitAlreadyPublished,
     MappedPublicationFailed,
+    /// Source-specific abandoned publication did not complete between the
+    /// abandoned identity/map transition and the common unown loop. The
+    /// caller still owns the low bit and must retain its exact terminal
+    /// transition rather than exposing an ordinary-associated page.
+    PreUnownPublication,
     AbandonedCountDecrementFailed,
     InvalidPageGeometry,
     /// A bounded mapped one-block owner-exit handoff acquired its source low
@@ -1302,6 +1307,37 @@ where
     }
 }
 
+/// Performs the false-force owner-local phase after a post-exit CAS claim.
+///
+/// The outer W08 owner-exit coordinator already runs force then false
+/// collection before it establishes an abandoned identity. A pointer lookup
+/// can, however, observe a page that was abandoned by another valid source
+/// path. Repeating this exact false-force phase under the newly claimed low
+/// bit keeps that front edge source-faithful without consulting or
+/// dereferencing a departed `theap`; it is a no-op for the coordinator-drained
+/// case and consumes a remaining `local_free` list for the direct case.
+///
+/// # Safety
+///
+/// `page` must be the exact abandoned page whose remote-head low bit is held
+/// by the caller after a successful `allow_collect=true` publication. The
+/// page metadata and complete local-list area must remain live and exclusively
+/// owned through this one local-list transfer.
+pub(crate) unsafe fn collect_post_owner_exit_local_free_false(
+    page: NonNull<Page>,
+) -> Result<(), AbandonError> {
+    // SAFETY: the caller supplies the exact post-CAS low-bit and page-area
+    // proof. This projection reads only the abandoned identities and raw
+    // local-list fields; it never reads `page->theap`.
+    let state = unsafe { Page::abandoned_local_collect_state_at(page) }
+        .ok_or(AbandonError::InvalidPageGeometry)?;
+    // SAFETY: `state` is the one abandoned page's held-owner local-list
+    // projection. `force == false` matches the post-remote source phase.
+    unsafe { free_list::collect_local_false(state) }
+        .map(|_| ())
+        .map_err(AbandonError::LocalFree)
+}
+
 /// Frees one canonical block from an exited owner's regular arena page and,
 /// if that was the final block, hands the page directly to its terminal
 /// PageMap/span owner.
@@ -1462,6 +1498,36 @@ where
     }
 }
 
+/// Tests the source singleton shape after an abandoned remote-free claim.
+///
+/// Pinned `internal.h:mi_page_is_huge` recognizes the usual size-forced
+/// singleton and the aligned normal-OS variant: `reserved == 1` with the
+/// mapping base below its metadata. The latter is only an admission fact here;
+/// the W03 terminal callback must still reconstruct
+/// [`crate::os_page::OsAlignedPageLayout`] before it changes the OS list or
+/// PageMap. Arena and external pages retain the size-forced requirement.
+#[inline]
+fn is_source_singleton_claim_geometry(
+    page: NonNull<Page>,
+    state: &PageAbandonmentState,
+) -> bool {
+    if state.reserved != 1 {
+        return false;
+    }
+    if matches!(
+        size_class::page_kind_for_block_size(state.block_size),
+        Some(PageKind::Singleton)
+    ) {
+        return true;
+    }
+    state.memid.kind() == MemoryKind::Os
+        && state.memid.os_memory().is_some_and(|memory| {
+            !memory.base.is_null()
+                && memory.size != 0
+                && memory.base.addr() < page.as_ptr().addr()
+        })
+}
+
 /// Continues an already-published singleton claim through the source
 /// all-free and terminal arena/OS release tail.
 ///
@@ -1523,13 +1589,18 @@ where
             error: AbandonError::InvalidPageGeometry,
         });
     };
+    // `internal.h:mi_page_is_huge` treats a singleton as either the usual
+    // size-forced large block or a normal OS mapping whose aligned metadata
+    // lies after the mapping base.  The latter is how
+    // `aligned_alloc(128 KiB, 7)` reaches `reserved == 1` even though its
+    // rounded internal block remains `PageKind::Small`. W03's terminal
+    // callback reconstructs `OsAlignedPageLayout` before it mutates the OS
+    // list or PageMap. The rounded 4 KiB block already takes the existing
+    // full collector (`> SMALL_SIZE_MAX`), so this admission does not widen
+    // the direct-small partial collector.
     if !is_owned(&state)
         || source_thread_identity(&state) != THREAD_ID_ABANDONED
-        || state.reserved != 1
-        || !matches!(
-            size_class::page_kind_for_block_size(state.block_size),
-            Some(PageKind::Singleton)
-        )
+        || !is_source_singleton_claim_geometry(page, &state)
     {
         return Err(ClaimedPostOwnerExitSingletonFreeFailure {
             owner: claim,
@@ -1548,6 +1619,12 @@ where
             block,
             &UNMAPPABLE_ABANDONED_PAGES,
             &mut no_test_hook,
+            // After the source atomic detach, `_mi_page_free_collect(page,
+            // false)` must transfer any owner-local deferred list before the
+            // all-free/unabandon decision. The W07 claim still owns the low
+            // bit, so this neither consults a departed Theap nor rebuilds
+            // page/block authority.
+            |page| collect_post_owner_exit_local_free_false(page),
         )
     };
     match result {
@@ -2586,7 +2663,18 @@ where
     // SAFETY: the source publication above changed an unowned remote head
     // into an owned head. Continue after that CAS without linking `block` a
     // second time.
-    unsafe { finish_unmapped_after_remote_claim(page, block, map, before_expected_cas) }
+    unsafe {
+        finish_unmapped_after_remote_claim(
+            page,
+            block,
+            map,
+            before_expected_cas,
+            // This legacy raw helper preserves its bounded existing
+            // semantics. The exact claim-bearing singleton continuation
+            // above supplies the source false-force local phase.
+            |_page| Ok(()),
+        )
+    }
 }
 
 /// Continues the source-unmapped post-owner-exit tail after a remote
@@ -2603,15 +2691,17 @@ where
 /// this exact `block`, retain the complete initialized page/block area, and
 /// satisfy the map and test-hook obligations of
 /// [`free_unmapped_after_failed_reclaim_inner`].
-unsafe fn finish_unmapped_after_remote_claim<M, F>(
+unsafe fn finish_unmapped_after_remote_claim<M, F, C>(
     page: NonNull<Page>,
     block: NonNull<u8>,
     map: &M,
     before_expected_cas: &mut Option<F>,
+    collect_owner_deferred_frees: C,
 ) -> Result<UnmappedAbandonedFreeResult, AbandonError>
 where
     M: MappedAbandonedPages + ?Sized,
     F: FnOnce(),
+    C: FnOnce(NonNull<Page>) -> Result<(), AbandonError>,
 {
 
     // A successful `allow_collect` publication owns the low bit. Validate the
@@ -2644,6 +2734,13 @@ where
         unsafe { remote_free::collect_abandoned(page) }
     }
     .map_err(AbandonError::RemoteFree)?;
+
+    // The atomic collector transfers its detached head into `local_free`.
+    // Before source empty/reabandon/unown selection,
+    // `_mi_page_free_collect(page, false)` performs the owner-local half.
+    // The claim-bearing singleton continuation supplies that exact false
+    // transfer; legacy raw callers make their preserved no-op explicit.
+    collect_owner_deferred_frees(page)?;
 
     if let Some(result) = terminal_or_reabandon_unmapped(page, &state, map)? {
         return Ok(result);
@@ -2704,6 +2801,36 @@ pub(crate) unsafe fn abandon_after_collect<M: MappedAbandonedPages + ?Sized>(
     page: NonNull<Page>,
     map: Option<&M>,
 ) -> Result<AbandonResult, AbandonError> {
+    // SAFETY: this plain form has no source-specific publication between
+    // identity/map publication and the shared abandoned-owner unown loop.
+    unsafe { abandon_after_collect_with_before_unown(page, map, || Ok(())) }
+}
+
+/// The identity/publication half of [`abandon`] with one source-specific
+/// publication boundary before the common abandoned-owner unown loop.
+///
+/// Pinned `page.c:_mi_page_abandon` establishes abandoned identity before it
+/// delegates to `arena.c:_mi_arenas_page_abandon`. That branch may publish the
+/// mapped bitmap/count pair or an exact non-arena OS-list member, and only
+/// then may `mi_abandoned_page_unown` clear the owner bit. `before_unown`
+/// models the latter publication and must not release, reuse, or reclassify
+/// the page while it still owns the source low bit.
+///
+/// # Safety
+///
+/// `page` has the same proof as [`abandon_after_collect`]. In addition,
+/// `before_unown` must preserve initialized metadata and the raw originating
+/// Theap identity through its return. It may expose the page only through the
+/// matching source process structure once the abandoned identity and low owner
+/// bit are both established.
+pub(crate) unsafe fn abandon_after_collect_with_before_unown<
+    M: MappedAbandonedPages + ?Sized,
+    F: FnOnce() -> Result<(), AbandonError>,
+>(
+    page: NonNull<Page>,
+    map: Option<&M>,
+    before_unown: F,
+) -> Result<AbandonResult, AbandonError> {
     // SAFETY: caller retains the page lifecycle proof and has collected the
     // pre-abandon remote list. This projects raw fields only.
     let state = unsafe { Page::abandonment_state_at(page) };
@@ -2753,6 +2880,7 @@ pub(crate) unsafe fn abandon_after_collect<M: MappedAbandonedPages + ?Sized>(
             return Err(AbandonError::MappedPublicationFailed);
         }
     }
+    before_unown()?;
     unown(page, map)
 }
 
@@ -2774,9 +2902,33 @@ pub(crate) unsafe fn abandon_after_collect<M: MappedAbandonedPages + ?Sized>(
 pub(crate) unsafe fn abandon_unmappable_after_collect(
     page: NonNull<Page>,
 ) -> Result<AbandonResult, AbandonError> {
+    // SAFETY: this plain source-unmappable form has no OS-list publication
+    // boundary to preserve.
+    unsafe { abandon_unmappable_after_collect_with_before_unown(page, || Ok(())) }
+}
+
+/// Source-unmappable [`abandon_after_collect_with_before_unown`] form for an
+/// exact non-arena publication such as `heap->os_abandoned_pages`.
+///
+/// # Safety
+///
+/// The caller must meet [`abandon_unmappable_after_collect`]'s source-state
+/// proof and the additional pre-unown publication obligations above.
+pub(crate) unsafe fn abandon_unmappable_after_collect_with_before_unown<
+    F: FnOnce() -> Result<(), AbandonError>,
+>(
+    page: NonNull<Page>,
+    before_unown: F,
+) -> Result<AbandonResult, AbandonError> {
     // SAFETY: the caller provides the queue-detached, false-force-collected
     // source state; the private marker blocks an accidental mapped route.
-    unsafe { abandon_after_collect(page, Some(&UNMAPPABLE_ABANDONED_PAGES)) }
+    unsafe {
+        abandon_after_collect_with_before_unown(
+            page,
+            Some(&UNMAPPABLE_ABANDONED_PAGES),
+            before_unown,
+        )
+    }
 }
 
 /// Searches one source `pages_abandoned[bin]` map and claims/reassociates the
@@ -3008,7 +3160,62 @@ fn unown<M: MappedAbandonedPages + ?Sized>(
     page: NonNull<Page>,
     map: Option<&M>,
 ) -> Result<AbandonResult, AbandonError> {
-    unown_with(page, map, || {})
+    unown_with(page, map, || {
+        #[cfg(test)]
+        test_publish_owner_exit_remote_free_before_unown(page);
+    })
+}
+
+#[cfg(test)]
+struct OwnerExitLateRemoteFreeInjection {
+    producer: remote_free::OwnerExitUnownRemoteFreeInjection,
+}
+
+#[cfg(test)]
+#[thread_local]
+static mut OWNER_EXIT_LATE_REMOTE_FREE_INJECTION: Option<OwnerExitLateRemoteFreeInjection> = None;
+
+/// Installs the deterministic producer interleaving used by the production
+/// owner-exit regression. The callback fires after source unown observed an
+/// empty remote head and before its weak release CAS.
+///
+/// # Safety
+///
+/// `producer` must come from one exact still-live owner-scoped client and
+/// remain pending only until the current thread consumes it during
+/// abandonment.
+#[cfg(test)]
+pub(crate) unsafe fn test_inject_owner_exit_remote_free_before_unown(
+    producer: remote_free::OwnerExitUnownRemoteFreeInjection,
+) -> bool {
+    // SAFETY: this compiler-TLS slot is reachable only by the current test
+    // thread, which retains the page engine until the injection is consumed.
+    let slot = unsafe { &mut *core::ptr::addr_of_mut!(OWNER_EXIT_LATE_REMOTE_FREE_INJECTION) };
+    if slot.is_some() {
+        return false;
+    }
+    *slot = Some(OwnerExitLateRemoteFreeInjection { producer });
+    true
+}
+
+#[cfg(test)]
+fn test_publish_owner_exit_remote_free_before_unown(page: NonNull<Page>) {
+    // SAFETY: this compiler-TLS slot is reachable only by the current test
+    // thread. A nonmatching abandonment leaves the injection for its exact
+    // page later in the same generic queue traversal.
+    let slot = unsafe { &mut *core::ptr::addr_of_mut!(OWNER_EXIT_LATE_REMOTE_FREE_INJECTION) };
+    let Some(injection) = slot.take() else { return };
+    // SAFETY: the matching unown caller retains its initialized page while
+    // the test token retains only the disjoint producer projection.
+    if !unsafe { injection.producer.matches_page(page) } {
+        *slot = Some(injection);
+        return;
+    }
+    assert_eq!(
+        unsafe { injection.producer.publish_after_unown_observation() },
+        Ok(remote_free::AbandonedRemotePush::PublishedToExistingOwner),
+        "the deterministic late producer observes the source owner bit",
+    );
 }
 
 /// Source `mi_abandoned_page_unown` loop with its sole interleaving point
@@ -3324,14 +3531,14 @@ mod tests {
 
     use super::*;
     use core::cell::Cell;
-    use core::mem::MaybeUninit;
+    use core::mem::{MaybeUninit, size_of};
     use core::sync::atomic::{AtomicBool, AtomicI64, AtomicUsize, Ordering};
     use std::sync::{Arc, Barrier};
     use std::thread;
 
     use crate::arena::ArenaView;
     use crate::bitmap::{BitmapLayout, BitmapView};
-    use crate::config::{ARENA_BIN_COUNT, BCHUNK_BITS};
+    use crate::config::{ARENA_BIN_COUNT, BCHUNK_BITS, LARGE_MAX_OBJ_SIZE, MAX_ALIGN_SIZE};
     use crate::types::{
         Arena, ArenaPages, Block, Heap, MemoryId, PageRemoteFreeProducerState,
         ThreadLocalData,
@@ -3357,6 +3564,75 @@ mod tests {
         fn pointer(&mut self) -> NonNull<u8> {
             NonNull::from(&mut self.0).cast()
         }
+    }
+
+    // The singleton post-claim continuation now performs the source false
+    // local-free transfer.  These tests therefore need a real source-stride
+    // `Page` followed by its exact canonical block area, not the older
+    // `remote_free_test_page` plus unrelated `TestBlock` protocol fixture.
+    const SOURCE_SINGLETON_BLOCK_SIZE: usize =
+        (LARGE_MAX_OBJ_SIZE + 1 + MAX_ALIGN_SIZE - 1) & !(MAX_ALIGN_SIZE - 1);
+    const SOURCE_SINGLETON_PAGE_OFFSET: usize = size_of::<Page>();
+    const SOURCE_SINGLETON_STORAGE_WORDS: usize =
+        (SOURCE_SINGLETON_PAGE_OFFSET + SOURCE_SINGLETON_BLOCK_SIZE) / size_of::<usize>();
+
+    #[repr(align(16))]
+    struct SourceSingletonStorage {
+        words: [MaybeUninit<usize>; SOURCE_SINGLETON_STORAGE_WORDS],
+    }
+
+    impl SourceSingletonStorage {
+        fn uninit() -> Self {
+            Self {
+                words: [const { MaybeUninit::uninit() }; SOURCE_SINGLETON_STORAGE_WORDS],
+            }
+        }
+
+        fn page_and_block(&mut self) -> (NonNull<Page>, NonNull<u8>) {
+            let page = NonNull::new(self.words.as_mut_ptr().cast::<Page>())
+                .expect("the source-stride singleton metadata is non-null");
+            // SAFETY: the aligned backing reserves one complete page block
+            // immediately after its as-yet uninitialized metadata slot.
+            let block = unsafe {
+                NonNull::new_unchecked(
+                    page.as_ptr()
+                        .cast::<u8>()
+                        .add(SOURCE_SINGLETON_PAGE_OFFSET),
+                )
+            };
+            (page, block)
+        }
+    }
+
+    fn publish_source_singleton(
+        storage: &mut SourceSingletonStorage,
+        heap: &Heap,
+        theap: &mut Theap,
+        thread_id: LiveThreadId,
+        memory: MemoryId,
+    ) -> (NonNull<Page>, NonNull<u8>) {
+        let (metadata, block) = storage.page_and_block();
+        // SAFETY: `storage` holds exactly one aligned metadata image followed
+        // by its complete, aligned one-block area. The bound live Theap/Heap
+        // own the source association until `abandon` below.
+        let mut page = unsafe {
+            Page::publish_fresh_exclusive_at(
+                metadata,
+                theap,
+                heap,
+                thread_id,
+                SOURCE_SINGLETON_BLOCK_SIZE,
+                SOURCE_SINGLETON_PAGE_OFFSET,
+                1,
+                0,
+                true,
+                memory,
+            )
+        }
+        .expect("the source-stride singleton metadata initializes");
+        assert!(unsafe { page.as_mut() }.set_capacity_reserved(1, 1));
+        unsafe { page.as_mut() }.set_exclusive_used(1);
+        (page, block)
     }
 
     /// Raw-backed stand-in for one coherent W02 live-allocation observation.
@@ -3984,10 +4260,9 @@ mod tests {
     }
 
     fn claim_live_singleton_after_owner_exit(
-        page: &mut Page,
+        page: NonNull<Page>,
         block: NonNull<u8>,
     ) -> remote_free::ClaimedAbandonedRemoteFree {
-        let page = NonNull::from(page);
         // SAFETY: the fixture fixes this page and exact current block before
         // copying the producer projection. The live block keeps both valid
         // across the immediately following owner-exit transition.
@@ -4008,16 +4283,23 @@ mod tests {
 
     #[test]
     fn live_remote_singleton_claim_consumes_the_arena_terminal_tail() {
-        let block_size = crate::config::LARGE_MAX_OBJ_SIZE + 1;
         let mut storage = BitmapStorage::uninit();
         let mut arena = map_fixture(&mut storage);
-        let mut page = Page::remote_free_test_page(1, 1);
-        page.set_block_size(block_size);
-        assert!(unsafe { page.abandoned_test_set_arena_memory(&mut arena, 17, 1) });
-        let mut block = TestBlock([0; 16]);
-        let block = block.pointer();
-        let page_pointer = NonNull::from(&mut page);
-        let claim = claim_live_singleton_after_owner_exit(&mut page, block);
+        let thread_id = LiveThreadId::new(12).expect("valid source thread identity");
+        let mut heap = Heap::bootstrap_empty();
+        let mut tld = ThreadLocalData::detached();
+        let mut theap = Theap::empty();
+        bind_adopting_theap(&mut heap, &mut tld, &mut theap, thread_id);
+        let mut page_storage = SourceSingletonStorage::uninit();
+        let (mut page_pointer, block) = publish_source_singleton(
+            &mut page_storage,
+            &heap,
+            &mut theap,
+            thread_id,
+            MemoryId::none(),
+        );
+        assert!(unsafe { page_pointer.as_mut().abandoned_test_set_arena_memory(&mut arena, 17, 1) });
+        let claim = claim_live_singleton_after_owner_exit(page_pointer, block);
 
         let mut unabandon_calls = 0usize;
         let mut terminal_free_calls = 0usize;
@@ -4034,6 +4316,16 @@ mod tests {
                     release.backing(),
                     ClaimedPostOwnerExitSingletonBacking::Arena
                 );
+                let page = release.page().as_ref();
+                assert_eq!(
+                    page.remote_free_test_free(),
+                    block.cast::<Block>().as_ptr(),
+                    "the claimed remote block reached local_free before the source false collection"
+                );
+                assert!(
+                    page.remote_free_test_local_free().is_null(),
+                    "the singleton terminal tail observes the completed false-force local transfer"
+                );
                 assert_eq!(unabandon_calls, 0);
                 unabandon_calls += 1;
                 assert_eq!(terminal_free_calls, 0);
@@ -4047,35 +4339,32 @@ mod tests {
         ));
         assert_eq!(unabandon_calls, 1);
         assert_eq!(terminal_free_calls, 1);
-        assert_eq!(page.remote_free_test_used(), 0);
+        assert_eq!(unsafe { page_pointer.as_ref() }.remote_free_test_used(), 0);
     }
 
     #[test]
     fn live_remote_singleton_claim_consumes_the_external_terminal_tail() {
-        let block_size = crate::config::LARGE_MAX_OBJ_SIZE + 1;
         let thread_id = LiveThreadId::new(12).expect("valid source thread identity");
         let mut heap = Heap::bootstrap_empty();
         let mut tld = ThreadLocalData::detached();
         let mut theap = Theap::empty();
         bind_adopting_theap(&mut heap, &mut tld, &mut theap, thread_id);
-        let mut block = TestBlock([0; 16]);
-        let block = block.pointer();
-        let memory = MemoryId::external(block.as_ptr(), block_size, true, false, true);
-        let mut page = Page::remote_free_test_unassociated();
-        assert!(page.publish_fresh_exclusive(
-            &mut theap,
-            &heap,
-            thread_id,
-            block_size,
-            1,
-            1,
-            0,
+        let mut page_storage = SourceSingletonStorage::uninit();
+        let (_, block) = page_storage.page_and_block();
+        let memory = MemoryId::external(
+            block.as_ptr(),
+            SOURCE_SINGLETON_BLOCK_SIZE,
             true,
+            false,
+            true,
+        );
+        let (mut page_pointer, block) = publish_source_singleton(
+            &mut page_storage,
+            &heap,
+            &mut theap,
+            thread_id,
             memory,
-        ));
-        assert!(page.set_capacity_reserved(1, 1));
-        page.set_exclusive_used(1);
-        let page_pointer = NonNull::from(&mut page);
+        );
         // Source `_mi_arenas_page_abandon` links a non-arena abandoned page
         // before it later unowns the remote head. The bounded substrate leaves
         // that private-list owner to this terminal fixture, so install the
@@ -4114,6 +4403,16 @@ mod tests {
                     release.backing(),
                     ClaimedPostOwnerExitSingletonBacking::OsOrExternal
                 );
+                let page = release.page().as_ref();
+                assert_eq!(
+                    page.remote_free_test_free(),
+                    block.cast::<Block>().as_ptr(),
+                    "the external singleton sees the remote block after the source false collection"
+                );
+                assert!(
+                    page.remote_free_test_local_free().is_null(),
+                    "the external singleton terminal tail cannot skip local_free -> free"
+                );
                 assert_eq!(unabandon_calls, 0);
                 unabandon_calls += 1;
                 assert_eq!(heap.remove_os_abandoned_page(release.page()), Ok(()));
@@ -4130,21 +4429,28 @@ mod tests {
         assert_eq!(unabandon_calls, 1);
         assert_eq!(terminal_free_calls, 1);
         assert!(heap.test_os_abandoned_page_head().is_null());
-        assert_eq!(page.remote_free_test_used(), 0);
+        assert_eq!(unsafe { page_pointer.as_ref() }.remote_free_test_used(), 0);
     }
 
     #[test]
     fn live_remote_singleton_terminal_failure_retains_the_exact_claim() {
-        let block_size = crate::config::LARGE_MAX_OBJ_SIZE + 1;
         let mut storage = BitmapStorage::uninit();
         let mut arena = map_fixture(&mut storage);
-        let mut page = Page::remote_free_test_page(1, 1);
-        page.set_block_size(block_size);
-        assert!(unsafe { page.abandoned_test_set_arena_memory(&mut arena, 17, 1) });
-        let mut block = TestBlock([0; 16]);
-        let block = block.pointer();
-        let page_pointer = NonNull::from(&mut page);
-        let claim = claim_live_singleton_after_owner_exit(&mut page, block);
+        let thread_id = LiveThreadId::new(12).expect("valid source thread identity");
+        let mut heap = Heap::bootstrap_empty();
+        let mut tld = ThreadLocalData::detached();
+        let mut theap = Theap::empty();
+        bind_adopting_theap(&mut heap, &mut tld, &mut theap, thread_id);
+        let mut page_storage = SourceSingletonStorage::uninit();
+        let (mut page_pointer, block) = publish_source_singleton(
+            &mut page_storage,
+            &heap,
+            &mut theap,
+            thread_id,
+            MemoryId::none(),
+        );
+        assert!(unsafe { page_pointer.as_mut().abandoned_test_set_arena_memory(&mut arena, 17, 1) });
+        let claim = claim_live_singleton_after_owner_exit(page_pointer, block);
 
         // SAFETY: the fixture intentionally models a failed terminal release;
         // it returns the exact capability it received instead of dropping the
@@ -4167,8 +4473,8 @@ mod tests {
             retained.backing(),
             ClaimedPostOwnerExitSingletonBacking::Arena
         );
-        assert_eq!(page.remote_free_test_used(), 0);
-        assert_ne!(page.remote_free_test_head() & THREAD_FREE_OWNED, 0);
+        assert_eq!(unsafe { page_pointer.as_ref() }.remote_free_test_used(), 0);
+        assert_ne!(unsafe { page_pointer.as_ref() }.remote_free_test_head() & THREAD_FREE_OWNED, 0);
     }
 
     #[test]

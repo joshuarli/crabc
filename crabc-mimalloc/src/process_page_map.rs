@@ -186,6 +186,7 @@ impl LiveAllocationPointer {
     /// Reports the source page-wide interior-pointer flag.
     #[inline]
     pub(crate) const fn has_interior_pointers(&self) -> bool { self.has_interior_pointers }
+
 }
 
 /// Classifies one current allocation after its source PageMap lookup.
@@ -781,6 +782,34 @@ impl ProcessPageMapMutationLease {
         }
     }
 
+    /// Releases one short, exact post-owner-exit PageMap mutation boundary.
+    ///
+    /// Unlike [`Self::finish`], this does not claim that the whole process
+    /// PageMap is empty. It is deliberately unsafe and narrowly intended for
+    /// a source post-owner-exit continuation which has already proved all of
+    /// the following: it held W07's unique page claim, serialized every plain
+    /// PageMap operation on that exact page through this lease, and either
+    /// removed that exact registration before releasing its metadata or left
+    /// it untouched under another still-live source owner. Other entries must
+    /// have disjoint source lifetime proofs; this operation is neither a
+    /// general short map lock nor a route/access registry.
+    ///
+    /// An unlock failure follows the normal mutation-lease rule and poisons
+    /// the root after the visible release, so the caller must retain a
+    /// terminal process outcome rather than retrying it as a fresh lifecycle.
+    pub(crate) unsafe fn finish_after_exact_post_owner_exit_operation(
+        mut self,
+    ) -> Result<(), ProcessPageMapError> {
+        let guard = self.guard.take().ok_or(ProcessPageMapError::Poisoned)?;
+        match guard.unlock() {
+            Ok(()) => Ok(()),
+            Err(error) => {
+                self.storage.state.store(POISONED, Ordering::Release);
+                Err(ProcessPageMapError::Lock(error))
+            }
+        }
+    }
+
     /// Transfers the long engine guard to one process-lived post-exit page
     /// route.
     ///
@@ -1187,6 +1216,9 @@ mod tests {
     use super::*;
     use crate::config::ARENA_SLICE_SIZE;
     use crate::os::{PageSize, fault};
+    use crate::remote_free::{
+        self, AbandonedOwnerHeadTransition, LiveRemoteFreePublish,
+    };
     use crate::types::{
         Heap, LiveThreadId, MemoryId, Theap, ThreadLocalData, PAGE_FLAG_MASK,
         PAGE_HAS_INTERIOR_POINTERS, PAGE_IN_FULL_QUEUE, THREAD_ID_ABANDONED,
@@ -1215,6 +1247,182 @@ mod tests {
         // identity field and never accesses the potentially stale `theap`.
         let field = unsafe { &*core::ptr::addr_of!((*geometry).xthread_id) };
         field.store(xthread_id, Ordering::Relaxed);
+    }
+
+    /// Runs one real PageMap-derived pointer fixture through a consuming
+    /// source remote-free operation before unregistering its exact range.
+    ///
+    /// The closure receives no raw page/block constructor: it must obtain a
+    /// [`LiveAllocationPointer`] through `lookup_live_allocation`, just as the
+    /// production pointer dispatcher does.
+    fn with_live_pointer_remote_fixture(
+        operation: impl FnOnce(ProcessPageMapLease, NonNull<Page>, NonNull<u8>),
+    ) {
+        let storage = ProcessPageMapStorage::test_static_owner();
+        let subprocess = MainSubprocess::test_static_owner();
+        let lease = storage
+            .initialize(memory_config(), subprocess)
+            .expect("the fixture process map initializes");
+
+        let thread_id = LiveThreadId::new(16).expect("the fixture owner is source-valid");
+        let mut heap = Heap::bootstrap_empty();
+        let mut tld = ThreadLocalData::detached();
+        tld.attach_bootstrap_exclusive(thread_id);
+        let mut theap = Theap::empty();
+        assert!(theap.bind_exclusive_single_thread(&mut heap, &mut tld));
+
+        const BLOCK_SIZE: usize = 48;
+        const RESERVED: u16 = 4;
+        let metadata_size =
+            (size_of::<Page>() + align_of::<usize>() - 1) & !(align_of::<usize>() - 1);
+        let page_offset = ARENA_SLICE_SIZE + metadata_size;
+        let layout = Layout::from_size_align(2 * ARENA_SLICE_SIZE, ARENA_SLICE_SIZE)
+            .expect("the separated-metadata fixture layout is valid");
+        // SAFETY: the matching exact-range unregistration and deallocation
+        // happen after the consuming pointer operation returns.
+        let base = NonNull::new(unsafe { alloc_zeroed(layout) })
+            .expect("the focused pointer fixture allocates two arena slices");
+        let page = base.cast::<Page>();
+        // SAFETY: this fixture owns the metadata, complete block range, and
+        // bound source owner through its one pointer operation.
+        let mut page = unsafe {
+            Page::publish_fresh_exclusive_at(
+                page,
+                &mut theap,
+                &heap,
+                thread_id,
+                BLOCK_SIZE,
+                page_offset,
+                RESERVED,
+                0,
+                false,
+                MemoryId::external(base.as_ptr(), 2 * ARENA_SLICE_SIZE, true, false, true),
+            )
+        }
+        .expect("the live pointer fixture page is source-valid");
+        // The fixture hands out exactly its first block, so its still-counted
+        // `used` value supplies the source PageMap lifetime proof through the
+        // later remote publication.
+        unsafe { page.as_mut() }.set_exclusive_used(1);
+        let block = NonNull::new(unsafe { base.as_ptr().add(page_offset) })
+            .expect("the fixture canonical block is non-null");
+        // SAFETY: this fixture owns the one registered block area and has no
+        // concurrent PageMap writer or reader.
+        let page_map = unsafe { lease.page_map_for_owned_ranges() }
+            .expect("the process map serves the fixture range");
+        unsafe {
+            page_map
+                .register_range(block.as_ptr(), usize::from(RESERVED) * BLOCK_SIZE, page)
+                .expect("the fixture block range registers before lookup");
+        }
+
+        operation(lease, page, block);
+
+        // SAFETY: the operation consumed or rejected its one pointer and has
+        // discharged any source low-bit ownership before this exact clear.
+        unsafe {
+            page_map
+                .unregister_range(block.as_ptr(), usize::from(RESERVED) * BLOCK_SIZE)
+                .expect("the fixture registration clears before metadata release");
+            core::ptr::drop_in_place(page.as_ptr());
+            dealloc(base.as_ptr(), layout);
+        }
+    }
+
+    #[test]
+    fn live_allocation_pointer_post_exit_publication_handles_stale_source_snapshots() {
+        // A lookup that was live before owner exit must still use the exact
+        // allow-collect CAS. If exit clears the head first, the source result
+        // is the W07 claim—not a re-read or a former-owner route.
+        with_live_pointer_remote_fixture(|lease, page, block| {
+            let live = unsafe { lease.lookup_live_allocation(block) }
+                .expect("the fixture map remains ready")
+                .expect("the current fixture allocation resolves");
+            assert_eq!(live.page_state(), LiveAllocationPageState::LiveOwnerAssociated);
+            store_source_xthread_id_for_pointer_test(page, THREAD_ID_ABANDONED);
+            // SAFETY: this fixture exclusively models the source exit's
+            // identity/unown boundary before the stale pointer's CAS.
+            // SAFETY: this fixture retains the initialized atomic remote-head
+            // projection through the exact source unown model below.
+            unsafe {
+                Page::remote_free_producer_state_at(page)
+                    .xthread_free
+                    .as_ref()
+                    .store(0, Ordering::Release);
+            }
+
+            let claim = match unsafe { remote_free::push_post_owner_exit_live_allocation(live) } {
+                Ok(LiveRemoteFreePublish::ClaimedAbandonedPage(claim)) => claim,
+                outcome => panic!("stale live lookup must retain its exact claim: {outcome:?}"),
+            };
+            assert_eq!(claim.page(), page);
+            assert_eq!(claim.published_block(), block);
+            // SAFETY: the exact claim owns the abandoned low bit. Finish the
+            // test's source collection/unown before PageMap cleanup.
+            assert_eq!(unsafe { remote_free::collect_abandoned(page) }, Ok(1));
+            let producer = unsafe { Page::remote_free_producer_state_at(page) };
+            let mut no_hook = None::<fn()>;
+            assert_eq!(
+                remote_free::try_unown_abandoned_head(
+                    unsafe { producer.xthread_free.as_ref() },
+                    &mut no_hook,
+                ),
+                AbandonedOwnerHeadTransition::Released,
+            );
+            drop(claim);
+        });
+
+        // A lookup already classified as mapped-abandoned may become live
+        // again before its CAS. It must publish to that reclaimed owner rather
+        // than reject the stale snapshot or construct a second claim.
+        with_live_pointer_remote_fixture(|lease, page, block| {
+            store_source_xthread_id_for_pointer_test(page, THREAD_ID_ABANDONED_MAPPED);
+            let producer = unsafe { Page::remote_free_producer_state_at(page) };
+            unsafe { producer.xthread_free.as_ref() }.store(0, Ordering::Release);
+            let mapped = unsafe { lease.lookup_live_allocation(block) }
+                .expect("the fixture map remains ready")
+                .expect("the mapped-abandoned allocation resolves");
+            assert_eq!(mapped.page_state(), LiveAllocationPageState::AbandonedMapped);
+
+            // A different source claimant wins first and reclaims the page.
+            assert_eq!(
+                remote_free::claim_abandoned_owner(unsafe { producer.xthread_free.as_ref() }),
+                remote_free::AbandonedOwnerClaim::ClaimedUnowned,
+            );
+            store_source_xthread_id_for_pointer_test(page, 16);
+            assert_eq!(
+                unsafe { remote_free::push_post_owner_exit_live_allocation(mapped) },
+                Ok(LiveRemoteFreePublish::PublishedToOwner),
+            );
+            let owner = unsafe { Page::remote_free_owner_state_at(page) }
+                .expect("the reclaim installed the live owner projection");
+            assert_eq!(unsafe { remote_free::collect_live_page(owner) }, Ok(1));
+        });
+
+        // Detached source identity remains a hard dispatch boundary: it must
+        // not publish through an exited owner or an abandoned-page tail.
+        with_live_pointer_remote_fixture(|lease, page, block| {
+            store_source_xthread_id_for_pointer_test(page, THREAD_ID_DETACHED);
+            let detached = unsafe { lease.lookup_live_allocation(block) }
+                .expect("the fixture map remains ready")
+                .expect("the detached allocation remains lookup-visible");
+            assert_eq!(detached.page_state(), LiveAllocationPageState::Detached);
+            assert_eq!(
+                unsafe { remote_free::push_post_owner_exit_live_allocation(detached) },
+                Err(remote_free::RemoteFreeError::NotOwnerAssociated),
+            );
+            // SAFETY: detached rejection leaves this fixture's initialized
+            // remote-head atomic untouched until its exact test teardown.
+            assert_eq!(
+                unsafe {
+                    Page::remote_free_producer_state_at(page)
+                        .xthread_free
+                        .as_ref()
+                        .load(Ordering::Acquire)
+                },
+                1,
+            );
+        });
     }
 
     #[test]

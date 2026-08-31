@@ -860,14 +860,18 @@ impl Heap {
     /// only their disjoint remote-free atomic projections within Page
     /// metadata.
     #[inline]
-    pub(crate) unsafe fn remove_os_abandoned_page(
+    pub(crate) unsafe fn remove_os_abandoned_page_with_outcome(
         &mut self,
         page: NonNull<Page>,
-    ) -> Result<(), HeapOsAbandonedPageListError> {
-        let guard = self
-            .os_abandoned_pages_lock
-            .lock()
-            .map_err(HeapOsAbandonedPageListError::Lock)?;
+    ) -> HeapOsAbandonedPageRemovalOutcome {
+        let guard = match self.os_abandoned_pages_lock.lock() {
+            Ok(guard) => guard,
+            Err(error) => {
+                return HeapOsAbandonedPageRemovalOutcome::NotRemoved(
+                    HeapOsAbandonedPageListError::Lock(error),
+                );
+            }
+        };
         let heap = core::ptr::from_ref(self).cast_mut();
         let page_pointer = page.as_ptr();
 
@@ -937,11 +941,43 @@ impl Heap {
         };
 
         match (result, guard.unlock()) {
-            (Ok(()), Ok(())) => Ok(()),
-            (Ok(()), Err(error)) | (Err(_), Err(error)) => {
+            (Ok(()), Ok(())) => HeapOsAbandonedPageRemovalOutcome::Removed,
+            // The source splice and link clearing completed before the private
+            // lock's wake/error boundary. Preserve that irreversible fact so
+            // a terminal caller never treats this as a still-linked page.
+            (Ok(()), Err(error)) => {
+                HeapOsAbandonedPageRemovalOutcome::RemovedUnlockFailed(error)
+            }
+            (Err(_), Err(error)) => HeapOsAbandonedPageRemovalOutcome::NotRemoved(
+                HeapOsAbandonedPageListError::Lock(error),
+            ),
+            (Err(error), Ok(())) => HeapOsAbandonedPageRemovalOutcome::NotRemoved(error),
+        }
+    }
+
+    /// Removes one OS-abandoned list member while preserving the historic
+    /// `Result` boundary for callers that do not own a later irreversible
+    /// terminal transition.
+    ///
+    /// A new post-list terminal owner must instead call
+    /// [`Self::remove_os_abandoned_page_with_outcome`] and retain
+    /// [`HeapOsAbandonedPageRemovalOutcome::RemovedUnlockFailed`] as a
+    /// completed splice.
+    ///
+    /// # Safety
+    ///
+    /// Same as [`Self::remove_os_abandoned_page_with_outcome`].
+    #[inline]
+    pub(crate) unsafe fn remove_os_abandoned_page(
+        &mut self,
+        page: NonNull<Page>,
+    ) -> Result<(), HeapOsAbandonedPageListError> {
+        match unsafe { self.remove_os_abandoned_page_with_outcome(page) } {
+            HeapOsAbandonedPageRemovalOutcome::Removed => Ok(()),
+            HeapOsAbandonedPageRemovalOutcome::RemovedUnlockFailed(error) => {
                 Err(HeapOsAbandonedPageListError::Lock(error))
             }
-            (Err(error), Ok(())) => Err(error),
+            HeapOsAbandonedPageRemovalOutcome::NotRemoved(error) => Err(error),
         }
     }
 }
@@ -973,6 +1009,23 @@ pub(crate) enum HeapOsAbandonedPageListError {
     Successor,
     /// The allocator-private lock acquisition or release failed.
     Lock(crabc_core::Errno),
+}
+
+/// Mutation-aware result of removing one source OS-abandoned-list member.
+///
+/// A lock wake may fail after the list splice and link clearing completed.
+/// This type makes that ordering explicit for terminal source paths while the
+/// older `Result` wrapper remains available to bounded callers that treat any
+/// lock error as terminal at their own higher boundary.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum HeapOsAbandonedPageRemovalOutcome {
+    /// The list splice completed and its lock guard reported normal release.
+    Removed,
+    /// The list splice completed, but the internal private-lock release
+    /// reported an error after it made its source Release transition.
+    RemovedUnlockFailed(crabc_core::Errno),
+    /// No splice occurred; the page remains subject to its prior list owner.
+    NotRemoved(HeapOsAbandonedPageListError),
 }
 
 /// One failure manipulating the source-private `heap->arena_pages` table.
@@ -2923,6 +2976,78 @@ impl Page {
             // SAFETY: these are initialized owner-only subobjects; the
             // returned raw pointers are not dereferenced until the caller
             // performs its source-ordered local collection.
+            free: unsafe { NonNull::new_unchecked(core::ptr::addr_of_mut!((*page).free)) },
+            local_free: unsafe {
+                NonNull::new_unchecked(core::ptr::addr_of_mut!((*page).local_free))
+            },
+            used: unsafe { NonNull::new_unchecked(core::ptr::addr_of_mut!((*page).used)) },
+            free_is_zero: unsafe {
+                NonNull::new_unchecked(core::ptr::addr_of_mut!((*page).free_is_zero))
+            },
+        })
+    }
+
+    /// Projects the false-force local-list state after an abandoned-page
+    /// remote publication has claimed the source low bit.
+    ///
+    /// This is deliberately distinct from
+    /// [`Self::local_collect_state_for_owner_at`]: thread exit may retain a
+    /// raw former `theap` pointer for source comparison, but no post-exit path
+    /// may read or dereference it. The held low bit and either abandoned
+    /// identity are the complete authority for this narrow local-list phase.
+    ///
+    /// # Safety
+    ///
+    /// `page` must be initialized abandoned metadata whose `xthread_free`
+    /// owner bit is held by the caller. The caller must own the ordinary
+    /// free/local-free/used fields and retain the complete page area through
+    /// the following `collect_local_false` operation. It must not retire,
+    /// reuse, or release the page during that operation.
+    #[inline]
+    pub(super) unsafe fn abandoned_local_collect_state_at(
+        page: NonNull<Self>,
+    ) -> Option<PageLocalCollectState> {
+        let page = page.as_ptr();
+        // SAFETY: the caller retains the initialized atomic remote-head field
+        // until this post-claim local collection has finished.
+        let xthread_free = unsafe { &*core::ptr::addr_of!((*page).xthread_free) };
+        if xthread_free.load(Ordering::Acquire) & 1 == 0 {
+            return None;
+        }
+        // SAFETY: read only the atomic source identity. No former Theap is
+        // projected here, even as a null/equality check.
+        let thread_id = unsafe { &*core::ptr::addr_of!((*page).xthread_id) }
+            .load(Ordering::Acquire)
+            & !PAGE_FLAG_MASK;
+        if !matches!(thread_id, THREAD_ID_ABANDONED | THREAD_ID_ABANDONED_MAPPED) {
+            return None;
+        }
+
+        // SAFETY: the held source owner bit gives the caller the exact
+        // ordinary-field authority for the false-force local transfer.
+        let block_size = unsafe { (*page).block_size };
+        let reserved = unsafe { (*page).reserved };
+        let capacity = unsafe { (*page).capacity };
+        let used = unsafe { (*page).used };
+        let page_offset = unsafe { (*page).page_offset };
+        if block_size == 0
+            || reserved == 0
+            || capacity > reserved
+            || used > capacity as usize
+            || page_offset == 0
+        {
+            return None;
+        }
+        let area_bytes = usize::from(reserved).checked_mul(block_size)?;
+        // SAFETY: the caller's complete-page-area proof makes this exact
+        // source start address valid for the local-list transfer.
+        let area = unsafe { NonNull::new_unchecked(page.cast::<u8>().add(page_offset)) };
+        Some(PageLocalCollectState {
+            area,
+            area_bytes,
+            block_size,
+            capacity,
+            reserved,
             free: unsafe { NonNull::new_unchecked(core::ptr::addr_of_mut!((*page).free)) },
             local_free: unsafe {
                 NonNull::new_unchecked(core::ptr::addr_of_mut!((*page).local_free))
