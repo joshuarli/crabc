@@ -290,10 +290,15 @@ one validated executable legacy `DT_FINI` target that remains inert on
 ordinary final close, four copied objects, and one generation/addition. Those
 legacy tags are available only to the appended DSO; initial main/mid/leaf
 `DT_INIT`/`DT_FINI` stay reject-only, malformed runtime targets fail before
-publication, and `DT_FINI_ARRAY` remains reject-only. Its pinned-musl
-differential also proves `RTLD_NOLOAD` reference acquisition for that
-already-loaded plugin. The
-candidate accepts that request only with `RTLD_LAZY` or `RTLD_NOW` for the
+publication, and `DT_FINI_ARRAY` remains reject-only. The same fourth DSO may
+separately carry one nonempty, aligned 1–16-entry,
+load-contained `DT_PREINIT_ARRAY`/`DT_PREINIT_ARRAYSZ` metadata pair. Pinned
+musl leaves it inert during `dlopen`; the candidate validates the pair before
+publication but neither retains, reads, nor dispatches its entries. An
+out-of-load pair fails before publication, and initial main/mid/leaf preinit
+tags remain reject-only in this sibling. Its pinned-musl differential also
+proves `RTLD_NOLOAD` reference acquisition for that already-loaded plugin.
+The candidate accepts that request only with `RTLD_LAZY` or `RTLD_NOW` for the
 single appended basename: it returns the existing opaque token without a path
 lookup, mapping, constructor, or graph change; an unpresent name, `NULL`, and
 named initial main/mid/leaf objects fail closed. The candidate's copied
@@ -303,8 +308,7 @@ musl exposes its reference through a changed `dlpi_adds` observation.
 initial map and later no-load references. Because that mapping is already
 process-lifetime owned, it changes neither close/stale-token behavior nor the
 absence of an unload path; `NULL` and named initial identities fail closed.
-PT_TLS,
-RELR, recursive mapping,
+PT_TLS, RELR, recursive mapping,
 scope promotion, `DT_FINI_ARRAY`, finalization/unload, and all general
 dlfcn/loader behavior remain excluded, so `ldso.dynamic-runtime` and public
 x86 support remain planned.

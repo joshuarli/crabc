@@ -801,6 +801,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             "one serialized RUNPATH mapping",
             "validated executable runtime `DT_INIT`",
             "validated inert legacy `DT_FINI` target",
+            "paired inert runtime `DT_PREINIT_ARRAY`/`DT_PREINIT_ARRAYSZ`",
             "initial-DSO DT_INIT/DT_FINI with status 127",
             "DT_FINI_ARRAY",
             "RTLD_NODELETE",
@@ -988,6 +989,9 @@ class X86ParityLedgerTests(unittest.TestCase):
             "at most one nonzero executable `DT_FINI` target",
             "initial main/mid/leaf `DT_INIT` remains reject-only",
             "initial main/mid/leaf `DT_FINI` remains reject-only",
+            "exactly one nonempty aligned 1–16-entry load-contained `DT_PREINIT_ARRAY`/`DT_PREINIT_ARRAYSZ` pair",
+            "matching pinned musl's inert runtime-DSO behavior",
+            "initial main/mid/leaf preinit tags remain reject-only",
             "generation/additions one",
             "Two concurrent raw-clone callers",
             "RTLD_NOLOAD=4",
@@ -1022,6 +1026,9 @@ class X86ParityLedgerTests(unittest.TestCase):
             "malformed non-executable runtime `DT_FINI`",
             "initial-DSO `DT_INIT` status-127 rejection",
             "initial-DSO `DT_FINI` status-127 rejection",
+            "paired `DT_PREINIT_ARRAY`/`DT_PREINIT_ARRAYSZ` storage",
+            "marker inert",
+            "out-of-load pair fails before publication",
         ):
             self.assertIn(phrase, artifact["native_evidence"][0]["scope"])
 
@@ -1043,8 +1050,10 @@ class X86ParityLedgerTests(unittest.TestCase):
                 "compat/x86_64/ldso_initial_graph_mid.c",
                 "compat/x86_64/ldso_public_dlfcn_start.S",
                 "compat/x86_64/ldso_bounded_dlopen_plugin.c",
+                "compat/x86_64/ldso_bounded_dlopen_preinit_plugin.c",
                 "compat/x86_64/ldso_bounded_dlopen_tls.c",
                 "compat/x86_64/ldso_bounded_dlopen_probe.c",
+                "compat/x86_64/ldso_bounded_dlopen_preinit_probe.c",
                 "compat/x86_64/ldso_bounded_dlopen_fini_probe.c",
                 "compat/x86_64/run_ldso_bounded_dlopen.sh",
                 "scripts/dev-x86_64.sh",

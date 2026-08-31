@@ -4596,6 +4596,12 @@ token and one legacy/init-array sequence; a separate no-`RTLD_NODELETE`
 close/reopen differential proves inert legacy fini behavior. Copied dladdr, dlinfo, and
 dl_iterate_phdr observations prove the added mapping. PT_TLS, slash paths,
 recursive/unretained dependencies, and second-object capacity fail closed.
+The same fourth-slot DSO may carry one paired nonempty aligned 1–16-entry
+load-contained `DT_PREINIT_ARRAY`/`DT_PREINIT_ARRAYSZ` metadata array. Pinned
+musl ignores that DSO array during `dlopen`; the candidate checks only the tag
+pair before publication and deliberately never retains, reads, or dispatches
+its entries. A pair outside the DSO's load ranges fails before publication, and
+initial main/mid/leaf preinit tags stay reject-only in this sibling.
 Pinned musl 1.2.6 additionally proves that `RTLD_NOLOAD` returns an extra
 reference only after that runtime object is present. The candidate admits that
 query only for its one appended basename: it returns the same token without

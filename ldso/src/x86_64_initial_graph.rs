@@ -174,6 +174,10 @@ const MAX_OBJECTS: usize = INITIAL_OBJECT_COUNT;
 const MAX_PHDRS: usize = 32;
 const MAX_NEEDED: usize = 2;
 const MAX_PATH: usize = 512;
+// The runtime mapper retains no allocator or general lifecycle owner. Keep
+// every runtime array-shaped tag at the existing small constructor ceiling.
+#[cfg(crabc_bounded_runtime_dlopen)]
+const MAX_BOUNDED_RUNTIME_ARRAY_ENTRIES: usize = 16;
 #[cfg(any(crabc_fixed_graph_introspection, crabc_fixed_graph_dlfcn))]
 const FIXED_GRAPH_TEXT_CAPACITY: usize = 256;
 // This private fixed graph has no allocation owner. Bound both packed-RELR
@@ -943,6 +947,10 @@ unsafe fn parse_mapped(
     let mut bounded_runtime_init_virtual_address = None;
     #[cfg(crabc_bounded_runtime_dlopen)]
     let mut bounded_runtime_fini_virtual_address = None;
+    #[cfg(crabc_bounded_runtime_dlopen)]
+    let mut bounded_runtime_preinit_array_virtual_address = None;
+    #[cfg(crabc_bounded_runtime_dlopen)]
+    let mut bounded_runtime_preinit_array_byte_len = None;
     // The owned-CRT sibling does not execute any main-image lifecycle entry.
     // It only validates this exact Rust-Scrt1 dynamic-tag shape before that
     // CRT takes over through the post-relocation record.  The two established
@@ -1008,6 +1016,21 @@ unsafe fn parse_mapped(
             #[cfg(crabc_bounded_runtime_dlopen)]
             DT_INIT if mapped && allow_bounded_runtime_legacy_tags => {
                 if bounded_runtime_init_virtual_address.replace(value).is_some() {
+                    return None;
+                }
+            }
+            // Musl does not dispatch a DSO's preinit array during dlopen.
+            // This one-slot mapper records only bounded structural metadata;
+            // it neither retains nor dereferences the entry pointers below.
+            #[cfg(crabc_bounded_runtime_dlopen)]
+            DT_PREINIT_ARRAY if mapped && allow_bounded_runtime_legacy_tags => {
+                if bounded_runtime_preinit_array_virtual_address.replace(value).is_some() {
+                    return None;
+                }
+            }
+            #[cfg(crabc_bounded_runtime_dlopen)]
+            DT_PREINIT_ARRAYSZ if mapped && allow_bounded_runtime_legacy_tags => {
+                if bounded_runtime_preinit_array_byte_len.replace(value).is_some() {
                     return None;
                 }
             }
@@ -1160,6 +1183,25 @@ unsafe fn parse_mapped(
             object.init_array = runtime_address(base, address)? as *const usize;
             object.init_count = usize::try_from(byte_len / 8).ok()?;
         }
+        _ => return None,
+    }
+    #[cfg(crabc_bounded_runtime_dlopen)]
+    match (
+        bounded_runtime_preinit_array_virtual_address,
+        bounded_runtime_preinit_array_byte_len,
+    ) {
+        (None, None) => {}
+        // A runtime DSO preinit array is intentionally inert, matching musl's
+        // dlopen behavior. Validate the tag pair's bounded storage only: do
+        // not inspect or dispatch the function-pointer entries.
+        (Some(address), Some(byte_len))
+            if byte_len != 0
+                && byte_len % core::mem::size_of::<usize>() as u64 == 0
+                && byte_len
+                    <= (MAX_BOUNDED_RUNTIME_ARRAY_ENTRIES * core::mem::size_of::<usize>())
+                        as u64
+                && address & (core::mem::size_of::<usize>() as u64 - 1) == 0
+                && virtual_range_in_load(phdr, phnum, address, byte_len) => {}
         _ => return None,
     }
     #[cfg(crabc_bounded_runtime_dlopen)]
@@ -2584,7 +2626,7 @@ unsafe fn bounded_runtime_map(path: *const u8) -> Result<usize, &'static [u8]> {
         || object.relrsz != 0
         || object.runpath_len != 0
         || object.needed_count > MAX_NEEDED
-        || object.init_count > 16
+        || object.init_count > MAX_BOUNDED_RUNTIME_ARRAY_ENTRIES
     {
         bounded_runtime_unmap(&object);
         return Err(b"runtime loader rejected unsupported DSO metadata");

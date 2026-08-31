@@ -115,6 +115,9 @@ require_runner_contract "$BOUNDED_DLOPEN_RUNNER" \
     'libmid-bounded-dlopen-fini.so' \
     'candidate accepted DT_INIT in an initial DSO' \
     'candidate accepted DT_FINI in an initial DSO' \
+    'DT_PREINIT_ARRAY' \
+    'libbounded-preinit.so' \
+    'main-musl-bounded-preinit' \
     'RTLD_NOLOAD' \
     'RTLD_NODELETE' \
     'PT_TLS' \

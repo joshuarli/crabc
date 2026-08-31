@@ -1200,6 +1200,10 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn("-Wl,-init,bounded_plugin_legacy_initialize", runner)
         self.assertIn("-Wl,-init,mid_value", runner)
         self.assertIn("candidate accepted DT_INIT in an initial DSO", runner)
+        self.assertIn("rewrite_init_array_as_preinit", runner)
+        self.assertIn("DT_PREINIT_ARRAY", runner)
+        self.assertIn("main-musl-bounded-preinit", runner)
+
     def test_locale_error_strings_artifact_stays_abi_only_and_non_promoting(
         self,
     ) -> None:

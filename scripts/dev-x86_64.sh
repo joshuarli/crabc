@@ -1632,6 +1632,10 @@ Those legacy tags are limited to the appended DSO: initial main/mid/leaf
 `DT_INIT`/`DT_FINI` remain reject-only, and a malformed runtime target fails
 before publication. Pinned musl leaves the admitted legacy fini target inert
 on ordinary final close; `DT_FINI_ARRAY` remains reject-only.
+The same fourth-slot DSO may carry one bounded `DT_PREINIT_ARRAY`/
+`DT_PREINIT_ARRAYSZ` pair as inert metadata: pinned musl and the candidate
+leave its entries undispatched, while an out-of-load pair fails before
+publication. Initial main/mid/leaf preinit tags remain reject-only.
 Before publication, `NULL`, and named initial-graph identities fail closed
 without mapping; PT_TLS/malformed rejection and a hard one-object capacity
 remain enforced. `RTLD_NODELETE` is a lifecycle-neutral accepted flag
@@ -1642,7 +1646,7 @@ finalization/unload, general already-loaded-object queries, capability
 selection, or public x86 support.
 `ldso-dynamic-admission` executes the initial no-TLS, GNU-Dynamic TLS, owned-
 CRT, copied-introspection, retained-object-dlfcn, public-C-bridge fixed-graph,
-and bounded runtime-mapping/DT_INIT/inert-DT_FINI/RTLD_NOLOAD/RTLD_NODELETE
+and bounded runtime-mapping/DT_INIT/inert-DT_FINI/DT_PREINIT_ARRAY/RTLD_NOLOAD/RTLD_NODELETE
 fixtures as one consumed admission gate. Their fresh candidate ELF inspection
 and negative launches retain only the explicit accepted shapes and rejected
 metadata, relocation, record, handle, and scope forms. It is not a general x86 ldso,
