@@ -16,15 +16,19 @@
 //! source-shaped ticket-zero `ProcessMainThread` and the main-thread-minted
 //! `MainStaticHeapLease` for the process lifetime, then places one no-page
 //! `MainHeapThreadAttachment` in compiler TLS for each pthread worker that
-//! successfully enters through the runtime. A dormant ticket-zero native page
-//! owner may lend its already-published pair to one such worker for a bounded
-//! local or joined remote-free page-engine round trip; the worker finishes
-//! only after libc has run user cleanup handlers and pthread TSD destructors.
+//! successfully enters through the runtime. An ordinary later-thread native
+//! allocation promotes that attachment once into an inline compiler-TLS owner
+//! containing the attachment and continuously stored owner-local page engine;
+//! later local calls use short in-place borrows and never park or resume it.
+//! The worker consumes that owner only after libc has run user cleanup handlers
+//! and pthread TSD destructors. Older typed post-exit fixtures retain their
+//! bounded dormant ticket-zero scheduler routes until pointer-first abandoned
+//! dispatch owns the complete replacement capability.
 //!
-//! It deliberately does not route any `malloc`/`free` call, expose a C symbol,
-//! select a backend, create a public pthread key, or claim general fork
-//! recovery. A failed process setup leaves this shadow lifecycle unavailable
-//! and preserves the C backend. A failed worker attachment prevents that
+//! It exposes no C symbol, does not select a backend, creates no public pthread
+//! key, and claims no general fork recovery. A failed process setup leaves
+//! this shadow lifecycle unavailable and preserves the C backend. A failed
+//! worker attachment prevents that
 //! worker's start routine from running; libc performs the parent/child startup
 //! handshake. On libc's prepared `fork` path, only the original ticket-zero
 //! TLS image with no live or retained later bridge owner preserves the copied
@@ -34,6 +38,7 @@
 use core::cell::UnsafeCell;
 use core::marker::PhantomData;
 use core::mem::MaybeUninit;
+use core::pin::Pin;
 use core::sync::atomic::{AtomicPtr, AtomicU8, AtomicUsize, Ordering};
 
 use crate::compiler_tls::current_thread_identity;
@@ -46,6 +51,8 @@ use crate::main_heap_thread::{
     MainHeapThreadAttachmentError, MainHeapThreadPageSessionError,
 };
 use crate::main_heap_page::{
+    MainHeapThreadOwnerLocalAllocator, MainHeapThreadOwnerLocalPageEngine,
+    MainHeapThreadOwnerLocalPageEngineBeginError,
     MainHeapThreadPausedProcessPageAllocator,
     MainHeapThreadPausedProcessPageAllocatorResumeFailure,
     MainHeapThreadPersistentPageEngineTerminal,
@@ -79,6 +86,10 @@ use crate::single_thread::{
     ThreadExitKnownPostExitOsAbandonedList,
     ThreadExitMappedRegularPagesPostExitRemoteFreeProducer,
     ThreadExitMappedRegularPagesPostExitRemoteFreeProducerPair,
+};
+use crate::thread_local::{
+    PersistentCompilerTlsOwnerCell, PersistentCompilerTlsOwnerError,
+    PersistentCompilerTlsOwnerInitializeError, PersistentCompilerTlsOwnerTeardownError,
 };
 use crate::types::{LiveThreadId, Page};
 
@@ -301,6 +312,19 @@ const RUNTIME_PAGE_OWNER_PREPARATION_CLIENT_SLOTS: usize =
 // adoption transition rather than merely freeing its final page sequentially.
 #[cfg(test)]
 static AGGREGATE_LAST_MAPPED_REGULAR_ADOPTION_COUNT: AtomicUsize = AtomicUsize::new(0);
+
+// This default-off counter is an execution witness for the Phase-B native
+// owner-local seam.  It counts only successful operations that ran through
+// the retained current-thread owner, after its initial attachment/setup
+// transition; it is not a client ledger, scheduler, or routing capability.
+#[cfg(feature = "native-runtime-test-audit")]
+static NATIVE_OWNER_LOCAL_OPERATION_COUNT: AtomicUsize = AtomicUsize::new(0);
+
+// This separate counter makes the Phase-B regression reject an implementation
+// that merely renames the old parked-session bridge. It contains no pointer or
+// owner identity and is sampled only after the participating worker joins.
+#[cfg(feature = "native-runtime-test-audit")]
+static NATIVE_PARKED_COMPATIBILITY_OPERATION_COUNT: AtomicUsize = AtomicUsize::new(0);
 
 /// Result of one private ticket-zero native allocation operation.
 ///
@@ -4067,6 +4091,8 @@ pub struct NativeRuntimeLifecycleAudit {
     pub shared_later_theap_count: usize,
     pub main_heap_abandoned_page_count: usize,
     pub main_heap_os_abandoned_pages_empty: usize,
+    pub native_owner_local_operation_count: usize,
+    pub native_parked_compatibility_operation_count: usize,
 }
 
 /// Read-only scalar accounting for the runtime's fork-admission gate.
@@ -5392,6 +5418,10 @@ pub fn native_runtime_lifecycle_test_audit() -> Option<NativeRuntimeLifecycleAud
         shared_later_theap_count: main_heap.test_shared_later_theap_count(),
         main_heap_abandoned_page_count,
         main_heap_os_abandoned_pages_empty: usize::from(main_heap_os_abandoned_pages_empty),
+        native_owner_local_operation_count: NATIVE_OWNER_LOCAL_OPERATION_COUNT
+            .load(Ordering::Acquire),
+        native_parked_compatibility_operation_count:
+            NATIVE_PARKED_COMPATIBILITY_OPERATION_COUNT.load(Ordering::Acquire),
     })
 }
 
@@ -5482,6 +5512,66 @@ enum ThreadLifecycleState {
     Retained,
 }
 
+/// The source-shaped owner retained for ordinary later-thread native calls.
+///
+/// The attachment and continuously stored page engine are co-located values,
+/// not a self-reference. Each C operation temporarily splits one mutable
+/// borrow into the lower engine's short attachment/session projection. Source
+/// Page and PageMap state is the allocation record; this owner deliberately
+/// contains no client ledger, scheduler token, or process registry entry.
+#[must_use = "a persistent native thread owner must finish or remain retained in compiler TLS"]
+struct NativePersistentThreadOwner {
+    attachment: MainHeapThreadAttachment<'static>,
+    /// `None` is valid only before initial engine publication or after the
+    /// consuming engine finish has succeeded and attachment teardown remains.
+    engine: Option<MainHeapThreadOwnerLocalPageEngine>,
+}
+
+impl NativePersistentThreadOwner {
+    /// Binds one short attachment view to the continuously stored engine.
+    /// The scalar audit advances only after both the compiler-TLS projection
+    /// and this source-engine projection succeeded.
+    fn with_local_allocator<R>(
+        &mut self,
+        operation: impl FnOnce(&mut MainHeapThreadOwnerLocalAllocator<'_>) -> R,
+    ) -> Result<R, ()> {
+        let engine = self.engine.as_mut().ok_or(())?;
+        let result = engine
+            .with_local_allocator(&mut self.attachment, operation)
+            .map_err(|_| ())?;
+        #[cfg(feature = "native-runtime-test-audit")]
+        NATIVE_OWNER_LOCAL_OPERATION_COUNT.fetch_add(1, Ordering::AcqRel);
+        Ok(result)
+    }
+
+    /// Completes the all-free page engine and then the source attachment.
+    ///
+    /// `engine == None` records that the consuming page-engine finish already
+    /// succeeded but attachment teardown failed. A retry therefore resumes at
+    /// the remaining source boundary instead of reconstructing engine state.
+    fn teardown(&mut self) -> Result<(), ()> {
+        if let Some(engine) = self.engine.take() {
+            match engine.finish(&mut self.attachment) {
+                Ok(()) => {}
+                Err(failure) => {
+                    self.engine = Some(failure.into_owner());
+                    return Err(());
+                }
+            }
+        }
+        self.attachment
+            .finish_after_user_destructors()
+            .map_err(|_| ())
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum NativePersistentThreadOwnerAccessError {
+    NotInstalled,
+    Unavailable,
+    Retained,
+}
+
 /// Per-pthread compiler-TLS storage for the explicit later-thread owner.
 ///
 /// It intentionally has no destructor: libc calls the source-ordered finish
@@ -5506,6 +5596,15 @@ struct ThreadLifecycleSlot {
     /// TLS carries only scalar lifecycle accounting, never a route or client.
     pending_post_exit_route_completion_count: usize,
     attachment: Option<MainHeapThreadAttachment<'static>>,
+    /// Ordinary C-shaped later-thread operations promote `attachment` into
+    /// this address-stable cell once, then use only in-place scoped borrows.
+    /// Legacy typed owner-exit fixtures continue to use `attachment` plus
+    /// `page_owner` until their separate migration lands.
+    native_persistent_owner: PersistentCompilerTlsOwnerCell<NativePersistentThreadOwner>,
+    /// Distinguishes the cell's installed/retained payload from the other
+    /// lifecycle shapes whose attachment and page-owner fields are empty.
+    /// This is current-thread scalar state, not allocation or route metadata.
+    native_persistent_owner_installed: bool,
     /// A current-thread-only page engine that deliberately released its Rust
     /// borrow before it entered compiler TLS.  A normal no-page finalizer
     /// must never cross this state: it has to resume the matching engine and
@@ -5526,6 +5625,8 @@ impl ThreadLifecycleSlot {
             post_exit_route_completion_generation: 0,
             pending_post_exit_route_completion_count: 0,
             attachment: None,
+            native_persistent_owner: PersistentCompilerTlsOwnerCell::new(),
+            native_persistent_owner_installed: false,
             page_owner: None,
             next_page_owner_session_generation: 0,
         }
@@ -6562,6 +6663,212 @@ fn current_thread_slot() -> &'static mut ThreadLifecycleSlot {
     unsafe { &mut *current_thread_slot_pointer().as_ptr() }
 }
 
+/// Pins the inline native owner cell at its final compiler-TLS address.
+///
+/// The TLS slot is allocated by the runtime loader before this thread enters
+/// the allocator bridge and is never moved during the thread lifetime. Only
+/// the running thread can obtain this projection; the cell itself rejects
+/// nested mutable owner access before dereferencing its payload.
+#[inline]
+fn current_thread_native_persistent_owner_cell(
+) -> Pin<&'static PersistentCompilerTlsOwnerCell<NativePersistentThreadOwner>> {
+    let slot = current_thread_slot_pointer();
+    // SAFETY: the compiler-TLS slot has its final address for this native
+    // thread, and no API moves the embedded `!Unpin` cell after publication.
+    unsafe { Pin::new_unchecked(&(*slot.as_ptr()).native_persistent_owner) }
+}
+
+#[inline]
+fn retain_current_thread_native_persistent_owner_for_teardown() {
+    current_thread_slot().state = ThreadLifecycleState::Retained;
+}
+
+#[inline]
+fn fail_stop_with_current_thread_native_owner() -> ! {
+    retain_current_thread_native_persistent_owner_for_teardown();
+    crabc_core::process::exit_immediately(134)
+}
+
+#[inline]
+fn current_thread_has_native_persistent_owner() -> bool {
+    let slot = current_thread_slot();
+    slot.native_persistent_owner_installed
+        && matches!(
+            slot.state,
+            ThreadLifecycleState::Attached | ThreadLifecycleState::Retained
+        )
+}
+
+fn with_current_thread_native_persistent_owner<R>(
+    operation: impl FnOnce(&mut NativePersistentThreadOwner) -> R,
+) -> Result<R, NativePersistentThreadOwnerAccessError> {
+    match current_thread_slot().state {
+        ThreadLifecycleState::Attached => {}
+        ThreadLifecycleState::Retained => {
+            return Err(NativePersistentThreadOwnerAccessError::Retained);
+        }
+        ThreadLifecycleState::Fresh | ThreadLifecycleState::Finished => {
+            return Err(NativePersistentThreadOwnerAccessError::Unavailable);
+        }
+    }
+    match current_thread_native_persistent_owner_cell()
+        .with_owner(|owner| operation(owner.get_mut()))
+    {
+        Ok(result) => Ok(result),
+        Err(PersistentCompilerTlsOwnerError::NotAttached) => {
+            Err(NativePersistentThreadOwnerAccessError::NotInstalled)
+        }
+        Err(
+            PersistentCompilerTlsOwnerError::Initializing
+            | PersistentCompilerTlsOwnerError::Reentrant,
+        ) => Err(NativePersistentThreadOwnerAccessError::Unavailable),
+        Err(
+            PersistentCompilerTlsOwnerError::InvalidCurrentThread
+            | PersistentCompilerTlsOwnerError::WrongThread
+            | PersistentCompilerTlsOwnerError::AlreadyActive
+            | PersistentCompilerTlsOwnerError::Exiting
+            | PersistentCompilerTlsOwnerError::Retained
+            | PersistentCompilerTlsOwnerError::TornDown,
+        ) => {
+            retain_current_thread_native_persistent_owner_for_teardown();
+            Err(NativePersistentThreadOwnerAccessError::Retained)
+        }
+    }
+}
+
+/// Forms the immutable process pair used once during native-owner promotion.
+/// It does not claim or inspect `RuntimeProcessStorage::page_owner_state`.
+fn current_native_process_page_arena_pair() -> Option<ProcessPageArenaLease> {
+    // SAFETY: an active process permanently publishes this owner before any
+    // later thread is admitted.
+    let owner = unsafe { RUNTIME_PROCESS.active_owner() }?;
+    let page_map = owner.ready().ok()?.page_map().ok()?;
+    let arena = ProcessSharedArenaStorage::global().ready_lease().ok()?;
+    ProcessPageArenaLease::join(page_map, arena).ok()
+}
+
+/// Promotes the attached worker exactly once into its inline native owner.
+///
+/// The offered attachment is moved from the legacy slot only after the
+/// process pair is ready. A lower initialization failure leaves that exact
+/// attachment/engine payload pinned in the cell's retained state.
+fn begin_current_thread_native_persistent_owner(
+) -> Result<(), NativePersistentThreadOwnerAccessError> {
+    let Some(pair) = current_native_process_page_arena_pair() else {
+        return Err(NativePersistentThreadOwnerAccessError::Unavailable);
+    };
+    let slot = current_thread_slot();
+    if slot.state != ThreadLifecycleState::Attached || slot.page_owner.is_some() {
+        return Err(NativePersistentThreadOwnerAccessError::Unavailable);
+    }
+    let Some(attachment) = slot.attachment.take() else {
+        retain_current_thread_native_persistent_owner_for_teardown();
+        return Err(NativePersistentThreadOwnerAccessError::Retained);
+    };
+    let owner = NativePersistentThreadOwner {
+        attachment,
+        engine: None,
+    };
+    let initialized = current_thread_native_persistent_owner_cell().initialize(
+        owner,
+        |mut owner| -> Result<(), MainHeapThreadOwnerLocalPageEngineBeginError> {
+            let owner = owner.as_mut().get_mut();
+            let engine = MainHeapThreadOwnerLocalPageEngine::begin(&mut owner.attachment, pair)?;
+            owner.engine = Some(engine);
+            Ok(())
+        },
+    );
+    match initialized {
+        Ok(()) => {
+            current_thread_slot().native_persistent_owner_installed = true;
+            Ok(())
+        }
+        Err(PersistentCompilerTlsOwnerInitializeError::Owner(_)) => {
+            current_thread_slot().native_persistent_owner_installed = true;
+            retain_current_thread_native_persistent_owner_for_teardown();
+            Err(NativePersistentThreadOwnerAccessError::Retained)
+        }
+        Err(PersistentCompilerTlsOwnerInitializeError::State { owner, .. }) => {
+            // The cell rejected the offered owner before initialization, so
+            // its engine field is still empty and the original attachment can
+            // be restored as the exact terminal diagnostic owner.
+            let NativePersistentThreadOwner { attachment, engine } = owner;
+            debug_assert!(engine.is_none());
+            drop(engine);
+            let slot = current_thread_slot();
+            debug_assert!(slot.attachment.is_none());
+            slot.attachment = Some(attachment);
+            fail_stop_with_current_thread_native_owner()
+        }
+    }
+}
+
+fn with_current_thread_native_persistent_allocator<R>(
+    create_if_absent: bool,
+    mut operation: impl FnMut(&mut MainHeapThreadOwnerLocalAllocator<'_>) -> R,
+) -> Result<R, NativePersistentThreadOwnerAccessError> {
+    let mut may_create = create_if_absent;
+    loop {
+        match with_current_thread_native_persistent_owner(|owner| {
+            owner.with_local_allocator(|allocator| operation(allocator))
+        }) {
+            Ok(Ok(result)) => return Ok(result),
+            Ok(Err(())) => {
+                retain_current_thread_native_persistent_owner_for_teardown();
+                return Err(NativePersistentThreadOwnerAccessError::Retained);
+            }
+            Err(NativePersistentThreadOwnerAccessError::NotInstalled) if may_create => {
+                begin_current_thread_native_persistent_owner()?;
+                may_create = false;
+            }
+            Err(error) => return Err(error),
+        }
+    }
+}
+
+/// Applies one pointer-consuming operation only when PageMap source state
+/// associates the exact live allocation with this persistent local owner.
+fn with_current_thread_native_persistent_pointer<R>(
+    block: core::ptr::NonNull<u8>,
+    operation: impl FnOnce(&mut MainHeapThreadOwnerLocalAllocator<'_>) -> R,
+) -> Result<Option<R>, NativePersistentThreadOwnerAccessError> {
+    let Some(thread) = current_thread_identity() else {
+        retain_current_thread_native_persistent_owner_for_teardown();
+        return Err(NativePersistentThreadOwnerAccessError::Retained);
+    };
+    let Some(page_map) = (unsafe { RUNTIME_PROCESS.active_owner() })
+        .and_then(|owner| owner.ready().ok())
+        .and_then(|ready| ready.page_map().ok())
+    else {
+        return Err(NativePersistentThreadOwnerAccessError::Unavailable);
+    };
+    match with_current_thread_native_persistent_owner(|owner| {
+        // SAFETY: this private boundary is reached only from the native C
+        // operation's exact-live-allocation contract. The observation stays
+        // in this closure through the consuming local operation.
+        let pointer = unsafe { page_map.lookup_live_allocation(block) }.map_err(|_| ())?;
+        let Some(pointer) = pointer else {
+            return Ok(None);
+        };
+        if !pointer.is_associated_with(thread) {
+            return Ok(None);
+        }
+        let result = owner
+            .with_local_allocator(operation)
+            .map(Some)
+            .map_err(|_| ());
+        drop(pointer);
+        result
+    }) {
+        Ok(Ok(result)) => Ok(result),
+        Ok(Err(())) => {
+            retain_current_thread_native_persistent_owner_for_teardown();
+            Err(NativePersistentThreadOwnerAccessError::Retained)
+        }
+        Err(error) => Err(error),
+    }
+}
+
 /// Initializes the retained ticket-zero process owner from libc's validated
 /// `AT_PAGESZ` value. A false result means the shadow lifecycle is unavailable
 /// for this process; the existing C mimalloc backend remains selected.
@@ -6810,13 +7117,11 @@ pub fn prepare_native_initial_owner_for_later_thread() {
 /// Allocates one C-facing native-shadow block on the current thread.
 ///
 /// The initial process thread uses its permanent ticket-zero owner. An
-/// attached later pthread uses its current-thread parked owner session and
-/// records the returned block before the engine parks again. Natural C
-/// alignment remains an ordinary source allocation; only wider alignment
-/// takes the distinct aligned path. The latter is a deliberately bounded
-/// early-shadow route: it permits local allocation, local free, and all-free
-/// normal pthread finish, but has no cross-thread pointer dispatch or
-/// live-owner-exit handoff yet.
+/// attached later pthread uses its continuously stored compiler-TLS owner.
+/// Natural C alignment remains an ordinary source allocation; only wider
+/// alignment takes the distinct aligned path. The local allocation is
+/// represented solely by source Page used/free state plus the process PageMap;
+/// no client address is copied into the runtime owner.
 #[doc(hidden)]
 pub fn native_allocate_aligned(
     request: usize,
@@ -6837,8 +7142,8 @@ pub fn native_allocate_aligned(
     }
     // A final B-side free may already have recorded one or more A terminal
     // completions for this attachment. Those entries retain only A's parked
-    // token and admission proof; they do not borrow B's independently parked
-    // session. B may therefore continue ordinary local allocation while its
+    // token and admission proof; they do not borrow B's independent inline
+    // owner. B may therefore continue persistent local allocation while its
     // eventual source finish still precedes every completion release.
     native_later_thread_allocate_aligned(request, alignment, zero)
 }
@@ -6925,11 +7230,20 @@ pub unsafe fn native_reallocate(
             ticket_zero_reallocate(Some(block), new_size)
         });
     }
-    // A completed A route carries no C client and cannot own this replacement
-    // input. B's own parked session remains independently resumable for the
-    // normal local `realloc` below; its ordinary source finish still occurs
-    // before the completed A proofs can release their parked tokens or
-    // admissions.
+    // Phase B first derives this exact pointer's PageMap association and, for
+    // the current owner, performs realloc through the continuously stored TLS
+    // engine. Only a nonlocal/unavailable result may reach the older detached
+    // compatibility continuation below.
+    let local = unsafe { native_later_thread_reallocate(block, new_size) };
+    match local {
+        NativePageAllocationResult::Allocated(_)
+        | NativePageAllocationResult::AllocationFailed
+        | NativePageAllocationResult::Retained => return local,
+        NativePageAllocationResult::Unavailable => {}
+    }
+    // A completed A route may own this nonlocal input. This Phase-A branch is
+    // reachable only from a B shape whose older parked replacement session is
+    // still available; the persistent current-owner case returned above.
     if current_thread_can_access_native_post_exit_route() {
         match NATIVE_POST_EXIT_ROUTE.reallocate_exact(block, new_size) {
             NativePostExitRouteReallocateResult::Allocated(block) => {
@@ -6947,9 +7261,10 @@ pub unsafe fn native_reallocate(
             NativePostExitRouteReallocateResult::NotOwned => {}
         }
     }
-    // SAFETY: forwarded unchanged from this boundary's exact-current native
-    // block contract to the current attached worker's parked session.
-    unsafe { native_later_thread_reallocate(block, new_size) }
+    // `CRABC-MI-PHASE-A-DETACHED-REALLOC-CONTINUATION`: full replacement
+    // dispatch still needs W10's reviewed pointer decision plus the complete
+    // W07 -> W09 consuming old-pointer free capability.
+    local
 }
 
 /// Applies the Phase-A pointer-only detached-owner free bridge to one route.
@@ -7152,13 +7467,32 @@ unsafe fn native_free_detached_route_phase_a(
 /// # Safety
 ///
 /// `block` must be a live native-shadow allocation. A wrong-domain pointer
-/// reports `InvalidPointer`. The temporary Phase-A detached-route probe runs
-/// before every caller-local selection. An attached later worker may otherwise
-/// use its own local ledger or atomically source-publish an exact still-live
-/// ticket-zero or parked-live-owner client. Callers must not route any native
-/// failure to the C allocator as recovery.
+/// reports `InvalidPointer`. An attached later worker first uses PageMap
+/// association plus its persistent owner-local engine. Only a local miss may
+/// enter the temporary Phase-A detached/live-owner probes or source-publish an
+/// exact ticket-zero client. Callers must not route any native failure to the
+/// C allocator as recovery.
 #[doc(hidden)]
 pub unsafe fn native_free(block: core::ptr::NonNull<u8>) -> NativePageFreeResult {
+    let initial_thread = RUNTIME_PROCESS.is_on_initial_thread();
+    let local = if initial_thread {
+        NativePageFreeResult::Unavailable
+    } else {
+        // SAFETY: forwarded unchanged from this boundary's exact-current
+        // native block contract. The persistent path performs W02 association
+        // before it projects the owner-local engine; only a miss reaches any
+        // compatibility registry below.
+        unsafe { native_later_thread_free(block) }
+    };
+    match local {
+        NativePageFreeResult::Freed | NativePageFreeResult::Retained => return local,
+        NativePageFreeResult::InvalidPointer | NativePageFreeResult::Unavailable => {}
+    }
+
+    // `CRABC-MI-PHASE-A-DETACHED-FREE-CONTINUATION`: this registry remains
+    // only for a pointer not consumed by the current persistent owner. It is
+    // removed when W07's claimed-abandoned outcome can synchronously acquire
+    // W09's concrete map/collect/terminal-release capability.
     // SAFETY: `block` is forwarded unchanged from the C boundary's live
     // native allocation contract. This pointer-only bridge consumes only an
     // exact detached source client before caller-local owner selection.
@@ -7169,7 +7503,7 @@ pub unsafe fn native_free(block: core::ptr::NonNull<u8>) -> NativePageFreeResult
         NativePostExitRouteFreeResult::Retained => return NativePageFreeResult::Retained,
         NativePostExitRouteFreeResult::NotOwned => {}
     }
-    if RUNTIME_PROCESS.is_on_initial_thread() {
+    if initial_thread {
         // SAFETY: forwarded unchanged from this boundary's exact-current
         // native block contract.
         return native_free_from_ticket_zero(unsafe { ticket_zero_free(block) });
@@ -7183,22 +7517,14 @@ pub unsafe fn native_free(block: core::ptr::NonNull<u8>) -> NativePageFreeResult
             NativePostExitRouteFreeResult::NotOwned => {}
         }
     }
-    // SAFETY: forwarded unchanged from this boundary's exact-current native
-    // block contract to the current attached worker's parked session.
-    let local = unsafe { native_later_thread_free(block) };
-    match local {
-        NativePageFreeResult::Freed => return local,
-        NativePageFreeResult::Retained => return local,
-        NativePageFreeResult::InvalidPointer | NativePageFreeResult::Unavailable => {}
-    }
-
     // A ticket-zero allocation may legitimately cross to a later pthread
     // while the permanent initial owner remains active. Unlike a parked
     // worker route, the exact live allocation itself pins the source page;
     // the remote producer needs no borrowed engine, client ledger, or
-    // scheduler transition. Try this owner domain after the local ledger
-    // rejects the address, so a worker that owns unrelated native pages can
-    // still free an initial-thread client through `mi_free_block_mt`.
+    // scheduler transition. Try this owner domain after persistent local
+    // PageMap association rejects the address, so a worker that owns unrelated
+    // native pages can still free an initial-thread client through
+    // `mi_free_block_mt`.
     match unsafe { native_ticket_zero_live_remote_free(block) } {
         NativeTicketZeroRemoteFreeResult::Freed => return NativePageFreeResult::Freed,
         NativeTicketZeroRemoteFreeResult::Retained => {
@@ -7208,11 +7534,11 @@ pub unsafe fn native_free(block: core::ptr::NonNull<u8>) -> NativePageFreeResult
         | NativeTicketZeroRemoteFreeResult::Unavailable => {}
     }
 
-    // A foreign block normally misses B's local ledger. That miss is not yet
-    // an invalid native C pointer: B may have a parked local session and hold
-    // an exact source client received from another live worker. Preserve the
-    // local result for an actual registry miss, but let the bounded source
-    // publication route prove or reject the foreign address first.
+    // A foreign block normally misses B's persistent owner association. That
+    // miss is not yet an invalid native C pointer: an older Phase-A B shape
+    // may hold an exact source client received from another live worker.
+    // Preserve the local result for an actual registry miss, but let that
+    // bounded source-publication route prove or reject the address first.
     let can_access_post_exit_route = current_thread_can_access_native_post_exit_route();
     if !matches!(
         local,
@@ -7258,6 +7584,14 @@ pub unsafe fn native_usable_size(block: core::ptr::NonNull<u8>) -> Option<usize>
         // native block contract.
         return unsafe { ticket_zero_usable_size(block) };
     }
+    // The persistent local owner consumes W02 pointer association before any
+    // detached/live-owner compatibility ledger is inspected.
+    if let Some(usable_size) = unsafe { native_later_thread_usable_size(block) } {
+        return Some(usable_size);
+    }
+    // `CRABC-MI-PHASE-A-DETACHED-USABLE-CONTINUATION`: W10's pointer-only
+    // usable-size selection will replace these registry probes after its
+    // reviewed integration lands.
     if current_thread_can_access_native_post_exit_route() {
         if let Some(usable_size) = NATIVE_POST_EXIT_ROUTE.usable_size_exact(block) {
             return Some(usable_size);
@@ -7269,15 +7603,13 @@ pub unsafe fn native_usable_size(block: core::ptr::NonNull<u8>) -> Option<usize>
         }
         // The live lookup may have waited through A's `BUSY -> EMPTY`
         // handoff after its first detached lookup missed. Recheck the
-        // replacement route before falling back to B's local ledger, whose
-        // ordinary foreign-pointer result cannot describe A's transition.
+        // replacement route before returning the persistent local miss,
+        // which cannot describe A's transition.
         if let Some(usable_size) = NATIVE_POST_EXIT_ROUTE.usable_size_exact(block) {
             return Some(usable_size);
         }
     }
-    // SAFETY: forwarded unchanged from this boundary's exact-current native
-    // block contract to the current attached worker's parked session.
-    unsafe { native_later_thread_usable_size(block) }
+    None
 }
 
 /// The allocation vocabulary shared by the source-shaped owner-exit fixtures
@@ -9788,20 +10120,15 @@ impl CurrentThreadPageOwnerSessionHandle {
         }
     }
 
-    /// Runs one owner-local C operation against the current source Theap.
+    /// Runs one legacy session-local operation through the Phase-A parked
+    /// compatibility bridge.
     ///
-    /// This is the replacement seam for ordinary local `free` and `realloc`.
-    /// The current runtime can only store a parked engine in compiler TLS, so
-    /// it delegates to the compatibility bridge below. Once persistent TLS
-    /// owns an active source-shaped TLD/Theap, this method must call that
-    /// owner directly; it must not reintroduce a scheduler claim, PageMap
-    /// lease, or park/resume pair around an already-owned page operation.
-    ///
-    /// The parked bridge remains necessary until that TLS ownership is
-    /// installed because the live-owner registry may otherwise borrow this
-    /// session's raw TLS slot for a remote publication. Keeping the fallback
-    /// below this narrow boundary makes its deletion independent of pointer
-    /// routing and owner-exit control flow.
+    /// Ordinary native free/realloc/usable dispatch first projects the inline
+    /// persistent owner and reaches this method only when no such owner was
+    /// installed (principally the older typed owner-exit fixtures). Keeping
+    /// this spelling prevents those continuations from being mistaken for
+    /// the owner-local fast path while their pointer-first exit migration is
+    /// still incomplete.
     fn with_native_owner_local_operation<R>(
         &self,
         operation: impl FnMut(
@@ -9827,6 +10154,8 @@ impl CurrentThreadPageOwnerSessionHandle {
             &mut PreparedOwnerExitClients,
         ) -> R,
     ) -> Result<R, CurrentThreadPageOwnerSessionError> {
+        #[cfg(feature = "native-runtime-test-audit")]
+        NATIVE_PARKED_COMPATIBILITY_OPERATION_COUNT.fetch_add(1, Ordering::AcqRel);
         loop {
             match self.with_active_operation(|allocator, clients| operation(allocator, clients)) {
                 Err(CurrentThreadPageOwnerSessionError::Busy) => core::hint::spin_loop(),
@@ -10681,36 +11010,94 @@ fn native_later_thread_allocate_aligned(
     alignment: usize,
     zero: bool,
 ) -> NativePageAllocationResult {
-    let result = current_thread_native_session_handle(true).and_then(|mut session| {
-        let block = session.native_allocate_aligned(request, alignment, zero)?;
-        session.enable_native_live_remote()?;
-        Ok(block)
+    let result = with_current_thread_native_persistent_allocator(true, |allocator| {
+        if alignment <= NATIVE_C_MALLOC_ALIGNMENT {
+            allocator.allocate(request, zero)
+        } else if zero {
+            allocator.allocate_aligned_zeroed(request, alignment)
+        } else {
+            allocator.allocate_aligned(request, alignment)
+        }
     });
-    native_later_thread_allocation_result(result)
+    match result {
+        Ok(Some(block)) => NativePageAllocationResult::Allocated(block),
+        Ok(None) => NativePageAllocationResult::AllocationFailed,
+        Err(NativePersistentThreadOwnerAccessError::Retained) => {
+            NativePageAllocationResult::Retained
+        }
+        Err(
+            NativePersistentThreadOwnerAccessError::NotInstalled
+            | NativePersistentThreadOwnerAccessError::Unavailable,
+        ) => NativePageAllocationResult::Unavailable,
+    }
 }
 
 unsafe fn native_later_thread_reallocate(
     block: core::ptr::NonNull<u8>,
     new_size: usize,
 ) -> NativePageAllocationResult {
-    let result = current_thread_native_session_handle(false)
-        .and_then(|mut session| session.native_reallocate(block, new_size));
-    native_later_thread_allocation_result(result)
+    // SAFETY: forwarded unchanged from the exact-live native realloc
+    // boundary. PageMap association is checked before the local engine sees
+    // the pointer.
+    let persistent = with_current_thread_native_persistent_pointer(block, |allocator| unsafe {
+        allocator.reallocate(Some(block), new_size)
+    });
+    match persistent {
+        Ok(Some(Some(replacement))) => NativePageAllocationResult::Allocated(replacement),
+        Ok(Some(None)) => NativePageAllocationResult::AllocationFailed,
+        Ok(None) => NativePageAllocationResult::Unavailable,
+        Err(NativePersistentThreadOwnerAccessError::NotInstalled) => {
+            let result = current_thread_native_session_handle(false)
+                .and_then(|mut session| session.native_reallocate(block, new_size));
+            native_later_thread_allocation_result(result)
+        }
+        Err(NativePersistentThreadOwnerAccessError::Retained) => {
+            NativePageAllocationResult::Retained
+        }
+        Err(NativePersistentThreadOwnerAccessError::Unavailable) => {
+            NativePageAllocationResult::Unavailable
+        }
+    }
 }
 
 unsafe fn native_later_thread_free(block: core::ptr::NonNull<u8>) -> NativePageFreeResult {
-    match current_thread_native_session_handle(false).and_then(|mut session| session.native_free(block)) {
-        Ok(()) => NativePageFreeResult::Freed,
-        Err(CurrentThreadPageOwnerSessionError::Preparation(
-            CurrentThreadPageOwnerPreparationError::UnknownClient
-            | CurrentThreadPageOwnerPreparationError::DuplicateClient
-            | CurrentThreadPageOwnerPreparationError::LocalFree,
-        )) => NativePageFreeResult::InvalidPointer,
-        Err(CurrentThreadPageOwnerSessionError::Retained) => NativePageFreeResult::Retained,
-        Err(CurrentThreadPageOwnerSessionError::Busy
-        | CurrentThreadPageOwnerSessionError::Unavailable
-        | CurrentThreadPageOwnerSessionError::Stale
-        | CurrentThreadPageOwnerSessionError::Preparation(_)) => {
+    // SAFETY: forwarded unchanged from the exact-live native free boundary.
+    // PageMap association is checked before the local engine sees the pointer.
+    let persistent = with_current_thread_native_persistent_pointer(block, |allocator| unsafe {
+        allocator.free(block)
+    });
+    match persistent {
+        Ok(Some(Ok(()))) => NativePageFreeResult::Freed,
+        Ok(Some(Err(_))) => {
+            retain_current_thread_native_persistent_owner_for_teardown();
+            NativePageFreeResult::Retained
+        }
+        Ok(None) => NativePageFreeResult::InvalidPointer,
+        Err(NativePersistentThreadOwnerAccessError::NotInstalled) => {
+            match current_thread_native_session_handle(false)
+                .and_then(|mut session| session.native_free(block))
+            {
+                Ok(()) => NativePageFreeResult::Freed,
+                Err(CurrentThreadPageOwnerSessionError::Preparation(
+                    CurrentThreadPageOwnerPreparationError::UnknownClient
+                    | CurrentThreadPageOwnerPreparationError::DuplicateClient
+                    | CurrentThreadPageOwnerPreparationError::LocalFree,
+                )) => NativePageFreeResult::InvalidPointer,
+                Err(CurrentThreadPageOwnerSessionError::Retained) => {
+                    NativePageFreeResult::Retained
+                }
+                Err(
+                    CurrentThreadPageOwnerSessionError::Busy
+                    | CurrentThreadPageOwnerSessionError::Unavailable
+                    | CurrentThreadPageOwnerSessionError::Stale
+                    | CurrentThreadPageOwnerSessionError::Preparation(_),
+                ) => NativePageFreeResult::Unavailable,
+            }
+        }
+        Err(NativePersistentThreadOwnerAccessError::Retained) => {
+            NativePageFreeResult::Retained
+        }
+        Err(NativePersistentThreadOwnerAccessError::Unavailable) => {
             NativePageFreeResult::Unavailable
         }
     }
@@ -11049,9 +11436,26 @@ unsafe fn native_later_thread_live_remote_usable_size(
 }
 
 unsafe fn native_later_thread_usable_size(block: core::ptr::NonNull<u8>) -> Option<usize> {
-    current_thread_native_session_handle(false)
-        .and_then(|session| session.native_usable_size(block))
-        .ok()
+    // SAFETY: forwarded unchanged from the exact-live native usable-size
+    // boundary. PageMap association is checked before the local engine sees
+    // the pointer.
+    match with_current_thread_native_persistent_pointer(block, |allocator| unsafe {
+        allocator.usable_size(block)
+    }) {
+        Ok(Some(Some(usable_size))) => Some(usable_size),
+        Ok(Some(None)) => {
+            retain_current_thread_native_persistent_owner_for_teardown();
+            None
+        }
+        Ok(None) => None,
+        Err(NativePersistentThreadOwnerAccessError::NotInstalled) => {
+            current_thread_native_session_handle(false)
+                .and_then(|session| session.native_usable_size(block))
+                .ok()
+        }
+        Err(NativePersistentThreadOwnerAccessError::Unavailable) => None,
+        Err(NativePersistentThreadOwnerAccessError::Retained) => None,
+    }
 }
 
 /// Returns whether this attached worker can make one pointer-private native
@@ -13225,6 +13629,17 @@ pub fn attach_current_thread() -> ThreadAttachResult {
 /// Finishes one attached worker after libc's cleanup-handler and TSD phases.
 #[doc(hidden)]
 pub fn finish_current_thread_after_user_destructors() -> ThreadFinishResult {
+    // The persistent owner never publishes itself through the Phase-A raw-TLS
+    // route registry. Finish it directly so an unrelated retained registry
+    // entry cannot strand this exact inline payload at ELF TLS reclamation.
+    if current_thread_has_native_persistent_owner() {
+        let result = finish_current_thread_native_persistent_owner_after_user_destructors();
+        if result != ThreadFinishResult::Finished {
+            return result;
+        }
+        return finish_current_thread_post_exit_route_completions_after_user_destructors();
+    }
+
     let page_owner = {
         let slot_pointer = current_thread_slot_pointer();
         // A native A may not even inspect its TLS slot while B owns the raw
@@ -13407,6 +13822,13 @@ fn finish_current_thread_post_exit_route_completions_after_user_destructors() ->
 /// engine as no-page state.
 #[doc(hidden)]
 pub fn finish_current_thread_native_after_user_destructors() -> ThreadFinishResult {
+    // This source shape has no raw-TLS registry entry or client ledger to
+    // claim. Its exact compiler-TLS payload must be consumed before this
+    // function is allowed to return to libc's thread-exit path.
+    if current_thread_has_native_persistent_owner() {
+        return finish_current_thread_after_user_destructors();
+    }
+
     let slot_pointer = current_thread_slot_pointer();
     let native_session_generation = match NATIVE_LIVE_REMOTE_OWNER.claim_current_slot(slot_pointer)
     {
@@ -13516,6 +13938,48 @@ pub fn finish_current_thread_native_after_user_destructors() -> ThreadFinishResu
         return finish_current_thread_prepared_native_after_user_destructors();
     }
     finish_current_thread_after_user_destructors()
+}
+
+/// Consumes the continuously stored native owner at the source destructor
+/// boundary. No client ledger participates: the lower engine accepts finish
+/// only after source Page used/free state is quiescent. Any refusal restores
+/// the exact engine in the pinned TLS payload. Since libc reclaims the ELF TLS
+/// image immediately after this boundary, an unresolved retained payload is a
+/// fail-stop condition rather than a result that may reach native thread
+/// return.
+fn finish_current_thread_native_persistent_owner_after_user_destructors(
+) -> ThreadFinishResult {
+    let teardown = current_thread_native_persistent_owner_cell()
+        .teardown(|mut owner| owner.as_mut().get_mut().teardown());
+    match teardown {
+        Ok(()) => {}
+        Err(
+            PersistentCompilerTlsOwnerTeardownError::Owner(())
+            | PersistentCompilerTlsOwnerTeardownError::State(_),
+        ) => {
+            fail_stop_with_current_thread_native_owner();
+        }
+    }
+    current_thread_slot().native_persistent_owner_installed = false;
+
+    let slot = current_thread_slot();
+    let Some(admission) = slot.admission.take() else {
+        slot.state = ThreadLifecycleState::Retained;
+        RUNTIME_PROCESS.retain();
+        return ThreadFinishResult::Retained;
+    };
+    match RUNTIME_FORK_ADMISSION.release_later_thread(admission) {
+        Ok(()) => {
+            slot.state = ThreadLifecycleState::Finished;
+            ThreadFinishResult::Finished
+        }
+        Err(admission) => {
+            slot.admission = Some(admission);
+            slot.state = ThreadLifecycleState::Retained;
+            RUNTIME_PROCESS.retain();
+            ThreadFinishResult::Retained
+        }
+    }
 }
 
 /// The ordinary no-page half of the runtime finish boundary.  It is separate
