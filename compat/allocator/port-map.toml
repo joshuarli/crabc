@@ -118,10 +118,10 @@ performance_qualified = false
 [[unit]]
 upstream = "src/alloc.c"
 source_region = "allocation entry paths; includes free.c"
-rust_module = "crabc_mimalloc::alloc, crabc_mimalloc::single_thread, and crabc_mimalloc::free_list"
-rust_item = "partial: explicit default-theap scalar allocation/zeroing/free path plus live checked calloc and ordinary realloc reuse/replacement/copy/zero behavior"
-intentional_difference = "No public/TLS entry, guarded allocation, remote free, or process-owned arena path is claimed."
-tests = ["crabc-mimalloc/src/alloc.rs", "crabc-mimalloc/src/free_list.rs", "crabc-mimalloc/src/single_thread.rs", "compat/allocator/run.py"]
+rust_module = "crabc_mimalloc::alloc, crabc_mimalloc::single_thread, crabc_mimalloc::free_list, crabc_mimalloc::process_page_map, and crabc_mimalloc::runtime_lifecycle"
+rust_item = "partial: explicit default-theap scalar allocation/zeroing/free path, live checked calloc, ordinary realloc reuse/replacement/copy/zero behavior, and the private native-shadow pointer-first local-or-caller-owned replacement transaction"
+intentional_difference = "The private native-shadow realloc boundary is limited to exact live native clients and a caller with an attached persistent native owner; it is mapped precisely by ordinary-reallocation-decision-and-extents. Default-backend promotion, guarded allocation, general public allocator parity, and broad differential/stress/performance qualification remain absent."
+tests = ["crabc-mimalloc/src/alloc.rs", "crabc-mimalloc/src/free_list.rs", "crabc-mimalloc/src/single_thread.rs", "crabc-mimalloc/src/process_page_map.rs", "crabc-mimalloc/src/runtime_lifecycle.rs", "crabc-mimalloc/tests/native_pointer_first_nonlocal_reallocate.rs", "tests/fixtures/native_mimalloc_shadow_foreign_realloc_test.c", "tests/native_mimalloc_shadow_abi.rs", "tests/fixtures/native_mimalloc_owner_exit_realloc_test.c", "tests/native_mimalloc_owner_exit_realloc.rs", "compat/allocator/run.py", "compat/allocator/tests/test_port_map_nonlocal_realloc.py"]
 exported = false
 implemented = false
 unit_verified = false
@@ -2390,11 +2390,11 @@ performance_qualified = false
 [[item]]
 upstream = "src/alloc.c"
 name = "ordinary-reallocation-decision-and-extents"
-source_region = "src/alloc.c:379-451 mi_theap_realloc_zero_ex/mi_theap_realloc null allocation, reuse threshold, replacement copy size, aligned zero start, usable zero extent, and zero-size compatibility clear"
-rust_module = "crabc_mimalloc::alloc, crabc_mimalloc::single_thread, crabc_mimalloc::main_static_page, and crabc_mimalloc::main_heap_page"
-rust_item = "ReallocationPlan/reallocation_plan/replacement_zero_range/replacement_zeros_first_byte; SingleThreadAllocator::reallocate/reallocate_zeroed; and the bounded MainStaticProcessPageAllocator/MainStaticFirstArenaPageAllocator/MainHeapThreadProcessPageAllocator reallocate delegates"
-intentional_difference = "The private live path preserves replacement-failure ownership and source zeroing/copy extents. The ticket-zero null case alone may activate the completed first-arena policy; both bounded process owners otherwise delegate only while their existing map lifecycle is live. Public C policy, remote free, and concurrent lifecycle remain later vertical slices."
-tests = ["crabc-mimalloc/src/alloc.rs", "crabc-mimalloc/src/single_thread.rs", "crabc-mimalloc/src/main_static_page.rs", "crabc-mimalloc/src/main_heap_page.rs", "crabc-mimalloc/src/process_init.rs", "compat/allocator/run.py"]
+source_region = "mimalloc v3.5.0 src/alloc.c:344-417 mi_theap_realloc_zero_ex/_mi_theap_realloc_zero/mi_theap_realloc pointer validation, source usable-size derivation, same-target-Heap reuse predicate, replacement allocation, min(old usable,new size) copy, successful old-pointer free, allocation-failure preservation, and zero-size compatibility byte; src/alloc.c:447-449 mi_realloc current-default-Theap entry"
+rust_module = "crabc_mimalloc::alloc, crabc_mimalloc::single_thread, crabc_mimalloc::main_static_page, crabc_mimalloc::main_heap_page, crabc_mimalloc::process_page_map, and crabc_mimalloc::runtime_lifecycle"
+rust_item = "ReallocationPlan/reallocation_plan/replacement_zero_range/replacement_zeros_first_byte; SingleThreadAllocator::reallocate/reallocate_zeroed; bounded MainStaticProcessPageAllocator/MainStaticFirstArenaPageAllocator/MainHeapThreadProcessPageAllocator reallocate delegates; ProcessPageMapLease::lookup_live_allocation and LiveAllocationPointer; runtime_lifecycle::{native_live_allocation_for_pointer_reallocation,native_reallocate_pointer_first_local,native_reallocate_pointer_first_nonlocal,native_reallocate_release_unpublished_replacement,native_reallocate,native_free_pointer_first_nonlocal}"
+intentional_difference = "The private native-shadow path accepts an exact live native client and first derives one coherent PageMap allocation observation. A source page associated with the caller may take the existing same-target local reuse/replacement path. Every nonmatching live-associated, abandoned, abandoned-mapped, or detached observation instead allocates through the caller's persistent native owner, copies min(source usable size, requested size), and consumes the old observation through the general pointer-first nonlocal free path; it never borrows or reconstructs the source owner. Allocation failure leaves the old allocation untouched. If the old-source continuation does not return Freed after replacement allocation, the unescaped caller-local replacement is returned directly to its current owner; a rollback failure retains that owner, and the realloc operation fails closed so no replacement result escapes beside the old source. The bounded evidence is one focused Rust live-foreign replacement, one selected pinned-musl live-foreign C-ABI trace, and four serialized post-owner-exit C-ABI rounds covering normal return, pthread_exit, deferred cancellation, 4 KiB, 128 KiB, and source zero-size behavior. This is not aligned-realloc, zeroing-realloc, invalid-pointer, simultaneous access, general differential/stress evidence, M5 completion, backend promotion, or full allocator parity."
+tests = ["crabc-mimalloc/src/alloc.rs", "crabc-mimalloc/src/single_thread.rs", "crabc-mimalloc/src/main_static_page.rs", "crabc-mimalloc/src/main_heap_page.rs", "crabc-mimalloc/src/process_init.rs", "crabc-mimalloc/src/process_page_map.rs", "crabc-mimalloc/src/runtime_lifecycle.rs", "crabc-mimalloc/tests/native_pointer_first_nonlocal_reallocate.rs", "tests/fixtures/native_mimalloc_shadow_foreign_realloc_test.c", "tests/native_mimalloc_shadow_abi.rs", "tests/fixtures/native_mimalloc_owner_exit_realloc_test.c", "tests/native_mimalloc_owner_exit_realloc.rs", "compat/allocator/run.py", "compat/allocator/tests/test_port_map_nonlocal_realloc.py"]
 exported = false
 implemented = true
 unit_verified = true
@@ -2745,7 +2745,7 @@ upstream = "src/alloc.c"
 name = "nondefault-crabc-libc-native-mimalloc-shadow-ordinary-boundary"
 source_region = "mimalloc v3.5.0 src/alloc.c:29-159,344-451 ordinary allocation, calloc, realloc, free, and usable-size mechanics; src/free.c:100-160,221-255 exact live-page lookup, aligned block recovery, and cross-thread mi_free_block_mt publication; musl 1.2.6 malloc-family errno and zero-size C-ABI policy"
 rust_module = "crabc_libc::allocator_native_mimalloc, crabc_libc::c_abi, and crabc_libc::program_utils_exports with crabc_mimalloc::{process_page_map,runtime_lifecycle}"
-rust_item = "the `native-mimalloc-shadow` feature's malloc/free/calloc/realloc/malloc_usable_size boundary; native_allocate_aligned/native_reallocate/native_free/native_usable_size/native_current_live_allocation_for_direct_pointer_operation/native_reallocate_pointer_first_local/prepare_native_later_thread_arena/prepare_native_initial_owner_for_later_thread/native_ticket_zero_live_remote_free/native_later_thread_live_remote_free; ProcessPageMapLease::{lookup_live_allocation,lookup_page_for_live_client}, LiveAllocationPointer::{client,usable_size,is_associated_with}, Page::{is_live_owner_for_thread_at,canonical_remote_block_for_live_client_at}, and remote_free::push; MainStaticRuntimeFirstArenaPageAllocator::{prepare_dormant_page_pair,prepare_live_engine_for_later_thread,with_later_thread_page_pair}; MainStaticRuntimeParkedEngine and PageAllocatorEngine::{suspend_runtime_ticket_zero,resume_runtime_ticket_zero}; CurrentThreadPageOwnerSessionHandle::{native_free,native_publish_remote_free_to_parked_live_owner}; DetachedOwnerExitClient::can_attempt_final_member_adoption, DetachedOwnerExitClientLedger::only_client_for_native_free, NativePostExitRouteStorage::{free_exact,settle_exact_free}, NativePostExitRouteRegistry::{install,free_exact,view}, TicketZeroOwnerExitFreeRoute::{free_exact_native_block,adopt_last_native_mapped_regular_member}, NativeLiveRemoteOwnerRegistry::{install,claim_current_slot,claim_current_slot_while_holding_live_remote_owner,claim_exact_client}, NativeLiveRemoteOwnerStorage::{claim,try_claim}, NativeLiveRemoteOwnerTryClaim, NativeLiveRemoteOwnerRegistryNode/NativeLiveRemoteOwnerGuard, native_live_remote_owner_registry_test_audit/NativeLiveRemoteOwnerRegistryAudit, RuntimePersistentPageEngine::publish_remote_free_to_parked_live_owner, PreparedOwnerExitClientState::PublishedToLiveOwner; NativePostExitRoute, NativePostExitRouteRegistryNode, NativePostExitRouteCompletion, RuntimeParkedPostExitRoute, ProcessPageMapPostExitAccess, and finish_current_thread_native_after_user_destructors"
+rust_item = "the `native-mimalloc-shadow` feature's malloc/free/calloc/realloc/malloc_usable_size boundary; native_allocate_aligned/native_reallocate/native_free/native_usable_size/native_live_allocation_for_pointer_reallocation/native_reallocate_pointer_first_local/native_reallocate_pointer_first_nonlocal/native_reallocate_release_unpublished_replacement/prepare_native_later_thread_arena/prepare_native_initial_owner_for_later_thread/native_ticket_zero_live_remote_free/native_later_thread_live_remote_free; ProcessPageMapLease::{lookup_live_allocation,lookup_page_for_live_client}, LiveAllocationPointer::{client,usable_size,is_associated_with}, Page::{is_live_owner_for_thread_at,canonical_remote_block_for_live_client_at}, and remote_free::push; MainStaticRuntimeFirstArenaPageAllocator::{prepare_dormant_page_pair,prepare_live_engine_for_later_thread,with_later_thread_page_pair}; MainStaticRuntimeParkedEngine and PageAllocatorEngine::{suspend_runtime_ticket_zero,resume_runtime_ticket_zero}; CurrentThreadPageOwnerSessionHandle::{native_free,native_publish_remote_free_to_parked_live_owner}; DetachedOwnerExitClient::can_attempt_final_member_adoption, DetachedOwnerExitClientLedger::only_client_for_native_free, NativePostExitRouteStorage::{free_exact,settle_exact_free}, NativePostExitRouteRegistry::{install,free_exact,view}, TicketZeroOwnerExitFreeRoute::{free_exact_native_block,adopt_last_native_mapped_regular_member}, NativeLiveRemoteOwnerRegistry::{install,claim_current_slot,claim_current_slot_while_holding_live_remote_owner,claim_exact_client}, NativeLiveRemoteOwnerStorage::{claim,try_claim}, NativeLiveRemoteOwnerTryClaim, NativeLiveRemoteOwnerRegistryNode/NativeLiveRemoteOwnerGuard, native_live_remote_owner_registry_test_audit/NativeLiveRemoteOwnerRegistryAudit, RuntimePersistentPageEngine::publish_remote_free_to_parked_live_owner, PreparedOwnerExitClientState::PublishedToLiveOwner; NativePostExitRoute, NativePostExitRouteRegistryNode, NativePostExitRouteCompletion, RuntimeParkedPostExitRoute, ProcessPageMapPostExitAccess, and finish_current_thread_native_after_user_destructors"
 # Shadow correction: the metadata-backed live-owner registry can publish
 # independently parked A TLS sessions. The selected direct and C witnesses
 # park A1 before A2 enters its own setup transition, then give B1/B2 only
@@ -2757,9 +2757,11 @@ This is a compile-time, nondefault early-shadow lane, not a runtime selector or
 default-backend change. The initial thread retains the permanent ticket-zero
 owner. An attached worker may submit one exact still-live ticket-zero client
 through the source page's atomic remote head, but it receives no page engine,
-scheduler operation, admission claim, or stored client capability. That is
-source live-owner free only, not reallocation, owner-exit, abandonment, or a
-pointer registry. The separate PageMap usable-size boundary returns its
+source owner, admission claim, or stored client capability. That atomic
+producer seam supplies live-owner free only; the separately mapped realloc
+transaction allocates through the caller's persistent owner. Neither seam is
+owner-exit adoption, abandonment, or a pointer registry. The separate PageMap
+usable-size boundary returns its
 captured extent for any exact live native client without borrowing this
 producer.
 
@@ -2825,34 +2827,40 @@ Once that terminal completion is resident in B TLS, it retains only A's parked
 token and admission proof. B may resume and re-park its own independent local
 engine for ordinary allocation, local `realloc`, and exact local free; B's
 ordinary teardown still precedes every completion release. The selected
-`native_mimalloc_owner_exit_realloc` C fixture first proves that a valid
-detached `realloc` maps to `ENOMEM`, preserves A's bytes, and reaches A only
-through generic pointer-first free. It then allocates a B-local client,
-preserves that local prefix through its own replacement decisions, and keeps
-the completion opaque. B's TSD destructor repeats the local replacement,
-frees the continued client, and precedes the native all-free finish that
-settles A's proof. On B's `pthread_exit`, its cleanup handler makes and frees
-a new local allocation; the TSD destructor then continues the existing client
-before it frees that client. The same fixture repeats the cleanup/TSD order
-through deferred cancellation at a real cancellation point and proves the
-TSD-only normal-return phase before B's native all-free finish settles A's
-proof.
-For a detached or foreign `realloc` input, `native_reallocate` first captures
-the PageMap facts and compares the source identity with B. A mismatch returns
-`Unavailable`, leaves the original client and bytes live, and never claims a
-route entry, resumes B's parked engine, or records a replacement. B later
-consumes the original only through the same generic pointer-first free route.
-`native_usable_size` instead returns the captured PageMap extent directly for
-an exact live client and does not claim a route entry. This is not source
-in-place reuse, a borrowed A allocator, or a general cross-thread allocation
-capability.
-The candidate-only `native_mimalloc_shadow_foreign_realloc_test.c` witness
-keeps A live under a pthread handshake while the initial thread presents A's
-exact client to `realloc`: it requires `NULL`/`ENOMEM` and an unchanged prefix,
-then calls generic pointer-first `free(source)` before A may exit. Pinned musl
-permits that live cross-thread reallocation, so
-`native_mimalloc_shadow_abi.rs` records a deliberate native-contract
-divergence rather than comparing the two outputs.
+`native_mimalloc_owner_exit_realloc` C fixture first proves that an impossible
+replacement request maps to `ENOMEM` and preserves every 64 KiB source
+sentinel. Four serialized fresh-B rounds then replace A's post-exit source
+through B's persistent owner for 4 KiB, 128 KiB, and zero-size requests. The
+fixture observes only legal C behavior: a non-null result with the bounded
+prefix preserved, and the zero-size result's pinned compatibility zero byte.
+Pinned `mi_theap_realloc_zero_ex` selects its replacement branch because B's
+target Theap differs; successful replacement consumes A's old client exactly
+once through generic pointer-first free, so the fixture immediately clears and
+never compares or accesses that stale address. The same process retains B's
+existing local replacement and cleanup/TSD ordering
+coverage across normal return, `pthread_exit`, and deferred cancellation
+before B's native all-free finish settles A's proof.
+For any nonmatching live-associated, abandoned, abandoned-mapped, or detached
+`realloc` input, `native_reallocate` first captures one coherent PageMap
+observation, then allocates the replacement through the caller's persistent
+native owner rather than borrowing the source owner. It copies the smaller of
+the source usable extent and requested size before passing that same non-Copy
+observation to generic pointer-first nonlocal free. Allocation failure leaves
+the source live and unchanged. If that old-source continuation does not return
+`Freed`, the unescaped caller-local replacement is returned directly to its
+current owner; rollback failure retains that owner, and realloc returns its
+fail-closed retained result without publishing the replacement. Only `Freed`
+publishes the replacement. `native_usable_size` still returns the captured PageMap extent
+directly for an exact live client. This is never source in-place reuse or a
+borrow of A's allocator.
+The selected pinned-musl differential
+`native_mimalloc_shadow_foreign_realloc_test.c` keeps A live under a pthread
+handshake while B first rejects `SIZE_MAX` with `ENOMEM` and an unchanged
+513-byte prefix, then successfully replaces that source at 8192 bytes through
+B's persistent owner. It requires the copied prefix, writable replacement
+tail, preservation of the fixture's preexisting `EAGAIN`, no stale-source
+access after success, and B-local replacement free before A resumes. This is
+one bounded valid live-foreign trace, not broad realloc differential parity.
 Registry inspection proves only that every extant private OS-list member remains
 owned by a live typed route; it does not authorize list traversal or broad
 PageMap access. A metadata-growth, retained, or terminal route failure retains
@@ -2902,7 +2910,7 @@ or concurrent PageMap mutation. The selected boundary has no C-backend fallback:
 unsupported, or terminal native frees fail-stop, and an unavailable allocation
 reports the selected C-ABI failure.
 
-General single-page adoption/reclaim owner exit, foreign worker `realloc`,
+General single-page adoption/reclaim owner exit, simultaneous source access,
 general
 concurrent owner-exit traversal or worker allocation, fork repair, and
 promotion remain absent. `allocator-shadow` rebuilds this selected libc only
@@ -2970,11 +2978,13 @@ fixtures cannot execute the default C artifact.
 # parked session for ordinary local allocation, `realloc`, free, and one
 # exact live-owner source publication. B's source finish remains the sole
 # release boundary for the A completions.
-# Direct pointer-operation evidence: `native_pointer_current_owner_reallocate`
-# keeps the initial and worker owners local, proves both cross-owner identity
-# directions return `Unavailable` with source bytes intact, and distinguishes
-# PageMap-derived usable-size from owner-consuming realloc.
-tests = ["crabc-mimalloc/src/main_static_page.rs", "crabc-mimalloc/src/runtime_lifecycle.rs", "crabc-mimalloc/src/single_thread.rs", "crabc-mimalloc/tests/runtime_lifecycle.rs", "crabc-mimalloc/tests/native_source_published_live_owner_exit.rs", "crabc-mimalloc/tests/native_post_exit_lifecycle.rs", "crabc-mimalloc/tests/native_post_exit_split_releaser_lifecycle.rs", "crabc-mimalloc/tests/native_aggregate_post_exit_reclaim.rs", "crabc-mimalloc/tests/native_sole_post_exit_lifecycle.rs", "crabc-mimalloc/tests/native_two_post_exit_lifecycle.rs", "crabc-mimalloc/tests/native_three_post_exit_lifecycle.rs", "crabc-mimalloc/tests/native_post_exit_registry_reuse.rs", "crabc-mimalloc/tests/native_post_exit_registry_high_water.rs", "crabc-mimalloc/tests/native_post_exit_with_local_session.rs", "crabc-mimalloc/tests/native_multiple_post_exit_completions.rs", "crabc-mimalloc/tests/native_terminal_completion_live_remote_free.rs", "crabc-mimalloc/tests/native_live_remote_free.rs", "crabc-mimalloc/tests/native_two_live_remote_owners.rs", "crabc-mimalloc/tests/native_live_remote_owner_registry_reuse.rs", "crabc-mimalloc/tests/native_parallel_local_workers.rs", "tests/fixtures/allocator_test.c", "tests/allocator.rs", "tests/fixtures/pthread_create_join_tls_regression_test.c", "tests/pthread_create_join_tls_regression.rs", "tests/fixtures/native_mimalloc_shadow_foreign_realloc_test.c", "tests/native_mimalloc_shadow_abi.rs", "tests/fixtures/native_mimalloc_owner_exit_test.c", "tests/native_mimalloc_owner_exit.rs", "tests/fixtures/native_mimalloc_retired_owner_exit_test.c", "tests/native_mimalloc_retired_owner_exit.rs", "tests/fixtures/native_mimalloc_two_owner_exit_test.c", "tests/native_mimalloc_two_owner_exit.rs", "tests/fixtures/native_mimalloc_three_owner_exit_test.c", "tests/native_mimalloc_three_owner_exit.rs", "tests/fixtures/native_mimalloc_post_exit_split_releaser_test.c", "tests/native_mimalloc_post_exit_split_releaser.rs", "tests/fixtures/native_mimalloc_aggregate_reclaim_test.c", "tests/native_mimalloc_aggregate_reclaim.rs", "tests/fixtures/native_mimalloc_owner_exit_realloc_test.c", "tests/native_mimalloc_owner_exit_realloc.rs", "tests/fixtures/native_mimalloc_many_owner_exit_allocations_test.c", "tests/native_mimalloc_many_owner_exit_allocations.rs", "tests/fixtures/native_mimalloc_concurrent_post_exit_release_test.c", "tests/native_mimalloc_concurrent_post_exit_release.rs", "tests/fixtures/native_mimalloc_live_remote_free_test.c", "tests/native_mimalloc_live_remote_free.rs", "tests/fixtures/native_mimalloc_live_remote_from_parked_worker_test.c", "tests/native_mimalloc_live_remote_from_parked_worker.rs", "tests/fixtures/native_mimalloc_source_published_exit_test.c", "tests/native_mimalloc_source_published_exit.rs", "tests/fixtures/native_mimalloc_source_published_live_owner_exit_test.c", "tests/native_mimalloc_source_published_live_owner_exit.rs", "tests/fixtures/native_mimalloc_post_exit_source_published_successor_test.c", "tests/native_mimalloc_post_exit_source_published_successor.rs", "tests/fixtures/native_mimalloc_post_exit_source_published_all_free_proof_test.c", "tests/native_mimalloc_post_exit_source_published_all_free_proof.rs", "tests/fixtures/native_mimalloc_two_live_remote_owners_test.c", "tests/native_mimalloc_two_live_remote_owners.rs", "tests/fixtures/native_mimalloc_initial_remote_free_test.c", "tests/native_mimalloc_initial_remote_free.rs", "tests/fixtures/native_mimalloc_initial_live_local_worker_test.c", "tests/native_mimalloc_initial_live_local_worker.rs", "tests/fixtures/native_mimalloc_initial_live_owner_exit_test.c", "tests/native_mimalloc_initial_live_owner_exit.rs", "tests/fixtures/native_mimalloc_initial_live_parallel_workers_test.c", "tests/native_mimalloc_initial_live_parallel_workers.rs", "tests/fixtures/native_mimalloc_parallel_local_workers_test.c", "tests/native_mimalloc_parallel_local_workers.rs", "tests/native_mimalloc_live_remote_owner_exit_test.c", "tests/native_mimalloc_live_remote_owner_exit.rs", "libc/src/allocator_native_mimalloc.rs", "libc/src/c_abi.rs", "scripts/dev.sh"]
+# Direct pointer-operation evidence: the focused Rust regression proves one
+# live-foreign replacement uses B's persistent owner, preserves the old block
+# on impossible-size allocation failure, copies the bounded prefix, and leaves
+# A usable after the old source is published through pointer-first nonlocal
+# free. The selected C fixtures separately bound live-foreign and post-exit
+# ABI behavior; none is a full realloc differential or stress qualification.
+tests = ["crabc-mimalloc/src/main_static_page.rs", "crabc-mimalloc/src/runtime_lifecycle.rs", "crabc-mimalloc/src/single_thread.rs", "crabc-mimalloc/tests/runtime_lifecycle.rs", "crabc-mimalloc/tests/native_pointer_first_nonlocal_reallocate.rs", "crabc-mimalloc/tests/native_source_published_live_owner_exit.rs", "crabc-mimalloc/tests/native_post_exit_lifecycle.rs", "crabc-mimalloc/tests/native_post_exit_split_releaser_lifecycle.rs", "crabc-mimalloc/tests/native_aggregate_post_exit_reclaim.rs", "crabc-mimalloc/tests/native_sole_post_exit_lifecycle.rs", "crabc-mimalloc/tests/native_two_post_exit_lifecycle.rs", "crabc-mimalloc/tests/native_three_post_exit_lifecycle.rs", "crabc-mimalloc/tests/native_post_exit_registry_reuse.rs", "crabc-mimalloc/tests/native_post_exit_registry_high_water.rs", "crabc-mimalloc/tests/native_post_exit_with_local_session.rs", "crabc-mimalloc/tests/native_multiple_post_exit_completions.rs", "crabc-mimalloc/tests/native_terminal_completion_live_remote_free.rs", "crabc-mimalloc/tests/native_live_remote_free.rs", "crabc-mimalloc/tests/native_two_live_remote_owners.rs", "crabc-mimalloc/tests/native_live_remote_owner_registry_reuse.rs", "crabc-mimalloc/tests/native_parallel_local_workers.rs", "tests/fixtures/allocator_test.c", "tests/allocator.rs", "tests/fixtures/pthread_create_join_tls_regression_test.c", "tests/pthread_create_join_tls_regression.rs", "tests/fixtures/native_mimalloc_shadow_foreign_realloc_test.c", "tests/native_mimalloc_shadow_abi.rs", "tests/fixtures/native_mimalloc_owner_exit_test.c", "tests/native_mimalloc_owner_exit.rs", "tests/fixtures/native_mimalloc_retired_owner_exit_test.c", "tests/native_mimalloc_retired_owner_exit.rs", "tests/fixtures/native_mimalloc_two_owner_exit_test.c", "tests/native_mimalloc_two_owner_exit.rs", "tests/fixtures/native_mimalloc_three_owner_exit_test.c", "tests/native_mimalloc_three_owner_exit.rs", "tests/fixtures/native_mimalloc_post_exit_split_releaser_test.c", "tests/native_mimalloc_post_exit_split_releaser.rs", "tests/fixtures/native_mimalloc_aggregate_reclaim_test.c", "tests/native_mimalloc_aggregate_reclaim.rs", "tests/fixtures/native_mimalloc_owner_exit_realloc_test.c", "tests/native_mimalloc_owner_exit_realloc.rs", "tests/fixtures/native_mimalloc_many_owner_exit_allocations_test.c", "tests/native_mimalloc_many_owner_exit_allocations.rs", "tests/fixtures/native_mimalloc_concurrent_post_exit_release_test.c", "tests/native_mimalloc_concurrent_post_exit_release.rs", "tests/fixtures/native_mimalloc_live_remote_free_test.c", "tests/native_mimalloc_live_remote_free.rs", "tests/fixtures/native_mimalloc_live_remote_from_parked_worker_test.c", "tests/native_mimalloc_live_remote_from_parked_worker.rs", "tests/fixtures/native_mimalloc_source_published_exit_test.c", "tests/native_mimalloc_source_published_exit.rs", "tests/fixtures/native_mimalloc_source_published_live_owner_exit_test.c", "tests/native_mimalloc_source_published_live_owner_exit.rs", "tests/fixtures/native_mimalloc_post_exit_source_published_successor_test.c", "tests/native_mimalloc_post_exit_source_published_successor.rs", "tests/fixtures/native_mimalloc_post_exit_source_published_all_free_proof_test.c", "tests/native_mimalloc_post_exit_source_published_all_free_proof.rs", "tests/fixtures/native_mimalloc_two_live_remote_owners_test.c", "tests/native_mimalloc_two_live_remote_owners.rs", "tests/fixtures/native_mimalloc_initial_remote_free_test.c", "tests/native_mimalloc_initial_remote_free.rs", "tests/fixtures/native_mimalloc_initial_live_local_worker_test.c", "tests/native_mimalloc_initial_live_local_worker.rs", "tests/fixtures/native_mimalloc_initial_live_owner_exit_test.c", "tests/native_mimalloc_initial_live_owner_exit.rs", "tests/fixtures/native_mimalloc_initial_live_parallel_workers_test.c", "tests/native_mimalloc_initial_live_parallel_workers.rs", "tests/fixtures/native_mimalloc_parallel_local_workers_test.c", "tests/native_mimalloc_parallel_local_workers.rs", "tests/fixtures/native_mimalloc_live_remote_owner_exit_test.c", "tests/native_mimalloc_live_remote_owner_exit.rs", "libc/src/allocator_native_mimalloc.rs", "libc/src/c_abi.rs", "compat/allocator/tests/test_port_map_nonlocal_realloc.py", "scripts/dev.sh"]
 exported = true
 implemented = true
 unit_verified = true
