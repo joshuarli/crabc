@@ -50,7 +50,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 32)
-        self.assertEqual(report["verified_artifact_count"], 116)
+        self.assertEqual(report["verified_artifact_count"], 117)
         self.assertEqual(report["header_layout_probe_count"], 45)
         self.assertEqual(report["public_header_inventory_count"], 183)
         self.assertEqual(report["header_foundation_header_count"], 191)
@@ -726,6 +726,70 @@ class X86ParityLedgerTests(unittest.TestCase):
         with self.assertRaisesRegex(
             ledger.LedgerError,
             "no-std-static-pie-full-lto-consumer description omits",
+        ):
+            ledger.validate_ledger(changed)
+
+    def test_no_std_native_facade_lto_consumer_is_private_and_non_promoting(self) -> None:
+        data = self.data()
+        family = self.family(data, "consumer.rust-std-lto")
+        self.assertEqual(family["status"], "planned")
+        artifacts = family["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if entry["id"] == "no-std-native-facade-full-lto-consumer"
+        )
+        assert isinstance(artifact, dict)
+        self.assertNotIn("capabilities", artifact)
+        for phrase in (
+            "AArch64 `lto-native-facade` workload shape",
+            "filesystem, pipe, eventfd",
+            "full LLD `--lto-O3`",
+            "pinned target `libcore`",
+            "`libcrabc-builtins.a`",
+            "not the same source",
+            "stock Rust `std`",
+            "installed owned sysroot",
+            "promotion",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, artifact["description"])
+        self.assertEqual(
+            {entry["command"] for entry in artifact["native_evidence"]},
+            {"./scripts/dev-x86_64.sh consumer-native-facade-lto"},
+        )
+        for owner in (
+            "STATUS.md",
+            "x86-64.md",
+            "compat/lto/native-facade-lto-fixture/src/main.rs",
+            "crabc-core/src/event_x86_64.rs",
+            "crabc-core/src/fs.rs",
+            "crabc-core/src/pipe.rs",
+            "crabc-rs/src/event_x86_64.rs",
+            "crabc-rs/src/fs_x86_64.rs",
+            "crabc-rs/src/pipe.rs",
+            "compat/x86_64/consumer_native_facade_lto.py",
+            "compat/x86_64/consumer_native_facade_lto_fixture.rs",
+            "compat/x86_64/tests/test_consumer_native_facade_lto.py",
+        ):
+            self.assertIn(owner, artifact["source_owners"])
+
+        changed = copy.deepcopy(data)
+        changed_artifacts = self.family(changed, "consumer.rust-std-lto")[
+            "verified_artifact"
+        ]
+        assert isinstance(changed_artifacts, list)
+        changed_artifact = next(
+            entry
+            for entry in changed_artifacts
+            if entry["id"] == "no-std-native-facade-full-lto-consumer"
+        )
+        assert isinstance(changed_artifact, dict)
+        changed_artifact["description"] = "private facade LTO executable"
+        with self.assertRaisesRegex(
+            ledger.LedgerError,
+            "no-std-native-facade-full-lto-consumer description omits",
         ):
             ledger.validate_ledger(changed)
 

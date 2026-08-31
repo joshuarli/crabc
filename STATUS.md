@@ -379,6 +379,18 @@ musl-derived parser through target-local errno/multibyte/string/permanent-stream
 adapters only. It deliberately owns no environment object or mutation API,
 auxv/secure state, loader startup, general locale/stdio, allocator, libc.so,
 CRT family, sysroot, C ABI closure, promotion, or public x86 support.
+`./scripts/dev-x86_64.sh consumer-native-facade-lto` is the second private
+artifact in that family. It compiles an AArch64-native-facade-shaped no-std
+x86 workload—getpid, `/dev/null`, pipe, eventfd, descriptor flags, read/write,
+and close—entirely as linker-plugin inputs and links full LTO through the same
+closed static-PIE boundary. The separately hashed x86 fixture does not claim
+same-source parity because it owns the current static startup and pinned-core
+panic seams. Native execution twice, ELF closure, helper internalization, and
+owned `__udivti3` attribution prove a real broader facade consumer without an
+ambient CRT, libc, loader, or compiler runtime. Stock Rust `std`, an installed
+owned sysroot, dynamic libc/loader integration, the complete AArch64 gate,
+source build, family completion, promotion, and public x86 support remain
+unproved.
 
 The x86 direct Rust facade also has verified allocation-free
 `pattern::{fnmatch, FnmatchFlags}` and alloc-gated explicit-root

@@ -3906,10 +3906,32 @@ code before executing each twice with identical raw output. The O3 image keeps
 the helper symbol while full LTO internalizes it. Its ignored JSON evidence is
 written to `compat/reports/x86_64/consumer-static-pie-lto/latest.json`.
 
-This executable is deliberately the largest consumer the currently owned
-static artifacts admit. It is not stock Rust `std`, an owned sysroot, libc or
-loader integration, a source build, completion or promotion of
-`consumer.rust-std-lto`, or public x86 support.
+This first executable established the closed compiler/link/runtime boundary.
+It is not stock Rust `std`, an owned sysroot, libc or loader integration, a
+source build, completion or promotion of `consumer.rust-std-lto`, or public
+x86 support.
+
+`./scripts/dev-x86_64.sh consumer-native-facade-lto` is the next private
+artifact in that still-planned family. It carries the named workload shape of
+the AArch64 `lto-native-facade` fixture across x86 `crabc-rs`: stable getpid,
+`/dev/null` open/write, pipe read/write, eventfd read/write, `F_GETFD`, and
+owned descriptor close routes must all succeed before the fixed output is
+emitted. The x86 fixture is separately hashed and explicitly does not claim to
+be the same source because its current static CRT needs private lifecycle and
+pinned-core panic owners. A runtime-derived helper call also requires the
+one-member `libcrabc-builtins.a` to satisfy `__udivti3`.
+
+The gate compiles the application and dependency crates as linker-plugin
+bitcode, performs full LLD `--lto-O3` with the same ordered closed inputs as
+the earlier consumer, audits the final static ET_DYN image, and executes the
+whole workload twice. Every selected input is hashed; ambient CRT, libc,
+loader, compiler runtime, interpreter, DT_NEEDED entry, and unresolved symbol
+are rejected. Ignored evidence is written to
+`compat/reports/x86_64/consumer-native-facade-lto/latest.json`. This closes a
+real native-facade-shaped no-std prerequisite only. Stock Rust `std`, an
+installed owned sysroot, dynamic libc/loader integration, the complete
+AArch64 gate, source build, family promotion, and public x86 support remain
+unproved.
 
 `./scripts/dev-x86_64.sh libc-crt-static-tls` is the separate composed proof:
 real Rust CRT objects require the hidden libc bootstrap archive boundary, then

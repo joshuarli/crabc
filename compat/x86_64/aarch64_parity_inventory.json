@@ -1613,7 +1613,7 @@
       "capability_count": 0,
       "contract_state": "selected-private",
       "id": "consumer.rust-std-lto",
-      "verified_artifact_count": 1,
+      "verified_artifact_count": 2,
       "verified_slice_count": 0
     },
     {
@@ -1665,6 +1665,10 @@
     {
       "family": "compat.posix-process",
       "id": "static-posix-process-abi-admission"
+    },
+    {
+      "family": "consumer.rust-std-lto",
+      "id": "no-std-native-facade-full-lto-consumer"
     },
     {
       "family": "consumer.rust-std-lto",
@@ -2127,7 +2131,7 @@
     "aarch64_abi_manifest": "33dd504470f467caac7b149e747ee2b7ff8714c4fb23dfe5ad46e7f58bfe610c",
     "aarch64_capability_ledger": "128458dde00073bc0320b94972d864e66fa10d5f54e92b1b1c83081e2b4955e0",
     "aarch64_headers": "a0d35f0950abb3c060b978dfb5257cf50f70bed46ce91d371f43d65db7626b68",
-    "x86_parity_ledger": "7c993c4cea2da78180821a55e52908468921cceb897571dba9dd3c65fbef0458",
+    "x86_parity_ledger": "85741e26865f22ea27b64121e60fa34342f8c78a36f3b32bd778b230c7e8c415",
     "x86_public_headers": "2cdcd860a423d99afef8360b6376447cf17ae926f1cd47416be817d421fca80f",
     "x86_static_c_exports": "e1b03a1827768dd69831b5ff63931d82451c8a1e8cb7632cb1e16a91630cc123"
   },

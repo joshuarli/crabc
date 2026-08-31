@@ -7233,7 +7233,7 @@ def require_static_pie_rust_builtins_bundle_artifact(family: Mapping[str, Any]) 
 def require_no_std_static_pie_full_lto_consumer_artifact(
     family: Mapping[str, Any],
 ) -> None:
-    """Ratchet one real private LTO consumer without implying Rust-std closure."""
+    """Ratchet real private LTO consumers without implying Rust-std closure."""
 
     artifacts = require_verified_artifacts(
         family.get("verified_artifact"),
@@ -7356,6 +7356,131 @@ def require_no_std_static_pie_full_lto_consumer_artifact(
         require(
             phrase in scope,
             f"no-std-static-pie-full-lto-consumer evidence scope omits {phrase}",
+        )
+
+    native_facade_matching = [
+        entry
+        for entry in artifacts
+        if entry.get("id") == "no-std-native-facade-full-lto-consumer"
+    ]
+    require(
+        len(native_facade_matching) == 1,
+        "consumer.rust-std-lto must contain exactly one no-std-native-facade-full-lto-consumer artifact",
+    )
+    native_facade = native_facade_matching[0]
+    require(
+        family.get("status") == "planned",
+        "no-std-native-facade-full-lto-consumer must not promote consumer.rust-std-lto",
+    )
+    native_description = native_facade.get("description")
+    require(
+        isinstance(native_description, str),
+        "no-std-native-facade-full-lto-consumer needs a description",
+    )
+    for phrase in (
+        "still-planned `consumer.rust-std-lto`",
+        "AArch64 `lto-native-facade` workload shape",
+        "filesystem, pipe, eventfd",
+        "full LLD `--lto-O3`",
+        "pinned target `libcore`",
+        "`rcrt1.o`/`crti.o`/`crtn.o`",
+        "`libcrabc-builtins.a`",
+        "`__udivti3`",
+        "no interpreter",
+        "not the same source",
+        "stock Rust `std`",
+        "installed owned sysroot",
+        "promotion",
+        "public x86 support",
+    ):
+        require(
+            phrase in native_description,
+            f"no-std-native-facade-full-lto-consumer description omits {phrase}",
+        )
+    native_owners = set(
+        nonempty_strings(
+            native_facade["source_owners"],
+            "no-std-native-facade-full-lto-consumer.source_owners",
+        )
+    )
+    for owner in (
+        "STATUS.md",
+        "x86-64.md",
+        "compat/lto/native-facade-lto-fixture/src/main.rs",
+        "crabc-core/src/event_x86_64.rs",
+        "crabc-core/src/fs.rs",
+        "crabc-core/src/pipe.rs",
+        "crabc-core/src/syscall_x86_64.rs",
+        "crabc-rs/src/event_x86_64.rs",
+        "crabc-rs/src/fs_x86_64.rs",
+        "crabc-rs/src/io.rs",
+        "crabc-rs/src/pipe.rs",
+        "crabc-rs/src/process_x86_64.rs",
+        "libc/src/c_abi/x86_64/memory.rs",
+        "builtins/build_x86_64.py",
+        "crt/build_x86_64.py",
+        "compat/x86_64/consumer_static_pie_lto.py",
+        "compat/x86_64/consumer_static_pie_lto_helper.rs",
+        "compat/x86_64/consumer_native_facade_lto.py",
+        "compat/x86_64/consumer_native_facade_lto_fixture.rs",
+        "compat/x86_64/tests/test_consumer_native_facade_lto.py",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "scripts/dev-x86_64.sh",
+    ):
+        require(
+            owner in native_owners,
+            f"no-std-native-facade-full-lto-consumer source owners omit {owner}",
+        )
+    native_prerequisites = " ".join(
+        nonempty_strings(
+            native_facade["x86_abi_prerequisites"],
+            "no-std-native-facade-full-lto-consumer.x86_abi_prerequisites",
+        )
+    )
+    for phrase in (
+        "SHA-256",
+        "linker-plugin LLVM bitcode",
+        "`--lto-O3`",
+        "`same_source_claimed` remains false",
+        "actual compiler/link/runtime evidence",
+        "x86-64 ET_DYN",
+        "__memcpy_fwd/bcmp/memcmp/memcpy/memmove/memset",
+        "`__udivti3`",
+        "no interpreter",
+        "forbidden runtime marker",
+    ):
+        require(
+            phrase in native_prerequisites,
+            f"no-std-native-facade-full-lto-consumer ABI prerequisites omit {phrase}",
+        )
+    native_evidence = native_facade["native_evidence"]
+    assert isinstance(native_evidence, list)
+    require(
+        {entry["command"] for entry in native_evidence}
+        == {"./scripts/dev-x86_64.sh consumer-native-facade-lto"},
+        "no-std-native-facade-full-lto-consumer must use its closed native command",
+    )
+    native_scope = native_evidence[0].get("scope")
+    require(
+        isinstance(native_scope, str),
+        "no-std-native-facade-full-lto-consumer needs evidence scope",
+    )
+    for phrase in (
+        "Two clean CRT builds",
+        "two clean selected bulk-memory builds",
+        "exact target libcore",
+        "SHA-256 provenance",
+        "internalize the helper boundary",
+        "reject ambient CRT/libc/loader/compiler-runtime",
+        "execute the `/dev/null`, pipe, eventfd, fcntl, getpid, read, write, and close routes twice",
+        "raw status/stdout/stderr equality",
+        "family remains planned",
+        "not same-source AArch64 evidence",
+        "public x86 support",
+    ):
+        require(
+            phrase in native_scope,
+            f"no-std-native-facade-full-lto-consumer evidence scope omits {phrase}",
         )
 
 
