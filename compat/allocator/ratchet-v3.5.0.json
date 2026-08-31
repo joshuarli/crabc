@@ -14,14 +14,14 @@
   "port_map_counts": {
     "differential_verified": 15,
     "exported": 4,
-    "implemented": 145,
-    "item_count": 141,
+    "implemented": 148,
+    "item_count": 144,
     "performance_qualified": 0,
     "stress_verified": 1,
     "unit_count": 34,
-    "unit_verified": 145
+    "unit_verified": 148
   },
-  "port_map_sha256": "ba5e8f4c9b91b9e07695fabc721620f3ddc9a053d9aa7008c2246cc8e1c3ffdd",
+  "port_map_sha256": "e0235bb7a2fe9e7cbdc8f05245cc9f3a7bba5e1495f438938a2f78f54ad05508",
   "port_map_true_statuses": {
     "item:include/mimalloc/atomic.h:mi_lock_t-active-linux-private-lock-boundary": [
       "implemented",
@@ -263,6 +263,14 @@
       "unit_verified"
     ],
     "item:src/free.c:live-owner-remote-free-push-and-collection-protocol": [
+      "implemented",
+      "unit_verified"
+    ],
+    "item:src/free.c:page-owned-post-owner-exit-exact-remote-claim-terminal-tail": [
+      "implemented",
+      "unit_verified"
+    ],
+    "item:src/free.c:pointer-first-native-free-page-state-dispatch": [
       "implemented",
       "unit_verified"
     ],
@@ -583,6 +591,10 @@
       "unit_verified"
     ],
     "item:src/theap.c:later-main-mixed-full-singleton-regular-aggregate-post-exit-route": [
+      "implemented",
+      "unit_verified"
+    ],
+    "item:src/theap.c:later-persistent-owner-source-collect-abandon-exit": [
       "implemented",
       "unit_verified"
     ],

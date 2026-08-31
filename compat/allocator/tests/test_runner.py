@@ -2153,6 +2153,35 @@ class ContractTests(unittest.TestCase):
         )
         self.assertEqual(RUNNER.ratchet_measurement_regressions(baseline, baseline), [])
 
+    def test_ratchet_check_rejects_unreviewed_port_map_digest_drift(self) -> None:
+        """A status-preserving port-map edit still requires a reviewed snapshot."""
+
+        current = {
+            "format": 1,
+            "port_map_counts": {},
+            "port_map_true_statuses": {},
+            "adapted_test_contract_sha256": "adapted-tests",
+            "adapted_stress_test_contract_sha256": "adapted-stress",
+            "native_shadow_stress_contract_sha256": "native-shadow-stress",
+            "owner_exit_publication_contract_sha256": "owner-exit-publication",
+            "api_contract_sha256": "api",
+            "port_map_sha256": "current-port-map",
+            "upstream_test_contract_sha256": "upstream-tests",
+        }
+        baseline = {**current, "port_map_sha256": "reviewed-port-map"}
+
+        with tempfile.TemporaryDirectory() as temporary:
+            ratchet = Path(temporary) / "ratchet.json"
+            RUNNER.write_json(ratchet, baseline)
+            with mock.patch.object(RUNNER, "RATCHET", ratchet), mock.patch.object(
+                RUNNER, "ratchet_payload", return_value=current
+            ):
+                with self.assertRaisesRegex(
+                    RUNNER.HarnessError,
+                    "allocator ratchet input changed: port_map_sha256",
+                ):
+                    RUNNER.check_ratchet({})
+
 
 if __name__ == "__main__":
     unittest.main()
