@@ -36,6 +36,10 @@
 //! `F_NOWR`, so its `F_NOWR || rend` expression short-circuits to exactly
 //! one without observing a general FILE direction, read cursor, or input
 //! transition.
+//! The separate GNU `__fsetlocking` adapter admits only that same permanent
+//! `stdin` pointer and its three named request constants. Musl 1.2.6 keeps the
+//! source body as an unconditional zero return, so the selected calls neither
+//! establish a locking mode nor mutate stream state.
 //! The disjoint GNU `__fwritable` observation reads only the process-lifetime
 //! `stderr` pointer. Musl's fixed stderr record lacks `F_NOWR`, so its
 //! `!(F_NOWR)` expression is exactly one without observing a general FILE
@@ -82,7 +86,7 @@
 //! | `src/stdio/{fgets,fputs,puts}.c` | selected permanent-standard-stream line I/O |
 //! | `src/stdio/{feof,ferror,clearerr}.c` | selected permanent-status predicates and marker reset; focused evidence observes only stdin; `feof_unlocked` is musl's weak same-address alias of `feof` |
 //! | `src/stdio/fileno.c` | selected descriptor adapter plus musl-shaped weak `fileno_unlocked` alias; focused evidence observes only permanent stdin/stdout/stderr |
-//! | `src/stdio/ext.c` | private `__freading(stdin)` direction, `__freadable(stdin)` access, `__fwritable(stderr)` access, `__fbufsize(stderr)` fixed-capacity, and `__flbf(stderr)` fixed-line-buffer observations; no general FILE, input, output, or buffering contract |
+//! | `src/stdio/ext.c` | private `__freading(stdin)` direction, `__fsetlocking(stdin, request)` no-op, `__freadable(stdin)` access, `__fwritable(stderr)` access, `__fbufsize(stderr)` fixed-capacity, and `__flbf(stderr)` fixed-line-buffer observations; no general FILE, lock, input, output, or buffering contract |
 //! | `src/stdio/fflush.c` | selected explicit-flush entry |
 //! | `src/stdio/{fopen,fclose,setvbuf,fseek,ftell,fgetpos,fsetpos,rewind}.c` | one fixed pathname-stream lifecycle, caller-buffered full buffering, and logical-position routes |
 //! | `src/stdio/tmpfile.c`, `src/temp/__randname.c` | one exclusive pathname created below `/tmp` with requested mode `0600`, immediately unlinked, and adopted as a `w+` fixed stream; Linux `getrandom` plus hex encoding replaces musl's noncryptographic name generator without adding a PRNG |
@@ -793,6 +797,44 @@ pub unsafe extern "C" fn __freading(stream: *mut StandardStream) -> c_int {
     // SAFETY: pointer equality above proves the fixed F_NOWR stdin record.
     // Musl's logical-or short-circuits here, so this leaf never observes rend.
     unsafe { ((*stream).flags & F_NOWR != 0) as c_int }
+}
+
+/// Observe musl's fixed permanent-stdin `__fsetlocking` no-op.
+///
+/// Pinned musl 1.2.6 `src/stdio/ext.c` keeps `__fsetlocking(FILE *, int)` as
+/// an unconditional `return 0;`: it neither dereferences its stream argument
+/// nor changes a lock mode. This closed target-private adapter admits only the
+/// process-lifetime stdin pointer and the three named `stdio_ext.h` requests,
+/// preserving that exact zero result without selecting a general FILE lock or
+/// stream-configuration state machine.
+///
+/// # Safety
+///
+/// `stream` must be the exported process-lifetime `stdin` pointer and
+/// `request` must be `FSETLOCKING_QUERY`, `FSETLOCKING_INTERNAL`, or
+/// `FSETLOCKING_BYCALLER`. The selected calls are externally serialized with
+/// the permanent stream.
+#[no_mangle]
+pub unsafe extern "C" fn __fsetlocking(
+    stream: *mut StandardStream,
+    request: c_int,
+) -> c_int {
+    const FSETLOCKING_QUERY: c_int = 0;
+    const FSETLOCKING_INTERNAL: c_int = 1;
+    const FSETLOCKING_BYCALLER: c_int = 2;
+
+    if stream != ptr::addr_of_mut!(STDIN_STREAM)
+        || !matches!(
+            request,
+            FSETLOCKING_QUERY | FSETLOCKING_INTERNAL | FSETLOCKING_BYCALLER
+        )
+    {
+        // SAFETY: this closed boundary never dereferences an unselected FILE.
+        unsafe { reject_stream() };
+    }
+
+    // Musl's selected source body returns zero without changing any state.
+    0
 }
 
 /// Observe musl's fixed permanent-stdin readable-access predicate.

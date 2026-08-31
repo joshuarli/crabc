@@ -125,7 +125,7 @@ for source_name in 'src/stdio/ext.c' 'pub unsafe extern "C" fn __fbufsize' \
         fail "permanent-stderr __fbufsize implementation omits $source_name"
 done
 for unselected in __fwriting __fpending \
-    __fpurge __fsetlocking _flushlbf; do
+    __fpurge _flushlbf; do
     if grep -Eq "[[:space:]][TW][[:space:]]${unselected}$" "$archive_symbols"; then
         fail "archive accidentally exports unselected ${unselected}"
     fi

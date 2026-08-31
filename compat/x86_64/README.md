@@ -829,6 +829,25 @@ multiple streams,
 line/formatted/wide/memory/cookie/popen I/O, ordinary-exit flushing, general
 stdio, parity, promotion, and public x86 support.
 
+The separate `stdio-permanent-fsetlocking-stdin-header-abi` and
+`libc-stdio-permanent-fsetlocking-stdin` gates record one private
+`static-c-stdio-permanent-fsetlocking-stdin` artifact. It adds only the GNU
+`__fsetlocking` C ABI spelling, without promoting a capability. Its pinned-musl/
+static differential calls `__fsetlocking(stdin, request)` directly and through
+a function pointer for `FSETLOCKING_QUERY`, `FSETLOCKING_INTERNAL`, and
+`FSETLOCKING_BYCALLER`. Musl 1.2.6 keeps the source body as unconditional
+`return 0;`, so each valid call returns exact `int` `0` without dereferencing
+the FILE object or establishing a lock mode. The strict C11/C++17 `stdio_ext.h`
+matrix proves its unconditional `int (FILE *, int)` declaration, the exact
+`0`/`1`/`2` macro values, and unmangled C++ linkage. This is neither lock
+configuration nor a general FILE claim: it excludes arbitrary FILE or request
+behavior, FLOCK/FUNLOCK and lock-free behavior, input/output/buffering/cursor,
+other permanent streams, every other `stdio_ext` helper except separately
+selected `__freading(stdin)`, `__freadable(stdin)`, `__fbufsize(stderr)`, and
+`__flbf(stderr)`, stdio.stream-io, path/descriptor-reopen/tmpfile/LFS behavior,
+byte/block I/O including `fread`/`fwrite`, positions/status/configuration,
+multiple streams, general stdio, parity, promotion, and public x86 support.
+
 The separate `stdio-permanent-freading-stdin-header-abi` and
 `libc-stdio-permanent-freading-stdin` gates record one private
 `static-c-stdio-permanent-freading-stdin` artifact. It adds only the GNU

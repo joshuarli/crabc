@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# Native Linux/x86-64 permanent-stderr __fwritable evidence.
+# Native Linux/x86-64 permanent-stdin __fsetlocking evidence.
 #
 # One project-header fixture first runs against pinned musl 1.2.6 and then as
 # a true `-nostdlib -static` candidate linked only through the selected archive.
-# It observes only the fixed process-lifetime stderr writable-access query. It
-# does not write or configure stderr and is not FILE/path-stream, output
-# behavior, general stdio, or public-x86 evidence.
+# It observes only musl's no-op result for the fixed process-lifetime stdin
+# record and its three documented request constants. It does not configure or
+# lock stdin and is not general FILE, stream-I/O, or public-x86 evidence.
 set -euo pipefail
 
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -17,7 +17,7 @@ readonly INITIAL_TLS_BYTES=4096
 readonly INITIAL_TLS_ALIGNMENT=64
 
 fail() {
-    printf 'ERROR: x86 static libc permanent-stderr __fwritable: %s\n' "$*" >&2
+    printf 'ERROR: x86 static libc permanent-stdin __fsetlocking: %s\n' "$*" >&2
     exit 1
 }
 
@@ -67,14 +67,14 @@ done
 [ -f "$ORACLE_ARCHIVE" ] || fail "missing pinned musl static archive"
 
 bash "$ROOT_DIR/compat/x86_64/run_musl_oracle.sh" >/dev/null
-bash "$ROOT_DIR/compat/x86_64/run_stdio_permanent_fwritable_stderr_header_abi.sh" >/dev/null
+bash "$ROOT_DIR/compat/x86_64/run_stdio_permanent_fsetlocking_stdin_header_abi.sh" >/dev/null
 
-work_dir="$(mktemp -d /tmp/crabc-x86-64-libc-stdio-permanent-fwritable-stderr.XXXXXX)"
+work_dir="$(mktemp -d /tmp/crabc-x86-64-libc-stdio-permanent-fsetlocking-stdin.XXXXXX)"
 trap 'rm -rf -- "$work_dir"' EXIT
 target_dir="$work_dir/cargo-target"
 archive="$target_dir/x86_64-unknown-linux-musl/debug/libc.a"
-reference="$work_dir/musl-stdio-permanent-fwritable-stderr-reference"
-candidate="$work_dir/crabc-static-stdio-permanent-fwritable-stderr-candidate"
+reference="$work_dir/musl-stdio-permanent-fsetlocking-stdin-reference"
+candidate="$work_dir/crabc-static-stdio-permanent-fsetlocking-stdin-candidate"
 trace="$work_dir/header-trace"
 archive_symbols="$work_dir/archive-symbols"
 selected_symbols="$work_dir/selected-c-abi-symbols"
@@ -84,25 +84,25 @@ candidate_program_headers="$work_dir/candidate-program-headers"
 candidate_dynamic="$work_dir/candidate-dynamic"
 candidate_relocations="$work_dir/candidate-relocations"
 candidate_disassembly="$work_dir/candidate-disassembly"
-fwritable_disassembly="$work_dir/fwritable-disassembly"
+fsetlocking_disassembly="$work_dir/fsetlocking-disassembly"
 oracle_archive_symbols="$work_dir/oracle-archive-symbols"
 
 cd "$ROOT_DIR"
 "$ORACLE_CC" -std=c11 -D_POSIX_C_SOURCE=200809L -I"$ROOT_DIR/include" -E -H \
-    compat/x86_64/libc_stdio_permanent_fwritable_stderr_probe.c >/dev/null 2>"$trace"
+    compat/x86_64/libc_stdio_permanent_fsetlocking_stdin_probe.c >/dev/null 2>"$trace"
 for header in stdio_ext.h stdio.h features.h bits/alltypes.h; do
     grep -Fq "$ROOT_DIR/include/$header" "$trace" ||
         fail "fixture did not use the project $header header"
 done
 "$ORACLE_CC" -std=c11 -D_POSIX_C_SOURCE=200809L -fno-builtin \
     -fno-stack-protector -I"$ROOT_DIR/include" \
-    compat/x86_64/libc_stdio_permanent_fwritable_stderr_probe.c -o "$reference"
+    compat/x86_64/libc_stdio_permanent_fsetlocking_stdin_probe.c -o "$reference"
 timeout "$EXECUTION_TIMEOUT" "$reference" ||
-    fail "pinned-musl permanent-stderr __fwritable fixture failed"
+    fail "pinned-musl permanent-stdin __fsetlocking fixture failed"
 
 nm -A --defined-only "$ORACLE_ARCHIVE" >"$oracle_archive_symbols" 2>/dev/null
-grep -Eq "[[:space:]]T[[:space:]]__fwritable$" "$oracle_archive_symbols" ||
-    fail "pinned-musl archive omits strong __fwritable"
+grep -Eq "[[:space:]]T[[:space:]]__fsetlocking$" "$oracle_archive_symbols" ||
+    fail "pinned-musl archive omits strong __fsetlocking"
 
 CARGO_TARGET_DIR="$target_dir" cargo rustc --locked -p crabc-libc --lib \
     --target x86_64-unknown-linux-musl -- \
@@ -114,36 +114,38 @@ for symbol in __crabc_x86_static_tls_bootstrap; do
     grep -Eq "[[:space:]][TW][[:space:]]${symbol}$" "$archive_symbols" ||
         fail "archive does not define ${symbol}"
 done
-grep -Eq "[[:space:]]T[[:space:]]__fwritable$" "$archive_symbols" ||
-    fail "archive does not define strong __fwritable"
-grep -Eq "[[:space:]][BDR][[:space:]]stderr$" "$archive_symbols" ||
-    fail "archive does not define permanent stderr data"
-for source_name in 'src/stdio/ext.c' 'pub unsafe extern "C" fn __fwritable' \
-    '!(f->flags & F_NOWR)' 'stream != ptr::addr_of_mut!(STDERR_STREAM)' \
-    'StandardStream::new(2, F_PERM | F_NORD)'; do
+grep -Eq "[[:space:]]T[[:space:]]__fsetlocking$" "$archive_symbols" ||
+    fail "archive does not define strong __fsetlocking"
+grep -Eq "[[:space:]][BDR][[:space:]]stdin$" "$archive_symbols" ||
+    fail "archive does not define permanent stdin data"
+for source_name in 'src/stdio/ext.c' 'pub unsafe extern "C" fn __fsetlocking' \
+    'const FSETLOCKING_QUERY: c_int = 0' \
+    'const FSETLOCKING_INTERNAL: c_int = 1' \
+    'const FSETLOCKING_BYCALLER: c_int = 2' \
+    'stream != ptr::addr_of_mut!(STDIN_STREAM)' \
+    "Musl's selected source body returns zero without changing any state."; do
     grep -Fq "$source_name" "$ROOT_DIR/libc/src/c_abi/x86_64/stdio_standard.rs" ||
-        fail "permanent-stderr __fwritable implementation omits $source_name"
+        fail "permanent-stdin __fsetlocking implementation omits $source_name"
 done
-for unselected in __fwriting \
-    __fpending __fpurge _flushlbf; do
+for unselected in __fwriting __fpending __fpurge _flushlbf; do
     if grep -Eq "[[:space:]][TW][[:space:]]${unselected}$" "$archive_symbols"; then
         fail "archive accidentally exports unselected ${unselected}"
     fi
 done
 
 "$ORACLE_CC" -std=c11 -D_POSIX_C_SOURCE=200809L \
-    -DCRABC_STDIO_PERMANENT_FWRITABLE_STDERR_FREESTANDING -I"$ROOT_DIR/include" \
+    -DCRABC_STDIO_PERMANENT_FSETLOCKING_STDIN_FREESTANDING -I"$ROOT_DIR/include" \
     -nostdlib -static -fno-pie -no-pie -ffreestanding -fno-builtin \
     -fno-stack-protector -Wl,-e,_start -Wl,--no-undefined \
-    compat/x86_64/libc_stdio_permanent_fwritable_stderr_probe.c \
-    compat/x86_64/libc_stdio_permanent_fwritable_stderr_start.S "$archive" -o "$candidate"
+    compat/x86_64/libc_stdio_permanent_fsetlocking_stdin_probe.c \
+    compat/x86_64/libc_stdio_permanent_fsetlocking_stdin_start.S "$archive" -o "$candidate"
 readelf --symbols --wide "$candidate" >"$candidate_symbols"
 readelf --program-headers --wide "$candidate" >"$candidate_program_headers"
 readelf --dynamic --wide "$candidate" >"$candidate_dynamic" || true
 readelf --relocs --wide "$candidate" >"$candidate_relocations"
 objdump -d "$candidate" >"$candidate_disassembly"
-objdump -d --disassemble=__fwritable "$candidate" >"$fwritable_disassembly"
-for symbol in __fwritable stderr; do
+objdump -d --disassemble=__fsetlocking "$candidate" >"$fsetlocking_disassembly"
+for symbol in __fsetlocking stdin; do
     grep -Eq "[[:space:]]${symbol}$" "$candidate_symbols" ||
         fail "candidate lacks ${symbol}"
 done
@@ -165,13 +167,13 @@ if grep -Eq 'crabc_core|mimalloc|sha_crypt' \
     "$candidate_symbols" "$candidate_disassembly"; then
     fail "candidate selects an unowned runtime dependency"
 fi
-if grep -Eq '[[:space:]]syscall$' "$fwritable_disassembly"; then
-    fail "__fwritable unexpectedly contains a syscall path"
+if grep -Eq '[[:space:]]syscall$' "$fsetlocking_disassembly"; then
+    fail "__fsetlocking unexpectedly contains a syscall path"
 fi
 grep -Eq 'call.*__crabc_x86_static_tls_bootstrap' \
-    compat/x86_64/libc_stdio_permanent_fwritable_stderr_start.S ||
+    compat/x86_64/libc_stdio_permanent_fsetlocking_stdin_start.S ||
     fail "fixture start does not delegate first-thread TLS to libc"
 timeout "$EXECUTION_TIMEOUT" "$candidate" ||
-    fail "freestanding permanent-stderr __fwritable fixture failed"
+    fail "freestanding permanent-stdin __fsetlocking fixture failed"
 
-printf 'x86 static crabc-libc permanent-stderr __fwritable: PASS\n'
+printf 'x86 static crabc-libc permanent-stdin __fsetlocking: PASS\n'

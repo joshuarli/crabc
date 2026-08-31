@@ -35925,8 +35925,8 @@ def require_getsubopt_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 48,
-        "libc.text-math-locale-stdio must retain exactly forty-eight private verified artifacts",
+        len(artifacts) == 49,
+        "libc.text-math-locale-stdio must retain exactly forty-nine private verified artifacts",
     )
     matching = [
         entry for entry in artifacts if entry.get("id") == "static-c-getsubopt"
@@ -37382,8 +37382,8 @@ def require_stdio_integer_scan_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 48,
-        "libc.text-math-locale-stdio must retain exactly forty-eight private verified artifacts",
+        len(artifacts) == 49,
+        "libc.text-math-locale-stdio must retain exactly forty-nine private verified artifacts",
     )
     matching = [
         entry for entry in artifacts if entry.get("id") == "static-c-stdio-integer-scan"
@@ -37665,8 +37665,8 @@ def require_stdio_octal_hex_scan_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 48,
-        "libc.text-math-locale-stdio must retain exactly forty-eight private verified artifacts",
+        len(artifacts) == 49,
+        "libc.text-math-locale-stdio must retain exactly forty-nine private verified artifacts",
     )
     matching = [
         entry
@@ -38191,8 +38191,8 @@ def require_stdio_errno_output_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 48,
-        "libc.text-math-locale-stdio must retain exactly forty-eight private verified artifacts",
+        len(artifacts) == 49,
+        "libc.text-math-locale-stdio must retain exactly forty-nine private verified artifacts",
     )
     matching = [
         entry for entry in artifacts if entry.get("id") == "static-c-stdio-errno-output"
@@ -38712,8 +38712,8 @@ def require_stdio_permanent_byte_io_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 48,
-        "libc.text-math-locale-stdio must retain exactly forty-eight private verified artifacts",
+        len(artifacts) == 49,
+        "libc.text-math-locale-stdio must retain exactly forty-nine private verified artifacts",
     )
     matching = [
         entry
@@ -39039,8 +39039,8 @@ def require_stdio_permanent_status_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 48,
-        "libc.text-math-locale-stdio must retain exactly forty-eight private verified artifacts",
+        len(artifacts) == 49,
+        "libc.text-math-locale-stdio must retain exactly forty-nine private verified artifacts",
     )
     matching = [
         entry
@@ -39366,8 +39366,8 @@ def require_stdio_permanent_freading_stdin_artifact(
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 48,
-        "libc.text-math-locale-stdio must retain exactly forty-eight private verified artifacts",
+        len(artifacts) == 49,
+        "libc.text-math-locale-stdio must retain exactly forty-nine private verified artifacts",
     )
     matching = [
         entry
@@ -39406,7 +39406,7 @@ def require_stdio_permanent_freading_stdin_artifact(
         "int (FILE *)",
         "stdio_ext.h",
         "unmangled C++ spelling",
-        "separately selected `__freadable(stdin)`, `__fbufsize(stderr)`, and `__flbf(stderr)` siblings",
+        "separately selected `__fsetlocking(stdin)`, `__freadable(stdin)`, `__fbufsize(stderr)`, and `__flbf(stderr)` siblings",
         "externally serialized",
         "FLOCK/FUNLOCK",
         "lock-free",
@@ -39415,7 +39415,6 @@ def require_stdio_permanent_freading_stdin_artifact(
         "__fwritable",
         "__fpending",
         "__fpurge",
-        "__fsetlocking",
         "_flushlbf",
         "does not select `stdio.stream-io`",
         "FILE/path streams",
@@ -39460,6 +39459,7 @@ def require_stdio_permanent_freading_stdin_artifact(
         "compat/x86_64/libc_stdio_permanent_freading_stdin_probe.c",
         "compat/x86_64/libc_stdio_permanent_freading_stdin_start.S",
         "compat/x86_64/run_libc_stdio_permanent_freading_stdin.sh",
+        "compat/x86_64/run_libc_stdio_permanent_fsetlocking_stdin.sh",
         "compat/x86_64/run_libc_stdio_permanent_freadable_stdin.sh",
         "compat/x86_64/run_libc_stdio_permanent_fwritable_stderr.sh",
         "compat/x86_64/run_libc_stdio_permanent_fbufsize_stderr.sh",
@@ -39479,7 +39479,14 @@ def require_stdio_permanent_freading_stdin_artifact(
     exports = static_c_abi_export_names(
         ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
     )
-    for symbol in ("__freading", "__freadable", "__fwritable", "__fbufsize", "__flbf"):
+    for symbol in (
+        "__freading",
+        "__fsetlocking",
+        "__freadable",
+        "__fwritable",
+        "__fbufsize",
+        "__flbf",
+    ):
         require(
             symbol in exports,
             f"static C ABI export contract omits selected permanent stdio extension {symbol}",
@@ -39488,7 +39495,6 @@ def require_stdio_permanent_freading_stdin_artifact(
         "__fwriting",
         "__fpending",
         "__fpurge",
-        "__fsetlocking",
         "_flushlbf",
     ):
         require(
@@ -39710,6 +39716,391 @@ def require_stdio_permanent_freading_stdin_artifact(
         )
 
 
+def require_stdio_permanent_fsetlocking_stdin_artifact(
+    family: Mapping[str, Any],
+) -> None:
+    """Keep musl's fixed-stdin lock-setting no-op below a lock contract.
+
+    Musl's `__fsetlocking` source body ignores its FILE pointer and request and
+    returns zero. The selected ABI accepts only permanent stdin plus its three
+    named request constants, so no generalized locking/configuration state can
+    enter the x86 static profile.
+    """
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.text-math-locale-stdio].verified_artifact",
+        family.get("status", ""),
+    )
+    require(
+        len(artifacts) == 49,
+        "libc.text-math-locale-stdio must retain exactly forty-nine private verified artifacts",
+    )
+    matching = [
+        entry
+        for entry in artifacts
+        if entry.get("id") == "static-c-stdio-permanent-fsetlocking-stdin"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.text-math-locale-stdio must contain exactly one static-c-stdio-permanent-fsetlocking-stdin artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-stdio-permanent-fsetlocking-stdin must not promote libc.text-math-locale-stdio",
+    )
+    artifact = matching[0]
+    require(
+        not artifact.get("capabilities"),
+        "static-c-stdio-permanent-fsetlocking-stdin must not promote stdio.stream-io",
+    )
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for phrase in (
+        "still-planned `libc.text-math-locale-stdio`",
+        "__fsetlocking(stdin, request)",
+        "adds exactly one static C ABI export but no capability",
+        "direct and function-pointer calls",
+        "process-lifetime `stdin` pointer",
+        "FSETLOCKING_QUERY",
+        "FSETLOCKING_INTERNAL",
+        "FSETLOCKING_BYCALLER",
+        "exact int `0`",
+        "src/stdio/ext.c",
+        "unconditional `return 0;`",
+        "neither dereferences FILE nor establishes or changes a lock setting",
+        "before dereference",
+        "strict C11/C++17",
+        "int (FILE *, int)",
+        "macro values `0`/`1`/`2`",
+        "stdio_ext.h",
+        "unmangled C++ spelling",
+        "separately selected `__freading(stdin)`, `__freadable(stdin)`, `__fwritable(stderr)`, `__fbufsize(stderr)`, and `__flbf(stderr)` observations",
+        "externally serialized",
+        "no lock configuration",
+        "FLOCK/FUNLOCK",
+        "lock-free",
+        "stream configuration",
+        "general FILE claim",
+        "__fwriting",
+        "__fwritable",
+        "__fpending",
+        "__fpurge",
+        "_flushlbf",
+        "does not select `stdio.stream-io`",
+        "FILE/path streams",
+        "descriptor adoption/reopen",
+        "`tmpfile`",
+        "LP64/LFS aliases",
+        "byte/block I/O",
+        "`fread`/`fwrite`",
+        "positions, status predicates",
+        "multiple streams",
+        "general stdio",
+        "capability or family completion",
+        "promotion",
+        "public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"static-c-stdio-permanent-fsetlocking-stdin description omits {phrase}",
+        )
+
+    owners = nonempty_strings(
+        artifact["source_owners"],
+        "static-c-stdio-permanent-fsetlocking-stdin.source_owners",
+    )
+    for owner in (
+        "compat/upstreams.toml",
+        "libc/Cargo.toml",
+        "libc/src/lib.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/stdio_standard.rs",
+        "libc/src/c_abi/x86_64/errno.rs",
+        "libc/src/c_abi/x86_64/static_tls.rs",
+        "libc/src/c_abi/x86_64/syscall.rs",
+        "include/bits/alltypes.h",
+        "include/features.h",
+        "include/stdio.h",
+        "include/stdio_ext.h",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/stdio_permanent_fsetlocking_stdin_header_abi_probe.c",
+        "compat/x86_64/stdio_permanent_fsetlocking_stdin_header_abi_probe.cpp",
+        "compat/x86_64/run_stdio_permanent_fsetlocking_stdin_header_abi.sh",
+        "compat/x86_64/libc_stdio_permanent_fsetlocking_stdin_probe.c",
+        "compat/x86_64/libc_stdio_permanent_fsetlocking_stdin_start.S",
+        "compat/x86_64/run_libc_stdio_permanent_fsetlocking_stdin.sh",
+        "compat/x86_64/run_libc_stdio_permanent_freading_stdin.sh",
+        "compat/x86_64/run_libc_stdio_permanent_freadable_stdin.sh",
+        "compat/x86_64/run_libc_stdio_permanent_fwritable_stderr.sh",
+        "compat/x86_64/run_libc_stdio_permanent_fbufsize_stderr.sh",
+        "compat/x86_64/run_libc_stdio_permanent_flbf_stderr.sh",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/README.md",
+        "x86-64.md",
+        "scripts/dev-x86_64.sh",
+    ):
+        require(
+            owner in owners,
+            f"static-c-stdio-permanent-fsetlocking-stdin omits {owner}",
+        )
+
+    exports = static_c_abi_export_names(
+        ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+    )
+    for symbol in (
+        "__freading",
+        "__fsetlocking",
+        "__freadable",
+        "__fwritable",
+        "__fbufsize",
+        "__flbf",
+    ):
+        require(
+            symbol in exports,
+            f"static C ABI export contract omits selected permanent stdio extension {symbol}",
+        )
+    for unselected in (
+        "__fwriting",
+        "__fpending",
+        "__fpurge",
+        "_flushlbf",
+    ):
+        require(
+            unselected not in exports,
+            f"static-c-stdio-permanent-fsetlocking-stdin accidentally selects {unselected}",
+        )
+
+    implementation = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "stdio_standard.rs"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "src/stdio/ext.c",
+        'pub unsafe extern "C" fn __fsetlocking',
+        "const FSETLOCKING_QUERY: c_int = 0",
+        "const FSETLOCKING_INTERNAL: c_int = 1",
+        "const FSETLOCKING_BYCALLER: c_int = 2",
+        "stream != ptr::addr_of_mut!(STDIN_STREAM)",
+        "Musl's selected source body returns zero without changing any state.",
+    ):
+        require(
+            snippet in implementation,
+            f"permanent stdin __fsetlocking implementation omits {snippet}",
+        )
+
+    for probe_name in (
+        "stdio_permanent_fsetlocking_stdin_header_abi_probe.c",
+        "stdio_permanent_fsetlocking_stdin_header_abi_probe.cpp",
+    ):
+        probe = (ROOT / "compat" / "x86_64" / probe_name).read_text(
+            encoding="utf-8"
+        )
+        for snippet in (
+            "stdio_ext.h",
+            "__fsetlocking",
+            "FILE",
+            "FSETLOCKING_STDIN",
+            "FSETLOCKING_QUERY",
+            "FSETLOCKING_INTERNAL",
+            "FSETLOCKING_BYCALLER",
+        ):
+            require(
+                snippet in probe,
+                f"permanent stdin __fsetlocking header probe {probe_name} omits {snippet}",
+            )
+    header_runner = (
+        ROOT
+        / "compat"
+        / "x86_64"
+        / "run_stdio_permanent_fsetlocking_stdin_header_abi.sh"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "CRABC_STDIO_PERMANENT_FSETLOCKING_STDIN_C11",
+        "CRABC_STDIO_PERMANENT_FSETLOCKING_STDIN_CXX17",
+        "stdio_ext.h stdio.h features.h bits/alltypes.h",
+        "-nostdinc",
+        "-nostdinc++",
+        "assert_cxx_c_linkage",
+        "run_musl_oracle.sh",
+    ):
+        require(
+            snippet in header_runner,
+            f"permanent stdin __fsetlocking header runner omits {snippet}",
+        )
+
+    fixture = (
+        ROOT
+        / "compat"
+        / "x86_64"
+        / "libc_stdio_permanent_fsetlocking_stdin_probe.c"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "__fsetlocking(stdin, FSETLOCKING_QUERY) != 0",
+        "fsetlocking_entry(stdin, FSETLOCKING_INTERNAL) != 0",
+        "__fsetlocking(stdin, FSETLOCKING_BYCALLER) != 0",
+        "CRABC_STDIO_PERMANENT_FSETLOCKING_STDIN_FREESTANDING",
+    ):
+        require(
+            snippet in fixture,
+            f"permanent stdin __fsetlocking fixture omits {snippet}",
+        )
+    for forbidden in (
+        "fputc",
+        "fflush",
+        "fgetc",
+        "stdout",
+        "stderr",
+        "fopen",
+        "tmpfile",
+        "dup",
+        "close",
+        "setvbuf",
+        "__freading",
+        "__freadable",
+        "__fwriting",
+        "__fwritable",
+    ):
+        require(
+            forbidden not in fixture,
+            f"permanent stdin __fsetlocking fixture unexpectedly selects {forbidden}",
+        )
+    start = (
+        ROOT
+        / "compat"
+        / "x86_64"
+        / "libc_stdio_permanent_fsetlocking_stdin_start.S"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "__crabc_x86_static_tls_bootstrap",
+        "crabc_x86_64_stdio_permanent_fsetlocking_stdin_probe",
+        "mov $231, %eax",
+    ):
+        require(
+            snippet in start,
+            f"permanent stdin __fsetlocking start shim omits {snippet}",
+        )
+    runner = (
+        ROOT
+        / "compat"
+        / "x86_64"
+        / "run_libc_stdio_permanent_fsetlocking_stdin.sh"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "ORACLE_ARCHIVE",
+        "run_stdio_permanent_fsetlocking_stdin_header_abi.sh",
+        "STATIC_C_ABI_EXPORTS",
+        "strong __fsetlocking",
+        "FSETLOCKING_QUERY",
+        "__fwriting",
+        "-nostdlib -static",
+        "dynamic TLS model",
+        "unowned runtime dependency",
+        "__fsetlocking unexpectedly contains a syscall path",
+        "__crabc_x86_static_tls_bootstrap",
+    ):
+        require(
+            snippet in runner,
+            f"permanent stdin __fsetlocking runner omits {snippet}",
+        )
+    require(
+        "--whole-archive" not in runner,
+        "permanent stdin __fsetlocking runner must preserve archive extraction evidence",
+    )
+
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-stdio-permanent-fsetlocking-stdin"},
+        "static-c-stdio-permanent-fsetlocking-stdin must use its closed native command",
+    )
+    scope = evidence[0].get("scope")
+    require(
+        isinstance(scope, str)
+        and all(
+            phrase in scope
+            for phrase in (
+                "Pinned-musl project-header C reference",
+                "dependency-free x86 crabc-libc archive",
+                "`-nostdlib -static` candidate",
+                "strict C11/C++17 permanent-stdin __fsetlocking stdio_ext.h declaration/linkage and macro-value proof",
+                "strong __fsetlocking",
+                "unselected access/direction/buffer/configuration extensions",
+                "only on permanent stdin",
+                "QUERY, INTERNAL, and BYCALLER",
+                "exact int 0",
+                "no stream I/O, configuration, locking, descriptor operation, or state transition",
+                "Static Initial TLS v1 bootstrap",
+                "__fsetlocking itself has no syscall path",
+                "arbitrary-FILE or invalid-request",
+                "FLOCK/FUNLOCK",
+                "lock-free",
+                "input/output/buffering/cursor, another stream",
+                "pathname, descriptor-reopen, tmpfile, LFS",
+                "byte/block, fread/fwrite, position, status",
+                "multiple-stream",
+                "general-stdio",
+                "capability or family completion",
+                "promotion",
+                "public x86 support",
+            )
+        ),
+        "static-c-stdio-permanent-fsetlocking-stdin evidence must retain its closed native boundary",
+    )
+
+    oracle = artifact["oracle"]
+    assert isinstance(oracle, list)
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "c-posix"
+            and all(
+                phrase in str(entry.get("role"))
+                for phrase in (
+                    "src/stdio/ext.c",
+                    "strong __fsetlocking",
+                    "unconditional return-zero body",
+                    "no FILE dereference",
+                    "FLOCK/FUNLOCK",
+                    "other ext.c helpers",
+                )
+            )
+            for entry in oracle
+        ),
+        "static-c-stdio-permanent-fsetlocking-stdin must retain its pinned-musl source oracle",
+    )
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "elf-abi"
+            and all(
+                phrase in str(entry.get("role"))
+                for phrase in (
+                    "FILE-pointer/int/int",
+                    "stdio_ext.h C/C++ declaration linkage",
+                    "FSETLOCKING macro values",
+                    "Static Initial TLS v1",
+                )
+            )
+            for entry in oracle
+        ),
+        "static-c-stdio-permanent-fsetlocking-stdin must retain its ABI/header oracle",
+    )
+
+    dispatcher = (ROOT / "scripts" / "dev-x86_64.sh").read_text(encoding="utf-8")
+    for snippet in (
+        "stdio-permanent-fsetlocking-stdin-header-abi)",
+        "libc-stdio-permanent-fsetlocking-stdin)",
+        "run_stdio_permanent_fsetlocking_stdin_header_abi.sh",
+        "run_libc_stdio_permanent_fsetlocking_stdin.sh",
+    ):
+        require(
+            snippet in dispatcher,
+            f"x86 dispatcher omits permanent stdin __fsetlocking {snippet}",
+        )
+
+
 def require_stdio_permanent_freadable_stdin_artifact(
     family: Mapping[str, Any],
 ) -> None:
@@ -39726,8 +40117,8 @@ def require_stdio_permanent_freadable_stdin_artifact(
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 48,
-        "libc.text-math-locale-stdio must retain exactly forty-eight private verified artifacts",
+        len(artifacts) == 49,
+        "libc.text-math-locale-stdio must retain exactly forty-nine private verified artifacts",
     )
     matching = [
         entry
@@ -39774,7 +40165,6 @@ def require_stdio_permanent_freadable_stdin_artifact(
         "__fwritable",
         "__fpending",
         "__fpurge",
-        "__fsetlocking",
         "_flushlbf",
         "does not select `stdio.stream-io`",
         "FILE/path streams",
@@ -39838,7 +40228,13 @@ def require_stdio_permanent_freadable_stdin_artifact(
         "__freadable" in exports,
         "static C ABI export contract omits permanent stdin __freadable",
     )
-    for sibling in ("__freading", "__fwritable", "__fbufsize", "__flbf"):
+    for sibling in (
+        "__freading",
+        "__fsetlocking",
+        "__fwritable",
+        "__fbufsize",
+        "__flbf",
+    ):
         require(
             sibling in exports,
             f"static C ABI export contract omits separately selected permanent stdio extension {sibling}",
@@ -39847,7 +40243,6 @@ def require_stdio_permanent_freadable_stdin_artifact(
         "__fwriting",
         "__fpending",
         "__fpurge",
-        "__fsetlocking",
         "_flushlbf",
     ):
         require(
@@ -40078,8 +40473,8 @@ def require_stdio_permanent_fwritable_stderr_artifact(
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 48,
-        "libc.text-math-locale-stdio must retain exactly forty-eight private verified artifacts",
+        len(artifacts) == 49,
+        "libc.text-math-locale-stdio must retain exactly forty-nine private verified artifacts",
     )
     matching = [
         entry
@@ -40128,7 +40523,6 @@ def require_stdio_permanent_fwritable_stderr_artifact(
         "__fbufsize",
         "__fpending",
         "__fpurge",
-        "__fsetlocking",
         "_flushlbf",
         "does not select `stdio.stream-io`",
         "FILE/path streams",
@@ -40201,6 +40595,10 @@ def require_stdio_permanent_fwritable_stderr_artifact(
         "static C ABI export contract omits separately selected permanent stdin __freading",
     )
     require(
+        "__fsetlocking" in exports,
+        "static C ABI export contract omits separately selected permanent stdin __fsetlocking",
+    )
+    require(
         "__flbf" in exports,
         "static C ABI export contract omits separately selected permanent stderr __flbf",
     )
@@ -40208,7 +40606,6 @@ def require_stdio_permanent_fwritable_stderr_artifact(
         "__fwriting",
         "__fpending",
         "__fpurge",
-        "__fsetlocking",
         "_flushlbf",
     ):
         require(
@@ -40438,8 +40835,8 @@ def require_stdio_permanent_fbufsize_stderr_artifact(
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 48,
-        "libc.text-math-locale-stdio must retain exactly forty-eight private verified artifacts",
+        len(artifacts) == 49,
+        "libc.text-math-locale-stdio must retain exactly forty-nine private verified artifacts",
     )
     matching = [
         entry
@@ -40478,6 +40875,7 @@ def require_stdio_permanent_fbufsize_stderr_artifact(
         "stdio_ext.h",
         "unmangled C++ spelling",
         "separately selected `__freading(stdin)` sibling",
+        "separately selected `__fsetlocking(stdin)` sibling",
         "separately selected `__freadable(stdin)` sibling",
         "separately selected `__fwritable(stderr)` sibling",
         "separately selected `__flbf(stderr)` sibling",
@@ -40491,7 +40889,6 @@ def require_stdio_permanent_fbufsize_stderr_artifact(
         "__fwritable",
         "__fpending",
         "__fpurge",
-        "__fsetlocking",
         "_flushlbf",
         "does not select `stdio.stream-io`",
         "FILE/path streams",
@@ -40565,6 +40962,10 @@ def require_stdio_permanent_fbufsize_stderr_artifact(
         "static C ABI export contract omits separately selected permanent stdin __freading",
     )
     require(
+        "__fsetlocking" in exports,
+        "static C ABI export contract omits separately selected permanent stdin __fsetlocking",
+    )
+    require(
         "__fwritable" in exports,
         "static C ABI export contract omits separately selected permanent stderr __fwritable",
     )
@@ -40576,7 +40977,6 @@ def require_stdio_permanent_fbufsize_stderr_artifact(
         "__fwriting",
         "__fpending",
         "__fpurge",
-        "__fsetlocking",
         "_flushlbf",
     ):
         require(
@@ -40809,8 +41209,8 @@ def require_stdio_permanent_flbf_stderr_artifact(
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 48,
-        "libc.text-math-locale-stdio must retain exactly forty-eight private verified artifacts",
+        len(artifacts) == 49,
+        "libc.text-math-locale-stdio must retain exactly forty-nine private verified artifacts",
     )
     matching = [
         entry
@@ -40847,7 +41247,7 @@ def require_stdio_permanent_flbf_stderr_artifact(
         "int (FILE *)",
         "stdio_ext.h",
         "unmangled C++ spelling",
-        "separately selected __freadable(stdin) and __fbufsize(stderr) siblings",
+        "separately selected __fsetlocking(stdin), __freadable(stdin), and __fbufsize(stderr) siblings",
         "separately selected __freading(stdin) and __fwritable(stderr) siblings",
         "externally serialized",
         "FLOCK/FUNLOCK",
@@ -40860,7 +41260,6 @@ def require_stdio_permanent_flbf_stderr_artifact(
         "__fwritable",
         "__fpending",
         "__fpurge",
-        "__fsetlocking",
         "_flushlbf",
         "does not select stdio.stream-io",
         "FILE/path streams",
@@ -40922,7 +41321,14 @@ def require_stdio_permanent_flbf_stderr_artifact(
     exports = static_c_abi_export_names(
         ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
     )
-    for symbol in ("__freading", "__freadable", "__fwritable", "__fbufsize", "__flbf"):
+    for symbol in (
+        "__freading",
+        "__fsetlocking",
+        "__freadable",
+        "__fwritable",
+        "__fbufsize",
+        "__flbf",
+    ):
         require(
             symbol in exports,
             f"static C ABI export contract omits selected permanent stdio extension {symbol}",
@@ -40931,7 +41337,6 @@ def require_stdio_permanent_flbf_stderr_artifact(
         "__fwriting",
         "__fpending",
         "__fpurge",
-        "__fsetlocking",
         "_flushlbf",
     ):
         require(
@@ -41171,8 +41576,8 @@ def require_stdio_permanent_feof_unlocked_artifact(
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 48,
-        "libc.text-math-locale-stdio must retain exactly forty-eight private verified artifacts",
+        len(artifacts) == 49,
+        "libc.text-math-locale-stdio must retain exactly forty-nine private verified artifacts",
     )
     matching = [
         entry
@@ -41539,8 +41944,8 @@ def require_stdio_permanent_fileno_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 48,
-        "libc.text-math-locale-stdio must retain exactly forty-eight private verified artifacts",
+        len(artifacts) == 49,
+        "libc.text-math-locale-stdio must retain exactly forty-nine private verified artifacts",
     )
     matching = [
         entry
@@ -41844,8 +42249,8 @@ def require_stdio_permanent_fileno_unlocked_artifact(
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 48,
-        "libc.text-math-locale-stdio must retain exactly forty-eight private verified artifacts",
+        len(artifacts) == 49,
+        "libc.text-math-locale-stdio must retain exactly forty-nine private verified artifacts",
     )
     matching = [
         entry
@@ -45381,8 +45786,8 @@ def require_math_exp2_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 48,
-        "libc.text-math-locale-stdio must retain exactly forty-eight private verified artifacts",
+        len(artifacts) == 49,
+        "libc.text-math-locale-stdio must retain exactly forty-nine private verified artifacts",
     )
     matching = [entry for entry in artifacts if entry.get("id") == "static-c-math-exp2"]
     require(
@@ -45641,8 +46046,8 @@ def require_math_expm1_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 48,
-        "libc.text-math-locale-stdio must retain exactly forty-eight private verified artifacts",
+        len(artifacts) == 49,
+        "libc.text-math-locale-stdio must retain exactly forty-nine private verified artifacts",
     )
     matching = [entry for entry in artifacts if entry.get("id") == "static-c-math-expm1"]
     require(
@@ -45879,8 +46284,8 @@ def require_math_log10_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 48,
-        "libc.text-math-locale-stdio must retain exactly forty-eight private verified artifacts",
+        len(artifacts) == 49,
+        "libc.text-math-locale-stdio must retain exactly forty-nine private verified artifacts",
     )
     matching = [entry for entry in artifacts if entry.get("id") == "static-c-math-log10"]
     require(
@@ -46124,8 +46529,8 @@ def require_math_ceil_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 48,
-        "libc.text-math-locale-stdio must retain exactly forty-eight private verified artifacts",
+        len(artifacts) == 49,
+        "libc.text-math-locale-stdio must retain exactly forty-nine private verified artifacts",
     )
     matching = [entry for entry in artifacts if entry.get("id") == "static-c-math-ceil"]
     require(
@@ -46349,8 +46754,8 @@ def require_math_floor_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 48,
-        "libc.text-math-locale-stdio must retain exactly forty-eight private verified artifacts",
+        len(artifacts) == 49,
+        "libc.text-math-locale-stdio must retain exactly forty-nine private verified artifacts",
     )
     matching = [entry for entry in artifacts if entry.get("id") == "static-c-math-floor"]
     require(
@@ -46575,8 +46980,8 @@ def require_math_round_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 48,
-        "libc.text-math-locale-stdio must retain exactly forty-eight private verified artifacts",
+        len(artifacts) == 49,
+        "libc.text-math-locale-stdio must retain exactly forty-nine private verified artifacts",
     )
     matching = [entry for entry in artifacts if entry.get("id") == "static-c-math-round"]
     require(
@@ -46803,8 +47208,8 @@ def require_math_log2_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 48,
-        "libc.text-math-locale-stdio must retain exactly forty-eight private verified artifacts",
+        len(artifacts) == 49,
+        "libc.text-math-locale-stdio must retain exactly forty-nine private verified artifacts",
     )
     matching = [entry for entry in artifacts if entry.get("id") == "static-c-math-log2"]
     require(
@@ -47787,8 +48192,8 @@ def require_locale_wide_iconv_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 48,
-        "libc.text-math-locale-stdio must retain exactly forty-eight private verified artifacts",
+        len(artifacts) == 49,
+        "libc.text-math-locale-stdio must retain exactly forty-nine private verified artifacts",
     )
     matching = [
         entry for entry in artifacts if entry.get("id") == "static-c-locale-wide-iconv"
@@ -48847,8 +49252,8 @@ def require_locale_error_strings_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 48,
-        "libc.text-math-locale-stdio must retain exactly forty-eight private verified artifacts",
+        len(artifacts) == 49,
+        "libc.text-math-locale-stdio must retain exactly forty-nine private verified artifacts",
     )
     matching = [
         entry for entry in artifacts if entry.get("id") == "static-c-locale-error-strings"
@@ -50776,6 +51181,9 @@ def validate_ledger(
     require_stdio_permanent_byte_io_artifact(by_id["libc.text-math-locale-stdio"])
     require_stdio_permanent_status_artifact(by_id["libc.text-math-locale-stdio"])
     require_stdio_permanent_freading_stdin_artifact(
+        by_id["libc.text-math-locale-stdio"]
+    )
+    require_stdio_permanent_fsetlocking_stdin_artifact(
         by_id["libc.text-math-locale-stdio"]
     )
     require_stdio_permanent_freadable_stdin_artifact(

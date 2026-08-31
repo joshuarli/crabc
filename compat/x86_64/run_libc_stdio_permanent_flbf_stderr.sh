@@ -127,7 +127,7 @@ for source_name in 'src/stdio/ext.c' 'src/stdio/stderr.c' \
         fail "permanent-stderr __flbf implementation omits $source_name"
 done
 for unselected in __fwriting __fpending __fpurge \
-    __fsetlocking _flushlbf; do
+    _flushlbf; do
     if grep -Eq "[[:space:]][TW][[:space:]]${unselected}$" "$archive_symbols"; then
         fail "archive accidentally exports unselected $unselected"
     fi
