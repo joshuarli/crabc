@@ -1482,6 +1482,19 @@ mask or process signaling, waits, queues, descriptors, timers, pthread policy,
 libc.so, CRT, loader, sysroot, family/platform parity, promotion, or public x86
 support.
 
+`./scripts/dev-x86_64.sh libc-sigpending` is a separate private
+`static-c-sigpending` artifact inside planned `libc.posix-runtime`. Its
+one-symbol pinned-musl/freestanding-static C proof follows musl 1.2.6's POSIX
+`sigpending`: Linux `rt_sigpending=127` writes only the first eight-byte public
+`sigset_t` word, leaves the fifteen-word tail caller-resident, preserves stale
+`errno` on success, and exposes null/non-null `EFAULT`. Fixture-only raw
+block-and-`tgkill` setup queues one `SIGUSR1` to observe the returned pending
+bit; it selects no C mask, action, delivery, or wait API. The shared C and
+paired C++17 proofs retain the exact POSIX declaration and unmangled linkage.
+It does not select handlers/actions, signal masks, process signaling, waits,
+queues, descriptors, timers, pthread policy, libc.so, CRT, loader, sysroot,
+family/platform parity, promotion, or public x86 support.
+
 `./scripts/dev-x86_64.sh libc-ioctl` is a private
 `static-c-generic-ioctl` artifact inside planned `libc.posix-runtime`. It
 proves the direct signed `int ioctl(int, int, ...)` C boundary through pinned

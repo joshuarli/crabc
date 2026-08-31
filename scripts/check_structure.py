@@ -219,6 +219,7 @@ X86_RUNTIME_FOUNDATION_LIBC_SOURCES = {
     Path("libc/src/c_abi/x86_64/readiness_waits.rs"),
     Path("libc/src/c_abi/x86_64/setjmp.rs"),
     Path("libc/src/c_abi/x86_64/signal_control.rs"),
+    Path("libc/src/c_abi/x86_64/signal_pending.rs"),
     Path("libc/src/c_abi/x86_64/signal_execution.rs"),
     Path("libc/src/c_abi/x86_64/signal_set_isempty.rs"),
     Path("libc/src/c_abi/x86_64/signal_set_binary.rs"),
@@ -3725,6 +3726,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         '#[path = "setjmp.rs"]',
         '#[path = "signal_foundation.rs"]',
         '#[path = "signal_control.rs"]',
+        '#[path = "signal_pending.rs"]',
         '#[path = "signal_execution.rs"]',
         '#[path = "signal_set_isempty.rs"]',
         '#[path = "signal_set_binary.rs"]',
@@ -4503,10 +4505,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
     for required in (
         "raw_syscall::SYS_RT_SIGACTION",
         "raw_syscall::SYS_RT_SIGPROCMASK",
-        "raw_syscall::SYS_RT_SIGPENDING",
         "raw_syscall::syscall4(",
-        "raw_syscall::syscall2(",
-        "size_of::<u64>()",
         "RESERVED_SIGNAL_MASK",
         "pack_public_action",
         "unpack_kernel_action",
@@ -4532,14 +4531,57 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         "sigdelset",
         "sigismember",
         "sigprocmask",
-        "sigpending",
         "__libc_current_sigrtmax",
     }
     if signal_exports != expected_signal_exports:
         errors.append(
             "libc/src/c_abi/x86_64/signal_control.rs: selected static signal "
-            "artifact must export only simple action/set/mask/pending symbols"
+            "artifact must export only simple action/set/mask symbols"
         )
+
+    signal_pending_source = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "signal_pending.rs"
+    )
+    signal_pending_text = signal_pending_source.read_text(errors="replace")
+    for required in (
+        "Selected static Linux/x86-64 `sigpending` C boundary",
+        "src/signal/sigpending.c",
+        "raw_syscall::SYS_RT_SIGPENDING",
+        "raw_syscall::syscall2(",
+        "size_of::<u64>()",
+        "c_status(result)",
+    ):
+        if required not in signal_pending_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/signal_pending.rs: selected static "
+                f"sigpending boundary is missing {required!r}"
+            )
+    signal_pending_exports = set(
+        re.findall(
+            r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(',
+            signal_pending_text,
+        )
+    )
+    if signal_pending_exports != {"sigpending"}:
+        errors.append(
+            "libc/src/c_abi/x86_64/signal_pending.rs: selected static artifact "
+            "must export only sigpending"
+        )
+    for forbidden in (
+        "sigaction(",
+        "signal(",
+        "sigprocmask(",
+        "sigsuspend(",
+        "sigwait",
+        "signalfd",
+        "timerfd",
+        "pthread_",
+    ):
+        if forbidden in signal_pending_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/signal_pending.rs: selected static "
+                f"sigpending boundary must not select {forbidden!r}"
+            )
 
     pthread_identity_source = (
         ROOT / "libc" / "src" / "c_abi" / "x86_64" / "pthread_identity.rs"
@@ -9490,6 +9532,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         shared_getopt_text,
         fenv_text,
         signal_control_text,
+        signal_pending_text,
         signal_execution_text,
         signal_set_isempty_text,
         signal_set_binary_text,
@@ -10070,6 +10113,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         ("setjmp.rs", setjmp_text),
         ("signal_foundation.rs", signal_foundation_text),
         ("signal_control.rs", signal_control_text),
+        ("signal_pending.rs", signal_pending_text),
         ("signal_execution.rs", signal_execution_text),
         ("signal_set_isempty.rs", signal_set_isempty_text),
         ("signal_set_binary.rs", signal_set_binary_text),

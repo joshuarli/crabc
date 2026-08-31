@@ -4,14 +4,14 @@
 //! revision `9fa28ece75d8a2191de7c5bb53bed224c5947417` under musl's MIT
 //! license. Its source mapping is `src/signal/sigaction.c` (validation,
 //! action conversion, and partial old-action writes), `signal.c`,
-//! `sig{empty,fill,add,del}set.c`, `sigismember.c`, `sigpending.c`, and
-//! `sigrtmax.c`; `sigprocmask.c` supplies its public errno convention while
+//! `sig{empty,fill,add,del}set.c`, `sigismember.c`, and `sigrtmax.c`;
+//! `sigprocmask.c` supplies its public errno convention while
 //! `src/thread/pthread_sigmask.c` supplies the one-word syscall and returned
 //! reserved-bit filtering. It reuses the x86 `SA_RESTORER`/`rt_sigreturn`
 //! machinery from `signal_foundation.rs`.
 //!
 //! The selected artifact owns only application signal-set helpers, simple
-//! disposition installation/query, and a calling-thread mask/pending boundary.
+//! disposition installation/query, and a calling-thread mask boundary.
 //! It deliberately excludes generic process or thread delivery, waits and
 //! cancellation points, queues, alternate stacks, pthread signal policy,
 //! legacy helpers, and a general signal-management framework. Musl's pthread
@@ -285,27 +285,6 @@ pub unsafe extern "C" fn sigprocmask(
         };
     }
     0
-}
-
-/// Query the calling thread's pending selected application signals.
-///
-/// # Safety
-///
-/// `set` must point to writable storage for the first kernel-visible word of
-/// one x86 public `sigset_t` record. As in musl, the kernel leaves its public
-/// tail words caller-resident.
-#[no_mangle]
-pub unsafe extern "C" fn sigpending(set: *mut c_void) -> c_int {
-    // SAFETY: Linux writes exactly one kernel signal-set word to `set` and
-    // reports EFAULT itself for an invalid non-null caller pointer.
-    let result = unsafe {
-        raw_syscall::syscall2(
-            raw_syscall::SYS_RT_SIGPENDING,
-            set as usize as i64,
-            core::mem::size_of::<u64>() as i64,
-        )
-    };
-    c_status(result)
 }
 
 /// Return musl's fixed x86 application realtime upper bound.

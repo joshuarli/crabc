@@ -50,7 +50,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 41)
-        self.assertEqual(report["verified_artifact_count"], 177)
+        self.assertEqual(report["verified_artifact_count"], 178)
         self.assertEqual(report["header_layout_probe_count"], 46)
         self.assertEqual(report["public_header_inventory_count"], 183)
         self.assertEqual(report["header_foundation_header_count"], 191)
@@ -6291,6 +6291,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             "libc/src/c_abi/x86_64/static_c_abi.rs",
             "libc/src/c_abi/x86_64/signal_foundation.rs",
             "libc/src/c_abi/x86_64/signal_control.rs",
+            "libc/src/c_abi/x86_64/signal_pending.rs",
             "compat/x86_64/static_c_abi_exports.txt",
             "compat/x86_64/libc_signal_control_probe.c",
             "compat/x86_64/libc_signal_control_start.S",
@@ -14163,6 +14164,98 @@ class X86ParityLedgerTests(unittest.TestCase):
         with self.assertRaisesRegex(
             ledger.LedgerError, "closed libc-sigandset-sigorset command"
         ):
+            ledger.validate_ledger(data)
+
+    def test_sigpending_artifact_keeps_its_closed_static_contract(self) -> None:
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-sigpending"
+        )
+        self.assertNotIn("capabilities", artifact)
+        for owner in (
+            "libc/src/c_abi/x86_64/signal_pending.rs",
+            "compat/x86_64/signal_header_abi_probe.c",
+            "compat/x86_64/signal_header_posix_abi_probe.c",
+            "compat/x86_64/run_signal_header_abi.sh",
+            "compat/x86_64/sigpending_header_abi_probe.cpp",
+            "compat/x86_64/libc_sigpending_probe.c",
+            "compat/x86_64/libc_sigpending_start.S",
+            "compat/x86_64/run_libc_sigpending.sh",
+        ):
+            self.assertIn(owner, artifact["source_owners"])
+        self.assertEqual(
+            {evidence["command"] for evidence in artifact["native_evidence"]},
+            {"./scripts/dev-x86_64.sh libc-sigpending"},
+        )
+        for phrase in (
+            "one-symbol POSIX pending-signal observation artifact",
+            "planned `libc.posix-runtime`",
+            "exactly `sigpending`",
+            "`rt_sigpending=127`",
+            "fifteen public tail words",
+            "Fixture-only raw mask/delivery setup",
+            "C GNU/POSIX gate and paired C++17 POSIX/GNU proof",
+            "handlers/actions",
+            "signal masks",
+            "process signaling",
+            "waits, queues, descriptors, timers",
+            "signal-family completion, promotion, and public x86 support",
+        ):
+            self.assertIn(phrase, artifact["description"])
+        prerequisites = artifact["x86_abi_prerequisites"]
+        self.assertTrue(
+            any(
+                "rt_sigpending=127" in prerequisite
+                and "`_NSIG/8`" in prerequisite
+                and "all public tail words" in prerequisite
+                for prerequisite in prerequisites
+            )
+        )
+        self.assertTrue(
+            any(
+                "src/signal/sigpending.c" in prerequisite
+                and "without a local null check" in prerequisite
+                for prerequisite in prerequisites
+            )
+        )
+        self.assertTrue(
+            any(
+                "fixture-only raw rt_sigprocmask=14 and tgkill=234" in prerequisite
+                and "non-null plus null EFAULT" in prerequisite
+                for prerequisite in prerequisites
+            )
+        )
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-sigpending"
+        )
+        artifact["description"] = "private pending helper"
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "static-c-sigpending description omits"
+        ):
+            ledger.validate_ledger(data)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-sigpending"
+        )
+        evidence = artifact["native_evidence"]
+        assert isinstance(evidence, list) and isinstance(evidence[0], dict)
+        evidence[0]["command"] = "./scripts/dev-x86_64.sh signal-reference"
+        with self.assertRaisesRegex(ledger.LedgerError, "closed libc-sigpending command"):
             ledger.validate_ledger(data)
 
     def test_signal_execution_artifact_keeps_its_closed_static_contract(self) -> None:

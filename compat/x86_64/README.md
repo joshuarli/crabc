@@ -389,6 +389,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-sigpause
 ./scripts/dev-x86_64.sh libc-sigisemptyset
 ./scripts/dev-x86_64.sh libc-sigandset-sigorset
+./scripts/dev-x86_64.sh libc-sigpending
 ./scripts/dev-x86_64.sh libc-static-tls-v1
 ./scripts/dev-x86_64.sh libc-crt-static-tls
 ./scripts/dev-x86_64.sh libc-crt1-static-tls
@@ -2799,6 +2800,20 @@ does not select `sigisemptyset`, handlers/actions, mask or process signaling,
 waits, queues, descriptors, timers, pthread policy, signal-family completion,
 AArch64 parity, promotion, or public x86 support.
 
+`libc-sigpending` is a separate `static-c-sigpending` `verified_artifact`
+within planned `libc.posix-runtime`. Its project-header C body runs first
+through pinned musl 1.2.6 and then through a true `-nostdlib -static`
+candidate. It selects exactly the POSIX `sigpending` observation: Linux
+`rt_sigpending=127` receives the caller pointer and one eight-byte kernel
+signal-set size, writes only the first public word, and leaves the fifteen-word
+tail caller-resident. Fixture-only raw block/`tgkill` setup queues one `SIGUSR1`
+to prove the returned bit; the body also proves tail sentinels, stale `errno`,
+and null/non-null `EFAULT`. The shared C signal gate and paired C++17 proof
+keep the POSIX declaration and unmangled linkage. It does not select
+handlers/actions, signal masks, process signaling, waits, queues, descriptors,
+timers, pthread policy, signal-family completion, AArch64 parity, promotion,
+or public x86 support.
+
 `libc-static-tls-v1` is a separately recorded private static
 `verified_artifact` inside still-planned `libc.pthread-tls`. Its freestanding
 candidate start shim passes the untouched Linux entry stack to the hidden
@@ -5203,7 +5218,7 @@ startup, loader TLS, sysroot, nor public x86 support.
 Apart from the narrowly named `libc-stat-compat`, `libc-credentials`,
 `libc-bootstrap-primitives`, `libc-signal-control`, `libc-signal-execution`,
 `libc-signal-altstack`, `libc-timerfd`, `libc-signalfd`, `libc-sigpause`,
-`libc-sigisemptyset`, and `libc-sigandset-sigorset`,
+`libc-sigisemptyset`, `libc-sigandset-sigorset`, and `libc-sigpending`,
 `libc-static-tls-v1`, `libc-crt-static-tls`,
 `libc-pthread-create-join-tls`, `libc-pthread-identity`, `libc-c11-lifecycle`,
 `libc-pthread-detach`, `libc-thrd-sleep`, `libc-thrd-yield`, `libc-pthread-cpuclock`, `libc-pthread-name`, `libc-pthread-mutex-normal`,

@@ -16961,6 +16961,191 @@ def require_sigandset_sigorset_artifact(family: Mapping[str, Any]) -> None:
     )
 
 
+def require_sigpending_artifact(family: Mapping[str, Any]) -> None:
+    """Keep direct pending-state observation below signal-runtime promotion."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.posix-runtime].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [entry for entry in artifacts if entry.get("id") == "static-c-sigpending"]
+    require(
+        len(matching) == 1,
+        "libc.posix-runtime must contain exactly one static-c-sigpending artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-sigpending must not promote libc.posix-runtime",
+    )
+    artifact = matching[0]
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for phrase in (
+        "one-symbol POSIX pending-signal observation artifact",
+        "planned `libc.posix-runtime`",
+        "exactly `sigpending`",
+        "`rt_sigpending=127`",
+        "eight-byte kernel signal-set size",
+        "fifteen public tail words",
+        "stale errno",
+        "Fixture-only raw mask/delivery setup",
+        "C GNU/POSIX gate and paired C++17 POSIX/GNU proof",
+        "handlers/actions",
+        "signal masks",
+        "process signaling",
+        "waits, queues, descriptors, timers",
+        "pthread policy",
+        "signal-family completion, promotion, and public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"static-c-sigpending description omits {phrase}",
+        )
+    owners = set(
+        nonempty_strings(artifact["source_owners"], "static-c-sigpending.source_owners")
+    )
+    for owner in (
+        "compat/upstreams.toml",
+        "libc/Cargo.toml",
+        "libc/src/lib.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/signal_pending.rs",
+        "libc/src/c_abi/x86_64/errno.rs",
+        "libc/src/c_abi/x86_64/syscall.rs",
+        "libc/src/c_abi/x86_64/static_tls.rs",
+        "include/errno.h",
+        "include/signal.h",
+        "include/stdint.h",
+        "include/sys/syscall.h",
+        "include/bits/alltypes.h",
+        "include/bits/syscall.h",
+        "compat/x86_64/signal_header_abi_probe.c",
+        "compat/x86_64/signal_header_posix_abi_probe.c",
+        "compat/x86_64/run_signal_header_abi.sh",
+        "compat/x86_64/sigpending_header_abi_probe.cpp",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/libc_sigpending_probe.c",
+        "compat/x86_64/libc_sigpending_start.S",
+        "compat/x86_64/run_libc_sigpending.sh",
+        "compat/x86_64/aarch64_parity_inventory.py",
+        "compat/x86_64/aarch64_parity_inventory.json",
+        "compat/x86_64/tests/test_aarch64_parity_inventory.py",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/README.md",
+        "STATUS.md",
+        "x86-64.md",
+        "scripts/dev-x86_64.sh",
+        "scripts/check_structure.py",
+    ):
+        require(owner in owners, f"static-c-sigpending source owners omit {owner}")
+    prerequisites = nonempty_strings(
+        artifact["x86_abi_prerequisites"], "static-c-sigpending.x86_abi_prerequisites"
+    )
+    require(
+        any(
+            "sigset_t is 128-byte align-8" in item
+            and "rt_sigpending=127" in item
+            and "rdi" in item
+            and "`_NSIG/8`" in item
+            and "all public tail words" in item
+            and "-4095 through -1" in item
+            for item in prerequisites
+        ),
+        "static-c-sigpending must retain its exact one-word x86 syscall ABI",
+    )
+    require(
+        any(
+            "src/signal/sigpending.c" in item
+            and "int sigpending(sigset_t *set)" in item
+            and "SYS_rt_sigpending" in item
+            and "without a local null check" in item
+            for item in prerequisites
+        ),
+        "static-c-sigpending must retain pinned-musl source closure",
+    )
+    require(
+        any(
+            "fixture-only raw rt_sigprocmask=14 and tgkill=234" in item
+            and "SIGUSR1" in item
+            and "tail sentinels" in item
+            and "ERANGE" in item
+            and "non-null plus null EFAULT" in item
+            and "Static Initial TLS v1" in item
+            and "does not claim CRT" in item
+            for item in prerequisites
+        ),
+        "static-c-sigpending must retain its isolated static differential",
+    )
+    headers = nonempty_strings(
+        artifact["x86_header_prerequisites"],
+        "static-c-sigpending.x86_header_prerequisites",
+    )
+    require(
+        any(
+            "GNU/POSIX signal-header gate" in item
+            and "sigpending pointer signature" in item
+            and "C++17 strict-POSIX and GNU proof" in item
+            and "unmangled C references" in item
+            for item in headers
+        ),
+        "static-c-sigpending must retain its C/C++ POSIX header proof",
+    )
+    static_exports = set(
+        static_c_abi_export_names(
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        )
+    )
+    require(
+        "sigpending" in static_exports,
+        "static-c-sigpending must expose the public POSIX spelling",
+    )
+    oracle = artifact["oracle"]
+    assert isinstance(oracle, list)
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "c-posix"
+            and isinstance(entry.get("role"), str)
+            and "src/signal/sigpending.c" in entry["role"]
+            and "`_NSIG/8`" in entry["role"]
+            for entry in oracle
+        ),
+        "static-c-sigpending must retain its pinned-musl observation oracle",
+    )
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-sigpending"},
+        "static-c-sigpending must use the closed libc-sigpending command",
+    )
+    scope = evidence[0].get("scope")
+    require(
+        isinstance(scope, str)
+        and all(
+            phrase in scope
+            for phrase in (
+                "Pinned-musl 1.2.6",
+                "C++ POSIX/GNU declaration/linkage checks",
+                "`-nostdlib -static` candidate",
+                "handlers/actions",
+                "signal masks",
+                "process signaling",
+                "waits, queues, descriptors, timers",
+                "fixture-only raw blocked-SIGUSR1 setup",
+                "tail sentinels",
+                "stale-errno",
+                "non-null EFAULT",
+                "null EFAULT",
+                "signal-family completion, promotion, or public x86 support",
+            )
+        ),
+        "static-c-sigpending evidence must retain its exact observation regression",
+    )
+
+
 def require_signal_execution_artifact(family: Mapping[str, Any]) -> None:
     """Keep the coherent C process-signal artifact bounded and evidence-led."""
     artifacts = require_verified_artifacts(
@@ -35372,6 +35557,7 @@ def validate_ledger(
     require_sigpause_artifact(by_id["libc.posix-runtime"])
     require_sigisemptyset_artifact(by_id["libc.posix-runtime"])
     require_sigandset_sigorset_artifact(by_id["libc.posix-runtime"])
+    require_sigpending_artifact(by_id["libc.posix-runtime"])
     require_clock_nanosleep_artifact(by_id["libc.posix-runtime"])
     require_nanosleep_artifact(by_id["libc.posix-runtime"])
     require_descriptor_entry_artifact(by_id["libc.posix-runtime"])

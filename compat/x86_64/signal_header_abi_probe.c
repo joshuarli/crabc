@@ -103,3 +103,5 @@ _Static_assert(__builtin_types_compatible_p(__typeof__(&sigorset),
 _Static_assert(__builtin_types_compatible_p(__typeof__(&sigandset),
     int (*)(sigset_t *, const sigset_t *, const sigset_t *)),
     "GNU sigandset declaration");
+_Static_assert(__builtin_types_compatible_p(__typeof__(&sigpending),
+    int (*)(sigset_t *)), "GNU/POSIX sigpending declaration");

@@ -146,6 +146,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-sigpause  run the static x86 crabc-libc one-signal pause slice
   libc-sigisemptyset  run the static x86 crabc-libc GNU signal-set predicate slice
   libc-sigandset-sigorset  run the static x86 crabc-libc GNU signal-set binary slice
+  libc-sigpending  run the static x86 crabc-libc POSIX pending-signal slice
   libc-extended-attributes  run the static x86 crabc-libc extended-attribute slice
   libc-pathname-lifecycle  run the static x86 crabc-libc pathname-lifecycle slice
   libc-directory-streams  run the static x86 crabc-libc directory-stream slice
@@ -471,6 +472,12 @@ It reads both first public x86 signal-set words and writes only the destination
 first word with AND or OR, including destination/operand aliasing; it preserves
 tail storage and stale errno with no syscall path. It does not select the
 predicate, signal actions/handlers, mask or process signaling, waits,
+descriptors, timers, pthread behavior, dynamic libc, or application startup.
+`libc-sigpending` is a separate one-entry POSIX pending-signal observation
+boundary. It calls Linux `rt_sigpending=127` with only the public set's first
+eight-byte kernel word, preserves the fifteen-word public tail, and maps raw
+errors through initial-TLS errno. Fixture-only raw block/delivery setup creates
+one pending `SIGUSR1`; it does not select a C mask/action/delivery/wait API,
 descriptors, timers, pthread behavior, dynamic libc, or application startup.
 `libc-static-tls-v1` passes a real
 final static executable's untouched entry stack to a hidden libc owner, which
@@ -2280,6 +2287,10 @@ run_libc_sigandset_sigorset_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_sigandset_sigorset.sh
 }
 
+run_libc_sigpending_probe() {
+    run_in_container bash /workspace/compat/x86_64/run_libc_sigpending.sh
+}
+
 run_libc_extended_attributes() {
     run_in_container bash /workspace/compat/x86_64/run_libc_extended_attributes.sh
 }
@@ -3564,7 +3575,7 @@ shift
 
 case "$command" in
     timerfd-header-abi|signalfd-header-abi) ;;
-    libc-timerfd|libc-signalfd|libc-sigpause|libc-sigisemptyset|libc-sigandset-sigorset) ;;
+    libc-timerfd|libc-signalfd|libc-sigpause|libc-sigisemptyset|libc-sigandset-sigorset|libc-sigpending) ;;
     ctermid-header-abi|gethostid-header-abi|isatty-header-abi|tcgetpgrp-header-abi|tcsetpgrp-header-abi|getpass-header-abi|libc-ctermid|libc-gethostid|libc-isatty|libc-tcgetpgrp|libc-tcsetpgrp|libc-getpass|mkfifo-header-abi|mkfifoat-header-abi|libc-mkfifo|libc-mkfifoat|mktemp-header-abi|libc-mktemp) ;;
     stdio-permanent-line-io-header-abi|stdio-octal-hex-scan-header-abi) ;;
     math-complex-complete-header-abi|libc-math-complex-complete) ;;
@@ -5309,6 +5320,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "libc-sigandset-sigorset takes no arguments"
         ensure_image
         run_libc_sigandset_sigorset_probe
+        ;;
+    libc-sigpending)
+        [ "$#" -eq 0 ] || fail "libc-sigpending takes no arguments"
+        ensure_image
+        run_libc_sigpending_probe
         ;;
     libc-extended-attributes)
         [ "$#" -eq 0 ] || fail "libc-extended-attributes takes no arguments"

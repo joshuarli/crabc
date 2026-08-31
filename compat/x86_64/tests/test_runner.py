@@ -1367,7 +1367,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         )
         expected_groups = (
             "timerfd-header-abi|signalfd-header-abi",
-            "libc-timerfd|libc-signalfd|libc-sigpause|libc-sigisemptyset|libc-sigandset-sigorset",
+            "libc-timerfd|libc-signalfd|libc-sigpause|libc-sigisemptyset|libc-sigandset-sigorset|libc-sigpending",
             "ctermid-header-abi|gethostid-header-abi|isatty-header-abi|tcgetpgrp-header-abi|tcsetpgrp-header-abi|getpass-header-abi|libc-ctermid|libc-gethostid|libc-isatty|libc-tcgetpgrp|libc-tcsetpgrp|libc-getpass|mkfifo-header-abi|mkfifoat-header-abi|libc-mkfifo|libc-mkfifoat|mktemp-header-abi|libc-mktemp",
             "stdio-permanent-line-io-header-abi|stdio-octal-hex-scan-header-abi",
             "math-complex-complete-header-abi|libc-math-complex-complete",
@@ -4163,6 +4163,9 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         signal_control = (
             ROOT / "libc" / "src" / "c_abi" / "x86_64" / "signal_control.rs"
         ).read_text(encoding="utf-8")
+        signal_pending = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "signal_pending.rs"
+        ).read_text(encoding="utf-8")
         foundation_probe = (
             ROOT / "compat" / "x86_64" / "libc_signal_foundation_probe.rs"
         ).read_text(encoding="utf-8")
@@ -4187,6 +4190,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
 
         self.assertIn('#[path = "signal_foundation.rs"]', static_root)
         self.assertIn('#[path = "signal_control.rs"]', static_root)
+        self.assertIn('#[path = "signal_pending.rs"]', static_root)
         for symbol in (
             "fn sigaction(",
             "fn signal(",
@@ -4196,16 +4200,15 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "fn sigdelset(",
             "fn sigismember(",
             "fn sigprocmask(",
-            "fn sigpending(",
             "fn __libc_current_sigrtmax(",
         ):
             self.assertIn(symbol, signal_control)
+        self.assertNotIn("fn sigpending(", signal_control)
+        self.assertIn("fn sigpending(", signal_pending)
         for required in (
             "raw_syscall::SYS_RT_SIGACTION",
             "raw_syscall::SYS_RT_SIGPROCMASK",
-            "raw_syscall::SYS_RT_SIGPENDING",
             "raw_syscall::syscall4(",
-            "raw_syscall::syscall2(",
             "SA_RESTORER",
             "pack_public_action",
             "unpack_kernel_action",
@@ -5117,6 +5120,127 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         )
         self.assertIn("run_libc_sigandset_sigorset_probe()", dispatcher)
         self.assertIn("libc-sigandset-sigorset)", dispatcher)
+
+    def test_libc_static_c_abi_sigpending_artifact_stays_bounded(self) -> None:
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        source_path = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "signal_pending.rs"
+        )
+        probe_path = ROOT / "compat" / "x86_64" / "libc_sigpending_probe.c"
+        start_path = ROOT / "compat" / "x86_64" / "libc_sigpending_start.S"
+        cxx_header_path = (
+            ROOT / "compat" / "x86_64" / "sigpending_header_abi_probe.cpp"
+        )
+        artifact_runner_path = (
+            ROOT / "compat" / "x86_64" / "run_libc_sigpending.sh"
+        )
+        for path in (
+            source_path,
+            probe_path,
+            start_path,
+            cxx_header_path,
+            artifact_runner_path,
+        ):
+            self.assertTrue(path.is_file(), f"missing sigpending input: {path}")
+        self.assertTrue(artifact_runner_path.stat().st_mode & 0o111)
+
+        source = source_path.read_text(encoding="utf-8")
+        probe = probe_path.read_text(encoding="utf-8")
+        start = start_path.read_text(encoding="utf-8")
+        cxx_header = cxx_header_path.read_text(encoding="utf-8")
+        artifact_runner = artifact_runner_path.read_text(encoding="utf-8")
+        static_exports = {
+            line
+            for line in (
+                ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+            ).read_text(encoding="utf-8").splitlines()
+            if line and not line.startswith("#")
+        }
+        signal_header_probe = (
+            ROOT / "compat" / "x86_64" / "signal_header_abi_probe.c"
+        ).read_text(encoding="utf-8")
+        signal_header_posix_probe = (
+            ROOT / "compat" / "x86_64" / "signal_header_posix_abi_probe.c"
+        ).read_text(encoding="utf-8")
+        parity_ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        dispatcher = RUNNER.read_text(encoding="utf-8")
+
+        self.assertIn('#[path = "signal_pending.rs"]', static_root)
+        for required in (
+            "Selected static Linux/x86-64 `sigpending` C boundary",
+            "src/signal/sigpending.c",
+            "raw_syscall::SYS_RT_SIGPENDING",
+            "raw_syscall::syscall2(",
+            "size_of::<u64>()",
+            'pub unsafe extern "C" fn sigpending',
+            "c_status",
+        ):
+            self.assertIn(required, source)
+        for forbidden in (
+            "sigaction(",
+            "signal(",
+            "sigprocmask(",
+            "sigsuspend(",
+            "sigwait",
+            "signalfd",
+            "timerfd",
+            "pthread_",
+        ):
+            self.assertNotIn(forbidden, source)
+
+        for required in (
+            "sigpending(&pending)",
+            "SYS_rt_sigprocmask == 14",
+            "SYS_rt_sigpending == 127",
+            "SYS_tgkill == 234",
+            "SIGUSR1",
+            "errno = ERANGE",
+            "EFAULT",
+            "tail sentinels",
+            "CRABC_SIGPENDING_FREESTANDING",
+        ):
+            self.assertIn(required, probe)
+        for required in (
+            "call __crabc_x86_static_tls_bootstrap",
+            "crabc_x86_64_sigpending_probe",
+            "exit_group",
+        ):
+            self.assertIn(required, start)
+        self.assertNotIn("arch_prctl", start)
+        for required in (
+            "decltype(&sigpending)",
+            "CRABC_EXPECT_SIGPENDING",
+            "CRABC_REQUIRE_SIGPENDING",
+        ):
+            self.assertIn(required, cxx_header)
+        for required in (
+            "run_musl_oracle.sh",
+            "run_signal_header_abi.sh",
+            "C++",
+            "static_c_abi_exports.txt",
+            "-nostdlib -static",
+            "-Wl,-e,_start",
+            "-Wl,--no-undefined",
+            "R_X86_64_TPOFF",
+            "--disassemble=sigpending",
+            "assert_named_syscall sigpending 7f",
+            "candidate unexpectedly pulls",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn("--whole-archive", artifact_runner)
+        self.assertIn("sigpending", static_exports)
+        self.assertIn("__typeof__(&sigpending)", signal_header_probe)
+        self.assertIn("__typeof__(&sigpending)", signal_header_posix_probe)
+        self.assertIn('id = "static-c-sigpending"', parity_ledger)
+        self.assertIn(
+            'command = "./scripts/dev-x86_64.sh libc-sigpending"', parity_ledger
+        )
+        self.assertIn("run_libc_sigpending_probe()", dispatcher)
+        self.assertIn("libc-sigpending)", dispatcher)
 
     def test_libc_static_c_abi_pthread_create_exit_join_tls_artifact_stays_bounded(
         self,
