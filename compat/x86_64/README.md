@@ -439,6 +439,8 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-bsearch
 ./scripts/dev-x86_64.sh linear-search-header-abi
 ./scripts/dev-x86_64.sh libc-linear-search
+./scripts/dev-x86_64.sh intrusive-queue-header-abi
+./scripts/dev-x86_64.sh libc-intrusive-queue
 ./scripts/dev-x86_64.sh qsort-header-abi
 ./scripts/dev-x86_64.sh libc-qsort
 ./scripts/dev-x86_64.sh getpass-header-abi
@@ -3621,6 +3623,20 @@ helpers, TLS/errno, allocation, locale, syscall, and runtime state. It
 selects neither general sorting/searching nor callback ownership, libc.so,
 CRT, loader, sysroot, family completion, promotion, or public x86 support.
 
+`libc-intrusive-queue` is a separate capability-free
+`static-c-intrusive-queue` `verified_artifact` inside still-planned
+`libc.c-abi-compat`. Its strict, POSIX, X/Open, GNU, and BSD C/C++ `<search.h>`
+matrix proves unconditional `insque`/`remque` declarations and unmangled C++
+linkage. One project-header C fixture runs through pinned musl and a
+`-nostdlib -static` candidate, proving null-predecessor reset without stale
+neighbor writes, splice before an existing successor, payload preservation,
+middle-node unlink repair, and `remque` retaining its removed node links. The
+candidate contains only this paired two-link mutation boundary and rejects
+linear/binary/sort/tree/hash helpers, TLS/errno, allocation, callbacks,
+locale, locks, syscalls, and runtime state. It selects no general searching,
+tree/list/container lifecycle, `search.tree-intrusive` capability, libc.so,
+CRT, loader, sysroot, family completion, promotion, or public x86 support.
+
 `libc-qsort` is a separate capability-free `static-c-qsort`
 `verified_artifact` inside still-planned `libc.c-abi-compat`. Its strict,
 POSIX, X/Open, GNU, and BSD C/C++ `<stdlib.h>` matrix proves the unconditional
@@ -5622,6 +5638,7 @@ Apart from the narrowly named `libc-stat-compat`, `libc-credentials`,
 `libc-tcsetpgrp`,
 `libc-bsearch`,
 `libc-linear-search`,
+`libc-intrusive-queue`,
 `libc-qsort`,
 `libc-getpass`,
 `libc-mktemp`,

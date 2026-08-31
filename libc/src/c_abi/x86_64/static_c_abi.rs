@@ -380,6 +380,8 @@ mod stdio_format_scan;
 mod bsearch;
 #[path = "linear_search.rs"]
 mod linear_search;
+#[path = "intrusive_queue.rs"]
+mod intrusive_queue;
 #[path = "qsort.rs"]
 mod qsort;
 #[path = "callback_algorithms.rs"]

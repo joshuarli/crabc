@@ -96,6 +96,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   sched-yield-header-abi  verify selected x86 sched_yield C/C++ ABI profiles
   bsearch-header-abi  verify staged x86 C/C++ stdlib bsearch declaration and linkage
   linear-search-header-abi  verify staged x86 C/C++ search.h lfind/lsearch declarations and linkage
+  intrusive-queue-header-abi  verify staged x86 C/C++ search.h insque/remque declarations and linkage
   qsort-header-abi  verify staged x86 C/C++ stdlib qsort declaration and linkage
   callback-algorithms-header-abi  compile the staged x86 C/C++ stdlib callback-algorithm declarations
   ffs-header-abi  compile the staged x86 C/C++ strings.h find-first-set declarations
@@ -311,6 +312,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-posix-exit  run the static x86 crabc-libc POSIX _exit forwarding slice
   libc-bsearch  run the static x86 crabc-libc standalone bsearch slice
   libc-linear-search  run the static x86 crabc-libc standalone lfind/lsearch slice
+  libc-intrusive-queue  run the static x86 crabc-libc standalone insque/remque slice
   libc-qsort  run the static x86 crabc-libc standalone qsort slice
   libc-callback-algorithms  run the static x86 crabc-libc callback-algorithms slice
   libc-search-tree-intrusive  run the static x86 crabc-libc search.h callback-tree slice
@@ -2256,6 +2258,10 @@ run_linear_search_header_abi() {
     run_in_container bash /workspace/compat/x86_64/run_linear_search_header_abi.sh
 }
 
+run_intrusive_queue_header_abi() {
+    run_in_container bash /workspace/compat/x86_64/run_intrusive_queue_header_abi.sh
+}
+
 run_qsort_header_abi() {
     run_in_container bash /workspace/compat/x86_64/run_qsort_header_abi.sh
 }
@@ -2289,6 +2295,10 @@ run_libc_bsearch() {
 
 run_libc_linear_search() {
     run_in_container bash /workspace/compat/x86_64/run_libc_linear_search.sh
+}
+
+run_libc_intrusive_queue() {
+    run_in_container bash /workspace/compat/x86_64/run_libc_intrusive_queue.sh
 }
 
 run_libc_qsort() {
@@ -3871,7 +3881,7 @@ case "$command" in
     xattr-header-abi) ;;
     madvise-reference) ;;
     ctype-header-abi|locale-profile-header-abi|locale-multibyte-header-abi|iconv-header-abi|wide-character-header-abi|locale-object-wide-header-abi|locale-narrow-header-abi) ;;
-    integer-arithmetic-header-abi|integer-parse-header-abi|float-parse-header-abi|getsubopt-header-abi|intmax-arithmetic-header-abi|credential-observation-header-abi|login-name-header-abi|child-reaping-header-abi|immediate-termination-header-abi|sched-yield-header-abi|bsearch-header-abi|linear-search-header-abi|qsort-header-abi|callback-algorithms-header-abi) ;;
+    integer-arithmetic-header-abi|integer-parse-header-abi|float-parse-header-abi|getsubopt-header-abi|intmax-arithmetic-header-abi|credential-observation-header-abi|login-name-header-abi|child-reaping-header-abi|immediate-termination-header-abi|sched-yield-header-abi|bsearch-header-abi|linear-search-header-abi|intrusive-queue-header-abi|qsort-header-abi|callback-algorithms-header-abi) ;;
     posix-exit-header-abi) ;;
     ffs-header-abi) ;;
     byte-strings-header-abi) ;;
@@ -3913,7 +3923,7 @@ case "$command" in
     libc-static-c-abi-same-object-differential|qualification-posix-abi-admission) ;;
     libc-interface-discovery) ;;
     libc-posix-exit) ;;
-    libc-readiness-waits|libc-system-observation|libc-system-information|libc-fcntl-record-locks|libc-flock|libc-sendfile|libc-posix-fallocate|libc-descriptor-advice|libc-filesystem-capacity|libc-uts-identity|libc-ctype|libc-locale-profile|libc-locale-multibyte|libc-locale-wide-iconv|libc-wide-character|libc-locale-object-wide|libc-locale-narrow|libc-locale-ctype-locators|libc-locale-error-strings|libc-regex|libc-integer-arithmetic|libc-integer-parse|libc-float-parse|libc-getsubopt|libc-intmax-arithmetic|libc-credential-observation|libc-secure-environment|libc-login-name|libc-child-reaping|libc-immediate-termination|libc-bsearch|libc-linear-search|libc-qsort|libc-callback-algorithms|libc-search-tree-intrusive|libc-search-hash-table|libc-gettext-catalog|libc-access|libc-clock-gettime|libc-time-observation|libc-difftime|libc-timegm|libc-gmtime-r|libc-system-configuration|libc-mapping-core|libc-header-layouts-baseline|libc-nanosleep|libc-clock-nanosleep|libc-descriptor-entry|libc-fcntl-status-control|libc-ioctl|libc-ffs|libc-byte-strings|libc-in6addr-any|libc-in6addr-loopback|libc-process-globals-getopt|libc-auxv-observation|libc-inet-address|libc-inet-ntoa|libc-inet-classful|libc-hstrerror|libc-numeric-netdb|libc-random-entropy|libc-memory-search|libc-string-copy|libc-error-strings|libc-strsignal|libc-descriptor-pipeline) ;;
+    libc-readiness-waits|libc-system-observation|libc-system-information|libc-fcntl-record-locks|libc-flock|libc-sendfile|libc-posix-fallocate|libc-descriptor-advice|libc-filesystem-capacity|libc-uts-identity|libc-ctype|libc-locale-profile|libc-locale-multibyte|libc-locale-wide-iconv|libc-wide-character|libc-locale-object-wide|libc-locale-narrow|libc-locale-ctype-locators|libc-locale-error-strings|libc-regex|libc-integer-arithmetic|libc-integer-parse|libc-float-parse|libc-getsubopt|libc-intmax-arithmetic|libc-credential-observation|libc-secure-environment|libc-login-name|libc-child-reaping|libc-immediate-termination|libc-bsearch|libc-linear-search|libc-intrusive-queue|libc-qsort|libc-callback-algorithms|libc-search-tree-intrusive|libc-search-hash-table|libc-gettext-catalog|libc-access|libc-clock-gettime|libc-time-observation|libc-difftime|libc-timegm|libc-gmtime-r|libc-system-configuration|libc-mapping-core|libc-header-layouts-baseline|libc-nanosleep|libc-clock-nanosleep|libc-descriptor-entry|libc-fcntl-status-control|libc-ioctl|libc-ffs|libc-byte-strings|libc-in6addr-any|libc-in6addr-loopback|libc-process-globals-getopt|libc-auxv-observation|libc-inet-address|libc-inet-ntoa|libc-inet-classful|libc-hstrerror|libc-numeric-netdb|libc-random-entropy|libc-memory-search|libc-string-copy|libc-error-strings|libc-strsignal|libc-descriptor-pipeline) ;;
     libc-vector-io|libc-uio-cxx-linkage) ;;
     libc-sysv-semaphore|libc-posix-semaphore) ;;
     libc-sysv-message-shared-memory) ;;
@@ -4214,6 +4224,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "linear-search-header-abi takes no arguments"
         ensure_image
         run_linear_search_header_abi
+        ;;
+    intrusive-queue-header-abi)
+        [ "$#" -eq 0 ] || fail "intrusive-queue-header-abi takes no arguments"
+        ensure_image
+        run_intrusive_queue_header_abi
         ;;
     qsort-header-abi)
         [ "$#" -eq 0 ] || fail "qsort-header-abi takes no arguments"
@@ -5484,6 +5499,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "libc-linear-search takes no arguments"
         ensure_image
         run_libc_linear_search
+        ;;
+    libc-intrusive-queue)
+        [ "$#" -eq 0 ] || fail "libc-intrusive-queue takes no arguments"
+        ensure_image
+        run_libc_intrusive_queue
         ;;
     libc-qsort)
         [ "$#" -eq 0 ] || fail "libc-qsort takes no arguments"

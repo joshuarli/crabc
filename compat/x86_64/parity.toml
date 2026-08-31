@@ -10069,6 +10069,49 @@ native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc
 oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source, unconditional search.h declaration, and executable behavior oracle for src/search/lsearch.c::{lsearch,lfind}: forward first-match lookup, unchanged count for lfind and existing lsearch hits, missed append/copy/count order, and zero-count callback suppression." }, { kind = "elf-abi", source = "System V AMD64 psABI", role = "LP64 five-argument function/two-pointer callback register convention, mutable pointer/int result ABI, C++ C linkage, and true-static ET_EXEC closure." }]
 
 [[family.verified_artifact]]
+id = "static-c-intrusive-queue"
+description = "Private native x86 selected-static-archive `insque`/`remque` compatibility artifact inside still-planned `libc.c-abi-compat`. One dependency-free `crabc-libc` archive resolves exactly the paired caller-owned two-link mutation entries into a freestanding C fixture after equivalent pinned-musl execution. Musl's complete `src/search/insque.c` leaf treats the first two pointer fields as next/prev links: direct and function-pointer calls prove null-predecessor reset without touching stale neighbors, insertion before an existing successor, payload preservation, middle-node neighbor repair, and `remque` retaining the removed node's own links without clearing the removed node's own links. The final candidate rejects `bsearch`, `lfind`, `lsearch`, `qsort`, `qsort_r`, `__qsort_r`, tree/hash helpers, byte-copy helpers, TLS/errno, allocation, locale, locks, syscalls, and runtime state. This capability-free ABI artifact does not select general searching, trees, lists, containers, allocation, iteration, callbacks, C longjmp/C++ exception transport, libc.so, CRT, loader, sysroot, family completion, promotion, or public x86 support. It does not alter the separately selected `search.tree-intrusive` capability accounting."
+source_owners = [
+  "compat/upstreams.toml",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/intrusive_queue.rs",
+  "include/features.h",
+  "include/bits/alltypes.h",
+  "include/stddef.h",
+  "include/search.h",
+  "compat/x86_64/intrusive_queue_header_abi_probe.c",
+  "compat/x86_64/intrusive_queue_header_abi_probe.cpp",
+  "compat/x86_64/run_intrusive_queue_header_abi.sh",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/libc_intrusive_queue_probe.c",
+  "compat/x86_64/libc_intrusive_queue_start.S",
+  "compat/x86_64/run_libc_intrusive_queue.sh",
+  "compat/x86_64/aarch64_parity_inventory.py",
+  "compat/x86_64/aarch64_parity_inventory.json",
+  "compat/x86_64/tests/test_aarch64_parity_inventory.py",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "compat/x86_64/README.md",
+  "STATUS.md",
+  "x86-64.md",
+  "scripts/dev-x86_64.sh",
+  "scripts/check_structure.py",
+]
+x86_abi_prerequisites = [
+  "The SysV AMD64 LP64 C ABI passes `insque(void *element, void *pred)` in rdi/rsi and `remque(void *element)` in rdi; both return void. The selected caller node begins with two eight-byte pointer slots at offsets 0/8 in next/prev order, and all non-null links reached by the mutation must denote writable caller-owned nodes.",
+  "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417 maps `src/search/insque.c::{insque,remque}` directly to the paired field updates. On the C-defined caller-owned node domain, null pred resets only element's two links, non-null pred splices before its successor, and remque repairs neighbors without clearing element's own links.",
+  "The final `-nostdlib -static` candidate has no interpreter, DT_NEEDED, unresolved symbol, PT_TLS, errno path, allocation, locale, callback, lock, or ambient runtime dependency. It exposes insque/remque while rejecting bsearch, lfind/lsearch, qsort_r, and tree/hash helpers; apart from the test entry's one exit syscall, its intrusive-queue closure has no syscall boundary.",
+]
+x86_header_prerequisites = [
+  "The focused pinned-musl/project-first C11/C++17 `<search.h>` matrix proves unconditional `void insque(void *, void *)` and `void remque(void *)` under strict, POSIX, X/Open, GNU, and BSD profiles, with exact function-pointer types and unmangled C++ linkage. It selects no tree/hash declaration, general search/list lifecycle, archive linkage, installed-header completion, or public x86 support.",
+]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-intrusive-queue", scope = "Pinned-musl/project C11/C++ header compilation plus equivalent pinned-musl C execution and one true dependency-free x86 crabc-libc `-nostdlib -static` candidate. The fixture proves direct/function-pointer two-link calls; null-predecessor reset without stale-neighbor writes; insertion before a successor; payload preservation; middle-node neighbor repair; and remque retaining the removed node links. It audits exact crate-owned export closure, no interpreter/DT_NEEDED/unresolved symbol/PT_TLS/errno/allocation/locale/panic path, and no intrusive-queue syscall beyond the fixture entry. It rejects bsearch/lfind/lsearch/qsort plus tree/hash and byte-copy extraction. It does not select general searching, trees, lists, containers, callbacks, libc.so, CRT, loader, sysroot, family promotion, or public x86 support." }]
+oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source, unconditional search.h declarations, and executable behavior oracle for src/search/insque.c::{insque,remque}: null-predecessor reset, successor splice, neighboring-link repair, and retained removed-node links." }, { kind = "elf-abi", source = "System V AMD64 psABI", role = "LP64 one/two-pointer void function ABI, two-link node-prefix layout, C++ C linkage, and true-static ET_EXEC closure." }]
+
+[[family.verified_artifact]]
 id = "static-c-qsort"
 description = "Private native x86 selected-static-archive `qsort` compatibility artifact inside still-planned `libc.c-abi-compat`. One dependency-free `crabc-libc` archive resolves exactly `qsort` and its non-exported smoothsort worker into a freestanding C fixture after an equivalent pinned-musl execution. Musl's complete `src/stdlib/qsort.c` smoothsort and `src/stdlib/qsort_nr.c` two-argument comparator adapter retain their O(1) 256-byte cycling buffer, unsigned Leonardo state, and unstable equal-key behavior for valid caller-owned records: direct and function-pointer calls cover signed integer ordering, duplicate keys, record permutation, a 308-byte record width, and zero elements without a callback. The target-local private worker preserves the existing `__qsort_r`/weak `qsort_r` context-ABI behavior without extracting either symbol into this candidate. The checked multiplication guard applies only outside the valid C array domain, where musl's source multiplication/pointer expression is already undefined. The final candidate rejects `bsearch`, `__qsort_r`, `qsort_r`, search-container helpers, TLS/errno, allocation, locale, locks, syscalls, and runtime state. This capability-free ABI artifact does not select general sorting/searching or callback ownership, alter qsort_r behavior, or select libc.so, CRT, loader, sysroot, family completion, promotion, or public x86 support."
 source_owners = [

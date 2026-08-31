@@ -16460,6 +16460,147 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             runner,
         )
 
+    def test_libc_static_c_abi_intrusive_queue_artifact_stays_standalone(
+        self,
+    ) -> None:
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        implementation = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "intrusive_queue.rs"
+        ).read_text(encoding="utf-8")
+        probe = (
+            ROOT / "compat" / "x86_64" / "libc_intrusive_queue_probe.c"
+        ).read_text(encoding="utf-8")
+        start = (
+            ROOT / "compat" / "x86_64" / "libc_intrusive_queue_start.S"
+        ).read_text(encoding="utf-8")
+        artifact_runner = (
+            ROOT / "compat" / "x86_64" / "run_libc_intrusive_queue.sh"
+        ).read_text(encoding="utf-8")
+        header_runner = (
+            ROOT / "compat" / "x86_64" / "run_intrusive_queue_header_abi.sh"
+        ).read_text(encoding="utf-8")
+        header_c = (
+            ROOT / "compat" / "x86_64" / "intrusive_queue_header_abi_probe.c"
+        ).read_text(encoding="utf-8")
+        header_cxx = (
+            ROOT / "compat" / "x86_64" / "intrusive_queue_header_abi_probe.cpp"
+        ).read_text(encoding="utf-8")
+        static_exports = {
+            line
+            for line in (
+                ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+            ).read_text(encoding="utf-8").splitlines()
+            if line and not line.startswith("#")
+        }
+        parity_ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        runner = RUNNER.read_text(encoding="utf-8")
+
+        self.assertIn('#[path = "intrusive_queue.rs"]', static_root)
+        for required in (
+            "Selected static Linux/x86-64 C intrusive-queue ABI boundary",
+            "musl 1.2.6 release commit",
+            "src/search/insque.c::{insque,remque}",
+            "without clearing the removed node's own links",
+            "read_unaligned",
+            "write_unaligned",
+            'pub unsafe extern "C" fn insque',
+            'pub unsafe extern "C" fn remque',
+        ):
+            self.assertIn(required, implementation)
+        for forbidden in (
+            "raw_syscall::",
+            "errno::",
+            "crabc_core",
+            "crabc_mimalloc",
+            "global_asm!",
+            "panic_",
+        ):
+            self.assertNotIn(forbidden, implementation)
+        for symbol in ("insque", "remque"):
+            self.assertIn(symbol, static_exports)
+
+        for required in (
+            "insque_signature",
+            "remque_signature",
+            "const insque_signature insert = insque",
+            "const remque_signature remove = remque",
+            "check_null_predecessor_reset",
+            "check_splice_and_unlink",
+            "remque retaining",
+            "element.next != &successor",
+            "CRABC_INTRUSIVE_QUEUE_FREESTANDING",
+        ):
+            self.assertIn(required, probe)
+        for required in (
+            "crabc_x86_64_intrusive_queue_probe",
+            "mov $60, %eax",
+        ):
+            self.assertIn(required, start)
+        for header in (header_c, header_cxx):
+            for required in (
+                "insque declaration",
+                "remque declaration",
+                "insque_signature",
+                "remque_signature",
+                "insque_function",
+                "remque_function",
+            ):
+                self.assertIn(required, header)
+        for required in (
+            "intrusive_queue_header_abi_probe.c",
+            "intrusive_queue_header_abi_probe.cpp",
+            "-D__STRICT_ANSI__",
+            "-D_POSIX_C_SOURCE=200809L",
+            "-D_XOPEN_SOURCE=700",
+            "-D_GNU_SOURCE",
+            "-D_BSD_SOURCE",
+            "nm --undefined-only",
+            "retained a mangled intrusive-queue reference",
+        ):
+            self.assertIn(required, header_runner)
+        for required in (
+            "run_intrusive_queue_header_abi.sh",
+            "static_c_abi_exports.txt",
+            "-nostdlib -static",
+            "-Wl,-e,_start",
+            "-Wl,--no-undefined",
+            "--disassemble=insque",
+            "--disassemble=remque",
+            "intrusive-queue candidate unexpectedly retains TLS",
+            "intrusive queue unexpectedly performs a syscall",
+            "outside the test entry shim",
+            "bsearch lfind lsearch __qsort_r qsort qsort_r",
+            "candidate accidentally selects ${symbol}",
+            "timeout",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn("--whole-archive", artifact_runner)
+        self.assertIn('id = "static-c-intrusive-queue"', parity_ledger)
+        self.assertIn(
+            'command = "./scripts/dev-x86_64.sh libc-intrusive-queue"',
+            parity_ledger,
+        )
+        self.assertIn("run_intrusive_queue_header_abi()", runner)
+        self.assertIn(
+            "/workspace/compat/x86_64/run_intrusive_queue_header_abi.sh", runner
+        )
+        self.assertIn("run_libc_intrusive_queue()", runner)
+        self.assertIn(
+            "/workspace/compat/x86_64/run_libc_intrusive_queue.sh", runner
+        )
+        self.assertIn(
+            '    intrusive-queue-header-abi)\n        [ "$#" -eq 0 ] || fail "intrusive-queue-header-abi takes no arguments"',
+            runner,
+        )
+        self.assertIn(
+            '    libc-intrusive-queue)\n        [ "$#" -eq 0 ] || fail "libc-intrusive-queue takes no arguments"',
+            runner,
+        )
+
     def test_libc_static_c_abi_qsort_artifact_stays_standalone(self) -> None:
         static_root = (
             ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
