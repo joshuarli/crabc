@@ -375,6 +375,10 @@ class CanonicalUpstreamStressContractTests(unittest.TestCase):
         self.assertEqual(report["execution"]["case"], RUNNER.case_inventory(case))
         self.assertEqual(report["execution"]["process_attempt_count"], 1)
         self.assertEqual(report["runtime"]["backend_attestation"], backend)
+        self.assertEqual(
+            report["runtime"]["environment"],
+            RUNNER.runtime_environment_record(root / "target"),
+        )
         self.assertEqual(report["current_head"]["source"], current_head["source"])
 
     def test_diagnostic_blocked_prerequisite_never_claims_a_matrix_result(self) -> None:
@@ -416,20 +420,41 @@ class CanonicalUpstreamStressContractTests(unittest.TestCase):
         self.assertNotIn("patch", " ".join(command))
         self.assertEqual(command.count("-D" + "USE_STD_MALLOC"), 1)
 
-    def test_runtime_environment_clears_inherited_loader_overrides(self) -> None:
+    def test_runtime_environment_is_closed_and_reported(self) -> None:
         with mock.patch.dict(
             RUNNER.os.environ,
             {
+                "HOME": "/ambient/home",
                 "LD_AUDIT": "audit.so",
+                "LD_DEBUG": "all",
                 "LD_LIBRARY_PATH": "/ambient/lib",
                 "LD_PRELOAD": "preload.so",
+                "MALLOC_CHECK_": "3",
+                "MI_SHOW_STATS": "1",
+                "PATH": "/ambient/bin",
             },
-            clear=False,
+            clear=True,
         ):
             environment = RUNNER.runtime_environment(Path("/target/debug"))
-        self.assertNotIn("LD_AUDIT", environment)
-        self.assertNotIn("LD_PRELOAD", environment)
-        self.assertEqual(environment["LD_LIBRARY_PATH"], "/target/debug")
+        self.assertEqual(
+            environment,
+            {
+                "LC_ALL": "C",
+                "LD_LIBRARY_PATH": "/target/debug",
+                "TZ": "UTC",
+            },
+        )
+        self.assertEqual(
+            RUNNER.runtime_environment_record(Path("/target/debug")),
+            {
+                "inheritance": "none",
+                "variables": {
+                    "LC_ALL": "C",
+                    "LD_LIBRARY_PATH": "/target/debug",
+                    "TZ": "UTC",
+                },
+            },
+        )
 
     def test_native_target_rejects_a_kernel_below_the_checked_inventory(self) -> None:
         with mock.patch.object(RUNNER.platform, "system", return_value="Linux"), mock.patch.object(
@@ -1027,8 +1052,16 @@ class CanonicalUpstreamStressContractTests(unittest.TestCase):
         self.assertEqual(report["capability"]["passed_case_count"], 1)
         self.assertEqual(report["capability"]["fully_verified_worker_counts"], [])
         self.assertEqual(
+            report["runtime"]["environment"],
+            RUNNER.runtime_environment_record(root / "target"),
+        )
+        self.assertEqual(
             commands.call_args_list[2].args[0],
             RUNNER.run_command(root.resolve() / "output/canonical-upstream-test-stress", cases[1]),
+        )
+        self.assertEqual(
+            commands.call_args_list[2].kwargs["environment"],
+            RUNNER.runtime_environment(root / "target"),
         )
 
     def test_execute_marks_the_inventory_passed_only_after_every_case_passes(self) -> None:

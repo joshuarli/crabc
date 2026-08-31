@@ -1864,11 +1864,34 @@ def build_command(
 
 
 def runtime_environment(target_dir: Path) -> dict[str, str]:
-    environment = dict(os.environ)
-    for name in ("LD_AUDIT", "LD_LIBRARY_PATH", "LD_PRELOAD"):
-        environment.pop(name, None)
-    environment["LD_LIBRARY_PATH"] = str(target_dir)
-    return environment
+    """Return the complete, deliberately small environment of one stress process.
+
+    The fixture is an allocator/loader boundary, so carrying arbitrary caller
+    state into it would make a recorded result dependent on ambient preload,
+    loader, allocator, locale, or diagnostic settings.  The binary is invoked
+    by an absolute path and needs no inherited ``PATH``/``HOME``; the selected
+    libc directory is the only dynamic-loader input this lane intentionally
+    supplies.
+    """
+
+    return {
+        "LC_ALL": "C",
+        "LD_LIBRARY_PATH": str(target_dir),
+        "TZ": "UTC",
+    }
+
+
+def runtime_environment_record(target_dir: Path) -> dict[str, object]:
+    """Describe the closed fixture environment without host-specific paths."""
+
+    return {
+        "inheritance": "none",
+        "variables": {
+            "LC_ALL": "C",
+            "LD_LIBRARY_PATH": relative_path(target_dir, ROOT),
+            "TZ": "UTC",
+        },
+    }
 
 
 def execution_cases(contract: Mapping[str, Any]) -> list[dict[str, Any]]:
@@ -2271,6 +2294,7 @@ def execute(contract: Mapping[str, Any], pin: Mapping[str, str], args: argparse.
     report["runtime"] = {
         "compiler": relative_path(runtime_inputs.compiler, ROOT),
         "backend_attestation": backend_attestation,
+        "environment": runtime_environment_record(runtime_inputs.target_dir),
         "sysroot": relative_path(runtime_inputs.sysroot, ROOT),
         "sysroot_purity": {
             "crt_sysroot_pure_rust": runtime_inputs.purity["crt_sysroot_pure_rust"],
@@ -2342,13 +2366,14 @@ def execute(contract: Mapping[str, Any], pin: Mapping[str, str], args: argparse.
     cases = execution_cases(contract)
     results = report["execution"]["case_results"]
     assert isinstance(results, list)
+    fixture_environment = runtime_environment(runtime_inputs.target_dir)
     for process_attempt, case in enumerate(cases, start=1):
         case_directory = output_dir / "cases" / str(case["id"])
         case_directory.mkdir(parents=True, exist_ok=True)
         run = command_record(
             run_command(binary, case),
             cwd=case_directory,
-            environment=runtime_environment(runtime_inputs.target_dir),
+            environment=fixture_environment,
             timeout=int(execution["watchdog"]["seconds"]),
         )
         if run.get("kind") in {"process", "timeout"}:
@@ -2447,6 +2472,7 @@ def execute_diagnostic(
     report["runtime"] = {
         "compiler": relative_path(runtime_inputs.compiler, ROOT),
         "backend_attestation": backend_attestation,
+        "environment": runtime_environment_record(runtime_inputs.target_dir),
         "sysroot": relative_path(runtime_inputs.sysroot, ROOT),
         "sysroot_purity": {
             "crt_sysroot_pure_rust": runtime_inputs.purity["crt_sysroot_pure_rust"],
@@ -2521,10 +2547,11 @@ def execute_diagnostic(
 
     case_directory = output_dir / "cases" / str(case["id"])
     case_directory.mkdir(parents=True, exist_ok=True)
+    fixture_environment = runtime_environment(runtime_inputs.target_dir)
     run = command_record(
         run_command(binary, case),
         cwd=case_directory,
-        environment=runtime_environment(runtime_inputs.target_dir),
+        environment=fixture_environment,
         timeout=int(execution["watchdog"]["seconds"]),
     )
     if run.get("kind") in {"process", "timeout"}:
