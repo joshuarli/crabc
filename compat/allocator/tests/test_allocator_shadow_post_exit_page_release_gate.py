@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Ratchet concurrent post-exit release witnesses into the shadow gate."""
+"""Ratchet concurrent post-exit direct and C witnesses into the shadow gate."""
 
 from __future__ import annotations
 
@@ -11,9 +11,16 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[3]
 DEV_SH = ROOT / "scripts/dev.sh"
 DIRECT_TARGET = "native_concurrent_post_exit_page_release"
-C_TARGET = "native_mimalloc_concurrent_post_exit_release"
-C_FIXTURE = ROOT / "tests/fixtures/native_mimalloc_concurrent_post_exit_release_test.c"
-C_HARNESS = ROOT / "tests/native_mimalloc_concurrent_post_exit_release.rs"
+C_RELEASE_TARGET = "native_mimalloc_concurrent_post_exit_release"
+C_RELEASE_FIXTURE = ROOT / "tests/fixtures/native_mimalloc_concurrent_post_exit_release_test.c"
+C_RELEASE_HARNESS = ROOT / "tests/native_mimalloc_concurrent_post_exit_release.rs"
+C_REALLOC_TARGET = "native_mimalloc_post_exit_concurrent_realloc"
+C_REALLOC_FIXTURE = ROOT / "tests/fixtures/native_mimalloc_post_exit_concurrent_realloc_test.c"
+C_REALLOC_HARNESS = ROOT / "tests/native_mimalloc_post_exit_concurrent_realloc.rs"
+C_CONCURRENT_WITNESSES = (
+    (C_RELEASE_TARGET, C_RELEASE_FIXTURE, C_RELEASE_HARNESS),
+    (C_REALLOC_TARGET, C_REALLOC_FIXTURE, C_REALLOC_HARNESS),
+)
 
 
 def allocator_shadow_commands() -> list[list[str]]:
@@ -53,8 +60,8 @@ def contains_tokens(command: list[str], expected: tuple[str, ...]) -> bool:
     return any(command[index : index + width] == list(expected) for index in range(len(command)))
 
 
-class AllocatorShadowPostExitPageReleaseGateTests(unittest.TestCase):
-    def test_canonical_shadow_lane_selects_both_concurrent_release_witnesses(self) -> None:
+class AllocatorShadowPostExitGateTests(unittest.TestCase):
+    def test_canonical_shadow_lane_selects_direct_and_concurrent_c_witnesses(self) -> None:
         commands = allocator_shadow_commands()
         direct_prefix = ("run_in_container", "cargo", "test", "-p", "crabc-mimalloc")
         direct_target = ("--test", DIRECT_TARGET)
@@ -92,12 +99,14 @@ class AllocatorShadowPostExitPageReleaseGateTests(unittest.TestCase):
             command for command in commands if contains_tokens(command, selected_c_prefix)
         ]
         self.assertEqual(len(selected_c_commands), 1)
-        self.assertTrue(contains_tokens(selected_c_commands[0], ("--test", C_TARGET)))
         self.assertIn("--test-threads=1", selected_c_commands[0])
 
-        self.assertTrue(C_FIXTURE.is_file())
-        self.assertTrue(C_HARNESS.is_file())
-        self.assertIn(C_FIXTURE.name, C_HARNESS.read_text(encoding="utf-8"))
+        for target, fixture, harness in C_CONCURRENT_WITNESSES:
+            with self.subTest(target=target):
+                self.assertTrue(contains_tokens(selected_c_commands[0], ("--test", target)))
+                self.assertTrue(fixture.is_file())
+                self.assertTrue(harness.is_file())
+                self.assertIn(fixture.name, harness.read_text(encoding="utf-8"))
 
 
 if __name__ == "__main__":
