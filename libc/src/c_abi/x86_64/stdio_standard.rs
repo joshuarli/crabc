@@ -31,6 +31,14 @@
 //! process-lifetime `stdin` pointer. Musl's fixed stdin record lacks
 //! `F_NORD`, so its `!(F_NORD)` expression is exactly one without observing
 //! a general FILE access mode, read cursor, or input transition.
+//! The disjoint GNU `__fwritable` observation reads only the process-lifetime
+//! `stderr` pointer. Musl's fixed stderr record lacks `F_NOWR`, so its
+//! `!(F_NOWR)` expression is exactly one without observing a general FILE
+//! access mode, write cursor, or output transition.
+//! The disjoint GNU `__fbufsize` observation reads only the process-lifetime
+//! `stderr` pointer. Musl's fixed stderr record has `buf_size = 0`, matching
+//! this module's permanently zero capacity without observing buffering setup,
+//! a cursor, or output transition.
 //! The sibling pathname/tmpfile block admits only one active `fopen("r")`,
 //! `fopen("w+")`, or `tmpfile` stream at a time, its exact `fclose`, pre-I/O
 //! caller-buffered `_IOFBF` configuration, and its selected
@@ -64,7 +72,7 @@
 //! | `src/stdio/{fgets,fputs,puts}.c` | selected permanent-standard-stream line I/O |
 //! | `src/stdio/{feof,ferror,clearerr}.c` | selected permanent-status predicates and marker reset; focused evidence observes only stdin; `feof_unlocked` is musl's weak same-address alias of `feof` |
 //! | `src/stdio/fileno.c` | selected descriptor adapter plus musl-shaped weak `fileno_unlocked` alias; focused evidence observes only permanent stdin/stdout/stderr |
-//! | `src/stdio/ext.c` | one private `__freadable(stdin)` access-query observation; no general FILE or input contract |
+//! | `src/stdio/ext.c` | private `__freadable(stdin)`, `__fwritable(stderr)`, and `__fbufsize(stderr)` fixed-capacity observations; no general FILE, input, output, or buffering contract |
 //! | `src/stdio/fflush.c` | selected explicit-flush entry |
 //! | `src/stdio/{fopen,fclose,setvbuf,fseek,ftell,fgetpos,fsetpos,rewind}.c` | one fixed pathname-stream lifecycle, caller-buffered full buffering, and logical-position routes |
 //! | `src/stdio/tmpfile.c`, `src/temp/__randname.c` | one exclusive pathname created below `/tmp` with requested mode `0600`, immediately unlinked, and adopted as a `w+` fixed stream; Linux `getrandom` plus hex encoding replaces musl's noncryptographic name generator without adding a PRNG |
@@ -796,6 +804,35 @@ pub unsafe extern "C" fn __fwritable(stream: *mut StandardStream) -> c_int {
     }
     // SAFETY: pointer equality above proves this is the fixed stderr record.
     unsafe { ((*stream).flags & F_NOWR == 0) as c_int }
+}
+
+/// Observe musl's fixed permanent-stderr buffer capacity.
+///
+/// Musl 1.2.6 `src/stdio/ext.c` implements `__fbufsize` as
+/// `return f->buf_size`, while its permanent `src/stdio/stderr.c` record fixes
+/// that member at zero. The owned stderr record likewise retains capacity zero
+/// before and after this module's unrelated static-stream initialization. This
+/// private adapter therefore has the exact process-lifetime `size_t` result
+/// `0` without importing a general FILE buffer-size query, configuration,
+/// cursor, or output behavior. It intentionally rejects every pointer other
+/// than stderr; the result does not select input, another permanent stream,
+/// pathname state, or any other stdio-extension helper.
+///
+/// # Safety
+///
+/// `stream` must be the exported process-lifetime `stderr` pointer. Its
+/// observation is externally serialized with the selected permanent stream.
+#[no_mangle]
+pub unsafe extern "C" fn __fbufsize(stream: *mut StandardStream) -> usize {
+    // The fixed stderr capacity is complete before first use; this query must
+    // not trigger shared permanent-stream buffer initialization.
+    if stream != ptr::addr_of_mut!(STDERR_STREAM) {
+        // SAFETY: no caller stream was dereferenced on this closed boundary.
+        unsafe { reject_stream() };
+        return 0;
+    }
+    // SAFETY: pointer equality above proves this is the fixed stderr record.
+    unsafe { (*stream).capacity }
 }
 
 // Musl's `weak_alias(fileno, fileno_unlocked)` preserves both a weak archive

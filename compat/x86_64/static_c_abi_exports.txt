@@ -19,6 +19,7 @@ __cxa_finalize
 __dn_expand
 __environ
 __errno_location
+__fbufsize
 __fesetround
 __flt_rounds
 __fork_handler

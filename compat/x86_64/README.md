@@ -839,7 +839,9 @@ read-only observation returns exact `int` `1`. The strict C11/C++17
 `stdio_ext.h` matrix proves its unconditional `int (FILE *)` declaration and
 unmangled C++ linkage. This is neither input behavior nor a general FILE
 access-mode claim: it excludes arbitrary FILEs, FLOCK/FUNLOCK or lock-free
-behavior, other permanent streams, every other `stdio_ext` helper,
+behavior, other permanent streams, every other `stdio_ext` helper except the
+separately selected fixed `__fwritable(stderr)` and `__fbufsize(stderr)`
+siblings,
 stdio.stream-io, path/descriptor-reopen/tmpfile/LFS behavior, byte/block I/O
 including `fread`/`fwrite`, positions/status/configuration/buffering, multiple
 streams, general stdio, parity, promotion, and public x86 support.
@@ -854,10 +856,29 @@ so each read-only observation returns exact `int` `1`. The strict C11/C++17
 `stdio_ext.h` matrix proves its unconditional `int (FILE *)` declaration and
 unmangled C++ linkage. This is neither output behavior nor a general FILE
 access-mode claim: it excludes arbitrary FILEs, FLOCK/FUNLOCK or lock-free
-behavior, other permanent streams, every other `stdio_ext` helper,
+behavior, other permanent streams, every other `stdio_ext` helper except the
+separately selected fixed `__fbufsize(stderr)` sibling,
 stdio.stream-io, path/descriptor-reopen/tmpfile/LFS behavior, byte/block I/O
 including `fread`/`fwrite`, positions/status/configuration/buffering, multiple
 streams, general stdio, parity, promotion, and public x86 support.
+
+The separate `stdio-permanent-fbufsize-stderr-header-abi` and
+`libc-stdio-permanent-fbufsize-stderr` gates record one private
+`static-c-stdio-permanent-fbufsize-stderr` artifact. It adds only the GNU
+`__fbufsize` C ABI spelling, without promoting a capability. Its pinned-musl/
+static differential calls `__fbufsize(stderr)` directly and through a function
+pointer; musl's permanent stderr record fixes `buf_size = 0`, matching crabc's
+fixed capacity, so every read-only observation returns exact `size_t` `0`.
+The strict C11/C++17 `stdio_ext.h` matrix proves its unconditional
+`size_t (FILE *)` declaration and unmangled C++ linkage. This is neither
+buffering setup nor a general FILE buffer-size claim: it excludes arbitrary
+FILEs, FLOCK/FUNLOCK or lock-free behavior, the separately selected
+`__freadable(stdin)` sibling and `__fwritable(stderr)` sibling, other
+permanent streams, every other unselected `stdio_ext` helper, stdio.stream-io,
+path/descriptor-reopen/tmpfile/LFS
+behavior, byte/block I/O including `fread`/`fwrite`, positions/status/
+configuration, multiple streams, general stdio, parity, promotion, and public
+x86 support.
 
 The separate `stdio-permanent-feof-unlocked-header-abi` and
 `libc-stdio-permanent-feof-unlocked` gates record one private
