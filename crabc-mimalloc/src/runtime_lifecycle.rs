@@ -7892,56 +7892,6 @@ pub fn native_allocate_aligned(
     native_later_thread_allocate_aligned(request, alignment, zero)
 }
 
-/// Constructs the one source-valid mixed native exit image for an isolated
-/// lifecycle regression.
-///
-/// A joined producer first publishes a direct-small client to A's source
-/// remote head, while a distinct medium client remains local in the same
-/// native session. The returned address names only that still-live C-shaped
-/// client; the published client remains private to source collection. This
-/// setup exists solely to exercise the native destructor branch that must
-/// collect the first client before it transfers the second through the typed
-/// post-exit route. It is deliberately feature-gated instead of creating a
-/// general native source-publication API.
-#[cfg(feature = "native-runtime-test-published-source")]
-#[doc(hidden)]
-pub fn native_test_prepare_source_published_live_owner_exit(
-    publish_before_exit: TicketZeroSingleRemoteFreePublisher,
-) -> NativePageAllocationResult {
-    let mut session = match current_thread_native_session_handle(true) {
-        Ok(session) => session,
-        Err(error) => return native_later_thread_allocation_result(Err(error)),
-    };
-    let published = match session.allocate(37, false) {
-        Ok(client) => client,
-        Err(error) => return native_later_thread_allocation_result(Err(error)),
-    };
-    let live = match session.native_allocate_aligned(
-        OWNER_EXIT_RECLAIM_MEDIUM_REQUEST,
-        NATIVE_C_MALLOC_ALIGNMENT,
-        false,
-    ) {
-        Ok(block) => block,
-        Err(error) => return native_later_thread_allocation_result(Err(error)),
-    };
-    if session.enable_native_live_remote().is_err() {
-        retain_current_thread_live_page_owner();
-        return NativePageAllocationResult::Retained;
-    }
-    if session
-        .publish_remote_free(published, publish_before_exit)
-        .is_err()
-    {
-        // The publication closure either left the source client live or
-        // returned its exact producer to the source operation. This focused
-        // setup has no retry policy, and it must never present the sibling as
-        // a detached client after that incomplete source transition.
-        retain_current_thread_live_page_owner();
-        return NativePageAllocationResult::Retained;
-    }
-    NativePageAllocationResult::Allocated(live)
-}
-
 /// Looks up one exact native client before a pointer-first reallocation.
 ///
 /// Once the caller's persistent target owner is established, pinned

@@ -90,10 +90,8 @@ required-features = ["native-runtime-test-audit"]
 [[test]]
 name = "native_source_published_live_owner_exit"
 path = "tests/native_source_published_live_owner_exit.rs"
-# This direct-only lifecycle witness constructs the one joined source
-# publication plus distinct live native client state. The setup seam is absent
-# from the production friend surface.
-required-features = ["native-runtime-test-published-source"]
+# This direct-only lifecycle witness uses ordinary persistent-owner allocation,
+# source publication, collect-abandon, and pointer-first post-exit free paths.
 
 [features]
 default = []
@@ -118,10 +116,6 @@ native-runtime-test-audit = []
 # `munmap` fails while the native post-exit registry owns its source route.
 # It is absent from normal allocator and libc builds.
 native-runtime-test-fault = []
-# Enables one direct-regression setup for a joined source publication beside a
-# distinct live native owner-exit client. It is absent from normal allocator
-# and libc builds, and exposes no route, page, or release capability.
-native-runtime-test-published-source = []
 
 [dependencies]
 chacha20 = { version = "=0.10.1", default-features = false, features = ["legacy", "zeroize"] }
