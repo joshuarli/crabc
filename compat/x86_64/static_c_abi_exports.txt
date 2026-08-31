@@ -65,6 +65,7 @@ __xstat
 _environ
 _exit
 _longjmp
+_ns_flagdata
 _pthread_cleanup_pop
 _pthread_cleanup_push
 _setjmp

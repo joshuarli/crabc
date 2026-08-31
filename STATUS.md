@@ -117,8 +117,10 @@ C/C++ `dn_skipname(const unsigned char *, const unsigned char *)` and
 `dn_expand(const unsigned char *, const unsigned char *, const unsigned char *, char *, int)`,
 `ns_get16(const unsigned char *)`, `ns_get32(const unsigned char *)`, and
 `ns_put16(unsigned, unsigned char *)`, and
-`ns_put32(unsigned long, unsigned char *)` declarations, the
-`NS_CMPRSFLGS`/name-size constants, and unmangled C++ linkage. The static
+`ns_put32(unsigned long, unsigned char *)` declarations, plus the
+eight-byte align-4 `{ int mask; int shift; }` `_ns_flagdata` record, its
+`const struct _ns_flagdata *` array-decay type, and unmangled C++ data
+reference. It also proves the `NS_CMPRSFLGS`/name-size constants. The static
 fixture then runs through pinned musl 1.2.6 and an archive-free
 `-nostdlib -static` candidate linked from exactly one extracted object, never
 `libc.a`. It selects only musl `src/network/dn_skipname.c`'s caller-owned
@@ -146,11 +148,27 @@ packet I/O, socket, netdb/database, parser, nameser read/write helper,
 allocation, syscall, interface, or Ethernet dependency; it is not resolver
 completion, promotion, or public x86 support.
 
+`./scripts/dev-x86_64.sh libc-ns-flagdata` is a private
+`static-c-ns-flagdata` artifact inside still-planned `libc.resolver`. Its
+shared `./scripts/dev-x86_64.sh nameser-header-abi` gate proves the exact
+C/C++ `_ns_flagdata` data declaration and record layout. Its project-header C
+fixture then executes through pinned musl 1.2.6 and an archive-free
+`-nostdlib -static` candidate linked from exactly one extracted object, never
+`libc.a`. It selects only the global default read-only 128-byte sixteen-record
+`_ns_flagdata` section in musl `src/network/ns_parse.c`: the separate
+`.rodata._ns_flagdata` section has no relocation despite its co-resident parser
+code, the first ten `(mask, shift)` pairs drive `ns_msg_getflag` QR/opcode/AA/
+TC/RD/RA/Z/AD/CD/rcode extraction, and the final six records are zero. It has
+no parser, resolver state, `h_errno`, `errno`, TLS, `/etc/hosts` or
+`/etc/resolv.conf` access, DNS packet I/O, socket, netdb/database, nameser
+helper, allocation, syscall, interface, or Ethernet dependency; it is not
+resolver completion, promotion, or public x86 support.
+
 `./scripts/dev-x86_64.sh libc-ns-get16` is a private `static-c-ns-get16`
 artifact inside still-planned `libc.resolver`. The shared
 `./scripts/dev-x86_64.sh nameser-header-abi` gate proves the exact C/C++
 `ns_get16(const unsigned char *)` declaration and unmangled C++ linkage beside
-`dn_skipname`, `dn_expand`, `ns_get32`, `ns_put16`, and `ns_put32`. Its static fixture then runs through
+`dn_skipname`, `dn_expand`, `_ns_flagdata`, `ns_get32`, `ns_put16`, and `ns_put32`. Its static fixture then runs through
 pinned musl 1.2.6 and an archive-free `-nostdlib -static` candidate linked from
 exactly one extracted object, never `libc.a`. It selects only the 11-byte
 call-free `ns_get16` text section in musl `src/network/ns_parse.c`: two
@@ -165,7 +183,7 @@ completion, promotion, or public x86 support.
 artifact inside still-planned `libc.resolver`. The shared
 `./scripts/dev-x86_64.sh nameser-header-abi` gate proves the exact C/C++
 `ns_get32(const unsigned char *)` declaration and unmangled C++ linkage beside
-`dn_skipname`, `dn_expand`, `ns_get16`, `ns_put16`, and `ns_put32`. Its static fixture then runs through
+`dn_skipname`, `dn_expand`, `_ns_flagdata`, `ns_get16`, `ns_put16`, and `ns_put32`. Its static fixture then runs through
 pinned musl 1.2.6 and an archive-free `-nostdlib -static` candidate linked from
 exactly one extracted object, never `libc.a`. It selects only the seven-byte
 call-free `ns_get32` text section in musl `src/network/ns_parse.c`: four
@@ -181,7 +199,7 @@ support.
 artifact inside still-planned `libc.resolver`. The shared
 `./scripts/dev-x86_64.sh nameser-header-abi` gate proves the exact C/C++
 `ns_put16(unsigned, unsigned char *)` declaration and unmangled C++ linkage
-beside `dn_skipname`, `dn_expand`, `ns_get16`, `ns_get32`, and `ns_put32`. Its static fixture then runs
+beside `dn_skipname`, `dn_expand`, `_ns_flagdata`, `ns_get16`, `ns_get32`, and `ns_put32`. Its static fixture then runs
 through pinned musl 1.2.6 and an archive-free `-nostdlib -static` candidate
 linked from exactly one extracted object, never `libc.a`. It selects only the
 10-byte call-free `ns_put16` text section in musl `src/network/ns_parse.c`: C
@@ -196,7 +214,7 @@ completion, promotion, or public x86 support.
 artifact inside still-planned `libc.resolver`. The shared
 `./scripts/dev-x86_64.sh nameser-header-abi` gate proves the exact C/C++
 `ns_put32(unsigned long, unsigned char *)` declaration and unmangled C++
-linkage beside `dn_skipname`, `dn_expand`, `ns_get16`, `ns_get32`, and `ns_put16`. Its static
+linkage beside `dn_skipname`, `dn_expand`, `_ns_flagdata`, `ns_get16`, `ns_get32`, and `ns_put16`. Its static
 fixture then runs through pinned musl 1.2.6 and an archive-free
 `-nostdlib -static` candidate linked from exactly one extracted object, never
 `libc.a`. It selects only the five-byte call-free `ns_put32` text section in

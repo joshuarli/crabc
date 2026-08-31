@@ -3747,6 +3747,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         '#[path = "in6addr_any.rs"]',
         '#[path = "in6addr_loopback.rs"]',
         '#[path = "dn_skipname.rs"]',
+        '#[path = "ns_flagdata.rs"]',
         '#[path = "ns_get16.rs"]',
         '#[path = "ns_get32.rs"]',
         '#[path = "ns_put16.rs"]',
@@ -8301,6 +8302,15 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
     dn_expand_runner_source = (
         ROOT / "compat" / "x86_64" / "run_libc_dn_expand.sh"
     )
+    ns_flagdata_probe_source = (
+        ROOT / "compat" / "x86_64" / "libc_ns_flagdata_probe.c"
+    )
+    ns_flagdata_start_source = (
+        ROOT / "compat" / "x86_64" / "libc_ns_flagdata_start.S"
+    )
+    ns_flagdata_runner_source = (
+        ROOT / "compat" / "x86_64" / "run_libc_ns_flagdata.sh"
+    )
     nameser_header_c_source = (
         ROOT / "compat" / "x86_64" / "nameser_header_abi_probe.c"
     )
@@ -8317,6 +8327,9 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         dn_expand_probe_source,
         dn_expand_start_source,
         dn_expand_runner_source,
+        ns_flagdata_probe_source,
+        ns_flagdata_start_source,
+        ns_flagdata_runner_source,
         nameser_header_c_source,
         nameser_header_cpp_source,
         nameser_header_runner_source,
@@ -8339,6 +8352,11 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
     dn_expand_probe = dn_expand_probe_source.read_text(errors="replace")
     dn_expand_start = dn_expand_start_source.read_text(errors="replace")
     dn_expand_runner = dn_expand_runner_source.read_text(errors="replace")
+    ns_flagdata_source = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "ns_flagdata.rs"
+    ns_flagdata_text = ns_flagdata_source.read_text(errors="replace")
+    ns_flagdata_probe = ns_flagdata_probe_source.read_text(errors="replace")
+    ns_flagdata_start = ns_flagdata_start_source.read_text(errors="replace")
+    ns_flagdata_runner = ns_flagdata_runner_source.read_text(errors="replace")
     nameser_header_c = nameser_header_c_source.read_text(errors="replace")
     nameser_header_cpp = nameser_header_cpp_source.read_text(errors="replace")
     nameser_header_runner = nameser_header_runner_source.read_text(errors="replace")
@@ -8391,6 +8409,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
             "#include <resolv.h>",
             "dn_skipname_signature",
             "dn_expand_signature",
+            "ns_flagdata_pointer",
             "ns_get16_signature",
             "ns_get32_signature",
             "ns_put16_signature",
@@ -8410,6 +8429,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         "nm --undefined-only",
         "_Z.*dn_skipname",
         "_Z.*dn_expand",
+        "_Z.*_ns_flagdata",
         "_Z.*ns_get16",
         "_Z.*ns_get32",
         "_Z.*ns_put16",
@@ -8422,6 +8442,34 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
             errors.append(
                 "compat/x86_64/run_nameser_header_abi.sh: C/C++ declaration "
                 f"evidence is missing {required!r}"
+            )
+    for required in (
+        "sizeof(struct _ns_flagdata) == 8",
+        "offsetof(struct _ns_flagdata, mask) == 0",
+        "offsetof(struct _ns_flagdata, shift) == 4",
+        "_ns_flagdata + 0",
+    ):
+        if required not in nameser_header_c or required not in nameser_header_cpp:
+            errors.append(
+                "compat/x86_64 nameser C/C++ header probe: selected "
+                f"_ns_flagdata ABI is missing {required!r}"
+            )
+    for required in (
+        "_Alignof(struct _ns_flagdata) == 4",
+    ):
+        if required not in nameser_header_c:
+            errors.append(
+                "compat/x86_64 nameser C header probe: selected "
+                f"_ns_flagdata ABI is missing {required!r}"
+            )
+    for required in (
+        "alignof(struct _ns_flagdata) == 4",
+        "extern \"C\" const struct _ns_flagdata _ns_flagdata[];",
+    ):
+        if required not in nameser_header_cpp:
+            errors.append(
+                "compat/x86_64 nameser C++ header probe: selected "
+                f"_ns_flagdata ABI is missing {required!r}"
             )
     for required in (
         "#include <resolv.h>",
@@ -8586,6 +8634,116 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         errors.append(
             "compat/x86_64/run_libc_dn_expand.sh: final wire-expansion candidate "
             "must not link libc.a"
+        )
+
+    for required in (
+        "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+        "src/network/ns_parse.c",
+        ".rodata._ns_flagdata",
+        "no relocations",
+        "#[repr(C)]",
+        "pub struct NsFlagData",
+        "pub static _ns_flagdata: [NsFlagData; 16]",
+        "mask: 0x8000, shift: 15",
+        "mask: 0x000f, shift: 0",
+        "NsFlagData { mask: 0, shift: 0 }",
+        "ns_msg_getflag",
+    ):
+        if required not in ns_flagdata_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/ns_flagdata.rs: selected static "
+                f"nameserver data boundary is missing {required!r}"
+            )
+    for forbidden in (
+        "static mut",
+        "raw_syscall",
+        "__errno_location",
+        "__h_errno_location",
+        "getaddrinfo",
+        "gethostby",
+        "socket(",
+        "std::",
+        "alloc::",
+        "crabc_core",
+        "crabc_mimalloc",
+        "fn dn_expand",
+        "fn dn_skipname",
+        "fn ns_get16",
+        "fn ns_get32",
+        "fn ns_put16",
+        "fn ns_put32",
+    ):
+        if forbidden in ns_flagdata_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/ns_flagdata.rs: selected static "
+                f"nameserver data boundary must not select {forbidden!r}"
+            )
+    ns_flagdata_exports = set(
+        re.findall(r"(?m)^pub\s+static\s+(\w+)\s*:", ns_flagdata_text)
+    )
+    if ns_flagdata_exports != {"_ns_flagdata"}:
+        errors.append(
+            "libc/src/c_abi/x86_64/ns_flagdata.rs: selected static artifact "
+            "must export only immutable _ns_flagdata data"
+        )
+    if re.search(r'(?m)^pub\s+unsafe\s+extern\s+"C"\s+fn\s+', ns_flagdata_text):
+        errors.append(
+            "libc/src/c_abi/x86_64/ns_flagdata.rs: selected static artifact "
+            "must not add a C function"
+        )
+    for required in (
+        "#include <arpa/nameser.h>",
+        "ns_flagdata_pointer",
+        "expected[16]",
+        "table_matches",
+        "flags_match",
+        "ns_msg_getflag",
+        "0xffff",
+        "0x2905",
+        "CRABC_NS_FLAGDATA_FREESTANDING",
+    ):
+        if required not in ns_flagdata_probe:
+            errors.append(
+                "compat/x86_64/libc_ns_flagdata_probe.c: static nameserver "
+                f"data regression is missing {required!r}"
+            )
+    for required in ("crabc_x86_64_ns_flagdata_probe", "mov $60, %eax"):
+        if required not in ns_flagdata_start:
+            errors.append(
+                "compat/x86_64/libc_ns_flagdata_start.S: static nameserver "
+                f"data entry is missing {required!r}"
+            )
+    if "ARCH_SET_FS" in ns_flagdata_start:
+        errors.append(
+            "compat/x86_64/libc_ns_flagdata_start.S: nameserver data entry "
+            "must not bootstrap TLS"
+        )
+    for required in (
+        "ns_parse.lo",
+        "ns_parse.c",
+        ".rodata._ns_flagdata",
+        "128",
+        "assert_selected_c_abi_surface",
+        "extract_selected_member",
+        "_ns_flagdata archive member also defines a resolver sibling",
+        "-nostdlib -static",
+        '\"$selected_member\" -o \"$candidate\"',
+        "does not retain its 128-byte ABI",
+        "candidate selects errno, h_errno, or TLS",
+        "dn_comp dn_expand dn_skipname ns_get16 ns_get32 ns_put16 ns_put32",
+        "res_query res_querydomain res_search",
+        "getaddrinfo freeaddrinfo",
+        "socket bind connect send recv",
+    ):
+        if required not in ns_flagdata_runner:
+            errors.append(
+                "compat/x86_64/run_libc_ns_flagdata.sh: archive-free static "
+                f"nameserver data evidence is missing {required!r}"
+            )
+    if '\"$archive\" -o \"$candidate\"' in ns_flagdata_runner:
+        errors.append(
+            "compat/x86_64/run_libc_ns_flagdata.sh: final nameserver data "
+            "candidate must not link libc.a"
         )
 
     ns_get16_probe_source = ROOT / "compat" / "x86_64" / "libc_ns_get16_probe.c"
@@ -9785,6 +9943,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         hstrerror_text,
         dn_skipname_text,
         dn_expand_text,
+        ns_flagdata_text,
         ns_get16_text,
         ns_get32_text,
         ns_put16_text,
@@ -9873,6 +10032,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         | process_global_data_exports
         | in6addr_any_exports
         | in6addr_loopback_exports
+        | ns_flagdata_exports
     )
     expected_exports = {
         "__errno_location",
@@ -10129,6 +10289,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         "dn_skipname",
         "__dn_expand",
         "dn_expand",
+        "_ns_flagdata",
         "ns_get16",
         "ns_get32",
         "ns_put16",
@@ -10270,7 +10431,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
             "signal-control, bounded process-signal execution, and one legacy single-signal pause wait, bounded pthread create/exit/join/detach initial-TLS worker, its private selected-main/worker pthread-key/C11-TSS lifecycle, private process-normal pthread mutexes and their musl private condition-variable handoff, the complete selected rwlock/attribute family with private-or-shared futex operation, plus the distinct C11 plain-sync adapter and normal-return pthread/C11 once state machine, its typed C11 create/exit/join/detach sibling, and pthread/C11 identity aliases, named termios-control, selected process-context, child-reaping, C11 immediate termination, callback algorithms, direct clock_gettime, caller-owned mapping-core, no-cancellation mapping synchronization, direct anonymous-memory descriptor creation, nanosleep, and clock_nanosleep, selected "
             "descriptor-entry, selected filesystem-access, bounded descriptor-control, timestamp updates, and descriptor-I/O, selected process-resources, selected readiness/signal-waits, "
             "selected socket transport and selected socket-message/options, selected system-observation, selected UTS-identity, "
-            "immutable IPv6 unspecified-address and loopback-address data objects, selected numeric-address codecs and legacy classful IPv4 arithmetic, fixed-profile h_errno message text, byte-string, random-entropy, memory-search, C-string-copy, immutable error-string, "
+            "immutable IPv6 unspecified-address and loopback-address data objects, immutable nameserver flag-accessor data, selected numeric-address codecs and legacy classful IPv4 arithmetic, fixed-profile h_errno message text, byte-string, random-entropy, memory-search, C-string-copy, immutable error-string, "
             "fixed-C-locale ctype, integer-arithmetic, integer-parsing, intmax-arithmetic, credential-observation, and "
             "environment-backed login-name observation, find-first-set, startup-published program names, short/GNU-long "
             "getopt state and aliases, callback-tree/hash-table search, and the "
@@ -10339,6 +10500,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         ("hstrerror.rs", hstrerror_text),
         ("dn_skipname.rs", dn_skipname_text),
         ("dn_expand.rs", dn_expand_text),
+        ("ns_flagdata.rs", ns_flagdata_text),
         ("ns_get16.rs", ns_get16_text),
         ("ns_get32.rs", ns_get32_text),
         ("ns_put16.rs", ns_put16_text),

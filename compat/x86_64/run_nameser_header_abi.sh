@@ -3,10 +3,10 @@
 #
 # Pinned musl 1.2.6 is the declaration and C-linkage oracle. This header-only
 # gate proves one caller-owned DNS wire-name span function, one caller-owned
-# DNS wire-name expansion function, one caller-owned 16-bit wire-read function,
-# one caller-owned 32-bit wire-read function, one caller-owned 16-bit wire-write
-# function, and one caller-owned 32-bit wire-write function through C and C++.
-# It selects no resolver state or
+# DNS wire-name expansion function, one immutable nameserver flag-accessor
+# data object, one caller-owned 16-bit wire-read function, one caller-owned
+# 32-bit wire-read function, one caller-owned 16-bit wire-write function, and
+# one caller-owned 32-bit wire-write function through C and C++. It selects no resolver state or
 # `/etc/resolv.conf`.
 # DNS packet I/O, socket, netdb, and general nameserver API behavior stay out.
 set -euo pipefail
@@ -33,11 +33,11 @@ check_cxx_c_linkage() {
     local symbol mangled undefined
 
     undefined="$(nm --undefined-only "$object")"
-    for symbol in dn_skipname dn_expand ns_get16 ns_get32 ns_put16 ns_put32; do
+    for symbol in dn_skipname dn_expand _ns_flagdata ns_get16 ns_get32 ns_put16 ns_put32; do
         printf '%s\n' "$undefined" | grep -Eq "[[:space:]]${symbol}$" ||
             fail "$tree C++ probe does not retain C linkage for ${symbol}"
     done
-    for mangled in '_Z.*dn_skipname' '_Z.*dn_expand' '_Z.*ns_get16' '_Z.*ns_get32' '_Z.*ns_put16' '_Z.*ns_put32'; do
+    for mangled in '_Z.*dn_skipname' '_Z.*dn_expand' '_Z.*_ns_flagdata' '_Z.*ns_get16' '_Z.*ns_get32' '_Z.*ns_put16' '_Z.*ns_put32'; do
         if printf '%s\n' "$undefined" | grep -Eq "$mangled"; then
             fail "$tree C++ probe retained a mangled selected-nameserver reference"
         fi

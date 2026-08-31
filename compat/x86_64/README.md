@@ -1285,11 +1285,14 @@ address-conversion or socket behavior, `crabc-libc`, or public x86 support.
 `dn_expand(const unsigned char *, const unsigned char *, const unsigned char *, char *, int)`, and
 `ns_get16(const unsigned char *)`, `ns_get32(const unsigned char *)`, and
 `ns_put16(unsigned, unsigned char *)`, plus
-`ns_put32(unsigned long, unsigned char *)`. It ratchets `NS_CMPRSFLGS=0xc0`,
-`NS_MAXLABEL=63`, `NS_MAXCDNAME=255`, and `NS_MAXDNAME=1025`, then checks the
-C++ object retains all six unmangled C symbols. It is declaration-only
-evidence for caller-owned DNS wire-name span walking and expansion,
-caller-owned 16-bit and 32-bit wire reads, and caller-owned 16-bit and 32-bit wire writes; it does not
+`ns_put32(unsigned long, unsigned char *)`, plus the eight-byte align-4
+`struct _ns_flagdata { int mask; int shift; }` and `const struct _ns_flagdata *`
+array-decay declaration. It ratchets `NS_CMPRSFLGS=0xc0`, `NS_MAXLABEL=63`,
+`NS_MAXCDNAME=255`, and `NS_MAXDNAME=1025`, then checks the C++ object retains
+the six unmangled C function symbols and one unmangled `_ns_flagdata` data
+reference. It is declaration-only evidence for caller-owned DNS wire-name span
+walking and expansion, immutable nameserver flag-accessor data, caller-owned
+16-bit and 32-bit wire reads, and caller-owned 16-bit and 32-bit wire writes; it does not
 establish archive linkage, resolver state, `/etc/resolv.conf` parsing, DNS
 packet I/O, sockets, netdb, installed-header completion, family promotion, or
 public x86 support.
@@ -1423,6 +1426,24 @@ dotted output. It has no resolver state, `h_errno`/`errno`/TLS,
 netdb/database, parser sibling, `dn_skipname`, nameser read/write helper,
 address-codec, interface, Ethernet, allocation, syscall, libc.so, CRT,
 loader, sysroot, family promotion, or public x86 support.
+
+`libc-ns-flagdata` (`./scripts/dev-x86_64.sh libc-ns-flagdata`) is a distinct
+private static immutable nameserver flag-accessor data C ABI artifact inside
+still-planned `libc.resolver`, not resolver-network behavior or a promotion.
+Its project-header C fixture runs first through pinned musl 1.2.6 and then
+through an archive-free true `-nostdlib -static` candidate linked from exactly
+one extracted `_ns_flagdata` object, never `libc.a`; the aggregate export
+ratchet separately proves publication. Pinned musl puts the global default
+read-only 128-byte sixteen-record table in the no-relocation
+`.rodata._ns_flagdata` section of `src/network/ns_parse.c`, beside parser code
+which remains unselected. The differential proves the eight-byte align-4
+two-`int` C record layout, all sixteen `(mask, shift)` pairs, six all-zero
+reserved records, and `ns_msg_getflag` QR/opcode/AA/TC/RD/RA/Z/AD/CD/rcode
+extraction. It excludes parser code, resolver state, `h_errno`/`errno`/TLS,
+`/etc/hosts` and `/etc/resolv.conf`, DNS packet I/O, sockets, netdb/database,
+nameser helpers, address codecs, interfaces, Ethernet, allocation, syscalls,
+libc.so, CRT, loader, sysroot, resolver-family completion, and public x86
+support.
 
 `libc-ns-get16` (`./scripts/dev-x86_64.sh libc-ns-get16`) is a distinct
 private static caller-owned nameserver 16-bit wire-read C ABI artifact inside

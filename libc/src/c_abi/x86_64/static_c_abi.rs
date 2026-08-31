@@ -44,8 +44,9 @@
 //! processor/page-count system-information, UTS-namespace identity, basic socket-transport,
 //! scalar network byte-order conversion, one immutable IPv6 unspecified-address
 //! data object and one immutable IPv6 loopback-address data object, one
-//! caller-owned nameserver 16-bit wire-read codec, one caller-owned DNS
-//! wire-name span codec, and one caller-owned DNS wire-name expansion codec,
+//! immutable nameserver flag-accessor table, one caller-owned nameserver 16-bit
+//! wire-read codec, one caller-owned DNS wire-name span codec, and one
+//! caller-owned DNS wire-name expansion codec,
 //! isolated shared static IPv4 presentation buffer with no resolver state, and
 //! selected classful raw-word
 //! IPv4 arithmetic/network-part extraction with no resolver state, padded
@@ -393,6 +394,8 @@ mod in6addr_loopback;
 mod dn_skipname;
 #[path = "dn_expand.rs"]
 mod dn_expand;
+#[path = "ns_flagdata.rs"]
+mod ns_flagdata;
 #[path = "ns_get16.rs"]
 mod ns_get16;
 #[path = "ns_get32.rs"]
