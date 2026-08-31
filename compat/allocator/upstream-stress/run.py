@@ -44,8 +44,17 @@ CACHE = ALLOCATOR_ROOT / ".cache"
 DEFAULT_TARGET_DIR = ROOT / "target/debug"
 DEFAULT_OUTPUT_DIR = ROOT / "target/compat/allocator/upstream-stress"
 DEFAULT_REPORT = ROOT / "compat/reports/allocator/upstream-stress/latest.json"
+DEFAULT_DIAGNOSTIC_REPORT = (
+    ROOT / "compat/reports/allocator/upstream-stress/current-head.json"
+)
 DEFAULT_LIBC_BUILD_RECORD = DEFAULT_OUTPUT_DIR / "selected-libc-build.json"
 CANONICAL_LOADER = Path("/lib/ld-crabc-aarch64.so.1")
+CURRENT_HEAD_BUILD_RECORD_FORMAT = 1
+CURRENT_HEAD_BUILD_RECORD_SCHEMA = "crabc-selected-libc-current-head-build"
+DIAGNOSTIC_REPORT_FORMAT = 1
+DIAGNOSTIC_REPORT_SCHEMA = (
+    "crabc-mimalloc-canonical-upstream-stress-current-head-diagnostic-report"
+)
 FIXED_PIN = {
     "version": "3.5.0",
     "repository": "https://github.com/microsoft/mimalloc.git",
@@ -118,6 +127,201 @@ def file_record(path: Path, *, root: Path | None = None) -> dict[str, Any]:
         "path": relative_path(path, root),
         "sha256": sha256_file(path),
     }
+
+
+def byte_record_payload(record: object, subject: str) -> bytes:
+    """Decode one self-attesting byte record before trusting its contents."""
+
+    if not isinstance(record, dict) or set(record) != {"bytes", "sha256", "hex"}:
+        raise EvidenceError(f"{subject} byte-stream record is invalid")
+    try:
+        payload = bytes.fromhex(str(record["hex"]))
+    except (KeyError, ValueError) as error:
+        raise EvidenceError(f"{subject} byte-stream record has invalid hex") from error
+    if (
+        type(record["bytes"]) is not int
+        or record["bytes"] != len(payload)
+        or record["sha256"] != hashlib.sha256(payload).hexdigest()
+    ):
+        raise EvidenceError(f"{subject} byte-stream record attestation drifted")
+    return payload
+
+
+def current_head_build_record_path(build_record_path: Path) -> Path:
+    """Keep current-head provenance beside, but distinct from, the Cargo record."""
+
+    path = build_record_path.expanduser()
+    return path.with_name(f"{path.stem}-current-head.json")
+
+
+def source_state_excludes(path: Path) -> bool:
+    """Leave VCS metadata and known generated/cache roots out of source identity."""
+
+    parts = path.parts
+    return (
+        bool(parts)
+        and (
+            parts[0] in {".git", "target"}
+            or parts[:2] == ("compat", "reports")
+            or parts[:3] == ("compat", "allocator", ".cache")
+        )
+    )
+
+
+def workspace_tree_source_state() -> dict[str, Any]:
+    """Hash the mounted source tree when a worktree's Git metadata is unavailable."""
+
+    digest = hashlib.sha256()
+    file_count = 0
+
+    def update_field(value: bytes) -> None:
+        digest.update(len(value).to_bytes(8, byteorder="big"))
+        digest.update(value)
+
+    def update_path(kind: bytes, path: Path, mode: int, payload: bytes | None = None) -> None:
+        nonlocal file_count
+        update_field(kind)
+        update_field(path.as_posix().encode("utf-8", errors="surrogateescape"))
+        update_field(mode.to_bytes(4, byteorder="big"))
+        if payload is not None:
+            update_field(payload)
+        file_count += 1
+
+    for directory, children, filenames in os.walk(ROOT, followlinks=False):
+        directory_path = Path(directory)
+        relative_directory = directory_path.relative_to(ROOT)
+        kept_children: list[str] = []
+        for child in sorted(children):
+            child_path = directory_path / child
+            relative = relative_directory / child
+            if source_state_excludes(relative):
+                continue
+            if child_path.is_symlink():
+                try:
+                    update_path(
+                        b"symlink",
+                        relative,
+                        child_path.lstat().st_mode & 0o777,
+                        os.fsencode(os.readlink(child_path)),
+                    )
+                except OSError as error:
+                    raise EvidenceError(
+                        f"cannot read workspace source symlink: {child_path}"
+                    ) from error
+            else:
+                kept_children.append(child)
+        children[:] = kept_children
+        for filename in sorted(filenames):
+            path = directory_path / filename
+            relative = relative_directory / filename
+            if source_state_excludes(relative):
+                continue
+            try:
+                if path.is_symlink():
+                    update_path(
+                        b"symlink",
+                        relative,
+                        path.lstat().st_mode & 0o777,
+                        os.fsencode(os.readlink(path)),
+                    )
+                    continue
+                if not path.is_file():
+                    continue
+                stat = path.stat()
+                update_path(
+                    b"file",
+                    relative,
+                    stat.st_mode & 0o777,
+                    stat.st_size.to_bytes(8, byteorder="big"),
+                )
+                observed_bytes = 0
+                with path.open("rb") as stream:
+                    for block in iter(lambda: stream.read(1024 * 1024), b""):
+                        digest.update(block)
+                        observed_bytes += len(block)
+                if observed_bytes != stat.st_size or path.stat().st_size != stat.st_size:
+                    raise EvidenceError(
+                        f"workspace source changed while recording identity: {path}"
+                    )
+            except OSError as error:
+                raise EvidenceError(f"cannot read workspace source file: {path}") from error
+    return {
+        "kind": "workspace-tree-sha256",
+        "file_count": file_count,
+        "sha256": digest.hexdigest(),
+    }
+
+
+def current_head_source_state() -> dict[str, Any]:
+    """Describe checked-out Git state, or the mounted source tree when Git is absent."""
+
+    git = shutil.which("git")
+    if git is None:
+        return workspace_tree_source_state()
+    revision_record = command_record((git, "rev-parse", "--verify", "HEAD"), cwd=ROOT)
+    status_record = command_record(
+        (git, "status", "--porcelain=v1", "--untracked-files=all", "-z"), cwd=ROOT
+    )
+    try:
+        revision = byte_record_payload(revision_record.get("stdout"), "git revision").decode(
+            "ascii", errors="strict"
+        )
+        worktree_status = byte_record_payload(
+            status_record.get("stdout"), "git worktree status"
+        )
+    except (AttributeError, EvidenceError, UnicodeDecodeError):
+        return workspace_tree_source_state()
+    if (
+        revision_record.get("kind") != "process"
+        or revision_record.get("status") != 0
+        or status_record.get("kind") != "process"
+        or status_record.get("status") != 0
+        or not re.fullmatch(r"[0-9a-f]{40}\n?", revision)
+    ):
+        return workspace_tree_source_state()
+    return {
+        "kind": "git",
+        "revision": revision.strip(),
+        "worktree_clean": worktree_status == b"",
+        "worktree_status": bytes_record(worktree_status),
+    }
+
+
+def validate_current_head_source_state(state: object, subject: str) -> dict[str, Any]:
+    """Validate the small source-state schema stored with one Cargo build."""
+
+    if not isinstance(state, dict):
+        raise EvidenceError(f"{subject} source state is invalid")
+    kind = state.get("kind")
+    if kind == "unavailable":
+        if set(state) != {"kind", "reason"} or not isinstance(state.get("reason"), str):
+            raise EvidenceError(f"{subject} unavailable source state is invalid")
+        return dict(state)
+    if kind == "workspace-tree-sha256":
+        if set(state) != {"kind", "file_count", "sha256"}:
+            raise EvidenceError(f"{subject} workspace source state is invalid")
+        if type(state.get("file_count")) is not int or state["file_count"] < 0:
+            raise EvidenceError(f"{subject} workspace source file count is invalid")
+        digest = state.get("sha256")
+        if not isinstance(digest, str) or re.fullmatch(r"[0-9a-f]{64}", digest) is None:
+            raise EvidenceError(f"{subject} workspace source digest is invalid")
+        return dict(state)
+    if kind != "git" or set(state) != {
+        "kind",
+        "revision",
+        "worktree_clean",
+        "worktree_status",
+    }:
+        raise EvidenceError(f"{subject} source state is invalid")
+    revision = state.get("revision")
+    if not isinstance(revision, str) or re.fullmatch(r"[0-9a-f]{40}", revision) is None:
+        raise EvidenceError(f"{subject} source revision is invalid")
+    if type(state.get("worktree_clean")) is not bool:
+        raise EvidenceError(f"{subject} worktree cleanliness is invalid")
+    payload = byte_record_payload(state.get("worktree_status"), f"{subject} worktree status")
+    if state["worktree_clean"] != (payload == b""):
+        raise EvidenceError(f"{subject} worktree cleanliness contradicted its status")
+    return dict(state)
 
 
 def stable_source_member_record(
@@ -509,6 +713,14 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
         help="validate the closed source/target/backend/report contract without compiling or running it",
     )
     parser.add_argument(
+        "--diagnose",
+        action="store_true",
+        help=(
+            "run only the closed matrix's first 1-worker/scale-1/iteration-1 "
+            "current-head diagnostic; this is not a full-matrix capability pass"
+        ),
+    )
+    parser.add_argument(
         "--target-dir",
         type=Path,
         default=Path(os.environ.get("CRABC_TARGET_DIR", DEFAULT_TARGET_DIR)),
@@ -523,8 +735,12 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
     parser.add_argument(
         "--report",
         type=Path,
-        default=Path(os.environ.get("CRABC_UPSTREAM_STRESS_REPORT", DEFAULT_REPORT)),
-        help="JSON report path (default: CRABC_UPSTREAM_STRESS_REPORT or compat/reports/allocator/upstream-stress/latest.json)",
+        default=None,
+        help=(
+            "JSON report path (defaults to CRABC_UPSTREAM_STRESS_REPORT or "
+            "compat/reports/allocator/upstream-stress/latest.json; --diagnose uses "
+            "CRABC_UPSTREAM_STRESS_DIAGNOSTIC_REPORT or current-head.json)"
+        ),
     )
     parser.add_argument(
         "--libc-build-record",
@@ -539,7 +755,43 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
         type=Path,
         help="build the selected libc and atomically write its exact Cargo compiler-artifact record",
     )
-    return parser.parse_args(arguments)
+    parser.add_argument(
+        "--current-head-build-record",
+        type=Path,
+        default=None,
+        help=(
+            "current-head companion to the selected Cargo build record; required by "
+            "--diagnose and written by --capture-selected-libc-build"
+        ),
+    )
+    parsed = parser.parse_args(arguments)
+    if parsed.check and parsed.diagnose:
+        parser.error("--check and --diagnose cannot be combined")
+    if parsed.capture_selected_libc_build is not None and parsed.diagnose:
+        parser.error("--capture-selected-libc-build and --diagnose are separate phases")
+    if parsed.report is None:
+        if parsed.diagnose:
+            parsed.report = Path(
+                os.environ.get(
+                    "CRABC_UPSTREAM_STRESS_DIAGNOSTIC_REPORT", DEFAULT_DIAGNOSTIC_REPORT
+                )
+            )
+        else:
+            parsed.report = Path(os.environ.get("CRABC_UPSTREAM_STRESS_REPORT", DEFAULT_REPORT))
+    if parsed.current_head_build_record is None:
+        anchor = (
+            parsed.capture_selected_libc_build
+            if parsed.capture_selected_libc_build is not None
+            else parsed.libc_build_record
+        )
+        parsed.current_head_build_record = current_head_build_record_path(anchor)
+    return parsed
+
+
+def diagnostic_output_dir(args: argparse.Namespace) -> Path:
+    """Avoid overwriting the canonical full-matrix fixture with one-case output."""
+
+    return args.output_dir.expanduser().resolve() / "current-head"
 
 
 def archive_path(pin: Mapping[str, str]) -> Path:
@@ -1248,7 +1500,10 @@ def select_libc_compiler_artifact(
 
 
 def capture_selected_libc_build(
-    contract: Mapping[str, Any], target_dir: Path, build_record_path: Path
+    contract: Mapping[str, Any],
+    target_dir: Path,
+    build_record_path: Path,
+    current_head_record_path: Path | None = None,
 ) -> dict[str, Any]:
     """Run the canonical dev build and atomically preserve its exact artifact record."""
 
@@ -1262,6 +1517,7 @@ def capture_selected_libc_build(
         isinstance(argument, str) and argument for argument in command
     ):
         raise EvidenceError("selected libc Cargo build command is invalid")
+    source_before = current_head_source_state()
     completed = subprocess.run(
         command,
         cwd=ROOT,
@@ -1295,7 +1551,176 @@ def capture_selected_libc_build(
         "artifacts": artifacts,
     }
     write_json(build_record_path, build_record)
+    source_after = current_head_source_state()
+    if current_head_record_path is None:
+        current_head_record_path = current_head_build_record_path(build_record_path)
+    current_head_record = {
+        "format": CURRENT_HEAD_BUILD_RECORD_FORMAT,
+        "schema": CURRENT_HEAD_BUILD_RECORD_SCHEMA,
+        "source_before": source_before,
+        "source_after": source_after,
+        "source_unchanged_during_build": exactly_matches(source_before, source_after),
+        "selected_libc_build_record": file_record(build_record_path, root=ROOT),
+        "artifacts": artifacts,
+    }
+    write_json(current_head_record_path, current_head_record)
     return build_record
+
+
+def read_current_head_build_record(path: Path) -> dict[str, Any]:
+    """Read the companion emitted during the exact selected-libc Cargo build."""
+
+    resolved = path.expanduser().resolve()
+    if not resolved.is_file() or resolved.is_symlink():
+        raise BlockedPrerequisite(
+            "current-head-build-record",
+            "current-head diagnostic requires the companion record emitted with its "
+            "selected libc Cargo build",
+            {
+                "build_record": str(resolved),
+                "required_producer": "compat/allocator/upstream-stress/run.py --capture-selected-libc-build",
+            },
+        )
+    try:
+        value = json.loads(resolved.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise BlockedPrerequisite(
+            "current-head-build-record",
+            "current-head diagnostic cannot read its selected libc build companion",
+            {"build_record": str(resolved)},
+        ) from error
+    if not isinstance(value, dict) or set(value) != {
+        "format",
+        "schema",
+        "source_before",
+        "source_after",
+        "source_unchanged_during_build",
+        "selected_libc_build_record",
+        "artifacts",
+    }:
+        raise BlockedPrerequisite(
+            "current-head-build-record",
+            "current-head diagnostic selected libc build companion schema drifted",
+            {"build_record": str(resolved)},
+        )
+    if (
+        value.get("format") != CURRENT_HEAD_BUILD_RECORD_FORMAT
+        or value.get("schema") != CURRENT_HEAD_BUILD_RECORD_SCHEMA
+        or type(value.get("source_unchanged_during_build")) is not bool
+    ):
+        raise BlockedPrerequisite(
+            "current-head-build-record",
+            "current-head diagnostic selected libc build companion identity drifted",
+            {"build_record": str(resolved)},
+        )
+    try:
+        source_before = validate_current_head_source_state(
+            value["source_before"], "current-head build before"
+        )
+        source_after = validate_current_head_source_state(
+            value["source_after"], "current-head build after"
+        )
+    except EvidenceError as error:
+        raise BlockedPrerequisite(
+            "current-head-build-record",
+            "current-head diagnostic selected libc build companion source state drifted",
+            {"build_record": str(resolved)},
+        ) from error
+    if value["source_unchanged_during_build"] != exactly_matches(source_before, source_after):
+        raise BlockedPrerequisite(
+            "current-head-build-record",
+            "current-head diagnostic selected libc build companion contradicted its source state",
+            {"build_record": str(resolved)},
+        )
+    record = dict(value)
+    record["source_before"] = source_before
+    record["source_after"] = source_after
+    return record
+
+
+def attest_current_head_build(
+    current_head_record_path: Path,
+    build_record_path: Path,
+    backend_attestation: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Bind a clean current HEAD, the Cargo record, and the selected runtime files."""
+
+    record_path = current_head_record_path.expanduser().resolve()
+    record = read_current_head_build_record(record_path)
+    source_before = record["source_before"]
+    source_after = record["source_after"]
+    supported_source_kinds = {"git", "workspace-tree-sha256"}
+    if (
+        source_before.get("kind") not in supported_source_kinds
+        or source_after.get("kind") not in supported_source_kinds
+    ):
+        raise BlockedPrerequisite(
+            "current-head-source-state",
+            "current-head diagnostic requires source provenance for the selected libc build",
+            {"build_record": str(record_path)},
+        )
+    if not record["source_unchanged_during_build"]:
+        raise BlockedPrerequisite(
+            "current-head-source-stability",
+            "current-head diagnostic refuses a selected libc built while its source changed",
+            {"build_record": str(record_path)},
+        )
+    if source_after["kind"] == "git" and not source_after["worktree_clean"]:
+        raise BlockedPrerequisite(
+            "current-head-source-state",
+            "current-head diagnostic requires a clean source tree for the selected libc build",
+            {"build_record": str(record_path), "revision": source_after["revision"]},
+        )
+    observed_source = current_head_source_state()
+    if observed_source.get("kind") not in supported_source_kinds:
+        raise BlockedPrerequisite(
+            "current-head-source-state",
+            "current-head diagnostic cannot attest the source tree at execution time",
+            {"build_record": str(record_path)},
+        )
+    source_drifted = not exactly_matches(observed_source, source_after)
+    if observed_source["kind"] == "git" and not observed_source["worktree_clean"]:
+        source_drifted = True
+    if source_drifted:
+        raise BlockedPrerequisite(
+            "current-head-source-drift",
+            "current-head diagnostic source no longer matches the selected libc build",
+            {
+                "build_record": str(record_path),
+                "built_source": source_after,
+                "observed_source": observed_source,
+            },
+        )
+    build_record = build_record_path.expanduser().resolve()
+    if not build_record.is_file() or build_record.is_symlink():
+        raise BlockedPrerequisite(
+            "selected-libc-build-record",
+            "current-head diagnostic requires the selected libc Cargo build record",
+            {"build_record": str(build_record)},
+        )
+    observed_build_record = file_record(build_record, root=ROOT)
+    if not exactly_matches(record["selected_libc_build_record"], observed_build_record):
+        raise BlockedPrerequisite(
+            "current-head-build-record",
+            "current-head diagnostic selected libc Cargo record drifted after capture",
+            {"build_record": str(build_record)},
+        )
+    backend_build_record = backend_attestation.get("build_record")
+    backend_artifacts = backend_attestation.get("artifacts")
+    if (
+        not exactly_matches(record["selected_libc_build_record"], backend_build_record)
+        or not isinstance(backend_artifacts, dict)
+        or not exactly_matches(record["artifacts"], backend_artifacts)
+    ):
+        raise EvidenceError(
+            "current-head diagnostic selected libc companion does not bind the attested runtime artifact"
+        )
+    return {
+        "record": file_record(record_path, root=ROOT),
+        "source": source_after,
+        "selected_libc_build_record": observed_build_record,
+        "artifacts": dict(backend_artifacts),
+    }
 
 
 def selected_backend_contract(contract: Mapping[str, Any]) -> dict[str, Any]:
@@ -1447,6 +1872,19 @@ def run_command(binary: Path, case: Mapping[str, Any]) -> list[str]:
     return [str(binary), *arguments]
 
 
+def diagnostic_case(contract: Mapping[str, Any]) -> dict[str, Any]:
+    """Select the first closed matrix case without rewriting the full matrix."""
+
+    cases = execution_cases(contract)
+    expected = expected_matrix_case(1, 1, 1)
+    if not exactly_matches(cases[0], expected):
+        raise EvidenceError(
+            "current-head diagnostic requires the canonical matrix to begin with "
+            "workers=1 scale=1 iterations=1"
+        )
+    return cases[0]
+
+
 def selected_target_contract(contract: Mapping[str, Any]) -> dict[str, Any]:
     inventory = contract.get("target_inventory")
     if not isinstance(inventory, dict) or not isinstance(inventory.get("selected"), str):
@@ -1576,6 +2014,93 @@ def report_base(contract: Mapping[str, Any], pin: Mapping[str, str], args: argpa
             "system": platform.system(),
         },
         "capability": capability_record(contract),
+        "blocked": None,
+        "first_fact": None,
+        "upstream_pin": dict(pin),
+    }
+
+
+def diagnostic_report_base(
+    contract: Mapping[str, Any], pin: Mapping[str, str], args: argparse.Namespace
+) -> dict[str, Any]:
+    """Start a one-case report that cannot be mistaken for the canonical matrix."""
+
+    fixture = contract["fixture"]
+    adaptation = contract["source_adaptation"]
+    execution = contract["execution"]
+    assert isinstance(fixture, dict) and isinstance(adaptation, dict) and isinstance(execution, dict)
+    case = diagnostic_case(contract)
+    report_contract = contract["report"]
+    assert isinstance(report_contract, dict)
+    artifact_ids = report_contract["artifact_ids"]
+    assert isinstance(artifact_ids, list)
+    contract_artifact = file_record(CONTRACT_PATH, root=ROOT)
+    output_dir = diagnostic_output_dir(args)
+    return {
+        "format": DIAGNOSTIC_REPORT_FORMAT,
+        "schema": DIAGNOSTIC_REPORT_SCHEMA,
+        "status": "failed",
+        "contract": {
+            **contract_artifact,
+            "upstream": dict(contract["upstream"]),
+        },
+        "artifacts": {
+            artifact_id: contract_artifact if artifact_id == "contract" else None
+            for artifact_id in artifact_ids
+        },
+        "fixture": {
+            "archive_member": fixture["archive_member"],
+            "expected_sha256": fixture["sha256"],
+            "source_adaptation": {
+                "compile_defines": list(adaptation["compile_defines"]),
+                "patches": list(adaptation["patches"]),
+            },
+        },
+        "diagnostic": {
+            "id": "current-head-first-case",
+            "status": "not-run",
+            "classification": "diagnostic-only",
+            "native_execution_started": False,
+        },
+        "canonical_matrix": {
+            "status": "not-run",
+            "required_case_count": len(execution_cases(contract)),
+            "completed_case_count": 0,
+            "m5_accepted": False,
+        },
+        "execution": {
+            "attempted": False,
+            "case": case_inventory(case),
+            "process_attempt_count": 0,
+            "result": None,
+            "source_randomness": dict(execution["source_randomness"]),
+            "watchdog": dict(execution["watchdog"]),
+        },
+        "requested_runtime": {
+            "allocator_feature": contract["compile_requirements"]["allocator_feature"],
+            "backend": selected_backend_contract(contract)["id"],
+            "target_dir": relative_path(args.target_dir, ROOT),
+            "output_dir": relative_path(output_dir, ROOT),
+            "selected_libc_build_record": relative_path(args.libc_build_record, ROOT),
+            "current_head_build_record": relative_path(
+                args.current_head_build_record, ROOT
+            ),
+        },
+        "selection": {
+            "target": selected_target_contract(contract),
+            "backend": selected_backend_contract(contract)["id"],
+        },
+        "observed_host": {
+            "architecture": platform.machine(),
+            "byte_order": sys.byteorder,
+            "kernel_release": platform.release(),
+            "system": platform.system(),
+        },
+        "current_head": {
+            "status": "not-attested",
+            "record": None,
+            "source": None,
+        },
         "blocked": None,
         "first_fact": None,
         "upstream_pin": dict(pin),
@@ -1771,6 +2296,183 @@ def execute(contract: Mapping[str, Any], pin: Mapping[str, str], args: argparse.
     }
 
 
+def execute_diagnostic(
+    contract: Mapping[str, Any], pin: Mapping[str, str], args: argparse.Namespace, report: dict[str, Any]
+) -> None:
+    """Run one attested current-head observation without reducing the full matrix."""
+
+    case = diagnostic_case(contract)
+    require_native_aarch64()
+    archive = fetch_archive(pin, offline=args.offline)
+    report["artifacts"]["upstream_archive"] = file_record(archive, root=ROOT)
+    tag_attestation = cached_tag_attestation(pin)
+    if tag_attestation is None:
+        raise EvidenceError("pinned archive was accepted without a tag attestation")
+    report["tag_attestation"] = tag_attestation
+    requirements = contract["compile_requirements"]
+    assert isinstance(requirements, dict)
+    runtime_inputs = require_runtime_inputs(args.target_dir, requirements)
+    build_record_path = args.libc_build_record.expanduser().resolve()
+    if not build_record_path.is_file():
+        raise BlockedPrerequisite(
+            "selected-libc-build-record",
+            "current-head diagnostic requires the exact Cargo compiler-artifact record "
+            "emitted by its selected libc build",
+            {
+                "build_record": str(build_record_path),
+                "required_producer": "compat/allocator/upstream-stress/run.py --capture-selected-libc-build",
+                "stress_process_started": False,
+            },
+        )
+    backend_attestation = attest_selected_backend(
+        runtime_inputs.target_dir, build_record_path, contract
+    )
+    current_head_attestation = attest_current_head_build(
+        args.current_head_build_record,
+        build_record_path,
+        backend_attestation,
+    )
+    report["current_head"] = {
+        "status": "attested",
+        "record": current_head_attestation["record"],
+        "source": current_head_attestation["source"],
+    }
+    report["artifacts"].update(
+        {
+            "owned_sysroot_manifest": file_record(runtime_inputs.manifest_path, root=ROOT),
+            "owned_sysroot_purity": file_record(runtime_inputs.purity_path, root=ROOT),
+            "owned_compiler": file_record(runtime_inputs.compiler, root=ROOT),
+            "selected_loader": file_record(
+                runtime_inputs.target_dir / "libldso.so", root=ROOT
+            ),
+            "staged_canonical_loader": file_record(
+                runtime_inputs.canonical_loader_path, root=ROOT
+            ),
+            "selected_libc": backend_attestation["artifacts"]["selected_shared_libc"],
+            "selected_static_libc": backend_attestation["artifacts"]["selected_static_libc"],
+            "selected_backend_build_record": backend_attestation["build_record"],
+        }
+    )
+    report["runtime"] = {
+        "compiler": relative_path(runtime_inputs.compiler, ROOT),
+        "backend_attestation": backend_attestation,
+        "sysroot": relative_path(runtime_inputs.sysroot, ROOT),
+        "sysroot_purity": {
+            "crt_sysroot_pure_rust": runtime_inputs.purity["crt_sysroot_pure_rust"],
+            "full_runtime_pure_rust": runtime_inputs.purity["full_runtime_pure_rust"],
+            "full_runtime_purity_status": runtime_inputs.purity[
+                "full_runtime_purity_status"
+            ],
+        },
+    }
+
+    output_dir = diagnostic_output_dir(args)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    binary = output_dir / "canonical-upstream-test-stress"
+    fixture = contract["fixture"]
+    execution = contract["execution"]
+    assert isinstance(fixture, dict) and isinstance(execution, dict)
+
+    with tempfile.TemporaryDirectory(prefix="pinned-source-", dir=output_dir) as temporary:
+        source_root = extract_exact_archive(archive, pin, Path(temporary))
+        source = source_root / str(fixture["archive_member"])
+        if not source.is_file() or sha256_file(source) != fixture["sha256"]:
+            raise EvidenceError("canonical stress source differs from the pinned archive member")
+        source_artifact = stable_source_member_record(
+            source, pin, str(fixture["archive_member"])
+        )
+        report["fixture"]["observed_source"] = source_artifact
+        report["artifacts"]["source_member"] = source_artifact
+        build = normalize_source_paths(
+            command_record(
+                build_command(
+                    runtime_inputs.compiler,
+                    source_root,
+                    str(fixture["archive_member"]),
+                    runtime_inputs.target_dir,
+                    binary,
+                    contract,
+                ),
+                cwd=source_root,
+            ),
+            source_root,
+            pin,
+        )
+    report["build"] = build
+    if build.get("kind") != "process" or build.get("status") != 0:
+        report["diagnostic"]["status"] = "failed"
+        report["first_fact"] = {
+            "kind": "first-failure",
+            "stage": "build",
+            "observation": build,
+        }
+        return
+
+    report["artifacts"]["stress_binary"] = file_record(binary, root=ROOT)
+    try:
+        fixture_elf = audit_fixture_elf(binary, contract)
+    except ArtifactContractError as error:
+        report["diagnostic"]["status"] = "failed"
+        report["first_fact"] = {
+            "kind": "first-failure",
+            "stage": "artifact-contract",
+            "boundary": error.boundary,
+            "observed": error.observed,
+            "expected": error.expected,
+        }
+        return
+    report["fixture_elf"] = fixture_elf
+    report["runtime"]["library_selection"] = {
+        "dynamic_dependencies": fixture_elf["dynamic_dependencies"],
+        "ld_library_path": relative_path(runtime_inputs.target_dir, ROOT),
+        "selected_shared_libc": backend_attestation["artifacts"]["selected_shared_libc"],
+    }
+
+    case_directory = output_dir / "cases" / str(case["id"])
+    case_directory.mkdir(parents=True, exist_ok=True)
+    run = command_record(
+        run_command(binary, case),
+        cwd=case_directory,
+        environment=runtime_environment(runtime_inputs.target_dir),
+        timeout=int(execution["watchdog"]["seconds"]),
+    )
+    if run.get("kind") in {"process", "timeout"}:
+        report["diagnostic"]["native_execution_started"] = True
+    report["execution"]["attempted"] = True
+    report["execution"]["process_attempt_count"] = 1
+    state = "passed" if successful_run(run, case) else "failed"
+    report["execution"]["result"] = {
+        "case": case_inventory(case),
+        "process_attempt": 1,
+        "state": state,
+        "observation": run,
+    }
+    if state == "failed":
+        report["diagnostic"]["status"] = "failed"
+        report["first_fact"] = {
+            "kind": "first-failure",
+            "stage": "run",
+            "case": case_inventory(case),
+            "process_attempt": 1,
+            "observation": run,
+            "expected": {
+                "exit_status": case["expected_exit_status"],
+                "stderr": case["expected_stderr"],
+                "stdout": case["expected_stdout"],
+            },
+        }
+        return
+
+    report["status"] = "passed"
+    report["diagnostic"]["status"] = "passed"
+    report["first_fact"] = {
+        "kind": "pass",
+        "stage": "diagnostic-run",
+        "case": case_inventory(case),
+        "process_attempt": 1,
+    }
+
+
 def write_json(path: Path, value: Mapping[str, Any]) -> None:
     path = path.expanduser().resolve()
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -1789,7 +2491,10 @@ def main(arguments: Sequence[str] | None = None) -> int:
         contract, pin = load_contract()
         if args.capture_selected_libc_build is not None:
             capture_selected_libc_build(
-                contract, args.target_dir, args.capture_selected_libc_build
+                contract,
+                args.target_dir,
+                args.capture_selected_libc_build,
+                args.current_head_build_record,
             )
             print(args.capture_selected_libc_build.expanduser().resolve())
             return 0
@@ -1806,16 +2511,29 @@ def main(arguments: Sequence[str] | None = None) -> int:
                 )
             )
             return 0
-        report = report_base(contract, pin, args)
+        report = (
+            diagnostic_report_base(contract, pin, args)
+            if args.diagnose
+            else report_base(contract, pin, args)
+        )
         try:
-            execute(contract, pin, args, report)
+            if args.diagnose:
+                execute_diagnostic(contract, pin, args, report)
+            else:
+                execute(contract, pin, args, report)
         except BlockedPrerequisite as error:
             report["status"] = "blocked"
             report["blocked"] = blocked_record(error)
-            update_capability(report, contract, "blocked")
+            if args.diagnose:
+                report["diagnostic"]["status"] = "blocked"
+            else:
+                update_capability(report, contract, "blocked")
         except EvidenceError as error:
             report["status"] = "failed"
-            update_capability(report, contract, "failed")
+            if args.diagnose:
+                report["diagnostic"]["status"] = "failed"
+            else:
+                update_capability(report, contract, "failed")
             report["first_fact"] = {
                 "kind": "first-failure",
                 "stage": "harness",

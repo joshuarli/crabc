@@ -24,6 +24,42 @@ selected shadow libc last, stages the owned loader, and runs the matrix:
 ./scripts/dev.sh allocator-upstream
 ```
 
+## Current-head first-case diagnostic
+
+For a reproducible, narrowly scoped observation of the current checkout, run:
+
+```sh
+./scripts/dev.sh allocator-upstream --diagnose
+```
+
+The dispatch still builds the selected `native-mimalloc-shadow` libc last. Its
+capture phase writes the normal selected Cargo compiler-artifact record plus
+`selected-libc-build-current-head.json`. The companion binds the exact clean
+Git `HEAD` before and after that build to the selected shared and static libc
+hashes and to the normal Cargo record. When a Docker-mounted linked worktree
+cannot resolve its host-side Git metadata, the same companion instead records
+a deterministic source-tree digest that excludes only VCS metadata and known
+generated/cache roots. The diagnostic rechecks either source identity and
+refuses a missing, dirty, changed, or mismatched source/build companion before
+it starts a stress process.
+
+`--diagnose` compiles the same byte-for-byte archived source with the same
+`USE_STD_MALLOC` selection, verifies the same ELF and selected-free route
+boundaries, and executes only the first closed case: `1 1 1`. Its fixture is
+isolated under `target/compat/allocator/upstream-stress/current-head/` and its
+default report is
+`compat/reports/allocator/upstream-stress/current-head.json` (override with
+`CRABC_UPSTREAM_STRESS_DIAGNOSTIC_REPORT` or `--report`). The report records
+the current-head companion, Cargo artifact hashes, runtime `LD_LIBRARY_PATH`
+selection, `DT_NEEDED` proof, and the complete process observation.
+When using custom selected-build paths, pass the same derived or explicit
+`--current-head-build-record` to the capture and diagnostic phases.
+
+A diagnostic `status: "passed"` means only that this one current-head source
+case produced the exact expected result. Its report separately fixes the
+canonical matrix at `status: "not-run"` and M5 acceptance at `false`; it is
+never full-matrix, allocator-promotion, large-object, or M5 evidence.
+
 The owned-suite wrapper is required. Before entering it, the canonical
 dispatch builds `crabc-libc` with Cargo's JSON message format and atomically
 records the exact matching compiler-artifact from that invocation. The record

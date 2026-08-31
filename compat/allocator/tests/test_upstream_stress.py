@@ -179,6 +179,167 @@ class CanonicalUpstreamStressContractTests(unittest.TestCase):
         )
         self.assertTrue(all("-DNTHREADS" not in command for command in commands))
 
+    def test_diagnose_selects_only_the_contracts_first_smallest_case(self) -> None:
+        contract, _ = RUNNER.load_contract()
+        args = RUNNER.parse_arguments(["--diagnose"])
+
+        self.assertEqual(
+            RUNNER.diagnostic_case(contract),
+            RUNNER.execution_cases(contract)[0],
+        )
+        self.assertEqual(
+            RUNNER.case_inventory(RUNNER.diagnostic_case(contract)),
+            {
+                "id": "workers-1-scale-1-iterations-1",
+                "workers": 1,
+                "scale": 1,
+                "iterations": 1,
+                "arguments": ["1", "1", "1"],
+            },
+        )
+        self.assertEqual(args.report, RUNNER.DEFAULT_DIAGNOSTIC_REPORT)
+        self.assertEqual(
+            RUNNER.diagnostic_output_dir(args),
+            RUNNER.DEFAULT_OUTPUT_DIR / "current-head",
+        )
+
+    def test_diagnostic_pass_is_not_a_full_matrix_or_m5_acceptance(self) -> None:
+        contract, pin = RUNNER.load_contract()
+        case = RUNNER.execution_cases(contract)[0]
+        build = {
+            "kind": "process",
+            "status": 0,
+            "stdout": RUNNER.bytes_record(b""),
+            "stderr": RUNNER.bytes_record(b""),
+        }
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source_root = root / "source"
+            source = source_root / "test/test-stress.c"
+            source.parent.mkdir(parents=True)
+            source.write_bytes(b"exact pinned source")
+            build_record = root / "selected-libc-build.json"
+            build_record.write_text("{}\n", encoding="utf-8")
+            args = RUNNER.parse_arguments(
+                [
+                    "--diagnose",
+                    "--target-dir",
+                    str(root / "target"),
+                    "--output-dir",
+                    str(root / "output"),
+                    "--libc-build-record",
+                    str(build_record),
+                ]
+            )
+            report = RUNNER.diagnostic_report_base(contract, pin, args)
+            backend = {
+                "build_record": {
+                    "bytes": 1, "path": "build-record", "sha256": "0" * 64
+                },
+                "artifacts": {
+                    "selected_shared_libc": {
+                        "bytes": 1, "path": "libc.so", "sha256": "0" * 64
+                    },
+                    "selected_static_libc": {
+                        "bytes": 1, "path": "libc.a", "sha256": "0" * 64
+                    },
+                },
+                "status": "passed",
+            }
+            current_head = {
+                "record": {
+                    "bytes": 1,
+                    "path": "current-head-build",
+                    "sha256": "0" * 64,
+                },
+                "source": {
+                    "kind": "git",
+                    "revision": "1" * 40,
+                    "worktree_clean": True,
+                    "worktree_status": RUNNER.bytes_record(b""),
+                },
+            }
+            with mock.patch.object(RUNNER, "require_native_aarch64"), mock.patch.object(
+                RUNNER, "fetch_archive", return_value=root / "mimalloc.tar.gz"
+            ), mock.patch.object(
+                RUNNER,
+                "cached_tag_attestation",
+                return_value={"format": 1, "revision": pin["revision"]},
+            ), mock.patch.object(
+                RUNNER,
+                "require_runtime_inputs",
+                return_value=self.native_runtime_inputs(root),
+            ), mock.patch.object(
+                RUNNER, "attest_selected_backend", return_value=backend
+            ), mock.patch.object(
+                RUNNER, "attest_current_head_build", return_value=current_head
+            ), mock.patch.object(
+                RUNNER, "extract_exact_archive", return_value=source_root
+            ), mock.patch.object(
+                RUNNER,
+                "sha256_file",
+                return_value=contract["fixture"]["sha256"],
+            ), mock.patch.object(
+                RUNNER,
+                "file_record",
+                return_value={"bytes": 1, "path": "recorded", "sha256": "0" * 64},
+            ), mock.patch.object(
+                RUNNER,
+                "command_record",
+                side_effect=[build, self.successful_process(case)],
+            ) as commands, mock.patch.object(
+                RUNNER,
+                "audit_fixture_elf",
+                return_value={
+                    "dynamic_dependencies": ["libc.so"],
+                    "elf_identity": {
+                        "class": "ELF64",
+                        "endianness": "little",
+                        "machine": "AArch64",
+                    },
+                    "interpreter": "/lib/ld-crabc-aarch64.so.1",
+                },
+            ):
+                RUNNER.execute_diagnostic(contract, pin, args, report)
+
+        self.assertEqual(commands.call_count, 2)
+        self.assertEqual(
+            commands.call_args_list[1].args[0],
+            RUNNER.run_command(root.resolve() / "output/current-head/canonical-upstream-test-stress", case),
+        )
+        self.assertEqual(report["status"], "passed")
+        self.assertEqual(report["diagnostic"]["status"], "passed")
+        self.assertEqual(report["canonical_matrix"]["status"], "not-run")
+        self.assertFalse(report["canonical_matrix"]["m5_accepted"])
+        self.assertEqual(report["execution"]["case"], RUNNER.case_inventory(case))
+        self.assertEqual(report["execution"]["process_attempt_count"], 1)
+        self.assertEqual(report["runtime"]["backend_attestation"], backend)
+        self.assertEqual(report["current_head"]["source"], current_head["source"])
+
+    def test_diagnostic_blocked_prerequisite_never_claims_a_matrix_result(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            report_path = Path(temporary) / "current-head.json"
+            with mock.patch.object(
+                RUNNER,
+                "execute_diagnostic",
+                side_effect=RUNNER.BlockedPrerequisite(
+                    "current-head-build-record",
+                    "missing selected libc current-head companion",
+                    {"build_record": "/missing/current-head.json"},
+                ),
+            ):
+                status = RUNNER.main(["--diagnose", "--report", str(report_path)])
+            report = json.loads(report_path.read_text(encoding="utf-8"))
+
+        self.assertEqual(status, 1)
+        self.assertEqual(report["schema"], RUNNER.DIAGNOSTIC_REPORT_SCHEMA)
+        self.assertEqual(report["status"], "blocked")
+        self.assertEqual(report["diagnostic"]["status"], "blocked")
+        self.assertFalse(report["diagnostic"]["native_execution_started"])
+        self.assertEqual(report["canonical_matrix"]["status"], "not-run")
+        self.assertFalse(report["canonical_matrix"]["m5_accepted"])
+        self.assertEqual(report["blocked"]["prerequisite"], "current-head-build-record")
+
     def test_build_command_contains_only_the_upstream_standard_allocator_selection(self) -> None:
         contract, _ = RUNNER.load_contract()
         command = RUNNER.build_command(
@@ -323,6 +484,90 @@ class CanonicalUpstreamStressContractTests(unittest.TestCase):
             attestation["artifacts"]["selected_static_libc"]["sha256"],
             expected_static_sha256,
         )
+
+    def test_current_head_companion_binds_the_clean_source_and_selected_artifacts(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            build_record = root / "selected-libc-build.json"
+            shared = root / "target/libc.so"
+            static = root / "target/libc.a"
+            shared.parent.mkdir(parents=True)
+            shared.write_bytes(b"selected shared libc")
+            static.write_bytes(b"selected static libc")
+            build_record.write_text("{\"selected\": \"build\"}\n", encoding="utf-8")
+            artifacts = {
+                "selected_shared_libc": RUNNER.file_record(shared, root=RUNNER.ROOT),
+                "selected_static_libc": RUNNER.file_record(static, root=RUNNER.ROOT),
+            }
+            source = {
+                "kind": "git",
+                "revision": "a" * 40,
+                "worktree_clean": True,
+                "worktree_status": RUNNER.bytes_record(b""),
+            }
+            companion = RUNNER.current_head_build_record_path(build_record)
+            companion.write_text(
+                json.dumps(
+                    {
+                        "format": RUNNER.CURRENT_HEAD_BUILD_RECORD_FORMAT,
+                        "schema": RUNNER.CURRENT_HEAD_BUILD_RECORD_SCHEMA,
+                        "source_before": source,
+                        "source_after": source,
+                        "source_unchanged_during_build": True,
+                        "selected_libc_build_record": RUNNER.file_record(
+                            build_record, root=RUNNER.ROOT
+                        ),
+                        "artifacts": artifacts,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            backend = {
+                "build_record": RUNNER.file_record(build_record, root=RUNNER.ROOT),
+                "artifacts": artifacts,
+            }
+            with mock.patch.object(RUNNER, "current_head_source_state", return_value=source):
+                attestation = RUNNER.attest_current_head_build(
+                    companion, build_record, backend
+                )
+
+            drifted = dict(source)
+            drifted["revision"] = "b" * 40
+            with mock.patch.object(RUNNER, "current_head_source_state", return_value=drifted):
+                with self.assertRaises(RUNNER.BlockedPrerequisite) as failure:
+                    RUNNER.attest_current_head_build(companion, build_record, backend)
+
+        self.assertEqual(attestation["source"], source)
+        self.assertEqual(attestation["artifacts"], artifacts)
+        self.assertEqual(failure.exception.prerequisite, "current-head-source-drift")
+
+    def test_workspace_source_digest_excludes_only_known_generated_and_vcs_roots(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "libc/src/lib.rs"
+            source.parent.mkdir(parents=True)
+            source.write_bytes(b"selected source")
+            (root / ".git").write_text("gitdir: unavailable\n", encoding="utf-8")
+            generated = root / "target/libc.so"
+            generated.parent.mkdir(parents=True)
+            generated.write_bytes(b"first generated artifact")
+            cache = root / "compat/allocator/.cache/mimalloc.tar.gz"
+            cache.parent.mkdir(parents=True)
+            cache.write_bytes(b"pinned archive")
+            report = root / "compat/reports/allocator/latest.json"
+            report.parent.mkdir(parents=True)
+            report.write_bytes(b"generated report")
+            with mock.patch.object(RUNNER, "ROOT", root):
+                first = RUNNER.workspace_tree_source_state()
+                generated.write_bytes(b"second generated artifact")
+                ignored_changed = RUNNER.workspace_tree_source_state()
+                source.write_bytes(b"changed selected source")
+                source_changed = RUNNER.workspace_tree_source_state()
+
+        self.assertEqual(first["kind"], "workspace-tree-sha256")
+        self.assertEqual(first["file_count"], 1)
+        self.assertEqual(first, ignored_changed)
+        self.assertNotEqual(first, source_changed)
 
     def test_native_backend_attestation_rejects_a_c_free_route(self) -> None:
         contract, _ = RUNNER.load_contract()
