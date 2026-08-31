@@ -738,6 +738,48 @@ impl ProcessPageMapLease {
         })
     }
 
+    /// Blocks for one short, exact W03 post-owner-exit PageMap mutation.
+    ///
+    /// This is deliberately separate from [`Self::begin_page_lifecycle`].
+    /// Normal page-engine admission remains nonblocking so a second owner is
+    /// rejected as [`ProcessPageMapError::LifecycleBusy`] instead of becoming
+    /// an implicit recursive or scheduled lifecycle. Only W03's terminal
+    /// callbacks may wait here after W07 has claimed the exact abandoned page
+    /// and immediately before that source tail mutates its PageMap range.
+    ///
+    /// # Safety
+    ///
+    /// The caller must hold W07's unique low-bit claim for one exact
+    /// post-owner-exit terminal source continuation. It must use the returned
+    /// mutation lease only for that page's bounded map/list/metadata/backing
+    /// release, then call
+    /// [`ProcessPageMapMutationLease::finish_after_exact_post_owner_exit_operation`]
+    /// or retain the lease with that exact terminal owner after partial
+    /// progress. It must not use this blocking boundary for normal lifecycle
+    /// admission, a lookup, a route/registry, or a new scheduler policy.
+    pub(crate) unsafe fn begin_blocking_exact_post_owner_exit_mutation(
+        self,
+    ) -> Result<ProcessPageMapMutationLease, ProcessPageMapError> {
+        self.ensure_ready()?;
+        let guard = self
+            .storage
+            .page_lifecycle_lock
+            .lock()
+            .map_err(ProcessPageMapError::Lock)?;
+        if self.storage.state.load(Ordering::Acquire) != READY || self.storage.root.load().is_none() {
+            let unlock = guard.unlock();
+            if let Err(error) = unlock {
+                self.storage.state.store(POISONED, Ordering::Release);
+                return Err(ProcessPageMapError::Lock(error));
+            }
+            return Err(ProcessPageMapError::Poisoned);
+        }
+        Ok(ProcessPageMapMutationLease {
+            storage: self.storage,
+            guard: Some(guard),
+        })
+    }
+
     /// Borrows the process-stable PageMap for source structural operations on
     /// ranges whose complete lifetime the caller owns.
     ///
@@ -1311,8 +1353,9 @@ mod tests {
     use core::mem::{align_of, size_of};
     use core::ptr::NonNull;
     use std::alloc::{alloc_zeroed, dealloc};
-    use std::sync::{Arc, Barrier};
+    use std::sync::{mpsc, Arc, Barrier};
     use std::thread;
+    use std::time::Duration;
 
     fn memory_config() -> MemoryConfig {
         MemoryConfig::from_observations(
@@ -1818,6 +1861,61 @@ mod tests {
             lease.test_retained_page_map().is_some(),
             "terminal poisoning retains the final map slot rather than exposing a new cold root"
         );
+    }
+
+    #[test]
+    fn exact_post_owner_exit_mutation_waits_without_changing_normal_lifecycle_rejection() {
+        let storage = ProcessPageMapStorage::test_static_owner();
+        let subprocess = MainSubprocess::test_static_owner();
+        let lease = storage.initialize(memory_config(), subprocess).unwrap();
+        let held = lease
+            .begin_page_lifecycle()
+            .expect("the fixture's normal lifecycle holds the shared map boundary");
+        let barrier = Arc::new(Barrier::new(2));
+        let (completion_send, completion_receive) = mpsc::channel();
+        let waiter_barrier = Arc::clone(&barrier);
+
+        let waiter = thread::spawn(move || {
+            waiter_barrier.wait();
+            // SAFETY: this empty isolated fixture models one already-claimed
+            // W03 final callback. It has no raw PageMap access or page state,
+            // and it releases the returned short boundary before returning.
+            let completion = unsafe { lease.begin_blocking_exact_post_owner_exit_mutation() }
+                .and_then(|mutation| unsafe {
+                    mutation.finish_after_exact_post_owner_exit_operation()
+                });
+            completion_send
+                .send(completion)
+                .expect("the fixture receives the W03 terminal completion");
+        });
+
+        barrier.wait();
+        assert!(matches!(
+            lease.begin_page_lifecycle(),
+            Err(ProcessPageMapError::LifecycleBusy)
+        ), "ordinary lifecycle admission remains immediately nonblocking while W03 waits");
+        assert!(
+            completion_receive
+                .recv_timeout(Duration::from_millis(100))
+                .is_err(),
+            "the W03-only terminal acquisition waits instead of converting held-map contention into retention"
+        );
+
+        held
+            .finish()
+            .expect("releasing the normal lifecycle wakes the exact W03 terminal acquisition");
+        match completion_receive.recv_timeout(Duration::from_secs(1)) {
+            Ok(Ok(())) => {}
+            completion => panic!("the waiting W03 terminal acquisition releases safely: {completion:?}"),
+        }
+        waiter
+            .join()
+            .expect("the W03 waiter completes after the normal lifecycle releases");
+        lease
+            .begin_page_lifecycle()
+            .expect("the completed short W03 mutation leaves ordinary lifecycle semantics unchanged")
+            .finish()
+            .expect("the final normal lifecycle releases the reusable root");
     }
 
     #[test]

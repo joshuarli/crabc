@@ -924,8 +924,9 @@ unsafe fn continue_post_owner_exit_remote_claim_with_process_page_facts(
         let mut retained_mutation = None;
         let mut mutation_lease_release_failed = false;
         // SAFETY: the exact claim begins this source tail after publication;
-        // the terminal callback alone acquires the exact PageMap mutation
-        // lease, immediately before it may unregister this page's range.
+        // the terminal callback alone may wait for the exact W03 PageMap
+        // mutation lease, immediately before it may unregister this page's
+        // range. No normal lifecycle admission reaches that blocking path.
         let result = unsafe {
             abandoned::continue_post_owner_exit_remote_claim(
                 claim,
@@ -939,7 +940,7 @@ unsafe fn continue_post_owner_exit_remote_claim_with_process_page_facts(
                 },
                 |page| abandoned::collect_post_owner_exit_local_free_false(page),
                 |page| {
-                    let mutation = match process.begin_page_lifecycle() {
+                    let mutation = match process.begin_blocking_exact_post_owner_exit_mutation() {
                         Ok(mutation) => mutation,
                         Err(_) => return abandoned::PostOwnerExitTerminalRelease::Retained,
                     };
@@ -1028,11 +1029,12 @@ unsafe fn continue_post_owner_exit_remote_claim_with_process_page_facts(
     let mut retained_mutation = None;
     let mut mutation_lease_release_failed = false;
     // SAFETY: as above, the W07 claim is consumed exactly once. The terminal
-    // callback receives the same linear owner and stages the PageMap lease
-    // only immediately before its arena unregister or non-arena OS-list tail.
+    // callback receives the same linear owner and may wait for the W03-only
+    // PageMap lease only immediately before its arena unregister or non-arena
+    // OS-list tail; normal lifecycle admission remains nonblocking.
     let result = unsafe {
         abandoned::continue_post_owner_exit_singleton_remote_claim(claim, |release| {
-            let mutation = match process.begin_page_lifecycle() {
+            let mutation = match process.begin_blocking_exact_post_owner_exit_mutation() {
                 Ok(mutation) => mutation,
                 Err(_) => {
                     return abandoned::ClaimedPostOwnerExitSingletonFreeResult::TerminalReleaseRetained(

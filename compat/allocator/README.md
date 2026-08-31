@@ -2173,7 +2173,11 @@ permanent blocker.
 The routes take short serialized PageMap access, and neither may consume that
 access into a long engine while a sibling route remains live. Metadata-growth
 or terminal-route failure retains the exact source owner rather than publishing
-an untyped fallback. The selected `native_mimalloc_concurrent_post_exit_release`
+an untyped fallback. After W07 has claimed one exact final source page, only
+W03's regular or singleton terminal callback may wait on the existing private
+PageMap lock for that short release; ordinary lifecycle admission remains
+nonblocking and reports contention instead. The selected
+`native_mimalloc_concurrent_post_exit_release`
 fixture instead has four fresh B workers contend on one detached mixed
 aggregate. Each offers only disjoint exact inputs; one `ACTIVE -> BUSY` entry
 transition serializes the source operation, and the final B carries the

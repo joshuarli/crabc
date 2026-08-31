@@ -1008,6 +1008,29 @@ impl ProcessPageArenaLease {
             .map_err(ProcessPageArenaLeaseError::PageMap)
     }
 
+    /// Blocks only for W03's one exact post-owner-exit terminal mutation
+    /// after this pair's map/arena identity has already been proven.
+    ///
+    /// This delegates the PageMap's deliberately exceptional blocking
+    /// boundary. It does not alter ordinary `begin_page_lifecycle` admission,
+    /// create a general PageMap lock, or grant another page/route owner.
+    ///
+    /// # Safety
+    ///
+    /// The caller must satisfy
+    /// [`ProcessPageMapLease::begin_blocking_exact_post_owner_exit_mutation`]'s
+    /// W07-claim, exact-terminal-tail, and explicit-release-or-retention
+    /// contract.
+    #[inline]
+    pub(crate) unsafe fn begin_blocking_exact_post_owner_exit_mutation(
+        self,
+    ) -> Result<ProcessPageMapMutationLease, ProcessPageArenaLeaseError> {
+        // SAFETY: the caller supplies the delegated W03 exact-terminal
+        // mutation contract; this pairing only preserves map/arena identity.
+        unsafe { self.page_map.begin_blocking_exact_post_owner_exit_mutation() }
+            .map_err(ProcessPageArenaLeaseError::PageMap)
+    }
+
     /// Borrows the paired process PageMap for structural operations on exact
     /// ranges whose complete page lifetime the caller owns.
     ///
