@@ -210,7 +210,7 @@ pub(crate) enum PersistentCompilerTlsOwnerState {
     Borrowed,
     /// Source-ordered consuming teardown owns the only mutable projection.
     Exiting,
-    /// Initialization or teardown failed while the exact payload stayed pinned.
+    /// Initialization, local work, or teardown unwound/failed with the payload pinned.
     Retained,
     /// Teardown succeeded, the payload was dropped in place, and reuse is forbidden.
     TornDown,

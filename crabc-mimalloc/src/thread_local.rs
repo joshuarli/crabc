@@ -532,7 +532,7 @@ pub(crate) enum PersistentCompilerTlsOwnerError {
     Reentrant,
     /// Source owner exit owns the only in-place payload projection.
     Exiting,
-    /// A failed initialization or exit retained the exact pinned payload.
+    /// Failed or unwinding initialization, local work, or exit retained the payload.
     Retained,
     /// The owner completed its one-way compiler-TLS teardown transition.
     TornDown,
@@ -571,13 +571,16 @@ pub(crate) enum PersistentCompilerTlsOwnerTeardownError<E> {
 /// A nested projection is rejected before it can create a second `&mut`
 /// reference.
 ///
-/// This is not a scheduler, a process registry, a page owner, or a generic
-/// TLS-key mechanism. The integrating later-thread lifecycle initializes the
-/// complete co-located attachment and allocator state inside `T`, drives page
-/// exit, and supplies its consuming source teardown closure. `MaybeUninit`
+/// This generic cell is not itself a concrete ELF-TLS owner, scheduler,
+/// process registry, page owner, or generic TLS-key mechanism. The integrating
+/// runtime must embed it in a concrete compiler-TLS record, initialize the
+/// complete co-located attachment and allocator state inside `T`, drive page
+/// exit, and supply its consuming source teardown closure. `MaybeUninit`
 /// deliberately has no implicit drop path: an active or retained payload must
 /// stay mechanically owned by this cell instead of being destroyed at ELF TLS
-/// reclamation without source teardown.
+/// reclamation without source teardown. The runtime must therefore resolve a
+/// retained payload through teardown before the native thread returns; this
+/// generic cell cannot make thread return safe by itself.
 #[must_use = "a persistent compiler-TLS owner cell must complete source teardown or retain its exact payload"]
 pub(crate) struct PersistentCompilerTlsOwnerCell<T> {
     state: Cell<PersistentCompilerTlsOwnerState>,
@@ -589,7 +592,7 @@ pub(crate) struct PersistentCompilerTlsOwnerCell<T> {
     _not_send_sync: PhantomData<*mut ()>,
 }
 
-/// Restores or retains the cell state if an operation closure unwinds.
+/// Publishes the conservative state if a transition closure unwinds.
 struct PersistentCompilerTlsOwnerTransition<'cell, T> {
     cell: &'cell PersistentCompilerTlsOwnerCell<T>,
     unwind_state: PersistentCompilerTlsOwnerState,
@@ -672,9 +675,12 @@ impl<T> PersistentCompilerTlsOwnerCell<T> {
 
     /// Runs one direct local operation through the same in-place owner.
     ///
-    /// The closure is synchronous. On return, the temporary exclusive borrow
-    /// ends but the compiler-TLS owner remains attached, so later operations
-    /// observe the same TLD/Theap image and never park, resume, or move it.
+    /// The closure is synchronous. On normal return, the temporary exclusive
+    /// borrow ends and the compiler-TLS owner becomes active again, so later
+    /// operations observe the same TLD/Theap image and never park, resume, or
+    /// move it. If the closure unwinds after a one-way source mutation, the
+    /// guard conservatively retains the exact payload and refuses ordinary
+    /// reentry; only source teardown may inspect it again.
     pub(crate) fn with_owner<R>(
         self: Pin<&Self>,
         operation: impl for<'owner> FnOnce(Pin<&'owner mut T>) -> R,
@@ -686,9 +692,9 @@ impl<T> PersistentCompilerTlsOwnerCell<T> {
         }
         cell.ensure_current_thread()?;
         cell.state.set(PersistentCompilerTlsOwnerState::Borrowed);
-        let _transition = PersistentCompilerTlsOwnerTransition::new(
+        let mut transition = PersistentCompilerTlsOwnerTransition::new(
             cell,
-            PersistentCompilerTlsOwnerState::Active,
+            PersistentCompilerTlsOwnerState::Retained,
         );
         // SAFETY: `Active -> Borrowed` grants this closure the only mutable
         // projection. Recursive access sees `Borrowed` and returns before
@@ -698,6 +704,8 @@ impl<T> PersistentCompilerTlsOwnerCell<T> {
         #[cfg(test)]
         cell.completed_operation_count
             .set(cell.completed_operation_count.get().wrapping_add(1));
+        cell.state.set(PersistentCompilerTlsOwnerState::Active);
+        transition.disarm();
         Ok(result)
     }
 
@@ -1263,6 +1271,7 @@ mod tests {
     use super::*;
     use crate::os::{PageSize, fault};
     use crate::types::MemoryKind;
+    use std::panic::{AssertUnwindSafe, catch_unwind};
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{Arc, Barrier, mpsc};
     use std::thread;
@@ -2043,6 +2052,79 @@ mod tests {
         })
         .join()
         .expect("the compiler-TLS recursion test completes");
+    }
+
+    #[test]
+    fn persistent_compiler_tls_owner_retains_one_way_operation_mutation_after_unwind() {
+        struct Owner {
+            one_way_source_mutation: bool,
+            torn_down: bool,
+            drops: Arc<AtomicUsize>,
+            _pinned: core::marker::PhantomPinned,
+        }
+
+        impl Drop for Owner {
+            fn drop(&mut self) {
+                assert!(self.torn_down, "the retained owner drops only after teardown");
+                self.drops.fetch_add(1, Ordering::Relaxed);
+            }
+        }
+
+        thread::spawn(|| {
+            let drops = Arc::new(AtomicUsize::new(0));
+            let operation_address = core::cell::Cell::new(0);
+            let cell = core::pin::pin!(PersistentCompilerTlsOwnerCell::new());
+            let cell = cell.as_ref();
+            assert!(cell
+                .initialize(
+                    Owner {
+                        one_way_source_mutation: false,
+                        torn_down: false,
+                        drops: Arc::clone(&drops),
+                        _pinned: core::marker::PhantomPinned,
+                    },
+                    |_| Ok::<(), ()>(()),
+                )
+                .is_ok());
+
+            let unwind = catch_unwind(AssertUnwindSafe(|| {
+                let _: Result<(), PersistentCompilerTlsOwnerError> = cell.with_owner(|owner| {
+                    operation_address
+                        .set(owner.as_ref().get_ref() as *const Owner as usize);
+                    // SAFETY: the cell grants this closure the only pinned
+                    // mutable projection; the mutation does not move `Owner`.
+                    unsafe { owner.get_unchecked_mut() }.one_way_source_mutation = true;
+                    panic!("operation unwinds after mutating source state");
+                });
+            }));
+            assert!(unwind.is_err());
+            assert_eq!(cell.completed_operation_count_for_test(), 0);
+            assert_eq!(cell.state_for_test(), PersistentCompilerTlsOwnerState::Retained);
+            assert_eq!(
+                cell.with_owner(|_| ()),
+                Err(PersistentCompilerTlsOwnerError::Retained),
+                "an unwinding operation must not republish one-way source state as active"
+            );
+            assert_eq!(drops.load(Ordering::Relaxed), 0);
+
+            assert!(cell
+                .teardown(|owner| {
+                    assert_eq!(
+                        owner.as_ref().get_ref() as *const Owner as usize,
+                        operation_address.get(),
+                        "teardown receives the exact payload retained after unwind"
+                    );
+                    assert!(owner.as_ref().get_ref().one_way_source_mutation);
+                    // SAFETY: teardown mutates the retained pinned shell in
+                    // place before authorizing its terminal drop.
+                    unsafe { owner.get_unchecked_mut() }.torn_down = true;
+                    Ok::<(), ()>(())
+                })
+                .is_ok());
+            assert_eq!(drops.load(Ordering::Relaxed), 1);
+        })
+        .join()
+        .expect("the compiler-TLS operation-unwind test completes");
     }
 
     #[test]
