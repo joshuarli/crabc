@@ -446,6 +446,28 @@ whitespace, `%n`/`%hhn`, scanset/pointer/integer/floating/wide forms, external
 FILE input, byte-formatting, locale objects, a general scanner or stdio
 boundary, parity, promotion, and public x86 support remain excluded.
 
+The separate private
+`./scripts/dev-x86_64.sh libc-stdio-fixed-suppressed-scanset-scan` artifact
+adds no export or capability. It narrows a pinned-musl 1.2.6 versus true
+`-nostdlib -static` differential to one literal non-wide `%*3[abc]`
+`sscanf`/`vsscanf` state: assignment suppression has no variadic destination,
+does not advance the fixture-only trailing `va_list` sentinel, writes no
+terminator or assignment, bypasses C-locale input-whitespace skipping, and
+consumes at most three raw `a`/`b`/`c` member bytes. Fixed direct and `vsscanf`
+witnesses cover a short nonempty member run, exact-width consumption before a
+following literal, leading whitespace and a first non-member matching failure,
+initial EOF, a high byte retained for a following raw literal, and stale errno.
+The following literal only observes member consumption; raw literal matching
+remains owned by the fixed-literal profile. Its independent C11/C++17 header
+gate proves only the existing declarations and unmangled C++ C spellings. This
+is pinned-musl assignment-suppression evidence, not a general scanf-suppression
+or scanset claim. Unsuppressed `%3[abc]` storage, all other widths or
+suppressed forms, unbounded/leading-zero/range/inverse/allocating/wide scanset
+grammar, literal-percent `%%`, format whitespace, `%n`/`%hhn`,
+character/string/pointer/integer/floating/wide forms, external FILE input,
+byte-formatting, locale objects, a general scanner or stdio boundary, parity,
+promotion, and public x86 support remain excluded.
+
 The separate private `./scripts/dev-x86_64.sh libc-stdio-float-hex-output`
 artifact adds no export and selects only allocation-free C-locale binary64
 `%a`/`%A` byte-buffer output. It preserves musl's no-op `l` modifier,

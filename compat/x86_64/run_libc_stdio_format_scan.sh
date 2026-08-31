@@ -17,12 +17,15 @@
 # no-destination non-wide `%*3c` raw-character conversion state.
 # `fixed-suppressed-string-scan` owns only the no-destination non-wide `%*3s`
 # token-string conversion state after its own C-locale input-whitespace skip.
+# `fixed-suppressed-scanset-scan` owns only the no-destination non-wide
+# literal `%*3[abc]` raw-member state, without input-whitespace skipping.
 # The sibling `float-hex-output` profile selects only binary64 `%a`/`%A`
 # output, while the closed `errno-output` profile adds only bare GNU/musl `%m` C-locale
 # errno-message output through that same formatter. None selects a general
 # error-reporting, stream, locale, or ambient-formatting boundary, FILE
 # streams, printf/fprintf, scanf/fscanf, decimal or long-double floats, wide
-# text, scansets, positional arguments, pointer-valued %p, allocation, a
+# text, scanset grammar outside the separate sealed profile, positional
+# arguments, pointer-valued %p, allocation, a
 # dynamic libc, CRT, loader, sysroot, or public x86 support.
 set -euo pipefail
 
@@ -96,6 +99,13 @@ fixed-suppressed-string-scan)
     readonly START_SOURCE=compat/x86_64/libc_stdio_fixed_suppressed_string_scan_start.S
     readonly FREESTANDING_DEFINE=CRABC_STDIO_FIXED_SUPPRESSED_STRING_SCAN_FREESTANDING
     readonly EVIDENCE_LABEL="sealed stdio suppressed-string scan"
+    readonly -a REQUIRED_C_ABI_SYMBOLS=(sscanf vsscanf)
+    ;;
+fixed-suppressed-scanset-scan)
+    readonly FIXTURE_SOURCE=compat/x86_64/libc_stdio_fixed_suppressed_scanset_scan_probe.c
+    readonly START_SOURCE=compat/x86_64/libc_stdio_fixed_suppressed_scanset_scan_start.S
+    readonly FREESTANDING_DEFINE=CRABC_STDIO_FIXED_SUPPRESSED_SCANSET_SCAN_FREESTANDING
+    readonly EVIDENCE_LABEL="sealed stdio suppressed-scanset scan"
     readonly -a REQUIRED_C_ABI_SYMBOLS=(sscanf vsscanf)
     ;;
 float-hex-output)
@@ -357,6 +367,26 @@ if [ "$EVIDENCE_PROFILE" = fixed-suppressed-string-scan ]; then
         fail "suppressed-string scanner no longer seals its null destination"
     grep -Fq 'zero-assignment suppressed token' "$ROOT_DIR/$FIXTURE_SOURCE" ||
         fail "suppressed-string fixture no longer records its assignment boundary"
+fi
+if [ "$EVIDENCE_PROFILE" = fixed-suppressed-scanset-scan ]; then
+    grep -Fq 'static-c-stdio-fixed-suppressed-scanset-scan artifact' \
+        "$ROOT_DIR/libc/src/c_abi/x86_64/stdio_format_scan.rs" ||
+        fail "suppressed-scanset scanner state is no longer selected"
+    grep -Fq "b'['" \
+        "$ROOT_DIR/libc/src/c_abi/x86_64/stdio_format_scan.rs" ||
+        fail "suppressed-scanset scanner no longer owns the selected bracket directive"
+    grep -Fq 'parsed_width == 3' \
+        "$ROOT_DIR/libc/src/c_abi/x86_64/stdio_format_scan.rs" ||
+        fail "suppressed-scanset scanner no longer retains its three-byte width"
+    grep -Fq "read_byte(width_start) } == b'3'" \
+        "$ROOT_DIR/libc/src/c_abi/x86_64/stdio_format_scan.rs" ||
+        fail "suppressed-scanset scanner no longer retains its literal width spelling"
+    grep -Fq "b'a' | b'b' | b'c'" \
+        "$ROOT_DIR/libc/src/c_abi/x86_64/stdio_format_scan.rs" ||
+        fail "suppressed-scanset scanner no longer retains its exact C-locale members"
+    grep -Fq 'raw narrow bytes' \
+        "$ROOT_DIR/compat/x86_64/libc_stdio_fixed_suppressed_scanset_scan_probe.c" ||
+        fail "suppressed-scanset fixture no longer records its raw-byte boundary"
 fi
 if timeout --foreground "$EXECUTION_TIMEOUT" "$candidate"; then
     :

@@ -1008,6 +1008,30 @@ wide forms, external FILE input, byte formatting, locale objects, a general
 scanner or stdio boundary, parity, promotion, and public x86 support remain
 outside it.
 
+The distinct `libc-stdio-fixed-suppressed-scanset-scan` gate
+(`./scripts/dev-x86_64.sh libc-stdio-fixed-suppressed-scanset-scan`) records
+one private `static-c-stdio-fixed-suppressed-scanset-scan` artifact without
+adding an export or capability. Its independent C11/C++17 header gate proves
+only the existing `sscanf`/`vsscanf` signatures and unmangled C++ C spellings.
+The fixed project-header fixture compares pinned musl 1.2.6 with a true
+`-nostdlib -static` candidate for only the literal non-wide `%*3[abc]` state:
+musl assignment suppression supplies no destination, performs no `va_list`
+advance, terminator write, or assignment, does not skip C-locale input
+whitespace, and consumes at most three raw a/b/c member bytes. Direct and
+`vsscanf` witnesses retain a fixture-only trailing sentinel and stale errno
+while proving short-member success, exact-width consumption before a following
+literal, leading-whitespace and first-non-member matching failure, initial EOF,
+and one high byte retained for a following raw literal. A following literal
+merely witnesses member consumption; raw literal matching remains owned by the
+sibling fixed-literal profile. This is pinned-musl assignment-suppression
+evidence, not a general scanf-suppression or scanset claim. Unsuppressed
+`%3[abc]` storage, all other widths or suppressed forms,
+unbounded/leading-zero/range/inverse/allocating/wide scanset grammar,
+literal-percent `%%`, C-locale format whitespace, `%n`/`%hhn`,
+character/string/pointer/integer/floating/wide forms, external FILE input,
+byte formatting, locale objects, a general scanner or stdio boundary, parity,
+promotion, and public x86 support remain outside it.
+
 The separate `libc-stdio-float-hex-output` gate
 (`./scripts/dev-x86_64.sh libc-stdio-float-hex-output`) records one private
 `static-c-stdio-float-hex-output` artifact without adding an export or
