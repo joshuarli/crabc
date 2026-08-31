@@ -17274,6 +17274,216 @@ class X86ParityLedgerTests(unittest.TestCase):
         with self.assertRaisesRegex(ledger.LedgerError, "Linux syscall register ABI"):
             ledger.validate_ledger(data)
 
+    def test_chown_artifact_keeps_its_following_ownership_boundary(self) -> None:
+        data = self.data()
+        family = self.family(data, "libc.posix-runtime")
+        self.assertEqual(family["status"], "planned")
+        artifacts = family["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-chown"
+        )
+        self.assertNotIn("capabilities", artifact)
+        for owner in (
+            "COMPATIBILITY-PROFILE.md",
+            "compat/upstreams.toml",
+            "libc/src/c_abi/x86_64/static_c_abi.rs",
+            "libc/src/c_abi/x86_64/chown.rs",
+            "libc/src/c_abi/x86_64/errno.rs",
+            "libc/src/c_abi/x86_64/syscall.rs",
+            "libc/src/c_abi/x86_64/static_tls.rs",
+            "include/errno.h",
+            "include/fcntl.h",
+            "include/sys/stat.h",
+            "include/sys/syscall.h",
+            "include/sys/types.h",
+            "include/unistd.h",
+            "compat/x86_64/chown_header_abi_probe.c",
+            "compat/x86_64/chown_header_abi_probe.cpp",
+            "compat/x86_64/run_chown_header_abi.sh",
+            "compat/x86_64/static_c_abi_exports.txt",
+            "compat/x86_64/libc_chown_probe.c",
+            "compat/x86_64/libc_chown_start.S",
+            "compat/x86_64/run_libc_chown.sh",
+            "compat/x86_64/run_libc_access.sh",
+            "compat/x86_64/aarch64_parity_inventory.json",
+            "compat/x86_64/validate_parity_ledger.py",
+            "scripts/dev-x86_64.sh",
+        ):
+            self.assertIn(owner, artifact["source_owners"])
+        for phrase in (
+            "selected-static-archive `chown`",
+            "still-planned `libc.posix-runtime`",
+            "pinned musl 1.2.6",
+            "`-nostdlib -static`",
+            "chown=92",
+            "final component follows a symlink",
+            "dangling symlink",
+            "all-ones `uid_t`/`gid_t` no-change words",
+            "stale-errno success",
+            "CAP_CHOWN",
+            "ENOENT",
+            "EFAULT",
+            "`lchown`",
+            "`fchown`",
+            "`fchownat`",
+            "musl's non-x86 fallback",
+            "another pathname entry",
+            "pathname lifecycle family",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, artifact["description"])
+        self.assertEqual(
+            {entry["command"] for entry in artifact["native_evidence"]},
+            {"./scripts/dev-x86_64.sh libc-chown"},
+        )
+
+        prerequisites = artifact["x86_abi_prerequisites"]
+        assert isinstance(prerequisites, list)
+        syscall_abi = next(item for item in prerequisites if "chown=92" in item)
+        assert isinstance(syscall_abi, str)
+        for phrase in ("rdi", "rsi", "rdx", "-4095", "initial-TLS errno"):
+            self.assertIn(phrase, syscall_abi)
+        source_mapping = next(item for item in prerequisites if "src/unistd/chown.c" in item)
+        assert isinstance(source_mapping, str)
+        for phrase in (
+            "#ifdef SYS_chown",
+            "syscall(SYS_chown, path, uid, gid)",
+            "SYS_fchownat",
+            "AT_FDCWD",
+            "zero-flags",
+            "Linux 5.10",
+        ):
+            self.assertIn(phrase, source_mapping)
+        request_proof = next(item for item in prerequisites if "raw-creates" in item)
+        assert isinstance(request_proof, str)
+        for phrase in (
+            "dangling symlink",
+            "UINT32_MAX",
+            "no-change",
+            "stale errno",
+            "raw ENOENT",
+            "CAP_CHOWN",
+            "EFAULT",
+            "AT_FDCWD",
+            "another pathname entry",
+        ):
+            self.assertIn(phrase, request_proof)
+
+        headers = artifact["x86_header_prerequisites"]
+        assert isinstance(headers, list) and isinstance(headers[0], str)
+        for phrase in (
+            "eight-profile",
+            "unistd.h",
+            "chown(const char *, uid_t, gid_t)",
+            "four-byte unsigned uid_t/gid_t",
+            "All eight",
+            "none hides it",
+            "unmangled C++",
+        ):
+            self.assertIn(phrase, headers[0])
+
+        exports = set(
+            (ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt")
+            .read_text(encoding="utf-8")
+            .splitlines()
+        )
+        self.assertIn("chown", exports)
+        for forbidden in ("fchown", "fchownat"):
+            self.assertNotIn(forbidden, exports)
+
+        implementation = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "chown.rs"
+        ).read_text(encoding="utf-8")
+        for snippet in (
+            "src/unistd/chown.c",
+            "syscall(SYS_chown, path, uid, gid)",
+            "fn chown",
+            "raw_syscall::SYS_CHOWN",
+            "raw_syscall::syscall3(",
+            "i64::from(owner)",
+            "i64::from(group)",
+            "c_status(result)",
+            "chown=92",
+        ):
+            self.assertIn(snippet, implementation)
+        for forbidden in (
+            "raw_syscall::SYS_FCHOWNAT",
+            "const AT_FDCWD",
+            "const AT_SYMLINK_NOFOLLOW",
+            "fn lchown(",
+            "fn fchown(",
+            "fn fchownat(",
+            "crabc_core",
+            "mimalloc",
+            "alloc::",
+        ):
+            self.assertNotIn(forbidden, implementation)
+
+        header_runner = (
+            ROOT / "compat" / "x86_64" / "run_chown_header_abi.sh"
+        ).read_text(encoding="utf-8")
+        for snippet in (
+            "MUSL_ROOT=/opt/musl-1.2.6",
+            "EXPECTED_PROFILE_COUNT=8",
+            "EXPECTED_VISIBLE_PROFILE_COUNT=8",
+            "EXPECTED_HIDDEN_PROFILE_COUNT=0",
+            "unistd.h",
+            "chown",
+            "unmangled",
+        ):
+            self.assertIn(snippet, header_runner)
+        probe = (ROOT / "compat" / "x86_64" / "libc_chown_probe.c").read_text(
+            encoding="utf-8"
+        )
+        for snippet in (
+            "SYS_chown == 92",
+            "dangling symlink",
+            "AT_SYMLINK_NOFOLLOW",
+            "UINT32_MAX",
+            "no-change",
+            "stale errno",
+            "CAP_CHOWN",
+            "ENOENT",
+            "EFAULT",
+        ):
+            self.assertIn(snippet, probe)
+        start = (ROOT / "compat" / "x86_64" / "libc_chown_start.S").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("CRABC_CHOWN_FREESTANDING", start)
+        runner = (ROOT / "compat" / "x86_64" / "run_libc_chown.sh").read_text(
+            encoding="utf-8"
+        )
+        for snippet in (
+            "run_musl_oracle.sh",
+            "run_chown_header_abi.sh",
+            "-nostdlib -static",
+            "--no-undefined",
+            "assert_selected_c_abi_surface",
+            "chown=92",
+            "CRABC_CHOWN_FREESTANDING",
+            "chown candidate exports an unselected ownership or pathname entry",
+        ):
+            self.assertIn(snippet, runner)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-chown"
+        )
+        prerequisites = artifact["x86_abi_prerequisites"]
+        assert isinstance(prerequisites, list)
+        index = next(index for index, item in enumerate(prerequisites) if "chown=92" in item)
+        prerequisites[index] = prerequisites[index].replace("chown=92", "chown=999")
+        with self.assertRaisesRegex(ledger.LedgerError, "Linux syscall register ABI"):
+            ledger.validate_ledger(data)
+
     def test_lchown_artifact_keeps_its_no_follow_ownership_boundary(self) -> None:
         data = self.data()
         family = self.family(data, "libc.posix-runtime")
@@ -17390,7 +17600,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             .splitlines()
         )
         self.assertIn("lchown", exports)
-        for forbidden in ("chown", "fchown", "fchownat"):
+        for forbidden in ("fchown", "fchownat"):
             self.assertNotIn(forbidden, exports)
 
         implementation = (

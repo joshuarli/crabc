@@ -301,6 +301,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh readlinkat-header-abi
 ./scripts/dev-x86_64.sh linkat-header-abi
 ./scripts/dev-x86_64.sh unlinkat-header-abi
+./scripts/dev-x86_64.sh chown-header-abi
 ./scripts/dev-x86_64.sh lchown-header-abi
 ./scripts/dev-x86_64.sh hasmntopt-header-abi
 ./scripts/dev-x86_64.sh sync-header-abi
@@ -500,6 +501,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-readlinkat
 ./scripts/dev-x86_64.sh libc-linkat
 ./scripts/dev-x86_64.sh libc-unlinkat
+./scripts/dev-x86_64.sh libc-chown
 ./scripts/dev-x86_64.sh libc-lchown
 ./scripts/dev-x86_64.sh libc-hasmntopt
 ./scripts/dev-x86_64.sh libc-sync
@@ -1110,6 +1112,21 @@ success and `ENOENT`/`EINVAL`/`EBADF`/`EFAULT` paths. It excludes `unlink`,
 `rmdir`, other *at entries, `AT_FDCWD` selection, pathname/CWD/namespace
 policy, directory streams, allocation, cancellation, a Rust facade, family
 completion, promotion, and public x86 support.
+
+`chown-header-abi` is a separate eight-profile C11/C++17 project-header/
+pinned-musl matrix for unconditional `chown(const char *, uid_t, gid_t)`,
+four-byte unsigned x86 LP64 `uid_t`/`gid_t` spelling, and unmangled C++
+linkage. Its paired private `libc-chown` static artifact selects only musl
+1.2.6's direct Linux x86-64 `chown=92` branch. The raw-owned fixture creates
+and observes one dangling symlink, then passes all-ones no-change owner/group
+words: candidate stale `errno` success and a raw request on the fixture
+directory, plus matching candidate/raw `ENOENT` on the dangling path, pin
+final-component following without requiring `CAP_CHOWN`, alongside
+missing/empty `ENOENT` and null `EFAULT`. It excludes `lchown`, `fchown`,
+`fchownat`, musl's non-x86 fallback, credential/ownership policy, another
+pathname entry, pathname/CWD/namespace policy, directory streams, allocation,
+cancellation, a Rust facade, filesystem capability completion, family
+promotion, and public x86 support.
 
 `lchown-header-abi` is a separate eight-profile C11/C++17 project-header/
 pinned-musl matrix for unconditional `lchown(const char *, uid_t, gid_t)`,
@@ -5813,6 +5830,7 @@ Apart from the narrowly named `libc-stat-compat`, `libc-credentials`,
 `libc-readlinkat`,
 `libc-linkat`,
 `libc-unlinkat`,
+`libc-chown`,
 `libc-lchown`,
 `libc-hasmntopt`,
 `libc-sync`,

@@ -98,8 +98,9 @@
 //! artifact, one bounded pathname-mutation/lifecycle artifact, one distinct
 //! caller-buffered descriptor-relative readlinkat leaf, one distinct
 //! caller-supplied-directory hard-link linkat leaf, one caller-supplied
-//! directory-entry removal unlinkat leaf, and one bounded no-follow
-//! pathname-ownership lchown leaf, one caller-owned mntent
+//! directory-entry removal unlinkat leaf, one bounded following pathname-
+//! ownership chown leaf, one bounded no-follow pathname-ownership lchown leaf,
+//! one caller-owned mntent
 //! option-string lookup leaf, one direct system-wide filesystem writeback
 //! request, and one bounded directory-stream/raw-directory artifact.
 //! The fixed-graph dlfcn bridge is a separate public-C spelling over the
@@ -474,6 +475,8 @@ mod readlinkat;
 mod linkat;
 #[path = "unlinkat.rs"]
 mod unlinkat;
+#[path = "chown.rs"]
+mod chown;
 #[path = "lchown.rs"]
 mod lchown;
 #[path = "hasmntopt.rs"]

@@ -358,6 +358,7 @@ pub(crate) const SYS_SYMLINK: i64 = 88;
 pub(crate) const SYS_READLINK: i64 = 89;
 pub(crate) const SYS_CHMOD: i64 = 90;
 pub(crate) const SYS_FCHMOD: i64 = 91;
+pub(crate) const SYS_CHOWN: i64 = 92;
 pub(crate) const SYS_LCHOWN: i64 = 94;
 pub(crate) const SYS_UMASK: i64 = 95;
 pub(crate) const SYS_GETTIMEOFDAY: i64 = 96;

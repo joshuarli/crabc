@@ -145,6 +145,7 @@ cfsetospeed
 cfsetspeed
 chdir
 chmod
+chown
 cimag
 cimagf
 cimagl
