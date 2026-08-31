@@ -379,6 +379,7 @@ pub(crate) const SYS_RT_SIGTIMEDWAIT: i64 = 128;
 pub(crate) const SYS_RT_SIGQUEUEINFO: i64 = 129;
 pub(crate) const SYS_RT_SIGSUSPEND: i64 = 130;
 pub(crate) const SYS_SIGALTSTACK: i64 = 131;
+pub(crate) const SYS_PERSONALITY: i64 = 135;
 pub(crate) const SYS_GETPRIORITY: i64 = 140;
 pub(crate) const SYS_SETPRIORITY: i64 = 141;
 pub(crate) const SYS_MLOCK: i64 = 149;

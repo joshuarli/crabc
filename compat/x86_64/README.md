@@ -251,6 +251,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh float-parse-header-abi
 ./scripts/dev-x86_64.sh getsubopt-header-abi
 ./scripts/dev-x86_64.sh intmax-arithmetic-header-abi
+./scripts/dev-x86_64.sh personality-header-abi
 ./scripts/dev-x86_64.sh setfsgid-header-abi
 ./scripts/dev-x86_64.sh setfsuid-header-abi
 ./scripts/dev-x86_64.sh credential-observation-header-abi
@@ -525,6 +526,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-float-parse
 ./scripts/dev-x86_64.sh libc-getsubopt
 ./scripts/dev-x86_64.sh libc-intmax-arithmetic
+./scripts/dev-x86_64.sh libc-personality
 ./scripts/dev-x86_64.sh libc-setfsgid
 ./scripts/dev-x86_64.sh libc-setfsuid
 ./scripts/dev-x86_64.sh libc-credential-observation
@@ -1240,6 +1242,16 @@ layout, return type, and unmangled C++ linkage. This is compile-only header
 evidence for the arithmetic forms only; it is distinct from the separately
 staged `strtoimax`/`strtoumax` declaration and archive evidence, and does not
 select `crabc-libc` or a general C runtime ABI.
+
+`personality-header-abi` separately compiles project-first and pinned-musl
+C/C++ `<sys/personality.h>` declarations for the unconditional Linux spelling
+`int personality(unsigned long)`. Strict, POSIX, X/Open, and GNU selections
+ratchet the eight-byte x86 unsigned-long word, `PER_LINUX=0`/`PER_MASK=0xff`,
+syscall macro 135, and unmangled C++ linkage. This is declaration-only
+evidence for the separately selected process-personality artifact; it does not
+select personality policy or executable transitions, prctl/capability/namespace
+controls, credential or identity/session families, scheduler state, or a
+general C-process ABI.
 
 `setfsuid-header-abi` compiles project-first and pinned-musl C/C++
 `<sys/fsuid.h>` declarations for the unconditional Linux extension
@@ -2979,6 +2991,20 @@ the 128-byte align-8 `cpu_set_t`, and unmangled C linkage. It does not select
 `sched_setaffinity`, CPU macro/helper/counting APIs, scheduler policy or
 parameters, pthread affinity/lifecycle, scheduler-family completion, AArch64
 parity, promotion, or public x86 support.
+
+`libc-personality` is a separate `static-c-personality` `verified_artifact`
+within planned `libc.posix-runtime`. Its one-symbol project-header C body first
+runs through pinned musl 1.2.6 and then through a true `-nostdlib -static`
+candidate. It maps only musl's `src/linux/personality.c::personality`: raw x86
+syscall 135 returns the current execution personality for the unsigned-long
+all-ones `0xffffffffUL` query instead of a zero-or-error status. The common C
+body uses only that non-mutating query twice, proving raw/C agreement and stale
+`errno` on ordinary returns. The strict/POSIX/X/Open/GNU C/C++ matrix retains
+the unconditional `int personality(unsigned long)` declaration,
+`PER_LINUX=0`/`PER_MASK=0xff`, and unmangled C linkage. It excludes personality
+policy or executable transitions, prctl/capability/namespace controls,
+credential or identity/session families, scheduler state, pthread lifecycle,
+dynamic runtime, allocator, loader, sysroot, and public x86 support.
 
 `libc-setfsuid` is a separate `static-c-setfsuid` `verified_artifact` within
 planned `libc.posix-runtime`. Its one-symbol project-header C body first runs
@@ -5679,7 +5705,7 @@ Apart from the narrowly named `libc-stat-compat`, `libc-credentials`,
 `libc-byte-strings`, `libc-legacy-memory`, `libc-memccpy`, `libc-mempcpy`, `libc-strsep`, `libc-random-entropy`, `libc-memory-search`,
 `libc-string-copy`, `libc-allocator-string-duplication`, `libc-error-strings`,
 `libc-locale-error-strings`, `libc-ctype`, `libc-integer-arithmetic`,
-`libc-integer-parse`, `libc-float-parse`, `libc-getsubopt`, `libc-intmax-arithmetic`, `libc-setfsgid`, `libc-setfsuid`, `libc-credential-observation`,
+`libc-integer-parse`, `libc-float-parse`, `libc-getsubopt`, `libc-intmax-arithmetic`, `libc-personality`, `libc-setfsgid`, `libc-setfsuid`, `libc-credential-observation`,
 `libc-ffs`, `libc-math-complex`, `libc-math-complex-complete`, `libc-elementary-sqrt-fenv`, and
 `libc-fenv-rounding` static archive harnesses, and the separately scoped
 `static-pie` CRT gate, and the bounded `owned-static-sysroot` installed

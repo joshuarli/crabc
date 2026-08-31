@@ -15662,6 +15662,121 @@ class X86ParityLedgerTests(unittest.TestCase):
         ):
             ledger.validate_ledger(data)
 
+    def test_personality_artifact_keeps_its_musl_static_contract(self) -> None:
+        data = self.data()
+        family = self.family(data, "libc.posix-runtime")
+        self.assertEqual(family["status"], "planned")
+        artifacts = family["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-personality"
+        )
+        self.assertNotIn("capabilities", artifact)
+        for owner in (
+            "libc/src/c_abi/x86_64/personality.rs",
+            "include/sys/personality.h",
+            "compat/x86_64/personality_header_abi_probe.c",
+            "compat/x86_64/personality_header_abi_probe.cpp",
+            "compat/x86_64/run_personality_header_abi.sh",
+            "compat/x86_64/libc_personality_probe.c",
+            "compat/x86_64/libc_personality_start.S",
+            "compat/x86_64/run_libc_personality.sh",
+        ):
+            self.assertIn(owner, artifact["source_owners"])
+        self.assertEqual(
+            {evidence["command"] for evidence in artifact["native_evidence"]},
+            {"./scripts/dev-x86_64.sh libc-personality"},
+        )
+        for phrase in (
+            "one-symbol process-personality compatibility artifact",
+            "planned `libc.posix-runtime`",
+            "exactly `personality(unsigned long)`",
+            "`src/linux/personality.c::personality`",
+            "raw Linux x86 syscall 135",
+            "0xffffffffUL",
+            "non-mutating query",
+            "prior-personality",
+            "stale initial-TLS `errno`",
+            "strict/POSIX/X/Open/GNU C and C++17",
+            "unconditional `int personality(unsigned long)`",
+            "PER_LINUX=0",
+            "PER_MASK=0xff",
+            "neither personality policy nor executable transition",
+            "prctl/capability/namespace controls",
+            "credential or identity/session families",
+            "scheduler state",
+            "pthread lifecycle",
+            "family completion, promotion, or public x86 support",
+        ):
+            self.assertIn(phrase, artifact["description"])
+        prerequisites = artifact["x86_abi_prerequisites"]
+        self.assertTrue(
+            any(
+                "unsigned long" in prerequisite
+                and "rdi" in prerequisite
+                and "eax" in prerequisite
+                and "135" in prerequisite
+                and "prior personality" in prerequisite
+                and "0xffffffffUL" in prerequisite
+                for prerequisite in prerequisites
+            )
+        )
+        self.assertTrue(
+            any(
+                "src/linux/personality.c::personality" in prerequisite
+                and "__syscall_ret" in prerequisite
+                and "prctl" in prerequisite
+                and "scheduler" in prerequisite
+                for prerequisite in prerequisites
+            )
+        )
+        self.assertTrue(
+            any(
+                "raw and C 0xffffffffUL query agreement" in prerequisite
+                and "stale ERANGE" in prerequisite
+                and "unchanged second raw query" in prerequisite
+                and "stale E2BIG" in prerequisite
+                for prerequisite in prerequisites
+            )
+        )
+        self.assertIn("sys/personality.h", artifact["x86_header_prerequisites"][0])
+        self.assertIn("SYS_personality=135", artifact["x86_header_prerequisites"][0])
+        self.assertIn(
+            "libc/src/c_abi/x86_64/personality.rs", family["source_owners"]
+        )
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-personality"
+        )
+        artifact["description"] = "private process helper"
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "static-c-personality description omits"
+        ):
+            ledger.validate_ledger(data)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-personality"
+        )
+        evidence = artifact["native_evidence"]
+        assert isinstance(evidence, list) and isinstance(evidence[0], dict)
+        evidence[0]["command"] = "./scripts/dev-x86_64.sh personality-reference"
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "closed libc-personality command"
+        ):
+            ledger.validate_ledger(data)
+
     def test_setfsgid_artifact_keeps_its_musl_static_contract(self) -> None:
         data = self.data()
         family = self.family(data, "libc.posix-runtime")

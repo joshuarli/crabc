@@ -153,6 +153,7 @@ X86_RUNTIME_FOUNDATION_LIBC_SOURCES = {
     Path("libc/src/c_abi/x86_64/clone.rs"),
     Path("libc/src/c_abi/x86_64/credentials.rs"),
     Path("libc/src/c_abi/x86_64/credential_observation.rs"),
+    Path("libc/src/c_abi/x86_64/personality.rs"),
     Path("libc/src/c_abi/x86_64/setfsgid.rs"),
     Path("libc/src/c_abi/x86_64/setfsuid.rs"),
     Path("libc/src/c_abi/x86_64/child_reaping.rs"),
@@ -3740,6 +3741,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         '#[path = "timestamp_updates.rs"]',
         '#[path = "credentials.rs"]',
         '#[path = "credential_observation.rs"]',
+        '#[path = "personality.rs"]',
         '#[path = "setfsgid.rs"]',
         '#[path = "setfsuid.rs"]',
         '#[path = "memory.rs"]',
@@ -10267,6 +10269,44 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
             "artifact must export only getgroups, getresuid, and getresgid"
         )
 
+    personality_source = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "personality.rs"
+    personality_text = personality_source.read_text(errors="replace")
+    for required in (
+        "Bounded Linux/x86-64 static process-personality boundary",
+        "src/linux/personality.c::personality",
+        "SYS_PERSONALITY",
+        "c_status(result)",
+    ):
+        if required not in personality_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/personality.rs: selected static "
+                f"process-personality boundary is missing {required!r}"
+            )
+    personality_exports = set(
+        re.findall(
+            r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(',
+            personality_text,
+        )
+    )
+    if personality_exports != {"personality"}:
+        errors.append(
+            "libc/src/c_abi/x86_64/personality.rs: selected static "
+            "artifact must export only personality"
+        )
+    for forbidden in (
+        "SYS_PRCTL",
+        "SYS_CAPGET",
+        "SYS_CAPSET",
+        "SYS_SETNS",
+        "SYS_UNSHARE",
+        "pthread_",
+    ):
+        if forbidden in personality_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/personality.rs: selected static "
+                f"process-personality boundary must not select {forbidden!r}"
+            )
+
     setfsuid_source = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "setfsuid.rs"
     setfsuid_text = setfsuid_source.read_text(errors="replace")
     for required in (
@@ -10507,6 +10547,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         sched_getparam_text,
         sched_setparam_text,
         sched_getaffinity_text,
+        personality_text,
         setfsgid_text,
         setfsuid_text,
         signal_pending_text,
@@ -10755,6 +10796,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         "sched_setparam",
         "sched_getaffinity",
         "sched_getscheduler",
+        "personality",
         "setfsgid",
         "setfsuid",
         "kill",
@@ -11087,7 +11129,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
             "POSIX _exit forwarding, descriptor-entry, selected filesystem-access, bounded descriptor-control, timestamp updates, and descriptor-I/O, selected process-resources, selected readiness/signal-waits, "
             "selected socket transport and selected socket-message/options, selected system-observation, selected UTS-identity, "
             "selected numeric-address codecs, immutable IPv6 unspecified/loopback address data objects, and legacy classful IPv4 arithmetic, fixed-profile h_errno message text, byte-string, legacy-memory adapters, source-backed memccpy/mempcpy, caller-buffer strsep, random-entropy, memory-search, C-string-copy, immutable error-string, "
-            "fixed-C-locale ctype, integer-arithmetic, integer-parsing, intmax-arithmetic, one-symbol filesystem-credential setfsgid and setfsuid, credential-observation, and "
+            "fixed-C-locale ctype, integer-arithmetic, integer-parsing, intmax-arithmetic, one-symbol process-personality, one-symbol filesystem-credential setfsgid and setfsuid, credential-observation, and "
             "raw auxiliary-vector observation, startup-derived secure-environment, and environment-backed login-name observation, find-first-set, startup-published program names, short/GNU-long "
             "getopt state and aliases, standalone linear search, callback-tree/hash-table search, and the "
             "bounded no-catalog gettext/message-catalog ABI, "
@@ -11098,6 +11140,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         ("stat_compat.rs", stat_text),
         ("credentials.rs", credentials_text),
         ("credential_observation.rs", credential_observation_text),
+        ("personality.rs", personality_text),
         ("setfsgid.rs", setfsgid_text),
         ("setfsuid.rs", setfsuid_text),
         ("auxv_observation.rs", auxv_observation_text),

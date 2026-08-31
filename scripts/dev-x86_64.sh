@@ -131,6 +131,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   sched-getaffinity-header-abi  compile x86 GNU sched_getaffinity C/C++ declarations
   setfsuid-header-abi  compile x86 sys/fsuid.h setfsuid C/C++ declarations
   setfsgid-header-abi  compile x86 sys/fsuid.h setfsgid C/C++ declarations
+  personality-header-abi  compile x86 sys/personality.h C/C++ declarations
   termios-header-abi  compile the staged x86 C/C++ GNU termios-header layouts
   ctermid-header-abi  compile the staged x86 C/C++ POSIX/XSI ctermid declaration
   gethostid-header-abi  compile the staged x86 C/C++ X/Open gethostid declaration
@@ -167,6 +168,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-sched-getaffinity  run the static x86 GNU scheduler-affinity observation slice
   libc-setfsuid  run the static x86 filesystem-credential setfsuid slice
   libc-setfsgid  run the static x86 filesystem-credential setfsgid slice
+  libc-personality  run the static x86 process-personality slice
   libc-sigaddset-sigdelset-sigfillset  run the static x86 crabc-libc POSIX signal-set mutation slice
   libc-extended-attributes  run the static x86 crabc-libc extended-attribute slice
   libc-pathname-lifecycle  run the static x86 crabc-libc pathname-lifecycle slice
@@ -578,6 +580,14 @@ effective-ID requests, including stale `errno` on ordinary returns. It does
 not select user filesystem credentials, credential synchronization, account
 data, process/session control, scheduler state, pthread lifecycle, dynamic
 libc, or application startup.
+`libc-personality` is a separate one-entry Linux process-personality boundary.
+Pinned musl's `src/linux/personality.c` forwards syscall 135 and preserves the
+current personality returned by Linux's all-ones non-mutating query instead of
+inventing a zero-or-error status. The common reference/candidate fixture checks
+raw/C query agreement and stale `errno` on ordinary returns. It does not select
+personality policy, executable transition, prctl/capability/namespace controls,
+credential or identity/session families, scheduler state, pthread lifecycle,
+dynamic libc, or application startup.
 `libc-sigaddset-sigdelset-sigfillset` is a separate three-entry POSIX
 signal-set mutation boundary. It follows musl's one-word x86 helpers: fill
 writes `0xfffffffc7fffffff`, while add/delete reject 0, 32--34, and 65 with
@@ -2524,6 +2534,10 @@ run_libc_setfsgid_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_setfsgid.sh
 }
 
+run_libc_personality_probe() {
+    run_in_container bash /workspace/compat/x86_64/run_libc_personality.sh
+}
+
 run_libc_sigset_mutation_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_sigaddset_sigdelset_sigfillset.sh
 }
@@ -2662,6 +2676,10 @@ run_setfsuid_header_abi() {
 
 run_setfsgid_header_abi() {
     run_in_container bash /workspace/compat/x86_64/run_setfsgid_header_abi.sh
+}
+
+run_personality_header_abi() {
+    run_in_container bash /workspace/compat/x86_64/run_personality_header_abi.sh
 }
 
 run_termios_header_abi() {
@@ -3856,8 +3874,8 @@ shift
 
 case "$command" in
     timerfd-header-abi|signalfd-header-abi) ;;
-    libc-timerfd|libc-signalfd|libc-sigpause|libc-sigisemptyset|libc-sigandset-sigorset|libc-sigpending|libc-sigrtmax|libc-sigrtmin|libc-sched-getparam|libc-sched-setparam|libc-sched-getaffinity|libc-setfsuid|libc-setfsgid|libc-sched-getscheduler|libc-sigaddset-sigdelset-sigfillset) ;;
-    sched-getscheduler-header-abi|sched-getparam-header-abi|sched-setparam-header-abi|sched-getaffinity-header-abi|setfsuid-header-abi|setfsgid-header-abi) ;;
+    libc-timerfd|libc-signalfd|libc-sigpause|libc-sigisemptyset|libc-sigandset-sigorset|libc-sigpending|libc-sigrtmax|libc-sigrtmin|libc-sched-getparam|libc-sched-setparam|libc-sched-getaffinity|libc-setfsuid|libc-setfsgid|libc-personality|libc-sched-getscheduler|libc-sigaddset-sigdelset-sigfillset) ;;
+    sched-getscheduler-header-abi|sched-getparam-header-abi|sched-setparam-header-abi|sched-getaffinity-header-abi|setfsuid-header-abi|setfsgid-header-abi|personality-header-abi) ;;
     ctermid-header-abi|gethostid-header-abi|isatty-header-abi|tcgetpgrp-header-abi|tcsetpgrp-header-abi|getpass-header-abi|libc-ctermid|libc-gethostid|libc-isatty|libc-tcgetpgrp|libc-tcsetpgrp|libc-getpass|mkfifo-header-abi|mkfifoat-header-abi|libc-mkfifo|libc-mkfifoat|mktemp-header-abi|libc-mktemp) ;;
     stdio-permanent-line-io-header-abi|stdio-octal-hex-scan-header-abi) ;;
     math-complex-complete-header-abi|libc-math-complex-complete) ;;
@@ -4405,6 +4423,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "setfsgid-header-abi takes no arguments"
         ensure_image
         run_setfsgid_header_abi
+        ;;
+    personality-header-abi)
+        [ "$#" -eq 0 ] || fail "personality-header-abi takes no arguments"
+        ensure_image
+        run_personality_header_abi
         ;;
     termios-header-abi)
         [ "$#" -eq 0 ] || fail "termios-header-abi takes no arguments"
@@ -5740,6 +5763,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "libc-setfsgid takes no arguments"
         ensure_image
         run_libc_setfsgid_probe
+        ;;
+    libc-personality)
+        [ "$#" -eq 0 ] || fail "libc-personality takes no arguments"
+        ensure_image
+        run_libc_personality_probe
         ;;
     libc-sigaddset-sigdelset-sigfillset)
         [ "$#" -eq 0 ] || fail "libc-sigaddset-sigdelset-sigfillset takes no arguments"

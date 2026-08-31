@@ -591,6 +591,7 @@ optopt
 optreset
 pathconf
 pause
+personality
 pipe
 pipe2
 poll

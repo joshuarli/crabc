@@ -1755,6 +1755,20 @@ LP64 `cpu_set_t` layout. It does not select affinity mutation, CPU helpers,
 scheduler policy or parameters, pthread affinity/lifecycle, family/platform
 parity, promotion, or public x86 support.
 
+`./scripts/dev-x86_64.sh libc-personality` is a separate private
+`static-c-personality` artifact inside planned `libc.posix-runtime`. Pinned
+musl 1.2.6's `src/linux/personality.c::personality` forwards Linux x86 raw
+syscall 135. Its true-static project-header C body uses only the unsigned-long
+all-ones `0xffffffffUL` non-mutating query, comparing raw/C current-personality
+results and proving stale initial-TLS `errno` on ordinary returns. The paired
+strict/POSIX/X/Open/GNU C/C++ `<sys/personality.h>` gate retains the
+unconditional `int personality(unsigned long)` declaration, eight-byte x86
+unsigned long, `PER_LINUX=0`/`PER_MASK=0xff`, syscall macro, and unmangled C
+linkage. It excludes personality policy or executable transitions,
+prctl/capability/namespace controls, credential or identity/session families,
+scheduler state, pthread lifecycle, libc.so, CRT, loader, sysroot,
+family/platform parity, promotion, and public x86 support.
+
 `./scripts/dev-x86_64.sh libc-setfsuid` is a separate private
 `static-c-setfsuid` artifact inside planned `libc.posix-runtime`. Pinned musl
 1.2.6's `src/linux/setfsuid.c::setfsuid` forwards Linux x86 raw syscall 122

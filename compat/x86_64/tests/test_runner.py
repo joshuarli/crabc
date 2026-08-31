@@ -1369,8 +1369,8 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         )
         expected_groups = (
             "timerfd-header-abi|signalfd-header-abi",
-            "libc-timerfd|libc-signalfd|libc-sigpause|libc-sigisemptyset|libc-sigandset-sigorset|libc-sigpending|libc-sigrtmax|libc-sigrtmin|libc-sched-getparam|libc-sched-setparam|libc-sched-getaffinity|libc-setfsuid|libc-setfsgid|libc-sched-getscheduler|libc-sigaddset-sigdelset-sigfillset",
-            "sched-getscheduler-header-abi|sched-getparam-header-abi|sched-setparam-header-abi|sched-getaffinity-header-abi|setfsuid-header-abi|setfsgid-header-abi",
+            "libc-timerfd|libc-signalfd|libc-sigpause|libc-sigisemptyset|libc-sigandset-sigorset|libc-sigpending|libc-sigrtmax|libc-sigrtmin|libc-sched-getparam|libc-sched-setparam|libc-sched-getaffinity|libc-setfsuid|libc-setfsgid|libc-personality|libc-sched-getscheduler|libc-sigaddset-sigdelset-sigfillset",
+            "sched-getscheduler-header-abi|sched-getparam-header-abi|sched-setparam-header-abi|sched-getaffinity-header-abi|setfsuid-header-abi|setfsgid-header-abi|personality-header-abi",
             "ctermid-header-abi|gethostid-header-abi|isatty-header-abi|tcgetpgrp-header-abi|tcsetpgrp-header-abi|getpass-header-abi|libc-ctermid|libc-gethostid|libc-isatty|libc-tcgetpgrp|libc-tcsetpgrp|libc-getpass|mkfifo-header-abi|mkfifoat-header-abi|libc-mkfifo|libc-mkfifoat|mktemp-header-abi|libc-mktemp",
             "stdio-permanent-line-io-header-abi|stdio-octal-hex-scan-header-abi",
             "math-complex-complete-header-abi|libc-math-complex-complete",
@@ -6321,6 +6321,135 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn("run_libc_setfsgid_probe()", dispatcher)
         self.assertIn("setfsgid-header-abi)", dispatcher)
         self.assertIn("libc-setfsgid)", dispatcher)
+
+    def test_libc_static_c_abi_personality_artifact_stays_bounded(self) -> None:
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        source_path = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "personality.rs"
+        c_header_path = ROOT / "compat" / "x86_64" / "personality_header_abi_probe.c"
+        cxx_header_path = (
+            ROOT / "compat" / "x86_64" / "personality_header_abi_probe.cpp"
+        )
+        header_runner_path = (
+            ROOT / "compat" / "x86_64" / "run_personality_header_abi.sh"
+        )
+        probe_path = ROOT / "compat" / "x86_64" / "libc_personality_probe.c"
+        start_path = ROOT / "compat" / "x86_64" / "libc_personality_start.S"
+        artifact_runner_path = (
+            ROOT / "compat" / "x86_64" / "run_libc_personality.sh"
+        )
+        for path in (
+            source_path,
+            c_header_path,
+            cxx_header_path,
+            header_runner_path,
+            probe_path,
+            start_path,
+            artifact_runner_path,
+        ):
+            self.assertTrue(path.is_file(), f"missing personality input: {path}")
+        self.assertTrue(header_runner_path.stat().st_mode & 0o111)
+        self.assertTrue(artifact_runner_path.stat().st_mode & 0o111)
+
+        source = source_path.read_text(encoding="utf-8")
+        c_header = c_header_path.read_text(encoding="utf-8")
+        cxx_header = cxx_header_path.read_text(encoding="utf-8")
+        header_runner = header_runner_path.read_text(encoding="utf-8")
+        probe = probe_path.read_text(encoding="utf-8")
+        start = start_path.read_text(encoding="utf-8")
+        artifact_runner = artifact_runner_path.read_text(encoding="utf-8")
+        static_exports = {
+            line
+            for line in (
+                ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+            ).read_text(encoding="utf-8").splitlines()
+            if line and not line.startswith("#")
+        }
+        parity_ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        dispatcher = RUNNER.read_text(encoding="utf-8")
+
+        self.assertIn('#[path = "personality.rs"]', static_root)
+        for required in (
+            "Bounded Linux/x86-64 static process-personality boundary",
+            "src/linux/personality.c::personality",
+            "SYS_PERSONALITY",
+            "c_status(result)",
+            'pub unsafe extern "C" fn personality',
+        ):
+            self.assertIn(required, source)
+        for forbidden in (
+            "SYS_PRCTL",
+            "SYS_CAPGET",
+            "SYS_CAPSET",
+            "SYS_SETNS",
+            "SYS_UNSHARE",
+            "pthread_",
+        ):
+            self.assertNotIn(forbidden, source)
+
+        for required in (
+            "__typeof__(&personality)",
+            "personality_signature)(unsigned long)",
+            "sizeof(unsigned long) == 8",
+            "SYS_personality == 135",
+        ):
+            self.assertIn(required, c_header)
+        for required in (
+            "decltype(&personality)",
+            "personality_signature",
+            "sizeof(unsigned long) == 8",
+            'extern "C" void crabc_personality_linkage_witness',
+        ):
+            self.assertIn(required, cxx_header)
+        for required in (
+            "strict posix xopen gnu",
+            "personality_header_abi_probe.c",
+            "unmangled personality",
+            "project trace omitted",
+        ):
+            self.assertIn(required, header_runner)
+
+        for required in (
+            "SYS_personality == 135",
+            "raw_personality",
+            "0xffffffffUL",
+            "CRABC_PERSONALITY_FREESTANDING",
+        ):
+            self.assertIn(required, probe)
+        for required in (
+            "call __crabc_x86_static_tls_bootstrap",
+            "crabc_x86_64_personality_probe",
+            "exit_group",
+        ):
+            self.assertIn(required, start)
+        self.assertNotIn("arch_prctl", start)
+
+        for required in (
+            "run_musl_oracle.sh",
+            "run_personality_header_abi.sh",
+            "static_c_abi_exports.txt",
+            "-nostdlib -static",
+            "-Wl,-e,_start",
+            "-Wl,--no-undefined",
+            "R_X86_64_TPOFF",
+            "assert_personality_boundary",
+            "personality does not issue syscall 135",
+            "candidate unexpectedly pulls",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn("--whole-archive", artifact_runner)
+        self.assertIn("personality", static_exports)
+        self.assertIn('id = "static-c-personality"', parity_ledger)
+        self.assertIn(
+            'command = "./scripts/dev-x86_64.sh libc-personality"', parity_ledger
+        )
+        self.assertIn("run_personality_header_abi()", dispatcher)
+        self.assertIn("run_libc_personality_probe()", dispatcher)
+        self.assertIn("personality-header-abi)", dispatcher)
+        self.assertIn("libc-personality)", dispatcher)
 
     def test_libc_static_c_abi_sigpending_artifact_stays_bounded(self) -> None:
         static_root = (
