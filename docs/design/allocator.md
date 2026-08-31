@@ -1581,22 +1581,30 @@ then generic pointer-first nonlocal free consumes A's source client. It never
 borrows A's route or engine. A true `LiveAllocationPageState::Detached` source
 has no W03 producer, so the unpublished B replacement rolls back and returns
 `Retained`. Generic pointer-first `native_free` may also consume A's detached
-client. B's own `realloc` remains a separate current-owner operation. On the
-terminal A free, `NativePostExitRouteCompletion` is retained in B TLS beside
-B's local session; the validated lane detaches B's still-live client into B's
-successor route before B completes its ordinary attachment finish. A fresh C
-then releases that successor; neither route's parked count or admission can
-release early. A prepared B exit and a B that already holds a completion remain
-rejected. The direct `native_post_exit_with_local_session` regression proves
-the PageMap-query/replacement/free boundary beside B-local replacement and,
-under its scalar audit, the `A + B -> B-successor -> none` admission sequence;
-the selected owner-exit C fixture proves the same replacement/free boundary
+client. B's own `realloc` remains a separate current-owner operation. A's
+completed persistent owner carries no worker-admission claim, and consuming an
+A source does not recreate one. B may continue ordinary local allocation, free,
+and reallocation through B's persistent owner, but that owner neither borrows
+A's route nor makes B's attachment responsible for an A-side completion. A
+consumed A source does not block ticket zero merely because B remains attached.
+
+The direct `native_post_exit_with_local_session` regression proves this bounded
+lifecycle: A's completed persistent owner releases its admission before B
+attaches; B then has the sole admission while it consumes A's exact sources and
+continues its own local session; B's normal finish publishes B's own successor
+client but leaves no worker-admission claim; and C has the sole admission only
+while it frees that successor and finishes. The regression exposes no route,
+registry, client ledger, page, or allocator capability. W01/W03's direct
+PageMap path does not make post-exit registry or completion scaffolding a
+normal free, realloc, or scheduling path.
+
+The selected owner-exit C fixture proves the same replacement/free boundary
 without exposing a route address, ledger, page, or allocator capability. Its
 `native_mimalloc_post_exit_split_releaser` companion proves the same existing
-aggregate can cross B then C: B finishes after a nonterminal exact subset, C
-performs the terminal exact frees, and only C's normal finish returns A's
-admission. It introduces neither concurrent route frees nor a pointer
-capability.
+aggregate can cross B then C: B finishes after a nonterminal exact subset and C
+performs the terminal exact frees; each current attachment releases only its
+own admission at normal finish. It introduces neither concurrent route frees
+nor a pointer capability.
 
 The direct `native_post_exit_registry_high_water` regression enables a
 test-only scalar audit, establishes three simultaneously detached routes, and
