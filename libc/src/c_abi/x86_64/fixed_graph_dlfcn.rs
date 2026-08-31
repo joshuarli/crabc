@@ -756,7 +756,13 @@ pub unsafe extern "C" fn dlinfo(
 /// # Safety
 ///
 /// `callback`, when present, must obey the C `dl_iterate_phdr` callback
-/// contract for each invocation and `data` must satisfy that callback.
+/// contract for each invocation and `data` must satisfy that callback. Pinned
+/// musl 1.2.6 `ldso/dynlink.c:dl_iterate_phdr` invokes each callback before
+/// taking its reader lock for the next image. The copied snapshot likewise
+/// returns its loader lock before this loop, and this bridge never holds its
+/// diagnostic-slot lock across the callback. A callback may therefore consume
+/// one already-pending same-thread `dlerror` state; this is not admission for
+/// callback-driven mapping, graph mutation, or a general reentrant loader.
 #[no_mangle]
 pub unsafe extern "C" fn dl_iterate_phdr(
     callback: Option<unsafe extern "C" fn(*mut DlPhdrInfo, usize, *mut c_void) -> c_int>,

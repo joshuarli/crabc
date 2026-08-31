@@ -1823,7 +1823,12 @@ continue to clear output and fail closed. The gate also proves that only this
 non-runtime public bridge returns musl's permanent main
 handle with clear `dlerror` for `dlopen(NULL, RTLD_NOLOAD)` before mode
 processing; the bounded runtime-mapping sibling retains its bare NULL/NOLOAD
-initial-object rejection. The gate also proves stale handles, malformed and absent records, and copied
+initial-object rejection. Musl `ldso/dynlink.c:dl_iterate_phdr` invokes a
+callback before taking its next-image reader lock; after the existing
+unknown-object failure, the first callback consumes that nonempty same-thread
+diagnostic, returns `74`, and leaves the next `dlerror` null. This is not
+callback-driven mapping, graph mutation, or general loader reentrancy. The
+gate also proves stale handles, malformed and absent records, and copied
 introspection, while continuing to exclude search, mutation, global promotion,
 RTLD_NEXT, finalization, and unload.
 It remains a staged fixed-graph artifact, not capability or platform promotion.

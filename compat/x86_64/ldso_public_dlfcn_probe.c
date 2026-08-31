@@ -85,6 +85,20 @@ static int stop_after_one(struct dl_phdr_info *information, size_t size, void *o
     return 73;
 }
 
+struct callback_error_state {
+    int visits;
+    char *error;
+};
+
+static int consume_pending_error(struct dl_phdr_info *information, size_t size, void *opaque) {
+    (void)information;
+    (void)size;
+    struct callback_error_state *state = opaque;
+    ++state->visits;
+    state->error = typed_dlerror();
+    return state->error != NULL && state->error[0] != '\0' ? 74 : 93;
+}
+
 struct error_worker {
     volatile int ready;
     volatile int go;
@@ -286,8 +300,11 @@ int main(void) {
 #endif
 
     typed_dlerror();
-    if (typed_dlopen("libcrabc-not-loaded.so", RTLD_NOW | RTLD_LOCAL) != NULL
-        || typed_dlerror() == NULL || typed_dlerror() != NULL) return 54;
+    if (typed_dlopen("libcrabc-not-loaded.so", RTLD_NOW | RTLD_LOCAL) != NULL) return 54;
+    struct callback_error_state callback_error = {0, NULL};
+    if (typed_dl_iterate_phdr(consume_pending_error, &callback_error) != 74
+        || callback_error.visits != 1 || callback_error.error == NULL
+        || typed_dlerror() != NULL) return 54;
 
 #ifdef CRABC_PUBLIC_DLFCN_FREESTANDING
     if (typed_dlsym(RTLD_NEXT, "mid_value") != NULL || typed_dlerror() == NULL
