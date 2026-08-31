@@ -254,6 +254,8 @@ mod float_parse;
 mod float_parse_locale;
 #[path = "getsubopt.rs"]
 mod getsubopt;
+#[path = "l64a.rs"]
+mod l64a;
 #[path = "intmax_arithmetic.rs"]
 mod intmax_arithmetic;
 #[path = "ffs.rs"]

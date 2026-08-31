@@ -496,6 +496,7 @@ jn
 jnf
 kill
 killpg
+l64a
 labs
 lchmod
 lchown

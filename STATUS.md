@@ -209,6 +209,18 @@ packet I/O, socket, netdb/database, parser sibling, integer byte-order helper,
 allocation, syscall, interface, or Ethernet dependency; it is not resolver
 completion, promotion, or public x86 support.
 
+`./scripts/dev-x86_64.sh libc-l64a` is a private `static-c-l64a` artifact
+inside still-planned `libc.c-abi-compat`. It isolates only the `l64a` half of
+pinned musl 1.2.6 `src/misc/a64l.c`: a one-symbol true `-nostdlib -static`
+candidate proves low-32-bit, low-to-high radix-64 encoding into the shared
+seven-byte result, the same returned address, and overwrite by a later call.
+Its project/pinned-musl C/C++ `<stdlib.h>` matrix hides the declaration in
+strict/POSIX profiles and exposes exact unmangled `char *(long)` linkage in
+X/Open, GNU, and BSD profiles. Callers must synchronize concurrent result
+access and copy the result before a later call. The shared-source `a64l`
+decoder, general numeric conversion, errno/TLS, allocator, runtime, family
+completion, promotion, and public x86 support remain unselected.
+
 `./scripts/dev-x86_64.sh libc-login-name` is a private
 `static-c-login-name` artifact inside planned `libc.posix-runtime`. Its
 pinned-musl and freestanding-static routes compose the selected bounded

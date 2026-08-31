@@ -189,6 +189,7 @@ X86_RUNTIME_FOUNDATION_LIBC_SOURCES = {
     Path("libc/src/c_abi/x86_64/integer_arithmetic.rs"),
     Path("libc/src/c_abi/x86_64/integer_parse.rs"),
     Path("libc/src/c_abi/x86_64/intmax_arithmetic.rs"),
+    Path("libc/src/c_abi/x86_64/l64a.rs"),
     Path("libc/src/c_abi/x86_64/math_complex.rs"),
     Path("libc/src/c_abi/x86_64/complex_projection.rs"),
     Path("libc/src/c_abi/x86_64/math_complex_complete.rs"),
@@ -3846,6 +3847,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         '#[path = "memory_search.rs"]',
         '#[path = "string_copy.rs"]',
         '#[path = "error_strings.rs"]',
+        '#[path = "l64a.rs"]',
         '#[path = "strsignal.rs"]',
         '#[path = "ctype.rs"]',
         '#[path = "locale_ctype.rs"]',
@@ -11859,6 +11861,55 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
                 f"boundary selects forbidden runtime seam {forbidden!r}"
             )
 
+    l64a_source = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "l64a.rs"
+    l64a_text = l64a_source.read_text(errors="replace")
+    for required in (
+        "musl 1.2.6",
+        "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+        "src/misc/a64l.c",
+        "a64l.lo",
+        "seven-byte",
+        "DIGITS",
+        "L64A_RESULT",
+        "remaining = value as u32",
+        'pub unsafe extern "C" fn l64a',
+        "must externally synchronize access",
+    ):
+        if required not in l64a_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/l64a.rs: selected static shared "
+                f"radix-64 result boundary is missing {required!r}"
+            )
+    l64a_exports = set(
+        re.findall(
+            r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(',
+            l64a_text,
+        )
+    )
+    if l64a_exports != {"l64a"}:
+        errors.append(
+            "libc/src/c_abi/x86_64/l64a.rs: selected static artifact must "
+            "export only l64a"
+        )
+    if re.findall(r"(?m)^static mut (\w+)", l64a_text) != ["L64A_RESULT"]:
+        errors.append(
+            "libc/src/c_abi/x86_64/l64a.rs: selected static artifact must own "
+            "exactly one shared mutable result buffer"
+        )
+    for forbidden in (
+        "raw_syscall",
+        "errno::",
+        "thread_local",
+        "crabc_core",
+        "crabc_mimalloc",
+        "alloc::",
+    ):
+        if forbidden in l64a_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/l64a.rs: selected static shared "
+                f"radix-64 result boundary widens into {forbidden!r}"
+            )
+
     ctype_source = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "ctype.rs"
     ctype_text = ctype_source.read_text(errors="replace")
     for required in (
@@ -13094,6 +13145,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         ("string_copy.rs", string_copy_text),
         ("error_strings.rs", error_strings_text),
         ("locale_error_strings.rs", locale_error_strings_text),
+        ("l64a.rs", l64a_text),
         ("strsignal.rs", strsignal_text),
         ("ctype.rs", ctype_text),
         ("locale_ctype.rs", locale_ctype_text),

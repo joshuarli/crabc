@@ -11860,6 +11860,53 @@ oracle = [
 ]
 
 [[family.verified_artifact]]
+id = "static-c-l64a"
+description = "Private native x86 selected-static-archive `l64a` artifact inside still-planned `libc.c-abi-compat`. One one-symbol Rust archive member and a true `-nostdlib -static` candidate select only musl's `l64a` low-32-bit radix-64 encoder: it casts the LP64 `long` input to `uint32_t`, emits at most six low-to-high `./0-9A-Za-z` digits, terminates one process-global `static char s[7]`, and returns that same mutable address. Musl's shared `src/misc/a64l.c` and `a64l.lo` also define the state-free `a64l` decoder; this source split deliberately excludes `a64l` and all decode behavior. Strict/POSIX C/C++ hides the declaration, while X/Open 700, GNU, and BSD profiles expose exactly unmangled `char *(long)` linkage. The shared result is non-reentrant: callers synchronize concurrent calls and copy a result before a later call overwrites it. This direct leaf owns no errno, TLS, locale, allocator, syscall, or runtime edge. It does not alter separately selected Rust-facade `numeric.scalar-legacy-callback` accounting, complete `legacy.misc`, select general numeric parsing/conversion, libc.so, CRT, loader, sysroot, family completion, promotion, or public x86 support."
+source_owners = [
+  "compat/upstreams.toml",
+  "compat/crabc-rs/coverage.toml",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/l64a.rs",
+  "include/features.h",
+  "include/bits/alltypes.h",
+  "include/stdlib.h",
+  "compat/abi/musl-1.2.6/aarch64/libc.a.static.tsv",
+  "compat/x86_64/l64a_header_abi_probe.c",
+  "compat/x86_64/l64a_header_abi_probe.cpp",
+  "compat/x86_64/run_l64a_header_abi.sh",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/libc_l64a_probe.c",
+  "compat/x86_64/libc_l64a_start.S",
+  "compat/x86_64/run_libc_l64a.sh",
+  "compat/x86_64/aarch64_parity_inventory.py",
+  "compat/x86_64/aarch64_parity_inventory.json",
+  "compat/x86_64/tests/test_aarch64_parity_inventory.py",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "compat/x86_64/README.md",
+  "STATUS.md",
+  "x86-64.md",
+  "scripts/dev-x86_64.sh",
+  "scripts/check_structure.py",
+]
+x86_abi_prerequisites = [
+  "The selected SysV AMD64 LP64 C boundary passes the signed `long` input in rdi and returns the `char *` result address in rax. The source converts through `uint32_t`, so only the low 32 bits contribute; the at-most-six low-to-high six-bit digits occupy a zero-initialized seven-byte process-global object and the seventh byte always remains available for NUL.",
+  "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417 maps `src/misc/a64l.c::l64a` directly to `libc/src/c_abi/x86_64/l64a.rs`. Musl's shared `a64l.lo` and source also define `a64l`; the target-local `DIGITS` table and `remaining as u32` loop preserve `*p = digits[x & 63]; x >>= 6; *p = 0` without importing the sibling decoder or a byte-string archive leaf.",
+  "The selected static object has exactly one ordinary mutable seven-byte result buffer. Its zero-initialized first call for zero, same-address successive calls, and overwrite-visible prior pointer are differentially proved. A caller must not use a result as independent storage and must externally synchronize concurrent calls or prior-result reads; this is musl's non-reentrant static-storage contract, not TLS, locking, allocation, or a general runtime-state claim.",
+]
+x86_header_prerequisites = [
+  "The pinned-musl/project `<stdlib.h>` C11/C++17 matrix proves strict C/C++ and POSIX.1-2008 hide `l64a`, while X/Open 700, GNU, and BSD profiles expose exactly `char *(long)` with unmangled C++ linkage. The raw project pass uses `-nostdinc`/`-nostdinc++`, only compiler builtin headers, and traces project `stdlib.h`, `features.h`, and `bits/alltypes.h`; it is declaration evidence, not general stdlib/header-family completion.",
+]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-l64a", scope = "Pinned-musl project-header X/Open C execution and shared `a64l.lo` provenance precede a true x86 one-member `-nostdlib -static` candidate. The C/C++ header gate ratchets strict/POSIX hiding, X/Open/GNU/BSD visibility, and unmangled linkage. The differential checks exact alphabet, low-to-high ordering, low-32-bit truncation, zero output, same-address overwrite, and reference-only stale errno. Archive and final-ELF evidence require source provenance for both `l64a`/`a64l`, select exactly `l64a` plus its seven-byte mutable result object, and reject `a64l`, unresolved symbols, interpreter/DT_NEEDED, PLT, TLS/errno, calls/syscalls, byte-string or numeric-parsing helpers, allocator, and ambient runtime inputs. This does not alter Rust-facade accounting, select legacy.misc/general numeric conversion, complete the family, promote x86, or claim public x86 support." }]
+oracle = [
+  { kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source, installed `<stdlib.h>` declaration, shared static a64l.lo provenance, and C behavior oracle for src/misc/a64l.c::l64a: uint32_t low-word conversion, exact low-to-high alphabet, seven-byte static output, same-address overwrite, and no errno. The source's separate a64l decoder half remains unselected." },
+  { kind = "elf-abi", source = "System V AMD64 psABI and pinned musl stdlib.h", role = "LP64 rdi long argument, rax mutable-char-pointer result, ordinary BSS static-object, and selected installed C/C++ declaration/linkage oracle for the freestanding candidate." },
+]
+
+[[family.verified_artifact]]
 id = "static-c-alloca-builtin"
 description = "Private native x86 allocation-adjacent compiler-builtin artifact within still-planned `libc.c-abi-compat`. The project `alloca.h` byte-matches pinned musl 1.2.6: it requests size_t from bits/alltypes.h, declares the legacy spelling, and maps `alloca` exactly to `__builtin_alloca`. Pinned-musl and project-header C/C++ compile probes retain that macro with no callable alloca reference. One positive-size dynamic-request/nested-frame C fixture then executes first through pinned musl and then as a true `-nostdlib -static` candidate made with no crabc archive, only the fixture and an exit syscall shim. The candidate proves 16-byte-aligned stack storage and preserved outer-frame bytes while rejecting a callable alloca symbol, public allocator/runtime symbols, PT_TLS, interpreter, DT_NEEDED, PLT, unresolved, dynamic-TLS, and ambient-backend paths. It is not a crabc-libc archive or runtime artifact and does not select `memory.allocator-basic`, `memory.allocator-observability`, callable linkage for the declared alloca spelling, heap allocation/lifecycle/interposition, alloca(0), stack-overflow/guard policy, VLA/unwind behavior, CRT/sysroot, family promotion, or public x86 support."
 source_owners = [
