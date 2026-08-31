@@ -68,8 +68,10 @@ for symbol in getlogin getlogin_r; do
     grep -Eq "[[:space:]][TW][[:space:]]${symbol}$" "$archive_symbols" ||
         fail "archive does not define $symbol"
 done
+# The separately selected secure-environment archive export is not part of
+# this candidate. Login-name still excludes passwd/utmp/terminal/allocator use.
 for unselected in getusershell setusershell endusershell getpwnam getpwuid \
-    getutent ttyname secure_getenv malloc free calloc realloc; do
+    getutent ttyname ctermid malloc free calloc realloc; do
     if grep -Eq "[[:space:]][TW][[:space:]]${unselected}$" "$archive_symbols"; then
         fail "archive accidentally exports unselected $unselected"
     fi

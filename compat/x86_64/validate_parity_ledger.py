@@ -1163,6 +1163,8 @@ CREDENTIAL_OBSERVATION_SYMBOLS = ("getgroups", "getresuid", "getresgid")
 
 LOGIN_NAME_SYMBOLS = ("getlogin", "getlogin_r")
 
+SECURE_ENVIRONMENT_SYMBOLS = ("secure_getenv",)
+
 CHILD_REAPING_SYMBOLS = ("wait", "waitpid", "waitid")
 
 IMMEDIATE_TERMINATION_SYMBOLS = ("_Exit",)
@@ -12325,6 +12327,259 @@ def require_static_environment_artifact(family: Mapping[str, Any]) -> None:
     )
 
 
+def require_static_secure_environment_artifact(family: Mapping[str, Any]) -> None:
+    """Keep secure_getenv distinct from raw auxv observation and non-promoting."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.posix-runtime].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [
+        entry
+        for entry in artifacts
+        if entry.get("id") == "static-c-secure-environment"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.posix-runtime must contain exactly one static-c-secure-environment artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-secure-environment must not promote libc.posix-runtime",
+    )
+    artifact = matching[0]
+    require(
+        "capabilities" not in artifact,
+        "static-c-secure-environment must not promote capabilities",
+    )
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for phrase in (
+        "GNU secure-environment observation",
+        "only GNU `secure_getenv`",
+        "separately qualified static-c-auxv-observation sibling",
+        "last matching AT_SECURE",
+        "before init or application callbacks",
+        "without inspecting its name",
+        "borrowed value",
+        "direct raw auxv lookup",
+        "descriptor sanitation",
+        "credential mutation",
+        "environment mutation",
+        "exec/spawn",
+        "signal",
+        "loader",
+        "promotion",
+        "public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"static-c-secure-environment description omits {phrase}",
+        )
+
+    owners = set(
+        nonempty_strings(
+            artifact["source_owners"],
+            "static-c-secure-environment.source_owners",
+        )
+    )
+    for owner in (
+        "compat/upstreams.toml",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/static_tls.rs",
+        "libc/src/c_abi/x86_64/static_startup.rs",
+        "libc/src/c_abi/x86_64/auxv_observation.rs",
+        "libc/src/c_abi/x86_64/startup_security.rs",
+        "libc/src/c_abi/x86_64/secure_environment.rs",
+        "libc/src/c_abi/x86_64/environment.rs",
+        "libc/src/c_abi/x86_64/errno.rs",
+        "include/errno.h",
+        "include/stdlib.h",
+        "compat/x86_64/stdlib_header_abi_probe.c",
+        "compat/x86_64/stdlib_header_abi_probe.cpp",
+        "compat/x86_64/run_stdlib_header_abi.sh",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/libc_secure_environment_probe.c",
+        "compat/x86_64/libc_secure_environment_start.S",
+        "compat/x86_64/run_libc_secure_environment.sh",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/tests/test_runner.py",
+        "scripts/dev-x86_64.sh",
+        "scripts/check_structure.py",
+    ):
+        require(
+            owner in owners,
+            f"static-c-secure-environment source owners omit {owner}",
+        )
+
+    prerequisites = nonempty_strings(
+        artifact["x86_abi_prerequisites"],
+        "static-c-secure-environment.x86_abi_prerequisites",
+    )
+    require(
+        any(
+            "System V AMD64" in item
+            and "secure_getenv argument" in item
+            and "raw auxiliary-vector pointer" in item
+            for item in prerequisites
+        ),
+        "static-c-secure-environment must retain its x86 secure_getenv ABI",
+    )
+    require(
+        any(
+            "4,096-record" in item
+            and "auxv_observation" in item
+            and "last matching AT_SECURE" in item
+            and "before environment installation" in item
+            for item in prerequisites
+        ),
+        "static-c-secure-environment must retain validated cache ordering",
+    )
+    require(
+        any(
+            "without reading it" in item
+            and "getenv borrowed-pointer boundary" in item
+            and "errno" in item
+            for item in prerequisites
+        ),
+        "static-c-secure-environment must retain its errno and getenv boundary",
+    )
+    require(
+        any(
+            "descriptor sanitation" in item
+            and "credential changes" in item
+            and "process execution" in item
+            and "signal policy" in item
+            and "loader state" in item
+            for item in prerequisites
+        ),
+        "static-c-secure-environment must retain its exact exclusions",
+    )
+    header_prerequisites = nonempty_strings(
+        artifact["x86_header_prerequisites"],
+        "static-c-secure-environment.x86_header_prerequisites",
+    )
+    require(
+        any(
+            "secure_getenv" in item
+            and "unmangled C++ linkage" in item
+            and "raw getauxval linkage" in item
+            for item in header_prerequisites
+        ),
+        "static-c-secure-environment must retain its focused header ABI contract",
+    )
+
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-secure-environment"},
+        "static-c-secure-environment must use the closed libc-secure-environment command",
+    )
+    scope = evidence[0].get("scope")
+    require(
+        isinstance(scope, str)
+        and all(
+            phrase in scope
+            for phrase in (
+                "Pinned-musl project-header C reference",
+                "`-nostdlib -static`",
+                "normal real-entry-stack",
+                "borrowed normal secure_getenv results",
+                "final AT_SECURE=1",
+                "UID/EUID mismatch",
+                "invalid name without inspection",
+                "credential, descriptor, execution, signal, or raw-auxv dependency",
+                "direct raw auxv observation",
+                "loader",
+                "promotion",
+                "public x86 support",
+            )
+        ),
+        "static-c-secure-environment evidence must retain its observable bounded contract",
+    )
+    oracles = artifact["oracle"]
+    assert isinstance(oracles, list)
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "c-posix"
+            and entry.get("source")
+            == "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417"
+            and "src/env/__libc_start_main.c" in str(entry.get("role"))
+            and "src/env/secure_getenv.c" in str(entry.get("role"))
+            for entry in oracles
+        ),
+        "static-c-secure-environment must retain its pinned musl source mapping",
+    )
+    exports = set(
+        static_c_abi_export_names(
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        )
+    )
+    require(
+        set(SECURE_ENVIRONMENT_SYMBOLS) <= exports,
+        "static-c-secure-environment must retain its selected secure_getenv export",
+    )
+    implementation = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "secure_environment.rs"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        'pub unsafe extern "C" fn secure_getenv',
+        "environment::getenv",
+        "startup_security::is_secure",
+    ):
+        require(
+            snippet in implementation,
+            f"static-c-secure-environment implementation omits {snippet}",
+        )
+    for forbidden in (
+        'fn __getauxval',
+        ".weak getauxval",
+        "global_asm!",
+        "errno::",
+    ):
+        require(
+            forbidden not in implementation,
+            f"static-c-secure-environment overlaps raw auxv through {forbidden}",
+        )
+    startup = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_startup.rs"
+    ).read_text(encoding="utf-8")
+    auxv_install = "unsafe { auxv_observation::install_initial(vectors.auxv) };"
+    security_install = "unsafe { startup_security::install_initial(vectors.auxv) };"
+    environment_install = "unsafe { environment::install_initial(vectors.envp) };"
+    init_call = "if let Some(init) = init {"
+    require(
+        all(
+            snippet in startup
+            for snippet in (
+                auxv_install,
+                security_install,
+                environment_install,
+                init_call,
+            )
+        )
+        and startup.index(auxv_install) < startup.index(security_install)
+        and startup.index(security_install) < startup.index(environment_install)
+        and startup.index(environment_install) < startup.index(init_call),
+        "static startup must cache secure_getenv after raw auxv and before callbacks",
+    )
+    dispatcher = (ROOT / "scripts" / "dev-x86_64.sh").read_text(encoding="utf-8")
+    for snippet in (
+        "run_libc_secure_environment_probe()",
+        "libc-secure-environment)",
+    ):
+        require(
+            snippet in dispatcher,
+            f"static-c-secure-environment dispatcher omits {snippet}",
+        )
+
+
+
+
+
 def require_static_login_name_artifact(family: Mapping[str, Any]) -> None:
     """Keep environment-backed login-name observation exact and non-promoting."""
     artifacts = require_verified_artifacts(
@@ -19198,8 +19453,8 @@ def require_auxv_observation_artifact(family: Mapping[str, Any]) -> None:
         "static-c-auxv-observation must retain both selected exports",
     )
     require(
-        not (exports & {"__auxv", "secure_getenv"}),
-        "static-c-auxv-observation must not expose raw auxv or secure policy",
+        "__auxv" not in exports,
+        "static-c-auxv-observation must not expose a raw auxv object",
     )
 
     static_root = (
@@ -30147,6 +30402,7 @@ def validate_ledger(
     require_intmax_arithmetic_artifact(by_id["libc.posix-runtime"])
     require_credential_observation_artifact(by_id["libc.posix-runtime"])
     require_static_environment_artifact(by_id["libc.posix-runtime"])
+    require_static_secure_environment_artifact(by_id["libc.posix-runtime"])
     require_static_login_name_artifact(by_id["libc.posix-runtime"])
     require_ctermid_artifact(by_id["libc.posix-runtime"])
     require_getpass_artifact(by_id["libc.posix-runtime"])

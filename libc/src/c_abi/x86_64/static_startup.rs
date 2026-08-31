@@ -13,7 +13,9 @@
 //! validated initial `envp` pointer to [`super::environment`] before
 //! application callbacks. The adjacent `auxv_observation` leaf receives the
 //! same validated initial auxiliary vector before constructors, but owns only
-//! raw tag lookup rather than secure-execution or loader policy.
+//! raw tag lookup rather than secure-execution or loader policy. The private
+//! adjacent startup_security cache derives only the secure_getenv decision
+//! from that same validated vector; it does not alter the raw lookup contract.
 //!
 //! Translation provenance is musl 1.2.6 release commit
 //! `9fa28ece75d8a2191de7c5bb53bed224c5947417`, under musl's MIT license:
@@ -37,7 +39,10 @@ compile_error!("x86 static startup requires little-endian Linux/x86-64");
 
 use core::ffi::{c_char, c_int, c_void};
 
-use super::{auxv_observation, environment, immediate_termination, process_globals, static_tls};
+use super::{
+    auxv_observation, environment, immediate_termination, process_globals, startup_security,
+    static_tls,
+};
 
 const MAX_STARTUP_POINTERS: usize = 1 << 20;
 const MAX_AUXV_ENTRIES: usize = 4096;
@@ -244,6 +249,10 @@ pub unsafe extern "C" fn __libc_start_main(
     // vector delimiters before this sole process-wide raw-pointer publication.
     // The adjacent lookup leaf owns no loader or secure-execution policy.
     unsafe { auxv_observation::install_initial(vectors.auxv) };
+
+    // SAFETY: the same validated immutable vector supplies the private musl
+    // secure_getenv cache. It does not publish or alter raw getauxval state.
+    unsafe { startup_security::install_initial(vectors.auxv) };
 
     // SAFETY: `startup_vectors` validated the kernel/CRT argv/envp
     // delimiters before any libc-visible startup state changes.  The selected

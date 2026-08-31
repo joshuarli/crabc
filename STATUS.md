@@ -722,6 +722,18 @@ select a raw auxv object, secure-execution policy, `secure_getenv`, environment
 ownership, auxv-derived system configuration, loader startup, CRT completion,
 or public x86 support.
 
+`./scripts/dev-x86_64.sh libc-secure-environment` is a separate private
+`static-c-secure-environment` artifact inside still-planned
+`libc.posix-runtime`. It composes the already-qualified raw auxv owner with a
+private musl-shaped secure-state cache before init callbacks, then exports GNU
+`secure_getenv` only. The normal pinned-musl/candidate case and synthetic
+final-`AT_SECURE` and UID/EUID-mismatch vectors prove that secure mode returns
+null without reading an invalid name while normal mode returns the selected
+borrowed `getenv` value. It does not change raw `getauxval`, sanitize
+descriptors, mutate credentials or environment state, create or execute
+processes, install signal behavior, select loader policy, complete CRT/runtime
+families, promote x86, or claim public support.
+
 The same still-planned C ABI family also now selects only the private
 `numeric.qsort-helper` ABI leaf. It accounts for musl's strong, uninstalled
 `__qsort_r` smoothsort helper and weak same-address `qsort_r` alias through

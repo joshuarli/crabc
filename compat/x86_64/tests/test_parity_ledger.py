@@ -50,7 +50,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 41)
-        self.assertEqual(report["verified_artifact_count"], 157)
+        self.assertEqual(report["verified_artifact_count"], 158)
         self.assertEqual(report["header_layout_probe_count"], 46)
         self.assertEqual(report["public_header_inventory_count"], 183)
         self.assertEqual(report["header_foundation_header_count"], 191)
@@ -5645,7 +5645,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             "does not select libc.so", credentials["native_evidence"][0]["scope"]
         )
         posix_artifacts = posix_runtime["verified_artifact"]
-        assert isinstance(posix_artifacts, list) and len(posix_artifacts) == 68
+        assert isinstance(posix_artifacts, list) and len(posix_artifacts) == 69
         artifacts_by_id = {
             artifact["id"]: artifact
             for artifact in posix_artifacts
@@ -11720,6 +11720,51 @@ class X86ParityLedgerTests(unittest.TestCase):
         evidence[0]["command"] = "./scripts/dev-x86_64.sh libc-termios-control"
         with self.assertRaisesRegex(
             ledger.LedgerError, "closed libc-ctermid command"
+        ):
+            ledger.validate_ledger(data)
+
+    def test_static_secure_environment_artifact_keeps_its_private_boundary(
+        self,
+    ) -> None:
+        data = self.data()
+        family = self.family(data, "libc.posix-runtime")
+        family["status"] = "foundation-verified"
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "static-c-secure-environment must not promote"
+        ):
+            ledger.require_static_secure_environment_artifact(family)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict)
+            and entry["id"] == "static-c-secure-environment"
+        )
+        artifact["description"] = artifact["description"].replace(
+            "last matching AT_SECURE", "first matching AT_SECURE"
+        )
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "description omits last matching AT_SECURE"
+        ):
+            ledger.validate_ledger(data)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict)
+            and entry["id"] == "static-c-secure-environment"
+        )
+        evidence = artifact["native_evidence"]
+        assert isinstance(evidence, list) and isinstance(evidence[0], dict)
+        evidence[0]["command"] = "./scripts/dev-x86_64.sh libc-auxv-observation"
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "closed libc-secure-environment command"
         ):
             ledger.validate_ledger(data)
 

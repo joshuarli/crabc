@@ -145,7 +145,10 @@ assert_weak_same_address_alias "$archive_elf_symbols" getauxval __getauxval \
     "selected crabc archive"
 grep -Eq 'R_X86_64_TPOFF(32|64)?' "$archive_relocations" ||
     fail "archive auxv errno path lacks an initial-TLS TPOFF relocation"
-if grep -Eq 'TLSGD|TLSLD|TLSDESC|GOTTPOFF|DTPMOD(64)?|__tls_get_addr|crabc_core|mimalloc|sha_crypt|secure_getenv' \
+# `secure_getenv` is a separately selected archive member. It is not linked
+# into this raw-auxv candidate and must not make archive-wide relocation
+# closure look like an auxv dependency.
+if grep -Eq 'TLSGD|TLSLD|TLSDESC|GOTTPOFF|DTPMOD(64)?|__tls_get_addr|crabc_core|mimalloc|sha_crypt' \
     "$archive_relocations"; then
     fail "archive selects dynamic TLS, a loader policy, or an unowned runtime dependency"
 fi

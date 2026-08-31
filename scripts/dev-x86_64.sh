@@ -266,6 +266,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-mktemp  run the static x86 crabc-libc historical mktemp slice
   libc-process-context  run the static x86 crabc-libc selected process-context slice
   libc-environment  run the static x86 crabc-libc bounded environment slice
+  libc-secure-environment  run the static x86 crabc-libc GNU secure-environment slice
   libc-login-name  run the static x86 crabc-libc environment-backed login-name slice
   libc-child-reaping  run the static x86 crabc-libc child-reaping slice
   libc-immediate-termination  run the static x86 crabc-libc C11 immediate-termination slice
@@ -1260,6 +1261,14 @@ does not cover returned-pointer use, direct writers, caller-owned `putenv`
 storage, signals, or fork recovery. It does not provide secure execution,
 exec/spawn inheritance, a general environment lifecycle, dynamic libc, CRT
 objects, loader, sysroot, or public x86 support.
+`libc-secure-environment` separately selects GNU `secure_getenv` only.
+Static startup composes the already-qualified raw auxv observation with a
+private musl-shaped secure cache: the final `AT_SECURE`/UID/EUID/GID/EGID
+values decide whether it returns null without inspecting its name. In an
+ordinary start it returns the selected borrowed `getenv` value. The synthetic
+vectors prove final-tag and UID/EUID-mismatch secure cases. It does not alter
+raw `getauxval`, sanitize descriptors, mutate credentials or environment,
+manage execution, signals, loaders, or a general x86 runtime.
 `libc-login-name` composes that bounded environment owner without widening it.
 It selects exactly `getlogin` and `getlogin_r`: first-match borrowed `LOGNAME`,
 direct ENXIO/ERANGE results, and exact caller-buffer copying with stale errno.
@@ -3153,6 +3162,10 @@ run_libc_environment_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_environment.sh
 }
 
+run_libc_secure_environment_probe() {
+    run_in_container bash /workspace/compat/x86_64/run_libc_secure_environment.sh
+}
+
 run_libc_login_name_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_login_name.sh
 }
@@ -3455,7 +3468,7 @@ case "$command" in
     libc-static-c-abi-differential) ;;
     libc-static-c-abi-same-object-differential|qualification-posix-abi-admission) ;;
     libc-interface-discovery) ;;
-    libc-readiness-waits|libc-system-observation|libc-system-information|libc-fcntl-record-locks|libc-flock|libc-sendfile|libc-posix-fallocate|libc-descriptor-advice|libc-filesystem-capacity|libc-uts-identity|libc-ctype|libc-locale-profile|libc-locale-multibyte|libc-locale-wide-iconv|libc-wide-character|libc-locale-object-wide|libc-locale-narrow|libc-locale-ctype-locators|libc-locale-error-strings|libc-regex|libc-integer-arithmetic|libc-integer-parse|libc-float-parse|libc-intmax-arithmetic|libc-credential-observation|libc-login-name|libc-child-reaping|libc-immediate-termination|libc-callback-algorithms|libc-search-tree-intrusive|libc-search-hash-table|libc-gettext-catalog|libc-access|libc-clock-gettime|libc-time-observation|libc-system-configuration|libc-mapping-core|libc-header-layouts-baseline|libc-nanosleep|libc-clock-nanosleep|libc-descriptor-entry|libc-fcntl-status-control|libc-ioctl|libc-ffs|libc-byte-strings|libc-process-globals-getopt|libc-auxv-observation|libc-inet-address|libc-inet-ntoa|libc-hstrerror|libc-numeric-netdb|libc-random-entropy|libc-memory-search|libc-string-copy|libc-error-strings|libc-strsignal|libc-descriptor-pipeline) ;;
+    libc-readiness-waits|libc-system-observation|libc-system-information|libc-fcntl-record-locks|libc-flock|libc-sendfile|libc-posix-fallocate|libc-descriptor-advice|libc-filesystem-capacity|libc-uts-identity|libc-ctype|libc-locale-profile|libc-locale-multibyte|libc-locale-wide-iconv|libc-wide-character|libc-locale-object-wide|libc-locale-narrow|libc-locale-ctype-locators|libc-locale-error-strings|libc-regex|libc-integer-arithmetic|libc-integer-parse|libc-float-parse|libc-intmax-arithmetic|libc-credential-observation|libc-secure-environment|libc-login-name|libc-child-reaping|libc-immediate-termination|libc-callback-algorithms|libc-search-tree-intrusive|libc-search-hash-table|libc-gettext-catalog|libc-access|libc-clock-gettime|libc-time-observation|libc-system-configuration|libc-mapping-core|libc-header-layouts-baseline|libc-nanosleep|libc-clock-nanosleep|libc-descriptor-entry|libc-fcntl-status-control|libc-ioctl|libc-ffs|libc-byte-strings|libc-process-globals-getopt|libc-auxv-observation|libc-inet-address|libc-inet-ntoa|libc-hstrerror|libc-numeric-netdb|libc-random-entropy|libc-memory-search|libc-string-copy|libc-error-strings|libc-strsignal|libc-descriptor-pipeline) ;;
     libc-vector-io|libc-uio-cxx-linkage) ;;
     libc-sysv-semaphore|libc-posix-semaphore) ;;
     libc-sysv-message-shared-memory) ;;
@@ -4565,6 +4578,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "libc-environment takes no arguments"
         ensure_image
         run_libc_environment_probe
+        ;;
+    libc-secure-environment)
+        [ "$#" -eq 0 ] || fail "libc-secure-environment takes no arguments"
+        ensure_image
+        run_libc_secure_environment_probe
         ;;
     libc-login-name)
         [ "$#" -eq 0 ] || fail "libc-login-name takes no arguments"

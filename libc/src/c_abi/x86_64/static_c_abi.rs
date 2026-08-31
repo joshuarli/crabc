@@ -299,6 +299,10 @@ mod environment;
 mod login_name;
 #[path = "auxv_observation.rs"]
 mod auxv_observation;
+#[path = "startup_security.rs"]
+mod startup_security;
+#[path = "secure_environment.rs"]
+mod secure_environment;
 #[path = "child_reaping.rs"]
 mod child_reaping;
 #[path = "immediate_termination.rs"]

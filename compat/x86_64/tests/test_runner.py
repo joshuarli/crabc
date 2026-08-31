@@ -1440,7 +1440,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "libc-static-c-abi-differential",
             "libc-static-c-abi-same-object-differential|qualification-posix-abi-admission",
             "libc-interface-discovery",
-            "libc-readiness-waits|libc-system-observation|libc-system-information|libc-fcntl-record-locks|libc-flock|libc-sendfile|libc-posix-fallocate|libc-descriptor-advice|libc-filesystem-capacity|libc-uts-identity|libc-ctype|libc-locale-profile|libc-locale-multibyte|libc-locale-wide-iconv|libc-wide-character|libc-locale-object-wide|libc-locale-narrow|libc-locale-ctype-locators|libc-locale-error-strings|libc-regex|libc-integer-arithmetic|libc-integer-parse|libc-float-parse|libc-intmax-arithmetic|libc-credential-observation|libc-login-name|libc-child-reaping|libc-immediate-termination|libc-callback-algorithms|libc-search-tree-intrusive|libc-search-hash-table|libc-gettext-catalog|libc-access|libc-clock-gettime|libc-time-observation|libc-system-configuration|libc-mapping-core|libc-header-layouts-baseline|libc-nanosleep|libc-clock-nanosleep|libc-descriptor-entry|libc-fcntl-status-control|libc-ioctl|libc-ffs|libc-byte-strings|libc-process-globals-getopt|libc-auxv-observation|libc-inet-address|libc-inet-ntoa|libc-hstrerror|libc-numeric-netdb|libc-random-entropy|libc-memory-search|libc-string-copy|libc-error-strings|libc-strsignal|libc-descriptor-pipeline",
+            "libc-readiness-waits|libc-system-observation|libc-system-information|libc-fcntl-record-locks|libc-flock|libc-sendfile|libc-posix-fallocate|libc-descriptor-advice|libc-filesystem-capacity|libc-uts-identity|libc-ctype|libc-locale-profile|libc-locale-multibyte|libc-locale-wide-iconv|libc-wide-character|libc-locale-object-wide|libc-locale-narrow|libc-locale-ctype-locators|libc-locale-error-strings|libc-regex|libc-integer-arithmetic|libc-integer-parse|libc-float-parse|libc-intmax-arithmetic|libc-credential-observation|libc-secure-environment|libc-login-name|libc-child-reaping|libc-immediate-termination|libc-callback-algorithms|libc-search-tree-intrusive|libc-search-hash-table|libc-gettext-catalog|libc-access|libc-clock-gettime|libc-time-observation|libc-system-configuration|libc-mapping-core|libc-header-layouts-baseline|libc-nanosleep|libc-clock-nanosleep|libc-descriptor-entry|libc-fcntl-status-control|libc-ioctl|libc-ffs|libc-byte-strings|libc-process-globals-getopt|libc-auxv-observation|libc-inet-address|libc-inet-ntoa|libc-hstrerror|libc-numeric-netdb|libc-random-entropy|libc-memory-search|libc-string-copy|libc-error-strings|libc-strsignal|libc-descriptor-pipeline",
             "libc-vector-io|libc-uio-cxx-linkage",
             "libc-sysv-semaphore|libc-posix-semaphore",
             "libc-sysv-message-shared-memory",
@@ -1497,6 +1497,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn("libc-mktemp", source)
         self.assertIn("libc-process-context", source)
         self.assertIn("libc-environment", source)
+        self.assertIn("libc-secure-environment", source)
         self.assertIn("libc-descriptor-io", source)
         self.assertIn("libc-descriptor-lifecycle", source)
         self.assertIn("libc-timestamp-updates", source)
@@ -2931,6 +2932,14 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         )
         self.assertIn(
             '    libc-environment)\n        [ "$#" -eq 0 ] || fail "libc-environment takes no arguments"',
+            source,
+        )
+        self.assertIn('run_libc_secure_environment_probe()', source)
+        self.assertIn(
+            '/workspace/compat/x86_64/run_libc_secure_environment.sh', source
+        )
+        self.assertIn(
+            '    libc-secure-environment)\n        [ "$#" -eq 0 ] || fail "libc-secure-environment takes no arguments"',
             source,
         )
         self.assertIn('run_libc_descriptor_io_probe()', source)
@@ -9146,7 +9155,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "is not an ELF alias of __environ",
             "environment object does not have x86 LP64 size/type/binding",
             "environment alias is not a weak x86 LP64 object",
-            "secure_getenv __secure_getenv __putenv __env_rm_add",
+            "__secure_getenv __putenv __env_rm_add",
             "R_X86_64_TPOFF",
             "candidate relocations retain a dynamic TLS model",
             "env -i CRABC_X86_INITIAL=entry",
@@ -9170,6 +9179,101 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         ):
             self.assertIn(symbol, static_export_names)
         self.assertIn("libc-environment", runner)
+
+    def test_libc_static_c_abi_secure_environment_stays_startup_bounded(self) -> None:
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        startup = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_startup.rs"
+        ).read_text(encoding="utf-8")
+        security = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "startup_security.rs"
+        ).read_text(encoding="utf-8")
+        leaf = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "secure_environment.rs"
+        ).read_text(encoding="utf-8")
+        probe = (
+            ROOT / "compat" / "x86_64" / "libc_secure_environment_probe.c"
+        ).read_text(encoding="utf-8")
+        start = (
+            ROOT / "compat" / "x86_64" / "libc_secure_environment_start.S"
+        ).read_text(encoding="utf-8")
+        artifact_runner = (
+            ROOT / "compat" / "x86_64" / "run_libc_secure_environment.sh"
+        ).read_text(encoding="utf-8")
+        static_exports = (
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        ).read_text(encoding="utf-8")
+        static_export_names = {
+            line for line in static_exports.splitlines() if line and not line.startswith("#")
+        }
+        dispatcher = RUNNER.read_text(encoding="utf-8")
+
+        for required in (
+            '#[path = "startup_security.rs"]',
+            '#[path = "secure_environment.rs"]',
+        ):
+            self.assertIn(required, static_root)
+        raw_install = "unsafe { auxv_observation::install_initial(vectors.auxv) };"
+        secure_install = "unsafe { startup_security::install_initial(vectors.auxv) };"
+        environment_install = "unsafe { environment::install_initial(vectors.envp) };"
+        init_call = "if let Some(init) = init {"
+        for call in (raw_install, secure_install, environment_install):
+            self.assertIn(call, startup)
+        self.assertLess(startup.index(raw_install), startup.index(secure_install))
+        self.assertLess(startup.index(secure_install), startup.index(environment_install))
+        self.assertLess(startup.index(environment_install), startup.index(init_call))
+        for required in (
+            "musl 1.2.6 release commit",
+            "src/env/__libc_start_main.c",
+            "AT_UID",
+            "AT_EUID",
+            "AT_GID",
+            "AT_EGID",
+            "AT_SECURE",
+            "MAX_AUXV_ENTRIES",
+            "last matching auxiliary-vector value",
+            "AtomicBool",
+            "Ordering::Release",
+            "Ordering::Acquire",
+        ):
+            self.assertIn(required, security)
+        self.assertNotIn("AtomicUsize", security)
+        for required in (
+            "src/env/secure_getenv.c",
+            'pub unsafe extern "C" fn secure_getenv',
+            "startup_security::is_secure",
+            "environment::getenv",
+            "auxv_observation",
+        ):
+            self.assertIn(required, leaf)
+        for forbidden in ("fn __getauxval", ".weak getauxval", "global_asm!"):
+            self.assertNotIn(forbidden, leaf)
+        for required in (
+            "CRABC_SECURE_ENVIRONMENT_SYNTHETIC",
+            "secure_getenv((const char *)1)",
+        ):
+            self.assertIn(required, probe)
+        self.assertNotIn("getauxval(", probe)
+        for required in ("AT_SECURE", "AT_UID", "AT_EUID", "AT_GID", "AT_EGID"):
+            self.assertIn(required, start)
+        for required in (
+            "run_musl_oracle.sh",
+            "run_stdlib_header_abi.sh",
+            "assert_selected_c_abi_surface",
+            "-nostdlib -static",
+            "CRABC_SECURE_ENVIRONMENT_SYNTHETIC_AT_SECURE",
+            "CRABC_SECURE_ENVIRONMENT_SYNTHETIC_UID_MISMATCH",
+            "secure_getenv",
+            "raw-auxv dependency",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn("run_machine_context_header_abi.sh", artifact_runner)
+        self.assertIn("secure_getenv", static_export_names)
+        self.assertIn('id = "static-c-secure-environment"', (ROOT / "compat" / "x86_64" / "parity.toml").read_text(encoding="utf-8"))
+        self.assertIn("libc-secure-environment)", dispatcher)
+        self.assertIn("run_libc_secure_environment.sh", dispatcher)
 
     def test_libc_static_c_abi_descriptor_io_artifact_stays_narrow(self) -> None:
         static_root = (
@@ -19205,7 +19309,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertLess(startup.index(install_call), startup.index("unsafe { process_globals::install"))
 
         self.assertTrue({"__getauxval", "getauxval"} <= static_export_names)
-        self.assertFalse(static_export_names & {"__auxv", "secure_getenv"})
+        self.assertNotIn("__auxv", static_export_names)
         for required in (
             "#include <elf.h>",
             "#include <errno.h>",
@@ -19240,6 +19344,8 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             self.assertIn(required, artifact_runner)
         self.assertIn("libc-auxv-observation)", dispatcher)
         self.assertIn("run_libc_auxv_observation.sh", dispatcher)
+        self.assertIn("separately selected archive member", artifact_runner)
+        self.assertIn("<(secure_getenv|malloc|calloc|realloc|free)>", artifact_runner)
 
     def test_math_minmax_runner_keeps_the_binary32_binary64_static_boundary(self) -> None:
         dispatcher = RUNNER.read_text(encoding="utf-8")

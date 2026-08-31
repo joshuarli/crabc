@@ -194,6 +194,8 @@ X86_RUNTIME_FOUNDATION_LIBC_SOURCES = {
     Path("libc/src/c_abi/x86_64/memory.rs"),
     Path("libc/src/c_abi/x86_64/process_context.rs"),
     Path("libc/src/c_abi/x86_64/environment.rs"),
+    Path("libc/src/c_abi/x86_64/startup_security.rs"),
+    Path("libc/src/c_abi/x86_64/secure_environment.rs"),
     Path("libc/src/c_abi/x86_64/login_name.rs"),
     Path("libc/src/c_abi/x86_64/auxv_observation.rs"),
     Path("libc/src/c_abi/x86_64/process_globals.rs"),
@@ -3699,6 +3701,8 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         '#[path = "static_tls.rs"]',
         '#[path = "static_startup.rs"]',
         '#[path = "auxv_observation.rs"]',
+        '#[path = "startup_security.rs"]',
+        '#[path = "secure_environment.rs"]',
         '#[path = "process_globals.rs"]',
         '#[path = "stat_compat.rs"]',
         '#[path = "timestamp_updates.rs"]',
@@ -3795,6 +3799,9 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         "pub unsafe extern \"C\" fn exit(",
         "pub unsafe extern \"C\" fn __libc_start_main(",
         "if rtld_fini.is_some() || !static_tls::is_ready()",
+        "MAX_AUXV_ENTRIES",
+        "auxv_observation::install_initial(vectors.auxv)",
+        "startup_security::install_initial(vectors.auxv)",
         "if fini.is_some() && unsafe { atexit(fini) } != 0",
         "immediate_termination::_Exit(127)",
     ):
@@ -3823,6 +3830,83 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
             "libc/src/c_abi/x86_64/static_startup.rs: selected static startup "
             "artifact must export only its bounded lifecycle symbols"
         )
+
+    auxv_observation_source = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "auxv_observation.rs"
+    )
+    auxv_observation_text = auxv_observation_source.read_text(errors="replace")
+    startup_security_source = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "startup_security.rs"
+    )
+    startup_security_text = startup_security_source.read_text(errors="replace")
+    for required in (
+        "musl 1.2.6 release commit",
+        "src/env/__libc_start_main.c",
+        "AT_UID",
+        "AT_EUID",
+        "AT_GID",
+        "AT_EGID",
+        "AT_SECURE",
+        "MAX_AUXV_ENTRIES",
+        "last matching auxiliary-vector value",
+        "AtomicBool",
+        "Ordering::Release",
+        "Ordering::Acquire",
+        "pub(super) unsafe fn install_initial",
+        "pub(super) fn is_secure",
+    ):
+        if required not in startup_security_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/startup_security.rs: selected static "
+                f"secure-startup boundary is missing {required!r}"
+            )
+
+    secure_environment_source = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "secure_environment.rs"
+    )
+    secure_environment_text = secure_environment_source.read_text(errors="replace")
+    for required in (
+        "musl 1.2.6 release commit",
+        "src/env/secure_getenv.c",
+        'pub unsafe extern "C" fn secure_getenv',
+        "environment::getenv",
+        "startup_security::is_secure",
+        "auxv_observation",
+    ):
+        if required not in secure_environment_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/secure_environment.rs: selected static "
+                f"secure-environment boundary is missing {required!r}"
+            )
+    secure_environment_exports = set(
+        re.findall(
+            r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(',
+            secure_environment_text,
+        )
+    )
+    if secure_environment_exports != {"secure_getenv"}:
+        errors.append(
+            "libc/src/c_abi/x86_64/secure_environment.rs: selected static "
+            "artifact must export only secure_getenv"
+        )
+    for forbidden in (
+        "alloc::",
+        "crabc_core",
+        "crabc_mimalloc",
+        "raw_syscall",
+        "fn __getauxval",
+        ".weak getauxval",
+        "global_asm!",
+        "fn fork(",
+        "fn execve(",
+        "fn setuid(",
+        "fn sigaction(",
+    ):
+        if forbidden in secure_environment_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/secure_environment.rs: selected static "
+                f"secure-environment boundary must not select {forbidden!r}"
+            )
 
     process_globals_source = (
         ROOT / "libc" / "src" / "c_abi" / "x86_64" / "process_globals.rs"
@@ -3885,6 +3969,25 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         errors.append(
             "libc/src/c_abi/x86_64/static_startup.rs: program names must be "
             "published before the bounded init callback"
+        )
+    auxv_install_call = "unsafe { auxv_observation::install_initial(vectors.auxv) };"
+    security_install_call = "unsafe { startup_security::install_initial(vectors.auxv) };"
+    environment_install_call = "unsafe { environment::install_initial(vectors.envp) };"
+    if (
+        auxv_install_call not in static_startup_text
+        or security_install_call not in static_startup_text
+        or environment_install_call not in static_startup_text
+        or init_call not in static_startup_text
+        or static_startup_text.index(auxv_install_call)
+        >= static_startup_text.index(security_install_call)
+        or static_startup_text.index(security_install_call)
+        >= static_startup_text.index(environment_install_call)
+        or static_startup_text.index(environment_install_call)
+        >= static_startup_text.index(init_call)
+    ):
+        errors.append(
+            "libc/src/c_abi/x86_64/static_startup.rs: raw auxv observation, "
+            "validated auxv security, and envp must publish before the bounded init callback"
         )
 
     stat_source = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "stat_compat.rs"
@@ -8436,6 +8539,9 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         errno_text,
         static_tls_text,
         static_startup_text,
+        auxv_observation_text,
+        startup_security_text,
+        secure_environment_text,
         shared_getopt_text,
         fenv_text,
         signal_control_text,
@@ -8525,6 +8631,17 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
             "libc/src/c_abi/x86_64/timestamp_updates.rs: selected static artifact "
             "must retain futimesat as the musl same-address assembler alias"
         )
+    auxv_observation_aliases = set(
+        re.findall(
+            r'(?m)^\s*"\.set\s+(\w+)\s*,\s*__getauxval",\s*$',
+            auxv_observation_text,
+        )
+    )
+    if auxv_observation_aliases != {"getauxval"}:
+        errors.append(
+            "libc/src/c_abi/x86_64/auxv_observation.rs: selected static "
+            "artifact must retain getauxval as the musl same-address assembler alias"
+        )
     pthread_rwlock_public_aliases = {public for public, _hidden in pthread_rwlock_aliases}
     process_global_data_exports = set(
         re.findall(
@@ -8559,6 +8676,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         | error_string_aliases
         | locale_error_string_aliases
         | timestamp_aliases
+        | auxv_observation_aliases
         | pthread_rwlock_public_aliases
         | pthread_identity_exports
         | process_global_data_exports
@@ -8566,6 +8684,9 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
     expected_exports = {
         "__errno_location",
         "__crabc_x86_static_tls_bootstrap",
+        "__getauxval",
+        "getauxval",
+        "secure_getenv",
         "stat",
         "lstat",
         "fstat",
@@ -8950,7 +9071,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
             "selected socket transport and selected socket-message/options, selected system-observation, selected UTS-identity, "
             "selected numeric-address codecs, fixed-profile h_errno message text, byte-string, random-entropy, memory-search, C-string-copy, immutable error-string, "
             "fixed-C-locale ctype, integer-arithmetic, integer-parsing, intmax-arithmetic, credential-observation, and "
-            "environment-backed login-name observation, find-first-set, startup-published program names, short/GNU-long "
+            "raw auxiliary-vector observation, startup-derived secure-environment, and environment-backed login-name observation, find-first-set, startup-published program names, short/GNU-long "
             "getopt state and aliases, callback-tree/hash-table search, and the "
             "bounded no-catalog gettext/message-catalog ABI, "
             "and abort-personality surfaces"
@@ -8960,6 +9081,9 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         ("stat_compat.rs", stat_text),
         ("credentials.rs", credentials_text),
         ("credential_observation.rs", credential_observation_text),
+        ("auxv_observation.rs", auxv_observation_text),
+        ("startup_security.rs", startup_security_text),
+        ("secure_environment.rs", secure_environment_text),
         ("login_name.rs", login_name_text),
         ("errno.rs", errno_text),
         ("static_startup.rs", static_startup_text),

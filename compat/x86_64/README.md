@@ -413,6 +413,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-mktemp
 ./scripts/dev-x86_64.sh libc-process-context
 ./scripts/dev-x86_64.sh libc-environment
+./scripts/dev-x86_64.sh libc-secure-environment
 ./scripts/dev-x86_64.sh libc-login-name
 ./scripts/dev-x86_64.sh libc-child-reaping
 ./scripts/dev-x86_64.sh libc-immediate-termination
@@ -3121,6 +3122,21 @@ caller-coordinated. This no-allocator artifact does not select
 threaded environment lifecycle, dynamic runtime, CRT objects, or public x86
 support.
 
+`libc-secure-environment` is a separately recorded
+`static-c-secure-environment` `verified_artifact`, not a secure-execution or
+process-environment capability. Its project-header C body first executes
+through pinned musl and then through a `-nostdlib -static` candidate. The
+shared static startup validates and first publishes the raw initial auxv to
+the separate `static-c-auxv-observation` artifact; this leaf then caches musl's
+last matching `AT_SECURE`/UID/EUID/GID/EGID decision before callbacks and
+exports GNU `secure_getenv` only. Secure mode returns null without inspecting
+the requested name; normal mode returns the selected borrowed `getenv` value.
+Synthetic final-`AT_SECURE` and UID/EUID-mismatch vectors prove both secure
+paths, including an invalid-name call. It does not alter raw `getauxval`,
+sanitize descriptors, mutate credentials or environment state, create or
+execute processes, install signals, select loader policy, complete a CRT or
+runtime family, promote x86, or claim public support.
+
 `libc-login-name` is a separately recorded `static-c-login-name`
 `verified_artifact` gate over that archive, not a login/session identity
 capability. Its project-header C body first executes through pinned musl and
@@ -4878,7 +4894,7 @@ Apart from the narrowly named `libc-stat-compat`, `libc-credentials`,
 `libc-ctermid`,
 `libc-getpass`,
 `libc-mktemp`,
-`libc-process-context`, `libc-environment`, `libc-login-name`, `libc-child-reaping`, and
+`libc-process-context`, `libc-environment`, `libc-secure-environment`, `libc-login-name`, `libc-child-reaping`, and
 `libc-immediate-termination`, `libc-callback-algorithms`,
 `libc-search-hash-table`,
 `libc-gettext-catalog`,

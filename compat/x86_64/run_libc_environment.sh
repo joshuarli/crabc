@@ -114,7 +114,9 @@ for symbol in __environ environ _environ ___environ getenv setenv putenv unseten
     grep -Eq "[[:space:]]${symbol}$" "$archive_symbols" ||
         fail "archive does not define ${symbol}"
 done
-for unselected in secure_getenv __secure_getenv __putenv __env_rm_add; do
+# `secure_getenv` belongs to a separately evidenced archive leaf and is not
+# linked into this environment candidate. Keep musl-private helpers excluded.
+for unselected in __secure_getenv __putenv __env_rm_add; do
     if grep -Eq "[[:space:]]${unselected}$" "$archive_symbols"; then
         fail "archive accidentally exports unselected ${unselected}"
     fi

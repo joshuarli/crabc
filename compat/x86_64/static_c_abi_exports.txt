@@ -675,6 +675,7 @@ scalblnl
 scalbn
 scalbnf
 scalbnl
+secure_getenv
 seekdir
 select
 sem_destroy
