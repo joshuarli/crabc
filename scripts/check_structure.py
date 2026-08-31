@@ -4103,6 +4103,153 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
                 f"declaration evidence is missing {required!r}"
             )
 
+    confstr_source = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "system_configuration.rs"
+    )
+    confstr_probe_source = ROOT / "compat" / "x86_64" / "libc_confstr_probe.c"
+    confstr_start_source = ROOT / "compat" / "x86_64" / "libc_confstr_start.S"
+    confstr_runner_source = ROOT / "compat" / "x86_64" / "run_libc_confstr.sh"
+    confstr_header_c_source = (
+        ROOT / "compat" / "x86_64" / "confstr_header_abi_probe.c"
+    )
+    confstr_header_cxx_source = (
+        ROOT / "compat" / "x86_64" / "confstr_header_abi_probe.cpp"
+    )
+    confstr_header_runner_source = (
+        ROOT / "compat" / "x86_64" / "run_confstr_header_abi.sh"
+    )
+    for path in (
+        confstr_source,
+        confstr_probe_source,
+        confstr_start_source,
+        confstr_runner_source,
+        confstr_header_c_source,
+        confstr_header_cxx_source,
+        confstr_header_runner_source,
+    ):
+        if not path.is_file():
+            errors.append(
+                "x86 static confstr artifact is missing " f"{path.relative_to(ROOT)}"
+            )
+            return
+
+    confstr_text = confstr_source.read_text(errors="replace")
+    confstr_probe = confstr_probe_source.read_text(errors="replace")
+    confstr_start = confstr_start_source.read_text(errors="replace")
+    confstr_runner = confstr_runner_source.read_text(errors="replace")
+    confstr_header_c = confstr_header_c_source.read_text(errors="replace")
+    confstr_header_cxx = confstr_header_cxx_source.read_text(errors="replace")
+    confstr_header_runner = confstr_header_runner_source.read_text(errors="replace")
+    for required in (
+        "src/conf/confstr.c",
+        "fn confstr_value",
+        'pub unsafe extern "C" fn confstr',
+        "Unlike musl's internal `snprintf` shortcut",
+        "compiler-memory-helper closure",
+        "while index < copy_len",
+        "buf.add(index).write",
+        "errno::set_errno(EINVAL)",
+    ):
+        if required not in confstr_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/system_configuration.rs: selected "
+                f"confstr source is missing {required!r}"
+            )
+    confstr_marker = "/// Query or copy a selected POSIX configuration string."
+    pathconf_marker = "#[inline(always)]\nfn pathconf_value"
+    if confstr_marker not in confstr_text or pathconf_marker not in confstr_text:
+        errors.append(
+            "libc/src/c_abi/x86_64/system_configuration.rs: selected "
+            "confstr source boundary is missing"
+        )
+    else:
+        confstr_body = confstr_text[
+            confstr_text.index(confstr_marker) : confstr_text.index(pathconf_marker)
+        ]
+        for forbidden in ("copy_nonoverlapping", "snprintf(", "raw_syscall", "alloc::"):
+            if forbidden in confstr_body:
+                errors.append(
+                    "libc/src/c_abi/x86_64/system_configuration.rs: selected "
+                    f"confstr leaf must not select {forbidden!r}"
+                )
+    for required in (
+        "#include <errno.h>",
+        "#include <unistd.h>",
+        "confstr_signature",
+        "check_path",
+        "check_empty_values",
+        "check_invalid_selector",
+        "_CS_PATH",
+        "_CS_POSIX_V6_ILP32_OFF32_CFLAGS",
+        "E2BIG",
+        "EINVAL",
+        "CRABC_CONFSTR_FREESTANDING",
+    ):
+        if required not in confstr_probe:
+            errors.append(
+                "compat/x86_64/libc_confstr_probe.c: static confstr regression "
+                f"is missing {required!r}"
+            )
+    for required in (
+        "crabc_x86_64_confstr_probe",
+        "crabc_x86_64_confstr_thread_pointer",
+        "mov %rsi, %fs:0",
+        "mov $60, %eax",
+    ):
+        if required not in confstr_start:
+            errors.append(
+                "compat/x86_64/libc_confstr_start.S: static confstr entry shim "
+                f"is missing {required!r}"
+            )
+    for required in (
+        "run_musl_oracle.sh",
+        "run_confstr_header_abi.sh",
+        "confstr.lo",
+        "archive_member_for_symbol",
+        "-nostdlib -static",
+        "--no-undefined",
+        "--gc-sections",
+        "candidate retained neighboring system-configuration or resource C ABI symbols",
+        "candidate retained an unselected text or allocator dependency",
+        "candidate confstr unexpectedly performs a syscall",
+        "candidate confstr calls outside its explicit errno seam",
+        "candidate errno accessor does not use direct initial-TLS FS access",
+    ):
+        if required not in confstr_runner:
+            errors.append(
+                "compat/x86_64/run_libc_confstr.sh: static confstr evidence "
+                f"is missing {required!r}"
+            )
+    if "--whole-archive" in confstr_runner:
+        errors.append(
+            "compat/x86_64/run_libc_confstr.sh: static confstr evidence must not "
+            "force-link the archive"
+        )
+    for header_probe in (confstr_header_c, confstr_header_cxx):
+        for required in ("confstr_signature", "confstr", "size_t"):
+            if required not in header_probe:
+                errors.append(
+                    "x86 confstr header probe is missing " f"{required!r}"
+                )
+    for required in (
+        "confstr_header_abi_probe.c",
+        "confstr_header_abi_probe.cpp",
+        "-nostdinc",
+        "-nostdinc++",
+        "compile_profile strict",
+        "compile_profile posix",
+        "compile_profile xopen",
+        "compile_profile gnu",
+        "compile_profile bsd",
+        "retained a mangled confstr reference",
+        "escaped its declared roots",
+    ):
+        if required not in confstr_header_runner:
+            errors.append(
+                "compat/x86_64/run_confstr_header_abi.sh: confstr declaration "
+                f"evidence is missing {required!r}"
+            )
+
     static_startup_source = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_startup.rs"
     static_startup_text = static_startup_source.read_text(errors="replace")
     for required in (

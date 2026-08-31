@@ -1449,6 +1449,22 @@ as an oracle. This does not promote system configuration or resource lifecycle,
 and does not claim allocator, C runtime, CRT, family completion, or public x86
 support.
 
+`./scripts/dev-x86_64.sh libc-confstr` is a separate private
+`static-c-confstr` artifact in that same planned family. It maps pinned musl
+1.2.6 `src/conf/confstr.c` to the existing `system_configuration.rs` source
+owner: `_CS_PATH` returns `/bin:/usr/bin`, the selected width-restricted
+names return an empty string, valid queries preserve stale `errno`, and an
+invalid selector returns zero with `EINVAL`. Its C/C++ `<unistd.h>` matrix
+proves the exact unconditional unmangled declaration in strict, POSIX, X/Open,
+GNU, and BSD profiles. A source-local byte loop preserves musl's query,
+copy, truncation, and terminator behavior without retaining musl's internal
+stdio shortcut or a compiler-memory helper. The true
+`-nostdlib -static -Wl,--gc-sections` candidate retains only `confstr` and its
+initial-TLS errno seam, rejecting neighboring configuration APIs, text/memory
+helpers, allocator, runtime, and C-runtime closure. This does not alter or
+promote `static-c-system-configuration`, broad system configuration, libc.so,
+CRT, pthread/TLS lifecycle, family completion, or public x86 support.
+
 `./scripts/dev-x86_64.sh libc-fcntl-record-locks` is a separate private
 `static-c-fcntl-record-locks` artifact inside planned `libc.posix-runtime`.
 Its project-header C/C++ gate and pinned-musl/freestanding-static fixture prove

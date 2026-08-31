@@ -146,11 +146,22 @@ pub unsafe extern "C" fn confstr(name: c_int, buf: *mut c_char, len: usize) -> u
     let value_len = value.len() - 1;
     if !buf.is_null() && len != 0 {
         let copy_len = core::cmp::min(len - 1, value_len);
+        // Unlike musl's internal `snprintf` shortcut, copy the selected small
+        // literal byte-by-byte. This retains musl's query/truncation result
+        // while keeping the isolated `confstr` static candidate free of a
+        // stdio or compiler-memory-helper closure.
+        //
         // SAFETY: the caller owns `len` writable bytes when supplying a
-        // non-null output pointer. `copy_len < len`, so the terminator write
-        // remains inside that C object.
+        // non-null output pointer. `copy_len < len` and `copy_len <= value_len`,
+        // so the source reads and destination/terminator writes remain inside
+        // their respective objects.
         unsafe {
-            core::ptr::copy_nonoverlapping(value.as_ptr(), buf.cast::<u8>(), copy_len);
+            let source = value.as_ptr();
+            let mut index = 0usize;
+            while index < copy_len {
+                buf.add(index).write(source.add(index).read() as c_char);
+                index += 1;
+            }
             *buf.add(copy_len) = 0;
         }
     }

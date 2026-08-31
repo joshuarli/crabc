@@ -279,6 +279,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh filesystem-capacity-header-abi
 ./scripts/dev-x86_64.sh vector-io-header-abi
 ./scripts/dev-x86_64.sh unistd-header-abi
+./scripts/dev-x86_64.sh confstr-header-abi
 ./scripts/dev-x86_64.sh getpagesize-header-abi
 ./scripts/dev-x86_64.sh getdtablesize-header-abi
 ./scripts/dev-x86_64.sh system-header-abi
@@ -457,6 +458,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-timegm
 ./scripts/dev-x86_64.sh libc-gmtime-r
 ./scripts/dev-x86_64.sh libc-system-configuration
+./scripts/dev-x86_64.sh libc-confstr
 ./scripts/dev-x86_64.sh libc-getpagesize
 ./scripts/dev-x86_64.sh libc-getdtablesize
 ./scripts/dev-x86_64.sh libc-mapping-core
@@ -1448,6 +1450,13 @@ declarations, including the staged x86 LP64 POSIX/GNU selectors, process and
 system helper declarations, GNU hostname/domain-name signatures, lock
 constants, and large-file aliases. It is source-only and does not select C
 process, filesystem, descriptor, namespace, or UTS-identity behavior.
+
+`confstr-header-abi` is a separate project-first/pinned-musl C11/C++17
+`<unistd.h>` declaration gate for only `size_t confstr(int, char *, size_t)`.
+It proves an exact unconditional signature and unmangled C++ linkage in
+strict, POSIX, X/Open, GNU, and BSD profiles. It is header-only evidence; it
+does not select broad `unistd.h`, configuration behavior, archive linkage, C
+runtime, or public x86 support.
 
 `getpagesize-header-abi` is a separate project-first/pinned-musl C11/C++17
 `<unistd.h>` declaration gate for only `int getpagesize(void)`. It proves
@@ -3751,6 +3760,21 @@ and call/syscall paths. This does not alter or promote
 `static-c-system-configuration`; it is not general page-size discovery,
 `sysconf`/path configuration, C-runtime, CRT, or public x86 support.
 
+`libc-confstr` is a separate private `static-c-confstr` `verified_artifact`,
+derived from the existing `system_configuration.rs` owner rather than a new
+configuration subsystem. Pinned musl 1.2.6 `src/conf/confstr.c` defines the
+fixed `_CS_PATH` and selected empty values, required-size query/copy/truncation
+semantics, valid-selector stale-errno preservation, and invalid-selector
+`EINVAL`. The unconditional C/C++ `<unistd.h>` gate is followed by equivalent
+pinned-musl execution and a true `-nostdlib -static -Wl,--gc-sections`
+candidate. Its source-local byte loop preserves those caller-buffer observables
+without selecting musl's internal stdio shortcut or a compiler-memory helper.
+Final-link collection retains only `confstr` and its initial-TLS errno seam,
+rejecting `sysconf`, `pathconf`, `fpathconf`, `getpagesize`, `getdtablesize`,
+text/memory helpers, allocator, and runtime closure. This does not alter or
+promote `static-c-system-configuration`, broad system configuration, C runtime,
+CRT, pthread/TLS lifecycle, or public x86 support.
+
 `libc-getdtablesize` is a separate private `static-c-getdtablesize`
 `verified_artifact`, derived from that same existing
 `system_configuration.rs` source owner rather than a new configuration or
@@ -5600,6 +5624,7 @@ Apart from the narrowly named `libc-stat-compat`, `libc-credentials`,
 `libc-timegm`,
 `libc-gmtime-r`,
 `libc-system-configuration`,
+`libc-confstr`,
 `libc-getpagesize`,
 `libc-getdtablesize`,
 `libc-mapping-core`,

@@ -125,6 +125,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   unistd-header-abi  compile the staged x86 C/C++ unistd header declarations
   getpagesize-header-abi  compile the staged x86 C/C++ GNU/BSD getpagesize declaration
   getdtablesize-header-abi  compile the staged x86 C/C++ GNU/BSD getdtablesize declaration
+  confstr-header-abi  verify x86 C/C++ unconditional confstr declaration and linkage
   system-header-abi  compile the staged x86 C/C++ system header layouts
   syscall-header-abi  compare the staged x86 syscall macro surface with musl
   signal-header-abi  compile the staged x86 GNU/POSIX signal-header layouts
@@ -319,6 +320,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-system-configuration  run the static x86 crabc-libc system-configuration slice
   libc-getpagesize  run the static x86 crabc-libc getpagesize slice
   libc-getdtablesize  run the static x86 crabc-libc getdtablesize slice
+  libc-confstr  run the static x86 crabc-libc confstr slice
   libc-mapping-core  run the static x86 crabc-libc caller-owned mapping-core slice
   libc-memory-sync  run the static x86 crabc-libc no-cancellation msync slice
   libc-memory-locking  run the static x86 crabc-libc per-range memory-locking slice
@@ -2317,6 +2319,10 @@ run_libc_getdtablesize() {
     run_in_container bash /workspace/compat/x86_64/run_libc_getdtablesize.sh
 }
 
+run_libc_confstr() {
+    run_in_container bash /workspace/compat/x86_64/run_libc_confstr.sh
+}
+
 run_libc_mapping_core() {
     run_in_container bash /workspace/compat/x86_64/run_libc_mapping_core.sh
 }
@@ -2559,6 +2565,10 @@ run_getpagesize_header_abi() {
 
 run_getdtablesize_header_abi() {
     run_in_container bash /workspace/compat/x86_64/run_getdtablesize_header_abi.sh
+}
+
+run_confstr_header_abi() {
+    run_in_container bash /workspace/compat/x86_64/run_confstr_header_abi.sh
 }
 
 run_system_header_abi() {
@@ -3766,7 +3776,7 @@ shift
 case "$command" in
     timerfd-header-abi|signalfd-header-abi) ;;
     libc-timerfd|libc-signalfd|libc-sigpause|libc-sigisemptyset|libc-sigandset-sigorset|libc-sigpending|libc-sigrtmax|libc-sigrtmin|libc-sigaddset-sigdelset-sigfillset) ;;
-    ctermid-header-abi|gethostid-header-abi|getpagesize-header-abi|getdtablesize-header-abi|isatty-header-abi|tcgetpgrp-header-abi|tcsetpgrp-header-abi|getpass-header-abi|libc-ctermid|libc-gethostid|libc-getpagesize|libc-getdtablesize|libc-isatty|libc-tcgetpgrp|libc-tcsetpgrp|libc-getpass|mkfifo-header-abi|mkfifoat-header-abi|libc-mkfifo|libc-mkfifoat|mktemp-header-abi|libc-mktemp) ;;
+    ctermid-header-abi|gethostid-header-abi|getpagesize-header-abi|getdtablesize-header-abi|confstr-header-abi|isatty-header-abi|tcgetpgrp-header-abi|tcsetpgrp-header-abi|getpass-header-abi|libc-ctermid|libc-gethostid|libc-getpagesize|libc-getdtablesize|libc-confstr|libc-isatty|libc-tcgetpgrp|libc-tcsetpgrp|libc-getpass|mkfifo-header-abi|mkfifoat-header-abi|libc-mkfifo|libc-mkfifoat|mktemp-header-abi|libc-mktemp) ;;
     stdio-permanent-line-io-header-abi|stdio-octal-hex-scan-header-abi) ;;
     math-complex-complete-header-abi|libc-math-complex-complete) ;;
     stdio-permanent-byte-io-header-abi) ;;
@@ -4283,6 +4293,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "getdtablesize-header-abi takes no arguments"
         ensure_image
         run_getdtablesize_header_abi
+        ;;
+    confstr-header-abi)
+        [ "$#" -eq 0 ] || fail "confstr-header-abi takes no arguments"
+        ensure_image
+        run_confstr_header_abi
         ;;
     system-header-abi)
         [ "$#" -eq 0 ] || fail "system-header-abi takes no arguments"
@@ -5473,6 +5488,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "libc-getdtablesize takes no arguments"
         ensure_image
         run_libc_getdtablesize
+        ;;
+    libc-confstr)
+        [ "$#" -eq 0 ] || fail "libc-confstr takes no arguments"
+        ensure_image
+        run_libc_confstr
         ;;
     libc-mapping-core)
         [ "$#" -eq 0 ] || fail "libc-mapping-core takes no arguments"

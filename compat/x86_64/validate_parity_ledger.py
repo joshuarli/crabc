@@ -1200,6 +1200,8 @@ GETPAGESIZE_SYMBOLS = ("getpagesize",)
 
 GETDTABLESIZE_SYMBOLS = ("getdtablesize",)
 
+CONFSTR_SYMBOLS = ("confstr",)
+
 MEMORY_SYNC_SYMBOLS = ("msync",)
 
 MEMFD_CREATE_SYMBOLS = ("memfd_create",)
@@ -17154,6 +17156,332 @@ def require_getdtablesize_artifact(family: Mapping[str, Any]) -> None:
         "run_libc_getdtablesize",
     ):
         require(snippet in dispatcher, f"getdtablesize dispatcher omits {snippet}")
+
+
+def require_confstr_artifact(family: Mapping[str, Any]) -> None:
+    """Keep one static configuration-string leaf below configuration promotion."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.posix-runtime].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [entry for entry in artifacts if entry.get("id") == "static-c-confstr"]
+    require(
+        len(matching) == 1,
+        "libc.posix-runtime must contain exactly one static-c-confstr artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-confstr must not promote libc.posix-runtime",
+    )
+    artifact = matching[0]
+    require(
+        "capabilities" not in artifact,
+        "static-c-confstr must not carry capabilities",
+    )
+
+    description = artifact.get("description")
+    require(isinstance(description, str), "static-c-confstr needs a description")
+    for phrase in (
+        "Private native x86 selected-static-archive `confstr` C ABI artifact",
+        "existing `system_configuration.rs` source owner",
+        "still-planned `libc.posix-runtime`",
+        "src/conf/confstr.c",
+        "`_CS_PATH` as `/bin:/usr/bin`",
+        "1116..1151 ranges as empty strings",
+        "invalid selectors with EINVAL",
+        "Musl uses an internal snprintf shortcut",
+        "byte-by-byte",
+        "without a stdio or compiler-memory-helper closure",
+        "`--gc-sections`",
+        "only `confstr` plus its required `__errno_location`",
+        "does not change or promote the broad `static-c-system-configuration` artifact",
+        "broad system configuration",
+        "general path or resource policy",
+        "general text/memory helpers",
+        "allocator",
+        "C runtime",
+        "family completion",
+        "promotion",
+        "public x86 support",
+    ):
+        require(phrase in description, f"static-c-confstr description omits {phrase}")
+
+    owners = set(
+        nonempty_strings(artifact.get("source_owners"), "static-c-confstr.source_owners")
+    )
+    for owner in (
+        "compat/upstreams.toml",
+        "compat/abi/musl-1.2.6/aarch64/libc.a.static.tsv",
+        "libc/Cargo.toml",
+        "libc/src/lib.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/system_configuration.rs",
+        "libc/src/c_abi/x86_64/errno.rs",
+        "include/errno.h",
+        "include/features.h",
+        "include/sys/types.h",
+        "include/unistd.h",
+        "compat/x86_64/confstr_header_abi_probe.c",
+        "compat/x86_64/confstr_header_abi_probe.cpp",
+        "compat/x86_64/run_confstr_header_abi.sh",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/libc_confstr_probe.c",
+        "compat/x86_64/libc_confstr_start.S",
+        "compat/x86_64/run_libc_confstr.sh",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/aarch64_parity_inventory.py",
+        "compat/x86_64/aarch64_parity_inventory.json",
+        "compat/x86_64/README.md",
+        "STATUS.md",
+        "x86-64.md",
+        "scripts/dev-x86_64.sh",
+        "scripts/check_structure.py",
+    ):
+        require(owner in owners, f"static-c-confstr source owners omit {owner}")
+
+    prerequisites = nonempty_strings(
+        artifact.get("x86_abi_prerequisites"), "static-c-confstr.x86_abi_prerequisites"
+    )
+    require(
+        any(
+            "System V AMD64" in item
+            and "rdi" in item
+            and "rsi" in item
+            and "rdx" in item
+            and "rax" in item
+            and "including NUL" in item
+            and "len-zero leaves" in item
+            for item in prerequisites
+        ),
+        "static-c-confstr must retain its C ABI and caller-buffer boundary",
+    )
+    require(
+        any(
+            "9fa28ece75d8a2191de7c5bb53bed224c5947417" in item
+            and "src/conf/confstr.c" in item
+            and "_CS_PATH" in item
+            and "confstr\tconfstr.lo\tT\tGLOBAL\t0\t78" in item
+            and "snprintf" in item
+            and "bounded byte loop" in item
+            for item in prerequisites
+        ),
+        "static-c-confstr must retain pinned-musl source and closure provenance",
+    )
+    require(
+        any(
+            "system-configuration archive member" in item
+            and "--gc-sections" in item
+            and "confstr and __errno_location" in item
+            and "PT_TLS" in item
+            and "%fs TPOFF" in item
+            and "snprintf, string/memory helpers, allocator" in item
+            and "Fixture-local arch_prctl" in item
+            for item in prerequisites
+        ),
+        "static-c-confstr must retain its final-link isolation boundary",
+    )
+
+    headers = nonempty_strings(
+        artifact.get("x86_header_prerequisites"), "static-c-confstr.x86_header_prerequisites"
+    )
+    require(
+        any(
+            "size_t confstr(int, char *, size_t)" in item
+            and "unconditional" in item
+            and "strict, POSIX.1-2008, X/Open 700, GNU, and BSD" in item
+            and "unmangled C++ linkage" in item
+            and "-nostdinc/-nostdinc++" in item
+            and "unistd.h, features.h, and sys/types.h" in item
+            for item in headers
+        ),
+        "static-c-confstr must retain its focused C/C++ header ABI",
+    )
+
+    exports = set(
+        static_c_abi_export_names(
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        )
+    )
+    require(
+        set(CONFSTR_SYMBOLS) <= exports,
+        "static-c-confstr must retain its selected export",
+    )
+    require(
+        {symbol for symbol in exports if symbol.startswith("confstr")}
+        == set(CONFSTR_SYMBOLS),
+        "static-c-confstr must expose only confstr",
+    )
+
+    static_root = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+    ).read_text(encoding="utf-8")
+    require(
+        '#[path = "system_configuration.rs"]\nmod system_configuration;' in static_root,
+        "x86 static C ABI must retain the existing system-configuration source owner",
+    )
+    source = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "system_configuration.rs"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "src/conf/confstr.c",
+        "fn confstr_value",
+        'pub unsafe extern "C" fn confstr',
+        "Unlike musl's internal `snprintf` shortcut",
+        "byte-by-byte",
+        "compiler-memory-helper closure",
+        "while index < copy_len",
+        "buf.add(index).write",
+        "errno::set_errno(EINVAL)",
+    ):
+        require(snippet in source, f"existing confstr source omits {snippet}")
+    confstr_body = source[
+        source.index("/// Query or copy a selected POSIX configuration string.") : source.index(
+            "#[inline(always)]\nfn pathconf_value"
+        )
+    ]
+    for forbidden in ("copy_nonoverlapping", "snprintf(", "raw_syscall", "alloc::"):
+        require(
+            forbidden not in confstr_body,
+            f"confstr source body must not select {forbidden}",
+        )
+
+    runner = (ROOT / "compat" / "x86_64" / "run_libc_confstr.sh").read_text(
+        encoding="utf-8"
+    )
+    for snippet in (
+        "run_musl_oracle.sh",
+        "run_confstr_header_abi.sh",
+        "confstr.lo",
+        "archive_member_for_symbol",
+        "--gc-sections",
+        "-nostdlib -static",
+        "--no-undefined",
+        "candidate retained neighboring system-configuration or resource C ABI symbols",
+        "candidate retained an unselected text or allocator dependency",
+        "candidate lacks the required initial-TLS errno segment",
+        "candidate confstr calls outside its explicit errno seam",
+        "candidate errno accessor does not use direct initial-TLS FS access",
+    ):
+        require(snippet in runner, f"confstr runner omits {snippet}")
+    require("--whole-archive" not in runner, "confstr runner must not force-link the archive")
+
+    probe = (ROOT / "compat" / "x86_64" / "libc_confstr_probe.c").read_text(
+        encoding="utf-8"
+    )
+    for snippet in (
+        "confstr_signature",
+        "check_path",
+        "check_empty_values",
+        "check_invalid_selector",
+        "_CS_PATH",
+        "_CS_POSIX_V6_ILP32_OFF32_CFLAGS",
+        "E2BIG",
+        "EINVAL",
+        "CRABC_CONFSTR_FREESTANDING",
+    ):
+        require(snippet in probe, f"confstr probe omits {snippet}")
+    start = (ROOT / "compat" / "x86_64" / "libc_confstr_start.S").read_text(
+        encoding="utf-8"
+    )
+    for snippet in (
+        "crabc_x86_64_confstr_probe",
+        "crabc_x86_64_confstr_thread_pointer",
+        "mov %rsi, %fs:0",
+        "mov $60, %eax",
+    ):
+        require(snippet in start, f"confstr start shim omits {snippet}")
+
+    header_c = (
+        ROOT / "compat" / "x86_64" / "confstr_header_abi_probe.c"
+    ).read_text(encoding="utf-8")
+    header_cxx = (
+        ROOT / "compat" / "x86_64" / "confstr_header_abi_probe.cpp"
+    ).read_text(encoding="utf-8")
+    for snippet in ("confstr_signature", "confstr", "size_t"):
+        require(snippet in header_c, f"confstr C header probe omits {snippet}")
+        require(snippet in header_cxx, f"confstr C++ header probe omits {snippet}")
+    header_runner = (
+        ROOT / "compat" / "x86_64" / "run_confstr_header_abi.sh"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "confstr_header_abi_probe.c",
+        "confstr_header_abi_probe.cpp",
+        "-nostdinc",
+        "-nostdinc++",
+        "compile_profile strict",
+        "compile_profile posix",
+        "compile_profile xopen",
+        "compile_profile gnu",
+        "compile_profile bsd",
+        "retained a mangled confstr reference",
+        "escaped its declared roots",
+    ):
+        require(snippet in header_runner, f"confstr header runner omits {snippet}")
+
+    evidence = artifact.get("native_evidence")
+    require(isinstance(evidence, list), "static-c-confstr needs evidence")
+    require(
+        {entry.get("command") for entry in evidence if isinstance(entry, Mapping)}
+        == {"./scripts/dev-x86_64.sh libc-confstr"},
+        "static-c-confstr must use the closed libc-confstr command",
+    )
+    scope = evidence[0].get("scope")
+    require(
+        isinstance(scope, str)
+        and all(
+            phrase in scope
+            for phrase in (
+                "Pinned-musl/project C/C++ unconditional header",
+                "`-nostdlib -static -Wl,--gc-sections` candidate",
+                "confstr.lo",
+                "direct/function-pointer query, full copy, truncation, len-zero no-write",
+                "retains confstr and __errno_location",
+                "rejecting sysconf/pathconf/fpathconf/getpagesize/getdtablesize",
+                "snprintf/string/memory helpers, allocator",
+                "no interpreter, DT_NEEDED, unresolved symbols",
+                "PT_TLS and direct initial-TLS FS errno access",
+                "syscall in confstr",
+                "C runtime",
+                "public x86 support",
+            )
+        ),
+        "static-c-confstr evidence must retain its isolated static contract",
+    )
+    oracle = artifact.get("oracle")
+    require(isinstance(oracle, list), "static-c-confstr needs an oracle")
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "c-posix"
+            and "src/conf/confstr.c" in str(entry.get("role"))
+            and "query/copy/truncation" in str(entry.get("role"))
+            and "not a general text or stdio replacement" in str(entry.get("role"))
+            for entry in oracle
+        ),
+        "static-c-confstr must retain its musl behavior oracle",
+    )
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "elf-abi"
+            and "rdi/rsi/rdx" in str(entry.get("role"))
+            and "rax size_t" in str(entry.get("role"))
+            for entry in oracle
+        ),
+        "static-c-confstr must retain its SysV ABI oracle",
+    )
+
+    dispatcher = (ROOT / "scripts" / "dev-x86_64.sh").read_text(encoding="utf-8")
+    for snippet in (
+        "confstr-header-abi)",
+        "run_confstr_header_abi",
+        "libc-confstr)",
+        "run_libc_confstr",
+    ):
+        require(snippet in dispatcher, f"confstr dispatcher omits {snippet}")
 
 
 def require_system_information_artifact(family: Mapping[str, Any]) -> None:
@@ -40716,6 +41044,7 @@ def validate_ledger(
     require_system_configuration_artifact(by_id["libc.posix-runtime"])
     require_getpagesize_artifact(by_id["libc.posix-runtime"])
     require_getdtablesize_artifact(by_id["libc.posix-runtime"])
+    require_confstr_artifact(by_id["libc.posix-runtime"])
     require_system_information_artifact(by_id["libc.posix-runtime"])
     require_mapping_core_artifact(by_id["libc.posix-runtime"])
     require_memory_sync_artifact(by_id["libc.posix-runtime"])

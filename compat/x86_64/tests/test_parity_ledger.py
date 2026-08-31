@@ -50,7 +50,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 41)
-        self.assertEqual(report["verified_artifact_count"], 196)
+        self.assertEqual(report["verified_artifact_count"], 197)
         self.assertEqual(report["header_layout_probe_count"], 46)
         self.assertEqual(report["public_header_inventory_count"], 183)
         self.assertEqual(report["header_foundation_header_count"], 191)
@@ -14621,6 +14621,77 @@ class X86ParityLedgerTests(unittest.TestCase):
         with self.assertRaisesRegex(
             ledger.LedgerError, "closed libc-getdtablesize command"
         ):
+            ledger.validate_ledger(data)
+
+    def test_confstr_artifact_keeps_its_source_split_static_contract(self) -> None:
+        data = self.data()
+        family = self.family(data, "libc.posix-runtime")
+        self.assertEqual(family["status"], "planned")
+        artifacts = family["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-confstr"
+        )
+        self.assertNotIn("capabilities", artifact)
+        for phrase in (
+            "src/conf/confstr.c",
+            "Musl uses an internal snprintf shortcut",
+            "byte-by-byte",
+            "only `confstr` plus its required `__errno_location`",
+            "does not change or promote the broad",
+            "general text/memory helpers",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, artifact["description"])
+        self.assertEqual(
+            {entry["command"] for entry in artifact["native_evidence"]},
+            {"./scripts/dev-x86_64.sh libc-confstr"},
+        )
+        self.assertIn("src/conf/confstr.c", artifact["oracle"][0]["role"])
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-confstr"
+        )
+        artifact["description"] = artifact["description"].replace(
+            "without a stdio or compiler-memory-helper closure",
+            "with an ambient stdio closure",
+        )
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "compiler-memory-helper closure"
+        ):
+            ledger.validate_ledger(data)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-confstr"
+        )
+        artifact["capabilities"] = ["system.configuration"]
+        with self.assertRaisesRegex(ledger.LedgerError, "must not carry capabilities"):
+            ledger.validate_ledger(data)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-confstr"
+        )
+        evidence = artifact["native_evidence"]
+        assert isinstance(evidence, list) and isinstance(evidence[0], dict)
+        evidence[0]["command"] = "./scripts/dev-x86_64.sh libc-system-configuration"
+        with self.assertRaisesRegex(ledger.LedgerError, "closed libc-confstr command"):
             ledger.validate_ledger(data)
 
     def test_mapping_core_artifact_keeps_its_closed_static_contract(self) -> None:
