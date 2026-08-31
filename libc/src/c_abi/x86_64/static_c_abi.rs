@@ -64,8 +64,9 @@
 //! processor/page-count system-information, UTS-namespace identity, basic socket-transport,
 //! scalar network byte-order conversion, immutable IPv6 unspecified-address
 //! and loopback-address data objects, one caller-owned nameserver 16-bit
-//! wire-read codec, one caller-owned DNS wire-name span codec, one isolated
-//! shared static IPv4 presentation buffer with no resolver state, padded
+//! wire-read codec, one caller-owned DNS wire-name span codec, one
+//! caller-owned DNS wire-name expansion codec, one isolated shared static
+//! IPv4 presentation buffer with no resolver state, padded
 //! socket messages/options,
 //! deterministic numeric `netdb.h` address/service translation and result
 //! ownership without resolver configuration, hosts, or DNS,
@@ -517,6 +518,8 @@ mod in6addr_any;
 mod in6addr_loopback;
 #[path = "dn_skipname.rs"]
 mod dn_skipname;
+#[path = "dn_expand.rs"]
+mod dn_expand;
 #[path = "ns_get16.rs"]
 mod ns_get16;
 #[path = "ns_get32.rs"]

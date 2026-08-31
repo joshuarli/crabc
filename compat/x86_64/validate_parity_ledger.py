@@ -1434,6 +1434,8 @@ HSTRERROR_SYMBOLS = ("hstrerror",)
 
 DN_SKIPNAME_SYMBOLS = ("dn_skipname",)
 
+DN_EXPAND_SYMBOLS = ("__dn_expand", "dn_expand")
+
 NS_GET16_SYMBOLS = ("ns_get16",)
 
 NS_GET32_SYMBOLS = ("ns_get32",)
@@ -30576,7 +30578,7 @@ def require_dn_skipname_artifact(family: Mapping[str, Any]) -> None:
         "static-c-dn-skipname must retain its selected export",
     )
     require(
-        not (exports & {"dn_expand", "ns_skiprr", "ns_name_uncompress", "res_init"}),
+        not (exports & {"ns_skiprr", "ns_name_uncompress", "res_init"}),
         "static-c-dn-skipname must not add broader nameserver exports",
     )
 
@@ -30774,6 +30776,375 @@ def require_dn_skipname_artifact(family: Mapping[str, Any]) -> None:
     )
 
 
+def require_dn_expand_artifact(family: Mapping[str, Any]) -> None:
+    """Keep the alias-preserving wire-name decoder out of resolver state."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.resolver].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [entry for entry in artifacts if entry.get("id") == "static-c-dn-expand"]
+    require(
+        len(matching) == 1,
+        "libc.resolver must contain exactly one static-c-dn-expand artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-dn-expand must not promote libc.resolver",
+    )
+    artifact = matching[0]
+    description = artifact.get("description")
+    require(isinstance(description, str), "static-c-dn-expand needs a description")
+    for phrase in (
+        "Private native x86 static `dn_expand` caller-owned DNS wire-name expansion C ABI artifact",
+        "still-planned `libc.resolver`",
+        "archive-free true `-nostdlib -static` candidate",
+        "exactly one extracted crabc object",
+        "never `libc.a`",
+        "public `dn_expand` boundary",
+        "hidden global `__dn_expand`/weak default `dn_expand` alias pair",
+        "caller-owned `base..end` message",
+        "low- and high-offset compressed pointers",
+        "initial encoded span length",
+        "254 bytes",
+        "looping pointer/input",
+        "`h_errno`",
+        "`errno`",
+        "TLS",
+        "`/etc/hosts`",
+        "`/etc/resolv.conf`",
+        "DNS packet I/O",
+        "netdb/database",
+        "`dn_skipname`",
+        "ns_get16/ns_get32/ns_put16/ns_put32",
+        "Ethernet",
+        "public x86 support",
+    ):
+        require(phrase in description, f"static-c-dn-expand description omits {phrase}")
+
+    owners = set(
+        nonempty_strings(artifact.get("source_owners"), "static-c-dn-expand.source_owners")
+    )
+    for owner in (
+        "compat/upstreams.toml",
+        "libc/Cargo.toml",
+        "libc/src/lib.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/dn_expand.rs",
+        "include/resolv.h",
+        "include/arpa/nameser.h",
+        "include/netinet/in.h",
+        "include/stddef.h",
+        "include/stdint.h",
+        "include/sys/socket.h",
+        "include/sys/types.h",
+        "include/bits/alltypes.h",
+        "compat/x86_64/nameser_header_abi_probe.c",
+        "compat/x86_64/nameser_header_abi_probe.cpp",
+        "compat/x86_64/run_nameser_header_abi.sh",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/libc_dn_expand_probe.c",
+        "compat/x86_64/libc_dn_expand_start.S",
+        "compat/x86_64/run_libc_dn_expand.sh",
+        "compat/x86_64/aarch64_parity_inventory.py",
+        "compat/x86_64/aarch64_parity_inventory.json",
+        "compat/x86_64/tests/test_aarch64_parity_inventory.py",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/README.md",
+        "STATUS.md",
+        "x86-64.md",
+        "scripts/dev-x86_64.sh",
+        "scripts/check_structure.py",
+    ):
+        require(owner in owners, f"static-c-dn-expand source owners omit {owner}")
+
+    prerequisites = nonempty_strings(
+        artifact.get("x86_abi_prerequisites"),
+        "static-c-dn-expand.x86_abi_prerequisites",
+    )
+    require(
+        any(
+            "SysV AMD64 LP64" in item
+            and "dn_expand(const unsigned char *, const unsigned char *, const unsigned char *, char *, int)" in item
+            and "rdi/rsi/rdx" in item
+            and "rcx" in item
+            and "r8d" in item
+            and "eax" in item
+            and "base..end message range in one allocation" in item
+            and "source==end and nonpositive space return -1 before destination access" in item
+            for item in prerequisites
+        ),
+        "static-c-dn-expand must retain its five-argument caller-owned ABI",
+    )
+    require(
+        any(
+            "9fa28ece75d8a2191de7c5bb53bed224c5947417" in item
+            and "292-byte `dn_expand.lo`" in item
+            and "src/network/dn_expand.c" in item
+            and "global hidden `__dn_expand`" in item
+            and "weak default `dn_expand`" in item
+            and "same address" in item
+            and "no undefined code reference, call, or syscall" in item
+            and "either top compression bit" in item
+            and "254" in item
+            for item in prerequisites
+        ),
+        "static-c-dn-expand must retain its pinned-musl source closure",
+    )
+    require(
+        any(
+            "exactly one extracted `dn_expand` object" in item
+            and "never `libc.a`" in item
+            and "hidden/weak same-address alias pair" in item
+            and "TLS/errno/h_errno" in item
+            and "DNS packet I/O" in item
+            and "Ethernet" in item
+            for item in prerequisites
+        ),
+        "static-c-dn-expand must retain its archive-free non-resolver boundary",
+    )
+
+    headers = nonempty_strings(
+        artifact.get("x86_header_prerequisites"),
+        "static-c-dn-expand.x86_header_prerequisites",
+    )
+    require(
+        any(
+            "<resolv.h>" in item
+            and "dn_expand(const unsigned char *, const unsigned char *, const unsigned char *, char *, int)" in item
+            and "dn_skipname, ns_get16, ns_get32, and ns_put16" in item
+            and "NS_CMPRSFLGS=0xc0" in item
+            and "NS_MAXDNAME=1025" in item
+            and "unmangled C++ C linkage" in item
+            for item in headers
+        ),
+        "static-c-dn-expand must retain its C/C++ resolv.h declaration boundary",
+    )
+
+    exports = set(
+        static_c_abi_export_names(
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        )
+    )
+    require(
+        set(DN_EXPAND_SYMBOLS) <= exports,
+        "static-c-dn-expand must retain both source-required alias exports",
+    )
+    require(
+        not (exports & {"ns_skiprr", "ns_name_uncompress", "res_init"}),
+        "static-c-dn-expand must not add broader nameserver exports",
+    )
+
+    static_root = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+    ).read_text(encoding="utf-8")
+    require(
+        '#[path = "dn_expand.rs"]\nmod dn_expand;' in static_root,
+        "x86 static C ABI must compose the dn_expand leaf",
+    )
+    implementation = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "dn_expand.rs"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+        "src/network/dn_expand.c",
+        'pub unsafe extern "C" fn __dn_expand',
+        "label & 0xc0 != 0",
+        "space > 254",
+        "iteration += 2",
+        ".hidden __dn_expand",
+        ".weak dn_expand",
+        ".set dn_expand, __dn_expand",
+        "output may overlap",
+    ):
+        require(snippet in implementation, f"dn_expand leaf omits {snippet}")
+    exported_functions = set(
+        re.findall(
+            r'(?m)^pub\s+unsafe\s+extern\s+"C"\s+fn\s+(\w+)\s*\(', implementation
+        )
+    )
+    require(
+        exported_functions == {"__dn_expand"},
+        "dn_expand leaf must use only the source hidden implementation plus assembler alias",
+    )
+    for forbidden in (
+        "static mut",
+        "raw_syscall",
+        "__errno_location",
+        "__h_errno_location",
+        "getaddrinfo",
+        "gethostby",
+        "socket(",
+        "std::",
+        "alloc::",
+        "crabc_core",
+        "crabc_mimalloc",
+        "fn dn_skipname",
+        "fn ns_get16",
+        "fn ns_get32",
+        "fn ns_put16",
+        "fn ns_put32",
+    ):
+        require(forbidden not in implementation, f"dn_expand leaf widens into {forbidden}")
+
+    oracle = artifact.get("oracle")
+    require(isinstance(oracle, list), "static-c-dn-expand needs oracle evidence")
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "c-posix"
+            and isinstance(entry.get("role"), str)
+            and "src/network/dn_expand.c" in entry["role"]
+            and "254-byte output cap" in entry["role"]
+            and "high-offset 14-bit pointer following" in entry["role"]
+            and "pointer-loop failure" in entry["role"]
+            and "Resolver state/files" in entry["role"]
+            and "Ethernet" in entry["role"]
+            for entry in oracle
+        ),
+        "static-c-dn-expand must retain its pinned-musl decoder oracle",
+    )
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "elf-abi"
+            and isinstance(entry.get("role"), str)
+            and "five-argument C-call ABI" in entry["role"]
+            and "292-byte" in entry["role"]
+            and "__dn_expand/weak-default dn_expand same-address alias pair" in entry["role"]
+            and "archive-free static final-ELF boundary" in entry["role"]
+            for entry in oracle
+        ),
+        "static-c-dn-expand must retain its static ELF alias ABI oracle",
+    )
+
+    evidence = artifact.get("native_evidence")
+    require(isinstance(evidence, list), "static-c-dn-expand needs evidence")
+    require(
+        {entry.get("command") for entry in evidence if isinstance(entry, Mapping)}
+        == {"./scripts/dev-x86_64.sh libc-dn-expand"},
+        "static-c-dn-expand must use the closed libc-dn-expand command",
+    )
+    scope = evidence[0].get("scope")
+    require(isinstance(scope, str), "static-c-dn-expand evidence needs a scope")
+    for phrase in (
+        "Pinned-musl project-header C execution",
+        "archive-free x86 `-nostdlib -static` candidate",
+        "hidden `__dn_expand`/weak `dn_expand` same-address alias pair",
+        "`dn_expand.lo` 292-byte source mapping",
+        "no code relocation/call/syscall",
+        "exactly one extracted object",
+        "never `libc.a`",
+        "compressed/noncanonical/high-offset pointers",
+        "initial encoded-span return lengths",
+        "truncated/out-of-range/loop failure",
+        "source==end/nonpositive-space early failure",
+        "254-byte bounded output semantics",
+        "partial dotted output",
+        "no interpreter/DT_NEEDED/unresolved symbol",
+        "TLS/errno/h_errno/dynamic TLS",
+        "calls, syscalls",
+        "resolver configuration",
+        "hosts/resolv.conf",
+        "DNS packet I/O",
+        "netdb/database",
+        "selected nameser read/write helpers",
+        "Ethernet",
+        "public x86 support",
+    ):
+        require(phrase in scope, f"static-c-dn-expand evidence omits {phrase}")
+
+    header_c = (
+        ROOT / "compat" / "x86_64" / "nameser_header_abi_probe.c"
+    ).read_text(encoding="utf-8")
+    header_cpp = (
+        ROOT / "compat" / "x86_64" / "nameser_header_abi_probe.cpp"
+    ).read_text(encoding="utf-8")
+    header_runner = (
+        ROOT / "compat" / "x86_64" / "run_nameser_header_abi.sh"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "#include <resolv.h>",
+        "dn_expand_signature",
+        "NS_CMPRSFLGS == 0xc0",
+        "NS_MAXLABEL == 63",
+        "NS_MAXCDNAME == 255",
+        "NS_MAXDNAME == 1025",
+    ):
+        require(snippet in header_c, f"nameser C header probe omits {snippet}")
+        require(snippet in header_cpp, f"nameser C++ header probe omits {snippet}")
+    for snippet in (
+        "check_cxx_c_linkage",
+        "nm --undefined-only",
+        "_Z.*dn_expand",
+        "resolv.h arpa/nameser.h netinet/in.h",
+        "DNS packet I/O",
+        "netdb",
+    ):
+        require(snippet in header_runner, f"nameser header runner omits {snippet}")
+
+    fixture = (
+        ROOT / "compat" / "x86_64" / "libc_dn_expand_probe.c"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "#include <resolv.h>",
+        "dn_expand_signature",
+        "static const unsigned char compressed",
+        "noncanonical_pointer",
+        "high_offset_pointer",
+        "truncated_pointer",
+        "invalid_pointer",
+        "pointer_loop",
+        "source==end",
+        "CRABC_DN_EXPAND_FREESTANDING",
+    ):
+        require(snippet in fixture, f"dn_expand fixture omits {snippet}")
+    start = (
+        ROOT / "compat" / "x86_64" / "libc_dn_expand_start.S"
+    ).read_text(encoding="utf-8")
+    for snippet in ("crabc_x86_64_dn_expand_probe", "mov $60, %eax"):
+        require(snippet in start, f"dn_expand static entry omits {snippet}")
+    require("ARCH_SET_FS" not in start, "dn_expand static entry must not bootstrap TLS")
+
+    runner = (
+        ROOT / "compat" / "x86_64" / "run_libc_dn_expand.sh"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "dn_expand.lo",
+        "dn_expand.c",
+        "292",
+        "assert_selected_c_abi_surface",
+        "assert_dn_expand_alias",
+        "extract_selected_member",
+        "dn_expand archive member also defines a nameserver sibling",
+        "-nostdlib -static",
+        '"$selected_member" -o "$candidate"',
+        "candidate unexpectedly selects TLS",
+        "__h_errno_location",
+        "dn_skipname ns_get16 ns_get32 ns_put16 ns_put32",
+        "res_query res_querydomain res_search",
+        "htonl htons ntohl ntohs",
+        "getaddrinfo freeaddrinfo",
+        "socket bind connect send recv",
+        "call|syscall",
+    ):
+        require(snippet in runner, f"dn_expand runner omits {snippet}")
+    require(
+        '"$archive" -o "$candidate"' not in runner,
+        "dn_expand final candidate must not link libc.a",
+    )
+    dispatch = (ROOT / "scripts" / "dev-x86_64.sh").read_text(encoding="utf-8")
+    require(
+        "nameser-header-abi)" in dispatch
+        and "run_nameser_header_abi.sh" in dispatch
+        and "libc-dn-expand)" in dispatch
+        and "run_libc_dn_expand.sh" in dispatch,
+        "dn_expand dispatcher bindings are missing",
+    )
+
+
 def require_ns_get16_artifact(family: Mapping[str, Any]) -> None:
     """Keep the dependency-free nameserver wire read out of resolver state."""
     artifacts = require_verified_artifacts(
@@ -30925,7 +31296,6 @@ def require_ns_get16_artifact(family: Mapping[str, Any]) -> None:
         not (
             exports
             & {
-                "dn_expand",
                 "ns_put32",
                 "ns_skiprr",
                 "ns_name_uncompress",
@@ -31279,7 +31649,6 @@ def require_ns_get32_artifact(family: Mapping[str, Any]) -> None:
         not (
             exports
             & {
-                "dn_expand",
                 "ns_put32",
                 "ns_skiprr",
                 "ns_name_uncompress",
@@ -31641,7 +32010,6 @@ def require_ns_put16_artifact(family: Mapping[str, Any]) -> None:
         not (
             exports
             & {
-                "dn_expand",
                 "ns_put32",
                 "ns_skiprr",
                 "ns_name_uncompress",
@@ -47714,6 +48082,7 @@ def validate_ledger(
     require_linear_search_artifact(by_id["libc.c-abi-compat"])
     require_intrusive_queue_artifact(by_id["libc.c-abi-compat"])
     require_dn_skipname_artifact(by_id["libc.resolver"])
+    require_dn_expand_artifact(by_id["libc.resolver"])
     require_ns_get16_artifact(by_id["libc.resolver"])
     require_ns_get32_artifact(by_id["libc.resolver"])
     require_ns_put16_artifact(by_id["libc.resolver"])
