@@ -50,6 +50,7 @@ __pthread_rwlock_trywrlock
 __pthread_rwlock_unlock
 __pthread_rwlock_wrlock
 __qsort_r
+__sched_cpucount
 __setjmp
 __signbit
 __signbitf

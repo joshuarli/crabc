@@ -256,6 +256,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh child-reaping-header-abi
 ./scripts/dev-x86_64.sh immediate-termination-header-abi
 ./scripts/dev-x86_64.sh posix-exit-header-abi
+./scripts/dev-x86_64.sh sched-cpucount-header-abi
 ./scripts/dev-x86_64.sh sched-getcpu-header-abi
 ./scripts/dev-x86_64.sh sched-yield-header-abi
 ./scripts/dev-x86_64.sh callback-algorithms-header-abi
@@ -503,6 +504,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-descriptor-pipeline
 ./scripts/dev-x86_64.sh libc-timestamp-updates
 ./scripts/dev-x86_64.sh libc-process-resources
+./scripts/dev-x86_64.sh libc-sched-cpucount
 ./scripts/dev-x86_64.sh libc-sched-getcpu
 ./scripts/dev-x86_64.sh libc-sched-yield
 ./scripts/dev-x86_64.sh libc-readiness-waits
@@ -1331,6 +1333,15 @@ GNU C11/C++17 `<sched.h>` declarations for `int sched_getcpu(void)`, with
 strict, POSIX, and XOPEN profiles required to hide it. It proves only the
 GNU declaration and unmangled C++ linkage, not CPU affinity/topology,
 scheduler policy, time support, or general-header completion.
+
+`sched-cpucount-header-abi` separately compiles project-first and pinned-musl
+GNU C11/C++17 `<sched.h>` declarations/macros for
+`int __sched_cpucount(size_t, const cpu_set_t *)`, `CPU_COUNT_S`, and
+`CPU_COUNT`. It ratchets the 128-byte, align-8 GNU `cpu_set_t` layout and
+unmangled C++ helper reference; strict, POSIX, and XOPEN profiles must hide all
+three GNU spellings. This is declaration/macro evidence only, not affinity,
+CPU topology, CPU-mask construction/allocation/comparison, scheduler policy,
+time support, or general-header completion.
 
 `callback-algorithms-header-abi` compiles project-first and pinned-musl C/C++
 `<stdlib.h>` declarations for `bsearch`, `qsort`, and GNU/BSD `qsort_r`.
@@ -4292,6 +4303,19 @@ nonnegative observations preserve stale errno. It excludes CPU/NUMA/cache
 output, topology/migration policy, affinity, scheduler policy/parameters/
 priority/yield, thread state, clocks/timers/calendar/timezone/environment,
 general runtime, family completion, promotion, and public x86 support.
+
+`libc-sched-cpucount` is a distinct private `static-c-sched-cpucount` GNU
+caller-buffer bit-count artifact, not scheduler, affinity, or time support.
+Its project-header C fixture runs first through pinned musl 1.2.6 and then
+through a true `-nostdlib -static` candidate. It maps exactly to musl's
+`src/sched/sched_cpucount.c::__sched_cpucount` bytewise eight-bit loop over a
+valid caller-owned range, proving zero, partial, and full 128-byte masks plus
+the `CPU_COUNT_S`/`CPU_COUNT` macro forwarding. It has no syscall, errno/TLS,
+allocation, CPU state observation or mutation, scheduler policy/parameter/
+priority/yield, clock/timer/calendar/timezone, or ambient runtime path.
+Invalid caller storage, count conversion above `INT_MAX`, the rest of the
+`CPU_*` macro family, family completion, promotion, and public x86 support
+remain excluded.
 
 `libc-readiness-waits` is the fixture for a separately recorded
 `static-c-readiness-signal-waits` `verified_artifact` gate over that archive,

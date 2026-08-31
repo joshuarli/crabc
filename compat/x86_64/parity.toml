@@ -5212,6 +5212,54 @@ native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc
 oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source and GNU declaration/behavior oracle for src/sched/sched_getcpu.c::sched_getcpu: the selected raw syscall(SYS_getcpu) fallback returns the CPU or ordinary status/errno translation, while x86 may first use private VDSO_GETCPU_SYM state." }, { kind = "kernel-abi", source = "Linux 5.10 x86-64 ABI", role = "getcpu=309 rdi/rsi/rdx private-output and raw-errno contract plus fixture-only prctl=157/seccomp=317 EPERM observation boundary." }, { kind = "elf-abi", source = "System V AMD64 psABI", role = "No-argument signed-int C ABI, direct syscall register convention, and freestanding static initial-exec errno TLS boundary." }]
 
 [[family.verified_artifact]]
+id = "static-c-sched-cpucount"
+description = "Private native x86 static GNU `__sched_cpucount` caller-buffer bit-count artifact inside still-planned `libc.posix-runtime`. One project-header C fixture first executes through pinned musl 1.2.6 and then through a true dependency-free `-nostdlib -static` candidate linked only with the selected `crabc-libc` archive. Pinned musl `src/sched/sched_cpucount.c::__sched_cpucount` casts the exact GNU `cpu_set_t` input to bytes and visits each selected byte's eight bit positions; the shared fixture proves zero-length, partial 1/2/7/8/127-byte ranges with high-bit and tail values, and the complete 128-byte all-set mask. The GNU-only C/C++ header matrix proves exactly `int __sched_cpucount(size_t, const cpu_set_t *)`, `CPU_COUNT_S`, `CPU_COUNT`, the 128-byte align-8 cpu_set_t layout, and unmangled linkage; strict/POSIX/XOPEN profiles hide all three spellings. The candidate has no Linux syscall, errno/TLS, allocation, mutation, affinity, CPU topology/migration policy, scheduler policy/parameters/priority/yield, thread state, clocks/timers/calendar/timezone/environment, libc.so, CRT, loader, sysroot, dynamic TLS lifecycle, family completion, promotion, or public x86 support. Caller-invalid/null/unreadable storage, a size beyond caller-readable storage, and count conversion above INT_MAX remain outside its C source contract."
+source_owners = [
+  "compat/upstreams.toml",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/sched_cpucount.rs",
+  "include/features.h",
+  "include/sched.h",
+  "include/sys/types.h",
+  "include/time.h",
+  "include/bits/alltypes.h",
+  "compat/x86_64/sched_cpucount_header_abi_probe.c",
+  "compat/x86_64/sched_cpucount_header_abi_probe.cpp",
+  "compat/x86_64/run_sched_cpucount_header_abi.sh",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/libc_sched_cpucount_probe.c",
+  "compat/x86_64/libc_sched_cpucount_start.S",
+  "compat/x86_64/run_libc_sched_cpucount.sh",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "compat/x86_64/aarch64_parity_inventory.py",
+  "compat/x86_64/aarch64_parity_inventory.json",
+  "compat/x86_64/README.md",
+  "STATUS.md",
+  "x86-64.md",
+  "scripts/dev-x86_64.sh",
+  "scripts/check_structure.py",
+]
+x86_abi_prerequisites = [
+  "The System V AMD64 GNU `int __sched_cpucount(size_t, const cpu_set_t *)` ABI passes LP64 size_t in rdi and the caller CPU-mask pointer in rsi, then returns the signed int result in eax. The selected x86 cpu_set_t is a 128-byte, align-8 array of sixteen unsigned-long words.",
+  "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417 maps src/sched/sched_cpucount.c::__sched_cpucount: const unsigned char *p visits every selected byte and its eight bit positions, accumulating the count as size_t before the C int return conversion. The x86 source retains this bytewise loop rather than selecting affinity syscalls or the adjacent CPU_* macro family.",
+  "The pinned-musl and true-static fixture uses only valid caller-owned cpu_set_t storage: size 0, partial 1/2/7/8/127-byte ranges with high-bit and tail patterns, and the full 128-byte/1024-bit all-set mask. Null/unreadable pointers, sizes beyond readable caller storage, and any count conversion above INT_MAX have no selected C source contract.",
+  "This pure helper has no Linux syscall, no errno, no TLS, no allocation, no CPU-affinity/topology/state observation or mutation, no scheduler policy/parameter/priority/yield path, and no clock/timer/calendar/timezone/environment path. The freestanding candidate needs no thread-pointer bootstrap and does not select libc.so, CRT, loader, or sysroot behavior.",
+]
+x86_header_prerequisites = [
+  "Pinned-musl/project GNU C11/C++17 sched.h probes require exactly `int __sched_cpucount(size_t, const cpu_set_t *)`, CPU_COUNT_S, CPU_COUNT, the 128-byte align-8 cpu_set_t layout, and an unmangled C++ reference. Strict, POSIX, and XOPEN C11/C++17 probes require all three GNU spellings to remain hidden, matching the _GNU_SOURCE profile.",
+  "The fixture preprocesses only project sched.h, sys/types.h, time.h, features.h, and bits/alltypes.h. It is declaration/macro and selected static-link evidence, not installed-header completion or scheduler/affinity capability evidence.",
+]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-sched-cpucount", scope = "Pinned-musl 1.2.6 project-header normal C execution plus the separate strict/POSIX/XOPEN/GNU C/C++ declaration/macro gate precede a true `-nostdlib -static` candidate. The common fixture proves valid caller-owned zero-length, partial 1/2/7/8/127-byte high-bit/tail masks, and the full 128-byte all-set CPU_COUNT_S/CPU_COUNT result. Header/archive/final-ELF/source/disassembly checks require exactly __sched_cpucount in the archive/candidate and an env -i call-free byte-count closure, with no interpreter/DT_NEEDED/unresolved symbol, TLS, errno, Linux syscall, affinity/topology, scheduler policy/parameters/priority/yield, clocks/timers/calendar/timezone, or ambient runtime. It excludes invalid caller storage/count-overflow behavior, CPU macro construction/allocation/comparison, family completion, promotion, and public x86 support." }]
+oracle = [
+  { kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source, GNU declaration, macro, and behavior oracle for src/sched/sched_cpucount.c::__sched_cpucount: bytewise const unsigned char iteration with eight positions per selected byte; CPU_COUNT_S(size,set) and CPU_COUNT(set) forward exactly to that helper." },
+  { kind = "elf-abi", source = "System V AMD64 psABI and pinned musl x86 headers", role = "LP64 size_t/pointer rdi/rsi integer ABI, signed eax result, 128-byte align-8 cpu_set_t layout, and C/C++ external-C declaration/linkage proof." },
+]
+
+[[family.verified_artifact]]
 id = "static-c-readiness-signal-waits"
 description = "Private native x86 selected-static-archive readiness/signal-waits block. One dependency-free `crabc-libc` archive resolves only `poll`, GNU `ppoll`, `select`, `pselect`, `pause`, and `sigsuspend` into a freestanding C fixture after an equivalent pinned-musl execution. The fixture uses already-selected pipe and simple signal-control calls only as plumbing, then proves empty/readable/hangup/invalid descriptor readiness, copied public timeout records, select's local timeval normalization and validation, atomic temporary-mask delivery/restoration for ppoll/pselect/sigsuspend, and the emitted direct pause syscall path. This artifact is deliberately narrower than readiness, event, or signal capabilities. It does not exercise epoll/eventfd; a separate artifact owns those archive exports. C socket/open/path/fcntl/vector-I/O APIs, AIO, generic signal delivery or signal-wait APIs, process lifecycle, timers, pthread cancellation or mask policy, libc.so, CRT, dynamic TLS, loader, sysroot, allocator, or public x86 support remain excluded."
 source_owners = [

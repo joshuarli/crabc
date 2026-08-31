@@ -220,6 +220,7 @@ X86_RUNTIME_FOUNDATION_LIBC_SOURCES = {
     Path("libc/src/c_abi/x86_64/auxv_observation.rs"),
     Path("libc/src/c_abi/x86_64/process_globals.rs"),
     Path("libc/src/c_abi/x86_64/process_resources.rs"),
+    Path("libc/src/c_abi/x86_64/sched_cpucount.rs"),
     Path("libc/src/c_abi/x86_64/sched_getcpu.rs"),
     Path("libc/src/c_abi/x86_64/sched_yield.rs"),
     Path("libc/src/c_abi/x86_64/posix_semaphore.rs"),
@@ -3795,6 +3796,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         '#[path = "difftime.rs"]',
         '#[path = "gmtime_r.rs"]',
         '#[path = "timegm.rs"]',
+        '#[path = "sched_cpucount.rs"]',
         '#[path = "sched_getcpu.rs"]',
         '#[path = "sched_yield.rs"]',
         '#[path = "clock_nanosleep.rs"]',
@@ -8251,6 +8253,52 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
                 f"current-CPU boundary must not select {forbidden!r}"
             )
 
+    sched_cpucount_source = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "sched_cpucount.rs"
+    )
+    sched_cpucount_text = sched_cpucount_source.read_text(errors="replace")
+    for required in (
+        "musl 1.2.6 release commit",
+        "src/sched/sched_cpucount.c::__sched_cpucount",
+        "const unsigned char *",
+        "while index < size",
+        "while bit < 8",
+        "wrapping_add",
+        'pub unsafe extern "C" fn __sched_cpucount',
+        "caller-owned",
+        "public x86 support",
+    ):
+        if required not in sched_cpucount_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/sched_cpucount.rs: selected static GNU "
+                f"CPU-count boundary is missing {required!r}"
+            )
+    sched_cpucount_exports = set(
+        re.findall(
+            r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(',
+            sched_cpucount_text,
+        )
+    )
+    if sched_cpucount_exports != {"__sched_cpucount"}:
+        errors.append(
+            "libc/src/c_abi/x86_64/sched_cpucount.rs: selected static artifact "
+            "must export only __sched_cpucount"
+        )
+    for forbidden in (
+        "crabc_core",
+        "crabc_mimalloc",
+        "raw_syscall",
+        "set_errno",
+        "getenv",
+        "tzset",
+        "__tls_get_addr",
+    ):
+        if forbidden in sched_cpucount_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/sched_cpucount.rs: selected static GNU "
+                f"CPU-count boundary must not select {forbidden!r}"
+            )
+
     timegm_source = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "timegm.rs"
     timegm_text = timegm_source.read_text(errors="replace")
     for required in (
@@ -11424,6 +11472,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         difftime_text,
         gmtime_r_text,
         timegm_text,
+        sched_cpucount_text,
         sched_getcpu_text,
         sched_yield_text,
         clock_nanosleep_text,
@@ -11749,6 +11798,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         "difftime",
         "gmtime_r",
         "timegm",
+        "__sched_cpucount",
         "sched_getcpu",
         "sched_yield",
         "clock_nanosleep",
@@ -11975,7 +12025,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         errors.append(
             "libc/src/c_abi/x86_64: selected static archive must export only its "
             "stat, credential, errno, bootstrap-memory/fenv/continuation, simple "
-            "signal-control, separate realtime-minimum/realtime-maximum bridges, one pure GNU signal-set predicate, paired GNU binary set-operation leaf, and a three-symbol POSIX signal-set mutation leaf, bounded process-signal execution, and one legacy single-signal pause wait, bounded pthread create/exit/join/detach initial-TLS worker, its private selected-main/worker pthread-key/C11-TSS lifecycle, private process-normal pthread mutexes and their musl private condition-variable handoff, the complete selected rwlock/attribute family with private-or-shared futex operation, plus the distinct C11 plain-sync adapter and normal-return pthread/C11 once state machine, its typed C11 create/exit/join/detach sibling, and pthread/C11 identity aliases, named termios-control, direct terminal-descriptor and foreground-group observations plus one named foreground-group assignment, caller-buffered terminal naming, historical ctermid pathname spelling, constant historical gethostid compatibility, direct GNU gettid observation, selected process-context, child-reaping, C11 immediate termination, callback algorithms, direct clock_gettime, binary64 difftime, caller-buffered fixed-UTC gmtime_r, fixed-UTC timegm, a GNU current-CPU raw-fallback observation leaf, a status-returning POSIX scheduler-yield leaf, caller-owned mapping-core, no-cancellation mapping synchronization, direct anonymous-memory descriptor creation, nanosleep, and clock_nanosleep, selected "
+            "signal-control, separate realtime-minimum/realtime-maximum bridges, one pure GNU signal-set predicate, paired GNU binary set-operation leaf, and a three-symbol POSIX signal-set mutation leaf, bounded process-signal execution, and one legacy single-signal pause wait, bounded pthread create/exit/join/detach initial-TLS worker, its private selected-main/worker pthread-key/C11-TSS lifecycle, private process-normal pthread mutexes and their musl private condition-variable handoff, the complete selected rwlock/attribute family with private-or-shared futex operation, plus the distinct C11 plain-sync adapter and normal-return pthread/C11 once state machine, its typed C11 create/exit/join/detach sibling, and pthread/C11 identity aliases, named termios-control, direct terminal-descriptor and foreground-group observations plus one named foreground-group assignment, caller-buffered terminal naming, historical ctermid pathname spelling, constant historical gethostid compatibility, direct GNU gettid observation, selected process-context, child-reaping, C11 immediate termination, callback algorithms, direct clock_gettime, binary64 difftime, caller-buffered fixed-UTC gmtime_r, fixed-UTC timegm, a caller-buffered GNU CPU-mask bit-count helper, a GNU current-CPU raw-fallback observation leaf, a status-returning POSIX scheduler-yield leaf, caller-owned mapping-core, no-cancellation mapping synchronization, direct anonymous-memory descriptor creation, nanosleep, and clock_nanosleep, selected "
             "signal-control, separate realtime-minimum/realtime-maximum bridges, one historical SIGALRM interval-timer adapter leaf, one pure GNU signal-set predicate, paired GNU binary set-operation leaf, and a three-symbol POSIX signal-set mutation leaf, bounded process-signal execution, and one legacy single-signal pause wait, bounded pthread create/exit/join/detach initial-TLS worker, its private selected-main/worker pthread-key/C11-TSS lifecycle, private process-normal pthread mutexes and their musl private condition-variable handoff, the complete selected rwlock/attribute family with private-or-shared futex operation, plus the distinct C11 plain-sync adapter and normal-return pthread/C11 once state machine, its typed C11 create/exit/join/detach sibling, and pthread/C11 identity aliases, named termios-control, direct terminal-descriptor and foreground-group observations plus one named foreground-group assignment, caller-buffered terminal naming, historical ctermid pathname spelling, constant historical gethostid compatibility, selected process-context, child-reaping, C11 immediate termination, callback algorithms, direct clock_gettime, binary64 difftime, caller-buffered fixed-UTC gmtime_r, fixed-UTC timegm, a status-returning POSIX scheduler-yield leaf, caller-owned mapping-core, no-cancellation mapping synchronization, direct anonymous-memory descriptor creation, nanosleep, and clock_nanosleep, selected "
             "POSIX _exit forwarding, descriptor-entry, selected filesystem-access, bounded descriptor-control, timestamp updates, and descriptor-I/O, selected process-resources, selected readiness/signal-waits, "
             "selected socket transport and selected socket-message/options, selected system-observation, historical load snapshot, selected UTS-identity, "
@@ -12049,6 +12099,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         ("search_hash_table.rs", search_hash_table_text),
         ("gettext_catalog.rs", gettext_catalog_text),
         ("clock_gettime.rs", clock_gettime_text),
+        ("sched_cpucount.rs", sched_cpucount_text),
         ("sched_getcpu.rs", sched_getcpu_text),
         ("sched_yield.rs", sched_yield_text),
         ("clock_nanosleep.rs", clock_nanosleep_text),

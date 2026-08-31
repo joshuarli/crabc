@@ -1379,8 +1379,8 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "libc-getloadavg",
             "timerfd-header-abi|signalfd-header-abi",
             "libc-timerfd|libc-signalfd|libc-sigpause|libc-sigisemptyset|libc-sigandset-sigorset|libc-sigpending|libc-sigrtmax|libc-sigrtmin|libc-sched-getscheduler|libc-alarm|libc-sigaddset-sigdelset-sigfillset",
-            "libc-sched-getcpu|libc-sched-yield",
-            "sched-getscheduler-header-abi",
+            "libc-sched-cpucount|libc-sched-getcpu|libc-sched-yield",
+            "sched-cpucount-header-abi|sched-getscheduler-header-abi",
             "ctermid-header-abi|gethostid-header-abi|getpagesize-header-abi|gettid-header-abi|isatty-header-abi|ttyname-r-header-abi|tcgetpgrp-header-abi|tcsetpgrp-header-abi|getpass-header-abi|libc-ctermid|libc-gethostid|libc-getpagesize|libc-gettid|libc-isatty|libc-ttyname-r|libc-tcgetpgrp|libc-tcsetpgrp|libc-getpass|mkfifo-header-abi|mkfifoat-header-abi|libc-mkfifo|libc-mkfifoat|mktemp-header-abi|libc-mktemp",
             "readlinkat-header-abi|libc-readlinkat",
             "stdio-permanent-line-io-header-abi|stdio-octal-hex-scan-header-abi",
@@ -7444,6 +7444,135 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         )
         self.assertIn("sched-getcpu-header-abi", runner)
         self.assertIn("libc-sched-getcpu", runner)
+
+    def test_libc_static_c_abi_sched_cpucount_artifact_stays_bytewise(self) -> None:
+        """The GNU CPU-mask count is one pure caller-buffer helper leaf."""
+
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        source_path = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "sched_cpucount.rs"
+        )
+        probe_path = ROOT / "compat" / "x86_64" / "libc_sched_cpucount_probe.c"
+        start_path = ROOT / "compat" / "x86_64" / "libc_sched_cpucount_start.S"
+        artifact_runner_path = (
+            ROOT / "compat" / "x86_64" / "run_libc_sched_cpucount.sh"
+        )
+        header_c_path = (
+            ROOT / "compat" / "x86_64" / "sched_cpucount_header_abi_probe.c"
+        )
+        header_cxx_path = (
+            ROOT / "compat" / "x86_64" / "sched_cpucount_header_abi_probe.cpp"
+        )
+        header_runner_path = (
+            ROOT / "compat" / "x86_64" / "run_sched_cpucount_header_abi.sh"
+        )
+        static_exports = {
+            line
+            for line in (
+                ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+            ).read_text(encoding="utf-8").splitlines()
+            if line and not line.startswith("#")
+        }
+        parity_ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        runner = RUNNER.read_text(encoding="utf-8")
+
+        for path in (
+            source_path,
+            probe_path,
+            start_path,
+            artifact_runner_path,
+            header_c_path,
+            header_cxx_path,
+            header_runner_path,
+        ):
+            self.assertTrue(path.is_file(), f"missing sched_cpucount artifact input: {path}")
+
+        source = source_path.read_text(encoding="utf-8")
+        probe = probe_path.read_text(encoding="utf-8")
+        start = start_path.read_text(encoding="utf-8")
+        artifact_runner = artifact_runner_path.read_text(encoding="utf-8")
+        header_runner = header_runner_path.read_text(encoding="utf-8")
+        sched_header = (ROOT / "include" / "sched.h").read_text(encoding="utf-8")
+
+        self.assertIn('#[path = "sched_cpucount.rs"]', static_root)
+        self.assertIn("__sched_cpucount", static_exports)
+        for required in (
+            "musl 1.2.6 release commit",
+            "src/sched/sched_cpucount.c::__sched_cpucount",
+            "const unsigned char *",
+            "while index < size",
+            "while bit < 8",
+            "wrapping_add",
+            'pub unsafe extern "C" fn __sched_cpucount',
+            "caller-owned",
+            "public x86 support",
+        ):
+            self.assertIn(required, source)
+        for forbidden in (
+            "crabc_core",
+            "crabc_mimalloc",
+            "raw_syscall",
+            "set_errno",
+            "getenv",
+            "tzset",
+            "__tls_get_addr",
+        ):
+            self.assertNotIn(forbidden, source)
+
+        for required in (
+            "int __sched_cpucount(size_t, const cpu_set_t *);",
+            "#define CPU_COUNT_S(size,set) __sched_cpucount(size,set)",
+            "#define CPU_COUNT(set) CPU_COUNT_S(sizeof(cpu_set_t),set)",
+        ):
+            self.assertIn(required, sched_header)
+        for required in (
+            "#include <sched.h>",
+            "CPU_COUNT_S",
+            "CPU_COUNT",
+            "sched_cpucount_function",
+            "check_partial_sizes",
+            "check_full_mask",
+            "CRABC_SCHED_CPUCOUNT_FREESTANDING",
+        ):
+            self.assertIn(required, probe)
+        self.assertIn("crabc_x86_64_sched_cpucount_probe", start)
+        for header_path in (header_c_path, header_cxx_path):
+            header_probe = header_path.read_text(encoding="utf-8")
+            self.assertIn("sched_cpucount_signature", header_probe)
+            self.assertIn("CPU_COUNT_S", header_probe)
+            self.assertIn("CPU_COUNT", header_probe)
+        for required in (
+            "strict",
+            "GNU",
+            "-std=c++17",
+            "nm --undefined-only",
+            "mangled",
+        ):
+            self.assertIn(required, header_runner)
+        for required in (
+            "static_c_abi_exports.txt",
+            "run_sched_cpucount_header_abi.sh",
+            "-nostdlib -static",
+            "-Wl,-e,_start",
+            "-Wl,--no-undefined",
+            "assert_byte_count_code",
+            "int result register",
+            "env -i",
+            "__sched_cpucount",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn("--whole-archive", artifact_runner)
+        self.assertIn('id = "static-c-sched-cpucount"', parity_ledger)
+        self.assertIn(
+            'command = "./scripts/dev-x86_64.sh libc-sched-cpucount"',
+            parity_ledger,
+        )
+        self.assertIn("sched-cpucount-header-abi", runner)
+        self.assertIn("libc-sched-cpucount", runner)
 
     def test_libc_static_c_abi_pthread_cpuclock_artifact_stays_self_only(
         self,
