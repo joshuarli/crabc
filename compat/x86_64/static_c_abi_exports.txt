@@ -403,6 +403,7 @@ isalnum_l
 isalpha
 isalpha_l
 isascii
+isatty
 isblank
 isblank_l
 iscntrl

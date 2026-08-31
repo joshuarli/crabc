@@ -411,6 +411,8 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-ctermid
 ./scripts/dev-x86_64.sh gethostid-header-abi
 ./scripts/dev-x86_64.sh libc-gethostid
+./scripts/dev-x86_64.sh isatty-header-abi
+./scripts/dev-x86_64.sh libc-isatty
 ./scripts/dev-x86_64.sh getpass-header-abi
 ./scripts/dev-x86_64.sh libc-getpass
 ./scripts/dev-x86_64.sh mktemp-header-abi
@@ -3140,6 +3142,19 @@ host configuration nor selects hostname/domain-name state, host-identity or
 secure-execution policy, libc.so, CRT, loader, sysroot, family completion,
 promotion, or public x86 support.
 
+`libc-isatty` is a separately recorded static `static-c-isatty`
+`verified_artifact` gate over that archive, not a terminal capability. Its
+strict/POSIX/X/Open/GNU/BSD C/C++ `unistd.h` declaration gate and one
+project-header C body first execute through pinned musl and then through a
+`-nostdlib -static` candidate. It selects only `isatty(int)`: pinned musl's
+direct `ioctl=16`/`TIOCGWINSZ=0x5413` private winsize scratch followed by the
+exact `syscall(...) + 1` conversion. The fixture proves tty success with
+stale-errno preservation, invalid-fd `EBADF`, and `/dev/null` `ENOTTY`; its
+raw devpts setup only supplies the known tty descriptor. It neither opens nor
+names a terminal and excludes terminal discovery, termios mutation/control,
+PTY/session policy, `ttyname`, `getpass`, generic ioctl, dynamic runtime,
+family completion, promotion, and public x86 support.
+
 `libc-getpass` is a separately recorded static `verified_artifact` gate over
 that archive, not a terminal or password capability. Its GNU/BSD C/C++ header
 gate and one project-header C body first execute through pinned musl and then
@@ -4987,6 +5002,7 @@ Apart from the narrowly named `libc-stat-compat`, `libc-credentials`,
 `libc-termios-control`,
 `libc-ctermid`,
 `libc-gethostid`,
+`libc-isatty`,
 `libc-getpass`,
 `libc-mktemp`,
 `libc-process-context`, `libc-environment`, `libc-secure-environment`, `libc-login-name`, `libc-child-reaping`, and

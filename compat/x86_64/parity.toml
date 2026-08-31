@@ -1893,6 +1893,7 @@ native_evidence = [
   { state = "required", command = "./scripts/dev-x86_64.sh libc-bootstrap-primitives", scope = "The completed static artifact is recorded below as `verified_artifact`; aggregate header/layout closure remains required." },
   { state = "required", command = "./scripts/dev-x86_64.sh libc-termios-control", scope = "The completed static artifact is recorded under libc.posix-runtime as `verified_artifact`; aggregate header/layout closure remains required." },
   { state = "required", command = "./scripts/dev-x86_64.sh libc-ctermid", scope = "The completed historical static pathname-spelling artifact is recorded under libc.posix-runtime as `verified_artifact`; it does not close terminal policy, filesystem behavior, temporary-file families, or an archive family." },
+  { state = "required", command = "./scripts/dev-x86_64.sh libc-isatty", scope = "The completed selected-private static descriptor-observation artifact is recorded under libc.posix-runtime as `verified_artifact`; it does not close terminal, descriptor, header, or archive families." },
   { state = "required", command = "./scripts/dev-x86_64.sh libc-getpass", scope = "The completed historical static terminal-input artifact is recorded under libc.posix-runtime as `verified_artifact`; it does not close a terminal, password, session, or archive family." },
   { state = "required", command = "./scripts/dev-x86_64.sh libc-process-context", scope = "The completed static artifact is recorded under libc.posix-runtime as `verified_artifact`; aggregate header/layout closure remains required." },
   { state = "required", command = "./scripts/dev-x86_64.sh libc-child-reaping", scope = "The completed static artifact is recorded under libc.posix-runtime as `verified_artifact`; aggregate header/layout closure remains required." },
@@ -2424,6 +2425,50 @@ x86_abi_prerequisites = [
 x86_header_prerequisites = ["The focused pinned-musl/project-header-first C11/C++17 gate proves `char *ctermid(char *)`, `L_ctermid == 20`, POSIX/POSIX.1-2008/XOPEN/GNU/BSD visibility, unmangled C++ linkage, and strict C/C++ hiding of both the declaration and macro through stdio.h/features.h/bits/alltypes.h. This header-only check selects no stdio stream, terminal behavior, archive linkage, installed-header completion, or public x86 support."]
 native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-ctermid", scope = "Pinned-musl/project POSIX C/C++ header compilation plus equivalent pinned-musl C execution and a true dependency-free x86 crabc-libc archive with one `-nostdlib -static` candidate. The fixture proves the exact ctermid declaration and L_ctermid=20 visibility boundary, unmangled C++ reference, non-null `/dev/tty` spelling, null borrowed spelling, caller-buffer result-pointer identity, terminating NUL, and untouched caller tail. It audits exact crate-owned export closure, no interpreter/DT_NEEDED/unresolved symbol, no TLS/errno path, no syscall instruction, and no terminal, filesystem, or string-helper linkage. It excludes terminal policy, PTY/session/termios/tty discovery, getpass, generic filesystem behavior, mktemp/tempnam/tmpnam/mkstemp/mkdtemp/tmpfile temporary-file families, authority-bearing filesystem handles, family completion, promotion, and public x86 support." }]
 oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source mapping: src/unistd/ctermid.c supplies the declaration visibility, fixed literal, caller-buffer copy, and null-result behavior oracle." }, { kind = "elf-abi", source = "System V AMD64 psABI", role = "C char-pointer argument/result and true-static closure contract." }]
+
+[[family.verified_artifact]]
+id = "static-c-isatty"
+description = "Private native x86 selected-static-archive `isatty` descriptor-observation boundary inside still-planned `libc.posix-runtime`. One dependency-free `crabc-libc` archive resolves exactly `isatty(int)` into a freestanding C fixture after equivalent pinned-musl execution. Pinned musl `src/unistd/isatty.c` maps fixed Linux `ioctl=16`/`TIOCGWINSZ=0x5413` and a private four-u16 winsize scratch to `syscall(...) + 1`: a zero ioctl result becomes one and preserves errno, while raw `EBADF`/`ENOTTY` errors become zero and publish the raw errno. Fixture-local raw devpts setup only supplies a known terminal descriptor. The leaf neither opens nor names a terminal and selects no terminal discovery, terminal path/session discovery, termios mutation/control, PTY/session policy, `ttyname`, `getpass`, generic ioctl, generic filesystem completion, temporary-file creation family, dynamic runtime, CRT, loader, sysroot, family completion, promotion, or public x86 support."
+source_owners = [
+  "compat/upstreams.toml",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/errno.rs",
+  "libc/src/c_abi/x86_64/syscall.rs",
+  "libc/src/c_abi/x86_64/isatty.rs",
+  "include/errno.h",
+  "include/fcntl.h",
+  "include/stdint.h",
+  "include/unistd.h",
+  "include/features.h",
+  "include/sys/types.h",
+  "include/sys/syscall.h",
+  "include/bits/syscall.h",
+  "compat/x86_64/isatty_header_abi_probe.c",
+  "compat/x86_64/isatty_header_abi_probe.cpp",
+  "compat/x86_64/run_isatty_header_abi.sh",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/libc_isatty_probe.c",
+  "compat/x86_64/libc_isatty_start.S",
+  "compat/x86_64/run_libc_isatty.sh",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "compat/x86_64/README.md",
+  "STATUS.md",
+  "x86-64.md",
+  "scripts/dev-x86_64.sh",
+  "scripts/check_structure.py",
+]
+x86_abi_prerequisites = [
+  "The SysV AMD64 `isatty(int)` ABI receives the signed four-byte descriptor in rdi and returns a signed four-byte int in eax. Linux x86-64 ioctl=16 receives fd/request/private-output-pointer in rdi/rsi/rdx; this leaf admits only TIOCGWINSZ=0x5413 and an 8-byte align-2 private winsize of four u16 words at offsets 0/2/4/6",
+  "Pinned musl 1.2.6 `src/unistd/isatty.c` performs `syscall(SYS_ioctl, fd, TIOCGWINSZ, &winsize) + 1`. The selected implementation applies the same conversion after the shared raw-status translator: ioctl zero returns one without changing errno, and raw -EBADF/-ENOTTY become -1 plus initial-TLS errno before the final plus one returns zero",
+  "The final static candidate has a PT_TLS errno datum with direct initial-exec TPOFF access and no TLSGD/TLSLD/TLSDESC/GOTTPOFF/DTPMOD/DTPOFF model form or __tls_get_addr; fixture-local startup writes one Variant-II thread-pointer self word at %fs:0 without claiming CRT or TLS lifecycle",
+]
+x86_header_prerequisites = ["The focused pinned-musl/project-header-first strict, POSIX, X/Open, GNU, and BSD C11/C++17 gate proves the unconditional `int isatty(int)` `unistd.h` declaration, exact C++ C linkage, and project `sys/types.h`/`features.h` provenance. It selects no terminal behavior, static archive linkage, installed-header completion, or public x86 support."]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-isatty", scope = "Pinned-musl/project C/C++ header compilation plus equivalent pinned-musl C execution and a true dependency-free x86 crabc-libc archive with a `-nostdlib -static` candidate under a deterministic timeout. The fixture proves tty success and stale-errno preservation, invalid-fd EBADF, and /dev/null ENOTTY. The gate audits exact crate-owned exports, initial-TLS errno, no interpreter/DT_NEEDED/unresolved symbol or dynamic-TLS resolver, direct isatty ioctl=16/TIOCGWINSZ=0x5413 code, and absence of TCGETS/TCSETS or terminal naming/password/PTY/session helpers. Fixture-local raw devpts setup is harness-only. It excludes terminal discovery, terminal path/session discovery, termios mutation/control, PTY/session policy, ttyname, getpass, generic ioctl, dynamic runtime, family completion, promotion, and public x86 support." }]
+oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source mapping: src/unistd/isatty.c supplies the fixed TIOCGWINSZ private-scratch and raw-status-plus-one behavior oracle." }, { kind = "kernel-abi", source = "Linux 5.10 x86-64 ABI", role = "ioctl=16 register words, TIOCGWINSZ=0x5413 private winsize output, EBADF/ENOTTY, and devpts fixture contract." }, { kind = "elf-abi", source = "System V AMD64 psABI", role = "int argument/result ABI and static initial-exec TLS Variant-II fixture contract." }]
 
 [[family.verified_artifact]]
 id = "static-c-getpass"

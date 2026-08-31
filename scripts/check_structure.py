@@ -229,6 +229,7 @@ X86_RUNTIME_FOUNDATION_LIBC_SOURCES = {
     Path("libc/src/c_abi/x86_64/error_strings.rs"),
     Path("libc/src/c_abi/x86_64/strsignal.rs"),
     Path("libc/src/c_abi/x86_64/termios_control.rs"),
+    Path("libc/src/c_abi/x86_64/isatty.rs"),
     Path("libc/src/c_abi/x86_64/getpass.rs"),
     Path("libc/src/c_abi/x86_64/thread_pointer.rs"),
     Path("libc/src/c_abi/x86_64/uts_identity.rs"),
@@ -3730,6 +3731,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         '#[path = "c11_sync.rs"]',
         '#[path = "pthread_once.rs"]',
         '#[path = "termios_control.rs"]',
+        '#[path = "isatty.rs"]',
         '#[path = "getpass.rs"]',
         '#[path = "process_context.rs"]',
         '#[path = "login_name.rs"]',
@@ -5721,6 +5723,152 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
             errors.append(
                 "libc/src/c_abi/x86_64/gethostid.rs: selected static historical "
                 f"gethostid boundary must not select {forbidden!r}"
+            )
+
+    isatty_source = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "isatty.rs"
+    isatty_text = isatty_source.read_text(errors="replace")
+    for required in (
+        "pinned musl 1.2.6 release commit",
+        "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+        "src/unistd/isatty.c::isatty",
+        "TIOCGWINSZ: i64 = 0x5413",
+        "struct KernelWinsize",
+        "MaybeUninit::<KernelWinsize>::uninit()",
+        "raw_syscall::SYS_IOCTL",
+        "c_status(result) + 1",
+        "terminal-path or",
+    ):
+        if required not in isatty_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/isatty.rs: selected static descriptor "
+                f"observation boundary is missing {required!r}"
+            )
+    isatty_exports = set(
+        re.findall(
+            r'(?m)^pub\s+unsafe\s+extern\s+"C"\s+fn\s+(\w+)\s*\(',
+            isatty_text,
+        )
+    )
+    if isatty_exports != {"isatty"}:
+        errors.append(
+            "libc/src/c_abi/x86_64/isatty.rs: selected static descriptor "
+            "observation artifact must export only isatty"
+        )
+    for forbidden in (
+        "termios_control::",
+        "raw_syscall::SYS_OPEN",
+        "raw_syscall::SYS_OPENAT",
+        "TCGETS",
+        "TIOCSPTLCK",
+        "crabc_core",
+        "crabc_mimalloc",
+    ):
+        if forbidden in isatty_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/isatty.rs: selected static descriptor "
+                f"observation boundary must not select {forbidden!r}"
+            )
+
+    isatty_runner = (
+        ROOT / "compat" / "x86_64" / "run_libc_isatty.sh"
+    ).read_text(errors="replace")
+    isatty_header_runner = (
+        ROOT / "compat" / "x86_64" / "run_isatty_header_abi.sh"
+    ).read_text(errors="replace")
+    isatty_header_c = (
+        ROOT / "compat" / "x86_64" / "isatty_header_abi_probe.c"
+    ).read_text(errors="replace")
+    isatty_header_cxx = (
+        ROOT / "compat" / "x86_64" / "isatty_header_abi_probe.cpp"
+    ).read_text(errors="replace")
+    isatty_probe = (
+        ROOT / "compat" / "x86_64" / "libc_isatty_probe.c"
+    ).read_text(errors="replace")
+    isatty_start = (
+        ROOT / "compat" / "x86_64" / "libc_isatty_start.S"
+    ).read_text(errors="replace")
+    x86_runner = (ROOT / "scripts" / "dev-x86_64.sh").read_text(errors="replace")
+    for required in (
+        "run_musl_oracle.sh",
+        "run_isatty_header_abi.sh",
+        "static_c_abi_exports.txt",
+        "-nostdlib -static",
+        "--no-undefined",
+        "for symbol in __errno_location isatty",
+        "--disassemble=isatty",
+        "project-header isatty fixture contract drifted",
+        "fixture did not use the project",
+        "fixed TIOCGWINSZ request",
+        "termios-control request",
+        "candidate selects an excluded terminal helper",
+        'timeout "$EXECUTION_TIMEOUT"',
+        "candidate retains a dynamic TLS model",
+    ):
+        if required not in isatty_runner:
+            errors.append(
+                "compat/x86_64/run_libc_isatty.sh: selected static descriptor "
+                f"observation evidence is missing {required!r}"
+            )
+    for required in (
+        "isatty_header_abi_probe.c",
+        "isatty_header_abi_probe.cpp",
+        "Pinned musl 1.2.6",
+        "unconditional <unistd.h> declaration",
+        "retained a mangled isatty reference",
+    ):
+        if required not in isatty_header_runner:
+            errors.append(
+                "compat/x86_64/run_isatty_header_abi.sh: selected descriptor "
+                f"observation declaration evidence is missing {required!r}"
+            )
+    for required in ("isatty declaration", "isatty_function = isatty"):
+        if required not in isatty_header_c or required not in isatty_header_cxx:
+            errors.append(
+                "compat/x86_64/isatty_header_abi_probe: selected descriptor "
+                f"observation declaration evidence is missing {required!r}"
+            )
+    for required in (
+        "FIXTURE_EBADF",
+        "FIXTURE_ENOTTY",
+        "FIXTURE_TIOCGWINSZ",
+        "FIXTURE_TIOCSPTLCK",
+        "FIXTURE_TIOCGPTPEER",
+        "open_pty_pair",
+        "isatty(pair.slave) != 1 || errno != 313",
+        "isatty(-1) != 0 || errno != FIXTURE_EBADF",
+        "isatty(null_fd) != 0 || errno != FIXTURE_ENOTTY",
+    ):
+        if required not in isatty_probe:
+            errors.append(
+                "compat/x86_64/libc_isatty_probe.c: selected descriptor "
+                f"observation regression is missing {required!r}"
+            )
+    for forbidden in ("tcgetattr(", "tcsetattr(", "ttyname(", "getpass("):
+        if forbidden in isatty_probe:
+            errors.append(
+                "compat/x86_64/libc_isatty_probe.c: selected descriptor "
+                f"observation fixture must not select {forbidden!r}"
+            )
+    for required in (
+        "ARCH_SET_FS",
+        "mov %rsi, %fs:0",
+        "crabc_x86_64_isatty_probe",
+    ):
+        if required not in isatty_start:
+            errors.append(
+                "compat/x86_64/libc_isatty_start.S: selected descriptor "
+                f"observation TLS fixture is missing {required!r}"
+            )
+    for required in (
+        "isatty-header-abi)",
+        "run_isatty_header_abi",
+        "libc-isatty)",
+        "run_libc_isatty_probe",
+    ):
+        if required not in x86_runner:
+            errors.append(
+                "scripts/dev-x86_64.sh: selected static isatty dispatcher is "
+                f"missing {required!r}"
             )
 
     getpass_source = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "getpass.rs"
@@ -8790,6 +8938,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         termios_control_text,
         ctermid_text,
         gethostid_text,
+        isatty_text,
         process_context_text,
         login_name_text,
         child_reaping_text,
@@ -9073,6 +9222,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         "tcsetwinsize",
         "ctermid",
         "gethostid",
+        "isatty",
         "getpid",
         "getppid",
         "getuid",
@@ -9303,7 +9453,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         errors.append(
             "libc/src/c_abi/x86_64: selected static archive must export only its "
             "stat, credential, errno, bootstrap-memory/fenv/continuation, simple "
-            "signal-control, one pure GNU signal-set predicate and paired GNU binary set-operation leaf, bounded process-signal execution, and one legacy single-signal pause wait, bounded pthread create/exit/join/detach initial-TLS worker, its private selected-main/worker pthread-key/C11-TSS lifecycle, private process-normal pthread mutexes and their musl private condition-variable handoff, the complete selected rwlock/attribute family with private-or-shared futex operation, plus the distinct C11 plain-sync adapter and normal-return pthread/C11 once state machine, its typed C11 create/exit/join/detach sibling, and pthread/C11 identity aliases, named termios-control, historical ctermid pathname spelling, constant historical gethostid compatibility, selected process-context, child-reaping, C11 immediate termination, callback algorithms, direct clock_gettime, caller-owned mapping-core, no-cancellation mapping synchronization, direct anonymous-memory descriptor creation, nanosleep, and clock_nanosleep, selected "
+            "signal-control, one pure GNU signal-set predicate and paired GNU binary set-operation leaf, bounded process-signal execution, and one legacy single-signal pause wait, bounded pthread create/exit/join/detach initial-TLS worker, its private selected-main/worker pthread-key/C11-TSS lifecycle, private process-normal pthread mutexes and their musl private condition-variable handoff, the complete selected rwlock/attribute family with private-or-shared futex operation, plus the distinct C11 plain-sync adapter and normal-return pthread/C11 once state machine, its typed C11 create/exit/join/detach sibling, and pthread/C11 identity aliases, named termios-control, direct terminal-descriptor observation, historical ctermid pathname spelling, constant historical gethostid compatibility, selected process-context, child-reaping, C11 immediate termination, callback algorithms, direct clock_gettime, caller-owned mapping-core, no-cancellation mapping synchronization, direct anonymous-memory descriptor creation, nanosleep, and clock_nanosleep, selected "
             "descriptor-entry, selected filesystem-access, bounded descriptor-control, timestamp updates, and descriptor-I/O, selected process-resources, selected readiness/signal-waits, "
             "selected socket transport and selected socket-message/options, selected system-observation, selected UTS-identity, "
             "selected numeric-address codecs and legacy classful IPv4 arithmetic, fixed-profile h_errno message text, byte-string, random-entropy, memory-search, C-string-copy, immutable error-string, "
@@ -9347,6 +9497,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         ("pthread_tsd.rs", pthread_tsd_text),
         ("termios_control.rs", termios_control_text),
         ("ctermid.rs", ctermid_text),
+        ("isatty.rs", isatty_text),
         ("mktemp.rs", mktemp_text),
         ("process_context.rs", process_context_text),
         ("child_reaping.rs", child_reaping_text),

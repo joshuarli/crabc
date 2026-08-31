@@ -50,7 +50,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 41)
-        self.assertEqual(report["verified_artifact_count"], 164)
+        self.assertEqual(report["verified_artifact_count"], 165)
         self.assertEqual(report["header_layout_probe_count"], 46)
         self.assertEqual(report["public_header_inventory_count"], 183)
         self.assertEqual(report["header_foundation_header_count"], 191)
@@ -5983,6 +5983,54 @@ class X86ParityLedgerTests(unittest.TestCase):
             "libc/src/c_abi/x86_64/ctermid.rs",
             posix_runtime["source_owners"],
         )
+        isatty = artifacts_by_id["static-c-isatty"]
+        assert isinstance(isatty, dict)
+        self.assertNotIn("capabilities", isatty)
+        for owner in (
+            "libc/src/c_abi/x86_64/isatty.rs",
+            "compat/x86_64/isatty_header_abi_probe.c",
+            "compat/x86_64/isatty_header_abi_probe.cpp",
+            "compat/x86_64/run_isatty_header_abi.sh",
+            "compat/x86_64/libc_isatty_probe.c",
+            "compat/x86_64/libc_isatty_start.S",
+            "compat/x86_64/run_libc_isatty.sh",
+            "compat/x86_64/validate_parity_ledger.py",
+            "scripts/check_structure.py",
+        ):
+            self.assertIn(owner, isatty["source_owners"])
+        self.assertEqual(
+            {evidence["command"] for evidence in isatty["native_evidence"]},
+            {"./scripts/dev-x86_64.sh libc-isatty"},
+        )
+        for phrase in (
+            "`isatty` descriptor-observation boundary",
+            "`ioctl=16`/`TIOCGWINSZ=0x5413`",
+            "`syscall(...) + 1`",
+            "terminal discovery",
+            "termios mutation/control",
+            "PTY/session policy",
+            "`ttyname`",
+            "`getpass`",
+            "family completion",
+            "promotion",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, isatty["description"])
+        isatty_scope = isatty["native_evidence"][0]["scope"]
+        for phrase in (
+            "tty success",
+            "stale-errno preservation",
+            "EBADF",
+            "ENOTTY",
+            "ioctl=16/TIOCGWINSZ=0x5413",
+            "TCGETS/TCSETS",
+            "terminal discovery",
+            "termios mutation/control",
+            "PTY/session policy",
+            "ttyname",
+            "getpass",
+        ):
+            self.assertIn(phrase, isatty_scope)
         getpass = artifacts_by_id["static-c-getpass"]
         assert isinstance(getpass, dict)
         self.assertNotIn("capabilities", getpass)
@@ -11926,6 +11974,61 @@ class X86ParityLedgerTests(unittest.TestCase):
         evidence[0]["command"] = "./scripts/dev-x86_64.sh libc-auxv-observation"
         with self.assertRaisesRegex(
             ledger.LedgerError, "closed libc-secure-environment command"
+        ):
+            ledger.validate_ledger(data)
+
+    def test_static_isatty_artifact_keeps_its_nonpromoting_contract(self) -> None:
+        data = self.data()
+        family = self.family(data, "libc.posix-runtime")
+        family["status"] = "foundation-verified"
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "static-c-isatty must not promote"
+        ):
+            ledger.require_isatty_artifact(family)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-isatty"
+        )
+        artifact["description"] = artifact["description"].replace(
+            "`syscall(...) + 1`", "generic boolean conversion"
+        )
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "description omits `syscall\\(\\.\\.\\.\\) \\+ 1`"
+        ):
+            ledger.validate_ledger(data)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-isatty"
+        )
+        artifact["capabilities"] = ["terminal.session-control"]
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "must not carry capabilities"
+        ):
+            ledger.validate_ledger(data)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-isatty"
+        )
+        evidence = artifact["native_evidence"]
+        assert isinstance(evidence, list) and isinstance(evidence[0], dict)
+        evidence[0]["command"] = "./scripts/dev-x86_64.sh libc-termios-control"
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "closed libc-isatty command"
         ):
             ledger.validate_ledger(data)
 

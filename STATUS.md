@@ -94,6 +94,17 @@ select host identity policy, secure-execution policy, the broad
 `system.kernel-admin` capability, family completion, promotion, or public x86
 support.
 
+`./scripts/dev-x86_64.sh libc-isatty` is a separate private `static-c-isatty`
+artifact inside still-planned `libc.posix-runtime`. Its strict/POSIX/X/Open/GNU/
+BSD C/C++ declaration gate and pinned-musl/static C fixture select only
+`isatty(int)` descriptor observation: musl's fixed `ioctl=16`/
+`TIOCGWINSZ=0x5413` private winsize scratch and `syscall(...) + 1` conversion,
+tty success with preserved errno, invalid-fd `EBADF`, and `/dev/null` `ENOTTY`.
+The raw devpts setup is fixture-only. It neither opens nor names a terminal and
+does not select terminal discovery, termios mutation/control, PTY/session
+policy, `ttyname`, `getpass`, generic ioctl, family completion, promotion, or
+public x86 support.
+
 `./scripts/dev-x86_64.sh libc-getpass` is a separate private
 `static-c-getpass` artifact inside still-planned `libc.posix-runtime`. Its
 pinned-musl and freestanding-static routes select only the historical C

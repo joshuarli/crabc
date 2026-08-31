@@ -1367,7 +1367,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         expected_groups = (
             "timerfd-header-abi|signalfd-header-abi",
             "libc-timerfd|libc-signalfd|libc-sigpause|libc-sigisemptyset|libc-sigandset-sigorset",
-            "ctermid-header-abi|gethostid-header-abi|getpass-header-abi|libc-ctermid|libc-gethostid|libc-getpass|mkfifo-header-abi|libc-mkfifo|mktemp-header-abi|libc-mktemp",
+            "ctermid-header-abi|gethostid-header-abi|isatty-header-abi|getpass-header-abi|libc-ctermid|libc-gethostid|libc-isatty|libc-getpass|mkfifo-header-abi|libc-mkfifo|mktemp-header-abi|libc-mktemp",
             "stdio-permanent-line-io-header-abi|stdio-octal-hex-scan-header-abi",
             "math-complex-complete-header-abi|libc-math-complex-complete",
             "stdio-permanent-byte-io-header-abi",
@@ -2896,6 +2896,18 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         )
         self.assertIn(
             '    libc-ctermid)\n        [ "$#" -eq 0 ] || fail "libc-ctermid takes no arguments"',
+            source,
+        )
+        self.assertIn('run_isatty_header_abi()', source)
+        self.assertIn(
+            '/workspace/compat/x86_64/run_isatty_header_abi.sh', source
+        )
+        self.assertIn('run_libc_isatty_probe()', source)
+        self.assertIn(
+            '/workspace/compat/x86_64/run_libc_isatty.sh', source
+        )
+        self.assertIn(
+            '    libc-isatty)\n        [ "$#" -eq 0 ] || fail "libc-isatty takes no arguments"',
             source,
         )
         self.assertIn('run_getpass_header_abi()', source)
@@ -8796,6 +8808,124 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertNotIn("#define L_ctermid 20\n\n/* File access */", stdio_header)
         self.assertIn("ctermid-header-abi", runner)
         self.assertIn("libc-ctermid", runner)
+
+    def test_libc_static_c_abi_isatty_artifact_stays_narrow(self) -> None:
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        source = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "isatty.rs"
+        ).read_text(encoding="utf-8")
+        probe = (
+            ROOT / "compat" / "x86_64" / "libc_isatty_probe.c"
+        ).read_text(encoding="utf-8")
+        start = (
+            ROOT / "compat" / "x86_64" / "libc_isatty_start.S"
+        ).read_text(encoding="utf-8")
+        artifact_runner = (
+            ROOT / "compat" / "x86_64" / "run_libc_isatty.sh"
+        ).read_text(encoding="utf-8")
+        header_runner = (
+            ROOT / "compat" / "x86_64" / "run_isatty_header_abi.sh"
+        ).read_text(encoding="utf-8")
+        header_c = (
+            ROOT / "compat" / "x86_64" / "isatty_header_abi_probe.c"
+        ).read_text(encoding="utf-8")
+        header_cxx = (
+            ROOT / "compat" / "x86_64" / "isatty_header_abi_probe.cpp"
+        ).read_text(encoding="utf-8")
+        static_exports = (
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        ).read_text(encoding="utf-8")
+        static_export_names = {
+            line
+            for line in static_exports.splitlines()
+            if line and not line.startswith("#")
+        }
+        runner = RUNNER.read_text(encoding="utf-8")
+
+        self.assertIn('#[path = "isatty.rs"]', static_root)
+        self.assertIn("isatty", static_export_names)
+        self.assertEqual(
+            set(
+                re.findall(
+                    r'(?m)^pub\s+unsafe\s+extern\s+"C"\s+fn\s+(\w+)\s*\(',
+                    source,
+                )
+            ),
+            {"isatty"},
+        )
+        for required in (
+            "pinned musl 1.2.6 release commit",
+            "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+            "src/unistd/isatty.c::isatty",
+            "TIOCGWINSZ: i64 = 0x5413",
+            "struct KernelWinsize",
+            "MaybeUninit::<KernelWinsize>::uninit()",
+            "raw_syscall::SYS_IOCTL",
+            "c_status(result) + 1",
+            "terminal-path or",
+        ):
+            self.assertIn(required, source)
+        for forbidden in (
+            "termios_control::",
+            "raw_syscall::SYS_OPEN",
+            "raw_syscall::SYS_OPENAT",
+            "TCGETS",
+            "TIOCSPTLCK",
+            "crabc_core",
+            "crabc_mimalloc",
+        ):
+            self.assertNotIn(forbidden, source)
+        for required in (
+            "FIXTURE_EBADF",
+            "FIXTURE_ENOTTY",
+            "FIXTURE_TIOCGWINSZ",
+            "FIXTURE_TIOCSPTLCK",
+            "FIXTURE_TIOCGPTPEER",
+            "open_pty_pair",
+            "isatty(pair.slave) != 1 || errno != 313",
+            "isatty(-1) != 0 || errno != FIXTURE_EBADF",
+            "isatty(null_fd) != 0 || errno != FIXTURE_ENOTTY",
+        ):
+            self.assertIn(required, probe)
+        for forbidden in ("tcgetattr(", "tcsetattr(", "ttyname(", "getpass("):
+            self.assertNotIn(forbidden, probe)
+        for required in (
+            "ARCH_SET_FS",
+            "mov %rsi, %fs:0",
+            "crabc_x86_64_isatty_probe",
+        ):
+            self.assertIn(required, start)
+        for required in (
+            "run_musl_oracle.sh",
+            "run_isatty_header_abi.sh",
+            "static_c_abi_exports.txt",
+            "-nostdlib -static",
+            "-Wl,--no-undefined",
+            "for symbol in __errno_location isatty",
+            "--disassemble=isatty",
+            "project-header isatty fixture contract drifted",
+            "fixture did not use the project",
+            "fixed TIOCGWINSZ request",
+            "termios-control request",
+            "candidate selects an excluded terminal helper",
+            'timeout "$EXECUTION_TIMEOUT"',
+        ):
+            self.assertIn(required, artifact_runner)
+        for required in (
+            "isatty_header_abi_probe.c",
+            "isatty_header_abi_probe.cpp",
+            "Pinned musl 1.2.6",
+            "unconditional <unistd.h> declaration",
+            "retained a mangled isatty reference",
+        ):
+            self.assertIn(required, header_runner)
+        for required in ("isatty declaration", "isatty_function = isatty"):
+            self.assertIn(required, header_c)
+            self.assertIn(required, header_cxx)
+        self.assertIn("isatty-header-abi", runner)
+        self.assertIn("libc-isatty", runner)
 
     def test_libc_static_c_abi_getpass_artifact_stays_narrow(self) -> None:
         static_root = (

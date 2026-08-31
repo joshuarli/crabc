@@ -12080,6 +12080,249 @@ def require_getpass_artifact(family: Mapping[str, Any]) -> None:
         require(snippet in dispatcher, f"x86 dispatcher omits {snippet}")
 
 
+def require_isatty_artifact(family: Mapping[str, Any]) -> None:
+    """Keep direct terminal-descriptor observation below family promotion."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.posix-runtime].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [entry for entry in artifacts if entry.get("id") == "static-c-isatty"]
+    require(
+        len(matching) == 1,
+        "libc.posix-runtime must contain exactly one static-c-isatty artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-isatty must not promote libc.posix-runtime",
+    )
+    artifact = matching[0]
+    require(
+        "capabilities" not in artifact,
+        "static-c-isatty must not promote a terminal capability",
+    )
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for phrase in (
+        "`isatty` descriptor-observation boundary",
+        "still-planned `libc.posix-runtime`",
+        "exactly `isatty(int)`",
+        "src/unistd/isatty.c",
+        "`ioctl=16`/`TIOCGWINSZ=0x5413`",
+        "private four-u16 winsize scratch",
+        "`syscall(...) + 1`",
+        "preserves errno",
+        "`EBADF`/`ENOTTY`",
+        "terminal discovery",
+        "termios mutation/control",
+        "PTY/session policy",
+        "`ttyname`",
+        "`getpass`",
+        "generic ioctl",
+        "family completion",
+        "promotion",
+        "public x86 support",
+    ):
+        require(phrase in description, f"static-c-isatty description omits {phrase}")
+
+    owners = set(
+        nonempty_strings(artifact["source_owners"], "static-c-isatty.source_owners")
+    )
+    for owner in (
+        "compat/upstreams.toml",
+        "libc/Cargo.toml",
+        "libc/src/lib.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/errno.rs",
+        "libc/src/c_abi/x86_64/syscall.rs",
+        "libc/src/c_abi/x86_64/isatty.rs",
+        "include/errno.h",
+        "include/fcntl.h",
+        "include/stdint.h",
+        "include/unistd.h",
+        "include/sys/syscall.h",
+        "compat/x86_64/isatty_header_abi_probe.c",
+        "compat/x86_64/isatty_header_abi_probe.cpp",
+        "compat/x86_64/run_isatty_header_abi.sh",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/libc_isatty_probe.c",
+        "compat/x86_64/libc_isatty_start.S",
+        "compat/x86_64/run_libc_isatty.sh",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/README.md",
+        "STATUS.md",
+        "x86-64.md",
+        "scripts/dev-x86_64.sh",
+        "scripts/check_structure.py",
+    ):
+        require(owner in owners, f"static-c-isatty source owners omit {owner}")
+
+    prerequisites = nonempty_strings(
+        artifact["x86_abi_prerequisites"], "static-c-isatty.x86_abi_prerequisites"
+    )
+    require(
+        any(
+            "SysV AMD64 `isatty(int)`" in item
+            and "ioctl=16" in item
+            and "TIOCGWINSZ=0x5413" in item
+            and "8-byte align-2" in item
+            for item in prerequisites
+        ),
+        "static-c-isatty must retain its SysV/ioctl/winsize contract",
+    )
+    require(
+        any(
+            "src/unistd/isatty.c" in item
+            and "syscall(SYS_ioctl, fd, TIOCGWINSZ, &winsize) + 1" in item
+            and "-EBADF/-ENOTTY" in item
+            for item in prerequisites
+        ),
+        "static-c-isatty must retain its exact pinned-musl status conversion",
+    )
+    require(
+        any("PT_TLS errno" in item and "__tls_get_addr" in item for item in prerequisites),
+        "static-c-isatty must retain its static errno TLS boundary",
+    )
+    header_prerequisites = nonempty_strings(
+        artifact["x86_header_prerequisites"],
+        "static-c-isatty.x86_header_prerequisites",
+    )
+    require(
+        any(
+            "strict, POSIX, X/Open, GNU, and BSD" in item
+            and "unconditional `int isatty(int)`" in item
+            and "C++ C linkage" in item
+            for item in header_prerequisites
+        ),
+        "static-c-isatty must retain its unconditional C/C++ header ABI",
+    )
+
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-isatty"},
+        "static-c-isatty must use the closed libc-isatty command",
+    )
+    scope = evidence[0].get("scope")
+    require(
+        isinstance(scope, str)
+        and all(
+            phrase in scope
+            for phrase in (
+                "tty success",
+                "stale-errno preservation",
+                "EBADF",
+                "ENOTTY",
+                "ioctl=16/TIOCGWINSZ=0x5413",
+                "TCGETS/TCSETS",
+                "terminal discovery",
+                "termios mutation/control",
+                "PTY/session policy",
+                "ttyname",
+                "getpass",
+                "public x86 support",
+            )
+        ),
+        "static-c-isatty evidence must retain its observable bounded contract",
+    )
+
+    exports = set(
+        static_c_abi_export_names(
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        )
+    )
+    require("isatty" in exports, "static C ABI export contract omits isatty")
+
+    source = (ROOT / "libc" / "src" / "c_abi" / "x86_64" / "isatty.rs").read_text(
+        encoding="utf-8"
+    )
+    for snippet in (
+        "pinned musl 1.2.6 release commit",
+        "src/unistd/isatty.c::isatty",
+        "TIOCGWINSZ: i64 = 0x5413",
+        "struct KernelWinsize",
+        "MaybeUninit::<KernelWinsize>::uninit()",
+        "raw_syscall::SYS_IOCTL",
+        "c_status(result) + 1",
+        'pub unsafe extern "C" fn isatty',
+        "terminal-path or",
+    ):
+        require(snippet in source, f"isatty implementation omits {snippet}")
+    exported = set(re.findall(r'pub unsafe extern "C" fn ([A-Za-z0-9_]+)', source))
+    require(exported == {"isatty"}, "isatty implementation must export only isatty")
+    for forbidden in (
+        "termios_control::",
+        "raw_syscall::SYS_OPEN",
+        "raw_syscall::SYS_OPENAT",
+        "TCGETS",
+        "TIOCSPTLCK",
+        "crabc_core",
+        "crabc_mimalloc",
+    ):
+        require(forbidden not in source, f"isatty implementation selects {forbidden}")
+
+    runner = (ROOT / "compat" / "x86_64" / "run_libc_isatty.sh").read_text(
+        encoding="utf-8"
+    )
+    for snippet in (
+        "run_musl_oracle.sh",
+        "run_isatty_header_abi.sh",
+        "static_c_abi_exports.txt",
+        "-nostdlib -static",
+        "--no-undefined",
+        "for symbol in __errno_location isatty",
+        "--disassemble=isatty",
+        "project-header isatty fixture contract drifted",
+        "fixture did not use the project",
+        "fixed TIOCGWINSZ request",
+        "termios-control request",
+        "candidate selects an excluded terminal helper",
+        'timeout "$EXECUTION_TIMEOUT"',
+        "__tls_get_addr",
+    ):
+        require(snippet in runner, f"isatty runner omits {snippet}")
+
+    probe = (ROOT / "compat" / "x86_64" / "libc_isatty_probe.c").read_text(
+        encoding="utf-8"
+    )
+    for snippet in (
+        "FIXTURE_EBADF",
+        "FIXTURE_ENOTTY",
+        "FIXTURE_TIOCGWINSZ",
+        "FIXTURE_TIOCSPTLCK",
+        "FIXTURE_TIOCGPTPEER",
+        "open_pty_pair",
+        "isatty(pair.slave) != 1 || errno != 313",
+        "isatty(-1) != 0 || errno != FIXTURE_EBADF",
+        "isatty(null_fd) != 0 || errno != FIXTURE_ENOTTY",
+    ):
+        require(snippet in probe, f"isatty probe omits {snippet}")
+    for forbidden in ("tcgetattr(", "tcsetattr(", "ttyname(", "getpass("):
+        require(forbidden not in probe, f"isatty fixture selects {forbidden}")
+
+    header_c = (
+        ROOT / "compat" / "x86_64" / "isatty_header_abi_probe.c"
+    ).read_text(encoding="utf-8")
+    header_cxx = (
+        ROOT / "compat" / "x86_64" / "isatty_header_abi_probe.cpp"
+    ).read_text(encoding="utf-8")
+    for snippet in ("isatty declaration", "isatty_function = isatty"):
+        require(snippet in header_c, f"isatty C header probe omits {snippet}")
+        require(snippet in header_cxx, f"isatty C++ header probe omits {snippet}")
+
+    dispatcher = (ROOT / "scripts" / "dev-x86_64.sh").read_text(encoding="utf-8")
+    for snippet in (
+        "isatty-header-abi)",
+        "libc-isatty)",
+        "run_isatty_header_abi()",
+        "run_libc_isatty_probe()",
+    ):
+        require(snippet in dispatcher, f"x86 dispatcher omits {snippet}")
+
+
 def require_mktemp_artifact(family: Mapping[str, Any]) -> None:
     """Keep historical pathname selection below filesystem capability promotion."""
     artifacts = require_verified_artifacts(
@@ -31934,6 +32177,7 @@ def validate_ledger(
     require_static_secure_environment_artifact(by_id["libc.posix-runtime"])
     require_static_login_name_artifact(by_id["libc.posix-runtime"])
     require_ctermid_artifact(by_id["libc.posix-runtime"])
+    require_isatty_artifact(by_id["libc.posix-runtime"])
     require_getpass_artifact(by_id["libc.posix-runtime"])
     require_mktemp_artifact(by_id["libc.posix-runtime"])
     require_child_reaping_artifact(by_id["libc.posix-runtime"])
