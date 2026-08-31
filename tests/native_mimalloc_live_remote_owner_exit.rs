@@ -24,10 +24,10 @@ fn compile_fixture(binary: &std::path::Path, candidate: bool) {
     command.arg(&fixture).args(["-lc", "-o"]).arg(binary);
     let status = command
         .status()
-        .expect("failed to compile the native mimalloc live-remote owner-exit fixture");
+        .expect("failed to compile the native mimalloc live-remote multi-producer owner-exit fixture");
     assert!(
         status.success(),
-        "native mimalloc live-remote owner-exit fixture compilation failed"
+        "native mimalloc live-remote multi-producer owner-exit fixture compilation failed"
     );
 }
 
@@ -39,15 +39,15 @@ fn run(binary: &std::path::Path, candidate: bool) -> Output {
     }
     command
         .output()
-        .expect("failed to run the native mimalloc live-remote owner-exit fixture")
+        .expect("failed to run the native mimalloc live-remote multi-producer owner-exit fixture")
 }
 
 #[test]
-fn native_mimalloc_live_remote_owner_exit_matches_pinned_musl() {
+fn native_mimalloc_live_remote_multi_producer_owner_exit_matches_pinned_musl() {
     let reference =
-        test_support::TempArtifact::new("native-mimalloc-live-remote-owner-exit-reference");
+        test_support::TempArtifact::new("native-mimalloc-live-remote-multi-producer-owner-exit-reference");
     let candidate =
-        test_support::TempArtifact::new("native-mimalloc-live-remote-owner-exit-candidate");
+        test_support::TempArtifact::new("native-mimalloc-live-remote-multi-producer-owner-exit-candidate");
     compile_fixture(&reference, false);
     compile_fixture(&candidate, true);
 
@@ -61,7 +61,7 @@ fn native_mimalloc_live_remote_owner_exit_matches_pinned_musl() {
     );
     assert_eq!(
         reference_output.stdout,
-        b"native mimalloc live remote owner exit ok\n"
+        b"native mimalloc live remote multi-producer owner exit ok\n"
     );
     assert_eq!(
         candidate_output.status,
