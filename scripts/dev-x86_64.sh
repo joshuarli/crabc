@@ -301,6 +301,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-locale-object-wide  run the static x86 built-in locale-object/localized-wide slice
   libc-locale-narrow  run the static x86 fixed-locale narrow ctype/case/collation slice
   libc-locale-ctype-locators  run the static x86 musl-compatible ctype table locators
+  libc-locale-error-strings  run the static x86 fixed-profile locale error-string slice
   libc-integer-arithmetic  run the static x86 crabc-libc integer-arithmetic slice
   libc-integer-parse  run the static x86 crabc-libc integer-parsing slice
   libc-float-parse  run the complete static x86 numeric.parse-float-locale slice
@@ -3227,7 +3228,7 @@ case "$command" in
     libc-memfd-create) ;;
     libc-static-c-abi-differential) ;;
     libc-static-c-abi-same-object-differential|qualification-posix-abi-admission) ;;
-    libc-readiness-waits|libc-system-observation|libc-system-information|libc-fcntl-record-locks|libc-flock|libc-sendfile|libc-posix-fallocate|libc-descriptor-advice|libc-filesystem-capacity|libc-uts-identity|libc-ctype|libc-locale-multibyte|libc-locale-wide-iconv|libc-wide-character|libc-locale-object-wide|libc-locale-narrow|libc-locale-ctype-locators|libc-regex|libc-integer-arithmetic|libc-integer-parse|libc-float-parse|libc-intmax-arithmetic|libc-credential-observation|libc-login-name|libc-child-reaping|libc-immediate-termination|libc-callback-algorithms|libc-search-tree-intrusive|libc-search-hash-table|libc-gettext-catalog|libc-access|libc-clock-gettime|libc-time-observation|libc-system-configuration|libc-mapping-core|libc-header-layouts-baseline|libc-nanosleep|libc-clock-nanosleep|libc-descriptor-entry|libc-fcntl-status-control|libc-ioctl|libc-ffs|libc-byte-strings|libc-process-globals-getopt|libc-auxv-observation|libc-inet-address|libc-numeric-netdb|libc-random-entropy|libc-memory-search|libc-string-copy|libc-error-strings|libc-descriptor-pipeline) ;;
+    libc-readiness-waits|libc-system-observation|libc-system-information|libc-fcntl-record-locks|libc-flock|libc-sendfile|libc-posix-fallocate|libc-descriptor-advice|libc-filesystem-capacity|libc-uts-identity|libc-ctype|libc-locale-multibyte|libc-locale-wide-iconv|libc-wide-character|libc-locale-object-wide|libc-locale-narrow|libc-locale-ctype-locators|libc-locale-error-strings|libc-regex|libc-integer-arithmetic|libc-integer-parse|libc-float-parse|libc-intmax-arithmetic|libc-credential-observation|libc-login-name|libc-child-reaping|libc-immediate-termination|libc-callback-algorithms|libc-search-tree-intrusive|libc-search-hash-table|libc-gettext-catalog|libc-access|libc-clock-gettime|libc-time-observation|libc-system-configuration|libc-mapping-core|libc-header-layouts-baseline|libc-nanosleep|libc-clock-nanosleep|libc-descriptor-entry|libc-fcntl-status-control|libc-ioctl|libc-ffs|libc-byte-strings|libc-process-globals-getopt|libc-auxv-observation|libc-inet-address|libc-numeric-netdb|libc-random-entropy|libc-memory-search|libc-string-copy|libc-error-strings|libc-descriptor-pipeline) ;;
     libc-vector-io|libc-uio-cxx-linkage) ;;
     libc-sysv-semaphore|libc-posix-semaphore) ;;
     libc-sysv-message-shared-memory) ;;
@@ -4427,6 +4428,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "libc-locale-ctype-locators takes no arguments"
         ensure_image
         run_in_container bash /workspace/compat/x86_64/run_libc_locale_ctype_locators.sh
+        ;;
+    libc-locale-error-strings)
+        [ "$#" -eq 0 ] || fail "libc-locale-error-strings takes no arguments"
+        ensure_image
+        run_in_container bash /workspace/compat/x86_64/run_libc_locale_error_strings.sh
         ;;
     libc-integer-arithmetic)
         [ "$#" -eq 0 ] || fail "libc-integer-arithmetic takes no arguments"

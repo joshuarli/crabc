@@ -7022,6 +7022,56 @@ native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc
 oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source, table-layout, endian-encoding, pointer-bias, and fixed-C-locale behavior oracle for src/ctype/__ctype_b_loc.c, __ctype_tolower_loc.c, and __ctype_toupper_loc.c." }, { kind = "project-contract", source = "AArch64 crabc-libc ctype locator implementation in libc/src/locale_ctype.rs plus checked AArch64 ABI/export inventory", role = "Existing project ownership and AArch64 symbol-availability oracle. The x86 leaf preserves the same 384-entry pointer-table ABI and musl class-word encoding without importing a mutable locale framework." }, { kind = "elf-abi", source = "System V AMD64 psABI and pinned musl x86 headers", role = "LP64 outer-pointer return ABI, unsigned-short/int32_t table element widths, and direct signed/unsigned byte-index representation." }, { kind = "kernel-abi", source = "Linux 5.10 x86-64 ABI", role = "The fixture-only raw write=1 syscall emits its differential fingerprint and does not select a libc descriptor-I/O or locale runtime boundary." }]
 
 [[family.verified_artifact]]
+id = "static-c-locale-error-strings"
+description = "Private native x86 fixed-profile locale error-string ABI artifact inside still-planned `libc.text-math-locale-stdio`. One dependency-free `crabc-libc` archive adds exactly strong `__strerror_l` and weak same-address `strerror_l`, matching musl's `weak_alias(__strerror_l, strerror_l)` ELF contract over the existing immutable `strerror` message table. A project-header C/C++ declaration matrix and one shared C fixture run first through pinned musl 1.2.6 and then a true `-nostdlib -static` candidate. The fixture constructs only valid built-in `C`, `POSIX`, and `C.UTF-8` locale objects, traverses all nonnegative x86 Linux errno values 0 through 134 under C, UTF-8, and global-following selected-thread modes, checks message-pointer equality with `strerror`, preserves `errno`, and byte-compares its complete differential digest. `LC_GLOBAL_LOCALE` is used only with `uselocale`; it is deliberately not passed as a `strerror_l` argument because the musl oracle rejects that sentinel there. The selected bridge neither dereferences its admitted opaque token nor allocates, changes locale TLS/state, reads catalogs, or adds translation data. This is one ABI sub-slice toward `locale.core`, not `locale.core` capability selection, family completion, promotion, or public x86 support. General locale or legacy-encoding databases, arbitrary locale names, environment selection, gettext/message catalogs, `strfmon`, localized numeric parsing, wide text/stdio/time conversion, iconv, `strsignal`, perror/err/warn diagnostics, libc.so, CRT, loader, and sysroot remain excluded."
+source_owners = [
+  "compat/upstreams.toml",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "libc/src/c_abi.rs",
+  "libc/src/locale_exports.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/errno.rs",
+  "libc/src/c_abi/x86_64/static_tls.rs",
+  "libc/src/c_abi/x86_64/error_strings.rs",
+  "libc/src/c_abi/x86_64/locale_error_strings.rs",
+  "libc/src/c_abi/x86_64/locale_objects.rs",
+  "include/bits/alltypes.h",
+  "include/errno.h",
+  "include/features.h",
+  "include/locale.h",
+  "include/stdint.h",
+  "include/string.h",
+  "compat/x86_64/error_strings_header_abi_probe.c",
+  "compat/x86_64/error_strings_header_abi_probe.cpp",
+  "compat/x86_64/run_error_strings_header_abi.sh",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/libc_locale_error_strings_probe.c",
+  "compat/x86_64/libc_locale_error_strings_start.S",
+  "compat/x86_64/run_libc_locale_error_strings.sh",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "compat/x86_64/README.md",
+  "docs/evidence/x86-aarch64-parity-inventory.md",
+  "STATUS.md",
+  "x86-64.md",
+  "scripts/check_structure.py",
+  "scripts/dev-x86_64.sh",
+]
+x86_abi_prerequisites = [
+  "System V AMD64 passes int plus pointer-shaped locale_t in general-purpose registers and returns the char * result in rax. The final ELF must define strong __strerror_l and weak strerror_l at the same value; a wrapper with a distinct address is not an equivalent musl alias.",
+  "Pinned musl 1.2.6 src/errno/strerror.c::__strerror_l and weak_alias(__strerror_l, strerror_l) are the MIT source and behavior oracle. Its LCTRANS route accepts a valid locale object, while LC_GLOBAL_LOCALE is a uselocale sentinel rather than a valid explicit strerror_l argument; C/POSIX/C.UTF-8 share the selected immutable English table.",
+  "The fixture composes existing immutable locale-object tokens and Static Initial TLS v1 only to prove selected-thread/global-following state is not changed. The locale-error-string bridge itself has no TLS datum, errno mutation, allocation, catalog, locale-map, syscall, cancellation, lock, or ambient-runtime dependency.",
+]
+x86_header_prerequisites = [
+  "The shared pinned-musl/project-first C11/C++17 string.h matrix proves strerror_l's char *(*)(int, locale_t) declaration and unmangled C++ linkage under POSIX/XOPEN/GNU/BSD feature profiles, while strict C/C++ keeps both strerror_l and locale_t hidden. __strerror_l remains an intentionally uninstalled musl ABI spelling declared only inside the private runtime fixture.",
+  "The runtime fixture preprocesses project errno.h, locale.h, stdint.h, string.h, features.h, and bits/alltypes.h before either reference or candidate execution. It admits only live C/POSIX/C.UTF-8 objects returned by newlocale and uses LC_GLOBAL_LOCALE only through uselocale state selection.",
+]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-locale-error-strings", scope = "Pinned-musl project-header C/C++ declaration oracle plus one dependency-free selected x86 archive and true `-nostdlib -static` candidate. The gate ratchets the complete archive export surface; requires strong __strerror_l, weak same-address strerror_l, no unresolved symbol/interpreter/DT_NEEDED/dynamic TLS, and archive-owned Static Initial TLS v1 bootstrap. The shared fixture passes only valid C/POSIX/C.UTF-8 locale objects, iterates every defined nonnegative x86 errno table index through 134 in three selected-thread/global-following modes, proves message-pointer equality and errno preservation, and byte-compares the output digest. It rejects allocator, catalog, monetary, numeric, wide, iconv, and ambient-runtime dependencies. It is one private verified ABI artifact inside a planned family, not locale.core selection, general locale/error reporting completion, promotion, or public x86 support." }]
+oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source/declaration/behavior oracle for src/errno/strerror.c::__strerror_l, its weak strerror_l alias, valid locale-object argument boundary, and the fixed C/POSIX/C.UTF-8 messages." }, { kind = "project-contract", source = "AArch64 crabc-libc locale aliases in libc/src/locale_exports.rs plus checked AArch64 ABI/export inventory", role = "Existing project symbol-availability and fixed-profile forwarding oracle. The x86 leaf strengthens the AArch64 wrapper pair to musl's same-address weak ELF alias without adding a locale database." }, { kind = "elf-abi", source = "System V AMD64 psABI and pinned musl x86 headers/static symbols", role = "LP64 int/locale_t/char-pointer calling convention, feature-gated C/C++ declaration linkage, and strong-internal/weak-public same-address function alias contract." }]
+
+[[family.verified_artifact]]
 id = "static-c-text-math-locale-stdio-composition"
 description = "Private native x86 selected-static C composition artifact inside still-planned `libc.text-math-locale-stdio`. One project-header fixture first executes through pinned musl 1.2.6 and then a dependency-free `-nostdlib -static` crabc-libc archive. It crosses only existing `setlocale`/`localeconv`/`mbrtowc` named C.UTF-8 state, `strtod` C-locale parsing, `__fpclassify` binary64 classification, direct initial-exec errno TLS, and permanent `stdout` `fputc`/`fflush` behavior: valid UTF-8 leaves stale errno, an invalid lead sets EILSEQ, a successful parse preserves that errno, and a pipe-observed explicit stream flush preserves it again. The runner requires all four existing math/complex, float-parse, locale/multibyte, and permanent-standard-stream C/C++ header matrices; ratchets the complete selected archive export list; rejects interpreter/DT_NEEDED/unresolved symbols, dynamic TLS, formatter/wide streams, scalar libm, allocation, and ambient runtime dependencies; and reaches archive-owned Static Initial TLS v1 from the untouched entry stack. The archive may contain the separate locale-object, iconv, and wide-character leaves, which this composition neither invokes nor establishes. It does not exercise the independently selected `_l` parser wrappers. The fixture does not reference or exercise the separately owned byte-format/scanner or pathname lifecycle, although the shared permanent-`fflush` target leaf may materialize selected path symbols. It is a cross-surface regression only, not another C wrapper or a claim of general text, math, locale, stdio, CRT, loader, sysroot, family completion, promotion, or public x86 support."
 source_owners = [

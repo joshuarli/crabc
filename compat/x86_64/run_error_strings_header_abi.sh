@@ -2,7 +2,9 @@
 # Native Linux/x86-64 compile-only <string.h> error-string ABI slice.
 #
 # Pinned musl 1.2.6 is the declaration oracle. `strerror` is unconditional;
-# POSIX/XOPEN/GNU/BSD selectors expose the XSI/POSIX `int strerror_r` form.
+# POSIX/XOPEN/GNU/BSD selectors expose the XSI/POSIX `int strerror_r` form
+# and the locale-object `strerror_l` form. The latter remains a C ABI bridge:
+# it does not imply a message-catalog or general locale-database contract.
 # Musl's private weak `__xpg_strerror_r` spelling is intentionally absent from
 # the public header and belongs to the separate selected-artifact proof.
 set -euo pipefail
@@ -43,13 +45,13 @@ compile_profile() {
 }
 
 compile_profile -D__STRICT_ANSI__
-compile_profile -D_POSIX_C_SOURCE=200809L -DCRABC_EXPECT_STRERROR_R
-compile_profile -D_XOPEN_SOURCE=700 -DCRABC_EXPECT_STRERROR_R
-compile_profile -D_GNU_SOURCE -DCRABC_EXPECT_STRERROR_R
-compile_profile -D_BSD_SOURCE -DCRABC_EXPECT_STRERROR_R
+compile_profile -D_POSIX_C_SOURCE=200809L -DCRABC_EXPECT_STRERROR_R -DCRABC_EXPECT_STRERROR_L
+compile_profile -D_XOPEN_SOURCE=700 -DCRABC_EXPECT_STRERROR_R -DCRABC_EXPECT_STRERROR_L
+compile_profile -D_GNU_SOURCE -DCRABC_EXPECT_STRERROR_R -DCRABC_EXPECT_STRERROR_L
+compile_profile -D_BSD_SOURCE -DCRABC_EXPECT_STRERROR_R -DCRABC_EXPECT_STRERROR_L
 
 if ! "$ORACLE_CC" -std=c11 -D_POSIX_C_SOURCE=200809L \
-    -DCRABC_EXPECT_STRERROR_R -I "$ROOT_DIR/include" -H -fsyntax-only \
+    -DCRABC_EXPECT_STRERROR_R -DCRABC_EXPECT_STRERROR_L -I "$ROOT_DIR/include" -H -fsyntax-only \
     "$c_probe" >/dev/null 2>"$header_trace"; then
     sed -n '1,160p' "$header_trace" >&2
     fail "project error-string C header contract drifted"
@@ -66,12 +68,12 @@ for language in c cxx; do
         errors="$work_dir/${variant}-${language}-strict-errors"
         if [ "$language" = c ]; then
             if "$ORACLE_CC" -std=c11 -U_GNU_SOURCE -D__STRICT_ANSI__ \
-                -DCRABC_REQUIRE_STRERROR_R_HIDDEN "${include_args[@]}" \
+                -DCRABC_REQUIRE_STRERROR_R_HIDDEN -DCRABC_REQUIRE_STRERROR_L_HIDDEN "${include_args[@]}" \
                 -fsyntax-only "$c_probe" >"$errors" 2>&1; then
                 fail "strerror_r is visible under strict C (${variant})"
             fi
         elif "$ORACLE_CC" -std=c++17 -x c++ -U_GNU_SOURCE -D__STRICT_ANSI__ \
-            -DCRABC_REQUIRE_STRERROR_R_HIDDEN "${include_args[@]}" \
+            -DCRABC_REQUIRE_STRERROR_R_HIDDEN -DCRABC_REQUIRE_STRERROR_L_HIDDEN "${include_args[@]}" \
             -fsyntax-only "$cxx_probe" >"$errors" 2>&1; then
             fail "strerror_r is visible under strict C++ (${variant})"
         fi
@@ -83,10 +85,10 @@ for variant in oracle project; do
     [ "$variant" = project ] && include_args=(-I "$ROOT_DIR/include")
     object="$work_dir/${variant}-error-strings-cxx.o"
     "$ORACLE_CC" -std=c++17 -x c++ -D_POSIX_C_SOURCE=200809L \
-        -DCRABC_EXPECT_STRERROR_R "${include_args[@]}" -c "$cxx_probe" \
+        -DCRABC_EXPECT_STRERROR_R -DCRABC_EXPECT_STRERROR_L "${include_args[@]}" -c "$cxx_probe" \
         -o "$object"
     undefined="$(nm --undefined-only "$object")"
-    for symbol in strerror strerror_r; do
+    for symbol in strerror strerror_r strerror_l; do
         printf '%s\n' "$undefined" | grep -Eq "[[:space:]]${symbol}$" \
             || fail "C++ probe does not retain C linkage for ${symbol} (${variant})"
     done

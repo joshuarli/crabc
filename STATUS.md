@@ -722,6 +722,20 @@ It does not add locale selection/maps, legacy encodings, Unicode narrow
 classification, localized string or numeric formatting, wide I/O/time
 conversion, family completion, promotion, or public x86 support.
 
+The separate private x86 `static-c-locale-error-strings` artifact is verified
+by `./scripts/dev-x86_64.sh libc-locale-error-strings`. It adds only strong
+`__strerror_l` and musl's weak same-address `strerror_l` alias over the
+existing immutable error table. The project/pinned-musl C11/C++17 declaration
+matrix and shared static fixture prove the feature-gated public declaration,
+unmangled C++ linkage, all nonnegative errno indices `0..=134`, C/POSIX/C.UTF-8
+locale objects, selected-thread/global-following stability, pointer equality
+with `strerror`, preserved `errno`, and the final ELF binding/address pair.
+`LC_GLOBAL_LOCALE` is used only with `uselocale`, not as a `strerror_l`
+argument, matching musl. This is a non-promoting ABI sub-slice toward
+`locale.core`: it adds no locale map/catalog/environment handling, gettext,
+`strfmon`, numeric/wide/iconv text behavior, diagnostic family, general
+locale completion, promotion, or public x86 support.
+
 The x86 static C archive also has one private caller-owned mapping-core
 artifact: `./scripts/dev-x86_64.sh libc-mapping-core` runs the project-header
 C/C++ `sys/mman.h` gate and then one pinned-musl/freestanding-static proof for

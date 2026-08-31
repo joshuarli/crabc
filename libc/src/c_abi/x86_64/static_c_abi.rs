@@ -58,7 +58,8 @@
 //! table locators, immutable built-in locale objects, fixed langinfo,
 //! selected-thread locale overrides, and localized wide
 //! classification/case/collation wrappers,
-//! find-first-set, immutable C-locale error strings, C11 immediate-termination,
+//! find-first-set, immutable C-locale error strings and their fixed-profile
+//! locale-message aliases, C11 immediate-termination,
 //! a bounded private static
 //! startup/ordinary-exit lifecycle, startup-published program-name globals,
 //! raw initial auxiliary-vector observation, and option parsing,
@@ -161,6 +162,8 @@ mod byte_strings;
 mod string_copy;
 #[path = "error_strings.rs"]
 mod error_strings;
+#[path = "locale_error_strings.rs"]
+mod locale_error_strings;
 #[path = "ctype.rs"]
 mod ctype;
 #[path = "locale_ctype.rs"]

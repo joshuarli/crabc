@@ -467,6 +467,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-wide-character
 ./scripts/dev-x86_64.sh libc-locale-object-wide
 ./scripts/dev-x86_64.sh libc-locale-narrow
+./scripts/dev-x86_64.sh libc-locale-error-strings
 ./scripts/dev-x86_64.sh libc-memory
 ./scripts/dev-x86_64.sh libc-setjmp
 ./scripts/dev-x86_64.sh libc-atomic
@@ -1041,12 +1042,13 @@ compile-only header evidence; it does not select C string-copy behavior or
 
 `error-strings-header-abi` compiles project-first and pinned-musl C/C++
 `<string.h>` declarations for unconditional `strerror` and the
-POSIX/XOPEN/GNU/BSD-selected `int strerror_r` form. Strict C and C++ checks
-keep `strerror_r` hidden, while positive C++ objects retain unmangled
-references to both public functions. Musl's private `__xpg_strerror_r` alias
-is intentionally absent from the header and remains runtime/ELF evidence.
-This is compile-only evidence; it does not select diagnostics, termination,
-locale state, or `crabc-libc`.
+POSIX/XOPEN/GNU/BSD-selected `int strerror_r` and
+`char *strerror_l(int, locale_t)` forms. Strict C and C++ checks keep both
+feature-gated declarations hidden, while positive C++ objects retain unmangled
+references to all public functions. Musl's private `__xpg_strerror_r` and
+`__strerror_l` aliases are intentionally absent from the header and remain
+runtime/ELF evidence. This is compile-only evidence; it does not select
+diagnostics, termination, locale state, or `crabc-libc`.
 
 `random-entropy-header-abi` compiles project-first and pinned-musl C/C++
 `<sys/random.h>` and `<unistd.h>` declarations for `getrandom`, its GRND
@@ -3467,10 +3469,12 @@ errno table index `0..=134`. Direct checks prove musl's immutable
 `No error information` catch-all, caller-buffer ERANGE/truncation/NUL and
 untouched-tail behavior, and weak same-address `__xpg_strerror_r`. The leaf
 has no errno/TLS, allocator, mutable unknown buffer, or dynamic dependency.
-It deliberately excludes negative-input musl undefined behavior,
-`strerror_l`/locale catalogs, `strsignal`, perror/err/warn diagnostics,
-`abort`, exit hooks, variadic `syscall`, libc.so, CRT, loader, sysroot,
-promotion, and public x86 support.
+It deliberately excludes negative-input musl undefined behavior, locale
+objects/catalogs, `strsignal`, perror/err/warn diagnostics, `abort`, exit
+hooks, variadic `syscall`, libc.so, CRT, loader, sysroot, promotion, and public
+x86 support. The separate `libc-locale-error-strings` artifact owns the fixed
+profile `strerror_l` spellings; this original error-reporting leaf neither
+invokes nor establishes them.
 
 `libc-ctype` is a separately recorded `static-c-ctype`
 `verified_artifact` gate over that archive, not a general locale or C text
@@ -3933,6 +3937,23 @@ this ABI-only slice neither selects `locale.core` nor adds a locale database,
 locale/environment selection, Unicode narrow classification, localized
 text/numeric/time formatting, wide I/O, a dynamic runtime, family completion,
 promotion, or public x86 support.
+
+`libc-locale-error-strings` records the separate private
+`static-c-locale-error-strings` ABI artifact. It adds only strong
+`__strerror_l` plus musl's weak same-address public `strerror_l` alias over the
+already selected immutable error-message table. The shared project-header
+C/C++ matrix verifies the feature-gated `<string.h>` declaration and unmangled
+C++ reference; its pinned-musl/static fixture then passes only live `C`,
+`POSIX`, and `C.UTF-8` locale objects through all nonnegative errno indices
+`0..=134` while testing C, UTF-8, and global-following selected-thread modes.
+It proves alias address/binding, pointer equality with `strerror`, preserved
+`errno`, and a matching full digest. `LC_GLOBAL_LOCALE` is only a `uselocale`
+sentinel, not an explicit `strerror_l` argument. The bridge reads no locale
+token or catalog and adds no locale data; it is an ABI sub-slice toward, but
+not a selection of, `locale.core`. General locale/legacy-encoding databases,
+arbitrary names or environment selection, gettext, `strfmon`, numeric parsing,
+wide text/stdio/time conversion, iconv, diagnostics, dynamic runtime, family
+completion, promotion, and public x86 support remain excluded.
 
 `libc-memory` compiles only `libc/src/c_abi/x86_64/memory.rs`, then runs one C
 fixture against pinned musl and the isolated x86 object with project
@@ -4426,7 +4447,7 @@ Apart from the narrowly named `libc-stat-compat`, `libc-credentials`,
 `libc-system-observation`, `libc-system-information`, `libc-uts-identity`, `libc-socket-transport`,
 `libc-socket-messages`,
 `libc-byte-strings`, `libc-random-entropy`, `libc-memory-search`,
-`libc-string-copy`, `libc-error-strings`, `libc-ctype`, `libc-integer-arithmetic`,
+`libc-string-copy`, `libc-error-strings`, `libc-locale-error-strings`, `libc-ctype`, `libc-integer-arithmetic`,
 `libc-integer-parse`, `libc-float-parse`, `libc-intmax-arithmetic`, `libc-credential-observation`,
 `libc-ffs`, `libc-math-complex`, `libc-elementary-sqrt-fenv`, and
 `libc-fenv-rounding` static archive harnesses, and the separately scoped

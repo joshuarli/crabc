@@ -90,7 +90,7 @@ for symbol in "${SELECTED_SYMBOLS[@]}"; do
         fail "archive does not define $symbol"
 done
 for unselected in __newlocale __freelocale __duplocale __uselocale \
-    __nl_langinfo __nl_langinfo_l strerror_l strfmon strfmon_l malloc calloc \
+    __nl_langinfo __nl_langinfo_l strfmon strfmon_l malloc calloc \
     realloc free; do
     if grep -Eq "[[:space:]][TW][[:space:]]${unselected}$" "$archive_symbols"; then
         fail "archive accidentally exports unselected $unselected"

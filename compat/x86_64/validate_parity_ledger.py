@@ -1639,6 +1639,7 @@ LOCALE_CTYPE_LOCATOR_SYMBOLS = (
     "__ctype_tolower_loc",
     "__ctype_toupper_loc",
 )
+LOCALE_ERROR_STRING_SYMBOLS = ("__strerror_l", "strerror_l")
 
 
 class LedgerError(ValueError):
@@ -20038,8 +20039,8 @@ def require_stdio_errno_output_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 21,
-        "libc.text-math-locale-stdio must retain exactly twenty-one private verified artifacts",
+        len(artifacts) == 22,
+        "libc.text-math-locale-stdio must retain exactly twenty-two private verified artifacts",
     )
     matching = [
         entry for entry in artifacts if entry.get("id") == "static-c-stdio-errno-output"
@@ -22846,8 +22847,8 @@ def require_locale_wide_iconv_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 21,
-        "libc.text-math-locale-stdio must retain exactly twenty-one private verified artifacts",
+        len(artifacts) == 22,
+        "libc.text-math-locale-stdio must retain exactly twenty-two private verified artifacts",
     )
     matching = [
         entry for entry in artifacts if entry.get("id") == "static-c-locale-wide-iconv"
@@ -23661,6 +23662,258 @@ def require_locale_ctype_locator_artifact(family: Mapping[str, Any]) -> None:
     require(
         "libc-locale-ctype-locators)" in dispatcher,
         "x86 dispatcher omits libc-locale-ctype-locators",
+    )
+
+
+def require_locale_error_strings_artifact(family: Mapping[str, Any]) -> None:
+    """Keep the fixed-profile strerror_l bridge exact and non-promoting."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.text-math-locale-stdio].verified_artifact",
+        family.get("status", ""),
+    )
+    require(
+        len(artifacts) == 22,
+        "libc.text-math-locale-stdio must retain exactly twenty-two private verified artifacts",
+    )
+    matching = [
+        entry for entry in artifacts if entry.get("id") == "static-c-locale-error-strings"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.text-math-locale-stdio must contain exactly one static-c-locale-error-strings artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-locale-error-strings must not promote its family",
+    )
+    artifact = matching[0]
+    require(
+        "capabilities" not in artifact,
+        "locale-error-strings artifact must not select locale.core",
+    )
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for symbol in LOCALE_ERROR_STRING_SYMBOLS:
+        require(
+            f"`{symbol}`" in description,
+            f"locale-error-strings artifact description omits {symbol}",
+        )
+    for phrase in (
+        "fixed-profile locale error-string ABI artifact",
+        "weak_alias(__strerror_l, strerror_l)",
+        "C`, `POSIX`, and `C.UTF-8` locale objects",
+        "LC_GLOBAL_LOCALE",
+        "not passed as a `strerror_l` argument",
+        "neither dereferences its admitted opaque token",
+        "not `locale.core` capability selection",
+        "General locale or legacy-encoding databases",
+        "gettext/message catalogs",
+        "strfmon",
+        "localized numeric parsing",
+        "wide text/stdio/time conversion",
+        "iconv",
+        "strsignal",
+        "family completion, promotion, or public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"locale-error-strings artifact description omits {phrase}",
+        )
+    owners = nonempty_strings(
+        artifact["source_owners"], "static-c-locale-error-strings.source_owners"
+    )
+    for owner in (
+        "libc/src/c_abi.rs",
+        "libc/src/locale_exports.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/error_strings.rs",
+        "libc/src/c_abi/x86_64/locale_error_strings.rs",
+        "libc/src/c_abi/x86_64/locale_objects.rs",
+        "libc/src/c_abi/x86_64/static_tls.rs",
+        "include/locale.h",
+        "include/string.h",
+        "compat/x86_64/error_strings_header_abi_probe.c",
+        "compat/x86_64/error_strings_header_abi_probe.cpp",
+        "compat/x86_64/run_error_strings_header_abi.sh",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/libc_locale_error_strings_probe.c",
+        "compat/x86_64/libc_locale_error_strings_start.S",
+        "compat/x86_64/run_libc_locale_error_strings.sh",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "scripts/check_structure.py",
+        "scripts/dev-x86_64.sh",
+    ):
+        require(owner in owners, f"locale-error-strings artifact omits {owner}")
+    abi_prerequisites = nonempty_strings(
+        artifact["x86_abi_prerequisites"],
+        "static-c-locale-error-strings.x86_abi_prerequisites",
+    )
+    require(
+        any(
+            "System V AMD64" in item
+            and "strong __strerror_l" in item
+            and "weak strerror_l" in item
+            for item in abi_prerequisites
+        ),
+        "locale-error-strings artifact must record the exact same-address ELF alias",
+    )
+    require(
+        any(
+            "src/errno/strerror.c::__strerror_l" in item
+            and "LC_GLOBAL_LOCALE" in item
+            and "valid locale object" in item
+            for item in abi_prerequisites
+        ),
+        "locale-error-strings artifact must record the musl locale-argument boundary",
+    )
+    require(
+        any(
+            "Static Initial TLS v1" in item
+            and "bridge itself has no TLS datum" in item
+            and "catalog" in item
+            for item in abi_prerequisites
+        ),
+        "locale-error-strings artifact must retain its composed TLS/catalog boundary",
+    )
+    header_prerequisites = nonempty_strings(
+        artifact["x86_header_prerequisites"],
+        "static-c-locale-error-strings.x86_header_prerequisites",
+    )
+    require(
+        any(
+            "C11/C++17" in item
+            and "strerror_l" in item
+            and "unmangled C++ linkage" in item
+            and "__strerror_l remains" in item
+            for item in header_prerequisites
+        ),
+        "locale-error-strings artifact must record public/header-private ABI visibility",
+    )
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-locale-error-strings"},
+        "locale-error-strings artifact must use the closed libc-locale-error-strings command",
+    )
+    scope = evidence[0]["scope"]
+    assert isinstance(scope, str)
+    for phrase in (
+        "strong __strerror_l, weak same-address strerror_l",
+        "C/POSIX/C.UTF-8 locale objects",
+        "every defined nonnegative x86 errno table index through 134",
+        "message-pointer equality and errno preservation",
+        "not locale.core selection",
+    ):
+        require(
+            phrase in scope,
+            f"locale-error-strings evidence scope omits {phrase}",
+        )
+    oracles = artifact["oracle"]
+    assert isinstance(oracles, list)
+    require(
+        any(
+            entry.get("kind") == "c-posix"
+            and "src/errno/strerror.c::__strerror_l" in str(entry.get("role"))
+            and "weak strerror_l alias" in str(entry.get("role"))
+            for entry in oracles
+        ),
+        "locale-error-strings artifact must record the musl strerror_l oracle",
+    )
+    require(
+        any(
+            entry.get("kind") == "project-contract"
+            and "AArch64" in str(entry.get("source"))
+            and "same-address weak ELF alias" in str(entry.get("role"))
+            for entry in oracles
+        ),
+        "locale-error-strings artifact must record its bounded AArch64 delta",
+    )
+    static_root = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+    ).read_text(encoding="utf-8")
+    require(
+        '#[path = "locale_error_strings.rs"]\nmod locale_error_strings;' in static_root,
+        "x86 static C ABI must compose the locale_error_strings leaf",
+    )
+    implementation = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "locale_error_strings.rs"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "src/errno/strerror.c::__strerror_l",
+        "weak_alias(__strerror_l, strerror_l)",
+        ".weak strerror_l",
+        ".set strerror_l, __strerror_l",
+        "fn __strerror_l(",
+        "error_strings::strerror(error)",
+        "LC_GLOBAL_LOCALE",
+        "general locale database",
+    ):
+        require(
+            snippet in implementation,
+            f"locale_error_strings leaf omits {snippet}",
+        )
+    for forbidden in ("static mut", "crabc_core", "crabc_mimalloc", "fn malloc(", "fn strfmon("):
+        require(forbidden not in implementation, f"locale_error_strings leaf selects {forbidden}")
+    exports = static_c_abi_export_names(
+        ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+    )
+    for symbol in LOCALE_ERROR_STRING_SYMBOLS:
+        require(symbol in exports, f"static C ABI export contract omits {symbol}")
+    fixture = (
+        ROOT / "compat" / "x86_64" / "libc_locale_error_strings_probe.c"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "extern char *__strerror_l(int, locale_t);",
+        "strerror_l != __strerror_l",
+        "newlocale(LC_ALL_MASK, \"C.UTF-8\", NULL)",
+        "LC_GLOBAL_LOCALE",
+        "error <= 134",
+        "errno != EINTR",
+        "locale-error-strings-fnv1a64",
+    ):
+        require(
+            snippet in fixture,
+            f"locale-error-strings fixture omits {snippet}",
+        )
+    header_runner = (
+        ROOT / "compat" / "x86_64" / "run_error_strings_header_abi.sh"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "CRABC_EXPECT_STRERROR_L",
+        "CRABC_REQUIRE_STRERROR_L_HIDDEN",
+        "strerror_l",
+        "C++ probe does not retain C linkage",
+    ):
+        require(
+            snippet in header_runner,
+            f"locale-error-strings header runner omits {snippet}",
+        )
+    runner = (
+        ROOT / "compat" / "x86_64" / "run_libc_locale_error_strings.sh"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "static_c_abi_exports.txt",
+        "-nostdlib -static",
+        "--no-undefined",
+        "strong __strerror_l",
+        "weak strerror_l",
+        "same-address __strerror_l alias",
+        "candidate lacks PT_TLS",
+        "locale-error-strings-fnv1a64",
+        "strfmon",
+    ):
+        require(
+            snippet in runner,
+            f"locale-error-strings runner omits {snippet}",
+        )
+    dispatcher = (ROOT / "scripts" / "dev-x86_64.sh").read_text(encoding="utf-8")
+    require(
+        "libc-locale-error-strings)" in dispatcher,
+        "x86 dispatcher omits libc-locale-error-strings",
     )
 
 
@@ -24698,6 +24951,7 @@ def validate_ledger(
     require_locale_object_wide_artifact(by_id["libc.text-math-locale-stdio"])
     require_locale_narrow_artifact(by_id["libc.text-math-locale-stdio"])
     require_locale_ctype_locator_artifact(by_id["libc.text-math-locale-stdio"])
+    require_locale_error_strings_artifact(by_id["libc.text-math-locale-stdio"])
 
     musl_oracle = by_id["oracle.musl-toolchain"]
     require(musl_oracle["status"] == "foundation-verified", "musl oracle must remain foundation-verified")

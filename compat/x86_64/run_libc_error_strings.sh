@@ -101,8 +101,10 @@ grep -Eq '[[:space:]]T[[:space:]]strerror_r$' "$archive_symbols" \
     || fail "archive does not define strong strerror_r"
 grep -Eq '[[:space:]]W[[:space:]]__xpg_strerror_r$' "$archive_symbols" \
     || fail "archive does not define weak __xpg_strerror_r"
-for unselected in __strerror_l strerror_l abort syscall malloc calloc realloc \
-    free posix_memalign; do
+# `__strerror_l`/`strerror_l` are a separately evidenced fixed-profile locale
+# ABI sibling in the shared archive. This original error-string artifact neither
+# invokes nor establishes them; its final candidate still excludes that leaf.
+for unselected in abort syscall malloc calloc realloc free posix_memalign; do
     if grep -Eq "[[:space:]][TW][[:space:]]${unselected}$" "$archive_symbols"; then
         fail "archive accidentally exports unselected ${unselected}"
     fi

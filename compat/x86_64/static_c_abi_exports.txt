@@ -54,6 +54,7 @@ __signbitf
 __signbitl
 __signgam
 __sigsetjmp
+__strerror_l
 __strtod_l
 __strtof_l
 __strtold_l
@@ -693,6 +694,7 @@ strcoll_l
 strcpy
 strcspn
 strerror
+strerror_l
 strerror_r
 strlcat
 strlcpy

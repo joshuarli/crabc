@@ -7288,6 +7288,50 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
             "artifact must retain only the weak same-address __xpg_strerror_r alias"
         )
 
+    locale_error_strings_source = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "locale_error_strings.rs"
+    )
+    locale_error_strings_text = locale_error_strings_source.read_text(errors="replace")
+    for required in (
+        "musl 1.2.6 release commit",
+        "src/errno/strerror.c::__strerror_l",
+        "weak_alias(__strerror_l, strerror_l)",
+        ".weak strerror_l",
+        ".set strerror_l, __strerror_l",
+        "C/POSIX/C.UTF-8",
+        "LC_GLOBAL_LOCALE",
+        "message catalogs",
+        "locale database",
+        "public x86 support",
+    ):
+        if required not in locale_error_strings_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/locale_error_strings.rs: fixed-profile "
+                f"locale-error-string boundary is missing {required!r}"
+            )
+    locale_error_string_exports = set(
+        re.findall(
+            r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(',
+            locale_error_strings_text,
+        )
+    )
+    if locale_error_string_exports != {"__strerror_l"}:
+        errors.append(
+            "libc/src/c_abi/x86_64/locale_error_strings.rs: fixed-profile "
+            "artifact must export only strong __strerror_l"
+        )
+    locale_error_string_aliases = set(
+        re.findall(
+            r'(?m)^\s*"\.set\s+(\w+)\s*,\s*__strerror_l",\s*$',
+            locale_error_strings_text,
+        )
+    )
+    if locale_error_string_aliases != {"strerror_l"}:
+        errors.append(
+            "libc/src/c_abi/x86_64/locale_error_strings.rs: fixed-profile "
+            "artifact must retain strerror_l as the weak same-address alias"
+        )
+
     ctype_source = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "ctype.rs"
     ctype_text = ctype_source.read_text(errors="replace")
     for required in (
@@ -7764,6 +7808,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         memory_search_text,
         string_copy_text,
         error_strings_text,
+        locale_error_strings_text,
         ctype_text,
         integer_arithmetic_text,
         integer_parse_text,
@@ -7834,6 +7879,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         | filesystem_access_aliases
         | inet_address_aliases
         | error_string_aliases
+        | locale_error_string_aliases
         | timestamp_aliases
         | pthread_rwlock_public_aliases
         | pthread_identity_exports
@@ -8117,6 +8163,8 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         "strerror",
         "strerror_r",
         "__xpg_strerror_r",
+        "__strerror_l",
+        "strerror_l",
         "isalnum",
         "isalpha",
         "isblank",
@@ -8277,6 +8325,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         ("memory_search.rs", memory_search_text),
         ("string_copy.rs", string_copy_text),
         ("error_strings.rs", error_strings_text),
+        ("locale_error_strings.rs", locale_error_strings_text),
         ("ctype.rs", ctype_text),
         ("locale_ctype.rs", locale_ctype_text),
         ("integer_arithmetic.rs", integer_arithmetic_text),

@@ -92,10 +92,10 @@ for symbol in "${SELECTED_SYMBOLS[@]}"; do
     grep -Eq "[[:space:]][TW][[:space:]]${symbol}$" "$archive_symbols" ||
         fail "archive does not define $symbol"
 done
-# Selected `strtof_l strtod_l strtold_l` numeric `_l` roots are deliberate
-# shared archive exports. This narrow-text artifact neither invokes nor
-# establishes their contract.
-for unselected in strerror_l wcstof_l wcstod_l \
+# Selected `strtof_l strtod_l strtold_l` numeric `_l` roots and the fixed-profile
+# `__strerror_l`/`strerror_l` pair are deliberate shared archive exports. This
+# narrow-text artifact neither invokes nor establishes their contracts.
+for unselected in wcstof_l wcstod_l \
     wcstold_l strftime_l wcsftime_l fwide fgetwc fputwc malloc calloc realloc free; do
     if grep -Eq "[[:space:]][TW][[:space:]]${unselected}$" "$archive_symbols"; then
         fail "archive accidentally exports unselected $unselected"

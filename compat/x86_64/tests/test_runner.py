@@ -1110,6 +1110,103 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn("-Wl,-init,bounded_plugin_legacy_initialize", runner)
         self.assertIn("-Wl,-init,mid_value", runner)
         self.assertIn("candidate accepted DT_INIT in an initial DSO", runner)
+    def test_locale_error_strings_artifact_stays_abi_only_and_non_promoting(
+        self,
+    ) -> None:
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        implementation = (
+            ROOT
+            / "libc"
+            / "src"
+            / "c_abi"
+            / "x86_64"
+            / "locale_error_strings.rs"
+        ).read_text(encoding="utf-8")
+        probe = (
+            ROOT / "compat" / "x86_64" / "libc_locale_error_strings_probe.c"
+        ).read_text(encoding="utf-8")
+        artifact_runner = (
+            ROOT / "compat" / "x86_64" / "run_libc_locale_error_strings.sh"
+        ).read_text(encoding="utf-8")
+        header_runner = (
+            ROOT / "compat" / "x86_64" / "run_error_strings_header_abi.sh"
+        ).read_text(encoding="utf-8")
+        string_header = (ROOT / "include" / "string.h").read_text(encoding="utf-8")
+        static_exports = {
+            line
+            for line in (
+                ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+            ).read_text(encoding="utf-8").splitlines()
+            if line and not line.startswith("#")
+        }
+        parity = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        dispatcher = RUNNER.read_text(encoding="utf-8")
+
+        self.assertIn('#[path = "locale_error_strings.rs"]', static_root)
+        for symbol in ("__strerror_l", "strerror_l"):
+            self.assertIn(symbol, static_exports)
+        for required in (
+            "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+            "src/errno/strerror.c::__strerror_l",
+            "weak_alias(__strerror_l, strerror_l)",
+            ".weak strerror_l",
+            ".set strerror_l, __strerror_l",
+            "fn __strerror_l(",
+            "error_strings::strerror(error)",
+            "LC_GLOBAL_LOCALE",
+            "general locale database",
+        ):
+            self.assertIn(required, implementation)
+        for forbidden in (
+            "static mut",
+            "crabc_core",
+            "crabc_mimalloc",
+            "fn malloc(",
+            "fn strfmon(",
+        ):
+            self.assertNotIn(forbidden, implementation)
+        for required in (
+            "#include <locale.h>",
+            "extern char *__strerror_l(int, locale_t);",
+            "strerror_l != __strerror_l",
+            "newlocale(LC_ALL_MASK, \"C.UTF-8\", NULL)",
+            "uselocale(LC_GLOBAL_LOCALE)",
+            "error <= 134",
+            "errno != EINTR",
+            "locale-error-strings-fnv1a64",
+        ):
+            self.assertIn(required, probe)
+        for required in (
+            "CRABC_EXPECT_STRERROR_L",
+            "CRABC_REQUIRE_STRERROR_L_HIDDEN",
+            "strerror_l",
+            "C++ probe does not retain C linkage",
+        ):
+            self.assertIn(required, header_runner)
+        self.assertIn("char *strerror_l(int, locale_t);", string_header)
+        for required in (
+            "static_c_abi_exports.txt",
+            "-nostdlib -static",
+            "--no-undefined",
+            "strong __strerror_l",
+            "weak strerror_l",
+            "same-address __strerror_l alias",
+            "candidate lacks PT_TLS",
+            "locale-error-strings-fnv1a64",
+            "strfmon",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn("--whole-archive", artifact_runner)
+        self.assertIn('id = "static-c-locale-error-strings"', parity)
+        self.assertIn(
+            'command = "./scripts/dev-x86_64.sh libc-locale-error-strings"',
+            parity,
+        )
+        self.assertIn("libc-locale-error-strings)", dispatcher)
 
     def test_script_is_valid_and_has_a_closed_command_set(self) -> None:
         syntax = subprocess.run(
@@ -1227,7 +1324,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "libc-memfd-create",
             "libc-static-c-abi-differential",
             "libc-static-c-abi-same-object-differential|qualification-posix-abi-admission",
-            "libc-readiness-waits|libc-system-observation|libc-system-information|libc-fcntl-record-locks|libc-flock|libc-sendfile|libc-posix-fallocate|libc-descriptor-advice|libc-filesystem-capacity|libc-uts-identity|libc-ctype|libc-locale-multibyte|libc-locale-wide-iconv|libc-wide-character|libc-locale-object-wide|libc-locale-narrow|libc-locale-ctype-locators|libc-regex|libc-integer-arithmetic|libc-integer-parse|libc-float-parse|libc-intmax-arithmetic|libc-credential-observation|libc-login-name|libc-child-reaping|libc-immediate-termination|libc-callback-algorithms|libc-search-tree-intrusive|libc-search-hash-table|libc-gettext-catalog|libc-access|libc-clock-gettime|libc-time-observation|libc-system-configuration|libc-mapping-core|libc-header-layouts-baseline|libc-nanosleep|libc-clock-nanosleep|libc-descriptor-entry|libc-fcntl-status-control|libc-ioctl|libc-ffs|libc-byte-strings|libc-process-globals-getopt|libc-auxv-observation|libc-inet-address|libc-numeric-netdb|libc-random-entropy|libc-memory-search|libc-string-copy|libc-error-strings|libc-descriptor-pipeline",
+            "libc-readiness-waits|libc-system-observation|libc-system-information|libc-fcntl-record-locks|libc-flock|libc-sendfile|libc-posix-fallocate|libc-descriptor-advice|libc-filesystem-capacity|libc-uts-identity|libc-ctype|libc-locale-multibyte|libc-locale-wide-iconv|libc-wide-character|libc-locale-object-wide|libc-locale-narrow|libc-locale-ctype-locators|libc-locale-error-strings|libc-regex|libc-integer-arithmetic|libc-integer-parse|libc-float-parse|libc-intmax-arithmetic|libc-credential-observation|libc-login-name|libc-child-reaping|libc-immediate-termination|libc-callback-algorithms|libc-search-tree-intrusive|libc-search-hash-table|libc-gettext-catalog|libc-access|libc-clock-gettime|libc-time-observation|libc-system-configuration|libc-mapping-core|libc-header-layouts-baseline|libc-nanosleep|libc-clock-nanosleep|libc-descriptor-entry|libc-fcntl-status-control|libc-ioctl|libc-ffs|libc-byte-strings|libc-process-globals-getopt|libc-auxv-observation|libc-inet-address|libc-numeric-netdb|libc-random-entropy|libc-memory-search|libc-string-copy|libc-error-strings|libc-descriptor-pipeline",
             "libc-vector-io|libc-uio-cxx-linkage",
             "libc-sysv-semaphore|libc-posix-semaphore",
             "libc-sysv-message-shared-memory",
