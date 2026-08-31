@@ -402,7 +402,11 @@ pub(crate) trait TheapCollectAbandonCallbacks {
 /// `release_page` and `abandon_page` may act only after this helper has
 /// detached the current page. A failing continuation must leave enough state
 /// for `retain_terminal` to retain one owner. No producer may race any
-/// non-atomic page field or queue transition.
+/// non-atomic page field or queue transition; a valid live client may access
+/// only its distinct current block and the page's disjoint atomic producer
+/// projection. The coordinator and callbacks retain exclusive access to every
+/// ordinary field they mutate and never materialize a whole-`Page` reference
+/// during that interval.
 pub(crate) unsafe fn theap_collect_abandon_queues<'theap, DeferredFrees, RetiredPages, Callbacks>(
     theap: &'theap mut Theap,
     mut prepass: TheapCollectAbandonPrepass<DeferredFrees, RetiredPages>,
@@ -487,8 +491,10 @@ where
             // proof keeps the current page and its successor link valid.
             // Saving this edge is the source visitor's required protection
             // against either detached-page continuation retiring current
-            // metadata.
-            let next = unsafe { page.as_ref().next };
+            // metadata. The raw field projection does not materialize a
+            // whole-page reference while a live client may access disjoint
+            // producer atomics.
+            let next = unsafe { core::ptr::read(core::ptr::addr_of!((*page.as_ptr()).next)) };
             let action = match callbacks.collect_page(TheapCollectAbandonCurrentPage {
                 page,
                 _prepass: &page_actions_ready,
@@ -726,25 +732,53 @@ pub(crate) fn page_is_in_full(page: &Page) -> bool {
 /// writes only the page-resident atomic flag here. Its Relaxed operation is
 /// exactly the `mi_page_flags_set` operation used by the source helper.
 #[inline]
-fn page_set_in_full_membership(page: &Page, in_full: bool) {
+unsafe fn page_set_in_full_membership(page: *mut Page, in_full: bool) {
+    // SAFETY: callers keep initialized page metadata stable. This forms a
+    // reference only to the atomic flag subobject, not to the whole `Page`.
+    let xthread_id = unsafe { &*core::ptr::addr_of!((*page).xthread_id) };
     if in_full {
-        page.xthread_id
-            .fetch_or(PAGE_IN_FULL_QUEUE, Ordering::Relaxed);
+        xthread_id.fetch_or(PAGE_IN_FULL_QUEUE, Ordering::Relaxed);
     } else {
-        page.xthread_id
-            .fetch_and(!PAGE_IN_FULL_QUEUE, Ordering::Relaxed);
+        xthread_id.fetch_and(!PAGE_IN_FULL_QUEUE, Ordering::Relaxed);
     }
+}
+
+#[inline]
+unsafe fn page_next(page: *mut Page) -> *mut Page {
+    // SAFETY: caller proves initialized metadata and queue-link ownership.
+    unsafe { core::ptr::read(core::ptr::addr_of!((*page).next)) }
+}
+
+#[inline]
+unsafe fn page_prev(page: *mut Page) -> *mut Page {
+    // SAFETY: caller proves initialized metadata and queue-link ownership.
+    unsafe { core::ptr::read(core::ptr::addr_of!((*page).prev)) }
+}
+
+#[inline]
+unsafe fn set_page_next(page: *mut Page, next: *mut Page) {
+    // SAFETY: caller proves exclusive ownership of this ordinary link field.
+    unsafe { core::ptr::write(core::ptr::addr_of_mut!((*page).next), next) };
+}
+
+#[inline]
+unsafe fn set_page_prev(page: *mut Page, prev: *mut Page) {
+    // SAFETY: caller proves exclusive ownership of this ordinary link field.
+    unsafe { core::ptr::write(core::ptr::addr_of_mut!((*page).prev), prev) };
 }
 
 /// Port of `mi_page_queue_remove`'s intrusive membership transition.
 ///
 /// # Safety
 ///
-/// `page` must be non-null, valid, and exclusively mutable. `queue` must be
-/// the complete, acyclic doubly linked queue containing `page`; its count and
+/// `page` must be non-null, valid, and stable. `queue` must be the complete,
+/// acyclic doubly linked queue containing `page`; its count and
 /// endpoint pointers must agree with every linked page. The caller must hold
 /// the owning theap's queue synchronization, so no concurrent operation may
-/// read or mutate these links. The page's block-size/special-queue relation
+/// read or mutate these ordinary links. A valid live client's Page access may
+/// concurrently use only the disjoint remote-free atomic projection, while it
+/// retains its distinct current block. The page's
+/// block-size/special-queue relation
 /// must satisfy the source helper's assertion: either its block size equals
 /// the queue's block size, it is a huge page in the huge queue, or it is
 /// marked in-full in the full queue.
@@ -752,57 +786,55 @@ fn page_set_in_full_membership(page: &Page, in_full: bool) {
 /// This metadata-only port intentionally excludes the source's absent theap
 /// page-count and direct-page-cache updates.
 pub(crate) unsafe fn page_queue_remove_metadata(queue: &mut PageQueue, page: *mut Page) {
-    // SAFETY: the caller guarantees that `page` is a valid uniquely mutable
-    // member of `queue`, so reading its two intrusive links is valid.
-    let page_ref = unsafe { &mut *page };
-
-    if !page_ref.prev.is_null() {
-        // SAFETY: `page_ref.prev` is another valid member of the caller's
+    // SAFETY: caller owns these two ordinary intrusive-link fields. Raw reads
+    // avoid a whole-page mutable borrow while a live client can retain the
+    // disjoint remote-free atomics.
+    let prev = unsafe { page_prev(page) };
+    let next = unsafe { page_next(page) };
+    if !prev.is_null() {
+        // SAFETY: `prev` is another valid member of the caller's
         // complete queue and exclusive queue ownership permits relinking it.
-        unsafe { (*page_ref.prev).next = page_ref.next };
+        unsafe { set_page_next(prev, next) };
     }
-    if !page_ref.next.is_null() {
-        // SAFETY: `page_ref.next` is another valid member of the caller's
+    if !next.is_null() {
+        // SAFETY: `next` is another valid member of the caller's
         // complete queue and exclusive queue ownership permits relinking it.
-        unsafe { (*page_ref.next).prev = page_ref.prev };
+        unsafe { set_page_prev(next, prev) };
     }
     if page as *const Page == queue.last.cast_const() {
-        queue.last = page_ref.prev;
+        queue.last = prev;
     }
     if page as *const Page == queue.first.cast_const() {
-        queue.first = page_ref.next;
+        queue.first = next;
     }
     queue.count -= 1;
-    page_ref.next = null_mut();
-    page_ref.prev = null_mut();
-    page_set_in_full_membership(page_ref, false);
+    unsafe { set_page_next(page, null_mut()) };
+    unsafe { set_page_prev(page, null_mut()) };
+    unsafe { page_set_in_full_membership(page, false) };
 }
 
 /// Port of `mi_page_queue_push`'s intrusive membership transition.
 ///
 /// # Safety
 ///
-/// `page` must be non-null, valid, exclusively mutable, and detached. The
-/// caller must exclusively own the complete acyclic queue and every page it
-/// links. `page` must either have `queue`'s block size, be a huge page in the
-/// huge queue, or already be marked in-full for the full queue. No concurrent
-/// queue mutation or observation may race with the operation.
+/// `page` must be non-null, valid, stable, and detached. The caller must
+/// exclusively own the complete acyclic queue and every ordinary link it
+/// changes. A valid live client's Page access may concurrently use only the
+/// disjoint remote-free atomic projection, while it retains its distinct
+/// current block. `page` must either have `queue`'s block size, be a huge page
+/// in the huge queue, or already be marked in-full for the full queue. No
+/// concurrent queue mutation or observation may race with the operation.
 ///
 /// This metadata-only port intentionally excludes the source's absent theap
 /// page-count and direct-page-cache updates.
 pub(crate) unsafe fn page_queue_push_metadata(queue: &mut PageQueue, page: *mut Page) {
-    // SAFETY: the caller guarantees `page` is valid, detached, and uniquely
-    // mutable for insertion into this exclusively owned queue.
-    let page_ref = unsafe { &mut *page };
-    let page = page_ref as *mut Page;
-
-    page_set_in_full_membership(page_ref, page_queue_is_full(queue));
-    page_ref.next = queue.first;
-    page_ref.prev = null_mut();
+    unsafe { page_set_in_full_membership(page, page_queue_is_full(queue)) };
+    unsafe { set_page_next(page, queue.first) };
+    unsafe { set_page_prev(page, null_mut()) };
     if !queue.first.is_null() {
         // SAFETY: the old head is a valid page in the caller's exclusively
         // owned queue, so its predecessor can be updated to the new head.
-        unsafe { (*queue.first).prev = page };
+        unsafe { set_page_prev(queue.first, page) };
         queue.first = page;
     } else {
         queue.first = page;
@@ -815,27 +847,24 @@ pub(crate) unsafe fn page_queue_push_metadata(queue: &mut PageQueue, page: *mut 
 ///
 /// # Safety
 ///
-/// `page` must be non-null, valid, exclusively mutable, and detached. The
-/// caller must exclusively own the complete acyclic queue and every page it
-/// links. `page` must either have `queue`'s block size, be a huge page in the
-/// huge queue, or already be marked in-full for the full queue. No concurrent
-/// queue mutation or observation may race with the operation.
+/// `page` must be non-null, valid, stable, and detached. The caller must
+/// exclusively own the complete acyclic queue and every ordinary link it
+/// changes. A valid live client's Page access may concurrently use only the
+/// disjoint remote-free atomic projection, while it retains its distinct
+/// current block. `page` must either have `queue`'s block size, be a huge page
+/// in the huge queue, or already be marked in-full for the full queue. No
+/// concurrent queue mutation or observation may race with the operation.
 ///
 /// This metadata-only port intentionally excludes the source's absent theap
 /// page-count and direct-page-cache updates.
 pub(crate) unsafe fn page_queue_push_at_end_metadata(queue: &mut PageQueue, page: *mut Page) {
-    // SAFETY: the caller guarantees `page` is valid, detached, and uniquely
-    // mutable for insertion into this exclusively owned queue.
-    let page_ref = unsafe { &mut *page };
-    let page = page_ref as *mut Page;
-
-    page_set_in_full_membership(page_ref, page_queue_is_full(queue));
-    page_ref.prev = queue.last;
-    page_ref.next = null_mut();
+    unsafe { page_set_in_full_membership(page, page_queue_is_full(queue)) };
+    unsafe { set_page_prev(page, queue.last) };
+    unsafe { set_page_next(page, null_mut()) };
     if !queue.last.is_null() {
         // SAFETY: the old tail is a valid page in the caller's exclusively
         // owned queue, so its successor can be updated to the new tail.
-        unsafe { (*queue.last).next = page };
+        unsafe { set_page_next(queue.last, page) };
         queue.last = page;
     } else {
         queue.first = page;
@@ -848,12 +877,14 @@ pub(crate) unsafe fn page_queue_push_at_end_metadata(queue: &mut PageQueue, page
 ///
 /// # Safety
 ///
-/// `page` must be non-null, valid, exclusively mutable, and a member of
-/// `queue`. `queue` and its complete acyclic page chain must be exclusively
-/// owned for the entire operation, with the source-required
-/// block-size/special-queue relation preserved: same block size, huge page in
-/// the huge queue, or a page marked in-full in the full queue. No concurrent
-/// queue mutation or observation may race with the operation.
+/// `page` must be non-null, valid, stable, and a member of `queue`. `queue`
+/// and every ordinary link in its complete acyclic page chain must be
+/// exclusively owned for the entire operation. A valid live client's Page
+/// access may concurrently use only the disjoint remote-free atomic
+/// projection, while it retains its distinct current block. Preserve the
+/// source-required block-size/special-queue relation: same block size, huge
+/// page in the huge queue, or a page marked in-full in the full queue. No
+/// concurrent queue mutation or observation may race with the operation.
 ///
 /// This metadata-only port intentionally excludes the source's absent theap
 /// page-count and direct-page-cache updates.
@@ -877,14 +908,17 @@ pub(crate) unsafe fn page_queue_move_to_front_metadata(queue: &mut PageQueue, pa
 ///
 /// # Safety
 ///
-/// `page` must be non-null, valid, and exclusively mutable. `from` must be
+/// `page` must be non-null, valid, and stable. `from` must be
 /// the complete acyclic queue containing it; `to` must be a complete acyclic
 /// queue that does not contain it; the two queues and every linked page must
-/// be disjoint and exclusively owned. Both counts and endpoints must be
-/// accurate. The page and queues must satisfy one source relation: its block
-/// size matches both queues; it matches `to` while `from` is full; it matches
-/// `from` while `to` is full; or it is huge and `to` is huge or full. No
-/// concurrent queue mutation or observation may race with the operation.
+/// be disjoint, with every ordinary link exclusively owned. A valid live
+/// client's Page access may concurrently use only the disjoint remote-free
+/// atomic projection, while it retains its distinct current block. Both
+/// counts and endpoints must be accurate. The page and queues must satisfy one
+/// source relation: its block size matches both queues; it matches `to` while
+/// `from` is full; it matches `from` while `to` is full; or it is huge and
+/// `to` is huge or full. No concurrent queue mutation or observation may race
+/// with the operation.
 ///
 /// This metadata-only port intentionally excludes the source's absent
 /// direct-page-cache updates.
@@ -894,37 +928,36 @@ pub(crate) unsafe fn page_queue_enqueue_from_ex_metadata(
     enqueue_at_end: bool,
     page: *mut Page,
 ) {
-    // SAFETY: the caller guarantees that `page` is a valid uniquely mutable
-    // member of `from`, with both complete queues exclusively owned.
-    let page_ref = unsafe { &mut *page };
-    let page = page_ref as *mut Page;
-
-    if !page_ref.prev.is_null() {
+    // SAFETY: the caller owns the ordinary intrusive links. Raw field access
+    // keeps a concurrently usable atomic producer projection disjoint.
+    let prev = unsafe { page_prev(page) };
+    let next = unsafe { page_next(page) };
+    if !prev.is_null() {
         // SAFETY: the predecessor belongs to `from`'s valid, exclusively
         // owned page chain and can be relinked around `page`.
-        unsafe { (*page_ref.prev).next = page_ref.next };
+        unsafe { set_page_next(prev, next) };
     }
-    if !page_ref.next.is_null() {
+    if !next.is_null() {
         // SAFETY: the successor belongs to `from`'s valid, exclusively owned
         // page chain and can be relinked around `page`.
-        unsafe { (*page_ref.next).prev = page_ref.prev };
+        unsafe { set_page_prev(next, prev) };
     }
     if page as *const Page == from.last.cast_const() {
-        from.last = page_ref.prev;
+        from.last = prev;
     }
     if page as *const Page == from.first.cast_const() {
-        from.first = page_ref.next;
+        from.first = next;
     }
     from.count -= 1;
 
     to.count += 1;
     if enqueue_at_end {
-        page_ref.prev = to.last;
-        page_ref.next = null_mut();
+        unsafe { set_page_prev(page, to.last) };
+        unsafe { set_page_next(page, null_mut()) };
         if !to.last.is_null() {
             // SAFETY: the old destination tail belongs to `to`'s valid,
             // exclusively owned chain and accepts `page` as its successor.
-            unsafe { (*to.last).next = page };
+            unsafe { set_page_next(to.last, page) };
             to.last = page;
         } else {
             to.first = page;
@@ -933,27 +966,27 @@ pub(crate) unsafe fn page_queue_enqueue_from_ex_metadata(
     } else if !to.first.is_null() {
         // SAFETY: the old head is valid in `to`'s exclusively owned chain;
         // reading its successor preserves the source's second-place insert.
-        let next = unsafe { (*to.first).next };
-        page_ref.prev = to.first;
-        page_ref.next = next;
+        let next = unsafe { page_next(to.first) };
+        unsafe { set_page_prev(page, to.first) };
+        unsafe { set_page_next(page, next) };
         // SAFETY: the old head is valid and uniquely mutable through the
         // caller's exclusive ownership of the complete destination queue.
-        unsafe { (*to.first).next = page };
+        unsafe { set_page_next(to.first, page) };
         if !next.is_null() {
             // SAFETY: the former second page remains valid in the destination
             // chain and must point back to the inserted page.
-            unsafe { (*next).prev = page };
+            unsafe { set_page_prev(next, page) };
         } else {
             to.last = page;
         }
     } else {
-        page_ref.prev = null_mut();
-        page_ref.next = null_mut();
+        unsafe { set_page_prev(page, null_mut()) };
+        unsafe { set_page_next(page, null_mut()) };
         to.first = page;
         to.last = page;
     }
 
-    page_set_in_full_membership(page_ref, page_queue_is_full(to));
+    unsafe { page_set_in_full_membership(page, page_queue_is_full(to)) };
 }
 
 /// Port of `mi_page_queue_enqueue_from`.

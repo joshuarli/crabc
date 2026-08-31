@@ -2326,7 +2326,7 @@ impl<'attach, 'heap> DynamicTheapPageDrainSession<'attach, 'heap> {
         let heap = self.attachment.heap_mut();
         // SAFETY: forwarded from this method's dynamic page-drain ownership
         // proof; Heap serializes its private OS-list mutation internally.
-        unsafe { heap.push_os_abandoned_page(&mut *page.as_ptr()) }
+        unsafe { heap.push_os_abandoned_page(page) }
     }
 
     /// Proves that a bounded OS-singleton aggregate starts from the empty
@@ -2358,7 +2358,7 @@ impl<'attach, 'heap> DynamicTheapPageDrainSession<'attach, 'heap> {
         let heap = self.attachment.heap_mut();
         // SAFETY: forwarded from this method's all-free handoff proof; Heap
         // serializes its private OS-list mutation internally.
-        unsafe { heap.remove_os_abandoned_page(&mut *page.as_ptr()) }
+        unsafe { heap.remove_os_abandoned_page(page) }
     }
 
     #[cfg(test)]

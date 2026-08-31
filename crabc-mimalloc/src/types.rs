@@ -764,32 +764,42 @@ impl Heap {
     /// a linked candidate, a foreign page, or a malformed current head before
     /// making any change. It deliberately does not search for or repair a
     /// separately registered page owner.
+    ///
+    /// # Safety
+    ///
+    /// `page` must name stable initialized metadata owned by this Heap with
+    /// clear intrusive links. The caller must keep it and every current list
+    /// neighbor live, and must exclusively own the page's ordinary link
+    /// fields through the call. Concurrent live clients may access their
+    /// distinct current blocks and only their disjoint remote-free atomic
+    /// projections within Page metadata.
     #[inline]
-    pub(crate) fn push_os_abandoned_page(
+    pub(crate) unsafe fn push_os_abandoned_page(
         &mut self,
-        page: &mut Page,
+        page: NonNull<Page>,
     ) -> Result<(), HeapOsAbandonedPageListError> {
         let guard = self
             .os_abandoned_pages_lock
             .lock()
             .map_err(HeapOsAbandonedPageListError::Lock)?;
         let heap = core::ptr::from_ref(self).cast_mut();
-        let page_pointer = core::ptr::from_mut(page);
+        let page_pointer = page.as_ptr();
 
-        // SAFETY: `page` is a live unique metadata reference. The caller's
-        // documented list-lifetime proof keeps the prior head and its
-        // immediate successor live while the private lock serializes all
-        // intrusive OS-list changes for this Heap.
+        // SAFETY: the caller retains live metadata and owns the ordinary
+        // intrusive links. Raw field operations avoid borrowing whole pages
+        // while clients may retain disjoint remote-free atomics.
         let result = unsafe {
-            if !core::ptr::eq(page.heap, heap) {
+            if core::ptr::read::<*mut Heap>(core::ptr::addr_of!((*page_pointer).heap)) != heap {
                 Err(HeapOsAbandonedPageListError::HeapMismatch)
-            } else if !page.prev.is_null() || !page.next.is_null() {
+            } else if !core::ptr::read(core::ptr::addr_of!((*page_pointer).prev)).is_null()
+                || !core::ptr::read(core::ptr::addr_of!((*page_pointer).next)).is_null()
+            {
                 Err(HeapOsAbandonedPageListError::NodeLinked)
             } else {
                 let head = self.os_abandoned_pages;
                 if head.is_null() {
-                    page.prev = null_mut();
-                    page.next = null_mut();
+                    core::ptr::write(core::ptr::addr_of_mut!((*page_pointer).prev), null_mut());
+                    core::ptr::write(core::ptr::addr_of_mut!((*page_pointer).next), null_mut());
                     self.os_abandoned_pages = page_pointer;
                     Ok(())
                 } else if head == page_pointer
@@ -807,9 +817,9 @@ impl Heap {
                     } else {
                         // Preserve the source link order after every local
                         // ownership relation has been validated.
-                        page.prev = null_mut();
-                        page.next = head;
-                        (*head).prev = page_pointer;
+                        core::ptr::write(core::ptr::addr_of_mut!((*page_pointer).prev), null_mut());
+                        core::ptr::write(core::ptr::addr_of_mut!((*page_pointer).next), head);
+                        core::ptr::write(core::ptr::addr_of_mut!((*head).prev), page_pointer);
                         self.os_abandoned_pages = page_pointer;
                         Ok(())
                     }
@@ -840,23 +850,32 @@ impl Heap {
     /// validated before writes. A foreign, absent, or malformed member is
     /// rejected with every existing link preserved rather than being silently
     /// spliced into a different list.
+    ///
+    /// # Safety
+    ///
+    /// `page` must name one stable initialized member of this Heap's private
+    /// list. The caller must retain it and every direct neighbor and must
+    /// exclusively own their ordinary link fields through the call.
+    /// Concurrent live clients may access their distinct current blocks and
+    /// only their disjoint remote-free atomic projections within Page
+    /// metadata.
     #[inline]
-    pub(crate) fn remove_os_abandoned_page(
+    pub(crate) unsafe fn remove_os_abandoned_page(
         &mut self,
-        page: &mut Page,
+        page: NonNull<Page>,
     ) -> Result<(), HeapOsAbandonedPageListError> {
         let guard = self
             .os_abandoned_pages_lock
             .lock()
             .map_err(HeapOsAbandonedPageListError::Lock)?;
         let heap = core::ptr::from_ref(self).cast_mut();
-        let page_pointer = core::ptr::from_mut(page);
+        let page_pointer = page.as_ptr();
 
-        // SAFETY: `page` is a live unique metadata reference. The caller's
-        // documented list-lifetime proof keeps every direct neighbor live,
-        // and the private heap lock serializes their link updates.
+        // SAFETY: caller retains every direct neighbor and owns the ordinary
+        // link fields; the private lock serializes all list mutations. Raw
+        // subobject operations manufacture no whole-page mutable reference.
         let result = unsafe {
-            if !core::ptr::eq(page.heap, heap) {
+            if core::ptr::read::<*mut Heap>(core::ptr::addr_of!((*page_pointer).heap)) != heap {
                 Err(HeapOsAbandonedPageListError::HeapMismatch)
             } else {
                 let head = self.os_abandoned_pages;
@@ -873,8 +892,8 @@ impl Heap {
                     {
                         Err(HeapOsAbandonedPageListError::Head)
                     } else {
-                        let previous = page.prev;
-                        let next = page.next;
+                        let previous = core::ptr::read(core::ptr::addr_of!((*page_pointer).prev));
+                        let next = core::ptr::read(core::ptr::addr_of!((*page_pointer).next));
                         if previous.is_null() {
                             if head != page_pointer {
                                 Err(HeapOsAbandonedPageListError::Membership)
@@ -886,10 +905,10 @@ impl Heap {
                             } else {
                                 self.os_abandoned_pages = next;
                                 if !next.is_null() {
-                                    (*next).prev = null_mut();
+                                    core::ptr::write(core::ptr::addr_of_mut!((*next).prev), null_mut());
                                 }
-                                page.next = null_mut();
-                                page.prev = null_mut();
+                                core::ptr::write(core::ptr::addr_of_mut!((*page_pointer).next), null_mut());
+                                core::ptr::write(core::ptr::addr_of_mut!((*page_pointer).prev), null_mut());
                                 Ok(())
                             }
                         } else if previous == page_pointer
@@ -904,12 +923,12 @@ impl Heap {
                         {
                             Err(HeapOsAbandonedPageListError::Successor)
                         } else {
-                            (*previous).next = next;
+                            core::ptr::write(core::ptr::addr_of_mut!((*previous).next), next);
                             if !next.is_null() {
-                                (*next).prev = previous;
+                                core::ptr::write(core::ptr::addr_of_mut!((*next).prev), previous);
                             }
-                            page.next = null_mut();
-                            page.prev = null_mut();
+                            core::ptr::write(core::ptr::addr_of_mut!((*page_pointer).next), null_mut());
+                            core::ptr::write(core::ptr::addr_of_mut!((*page_pointer).prev), null_mut());
                             Ok(())
                         }
                     }
@@ -1764,16 +1783,16 @@ pub(crate) struct Block {
 /// pointers. `free_list.rs` may update only the fields that the source local
 /// free-list routines own; queue and direct-cache transitions stay with the
 /// default-theap lifecycle.
-pub(super) struct PageFreeListState<'a> {
+pub(super) struct PageFreeListState {
     pub(super) area: NonNull<u8>,
     pub(super) area_bytes: usize,
     pub(super) block_size: usize,
-    pub(super) capacity: &'a mut u16,
+    pub(super) capacity: NonNull<u16>,
     pub(super) reserved: u16,
-    pub(super) free: &'a mut *mut Block,
-    pub(super) local_free: &'a mut *mut Block,
-    pub(super) used: &'a mut usize,
-    pub(super) free_is_zero: &'a mut bool,
+    pub(super) free: NonNull<*mut Block>,
+    pub(super) local_free: NonNull<*mut Block>,
+    pub(super) used: NonNull<usize>,
+    pub(super) free_is_zero: NonNull<bool>,
 }
 
 /// Narrow producer projection for the source remote-free protocol.
@@ -1822,12 +1841,10 @@ pub(super) struct PageRemoteFreeOwnerState {
 
 /// Narrow owner-only projection for the local half of `_mi_page_free_collect`.
 ///
-/// Unlike [`PageFreeListState`], this carries raw field pointers and never
-/// creates a whole-page mutable reference. The bounded full-page collector is
-/// nevertheless a caller-proved joined/quiescent lifecycle: later queue
-/// transitions still use existing queue helpers that borrow page metadata.
-/// The test-only scoped producer models that proof but is not a production
-/// lifetime capability. The caller remains responsible for the live-page,
+/// Unlike [`PageFreeListState`], this projects initialized capacity by value.
+/// Both forms carry raw field pointers and never create a whole-page mutable
+/// reference. Later queue transitions likewise use raw intrusive-link
+/// subobject operations. The caller remains responsible for the live-page,
 /// owner-associated, non-abandoning, and no-release proof; this state grants
 /// no queue or lifetime transition.
 pub(super) struct PageLocalCollectState {
@@ -2489,6 +2506,36 @@ impl Page {
         true
     }
 
+    /// Records a committed on-demand prefix through only its owner field.
+    ///
+    /// # Safety
+    ///
+    /// `page` must name stable initialized live metadata. The caller must own
+    /// `slice_pcommitted`, have committed the complete old-to-new prefix, and
+    /// preserve immutable page geometry. Concurrent live clients may access
+    /// their distinct current blocks and only their disjoint remote-free
+    /// atomic projection within Page metadata.
+    #[inline]
+    pub(super) unsafe fn set_slice_pcommitted_after_commit_at(
+        page: NonNull<Self>,
+        next: u16,
+    ) -> bool {
+        // SAFETY: caller proves `page` names stable initialized metadata; this
+        // derives only the ordinary prefix-count subobject address.
+        let field = unsafe {
+            core::ptr::addr_of_mut!((*page.as_ptr()).slice_pcommitted)
+        };
+        // SAFETY: caller proves this initialized owner-only subobject remains
+        // stable and grants exclusive access for the transition.
+        let current = unsafe { core::ptr::read(field) };
+        if current == 0 || next == 0 || next < current {
+            return false;
+        }
+        // SAFETY: same caller proof grants the exact ordinary-field write.
+        unsafe { core::ptr::write(field, next) };
+        true
+    }
+
     /// Sets the local page capacity record before the page is published into
     /// an exclusive theap queue. `capacity` must not exceed `reserved`.
     #[inline]
@@ -2581,6 +2628,27 @@ impl Page {
     #[inline]
     pub(crate) fn set_retire_expire(&mut self, retire_expire: u8) {
         self.retire_expire = retire_expire;
+    }
+
+    /// Writes the owner-only retirement countdown without borrowing the
+    /// complete live page.
+    ///
+    /// # Safety
+    ///
+    /// `page` must name stable initialized metadata whose owning theap grants
+    /// the caller exclusive access to `retire_expire`. The page may have live
+    /// clients retaining only the disjoint remote-free atomic projection; no
+    /// other access to this ordinary byte may overlap the write.
+    #[inline]
+    pub(super) unsafe fn set_retire_expire_at(page: NonNull<Self>, retire_expire: u8) {
+        // SAFETY: the caller owns this exact ordinary subobject and the raw
+        // projection creates no whole-page mutable reference.
+        unsafe {
+            core::ptr::write(
+                core::ptr::addr_of_mut!((*page.as_ptr()).retire_expire),
+                retire_expire,
+            )
+        };
     }
 
     /// Projects only the source atomic fields that a remote producer may use.
@@ -2775,14 +2843,15 @@ impl Page {
     /// Projects the raw owner fields used after remote detach by the
     /// false-force local half of `_mi_page_free_collect`.
     ///
-    /// This is deliberately separate from [`Self::local_free_list_state`]: a
-    /// `PageFreeListState` borrows the local fields through a `&mut Page`,
-    /// while this narrow collection step does not manufacture a whole-page
-    /// mutable reference. The surrounding full-page lifecycle still requires
-    /// caller-proved joined/quiescent producers before its later queue
-    /// transition helpers. The raw free-list boundary can select either the
-    /// false-force transfer or the force-only local-list append; no projection
-    /// itself grants a queue, abandonment, or owner-exit transition.
+    /// This is deliberately separate from [`Self::local_free_list_state_at`]:
+    /// the latter includes mutable capacity, while this narrow collection
+    /// step projects the already-initialized capacity by value. Neither
+    /// projection manufactures a whole-page reference. Later queue transitions
+    /// likewise project only owner-controlled intrusive links, so valid live
+    /// clients may retain or use only the disjoint producer atomics. The raw
+    /// free-list boundary can select either the false-force transfer or the
+    /// force-only local-list append; no projection itself grants a queue,
+    /// abandonment, or owner-exit transition.
     ///
     /// # Safety
     ///
@@ -2792,8 +2861,9 @@ impl Page {
     /// exclusively own the ordinary fields below and keep the page plus its
     /// complete block area live until the collection completes; it must not
     /// detach, retire, reuse, or release the page. A live owner may have
-    /// other threads retaining only [`Self::remote_free_producer_state_at`]
-    /// and may not touch the ordinary fields. The detached branch instead
+    /// other threads accessing distinct current blocks and retaining only
+    /// [`Self::remote_free_producer_state_at`] within Page metadata; those
+    /// threads may not touch the ordinary fields. The detached branch instead
     /// has the bootstrap/session's externally serialized no-remote-producer
     /// contract. The caller must prove that `page_offset` and
     /// `reserved * block_size` describe the same live writable area as the
@@ -2963,47 +3033,70 @@ impl Page {
         })
     }
 
-    /// Projects exactly the local free-list fields used by the single-thread
-    /// source path.
+    /// Projects exactly the local free-list fields used by the source owner.
     ///
     /// # Safety
     ///
-    /// The caller must exclusively own this live page and its entire block
-    /// area: `page_offset` bytes from this metadata address must begin a
-    /// writable allocation of exactly `reserved * block_size` bytes, with
-    /// nonzero `block_size` and `reserved`. The multiplication and resulting
-    /// pointer range must not overflow. The page must be associated with the
-    /// caller's live exclusive theap, and no remote-free, page-map,
-    /// queue-retirement, or other access may observe or mutate the projected
-    /// fields for the lifetime of the returned projection. Each free-list
-    /// pointer written through it must be null or an aligned block inside this
-    /// area. These are the source `mi_page_t` local-list invariants; this
-    /// bootstrap slice intentionally does not supply their concurrent form.
+    /// `page` must name stable initialized metadata. The caller must
+    /// exclusively own its ordinary local-list fields. `page_offset` bytes
+    /// from this metadata address must begin a live writable allocation of
+    /// exactly `reserved * block_size` bytes, with nonzero `block_size` and
+    /// `reserved`; the multiplication and resulting pointer range must not
+    /// overflow. The page must be associated with the caller's live theap.
+    ///
+    /// Block-area access follows the source allocation partition rather than
+    /// granting exclusivity over the entire area: the owner may access link
+    /// words only in blocks already on its local lists, newly extended
+    /// unallocated blocks, the exact block being freed locally, or the exact
+    /// block selected until `pop` returns it to the client. A remote producer
+    /// may concurrently write the link word of its own distinct current
+    /// allocation and access only [`Self::remote_free_producer_state_at`]. No
+    /// page-map, queue-retirement, or other owner operation may mutate the
+    /// projected ordinary fields while this state is used, and no whole
+    /// mutable `Page` reference may coexist with either projection's access.
+    /// Every list pointer must remain null or name an aligned owner-accessible
+    /// block inside the area.
     #[inline]
-    pub(super) unsafe fn local_free_list_state(&mut self) -> PageFreeListState<'_> {
-        debug_assert!(self.block_size != 0);
-        debug_assert!(self.reserved != 0);
+    pub(super) unsafe fn local_free_list_state_at(
+        page: NonNull<Self>,
+    ) -> PageFreeListState {
+        let page = page.as_ptr();
+        // SAFETY: the caller proves initialized stable metadata and immutable
+        // live-page geometry for this owner operation.
+        let block_size = unsafe { (*page).block_size };
+        let reserved = unsafe { (*page).reserved };
+        let page_offset = unsafe { (*page).page_offset };
+        debug_assert!(block_size != 0);
+        debug_assert!(reserved != 0);
         // SAFETY: the caller's live-area contract proves that advancing from
         // this page metadata address by `page_offset` remains in bounds and
         // produces the beginning of its writable block area.
-        let area = unsafe { (self as *mut Self).cast::<u8>().add(self.page_offset) };
+        let area = unsafe { page.cast::<u8>().add(page_offset) };
         // SAFETY: the live-area contract also proves the returned area pointer
         // is non-null and valid for the derived byte count.
         let area = unsafe { NonNull::new_unchecked(area) };
         // SAFETY: the same caller contract proves this source field product
         // does not overflow and identifies the complete page block area.
-        let area_bytes = unsafe { usize::from(self.reserved).unchecked_mul(self.block_size) };
+        let area_bytes = unsafe { usize::from(reserved).unchecked_mul(block_size) };
 
         PageFreeListState {
             area,
             area_bytes,
-            block_size: self.block_size,
-            capacity: &mut self.capacity,
-            reserved: self.reserved,
-            free: &mut self.free,
-            local_free: &mut self.local_free,
-            used: &mut self.used,
-            free_is_zero: &mut self.free_is_zero,
+            block_size,
+            // SAFETY: these raw pointers name only the caller-owned ordinary
+            // subobjects and manufacture no whole-page reference.
+            capacity: unsafe {
+                NonNull::new_unchecked(core::ptr::addr_of_mut!((*page).capacity))
+            },
+            reserved,
+            free: unsafe { NonNull::new_unchecked(core::ptr::addr_of_mut!((*page).free)) },
+            local_free: unsafe {
+                NonNull::new_unchecked(core::ptr::addr_of_mut!((*page).local_free))
+            },
+            used: unsafe { NonNull::new_unchecked(core::ptr::addr_of_mut!((*page).used)) },
+            free_is_zero: unsafe {
+                NonNull::new_unchecked(core::ptr::addr_of_mut!((*page).free_is_zero))
+            },
         }
     }
 
@@ -3986,6 +4079,8 @@ mod tests {
     extern crate std;
 
     use super::*;
+    use crate::free_list::LocalFreeList;
+    use crate::remote_free;
     use core::mem::{align_of, offset_of, size_of, MaybeUninit};
 
     #[test]
@@ -4451,6 +4546,140 @@ mod tests {
         assert_eq!(unsafe { (*page.as_ptr()).page_offset }, PAGE_OFFSET);
     }
 
+    fn producer_count_coexists_with_owner_local_alloc_free_and_quick_collect(
+        producer_count: usize,
+    ) {
+        const BLOCK_SIZE: usize = 64;
+        const PAGE_OFFSET: usize = size_of::<Page>();
+        const MAX_PRODUCERS: usize = 8;
+        const MAX_BLOCKS: usize = MAX_PRODUCERS + 1;
+        const STORAGE_WORDS: usize =
+            (PAGE_OFFSET + MAX_BLOCKS * BLOCK_SIZE) / size_of::<usize>();
+
+        assert!(matches!(producer_count, 1 | 2 | 4 | 8));
+        let reserved = u16::try_from(producer_count + 1).expect("bounded block count");
+        let mut storage = [MaybeUninit::<usize>::uninit(); STORAGE_WORDS];
+        let page_pointer = storage.as_mut_ptr().cast::<Page>();
+        let mut initial = Page::remote_free_test_page(reserved, 0);
+        initial.capacity = 0;
+        initial.block_size = BLOCK_SIZE;
+        initial.page_offset = PAGE_OFFSET;
+        // SAFETY: the aligned backing has room for the exact source-stride
+        // metadata followed by every reserved block and is initialized once.
+        unsafe { page_pointer.write(initial) };
+        // SAFETY: the backing pointer is non-null and remains stable through
+        // all scoped owner and producer operations below.
+        let page = unsafe { NonNull::new_unchecked(page_pointer) };
+        // SAFETY: this test owner controls the ordinary local-list fields and
+        // initially every block. After allocation, the owner keeps only
+        // `local_block`; each producer receives one distinct current block and
+        // the disjoint atomic projection.
+        let mut local = unsafe { LocalFreeList::from_page_at(page) }
+            .expect("valid source-stride local-list projection");
+        assert_eq!(local.extend().expect("initial source extension"), reserved);
+
+        let published: [std::sync::atomic::AtomicPtr<u8>; MAX_PRODUCERS] =
+            std::array::from_fn(|_| std::sync::atomic::AtomicPtr::new(null_mut()));
+        for slot in published.iter().take(producer_count) {
+            let block = local
+                .pop(false)
+                .expect("valid remote allocation pop")
+                .expect("reserved remote block");
+            slot.store(block.as_ptr(), Ordering::Release);
+        }
+        let local_block = local
+            .pop(false)
+            .expect("valid owner allocation pop")
+            .expect("reserved owner block");
+        assert_eq!(local.used(), producer_count + 1);
+
+        // SAFETY: the page is live, associated, and address-stable. Each copy
+        // permits only source atomic remote publication for one exact block.
+        let producer = unsafe { Page::remote_free_producer_state_at(page) };
+        let start = std::sync::Barrier::new(producer_count + 1);
+        let producer_fields_ready = std::sync::Barrier::new(producer_count + 1);
+        let owner_finished = std::sync::Barrier::new(producer_count + 1);
+        std::thread::scope(|scope| {
+            for slot in published.iter().take(producer_count) {
+                let start = &start;
+                let producer_fields_ready = &producer_fields_ready;
+                let owner_finished = &owner_finished;
+                scope.spawn(move || {
+                    let block = NonNull::new(slot.load(Ordering::Acquire))
+                        .expect("published exact remote block");
+                    start.wait();
+                    // SAFETY: these are the initialized atomic subobjects of
+                    // the stable source page. Keeping the references live
+                    // across the owner's disjoint local-list writes makes the
+                    // intended subobject coexistence deterministic.
+                    let xthread_id = unsafe { producer.xthread_id.as_ref() };
+                    let xthread_free = unsafe { producer.xthread_free.as_ref() };
+                    producer_fields_ready.wait();
+                    // SAFETY: every worker owns one distinct current block;
+                    // the scoped backing remains live and owner-associated.
+                    unsafe { remote_free::push(producer, block) }
+                        .expect("source remote publication");
+                    owner_finished.wait();
+                    assert_eq!(
+                        xthread_id.load(Ordering::Acquire) & !PAGE_FLAG_MASK,
+                        12,
+                    );
+                    assert_eq!(xthread_free.load(Ordering::Acquire) & 1, 1);
+                });
+            }
+
+            start.wait();
+            producer_fields_ready.wait();
+            // Exercise all three owner-local operations while each producer
+            // atomic reference is live. The empty immediate list makes every
+            // quick collection select exactly the just-freed owner block.
+            for _ in 0..(producer_count * 64) {
+                // SAFETY: the owner alone controls this exact allocated block
+                // and the ordinary `used`/`local_free` fields.
+                unsafe { local.push_local(local_block) }
+                    .expect("owner local free");
+                assert!(local.quick_collect().expect("owner quick collect"));
+                assert_eq!(
+                    local.pop(false).expect("owner local allocation"),
+                    Some(local_block),
+                );
+            }
+            owner_finished.wait();
+        });
+        drop(local);
+
+        // SAFETY: all producer threads joined; this owner projection now
+        // exclusively collects ordinary fields while retaining the owned bit.
+        let owner = unsafe { Page::remote_free_owner_state_at(page) }
+            .expect("live associated owner state");
+        assert_eq!(
+            unsafe { remote_free::collect(owner) }.expect("owner remote collection"),
+            producer_count,
+        );
+        // SAFETY: collection and all producer access have ended.
+        assert_eq!(unsafe { core::ptr::read(core::ptr::addr_of!((*page.as_ptr()).used)) }, 1);
+    }
+
+    #[test]
+    fn one_producer_coexists_with_owner_local_alloc_free_and_quick_collect() {
+        producer_count_coexists_with_owner_local_alloc_free_and_quick_collect(1);
+    }
+
+    #[test]
+    fn two_producers_coexist_with_owner_local_alloc_free_and_quick_collect() {
+        producer_count_coexists_with_owner_local_alloc_free_and_quick_collect(2);
+    }
+
+    #[test]
+    fn four_producers_coexist_with_owner_local_alloc_free_and_quick_collect() {
+        producer_count_coexists_with_owner_local_alloc_free_and_quick_collect(4);
+    }
+
+    #[test]
+    fn eight_producers_coexist_with_owner_local_alloc_free_and_quick_collect() {
+        producer_count_coexists_with_owner_local_alloc_free_and_quick_collect(8);
+    }
+
     #[test]
     fn represented_theap_prefix_keeps_the_pinned_field_offsets() {
         // These are offsets in the actual C `mi_theap_t`; this Rust prefix
@@ -4479,7 +4708,7 @@ mod tests {
         let page_pointer = core::ptr::addr_of_mut!(page);
 
         assert_eq!(heap.os_abandoned_pages_are_empty(), Ok(true));
-        assert_eq!(heap.push_os_abandoned_page(&mut page), Ok(()));
+        assert_eq!(unsafe { heap.push_os_abandoned_page(NonNull::from(&mut page)) }, Ok(()));
         assert_eq!(heap.os_abandoned_pages_are_empty(), Ok(false));
         assert_eq!(heap.os_abandoned_pages, page_pointer);
         assert!(page.prev.is_null());
@@ -4494,22 +4723,22 @@ mod tests {
         let first_pointer = core::ptr::addr_of_mut!(first);
         let second_pointer = core::ptr::addr_of_mut!(second);
 
-        assert_eq!(heap.push_os_abandoned_page(&mut first), Ok(()));
-        assert_eq!(heap.push_os_abandoned_page(&mut second), Ok(()));
+        assert_eq!(unsafe { heap.push_os_abandoned_page(NonNull::from(&mut first)) }, Ok(()));
+        assert_eq!(unsafe { heap.push_os_abandoned_page(NonNull::from(&mut second)) }, Ok(()));
         assert_eq!(heap.os_abandoned_pages, second_pointer);
         assert!(second.prev.is_null());
         assert_eq!(second.next, first_pointer);
         assert_eq!(first.prev, second_pointer);
         assert!(first.next.is_null());
 
-        assert_eq!(heap.remove_os_abandoned_page(&mut first), Ok(()));
+        assert_eq!(unsafe { heap.remove_os_abandoned_page(NonNull::from(&mut first)) }, Ok(()));
         assert_eq!(heap.os_abandoned_pages, second_pointer);
         assert!(second.prev.is_null());
         assert!(second.next.is_null());
         assert!(first.prev.is_null());
         assert!(first.next.is_null());
 
-        assert_eq!(heap.remove_os_abandoned_page(&mut second), Ok(()));
+        assert_eq!(unsafe { heap.remove_os_abandoned_page(NonNull::from(&mut second)) }, Ok(()));
         assert_eq!(heap.os_abandoned_pages_are_empty(), Ok(true));
         assert!(heap.os_abandoned_pages.is_null());
         assert!(second.prev.is_null());
@@ -4525,22 +4754,22 @@ mod tests {
         let mut absent = os_abandoned_test_page(&heap);
         let member_pointer = core::ptr::addr_of_mut!(member);
 
-        assert_eq!(heap.push_os_abandoned_page(&mut member), Ok(()));
+        assert_eq!(unsafe { heap.push_os_abandoned_page(NonNull::from(&mut member)) }, Ok(()));
         assert_eq!(
-            heap.remove_os_abandoned_page(&mut foreign),
+            unsafe { heap.remove_os_abandoned_page(NonNull::from(&mut foreign)) },
             Err(HeapOsAbandonedPageListError::HeapMismatch)
         );
         assert_eq!(
-            heap.remove_os_abandoned_page(&mut absent),
+            unsafe { heap.remove_os_abandoned_page(NonNull::from(&mut absent)) },
             Err(HeapOsAbandonedPageListError::Membership)
         );
         assert_eq!(heap.os_abandoned_pages, member_pointer);
         assert!(member.prev.is_null());
         assert!(member.next.is_null());
 
-        assert_eq!(heap.remove_os_abandoned_page(&mut member), Ok(()));
+        assert_eq!(unsafe { heap.remove_os_abandoned_page(NonNull::from(&mut member)) }, Ok(()));
         assert_eq!(
-            heap.remove_os_abandoned_page(&mut member),
+            unsafe { heap.remove_os_abandoned_page(NonNull::from(&mut member)) },
             Err(HeapOsAbandonedPageListError::Membership)
         );
         assert!(heap.os_abandoned_pages.is_null());
@@ -4560,13 +4789,13 @@ mod tests {
         let head_pointer = core::ptr::addr_of_mut!(head);
         let forged_pointer = core::ptr::addr_of_mut!(forged_predecessor);
 
-        assert_eq!(heap.push_os_abandoned_page(&mut tail), Ok(()));
-        assert_eq!(heap.push_os_abandoned_page(&mut middle), Ok(()));
-        assert_eq!(heap.push_os_abandoned_page(&mut head), Ok(()));
+        assert_eq!(unsafe { heap.push_os_abandoned_page(NonNull::from(&mut tail)) }, Ok(()));
+        assert_eq!(unsafe { heap.push_os_abandoned_page(NonNull::from(&mut middle)) }, Ok(()));
+        assert_eq!(unsafe { heap.push_os_abandoned_page(NonNull::from(&mut head)) }, Ok(()));
         tail.prev = forged_pointer;
 
         assert_eq!(
-            heap.remove_os_abandoned_page(&mut tail),
+            unsafe { heap.remove_os_abandoned_page(NonNull::from(&mut tail)) },
             Err(HeapOsAbandonedPageListError::Predecessor)
         );
         assert_eq!(heap.os_abandoned_pages, head_pointer);
@@ -4586,12 +4815,12 @@ mod tests {
         let head_pointer = core::ptr::addr_of_mut!(head);
         let forged_pointer = core::ptr::addr_of_mut!(forged_successor);
 
-        assert_eq!(heap.push_os_abandoned_page(&mut tail), Ok(()));
-        assert_eq!(heap.push_os_abandoned_page(&mut head), Ok(()));
+        assert_eq!(unsafe { heap.push_os_abandoned_page(NonNull::from(&mut tail)) }, Ok(()));
+        assert_eq!(unsafe { heap.push_os_abandoned_page(NonNull::from(&mut head)) }, Ok(()));
         tail.next = forged_pointer;
 
         assert_eq!(
-            heap.remove_os_abandoned_page(&mut tail),
+            unsafe { heap.remove_os_abandoned_page(NonNull::from(&mut tail)) },
             Err(HeapOsAbandonedPageListError::Successor)
         );
         assert_eq!(heap.os_abandoned_pages, head_pointer);

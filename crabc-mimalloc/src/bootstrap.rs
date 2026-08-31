@@ -239,10 +239,12 @@ pub(crate) mod theap_page_session_sealed {
 ///
 /// An implementation must retain one stable initialized Theap, Heap, and TLD;
 /// prove the exact live owner/thread identity for every published page; keep
-/// page metadata/block mappings and the source queue/direct state exclusive;
-/// select the exact main or heap-local arena-pages bitmap for fresh, rollback,
-/// and release transitions; and prevent attachment/metadata/list teardown
-/// while the engine or a scoped producer may hold raw page state.
+/// ordinary page fields, queue links, and source queue/direct state under the
+/// one owner while clients use only distinct current blocks and atomic Page
+/// projections; select the exact main or heap-local arena-pages bitmap for
+/// fresh, rollback, and release transitions; and prevent
+/// attachment/metadata/list teardown while the engine or a scoped producer
+/// may hold raw page state.
 /// `publish_fresh_page` must wire only that
 /// exact stable Theap/Heap pair.
 pub(crate) unsafe trait TheapPageSession: theap_page_session_sealed::Sealed {
@@ -275,6 +277,13 @@ pub(crate) unsafe trait TheapPageSession: theap_page_session_sealed::Sealed {
         free_is_zero: bool,
         memid: MemoryId,
     ) -> Option<NonNull<Page>>;
+    /// Performs the terminal whole-page reset.
+    ///
+    /// The caller must first prove the source `used == 0` no-live-client
+    /// condition and remove every queue, direct-cache, PageMap, bitmap, and
+    /// aligned alias that could retain or reach this metadata. Fresh rollback
+    /// may call this before any client or producer projection is published.
+    /// Only those two states permit manufacturing the supplied `&mut Page`.
     fn retire_page(&mut self, page: &mut Page) -> Option<MemoryId>;
     fn retired_bounds(&self) -> (usize, usize);
     fn note_retired_bin(&mut self, bin: usize) -> bool;

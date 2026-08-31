@@ -5745,7 +5745,7 @@ impl<'attach, 'heap, 'arena, 'map>
         // SAFETY: all immutable facts derived from `page_ref` above are now
         // copied. This temporary whole-page projection performs only local
         // geometry validation and ends before later raw/session mutation.
-        let preflight = match unsafe { LocalFreeList::from_page(&mut *page.as_ptr()) } {
+        let preflight = match unsafe { LocalFreeList::from_page_at(page) } {
             Ok(free_list) => free_list.validate_local_free_preflight(canonical_block),
             Err(error) => Err(error),
         };
@@ -6743,7 +6743,7 @@ impl<'attachment, 'main, 'arena, 'map>
         };
         // SAFETY: the exclusive pre-detach owner validates only local geometry
         // and the lower used bound; it does not change any source state.
-        let preflight = match unsafe { LocalFreeList::from_page(&mut *page.as_ptr()) } {
+        let preflight = match unsafe { LocalFreeList::from_page_at(page) } {
             Ok(free_list) => free_list.validate_local_free_preflight(canonical_block),
             Err(error) => Err(error),
         };
@@ -7198,7 +7198,7 @@ impl<'attachment, 'main, 'arena, 'map>
         };
         // SAFETY: preflight observes only this exact still-live client's
         // geometry while the drain retains exclusive ordinary-page access.
-        let preflight = match unsafe { LocalFreeList::from_page(&mut *page.as_ptr()) } {
+        let preflight = match unsafe { LocalFreeList::from_page_at(page) } {
             Ok(free_list) => free_list.validate_local_free_preflight(canonical_block),
             Err(error) => Err(error),
         };
@@ -7540,7 +7540,7 @@ impl<'attachment, 'main, 'arena, 'map>
         };
         // SAFETY: preflight observes only this exact still-live client's
         // geometry while the drain retains exclusive ordinary-page access.
-        let preflight = match unsafe { LocalFreeList::from_page(&mut *page.as_ptr()) } {
+        let preflight = match unsafe { LocalFreeList::from_page_at(page) } {
             Ok(free_list) => free_list.validate_local_free_preflight(canonical_block),
             Err(error) => Err(error),
         };
@@ -7887,7 +7887,7 @@ impl<'attachment, 'main, 'arena, 'map>
         };
         // SAFETY: preflight observes only this exact still-live client's
         // geometry while the drain retains exclusive ordinary-page access.
-        let preflight = match unsafe { LocalFreeList::from_page(&mut *page.as_ptr()) } {
+        let preflight = match unsafe { LocalFreeList::from_page_at(page) } {
             Ok(free_list) => free_list.validate_local_free_preflight(canonical_block),
             Err(error) => Err(error),
         };
@@ -8251,7 +8251,7 @@ impl<'attachment, 'main, 'arena, 'map>
         };
         // SAFETY: preflight observes only this exact still-live client's
         // geometry while the drain retains exclusive ordinary-page access.
-        let preflight = match unsafe { LocalFreeList::from_page(&mut *page.as_ptr()) } {
+        let preflight = match unsafe { LocalFreeList::from_page_at(page) } {
             Ok(free_list) => free_list.validate_local_free_preflight(canonical_block),
             Err(error) => Err(error),
         };
@@ -8639,7 +8639,7 @@ impl<'attachment, 'main, 'arena, 'map>
         };
         // SAFETY: this pre-detach drain owns the page's local free-list
         // fields exclusively. Validation does not mutate source state.
-        let preflight = match unsafe { LocalFreeList::from_page(&mut *page.as_ptr()) } {
+        let preflight = match unsafe { LocalFreeList::from_page_at(page) } {
             Ok(free_list) => free_list.validate_local_free_preflight(canonical_block),
             Err(error) => Err(error),
         };
@@ -12127,7 +12127,9 @@ impl<'attachment, 'main, 'arena, 'map>
                 if unsafe { page_nonnull.as_ref().used() } == 0 {
                     // `_mi_page_try_retire` decrements first, even when the
                     // forced source branch immediately frees the page.
-                    unsafe { (*page_nonnull.as_ptr()).set_retire_expire(expire - 1) };
+                    // SAFETY: the drain exclusively owns this ordinary byte;
+                    // the raw setter avoids borrowing the complete live page.
+                    unsafe { Page::set_retire_expire_at(page_nonnull, expire - 1) };
                     if !self.release_page(bin, page_nonnull.as_ptr()) {
                         // `release_page` can fail after it has removed this
                         // page from its queue and PageMap. The shared prepass
@@ -12145,7 +12147,8 @@ impl<'attachment, 'main, 'arena, 'map>
                     // A page revived before this source pass is no longer
                     // retired; the later normal traversal still validates and
                     // abandons it as one live regular page.
-                    unsafe { (*page_nonnull.as_ptr()).set_retire_expire(0) };
+                    // SAFETY: same owner-only retirement-byte contract.
+                    unsafe { Page::set_retire_expire_at(page_nonnull, 0) };
                 }
                 page = next;
             }
@@ -13225,7 +13228,7 @@ unsafe fn abandon_singleton_after_thread_exit<'attachment, 'main, 'arena, 'map>(
     };
     // SAFETY: the stable singleton's local geometry is exclusively owned by
     // the drain; this temporary projection ends before queue mutation.
-    let preflight = match unsafe { LocalFreeList::from_page(&mut *page.as_ptr()) } {
+    let preflight = match unsafe { LocalFreeList::from_page_at(page) } {
         Ok(free_list) => free_list.validate_local_free_preflight(canonical_block),
         Err(error) => Err(error),
     };
@@ -13366,10 +13369,7 @@ impl<'attachment, 'main, 'arena, 'map>
         // SAFETY: complete aggregate preflight retained this live exact
         // source queue member and the drain owns the one queue -> list
         // transition. The static Heap guard serializes its Heap projection.
-        let linked = unsafe {
-            heap.heap_mut()
-                .push_os_abandoned_page(&mut *page.as_ptr())
-        };
+        let linked = unsafe { heap.heap_mut().push_os_abandoned_page(page) };
         let unlock = heap.unlock();
         match (linked, unlock) {
             (Ok(()), Ok(())) => Ok(()),
@@ -13402,10 +13402,7 @@ impl<'attachment, 'main, 'arena, 'map>
         // an empty private list before its first insertion. Queue/count
         // detachment is complete, while common abandonment has not yet
         // cleared the source low owner bit.
-        let linked = unsafe {
-            heap.heap_mut()
-                .push_os_abandoned_page(&mut *page.as_ptr())
-        };
+        let linked = unsafe { heap.heap_mut().push_os_abandoned_page(page) };
         let unlock = heap.unlock();
         match (linked, unlock) {
             (Ok(()), Ok(())) => Ok(()),
@@ -13433,10 +13430,7 @@ impl<'attachment, 'main, 'arena, 'map>
         // SAFETY: the source full-queue detachment retained this exact live
         // metadata page, and this engine has the only handoff mutation path.
         // The static heap guard serializes the page's `heap` list projection.
-        let linked = unsafe {
-            heap.heap_mut()
-                .push_os_abandoned_page(&mut *page.as_ptr())
-        };
+        let linked = unsafe { heap.heap_mut().push_os_abandoned_page(page) };
         let unlock = heap.unlock();
         match (linked, unlock) {
             (Ok(()), Ok(())) => Ok(()),
@@ -13460,10 +13454,7 @@ impl<'attachment, 'main, 'arena, 'map>
         // SAFETY: the all-free source result claimed this exact formerly
         // abandoned page before release. It remains live until list removal
         // and the following PageMap -> alias -> metadata -> mapping tail.
-        let removed = unsafe {
-            heap.heap_mut()
-                .remove_os_abandoned_page(&mut *page.as_ptr())
-        };
+        let removed = unsafe { heap.heap_mut().remove_os_abandoned_page(page) };
         let unlock = heap.unlock();
         match (removed, unlock) {
             (Ok(()), Ok(())) => Ok(()),
@@ -13616,7 +13607,7 @@ unsafe fn abandon_mapped_one_block_after_thread_exit<'arena, 'map, Session: Thea
     };
     // SAFETY: the stable page's local geometry is exclusively owned by the
     // drain; this temporary projection ends before queue mutation.
-    let preflight = match unsafe { LocalFreeList::from_page(&mut *page.as_ptr()) } {
+    let preflight = match unsafe { LocalFreeList::from_page_at(page) } {
         Ok(free_list) => free_list.validate_local_free_preflight(canonical_block),
         Err(error) => Err(error),
     };
@@ -13798,7 +13789,7 @@ impl<'attachment, 'main, 'arena, 'map>
         let Some(canonical_block) = self.engine.canonical_block_start(page_ref, block) else {
             return Err(reject(self, ThreadExitSingletonRemoteFreeError::InvalidBlock));
         };
-        let preflight = match unsafe { LocalFreeList::from_page(&mut *self.page.as_ptr()) } {
+        let preflight = match unsafe { LocalFreeList::from_page_at(self.page) } {
             Ok(free_list) => free_list.validate_local_free_preflight(canonical_block),
             Err(error) => Err(error),
         };
@@ -13923,7 +13914,7 @@ impl<'arena, 'map, Session: TheapPageSession>
                 ThreadExitMappedOneBlockRemoteFreeError::InvalidBlock,
             ));
         };
-        let preflight = match unsafe { LocalFreeList::from_page(&mut *self.page.as_ptr()) } {
+        let preflight = match unsafe { LocalFreeList::from_page_at(self.page) } {
             Ok(free_list) => free_list.validate_local_free_preflight(canonical_block),
             Err(error) => Err(error),
         };
@@ -14622,7 +14613,7 @@ impl<'arena> ThreadExitFullSingletonPagesPostExitParts<'arena> {
         // SAFETY: the source shape proof above establishes the singleton's
         // live local geometry. This validation ends before the atomic
         // failed-reclaim tail mutates it.
-        let preflight = match unsafe { LocalFreeList::from_page(&mut *page.as_ptr()) } {
+        let preflight = match unsafe { LocalFreeList::from_page_at(page) } {
             Ok(free_list) => free_list.validate_local_free_preflight(canonical_block),
             Err(error) => Err(error),
         };
@@ -14889,7 +14880,7 @@ impl<'main> ThreadExitFullOsSingletonPagesPostExitParts<'main> {
         // SAFETY: the sealed full singleton geometry and PageMap member proof
         // hold through this temporary local free-list preflight, which ends
         // before the raw failed-reclaim tail changes the source low owner bit.
-        let preflight = match unsafe { LocalFreeList::from_page(&mut *page.as_ptr()) } {
+        let preflight = match unsafe { LocalFreeList::from_page_at(page) } {
             Ok(free_list) => free_list.validate_local_free_preflight(canonical_block),
             Err(error) => Err(error),
         };
@@ -14958,10 +14949,7 @@ impl<'main> ThreadExitFullOsSingletonPagesPostExitParts<'main> {
         // SAFETY: the raw empty result owns this exact page's source low bit;
         // the route retains every adjacent private-list member and the static
         // Heap guard serializes projection while the list locks itself.
-        let removed = unsafe {
-            heap.heap_mut()
-                .remove_os_abandoned_page(&mut *page.as_ptr())
-        };
+        let removed = unsafe { heap.heap_mut().remove_os_abandoned_page(page) };
         let unlock = heap.unlock();
         match (removed, unlock) {
             (Ok(()), Ok(())) => Ok(()),
@@ -17037,15 +17025,17 @@ impl<'main, 'arena> ThreadExitMappedRegularPostExitParts<'main, 'arena> {
                     // the live page exclusively until this source extension
                     // publishes its free-list head.
                     if !unsafe {
-                        (&mut *page.as_ptr())
-                            .set_slice_pcommitted_after_commit(plan.next_slice_pcommitted)
+                        Page::set_slice_pcommitted_after_commit_at(
+                            page,
+                            plan.next_slice_pcommitted,
+                        )
                     } {
                         return Err(ThreadExitMappedRegularPostExitAdoptError::PageCommitState);
                     }
                 }
                 // SAFETY: the page remains target-owned, queue-linked, and
                 // has a successfully accessible planned next block span.
-                let mut free_list = unsafe { LocalFreeList::from_page(&mut *page.as_ptr()) }
+                let mut free_list = unsafe { LocalFreeList::from_page_at(page) }
                     .map_err(ThreadExitMappedRegularPostExitAdoptError::Extension)?;
                 match free_list.extend_count(plan.extend) {
                     Ok(0) => {
@@ -21360,7 +21350,7 @@ impl<'attach, 'heap, 'arena, 'map>
         };
         // SAFETY: this uses only the stable singleton's local geometry while
         // the drain owns its page and no producer can coexist with entry.
-        let preflight = match unsafe { LocalFreeList::from_page(&mut *page.as_ptr()) } {
+        let preflight = match unsafe { LocalFreeList::from_page_at(page) } {
             Ok(free_list) => free_list.validate_local_free_preflight(canonical_block),
             Err(error) => Err(error),
         };
@@ -21638,7 +21628,7 @@ impl<'attach, 'heap, 'arena, 'map>
         };
         // SAFETY: the stable page's local geometry is exclusively owned by
         // the drain; this temporary projection ends before queue mutation.
-        let preflight = match unsafe { LocalFreeList::from_page(&mut *page.as_ptr()) } {
+        let preflight = match unsafe { LocalFreeList::from_page_at(page) } {
             Ok(free_list) => free_list.validate_local_free_preflight(canonical_block),
             Err(error) => Err(error),
         };
@@ -21923,7 +21913,7 @@ impl<'attach, 'heap, 'arena, 'map>
         };
         // SAFETY: the stable page's local geometry is exclusively owned by
         // the drain; this temporary projection ends before queue mutation.
-        let preflight = match unsafe { LocalFreeList::from_page(&mut *page.as_ptr()) } {
+        let preflight = match unsafe { LocalFreeList::from_page_at(page) } {
             Ok(free_list) => free_list.validate_local_free_preflight(canonical_block),
             Err(error) => Err(error),
         };
@@ -22243,7 +22233,7 @@ impl<'attach, 'heap, 'arena, 'map>
         };
         // SAFETY: the stable page's local geometry is exclusively owned by
         // the drain; this temporary projection ends before queue mutation.
-        let preflight = match unsafe { LocalFreeList::from_page(&mut *page.as_ptr()) } {
+        let preflight = match unsafe { LocalFreeList::from_page_at(page) } {
             Ok(free_list) => free_list.validate_local_free_preflight(canonical_block),
             Err(error) => Err(error),
         };
@@ -22530,7 +22520,7 @@ impl<'attach, 'heap, 'arena, 'map>
         };
         // SAFETY: the stable page's local geometry is exclusively owned by
         // the drain; this temporary projection ends before queue mutation.
-        let preflight = match unsafe { LocalFreeList::from_page(&mut *page.as_ptr()) } {
+        let preflight = match unsafe { LocalFreeList::from_page_at(page) } {
             Ok(free_list) => free_list.validate_local_free_preflight(canonical_block),
             Err(error) => Err(error),
         };
@@ -22854,7 +22844,7 @@ impl<'attach, 'heap, 'arena, 'map>
         };
         // SAFETY: the stable page's local geometry is exclusively owned by
         // the drain; this temporary projection ends before queue mutation.
-        let preflight = match unsafe { LocalFreeList::from_page(&mut *page.as_ptr()) } {
+        let preflight = match unsafe { LocalFreeList::from_page_at(page) } {
             Ok(free_list) => free_list.validate_local_free_preflight(canonical_block),
             Err(error) => Err(error),
         };
@@ -23148,7 +23138,7 @@ impl<'attach, 'heap, 'arena, 'map>
         };
         // SAFETY: the stable page's local geometry is exclusively owned by
         // the drain; this temporary projection ends before queue mutation.
-        let preflight = match unsafe { LocalFreeList::from_page(&mut *page.as_ptr()) } {
+        let preflight = match unsafe { LocalFreeList::from_page_at(page) } {
             Ok(free_list) => free_list.validate_local_free_preflight(canonical_block),
             Err(error) => Err(error),
         };
@@ -23499,7 +23489,7 @@ impl<'attach, 'heap, 'arena, 'map>
         };
         // SAFETY: the stable page's local geometry is exclusively owned by
         // the drain; this temporary projection ends before queue mutation.
-        let preflight = match unsafe { LocalFreeList::from_page(&mut *page.as_ptr()) } {
+        let preflight = match unsafe { LocalFreeList::from_page_at(page) } {
             Ok(free_list) => free_list.validate_local_free_preflight(canonical_block),
             Err(error) => Err(error),
         };
@@ -23844,7 +23834,7 @@ impl<'attach, 'heap, 'arena, 'map>
         };
         // SAFETY: the stable page's local geometry is exclusively owned by
         // the drain; this temporary projection ends before queue mutation.
-        let preflight = match unsafe { LocalFreeList::from_page(&mut *page.as_ptr()) } {
+        let preflight = match unsafe { LocalFreeList::from_page_at(page) } {
             Ok(free_list) => free_list.validate_local_free_preflight(canonical_block),
             Err(error) => Err(error),
         };
@@ -24139,7 +24129,7 @@ impl<'attach, 'heap, 'arena, 'map>
         };
         // SAFETY: the stable page's local geometry is exclusively owned by
         // the drain; this temporary projection ends before queue mutation.
-        let preflight = match unsafe { LocalFreeList::from_page(&mut *page.as_ptr()) } {
+        let preflight = match unsafe { LocalFreeList::from_page_at(page) } {
             Ok(free_list) => free_list.validate_local_free_preflight(canonical_block),
             Err(error) => Err(error),
         };
@@ -24933,7 +24923,7 @@ impl<'attach, 'heap, 'arena, 'map>
         };
         // SAFETY: the stable page's local geometry is exclusively owned by
         // the drain; this temporary projection ends before queue mutation.
-        let preflight = match unsafe { LocalFreeList::from_page(&mut *page.as_ptr()) } {
+        let preflight = match unsafe { LocalFreeList::from_page_at(page) } {
             Ok(free_list) => free_list.validate_local_free_preflight(canonical_block),
             Err(error) => Err(error),
         };
@@ -25298,7 +25288,7 @@ impl<'attach, 'heap, 'arena, 'map>
         };
         // SAFETY: the stable page's local geometry is exclusively owned by
         // the drain; this temporary projection ends before queue mutation.
-        let preflight = match unsafe { LocalFreeList::from_page(&mut *page.as_ptr()) } {
+        let preflight = match unsafe { LocalFreeList::from_page_at(page) } {
             Ok(free_list) => free_list.validate_local_free_preflight(canonical_block),
             Err(error) => Err(error),
         };
@@ -25664,7 +25654,7 @@ impl<'attach, 'heap, 'arena, 'map>
         };
         // SAFETY: the stable page's local geometry is exclusively owned by
         // the drain; this temporary projection ends before queue mutation.
-        let preflight = match unsafe { LocalFreeList::from_page(&mut *page.as_ptr()) } {
+        let preflight = match unsafe { LocalFreeList::from_page_at(page) } {
             Ok(free_list) => free_list.validate_local_free_preflight(canonical_block),
             Err(error) => Err(error),
         };
@@ -26153,7 +26143,7 @@ impl<'attach, 'heap, 'arena, 'map>
         };
         // SAFETY: the stable page's local geometry is exclusively owned by the
         // drain; this temporary projection ends before queue mutation.
-        let preflight = match unsafe { LocalFreeList::from_page(&mut *page.as_ptr()) } {
+        let preflight = match unsafe { LocalFreeList::from_page_at(page) } {
             Ok(free_list) => free_list.validate_local_free_preflight(canonical_block),
             Err(error) => Err(error),
         };
@@ -26532,7 +26522,7 @@ impl<'attach, 'heap, 'arena, 'map>
         // SAFETY: the full singleton source shape above establishes the live
         // local geometry. This preflight ends before the atomic failed-
         // reclaim tail mutates the source low owner bit.
-        let preflight = match unsafe { LocalFreeList::from_page(&mut *page.as_ptr()) } {
+        let preflight = match unsafe { LocalFreeList::from_page_at(page) } {
             Ok(free_list) => free_list.validate_local_free_preflight(canonical_block),
             Err(error) => Err(error),
         };
@@ -26748,7 +26738,7 @@ impl<'attach, 'heap, 'arena, 'map>
         // SAFETY: the sealed OS singleton geometry and PageMap member proof
         // hold through this local preflight, which ends before the atomic
         // failed-reclaim tail mutates the source low owner bit.
-        let preflight = match unsafe { LocalFreeList::from_page(&mut *page.as_ptr()) } {
+        let preflight = match unsafe { LocalFreeList::from_page_at(page) } {
             Ok(free_list) => free_list.validate_local_free_preflight(canonical_block),
             Err(error) => Err(error),
         };
@@ -27175,7 +27165,7 @@ impl<'attach, 'heap, 'arena, 'map>
         // SAFETY: the sealed aggregate geometry and PageMap member proof hold
         // through this local preflight, which ends before the atomic source
         // failed-reclaim tail mutates the low owner bit.
-        let preflight = match unsafe { LocalFreeList::from_page(&mut *page.as_ptr()) } {
+        let preflight = match unsafe { LocalFreeList::from_page_at(page) } {
             Ok(free_list) => free_list.validate_local_free_preflight(canonical_block),
             Err(error) => Err(error),
         };
@@ -27526,7 +27516,7 @@ impl<'attach, 'heap, 'arena, 'map>
         // SAFETY: the sealed aggregate geometry and PageMap member proof hold
         // through this local preflight, which ends before the atomic source
         // failed-reclaim tail mutates the low owner bit.
-        let preflight = match unsafe { LocalFreeList::from_page(&mut *page.as_ptr()) } {
+        let preflight = match unsafe { LocalFreeList::from_page_at(page) } {
             Ok(free_list) => free_list.validate_local_free_preflight(canonical_block),
             Err(error) => Err(error),
         };
@@ -27798,7 +27788,7 @@ impl<'attach, 'heap, 'arena, 'map>
         // SAFETY: the sealed aggregate geometry and PageMap member proof hold
         // through this local preflight, before the failed-reclaim tail changes
         // the low source owner bit.
-        let preflight = match unsafe { LocalFreeList::from_page(&mut *page.as_ptr()) } {
+        let preflight = match unsafe { LocalFreeList::from_page_at(page) } {
             Ok(free_list) => free_list.validate_local_free_preflight(canonical_block),
             Err(error) => Err(error),
         };
@@ -28082,7 +28072,7 @@ impl<'attach, 'heap, 'arena, 'map>
         // SAFETY: the sealed aggregate geometry and PageMap member proof hold
         // through this local preflight, before the failed-reclaim tail changes
         // the low source owner bit.
-        let preflight = match unsafe { LocalFreeList::from_page(&mut *page.as_ptr()) } {
+        let preflight = match unsafe { LocalFreeList::from_page_at(page) } {
             Ok(free_list) => free_list.validate_local_free_preflight(canonical_block),
             Err(error) => Err(error),
         };
@@ -28440,7 +28430,7 @@ impl<'attach, 'heap, 'arena, 'map>
         // SAFETY: the sealed one-block geometry remains stable through this
         // local preflight, which ends before the source tail claims its low
         // owner bit.
-        let preflight = match unsafe { LocalFreeList::from_page(&mut *page.as_ptr()) } {
+        let preflight = match unsafe { LocalFreeList::from_page_at(page) } {
             Ok(free_list) => free_list.validate_local_free_preflight(canonical_block),
             Err(error) => Err(error),
         };
@@ -28778,7 +28768,7 @@ impl<'attach, 'heap, 'arena, 'map>
         // SAFETY: the sealed aggregate geometry and PageMap member proof hold
         // through this local preflight, which ends before the atomic source
         // failed-reclaim tail mutates the low owner bit.
-        let preflight = match unsafe { LocalFreeList::from_page(&mut *page.as_ptr()) } {
+        let preflight = match unsafe { LocalFreeList::from_page_at(page) } {
             Ok(free_list) => free_list.validate_local_free_preflight(canonical_block),
             Err(error) => Err(error),
         };
@@ -29094,7 +29084,7 @@ impl<'attach, 'heap, 'arena, 'map>
         // SAFETY: the sealed aggregate geometry and PageMap member proof hold
         // through this local preflight, which ends before the atomic source
         // failed-reclaim tail mutates the low owner bit.
-        let preflight = match unsafe { LocalFreeList::from_page(&mut *page.as_ptr()) } {
+        let preflight = match unsafe { LocalFreeList::from_page_at(page) } {
             Ok(free_list) => free_list.validate_local_free_preflight(canonical_block),
             Err(error) => Err(error),
         };
@@ -29451,7 +29441,7 @@ impl<'attach, 'heap, 'arena, 'map>
         let Some(canonical_block) = self.drain.engine.canonical_block_start(page_ref, block) else {
             return Err(reject(self, DynamicThreadExitSingletonRemoteFreeError::InvalidBlock));
         };
-        let preflight = match unsafe { LocalFreeList::from_page(&mut *self.page.as_ptr()) } {
+        let preflight = match unsafe { LocalFreeList::from_page_at(self.page) } {
             Ok(free_list) => free_list.validate_local_free_preflight(canonical_block),
             Err(error) => Err(error),
         };
@@ -29654,7 +29644,7 @@ impl<'heap, 'arena, 'map>
                 DynamicThreadExitArenaSingletonPostExitRouteFreeError::InvalidBlock,
             ));
         };
-        let preflight = match unsafe { LocalFreeList::from_page(&mut *self.page.as_ptr()) } {
+        let preflight = match unsafe { LocalFreeList::from_page_at(self.page) } {
             Ok(free_list) => free_list.validate_local_free_preflight(canonical_block),
             Err(error) => Err(error),
         };
@@ -29930,7 +29920,7 @@ impl<'attach, 'heap, 'arena, 'map>
         // SAFETY: the handoff has exclusive ordinary-page mutation authority;
         // validation observes the exact client block before it is atomically
         // republished to the source failed-reclaim helper.
-        let preflight = match unsafe { LocalFreeList::from_page(&mut *self.page.as_ptr()) } {
+        let preflight = match unsafe { LocalFreeList::from_page_at(self.page) } {
             Ok(free_list) => free_list.validate_local_free_preflight(canonical_block),
             Err(error) => Err(error),
         };
@@ -30221,7 +30211,7 @@ impl<'attach, 'heap, 'arena, 'map>
         // SAFETY: the handoff has exclusive ordinary-page mutation authority;
         // validation observes the exact client block before it is atomically
         // republished to the source failed-reclaim helper.
-        let preflight = match unsafe { LocalFreeList::from_page(&mut *self.page.as_ptr()) } {
+        let preflight = match unsafe { LocalFreeList::from_page_at(self.page) } {
             Ok(free_list) => free_list.validate_local_free_preflight(canonical_block),
             Err(error) => Err(error),
         };
@@ -30515,7 +30505,7 @@ impl<'attach, 'heap, 'arena, 'map>
         // SAFETY: the handoff has exclusive ordinary-page mutation authority;
         // validation observes the exact client block before it is atomically
         // republished to the source failed-reclaim helper.
-        let preflight = match unsafe { LocalFreeList::from_page(&mut *self.page.as_ptr()) } {
+        let preflight = match unsafe { LocalFreeList::from_page_at(self.page) } {
             Ok(free_list) => free_list.validate_local_free_preflight(canonical_block),
             Err(error) => Err(error),
         };
@@ -30823,7 +30813,7 @@ impl<'attach, 'heap, 'arena, 'map>
         // SAFETY: the handoff has exclusive ordinary-page mutation authority;
         // validation observes the exact client block before it is atomically
         // republished to the source failed-reclaim helper.
-        let preflight = match unsafe { LocalFreeList::from_page(&mut *self.page.as_ptr()) } {
+        let preflight = match unsafe { LocalFreeList::from_page_at(self.page) } {
             Ok(free_list) => free_list.validate_local_free_preflight(canonical_block),
             Err(error) => Err(error),
         };
@@ -31118,7 +31108,7 @@ impl<'attach, 'heap, 'arena, 'map>
                 DynamicThreadExitMappedTwoBlockMediumRemoteFreeError::InvalidBlock,
             ));
         };
-        let preflight = match unsafe { LocalFreeList::from_page(&mut *self.page.as_ptr()) } {
+        let preflight = match unsafe { LocalFreeList::from_page_at(self.page) } {
             Ok(free_list) => free_list.validate_local_free_preflight(canonical_block),
             Err(error) => Err(error),
         };
@@ -31358,7 +31348,7 @@ impl<'attach, 'heap, 'arena, 'map>
                 DynamicThreadExitMappedTwoBlockLargeRemoteFreeError::InvalidBlock,
             ));
         };
-        let preflight = match unsafe { LocalFreeList::from_page(&mut *self.page.as_ptr()) } {
+        let preflight = match unsafe { LocalFreeList::from_page_at(self.page) } {
             Ok(free_list) => free_list.validate_local_free_preflight(canonical_block),
             Err(error) => Err(error),
         };
@@ -31628,7 +31618,7 @@ impl<'attach, 'heap, 'arena, 'map>
                 DynamicThreadExitMappedTwoBlockNonDirectSmallRemoteFreeError::InvalidBlock,
             ));
         };
-        let preflight = match unsafe { LocalFreeList::from_page(&mut *self.page.as_ptr()) } {
+        let preflight = match unsafe { LocalFreeList::from_page_at(self.page) } {
             Ok(free_list) => free_list.validate_local_free_preflight(canonical_block),
             Err(error) => Err(error),
         };
@@ -31878,7 +31868,7 @@ impl<'attach, 'heap, 'arena, 'map>
                 DynamicThreadExitMappedTwoBlockDirectSmallRemoteFreeError::InvalidBlock,
             ));
         };
-        let preflight = match unsafe { LocalFreeList::from_page(&mut *self.page.as_ptr()) } {
+        let preflight = match unsafe { LocalFreeList::from_page_at(self.page) } {
             Ok(free_list) => free_list.validate_local_free_preflight(canonical_block),
             Err(error) => Err(error),
         };
@@ -32102,7 +32092,7 @@ impl<'attach, 'heap, 'arena, 'map>
                 DynamicThreadExitMappedOneBlockRemoteFreeError::InvalidBlock,
             ));
         };
-        let preflight = match unsafe { LocalFreeList::from_page(&mut *self.page.as_ptr()) } {
+        let preflight = match unsafe { LocalFreeList::from_page_at(self.page) } {
             Ok(free_list) => free_list.validate_local_free_preflight(canonical_block),
             Err(error) => Err(error),
         };
@@ -32684,7 +32674,8 @@ impl<'arena, 'map, Session: TheapPageSession> PageAllocatorEngine<'arena, 'map, 
 
     /// Reads one exact current allocation's source page capacity without
     /// exposing page metadata. The caller retains this engine's lifecycle
-    /// lease and must not have a remote producer in flight.
+    /// lease. A remote producer may concurrently access only its distinct
+    /// current block and atomic Page projection.
     ///
     /// # Safety
     ///
@@ -32698,8 +32689,8 @@ impl<'arena, 'map, Session: TheapPageSession> PageAllocatorEngine<'arena, 'map, 
         // SAFETY: the caller retains the engine's PageMap lifecycle lease and
         // proves this exact block remains current and page-mapped.
         let page = NonNull::new(unsafe { self.page_map.checked_lookup(block.as_ptr()) })?;
-        // SAFETY: the map-published page remains initialized for this owner
-        // read and no producer may concurrently change its non-atomic fields.
+        // SAFETY: the map-published page remains initialized for this short
+        // immutable fact read; a producer does not access this ordinary field.
         Some(unsafe { page.as_ref().capacity() as usize })
     }
 
@@ -32711,8 +32702,8 @@ impl<'arena, 'map, Session: TheapPageSession> PageAllocatorEngine<'arena, 'map, 
     /// # Safety
     ///
     /// `block` must be current in this exact engine while its PageMap entry is
-    /// still published. No remote producer may be in flight while the caller
-    /// observes this ordinary page metadata.
+    /// still published. A concurrent producer may access only its distinct
+    /// current block and atomic Page projection.
     #[inline]
     pub(crate) unsafe fn current_allocation_page_reserved(
         &self,
@@ -32721,8 +32712,8 @@ impl<'arena, 'map, Session: TheapPageSession> PageAllocatorEngine<'arena, 'map, 
         // SAFETY: the caller retains the engine's PageMap lifecycle lease and
         // proves this exact block remains current and page-mapped.
         let page = NonNull::new(unsafe { self.page_map.checked_lookup(block.as_ptr()) })?;
-        // SAFETY: the map-published page remains initialized for this owner
-        // read and no producer may concurrently change its non-atomic fields.
+        // SAFETY: the map-published page remains initialized for this short
+        // immutable fact read; a producer does not access this ordinary field.
         Some(unsafe { page.as_ref().reserved() as usize })
     }
 
@@ -32741,8 +32732,8 @@ impl<'arena, 'map, Session: TheapPageSession> PageAllocatorEngine<'arena, 'map, 
     /// # Safety
     ///
     /// `block` must be current in this exact engine while its PageMap entry is
-    /// still published. No remote producer may be in flight while the caller
-    /// observes this ordinary page metadata.
+    /// still published. A concurrent producer may access only its distinct
+    /// current block and atomic Page projection.
     #[inline]
     pub(crate) unsafe fn current_allocation_page_has_owner_exit_collectable_local_free(
         &self,
@@ -32751,8 +32742,9 @@ impl<'arena, 'map, Session: TheapPageSession> PageAllocatorEngine<'arena, 'map, 
         // SAFETY: the caller retains the engine's PageMap lifecycle lease and
         // proves this exact block remains current and page-mapped.
         let page = NonNull::new(unsafe { self.page_map.checked_lookup(block.as_ptr()) })?;
-        // SAFETY: the map-published page remains initialized for this owner
-        // read and no producer may concurrently change its non-atomic fields.
+        // SAFETY: the map-published page remains initialized for this short
+        // immutable fact read; a producer does not access these ordinary
+        // fields or owner-list nodes.
         Some(unsafe { page.as_ref().has_owner_exit_collectable_local_free() })
     }
 
@@ -32952,9 +32944,9 @@ impl<'arena, 'map, Session: TheapPageSession> PageAllocatorEngine<'arena, 'map, 
                 Ok(true) => {
                     // `mi_page_queue_lookup_free_first` leaves its head in
                     // place and clears retirement only after choosing it.
-                    let page = unsafe { first.as_ptr().as_mut() }
-                        .ok_or(GenericPathError::Lifecycle)?;
-                    page.set_retire_expire(0);
+                    // SAFETY: this active session owns the candidate's
+                    // ordinary retirement byte. Producer atomics are disjoint.
+                    unsafe { Page::set_retire_expire_at(first, 0) };
                     return Ok(Some(first));
                 }
                 Ok(false) => {}
@@ -33056,10 +33048,8 @@ impl<'arena, 'map, Session: TheapPageSession> PageAllocatorEngine<'arena, 'map, 
             unsafe { page_queue_move_to_front_metadata(&mut *queue, candidate.as_ptr()) };
             self.update_direct_cache(bin);
             // SAFETY: choosing this valid live candidate mirrors the source
-            // post-search retirement reset.
-            let page = unsafe { candidate.as_ptr().as_mut() }
-                .ok_or(GenericPathError::Lifecycle)?;
-            page.set_retire_expire(0);
+            // post-search owner-only retirement reset without borrowing Page.
+            unsafe { Page::set_retire_expire_at(candidate, 0) };
             return Ok(Some(candidate));
         }
 
@@ -33077,12 +33067,10 @@ impl<'arena, 'map, Session: TheapPageSession> PageAllocatorEngine<'arena, 'map, 
     /// extending capacity. Queue candidate search uses this first to decide
     /// whether a page has an immediately reusable block.
     fn page_quick_collect(&mut self, page: NonNull<Page>) -> Result<bool, FreeListError> {
-        // SAFETY: callers name an active queue page while this exclusive
-        // lifecycle owns its local free-list and associated theap.
-        let page = unsafe { &mut *page.as_ptr() };
-        // SAFETY: the active page's source geometry and exclusive local-list
-        // conditions are maintained by fresh publication and queue ownership.
-        let mut free_list = unsafe { LocalFreeList::from_page(page) }?;
+        // SAFETY: callers name an active queue page while this lifecycle owns
+        // its ordinary local-list fields and every owner-list node this call
+        // can access. Producer blocks and atomics remain disjoint.
+        let mut free_list = unsafe { LocalFreeList::from_page_at(page) }?;
         free_list.quick_collect()
     }
 
@@ -33099,8 +33087,9 @@ impl<'arena, 'map, Session: TheapPageSession> PageAllocatorEngine<'arena, 'map, 
         {
             return Ok(true);
         }
-        // SAFETY: the source candidate remains current and exclusively owned
-        // between the local quick collection above and this geometry read.
+        // SAFETY: the source candidate remains current and its immutable
+        // geometry stays stable between local quick collection and this read;
+        // producer capabilities access only their atomics and distinct blocks.
         let expandable = unsafe { page.as_ref().capacity() < page.as_ref().reserved() };
         if expandable {
             self.extend_page_before_allocation(page)?;
@@ -33120,13 +33109,13 @@ impl<'arena, 'map, Session: TheapPageSession> PageAllocatorEngine<'arena, 'map, 
         &mut self,
         page: NonNull<Page>,
     ) -> Result<(), GenericPathError> {
-        // SAFETY: callers name one selected active page while this exclusive
-        // engine owns its queue, PageMap lifecycle, and local free-list.
+        // SAFETY: callers name one selected active page while this engine owns
+        // its queue, PageMap lifecycle, and ordinary local-list fields.
         let slice_pcommitted = unsafe { page.as_ref().slice_pcommitted() };
         if slice_pcommitted == 0 {
             // SAFETY: the normal committed-page path borrows no mapping or
             // queue state while it extends the source local free list.
-            let mut free_list = unsafe { LocalFreeList::from_page(&mut *page.as_ptr()) }
+            let mut free_list = unsafe { LocalFreeList::from_page_at(page) }
                 .map_err(GenericPathError::Local)?;
             return match free_list.extend().map_err(GenericPathError::Local)? {
                 0 => Err(GenericPathError::Lifecycle),
@@ -33223,8 +33212,10 @@ impl<'arena, 'map, Session: TheapPageSession> PageAllocatorEngine<'arena, 'map, 
             // SAFETY: the exact old..new prefix mapping commit succeeded;
             // this engine still exclusively owns the selected live page.
             if !unsafe {
-                (&mut *page.as_ptr())
-                    .set_slice_pcommitted_after_commit(plan.next_slice_pcommitted)
+                Page::set_slice_pcommitted_after_commit_at(
+                    page,
+                    plan.next_slice_pcommitted,
+                )
             } {
                 self.page_commit_poison = true;
                 return Err(GenericPathError::PageCommit(PageCommitError::PrefixState));
@@ -33233,7 +33224,7 @@ impl<'arena, 'map, Session: TheapPageSession> PageAllocatorEngine<'arena, 'map, 
 
         // SAFETY: after the direct mapping transition, the planned next block
         // range is accessible and this engine still owns the page exclusively.
-        let extension = unsafe { LocalFreeList::from_page(&mut *page.as_ptr()) }
+        let extension = unsafe { LocalFreeList::from_page_at(page) }
             .map_err(PageCommitError::Extension)
             .map_err(GenericPathError::PageCommit)
             .and_then(|mut free_list| {
@@ -33848,21 +33839,32 @@ impl<'arena, 'map, Session: TheapPageSession> PageAllocatorEngine<'arena, 'map, 
         // simultaneous page-map registration or unregistration for this block.
         let page = unsafe { self.page_map.checked_lookup(block.as_ptr()) };
         let page = NonNull::new(page).ok_or(FreeError::Unmapped)?;
-        // SAFETY: page-map registration keeps the returned metadata live until
-        // this lifecycle unregisters it, and this `&mut self` owns the only
-        // local mutation capability.
-        let page = unsafe { &mut *page.as_ptr() };
-        if !self.owns_page(page) {
+        // SAFETY: this short immutable owner check ends before ordinary local
+        // fields are raw-mutated below. Producer atomics may coexist with the
+        // shared read because they are `UnsafeCell` subobjects.
+        if !self.owns_page(unsafe { page.as_ref() }) {
             return Err(FreeError::ForeignPage);
         }
-        let base = self
-            .canonical_block_start(page, block)
+        // SAFETY: the exact live client keeps immutable geometry and metadata
+        // stable while this derives only its canonical source block.
+        let base = unsafe { Page::canonical_remote_block_for_live_client_at(page, block) }
             .ok_or(FreeError::InvalidBlock(FreeListError::InvalidBlock))?;
 
-        let (used, in_full, queue_bin, regular_bin) = {
-            // SAFETY: this lifecycle owns the page, its blocks, and all local
-            // free-list metadata. It never exposes a remote or concurrent path.
-            let mut free_list = unsafe { LocalFreeList::from_page(page) }
+        let (in_full, queue_bin, regular_bin) = {
+            // SAFETY: this read-only fact snapshot ends before the owner raw-
+            // mutates ordinary local-list fields. Live producer accesses are
+            // confined to the page's atomic subobjects.
+            let page_ref = unsafe { page.as_ref() };
+            (
+                page_is_in_full(page_ref),
+                page_queue_bin(page_ref),
+                size_class::bin(page_ref.block_size()),
+            )
+        };
+        let used = {
+            // SAFETY: this lifecycle owns the page block and its ordinary
+            // local-list fields; producer capabilities access only atomics.
+            let mut free_list = unsafe { LocalFreeList::from_page_at(page) }
                 .map_err(FreeError::InvalidBlock)?;
             // SAFETY: the public caller contract proves exactly-once ownership
             // of `block`; the borrowed list additionally validates the
@@ -33870,12 +33872,7 @@ impl<'arena, 'map, Session: TheapPageSession> PageAllocatorEngine<'arena, 'map, 
             // and initialized-capacity membership before writing a link.
             unsafe { free_list.push_local(base) }
                 .map_err(FreeError::InvalidBlock)?;
-            (
-                free_list.used(),
-                page_is_in_full(page),
-                page_queue_bin(page),
-                size_class::bin(page.block_size()),
-            )
+            free_list.used()
         };
         let queue_bin = queue_bin.ok_or(FreeError::Lifecycle)?;
 
@@ -33884,12 +33881,15 @@ impl<'arena, 'map, Session: TheapPageSession> PageAllocatorEngine<'arena, 'map, 
             // every allocation from the page has returned. Clearing it for an
             // individual aligned free would make another live interior
             // pointer unfreeable and give it the wrong usable size.
-            page.set_has_interior_pointers(false);
+            // SAFETY: `used == 0` proves every valid client allocation has
+            // returned; the source accounting therefore excludes a retained
+            // live producer while this atomic flag is cleared.
+            unsafe { page.as_ref() }.set_has_interior_pointers(false);
             // A full page and a huge singleton both bypass retirement. The
             // source route is selected from the page's actual queue, not its
             // ordinary object-size bin: a small OS-aligned singleton belongs
             // to `BIN_HUGE`, never its small ordinary bin.
-            if self.retire_or_release(queue_bin, page as *mut Page) {
+            if self.retire_or_release(queue_bin, page.as_ptr()) {
                 return Ok(());
             }
             return Err(FreeError::Lifecycle);
@@ -33897,7 +33897,7 @@ impl<'arena, 'map, Session: TheapPageSession> PageAllocatorEngine<'arena, 'map, 
 
         if in_full {
             let regular_bin = regular_bin.ok_or(FreeError::Lifecycle)?;
-            if self.move_full_to_regular(regular_bin, page as *mut Page) {
+            if self.move_full_to_regular(regular_bin, page.as_ptr()) {
                 return Ok(());
             }
             return Err(FreeError::Lifecycle);
@@ -34001,11 +34001,11 @@ impl<'arena, 'map, Session: TheapPageSession> PageAllocatorEngine<'arena, 'map, 
         // fields during this source preflight.
         let page = unsafe { self.page_map.checked_lookup(block.as_ptr()) };
         let page = NonNull::new(page).ok_or(RemoteFreePreparationError::Unmapped)?;
-        // SAFETY: see the PageMap/scheduler proof above. The temporary page
-        // projection ends before the atomic source publication below.
-        let page_ref = unsafe { &mut *page.as_ptr() };
-        let canonical_block = self
-            .canonical_block_start(page_ref, block)
+        // SAFETY: the exact parked live client keeps immutable geometry stable
+        // while this raw helper derives only its canonical source block.
+        let canonical_block = unsafe {
+            Page::canonical_remote_block_for_live_client_at(page, block)
+        }
             .ok_or(RemoteFreePreparationError::InvalidBlock(
                 FreeListError::InvalidBlock,
             ))?;
@@ -34013,7 +34013,7 @@ impl<'arena, 'map, Session: TheapPageSession> PageAllocatorEngine<'arena, 'map, 
         // ordinary field access. This preflight reads only initialized
         // geometry and the source `used > 0` lower bound; it neither writes a
         // list link nor claims any A-side collection authority.
-        let free_list = unsafe { LocalFreeList::from_page(page_ref) }
+        let free_list = unsafe { LocalFreeList::from_page_at(page) }
             .map_err(RemoteFreePreparationError::InvalidBlock)?;
         free_list
             .validate_local_free_preflight(canonical_block)
@@ -34054,38 +34054,37 @@ impl<'arena, 'map, Session: TheapPageSession> PageAllocatorEngine<'arena, 'map, 
         // and keeps registered metadata live for this non-mutating lookup.
         let page = unsafe { self.page_map.checked_lookup(block.as_ptr()) };
         let page = NonNull::new(page).ok_or(RemoteFreePreparationError::Unmapped)?;
-        // SAFETY: the map entry remains live under this owner's exclusive
-        // lifecycle. No raw page reference escapes the returned token.
-        let page = unsafe { &mut *page.as_ptr() };
-        if !self.owns_page(page) {
+        // SAFETY: this immutable owner check ends before the raw local-list
+        // projection below and no reference escapes the preflight.
+        if !self.owns_page(unsafe { page.as_ref() }) {
             return Err(RemoteFreePreparationError::ForeignPage);
         }
-        let page_pointer = NonNull::from(&mut *page);
         // SAFETY: exclusive owner preflight keeps this initialized page-map
         // entry live and prevents its identity/owner transition.
-        if !unsafe { Page::is_live_owner_for_thread_at(page_pointer, thread) } {
+        if !unsafe { Page::is_live_owner_for_thread_at(page, thread) } {
             return Err(RemoteFreePreparationError::InvalidOwnerState);
         }
-        let canonical_block = self
-            .canonical_block_start(page, block)
+        let canonical_block = unsafe {
+            Page::canonical_remote_block_for_live_client_at(page, block)
+        }
             .ok_or(RemoteFreePreparationError::InvalidBlock(
                 FreeListError::InvalidBlock,
             ))?;
         // SAFETY: this exclusive preflight borrows the ordinary page state but
         // does not mutate it; the source geometry is validated before the
         // remote producer gets only raw atomic-field access.
-        let free_list = unsafe { LocalFreeList::from_page(page) }
+        let free_list = unsafe { LocalFreeList::from_page_at(page) }
             .map_err(RemoteFreePreparationError::InvalidBlock)?;
         free_list
             .validate_local_free_preflight(canonical_block)
             .map_err(RemoteFreePreparationError::InvalidBlock)?;
-        if !self.page_has_active_collection_route(page_pointer) {
+        if !self.page_has_active_collection_route(page) {
             return Err(RemoteFreePreparationError::PageNotInCollectibleQueue);
         }
         Ok(RemoteFreeProducer {
             // SAFETY: the exclusive preflight proved stable initialized live
             // metadata; the returned token retains only these atomic fields.
-            producer: unsafe { Page::remote_free_producer_state_at(page_pointer) },
+            producer: unsafe { Page::remote_free_producer_state_at(page) },
             canonical_block,
             client_block: block,
             _owner: PhantomData,
@@ -34203,9 +34202,9 @@ impl<'arena, 'map, Session: TheapPageSession> PageAllocatorEngine<'arena, 'map, 
     /// releases all-free pages or returns no-longer-full pages to their exact
     /// regular bin before the arena purge. A live session performs remote
     /// detach first; the explicit detached session has no remote producer
-    /// path and performs only the source local false-force portion. In either
-    /// case, callers must prove producers joined/quiescent before the later
-    /// queue helpers borrow page metadata during their transitions.
+    /// path and performs only the source local false-force portion. A live
+    /// producer may race the detach or later queue transition through only
+    /// its atomics; owner local fields and links use raw disjoint projections.
     pub(crate) fn collect_retired(&mut self, force: bool) -> bool {
         if self.is_collection_poisoned() {
             return false;
@@ -34233,16 +34232,28 @@ impl<'arena, 'map, Session: TheapPageSession> PageAllocatorEngine<'arena, 'map, 
                     }
                     if unsafe { (*page).used() } == 0 {
                         let next_expire = expire - 1;
-                        unsafe { (*page).set_retire_expire(next_expire) };
+                        let page = match NonNull::new(page) {
+                            Some(page) => page,
+                            None => return false,
+                        };
+                        // SAFETY: this session owns the retired-page byte;
+                        // `used == 0` also excludes valid live clients.
+                        unsafe { Page::set_retire_expire_at(page, next_expire) };
                         if force || next_expire == 0 {
-                            if !self.release_page(bin, page) {
+                            if !self.release_page(bin, page.as_ptr()) {
                                 return false;
                             }
                         } else if !self.session.note_retired_bin(bin) {
                             return false;
                         }
                     } else {
-                        unsafe { (*page).set_retire_expire(0) };
+                        let page = match NonNull::new(page) {
+                            Some(page) => page,
+                            None => return false,
+                        };
+                        // SAFETY: this live owner controls the ordinary byte;
+                        // any producer capability remains atomic-only.
+                        unsafe { Page::set_retire_expire_at(page, 0) };
                     }
                     page = next;
                 }
@@ -34328,9 +34339,10 @@ impl<'arena, 'map, Session: TheapPageSession> PageAllocatorEngine<'arena, 'map, 
         let expected_thread = self.session.thread_id();
         if expected_thread.is_some() {
             // SAFETY: the active regular-or-full owner preserves page
-            // lifetime and exclusive ordinary fields. A remote producer may
-            // retain only its disjoint atomic state; the caller proves it
-            // joined before the later queue transition or potential release.
+            // lifetime and owns every ordinary field. A remote producer may
+            // concurrently retain or use only its disjoint atomic state;
+            // queue links are also projected raw, and release requires the
+            // later `used == 0` no-live-client proof.
             // SAFETY: the active source owner keeps this page live and owns
             // every ordinary field; producers retain only the disjoint
             // atomic projection.
@@ -34352,7 +34364,7 @@ impl<'arena, 'map, Session: TheapPageSession> PageAllocatorEngine<'arena, 'map, 
     }
 
     /// Exact force `_mi_page_free_collect` ordering used before the bounded
-    /// later-main thread-exit release decision: detach any joined remote list,
+    /// later-main thread-exit release decision: detach the current remote list,
     /// then append the owner-local deferred list to the immediate free list.
     ///
     /// This must stay distinct from [`Self::page_free_collect_false`]. The
@@ -34374,10 +34386,11 @@ impl<'arena, 'map, Session: TheapPageSession> PageAllocatorEngine<'arena, 'map, 
         }
         let expected_thread = self.session.thread_id();
         if expected_thread.is_some() {
-            // SAFETY: the source drain still owns the live Theap/page while
-            // every scoped producer has joined. Remote state is the only
-            // concurrently published component and is detached first.
-            // SAFETY: the joined source owner keeps the page stable and owns
+            // SAFETY: the source drain still owns the live Theap/page ordinary
+            // fields. Remote state is the only concurrently published
+            // component and its current snapshot is detached first; a racing
+            // producer continues through only the disjoint atomics.
+            // SAFETY: the source owner keeps the page stable and owns
             // every ordinary collection field.
             let owner = unsafe { Page::remote_free_owner_state_at(page) }
                 .ok_or(PageCollectError::InvalidOwnerState)?;
@@ -34545,22 +34558,20 @@ impl<'arena, 'map, Session: TheapPageSession> PageAllocatorEngine<'arena, 'map, 
         zero: bool,
     ) -> Result<Option<NonNull<u8>>, GenericPathError> {
         {
-            // SAFETY: callers name one selected or freshly published active
-            // page whose local-list and queue transitions this exclusive
-            // session owns. This short borrow ends before a direct mapping
-            // commit can occur below.
-            let page_ref = unsafe { &mut *page.as_ptr() };
-            // SAFETY: that active-page ownership supplies the initialized
-            // exclusive live-page conditions required by the borrowed list.
-            let mut free_list = unsafe { LocalFreeList::from_page(page_ref) }
+            // SAFETY: the active owner holds the ordinary local-list fields;
+            // this raw projection remains disjoint from producer atomics.
+            let mut free_list = unsafe { LocalFreeList::from_page_at(page) }
                 .map_err(GenericPathError::Local)?;
             if let Some(block) = free_list.pop(zero).map_err(GenericPathError::Local)? {
-                page_ref.set_retire_expire(0);
+                // SAFETY: the same owner exclusively controls this ordinary
+                // retirement byte; no whole-page reference is created.
+                unsafe { Page::set_retire_expire_at(page, 0) };
                 return Ok(Some(block));
             }
             if free_list.quick_collect().map_err(GenericPathError::Local)? {
                 if let Some(block) = free_list.pop(zero).map_err(GenericPathError::Local)? {
-                    page_ref.set_retire_expire(0);
+                    // SAFETY: same disjoint owner-only byte contract as above.
+                    unsafe { Page::set_retire_expire_at(page, 0) };
                     return Ok(Some(block));
                 }
             }
@@ -34571,13 +34582,13 @@ impl<'arena, 'map, Session: TheapPageSession> PageAllocatorEngine<'arena, 'map, 
         let expandable = unsafe { page.as_ref().capacity() < page.as_ref().reserved() };
         if expandable {
             self.extend_page_before_allocation(page)?;
-            // SAFETY: the successful source extension has published the
-            // page's immediate free-list head before this new short borrow.
-            let page_ref = unsafe { &mut *page.as_ptr() };
-            let mut free_list = unsafe { LocalFreeList::from_page(page_ref) }
+            // SAFETY: successful extension published the immediate list; the
+            // active owner still controls its ordinary local fields.
+            let mut free_list = unsafe { LocalFreeList::from_page_at(page) }
                 .map_err(GenericPathError::Local)?;
             if let Some(block) = free_list.pop(zero).map_err(GenericPathError::Local)? {
-                page_ref.set_retire_expire(0);
+                // SAFETY: the active owner exclusively controls this byte.
+                unsafe { Page::set_retire_expire_at(page, 0) };
                 return Ok(Some(block));
             }
         }
@@ -34595,14 +34606,15 @@ impl<'arena, 'map, Session: TheapPageSession> PageAllocatorEngine<'arena, 'map, 
         page: NonNull<Page>,
         zero: bool,
     ) -> Result<Option<NonNull<u8>>, FreeListError> {
-        // SAFETY: the direct cache names one regular page owned exclusively
-        // by this lifecycle; no producer token can coexist with this borrow.
-        let page = unsafe { &mut *page.as_ptr() };
-        // SAFETY: the direct page retains initialized local-list geometry.
-        let mut free_list = unsafe { LocalFreeList::from_page(page) }?;
+        // SAFETY: the direct page retains initialized local-list geometry and
+        // this owner controls its ordinary fields. Producer atomics remain
+        // disjoint from the raw local-list projection.
+        let mut free_list = unsafe { LocalFreeList::from_page_at(page) }?;
         let block = free_list.pop(zero)?;
         if block.is_some() {
-            page.set_retire_expire(0);
+            // SAFETY: this active owner exclusively controls the ordinary
+            // retirement byte.
+            unsafe { Page::set_retire_expire_at(page, 0) };
         }
         Ok(block)
     }
@@ -34683,7 +34695,7 @@ impl<'arena, 'map, Session: TheapPageSession> PageAllocatorEngine<'arena, 'map, 
             // SAFETY: `page` was initialized from the live OS claim's primary
             // metadata and describes its committed one-block area. No queue
             // or map observer sees it until this initialization completes.
-            let mut free_list = unsafe { LocalFreeList::from_page(&mut *page.as_ptr()) }.ok()?;
+            let mut free_list = unsafe { LocalFreeList::from_page_at(page) }.ok()?;
             (free_list.extend().ok()? == 1).then_some(())
         })();
         if initialized.is_none() {
@@ -34930,7 +34942,7 @@ impl<'arena, 'map, Session: TheapPageSession> PageAllocatorEngine<'arena, 'map, 
             // SAFETY: source fresh-page publication has installed all geometry
             // and exclusive ownership fields; no queue or map operation below
             // mutates the page while this local-list borrow is live.
-            let mut free_list = unsafe { LocalFreeList::from_page(&mut *page.as_ptr()) }.ok()?;
+            let mut free_list = unsafe { LocalFreeList::from_page_at(page) }.ok()?;
             if free_list.extend().ok()? == 0 {
                 return None;
             }
@@ -35043,30 +35055,46 @@ impl<'arena, 'map, Session: TheapPageSession> PageAllocatorEngine<'arena, 'map, 
     }
 
     fn retire_or_release(&mut self, bin: usize, page: *mut Page) -> bool {
-        let page = unsafe { page.as_mut() };
-        let Some(page) = page else {
+        let Some(page) = NonNull::new(page) else {
             return false;
         };
+        // SAFETY: this short immutable check precedes every owner mutation.
+        // Source `used == 0` is the concrete proof that no valid live client
+        // can retain a producer projection into terminal retirement.
+        if unsafe { page.as_ref() }.used() != 0 {
+            return false;
+        }
         let count = match self.session.queue(bin) {
             Some(queue) => queue.count(),
             None => return false,
         };
         if bin < BIN_HUGE
             && count <= RETIRE_MAX_PAGES
-            && (count == 1 || page.block_size() < SMALL_SIZE_MAX)
+            && (count == 1 || unsafe { page.as_ref() }.block_size() < SMALL_SIZE_MAX)
         {
-            let cycles = if page.block_size() <= SMALL_MAX_OBJ_SIZE {
+            let cycles = if unsafe { page.as_ref() }.block_size() <= SMALL_MAX_OBJ_SIZE {
                 RETIRE_CYCLES
             } else {
                 RETIRE_CYCLES / 4
             };
-            page.set_retire_expire(cycles);
+            // SAFETY: callers enter only after source owner accounting proved
+            // `used == 0`; this session exclusively owns the ordinary byte.
+            unsafe { Page::set_retire_expire_at(page, cycles) };
             return self.session.note_retired_bin(bin);
         }
-        self.release_page(bin, page as *mut Page)
+        self.release_page(bin, page.as_ptr())
     }
 
     fn release_page(&mut self, bin: usize, page: *mut Page) -> bool {
+        let Some(page_pointer) = NonNull::new(page) else {
+            return false;
+        };
+        // SAFETY: the caller retains initialized queue-linked metadata. This
+        // short read occurs before link mutation and encodes the source
+        // no-live-client condition required before terminal whole-page reset.
+        if unsafe { page_pointer.as_ref() }.used() != 0 {
+            return false;
+        }
         let Some(span) = self.release_span(page) else {
             return false;
         };
