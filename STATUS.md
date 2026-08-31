@@ -1173,6 +1173,22 @@ ELF checks reject weak compiler-builtins fallback, `expm1l`, adjacent exp/log/
 pow functions, fenv API/policy, special/complex/binary80 math, family
 completion, promotion, and public x86 support.
 
+The separate private `static-c-math-log10` artifact records only binary64
+`log10` and binary32 `log10f`: `./scripts/dev-x86_64.sh libc-math-log10` runs
+project-header C and default-SSE/`-mfpmath=387` C++ function-pointer fixtures
+through pinned musl and one freestanding static candidate. Its checked GCC
+15.2.0 translation of musl 1.2.6 `log10.c`/`log10f.c` is a direct no-call
+closure retaining raw classification, subnormal scaling, reduction,
+polynomial reconstruction, and zero/negative domain arithmetic without
+tables, ambient libm, or selected `math.special` state. The 224-record
+differential covers signed-zero divide-by-zero, negative-domain invalid,
+tiny/subnormal and normal bounds, reduction points, finite extrema,
+infinities, quiet/signaling NaNs, results, flags, and all four requested-and-
+observed MXCSR rounding directions. Strong target-owned definitions and final
+ELF checks reject weak compiler-builtins fallback, `log10l`, adjacent log/exp/
+pow functions, fenv API/policy, special/complex/binary80 math, family
+completion, promotion, and public x86 support.
+
 The separate private `static-c-math-ceil` artifact records only binary64
 `ceil` and binary32 `ceilf`: `./scripts/dev-x86_64.sh libc-math-ceil` runs
 project-header C and default-SSE/`-mfpmath=387` C++ function-pointer fixtures

@@ -503,6 +503,8 @@ llround
 llroundf
 llroundl
 localeconv
+log10
+log10f
 log10l
 log1pl
 log2l

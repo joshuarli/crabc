@@ -535,6 +535,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-math-fmod
 ./scripts/dev-x86_64.sh libc-math-exp2
 ./scripts/dev-x86_64.sh libc-math-expm1
+./scripts/dev-x86_64.sh libc-math-log10
 ./scripts/dev-x86_64.sh libc-math-elementary-long-double
 ./scripts/dev-x86_64.sh libc-fdim
 ./scripts/dev-x86_64.sh libc-locale-profile
@@ -4702,6 +4703,24 @@ scalar `addsd`/`addss`/`subsd`/`subss`/`mulsd`/`mulss`/`divsd`/`divss`/
 adjacent exp/log/pow functions, fenv API/policy, special/complex/binary80
 math, dynamic linkage, TLS, and ambient libm. Family completion, promotion,
 full x86-64 parity, and public x86 support remain unselected.
+`libc-math-log10` is the separate non-promoting `static-c-math-log10` artifact
+for binary64/binary32 `log10`/`log10f`. Its project-header C fixture and
+default-SSE/`-mfpmath=387` C++ signature probes run first through pinned musl
+and then through one garbage-collected `-nostdlib -static` candidate. The
+checked GCC 15.2.0 translation of musl 1.2.6 `log10.c`/`log10f.c` is a direct
+no-call source closure: it preserves raw classification, subnormal scaling,
+reduction, polynomial reconstruction, and zero/negative domain arithmetic
+without tables, ambient libm, or selected `math.special` state. The 224-record
+raw differential covers signed-zero divide-by-zero, negative-domain invalid,
+tiny/subnormal and normal boundaries, reduction points, finite extremes,
+infinities, quiet/signaling NaNs, result payloads, flags, and requested versus
+observed MXCSR direction in all four modes. Final-link proof requires strong
+crabc-owned definitions and scalar `addsd`/`addss`/`subsd`/`subss`/`mulsd`/
+`mulss`/`divsd`/`divss`, while rejecting weak compiler-builtins fallback,
+`log10l`, adjacent log/exp/pow functions, fenv API/policy,
+special/complex/binary80 math, dynamic linkage, TLS, and ambient libm. Family
+completion, promotion, full x86-64 parity, and public x86 support remain
+unselected.
 `libc-math-ceil` is the separate non-promoting `static-c-math-ceil` artifact
 for binary64/binary32 `ceil`/`ceilf`. Its project-header C fixture and
 default-SSE/`-mfpmath=387` C++ signature probes run first through pinned musl

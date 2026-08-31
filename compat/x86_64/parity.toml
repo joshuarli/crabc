@@ -7998,6 +7998,55 @@ native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc
 oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "FreeBSD/Sun msun source, preserved permissive notice, exact IEEE payload/exception/directed-rounding behavior, and public C ABI oracle for exactly src/math/expm1.c and src/math/expm1f.c." }, { kind = "elf-abi", source = "System V AMD64 psABI", role = "xmm0 binary32/binary64 unary argument and return ABI plus caller-visible MXCSR directed-SSE arithmetic boundary for the selected static C entries." }]
 
 [[family.verified_artifact]]
+id = "static-c-math-log10"
+description = "Private native x86 selected-static binary32/binary64 base-ten logarithm artifact inside still-planned `libc.text-math-locale-stdio`. One dependency-free `crabc-libc` archive resolves exactly `log10` and `log10f` into a freestanding project-header C fixture after equivalent pinned-musl execution. A checked GCC 15.2.0 assembly translation of musl's `log10.c`/`log10f.c` is a direct no-call closure: it retains binary64/binary32 raw classification, subnormal scaling, reduction, polynomial reconstruction, and zero/negative domain arithmetic without tables, ambient libm, or selected `math.special` state. The record stream covers signed-zero divide-by-zero, negative-domain invalid, tiny/subnormal and normal bounds, reduction points, finite extrema, infinities, quiet/signaling NaNs, results, and exception flags through all four MXCSR rounding modes. Strong target-owned definitions reject a weak compiler-builtins fallback. This artifact excludes `log10l`, adjacent log/exp/pow functions, fenv API/policy, fmod/remainder/modf, special and complex functions, binary80/x87 math, errno policy, general libm, libc.so, CRT/TLS lifecycle, loader, sysroot, `math.elementary` family completion, promotion, full x86-64 parity, and public x86 support."
+source_owners = [
+  "compat/upstreams.toml",
+  "docker/Dockerfile.x86_64",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/fenv.rs",
+  "libc/src/c_abi/x86_64/math_log10.rs",
+  "libc/src/c_abi/x86_64/math_log10_musl_x86_64.S",
+  "include/fenv.h",
+  "include/float.h",
+  "include/math.h",
+  "compat/x86_64/generate_libc_math_log10.py",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/math_log10_header_abi_probe.cpp",
+  "compat/x86_64/run_math_log10_header_abi.sh",
+  "compat/x86_64/libc_math_log10_probe.c",
+  "compat/x86_64/libc_math_log10_start.S",
+  "compat/x86_64/run_libc_math_log10.sh",
+  "compat/x86_64/run_libc_text_math_locale_stdio_composition.sh",
+  "compat/x86_64/aarch64_parity_inventory.py",
+  "compat/x86_64/aarch64_parity_inventory.json",
+  "compat/x86_64/tests/test_aarch64_parity_inventory.py",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "compat/x86_64/README.md",
+  "SCOPE.md",
+  "COMPATIBILITY-PROFILE.md",
+  "STATUS.md",
+  "x86-64.md",
+  "scripts/check_structure.py",
+  "scripts/dev-x86_64.sh",
+]
+x86_abi_prerequisites = [
+  "Pinned musl 1.2.6 src/math/log10.c and log10f.c are the complete FreeBSD/Sun msun source closure: their normalized 1.2.6 source-tree digest, GCC 15.2.0 input, preserved Sun notice, `-frounding-math`, and `-ffp-contract=off` assembly translation retain raw classification, subnormal scaling, reduction, polynomial, signed-zero divide-by-zero, and negative-domain invalid behavior rather than calling ambient libm.",
+  "System V AMD64 with FLT_EVAL_METHOD=0 passes and returns binary64/binary32 in xmm0. Fixed scalar SSE arithmetic preserves MXCSR-directed results and flags for source reduction and domain arithmetic; no x87/binary80, FMA, AVX, or packed-SIMD path is selected. Binary80 `log10l` is representation- and ABI-distinct and remains excluded.",
+  "The fixture composes only existing selected static fegetenv/fesetenv/fesetround/fegetround/feclearexcept/fetestexcept entries to reset and observe MXCSR. That harness dependency proves caller-visible environment behavior without selecting fenv API or rounding policy as part of this artifact.",
+]
+x86_header_prerequisites = [
+  "The focused C fixture preprocesses project fenv.h, float.h, math.h, stdint.h, features.h, and bits/alltypes.h, then calls parenthesized log10/log10f function pointers so compiler builtins cannot substitute for the named C ABI.",
+  "Dedicated C++17 objects compiled with default SSE and -mfpmath=387 pin exact binary64/binary32 unary function-pointer signatures and unmangled C references from the project header against pinned musl.",
+]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-math-log10", scope = "Pinned-musl/project-header C and C++ ABI execution plus one dependency-free `-nostdlib -static --no-undefined --gc-sections` candidate. The C fixture compares 224 exact 32-byte records across all four rounding directions: binary32/binary64 signed zero divide-by-zero, negative-domain invalid, raw tiny/subnormal and normal bounds, reduction points, finite extrema, infinities, quiet/signaling NaNs, raw results, requested/observed MXCSR direction, and exception flags. ELF proof requires strong global target-owned log10/log10f definitions, exact archive surface, and addsd/addss/subsd/subss/mulsd/mulss/divsd/divss source arithmetic; it rejects weak compiler-builtins fallback, log10l, adjacent log/exp/pow, fenv API/policy, special/complex, unresolved symbols, dynamic linkage, TLS, ambient libm, and unowned runtime dependencies. It excludes category/family completion, promotion, full x86-64 parity, and public x86 support." }]
+oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "FreeBSD/Sun msun source, preserved permissive notice, exact IEEE payload/exception/directed-rounding behavior, and public C ABI oracle for exactly src/math/log10.c and src/math/log10f.c." }, { kind = "elf-abi", source = "System V AMD64 psABI", role = "xmm0 binary32/binary64 unary argument and return ABI plus caller-visible MXCSR directed-SSE arithmetic boundary for the selected static C entries." }]
+
+[[family.verified_artifact]]
 id = "static-c-math-ceil"
 description = "Private native x86 selected-static binary32/binary64 fixed-direction ceiling artifact inside still-planned `libc.text-math-locale-stdio`. One dependency-free `crabc-libc` archive resolves exactly `ceil` and `ceilf` into a freestanding project-header C fixture after equivalent pinned-musl execution. A checked GCC 15.2.0 assembly translation of musl's `ceil.c`/`ceilf.c` retains binary64's raw IEEE exponent classification and `toint` add/subtract operation order, plus binary32's raw fraction-mask transformation and volatile `FORCE_EVAL` addition, rather than a target-intrinsic rewrite. The record stream covers signed zero, finite normal/subnormal boundaries, neighbors around integral values, large finite values, infinities, quiet/signaling NaNs, all four requested/observed rounding directions, and exception flags; fractional finite values preserve musl's `FE_INEXACT` behavior. Strong target-owned definitions reject a weak compiler-builtins fallback. This artifact excludes binary80 `ceill`, floor and all other fixed-direction rounding, fma, fmod, cbrt, fenv API/policy, bit-sign/minmax/fdim, special and complex functions, binary80/x87 math, errno policy, general libm, libc.so, CRT/TLS lifecycle, loader, sysroot, `math.elementary` family completion, promotion, full x86-64 parity, and public x86 support."
 source_owners = [
