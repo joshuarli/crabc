@@ -3745,6 +3745,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         '#[path = "readiness_waits.rs"]',
         '#[path = "socket_transport.rs"]',
         '#[path = "in6addr_any.rs"]',
+        '#[path = "in6addr_loopback.rs"]',
         '#[path = "inet_address.rs"]',
         '#[path = "inet_ntoa.rs"]',
         '#[path = "inet_classful.rs"]',
@@ -7272,6 +7273,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         "__in6_union",
         "#define s6_addr __in6_union.__s6_addr",
         "extern const struct in6_addr in6addr_any",
+        "extern const struct in6_addr in6addr_loopback",
     ):
         if required not in netinet_header:
             errors.append(
@@ -7339,10 +7341,150 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
     socket_header_runner = (
         ROOT / "compat" / "x86_64" / "run_socket_header_abi.sh"
     ).read_text(errors="replace")
-    if "check_cxx_in6addr_any_linkage" not in socket_header_runner:
+    if (
+        "check_cxx_in6addr_any_linkage" not in socket_header_runner
+        or "check_cxx_in6addr_loopback_linkage" not in socket_header_runner
+    ):
         errors.append(
             "compat/x86_64/run_socket_header_abi.sh: IPv6 data-object C++ "
             "linkage proof is missing"
+        )
+
+    in6addr_loopback_probe_source = (
+        ROOT / "compat" / "x86_64" / "libc_in6addr_loopback_probe.c"
+    )
+    in6addr_loopback_start_source = (
+        ROOT / "compat" / "x86_64" / "libc_in6addr_loopback_start.S"
+    )
+    in6addr_loopback_runner_source = (
+        ROOT / "compat" / "x86_64" / "run_libc_in6addr_loopback.sh"
+    )
+    for path in (
+        in6addr_loopback_probe_source,
+        in6addr_loopback_start_source,
+        in6addr_loopback_runner_source,
+    ):
+        if not path.is_file():
+            errors.append(
+                "x86 static immutable IPv6 loopback-address artifact is missing "
+                f"{path.relative_to(ROOT)}"
+            )
+            return
+
+    in6addr_loopback_source = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "in6addr_loopback.rs"
+    )
+    in6addr_loopback_text = in6addr_loopback_source.read_text(errors="replace")
+    in6addr_loopback_probe = in6addr_loopback_probe_source.read_text(
+        errors="replace"
+    )
+    in6addr_loopback_start = in6addr_loopback_start_source.read_text(
+        errors="replace"
+    )
+    in6addr_loopback_runner = in6addr_loopback_runner_source.read_text(
+        errors="replace"
+    )
+    for required in (
+        "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+        "src/network/in6addr_loopback.c",
+        "src/network/in6addr_any.c",
+        "pub struct In6Addr",
+        "pub union In6AddrUnion",
+        "[u8; 16]",
+        "[u16; 8]",
+        "[u32; 4]",
+        "#[no_mangle]",
+        "pub static in6addr_loopback",
+        "0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1",
+    ):
+        if required not in in6addr_loopback_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/in6addr_loopback.rs: selected static "
+                f"immutable IPv6 object boundary is missing {required!r}"
+            )
+    for forbidden in (
+        "static mut",
+        "raw_syscall",
+        "__errno_location",
+        "getaddrinfo",
+        "gethostby",
+        "if_nameindex",
+        "socket(",
+        "std::",
+        "alloc::",
+        "crabc_core",
+        "crabc_mimalloc",
+    ):
+        if forbidden in in6addr_loopback_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/in6addr_loopback.rs: selected static "
+                f"immutable IPv6 object must not select {forbidden!r}"
+            )
+    in6addr_loopback_exports = set(
+        re.findall(r"(?m)^pub\s+static\s+(\w+)\s*:", in6addr_loopback_text)
+    )
+    if in6addr_loopback_exports != {"in6addr_loopback"}:
+        errors.append(
+            "libc/src/c_abi/x86_64/in6addr_loopback.rs: selected static artifact "
+            "must export only in6addr_loopback"
+        )
+    for required in (
+        "sizeof(struct in6_addr) == 16",
+        "_Alignof(struct in6_addr) == 4",
+        "offsetof(struct in6_addr, s6_addr) == 0",
+        "in6addr_loopback_pointer",
+        "is_loopback",
+        "IN6_IS_ADDR_LOOPBACK",
+        "IN6_IS_ADDR_UNSPECIFIED",
+        "CRABC_IN6ADDR_LOOPBACK_FREESTANDING",
+    ):
+        if required not in in6addr_loopback_probe:
+            errors.append(
+                "compat/x86_64/libc_in6addr_loopback_probe.c: immutable IPv6 "
+                f"regression is missing {required!r}"
+            )
+    for required in (
+        "crabc_x86_64_in6addr_loopback_probe",
+        "mov $60, %eax",
+    ):
+        if required not in in6addr_loopback_start:
+            errors.append(
+                "compat/x86_64/libc_in6addr_loopback_start.S: immutable IPv6 "
+                f"entry is missing {required!r}"
+            )
+    if "ARCH_SET_FS" in in6addr_loopback_start:
+        errors.append(
+            "compat/x86_64/libc_in6addr_loopback_start.S: immutable IPv6 entry "
+            "must not bootstrap TLS"
+        )
+    for required in (
+        "in6addr_loopback.lo",
+        "in6addr_any.lo",
+        "in6addr_loopback.c",
+        "in6addr_any.c",
+        "assert_selected_c_abi_surface",
+        "extract_selected_member",
+        "in6addr_loopback archive member also defines in6addr_any",
+        "-nostdlib -static",
+        '"$selected_member" -o "$candidate"',
+        "candidate unexpectedly selects TLS",
+        "in6addr_any htonl htons ntohl ntohs",
+        "getaddrinfo",
+        "if_indextoname",
+        "if_nameindex",
+        "if_nametoindex",
+        "socket bind connect send recv",
+        "__tls_get_addr",
+    ):
+        if required not in in6addr_loopback_runner:
+            errors.append(
+                "compat/x86_64/run_libc_in6addr_loopback.sh: archive-free static "
+                f"immutable IPv6 evidence is missing {required!r}"
+            )
+    if '"$archive" -o "$candidate"' in in6addr_loopback_runner:
+        errors.append(
+            "compat/x86_64/run_libc_in6addr_loopback.sh: final immutable IPv6 "
+            "candidate must not link libc.a"
         )
 
     inet_address_probe_source = (
@@ -8954,6 +9096,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         | pthread_identity_exports
         | process_global_data_exports
         | in6addr_any_exports
+        | in6addr_loopback_exports
     )
     expected_exports = {
         "__errno_location",
@@ -9195,6 +9338,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         "recvmmsg",
         "sockatmark",
         "in6addr_any",
+        "in6addr_loopback",
         "inet_pton",
         "inet_ntop",
         "__inet_aton",
@@ -9343,7 +9487,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
             "signal-control, bounded process-signal execution, and one legacy single-signal pause wait, bounded pthread create/exit/join/detach initial-TLS worker, its private selected-main/worker pthread-key/C11-TSS lifecycle, private process-normal pthread mutexes and their musl private condition-variable handoff, the complete selected rwlock/attribute family with private-or-shared futex operation, plus the distinct C11 plain-sync adapter and normal-return pthread/C11 once state machine, its typed C11 create/exit/join/detach sibling, and pthread/C11 identity aliases, named termios-control, selected process-context, child-reaping, C11 immediate termination, callback algorithms, direct clock_gettime, caller-owned mapping-core, no-cancellation mapping synchronization, direct anonymous-memory descriptor creation, nanosleep, and clock_nanosleep, selected "
             "descriptor-entry, selected filesystem-access, bounded descriptor-control, timestamp updates, and descriptor-I/O, selected process-resources, selected readiness/signal-waits, "
             "selected socket transport and selected socket-message/options, selected system-observation, selected UTS-identity, "
-            "selected numeric-address codecs and legacy classful IPv4 arithmetic, fixed-profile h_errno message text, byte-string, random-entropy, memory-search, C-string-copy, immutable error-string, "
+            "immutable IPv6 unspecified-address and loopback-address data objects, selected numeric-address codecs and legacy classful IPv4 arithmetic, fixed-profile h_errno message text, byte-string, random-entropy, memory-search, C-string-copy, immutable error-string, "
             "fixed-C-locale ctype, integer-arithmetic, integer-parsing, intmax-arithmetic, credential-observation, and "
             "environment-backed login-name observation, find-first-set, startup-published program names, short/GNU-long "
             "getopt state and aliases, callback-tree/hash-table search, and the "
@@ -9403,6 +9547,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         ("socket_transport.rs", socket_transport_text),
         ("socket_messages.rs", socket_messages_text),
         ("in6addr_any.rs", in6addr_any_text),
+        ("in6addr_loopback.rs", in6addr_loopback_text),
         ("inet_address.rs", inet_address_text),
         ("inet_ntoa.rs", inet_ntoa_text),
         ("inet_classful.rs", inet_classful_text),

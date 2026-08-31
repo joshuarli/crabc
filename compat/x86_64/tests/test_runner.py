@@ -1328,6 +1328,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn("    inet-address-header-abi) ;;", source)
         self.assertIn("    libc-network-byte-order) ;;", source)
         self.assertIn("    libc-in6addr-any)", source)
+        self.assertIn("    libc-in6addr-loopback)", source)
         self.assertIn("    libc-inet-ntoa)", source)
         self.assertIn("    libc-inet-classful)", source)
         self.assertIn("    libc-inet-netof)", source)
@@ -1434,7 +1435,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "libc-static-c-abi-differential",
             "libc-static-c-abi-same-object-differential|qualification-posix-abi-admission",
             "libc-interface-discovery",
-            "libc-readiness-waits|libc-system-observation|libc-system-information|libc-fcntl-record-locks|libc-flock|libc-sendfile|libc-posix-fallocate|libc-descriptor-advice|libc-filesystem-capacity|libc-uts-identity|libc-ctype|libc-locale-profile|libc-locale-multibyte|libc-locale-wide-iconv|libc-wide-character|libc-locale-object-wide|libc-locale-narrow|libc-locale-ctype-locators|libc-locale-error-strings|libc-regex|libc-integer-arithmetic|libc-integer-parse|libc-float-parse|libc-intmax-arithmetic|libc-credential-observation|libc-login-name|libc-child-reaping|libc-immediate-termination|libc-callback-algorithms|libc-search-tree-intrusive|libc-search-hash-table|libc-gettext-catalog|libc-access|libc-clock-gettime|libc-time-observation|libc-system-configuration|libc-mapping-core|libc-header-layouts-baseline|libc-nanosleep|libc-clock-nanosleep|libc-descriptor-entry|libc-fcntl-status-control|libc-ioctl|libc-ffs|libc-byte-strings|libc-in6addr-any|libc-process-globals-getopt|libc-auxv-observation|libc-inet-address|libc-inet-ntoa|libc-inet-classful|libc-inet-netof|libc-inet-network|libc-hstrerror|libc-numeric-netdb|libc-random-entropy|libc-memory-search|libc-string-copy|libc-error-strings|libc-strsignal|libc-descriptor-pipeline",
+            "libc-readiness-waits|libc-system-observation|libc-system-information|libc-fcntl-record-locks|libc-flock|libc-sendfile|libc-posix-fallocate|libc-descriptor-advice|libc-filesystem-capacity|libc-uts-identity|libc-ctype|libc-locale-profile|libc-locale-multibyte|libc-locale-wide-iconv|libc-wide-character|libc-locale-object-wide|libc-locale-narrow|libc-locale-ctype-locators|libc-locale-error-strings|libc-regex|libc-integer-arithmetic|libc-integer-parse|libc-float-parse|libc-intmax-arithmetic|libc-credential-observation|libc-login-name|libc-child-reaping|libc-immediate-termination|libc-callback-algorithms|libc-search-tree-intrusive|libc-search-hash-table|libc-gettext-catalog|libc-access|libc-clock-gettime|libc-time-observation|libc-system-configuration|libc-mapping-core|libc-header-layouts-baseline|libc-nanosleep|libc-clock-nanosleep|libc-descriptor-entry|libc-fcntl-status-control|libc-ioctl|libc-ffs|libc-byte-strings|libc-in6addr-any|libc-in6addr-loopback|libc-process-globals-getopt|libc-auxv-observation|libc-inet-address|libc-inet-ntoa|libc-inet-classful|libc-inet-netof|libc-inet-network|libc-hstrerror|libc-numeric-netdb|libc-random-entropy|libc-memory-search|libc-string-copy|libc-error-strings|libc-strsignal|libc-descriptor-pipeline",
             "libc-vector-io|libc-uio-cxx-linkage",
             "libc-sysv-semaphore|libc-posix-semaphore",
             "libc-sysv-message-shared-memory",
@@ -9477,6 +9478,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "uint32_t __s6_addr32[4]",
             "__in6_union",
             "extern const struct in6_addr in6addr_any",
+            "extern const struct in6_addr in6addr_loopback",
         ):
             self.assertIn(required, header)
         for required in (
@@ -9486,7 +9488,9 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             '"$musl_ipv6_macro"',
             '"$project_ipv6_macro"',
             "check_cxx_in6addr_any_linkage",
+            "check_cxx_in6addr_loopback_linkage",
             "in6addr_any",
+            "in6addr_loopback",
         ):
             self.assertIn(required, runner)
 
@@ -9687,12 +9691,132 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             self.assertIn(required, artifact_runner)
         self.assertNotIn('"$archive" -o "$candidate"', artifact_runner)
         self.assertIn("in6addr_any", static_exports.splitlines())
-        self.assertNotIn("in6addr_loopback", static_exports.splitlines())
+        self.assertIn("in6addr_loopback", static_exports.splitlines())
         self.assertIn('id = "static-c-in6addr-any"', parity_ledger)
         self.assertIn(
             'command = "./scripts/dev-x86_64.sh libc-in6addr-any"', parity_ledger
         )
         self.assertIn("libc-in6addr-any)", dispatcher)
+
+    def test_libc_static_c_abi_in6addr_loopback_artifact_stays_private(
+        self,
+    ) -> None:
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        leaf = (
+            ROOT
+            / "libc"
+            / "src"
+            / "c_abi"
+            / "x86_64"
+            / "in6addr_loopback.rs"
+        ).read_text(encoding="utf-8")
+        header = (ROOT / "include" / "netinet" / "in.h").read_text(
+            encoding="utf-8"
+        )
+        probe = (
+            ROOT / "compat" / "x86_64" / "libc_in6addr_loopback_probe.c"
+        ).read_text(encoding="utf-8")
+        start = (
+            ROOT / "compat" / "x86_64" / "libc_in6addr_loopback_start.S"
+        ).read_text(encoding="utf-8")
+        artifact_runner = (
+            ROOT / "compat" / "x86_64" / "run_libc_in6addr_loopback.sh"
+        ).read_text(encoding="utf-8")
+        static_exports = (
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        ).read_text(encoding="utf-8")
+        parity_ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        dispatcher = RUNNER.read_text(encoding="utf-8")
+
+        self.assertIn('#[path = "in6addr_loopback.rs"]', static_root)
+        for required in (
+            "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+            "src/network/in6addr_loopback.c",
+            "src/network/in6addr_any.c",
+            "pub struct In6Addr",
+            "pub union In6AddrUnion",
+            "[u8; 16]",
+            "[u16; 8]",
+            "[u32; 4]",
+            "#[no_mangle]",
+            "pub static in6addr_loopback",
+            "0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1",
+        ):
+            self.assertIn(required, leaf)
+        self.assertEqual(
+            re.findall(r"(?m)^pub\s+static\s+(\w+)\s*:", leaf),
+            ["in6addr_loopback"],
+        )
+        for forbidden in (
+            "static mut",
+            "raw_syscall",
+            "__errno_location",
+            "getaddrinfo",
+            "gethostby",
+            "if_nameindex",
+            "socket(",
+            "std::",
+            "alloc::",
+            "crabc_core",
+            "crabc_mimalloc",
+        ):
+            self.assertNotIn(forbidden, leaf)
+        for required in (
+            'extern "C" {',
+            "uint8_t __s6_addr[16]",
+            "uint16_t __s6_addr16[8]",
+            "uint32_t __s6_addr32[4]",
+            "#define s6_addr __in6_union.__s6_addr",
+            "extern const struct in6_addr in6addr_loopback",
+        ):
+            self.assertIn(required, header)
+        for required in (
+            "sizeof(struct in6_addr) == 16",
+            "_Alignof(struct in6_addr) == 4",
+            "offsetof(struct in6_addr, s6_addr) == 0",
+            "in6addr_loopback_pointer",
+            "is_loopback",
+            "IN6_IS_ADDR_LOOPBACK",
+            "IN6_IS_ADDR_UNSPECIFIED",
+            "CRABC_IN6ADDR_LOOPBACK_FREESTANDING",
+        ):
+            self.assertIn(required, probe)
+        self.assertIn("crabc_x86_64_in6addr_loopback_probe", start)
+        self.assertIn("mov $60, %eax", start)
+        self.assertNotIn("ARCH_SET_FS", start)
+        for required in (
+            "in6addr_loopback.lo",
+            "in6addr_any.lo",
+            "in6addr_loopback.c",
+            "in6addr_any.c",
+            "assert_selected_c_abi_surface",
+            "extract_selected_member",
+            "in6addr_loopback archive member also defines in6addr_any",
+            "-nostdlib -static",
+            '"$selected_member" -o "$candidate"',
+            "candidate unexpectedly selects TLS",
+            "in6addr_any htonl htons ntohl ntohs",
+            "getaddrinfo",
+            "if_indextoname",
+            "if_nameindex",
+            "if_nametoindex",
+            "socket bind connect send recv",
+            "__tls_get_addr",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn('"$archive" -o "$candidate"', artifact_runner)
+        self.assertIn("in6addr_any", static_exports.splitlines())
+        self.assertIn("in6addr_loopback", static_exports.splitlines())
+        self.assertIn('id = "static-c-in6addr-loopback"', parity_ledger)
+        self.assertIn(
+            'command = "./scripts/dev-x86_64.sh libc-in6addr-loopback"',
+            parity_ledger,
+        )
+        self.assertIn("libc-in6addr-loopback)", dispatcher)
 
     def test_libc_static_c_abi_socket_transport_artifact_stays_narrow(self) -> None:
         static_root = (

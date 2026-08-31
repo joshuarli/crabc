@@ -50,7 +50,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 40)
-        self.assertEqual(report["verified_artifact_count"], 156)
+        self.assertEqual(report["verified_artifact_count"], 157)
         self.assertEqual(report["header_layout_probe_count"], 46)
         self.assertEqual(report["public_header_inventory_count"], 183)
         self.assertEqual(report["header_foundation_header_count"], 191)
@@ -14380,7 +14380,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             .splitlines()
         )
         self.assertIn("in6addr_any", exports)
-        self.assertNotIn("in6addr_loopback", exports)
+        self.assertIn("in6addr_loopback", exports)
 
         prerequisites = artifact["x86_abi_prerequisites"]
         assert isinstance(prerequisites, list)
@@ -14430,6 +14430,132 @@ class X86ParityLedgerTests(unittest.TestCase):
             entry
             for entry in artifacts
             if isinstance(entry, dict) and entry["id"] == "static-c-in6addr-any"
+        )
+        evidence = artifact["native_evidence"]
+        assert isinstance(evidence, list) and isinstance(evidence[0], dict)
+        evidence[0]["scope"] = "immutable IPv6 object fixture"
+        with self.assertRaisesRegex(ledger.LedgerError, "evidence omits"):
+            ledger.validate_ledger(data)
+
+    def test_in6addr_loopback_artifact_keeps_its_private_data_boundary(
+        self,
+    ) -> None:
+        data = self.data()
+        family = self.family(data, "libc.posix-runtime")
+        self.assertEqual(family["status"], "planned")
+        self.assertIn(
+            "libc/src/c_abi/x86_64/in6addr_loopback.rs",
+            family["source_owners"],
+        )
+        artifacts = family["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict)
+            and entry["id"] == "static-c-in6addr-loopback"
+        )
+        self.assertNotIn("capabilities", artifact)
+        for owner in (
+            "libc/src/c_abi/x86_64/in6addr_any.rs",
+            "libc/src/c_abi/x86_64/in6addr_loopback.rs",
+            "include/netinet/in.h",
+            "compat/x86_64/socket_header_abi_probe.c",
+            "compat/x86_64/socket_header_abi_probe.cpp",
+            "compat/x86_64/run_socket_header_abi.sh",
+            "compat/x86_64/libc_in6addr_loopback_probe.c",
+            "compat/x86_64/libc_in6addr_loopback_start.S",
+            "compat/x86_64/run_libc_in6addr_loopback.sh",
+            "compat/x86_64/static_c_abi_exports.txt",
+        ):
+            self.assertIn(owner, artifact["source_owners"])
+        self.assertEqual(
+            {entry["command"] for entry in artifact["native_evidence"]},
+            {"./scripts/dev-x86_64.sh libc-in6addr-loopback"},
+        )
+        for phrase in (
+            "Private native x86 static immutable IPv6 loopback-address C ABI artifact",
+            "still-planned `libc.posix-runtime`",
+            "archive-free true `-nostdlib -static` candidate",
+            "exactly one extracted crabc object",
+            "never `libc.a`",
+            "exactly the immutable `in6addr_loopback` global",
+            "sixteen-byte align-4 union-backed `struct in6_addr`",
+            "fifteen zero bytes and final byte one",
+            "`src/network/in6addr_loopback.c`",
+            "`in6addr_any` sibling",
+            "address conversion",
+            "IPv6 socket transport",
+            "resolver configuration",
+            "DNS packet",
+            "netdb/database",
+            "Ethernet",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, artifact["description"])
+
+        exports = set(
+            (ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt")
+            .read_text(encoding="utf-8")
+            .splitlines()
+        )
+        self.assertIn("in6addr_any", exports)
+        self.assertIn("in6addr_loopback", exports)
+
+        prerequisites = artifact["x86_abi_prerequisites"]
+        assert isinstance(prerequisites, list)
+        data_abi = next(
+            item
+            for item in prerequisites
+            if "const struct in6_addr in6addr_loopback" in item
+        )
+        assert isinstance(data_abi, str)
+        for phrase in (
+            "sixteen-byte align-4",
+            "s6_addr",
+            "uint8_t/uint16_t/uint32_t",
+            "const struct in6_addr *",
+            "unmangled C++",
+        ):
+            self.assertIn(phrase, data_abi)
+        source_mapping = next(
+            item
+            for item in prerequisites
+            if "src/network/in6addr_loopback.c" in item
+        )
+        assert isinstance(source_mapping, str)
+        for phrase in (
+            "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+            "fifteen-zero-final-one",
+            "no undefined references",
+            "src/network/in6addr_any.c",
+            "all-zero",
+        ):
+            self.assertIn(phrase, source_mapping)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict)
+            and entry["id"] == "static-c-in6addr-loopback"
+        )
+        artifact["description"] = artifact["description"].replace(
+            "final byte one", "final byte"
+        )
+        with self.assertRaisesRegex(ledger.LedgerError, "omits fifteen zero bytes"):
+            ledger.validate_ledger(data)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict)
+            and entry["id"] == "static-c-in6addr-loopback"
         )
         evidence = artifact["native_evidence"]
         assert isinstance(evidence, list) and isinstance(evidence[0], dict)

@@ -47,6 +47,8 @@ _Static_assert(sizeof(struct in6_addr) == 16 && _Alignof(struct in6_addr) == 4 &
     "x86 in6_addr layout");
 _Static_assert(__builtin_types_compatible_p(__typeof__(&in6addr_any),
     const struct in6_addr *), "in6addr_any declaration");
+_Static_assert(__builtin_types_compatible_p(__typeof__(&in6addr_loopback),
+    const struct in6_addr *), "in6addr_loopback declaration");
 
 _Static_assert(AF_UNSPEC == 0 && AF_UNIX == 1 && AF_INET == 2 && AF_INET6 == 10,
     "Linux address-family values");
