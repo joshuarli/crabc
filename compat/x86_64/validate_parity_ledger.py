@@ -1201,6 +1201,8 @@ TIMER_GETOVERRUN_ERROR_ABI_SYMBOLS = ("timer_getoverrun",)
 
 TIMER_DELETE_RAW_ERROR_ABI_SYMBOLS = ("timer_delete",)
 
+TIMER_GETTIME_ERROR_ABI_SYMBOLS = ("timer_gettime",)
+
 TIME_OBSERVATION_SYMBOLS = (
     "clock",
     "time",
@@ -18214,6 +18216,326 @@ def require_timer_delete_raw_error_abi_artifact(family: Mapping[str, Any]) -> No
         require(
             snippet in dispatcher,
             f"static-c-timer-delete-raw-error-abi dispatcher omits {snippet}",
+        )
+
+
+def require_timer_gettime_error_abi_artifact(family: Mapping[str, Any]) -> None:
+    """Keep rejected timer_gettime evidence private and non-promoting."""
+
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.posix-runtime].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [
+        entry
+        for entry in artifacts
+        if entry.get("id") == "static-c-timer-gettime-error-abi"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.posix-runtime must contain exactly one static-c-timer-gettime-error-abi artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-timer-gettime-error-abi must not promote libc.posix-runtime",
+    )
+    artifact = matching[0]
+    require(
+        "capabilities" not in artifact,
+        "static-c-timer-gettime-error-abi must not carry capabilities",
+    )
+
+    description = artifact.get("description")
+    require(
+        isinstance(description, str),
+        "static-c-timer-gettime-error-abi needs a description",
+    )
+    for phrase in (
+        "Private native x86 static C `timer_gettime` rejected-handle output-preservation error-ABI artifact",
+        "still-planned `libc.posix-runtime`",
+        "src/time/timer_gettime.c",
+        "return syscall(SYS_timer_gettime, t, val)",
+        "nonnegative opaque",
+        "timer_t 0",
+        "INT_MAX",
+        "`-1`/`EINVAL`",
+        "record to remain unchanged",
+        "negative `timer_t`",
+        "pthread_impl",
+        "does not decode or dereference",
+        "never creates, arms, queries, observes, or deletes a valid POSIX timer",
+        "timer ownership nor valid timer query values",
+        "family completion, promotion, or public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"static-c-timer-gettime-error-abi description omits {phrase}",
+        )
+
+    owners = set(
+        nonempty_strings(
+            artifact.get("source_owners"),
+            "static-c-timer-gettime-error-abi.source_owners",
+        )
+    )
+    for owner in (
+        "compat/upstreams.toml",
+        "libc/Cargo.toml",
+        "libc/src/lib.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/timer_gettime.rs",
+        "libc/src/c_abi/x86_64/errno.rs",
+        "libc/src/c_abi/x86_64/syscall.rs",
+        "include/errno.h",
+        "include/features.h",
+        "include/limits.h",
+        "include/stdint.h",
+        "include/time.h",
+        "include/sys/types.h",
+        "include/sys/syscall.h",
+        "include/bits/alltypes.h",
+        "include/bits/syscall.h",
+        "compat/x86_64/timer_gettime_header_abi_probe.c",
+        "compat/x86_64/timer_gettime_header_abi_probe.cpp",
+        "compat/x86_64/run_timer_gettime_header_abi.sh",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/libc_timer_gettime_probe.c",
+        "compat/x86_64/libc_timer_gettime_start.S",
+        "compat/x86_64/run_libc_timer_gettime.sh",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/aarch64_parity_inventory.py",
+        "compat/x86_64/aarch64_parity_inventory.json",
+        "compat/x86_64/README.md",
+        "STATUS.md",
+        "x86-64.md",
+        "scripts/dev-x86_64.sh",
+        "scripts/check_structure.py",
+    ):
+        require(
+            owner in owners,
+            f"static-c-timer-gettime-error-abi source ownership omits {owner}",
+        )
+
+    prerequisites = nonempty_strings(
+        artifact.get("x86_abi_prerequisites"),
+        "static-c-timer-gettime-error-abi.x86_abi_prerequisites",
+    )
+    require(
+        any(
+            "System V AMD64" in item
+            and "int timer_gettime(timer_t, struct itimerspec *)" in item
+            and "8-byte align-8" in item
+            and "32-byte align-8" in item
+            and "rdi" in item
+            and "rsi" in item
+            and "eax" in item
+            and "224" in item
+            for item in prerequisites
+        ),
+        "static-c-timer-gettime-error-abi must retain its two-word ABI",
+    )
+    require(
+        any(
+            "9fa28ece75d8a2191de7c5bb53bed224c5947417" in item
+            and "src/time/timer_gettime.c" in item
+            and "nonnegative opaque timer_t" in item
+            and "return syscall(SYS_timer_gettime, t, val)" in item
+            and "SYS_timer_gettime64" in item
+            and "(intptr_t)t < 0" in item
+            and "pthread_impl" in item
+            and "td->timer_id" in item
+            for item in prerequisites
+        ),
+        "static-c-timer-gettime-error-abi must retain its exact pinned-musl mapping",
+    )
+    require(
+        any(
+            "raw -4095 through -1" in item
+            and "c_status" in item
+            and "timer_t 0" in item
+            and "INT_MAX" in item
+            and "EINVAL" in item
+            and "record to remain unchanged" in item
+            and "never creates, arms, queries, observes, or deletes a valid POSIX timer" in item
+            for item in prerequisites
+        ),
+        "static-c-timer-gettime-error-abi must retain its rejected-handle boundary",
+    )
+    require(
+        any(
+            "initial-TLS errno" in item
+            and "no dynamic TLS resolver" in item
+            and "not POSIX timer support" in item
+            for item in prerequisites
+        ),
+        "static-c-timer-gettime-error-abi must retain its non-promotion boundary",
+    )
+
+    header_text = " ".join(
+        nonempty_strings(
+            artifact.get("x86_header_prerequisites"),
+            "static-c-timer-gettime-error-abi.x86_header_prerequisites",
+        )
+    )
+    for phrase in (
+        "strict C11/C++17",
+        "hidden",
+        "POSIX/XOPEN/GNU C11/C++17",
+        "int (*)(timer_t, struct itimerspec *)",
+        "8-byte align-8",
+        "16-byte align-8",
+        "32-byte align-8",
+        "offsets 0/16",
+        "unmangled C++",
+        "installed-header completion",
+    ):
+        require(
+            phrase in header_text,
+            f"static-c-timer-gettime-error-abi header prerequisites omit {phrase}",
+        )
+
+    exports = set(
+        static_c_abi_export_names(
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        )
+    )
+    require(
+        set(TIMER_GETTIME_ERROR_ABI_SYMBOLS) <= exports,
+        "static-c-timer-gettime-error-abi must retain its exact selected export",
+    )
+    static_root = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+    ).read_text(encoding="utf-8")
+    require(
+        '#[path = "timer_gettime.rs"]\nmod timer_gettime;' in static_root,
+        "x86 static C ABI must compose the timer_gettime error-ABI leaf",
+    )
+    source = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "timer_gettime.rs"
+    ).read_text(encoding="utf-8")
+    for phrase in (
+        "musl 1.2.6 release commit",
+        "src/time/timer_gettime.c::timer_gettime",
+        "SYS_TIMER_GETTIME",
+        "raw_syscall::syscall2",
+        "c_status(result)",
+        "nonnegative opaque",
+        "pthread_impl",
+        "does not decode or dereference",
+        "valid POSIX timer",
+        "public x86 support",
+    ):
+        require(
+            phrase in source,
+            f"static-c-timer-gettime-error-abi source omits {phrase}",
+        )
+    exports_in_source = set(
+        re.findall(
+            r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(', source
+        )
+    )
+    require(
+        exports_in_source == set(TIMER_GETTIME_ERROR_ABI_SYMBOLS),
+        "static-c-timer-gettime-error-abi source must export only timer_gettime",
+    )
+    for forbidden in (
+        "crabc_core",
+        "crabc_mimalloc",
+        "timer_create(",
+        "timer_delete(",
+        "timer_getoverrun(",
+        "timer_settime(",
+        "clock_gettime(",
+        "clock_getres(",
+        "clock_settime(",
+        "clock_adjtime(",
+        "adjtimex(",
+        "getenv(",
+        "tzset(",
+        "__tls_get_addr",
+    ):
+        require(
+            forbidden not in source,
+            f"static-c-timer-gettime-error-abi source must not select {forbidden}",
+        )
+    syscall_source = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "syscall.rs"
+    ).read_text(encoding="utf-8")
+    require(
+        "pub(crate) const SYS_TIMER_GETTIME: i64 = 224;" in syscall_source,
+        "static-c-timer-gettime-error-abi must retain Linux syscall 224",
+    )
+
+    evidence = artifact.get("native_evidence")
+    require(
+        isinstance(evidence, list),
+        "static-c-timer-gettime-error-abi needs evidence",
+    )
+    require(
+        {entry.get("command") for entry in evidence if isinstance(entry, Mapping)}
+        == {"./scripts/dev-x86_64.sh libc-timer-gettime"},
+        "static-c-timer-gettime-error-abi must use the closed libc-timer-gettime command",
+    )
+    scope = evidence[0].get("scope")
+    require(
+        isinstance(scope, str),
+        "static-c-timer-gettime-error-abi evidence needs a scope",
+    )
+    for phrase in (
+        "Pinned-musl 1.2.6 project-header normal C execution",
+        "strict-hidden/POSIX-XOPEN-GNU-visible C/C++",
+        "`-nostdlib -static` candidate",
+        "fresh process that creates no POSIX timers",
+        "timer_t 0 and INT_MAX",
+        "C -1/EINVAL",
+        "record to remain unchanged",
+        "never creating, arming, querying, observing, or deleting a valid POSIX timer",
+        "timer_gettime=224",
+        "initial-TLS errno",
+        "env -i",
+        "no interpreter/DT_NEEDED/unresolved symbol",
+        "negative tagged pthread timer behavior",
+        "family completion, promotion, and public x86 support",
+    ):
+        require(
+            phrase in scope,
+            f"static-c-timer-gettime-error-abi evidence omits {phrase}",
+        )
+
+    oracle = artifact.get("oracle")
+    require(
+        isinstance(oracle, list),
+        "static-c-timer-gettime-error-abi needs oracle records",
+    )
+    oracle_text = " ".join(
+        str(entry.get("role", "")) for entry in oracle if isinstance(entry, Mapping)
+    )
+    for phrase in (
+        "src/time/timer_gettime.c",
+        "return syscall(SYS_timer_gettime, t, val)",
+        "pthread_impl",
+        "timer_gettime=224",
+        "EINVAL",
+        "external-C linkage",
+    ):
+        require(
+            phrase in oracle_text,
+            f"static-c-timer-gettime-error-abi oracle omits {phrase}",
+        )
+
+    dispatcher = (ROOT / "scripts" / "dev-x86_64.sh").read_text(encoding="utf-8")
+    for snippet in (
+        "run_timer_gettime_header_abi()",
+        "run_libc_timer_gettime()",
+        "timer-gettime-header-abi)",
+        "libc-timer-gettime)",
+    ):
+        require(
+            snippet in dispatcher,
+            f"static-c-timer-gettime-error-abi dispatcher omits {snippet}",
         )
 
 
@@ -46493,6 +46815,7 @@ def validate_ledger(
     require_clock_settime_error_abi_artifact(by_id["libc.posix-runtime"])
     require_timer_getoverrun_error_abi_artifact(by_id["libc.posix-runtime"])
     require_timer_delete_raw_error_abi_artifact(by_id["libc.posix-runtime"])
+    require_timer_gettime_error_abi_artifact(by_id["libc.posix-runtime"])
     require_time_observation_artifact(by_id["libc.posix-runtime"])
     require_difftime_binary64_artifact(by_id["libc.posix-runtime"])
     require_timegm_utc_artifact(by_id["libc.posix-runtime"])

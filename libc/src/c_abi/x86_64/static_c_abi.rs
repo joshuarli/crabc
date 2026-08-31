@@ -100,8 +100,9 @@
 //! rejected-ID `clock_adjtime` error-ABI artifact, one binary64 scalar
 //! `difftime` artifact, one caller-buffered fixed-UTC `gmtime_r`
 //! conversion artifact, one direct rejected-handle `timer_getoverrun`
-//! error-ABI artifact, one raw-error `timer_delete` artifact, and one fixed-UTC
-//! `timegm` conversion artifact, plus one
+//! error-ABI artifact, one raw-error `timer_delete` artifact, one rejected-
+//! handle `timer_gettime` artifact, and one fixed-UTC `timegm` conversion
+//! artifact, plus one
 //! bounded System V message-queue/shared-memory artifact, one bounded
 //! unnamed POSIX semaphore artifact, and one bounded event-descriptor
 //! artifact, one bounded pathname-mutation/lifecycle artifact, one distinct
@@ -425,6 +426,8 @@ mod clock_adjtime;
 mod timer_getoverrun;
 #[path = "timer_delete.rs"]
 mod timer_delete;
+#[path = "timer_gettime.rs"]
+mod timer_gettime;
 #[path = "difftime.rs"]
 mod difftime;
 #[path = "gmtime_r.rs"]

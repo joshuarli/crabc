@@ -1537,6 +1537,22 @@ not establish valid timer-deletion semantics, timer ownership/state, signal deli
 calendar/timezone behavior, C time-family completion, promotion, or public x86
 support.
 
+The same archive has a separate private rejected-handle output-preservation
+`timer_gettime` artifact: `./scripts/dev-x86_64.sh timer-gettime-header-abi`
+and `./scripts/dev-x86_64.sh libc-timer-gettime` map exactly to pinned musl
+1.2.6 `src/time/timer_gettime.c`'s nonnegative direct
+`timer_gettime=224` rdi/rsi branch. Strict C11/C++17 `<time.h>` profiles hide
+the POSIX spelling; POSIX/XOPEN/GNU profiles prove the exact opaque C/C++
+external-C declaration, timespec/itimerspec layout, and linkage. In a fresh
+process that creates no POSIX timers, the shared musl/static fixture sends only
+nonnegative opaque `timer_t` values `0` and `INT_MAX` with initialized writable
+output records, requiring `-1`/`EINVAL` and leaving every record unchanged.
+Musl's negative tagged `timer_t` branch reconstructs private `pthread_impl`
+state and is explicitly excluded, so this leaf never decodes or dereferences a
+timer handle. It does not establish valid timer query values, timer ownership
+or state, lifecycle, clock/calendar/timezone behavior, signal delivery,
+cancellation, C time-family completion, promotion, or public x86 support.
+
 The same archive has a private direct time-observation artifact:
 `./scripts/dev-x86_64.sh libc-time-observation` proves only `clock`, `time`,
 C11 `timespec_get`, `clock_getres`, and `gettimeofday` through a pinned-musl
