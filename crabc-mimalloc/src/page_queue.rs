@@ -1,4 +1,6 @@
 // Copyright (c) 2018-2024, Microsoft Research, Daan Leijen
+// Portions derived from pinned mimalloc v3.5.0 `src/theap.c`:
+// Copyright (c) 2018-2026, Microsoft Research, Daan Leijen
 // This is free software; you can redistribute it and/or modify it under the
 // terms of the MIT license. A copy of the license can be found in the file
 // "LICENSE" at the root of this distribution.
@@ -6,12 +8,15 @@
 //
 // Source map: pinned mimalloc v3.5.0 `src/page-queue.c:40-55,147-172,204-274,
 // 252-423` (predicates, the test-only validity oracle, intrusive queue
-// membership, and the direct-cache-before-page-count queue-removal order).
-// The generic owner-exit coordinator below owns only source callback ordering
-// and the queue half; concrete deferred-free, retired-page, page-local
-// collection, abandonment publication, PageMap/backing release, and TLD/Theap
-// detach stay at their respective lifecycle boundaries.
+// membership, and the direct-cache-before-page-count queue-removal order), and
+// `src/theap.c:18-45,85-137` (`MI_ABANDON` prepass, saved-successor visitor,
+// and all-free versus live-page owner-exit split). The generic owner-exit
+// coordinator below owns only source callback ordering and the queue half;
+// concrete deferred-free, retired-page, page-local collection, abandonment
+// publication, PageMap/backing release, and TLD/Theap detach stay at their
+// respective lifecycle boundaries.
 
+use core::marker::PhantomData;
 use core::ptr::{NonNull, null_mut};
 use core::sync::atomic::Ordering;
 
@@ -49,10 +54,10 @@ pub(crate) const fn page_queue_count(queue: &PageQueue) -> usize {
 
 /// The page-local conclusion of one source `_mi_theap_page_collect` visit.
 ///
-/// The callback passed to [`theap_collect_abandon_queues`] chooses only this
-/// source lifetime branch after force/false free collection. It does not name
-/// a page kind, size bin, mapping kind, or test fixture geometry: an empty
-/// page is released and every other page is detached for its source-specific
+/// [`TheapCollectAbandonCallbacks::collect_page`] chooses only this source
+/// lifetime branch after force/false free collection. It does not name a page
+/// kind, size bin, mapping kind, or test fixture geometry: an empty page is
+/// released and every other page is detached for its source-specific
 /// abandonment publication.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum TheapCollectAbandonPageAction {
@@ -89,13 +94,18 @@ impl<DeferredFrees, RetiredPages> TheapCollectAbandonPrepass<DeferredFrees, Reti
     /// Runs the two source prepasses and creates the otherwise-unforgeable
     /// proof required by page-action callbacks.
     #[inline]
-    fn run<E>(&mut self, theap: &mut Theap) -> Result<TheapCollectAbandonPageActionsReady, E>
+    fn run<E>(
+        &mut self,
+        theap: &mut Theap,
+    ) -> Result<TheapCollectAbandonPageActionsReady, TheapCollectAbandonFailure<E>>
     where
         DeferredFrees: FnMut(&mut Theap) -> Result<(), E>,
         RetiredPages: FnMut(&mut Theap) -> Result<(), E>,
     {
-        (self.deferred_frees)(theap)?;
-        (self.retired_pages)(theap)?;
+        (self.deferred_frees)(theap)
+            .map_err(TheapCollectAbandonFailure::DeferredFrees)?;
+        (self.retired_pages)(theap)
+            .map_err(TheapCollectAbandonFailure::RetiredPages)?;
         Ok(TheapCollectAbandonPageActionsReady(()))
     }
 }
@@ -107,80 +117,342 @@ impl<DeferredFrees, RetiredPages> TheapCollectAbandonPrepass<DeferredFrees, Reti
 /// ordering part of their type-level boundary.
 pub(crate) struct TheapCollectAbandonPageActionsReady(());
 
-/// Failure from the generic queue half of `_mi_theap_collect_abandon`.
+/// One current page in the source `MI_ABANDON` traversal.
 ///
-/// A callback failure can occur after a one-way queue detach. The caller owns
-/// the corresponding terminal-retention policy; this helper never retries a
-/// different queue, invents a fresh page, or reattaches the former owner.
+/// This capability is minted only after deferred-free then retired-page
+/// collection. It deliberately omits the source bin and mutable Theap, so a
+/// caller cannot turn this generic coordinator into a page-shape route or
+/// bypass queue detachment before choosing the source all-free/live result.
+pub(crate) struct TheapCollectAbandonCurrentPage<'ready> {
+    page: NonNull<Page>,
+    _prepass: &'ready TheapCollectAbandonPageActionsReady,
+}
+
+impl TheapCollectAbandonCurrentPage<'_> {
+    #[inline]
+    pub(crate) const fn page(&self) -> NonNull<Page> {
+        self.page
+    }
+}
+
+/// A page whose all-free source state was detached from its Theap queue.
+///
+/// The callback receives this only after intrusive removal, direct-cache
+/// repair, and page-count transition. It owns no release algorithm: the
+/// existing PageMap/backing release boundary remains responsible for that
+/// source-specific work.
+pub(crate) struct TheapCollectAbandonReleasedPage<'ready> {
+    page: NonNull<Page>,
+    theap: &'ready Theap,
+    _prepass: &'ready TheapCollectAbandonPageActionsReady,
+}
+
+impl TheapCollectAbandonReleasedPage<'_> {
+    #[inline]
+    pub(crate) const fn page(&self) -> NonNull<Page> {
+        self.page
+    }
+
+    /// Observes the source count after this page's one-way queue detach.
+    #[inline]
+    pub(crate) const fn page_count_after_detach(&self) -> usize {
+        self.theap.page_count()
+    }
+
+    /// Observes the repaired direct-cache entry without exposing a mutable
+    /// Theap or the source queue/bin used to reach this page.
+    #[inline]
+    pub(crate) fn direct_page(&self, index: usize) -> Option<*mut Page> {
+        self.theap.direct_page(index)
+    }
+}
+
+/// A page with live blocks whose source queue membership was detached.
+///
+/// This is the counterpart of [`TheapCollectAbandonReleasedPage`]. Its
+/// callback publishes existing abandonment ownership; it does not duplicate
+/// PageMap, bitmap, arena, or mapping-release logic here.
+pub(crate) struct TheapCollectAbandonAbandonedPage<'ready> {
+    page: NonNull<Page>,
+    theap: &'ready Theap,
+    _prepass: &'ready TheapCollectAbandonPageActionsReady,
+}
+
+impl TheapCollectAbandonAbandonedPage<'_> {
+    #[inline]
+    pub(crate) const fn page(&self) -> NonNull<Page> {
+        self.page
+    }
+
+    /// Observes the source count after this page's one-way queue detach.
+    #[inline]
+    pub(crate) const fn page_count_after_detach(&self) -> usize {
+        self.theap.page_count()
+    }
+
+    /// Observes the repaired direct-cache entry without exposing a mutable
+    /// Theap or the source queue/bin used to reach this page.
+    #[inline]
+    pub(crate) fn direct_page(&self, index: usize) -> Option<*mut Page> {
+        self.theap.direct_page(index)
+    }
+}
+
+/// The point at which a generic owner-exit traversal became terminal.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum TheapCollectAbandonTerminalPhase {
+    /// Deferred-free processing failed before retired-page collection.
+    DeferredFrees,
+    /// Retired-page collection failed before regular page traversal.
+    RetiredPages,
+    /// Per-page force/false collection failed while the page remained queued.
+    CollectPage,
+    /// The all-free release continuation failed after queue detachment.
+    ReleasePage,
+    /// The live-page abandonment continuation failed after queue detachment.
+    AbandonPage,
+    /// The exclusive complete-queue invariant was not preserved.
+    QueueInvariant,
+}
+
+/// The non-forgeable state handed to a terminal-retention callback.
+///
+/// It describes whether the current page remains queued or was already
+/// detached, without lending mutable queue or geometry authority. The one
+/// returned [`TheapCollectAbandonRetainedOwner`] retains the exclusive Theap
+/// borrow until the caller handles that terminal state.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct TheapCollectAbandonTerminalContext {
+    phase: TheapCollectAbandonTerminalPhase,
+    page: Option<NonNull<Page>>,
+    page_detached: bool,
+    remaining_page_count: usize,
+}
+
+impl TheapCollectAbandonTerminalContext {
+    #[inline]
+    pub(crate) const fn phase(&self) -> TheapCollectAbandonTerminalPhase {
+        self.phase
+    }
+
+    #[inline]
+    pub(crate) const fn page(&self) -> Option<NonNull<Page>> {
+        self.page
+    }
+
+    #[inline]
+    pub(crate) const fn page_is_detached(&self) -> bool {
+        self.page_detached
+    }
+
+    #[inline]
+    pub(crate) const fn remaining_page_count(&self) -> usize {
+        self.remaining_page_count
+    }
+}
+
+/// The caller's one retained terminal owner for a failed owner-exit drain.
+///
+/// The private lifetime marker keeps the exclusive Theap borrow tied to this
+/// owner. A failure therefore cannot silently resume ordinary queue work with
+/// a detached page or incomplete queue image still in flight.
+#[must_use = "a failed collect-abandon drain must retain its unique terminal owner"]
+#[derive(Debug)]
+pub(crate) struct TheapCollectAbandonRetainedOwner<'theap, Owner> {
+    owner: Owner,
+    terminal: TheapCollectAbandonTerminalContext,
+    _theap: PhantomData<&'theap mut Theap>,
+}
+
+impl<Owner> TheapCollectAbandonRetainedOwner<'_, Owner> {
+    #[inline]
+    pub(crate) fn owner(&self) -> &Owner {
+        &self.owner
+    }
+
+    #[inline]
+    pub(crate) fn owner_mut(&mut self) -> &mut Owner {
+        &mut self.owner
+    }
+
+    #[inline]
+    pub(crate) const fn terminal_context(&self) -> TheapCollectAbandonTerminalContext {
+        self.terminal
+    }
+}
+
+/// Failure from the generic queue half of `_mi_theap_collect_abandon`.
 #[derive(Debug, Eq, PartialEq)]
-pub(crate) enum TheapCollectAbandonError<E> {
-    /// Deferred-free or retired-page collection failed before page traversal.
-    Prepass(E),
-    /// A page-local collector or post-detach source transition failed.
-    Page(E),
+pub(crate) enum TheapCollectAbandonFailure<E> {
+    /// Deferred-free processing failed before retired-page collection.
+    DeferredFrees(E),
+    /// Retired-page collection failed before regular page traversal.
+    RetiredPages(E),
+    /// Page-local force/false collection failed before queue detachment.
+    CollectPage(E),
+    /// The all-free continuation failed after queue detachment.
+    ReleasePage(E),
+    /// The live-page abandonment continuation failed after queue detachment.
+    AbandonPage(E),
     /// The caller violated the exclusive complete-queue invariant.
     QueueInvariant,
 }
 
+impl<E> TheapCollectAbandonFailure<E> {
+    #[inline]
+    const fn terminal_phase(&self) -> TheapCollectAbandonTerminalPhase {
+        match self {
+            Self::DeferredFrees(_) => TheapCollectAbandonTerminalPhase::DeferredFrees,
+            Self::RetiredPages(_) => TheapCollectAbandonTerminalPhase::RetiredPages,
+            Self::CollectPage(_) => TheapCollectAbandonTerminalPhase::CollectPage,
+            Self::ReleasePage(_) => TheapCollectAbandonTerminalPhase::ReleasePage,
+            Self::AbandonPage(_) => TheapCollectAbandonTerminalPhase::AbandonPage,
+            Self::QueueInvariant => TheapCollectAbandonTerminalPhase::QueueInvariant,
+        }
+    }
+}
+
+/// A failed coordinator call always returns exactly one terminal owner.
+///
+/// The coordinator invokes [`TheapCollectAbandonCallbacks::retain_terminal`]
+/// once for every error path, including prepass and queue-invariant failures.
+/// It never retries another queue, invents a fresh page, or reattaches the
+/// former owner.
+#[derive(Debug)]
+pub(crate) enum TheapCollectAbandonError<'theap, E, Owner> {
+    Terminal {
+        failure: TheapCollectAbandonFailure<E>,
+        retained: TheapCollectAbandonRetainedOwner<'theap, Owner>,
+    },
+}
+
+/// Source-order callbacks for one complete `MI_ABANDON` Theap traversal.
+///
+/// The coordinator alone runs deferred-free then retired-page prepasses,
+/// selects every queue through `BIN_FULL`, and performs queue detach/direct
+/// repair/page-count mutation. Callbacks receive opaque phase capabilities
+/// instead of a bin or mutable Theap, so they cannot select a test geometry or
+/// run release/abandon before that common source transition.
+pub(crate) trait TheapCollectAbandonCallbacks {
+    type Error;
+    type Retained;
+
+    /// Force/false-collect one current page and report only its source
+    /// all-free versus still-live conclusion.
+    fn collect_page(
+        &mut self,
+        page: TheapCollectAbandonCurrentPage<'_>,
+    ) -> Result<TheapCollectAbandonPageAction, Self::Error>;
+
+    /// Finish the existing release path for one all-free detached page.
+    fn release_page(
+        &mut self,
+        page: TheapCollectAbandonReleasedPage<'_>,
+    ) -> Result<(), Self::Error>;
+
+    /// Publish existing abandonment ownership for one live detached page.
+    fn abandon_page(
+        &mut self,
+        page: TheapCollectAbandonAbandonedPage<'_>,
+    ) -> Result<(), Self::Error>;
+
+    /// Retains the only terminal owner when the coordinator cannot finish.
+    ///
+    /// If `terminal.page_is_detached()` is true, the returned owner must keep
+    /// that page's source state valid and fail closed; it must not attempt to
+    /// reattach it to the departing Theap.
+    fn retain_terminal(
+        &mut self,
+        terminal: TheapCollectAbandonTerminalContext,
+    ) -> Self::Retained;
+}
+
 /// Visits the actual source queues for `MI_ABANDON` in pinned order.
 ///
-/// This is the queue coordinator seam for a future complete
-/// `_mi_theap_collect_abandon` owner-exit path. It runs
+/// This is the generic queue coordinator for
+/// `_mi_theap_collect_abandon`. It runs
 /// [`TheapCollectAbandonPrepass`] first, preserving source deferred-free then
-/// retired-page order before it enters either page-action callback. The
-/// otherwise-unforgeable [`TheapCollectAbandonPageActionsReady`] borrow makes
-/// that order part of each page callback's interface. The helper then covers
-/// every queue through `BIN_FULL`, saves the successor before either callback
-/// can detach the current page, and performs the source queue mutation in the
-/// required order: intrusive removal, direct-small cache repair, then Theap
-/// page-count decrement.
+/// retired-page order before it enters a [`TheapCollectAbandonCallbacks`]
+/// page callback. The otherwise-unforgeable
+/// [`TheapCollectAbandonPageActionsReady`] borrow makes that order part of the
+/// callback capabilities. The helper then covers every queue through
+/// `BIN_FULL`, saves the successor before a continuation can retire current
+/// metadata, and performs the source queue mutation in the required order:
+/// intrusive removal, direct-small cache repair, then Theap page-count
+/// decrement.
 ///
 /// This is intentionally not a public allocator entry point and does not
 /// detach the Theap/TLD, choose a page geometry, publish an abandonment
-/// bitmap, or release PageMap/mapping state. Those source-specific lifetimes
-/// remain in the owner-exit layer that calls this seam.
+/// bitmap, or duplicate PageMap/mapping release state. Those source-specific
+/// lifetimes remain in the owner-exit layer that supplies the callbacks.
 ///
 /// # Safety
 ///
 /// `theap` must be initialized and exclusively owned for the whole call. Its
-/// queues must be complete, acyclic, and contain exactly `page_count` live
-/// initialized pages after the prepass returns. Prepass callbacks may perform
-/// only their source deferred-free or retired-page transitions and must leave
-/// that valid exclusive image. Both page callbacks may mutate only the current
-/// page's page-local source state; they must not alter queue links, queue
-/// membership, direct-cache entries, or `theap.page_count`. `finish_page` may
-/// release the current page only after this helper has detached it. No producer
-/// may race any non-atomic page field or queue transition.
-pub(crate) unsafe fn theap_collect_abandon_queues<E, DeferredFrees, RetiredPages>(
-    theap: &mut Theap,
+/// queues must be complete, acyclic, and contain only live initialized pages
+/// after the prepass returns; each queue's count, endpoints, and backlinks must
+/// match its membership. `theap.page_count` may be inconsistent only as a
+/// fail-closed invariant input: no pointer validity may depend on that scalar,
+/// and the coordinator will retain the partial drain terminally. Prepass
+/// callbacks may perform only their source deferred-free or retired-page
+/// transitions and must leave that valid exclusive queue image.
+/// [`TheapCollectAbandonCallbacks::collect_page`] may mutate only current
+/// page-local source state and must not alter queue links, queue membership,
+/// direct-cache entries, or `theap.page_count`.
+/// `release_page` and `abandon_page` may act only after this helper has
+/// detached the current page. A failing continuation must leave enough state
+/// for `retain_terminal` to retain one owner. No producer may race any
+/// non-atomic page field or queue transition.
+pub(crate) unsafe fn theap_collect_abandon_queues<'theap, DeferredFrees, RetiredPages, Callbacks>(
+    theap: &'theap mut Theap,
     mut prepass: TheapCollectAbandonPrepass<DeferredFrees, RetiredPages>,
-    mut collect_page: impl FnMut(
-        &TheapCollectAbandonPageActionsReady,
-        usize,
-        NonNull<Page>,
-    ) -> Result<TheapCollectAbandonPageAction, E>,
-    mut finish_page: impl FnMut(
-        &TheapCollectAbandonPageActionsReady,
-        &Theap,
-        usize,
-        NonNull<Page>,
-        TheapCollectAbandonPageAction,
-    ) -> Result<(), E>,
-) -> Result<(), TheapCollectAbandonError<E>>
+    callbacks: &mut Callbacks,
+) -> Result<(), TheapCollectAbandonError<'theap, Callbacks::Error, Callbacks::Retained>>
 where
-    DeferredFrees: FnMut(&mut Theap) -> Result<(), E>,
-    RetiredPages: FnMut(&mut Theap) -> Result<(), E>,
+    DeferredFrees: FnMut(&mut Theap) -> Result<(), Callbacks::Error>,
+    RetiredPages: FnMut(&mut Theap) -> Result<(), Callbacks::Error>,
+    Callbacks: TheapCollectAbandonCallbacks,
 {
     // `mi_theap_collect_ex` runs this complete prepass even when the visitor
     // finds no pages, so the source empty fast path follows rather than
     // bypasses the typed prerequisite boundary.
-    let page_actions_ready = prepass
-        .run(theap)
-        .map_err(TheapCollectAbandonError::Prepass)?;
+    let page_actions_ready = match prepass.run(theap) {
+        Ok(ready) => ready,
+        Err(failure) => {
+            return Err(theap_collect_abandon_terminal_failure(
+                theap,
+                callbacks,
+                failure,
+                None,
+                false,
+            ));
+        }
+    };
 
-    // This is the source `mi_theap_visit_pages` fast empty case. A live
-    // Theap with zero pages has no queue transition to make after the prepass.
+    // This is the source `mi_theap_visit_pages` fast empty case. Since this
+    // boundary accepts `page_count` as a fallible aggregate, prove the actual
+    // queue image is empty before trusting zero and returning successfully.
     if theap.page_count == 0 {
+        for bin in 0..=BIN_FULL {
+            let Some(queue) = theap.pages.get(bin) else {
+                return Err(theap_collect_abandon_terminal_failure(
+                    theap,
+                    callbacks,
+                    TheapCollectAbandonFailure::QueueInvariant,
+                    None,
+                    false,
+                ));
+            };
+            if queue.count != 0 || !queue.first.is_null() || !queue.last.is_null() {
+                return Err(theap_collect_abandon_terminal_failure(
+                    theap,
+                    callbacks,
+                    TheapCollectAbandonFailure::QueueInvariant,
+                    None,
+                    false,
+                ));
+            }
+        }
         return Ok(());
     }
 
@@ -189,50 +461,169 @@ where
 
     // `MI_ABANDON` passes `include_full = true`, unlike ordinary collection.
     for bin in 0..=BIN_FULL {
-        let mut remaining = theap
-            .pages
-            .get(bin)
-            .ok_or(TheapCollectAbandonError::QueueInvariant)?
-            .count;
-        let mut current = theap
-            .pages
-            .get(bin)
-            .ok_or(TheapCollectAbandonError::QueueInvariant)?
-            .first;
+        let Some(queue) = theap.pages.get(bin) else {
+            return Err(theap_collect_abandon_terminal_failure(
+                theap,
+                callbacks,
+                TheapCollectAbandonFailure::QueueInvariant,
+                None,
+                false,
+            ));
+        };
+        let mut remaining = queue.count;
+        let mut current = queue.first;
 
         while remaining != 0 {
-            let page = NonNull::new(current).ok_or(TheapCollectAbandonError::QueueInvariant)?;
+            let Some(page) = NonNull::new(current) else {
+                return Err(theap_collect_abandon_terminal_failure(
+                    theap,
+                    callbacks,
+                    TheapCollectAbandonFailure::QueueInvariant,
+                    None,
+                    false,
+                ));
+            };
             // SAFETY: the caller's queue-completeness and exclusive-owner
             // proof keeps the current page and its successor link valid.
             // Saving this edge is the source visitor's required protection
-            // against either post-detach callback retiring current metadata.
+            // against either detached-page continuation retiring current
+            // metadata.
             let next = unsafe { page.as_ref().next };
-            let action = collect_page(&page_actions_ready, bin, page)
-                .map_err(TheapCollectAbandonError::Page)?;
+            let action = match callbacks.collect_page(TheapCollectAbandonCurrentPage {
+                page,
+                _prepass: &page_actions_ready,
+            }) {
+                Ok(action) => action,
+                Err(error) => {
+                    return Err(theap_collect_abandon_terminal_failure(
+                        theap,
+                        callbacks,
+                        TheapCollectAbandonFailure::CollectPage(error),
+                        Some(page),
+                        false,
+                    ));
+                }
+            };
 
             // SAFETY: the caller proves `page` remains a current member of
-            // this exact complete queue; the callback contract forbids it
-            // from changing links or membership before this source removal.
-            unsafe { theap_collect_abandon_detach_page(theap, bin, page)? };
-            finish_page(&page_actions_ready, theap, bin, page, action)
-                .map_err(TheapCollectAbandonError::Page)?;
+            // this exact complete queue; the current-page capability forbids
+            // changing links or membership before this source removal.
+            if let Err(detach) = unsafe { theap_collect_abandon_detach_page(theap, bin, page) } {
+                return Err(theap_collect_abandon_terminal_failure(
+                    theap,
+                    callbacks,
+                    TheapCollectAbandonFailure::QueueInvariant,
+                    Some(page),
+                    matches!(detach, TheapCollectAbandonDetachFailure::Detached),
+                ));
+            }
 
-            visited_page_count = visited_page_count
-                .checked_add(1)
-                .ok_or(TheapCollectAbandonError::QueueInvariant)?;
+            match action {
+                TheapCollectAbandonPageAction::Release => {
+                    if let Err(error) = callbacks.release_page(TheapCollectAbandonReleasedPage {
+                        page,
+                        theap: &*theap,
+                        _prepass: &page_actions_ready,
+                    }) {
+                        return Err(theap_collect_abandon_terminal_failure(
+                            theap,
+                            callbacks,
+                            TheapCollectAbandonFailure::ReleasePage(error),
+                            Some(page),
+                            true,
+                        ));
+                    }
+                }
+                TheapCollectAbandonPageAction::Abandon => {
+                    if let Err(error) = callbacks.abandon_page(TheapCollectAbandonAbandonedPage {
+                        page,
+                        theap: &*theap,
+                        _prepass: &page_actions_ready,
+                    }) {
+                        return Err(theap_collect_abandon_terminal_failure(
+                            theap,
+                            callbacks,
+                            TheapCollectAbandonFailure::AbandonPage(error),
+                            Some(page),
+                            true,
+                        ));
+                    }
+                }
+            }
+
+            let Some(next_visited_page_count) = visited_page_count.checked_add(1) else {
+                return Err(theap_collect_abandon_terminal_failure(
+                    theap,
+                    callbacks,
+                    TheapCollectAbandonFailure::QueueInvariant,
+                    None,
+                    false,
+                ));
+            };
+            visited_page_count = next_visited_page_count;
             current = next;
             remaining -= 1;
         }
 
         if !current.is_null() {
-            return Err(TheapCollectAbandonError::QueueInvariant);
+            return Err(theap_collect_abandon_terminal_failure(
+                theap,
+                callbacks,
+                TheapCollectAbandonFailure::QueueInvariant,
+                NonNull::new(current),
+                false,
+            ));
         }
     }
 
     if visited_page_count != expected_page_count || theap.page_count != 0 {
-        return Err(TheapCollectAbandonError::QueueInvariant);
+        return Err(theap_collect_abandon_terminal_failure(
+            theap,
+            callbacks,
+            TheapCollectAbandonFailure::QueueInvariant,
+            None,
+            false,
+        ));
     }
     Ok(())
+}
+
+/// Converts one failed source transition into its single retained terminal
+/// owner. The lifetime marker in that owner keeps the exclusive Theap borrow
+/// unavailable to ordinary queue operations until the caller resolves the
+/// failure.
+fn theap_collect_abandon_terminal_failure<'theap, Callbacks>(
+    theap: &'theap mut Theap,
+    callbacks: &mut Callbacks,
+    failure: TheapCollectAbandonFailure<Callbacks::Error>,
+    page: Option<NonNull<Page>>,
+    page_detached: bool,
+) -> TheapCollectAbandonError<'theap, Callbacks::Error, Callbacks::Retained>
+where
+    Callbacks: TheapCollectAbandonCallbacks,
+{
+    let terminal = TheapCollectAbandonTerminalContext {
+        phase: failure.terminal_phase(),
+        page,
+        page_detached,
+        remaining_page_count: theap.page_count(),
+    };
+    let owner = callbacks.retain_terminal(terminal);
+    TheapCollectAbandonError::Terminal {
+        failure,
+        retained: TheapCollectAbandonRetainedOwner {
+            owner,
+            terminal,
+            _theap: PhantomData,
+        },
+    }
+}
+
+/// Whether failure occurred before or after one page's queue detach.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum TheapCollectAbandonDetachFailure {
+    StillQueued,
+    Detached,
 }
 
 /// Removes one current queue member as the common queue half of source
@@ -241,22 +632,22 @@ where
 /// The direct cache must reflect the new queue head before `page_count`
 /// changes. Keeping those operations together prevents a caller-selected
 /// page-shape wrapper from accidentally repairing only direct-small paths.
-unsafe fn theap_collect_abandon_detach_page<E>(
+unsafe fn theap_collect_abandon_detach_page(
     theap: &mut Theap,
     bin: usize,
     page: NonNull<Page>,
-) -> Result<(), TheapCollectAbandonError<E>> {
-    let queue = theap
-        .pages
-        .get_mut(bin)
-        .ok_or(TheapCollectAbandonError::QueueInvariant)? as *mut PageQueue;
+) -> Result<(), TheapCollectAbandonDetachFailure> {
+    let Some(queue) = theap.pages.get_mut(bin) else {
+        return Err(TheapCollectAbandonDetachFailure::StillQueued);
+    };
+    let queue = queue as *mut PageQueue;
     // SAFETY: the caller proves this is a valid exclusive current membership.
     unsafe { page_queue_remove_metadata(&mut *queue, page.as_ptr()) };
     if !theap_collect_abandon_update_direct_cache(theap, bin) {
-        return Err(TheapCollectAbandonError::QueueInvariant);
+        return Err(TheapCollectAbandonDetachFailure::Detached);
     }
     if !theap.note_page_removed() {
-        return Err(TheapCollectAbandonError::QueueInvariant);
+        return Err(TheapCollectAbandonDetachFailure::Detached);
     }
     Ok(())
 }
@@ -983,8 +1374,105 @@ mod tests {
         }
     }
 
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    enum MixedCollectAbandonEvent {
+        DeferredFrees,
+        RetiredPages,
+        Collect(NonNull<Page>, usize, usize),
+        Release(NonNull<Page>, usize, Option<*mut Page>),
+        Abandon(NonNull<Page>, usize, Option<*mut Page>),
+    }
+
+    struct MixedCollectAbandonCallbacks<'a> {
+        small_direct: usize,
+        events: &'a core::cell::RefCell<std::vec::Vec<MixedCollectAbandonEvent>>,
+        terminal_calls: &'a core::cell::Cell<usize>,
+    }
+
+    impl TheapCollectAbandonCallbacks for MixedCollectAbandonCallbacks<'_> {
+        type Error = ();
+        type Retained = ();
+
+        fn collect_page(
+            &mut self,
+            page: TheapCollectAbandonCurrentPage<'_>,
+        ) -> Result<TheapCollectAbandonPageAction, Self::Error> {
+            let page = page.page();
+            // SAFETY: every synthetic producer has joined before the source
+            // owner begins this traversal. The test keeps the page and all
+            // published blocks live and gives this callback sole access to
+            // the page-local owner fields.
+            let collected = unsafe { crate::remote_free::collect(page) }
+                .expect("the source owner force-collects the joined remote list");
+            // SAFETY: the same joined-producer and exclusive-owner proof makes
+            // the post-collection `used` observation stable.
+            let used = unsafe { page.as_ref() }.remote_free_test_used();
+            self.events.borrow_mut().push(MixedCollectAbandonEvent::Collect(
+                page, collected, used,
+            ));
+            Ok(if used == 0 {
+                TheapCollectAbandonPageAction::Release
+            } else {
+                TheapCollectAbandonPageAction::Abandon
+            })
+        }
+
+        fn release_page(
+            &mut self,
+            page: TheapCollectAbandonReleasedPage<'_>,
+        ) -> Result<(), Self::Error> {
+            self.events.borrow_mut().push(MixedCollectAbandonEvent::Release(
+                page.page(),
+                page.page_count_after_detach(),
+                page.direct_page(self.small_direct),
+            ));
+            Ok(())
+        }
+
+        fn abandon_page(
+            &mut self,
+            page: TheapCollectAbandonAbandonedPage<'_>,
+        ) -> Result<(), Self::Error> {
+            // SAFETY: the coordinator detached this page and the test retains
+            // its sole metadata owner. Marking the synthetic page abandoned
+            // represents the source publication performed by this callback.
+            unsafe { page.page().as_mut() }.remote_free_test_mark_abandoned();
+            self.events.borrow_mut().push(MixedCollectAbandonEvent::Abandon(
+                page.page(),
+                page.page_count_after_detach(),
+                page.direct_page(self.small_direct),
+            ));
+            Ok(())
+        }
+
+        fn retain_terminal(
+            &mut self,
+            _terminal: TheapCollectAbandonTerminalContext,
+        ) -> Self::Retained {
+            self.terminal_calls.set(self.terminal_calls.get() + 1);
+        }
+    }
+
+    #[repr(align(16))]
+    struct MixedCollectAbandonRemoteBlock([u8; 16]);
+
+    impl MixedCollectAbandonRemoteBlock {
+        fn pointer(&mut self) -> NonNull<u8> {
+            NonNull::from(&mut self.0).cast()
+        }
+    }
+
+    fn remotely_freed_page(block_size: usize, used: usize) -> Page {
+        let mut page = Page::remote_free_test_page(
+            u16::try_from(used).expect("the focused test page fits source capacity"),
+            used,
+        );
+        page.block_size = block_size;
+        page
+    }
+
     #[test]
-    fn generic_collect_abandon_visits_mixed_queues_in_source_order() {
+    fn generic_collect_abandon_drains_a_mixed_theap_in_source_order() {
         let mut theap = Theap::empty();
         let small_bin = crate::size_class::bin(16).expect("small size has a regular bin");
         let medium_bin = crate::size_class::bin(LARGE_MAX_OBJ_SIZE / 2)
@@ -993,10 +1481,10 @@ mod tests {
 
         let small_size = theap.queue(small_bin).unwrap().block_size();
         let medium_size = theap.queue(medium_bin).unwrap().block_size();
-        let mut small_first = page(small_size);
-        let mut small_second = page(small_size);
-        let mut medium = page(medium_size);
-        let mut full = page(medium_size);
+        let mut small_first = remotely_freed_page(small_size, 1);
+        let mut small_second = remotely_freed_page(small_size, 2);
+        let mut medium = remotely_freed_page(medium_size, 1);
+        let mut full = remotely_freed_page(medium_size, 1);
         let small_first = NonNull::from(&mut small_first);
         let small_second = NonNull::from(&mut small_second);
         let medium = NonNull::from(&mut medium);
@@ -1005,8 +1493,14 @@ mod tests {
         // SAFETY: the four local pages begin detached and the test owns the
         // complete source queue image while it assembles it.
         unsafe {
-            page_queue_push_at_end_metadata(theap.queue_mut(small_bin).unwrap(), small_first.as_ptr());
-            page_queue_push_at_end_metadata(theap.queue_mut(small_bin).unwrap(), small_second.as_ptr());
+            page_queue_push_at_end_metadata(
+                theap.queue_mut(small_bin).unwrap(),
+                small_first.as_ptr(),
+            );
+            page_queue_push_at_end_metadata(
+                theap.queue_mut(small_bin).unwrap(),
+                small_second.as_ptr(),
+            );
             page_queue_push_at_end_metadata(theap.queue_mut(medium_bin).unwrap(), medium.as_ptr());
             page_queue_push_at_end_metadata(theap.queue_mut(BIN_FULL).unwrap(), full.as_ptr());
         }
@@ -1016,79 +1510,86 @@ mod tests {
         assert!(theap_collect_abandon_update_direct_cache(&mut theap, small_bin));
         let small_direct = invariants::word_count(small_size).unwrap();
         assert_eq!(theap.direct_page(small_direct), Some(small_first.as_ptr()));
+        assert!(page_is_in_full(unsafe { full.as_ref() }));
 
-        let mut visits = std::vec::Vec::new();
-        let mut finished = std::vec::Vec::new();
-        // SAFETY: the test has exclusive access to the complete, acyclic
-        // mixed queue image and the callbacks alter neither membership nor
-        // links. They only record the exact source sequence.
+        let mut small_first_remote = MixedCollectAbandonRemoteBlock([0; 16]);
+        let mut small_second_remote = MixedCollectAbandonRemoteBlock([0; 16]);
+        let mut medium_remote = MixedCollectAbandonRemoteBlock([0; 16]);
+        let mut full_remote = MixedCollectAbandonRemoteBlock([0; 16]);
+        // SAFETY: each block and its exact live owner-associated page stay
+        // pinned until the coordinator has collected all four joined remote
+        // publications. Every block is published exactly once.
         unsafe {
+            crate::remote_free::push(small_first, small_first_remote.pointer()).unwrap();
+            crate::remote_free::push(small_second, small_second_remote.pointer()).unwrap();
+            crate::remote_free::push(medium, medium_remote.pointer()).unwrap();
+            crate::remote_free::push(full, full_remote.pointer()).unwrap();
+        }
+
+        let events = core::cell::RefCell::new(std::vec::Vec::new());
+        let terminal_calls = core::cell::Cell::new(0usize);
+        let mut callbacks = MixedCollectAbandonCallbacks {
+            small_direct,
+            events: &events,
+            terminal_calls: &terminal_calls,
+        };
+
+        // SAFETY: the test has exclusive access to the complete, acyclic
+        // mixed queue image. The typed callbacks can only choose all-free or
+        // live-page continuations; the coordinator owns the queue transitions.
+        assert!(unsafe {
             theap_collect_abandon_queues(
                 &mut theap,
                 TheapCollectAbandonPrepass::new(
-                    |_theap: &mut Theap| Ok::<_, ()>(()),
-                    |_theap: &mut Theap| Ok::<_, ()>(()),
+                    |theap: &mut Theap| {
+                        assert_eq!(theap.page_count(), 4);
+                        events
+                            .borrow_mut()
+                            .push(MixedCollectAbandonEvent::DeferredFrees);
+                        Ok::<_, ()>(())
+                    },
+                    |theap: &mut Theap| {
+                        assert_eq!(theap.page_count(), 4);
+                        events
+                            .borrow_mut()
+                            .push(MixedCollectAbandonEvent::RetiredPages);
+                        Ok::<_, ()>(())
+                    },
                 ),
-                |_prepass, bin, page| {
-                    visits.push((bin, page));
-                    Ok::<_, ()>(if page == small_second {
-                        TheapCollectAbandonPageAction::Abandon
-                    } else {
-                        TheapCollectAbandonPageAction::Release
-                    })
-                },
-                |_prepass, theap, bin, page, action| {
-                    finished.push((bin, page, action, theap.page_count(), theap.direct_page(small_direct)));
-                    Ok::<_, ()>(())
-                },
+                &mut callbacks,
             )
-            .expect("the valid mixed Theap completes its source queue traversal");
-        }
+            .is_ok()
+        });
 
         assert_eq!(
-            visits,
+            events.into_inner(),
             std::vec![
-                (small_bin, small_first),
-                (small_bin, small_second),
-                (medium_bin, medium),
-                (BIN_FULL, full),
-            ],
-            "regular bins precede BIN_FULL and the saved small successor remains visitable"
-        );
-        assert_eq!(
-            finished,
-            std::vec![
-                (
-                    small_bin,
+                MixedCollectAbandonEvent::DeferredFrees,
+                MixedCollectAbandonEvent::RetiredPages,
+                MixedCollectAbandonEvent::Collect(small_first, 1, 0),
+                MixedCollectAbandonEvent::Release(
                     small_first,
-                    TheapCollectAbandonPageAction::Release,
                     3,
                     Some(small_second.as_ptr()),
                 ),
-                (
-                    small_bin,
+                MixedCollectAbandonEvent::Collect(small_second, 1, 1),
+                MixedCollectAbandonEvent::Abandon(
                     small_second,
-                    TheapCollectAbandonPageAction::Abandon,
                     2,
                     Some(EMPTY_PAGE.as_ptr()),
                 ),
-                (
-                    medium_bin,
+                MixedCollectAbandonEvent::Collect(medium, 1, 0),
+                MixedCollectAbandonEvent::Release(
                     medium,
-                    TheapCollectAbandonPageAction::Release,
                     1,
                     Some(EMPTY_PAGE.as_ptr()),
                 ),
-                (
-                    BIN_FULL,
-                    full,
-                    TheapCollectAbandonPageAction::Release,
-                    0,
-                    Some(EMPTY_PAGE.as_ptr()),
-                ),
+                MixedCollectAbandonEvent::Collect(full, 1, 0),
+                MixedCollectAbandonEvent::Release(full, 0, Some(EMPTY_PAGE.as_ptr())),
             ],
-            "each post-detach action observes the source direct-cache repair before page-count decrement"
+            "deferred then retired prepasses precede remote collection and every release/abandon continuation through BIN_FULL"
         );
+        assert_eq!(terminal_calls.get(), 0);
         assert!(theap.queue(small_bin).unwrap().is_empty());
         assert!(theap.queue(medium_bin).unwrap().is_empty());
         assert!(theap.queue(BIN_FULL).unwrap().is_empty());
@@ -1096,115 +1597,353 @@ mod tests {
         assert!(!page_is_in_full(unsafe { full.as_ref() }));
     }
 
-    #[test]
-    fn generic_collect_abandon_prepass_precedes_every_page_action() {
-        let mut theap = Theap::empty();
-        let bin = crate::size_class::bin(16).expect("small size has a regular bin");
-        let block_size = theap.queue(bin).unwrap().block_size();
-        let mut only = page(block_size);
-        let only = NonNull::from(&mut only);
-        // SAFETY: this local page begins detached, and the test owns the
-        // complete one-member queue image.
-        unsafe { page_queue_push_at_end_metadata(theap.queue_mut(bin).unwrap(), only.as_ptr()) };
-        theap.note_page_added();
+    #[derive(Debug, Eq, PartialEq)]
+    enum TerminalFailure {
+        AbandonPublication,
+    }
 
-        let events = std::cell::RefCell::new(std::vec::Vec::new());
-        // SAFETY: the test exclusively owns the complete acyclic queue image.
-        // The typed prepass callbacks only observe the Theap, while page
-        // callbacks only record their source-order position.
-        unsafe {
-            theap_collect_abandon_queues(
-                &mut theap,
-                TheapCollectAbandonPrepass::new(
-                    |theap: &mut Theap| {
-                        assert_eq!(theap.page_count(), 1);
-                        events.borrow_mut().push("deferred frees");
-                        Ok::<_, ()>(())
-                    },
-                    |theap: &mut Theap| {
-                        assert_eq!(theap.page_count(), 1);
-                        events.borrow_mut().push("retired pages");
-                        Ok::<_, ()>(())
-                    },
-                ),
-                |_prepass, actual_bin, page| {
-                    assert_eq!(actual_bin, bin);
-                    assert_eq!(page, only);
-                    events.borrow_mut().push("page collect");
-                    Ok::<_, ()>(TheapCollectAbandonPageAction::Release)
-                },
-                |_prepass, theap, actual_bin, page, action| {
-                    assert_eq!(actual_bin, bin);
-                    assert_eq!(page, only);
-                    assert_eq!(action, TheapCollectAbandonPageAction::Release);
-                    assert_eq!(theap.page_count(), 0);
-                    events.borrow_mut().push("terminal callback");
-                    Ok::<_, ()>(())
-                },
-            )
-            .expect("the source prepass and one-page traversal complete");
+    #[derive(Debug, Eq, PartialEq)]
+    struct TerminalOwner {
+        retain_call: usize,
+    }
+
+    struct TerminalFailureCallbacks<'a> {
+        only: NonNull<Page>,
+        small_direct: usize,
+        abandon_transition: &'a core::cell::Cell<Option<(usize, Option<*mut Page>)>>,
+        retain_calls: &'a core::cell::Cell<usize>,
+    }
+
+    impl TheapCollectAbandonCallbacks for TerminalFailureCallbacks<'_> {
+        type Error = TerminalFailure;
+        type Retained = TerminalOwner;
+
+        fn collect_page(
+            &mut self,
+            page: TheapCollectAbandonCurrentPage<'_>,
+        ) -> Result<TheapCollectAbandonPageAction, Self::Error> {
+            assert_eq!(page.page(), self.only);
+            Ok(TheapCollectAbandonPageAction::Abandon)
         }
 
-        assert_eq!(
-            events.into_inner(),
-            std::vec![
-                "deferred frees",
-                "retired pages",
-                "page collect",
-                "terminal callback",
-            ],
-            "pinned mi_theap_collect_ex completes its two prepasses before a visitor can act"
-        );
+        fn release_page(
+            &mut self,
+            _page: TheapCollectAbandonReleasedPage<'_>,
+        ) -> Result<(), Self::Error> {
+            panic!("the live page must select only the abandonment continuation")
+        }
+
+        fn abandon_page(
+            &mut self,
+            page: TheapCollectAbandonAbandonedPage<'_>,
+        ) -> Result<(), Self::Error> {
+            assert_eq!(page.page(), self.only);
+            self.abandon_transition.set(Some((
+                page.page_count_after_detach(),
+                page.direct_page(self.small_direct),
+            )));
+            Err(TerminalFailure::AbandonPublication)
+        }
+
+        fn retain_terminal(
+            &mut self,
+            terminal: TheapCollectAbandonTerminalContext,
+        ) -> Self::Retained {
+            assert_eq!(terminal.phase(), TheapCollectAbandonTerminalPhase::AbandonPage);
+            assert_eq!(terminal.page(), Some(self.only));
+            assert!(terminal.page_is_detached());
+            assert_eq!(terminal.remaining_page_count(), 0);
+            let retain_call = self.retain_calls.get() + 1;
+            self.retain_calls.set(retain_call);
+            TerminalOwner { retain_call }
+        }
     }
 
     #[test]
-    fn generic_collect_abandon_prepass_failure_prevents_page_actions() {
-        #[derive(Debug, Eq, PartialEq)]
-        enum Failure {
-            DeferredFrees,
-        }
-
+    fn generic_collect_abandon_terminal_failure_retains_one_detached_owner() {
         let mut theap = Theap::empty();
         let bin = crate::size_class::bin(16).expect("small size has a regular bin");
         let block_size = theap.queue(bin).unwrap().block_size();
         let mut only = page(block_size);
         let only = NonNull::from(&mut only);
-        // SAFETY: the local page is detached before the test exclusively
-        // constructs its one-member valid source queue image.
+        // SAFETY: the local page begins detached and this test owns the
+        // complete one-member source queue image.
         unsafe { page_queue_push_at_end_metadata(theap.queue_mut(bin).unwrap(), only.as_ptr()) };
         theap.note_page_added();
-        let page_actions = core::cell::Cell::new(0usize);
+        assert!(theap_collect_abandon_update_direct_cache(&mut theap, bin));
+        let small_direct = invariants::word_count(block_size).unwrap();
 
-        // SAFETY: the prepass rejects before it can mutate the valid queue.
-        // The page callbacks must consequently remain unreachable and the
-        // original owner retains its full queue image.
+        let abandon_transition = core::cell::Cell::new(None);
+        let retain_calls = core::cell::Cell::new(0usize);
+        let mut callbacks = TerminalFailureCallbacks {
+            only,
+            small_direct,
+            abandon_transition: &abandon_transition,
+            retain_calls: &retain_calls,
+        };
+
+        // SAFETY: the local image is complete and exclusive. The injected
+        // failure leaves the detached page untouched so the terminal owner can
+        // retain it instead of fabricating a retry or reattachment.
         let result = unsafe {
             theap_collect_abandon_queues(
                 &mut theap,
                 TheapCollectAbandonPrepass::new(
-                    |_theap: &mut Theap| Err::<(), _>(Failure::DeferredFrees),
-                    |_theap: &mut Theap| panic!("retired-page collection follows only a successful deferred prepass"),
+                    |_theap: &mut Theap| Ok::<_, TerminalFailure>(()),
+                    |_theap: &mut Theap| Ok::<_, TerminalFailure>(()),
                 ),
-                |_prepass, _bin, _page| {
-                    page_actions.set(page_actions.get() + 1);
-                    Ok::<_, Failure>(TheapCollectAbandonPageAction::Release)
-                },
-                |_prepass, _theap, _bin, _page, _action| {
-                    page_actions.set(page_actions.get() + 1);
-                    Ok::<_, Failure>(())
-                },
+                &mut callbacks,
             )
         };
 
-        assert_eq!(result, Err(TheapCollectAbandonError::Prepass(Failure::DeferredFrees)));
-        assert_eq!(page_actions.get(), 0);
-        assert_eq!(theap.page_count(), 1);
-        assert_eq!(theap.queue(bin).unwrap().first, only.as_ptr());
-        assert_eq!(theap.queue(bin).unwrap().count, 1);
+        let retained = match result {
+            Err(TheapCollectAbandonError::Terminal { failure, retained }) => {
+                assert_eq!(
+                    failure,
+                    TheapCollectAbandonFailure::AbandonPage(
+                        TerminalFailure::AbandonPublication,
+                    ),
+                );
+                retained
+            }
+            Ok(()) => panic!("the injected abandonment-publication failure must be terminal"),
+        };
+        assert_eq!(
+            abandon_transition.get(),
+            Some((0, Some(EMPTY_PAGE.as_ptr()))),
+            "the terminal callback observes direct-cache repair before page-count transition completes"
+        );
+        assert_eq!(retain_calls.get(), 1);
+        assert_eq!(retained.owner(), &TerminalOwner { retain_call: 1 });
+        assert_eq!(
+            retained.terminal_context().phase(),
+            TheapCollectAbandonTerminalPhase::AbandonPage,
+        );
+        assert!(retained.terminal_context().page_is_detached());
+        assert!(unsafe { only.as_ref() }.is_queue_detached());
+
+        drop(retained);
+        assert_eq!(theap.page_count(), 0);
+        assert!(theap.queue(bin).unwrap().is_empty());
+        assert_eq!(theap.direct_page(small_direct), Some(EMPTY_PAGE.as_ptr()));
     }
 
     #[test]
-    fn generic_collect_abandon_rejects_a_queue_count_mismatch() {
+    fn generic_collect_abandon_prepass_failure_retains_the_untouched_owner() {
+        let mut theap = Theap::empty();
+        let bin = crate::size_class::bin(16).expect("small size has a regular bin");
+        let block_size = theap.queue(bin).unwrap().block_size();
+        let mut only = page(block_size);
+        let only = NonNull::from(&mut only);
+        // SAFETY: this test exclusively constructs one complete source queue
+        // and keeps its page live through the rejected prepass.
+        unsafe { page_queue_push_at_end_metadata(theap.queue_mut(bin).unwrap(), only.as_ptr()) };
+        theap.note_page_added();
+        assert!(theap_collect_abandon_update_direct_cache(&mut theap, bin));
+        let small_direct = invariants::word_count(block_size).unwrap();
+        let mut callbacks = QueueInvariantCallbacks {
+            terminal_calls: core::cell::Cell::new(0),
+        };
+
+        // SAFETY: the queue image is valid and exclusive. The injected
+        // deferred-free failure occurs before either queue or page callback
+        // may mutate it.
+        let result = unsafe {
+            theap_collect_abandon_queues(
+                &mut theap,
+                TheapCollectAbandonPrepass::new(
+                    |_theap: &mut Theap| Err::<(), _>(()),
+                    |_theap: &mut Theap| panic!("retired collection cannot follow deferred failure"),
+                ),
+                &mut callbacks,
+            )
+        };
+        let retained = match result {
+            Err(TheapCollectAbandonError::Terminal { failure, retained }) => {
+                assert_eq!(failure, TheapCollectAbandonFailure::DeferredFrees(()));
+                retained
+            }
+            Ok(()) => panic!("the injected prepass failure must retain the untouched owner"),
+        };
+        assert_eq!(callbacks.terminal_calls.get(), 1);
+        assert_eq!(
+            retained.owner().phase(),
+            TheapCollectAbandonTerminalPhase::DeferredFrees,
+        );
+        assert_eq!(retained.owner().page(), None);
+        assert!(!retained.owner().page_is_detached());
+        assert_eq!(retained.owner().remaining_page_count(), 1);
+        drop(retained);
+        assert_eq!(theap.page_count(), 1);
+        assert_eq!(theap.direct_page(small_direct), Some(only.as_ptr()));
+        // SAFETY: no prepass or page action mutated the complete queue image.
+        unsafe { assert_queue(theap.queue(bin).unwrap(), &[only.as_ptr()]) };
+    }
+
+    struct MidDrainFailureCallbacks {
+        first: NonNull<Page>,
+        second: NonNull<Page>,
+        small_direct: usize,
+        collect_calls: usize,
+        release_calls: usize,
+        terminal_calls: usize,
+    }
+
+    impl TheapCollectAbandonCallbacks for MidDrainFailureCallbacks {
+        type Error = TerminalFailure;
+        type Retained = TheapCollectAbandonTerminalContext;
+
+        fn collect_page(
+            &mut self,
+            page: TheapCollectAbandonCurrentPage<'_>,
+        ) -> Result<TheapCollectAbandonPageAction, Self::Error> {
+            self.collect_calls += 1;
+            if page.page() == self.first {
+                Ok(TheapCollectAbandonPageAction::Release)
+            } else {
+                assert_eq!(page.page(), self.second);
+                Err(TerminalFailure::AbandonPublication)
+            }
+        }
+
+        fn release_page(
+            &mut self,
+            page: TheapCollectAbandonReleasedPage<'_>,
+        ) -> Result<(), Self::Error> {
+            assert_eq!(page.page(), self.first);
+            assert_eq!(page.page_count_after_detach(), 1);
+            assert_eq!(page.direct_page(self.small_direct), Some(self.second.as_ptr()));
+            self.release_calls += 1;
+            Ok(())
+        }
+
+        fn abandon_page(
+            &mut self,
+            _page: TheapCollectAbandonAbandonedPage<'_>,
+        ) -> Result<(), Self::Error> {
+            panic!("the second page fails during collection while still queued")
+        }
+
+        fn retain_terminal(
+            &mut self,
+            terminal: TheapCollectAbandonTerminalContext,
+        ) -> Self::Retained {
+            self.terminal_calls += 1;
+            terminal
+        }
+    }
+
+    #[test]
+    fn generic_collect_abandon_mid_drain_failure_retains_the_remaining_queue() {
+        let mut theap = Theap::empty();
+        let bin = crate::size_class::bin(16).expect("small size has a regular bin");
+        let block_size = theap.queue(bin).unwrap().block_size();
+        let mut first = page(block_size);
+        let mut second = page(block_size);
+        let first = NonNull::from(&mut first);
+        let second = NonNull::from(&mut second);
+        // SAFETY: the two pages begin detached and the test owns their one
+        // complete acyclic source queue throughout the partial drain.
+        unsafe {
+            page_queue_push_at_end_metadata(theap.queue_mut(bin).unwrap(), first.as_ptr());
+            page_queue_push_at_end_metadata(theap.queue_mut(bin).unwrap(), second.as_ptr());
+        }
+        theap.note_page_added();
+        theap.note_page_added();
+        assert!(theap_collect_abandon_update_direct_cache(&mut theap, bin));
+        let small_direct = invariants::word_count(block_size).unwrap();
+        let mut callbacks = MidDrainFailureCallbacks {
+            first,
+            second,
+            small_direct,
+            collect_calls: 0,
+            release_calls: 0,
+            terminal_calls: 0,
+        };
+
+        // SAFETY: the source queue is complete and exclusive. The injected
+        // second-page collection failure happens before that page's one-way
+        // detach, while the first page's successful release remains final.
+        let result = unsafe {
+            theap_collect_abandon_queues(
+                &mut theap,
+                TheapCollectAbandonPrepass::new(
+                    |_theap: &mut Theap| Ok::<_, TerminalFailure>(()),
+                    |_theap: &mut Theap| Ok::<_, TerminalFailure>(()),
+                ),
+                &mut callbacks,
+            )
+        };
+        let retained = match result {
+            Err(TheapCollectAbandonError::Terminal { failure, retained }) => {
+                assert_eq!(
+                    failure,
+                    TheapCollectAbandonFailure::CollectPage(
+                        TerminalFailure::AbandonPublication,
+                    ),
+                );
+                retained
+            }
+            Ok(()) => panic!("the injected mid-drain collection failure must be terminal"),
+        };
+        assert_eq!(callbacks.collect_calls, 2);
+        assert_eq!(callbacks.release_calls, 1);
+        assert_eq!(callbacks.terminal_calls, 1);
+        assert_eq!(retained.owner().page(), Some(second));
+        assert_eq!(
+            retained.owner().phase(),
+            TheapCollectAbandonTerminalPhase::CollectPage,
+        );
+        assert!(!retained.owner().page_is_detached());
+        assert_eq!(retained.owner().remaining_page_count(), 1);
+        assert!(unsafe { first.as_ref() }.is_queue_detached());
+        drop(retained);
+        assert_eq!(theap.page_count(), 1);
+        assert_eq!(theap.direct_page(small_direct), Some(second.as_ptr()));
+        // SAFETY: the failed current page never left this one-member queue.
+        unsafe { assert_queue(theap.queue(bin).unwrap(), &[second.as_ptr()]) };
+    }
+
+    struct QueueInvariantCallbacks {
+        terminal_calls: core::cell::Cell<usize>,
+    }
+
+    impl TheapCollectAbandonCallbacks for QueueInvariantCallbacks {
+        type Error = ();
+        type Retained = TheapCollectAbandonTerminalContext;
+
+        fn collect_page(
+            &mut self,
+            _page: TheapCollectAbandonCurrentPage<'_>,
+        ) -> Result<TheapCollectAbandonPageAction, Self::Error> {
+            Ok(TheapCollectAbandonPageAction::Release)
+        }
+
+        fn release_page(
+            &mut self,
+            _page: TheapCollectAbandonReleasedPage<'_>,
+        ) -> Result<(), Self::Error> {
+            Ok(())
+        }
+
+        fn abandon_page(
+            &mut self,
+            _page: TheapCollectAbandonAbandonedPage<'_>,
+        ) -> Result<(), Self::Error> {
+            Ok(())
+        }
+
+        fn retain_terminal(
+            &mut self,
+            terminal: TheapCollectAbandonTerminalContext,
+        ) -> Self::Retained {
+            self.terminal_calls.set(self.terminal_calls.get() + 1);
+            terminal
+        }
+    }
+
+    #[test]
+    fn generic_collect_abandon_retains_a_page_count_invariant_failure() {
         let mut theap = Theap::empty();
         let bin = crate::size_class::bin(16).expect("small size has a regular bin");
         let block_size = theap.queue(bin).unwrap().block_size();
@@ -1212,15 +1951,18 @@ mod tests {
         let only = NonNull::from(&mut only);
 
         // SAFETY: the page is initially detached and locally owned. The
-        // subsequent manually paired Theap count makes only the queue's
-        // source count malformed for this rejection test.
+        // queue itself stays complete and valid; only the separate Theap
+        // aggregate is made inconsistent for this fail-closed audit.
         unsafe { page_queue_push_at_end_metadata(theap.queue_mut(bin).unwrap(), only.as_ptr()) };
         theap.note_page_added();
-        theap.queue_mut(bin).unwrap().count += 1;
+        theap.note_page_added();
+        let mut callbacks = QueueInvariantCallbacks {
+            terminal_calls: core::cell::Cell::new(0),
+        };
 
-        // SAFETY: links themselves remain valid and exclusive; the primitive
-        // must reject the count/image disagreement rather than following a
-        // nonexistent successor.
+        // SAFETY: all queue links, membership counts, and endpoints remain
+        // valid and exclusive. Only `theap.page_count` is inconsistent, which
+        // this coordinator explicitly accepts as a typed fail-closed input.
         let result = unsafe {
             theap_collect_abandon_queues(
                 &mut theap,
@@ -1228,11 +1970,70 @@ mod tests {
                     |_theap: &mut Theap| Ok::<_, ()>(()),
                     |_theap: &mut Theap| Ok::<_, ()>(()),
                 ),
-                |_prepass, _bin, _page| Ok::<_, ()>(TheapCollectAbandonPageAction::Release),
-                |_prepass, _theap, _bin, _page, _action| Ok::<_, ()>(()),
+                &mut callbacks,
             )
         };
-        assert_eq!(result, Err(TheapCollectAbandonError::QueueInvariant));
+        let retained = match result {
+            Err(TheapCollectAbandonError::Terminal { failure, retained }) => {
+                assert_eq!(failure, TheapCollectAbandonFailure::QueueInvariant);
+                retained
+            }
+            Ok(()) => panic!("the malformed queue must be retained terminally"),
+        };
+        assert_eq!(callbacks.terminal_calls.get(), 1);
+        assert_eq!(
+            retained.owner().phase(),
+            TheapCollectAbandonTerminalPhase::QueueInvariant,
+        );
+        assert_eq!(retained.owner().remaining_page_count(), 1);
+        drop(retained);
+        assert_eq!(theap.page_count(), 1);
+        assert!(theap.queue(bin).unwrap().is_empty());
+    }
+
+    #[test]
+    fn generic_collect_abandon_rejects_a_false_empty_page_count_without_detaching() {
+        let mut theap = Theap::empty();
+        let bin = crate::size_class::bin(16).expect("small size has a regular bin");
+        let block_size = theap.queue(bin).unwrap().block_size();
+        let mut only = page(block_size);
+        let only = NonNull::from(&mut only);
+
+        // SAFETY: the page is initially detached and locally owned. This
+        // creates one valid non-empty queue while deliberately leaving the
+        // separate aggregate `page_count` at zero.
+        unsafe { page_queue_push_at_end_metadata(theap.queue_mut(bin).unwrap(), only.as_ptr()) };
+        let mut callbacks = QueueInvariantCallbacks {
+            terminal_calls: core::cell::Cell::new(0),
+        };
+
+        // SAFETY: queue links, membership count, endpoints, and ownership are
+        // valid and exclusive. Only the accepted fallible aggregate is false.
+        let result = unsafe {
+            theap_collect_abandon_queues(
+                &mut theap,
+                TheapCollectAbandonPrepass::new(
+                    |_theap: &mut Theap| Ok::<_, ()>(()),
+                    |_theap: &mut Theap| Ok::<_, ()>(()),
+                ),
+                &mut callbacks,
+            )
+        };
+        let retained = match result {
+            Err(TheapCollectAbandonError::Terminal { failure, retained }) => {
+                assert_eq!(failure, TheapCollectAbandonFailure::QueueInvariant);
+                retained
+            }
+            Ok(()) => panic!("the false empty aggregate must be retained terminally"),
+        };
+        assert_eq!(callbacks.terminal_calls.get(), 1);
+        assert_eq!(retained.owner().page(), None);
+        assert!(!retained.owner().page_is_detached());
+        assert_eq!(retained.owner().remaining_page_count(), 0);
+        drop(retained);
+        assert_eq!(theap.page_count(), 0);
+        // SAFETY: the fail-closed fast-path audit cannot detach the page.
+        unsafe { assert_queue(theap.queue(bin).unwrap(), &[only.as_ptr()]) };
     }
 
     #[test]
