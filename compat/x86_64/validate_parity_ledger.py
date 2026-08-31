@@ -1437,6 +1437,8 @@ SEARCH_HASH_TABLE_SYMBOLS = (
 
 QSORT_HELPER_SYMBOLS = ("__qsort_r",)
 
+AUXV_OBSERVATION_SYMBOLS = ("__getauxval", "getauxval")
+
 MATH_COMPLEX_FOUNDATION_SYMBOLS = (
     "__fpclassify",
     "__fpclassifyf",
@@ -11935,7 +11937,7 @@ def require_system_configuration_artifact(family: Mapping[str, Any]) -> None:
         "corresponding AArch64",
         "focused dynamic fixture",
         "full musl sysconf table",
-        "startup-owned auxv/getauxval",
+        "separate direct `getauxval` lookup",
     ):
         require(
             phrase in description,
@@ -16602,6 +16604,231 @@ def require_numeric_netdb_artifact(family: Mapping[str, Any]) -> None:
         "libc-numeric-netdb is absent from the native dispatcher",
     )
 
+
+
+def require_auxv_observation_artifact(family: Mapping[str, Any]) -> None:
+    """Keep direct initial-vector lookup bounded, static, and private."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.c-abi-compat].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [
+        entry for entry in artifacts if entry.get("id") == "static-c-auxv-observation"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.c-abi-compat must contain exactly one static-c-auxv-observation artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-auxv-observation must not promote libc.c-abi-compat",
+    )
+    artifact = matching[0]
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for symbol in AUXV_OBSERVATION_SYMBOLS:
+        require(
+            f"`{symbol}`" in description,
+            f"static-c-auxv-observation description omits {symbol}",
+        )
+    for phrase in (
+        "Private native x86 selected-static-archive",
+        "still-planned `libc.c-abi-compat`",
+        "dependency-free",
+        "weak same-address `getauxval`",
+        "4096",
+        "AT_NULL",
+        "AT_SECURE",
+        "ENOENT",
+        "secure-execution policy",
+        "loader/dynamic startup",
+        "C ABI closure",
+        "family promotion",
+        "public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"static-c-auxv-observation description omits {phrase}",
+        )
+
+    owners = set(
+        nonempty_strings(
+            artifact["source_owners"], "static-c-auxv-observation.source_owners"
+        )
+    )
+    for owner in (
+        "compat/upstreams.toml",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/auxv_observation.rs",
+        "libc/src/c_abi/x86_64/static_startup.rs",
+        "libc/src/c_abi/x86_64/errno.rs",
+        "include/sys/auxv.h",
+        "include/elf.h",
+        "compat/x86_64/machine_context_header_abi_probe.c",
+        "compat/x86_64/machine_context_header_abi_probe.cpp",
+        "compat/x86_64/run_machine_context_header_abi.sh",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/libc_auxv_observation_probe.c",
+        "compat/x86_64/libc_auxv_observation_start.S",
+        "compat/x86_64/run_libc_auxv_observation.sh",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/README.md",
+        "STATUS.md",
+        "x86-64.md",
+        "scripts/dev-x86_64.sh",
+        "scripts/check_structure.py",
+    ):
+        require(
+            owner in owners,
+            f"static-c-auxv-observation source owners omit {owner}",
+        )
+
+    prerequisites = nonempty_strings(
+        artifact["x86_abi_prerequisites"],
+        "static-c-auxv-observation.x86_abi_prerequisites",
+    )
+    require(
+        any(
+            "unsigned long" in item
+            and "AT_NULL=0" in item
+            and "ENOENT=2" in item
+            and "AT_SECURE" in item
+            for item in prerequisites
+        ),
+        "static-c-auxv-observation must record its x86 auxv/errno ABI",
+    )
+    require(
+        any(
+            "9fa28ece75d8a2191de7c5bb53bed224c5947417" in item
+            and "src/misc/getauxval.c" in item
+            and "weak same-address" in item
+            for item in prerequisites
+        ),
+        "static-c-auxv-observation must retain its pinned-musl source mapping",
+    )
+    require(
+        any(
+            "4096" in item
+            and "release publication" in item
+            and "constructors and main" in item
+            and "raw auxv address" in item
+            for item in prerequisites
+        ),
+        "static-c-auxv-observation must retain its bounded startup publication",
+    )
+
+    exports = set(
+        static_c_abi_export_names(
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        )
+    )
+    require(
+        set(AUXV_OBSERVATION_SYMBOLS) <= exports,
+        "static-c-auxv-observation must retain both selected exports",
+    )
+    require(
+        not (exports & {"__auxv", "secure_getenv"}),
+        "static-c-auxv-observation must not expose raw auxv or secure policy",
+    )
+
+    static_root = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+    ).read_text(encoding="utf-8")
+    require(
+        '#[path = "auxv_observation.rs"]\nmod auxv_observation;' in static_root,
+        "x86 static C ABI must compose the auxv observation leaf",
+    )
+    startup = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_startup.rs"
+    ).read_text(encoding="utf-8")
+    install_call = "unsafe { auxv_observation::install_initial(vectors.auxv) };"
+    init_call = "if let Some(init) = init {"
+    process_globals_call = "unsafe { process_globals::install(argc, argv) };"
+    require(
+        "auxv: *const usize" in startup
+        and "MAX_AUXV_ENTRIES: usize = 4096" in startup
+        and install_call in startup
+        and init_call in startup
+        and process_globals_call in startup
+        and startup.index(install_call) < startup.index(process_globals_call)
+        and startup.index(install_call) < startup.index(init_call),
+        "x86 static startup must publish bounded auxv before constructors and process globals",
+    )
+    leaf = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "auxv_observation.rs"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "AtomicUsize",
+        "Ordering::Release",
+        "Ordering::Acquire",
+        "MAX_AUXV_ENTRIES: usize = 4096",
+        '".weak getauxval"',
+        '".set getauxval, __getauxval"',
+        'pub unsafe extern "C" fn __getauxval',
+    ):
+        require(
+            snippet in leaf,
+            f"auxv observation leaf omits {snippet}",
+        )
+    for forbidden in ("raw_syscall", "getrandom", "fn secure_getenv", "__auxv"):
+        require(
+            forbidden not in leaf,
+            f"auxv observation leaf widens into {forbidden}",
+        )
+
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-auxv-observation"},
+        "static-c-auxv-observation must use its closed native command",
+    )
+    scope = evidence[0]["scope"]
+    assert isinstance(scope, str)
+    for phrase in (
+        "Pinned-musl static project-header C reference",
+        "`-nostdlib -static` candidate",
+        "weak same-address",
+        "AT_SECURE",
+        "AT_NULL/ENOENT",
+        "secure-execution policy",
+        "loader/dynamic startup",
+        "C ABI closure",
+        "family promotion",
+        "public x86 support",
+    ):
+        require(
+            phrase in scope,
+            f"static-c-auxv-observation evidence scope omits {phrase}",
+        )
+    runner = (
+        ROOT / "compat" / "x86_64" / "run_libc_auxv_observation.sh"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "run_musl_oracle.sh",
+        "run_machine_context_header_abi.sh",
+        "assert_weak_same_address_alias",
+        "pinned-musl static reference",
+        "-nostdlib -static",
+        "R_X86_64_TPOFF",
+        "AT_SECURE",
+        "AT_NULL/ENOENT",
+        "__getauxval",
+        "dynamic TLS",
+    ):
+        require(
+            snippet in runner,
+            f"auxv-observation runner omits {snippet}",
+        )
+    dispatcher = (ROOT / "scripts" / "dev-x86_64.sh").read_text(encoding="utf-8")
+    require(
+        "libc-auxv-observation)" in dispatcher
+        and "run_libc_auxv_observation.sh" in dispatcher,
+        "auxv-observation dispatcher binding is missing",
+    )
 
 
 def require_process_globals_getopt_artifact(family: Mapping[str, Any]) -> None:
@@ -23322,6 +23549,7 @@ def validate_ledger(
     require_extended_attributes_artifact(by_id["libc.posix-runtime"])
     require_inet_address_artifact(by_id["libc.resolver"])
     require_numeric_netdb_artifact(by_id["libc.resolver"])
+    require_auxv_observation_artifact(by_id["libc.c-abi-compat"])
     require_process_globals_getopt_artifact(by_id["libc.c-abi-compat"])
     require_search_tree_intrusive_slice(by_id["libc.c-abi-compat"])
     require_search_hash_table_slice(by_id["libc.c-abi-compat"])

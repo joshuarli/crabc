@@ -438,6 +438,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-socket-messages
 ./scripts/dev-x86_64.sh libc-byte-strings
 ./scripts/dev-x86_64.sh libc-process-globals-getopt
+./scripts/dev-x86_64.sh libc-auxv-observation
 ./scripts/dev-x86_64.sh libc-inet-address
 ./scripts/dev-x86_64.sh libc-numeric-netdb
 ./scripts/dev-x86_64.sh libc-random-entropy
@@ -3749,9 +3750,24 @@ UTF-8 option code points under `C.UTF-8`, quiet unknown/missing results, and
 GNU long required/optional/flag/ambiguous/permuted/long-only behavior. The
 x86 leaf reuses the established AArch64 musl-derived parser body with only
 target-local errno, multibyte, string, and permanent-stream adapters. It owns
-no environment object or mutation API, auxv/secure state, loader startup,
+no environment object or mutation API, direct auxv observation beyond the
+separate `static-c-auxv-observation` artifact, secure state, loader startup,
 allocator, general locale/stdio, `libc.so`, CRT family, sysroot, C ABI closure,
 family promotion, or public x86 support.
+
+`libc-auxv-observation` is the adjacent private
+`static-c-auxv-observation` artifact inside still-planned `libc.c-abi-compat`.
+The project `<sys/auxv.h>` C body first executes through pinned musl 1.2.6 and
+then a true `-nostdlib -static` candidate. Its existing static-TLS handoff and
+bounded `__libc_start_main` validate envp plus no more than 4096 `AT_NULL`-
+terminated auxiliary-vector pairs, then release-publish the kernel-owned
+vector before constructors and `main`. The archive exposes strong
+`__getauxval` with weak same-address `getauxval`; evidence covers
+`AT_PAGESZ`, `AT_PHENT`, `AT_PHNUM`, zero-valued `AT_SECURE` with stale errno,
+and absent `AT_NULL`/`ENOENT`. It excludes raw auxv address exposure,
+secure-execution policy/`secure_getenv`, environment ownership, auxv-derived
+system configuration, loader/dynamic startup, `libc.so`, CRT completion,
+family promotion, and public x86 support.
 
 `iconv-header-abi` and `libc-locale-wide-iconv` add a separate, non-promoting
 static composition artifact. The C11/C++17 gate checks the pointer-sized

@@ -50,7 +50,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 36)
-        self.assertEqual(report["verified_artifact_count"], 130)
+        self.assertEqual(report["verified_artifact_count"], 132)
         self.assertEqual(report["header_layout_probe_count"], 46)
         self.assertEqual(report["public_header_inventory_count"], 183)
         self.assertEqual(report["header_foundation_header_count"], 191)
@@ -5192,7 +5192,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             "corresponding AArch64",
             "focused dynamic fixture",
             "full musl sysconf table",
-            "startup-owned auxv/getauxval",
+            "separate direct `getauxval` lookup",
         ):
             self.assertIn(phrase, system_configuration["description"])
         self.assertIn(
@@ -13356,6 +13356,77 @@ class X86ParityLedgerTests(unittest.TestCase):
         with self.assertRaisesRegex(
             ledger.LedgerError,
             "hash-table slice must select exactly search.hash-table",
+        ):
+            ledger.validate_ledger(data)
+
+    def test_auxv_observation_artifact_stays_private_and_non_promoting(self) -> None:
+        data = self.data()
+        family = self.family(data, "libc.c-abi-compat")
+        self.assertEqual(family["status"], "planned")
+        artifacts = family["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-auxv-observation"
+        )
+        for symbol in ("__getauxval", "getauxval"):
+            self.assertIn(f"`{symbol}`", artifact["description"])
+        owners = artifact["source_owners"]
+        assert isinstance(owners, list)
+        for owner in (
+            "libc/src/c_abi/x86_64/auxv_observation.rs",
+            "libc/src/c_abi/x86_64/static_startup.rs",
+            "include/sys/auxv.h",
+            "compat/x86_64/libc_auxv_observation_probe.c",
+            "compat/x86_64/libc_auxv_observation_start.S",
+            "compat/x86_64/run_libc_auxv_observation.sh",
+            "compat/x86_64/static_c_abi_exports.txt",
+        ):
+            self.assertIn(owner, owners)
+        prerequisites = artifact["x86_abi_prerequisites"]
+        assert isinstance(prerequisites, list)
+        self.assertTrue(
+            any(
+                "AT_NULL" in item
+                and "4096" in item
+                and "ENOENT" in item
+                and "AT_SECURE" in item
+                for item in prerequisites
+            )
+        )
+        self.assertTrue(
+            any(
+                "src/misc/getauxval.c" in item
+                and "weak" in item
+                and "same-address" in item
+                for item in prerequisites
+            )
+        )
+        evidence = artifact["native_evidence"]
+        assert isinstance(evidence, list) and isinstance(evidence[0], dict)
+        self.assertEqual(
+            evidence[0]["command"],
+            "./scripts/dev-x86_64.sh libc-auxv-observation",
+        )
+        for phrase in (
+            "Pinned-musl static project-header C reference",
+            "`-nostdlib -static` candidate",
+            "weak same-address",
+            "AT_SECURE",
+            "ENOENT",
+            "secure-execution policy",
+            "loader",
+            "family promotion",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, evidence[0]["scope"])
+
+        artifact["description"] = artifact["description"].replace(
+            "weak same-address", "weak different-address"
+        )
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "weak same-address `getauxval`"
         ):
             ledger.validate_ledger(data)
 

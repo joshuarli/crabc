@@ -1220,7 +1220,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "libc-memfd-create",
             "libc-static-c-abi-differential",
             "libc-static-c-abi-same-object-differential|qualification-posix-abi-admission",
-            "libc-readiness-waits|libc-system-observation|libc-system-information|libc-fcntl-record-locks|libc-flock|libc-sendfile|libc-posix-fallocate|libc-descriptor-advice|libc-filesystem-capacity|libc-uts-identity|libc-ctype|libc-locale-multibyte|libc-locale-wide-iconv|libc-wide-character|libc-locale-object-wide|libc-locale-narrow|libc-locale-ctype-locators|libc-regex|libc-integer-arithmetic|libc-integer-parse|libc-float-parse|libc-intmax-arithmetic|libc-credential-observation|libc-login-name|libc-child-reaping|libc-immediate-termination|libc-callback-algorithms|libc-search-tree-intrusive|libc-search-hash-table|libc-access|libc-clock-gettime|libc-time-observation|libc-system-configuration|libc-mapping-core|libc-header-layouts-baseline|libc-nanosleep|libc-clock-nanosleep|libc-descriptor-entry|libc-fcntl-status-control|libc-ioctl|libc-ffs|libc-byte-strings|libc-process-globals-getopt|libc-inet-address|libc-numeric-netdb|libc-random-entropy|libc-memory-search|libc-string-copy|libc-error-strings|libc-descriptor-pipeline",
+            "libc-readiness-waits|libc-system-observation|libc-system-information|libc-fcntl-record-locks|libc-flock|libc-sendfile|libc-posix-fallocate|libc-descriptor-advice|libc-filesystem-capacity|libc-uts-identity|libc-ctype|libc-locale-multibyte|libc-locale-wide-iconv|libc-wide-character|libc-locale-object-wide|libc-locale-narrow|libc-locale-ctype-locators|libc-regex|libc-integer-arithmetic|libc-integer-parse|libc-float-parse|libc-intmax-arithmetic|libc-credential-observation|libc-login-name|libc-child-reaping|libc-immediate-termination|libc-callback-algorithms|libc-search-tree-intrusive|libc-search-hash-table|libc-access|libc-clock-gettime|libc-time-observation|libc-system-configuration|libc-mapping-core|libc-header-layouts-baseline|libc-nanosleep|libc-clock-nanosleep|libc-descriptor-entry|libc-fcntl-status-control|libc-ioctl|libc-ffs|libc-byte-strings|libc-process-globals-getopt|libc-auxv-observation|libc-inet-address|libc-numeric-netdb|libc-random-entropy|libc-memory-search|libc-string-copy|libc-error-strings|libc-descriptor-pipeline",
             "libc-vector-io|libc-uio-cxx-linkage",
             "libc-sysv-semaphore|libc-posix-semaphore",
             "libc-sysv-message-shared-memory",
@@ -11662,6 +11662,14 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             'getdtablesize lacks syscall 302',
         ):
             self.assertIn(required, artifact_runner)
+        self.assertIn("getauxval|statfs", artifact_runner)
+        archive_policy = artifact_runner[
+            artifact_runner.index('readelf --relocs --wide "$archive"') : artifact_runner.index(
+                '"$ORACLE_CC" -std=c11 -D_GNU_SOURCE -DCRABC_SYSTEM_CONFIGURATION_FREESTANDING'
+            )
+        ]
+        self.assertNotIn("getauxval", archive_policy)
+        self.assertNotIn("statfs", archive_policy)
         self.assertNotIn('--whole-archive', artifact_runner)
         for symbol in (
             'confstr',
@@ -16998,6 +17006,95 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "direct_fdimf",
         ):
             self.assertIn(required, header)
+    def test_auxv_observation_runner_keeps_the_private_native_boundary(self) -> None:
+        """The selected aux-vector lookup is one bounded static-startup leaf."""
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        startup = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_startup.rs"
+        ).read_text(encoding="utf-8")
+        leaf_path = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "auxv_observation.rs"
+        fixture_path = ROOT / "compat" / "x86_64" / "libc_auxv_observation_probe.c"
+        start_path = ROOT / "compat" / "x86_64" / "libc_auxv_observation_start.S"
+        artifact_runner_path = (
+            ROOT / "compat" / "x86_64" / "run_libc_auxv_observation.sh"
+        )
+        for path in (leaf_path, fixture_path, start_path, artifact_runner_path):
+            self.assertTrue(path.is_file(), f"missing auxv-observation artifact input: {path}")
+
+        leaf = leaf_path.read_text(encoding="utf-8")
+        fixture = fixture_path.read_text(encoding="utf-8")
+        start = start_path.read_text(encoding="utf-8")
+        artifact_runner = artifact_runner_path.read_text(encoding="utf-8")
+        static_exports = (
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        ).read_text(encoding="utf-8")
+        static_export_names = {
+            line for line in static_exports.splitlines() if line and not line.startswith("#")
+        }
+        dispatcher = RUNNER.read_text(encoding="utf-8")
+
+        self.assertIn('#[path = "auxv_observation.rs"]', static_root)
+        for required in (
+            "MAX_AUXV_ENTRIES",
+            "AT_NULL",
+            "ENOENT",
+            "AtomicUsize",
+            "pub(super) unsafe fn install_initial",
+            'pub unsafe extern "C" fn __getauxval',
+            '".weak getauxval"',
+            '".set getauxval, __getauxval"',
+        ):
+            self.assertIn(required, leaf)
+        self.assertNotIn("__auxv", leaf)
+        for forbidden in ("raw_syscall", "getrandom", "malloc", "fn secure_getenv"):
+            self.assertNotIn(forbidden, leaf)
+
+        install_call = "unsafe { auxv_observation::install_initial(vectors.auxv) };"
+        init_call = "if let Some(init) = init {"
+        self.assertIn(install_call, startup)
+        self.assertIn("auxv: *const usize", startup)
+        self.assertIn("MAX_AUXV_ENTRIES", startup)
+        self.assertLess(startup.index(install_call), startup.index(init_call))
+        self.assertLess(startup.index(install_call), startup.index("unsafe { process_globals::install"))
+
+        self.assertTrue({"__getauxval", "getauxval"} <= static_export_names)
+        self.assertFalse(static_export_names & {"__auxv", "secure_getenv"})
+        for required in (
+            "#include <elf.h>",
+            "#include <errno.h>",
+            "#include <sys/auxv.h>",
+            "AT_PAGESZ",
+            "AT_PHENT",
+            "AT_PHNUM",
+            "AT_SECURE",
+            "AT_NULL",
+            "ENOENT",
+            "__getauxval",
+            "crabc_x86_64_auxv_observation_init",
+        ):
+            self.assertIn(required, fixture)
+        self.assertIn("call __crabc_x86_static_tls_bootstrap", start)
+        self.assertIn("call __libc_start_main", start)
+        self.assertIn("crabc_x86_64_auxv_observation_init", start)
+        for required in (
+            "run_machine_context_header_abi.sh",
+            "pinned-musl static reference",
+            "assert_weak_same_address_alias",
+            "-nostdlib -static",
+            "R_X86_64_TPOFF",
+            "AT_SECURE",
+            "AT_NULL",
+            "ENOENT",
+            "__getauxval",
+            "getauxval",
+            "dynamic TLS",
+            "public x86 support",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertIn("libc-auxv-observation)", dispatcher)
+        self.assertIn("run_libc_auxv_observation.sh", dispatcher)
 
     def test_facade_keeps_native_pattern_archives_checked(self) -> None:
         source = RUNNER.read_text(encoding="utf-8")

@@ -484,8 +484,22 @@ options under `C.UTF-8`, permutation, ambiguity, optional/required arguments,
 and long-only precedence. The x86 leaf composes the established AArch64
 musl-derived parser through target-local errno/multibyte/string/permanent-stream
 adapters only. It deliberately owns no environment object or mutation API,
-auxv/secure state, loader startup, general locale/stdio, allocator, libc.so,
+direct auxv observation beyond the separate `static-c-auxv-observation`
+artifact, secure state, loader startup, general locale/stdio, allocator, libc.so,
 CRT family, sysroot, C ABI closure, promotion, or public x86 support.
+
+`./scripts/dev-x86_64.sh libc-auxv-observation` is the adjacent private
+`static-c-auxv-observation` artifact in the same still-planned family. Its
+project-header C body runs through pinned static musl and a true
+`-nostdlib -static` candidate. The selected static startup validates the
+initial envp/auxv delimiters, release-publishes at most 4096 kernel-owned
+auxiliary-vector pairs before constructors, and exposes only strong
+`__getauxval` with weak same-address `getauxval`. The gate proves raw
+`AT_PAGESZ`, `AT_PHENT`, and `AT_PHNUM` lookup, zero-valued `AT_SECURE`
+stale-errno preservation, and `AT_NULL`/`ENOENT` absence behavior. It does not
+select a raw auxv object, secure-execution policy, `secure_getenv`, environment
+ownership, auxv-derived system configuration, loader startup, CRT completion,
+or public x86 support.
 
 The same still-planned C ABI family also now selects only the private
 `numeric.qsort-helper` ABI leaf. It accounts for musl's strong, uninstalled

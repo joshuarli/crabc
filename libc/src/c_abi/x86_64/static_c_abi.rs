@@ -59,10 +59,10 @@
 //! classification/case/collation wrappers,
 //! find-first-set, immutable C-locale error strings, C11 immediate-termination,
 //! a bounded private static
-//! startup/ordinary-exit lifecycle, startup-published program-name globals
-//! and option parsing, callback-algorithms, allocator-export-free AVL
-//! callback-tree search, and allocator-export-free hash-table search, POSIX
-//! `nanosleep`
+//! startup/ordinary-exit lifecycle, startup-published program-name globals,
+//! raw initial auxiliary-vector observation, and option parsing,
+//! callback-algorithms, allocator-export-free AVL callback-tree search, and
+//! allocator-export-free hash-table search, POSIX `nanosleep`
 //! and `clock_nanosleep`, and direct clock-observation artifacts, plus one
 //! bounded System V message-queue/shared-memory artifact, one bounded
 //! unnamed POSIX semaphore artifact, and one bounded event-descriptor
@@ -255,6 +255,8 @@ mod process_context;
 mod environment;
 #[path = "login_name.rs"]
 mod login_name;
+#[path = "auxv_observation.rs"]
+mod auxv_observation;
 #[path = "child_reaping.rs"]
 mod child_reaping;
 #[path = "immediate_termination.rs"]

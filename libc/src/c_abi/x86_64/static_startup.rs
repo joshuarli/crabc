@@ -11,7 +11,9 @@
 //! only publication of the validated program name and option-parser state.
 //! Its other selected environment responsibility is to hand the already-
 //! validated initial `envp` pointer to [`super::environment`] before
-//! application callbacks.
+//! application callbacks. The adjacent `auxv_observation` leaf receives the
+//! same validated initial auxiliary vector before constructors, but owns only
+//! raw tag lookup rather than secure-execution or loader policy.
 //!
 //! Translation provenance is musl 1.2.6 release commit
 //! `9fa28ece75d8a2191de7c5bb53bed224c5947417`, under musl's MIT license:
@@ -35,10 +37,12 @@ compile_error!("x86 static startup requires little-endian Linux/x86-64");
 
 use core::ffi::{c_char, c_int, c_void};
 
-use super::{environment, immediate_termination, process_globals, static_tls};
+use super::{auxv_observation, environment, immediate_termination, process_globals, static_tls};
 
 const MAX_STARTUP_POINTERS: usize = 1 << 20;
+const MAX_AUXV_ENTRIES: usize = 4096;
 const ATEXIT_CAPACITY: usize = 32;
+const AT_NULL: usize = 0;
 
 type MainFunction = unsafe extern "C" fn(c_int, *const *const c_char, *const *const c_char) -> c_int;
 type ExitFunction = unsafe extern "C" fn(*mut c_void);
@@ -48,9 +52,10 @@ type LifecycleFunction = unsafe extern "C" fn();
 #[derive(Clone, Copy)]
 struct StartupVectors {
     envp: *const *const c_char,
+    auxv: *const usize,
 }
 
-/// Validate the static CRT's process-vector delimiters and derive `envp`.
+/// Validate the static CRT's process-vector delimiters and derive envp/auxv.
 ///
 /// The kernel/CRT ABI, not this helper, owns pointer validity through the
 /// terminators. The explicit bounds prevent malformed synthetic inputs from
@@ -67,7 +72,18 @@ unsafe fn startup_vectors(argc: c_int, argv: *const *const c_char) -> Option<Sta
             // SAFETY: a valid kernel startup vector has a terminating envp
             // null; the bound closes malformed input before it can run away.
             if unsafe { core::ptr::read(envp.add(index)) }.is_null() {
-                return Some(StartupVectors { envp });
+                // SAFETY: the validated envp terminator is immediately
+                // followed by the kernel auxiliary-vector word pairs.
+                let auxv = unsafe { envp.add(index + 1).cast::<usize>() };
+                for auxv_index in 0..MAX_AUXV_ENTRIES {
+                    // SAFETY: a valid kernel startup vector terminates its
+                    // `(tag, value)` pairs with AT_NULL; the explicit bound
+                    // closes malformed synthetic input before publication.
+                    if unsafe { core::ptr::read(auxv.add(auxv_index * 2)) } == AT_NULL {
+                        return Some(StartupVectors { envp, auxv });
+                    }
+                }
+                return None;
             }
         }
     }
@@ -223,6 +239,11 @@ pub unsafe extern "C" fn __libc_start_main(
     if rtld_fini.is_some() || !static_tls::is_ready() {
         startup_reject();
     }
+
+    // SAFETY: `startup_vectors` validated the kernel/CRT envp and auxiliary
+    // vector delimiters before this sole process-wide raw-pointer publication.
+    // The adjacent lookup leaf owns no loader or secure-execution policy.
+    unsafe { auxv_observation::install_initial(vectors.auxv) };
 
     // SAFETY: `startup_vectors` validated the kernel/CRT argv/envp
     // delimiters before any libc-visible startup state changes.  The selected

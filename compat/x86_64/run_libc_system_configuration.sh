@@ -77,8 +77,8 @@ for symbol in __errno_location confstr fpathconf getdtablesize getpagesize pathc
 done
 readelf --relocs --wide "$archive" >"$work_dir/archive-relocations"
 grep -Eq 'R_X86_64_TPOFF(32|64)?' "$work_dir/archive-relocations" || fail "archive errno lacks TPOFF relocation"
-if grep -Eq 'TLSGD|TLSLD|TLSDESC|GOTTPOFF|DTPMOD(64)?|__tls_get_addr|crabc_core|mimalloc|sha_crypt|getauxval|statfs' "$work_dir/archive-relocations"; then
-    fail "archive selects dynamic TLS, an unowned dependency, or path-statfs state"
+if grep -Eq 'TLSGD|TLSLD|TLSDESC|GOTTPOFF|DTPMOD(64)?|__tls_get_addr|crabc_core|mimalloc|sha_crypt' "$work_dir/archive-relocations"; then
+    fail "archive selects dynamic TLS or an unowned runtime dependency"
 fi
 
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -DCRABC_SYSTEM_CONFIGURATION_FREESTANDING -I"$ROOT_DIR/include" -nostdlib -static -fno-pie -no-pie -ffreestanding -fno-builtin -fno-stack-protector -Wl,-e,_start -Wl,--no-undefined compat/x86_64/libc_system_configuration_probe.c compat/x86_64/libc_system_configuration_start.S "$archive" -o "$candidate"
