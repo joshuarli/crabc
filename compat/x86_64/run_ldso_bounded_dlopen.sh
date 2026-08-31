@@ -91,6 +91,12 @@ readelf -Ws "$candidate" | awk \
 readelf -rW "$candidate" | grep -E \
     'R_X86_64_GLOB_DAT.*__crabc_x86_64_fixed_graph_dlfcn_v1' >/dev/null ||
     fail 'candidate lacks loader-record GLOB_DAT'
+grep -Fq 'RTLD_NOLOAD' "$PROBE" ||
+    fail 'runtime probe lacks RTLD_NOLOAD presence evidence'
+grep -Fq 'RTLD_LAZY | RTLD_NOLOAD' "$PROBE" ||
+    fail 'runtime probe lacks lazy RTLD_NOLOAD reference evidence'
+grep -Fq 'libleaf-bounded-dlopen.so' "$PROBE" ||
+    fail 'runtime probe lacks initial-object RTLD_NOLOAD rejection evidence'
 
 for image in "$work_dir/libbounded-plugin.so" "$work_dir/libbounded-extra.so"; do
     [ "$(readelf -h "$image" | awk '/Type:/{print $2}')" = DYN ] ||

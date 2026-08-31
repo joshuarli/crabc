@@ -35,7 +35,8 @@
 //! second no-TLS sibling adds loader-owned reference handles and scoped symbol
 //! lookup for objects already in that graph. Its separately selected bounded
 //! runtime sibling can add exactly one no-TLS DSO from the main image's fixed
-//! absolute RUNPATH when every dependency is already retained. It still
+//! absolute RUNPATH when every dependency is already retained, then make
+//! no-mapping `RTLD_NOLOAD` acquisitions of that appended identity. It still
 //! cannot promote, finalize, or unload an object, and neither sibling
 //! publishes borrowed link-map state or public dlfcn entry points.
 
@@ -270,6 +271,8 @@ const FIXED_GRAPH_RTLD_LAZY: i32 = 1;
 #[cfg(crabc_fixed_graph_dlfcn)]
 const FIXED_GRAPH_RTLD_NOW: i32 = 2;
 #[cfg(crabc_fixed_graph_dlfcn)]
+const FIXED_GRAPH_RTLD_NOLOAD: i32 = 4;
+#[cfg(crabc_fixed_graph_dlfcn)]
 const FIXED_GRAPH_RTLD_GLOBAL: i32 = 0x100;
 
 /// Caller-owned bounded text on the fixed-graph introspection wire.
@@ -404,8 +407,10 @@ pub static __crabc_x86_64_fixed_graph_introspection_v1: FixedGraphIntrospectionV
 ///
 /// Handles are loader-owned identity tokens with explicit acquisition counts;
 /// callbacks return copied text and metadata. `open` accepts only the retained
-/// main/mid/leaf identities. It cannot search the filesystem, add an object,
-/// mutate global scope, or make startup mappings unloadable.
+/// main/mid/leaf identities, except that the cfg-isolated bounded sibling can
+/// map one runtime object and then `RTLD_NOLOAD`-acquire only that published
+/// identity. It cannot search the filesystem, add an object beyond that one
+/// bounded transaction, mutate global scope, or make mappings unloadable.
 #[cfg(crabc_fixed_graph_dlfcn)]
 #[repr(C)]
 pub struct FixedGraphDlfcnV1 {
@@ -2528,8 +2533,11 @@ unsafe extern "C" fn fixed_graph_open(
         return -1;
     }
     let binding = flags & (FIXED_GRAPH_RTLD_LAZY | FIXED_GRAPH_RTLD_NOW);
+    let no_load = flags & FIXED_GRAPH_RTLD_NOLOAD != 0;
     if (binding != FIXED_GRAPH_RTLD_LAZY && binding != FIXED_GRAPH_RTLD_NOW)
-        || flags & !(FIXED_GRAPH_RTLD_LAZY | FIXED_GRAPH_RTLD_NOW) != 0
+        || flags
+            & !(FIXED_GRAPH_RTLD_LAZY | FIXED_GRAPH_RTLD_NOW | FIXED_GRAPH_RTLD_NOLOAD)
+            != 0
     {
         if flags & FIXED_GRAPH_RTLD_GLOBAL != 0 {
             fixed_graph_set_error(error, b"fixed graph cannot promote global scope");
@@ -2539,12 +2547,20 @@ unsafe extern "C" fn fixed_graph_open(
         return -1;
     }
     if path.is_null() {
+        if no_load {
+            fixed_graph_set_error(error, b"RTLD_NOLOAD is limited to the runtime object");
+            return -1;
+        }
         core::ptr::write(handle, fixed_graph_handle(0));
         return 0;
     }
     let object_count = fixed_graph_object_count();
     for index in 1..object_count {
         if fixed_graph_name_matches(index, path) {
+            if no_load && index < INITIAL_OBJECT_COUNT {
+                fixed_graph_set_error(error, b"RTLD_NOLOAD is limited to the runtime object");
+                return -1;
+            }
             if !fixed_graph_acquire(index) {
                 fixed_graph_set_error(error, b"loader handle reference overflow");
                 return -1;
@@ -2552,6 +2568,12 @@ unsafe extern "C" fn fixed_graph_open(
             core::ptr::write(handle, fixed_graph_handle(index));
             return 0;
         }
+    }
+    // A no-load query must observe only the already-published appended object;
+    // it never reaches the mapper or changes the copied graph state.
+    if no_load {
+        fixed_graph_set_error(error, b"RTLD_NOLOAD object is not loaded");
+        return -1;
     }
     #[cfg(crabc_bounded_runtime_dlopen)]
     match bounded_runtime_map(path) {

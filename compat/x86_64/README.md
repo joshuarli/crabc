@@ -4119,10 +4119,16 @@ generation/additions one. Native raw-clone callers prove concurrent opens
 share one loader token and one constructor; copied dladdr, dlinfo, and
 dl_iterate_phdr observations prove the added mapping. PT_TLS, slash paths,
 recursive/unretained dependencies, and second-object capacity fail closed.
-Pinned musl 1.2.6 supplies the separate ordinary runtime-dlopen differential.
-General search/mutation, TLS growth, RTLD_NEXT, global promotion,
-finalization/unload, both dlfcn capability selections, and public x86 support
-remain excluded.
+Pinned musl 1.2.6 additionally proves that `RTLD_NOLOAD` returns an extra
+reference only after that runtime object is present. The candidate admits that
+query only for its one appended basename: it returns the same token without
+path lookup, mapping, constructor execution, or snapshot change; unpresent
+names, `NULL`, and named initial-graph objects fail closed. The candidate's
+copied `dlpi_adds` remains unchanged for that reference, whereas pinned musl's
+observation changes; musl remains the oracle here for presence/reference
+semantics. General search/mutation, TLS growth, RTLD_NEXT, global promotion,
+finalization/unload, both dlfcn
+capability selections, and public x86 support remain excluded.
 
 `ldso-dynamic-admission` is the consumed aggregate admission gate for seven
 real-ELF private interpreter/bridge transactions. It runs each fixture afresh, so its

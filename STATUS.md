@@ -147,6 +147,22 @@ stale handles. Search/mapping, graph mutation, `RTLD_NEXT`, global promotion,
 finalization, and unload remain excluded, so neither dlfcn capability nor the
 dynamic-runtime family or public x86 platform is promoted.
 
+The cfg-isolated `ldso-bounded-dlopen` sibling then admits one append-only
+no-TLS RELA-only ET_DYN mapping through the initial main's absolute RUNPATH,
+with only already-retained dependencies, one constructor, four copied objects,
+and one generation/addition. Its pinned-musl differential also proves
+`RTLD_NOLOAD` reference acquisition for that already-loaded plugin. The
+candidate accepts that request only with `RTLD_LAZY` or `RTLD_NOW` for the
+single appended basename: it returns the existing opaque token without a path
+lookup, mapping, constructor, or graph change; an unpresent name, `NULL`, and
+named initial main/mid/leaf objects fail closed. The candidate's copied
+`dlpi_adds` remains a graph-mutation counter across that reference, while pinned
+musl exposes its reference through a changed `dlpi_adds` observation. PT_TLS,
+RELR, recursive mapping,
+scope promotion, finalization/unload, and all general dlfcn/loader behavior
+remain excluded, so `ldso.dynamic-runtime` and public x86 support remain
+planned.
+
 The separate `static-c-math-elementary-long-double` verified slice now
 completes the exact private 35-symbol `math.elementary-long-double`
 capability. It composes seventeen prior x87 binary80 entries with eighteen

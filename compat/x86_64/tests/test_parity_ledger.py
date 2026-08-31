@@ -734,6 +734,8 @@ class X86ParityLedgerTests(unittest.TestCase):
             "real ELF64 ET_DYN DSO",
             "generation/additions one",
             "Two concurrent raw-clone callers",
+            "RTLD_NOLOAD=4",
+            "without a path lookup",
             "PT_TLS",
             "a second runtime object",
             "neither `loader.dlfcn-basic` nor `loader.dlfcn-introspection` is selected",
@@ -743,6 +745,14 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(
             {entry["command"] for entry in artifact["native_evidence"]},
             {"./scripts/dev-x86_64.sh ldso-bounded-dlopen"},
+        )
+        self.assertIn(
+            "candidate copied-snapshot invariance and pinned-musl dlpi_adds reference difference",
+            artifact["native_evidence"][0]["scope"],
+        )
+        self.assertIn(
+            "both RTLD_NOW and RTLD_LAZY",
+            artifact["native_evidence"][0]["scope"],
         )
         self.assertEqual(
             set(artifact["source_owners"]),
