@@ -1107,6 +1107,9 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertNotIn(" | grep -Eq ", runner)
         self.assertIn("grep -F ' TLS ' >/dev/null", runner)
         self.assertIn("grep -E '\\(NEEDED\\)|\\(INTERP\\)|\\(RELR\\)' >/dev/null", runner)
+        self.assertIn("-Wl,-init,bounded_plugin_legacy_initialize", runner)
+        self.assertIn("-Wl,-init,mid_value", runner)
+        self.assertIn("candidate accepted DT_INIT in an initial DSO", runner)
 
     def test_script_is_valid_and_has_a_closed_command_set(self) -> None:
         syntax = subprocess.run(

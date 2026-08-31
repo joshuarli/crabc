@@ -4175,10 +4175,14 @@ widening that public claim. The cfg-isolated interpreter keeps the same
 64-byte RuntimeV1-shaped record and initial main/mid/leaf graph, then
 serializes exactly one slash-free basename lookup through the main image's
 validated absolute RUNPATH. The candidate maps a no-TLS RELA-only ET_DYN whose
-dependencies are already retained, applies final protections and RELRO, runs
-its constructor once, and append-publishes a fourth snapshot record with
-generation/additions one. Native raw-clone callers prove concurrent opens
-share one loader token and one constructor; copied dladdr, dlinfo, and
+dependencies are already retained, applies final protections and RELRO, then
+runs at most one validated executable legacy `DT_INIT` entry followed by its
+bounded constructor array, each exactly once, and append-publishes a fourth
+snapshot record with
+generation/additions one. The entry is limited to the appended DSO: main/mid/
+leaf `DT_INIT` stays reject-only, and a malformed runtime target fails before
+publication. Native raw-clone callers prove concurrent opens share one loader
+token and one legacy/init-array sequence; copied dladdr, dlinfo, and
 dl_iterate_phdr observations prove the added mapping. PT_TLS, slash paths,
 recursive/unretained dependencies, and second-object capacity fail closed.
 Pinned musl 1.2.6 additionally proves that `RTLD_NOLOAD` returns an extra

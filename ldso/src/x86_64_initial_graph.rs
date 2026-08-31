@@ -35,9 +35,10 @@
 //! second no-TLS sibling adds loader-owned reference handles and scoped symbol
 //! lookup for objects already in that graph. Its separately selected bounded
 //! runtime sibling can add exactly one no-TLS DSO from the main image's fixed
-//! absolute RUNPATH when every dependency is already retained, then make
-//! no-mapping `RTLD_NOLOAD` acquisitions of that appended identity. It still
-//! cannot promote, finalize, or unload an object, and neither sibling
+//! absolute RUNPATH when every dependency is already retained. That one DSO
+//! may carry a validated legacy `DT_INIT` entry followed by its bounded init
+//! array, then make no-mapping `RTLD_NOLOAD` acquisitions of its appended
+//! identity. It still cannot promote, finalize, or unload an object, and neither sibling
 //! publishes borrowed link-map state or public dlfcn entry points.
 
 #![allow(clippy::missing_safety_doc)]
@@ -467,6 +468,11 @@ struct Object {
     pltrelsz: usize,
     relr: *const u8,
     relrsz: usize,
+    // Only the cfg-isolated one-slot runtime mapper may retain this legacy
+    // initializer. Startup objects remain on the established init-array-only
+    // boundary, and runtime finalization remains deliberately unsupported.
+    #[cfg(crabc_bounded_runtime_dlopen)]
+    init: usize,
     init_array: *const usize,
     init_count: usize,
     relro_virtual_address: u64,
@@ -502,6 +508,8 @@ const EMPTY_OBJECT: Object = Object {
     pltrelsz: 0,
     relr: core::ptr::null(),
     relrsz: 0,
+    #[cfg(crabc_bounded_runtime_dlopen)]
+    init: 0,
     init_array: core::ptr::null(),
     init_count: 0,
     relro_virtual_address: 0,
@@ -723,7 +731,7 @@ pub unsafe extern "C" fn x86_64_initial_graph_run(sp: usize, ldso_base: usize) -
         // main and mid images remain RELA-only, while the fixed leaf carries
         // the one required packed table; accepting the same tags elsewhere
         // would silently widen this private graph's ABI.
-        objects[0] = parse_mapped(main_base, main_phdr, main_phnum, false)
+        objects[0] = parse_mapped(main_base, main_phdr, main_phnum, false, false)
             .unwrap_or_else(|| fail(b"mainelf\n"));
         if objects[0].needed_count != 1 || objects[0].runpath.is_null() || objects[0].relrsz != 0 {
             fail(b"mainshape\n");
@@ -812,7 +820,19 @@ unsafe fn main_load_bias(phdr: *const u8, phnum: usize) -> Option<u64> {
     (phdr as u64).checked_sub(virtual_address)
 }
 
-unsafe fn parse_mapped(base: u64, phdr: *const u8, phnum: usize, mapped: bool) -> Option<Object> {
+unsafe fn parse_mapped(
+    base: u64,
+    phdr: *const u8,
+    phnum: usize,
+    mapped: bool,
+    allow_bounded_runtime_init: bool,
+) -> Option<Object> {
+    // A legacy DT_INIT is not a general mapped-object feature. The only
+    // caller that may opt in is the one-slot runtime transaction below; it
+    // must never accidentally select main-image or startup-DSO lifecycle.
+    if allow_bounded_runtime_init && !mapped {
+        return None;
+    }
     let mut dynamic_virtual_address = None;
     let mut dynamic_byte_len = None;
     let mut relro = None;
@@ -916,6 +936,8 @@ unsafe fn parse_mapped(base: u64, phdr: *const u8, phnum: usize, mapped: bool) -
     let mut runpath_offset = None;
     let mut init_array_virtual_address = None;
     let mut init_array_byte_len = None;
+    #[cfg(crabc_bounded_runtime_dlopen)]
+    let mut bounded_runtime_init_virtual_address = None;
     // The owned-CRT sibling does not execute any main-image lifecycle entry.
     // It only validates this exact Rust-Scrt1 dynamic-tag shape before that
     // CRT takes over through the post-relocation record.  The two established
@@ -978,6 +1000,12 @@ unsafe fn parse_mapped(base: u64, phdr: *const u8, phnum: usize, mapped: bool) -
             DT_PLTREL => { if plt_is_rela.replace(value == ELF64_RELA).is_some() { return None; } }
             #[cfg(crabc_owned_crt_handoff)]
             DT_INIT if !mapped => { if owned_crt_main_init.replace(value).is_some() { return None; } }
+            #[cfg(crabc_bounded_runtime_dlopen)]
+            DT_INIT if mapped && allow_bounded_runtime_init => {
+                if bounded_runtime_init_virtual_address.replace(value).is_some() {
+                    return None;
+                }
+            }
             #[cfg(crabc_owned_crt_handoff)]
             DT_FINI if !mapped => { if owned_crt_main_fini.replace(value).is_some() { return None; } }
             #[cfg(crabc_owned_crt_handoff)]
@@ -1123,6 +1151,18 @@ unsafe fn parse_mapped(base: u64, phdr: *const u8, phnum: usize, mapped: bool) -
         }
         _ => return None,
     }
+    #[cfg(crabc_bounded_runtime_dlopen)]
+    if mapped && allow_bounded_runtime_init {
+        if let Some(address) = bounded_runtime_init_virtual_address {
+            // DT_INIT is a direct code pointer, not an array pointer. Make
+            // its one permitted runtime use executable-load-contained before
+            // relocation or any constructor can observe the mapping.
+            if address == 0 || !virtual_range_in_executable_load(phdr, phnum, address, 1) {
+                return None;
+            }
+            object.init = runtime_address(base, address)? as usize;
+        }
+    }
     if let Some(offset) = runpath_offset {
         if offset >= object.strsz { return None; }
         object.runpath = object.strtab.add(offset);
@@ -1143,7 +1183,7 @@ unsafe fn load_needed(parent: &Object, needed_index: usize) -> Option<Object> {
     let name = parent.strtab.add(parent.needed[needed_index]);
     let name_len = bounded_nul(name, parent.strsz - parent.needed[needed_index])?;
     let fd = open_from_runpath(parent.runpath, parent.runpath_len, name, name_len)?;
-    let result = map_elf(fd);
+    let result = map_elf(fd, false);
     let _ = syscall1(SYS_CLOSE, fd);
     result
 }
@@ -1187,7 +1227,7 @@ unsafe fn file_size_from_fd(fd: i64) -> Option<u64> {
     u64::try_from(read_i64(stat.as_ptr().add(X86_64_STAT_SIZE_OFFSET))).ok()
 }
 
-unsafe fn map_elf(fd: i64) -> Option<Object> {
+unsafe fn map_elf(fd: i64, allow_bounded_runtime_init: bool) -> Option<Object> {
     let file_byte_len = file_size_from_fd(fd)?;
     if file_byte_len < 64 { return None; }
     let header_map_len = file_byte_len.min(PAGE);
@@ -1265,7 +1305,7 @@ unsafe fn map_elf(fd: i64) -> Option<Object> {
     syscall2(SYS_MUNMAP, first, header_map_len as i64);
     // The provisional header mapping is gone; the final PT_LOAD mapping owns
     // every object metadata pointer retained by the returned `Object`.
-    parse_mapped(base, runtime_phdr, phnum, true)
+    parse_mapped(base, runtime_phdr, phnum, true, allow_bounded_runtime_init)
 }
 
 /// Assign the fixed graph's one-based GNU TLS module IDs and Variant-II
@@ -2428,6 +2468,12 @@ unsafe fn bounded_runtime_dependency_index(
 
 #[cfg(crabc_bounded_runtime_dlopen)]
 unsafe fn bounded_runtime_preflight_initializers(object: &Object) -> Option<()> {
+    if object.init != 0 {
+        let virtual_address = object.init.checked_sub(object.base as usize)? as u64;
+        if !virtual_range_in_executable_load(object.phdr, object.phnum, virtual_address, 1) {
+            return None;
+        }
+    }
     if object.init_count != 0 && object.init_array.is_null() {
         return None;
     }
@@ -2444,12 +2490,38 @@ unsafe fn bounded_runtime_preflight_initializers(object: &Object) -> Option<()> 
     Some(())
 }
 
+/// Run the sole admitted legacy initializer before the bounded init array.
+///
+/// This is intentionally separate from `run_initializers`: the initial graph
+/// stays DT_INIT-rejecting, while the one runtime DSO may carry one validated
+/// executable DT_INIT entry followed by its already-bounded init array. There
+/// is no DT_FINI/DT_FINI_ARRAY counterpart and no unload transition.
+#[cfg(crabc_bounded_runtime_dlopen)]
+unsafe fn run_bounded_runtime_initializers(object: &Object) -> Option<()> {
+    if object.init != 0 {
+        let virtual_address = object.init.checked_sub(object.base as usize)? as u64;
+        if !virtual_range_in_executable_load(object.phdr, object.phnum, virtual_address, 1) {
+            return None;
+        }
+        let initializer: unsafe extern "C" fn() = core::mem::transmute(object.init);
+        initializer();
+    }
+    invoke_initializer_range(
+        object.base,
+        object.phdr,
+        object.phnum,
+        object.init_array,
+        object.init_count,
+    )
+}
+
 /// Map and publish the single admitted runtime DSO.
 ///
 /// The name must be a basename found through the already-validated absolute
-/// RUNPATH of the main image. The DSO is RELA-only, has no PT_TLS, contains a
-/// bounded initializer array, and may depend only on objects already retained
-/// by the initial graph. Failed transactions never enter the published graph.
+/// RUNPATH of the main image. The DSO is RELA-only, has no PT_TLS, may carry
+/// one validated executable legacy `DT_INIT` entry followed by a bounded
+/// initializer array, and may depend only on objects already retained by the
+/// initial graph. Failed transactions never enter the published graph.
 #[cfg(crabc_bounded_runtime_dlopen)]
 unsafe fn bounded_runtime_map(path: *const u8) -> Result<usize, &'static [u8]> {
     let Some(path_len) = bounded_nul(path, FIXED_GRAPH_TEXT_CAPACITY) else {
@@ -2474,7 +2546,7 @@ unsafe fn bounded_runtime_map(path: *const u8) -> Result<usize, &'static [u8]> {
     let Some(fd) = open_from_runpath(main.runpath, main.runpath_len, path, path_len) else {
         return Err(b"runtime loader object was not found in RUNPATH");
     };
-    let mapped = map_elf(fd);
+    let mapped = map_elf(fd, true);
     let _ = syscall1(SYS_CLOSE, fd);
     let Some(object) = mapped else {
         return Err(b"runtime loader rejected malformed ELF");
@@ -2511,7 +2583,7 @@ unsafe fn bounded_runtime_map(path: *const u8) -> Result<usize, &'static [u8]> {
     // Every fallible validation and protection transition precedes the first
     // constructor side effect. The preflight above makes this invocation
     // infallible for the now-immutable mapped metadata.
-    if run_initializers(core::slice::from_ref(&object)).is_none() {
+    if run_bounded_runtime_initializers(&object).is_none() {
         bounded_runtime_unmap(&object);
         return Err(b"runtime loader constructor transaction failed");
     }

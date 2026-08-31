@@ -108,6 +108,9 @@ require_runner_contract "$BOUNDED_DLOPEN_RUNNER" \
     'R_X86_64_GLOB_DAT' \
     'libbounded-plugin.so' \
     'libbounded-tls.so' \
+    'bounded_plugin_legacy_initialize' \
+    'libmid-bounded-dlopen-init.so' \
+    'candidate accepted DT_INIT in an initial DSO' \
     'RTLD_NOLOAD' \
     'RTLD_NODELETE' \
     'PT_TLS' \

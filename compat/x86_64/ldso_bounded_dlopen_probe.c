@@ -98,10 +98,12 @@ int main(void) {
         || dlerror() == NULL || dlerror() != NULL) return 42;
     if (dlopen("libbounded-unretained.so", RTLD_NOW | RTLD_LOCAL) != NULL
         || dlerror() == NULL || dlerror() != NULL) return 43;
+    if (dlopen("libbounded-init-malformed.so", RTLD_NOW | RTLD_LOCAL) != NULL
+        || dlerror() == NULL || dlerror() != NULL) return 44;
     struct graph_observation after_malformed = {0, 0, 0};
     if (dl_iterate_phdr(observe_graph, &after_malformed) != 0
         || after_malformed.visits != 3 || after_malformed.plugin_seen
-        || after_malformed.nonzero_additions) return 44;
+        || after_malformed.nonzero_additions) return 45;
     if (dlopen("./libbounded-plugin.so", RTLD_NOW | RTLD_LOCAL) != NULL
         || dlerror() == NULL) return 45;
 #endif
@@ -153,10 +155,14 @@ int main(void) {
         "libbounded-plugin.so", RTLD_LAZY | RTLD_NOLOAD | RTLD_NODELETE | RTLD_LOCAL);
     if (lazy_nodelete_noload_handle != handle) return 69;
     int (*plugin_value)(void) = (int (*)(void))dlsym(handle, "bounded_plugin_value");
+    int *legacy_init_runs = dlsym(handle, "bounded_plugin_legacy_init_runs");
     int *constructor_runs = dlsym(handle, "bounded_plugin_constructor_runs");
     int *dependency_data = dlsym(handle, "leaf_data");
-    if (plugin_value == NULL || constructor_runs == NULL || dependency_data == NULL
-        || plugin_value() != 77 || *constructor_runs != 1 || *dependency_data != 40) return 54;
+    int *initializer_order = dlsym(handle, "bounded_plugin_initializer_order");
+    if (plugin_value == NULL || legacy_init_runs == NULL || constructor_runs == NULL
+        || dependency_data == NULL || initializer_order == NULL || plugin_value() != 77
+        || *legacy_init_runs != 1 || *constructor_runs != 1 || *initializer_order != 2
+        || *dependency_data != 40) return 54;
 
     Dl_info address = {0};
     if (dladdr((const void *)plugin_value, &address) != 1
@@ -197,9 +203,13 @@ int main(void) {
     void *nodelete_reopen =
         dlopen("libbounded-plugin.so", RTLD_LAZY | RTLD_NODELETE | RTLD_LOCAL);
     if (nodelete_reopen == NULL) return 75;
+    int *reopen_legacy_init_runs =
+        dlsym(nodelete_reopen, "bounded_plugin_legacy_init_runs");
     int *reopen_constructor_runs = dlsym(nodelete_reopen, "bounded_plugin_constructor_runs");
     if (dlsym(nodelete_reopen, "bounded_plugin_value") != (void *)plugin_value
-        || reopen_constructor_runs == NULL || *reopen_constructor_runs != 1) return 75;
+        || reopen_legacy_init_runs == NULL || reopen_constructor_runs == NULL
+        || *reopen_legacy_init_runs != 1 || *reopen_constructor_runs != 1
+        || *initializer_order != 2) return 75;
     if (dlclose(nodelete_reopen) != 0) return 76;
 #ifdef CRABC_BOUNDED_DLFCN_FREESTANDING
     if (dlsym(handle, "bounded_plugin_value") != NULL || dlerror() == NULL) return 77;

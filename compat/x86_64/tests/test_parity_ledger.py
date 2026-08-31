@@ -552,6 +552,8 @@ class X86ParityLedgerTests(unittest.TestCase):
             "fixed-graph dlfcn runtime graph",
             "public C dlfcn bridge",
             "one serialized RUNPATH mapping",
+            "validated executable runtime `DT_INIT`",
+            "initial-DSO DT_INIT with status 127",
             "RTLD_NODELETE",
             "status 127",
             "general loader",
@@ -733,6 +735,8 @@ class X86ParityLedgerTests(unittest.TestCase):
             "bounded runtime-mapping artifact",
             "one append-only graph mutation",
             "real ELF64 ET_DYN DSO",
+            "at most one nonzero executable `DT_INIT` entry",
+            "initial main/mid/leaf `DT_INIT` remains reject-only",
             "generation/additions one",
             "Two concurrent raw-clone callers",
             "RTLD_NOLOAD=4",
@@ -757,6 +761,13 @@ class X86ParityLedgerTests(unittest.TestCase):
             "both RTLD_NOW and RTLD_LAZY",
             artifact["native_evidence"][0]["scope"],
         )
+        for phrase in (
+            "one executable `DT_INIT` entry before its bounded `DT_INIT_ARRAY`",
+            "malformed non-executable runtime `DT_INIT`",
+            "initial-DSO `DT_INIT` status-127 rejection",
+        ):
+            self.assertIn(phrase, artifact["native_evidence"][0]["scope"])
+
         for phrase in (
             "NULL RTLD_NODELETE",
             "named-initial-object RTLD_NODELETE",

@@ -170,8 +170,12 @@ dynamic-runtime family or public x86 platform is promoted.
 
 The cfg-isolated `ldso-bounded-dlopen` sibling then admits one append-only
 no-TLS RELA-only ET_DYN mapping through the initial main's absolute RUNPATH,
-with only already-retained dependencies, one constructor, four copied objects,
-and one generation/addition. Its pinned-musl differential also proves
+with only already-retained dependencies, one validated executable legacy
+`DT_INIT` entry followed by its bounded constructor array, each exactly once,
+four copied objects, and
+one generation/addition. The entry is available only to that appended DSO;
+initial main/mid/leaf `DT_INIT` stays reject-only, and malformed runtime
+targets fail before publication. Its pinned-musl differential also proves
 `RTLD_NOLOAD` reference acquisition for that already-loaded plugin. The
 candidate accepts that request only with `RTLD_LAZY` or `RTLD_NOW` for the
 single appended basename: it returns the existing opaque token without a path
