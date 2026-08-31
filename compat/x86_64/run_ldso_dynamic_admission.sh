@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Native admission inventory for the six deliberately fixed x86 loader graphs.
+# Native admission inventory for the staged x86 loader graphs.
 #
 # This is a gate, not a generated report: it executes the existing fixtures that
 # build and inspect their candidate ELF objects, then requires each accepted and
@@ -16,13 +16,14 @@ readonly HANDOFF_RUNNER="$ROOT_DIR/compat/x86_64/run_ldso_owned_crt_handoff.sh"
 readonly INTROSPECTION_RUNNER="$ROOT_DIR/compat/x86_64/run_ldso_fixed_graph_introspection.sh"
 readonly DLFCN_RUNNER="$ROOT_DIR/compat/x86_64/run_ldso_fixed_graph_dlfcn.sh"
 readonly PUBLIC_DLFCN_RUNNER="$ROOT_DIR/compat/x86_64/run_ldso_public_dlfcn.sh"
+readonly BOUNDED_DLOPEN_RUNNER="$ROOT_DIR/compat/x86_64/run_ldso_bounded_dlopen.sh"
 
 if [ "$(uname -s)" != Linux ] || [ "$(uname -m)" != x86_64 ]; then
     printf '%s\n' 'ERROR: dynamic-admission inventory requires native Linux/x86-64' >&2
     exit 2
 fi
 
-for runner in "$GRAPH_RUNNER" "$TLS_RUNNER" "$HANDOFF_RUNNER" "$INTROSPECTION_RUNNER" "$DLFCN_RUNNER" "$PUBLIC_DLFCN_RUNNER"; do
+for runner in "$GRAPH_RUNNER" "$TLS_RUNNER" "$HANDOFF_RUNNER" "$INTROSPECTION_RUNNER" "$DLFCN_RUNNER" "$PUBLIC_DLFCN_RUNNER" "$BOUNDED_DLOPEN_RUNNER"; do
     if [ ! -f "$runner" ]; then
         printf '%s\n' "ERROR: required loader fixture is missing: $runner" >&2
         exit 2
@@ -101,6 +102,15 @@ require_runner_contract "$PUBLIC_DLFCN_RUNNER" \
     'main-crabc-public-dlfcn-malformed' \
     'main-crabc-public-dlfcn-absent' \
     'env -i PATH=/usr/bin:/bin'
+require_runner_contract "$BOUNDED_DLOPEN_RUNNER" \
+    'crabc_bounded_runtime_dlopen' \
+    '__crabc_x86_64_fixed_graph_dlfcn_v1' \
+    'R_X86_64_GLOB_DAT' \
+    'libbounded-plugin.so' \
+    'libbounded-tls.so' \
+    'PT_TLS' \
+    'main-musl-bounded-dlopen' \
+    'env -i PATH=/usr/bin:/bin'
 
 run_fixture() {
     local label="$1"
@@ -142,5 +152,9 @@ run_fixture \
     'public fixed-graph dlfcn bridge' \
     'x86 public C fixed-graph dlfcn ABI/diagnostics/introspection: PASS' \
     "$PUBLIC_DLFCN_RUNNER"
+run_fixture \
+    'bounded runtime dlopen graph' \
+    'x86 bounded runtime dlopen search/mapping/concurrency: PASS' \
+    "$BOUNDED_DLOPEN_RUNNER"
 
-printf '%s\n' 'x86 dynamic-loader fixed-graph admission inventory: PASS'
+printf '%s\n' 'x86 dynamic-loader staged admission inventory: PASS'

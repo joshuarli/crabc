@@ -1097,6 +1097,17 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         )
         self.assertIn("libc-locale-ctype-locators)", dispatcher)
 
+    def test_bounded_dlopen_elf_checks_are_pipefail_safe(self) -> None:
+        runner = (
+            ROOT / "compat" / "x86_64" / "run_ldso_bounded_dlopen.sh"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("set -euo pipefail", runner)
+        self.assertNotIn(" | grep -q ", runner)
+        self.assertNotIn(" | grep -Eq ", runner)
+        self.assertIn("grep -F ' TLS ' >/dev/null", runner)
+        self.assertIn("grep -E '\\(NEEDED\\)|\\(INTERP\\)|\\(RELR\\)' >/dev/null", runner)
+
     def test_script_is_valid_and_has_a_closed_command_set(self) -> None:
         syntax = subprocess.run(
             ["bash", "-n", str(RUNNER)],
@@ -1131,6 +1142,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         )
         self.assertIn("    ldso-fixed-graph-dlfcn) ;;", source)
         self.assertIn("    ldso-public-dlfcn) ;;", source)
+        self.assertIn("    ldso-bounded-dlopen) ;;", source)
         self.assertIn("    math-complex-header-abi)", source)
         self.assertIn("    math-special-header-abi)", source)
         self.assertIn("    libc-math-complex)", source)
@@ -1154,6 +1166,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "math-elementary-long-double-header-abi|libc-math-elementary-long-double",
             "ldso-fixed-graph-dlfcn",
             "ldso-public-dlfcn",
+            "ldso-bounded-dlopen",
             "math-special-header-abi|libc-math-special",
             "inet-address-header-abi",
             "ldso-target-root",

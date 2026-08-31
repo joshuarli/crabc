@@ -6557,6 +6557,7 @@ def require_ldso_dynamic_admission_artifact(family: Mapping[str, Any]) -> None:
     for phrase in (
         "still-planned `ldso.dynamic-runtime`",
         "six fixed private interpreter/bridge graphs",
+        "one bounded runtime-mapping graph",
         "R_X86_64_RELATIVE/GLOB_DAT/JUMP_SLOT",
         "bounded leaf `DT_RELR`",
         "R_X86_64_DTPMOD64/DTPOFF64",
@@ -6569,6 +6570,7 @@ def require_ldso_dynamic_admission_artifact(family: Mapping[str, Any]) -> None:
         "cannot map, promote, finalize, or unload",
         "public C dlfcn bridge",
         "bounded per-thread diagnostics",
+        "one serialized RUNPATH mapping",
         "DT_TEXTREL",
         "DF_STATIC_TLS",
         "status 127",
@@ -6589,6 +6591,7 @@ def require_ldso_dynamic_admission_artifact(family: Mapping[str, Any]) -> None:
         "compat/x86_64/run_ldso_fixed_graph_introspection.sh",
         "compat/x86_64/run_ldso_fixed_graph_dlfcn.sh",
         "compat/x86_64/run_ldso_public_dlfcn.sh",
+        "compat/x86_64/run_ldso_bounded_dlopen.sh",
         "compat/x86_64/run_ldso_dynamic_admission.sh",
         "scripts/dev-x86_64.sh",
     }
@@ -6612,6 +6615,7 @@ def require_ldso_dynamic_admission_artifact(family: Mapping[str, Any]) -> None:
         "run_ldso_fixed_graph_introspection.sh",
         "run_ldso_fixed_graph_dlfcn.sh",
         "run_ldso_public_dlfcn.sh",
+        "run_ldso_bounded_dlopen.sh",
         "R_X86_64_COPY",
         "R_X86_64_TPOFF64",
         "__crabc_x86_64_fixed_graph_introspection_v1",
@@ -6620,7 +6624,7 @@ def require_ldso_dynamic_admission_artifact(family: Mapping[str, Any]) -> None:
         "dso-import",
         "DT_TEXTREL",
         "STATIC_TLS",
-        "x86 dynamic-loader fixed-graph admission inventory: PASS",
+        "x86 dynamic-loader staged admission inventory: PASS",
     ):
         require(
             phrase in runner,
@@ -7062,6 +7066,138 @@ def require_ldso_public_fixed_graph_dlfcn_artifact(family: Mapping[str, Any]) ->
     require(
         "run_ldso_public_dlfcn.sh" in (ROOT / "scripts" / "dev-x86_64.sh").read_text(),
         "ldso-public-dlfcn dispatcher binding is missing",
+    )
+
+
+def require_ldso_bounded_runtime_dlopen_artifact(family: Mapping[str, Any]) -> None:
+    """Ratchet one real mapping transaction without promoting general dlfcn."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[ldso.dynamic-runtime].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [
+        entry for entry in artifacts
+        if entry.get("id") == "ldso-bounded-runtime-dlopen"
+    ]
+    require(
+        len(matching) == 1,
+        "ldso.dynamic-runtime needs exactly one ldso-bounded-runtime-dlopen artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "ldso-bounded-runtime-dlopen must not promote ldso.dynamic-runtime",
+    )
+    artifact = matching[0]
+    require(
+        "capabilities" not in artifact,
+        "ldso-bounded-runtime-dlopen must not select capabilities",
+    )
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for phrase in (
+        "bounded runtime-mapping artifact",
+        "still-planned `ldso.dynamic-runtime`",
+        "64-byte `RuntimeV1`-shaped",
+        "one append-only graph mutation",
+        "single absolute `DT_RUNPATH`",
+        "real ELF64 ET_DYN DSO",
+        "executes its bounded constructor array exactly once",
+        "generation/additions one",
+        "Two concurrent raw-clone callers",
+        "RTLD_LOCAL",
+        "PT_TLS",
+        "a second runtime object",
+        "neither `loader.dlfcn-basic` nor `loader.dlfcn-introspection` is selected",
+        "public x86 support is not promoted",
+    ):
+        require(
+            phrase in description,
+            f"ldso-bounded-runtime-dlopen description omits {phrase}",
+        )
+    expected_sources = {
+        "ldso/src/x86_64_initial_graph_source_root.rs",
+        "ldso/src/x86_64_initial_graph.rs",
+        "libc/src/c_abi/x86_64/fixed_graph_dlfcn.rs",
+        "libc/src/c_abi/x86_64/fixed_graph_dlfcn_runtime.rs",
+        "compat/x86_64/ldso_initial_graph_leaf.c",
+        "compat/x86_64/ldso_initial_graph_mid.c",
+        "compat/x86_64/ldso_public_dlfcn_start.S",
+        "compat/x86_64/ldso_bounded_dlopen_plugin.c",
+        "compat/x86_64/ldso_bounded_dlopen_tls.c",
+        "compat/x86_64/ldso_bounded_dlopen_probe.c",
+        "compat/x86_64/run_ldso_bounded_dlopen.sh",
+        "scripts/dev-x86_64.sh",
+    }
+    require(
+        set(string_list(artifact["source_owners"], "bounded runtime dlopen source owners"))
+        == expected_sources,
+        "ldso-bounded-runtime-dlopen source owners drifted",
+    )
+    prerequisite_text = " ".join(
+        string_list(
+            artifact["x86_abi_prerequisites"],
+            "ldso-bounded-runtime-dlopen ABI prerequisites",
+        )
+    )
+    for phrase in (
+        "R_X86_64_GLOB_DAT",
+        "0x43524142435f5844",
+        "ABI size 64",
+        "object_count is release-stored as four",
+        "additions=1, removals=0, generation=1",
+        "slash-free basename",
+        "RELA-only",
+        "no PT_TLS",
+        "Capacity is exactly one appended image",
+        "RTLD_LOCAL scope",
+        "neither finalizes nor unmaps",
+    ):
+        require(
+            phrase in prerequisite_text,
+            f"ldso-bounded-runtime-dlopen ABI prerequisites omit {phrase}",
+        )
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh ldso-bounded-dlopen"},
+        "ldso-bounded-runtime-dlopen must use the dedicated native command",
+    )
+    scope = evidence[0]["scope"]
+    assert isinstance(scope, str)
+    for phrase in (
+        "real ET_DYN interpreter/main/plugin ELF",
+        "absence of ambient libc/loader DT_NEEDED edges",
+        "malformed PT_TLS",
+        "two concurrent TLS-free clone opens",
+        "four-image dladdr/dlinfo/dl_iterate_phdr",
+        "stale-token rejection",
+        "second-object capacity rejection",
+        "public x86 support",
+    ):
+        require(
+            phrase in scope,
+            f"ldso-bounded-runtime-dlopen evidence scope omits {phrase}",
+        )
+    runner = (ROOT / "compat" / "x86_64" / "run_ldso_bounded_dlopen.sh").read_text()
+    for phrase in (
+        "crabc_bounded_runtime_dlopen",
+        "__crabc_x86_64_fixed_graph_dlfcn_v1",
+        "R_X86_64_GLOB_DAT",
+        "libbounded-plugin.so",
+        "libbounded-tls.so",
+        "PT_TLS",
+        "main-musl-bounded-dlopen",
+        "env -i PATH=/usr/bin:/bin",
+    ):
+        require(
+            phrase in runner,
+            f"ldso-bounded-runtime-dlopen runner omits {phrase}",
+        )
+    require(
+        "run_ldso_bounded_dlopen.sh" in (ROOT / "scripts" / "dev-x86_64.sh").read_text(),
+        "ldso-bounded-dlopen dispatcher binding is missing",
     )
 
 
@@ -22637,6 +22773,7 @@ def validate_ledger(
     require_ldso_fixed_graph_introspection_artifact(by_id["ldso.dynamic-runtime"])
     require_ldso_fixed_graph_dlfcn_artifact(by_id["ldso.dynamic-runtime"])
     require_ldso_public_fixed_graph_dlfcn_artifact(by_id["ldso.dynamic-runtime"])
+    require_ldso_bounded_runtime_dlopen_artifact(by_id["ldso.dynamic-runtime"])
     require_x86_crt_object_bundle_artifact(by_id["crt.dynamic-startup"])
     require_ldso_dynamic_admission_artifact(by_id["ldso.dynamic-runtime"])
     require_dynamic_pie_scrt1_artifact(by_id["crt.dynamic-startup"])

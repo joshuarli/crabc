@@ -33,18 +33,18 @@
 //! One cfg-isolated no-TLS sibling publishes only a callback-free copied
 //! snapshot/address/information record over this exact immutable graph. A
 //! second no-TLS sibling adds loader-owned reference handles and scoped symbol
-//! lookup for objects already in that graph. It still cannot map, promote,
-//! finalize, or unload an object, and neither sibling publishes borrowed
-//! link-map state or public dlfcn entry points.
+//! lookup for objects already in that graph. Its separately selected bounded
+//! runtime sibling can add exactly one no-TLS DSO from the main image's fixed
+//! absolute RUNPATH when every dependency is already retained. It still
+//! cannot promote, finalize, or unload an object, and neither sibling
+//! publishes borrowed link-map state or public dlfcn entry points.
 
 #![allow(clippy::missing_safety_doc)]
 
 use core::arch::global_asm;
 use core::ffi::c_void;
 #[cfg(any(crabc_fixed_graph_introspection, crabc_fixed_graph_dlfcn))]
-use core::sync::atomic::{AtomicBool, Ordering};
-#[cfg(crabc_fixed_graph_dlfcn)]
-use core::sync::atomic::AtomicUsize;
+use core::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 
 #[cfg(all(
     crabc_fixed_graph_introspection,
@@ -62,6 +62,9 @@ compile_error!("fixed-graph introspection is an independent no-TLS/owned-CRT sib
     )
 ))]
 compile_error!("fixed-graph dlfcn is an independent no-TLS/owned-CRT sibling");
+
+#[cfg(all(crabc_bounded_runtime_dlopen, not(crabc_fixed_graph_dlfcn)))]
+compile_error!("bounded runtime dlopen requires the fixed-graph dlfcn record sibling");
 
 const AT_PHDR: u64 = 3;
 const AT_PHNUM: u64 = 5;
@@ -160,7 +163,11 @@ const PAGE: u64 = 4096;
 const X86_64_STAT_BYTE_LEN: usize = 144;
 const X86_64_STAT_SIZE_OFFSET: usize = 48;
 
-const MAX_OBJECTS: usize = 3;
+const INITIAL_OBJECT_COUNT: usize = 3;
+#[cfg(crabc_bounded_runtime_dlopen)]
+const MAX_OBJECTS: usize = INITIAL_OBJECT_COUNT + 1;
+#[cfg(not(crabc_bounded_runtime_dlopen))]
+const MAX_OBJECTS: usize = INITIAL_OBJECT_COUNT;
 const MAX_PHDRS: usize = 32;
 const MAX_NEEDED: usize = 2;
 const MAX_PATH: usize = 512;
@@ -538,6 +545,12 @@ static mut OWNED_CRT_HANDOFF_STATE: u8 = OWNED_CRT_STATE_UNPUBLISHED;
 #[cfg(any(crabc_fixed_graph_introspection, crabc_fixed_graph_dlfcn))]
 static FIXED_GRAPH_RUNTIME_PUBLISHED: AtomicBool = AtomicBool::new(false);
 #[cfg(any(crabc_fixed_graph_introspection, crabc_fixed_graph_dlfcn))]
+static FIXED_GRAPH_RUNTIME_COUNT: AtomicUsize = AtomicUsize::new(0);
+#[cfg(any(crabc_fixed_graph_introspection, crabc_fixed_graph_dlfcn))]
+static FIXED_GRAPH_RUNTIME_ADDITIONS: AtomicU64 = AtomicU64::new(0);
+#[cfg(any(crabc_fixed_graph_introspection, crabc_fixed_graph_dlfcn))]
+static FIXED_GRAPH_RUNTIME_LOCK: AtomicBool = AtomicBool::new(false);
+#[cfg(any(crabc_fixed_graph_introspection, crabc_fixed_graph_dlfcn))]
 static mut FIXED_GRAPH_RUNTIME_OBJECTS: [Object; MAX_OBJECTS] = [EMPTY_OBJECT; MAX_OBJECTS];
 #[cfg(any(crabc_fixed_graph_introspection, crabc_fixed_graph_dlfcn))]
 static mut FIXED_GRAPH_RUNTIME_NAMES: [[u8; FIXED_GRAPH_TEXT_CAPACITY]; MAX_OBJECTS] =
@@ -545,26 +558,47 @@ static mut FIXED_GRAPH_RUNTIME_NAMES: [[u8; FIXED_GRAPH_TEXT_CAPACITY]; MAX_OBJE
 
 #[cfg(crabc_fixed_graph_dlfcn)]
 #[repr(C)]
+#[derive(Copy, Clone)]
 struct FixedGraphHandleToken {
-    image_index: usize,
+    identity: u8,
 }
 
 #[cfg(crabc_fixed_graph_dlfcn)]
-static FIXED_GRAPH_HANDLE_TOKENS: [FixedGraphHandleToken; MAX_OBJECTS] = [
-    FixedGraphHandleToken { image_index: 0 },
-    FixedGraphHandleToken { image_index: 1 },
-    FixedGraphHandleToken { image_index: 2 },
-];
+static FIXED_GRAPH_HANDLE_TOKENS: [FixedGraphHandleToken; MAX_OBJECTS] =
+    [FixedGraphHandleToken { identity: 0 }; MAX_OBJECTS];
 
 // Startup mappings own one permanent graph reference. These counters cover
 // only explicit dlfcn acquisitions, so the last `close` invalidates a token
 // without pretending that the image was finalized or unmapped.
 #[cfg(crabc_fixed_graph_dlfcn)]
-static FIXED_GRAPH_HANDLE_REFERENCES: [AtomicUsize; MAX_OBJECTS] = [
-    AtomicUsize::new(0),
-    AtomicUsize::new(0),
-    AtomicUsize::new(0),
-];
+static FIXED_GRAPH_HANDLE_REFERENCES: [AtomicUsize; MAX_OBJECTS] =
+    [const { AtomicUsize::new(0) }; MAX_OBJECTS];
+
+/// Serializes the copied graph view with the one admitted runtime mapping
+/// transaction. The immutable siblings still use the same guard so the
+/// callback contract has one race-free implementation.
+#[cfg(any(crabc_fixed_graph_introspection, crabc_fixed_graph_dlfcn))]
+struct FixedGraphRuntimeGuard;
+
+#[cfg(any(crabc_fixed_graph_introspection, crabc_fixed_graph_dlfcn))]
+impl FixedGraphRuntimeGuard {
+    fn lock() -> Self {
+        while FIXED_GRAPH_RUNTIME_LOCK
+            .compare_exchange_weak(false, true, Ordering::Acquire, Ordering::Relaxed)
+            .is_err()
+        {
+            core::hint::spin_loop();
+        }
+        Self
+    }
+}
+
+#[cfg(any(crabc_fixed_graph_introspection, crabc_fixed_graph_dlfcn))]
+impl Drop for FixedGraphRuntimeGuard {
+    fn drop(&mut self) {
+        FIXED_GRAPH_RUNTIME_LOCK.store(false, Ordering::Release);
+    }
+}
 
 #[panic_handler]
 fn panic(_: &core::panic::PanicInfo) -> ! {
@@ -2109,11 +2143,18 @@ unsafe fn publish_fixed_graph_runtime(
         objects[1].strsz.checked_sub(objects[1].needed[0])?,
     )?;
     let destination = core::ptr::addr_of_mut!(FIXED_GRAPH_RUNTIME_OBJECTS).cast::<Object>();
-    for index in 0..MAX_OBJECTS {
+    for index in 0..INITIAL_OBJECT_COUNT {
         core::ptr::write(destination.add(index), objects[index]);
     }
+    FIXED_GRAPH_RUNTIME_COUNT.store(INITIAL_OBJECT_COUNT, Ordering::Relaxed);
+    FIXED_GRAPH_RUNTIME_ADDITIONS.store(0, Ordering::Relaxed);
     FIXED_GRAPH_RUNTIME_PUBLISHED.store(true, Ordering::Release);
     Some(())
+}
+
+#[cfg(any(crabc_fixed_graph_introspection, crabc_fixed_graph_dlfcn))]
+fn fixed_graph_object_count() -> usize {
+    FIXED_GRAPH_RUNTIME_COUNT.load(Ordering::Acquire)
 }
 
 #[cfg(any(crabc_fixed_graph_introspection, crabc_fixed_graph_dlfcn))]
@@ -2145,6 +2186,7 @@ unsafe extern "C" fn fixed_graph_snapshot(
     generation: *mut u64,
     error: *mut FixedGraphTextV1,
 ) -> i32 {
+    let _guard = FixedGraphRuntimeGuard::lock();
     fixed_graph_clear_error(error);
     if count.is_null() || generation.is_null() || (capacity != 0 && records.is_null()) {
         fixed_graph_set_error(error, b"loader snapshot output is invalid");
@@ -2156,11 +2198,13 @@ unsafe extern "C" fn fixed_graph_snapshot(
         fixed_graph_set_error(error, b"fixed graph introspection unavailable");
         return -1;
     }
-    if capacity < MAX_OBJECTS {
+    let object_count = fixed_graph_object_count();
+    if capacity < object_count {
         fixed_graph_set_error(error, b"loader snapshot capacity is too small");
         return -1;
     }
-    for index in 0..MAX_OBJECTS {
+    let additions = FIXED_GRAPH_RUNTIME_ADDITIONS.load(Ordering::Acquire);
+    for index in 0..object_count {
         let object = fixed_graph_object(index);
         core::ptr::write(
             records.add(index),
@@ -2169,7 +2213,7 @@ unsafe extern "C" fn fixed_graph_snapshot(
                 program_headers: object.phdr.cast(),
                 program_header_count: object.phnum as u16,
                 reserved: 0,
-                additions: 0,
+                additions,
                 removals: 0,
                 tls_module: 0,
                 tls_data: core::ptr::null_mut(),
@@ -2177,7 +2221,8 @@ unsafe extern "C" fn fixed_graph_snapshot(
             },
         );
     }
-    core::ptr::write(count, MAX_OBJECTS);
+    core::ptr::write(count, object_count);
+    core::ptr::write(generation, additions);
     0
 }
 
@@ -2187,6 +2232,7 @@ unsafe extern "C" fn fixed_graph_address(
     result: *mut FixedGraphAddressV1,
     error: *mut FixedGraphTextV1,
 ) -> i32 {
+    let _guard = FixedGraphRuntimeGuard::lock();
     fixed_graph_clear_error(error);
     if result.is_null() {
         fixed_graph_set_error(error, b"loader address lookup is invalid");
@@ -2210,7 +2256,7 @@ unsafe extern "C" fn fixed_graph_address(
         return -1;
     }
     let address_value = address as usize;
-    for object_index in 0..MAX_OBJECTS {
+    for object_index in 0..fixed_graph_object_count() {
         let object = fixed_graph_object(object_index);
         if !fixed_graph_object_contains(&object, address_value) {
             continue;
@@ -2275,7 +2321,7 @@ unsafe fn fixed_graph_handle_index(handle: *mut c_void) -> Option<usize> {
     if handle.is_null() {
         return None;
     }
-    for index in 0..MAX_OBJECTS {
+    for index in 0..fixed_graph_object_count() {
         if handle == fixed_graph_handle(index)
             && (index == 0
                 || FIXED_GRAPH_HANDLE_REFERENCES[index].load(Ordering::Acquire) != 0)
@@ -2316,6 +2362,153 @@ unsafe fn fixed_graph_acquire(index: usize) -> bool {
     }
 }
 
+#[cfg(crabc_bounded_runtime_dlopen)]
+unsafe fn bounded_runtime_unmap(object: &Object) {
+    let mut minimum = u64::MAX;
+    let mut maximum = 0u64;
+    for index in 0..object.phnum {
+        let header = object.phdr.add(index * 56);
+        if read_u32(header) != PT_LOAD {
+            continue;
+        }
+        minimum = minimum.min(align_down(read_u64(header.add(16))));
+        let Some(end) = read_u64(header.add(16)).checked_add(read_u64(header.add(40))) else {
+            return;
+        };
+        maximum = maximum.max(align_up(end));
+    }
+    if minimum != u64::MAX && maximum > minimum {
+        let _ = syscall2(
+            SYS_MUNMAP,
+            object.base.wrapping_add(minimum) as i64,
+            (maximum - minimum) as i64,
+        );
+    }
+}
+
+#[cfg(crabc_bounded_runtime_dlopen)]
+unsafe fn bounded_runtime_dependency_index(
+    object: &Object,
+    needed_slot: usize,
+    retained_count: usize,
+) -> Option<usize> {
+    if needed_slot >= object.needed_count {
+        return None;
+    }
+    let offset = object.needed[needed_slot];
+    let name = object.strtab.add(offset);
+    let Some(name_len) = bounded_nul(name, object.strsz - offset) else {
+        return None;
+    };
+    for index in 1..retained_count {
+        let retained = fixed_graph_name(index);
+        if retained.len as usize == name_len
+            && bytes_eq(name, retained.bytes.as_ptr(), name_len)
+        {
+            return Some(index);
+        }
+    }
+    None
+}
+
+#[cfg(crabc_bounded_runtime_dlopen)]
+unsafe fn bounded_runtime_preflight_initializers(object: &Object) -> Option<()> {
+    if object.init_count != 0 && object.init_array.is_null() {
+        return None;
+    }
+    for index in 0..object.init_count {
+        let initializer = *object.init_array.add(index);
+        if initializer == 0 {
+            return None;
+        }
+        let virtual_address = initializer.checked_sub(object.base as usize)? as u64;
+        if !virtual_range_in_executable_load(object.phdr, object.phnum, virtual_address, 1) {
+            return None;
+        }
+    }
+    Some(())
+}
+
+/// Map and publish the single admitted runtime DSO.
+///
+/// The name must be a basename found through the already-validated absolute
+/// RUNPATH of the main image. The DSO is RELA-only, has no PT_TLS, contains a
+/// bounded initializer array, and may depend only on objects already retained
+/// by the initial graph. Failed transactions never enter the published graph.
+#[cfg(crabc_bounded_runtime_dlopen)]
+unsafe fn bounded_runtime_map(path: *const u8) -> Result<usize, &'static [u8]> {
+    let Some(path_len) = bounded_nul(path, FIXED_GRAPH_TEXT_CAPACITY) else {
+        return Err(b"loader object name is invalid");
+    };
+    if path_len == 0 {
+        return Err(b"loader object name is invalid");
+    }
+    for offset in 0..path_len {
+        if *path.add(offset) == b'/' {
+            return Err(b"runtime loader accepts a RUNPATH basename only");
+        }
+    }
+    let retained_count = fixed_graph_object_count();
+    if retained_count >= MAX_OBJECTS {
+        return Err(b"runtime loader object capacity is exhausted");
+    }
+    let main = fixed_graph_object(0);
+    if main.runpath.is_null() {
+        return Err(b"runtime loader RUNPATH is unavailable");
+    }
+    let Some(fd) = open_from_runpath(main.runpath, main.runpath_len, path, path_len) else {
+        return Err(b"runtime loader object was not found in RUNPATH");
+    };
+    let mapped = map_elf(fd);
+    let _ = syscall1(SYS_CLOSE, fd);
+    let Some(object) = mapped else {
+        return Err(b"runtime loader rejected malformed ELF");
+    };
+    if object.tls_memsz != 0
+        || object.relrsz != 0
+        || object.runpath_len != 0
+        || object.needed_count > MAX_NEEDED
+        || object.init_count > 16
+    {
+        bounded_runtime_unmap(&object);
+        return Err(b"runtime loader rejected unsupported DSO metadata");
+    }
+    for slot in 0..object.needed_count {
+        if bounded_runtime_dependency_index(&object, slot, retained_count).is_none() {
+            bounded_runtime_unmap(&object);
+            return Err(b"runtime loader dependency is not already retained");
+        }
+    }
+    let mut objects = [EMPTY_OBJECT; MAX_OBJECTS];
+    for index in 0..retained_count {
+        objects[index] = fixed_graph_object(index);
+    }
+    objects[retained_count] = object;
+    if relocate(&object, &objects).is_none()
+        || protect_segments(&object).is_none()
+        || apply_relro(&object).is_none()
+        || fixed_graph_store_name(retained_count, path, FIXED_GRAPH_TEXT_CAPACITY).is_none()
+        || bounded_runtime_preflight_initializers(&object).is_none()
+    {
+        bounded_runtime_unmap(&object);
+        return Err(b"runtime loader mapping transaction failed");
+    }
+    // Every fallible validation and protection transition precedes the first
+    // constructor side effect. The preflight above makes this invocation
+    // infallible for the now-immutable mapped metadata.
+    if run_initializers(core::slice::from_ref(&object)).is_none() {
+        bounded_runtime_unmap(&object);
+        return Err(b"runtime loader constructor transaction failed");
+    }
+    let destination = core::ptr::addr_of_mut!(FIXED_GRAPH_RUNTIME_OBJECTS)
+        .cast::<Object>()
+        .add(retained_count);
+    core::ptr::write(destination, object);
+    FIXED_GRAPH_RUNTIME_ADDITIONS.store(1, Ordering::Relaxed);
+    FIXED_GRAPH_RUNTIME_COUNT.store(retained_count + 1, Ordering::Release);
+    Ok(retained_count)
+}
+
 #[cfg(crabc_fixed_graph_dlfcn)]
 unsafe extern "C" fn fixed_graph_open(
     path: *const u8,
@@ -2323,6 +2516,7 @@ unsafe extern "C" fn fixed_graph_open(
     handle: *mut *mut c_void,
     error: *mut FixedGraphTextV1,
 ) -> i32 {
+    let _guard = FixedGraphRuntimeGuard::lock();
     fixed_graph_clear_error(error);
     if handle.is_null() {
         fixed_graph_set_error(error, b"loader open output is invalid");
@@ -2348,7 +2542,8 @@ unsafe extern "C" fn fixed_graph_open(
         core::ptr::write(handle, fixed_graph_handle(0));
         return 0;
     }
-    for index in 1..MAX_OBJECTS {
+    let object_count = fixed_graph_object_count();
+    for index in 1..object_count {
         if fixed_graph_name_matches(index, path) {
             if !fixed_graph_acquire(index) {
                 fixed_graph_set_error(error, b"loader handle reference overflow");
@@ -2358,8 +2553,26 @@ unsafe extern "C" fn fixed_graph_open(
             return 0;
         }
     }
-    fixed_graph_set_error(error, b"fixed graph object is not already loaded");
-    -1
+    #[cfg(crabc_bounded_runtime_dlopen)]
+    match bounded_runtime_map(path) {
+        Ok(index) => {
+            if !fixed_graph_acquire(index) {
+                fixed_graph_set_error(error, b"loader handle reference overflow");
+                return -1;
+            }
+            core::ptr::write(handle, fixed_graph_handle(index));
+            return 0;
+        }
+        Err(message) => {
+            fixed_graph_set_error(error, message);
+            return -1;
+        }
+    }
+    #[cfg(not(crabc_bounded_runtime_dlopen))]
+    {
+        fixed_graph_set_error(error, b"fixed graph object is not already loaded");
+        -1
+    }
 }
 
 #[cfg(crabc_fixed_graph_dlfcn)]
@@ -2402,6 +2615,38 @@ unsafe fn fixed_graph_lookup_in_object(object_index: usize, name: *const u8, nam
     weak
 }
 
+#[cfg(crabc_bounded_runtime_dlopen)]
+unsafe fn fixed_graph_lookup_runtime_dependencies(
+    object_index: usize,
+    name: *const u8,
+    name_len: usize,
+) -> Option<u64> {
+    if let Some(found) = fixed_graph_lookup_in_object(object_index, name, name_len) {
+        return Some(found);
+    }
+    let object = fixed_graph_object(object_index);
+    for slot in 0..object.needed_count {
+        let offset = object.needed[slot];
+        let dependency_name = object.strtab.add(offset);
+        let dependency_len = bounded_nul(dependency_name, object.strsz - offset)?;
+        for direct in 1..INITIAL_OBJECT_COUNT {
+            let retained = fixed_graph_name(direct);
+            if retained.len as usize == dependency_len
+                && bytes_eq(dependency_name, retained.bytes.as_ptr(), dependency_len)
+            {
+                // The retained startup graph's index suffix is its dependency
+                // closure: mid -> leaf and leaf -> none.
+                for candidate in direct..INITIAL_OBJECT_COUNT {
+                    if let Some(found) = fixed_graph_lookup_in_object(candidate, name, name_len) {
+                        return Some(found);
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
 #[cfg(crabc_fixed_graph_dlfcn)]
 unsafe extern "C" fn fixed_graph_symbol(
     handle: *mut c_void,
@@ -2409,6 +2654,7 @@ unsafe extern "C" fn fixed_graph_symbol(
     address: *mut *mut c_void,
     error: *mut FixedGraphTextV1,
 ) -> i32 {
+    let _guard = FixedGraphRuntimeGuard::lock();
     fixed_graph_clear_error(error);
     if address.is_null() || name.is_null() {
         if !address.is_null() {
@@ -2434,7 +2680,17 @@ unsafe extern "C" fn fixed_graph_symbol(
         fixed_graph_set_error(error, b"loader symbol name is invalid");
         return -1;
     }
-    for object_index in handle_index..MAX_OBJECTS {
+    #[cfg(crabc_bounded_runtime_dlopen)]
+    if handle_index >= INITIAL_OBJECT_COUNT {
+        if let Some(found) = fixed_graph_lookup_runtime_dependencies(handle_index, name, name_len) {
+            core::ptr::write(address, found as *mut c_void);
+            return 0;
+        }
+        fixed_graph_set_error(error, b"symbol not found in runtime handle scope");
+        return -1;
+    }
+    let scope_end = core::cmp::min(fixed_graph_object_count(), INITIAL_OBJECT_COUNT);
+    for object_index in handle_index..scope_end {
         if let Some(found) = fixed_graph_lookup_in_object(object_index, name, name_len) {
             core::ptr::write(address, found as *mut c_void);
             return 0;
@@ -2449,6 +2705,7 @@ unsafe extern "C" fn fixed_graph_close(
     handle: *mut c_void,
     error: *mut FixedGraphTextV1,
 ) -> i32 {
+    let _guard = FixedGraphRuntimeGuard::lock();
     fixed_graph_clear_error(error);
     if !FIXED_GRAPH_RUNTIME_PUBLISHED.load(Ordering::Acquire) {
         fixed_graph_set_error(error, b"fixed graph runtime unavailable");
@@ -2458,7 +2715,7 @@ unsafe extern "C" fn fixed_graph_close(
         return 0;
     }
     let mut index = None;
-    for candidate in 1..MAX_OBJECTS {
+    for candidate in 1..fixed_graph_object_count() {
         if handle == fixed_graph_handle(candidate) {
             index = Some(candidate);
             break;
@@ -2510,7 +2767,7 @@ unsafe fn fixed_graph_information_by_index(
         fixed_graph_set_error(error, b"fixed graph introspection unavailable");
         return -1;
     }
-    if image_index >= MAX_OBJECTS {
+    if image_index >= fixed_graph_object_count() {
         fixed_graph_set_error(error, b"loader information image is invalid");
         return -1;
     }
@@ -2532,6 +2789,7 @@ unsafe extern "C" fn fixed_graph_information(
     information: *mut FixedGraphInformationV1,
     error: *mut FixedGraphTextV1,
 ) -> i32 {
+    let _guard = FixedGraphRuntimeGuard::lock();
     fixed_graph_information_by_index(image_index, information, error)
 }
 
@@ -2541,6 +2799,7 @@ unsafe extern "C" fn fixed_graph_handle_information(
     information: *mut FixedGraphInformationV1,
     error: *mut FixedGraphTextV1,
 ) -> i32 {
+    let _guard = FixedGraphRuntimeGuard::lock();
     if information.is_null() {
         fixed_graph_clear_error(error);
         fixed_graph_set_error(error, b"loader information output is invalid");

@@ -342,7 +342,8 @@ Native Linux/x86-64 staged-foundation evidence commands:
   ldso-fixed-graph-introspection  run copied introspection over the fixed x86 loader graph
   ldso-fixed-graph-dlfcn  run handle/symbol operations over the fixed x86 loader graph
   ldso-public-dlfcn  run the public C bridge over the fixed x86 loader graph
-  ldso-dynamic-admission  run the bounded x86 dynamic-loader fixed-graph admission inventory
+  ldso-bounded-dlopen  run the one-slot x86 runtime DSO mapping/search artifact
+  ldso-dynamic-admission  run the bounded x86 dynamic-loader admission inventory
 
 This closed runner rejects non-native Linux/x86-64 hosts and does not provide
 a general x86 libc artifact, ldso, CRT, sysroot, allocator, generic Cargo, or
@@ -1519,8 +1520,16 @@ proves public C/C++ ABI layouts, per-thread one-shot errors, stale handles,
 malformed and absent records, and copied introspection, while continuing to
 exclude search, mutation, global promotion, RTLD_NEXT, finalization, and unload.
 It remains a staged fixed-graph artifact, not capability or platform promotion.
+`ldso-bounded-dlopen` admits one append-only runtime mapping through the main
+image's already-validated absolute RUNPATH. It proves serialized concurrent
+open, one constructor execution, retained dependencies, copied four-image
+introspection, PT_TLS/malformed rejection, and a hard one-object capacity.
+It does not provide general search, recursive dependency mapping, TLS growth,
+global promotion, RTLD_NEXT, finalization/unload, capability selection, or
+public x86 support.
 `ldso-dynamic-admission` executes the initial no-TLS, GNU-Dynamic TLS, owned-
-CRT, copied-introspection, retained-object-dlfcn, and public-C-bridge fixed-graph fixtures as
+CRT, copied-introspection, retained-object-dlfcn, public-C-bridge fixed-graph,
+and bounded runtime-mapping fixtures as
 one consumed admission gate. Their fresh candidate ELF inspection and negative
 launches retain only the explicit accepted shapes and rejected metadata,
 relocation, record, handle, and scope forms. It is not a general x86 ldso,
@@ -3079,6 +3088,10 @@ run_ldso_public_dlfcn_tests() {
     run_in_container bash /workspace/compat/x86_64/run_ldso_public_dlfcn.sh
 }
 
+run_ldso_bounded_dlopen_tests() {
+    run_in_container bash /workspace/compat/x86_64/run_ldso_bounded_dlopen.sh
+}
+
 run_ldso_dynamic_admission_tests() {
     run_in_container bash /workspace/compat/x86_64/run_ldso_dynamic_admission.sh
 }
@@ -3098,6 +3111,7 @@ case "$command" in
     math-elementary-long-double-header-abi|libc-math-elementary-long-double) ;;
     ldso-fixed-graph-dlfcn) ;;
     ldso-public-dlfcn) ;;
+    ldso-bounded-dlopen) ;;
     math-special-header-abi|libc-math-special) ;;
     inet-address-header-abi) ;;
     ldso-target-root) ;;
@@ -4699,6 +4713,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "ldso-public-dlfcn takes no arguments"
         ensure_image
         run_ldso_public_dlfcn_tests
+        ;;
+    ldso-bounded-dlopen)
+        [ "$#" -eq 0 ] || fail "ldso-bounded-dlopen takes no arguments"
+        ensure_image
+        run_ldso_bounded_dlopen_tests
         ;;
     ldso-dynamic-admission)
         [ "$#" -eq 0 ] || fail "ldso-dynamic-admission takes no arguments"

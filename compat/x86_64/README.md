@@ -4108,13 +4108,29 @@ filesystem search/mapping, graph mutation, finalization, and unload remain
 excluded. This artifact deliberately selects neither dlfcn capability,
 `ldso.dynamic-runtime`, nor public x86 support.
 
-`ldso-dynamic-admission` is the consumed aggregate admission gate for six
+`ldso-bounded-dlopen` advances one real loader-mapping prerequisite without
+widening that public claim. The cfg-isolated interpreter keeps the same
+64-byte RuntimeV1-shaped record and initial main/mid/leaf graph, then
+serializes exactly one slash-free basename lookup through the main image's
+validated absolute RUNPATH. The candidate maps a no-TLS RELA-only ET_DYN whose
+dependencies are already retained, applies final protections and RELRO, runs
+its constructor once, and append-publishes a fourth snapshot record with
+generation/additions one. Native raw-clone callers prove concurrent opens
+share one loader token and one constructor; copied dladdr, dlinfo, and
+dl_iterate_phdr observations prove the added mapping. PT_TLS, slash paths,
+recursive/unretained dependencies, and second-object capacity fail closed.
+Pinned musl 1.2.6 supplies the separate ordinary runtime-dlopen differential.
+General search/mutation, TLS growth, RTLD_NEXT, global promotion,
+finalization/unload, both dlfcn capability selections, and public x86 support
+remain excluded.
+
+`ldso-dynamic-admission` is the consumed aggregate admission gate for seven
 real-ELF private interpreter/bridge transactions. It runs each fixture afresh, so its
 positive inventory is limited to the no-TLS RELATIVE/GLOB_DAT/JUMP_SLOT plus
 bounded leaf RELR graph, the GNU-Dynamic DTPMOD/DTPOFF graph, and the
 owned-CRT weak-GLOB_DAT record graph, the callback-free fixed-graph
 introspection record, the retained-object handle/symbol dlfcn-runtime record,
-and its public-C bridge. Their in-place malformed inputs retain the fail-closed
+its public-C bridge, and the one-slot runtime mapper. Their in-place malformed inputs retain the fail-closed
 PT_TLS, COPY, malformed RELA/RELR, TEXTREL/static-TLS, TPOFF,
 malformed/early-handoff, malformed-introspection-record, malformed-dlfcn-record,
 and strong-dlfcn-import negatives. It is not a generated report or a general

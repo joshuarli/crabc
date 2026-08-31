@@ -1,17 +1,19 @@
-//! Public C dlfcn bridge for the immutable x86 loader graph.
+//! Public C dlfcn bridge for the bounded x86 loader graph.
 //!
 //! The interpreter remains the sole owner of object identities, symbol
 //! lookup, reference counts, and post-relocation metadata. This archive leaf
 //! imports only its exact weak `RuntimeV1` loader prefix. It deliberately does
 //! not fall back to an ambient loader when that record is absent or malformed.
 //!
-//! The fixed graph has no loader TLS. C `dlerror` and the borrowed names
+//! The graph has no loader TLS. C `dlerror` and the borrowed names
 //! returned by `dladdr` therefore live in a 32-entry process table keyed by
 //! Linux TID. Dead entries are reclaimed lazily with `tgkill(pid, tid, 0)`.
 //! Calls from more than 32 simultaneously live threads fail closed with a
-//! stable exhaustion diagnostic. This bound, RTLD_NEXT, filesystem search,
-//! graph mutation, global promotion, finalization, and unload are explicit
-//! reasons this staged leaf does not select the public dlfcn capabilities.
+//! stable exhaustion diagnostic. The loader may append one contract-bounded
+//! no-TLS DSO, so copied snapshots carry a runtime count and generation. This
+//! diagnostic bound, RTLD_NEXT, general filesystem search/graph mutation,
+//! global promotion, finalization, and unload remain explicit reasons this
+//! staged leaf does not select the public dlfcn capabilities.
 
 use core::ffi::{c_char, c_int, c_void};
 use core::mem;
@@ -24,7 +26,7 @@ const RECORD_MAGIC: u64 = 0x4352_4142_435f_5844;
 const RECORD_VERSION: u32 = 1;
 const RECORD_SIZE: u32 = 64;
 const TEXT_CAPACITY: usize = 256;
-const IMAGE_COUNT: usize = 3;
+const IMAGE_CAPACITY: usize = 4;
 const DIAGNOSTIC_SLOT_COUNT: usize = 32;
 const C_TEXT_CAPACITY: usize = TEXT_CAPACITY + 1;
 const RTLD_NOW: c_int = 2;
@@ -209,9 +211,9 @@ const EMPTY_DIAGNOSTIC_SLOT: DiagnosticSlot = DiagnosticSlot {
 static DLFCN_STATE_LOCK: AtomicBool = AtomicBool::new(false);
 static mut DIAGNOSTIC_SLOTS: [DiagnosticSlot; DIAGNOSTIC_SLOT_COUNT] =
     [const { EMPTY_DIAGNOSTIC_SLOT }; DIAGNOSTIC_SLOT_COUNT];
-static mut LINK_MAPS: [LinkMap; IMAGE_COUNT] = [EMPTY_LINK_MAP; IMAGE_COUNT];
-static mut LINK_MAP_NAMES: [[u8; C_TEXT_CAPACITY]; IMAGE_COUNT] =
-    [[0; C_TEXT_CAPACITY]; IMAGE_COUNT];
+static mut LINK_MAPS: [LinkMap; IMAGE_CAPACITY] = [EMPTY_LINK_MAP; IMAGE_CAPACITY];
+static mut LINK_MAP_NAMES: [[u8; C_TEXT_CAPACITY]; IMAGE_CAPACITY] =
+    [[0; C_TEXT_CAPACITY]; IMAGE_CAPACITY];
 
 struct StateGuard;
 
@@ -495,29 +497,35 @@ pub unsafe extern "C" fn dladdr(address: *const c_void, information: *mut DlInfo
     1
 }
 
-unsafe fn snapshot(record: &RuntimeRecordV1, images: &mut [ImageV1; IMAGE_COUNT]) -> bool {
+unsafe fn snapshot(
+    record: &RuntimeRecordV1,
+    images: &mut [ImageV1; IMAGE_CAPACITY],
+) -> Option<(usize, u64)> {
     let mut count = 0usize;
     let mut generation = 0u64;
     let mut error = EMPTY_TEXT;
-    snapshot_fn(record)(
+    if snapshot_fn(record)(
         images.as_mut_ptr(),
         images.len(),
         &mut count,
         &mut generation,
         &mut error,
-    ) == 0
-        && count == IMAGE_COUNT
-        && generation == 0
+    ) != 0
+        || count == 0
+        || count > IMAGE_CAPACITY
+    {
+        None
+    } else {
+        Some((count, generation))
+    }
 }
 
-unsafe fn publish_link_maps(record: &RuntimeRecordV1) -> bool {
-    let mut images = [EMPTY_IMAGE; IMAGE_COUNT];
-    if !snapshot(record, &mut images) {
-        return false;
-    }
-    let mut dynamic_addresses = [ptr::null_mut(); IMAGE_COUNT];
+unsafe fn publish_link_maps(record: &RuntimeRecordV1) -> Option<usize> {
+    let mut images = [EMPTY_IMAGE; IMAGE_CAPACITY];
+    let (count, _) = snapshot(record, &mut images)?;
+    let mut dynamic_addresses = [ptr::null_mut(); IMAGE_CAPACITY];
     let mut open_name = [0u8; C_TEXT_CAPACITY];
-    for index in 0..IMAGE_COUNT {
+    for index in 0..count {
         let path = if index == 0 {
             ptr::null()
         } else {
@@ -527,7 +535,7 @@ unsafe fn publish_link_maps(record: &RuntimeRecordV1) -> bool {
         let mut handle = ptr::null_mut();
         let mut error = EMPTY_TEXT;
         if open_fn(record)(path, RTLD_NOW, &mut handle, &mut error) != 0 {
-            return false;
+            return None;
         }
         let mut information = InformationV1 {
             image_base: ptr::null_mut(),
@@ -546,20 +554,20 @@ unsafe fn publish_link_maps(record: &RuntimeRecordV1) -> bool {
             || information.image_base != images[index].image_base
             || information.dynamic_address.is_null()
         {
-            return false;
+            return None;
         }
         dynamic_addresses[index] = information.dynamic_address;
     }
     let _guard = StateGuard::lock();
-    for index in 0..IMAGE_COUNT {
+    for index in 0..count {
         copy_text_to_c(LINK_MAP_NAMES[index].as_mut_ptr(), &images[index].image_name);
     }
-    for index in 0..IMAGE_COUNT {
+    for index in 0..count {
         LINK_MAPS[index] = LinkMap {
             l_addr: images[index].image_base as usize,
             l_name: LINK_MAP_NAMES[index].as_mut_ptr().cast(),
             l_ld: dynamic_addresses[index],
-            l_next: if index + 1 < IMAGE_COUNT {
+            l_next: if index + 1 < count {
                 ptr::addr_of_mut!(LINK_MAPS[index + 1])
             } else {
                 ptr::null_mut()
@@ -571,7 +579,11 @@ unsafe fn publish_link_maps(record: &RuntimeRecordV1) -> bool {
             },
         };
     }
-    true
+    for index in count..IMAGE_CAPACITY {
+        LINK_MAPS[index] = EMPTY_LINK_MAP;
+        LINK_MAP_NAMES[index] = [0; C_TEXT_CAPACITY];
+    }
+    Some(count)
 }
 
 /// Implement the useful musl `RTLD_DI_LINKMAP` request for a live handle.
@@ -602,13 +614,12 @@ pub unsafe extern "C" fn dlinfo(
         image_name: EMPTY_TEXT,
     };
     let mut error = EMPTY_TEXT;
-    if information_fn(record)(handle, &mut information, &mut error) != 0
-        || !publish_link_maps(record)
-    {
+    if information_fn(record)(handle, &mut information, &mut error) != 0 {
         return -1;
     }
+    let Some(count) = publish_link_maps(record) else { return -1; };
     let _guard = StateGuard::lock();
-    for index in 0..IMAGE_COUNT {
+    for index in 0..count {
         if LINK_MAPS[index].l_addr == information.image_base as usize {
             *(argument as *mut *mut LinkMap) = ptr::addr_of_mut!(LINK_MAPS[index]);
             return 0;
@@ -617,7 +628,7 @@ pub unsafe extern "C" fn dlinfo(
     -1
 }
 
-/// Visit a copied snapshot of the immutable loader graph.
+/// Visit one copied snapshot of the loader graph.
 ///
 /// # Safety
 ///
@@ -634,15 +645,13 @@ pub unsafe extern "C" fn dl_iterate_phdr(
     let Some(record) = runtime_record() else {
         return -1;
     };
-    let mut images = [EMPTY_IMAGE; IMAGE_COUNT];
-    if !snapshot(record, &mut images) {
-        return -1;
-    }
-    let mut names = [[0u8; C_TEXT_CAPACITY]; IMAGE_COUNT];
-    for index in 0..IMAGE_COUNT {
+    let mut images = [EMPTY_IMAGE; IMAGE_CAPACITY];
+    let Some((count, _)) = snapshot(record, &mut images) else { return -1; };
+    let mut names = [[0u8; C_TEXT_CAPACITY]; IMAGE_CAPACITY];
+    for index in 0..count {
         copy_text_to_c(names[index].as_mut_ptr(), &images[index].image_name);
     }
-    for index in 0..IMAGE_COUNT {
+    for index in 0..count {
         let image = &images[index];
         let mut public = DlPhdrInfo {
             dlpi_addr: image.image_base as usize,
