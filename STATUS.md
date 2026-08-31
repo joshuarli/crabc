@@ -1205,6 +1205,22 @@ ELF checks reject weak compiler-builtins fallback, `log10l`, adjacent log/exp/
 pow functions, fenv API/policy, special/complex/binary80 math, family
 completion, promotion, and public x86 support.
 
+The separate private `static-c-math-sin` artifact records only binary64 `sin`
+and binary32 `sinf`: `./scripts/dev-x86_64.sh libc-math-sin` runs project-header
+C and default-SSE/`-mfpmath=387` C++ function-pointer fixtures through pinned
+musl and one freestanding static candidate. Its checked GCC 15.2.0 translation
+of musl 1.2.6 `sin.c`/`sinf.c` is the exact direct source closure: local kernel
+polynomials, fixed `2/pi` moderate/large argument reduction, and local
+floor/scalbn providers instead of a public sibling, ambient-libm, or selected-
+`math.special` dependency. The 256-record differential preserves raw result
+bits, flags, and all four requested-and-observed MXCSR directions over signed
+zero, tiny/subnormal, quadrant-boundary, moderate/huge finite, infinite,
+quiet-NaN, and signaling-NaN inputs. Strong target-owned definitions and final
+ELF checks reject weak compiler-builtins fallback, `sinl`, sincos, adjacent
+cos/tan/hyperbolic/inverse-trig/log/exp/pow functions, fenv API/policy,
+special/complex/binary80 math, family completion, promotion, and public x86
+support.
+
 The separate private `static-c-math-ceil` artifact records only binary64
 `ceil` and binary32 `ceilf`: `./scripts/dev-x86_64.sh libc-math-ceil` runs
 project-header C and default-SSE/`-mfpmath=387` C++ function-pointer fixtures

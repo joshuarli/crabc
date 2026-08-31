@@ -65,6 +65,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   math-expm1-header-abi  verify x86 expm1/expm1f C++ ABI/linkage
   math-log-header-abi  verify x86 log/logf C++ ABI/linkage
   math-log10-header-abi  verify x86 log10/log10f C++ ABI/linkage
+  math-sin-header-abi  verify x86 sin/sinf C++ ABI/linkage
   sys-reg-header-abi  compile the staged crabc x86 ptrace-register header slice
   machine-context-header-abi  verify staged x86 machine/context C/C++ header ABI profiles
   types-header-abi  compile the staged crabc x86 C/C++ type-layout header slice
@@ -421,6 +422,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-math-expm1  run the static x86 expm1/expm1f scalar exponential-minus-one slice
   libc-math-log  run the static x86 log/logf scalar natural-logarithm slice
   libc-math-log10  run the static x86 log10/log10f scalar base-ten logarithm slice
+  libc-math-sin  run the static x86 sin/sinf scalar trigonometric slice
   libc-math-ceil  run the static x86 ceil/ceilf fixed-direction slice
   libc-math-floor  run the static x86 floor/floorf fixed-direction slice
   libc-math-round  run the static x86 round/roundf half-away slice
@@ -1781,6 +1783,18 @@ requested versus observed direction in all four MXCSR modes. It excludes
 `log10l`, adjacent log/exp/pow functions, fenv API/policy,
 special/complex/binary80 math, family completion, promotion, and public x86
 support.
+`libc-math-sin` is the separate selected binary32/binary64 trigonometric
+slice for `sin` and `sinf`. It compares parenthesized C calls and default-SSE/
+`-mfpmath=387` C++ declarations with pinned musl, then runs one freestanding
+static candidate. The checked GCC 15.2.0 translation of musl 1.2.6
+`sin.c`/`sinf.c` localizes its generic kernel, fixed `2/pi` argument-reduction,
+and floor/scalbn providers rather than sharing an existing math artifact. Its
+256 raw 32-byte records cover signed zero, tiny/subnormal and normal bounds,
+quadrant boundaries, moderate and huge reductions, finite extrema, infinities,
+quiet/signaling NaNs, IEEE flags, and requested versus observed direction in
+all four MXCSR modes. It excludes `sinl`, sincos, adjacent cos/tan/hyperbolic/
+inverse-trig/log/exp/pow functions, fenv API/policy, special/complex/binary80
+math, family completion, promotion, and public x86 support.
 `libc-math-ceil` is the separate selected binary32/binary64 fixed-direction
 ceiling slice for `ceil` and `ceilf`. It compares parenthesized C calls and
 default-SSE/`-mfpmath=387` C++ declarations with pinned musl, then runs one
@@ -2186,6 +2200,10 @@ run_math_log_header_abi() {
 
 run_math_log10_header_abi() {
     run_in_container bash /workspace/compat/x86_64/run_math_log10_header_abi.sh
+}
+
+run_math_sin_header_abi() {
+    run_in_container bash /workspace/compat/x86_64/run_math_sin_header_abi.sh
 }
 
 run_sys_reg_header_abi() {
@@ -3719,6 +3737,10 @@ run_libc_math_log10_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_math_log10.sh
 }
 
+run_libc_math_sin_probe() {
+    run_in_container bash /workspace/compat/x86_64/run_libc_math_sin.sh
+}
+
 run_libc_math_ceil_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_math_ceil.sh
 }
@@ -3849,7 +3871,7 @@ case "$command" in
     ldso-public-dlfcn|ldso-dladdr-symbol-bounds) ;;
     ldso-bounded-dlopen) ;;
     math-special-header-abi|libc-math-special) ;;
-    math-exp2-header-abi|math-expm1-header-abi|math-log-header-abi|math-log10-header-abi|libc-math-exp2|libc-math-expm1|libc-math-log|libc-math-log10) ;;
+    math-exp2-header-abi|math-expm1-header-abi|math-log-header-abi|math-log10-header-abi|math-sin-header-abi|libc-math-exp2|libc-math-expm1|libc-math-log|libc-math-log10|libc-math-sin) ;;
     inet-address-header-abi) ;;
     libc-network-byte-order) ;;
     ldso-target-root) ;;
@@ -4068,6 +4090,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "math-log10-header-abi takes no arguments"
         ensure_image
         run_math_log10_header_abi
+        ;;
+    math-sin-header-abi)
+        [ "$#" -eq 0 ] || fail "math-sin-header-abi takes no arguments"
+        ensure_image
+        run_math_sin_header_abi
         ;;
     sys-reg-header-abi)
         [ "$#" -eq 0 ] || fail "sys-reg-header-abi takes no arguments"
@@ -5898,6 +5925,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "libc-math-log10 takes no arguments"
         ensure_image
         run_libc_math_log10_probe
+        ;;
+    libc-math-sin)
+        [ "$#" -eq 0 ] || fail "libc-math-sin takes no arguments"
+        ensure_image
+        run_libc_math_sin_probe
         ;;
     libc-math-ceil)
         [ "$#" -eq 0 ] || fail "libc-math-ceil takes no arguments"

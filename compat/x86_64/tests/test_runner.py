@@ -23446,6 +23446,117 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         ):
             self.assertIn(required, assembly)
 
+    def test_math_sin_runner_keeps_the_binary32_binary64_static_boundary(self) -> None:
+        dispatcher = RUNNER.read_text(encoding="utf-8")
+        runner = (ROOT / "compat" / "x86_64" / "run_libc_math_sin.sh").read_text(
+            encoding="utf-8"
+        )
+        probe = (ROOT / "compat" / "x86_64" / "libc_math_sin_probe.c").read_text(
+            encoding="utf-8"
+        )
+        header = (
+            ROOT / "compat" / "x86_64" / "math_sin_header_abi_probe.cpp"
+        ).read_text(encoding="utf-8")
+        header_runner = (
+            ROOT / "compat" / "x86_64" / "run_math_sin_header_abi.sh"
+        ).read_text(encoding="utf-8")
+        leaf = (ROOT / "libc" / "src" / "c_abi" / "x86_64" / "math_sin.rs").read_text(
+            encoding="utf-8"
+        )
+        assembly = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "math_sin_musl_x86_64.S"
+        ).read_text(encoding="utf-8")
+        generator = (
+            ROOT / "compat" / "x86_64" / "generate_libc_math_sin.py"
+        ).read_text(encoding="utf-8")
+
+        for required in (
+            "math-sin-header-abi)",
+            "run_math_sin_header_abi()",
+            "libc-math-sin)",
+            "run_libc_math_sin_probe()",
+            "/workspace/compat/x86_64/run_libc_math_sin.sh",
+        ):
+            self.assertIn(required, dispatcher)
+        for required in (
+            "-nostdlib -static",
+            "--no-undefined",
+            "--gc-sections",
+            "run_math_sin_header_abi.sh",
+            "strong crabc-owned",
+            "weak compiler-builtins",
+            "candidate does not retain local",
+            "candidate accidentally retains unselected",
+            "candidate retains TLS",
+            "addsd addss subsd subss mulsd mulss cvtsd2ss cvtss2sd",
+            "sinl sincos sincosf",
+            "math_special",
+        ):
+            self.assertIn(required, runner)
+        for required in (
+            "direct_sin",
+            "direct_sinf",
+            "SIN_RECORD_WORDS 4",
+            "SIN_RECORD_COUNT",
+            "binary64_inputs",
+            "binary32_inputs",
+            "FE_TONEAREST",
+            "FE_DOWNWARD",
+            "FE_UPWARD",
+            "FE_TOWARDZERO",
+            "fegetround",
+            "fetestexcept",
+            "0x4415af1d78b58c40",
+            "0x60ad78ec",
+            "0x7ff0000000000042",
+            "0x7f800042",
+        ):
+            self.assertIn(required, probe)
+        for required in ("double_unary", "float_unary", "direct_sin", "direct_sinf"):
+            self.assertIn(required, header)
+        for required in ("math_sin_header_abi_probe.cpp", "-mfpmath=387", "unmangled"):
+            self.assertIn(required, header_runner)
+        for required in (
+            "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+            "d585fd3b613c66151fc3249e8ed44f77020cb5e6c1e635a616d3f9f82460512a",
+            "src/math/sin.c",
+            "src/math/sinf.c",
+            "__rem_pio2_large.c",
+            "floor.c",
+            "-ffp-contract=off",
+            'include_str!("math_sin_musl_x86_64.S")',
+            "public x86 support",
+        ):
+            self.assertIn(required, leaf)
+        for required in (
+            "2ebc86943f5cdac77729695b304a08f6308e7a218f9d484cec5675006b207d88",
+            '"src/math/sin.c"',
+            '"src/math/sinf.c"',
+            '"src/math/__sin.c"',
+            '"src/math/__rem_pio2_large.c"',
+            '"src/math/floor.c"',
+            '"src/math/scalbn.c"',
+            '"15.2.0"',
+            '"-frounding-math"',
+            '"-ffp-contract=off"',
+            '"-mfpmath=sse"',
+            "PRIVATE_RENAMES",
+            "retained_notices",
+        ):
+            self.assertIn(required, generator)
+        for required in (
+            "Sun Microsystems",
+            "musl's MIT license",
+            "\t.globl\tsin\n",
+            "\t.globl\tsinf\n",
+            "\t.local crabc_x86_math_sin_kernel_sin",
+            "\t.local crabc_x86_math_sin_reduce_pio2_large",
+            "\t.local crabc_x86_math_sin_provider_floor",
+            "cvtsd2ss",
+            "cvtss2sd",
+        ):
+            self.assertIn(required, assembly)
+
     def test_math_ceil_runner_keeps_the_binary32_binary64_static_boundary(self) -> None:
         dispatcher = RUNNER.read_text(encoding="utf-8")
         runner = (ROOT / "compat" / "x86_64" / "run_libc_math_ceil.sh").read_text(

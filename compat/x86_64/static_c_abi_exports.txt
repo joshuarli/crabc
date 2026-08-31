@@ -779,7 +779,9 @@ sigsuspend
 sigtimedwait
 sigwait
 sigwaitinfo
+sin
 sincosl
+sinf
 sinhl
 sinl
 snprintf

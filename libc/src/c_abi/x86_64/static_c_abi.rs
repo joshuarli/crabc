@@ -10,7 +10,7 @@
 //! binary32/binary64 fixed-direction ceiling/floor, half-away rounding,
 //! truncation, remainder,
 //! and cube root, selected scalar binary32/binary64 base-two/minus-one
-//! exponential, natural/base-ten logarithms,
+//! exponential, natural/base-ten logarithms, and sine,
 //! selected
 //! fenv-sensitive rounding,
 //! and one selected x87 binary80 extended-math block as real C bootstrap
@@ -264,6 +264,8 @@ mod math_expm1;
 mod math_log;
 #[path = "math_log10.rs"]
 mod math_log10;
+#[path = "math_sin.rs"]
+mod math_sin;
 #[path = "math_ceil.rs"]
 mod math_ceil;
 #[path = "math_floor.rs"]
