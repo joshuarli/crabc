@@ -94,6 +94,7 @@ bindtextdomain
 bsearch
 btowc
 bzero
+c32rtomb
 cabs
 cabsf
 cabsl

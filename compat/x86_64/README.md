@@ -242,6 +242,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh ctype-header-abi
 ./scripts/dev-x86_64.sh locale-profile-header-abi
 ./scripts/dev-x86_64.sh locale-multibyte-header-abi
+./scripts/dev-x86_64.sh c32rtomb-header-abi
 ./scripts/dev-x86_64.sh iconv-header-abi
 ./scripts/dev-x86_64.sh wide-character-header-abi
 ./scripts/dev-x86_64.sh locale-object-wide-header-abi
@@ -565,6 +566,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-fdim
 ./scripts/dev-x86_64.sh libc-locale-profile
 ./scripts/dev-x86_64.sh libc-locale-multibyte
+./scripts/dev-x86_64.sh libc-c32rtomb
 ./scripts/dev-x86_64.sh libc-locale-wide-iconv
 ./scripts/dev-x86_64.sh libc-wide-character
 ./scripts/dev-x86_64.sh libc-locale-object-wide
@@ -5108,6 +5110,25 @@ deliberately not selected. Locale objects,
 environment lookup, collation, iconv, wide streams/stdio, general locale/text
 completion, `libc.so`, CRT, loader, sysroot, promotion, and public x86 support
 remain outside this artifact.
+
+`c32rtomb-header-abi` and `libc-c32rtomb` are a separate private C11 UTF-32
+encoder adapter over that existing named C/POSIX/C.UTF-8 `wcrtomb` owner. The
+five-profile project/pinned-musl C11/C++17 `<uchar.h>` matrix proves the
+unconditional unmangled `size_t (char *, char32_t, mbstate_t *)` boundary and
+x86 4-byte `char32_t`/8-byte `mbstate_t` layout. The static differential maps
+musl 1.2.6 `src/multibyte/c32rtomb.c` to one object exporting only `c32rtomb`:
+the SysV rdi/esi/rdx argument lanes already match `wcrtomb`, so it tail-jumps
+to that existing selected owner. It differentially covers C/POSIX private code
+units, C.UTF-8 two/four-byte scalars, stale errno on success, EILSEQ invalid
+scalar paths, unchanged caller state, and the null-output query. Its final
+`-nostdlib -static` link reconstructs only the discovered existing
+`wcrtomb`/named-profile/errno closure and rejects dynamic linkage, dynamic TLS,
+PLT, allocators, iconv, wide streams, and ambient libc. That established
+closure may materialize its CTYPE override helper, but the adapter calls no
+public locale-object API. It does not select
+`c16rtomb`, decoding, UTF-16 surrogate state, locale-object APIs, environment
+or general locale databases, family completion, promotion, or public x86
+support.
 
 `locale-profile-header-abi` and `libc-locale-profile` are the separate
 selected-private `locale.core` fixed-profile vertical. Unlike the adjacent

@@ -1334,6 +1334,26 @@ inventory state of `locale.core` to selected-private: general locale or
 legacy-encoding databases, all other broad locale-core compatibility entries,
 family completion, promotion, and public x86 support remain excluded.
 
+`./scripts/dev-x86_64.sh c32rtomb-header-abi` and
+`./scripts/dev-x86_64.sh libc-c32rtomb` add one separate private C11 UTF-32
+encoder adapter inside still-planned `libc.text-math-locale-stdio`. Its
+pinned-musl/project-header matrix proves the unconditional unmangled
+`size_t c32rtomb(char *, char32_t, mbstate_t *)` boundary for strict, POSIX,
+X/Open, GNU, and BSD profiles, including x86 4-byte `char32_t` and 8-byte
+`mbstate_t`. Musl 1.2.6 `src/multibyte/c32rtomb.c` is exactly a forward to
+`wcrtomb`; the one-export x86 object tail-jumps over the same SysV
+rdi/esi/rdx ABI lanes to the existing fixed C/POSIX/C.UTF-8 profile owner.
+The differential covers C/POSIX private code units, C.UTF-8 two/four-byte
+scalars, stale-errno success, EILSEQ invalid scalar/surrogate paths, caller
+state preservation, and the null-output query. Its final `-nostdlib -static`
+candidate reconstructs only the discovered existing `wcrtomb`/named-profile/
+errno closure and rejects dynamic linkage, dynamic TLS, PLT, allocation,
+iconv, wide streams, and ambient libc. That owner may materialize its fixed
+CTYPE override helper, while this adapter calls no public locale-object API. It
+does not select `c16rtomb`, decoder
+or UTF-16 state, locale-object APIs, environment/general locale databases,
+family completion, promotion, or public x86 support.
+
 The x86 static C archive also has one private caller-owned mapping-core
 artifact: `./scripts/dev-x86_64.sh libc-mapping-core` runs the project-header
 C/C++ `sys/mman.h` gate and then one pinned-musl/freestanding-static proof for

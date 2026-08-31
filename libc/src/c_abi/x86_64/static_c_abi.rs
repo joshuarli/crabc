@@ -218,6 +218,8 @@ mod ctype;
 mod locale_ctype;
 #[path = "locale_multibyte.rs"]
 mod locale_multibyte;
+#[path = "c32rtomb.rs"]
+mod c32rtomb_adapter;
 #[path = "locale_objects.rs"]
 mod locale_objects;
 #[path = "locale_narrow.rs"]

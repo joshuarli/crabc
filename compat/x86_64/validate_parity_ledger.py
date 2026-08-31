@@ -32467,8 +32467,8 @@ def require_getsubopt_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 38,
-        "libc.text-math-locale-stdio must retain exactly thirty-eight private verified artifacts",
+        len(artifacts) == 39,
+        "libc.text-math-locale-stdio must retain exactly thirty-nine private verified artifacts",
     )
     matching = [
         entry for entry in artifacts if entry.get("id") == "static-c-getsubopt"
@@ -33924,8 +33924,8 @@ def require_stdio_integer_scan_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 38,
-        "libc.text-math-locale-stdio must retain exactly thirty-eight private verified artifacts",
+        len(artifacts) == 39,
+        "libc.text-math-locale-stdio must retain exactly thirty-nine private verified artifacts",
     )
     matching = [
         entry for entry in artifacts if entry.get("id") == "static-c-stdio-integer-scan"
@@ -34207,8 +34207,8 @@ def require_stdio_octal_hex_scan_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 38,
-        "libc.text-math-locale-stdio must retain exactly thirty-eight private verified artifacts",
+        len(artifacts) == 39,
+        "libc.text-math-locale-stdio must retain exactly thirty-nine private verified artifacts",
     )
     matching = [
         entry
@@ -34733,8 +34733,8 @@ def require_stdio_errno_output_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 38,
-        "libc.text-math-locale-stdio must retain exactly thirty-eight private verified artifacts",
+        len(artifacts) == 39,
+        "libc.text-math-locale-stdio must retain exactly thirty-nine private verified artifacts",
     )
     matching = [
         entry for entry in artifacts if entry.get("id") == "static-c-stdio-errno-output"
@@ -35254,8 +35254,8 @@ def require_stdio_permanent_byte_io_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 38,
-        "libc.text-math-locale-stdio must retain exactly thirty-eight private verified artifacts",
+        len(artifacts) == 39,
+        "libc.text-math-locale-stdio must retain exactly thirty-nine private verified artifacts",
     )
     matching = [
         entry
@@ -35581,8 +35581,8 @@ def require_stdio_permanent_status_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 38,
-        "libc.text-math-locale-stdio must retain exactly thirty-eight private verified artifacts",
+        len(artifacts) == 39,
+        "libc.text-math-locale-stdio must retain exactly thirty-nine private verified artifacts",
     )
     matching = [
         entry
@@ -35909,8 +35909,8 @@ def require_stdio_permanent_feof_unlocked_artifact(
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 38,
-        "libc.text-math-locale-stdio must retain exactly thirty-eight private verified artifacts",
+        len(artifacts) == 39,
+        "libc.text-math-locale-stdio must retain exactly thirty-nine private verified artifacts",
     )
     matching = [
         entry
@@ -36277,8 +36277,8 @@ def require_stdio_permanent_fileno_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 38,
-        "libc.text-math-locale-stdio must retain exactly thirty-eight private verified artifacts",
+        len(artifacts) == 39,
+        "libc.text-math-locale-stdio must retain exactly thirty-nine private verified artifacts",
     )
     matching = [
         entry
@@ -36582,8 +36582,8 @@ def require_stdio_permanent_fileno_unlocked_artifact(
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 38,
-        "libc.text-math-locale-stdio must retain exactly thirty-eight private verified artifacts",
+        len(artifacts) == 39,
+        "libc.text-math-locale-stdio must retain exactly thirty-nine private verified artifacts",
     )
     matching = [
         entry
@@ -40119,8 +40119,8 @@ def require_math_ceil_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 38,
-        "libc.text-math-locale-stdio must retain exactly thirty-eight private verified artifacts",
+        len(artifacts) == 39,
+        "libc.text-math-locale-stdio must retain exactly thirty-nine private verified artifacts",
     )
     matching = [entry for entry in artifacts if entry.get("id") == "static-c-math-ceil"]
     require(
@@ -40344,8 +40344,8 @@ def require_math_floor_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 38,
-        "libc.text-math-locale-stdio must retain exactly thirty-eight private verified artifacts",
+        len(artifacts) == 39,
+        "libc.text-math-locale-stdio must retain exactly thirty-nine private verified artifacts",
     )
     matching = [entry for entry in artifacts if entry.get("id") == "static-c-math-floor"]
     require(
@@ -40570,8 +40570,8 @@ def require_math_round_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 38,
-        "libc.text-math-locale-stdio must retain exactly thirty-eight private verified artifacts",
+        len(artifacts) == 39,
+        "libc.text-math-locale-stdio must retain exactly thirty-nine private verified artifacts",
     )
     matching = [entry for entry in artifacts if entry.get("id") == "static-c-math-round"]
     require(
@@ -41311,6 +41311,275 @@ def require_locale_profile_slice(family: Mapping[str, Any]) -> None:
         require(snippet in dispatcher, f"x86 dispatcher omits {snippet}")
 
 
+def require_c32rtomb_artifact(family: Mapping[str, Any]) -> None:
+    """Keep the direct C11 UTF-32 adapter below locale-family promotion."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.text-math-locale-stdio].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [entry for entry in artifacts if entry.get("id") == "static-c-c32rtomb"]
+    require(
+        len(matching) == 1,
+        "libc.text-math-locale-stdio must contain exactly one static-c-c32rtomb artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-c32rtomb must not promote libc.text-math-locale-stdio",
+    )
+    artifact = matching[0]
+    require(
+        "capabilities" not in artifact,
+        "static-c-c32rtomb must not promote locale.core or another capability",
+    )
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for phrase in (
+        "C11 `c32rtomb` adapter",
+        "planned `libc.text-math-locale-stdio`",
+        "src/multibyte/c32rtomb.c",
+        "tail-jumps to the already selected fixed-profile `wcrtomb` owner",
+        "rdi/esi/rdx",
+        "strict, POSIX, X/Open, GNU, and BSD",
+        "C/POSIX/C.UTF-8",
+        "C/POSIX private code units",
+        "C.UTF-8 two/four-byte scalars",
+        "null-output query",
+        "c16rtomb",
+        "locale-object API selection",
+        "environment lookup",
+        "family completion, promotion, and public x86 support",
+    ):
+        require(phrase in description, f"static-c-c32rtomb description omits {phrase}")
+
+    owners = set(
+        nonempty_strings(artifact["source_owners"], "static-c-c32rtomb.source_owners")
+    )
+    for owner in (
+        "compat/upstreams.toml",
+        "compat/abi/musl-1.2.6/aarch64/libc.a.static.tsv",
+        "libc/Cargo.toml",
+        "libc/src/lib.rs",
+        "libc/src/c_abi.rs",
+        "libc/src/unicode_encoders_exports.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/c32rtomb.rs",
+        "libc/src/c_abi/x86_64/locale_multibyte.rs",
+        "libc/src/c_abi/x86_64/locale_objects.rs",
+        "libc/src/c_abi/x86_64/errno.rs",
+        "include/errno.h",
+        "include/locale.h",
+        "include/uchar.h",
+        "include/features.h",
+        "include/bits/alltypes.h",
+        "compat/x86_64/c32rtomb_header_abi_probe.c",
+        "compat/x86_64/c32rtomb_header_abi_probe.cpp",
+        "compat/x86_64/run_c32rtomb_header_abi.sh",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/libc_c32rtomb_probe.c",
+        "compat/x86_64/libc_c32rtomb_start.S",
+        "compat/x86_64/run_libc_c32rtomb.sh",
+        "compat/x86_64/aarch64_parity_inventory.py",
+        "compat/x86_64/aarch64_parity_inventory.json",
+        "compat/x86_64/tests/test_aarch64_parity_inventory.py",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/README.md",
+        "STATUS.md",
+        "x86-64.md",
+        "scripts/check_structure.py",
+        "scripts/dev-x86_64.sh",
+    ):
+        require(owner in owners, f"static-c-c32rtomb source owners omit {owner}")
+
+    prerequisites = nonempty_strings(
+        artifact["x86_abi_prerequisites"], "static-c-c32rtomb.x86_abi_prerequisites"
+    )
+    require(
+        any(
+            "rdi" in item
+            and "esi" in item
+            and "rdx" in item
+            and "rax" in item
+            and "char32_t" in item
+            and "wchar_t" in item
+            and "INT_MAX" in item
+            for item in prerequisites
+        ),
+        "static-c-c32rtomb must retain its bit-preserving SysV ABI",
+    )
+    require(
+        any(
+            "src/multibyte/c32rtomb.c" in item
+            and "c32rtomb.lo" in item
+            and "unicode_encoders_exports.rs::c32rtomb" in item
+            and "exactly the one `wcrtomb` relocation" in item
+            for item in prerequisites
+        ),
+        "static-c-c32rtomb must retain musl source and AArch64 provenance",
+    )
+    require(
+        any(
+            "linker-discovered existing closure" in item
+            and "initial-exec errno" in item
+            and "no undefined symbol beyond wcrtomb" in item
+            and "locale-object APIs" in item
+            for item in prerequisites
+        ),
+        "static-c-c32rtomb must retain its bounded dependency boundary",
+    )
+
+    headers = nonempty_strings(
+        artifact["x86_header_prerequisites"], "static-c-c32rtomb.x86_header_prerequisites"
+    )
+    require(
+        any(
+            "C11/C++17" in item
+            and "<uchar.h>" in item
+            and "strict, POSIX.1-2008, X/Open 700, GNU, and BSD" in item
+            and "4-byte char32_t" in item
+            and "8-byte mbstate_t" in item
+            and "unmangled C++" in item
+            for item in headers
+        ),
+        "static-c-c32rtomb must retain its focused C/C++ header ABI",
+    )
+
+    static_exports = set(
+        static_c_abi_export_names(
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        )
+    )
+    require(
+        "c32rtomb" in static_exports,
+        "static-c-c32rtomb must expose the selected C11 spelling",
+    )
+
+    source = (ROOT / "libc" / "src" / "c_abi" / "x86_64" / "c32rtomb.rs").read_text(
+        encoding="utf-8"
+    )
+    for snippet in (
+        "musl 1.2.6",
+        "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+        "src/multibyte/c32rtomb.c",
+        ".global c32rtomb",
+        "jmp wcrtomb",
+        "INT_MAX",
+    ):
+        require(snippet in source, f"c32rtomb x86 adapter omits {snippet}")
+    static_root = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+    ).read_text(encoding="utf-8")
+    require(
+        '#[path = "c32rtomb.rs"]\nmod c32rtomb_adapter;' in static_root,
+        "x86 static C ABI must compose the c32rtomb adapter",
+    )
+
+    header_c = (
+        ROOT / "compat" / "x86_64" / "c32rtomb_header_abi_probe.c"
+    ).read_text(encoding="utf-8")
+    header_cxx = (
+        ROOT / "compat" / "x86_64" / "c32rtomb_header_abi_probe.cpp"
+    ).read_text(encoding="utf-8")
+    for snippet in ("c32rtomb_signature", "sizeof(char32_t) == 4", "sizeof(mbstate_t) == 8"):
+        require(snippet in header_c, f"C c32rtomb header probe omits {snippet}")
+        require(snippet in header_cxx, f"C++ c32rtomb header probe omits {snippet}")
+    header_runner = (
+        ROOT / "compat" / "x86_64" / "run_c32rtomb_header_abi.sh"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "strict posix xopen gnu bsd",
+        "-nostdinc",
+        "-nostdinc++",
+        "check_cxx_c_linkage",
+        "unmangled c32rtomb",
+    ):
+        require(snippet in header_runner, f"c32rtomb header runner omits {snippet}")
+
+    runtime_runner = (
+        ROOT / "compat" / "x86_64" / "run_libc_c32rtomb.sh"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "run_c32rtomb_header_abi.sh",
+        "c32rtomb.lo",
+        "c32rtomb adapter object export surface drifted",
+        "c32rtomb adapter dependency closure drifted",
+        "direct wcrtomb relocation",
+        "direct tail jump",
+        "linker-discovered closure",
+        "-nostdlib -static",
+        "direct fs initial TLS",
+        "public locale-object API call",
+    ):
+        require(snippet in runtime_runner, f"c32rtomb runtime runner omits {snippet}")
+    fixture = (ROOT / "compat" / "x86_64" / "libc_c32rtomb_probe.c").read_text(
+        encoding="utf-8"
+    )
+    for snippet in (
+        "C.UTF-8",
+        "POSIX",
+        "0xdf80",
+        "0x1f34c",
+        "0xd800",
+        "0x110000",
+        "EILSEQ",
+        "CRABC_C32RTOMB_FREESTANDING",
+    ):
+        require(snippet in fixture, f"c32rtomb fixture omits {snippet}")
+
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-c32rtomb"},
+        "static-c-c32rtomb must use the closed libc-c32rtomb command",
+    )
+    scope = evidence[0].get("scope")
+    require(
+        isinstance(scope, str)
+        and all(
+            phrase in scope
+            for phrase in (
+                "AArch64 c32rtomb static-ABI row",
+                "exactly one adapter object exporting only c32rtomb",
+                "sole undefined/relocation to be wcrtomb",
+                "direct tail jump",
+                "C/POSIX private code units",
+                "C.UTF-8 two/four-byte scalars",
+                "invalid surrogates/out-of-range EILSEQ",
+                "null-output query",
+                "interpreter/DT_NEEDED",
+                "locale-object APIs",
+                "public locale-object API call",
+                "public x86 support",
+            )
+        ),
+        "static-c-c32rtomb evidence must retain its narrow static contract",
+    )
+    oracle = artifact["oracle"]
+    assert isinstance(oracle, list)
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "c-posix"
+            and isinstance(entry.get("role"), str)
+            and "src/multibyte/c32rtomb.c" in entry["role"]
+            and "c16rtomb" in entry["role"]
+            for entry in oracle
+        ),
+        "static-c-c32rtomb must retain its pinned musl source oracle",
+    )
+    dispatcher = (ROOT / "scripts" / "dev-x86_64.sh").read_text(encoding="utf-8")
+    for snippet in (
+        "c32rtomb-header-abi)",
+        "libc-c32rtomb)",
+        "run_c32rtomb_header_abi()",
+        "/workspace/compat/x86_64/run_libc_c32rtomb.sh",
+    ):
+        require(snippet in dispatcher, f"x86 dispatcher omits {snippet}")
+
+
 def require_bounded_regex_artifact(family: Mapping[str, Any]) -> None:
     """Keep the bounded C matcher as evidence, not regex-family promotion."""
 
@@ -41523,8 +41792,8 @@ def require_locale_wide_iconv_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 38,
-        "libc.text-math-locale-stdio must retain exactly thirty-eight private verified artifacts",
+        len(artifacts) == 39,
+        "libc.text-math-locale-stdio must retain exactly thirty-nine private verified artifacts",
     )
     matching = [
         entry for entry in artifacts if entry.get("id") == "static-c-locale-wide-iconv"
@@ -42349,8 +42618,8 @@ def require_locale_error_strings_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 38,
-        "libc.text-math-locale-stdio must retain exactly thirty-eight private verified artifacts",
+        len(artifacts) == 39,
+        "libc.text-math-locale-stdio must retain exactly thirty-nine private verified artifacts",
     )
     matching = [
         entry for entry in artifacts if entry.get("id") == "static-c-locale-error-strings"
@@ -44292,6 +44561,7 @@ def validate_ledger(
     require_math_complex_complete_slice(by_id["libc.text-math-locale-stdio"])
     require_math_elementary_long_double_slice(by_id["libc.text-math-locale-stdio"])
     require_named_locale_multibyte_artifact(by_id["libc.text-math-locale-stdio"])
+    require_c32rtomb_artifact(by_id["libc.text-math-locale-stdio"])
     require_locale_profile_slice(by_id["libc.text-math-locale-stdio"])
     require_same_object_static_c_abi_artifact(by_id["compat.abi-differential"])
     require_posix_process_abi_admission_artifact(by_id["compat.posix-process"])

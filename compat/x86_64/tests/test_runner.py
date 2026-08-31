@@ -375,6 +375,117 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn("#if '\\xff' > 0", limits)
         self.assertIn("#define CHAR_MAX 127", limits)
 
+    def test_c32rtomb_static_adapter_stays_bounded(self) -> None:
+        """The C11 UTF-32 adapter remains a direct wcrtomb leaf."""
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        implementation = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "c32rtomb.rs"
+        ).read_text(encoding="utf-8")
+        c_probe = (
+            ROOT / "compat" / "x86_64" / "c32rtomb_header_abi_probe.c"
+        ).read_text(encoding="utf-8")
+        cpp_probe = (
+            ROOT / "compat" / "x86_64" / "c32rtomb_header_abi_probe.cpp"
+        ).read_text(encoding="utf-8")
+        header_runner = (
+            ROOT / "compat" / "x86_64" / "run_c32rtomb_header_abi.sh"
+        ).read_text(encoding="utf-8")
+        fixture = (
+            ROOT / "compat" / "x86_64" / "libc_c32rtomb_probe.c"
+        ).read_text(encoding="utf-8")
+        start = (
+            ROOT / "compat" / "x86_64" / "libc_c32rtomb_start.S"
+        ).read_text(encoding="utf-8")
+        artifact_runner = (
+            ROOT / "compat" / "x86_64" / "run_libc_c32rtomb.sh"
+        ).read_text(encoding="utf-8")
+        static_exports = {
+            line
+            for line in (
+                ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+            ).read_text(encoding="utf-8").splitlines()
+            if line and not line.startswith("#")
+        }
+        parity = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        dispatcher = RUNNER.read_text(encoding="utf-8")
+
+        self.assertIn('#[path = "c32rtomb.rs"]\nmod c32rtomb_adapter;', static_root)
+        for required in (
+            "musl 1.2.6",
+            "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+            "src/multibyte/c32rtomb.c",
+            ".global c32rtomb",
+            "jmp wcrtomb",
+            "INT_MAX",
+        ):
+            self.assertIn(required, implementation)
+        for forbidden in ("c16rtomb", "mbrtoc16", "mbrtoc32", "raw_syscall::"):
+            self.assertNotIn(forbidden, implementation)
+        for probe in (c_probe, cpp_probe):
+            for required in (
+                "#include <uchar.h>",
+                "c32rtomb_signature",
+                "sizeof(char32_t) == 4",
+                "sizeof(mbstate_t) == 8",
+            ):
+                self.assertIn(required, probe)
+        for required in (
+            "strict posix xopen gnu bsd",
+            "-nostdinc",
+            "-nostdinc++",
+            "check_cxx_c_linkage",
+            "unmangled c32rtomb",
+        ):
+            self.assertIn(required, header_runner)
+        for required in (
+            "C.UTF-8",
+            "POSIX",
+            "0xdf80",
+            "0x1f34c",
+            "0xd800",
+            "0x110000",
+            "EILSEQ",
+            "CRABC_C32RTOMB_FREESTANDING",
+        ):
+            self.assertIn(required, fixture)
+        for required in (
+            "crabc_x86_64_c32rtomb_probe",
+            "arch_prctl(ARCH_SET_FS",
+            "mov $60, %eax",
+        ):
+            self.assertIn(required, start)
+        for required in (
+            "run_c32rtomb_header_abi.sh",
+            "c32rtomb.lo",
+            "c32rtomb adapter object export surface drifted",
+            "c32rtomb adapter dependency closure drifted",
+            "direct wcrtomb relocation",
+            "direct tail jump",
+            "linker-discovered closure",
+            "-nostdlib -static",
+            "direct fs initial TLS",
+            "candidate retains a PLT",
+            "public locale-object API call",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn("--whole-archive", artifact_runner)
+        self.assertIn("c32rtomb", static_exports)
+        self.assertIn('id = "static-c-c32rtomb"', parity)
+        self.assertIn(
+            'command = "./scripts/dev-x86_64.sh libc-c32rtomb"', parity
+        )
+        for required in (
+            "c32rtomb-header-abi",
+            "libc-c32rtomb",
+            "run_c32rtomb_header_abi()",
+            "run_libc_c32rtomb.sh",
+        ):
+            self.assertIn(required, dispatcher)
+
     def test_fixed_locale_profile_capability_slice_stays_narrow(self) -> None:
         """Selected locale.core proof stays at setlocale/localeconv only."""
         static_root = (
@@ -1317,7 +1428,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn('readonly PLATFORM="linux/amd64"', source)
         self.assertIn("    madvise-reference) ;;", source)
         self.assertIn(
-            "    ctype-header-abi|locale-profile-header-abi|locale-multibyte-header-abi|iconv-header-abi|wide-character-header-abi|locale-object-wide-header-abi|locale-narrow-header-abi) ;;",
+            "    ctype-header-abi|locale-profile-header-abi|locale-multibyte-header-abi|c32rtomb-header-abi|iconv-header-abi|wide-character-header-abi|locale-object-wide-header-abi|locale-narrow-header-abi) ;;",
             source,
         )
         self.assertIn("    ffs-header-abi) ;;", source)
@@ -1423,7 +1534,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "access-header-abi",
             "xattr-header-abi",
             "madvise-reference",
-            "ctype-header-abi|locale-profile-header-abi|locale-multibyte-header-abi|iconv-header-abi|wide-character-header-abi|locale-object-wide-header-abi|locale-narrow-header-abi",
+            "ctype-header-abi|locale-profile-header-abi|locale-multibyte-header-abi|c32rtomb-header-abi|iconv-header-abi|wide-character-header-abi|locale-object-wide-header-abi|locale-narrow-header-abi",
             "integer-arithmetic-header-abi|integer-parse-header-abi|float-parse-header-abi|getsubopt-header-abi|intmax-arithmetic-header-abi|credential-observation-header-abi|login-name-header-abi|child-reaping-header-abi|immediate-termination-header-abi|sched-getcpu-header-abi|sched-yield-header-abi|bsearch-header-abi|linear-search-header-abi|qsort-header-abi|callback-algorithms-header-abi",
             "posix-exit-header-abi",
             "ffs-header-abi",
@@ -1466,7 +1577,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "libc-static-c-abi-same-object-differential|qualification-posix-abi-admission",
             "libc-interface-discovery",
             "libc-posix-exit",
-            "libc-readiness-waits|libc-system-observation|libc-system-information|libc-fcntl-record-locks|libc-flock|libc-sendfile|libc-posix-fallocate|libc-descriptor-advice|libc-filesystem-capacity|libc-uts-identity|libc-ctype|libc-locale-profile|libc-locale-multibyte|libc-locale-wide-iconv|libc-wide-character|libc-locale-object-wide|libc-locale-narrow|libc-locale-ctype-locators|libc-locale-error-strings|libc-regex|libc-integer-arithmetic|libc-integer-parse|libc-float-parse|libc-getsubopt|libc-intmax-arithmetic|libc-credential-observation|libc-secure-environment|libc-login-name|libc-child-reaping|libc-immediate-termination|libc-bsearch|libc-linear-search|libc-qsort|libc-callback-algorithms|libc-search-tree-intrusive|libc-search-hash-table|libc-gettext-catalog|libc-access|libc-clock-gettime|libc-time-observation|libc-difftime|libc-timegm|libc-gmtime-r|libc-system-configuration|libc-mapping-core|libc-header-layouts-baseline|libc-nanosleep|libc-clock-nanosleep|libc-descriptor-entry|libc-fcntl-status-control|libc-ioctl|libc-ffs|libc-byte-strings|libc-in6addr-any|libc-in6addr-loopback|libc-process-globals-getopt|libc-auxv-observation|libc-inet-address|libc-inet-ntoa|libc-inet-classful|libc-hstrerror|libc-numeric-netdb|libc-random-entropy|libc-memory-search|libc-string-copy|libc-error-strings|libc-strsignal|libc-descriptor-pipeline",
+            "libc-readiness-waits|libc-system-observation|libc-system-information|libc-fcntl-record-locks|libc-flock|libc-sendfile|libc-posix-fallocate|libc-descriptor-advice|libc-filesystem-capacity|libc-uts-identity|libc-ctype|libc-locale-profile|libc-locale-multibyte|libc-c32rtomb|libc-locale-wide-iconv|libc-wide-character|libc-locale-object-wide|libc-locale-narrow|libc-locale-ctype-locators|libc-locale-error-strings|libc-regex|libc-integer-arithmetic|libc-integer-parse|libc-float-parse|libc-getsubopt|libc-intmax-arithmetic|libc-credential-observation|libc-secure-environment|libc-login-name|libc-child-reaping|libc-immediate-termination|libc-bsearch|libc-linear-search|libc-qsort|libc-callback-algorithms|libc-search-tree-intrusive|libc-search-hash-table|libc-gettext-catalog|libc-access|libc-clock-gettime|libc-time-observation|libc-difftime|libc-timegm|libc-gmtime-r|libc-system-configuration|libc-mapping-core|libc-header-layouts-baseline|libc-nanosleep|libc-clock-nanosleep|libc-descriptor-entry|libc-fcntl-status-control|libc-ioctl|libc-ffs|libc-byte-strings|libc-in6addr-any|libc-in6addr-loopback|libc-process-globals-getopt|libc-auxv-observation|libc-inet-address|libc-inet-ntoa|libc-inet-classful|libc-hstrerror|libc-numeric-netdb|libc-random-entropy|libc-memory-search|libc-string-copy|libc-error-strings|libc-strsignal|libc-descriptor-pipeline",
             "libc-vector-io|libc-uio-cxx-linkage",
             "libc-sysv-semaphore|libc-posix-semaphore",
             "libc-sysv-message-shared-memory",

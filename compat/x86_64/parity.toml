@@ -9748,6 +9748,57 @@ x86_header_prerequisites = [
 native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-locale-multibyte", scope = "Pinned-musl project-header C reference plus one true dependency-free x86 crabc-libc archive and -nostdlib/static candidate. The gate requires the separate C/C++ named-locale/multibyte header ABI/linkage matrix; the sixteen selected entry points alongside the aggregate static C ABI export ratchet; archive and final-ELF purity; direct fs initial-TLS errno with no dynamic TLS resolver; no interpreter, DT_NEEDED, unresolved symbols, wide-stream, allocator, or ambient runtime dependency; and matching C/POSIX/C.UTF-8 named-state with CTYPE-only built-in UTF-8, lconv, UTF-8/code-unit, error/reset, initial-state string-conversion behavior, and one caller-owned positive-capacity UTF-8 mbsrtowcs resume. Its candidate-only parser regression enforces the narrower returned-mixed-form input boundary. The archive may contain the separately verified locale-object, iconv, and wide-character leaves, which this fixture neither invokes nor establishes. It is one verified artifact inside still-planned libc.text-math-locale-stdio, not locale/text/stdio family completion, promotion, or public x86 support." }]
 oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source mapping and C/POSIX behavior oracle for src/locale/setlocale.c, locale_map.c, localeconv.c, src/ctype/__ctype_get_mb_cur_max.c, and the selected src/multibyte internal/state/conversion leaves." }, { kind = "elf-abi", source = "System V AMD64 psABI and pinned musl x86 headers", role = "LP64 pointer/size_t convention plus wchar_t, wint_t, mbstate_t, lconv, C/C++ linkage, and initial-exec errno TLS fixture contract." }]
 
+[[family.verified_artifact]]
+id = "static-c-c32rtomb"
+description = "Private native x86 selected-static-archive C11 `c32rtomb` adapter inside still-planned `libc.text-math-locale-stdio`. One one-symbol assembly member maps pinned musl 1.2.6 `src/multibyte/c32rtomb.c` exactly: it tail-jumps to the already selected fixed-profile `wcrtomb` owner because x86-64 passes `char *`, the bit-preserving 32-bit `char32_t`/`wchar_t`, and `mbstate_t *` in the same rdi/esi/rdx registers. The dedicated project/pinned-musl C11/C++17 `<uchar.h>` matrix proves the unconditional unmangled `size_t (char *, char32_t, mbstate_t *)` declaration and x86 4-byte `char32_t`/8-byte `mbstate_t` layout across strict, POSIX, X/Open, GNU, and BSD selectors. Its differential fixes the admitted global named C/POSIX/C.UTF-8 profile: ASCII and C/POSIX private code units, C.UTF-8 two/four-byte scalars, stale errno on success, EILSEQ for invalid scalar/surrogate input, untouched caller state, and the null-output query. The adapter itself owns only its one direct `wcrtomb` relocation; the existing locale core continues to own CTYPE selection, locale-object override plumbing, and initial-TLS errno rather than duplicating any of it here. It excludes `c16rtomb`, mbrtoc16/mbrtoc32, decoding, UTF-16 surrogate state, locale-object API selection, environment lookup, locale/encoding databases, collation, iconv, wide streams/stdio, allocation, libc.so, CRT, loader, sysroot, family completion, promotion, and public x86 support."
+source_owners = [
+  "compat/upstreams.toml",
+  "compat/abi/musl-1.2.6/aarch64/libc.a.static.tsv",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "libc/src/c_abi.rs",
+  "libc/src/unicode_encoders_exports.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/c32rtomb.rs",
+  "libc/src/c_abi/x86_64/locale_multibyte.rs",
+  "libc/src/c_abi/x86_64/locale_objects.rs",
+  "libc/src/c_abi/x86_64/errno.rs",
+  "include/errno.h",
+  "include/features.h",
+  "include/locale.h",
+  "include/uchar.h",
+  "include/bits/alltypes.h",
+  "compat/x86_64/c32rtomb_header_abi_probe.c",
+  "compat/x86_64/c32rtomb_header_abi_probe.cpp",
+  "compat/x86_64/run_c32rtomb_header_abi.sh",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/libc_c32rtomb_probe.c",
+  "compat/x86_64/libc_c32rtomb_start.S",
+  "compat/x86_64/run_libc_c32rtomb.sh",
+  "compat/x86_64/aarch64_parity_inventory.py",
+  "compat/x86_64/aarch64_parity_inventory.json",
+  "compat/x86_64/tests/test_aarch64_parity_inventory.py",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "compat/x86_64/README.md",
+  "STATUS.md",
+  "x86-64.md",
+  "scripts/check_structure.py",
+  "scripts/dev-x86_64.sh",
+]
+x86_abi_prerequisites = [
+  "System V AMD64 passes `c32rtomb(char *, char32_t, mbstate_t *)` as destination rdi, the low 32-bit code point in esi, and caller state rdx, returning size_t in rax. x86 `char32_t` and the selected signed 32-bit wchar_t occupy the same esi ABI lane, so the tail jump preserves every u32 bit pattern, including values above INT_MAX.",
+  "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417 maps `src/multibyte/c32rtomb.c::c32rtomb` and the AArch64 `c32rtomb\tc32rtomb.lo\tT\tGLOBAL\t0\t4` row directly to the one-export x86 adapter. Its complete source body forwards `s`, `c32`, and `ps` to wcrtomb; the existing AArch64 `libc/src/unicode_encoders_exports.rs::c32rtomb` records the same bit-preserving 32-bit forwarding seam. The x86 object therefore has exactly the one `wcrtomb` relocation and no copied encoder algorithm.",
+  "The selected final candidate reconstructs only the linker-discovered existing closure for that direct wcrtomb call, named CTYPE selection, and the direct initial-exec errno datum. The adapter owns no state or syscall and has no undefined symbol beyond wcrtomb; it neither invokes nor selects locale-object APIs, UTF-16/decoder siblings, allocator, iconv, wide streams, or ambient runtime support.",
+]
+x86_header_prerequisites = [
+  "The dedicated pinned-musl/project-first C11/C++17 `<uchar.h>` matrix proves strict, POSIX.1-2008, X/Open 700, GNU, and BSD profiles all expose the same `size_t c32rtomb(char *, char32_t, mbstate_t *)` declaration, x86 4-byte char32_t and 8-byte mbstate_t, and unmangled C++ `c32rtomb` reference. The raw project pass uses -nostdinc/-nostdinc++ plus compiler builtins only.",
+  "The project-header runtime fixture uses errno.h, locale.h, uchar.h, features.h, and bits/alltypes.h before both pinned-musl and true-static links. It calls only c32rtomb plus the already selected setlocale profile seam and C errno accessor; its manual byte checks introduce no byte-string, conversion, or ambient-libc helper.",
+]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-c32rtomb", scope = "Pinned-musl project-header C differential and dedicated C11/C++ `<uchar.h>` declaration matrix precede a true `-nostdlib -static` candidate. The runner ratchets the AArch64 c32rtomb static-ABI row and complete selected x86 export list; it extracts exactly one adapter object exporting only c32rtomb, requires its sole undefined/relocation to be wcrtomb and its direct tail jump, then reconstructs the final linker-discovered existing wcrtomb/setlocale/errno closure rather than linking libc.a. The differential covers C/POSIX private code units, C.UTF-8 two/four-byte scalars, invalid surrogates/out-of-range EILSEQ, stale errno success, untouched caller mbstate_t, and null-output query. The final ELF rejects unresolved symbols, interpreter/DT_NEEDED, dynamic TLS, PLT, allocator, iconv, wide streams, ambient libc, and unowned runtime dependencies while retaining direct fs initial-TLS errno. The established wcrtomb closure may materialize its fixed CTYPE override helper, but the runner rejects every public locale-object API call and this adapter neither invokes nor establishes those APIs. It does not select c16rtomb, mbrtoc16/mbrtoc32, decoding, locale-object APIs, environment or general locale databases, family completion, promotion, or public x86 support." }]
+oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT `src/multibyte/c32rtomb.c` source and executable C behavior oracle: direct wcrtomb forwarding, active CTYPE encoding, invalid-scalar errno behavior, null-output query, and caller mbstate_t forwarding. Its c16rtomb and decoder siblings remain unselected." }, { kind = "elf-abi", source = "System V AMD64 psABI and pinned musl uchar.h/static manifests", role = "rdi/esi/rdx to rax C ABI, 32-bit char32_t/wchar_t register equivalence, 8-byte mbstate_t pointer ABI, unconditional C/C++ declaration/linkage, direct static relocation, and initial-exec errno fixture contract." }]
+
 [[family.verified_slice]]
 id = "locale.core-fixed-profile"
 description = "Private native x86 selected-private `locale.core` fixed-profile slice inside still-planned `libc.text-math-locale-stdio`. It consumes that capability only at the `setlocale`/`localeconv` seam: one dependency-free `crabc-libc` archive resolves exactly those two entries into a strict C11/C++17 header matrix and a shared project-header fixture which first executes through pinned musl 1.2.6 and then a true `-nostdlib -static --gc-sections` candidate. The fixed global profile accepts only `C`, `POSIX`, and `C.UTF-8`; musl's built-in C.UTF-8 map changes `LC_CTYPE` alone, so direct `LC_ALL` C.UTF-8 and a mixed-state query serialize exactly as `C.UTF-8;C;C;C;C;C`, while non-CTYPE C.UTF-8 and POSIX normalize to C. `localeconv` returns the stable immutable POSIX record with decimal point `.`, empty text fields, and all fourteen monetary char fields `CHAR_MAX`. Candidate-only negative checks reject `setlocale(category, \"\")`, arbitrary map names, and non-returned LC_ALL forms without changing state. The candidate has no TLS, environment lookup, allocation, locale object, conversion, collation, iconv, gettext, numeric, time, or stdio dependency. This selected-private accounting does not claim every broader legacy `locale.core` spelling, family completion, promotion, or public x86 support; general locale or legacy-encoding databases, libc.so, CRT, loader, and sysroot remain excluded."

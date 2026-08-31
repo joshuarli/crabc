@@ -131,9 +131,10 @@ X86_RUNTIME_FOUNDATION_LDSO_SOURCES = {
 # source-backed memccpy copy-until-target and mempcpy return-after-copy adapters,
 # one caller-buffer `strsep` token-mutation leaf, selected C-string
 # copy/concatenation, fixed-C-
-# locale ctype and the separately bounded named-locale/multibyte conversion
-# artifact, scalar integer arithmetic, complete integer parsing, intmax
-# arithmetic, and find-first-set, direct POSIX clock_gettime, bounded clock
+# locale ctype, the separately bounded named-locale/multibyte conversion
+# artifact, and the direct C11 c32rtomb-to-wcrtomb adapter, scalar integer
+# arithmetic, complete integer parsing, intmax arithmetic, and find-first-set,
+# direct POSIX clock_gettime, bounded clock
 # observation, no-cancellation mapping synchronization, direct anonymous-memory
 # descriptor creation, nanosleep, and clock_nanosleep, descriptor entry, selected
 # filesystem access, bounded fcntl
@@ -178,6 +179,7 @@ X86_RUNTIME_FOUNDATION_LIBC_SOURCES = {
     Path("libc/src/c_abi/x86_64/ctype.rs"),
     Path("libc/src/c_abi/x86_64/locale_ctype.rs"),
     Path("libc/src/c_abi/x86_64/locale_multibyte.rs"),
+    Path("libc/src/c_abi/x86_64/c32rtomb.rs"),
     Path("libc/src/c_abi/x86_64/locale_objects.rs"),
     Path("libc/src/c_abi/x86_64/locale_narrow.rs"),
     Path("libc/src/c_abi/x86_64/descriptor_io.rs"),
@@ -3830,6 +3832,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         '#[path = "ctype.rs"]',
         '#[path = "locale_ctype.rs"]',
         '#[path = "locale_multibyte.rs"]',
+        '#[path = "c32rtomb.rs"]',
         '#[path = "locale_objects.rs"]',
         '#[path = "integer_arithmetic.rs"]',
         '#[path = "integer_parse.rs"]',
@@ -11080,6 +11083,38 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
             "artifact must export only get/set hostname/domain-name symbols"
         )
 
+    c32rtomb_source = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "c32rtomb.rs"
+    c32rtomb_text = c32rtomb_source.read_text(errors="replace")
+    for required in (
+        "musl 1.2.6 release commit",
+        "src/multibyte/c32rtomb.c",
+        "rdi/esi/rdx",
+        "C/POSIX/C.UTF-8",
+        "INT_MAX",
+        ".global c32rtomb",
+        "jmp wcrtomb",
+        "public x86 support",
+    ):
+        if required not in c32rtomb_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/c32rtomb.rs: selected direct C11 adapter "
+                f"boundary is missing {required!r}"
+            )
+    c32rtomb_exports = set(
+        re.findall(r"(?m)^\s*\.global\s+(\w+)\s*$", c32rtomb_text)
+    )
+    if c32rtomb_exports != {"c32rtomb"}:
+        errors.append(
+            "libc/src/c_abi/x86_64/c32rtomb.rs: selected direct C11 adapter "
+            "must export only c32rtomb"
+        )
+    for forbidden in ("raw_syscall::", "extern \"C\" fn", "alloc::", "use super"):
+        if forbidden in c32rtomb_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/c32rtomb.rs: selected direct C11 adapter "
+                f"selects forbidden runtime seam {forbidden!r}"
+            )
+
     export_sources = (
         static_root_text,
         stat_text,
@@ -11170,6 +11205,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         locale_error_strings_text,
         strsignal_text,
         ctype_text,
+        c32rtomb_text,
         integer_arithmetic_text,
         integer_parse_text,
         intmax_arithmetic_text,
@@ -11200,6 +11236,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
                 fenv_text,
                 setjmp_text,
                 descriptor_control_text,
+                c32rtomb_text,
             )
         )
     )
@@ -11601,6 +11638,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         "toupper",
         "isascii",
         "toascii",
+        "c32rtomb",
         "abs",
         "labs",
         "llabs",
@@ -11688,6 +11726,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
             "selected socket transport and selected socket-message/options, selected system-observation, selected UTS-identity, "
             "selected numeric-address codecs, immutable IPv6 unspecified/loopback address data objects, and legacy classful IPv4 arithmetic, one caller-owned mntent option lookup, fixed-profile h_errno message text, byte-string, legacy-memory adapters, source-backed memccpy/mempcpy, caller-buffer strsep, random-entropy, memory-search, C-string-copy, immutable error-string, "
             "fixed-C-locale ctype, integer-arithmetic, integer-parsing, intmax-arithmetic, credential-observation, and "
+            "a direct C11 c32rtomb-to-wcrtomb adapter, "
             "raw auxiliary-vector observation, startup-derived secure-environment, and environment-backed login-name observation, find-first-set, startup-published program names, short/GNU-long "
             "getopt state and aliases, standalone linear search, callback-tree/hash-table search, and the "
             "bounded no-catalog gettext/message-catalog ABI, "
@@ -11789,6 +11828,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         ("locale_error_strings.rs", locale_error_strings_text),
         ("strsignal.rs", strsignal_text),
         ("ctype.rs", ctype_text),
+        ("c32rtomb.rs", c32rtomb_text),
         ("locale_ctype.rs", locale_ctype_text),
         ("integer_arithmetic.rs", integer_arithmetic_text),
         ("integer_parse.rs", integer_parse_text),
