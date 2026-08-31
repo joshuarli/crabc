@@ -1213,6 +1213,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "libc-pthread-identity",
             "libc-pthread-affinity",
             "libc-pthread-detach",
+            "libc-thrd-yield",
             "libc-memory-sync",
             "libc-memory-locking",
             "libc-memfd-create",
