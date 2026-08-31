@@ -511,18 +511,10 @@ case "$command" in
             --sysroot target/crabc-sysroot \
             --loader target/debug/libldso.so \
             -- python3 compat/allocator/shadow-abi-matrix/run.py run
-        # The direct runtime regressions keep the typed post-exit proof and
-        # persistent PageMap remote-publication boundaries observable without
-        # accidentally selecting the ordinary C allocator artifact. They
-        # cover aggregate, source-proved sole mapped-regular, parked-A source
-        # remote-free, and the two nominally distinct bounded post-exit B/C/D
-        # routes before the C ABI fixture exercises the selected shared object.
+        # The direct runtime regressions keep live-owner PageMap remote
+        # publication observable without selecting the ordinary C allocator
+        # artifact before the C ABI fixture exercises the selected shared object.
         run_in_container cargo test -p crabc-mimalloc \
-            --test native_post_exit_lifecycle \
-            --test native_sole_post_exit_lifecycle \
-            --test native_two_post_exit_lifecycle \
-            --test native_three_post_exit_lifecycle \
-            --test native_post_exit_with_local_session \
             --test native_live_remote_free \
             --test native_two_live_remote_owners \
             --test native_live_remote_owner_registry_reuse \
@@ -534,6 +526,8 @@ case "$command" in
             --features native-runtime-test-audit \
             --test native_multiple_post_exit_completions \
             --test native_terminal_completion_live_remote_free \
+            --test native_concurrent_post_exit_os_singletons \
+            --test native_concurrent_mixed_post_exit_completions \
             -- --test-threads=1
         # The next-`munmap` injection is a separately gated direct witness:
         # a failed OS terminal release must retain its PageMap source without

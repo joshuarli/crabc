@@ -11,6 +11,32 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[3]
 DEV_SH = ROOT / "scripts/dev.sh"
 DIRECT_TARGET = "native_concurrent_post_exit_page_release"
+LIVE_DIRECT_TARGETS = (
+    "native_live_remote_free",
+    "native_two_live_remote_owners",
+    "native_live_remote_owner_registry_reuse",
+)
+AUDIT_DIRECT_TARGETS = (
+    "native_multiple_post_exit_completions",
+    "native_terminal_completion_live_remote_free",
+    "native_concurrent_post_exit_os_singletons",
+    "native_concurrent_mixed_post_exit_completions",
+)
+RETIRED_ROUTE_TARGETS = (
+    "native_post_exit_lifecycle",
+    "native_sole_post_exit_lifecycle",
+    "native_two_post_exit_lifecycle",
+    "native_three_post_exit_lifecycle",
+    "native_post_exit_with_local_session",
+)
+RETIRED_SESSION_TARGETS = (
+    "runtime_lifecycle_session_initial_mapped_medium_post_exit_publisher",
+    "runtime_lifecycle_session_post_exit_publisher",
+    "runtime_lifecycle_session_post_exit_mapped_medium_publisher",
+    "runtime_lifecycle_session_post_exit_mapped_medium_requires_publisher",
+    "runtime_lifecycle_session_post_exit_mismatch_publisher",
+)
+RETIRED_HIGH_WATER_TARGETS = ("native_post_exit_registry_high_water",)
 C_RELEASE_TARGET = "native_mimalloc_concurrent_post_exit_release"
 C_RELEASE_FIXTURE = ROOT / "tests/fixtures/native_mimalloc_concurrent_post_exit_release_test.c"
 C_RELEASE_HARNESS = ROOT / "tests/native_mimalloc_concurrent_post_exit_release.rs"
@@ -60,7 +86,65 @@ def contains_tokens(command: list[str], expected: tuple[str, ...]) -> bool:
     return any(command[index : index + width] == list(expected) for index in range(len(command)))
 
 
+def selected_test_tokens(targets: tuple[str, ...]) -> list[str]:
+    return [token for target in targets for token in ("--test", target)]
+
+
 class AllocatorShadowPostExitGateTests(unittest.TestCase):
+    def test_canonical_shadow_lane_reconciles_live_and_audit_direct_targets(self) -> None:
+        commands = allocator_shadow_commands()
+        direct_prefix = ("run_in_container", "cargo", "test", "-p", "crabc-mimalloc")
+        live_commands = [
+            command
+            for command in commands
+            if contains_tokens(command, direct_prefix)
+            and contains_tokens(command, ("--test", LIVE_DIRECT_TARGETS[0]))
+        ]
+        self.assertEqual(live_commands, [
+            [
+                "run_in_container",
+                "cargo",
+                "test",
+                "-p",
+                "crabc-mimalloc",
+                *selected_test_tokens(LIVE_DIRECT_TARGETS),
+                "--",
+                "--test-threads=1",
+            ]
+        ])
+
+        audit_commands = [
+            command
+            for command in commands
+            if contains_tokens(command, direct_prefix)
+            and contains_tokens(command, ("--features", "native-runtime-test-audit"))
+            and contains_tokens(command, ("--test", AUDIT_DIRECT_TARGETS[0]))
+        ]
+        self.assertEqual(audit_commands, [
+            [
+                "run_in_container",
+                "cargo",
+                "test",
+                "-p",
+                "crabc-mimalloc",
+                "--features",
+                "native-runtime-test-audit",
+                *selected_test_tokens(AUDIT_DIRECT_TARGETS),
+                "--",
+                "--test-threads=1",
+            ]
+        ])
+
+        for target in (
+            *RETIRED_ROUTE_TARGETS,
+            *RETIRED_SESSION_TARGETS,
+            *RETIRED_HIGH_WATER_TARGETS,
+        ):
+            with self.subTest(retired_target=target):
+                self.assertFalse(
+                    any(contains_tokens(command, ("--test", target)) for command in commands)
+                )
+
     def test_canonical_shadow_lane_selects_direct_and_concurrent_c_witnesses(self) -> None:
         commands = allocator_shadow_commands()
         direct_prefix = ("run_in_container", "cargo", "test", "-p", "crabc-mimalloc")
