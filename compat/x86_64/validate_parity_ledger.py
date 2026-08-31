@@ -1184,6 +1184,8 @@ TIME_OBSERVATION_SYMBOLS = (
     "gettimeofday",
 )
 
+TIMEGM_UTC_SYMBOLS = ("timegm",)
+
 MEMORY_SYNC_SYMBOLS = ("msync",)
 
 MEMFD_CREATE_SYMBOLS = ("memfd_create",)
@@ -13970,6 +13972,236 @@ def require_time_observation_artifact(family: Mapping[str, Any]) -> None:
         == {"./scripts/dev-x86_64.sh libc-time-observation"},
         "static-c-time-observation must use the closed libc-time-observation command",
     )
+
+
+def require_timegm_utc_artifact(family: Mapping[str, Any]) -> None:
+    """Keep the fixed-UTC mutable C inverse separate and non-promoting."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.posix-runtime].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [
+        entry for entry in artifacts if entry.get("id") == "static-c-timegm-utc"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.posix-runtime must contain exactly one static-c-timegm-utc artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-timegm-utc must not promote libc.posix-runtime",
+    )
+    artifact = matching[0]
+    description = artifact.get("description")
+    require(isinstance(description, str), "static-c-timegm-utc needs a description")
+    for phrase in (
+        "Private native x86 static fixed-UTC `timegm`",
+        "still-planned `libc.posix-runtime`",
+        "negative-month correction",
+        "valid pre-epoch `-1`",
+        "`EOVERFLOW`",
+        "unchanged caller record",
+        "no kernel syscall",
+        "`TZ`",
+        "environment",
+        "timezone global",
+        "local conversion",
+        "calendar formatting/parsing",
+        "POSIX timers",
+        "public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"static-c-timegm-utc description omits {phrase}",
+        )
+
+    owners = set(
+        nonempty_strings(
+            artifact.get("source_owners"), "static-c-timegm-utc.source_owners"
+        )
+    )
+    for owner in (
+        "compat/upstreams.toml",
+        "libc/Cargo.toml",
+        "libc/src/lib.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/timegm.rs",
+        "libc/src/c_abi/x86_64/errno.rs",
+        "include/errno.h",
+        "include/limits.h",
+        "include/time.h",
+        "compat/x86_64/time_header_abi_probe.c",
+        "compat/x86_64/time_header_abi_probe.cpp",
+        "compat/x86_64/run_time_header_abi.sh",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/libc_timegm_probe.c",
+        "compat/x86_64/libc_timegm_start.S",
+        "compat/x86_64/run_libc_timegm.sh",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/README.md",
+        "STATUS.md",
+        "x86-64.md",
+        "scripts/dev-x86_64.sh",
+        "scripts/check_structure.py",
+    ):
+        require(owner in owners, f"static-c-timegm-utc source owners omit {owner}")
+
+    prerequisites = nonempty_strings(
+        artifact.get("x86_abi_prerequisites"),
+        "static-c-timegm-utc.x86_abi_prerequisites",
+    )
+    require(
+        any(
+            "System V AMD64" in item
+            and "rdi" in item
+            and "rax" in item
+            and "56-byte" in item
+            and "tm_gmtoff" in item
+            and "tm_zone" in item
+            for item in prerequisites
+        ),
+        "static-c-timegm-utc must record its x86 C record and calling ABI",
+    )
+    require(
+        any(
+            "9fa28ece75d8a2191de7c5bb53bed224c5947417" in item
+            and "src/time/timegm.c" in item
+            and "__tm_to_secs.c" in item
+            and "__secs_to_tm.c" in item
+            and "__year_to_secs.c" in item
+            and "__month_to_secs.c" in item
+            and "tm_isdst=0" in item
+            and "tm_gmtoff=0" in item
+            for item in prerequisites
+        ),
+        "static-c-timegm-utc must retain its exact pinned-musl UTC mapping",
+    )
+    require(
+        any(
+            "valid 1969-12-31T23:59:59Z value -1" in item
+            and "initial-TLS errno EOVERFLOW" in item
+            and "complete caller record unchanged" in item
+            for item in prerequisites
+        ),
+        "static-c-timegm-utc must retain its -1 and overflow boundary",
+    )
+    require(
+        any(
+            "no Linux syscall" in item
+            and "no vDSO path" in item
+            and "no environment/TZ read" in item
+            and "timezone global" in item
+            and "zoneinfo" in item
+            for item in prerequisites
+        ),
+        "static-c-timegm-utc must retain its fixed-UTC state exclusion",
+    )
+
+    headers = nonempty_strings(
+        artifact.get("x86_header_prerequisites"),
+        "static-c-timegm-utc.x86_header_prerequisites",
+    )
+    require(
+        any(
+            "GNU/BSD" in item
+            and "time_t timegm(struct tm *)" in item
+            and "C and C++" in item
+            and "56-byte" in item
+            and "tm_gmtoff/tm_zone" in item
+            for item in headers
+        ),
+        "static-c-timegm-utc must retain its feature-gated public header ABI",
+    )
+
+    exports = set(
+        static_c_abi_export_names(
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        )
+    )
+    require(
+        set(TIMEGM_UTC_SYMBOLS) <= exports,
+        "static-c-timegm-utc must retain its selected export",
+    )
+    require(
+        not (exports & {"mktime", "gmtime", "gmtime_r", "localtime", "localtime_r", "strftime", "strptime", "tzset"}),
+        "static-c-timegm-utc must not widen into C timezone/calendar siblings",
+    )
+
+    static_root = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+    ).read_text(encoding="utf-8")
+    require(
+        '#[path = "timegm.rs"]\nmod timegm;' in static_root,
+        "x86 static C ABI must compose the fixed-UTC timegm leaf",
+    )
+    implementation = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "timegm.rs"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "src/time/timegm.c",
+        "src/time/__tm_to_secs.c",
+        "src/time/__secs_to_tm.c",
+        "src/time/__year_to_secs.c",
+        "src/time/__month_to_secs.c",
+        "fn timegm(",
+        "month < 0",
+        "EOVERFLOW",
+        "UTC",
+        "initial-TLS errno",
+    ):
+        require(
+            snippet in implementation,
+            f"timegm leaf omits {snippet}",
+        )
+    for forbidden in (
+        "crabc_core",
+        "crabc_mimalloc",
+        "raw_syscall",
+        "getenv",
+        "tzset",
+        "localtime",
+        "mktime",
+        "strftime",
+        "strptime",
+        "__tls_get_addr",
+    ):
+        require(
+            forbidden not in implementation,
+            f"timegm leaf widens into {forbidden}",
+        )
+
+    evidence = artifact.get("native_evidence")
+    require(isinstance(evidence, list), "static-c-timegm-utc needs evidence")
+    require(
+        {entry.get("command") for entry in evidence if isinstance(entry, Mapping)}
+        == {"./scripts/dev-x86_64.sh libc-timegm"},
+        "static-c-timegm-utc must use the closed libc-timegm command",
+    )
+    scope = evidence[0].get("scope")
+    require(isinstance(scope, str), "static-c-timegm-utc evidence needs a scope")
+    for phrase in (
+        "fixed-UTC timegm regression",
+        "negative-month normalization",
+        "valid `-1`",
+        "EOVERFLOW",
+        "unchanged record",
+        "Pinned-musl project-header C execution",
+        "`-nostdlib -static` candidate",
+        "no interpreter/DT_NEEDED/unresolved",
+        "direct initial-TLS errno",
+        "no kernel syscall",
+        "env -i candidate",
+        "environment/TZ/timezone state",
+        "promotion",
+        "public x86 support",
+    ):
+        require(
+            phrase in scope,
+            f"static-c-timegm-utc evidence omits {phrase}",
+        )
 
 
 def require_system_configuration_artifact(family: Mapping[str, Any]) -> None:
@@ -32983,6 +33215,7 @@ def validate_ledger(
     require_callback_algorithms_artifact(by_id["libc.posix-runtime"])
     require_clock_gettime_artifact(by_id["libc.posix-runtime"])
     require_time_observation_artifact(by_id["libc.posix-runtime"])
+    require_timegm_utc_artifact(by_id["libc.posix-runtime"])
     require_system_configuration_artifact(by_id["libc.posix-runtime"])
     require_system_information_artifact(by_id["libc.posix-runtime"])
     require_mapping_core_artifact(by_id["libc.posix-runtime"])

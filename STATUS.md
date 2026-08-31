@@ -1157,6 +1157,18 @@ the `TIME_UTC`/unsupported-base boundary. It has no vDSO resolver, calendar or
 timezone state, clock mutation, POSIX timer, cancellation, libc.so, CRT,
 loader, sysroot, family/platform parity, or public-x86-support claim.
 
+`./scripts/dev-x86_64.sh libc-timegm` is a distinct private
+`static-c-timegm-utc` artifact in still-planned `libc.posix-runtime`. Its
+pinned-musl and true-static C fixture selects only GNU/BSD `timegm` as a
+fixed-UTC, caller-owned `struct tm` calculation: complete normalizing rewrite,
+negative-month correction, leap carry, valid pre-epoch `-1` with preserved
+errno, and `EOVERFLOW` with the original record unchanged. It installs only
+the fixed `UTC` offset/name result, makes no syscall, and reads neither `TZ`,
+the environment, timezone globals, nor zoneinfo. It does not select
+`gmtime`/`mktime`, local conversion, calendar formatting/parsing, clock
+observation or mutation, POSIX timers, C time-family completion, promotion, or
+public x86 support.
+
 `./scripts/dev-x86_64.sh libc-system-information` is a separate private
 `static-c-system-information` artifact inside planned `libc.posix-runtime`.
 Its project-header C/C++ gate and pinned-musl/freestanding-static fixture prove

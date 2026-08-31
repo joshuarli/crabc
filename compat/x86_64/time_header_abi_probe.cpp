@@ -26,6 +26,7 @@ static_assert(TIMER_ABSTIME == 1, "TIMER_ABSTIME");
 static_assert(TIME_UTC == 1, "TIME_UTC");
 
 static clock_t (*clock_signature)(void) = clock;
+static time_t (*timegm_signature)(struct tm *) = timegm;
 static int (*clock_gettime_signature)(clockid_t, struct timespec *) = clock_gettime;
 static int (*clock_nanosleep_signature)(clockid_t, int, const struct timespec *,
                                         struct timespec *) = clock_nanosleep;
@@ -37,6 +38,7 @@ int main()
     calendar.tm_gmtoff = 0;
     calendar.tm_zone = NULL;
     (void)clock_signature;
+    (void)timegm_signature;
     (void)clock_gettime_signature;
     (void)clock_nanosleep_signature;
     (void)timer_create_signature;

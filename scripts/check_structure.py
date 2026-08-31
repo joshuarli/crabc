@@ -152,6 +152,7 @@ X86_RUNTIME_FOUNDATION_LIBC_SOURCES = {
     Path("libc/src/c_abi/x86_64/credential_observation.rs"),
     Path("libc/src/c_abi/x86_64/child_reaping.rs"),
     Path("libc/src/c_abi/x86_64/clock_gettime.rs"),
+    Path("libc/src/c_abi/x86_64/timegm.rs"),
     Path("libc/src/c_abi/x86_64/time_observation.rs"),
     Path("libc/src/c_abi/x86_64/clock_nanosleep.rs"),
     Path("libc/src/c_abi/x86_64/nanosleep.rs"),
@@ -3747,6 +3748,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         '#[path = "search_hash_table.rs"]',
         '#[path = "gettext_catalog.rs"]',
         '#[path = "clock_gettime.rs"]',
+        '#[path = "timegm.rs"]',
         '#[path = "clock_nanosleep.rs"]',
         '#[path = "nanosleep.rs"]',
         '#[path = "descriptor_entry.rs"]',
@@ -6846,6 +6848,57 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
             "libc/src/c_abi/x86_64/clock_gettime.rs: selected static artifact "
             "must export only clock_gettime"
         )
+
+    timegm_source = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "timegm.rs"
+    timegm_text = timegm_source.read_text(errors="replace")
+    for required in (
+        "musl 1.2.6 release commit",
+        "src/time/timegm.c",
+        "src/time/__tm_to_secs.c",
+        "src/time/__secs_to_tm.c",
+        "src/time/__year_to_secs.c",
+        "src/time/__month_to_secs.c",
+        "struct Tm",
+        "month < 0",
+        "EOVERFLOW",
+        "UTC",
+        "initial-TLS errno",
+        'pub unsafe extern "C" fn timegm',
+    ):
+        if required not in timegm_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/timegm.rs: selected fixed-UTC timegm "
+                f"boundary is missing {required!r}"
+            )
+    timegm_exports = set(
+        re.findall(
+            r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(',
+            timegm_text,
+        )
+    )
+    if timegm_exports != {"timegm"}:
+        errors.append(
+            "libc/src/c_abi/x86_64/timegm.rs: selected fixed-UTC artifact "
+            "must export only timegm"
+        )
+    for forbidden in (
+        "crabc_core",
+        "crabc_mimalloc",
+        "raw_syscall",
+        "getenv",
+        "tzset",
+        "localtime",
+        "mktime",
+        "strftime",
+        "strptime",
+        "__tls_get_addr",
+    ):
+        if forbidden in timegm_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/timegm.rs: selected fixed-UTC timegm "
+                f"boundary must not select {forbidden!r}"
+            )
+
     raw_syscall_source = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "syscall.rs"
     raw_syscall_text = raw_syscall_source.read_text(errors="replace")
     if "pub(crate) const SYS_CLOCK_GETTIME: i64 = 228;" not in raw_syscall_text:
@@ -9044,6 +9097,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         search_hash_table_text,
         gettext_catalog_text,
         clock_gettime_text,
+        timegm_text,
         clock_nanosleep_text,
         memory_mapping_text,
         memory_sync_text,
@@ -9346,6 +9400,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         "waitpid",
         "waitid",
         "clock_gettime",
+        "timegm",
         "clock_nanosleep",
         "mmap",
         "munmap",
@@ -9559,7 +9614,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         errors.append(
             "libc/src/c_abi/x86_64: selected static archive must export only its "
             "stat, credential, errno, bootstrap-memory/fenv/continuation, simple "
-            "signal-control, one pure GNU signal-set predicate and paired GNU binary set-operation leaf, bounded process-signal execution, and one legacy single-signal pause wait, bounded pthread create/exit/join/detach initial-TLS worker, its private selected-main/worker pthread-key/C11-TSS lifecycle, private process-normal pthread mutexes and their musl private condition-variable handoff, the complete selected rwlock/attribute family with private-or-shared futex operation, plus the distinct C11 plain-sync adapter and normal-return pthread/C11 once state machine, its typed C11 create/exit/join/detach sibling, and pthread/C11 identity aliases, named termios-control, direct terminal-descriptor observation, historical ctermid pathname spelling, constant historical gethostid compatibility, selected process-context, child-reaping, C11 immediate termination, callback algorithms, direct clock_gettime, caller-owned mapping-core, no-cancellation mapping synchronization, direct anonymous-memory descriptor creation, nanosleep, and clock_nanosleep, selected "
+            "signal-control, one pure GNU signal-set predicate and paired GNU binary set-operation leaf, bounded process-signal execution, and one legacy single-signal pause wait, bounded pthread create/exit/join/detach initial-TLS worker, its private selected-main/worker pthread-key/C11-TSS lifecycle, private process-normal pthread mutexes and their musl private condition-variable handoff, the complete selected rwlock/attribute family with private-or-shared futex operation, plus the distinct C11 plain-sync adapter and normal-return pthread/C11 once state machine, its typed C11 create/exit/join/detach sibling, and pthread/C11 identity aliases, named termios-control, direct terminal-descriptor observation, historical ctermid pathname spelling, constant historical gethostid compatibility, selected process-context, child-reaping, C11 immediate termination, callback algorithms, direct clock_gettime, fixed-UTC timegm, caller-owned mapping-core, no-cancellation mapping synchronization, direct anonymous-memory descriptor creation, nanosleep, and clock_nanosleep, selected "
             "descriptor-entry, selected filesystem-access, bounded descriptor-control, timestamp updates, and descriptor-I/O, selected process-resources, selected readiness/signal-waits, "
             "selected socket transport and selected socket-message/options, selected system-observation, selected UTS-identity, "
             "selected numeric-address codecs and legacy classful IPv4 arithmetic, fixed-profile h_errno message text, byte-string, legacy-memory adapters, source-backed memccpy, random-entropy, memory-search, C-string-copy, immutable error-string, "

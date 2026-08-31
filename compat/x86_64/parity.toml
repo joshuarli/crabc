@@ -2908,6 +2908,52 @@ oracle = [
 ]
 
 [[family.verified_artifact]]
+id = "static-c-timegm-utc"
+description = "Private native x86 static fixed-UTC `timegm` block inside still-planned `libc.posix-runtime`. One dependency-free `crabc-libc` archive resolves only the GNU/BSD `timegm(struct tm *)` inverse for a freestanding C fixture after equivalent pinned-musl execution. It normalizes the complete caller-owned 56-byte LP64 `struct tm` through musl's UTC Gregorian calculation, writes `tm_isdst=0`, `tm_gmtoff=0`, and immutable `UTC`, and returns signed 64-bit `time_t`. The fixture proves epoch normalization, the negative-month correction, leap-second-style carry, a valid pre-epoch `-1` result that preserves errno, and `EOVERFLOW` with an unchanged caller record when normalized `tm_year` cannot fit int. The candidate issues no kernel syscall and reads no `TZ`, environment, timezone global, or zoneinfo; the existing clock/time observation artifacts remain separate. It does not select local conversion, `mktime`, `gmtime`, `strftime`/`strptime`, calendar formatting/parsing, clock observation/mutation, POSIX timers, libc.so, CRT, dynamic TLS lifecycle, loader, sysroot, allocator, family completion, promotion, or public x86 support."
+source_owners = [
+  "compat/upstreams.toml",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/timegm.rs",
+  "libc/src/c_abi/x86_64/errno.rs",
+  "include/errno.h",
+  "include/features.h",
+  "include/limits.h",
+  "include/stddef.h",
+  "include/stdint.h",
+  "include/time.h",
+  "include/bits/alltypes.h",
+  "compat/x86_64/time_header_abi_probe.c",
+  "compat/x86_64/time_header_abi_probe.cpp",
+  "compat/x86_64/run_time_header_abi.sh",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/libc_timegm_probe.c",
+  "compat/x86_64/libc_timegm_start.S",
+  "compat/x86_64/run_libc_timegm.sh",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "compat/x86_64/README.md",
+  "STATUS.md",
+  "x86-64.md",
+  "scripts/dev-x86_64.sh",
+  "scripts/check_structure.py",
+]
+x86_abi_prerequisites = [
+  "System V AMD64 passes the one mutable struct tm pointer in rdi and returns signed LP64 time_t in rax. Linux/x86-64 GNU struct tm is 56-byte align-eight storage: nine signed int fields at offsets 0 through 32, tm_gmtoff signed long at 40, and tm_zone pointer at 48.",
+  "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417 maps src/time/timegm.c through __tm_to_secs.c, __secs_to_tm.c, __year_to_secs.c, and __month_to_secs.c. It normalizes every signed int input field as UTC, restores tm_isdst=0/tm_gmtoff=0/tm_zone=UTC, and returns EOVERFLOW only when normalized tm_year cannot fit int.",
+  "A successful timegm result—including the valid 1969-12-31T23:59:59Z value -1—preserves incoming errno. Overflow writes initial-TLS errno EOVERFLOW and leaves the complete caller record unchanged; C callers must provide initialized writable storage and no null-pointer fallback is invented.",
+  "This leaf has no Linux syscall, no vDSO path, no environment/TZ read, no timezone global or zoneinfo dependency, and no mutable state beyond the selected initial-TLS errno write on overflow. Fixture-local startup supplies one Variant-II thread pointer only and does not claim CRT or TLS lifecycle.",
+]
+x86_header_prerequisites = ["The project/pinned-musl C and C++ time header gate compiles the GNU/BSD feature-gated `time_t timegm(struct tm *)` spelling plus the exact 56-byte x86 LP64 struct tm layout and GNU tm_gmtoff/tm_zone fields. This focused declaration proof does not select the remainder of C time, calendar, or timezone headers."]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-timegm", scope = "Pinned-musl project-header C execution plus a true `-nostdlib -static` candidate proves the fixed-UTC timegm regression: epoch, negative-month normalization, leap carry, valid `-1` stale-errno preservation, and EOVERFLOW with an unchanged record. It ratchets exact crate-owned export closure, public C/C++ header ABI, no interpreter/DT_NEEDED/unresolved symbol/dynamic TLS/unowned dependency, direct initial-TLS errno, no kernel syscall, and an env -i candidate. It reads no environment/TZ/timezone state and selects no local conversion, formatting/parsing, clock/timer behavior, promotion, or public x86 support." }]
+oracle = [
+  { kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source and behavior oracle for src/time/timegm.c, __tm_to_secs.c, __secs_to_tm.c, __year_to_secs.c, and __month_to_secs.c." },
+  { kind = "elf-abi", source = "System V AMD64 psABI and pinned musl x86 headers", role = "LP64 time_t return, mutable struct-tm pointer argument, public struct tm record layout, and static initial-TLS fixture contract." },
+]
+
+[[family.verified_artifact]]
 id = "static-c-system-configuration"
 description = "Private native x86 selected-static-archive system-configuration block. One dependency-free `crabc-libc` archive resolves exactly `sysconf`, `confstr`, `pathconf`, `fpathconf`, `getpagesize`, and `getdtablesize` into a freestanding C fixture after an equivalent pinned-musl execution. It admits only `_SC_CLK_TCK=100` and `_SC_PAGE_SIZE/_SC_PAGESIZE=4096` from the much broader `sysconf` namespace; every other selector is `-1/EINVAL`. It matches musl's bounded `confstr` string/copy/truncation contract and its path- and fd-independent `pathconf`/`fpathconf` table, including valid indeterminate `-1` values that preserve errno. The corresponding AArch64 implementation follows the same table, and its focused dynamic fixture compares the selected C behavior to pinned musl without filesystem access. That agreement resolves only this configuration boundary. `getpagesize` is the fixed x86 Linux 4096-byte base page, and `getdtablesize` queries `RLIMIT_NOFILE` through `prlimit64` and clamps it to `INT_MAX`. It does not select a full musl sysconf table, statfs/statvfs, filesystem capacity or path policy, `/proc` parsing, auxv-derived sysconf selectors beyond the separate direct `getauxval` lookup, libc.so, CRT, dynamic TLS lifecycle, pthread/TLS lifecycle, loader, sysroot, allocator, or public x86 support."
 source_owners = [

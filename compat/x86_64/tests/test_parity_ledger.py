@@ -50,7 +50,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 41)
-        self.assertEqual(report["verified_artifact_count"], 168)
+        self.assertEqual(report["verified_artifact_count"], 169)
         self.assertEqual(report["header_layout_probe_count"], 46)
         self.assertEqual(report["public_header_inventory_count"], 183)
         self.assertEqual(report["header_foundation_header_count"], 191)
@@ -5924,7 +5924,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             "does not select libc.so", credentials["native_evidence"][0]["scope"]
         )
         posix_artifacts = posix_runtime["verified_artifact"]
-        assert isinstance(posix_artifacts, list) and len(posix_artifacts) == 70
+        assert isinstance(posix_artifacts, list) and len(posix_artifacts) == 76
         artifacts_by_id = {
             artifact["id"]: artifact
             for artifact in posix_artifacts
@@ -12701,6 +12701,78 @@ class X86ParityLedgerTests(unittest.TestCase):
         with self.assertRaisesRegex(
             ledger.LedgerError, "closed libc-time-observation command"
         ):
+            ledger.validate_ledger(data)
+
+    def test_timegm_utc_artifact_keeps_its_fixed_state_boundary(self) -> None:
+        data = self.data()
+        family = self.family(data, "libc.posix-runtime")
+        self.assertEqual(family["status"], "planned")
+        artifacts = family["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-timegm-utc"
+        )
+        self.assertNotIn("capabilities", artifact)
+        for owner in (
+            "libc/src/c_abi/x86_64/timegm.rs",
+            "include/time.h",
+            "compat/x86_64/time_header_abi_probe.c",
+            "compat/x86_64/time_header_abi_probe.cpp",
+            "compat/x86_64/libc_timegm_probe.c",
+            "compat/x86_64/libc_timegm_start.S",
+            "compat/x86_64/run_libc_timegm.sh",
+            "compat/x86_64/validate_parity_ledger.py",
+            "scripts/dev-x86_64.sh",
+        ):
+            self.assertIn(owner, artifact["source_owners"])
+        self.assertEqual(
+            {entry["command"] for entry in artifact["native_evidence"]},
+            {"./scripts/dev-x86_64.sh libc-timegm"},
+        )
+        for phrase in (
+            "Private native x86 static fixed-UTC `timegm`",
+            "still-planned `libc.posix-runtime`",
+            "negative-month correction",
+            "valid pre-epoch `-1`",
+            "`EOVERFLOW`",
+            "unchanged caller record",
+            "no kernel syscall",
+            "`TZ`",
+            "timezone global",
+            "calendar formatting/parsing",
+            "POSIX timers",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, artifact["description"])
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-timegm-utc"
+        )
+        artifact["description"] = artifact["description"].replace(
+            "negative-month correction", "month correction"
+        )
+        with self.assertRaisesRegex(ledger.LedgerError, "negative-month correction"):
+            ledger.validate_ledger(data)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-timegm-utc"
+        )
+        evidence = artifact["native_evidence"]
+        assert isinstance(evidence, list) and isinstance(evidence[0], dict)
+        evidence[0]["command"] = "./scripts/dev-x86_64.sh calendar-time-reference"
+        with self.assertRaisesRegex(ledger.LedgerError, "closed libc-timegm command"):
             ledger.validate_ledger(data)
 
     def test_memory_locking_artifact_keeps_its_closed_mapping_contract(self) -> None:

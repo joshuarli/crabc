@@ -1445,7 +1445,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "libc-static-c-abi-differential",
             "libc-static-c-abi-same-object-differential|qualification-posix-abi-admission",
             "libc-interface-discovery",
-            "libc-readiness-waits|libc-system-observation|libc-system-information|libc-fcntl-record-locks|libc-flock|libc-sendfile|libc-posix-fallocate|libc-descriptor-advice|libc-filesystem-capacity|libc-uts-identity|libc-ctype|libc-locale-profile|libc-locale-multibyte|libc-locale-wide-iconv|libc-wide-character|libc-locale-object-wide|libc-locale-narrow|libc-locale-ctype-locators|libc-locale-error-strings|libc-regex|libc-integer-arithmetic|libc-integer-parse|libc-float-parse|libc-intmax-arithmetic|libc-credential-observation|libc-secure-environment|libc-login-name|libc-child-reaping|libc-immediate-termination|libc-callback-algorithms|libc-search-tree-intrusive|libc-search-hash-table|libc-gettext-catalog|libc-access|libc-clock-gettime|libc-time-observation|libc-system-configuration|libc-mapping-core|libc-header-layouts-baseline|libc-nanosleep|libc-clock-nanosleep|libc-descriptor-entry|libc-fcntl-status-control|libc-ioctl|libc-ffs|libc-byte-strings|libc-process-globals-getopt|libc-auxv-observation|libc-inet-address|libc-inet-ntoa|libc-inet-classful|libc-hstrerror|libc-numeric-netdb|libc-random-entropy|libc-memory-search|libc-string-copy|libc-error-strings|libc-strsignal|libc-descriptor-pipeline",
+            "libc-readiness-waits|libc-system-observation|libc-system-information|libc-fcntl-record-locks|libc-flock|libc-sendfile|libc-posix-fallocate|libc-descriptor-advice|libc-filesystem-capacity|libc-uts-identity|libc-ctype|libc-locale-profile|libc-locale-multibyte|libc-locale-wide-iconv|libc-wide-character|libc-locale-object-wide|libc-locale-narrow|libc-locale-ctype-locators|libc-locale-error-strings|libc-regex|libc-integer-arithmetic|libc-integer-parse|libc-float-parse|libc-intmax-arithmetic|libc-credential-observation|libc-secure-environment|libc-login-name|libc-child-reaping|libc-immediate-termination|libc-callback-algorithms|libc-search-tree-intrusive|libc-search-hash-table|libc-gettext-catalog|libc-access|libc-clock-gettime|libc-time-observation|libc-timegm|libc-system-configuration|libc-mapping-core|libc-header-layouts-baseline|libc-nanosleep|libc-clock-nanosleep|libc-descriptor-entry|libc-fcntl-status-control|libc-ioctl|libc-ffs|libc-byte-strings|libc-process-globals-getopt|libc-auxv-observation|libc-inet-address|libc-inet-ntoa|libc-inet-classful|libc-hstrerror|libc-numeric-netdb|libc-random-entropy|libc-memory-search|libc-string-copy|libc-error-strings|libc-strsignal|libc-descriptor-pipeline",
             "libc-vector-io|libc-uio-cxx-linkage",
             "libc-sysv-semaphore|libc-posix-semaphore",
             "libc-sysv-message-shared-memory",
@@ -14412,6 +14412,113 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         )
         self.assertIn(
             '    libc-time-observation)\n        [ "$#" -eq 0 ] || fail "libc-time-observation takes no arguments"',
+            runner,
+        )
+
+    def test_libc_static_c_abi_timegm_artifact_stays_fixed_utc(self) -> None:
+        """The GNU/BSD C inverse is one fixed-UTC conversion leaf only."""
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        timegm_path = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "timegm.rs"
+        probe_path = ROOT / "compat" / "x86_64" / "libc_timegm_probe.c"
+        start_path = ROOT / "compat" / "x86_64" / "libc_timegm_start.S"
+        artifact_runner_path = ROOT / "compat" / "x86_64" / "run_libc_timegm.sh"
+        for path in (timegm_path, probe_path, start_path, artifact_runner_path):
+            self.assertTrue(path.is_file(), f"missing fixed-UTC timegm input: {path}")
+
+        timegm = timegm_path.read_text(encoding="utf-8")
+        probe = probe_path.read_text(encoding="utf-8")
+        start = start_path.read_text(encoding="utf-8")
+        artifact_runner = artifact_runner_path.read_text(encoding="utf-8")
+        header_c = (
+            ROOT / "compat" / "x86_64" / "time_header_abi_probe.c"
+        ).read_text(encoding="utf-8")
+        header_cxx = (
+            ROOT / "compat" / "x86_64" / "time_header_abi_probe.cpp"
+        ).read_text(encoding="utf-8")
+        static_exports = (
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        ).read_text(encoding="utf-8")
+        static_export_names = {
+            line for line in static_exports.splitlines()
+            if line and not line.startswith("#")
+        }
+        parity_ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        runner = RUNNER.read_text(encoding="utf-8")
+
+        self.assertIn('#[path = "timegm.rs"]', static_root)
+        self.assertIn("fn timegm(", timegm)
+        self.assertIn("timegm", static_export_names)
+        for required in (
+            "musl 1.2.6 release commit",
+            "src/time/timegm.c",
+            "src/time/__tm_to_secs.c",
+            "src/time/__secs_to_tm.c",
+            "src/time/__year_to_secs.c",
+            "src/time/__month_to_secs.c",
+            "EOVERFLOW",
+            "UTC",
+            "initial-TLS errno",
+            "month < 0",
+        ):
+            self.assertIn(required, timegm)
+        for forbidden in (
+            "crabc_core",
+            "crabc_mimalloc",
+            "getenv",
+            "tzset",
+            "localtime",
+            "mktime",
+            "strftime",
+            "strptime",
+            "raw_syscall",
+            "__tls_get_addr",
+        ):
+            self.assertNotIn(forbidden, timegm)
+        for required in (
+            "#include <time.h>",
+            "sizeof(struct tm) == 56",
+            "timegm declaration",
+            "negative_month",
+            "valid_minus_one",
+            "overflow",
+            "CRABC_TIMEGM_FREESTANDING",
+        ):
+            self.assertIn(required, probe)
+        for required in (
+            "ARCH_SET_FS",
+            "mov %rsi, %fs:0",
+            "crabc_x86_64_timegm_probe",
+        ):
+            self.assertIn(required, start)
+        for required in (
+            "static_c_abi_exports.txt",
+            "run_time_header_abi.sh",
+            "-nostdlib -static",
+            "-Wl,-e,_start",
+            "R_X86_64_TPOFF",
+            "timegm",
+            "env -i",
+            "direct fs initial TLS",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn("--whole-archive", artifact_runner)
+        for header_probe in (header_c, header_cxx):
+            self.assertIn("timegm_signature", header_probe)
+        self.assertIn('id = "static-c-timegm-utc"', parity_ledger)
+        self.assertIn(
+            'command = "./scripts/dev-x86_64.sh libc-timegm"',
+            parity_ledger,
+        )
+        self.assertIn("run_libc_timegm()", runner)
+        self.assertIn(
+            "/workspace/compat/x86_64/run_libc_timegm.sh", runner
+        )
+        self.assertIn(
+            '    libc-timegm)\n        [ "$#" -eq 0 ] || fail "libc-timegm takes no arguments"',
             runner,
         )
 
