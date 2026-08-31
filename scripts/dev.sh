@@ -552,6 +552,7 @@ case "$command" in
         # A's surviving client through process PageMap/page state.
         run_in_container cargo test -p crabc-mimalloc \
             --test native_source_published_live_owner_exit \
+            --test native_concurrent_post_exit_page_release \
             -- --test-threads=1
         run_in_container env RUSTC_WRAPPER="/workspace/scripts/rustc_test_host_tool_wrapper.sh" \
             python3 scripts/run_owned_test_suite.py \
