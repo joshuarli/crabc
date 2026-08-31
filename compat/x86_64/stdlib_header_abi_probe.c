@@ -37,6 +37,7 @@ typedef long (*crabc_strtol_signature)(const char *restrict, char **restrict,
     int);
 typedef void (*crabc_qsort_signature)(void *, size_t, size_t,
     int (*)(const void *, const void *));
+typedef char *(*crabc_getenv_signature)(const char *);
 
 _Static_assert(CRABC_TYPE_IS(__typeof__(&malloc), crabc_malloc_signature),
     "malloc declaration");
@@ -44,6 +45,8 @@ _Static_assert(CRABC_TYPE_IS(__typeof__(&strtol), crabc_strtol_signature),
     "strtol declaration");
 _Static_assert(CRABC_TYPE_IS(__typeof__(&qsort), crabc_qsort_signature),
     "qsort declaration");
+_Static_assert(CRABC_TYPE_IS(__typeof__(&getenv), crabc_getenv_signature),
+    "getenv declaration");
 _Static_assert(sizeof(div_t) == 2 * sizeof(int) &&
     _Alignof(div_t) == _Alignof(int), "LP64 div_t ABI");
 _Static_assert(sizeof(ldiv_t) == 2 * sizeof(long) &&
@@ -170,6 +173,7 @@ _Static_assert(CRABC_TYPE_IS(__typeof__(&rand_r), crabc_rand_r_signature),
 typedef char *(*crabc_realpath_signature)(const char *restrict,
     char *restrict);
 typedef int (*crabc_putenv_signature)(char *);
+typedef int (*crabc_clearenv_signature)(void);
 typedef double (*crabc_drand48_signature)(void);
 typedef int (*crabc_posix_openpt_signature)(int);
 
@@ -207,6 +211,8 @@ _Static_assert(CRABC_TYPE_IS(__typeof__(&reallocarray),
     crabc_reallocarray_signature), "reallocarray declaration");
 _Static_assert(CRABC_TYPE_IS(__typeof__(&qsort_r), crabc_qsort_r_signature),
     "qsort_r declaration");
+_Static_assert(CRABC_TYPE_IS(__typeof__(&clearenv),
+    crabc_clearenv_signature), "clearenv declaration");
 #endif
 
 #if defined(CRABC_STDLIB_GNU)

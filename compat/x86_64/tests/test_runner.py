@@ -857,7 +857,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             if line.strip().endswith(") ;;")
         )
         expected_groups = (
-            "image|musl-oracle|header-abi-reference|public-header-surface|header-abi-project|math-complex-header-abi|sys-reg-header-abi|types-header-abi|stat-header-abi|utime-header-abi|pthread-c11-header-abi|pthread-cancellation-header-abi|stdlib-header-abi|stdio-standard-header-abi|time-header-abi|poll-header-abi|select-header-abi|fcntl-header-abi|descriptor-advice-header-abi|filesystem-capacity-header-abi|flock-header-abi|sendfile-header-abi|ioctl-header-abi|unistd-header-abi|system-header-abi|syscall-header-abi|signal-header-abi|termios-header-abi|mman-header-abi|resource-header-abi|socket-header-abi|socket-messages-header-abi|random-entropy-header-abi|mm-abi-reference|mapping-reference|memory-vm-reference|pty-basic-reference|terminal-reference|mlock-reference|msync-reference|mincore-reference|fs-advice-reference|memfd-reference|ftruncate-reference|statfs-reference|timestamp-reference|path-lifecycle-reference|namespace-reference|path-core-reference|xattr-reference|directory-reference|temporary-object-reference|statx-reference|cwd-canonicalize-reference|root-change-reference|mount-reference|thread-kill-reference|ipc-reference|shm-reference|inotify-reference|socket-transport-reference|interface-device-reference|resolver-transport-reference|resolver-facade-reference|netdb-reference|users-databases-reference|posix-fallocate-reference|fallocate-reference|file-position-reference|sync-reference|syncfs-reference|sync-file-range-reference|rand-reference|time-abi-reference|time-observation-reference|calendar-time-reference|advanced-time-reference|relative-sleep-reference|clock-nanosleep-reference|getitimer-reference|setitimer-reference|timerfd-reference|pselect-reference|poll-reference|ppoll-reference|epoll-reference|process-identity-reference|child-ownership-reference|getgroups-reference|process-session-reference|pidfd-open-reference|fcntl-getlk-reference|fcntl-status-reference|flock-reference|sendfile-reference|copy-file-range-reference|scheduler-priority-bounds-reference|rr-interval-reference|sched-affinity-reference|sched-affinity-set-reference|priority-reference|setpriority-reference|rlimit-reference|rlimit-targeted-reference|setrlimit-reference|umask-reference|rusage-reference|times-reference|fstat-reference|statat-reference|getcwd-reference|readlinkat-reference|access-reference|system-reference|thread-reference|thread-credentials-reference|fs-credentials-reference|core|facade|facade-record-owning|libc-syscall|libc-errno-tls|libc-stat-compat|libc-credentials|libc-bootstrap-primitives|libc-signal-control|libc-signal-execution|libc-static-tls-v1|libc-crt-static-tls|libc-pthread-create-join-tls|libc-c11-lifecycle|libc-c11-plain-sync|libc-pthread-c11-once|libc-pthread-c11-tsd|libc-pthread-tls-aggregate|libc-pthread-cancel-deferred|libc-pthread-atfork|libc-thrd-sleep|libc-pthread-mutex-normal|libc-pthread-rwlock|libc-pthread-cond-private|libc-termios-control|libc-process-context|libc-descriptor-io|libc-descriptor-lifecycle|libc-timestamp-updates|libc-process-resources|libc-socket-transport|libc-socket-messages|libc-thread-pointer|libc-foundation|libc-fenv|libc-math-complex|libc-memory|libc-setjmp|libc-atomic|libc-clone-raw|libc-signal-foundation|ldso-relocation|ldso-image|ldso-initial-graph|ldso-initial-tls|ldso-initial-exec-tls|ldso-owned-crt-handoff|ldso-fixed-graph-introspection|ldso-dynamic-admission",
+            "image|musl-oracle|header-abi-reference|public-header-surface|header-abi-project|math-complex-header-abi|sys-reg-header-abi|types-header-abi|stat-header-abi|utime-header-abi|pthread-c11-header-abi|pthread-cancellation-header-abi|stdlib-header-abi|stdio-standard-header-abi|time-header-abi|poll-header-abi|select-header-abi|fcntl-header-abi|descriptor-advice-header-abi|filesystem-capacity-header-abi|flock-header-abi|sendfile-header-abi|ioctl-header-abi|unistd-header-abi|system-header-abi|syscall-header-abi|signal-header-abi|termios-header-abi|mman-header-abi|resource-header-abi|socket-header-abi|socket-messages-header-abi|random-entropy-header-abi|mm-abi-reference|mapping-reference|memory-vm-reference|pty-basic-reference|terminal-reference|mlock-reference|msync-reference|mincore-reference|fs-advice-reference|memfd-reference|ftruncate-reference|statfs-reference|timestamp-reference|path-lifecycle-reference|namespace-reference|path-core-reference|xattr-reference|directory-reference|temporary-object-reference|statx-reference|cwd-canonicalize-reference|root-change-reference|mount-reference|thread-kill-reference|ipc-reference|shm-reference|inotify-reference|socket-transport-reference|interface-device-reference|resolver-transport-reference|resolver-facade-reference|netdb-reference|users-databases-reference|posix-fallocate-reference|fallocate-reference|file-position-reference|sync-reference|syncfs-reference|sync-file-range-reference|rand-reference|time-abi-reference|time-observation-reference|calendar-time-reference|advanced-time-reference|relative-sleep-reference|clock-nanosleep-reference|getitimer-reference|setitimer-reference|timerfd-reference|pselect-reference|poll-reference|ppoll-reference|epoll-reference|process-identity-reference|child-ownership-reference|getgroups-reference|process-session-reference|pidfd-open-reference|fcntl-getlk-reference|fcntl-status-reference|flock-reference|sendfile-reference|copy-file-range-reference|scheduler-priority-bounds-reference|rr-interval-reference|sched-affinity-reference|sched-affinity-set-reference|priority-reference|setpriority-reference|rlimit-reference|rlimit-targeted-reference|setrlimit-reference|umask-reference|rusage-reference|times-reference|fstat-reference|statat-reference|getcwd-reference|readlinkat-reference|access-reference|system-reference|thread-reference|thread-credentials-reference|fs-credentials-reference|core|facade|facade-record-owning|libc-syscall|libc-errno-tls|libc-stat-compat|libc-credentials|libc-bootstrap-primitives|libc-signal-control|libc-signal-execution|libc-static-tls-v1|libc-crt-static-tls|libc-pthread-create-join-tls|libc-c11-lifecycle|libc-c11-plain-sync|libc-pthread-c11-once|libc-pthread-c11-tsd|libc-pthread-tls-aggregate|libc-pthread-cancel-deferred|libc-pthread-atfork|libc-thrd-sleep|libc-pthread-mutex-normal|libc-pthread-rwlock|libc-pthread-cond-private|libc-termios-control|libc-process-context|libc-environment|libc-descriptor-io|libc-descriptor-lifecycle|libc-timestamp-updates|libc-process-resources|libc-socket-transport|libc-socket-messages|libc-thread-pointer|libc-foundation|libc-fenv|libc-math-complex|libc-memory|libc-setjmp|libc-atomic|libc-clone-raw|libc-signal-foundation|ldso-relocation|ldso-image|ldso-initial-graph|ldso-initial-tls|ldso-initial-exec-tls|ldso-owned-crt-handoff|ldso-fixed-graph-introspection|ldso-dynamic-admission",
             "inet-address-header-abi",
             "ldso-target-root",
             "machine-context-header-abi",
@@ -951,6 +951,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn("libc-pthread-atfork", source)
         self.assertIn("libc-termios-control", source)
         self.assertIn("libc-process-context", source)
+        self.assertIn("libc-environment", source)
         self.assertIn("libc-descriptor-io", source)
         self.assertIn("libc-descriptor-lifecycle", source)
         self.assertIn("libc-timestamp-updates", source)
@@ -2335,6 +2336,14 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         )
         self.assertIn(
             '    libc-process-context)\n        [ "$#" -eq 0 ] || fail "libc-process-context takes no arguments"',
+            source,
+        )
+        self.assertIn('run_libc_environment_probe()', source)
+        self.assertIn(
+            '/workspace/compat/x86_64/run_libc_environment.sh', source
+        )
+        self.assertIn(
+            '    libc-environment)\n        [ "$#" -eq 0 ] || fail "libc-environment takes no arguments"',
             source,
         )
         self.assertIn('run_libc_descriptor_io_probe()', source)
@@ -6940,6 +6949,132 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         ):
             self.assertIn(symbol, static_export_names)
         self.assertIn("libc-process-context", runner)
+
+    def test_libc_static_c_abi_environment_artifact_stays_bounded(self) -> None:
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        startup = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_startup.rs"
+        ).read_text(encoding="utf-8")
+        environment = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "environment.rs"
+        ).read_text(encoding="utf-8")
+        probe = (
+            ROOT / "compat" / "x86_64" / "libc_environment_probe.c"
+        ).read_text(encoding="utf-8")
+        start = (
+            ROOT / "compat" / "x86_64" / "libc_environment_start.S"
+        ).read_text(encoding="utf-8")
+        artifact_runner = (
+            ROOT / "compat" / "x86_64" / "run_libc_environment.sh"
+        ).read_text(encoding="utf-8")
+        static_exports = (
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        ).read_text(encoding="utf-8")
+        structure = (ROOT / "scripts" / "check_structure.py").read_text(
+            encoding="utf-8"
+        )
+        static_export_names = [
+            line
+            for line in static_exports.splitlines()
+            if line and not line.startswith("#")
+        ]
+        runner = RUNNER.read_text(encoding="utf-8")
+
+        self.assertIn('#[path = "environment.rs"]', static_root)
+        self.assertIn(
+            'Path("libc/src/c_abi/x86_64/environment.rs")', structure
+        )
+        self.assertIn("environment::install_initial(vectors.envp)", startup)
+        for required in (
+            "ENVIRONMENT_ENTRY_CAPACITY: usize = 128",
+            "ENVIRONMENT_STORAGE_BYTES: usize = 16 * 1024",
+            ".set environ, __environ",
+            ".set _environ, __environ",
+            ".set ___environ, __environ",
+            "pub unsafe extern \"C\" fn getenv",
+            "pub unsafe extern \"C\" fn setenv",
+            "pub unsafe extern \"C\" fn putenv",
+            "pub unsafe extern \"C\" fn unsetenv",
+            "pub unsafe extern \"C\" fn clearenv",
+            "putenv(\"NAME\")",
+            "ENVIRONMENT_LOOKUP_LIMIT",
+            "1,048,576",
+            "secure_getenv",
+            "16 KiB private byte arena",
+            "caller-owned `putenv` strings",
+            "fork recovery",
+        ):
+            self.assertIn(required, environment)
+        self.assertNotIn("alloc::", environment)
+        self.assertNotIn("crabc_core", environment)
+        self.assertNotIn("secure_getenv(", environment)
+        for required in (
+            "aliases_match",
+            "check_startup_environment",
+            "check_initial_and_mutation",
+            "check_clear_and_direct_assignment",
+            "check_fixed_capacity",
+            "check_fixed_storage",
+            "check_lookup_limit",
+            "check_nonreclaiming_storage",
+            "CRABC_ENVIRONMENT_FREESTANDING",
+            "ENVIRONMENT_ENTRY_CAPACITY = 128",
+            "ENVIRONMENT_STORAGE_BYTES = 16 * 1024",
+            "ENVIRONMENT_LOOKUP_LIMIT = 1 << 20",
+            "overfull_environment",
+            "lookup_limit_environment",
+            'getenv("CRABC_X86_INITIAL")',
+            "putenv(remove_duplicate)",
+            "borrowed[7] = 'B'",
+            "setenv(\"EXTRA\", \"value\", 1)",
+            "setenv(\"E127\", \"replacement\", 1)",
+            "unsetenv(\"E127\")",
+            "aliases_match(overfull_environment)",
+            "setenv(\"TOO_LARGE\", too_large, 1)",
+            "setenv(\"X\", \"\", 1)",
+            "setenv(\"Y\", \"\", 1)",
+        ):
+            self.assertIn(required, probe)
+        self.assertIn("__crabc_x86_static_tls_bootstrap", start)
+        self.assertIn("__libc_start_main", start)
+        self.assertIn("main", start)
+        self.assertNotIn("ARCH_SET_FS", start)
+        self.assertNotIn("%fs:0", start)
+        for required in (
+            "static_c_abi_exports.txt",
+            "-nostdlib -static",
+            "-Wl,-e,_start",
+            "-Wl,--no-undefined",
+            "symbol_value",
+            "is not an ELF alias of __environ",
+            "environment object does not have x86 LP64 size/type/binding",
+            "environment alias is not a weak x86 LP64 object",
+            "secure_getenv __secure_getenv __putenv __env_rm_add",
+            "R_X86_64_TPOFF",
+            "candidate relocations retain a dynamic TLS model",
+            "env -i CRABC_X86_INITIAL=entry",
+            "bootstrap_call_line",
+            "startup_call_line",
+            "TLS bootstrap does not precede libc startup",
+            "non-reclaiming arena unexpectedly accepted a new value",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn("--whole-archive", artifact_runner)
+        for symbol in (
+            "__environ",
+            "environ",
+            "_environ",
+            "___environ",
+            "getenv",
+            "setenv",
+            "putenv",
+            "unsetenv",
+            "clearenv",
+        ):
+            self.assertIn(symbol, static_export_names)
+        self.assertIn("libc-environment", runner)
 
     def test_libc_static_c_abi_descriptor_io_artifact_stays_narrow(self) -> None:
         static_root = (

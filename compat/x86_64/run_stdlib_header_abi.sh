@@ -272,21 +272,21 @@ compile_one() {
 expected_cxx_symbols() {
     local profile="$1"
 
-    printf '%s\n' malloc strtol qsort
+    printf '%s\n' malloc strtol qsort getenv
     case "$profile" in
         c11-posix-2008|cxx17-posix-2008|c11-xopen-700|cxx17-xopen-700|\
         c11-gnu|cxx17-gnu|c11-bsd|cxx17-bsd)
-            printf '%s\n' setenv rand_r
+            printf '%s\n' setenv unsetenv rand_r
             ;;
     esac
     case "$profile" in
         c11-xopen-700|cxx17-xopen-700|c11-gnu|cxx17-gnu|c11-bsd|cxx17-bsd)
-            printf '%s\n' realpath drand48
+            printf '%s\n' realpath putenv drand48
             ;;
     esac
     case "$profile" in
         c11-gnu|cxx17-gnu|c11-bsd|cxx17-bsd)
-            printf '%s\n' mktemp mkstemps mkostemps valloc memalign reallocarray qsort_r
+            printf '%s\n' mktemp mkstemps mkostemps valloc memalign reallocarray qsort_r clearenv
             ;;
     esac
     case "$profile" in
@@ -314,7 +314,7 @@ check_cxx_c_linkage() {
         fi
     done < <(expected_cxx_symbols "$profile")
     if printf '%s\n' "$undefined" | grep -Eq \
-        '_Z.*(malloc|strtol|qsort|setenv|rand_r|realpath|drand48|mktemp|mkstemps|mkostemps|valloc|memalign|reallocarray|qsort_r|secure_getenv|strtof_l|strtod_l|strtold_l)'; then
+        '_Z.*(malloc|strtol|qsort|getenv|setenv|unsetenv|rand_r|realpath|putenv|drand48|mktemp|mkstemps|mkostemps|valloc|memalign|reallocarray|qsort_r|clearenv|secure_getenv|strtof_l|strtod_l|strtold_l)'; then
         printf 'C++ linkage mismatch: %s retains a mangled <stdlib.h> reference\n' \
             "$label" >&2
         return 1

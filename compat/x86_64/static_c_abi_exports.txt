@@ -7,10 +7,12 @@
 # hidden `__crabc_x86_static_tls_bootstrap` name is private fixture/runtime
 # glue, uninstalled and not a stable public C API.
 _Exit
+___environ
 __crabc_x86_static_tls_bootstrap
 __ctype_get_mb_cur_max
 __cxa_atexit
 __cxa_finalize
+__environ
 __errno_location
 __fesetround
 __flt_rounds
@@ -41,6 +43,7 @@ __signbitf
 __signbitl
 __sigsetjmp
 __xstat
+_environ
 _exit
 _longjmp
 _pthread_cleanup_pop
@@ -72,6 +75,7 @@ chmod
 cimag
 cimagf
 cimagl
+clearenv
 clearerr
 clock
 clock_getres
@@ -100,6 +104,7 @@ dup
 dup2
 dup3
 eaccess
+environ
 epoll_create
 epoll_create1
 epoll_ctl
@@ -169,6 +174,7 @@ getdomainname
 getdtablesize
 getegid
 getentropy
+getenv
 geteuid
 getgid
 getgroups
@@ -330,6 +336,7 @@ pthread_setspecific
 pthread_testcancel
 putc
 putchar
+putenv
 pwrite
 pwritev
 qsort
@@ -369,6 +376,7 @@ sendmsg
 sendto
 setdomainname
 setegid
+setenv
 seteuid
 setgid
 setgroups
@@ -478,6 +486,7 @@ umask
 uname
 ungetc
 unlink
+unsetenv
 utime
 utimensat
 utimes

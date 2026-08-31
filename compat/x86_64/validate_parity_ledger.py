@@ -10021,6 +10021,142 @@ def require_credential_observation_artifact(family: Mapping[str, Any]) -> None:
     )
 
 
+def require_static_environment_artifact(family: Mapping[str, Any]) -> None:
+    """Keep the bounded static C process-environment artifact non-promoting."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.posix-runtime].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [entry for entry in artifacts if entry.get("id") == "static-c-environment"]
+    require(
+        len(matching) == 1,
+        "libc.posix-runtime must contain exactly one static-c-environment artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-environment must not promote libc.posix-runtime",
+    )
+    artifact = matching[0]
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for phrase in (
+        "`getenv`",
+        "`setenv`",
+        "`putenv`",
+        "`unsetenv`",
+        "`clearenv`",
+        "`__environ`/`environ`/`_environ`/`___environ`",
+        "128",
+        "16-KiB",
+        "1,048,576-entry lookup ceiling",
+        "never reclaimed",
+        "fork recovery",
+        "`ENOMEM`",
+        "secure_getenv",
+        "exec/spawn",
+        "public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"static-c-environment description omits {phrase}",
+        )
+
+    owners = set(
+        nonempty_strings(artifact["source_owners"], "static-c-environment.source_owners")
+    )
+    for owner in (
+        "compat/upstreams.toml",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/static_startup.rs",
+        "libc/src/c_abi/x86_64/environment.rs",
+        "include/stdlib.h",
+        "include/unistd.h",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/libc_environment_probe.c",
+        "compat/x86_64/libc_environment_start.S",
+        "compat/x86_64/run_libc_environment.sh",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "scripts/dev-x86_64.sh",
+    ):
+        require(owner in owners, f"static-c-environment source owners omit {owner}")
+
+    prerequisites = nonempty_strings(
+        artifact["x86_abi_prerequisites"], "static-c-environment.x86_abi_prerequisites"
+    )
+    require(
+        any(
+            "eight-byte" in item
+            and "weak ELF aliases" in item
+            and "Direct public assignment" in item
+            for item in prerequisites
+        ),
+        "static-c-environment must retain the x86 alias/vector ABI contract",
+    )
+    require(
+        any(
+            "128" in item and "16-KiB" in item and "ENOMEM" in item
+            for item in prerequisites
+        ),
+        "static-c-environment must retain its bounded ENOMEM contract",
+    )
+    require(
+        any(
+            "1,048,576" in item
+            and "clearenv" in item
+            and "directly publishes null" in item
+            for item in prerequisites
+        ),
+        "static-c-environment must retain its lookup and clearenv bounds",
+    )
+    require(
+        any(
+            "spin lock" in item
+            and "direct environ writes" in item
+            and "signal-handler reentry" in item
+            and "vanished thread" in item
+            for item in prerequisites
+        ),
+        "static-c-environment must retain its exact concurrency exclusions",
+    )
+
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-environment"},
+        "static-c-environment must use the closed libc-environment command",
+    )
+    scope = evidence[0].get("scope")
+    require(
+        isinstance(scope, str)
+        and all(
+            phrase in scope
+            for phrase in (
+                "same-address environment aliases",
+                "entry-stack envp through the selected TLS-bootstrap and __libc_start_main order",
+                "caller-owned putenv mutation",
+                "1,048,576-entry read ceiling",
+                "128-entry",
+                "16-KiB",
+                "oversized direct-vector mutation rejection and clearenv exception",
+                "non-reclamation after unsetenv and clearenv",
+                "secure_getenv",
+                "public x86 support",
+            )
+        ),
+        "static-c-environment evidence must retain its observable bounded contract",
+    )
+    exports = set(static_c_abi_export_names(ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"))
+    require(
+        {"__environ", "environ", "_environ", "___environ", "getenv", "setenv", "putenv", "unsetenv", "clearenv"}
+        <= exports,
+        "static-c-environment must retain its exact selected export set",
+    )
+
+
 def require_child_reaping_artifact(family: Mapping[str, Any]) -> None:
     """Keep the complete direct child-reaping artifact boundary durable."""
     artifacts = require_verified_artifacts(
@@ -17078,6 +17214,7 @@ def validate_ledger(
     require_integer_parse_artifact(by_id["libc.posix-runtime"])
     require_intmax_arithmetic_artifact(by_id["libc.posix-runtime"])
     require_credential_observation_artifact(by_id["libc.posix-runtime"])
+    require_static_environment_artifact(by_id["libc.posix-runtime"])
     require_child_reaping_artifact(by_id["libc.posix-runtime"])
     require_immediate_termination_artifact(by_id["libc.posix-runtime"])
     require_callback_algorithms_artifact(by_id["libc.posix-runtime"])

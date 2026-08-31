@@ -119,7 +119,8 @@ X86_RUNTIME_FOUNDATION_LDSO_SOURCES = {
 # distinct C11 plain-sync adapter, and its typed static C11 create/exit/join
 # sibling,
 # named termios control, selected
-# process context, child reaping, C11 immediate termination, bounded static
+# process context, bounded process environment, child reaping, C11 immediate
+# termination, bounded static
 # startup/ordinary exit, callback algorithms,
 # selected descriptor entry, fcntl status control, bounded generic ioctl, and
 # selected timestamp updates,
@@ -170,6 +171,7 @@ X86_RUNTIME_FOUNDATION_LIBC_SOURCES = {
     Path("libc/src/c_abi/x86_64/foundation.rs"),
     Path("libc/src/c_abi/x86_64/memory.rs"),
     Path("libc/src/c_abi/x86_64/process_context.rs"),
+    Path("libc/src/c_abi/x86_64/environment.rs"),
     Path("libc/src/c_abi/x86_64/process_resources.rs"),
     Path("libc/src/c_abi/x86_64/c11_thread_lifecycle.rs"),
     Path("libc/src/c_abi/x86_64/c11_sync.rs"),

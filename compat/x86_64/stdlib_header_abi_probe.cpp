@@ -51,6 +51,7 @@ using crabc_strtol_signature = long (*)(const char *__restrict,
     char **__restrict, int);
 using crabc_qsort_signature = void (*)(void *, size_t, size_t,
     int (*)(const void *, const void *));
+using crabc_getenv_signature = char *(*)(const char *);
 
 static_assert(__is_same(decltype(&malloc), crabc_malloc_signature),
     "malloc C++ declaration");
@@ -58,6 +59,8 @@ static_assert(__is_same(decltype(&strtol), crabc_strtol_signature),
     "strtol C++ declaration");
 static_assert(__is_same(decltype(&qsort), crabc_qsort_signature),
     "qsort C++ declaration");
+static_assert(__is_same(decltype(&getenv), crabc_getenv_signature),
+    "getenv C++ declaration");
 static_assert(sizeof(div_t) == 2 * sizeof(int) &&
     alignof(div_t) == alignof(int), "LP64 div_t ABI");
 static_assert(sizeof(ldiv_t) == 2 * sizeof(long) &&
@@ -156,19 +159,26 @@ __attribute__((used)) static crabc_strtol_signature crabc_stdlib_cxx_strtol =
     &strtol;
 __attribute__((used)) static crabc_qsort_signature crabc_stdlib_cxx_qsort =
     &qsort;
+__attribute__((used)) static crabc_getenv_signature crabc_stdlib_cxx_getenv =
+    &getenv;
 
 #if defined(CRABC_STDLIB_POSIX_2008) || \
     defined(CRABC_STDLIB_XOPEN_700) || \
     defined(CRABC_STDLIB_GNU) || defined(CRABC_STDLIB_BSD)
 using crabc_setenv_signature = int (*)(const char *, const char *, int);
+using crabc_unsetenv_signature = int (*)(const char *);
 using crabc_rand_r_signature = int (*)(unsigned *);
 
 static_assert(__is_same(decltype(&setenv), crabc_setenv_signature),
     "setenv C++ declaration");
+static_assert(__is_same(decltype(&unsetenv), crabc_unsetenv_signature),
+    "unsetenv C++ declaration");
 static_assert(__is_same(decltype(&rand_r), crabc_rand_r_signature),
     "rand_r C++ declaration");
 __attribute__((used)) static crabc_setenv_signature crabc_stdlib_cxx_setenv =
     &setenv;
+__attribute__((used)) static crabc_unsetenv_signature
+    crabc_stdlib_cxx_unsetenv = &unsetenv;
 __attribute__((used)) static crabc_rand_r_signature crabc_stdlib_cxx_rand_r =
     &rand_r;
 #endif
@@ -177,14 +187,19 @@ __attribute__((used)) static crabc_rand_r_signature crabc_stdlib_cxx_rand_r =
     defined(CRABC_STDLIB_GNU) || defined(CRABC_STDLIB_BSD)
 using crabc_realpath_signature = char *(*)(const char *__restrict,
     char *__restrict);
+using crabc_putenv_signature = int (*)(char *);
 using crabc_drand48_signature = double (*)(void);
 
 static_assert(__is_same(decltype(&realpath), crabc_realpath_signature),
     "realpath C++ declaration");
+static_assert(__is_same(decltype(&putenv), crabc_putenv_signature),
+    "putenv C++ declaration");
 static_assert(__is_same(decltype(&drand48), crabc_drand48_signature),
     "drand48 C++ declaration");
 __attribute__((used)) static crabc_realpath_signature
     crabc_stdlib_cxx_realpath = &realpath;
+__attribute__((used)) static crabc_putenv_signature crabc_stdlib_cxx_putenv =
+    &putenv;
 __attribute__((used)) static crabc_drand48_signature crabc_stdlib_cxx_drand48 =
     &drand48;
 #endif
@@ -198,6 +213,7 @@ using crabc_memalign_signature = void *(*)(size_t, size_t);
 using crabc_reallocarray_signature = void *(*)(void *, size_t, size_t);
 using crabc_qsort_r_signature = void (*)(void *, size_t, size_t,
     int (*)(const void *, const void *, void *), void *);
+using crabc_clearenv_signature = int (*)(void);
 
 static_assert(__is_same(decltype(&mktemp), crabc_mktemp_signature),
     "mktemp C++ declaration");
@@ -213,6 +229,8 @@ static_assert(__is_same(decltype(&reallocarray),
     crabc_reallocarray_signature), "reallocarray C++ declaration");
 static_assert(__is_same(decltype(&qsort_r), crabc_qsort_r_signature),
     "qsort_r C++ declaration");
+static_assert(__is_same(decltype(&clearenv), crabc_clearenv_signature),
+    "clearenv C++ declaration");
 __attribute__((used)) static crabc_mktemp_signature
     crabc_stdlib_cxx_mktemp = &mktemp;
 __attribute__((used)) static crabc_mkstemps_signature
@@ -227,6 +245,8 @@ __attribute__((used)) static crabc_reallocarray_signature
     crabc_stdlib_cxx_reallocarray = &reallocarray;
 __attribute__((used)) static crabc_qsort_r_signature
     crabc_stdlib_cxx_qsort_r = &qsort_r;
+__attribute__((used)) static crabc_clearenv_signature
+    crabc_stdlib_cxx_clearenv = &clearenv;
 #endif
 
 #if defined(CRABC_STDLIB_GNU)

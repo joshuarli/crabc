@@ -377,6 +377,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh termios-header-abi
 ./scripts/dev-x86_64.sh libc-termios-control
 ./scripts/dev-x86_64.sh libc-process-context
+./scripts/dev-x86_64.sh libc-environment
 ./scripts/dev-x86_64.sh libc-child-reaping
 ./scripts/dev-x86_64.sh libc-immediate-termination
 ./scripts/dev-x86_64.sh libc-callback-algorithms
@@ -2500,6 +2501,30 @@ process control and signal delivery, pthread coordination, dynamic runtime,
 and public x86 support; the separately selected child-reaping artifact owns
 the closed `wait`/`waitpid`/`waitid` surface.
 
+`libc-environment` is a separately recorded `static-c-environment`
+`verified_artifact` gate over that archive, not a process-environment
+capability. Its project-header C body first executes through pinned musl and
+then through a `-nostdlib -static` candidate. It selects only
+`getenv`/`setenv`/`putenv`/`unsetenv`/`clearenv` and the one-object
+`__environ`/`environ`/`_environ`/`___environ` aliases: first-match lookup,
+copy-versus-caller-owned replacement, `unsetenv` duplicate removal, clear, and
+direct public-global assignment. Under `env -i` the same pinned-musl/candidate
+body first observes the entry-stack `envp`; the candidate entry shim proves
+Static Initial TLS v1 bootstrap precedes the selected `__libc_start_main`,
+which installs that vector before `main`. Read-only lookup examines at most
+1,048,576 entries. A table-requiring mutation can copy at most 128 entry
+pointers; `clearenv` is the allocation-free exception and directly publishes
+null even for a larger direct vector. Every successful `setenv`, including a
+replacement, consumes bytes from a 16-KiB bump arena that replacement,
+`unsetenv`, and `clearenv` never reclaim. Exhaustion returns `ENOMEM` without
+publishing a partial mutation. The private spin lock serializes only the five
+selected calls: returned `getenv` pointers, direct `environ` writes,
+caller-owned `putenv` storage, signal reentry, and fork recovery remain
+caller-coordinated. This no-allocator artifact does not select
+`secure_getenv`, secure-execution policy, exec/spawn inheritance, a general
+threaded environment lifecycle, dynamic runtime, CRT objects, or public x86
+support.
+
 `libc-child-reaping` is a separately recorded
 `static-c-child-reaping` `verified_artifact` gate over that archive, not a
 process-control or child-supervision capability. Its project-header C body
@@ -3635,7 +3660,7 @@ Apart from the narrowly named `libc-stat-compat`, `libc-credentials`,
 `libc-pthread-rwlock`, `libc-pthread-cond-private`, `libc-c11-plain-sync`, `libc-pthread-c11-once`,
 `libc-pthread-c11-tsd`,
 `libc-termios-control`,
-`libc-process-context`, `libc-child-reaping`, and
+`libc-process-context`, `libc-environment`, `libc-child-reaping`, and
 `libc-immediate-termination`, `libc-callback-algorithms`,
 `libc-clock-gettime`,
 `libc-time-observation`,

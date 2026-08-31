@@ -105,6 +105,10 @@ _Static_assert(CRABC_TYPE_IS(&setgroups, int (*)(size_t, const gid_t *)),
 _Static_assert(CRABC_TYPE_IS(&daemon, int (*)(int, int)), "daemon declaration");
 _Static_assert(CRABC_TYPE_IS(&lseek64, off_t (*)(int, off_t, int)),
     "lseek64 alias declaration");
+_Static_assert(CRABC_TYPE_IS(environ, char **),
+    "GNU environ declaration");
+_Static_assert(CRABC_TYPE_IS(&environ, char ***),
+    "GNU environ object declaration");
 
 int crabc_x86_64_unistd_header_abi_probe(void)
 {

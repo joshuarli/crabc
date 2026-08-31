@@ -48,6 +48,7 @@ using fpathconf_function = long (*)(int, int);
 using pathconf_function = long (*)(const char *, int);
 using getpagesize_function = int (*)(void);
 using getdtablesize_function = int (*)(void);
+using environ_object = char ***;
 
 static_assert(__is_same(decltype(&read), read_function), "C++ read declaration");
 static_assert(__is_same(decltype(&pread), pread_function),
@@ -78,6 +79,10 @@ static_assert(__is_same(decltype(&getpagesize), getpagesize_function),
     "C++ GNU getpagesize declaration");
 static_assert(__is_same(decltype(&getdtablesize), getdtablesize_function),
     "C++ GNU getdtablesize declaration");
+static_assert(__is_same(decltype(environ), char **),
+    "C++ GNU environ declaration");
+static_assert(__is_same(decltype(&environ), environ_object),
+    "C++ GNU environ object declaration");
 
 int crabc_x86_64_unistd_header_abi_probe_cpp()
 {
