@@ -5504,6 +5504,21 @@ fn current_thread_has_native_initial_persistent_owner() -> bool {
         && current_thread_slot().initial_native_persistent_owner_installed
 }
 
+/// Returns whether this active process already installed its initial source
+/// owner in this compiler-TLS slot.
+///
+/// This is intentionally a cell-presence check, not an initial-thread
+/// classification. Once cold promotion has published the static source owner,
+/// the cell is the same selected source boundary that pinned
+/// `mi_heap_malloc` receives through its heap/theap argument. The active
+/// check preserves the terminal behavior that previously fell through to the
+/// unavailable later-owner path after process retention.
+#[inline]
+fn current_thread_has_active_native_initial_persistent_owner() -> bool {
+    let slot = current_thread_slot();
+    slot.initial_native_persistent_owner_installed && RUNTIME_PROCESS.is_active()
+}
+
 /// Inspects the promoted initial owner's source state during the held,
 /// zero-admission fork boundary.
 ///
@@ -6263,21 +6278,14 @@ pub unsafe fn ticket_zero_usable_size(block: core::ptr::NonNull<u8>) -> Option<u
         .flatten()
 }
 
-/// Allocates through the initial thread's continuously stored source owner.
-/// The promotion below is a one-time startup transition; once installed, an
-/// active owner performs this local operation with no process scheduler or
-/// parked-engine bridge.
-fn native_initial_thread_allocate_aligned(
-    request: usize,
-    alignment: usize,
-    zero: bool,
+/// Maps one initial-owner allocation attempt to the C-facing result.
+fn native_initial_thread_allocation_result(
+    result: Result<
+        (Option<core::ptr::NonNull<u8>>, bool),
+        NativeInitialPersistentThreadOwnerAccessError,
+    >,
 ) -> NativePageAllocationResult {
-    match with_current_thread_native_initial_persistent_allocator(true, |owner| {
-        (
-            owner.allocate_aligned(request, alignment, zero),
-            owner.is_retained(),
-        )
-    }) {
+    match result {
         Ok((Some(block), false)) => NativePageAllocationResult::Allocated(block),
         Ok((None, false)) => NativePageAllocationResult::AllocationFailed,
         Ok((Some(_) | None, true))
@@ -6290,6 +6298,46 @@ fn native_initial_thread_allocate_aligned(
             NativePageAllocationResult::Retained
         }
     }
+}
+
+/// Allocates through the initial thread's already-installed source owner.
+///
+/// The caller selected this pinned compiler-TLS cell before any ambient
+/// initial-thread admission. A valid active cell needs no cold promotion,
+/// scheduler, or parked-engine bridge; the cell itself remains the exact
+/// current-owner and reentrancy boundary.
+fn native_initial_thread_allocate_aligned_from_installed_owner(
+    request: usize,
+    alignment: usize,
+    zero: bool,
+) -> NativePageAllocationResult {
+    native_initial_thread_allocation_result(
+        with_pointer_associated_initial_persistent_owner(|owner| {
+            (
+                owner.allocate_aligned(request, alignment, zero),
+                owner.is_retained(),
+            )
+        }),
+    )
+}
+
+/// Allocates through the initial thread's continuously stored source owner.
+/// This is the cold initial-owner path: promotion is a one-time startup
+/// transition, after which the public allocation boundary selects the
+/// installed compiler-TLS cell above without reopening initial admission.
+fn native_initial_thread_allocate_aligned(
+    request: usize,
+    alignment: usize,
+    zero: bool,
+) -> NativePageAllocationResult {
+    native_initial_thread_allocation_result(
+        with_current_thread_native_initial_persistent_allocator(true, |owner| {
+            (
+                owner.allocate_aligned(request, alignment, zero),
+                owner.is_retained(),
+            )
+        }),
+    )
 }
 
 /// Frees a PageMap-proven current initial-thread client through that owner's
@@ -6451,6 +6499,22 @@ pub fn native_allocate_aligned(
     {
         return NativePageAllocationResult::AllocationFailed;
     }
+    // Pinned `mi_heap_malloc` receives an already-selected heap/theap before
+    // it enters its allocation control flow. Mirror that selection here: an
+    // installed compiler-TLS cell is the current source owner, so ordinary
+    // local allocation must not re-open ambient process/thread admission.
+    // `is_active` is part of the installed-initial predicate only to retain
+    // the former post-terminal unavailable behavior.
+    if current_thread_has_active_native_initial_persistent_owner() {
+        return native_initial_thread_allocate_aligned_from_installed_owner(
+            request, alignment, zero,
+        );
+    }
+    if current_thread_has_native_persistent_owner() {
+        return native_later_thread_allocate_aligned(request, alignment, zero);
+    }
+    // Caller identity remains the cold-selection boundary: only a thread
+    // without an installed owner may promote the initial static source.
     if RUNTIME_PROCESS.is_on_initial_thread() {
         return native_initial_thread_allocate_aligned(request, alignment, zero);
     }
