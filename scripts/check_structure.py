@@ -135,7 +135,7 @@ X86_RUNTIME_FOUNDATION_LDSO_SOURCES = {
 # artifact, scalar integer arithmetic, complete integer parsing, intmax
 # arithmetic, and find-first-set, direct POSIX clock_gettime, bounded clock
 # observation, no-cancellation mapping synchronization, direct anonymous-memory
-# descriptor creation, nanosleep, one microsecond usleep adapter, and
+# descriptor creation, nanosleep, one microsecond usleep adapter, sleep, and
 # clock_nanosleep, descriptor entry, selected
 # filesystem access, bounded fcntl
 # status control, bounded generic ioctl, and the basic x87 classification/sign,
@@ -163,6 +163,7 @@ X86_RUNTIME_FOUNDATION_LIBC_SOURCES = {
     Path("libc/src/c_abi/x86_64/clock_nanosleep.rs"),
     Path("libc/src/c_abi/x86_64/nanosleep.rs"),
     Path("libc/src/c_abi/x86_64/usleep.rs"),
+    Path("libc/src/c_abi/x86_64/sleep.rs"),
     Path("libc/src/c_abi/x86_64/descriptor_entry.rs"),
     Path("libc/src/c_abi/x86_64/filesystem_access.rs"),
     Path("libc/src/c_abi/x86_64/mktemp.rs"),
@@ -3804,6 +3805,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         '#[path = "clock_nanosleep.rs"]',
         '#[path = "nanosleep.rs"]',
         '#[path = "usleep.rs"]',
+        '#[path = "sleep.rs"]',
         '#[path = "descriptor_entry.rs"]',
         '#[path = "filesystem_access.rs"]',
         '#[path = "mktemp.rs"]',
@@ -8824,6 +8826,48 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
                 "libc/src/c_abi/x86_64/usleep.rs: selected static usleep adapter "
                 f"must not select {forbidden!r}"
             )
+    sleep_source = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "sleep.rs"
+    sleep_text = sleep_source.read_text(errors="replace")
+    for required in (
+        "Selected static Linux/x86-64 `sleep` C ABI boundary",
+        "musl 1.2.6 release commit",
+        "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+        "src/unistd/sleep.c::sleep",
+        "nanosleep(&tv, &tv)",
+        "initial-TLS `errno`",
+        'pub extern "C" fn sleep(seconds: c_uint) -> c_uint',
+        "nanosleep::nanosleep(",
+        "if result == 0",
+        "interval.seconds as c_uint",
+    ):
+        if required not in sleep_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/sleep.rs: selected static "
+                f"sleep wrapper is missing {required!r}"
+            )
+    sleep_exports = set(
+        re.findall(
+            r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(', sleep_text
+        )
+    )
+    if sleep_exports != {"sleep"}:
+        errors.append(
+            "libc/src/c_abi/x86_64/sleep.rs: selected static artifact "
+            "must export only sleep"
+        )
+    for forbidden in (
+        "raw_syscall::",
+        "errno::",
+        "signal_control::",
+        "clock_nanosleep",
+        "crabc_core",
+        "crabc_mimalloc",
+    ):
+        if forbidden in sleep_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/sleep.rs: selected static "
+                f"sleep wrapper must not select {forbidden!r}"
+            )
 
     descriptor_entry_source = (
         ROOT / "libc" / "src" / "c_abi" / "x86_64" / "descriptor_entry.rs"
@@ -11486,6 +11530,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         memfd_create_text,
         nanosleep_text,
         usleep_text,
+        sleep_text,
         descriptor_entry_text,
         filesystem_access_text,
         mktemp_text,
@@ -11819,6 +11864,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         "memfd_create",
         "nanosleep",
         "usleep",
+        "sleep",
         "open",
         "openat",
         "creat",
@@ -12030,8 +12076,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         errors.append(
             "libc/src/c_abi/x86_64: selected static archive must export only its "
             "stat, credential, errno, bootstrap-memory/fenv/continuation, simple "
-            "signal-control, separate realtime-minimum/realtime-maximum bridges, one pure GNU signal-set predicate, paired GNU binary set-operation leaf, and a three-symbol POSIX signal-set mutation leaf, bounded process-signal execution, and one legacy single-signal pause wait, bounded pthread create/exit/join/detach initial-TLS worker, its private selected-main/worker pthread-key/C11-TSS lifecycle, private process-normal pthread mutexes and their musl private condition-variable handoff, the complete selected rwlock/attribute family with private-or-shared futex operation, plus the distinct C11 plain-sync adapter and normal-return pthread/C11 once state machine, its typed C11 create/exit/join/detach sibling, and pthread/C11 identity aliases, named termios-control, direct terminal-descriptor and foreground-group observations plus one named foreground-group assignment, caller-buffered terminal naming, historical ctermid pathname spelling, constant historical gethostid compatibility, direct GNU gettid observation, selected process-context, child-reaping, C11 immediate termination, callback algorithms, direct clock_gettime, binary64 difftime, caller-buffered fixed-UTC gmtime_r, fixed-UTC timegm, a GNU current-CPU raw-fallback observation leaf, a status-returning POSIX scheduler-yield leaf, caller-owned mapping-core, no-cancellation mapping synchronization, direct anonymous-memory descriptor creation, nanosleep, and clock_nanosleep, selected "
-            "signal-control, separate realtime-minimum/realtime-maximum bridges, one historical SIGALRM interval-timer adapter leaf, one pure GNU signal-set predicate, paired GNU binary set-operation leaf, and a three-symbol POSIX signal-set mutation leaf, bounded process-signal execution, and one legacy single-signal pause wait, bounded pthread create/exit/join/detach initial-TLS worker, its private selected-main/worker pthread-key/C11-TSS lifecycle, private process-normal pthread mutexes and their musl private condition-variable handoff, the complete selected rwlock/attribute family with private-or-shared futex operation, plus the distinct C11 plain-sync adapter and normal-return pthread/C11 once state machine, its typed C11 create/exit/join/detach sibling, and pthread/C11 identity aliases, named termios-control, direct terminal-descriptor and foreground-group observations plus one named foreground-group assignment, caller-buffered terminal naming, historical ctermid pathname spelling, constant historical gethostid compatibility, selected process-context, child-reaping, C11 immediate termination, callback algorithms, direct clock_gettime, binary64 difftime, caller-buffered fixed-UTC gmtime_r, fixed-UTC timegm, a status-returning POSIX scheduler-yield leaf, caller-owned mapping-core, no-cancellation mapping synchronization, direct anonymous-memory descriptor creation, nanosleep, and clock_nanosleep, selected "
+            "selected private C ABI leaves, including nanosleep, usleep, sleep, and clock_nanosleep, selected "
             "POSIX _exit forwarding, descriptor-entry, selected filesystem-access, bounded descriptor-control, timestamp updates, and descriptor-I/O, selected process-resources, selected readiness/signal-waits, "
             "selected socket transport and selected socket-message/options, selected system-observation, historical load snapshot, selected UTS-identity, "
             "selected numeric-address codecs, immutable IPv6 unspecified/loopback address data objects, and legacy classful IPv4 arithmetic, fixed-profile h_errno message text, byte-string, legacy-memory adapters, source-backed memccpy/mempcpy, caller-buffer strsep, random-entropy, memory-search, C-string-copy, immutable error-string, "
@@ -12113,6 +12158,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         ("memfd_create.rs", memfd_create_text),
         ("nanosleep.rs", nanosleep_text),
         ("usleep.rs", usleep_text),
+        ("sleep.rs", sleep_text),
         ("descriptor_entry.rs", descriptor_entry_text),
         ("filesystem_access.rs", filesystem_access_text),
         ("descriptor_control.rs", descriptor_control_text),

@@ -50,7 +50,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 41)
-        self.assertEqual(report["verified_artifact_count"], 214)
+        self.assertEqual(report["verified_artifact_count"], 215)
         self.assertEqual(report["header_layout_probe_count"], 47)
         self.assertEqual(report["public_header_inventory_count"], 183)
         self.assertEqual(report["header_foundation_header_count"], 191)
@@ -16612,6 +16612,57 @@ class X86ParityLedgerTests(unittest.TestCase):
         evidence[0]["command"] = "./scripts/dev-x86_64.sh relative-sleep-reference"
         with self.assertRaisesRegex(
             ledger.LedgerError, "closed libc-nanosleep command"
+        ):
+            ledger.validate_ledger(data)
+
+    def test_sleep_artifact_stays_a_private_delegating_wrapper(self) -> None:
+        """A selected wrapper must not turn its nanosleep seam into time support."""
+
+        data = self.data()
+        family = self.family(data, "libc.posix-runtime")
+        self.assertEqual(family["status"], "planned")
+        artifacts = family["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-sleep"
+        )
+        self.assertNotIn("capabilities", artifact)
+        self.assertEqual(
+            {entry["command"] for entry in artifact["native_evidence"]},
+            {"./scripts/dev-x86_64.sh libc-sleep"},
+        )
+        for phrase in (
+            "selected-static-archive `sleep` compatibility artifact",
+            "same record as request and remainder",
+            "remaining record's truncated whole seconds",
+            "ordinary EINTR errno/TLS result",
+            "fixture-local SIGALRM interruption",
+            "`usleep`, clock or timer control, general signal policy",
+            "family completion",
+            "promotion",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, artifact["description"])
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-sleep"
+        )
+        evidence = artifact["native_evidence"]
+        assert isinstance(evidence, list) and isinstance(evidence[0], dict)
+        evidence[0]["scope"] = evidence[0]["scope"].replace(
+            "one nanosleep relocation without direct syscall/TLS",
+            "direct raw sleep syscall",
+        )
+        with self.assertRaisesRegex(
+            ledger.LedgerError,
+            "static-c-sleep evidence must retain its narrow static wrapper scope",
         ):
             ledger.validate_ledger(data)
 

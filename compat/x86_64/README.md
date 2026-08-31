@@ -270,6 +270,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh string-duplication-header-abi
 ./scripts/dev-x86_64.sh random-entropy-header-abi
 ./scripts/dev-x86_64.sh time-header-abi
+./scripts/dev-x86_64.sh sleep-header-abi
 ./scripts/dev-x86_64.sh timerfd-header-abi
 ./scripts/dev-x86_64.sh signalfd-header-abi
 ./scripts/dev-x86_64.sh poll-header-abi
@@ -482,6 +483,8 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-header-layouts-baseline
 ./scripts/dev-x86_64.sh libc-nanosleep
 ./scripts/dev-x86_64.sh libc-usleep
+./scripts/dev-x86_64.sh sleep-header-abi
+./scripts/dev-x86_64.sh libc-sleep
 ./scripts/dev-x86_64.sh libc-clock-nanosleep
 ./scripts/dev-x86_64.sh libc-descriptor-entry
 ./scripts/dev-x86_64.sh libc-access
@@ -4090,8 +4093,25 @@ produces `EINTR` with a positive remaining interval. The candidate emits
 on error. Musl's `nanosleep` delegates through its relative realtime
 `clock_nanosleep` route to `__syscall_cp` cancellation machinery; this direct
 leaf intentionally omits pthread cancellation until the x86 pthread/TLS
-runtime exists. It excludes `sleep`/`usleep`, C clock/timer state, signal
-policy, dynamic runtime, and public x86 support.
+runtime exists. The separate `static-c-sleep` artifact may delegate to this
+boundary, but this fixture rejects it from its final candidate; `usleep`, C
+clock/timer state, signal policy, dynamic runtime, and public x86 support
+remain excluded here.
+
+`sleep-header-abi` and `libc-sleep` are a separate private `static-c-sleep`
+`verified_artifact`, not C time or runtime completion. The all-profile
+project/pinned-musl C11/C++17 `<unistd.h>` gate fixes only the unconditional
+`unsigned int sleep(unsigned int)` declaration and C++ linkage. Its common
+project-header C body first executes through pinned musl and then through a
+`-nostdlib -static` candidate. It proves musl 1.2.6 `src/unistd/sleep.c`'s
+one-call wrapper over the selected `nanosleep` boundary: `sleep(0)` preserves
+stale `errno`, while fixture-local `SIGALRM` makes `sleep(2)` return a nonzero
+truncated whole-second remainder with `EINTR`. The archive/object and final
+ELF checks require one `sleep` export, one `nanosleep` relocation, and no
+direct syscall or errno/TLS access in the wrapper. The raw timer and selected
+signal setup are test plumbing only: this does not select `usleep`, pthread
+cancellation, wake timing, signal/mask policy, clock or timer control,
+dynamic runtime, family completion, promotion, or public x86 support.
 
 `libc-usleep` is a separately recorded `static-c-usleep` `verified_artifact`
 over that archive, not a C sleep or timer capability. Its project-header C
@@ -5931,6 +5951,7 @@ Apart from the narrowly named `libc-stat-compat`, `libc-credentials`,
 `libc-header-layouts-baseline`,
 `libc-nanosleep`,
 `libc-usleep`,
+`libc-sleep`,
 `libc-clock-nanosleep`,
 `libc-descriptor-entry`,
 `libc-access`,

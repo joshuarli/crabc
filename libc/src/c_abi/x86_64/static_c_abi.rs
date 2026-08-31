@@ -425,6 +425,8 @@ mod time_observation;
 mod nanosleep;
 #[path = "usleep.rs"]
 mod usleep;
+#[path = "sleep.rs"]
+mod sleep;
 #[path = "descriptor_entry.rs"]
 mod descriptor_entry;
 #[path = "filesystem_access.rs"]
