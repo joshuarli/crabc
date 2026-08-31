@@ -119,6 +119,9 @@ M5_GATE_CONTRACT = ALLOCATOR_ROOT / "m5-gate-v3.5.0.json"
 NATIVE_OWNER_EXIT_LIFECYCLE_CONTRACT = (
     ALLOCATOR_ROOT / "native-owner-exit-lifecycle-v3.5.0.json"
 )
+OWNER_EXIT_PUBLICATION_CONTRACT = (
+    ALLOCATOR_ROOT / "owner-exit-publication-v3.5.0.json"
+)
 
 M5_GATE_IDS = (
     "m5.base",
@@ -129,6 +132,71 @@ M5_GATE_IDS = (
     "m5.5e",
 )
 M5_STATIC_BLOCKED_GATE_IDS = frozenset({"m5.5d", "m5.5e"})
+
+# This is a source-order contract, not a claim that the incomplete Rust port
+# has completed generic owner exit.  Each name fixes the source fact to its
+# pinned-v3.5.0 definition so a later contract edit cannot silently turn a
+# different helper into the owner-exit evidence anchor.
+OWNER_EXIT_PUBLICATION_SOURCE_FACT_SHAPES = {
+    "thread-exit-selects-abandon-collection": ("src/init.c", "mi_thread_theaps_done"),
+    "owner-exit-collect-before-abandon": ("src/theap.c", "mi_theap_page_collect"),
+    "queue-detach-before-abandoned-identity": ("src/page.c", "_mi_page_abandon"),
+    "abandoned-identity-release-publication": (
+        "include/mimalloc/internal.h",
+        "mi_page_set_theap",
+    ),
+    "mapped-bitmap-publication-before-unown": (
+        "src/arena.c",
+        "_mi_arenas_page_abandon",
+    ),
+    "os-list-publication-before-unown": ("src/arena.c", "_mi_arenas_page_abandon"),
+    "empty-owner-exit-terminal-release": ("src/page.c", "_mi_page_abandon"),
+    "empty-abandoned-terminal-release": ("src/free.c", "mi_abandoned_page_try_free"),
+}
+
+OWNER_EXIT_PUBLICATION_ROUTE_SHAPES = {
+    "mapped-arena-bitmap": {
+        "sequence": [
+            "queue-detach",
+            "abandoned-identity",
+            "mapped-bitmap-publication",
+            "unown",
+        ],
+        "source_fact_ids": [
+            "queue-detach-before-abandoned-identity",
+            "abandoned-identity-release-publication",
+            "mapped-bitmap-publication-before-unown",
+        ],
+    },
+    "non-arena-os-list": {
+        "sequence": [
+            "queue-detach",
+            "abandoned-identity",
+            "os-list-publication",
+            "unown",
+        ],
+        "source_fact_ids": [
+            "queue-detach-before-abandoned-identity",
+            "abandoned-identity-release-publication",
+            "os-list-publication-before-unown",
+        ],
+    },
+}
+
+OWNER_EXIT_EMPTY_TERMINAL_FORBIDDEN_EVENTS = [
+    "queue-detach",
+    "abandoned-identity",
+    "mapped-bitmap-publication",
+    "os-list-publication",
+    "unown",
+]
+
+OWNER_EXIT_STALE_W07_FORBIDDEN_INPUTS = [
+    "raw-page-pointer",
+    "raw-block-pointer",
+    "xthread-free-head",
+    "departed-theap-hint",
+]
 
 # These are the concrete Gate 5C conditions, plus the two acceptance-boundary
 # facts that make the evidence about the one production traversal rather than
@@ -1525,6 +1593,227 @@ def validate_m5_gate_contract(
         "full_lane": expected_full_lane,
         "gate_count": len(gate_ids),
         "gate_ids": gate_ids,
+    }
+
+
+def source_function_body(source_text: str, *, path: str, function: str) -> str:
+    """Return one simple C function body from pinned source text.
+
+    This is deliberately only an audit helper, not a C parser. The owner-exit
+    anchors are ordinary v3.5.0 definitions with one balanced outer body. By
+    refusing an absent or ambiguous definition, it fails closed if the pinned
+    source shape changes instead of scanning unrelated call sites.
+    """
+
+    definition = re.compile(
+        rf"\b{re.escape(function)}\s*\([^{{}};]*\)\s*\{{",
+        re.DOTALL,
+    )
+    matches = list(definition.finditer(source_text))
+    if len(matches) != 1:
+        raise HarnessError(
+            f"owner-exit source fact {path}:{function} has no unique C definition"
+        )
+    opening = matches[0].end() - 1
+    depth = 0
+    for index in range(opening, len(source_text)):
+        character = source_text[index]
+        if character == "{":
+            depth += 1
+        elif character == "}":
+            depth -= 1
+            if depth == 0:
+                return source_text[opening + 1 : index]
+    raise HarnessError(f"owner-exit source fact {path}:{function} has an unclosed body")
+
+
+def validate_owner_exit_publication_contract(
+    contract: Mapping[str, Any], pin: Mapping[str, str], source: Path
+) -> dict[str, int]:
+    """Audit the pinned owner-exit publication order without claiming a port.
+
+    A page that survives collection cannot be exposed as merely "old raw page
+    plus block": queue membership has been detached, `xthread_id` now carries
+    an abandoned identity, and the route has either published its exact arena
+    bitmap/count capability or its exact non-arena OS-list member before the
+    common unown operation. An empty page instead takes its terminal release
+    branch. The contract keeps the old Wave 03/W07 Loom-only claim from being
+    promoted into a reconstruction authority after any of those transitions.
+    """
+
+    if (
+        contract.get("schema") != "crabc-mimalloc-owner-exit-publication-contract"
+        or contract.get("format") != 1
+    ):
+        raise HarnessError("unsupported owner-exit publication contract")
+    upstream = contract.get("upstream")
+    expected_upstream = {
+        "archive_sha256": pin["sha256"],
+        "revision": pin["revision"],
+        "version": pin["version"],
+    }
+    if not isinstance(upstream, Mapping) or dict(upstream) != expected_upstream:
+        raise HarnessError("owner-exit publication contract upstream identity mismatch")
+
+    expected_scope = {
+        "candidate_evidence": False,
+        "completion_status": "blocked",
+        "general_owner_exit_claimed": False,
+        "private_source_order_contract": True,
+        "public_allocator_backend": False,
+    }
+    if contract.get("scope") != expected_scope:
+        raise HarnessError("owner-exit publication contract scope changed")
+
+    raw_facts = contract.get("source_facts")
+    if not isinstance(raw_facts, list) or len(raw_facts) != len(
+        OWNER_EXIT_PUBLICATION_SOURCE_FACT_SHAPES
+    ):
+        raise HarnessError("owner-exit publication contract has an invalid source-fact inventory")
+    facts: dict[str, Mapping[str, Any]] = {}
+    for index, fact in enumerate(raw_facts):
+        if not isinstance(fact, Mapping) or set(fact) != {
+            "function",
+            "id",
+            "ordered_markers",
+            "path",
+        }:
+            raise HarnessError(f"owner-exit source fact {index} has unexpected fields")
+        fact_id = fact.get("id")
+        if (
+            not isinstance(fact_id, str)
+            or not re.fullmatch(r"[a-z][a-z0-9-]*", fact_id)
+            or fact_id in facts
+            or fact_id not in OWNER_EXIT_PUBLICATION_SOURCE_FACT_SHAPES
+        ):
+            raise HarnessError(f"owner-exit source fact {index} has an invalid id")
+        expected_path, expected_function = OWNER_EXIT_PUBLICATION_SOURCE_FACT_SHAPES[fact_id]
+        if fact.get("path") != expected_path or fact.get("function") != expected_function:
+            raise HarnessError(f"owner-exit source fact {fact_id} changed its pinned anchor")
+        markers = fact.get("ordered_markers")
+        if (
+            not isinstance(markers, list)
+            or len(markers) < 3
+            or not all(isinstance(marker, str) and marker for marker in markers)
+            or len(set(markers)) != len(markers)
+        ):
+            raise HarnessError(f"owner-exit source fact {fact_id} has invalid ordered markers")
+        facts[fact_id] = fact
+    if set(facts) != set(OWNER_EXIT_PUBLICATION_SOURCE_FACT_SHAPES):
+        raise HarnessError("owner-exit publication contract omits a required source fact")
+
+    raw_transition = contract.get("transition")
+    if not isinstance(raw_transition, Mapping) or set(raw_transition) != {
+        "empty_terminal_release",
+        "publication_routes",
+        "unmapped_nonpublication",
+    }:
+        raise HarnessError("owner-exit publication contract has an invalid transition inventory")
+
+    raw_routes = raw_transition.get("publication_routes")
+    if not isinstance(raw_routes, list) or len(raw_routes) != len(
+        OWNER_EXIT_PUBLICATION_ROUTE_SHAPES
+    ):
+        raise HarnessError("owner-exit publication contract has an invalid publication-route inventory")
+    routes: dict[str, Mapping[str, Any]] = {}
+    for index, route in enumerate(raw_routes):
+        if not isinstance(route, Mapping) or set(route) != {
+            "id",
+            "sequence",
+            "source_fact_ids",
+        }:
+            raise HarnessError(f"owner-exit publication route {index} has unexpected fields")
+        route_id = route.get("id")
+        if not isinstance(route_id, str) or route_id in routes:
+            raise HarnessError(f"owner-exit publication route {index} has an invalid id")
+        expected_route = OWNER_EXIT_PUBLICATION_ROUTE_SHAPES.get(route_id)
+        if expected_route is None:
+            raise HarnessError(f"owner-exit publication route {route_id} is not pinned")
+        if (
+            route.get("sequence") != expected_route["sequence"]
+            or route.get("source_fact_ids") != expected_route["source_fact_ids"]
+        ):
+            raise HarnessError(
+                f"owner-exit publication route {route_id} changed its source order"
+            )
+        routes[route_id] = route
+    if set(routes) != set(OWNER_EXIT_PUBLICATION_ROUTE_SHAPES):
+        raise HarnessError("owner-exit publication contract omits a publication route")
+
+    empty_terminal = raw_transition.get("empty_terminal_release")
+    expected_empty_terminal = {
+        "disposition": "terminal-release-without-abandon-publication",
+        "forbidden_transition_events": OWNER_EXIT_EMPTY_TERMINAL_FORBIDDEN_EVENTS,
+        "source_fact_ids": [
+            "empty-owner-exit-terminal-release",
+            "empty-abandoned-terminal-release",
+        ],
+    }
+    if empty_terminal != expected_empty_terminal:
+        raise HarnessError("owner-exit empty terminal release contract changed")
+    unmapped_nonpublication = raw_transition.get("unmapped_nonpublication")
+    if (
+        not isinstance(unmapped_nonpublication, Mapping)
+        or set(unmapped_nonpublication) != {"counts_as_publication_route", "meaning"}
+        or unmapped_nonpublication.get("counts_as_publication_route") is not False
+        or not isinstance(unmapped_nonpublication.get("meaning"), str)
+        or not unmapped_nonpublication["meaning"]
+    ):
+        raise HarnessError("owner-exit unmapped nonpublication boundary changed")
+
+    stale_w07_claim = contract.get("stale_w07_claim")
+    expected_stale_w07_keys = {
+        "claim_reconstruction",
+        "forbidden_evidence",
+        "forbidden_reconstruction_inputs",
+        "required_authority",
+        "status",
+    }
+    if not isinstance(stale_w07_claim, Mapping) or set(stale_w07_claim) != expected_stale_w07_keys:
+        raise HarnessError("stale W07 claim contract has unexpected fields")
+    if (
+        stale_w07_claim.get("claim_reconstruction") != "forbidden"
+        or stale_w07_claim.get("status") != "prohibited"
+        or stale_w07_claim.get("forbidden_reconstruction_inputs")
+        != OWNER_EXIT_STALE_W07_FORBIDDEN_INPUTS
+        or stale_w07_claim.get("forbidden_evidence")
+        != ["loom-only-lifetime-model", "raw-page-or-block-snapshot"]
+        or stale_w07_claim.get("required_authority")
+        != [
+            "typed-owner-exit-drain",
+            "current-page-map-resolution",
+            "publication-specific-capability",
+        ]
+    ):
+        raise HarnessError("stale W07 claim cannot be reconstructed from raw page or block")
+
+    source_texts: dict[str, str] = {}
+    function_bodies: dict[tuple[str, str], str] = {}
+    for fact_id, fact in facts.items():
+        path = str(fact["path"])
+        source_path = source / path
+        if not source_path.is_file():
+            raise HarnessError(f"owner-exit source fact {fact_id} is missing {path}")
+        source_text = source_texts.setdefault(path, source_path.read_text(encoding="utf-8"))
+        function = str(fact["function"])
+        body = function_bodies.setdefault(
+            (path, function),
+            source_function_body(source_text, path=path, function=function),
+        )
+        cursor = 0
+        for marker in fact["ordered_markers"]:
+            assert isinstance(marker, str)
+            offset = body.find(marker, cursor)
+            if offset < 0:
+                raise HarnessError(
+                    f"owner-exit source fact {fact_id} no longer preserves marker order at {marker!r}"
+                )
+            cursor = offset + len(marker)
+
+    return {
+        "forbidden_reconstruction_input_count": len(OWNER_EXIT_STALE_W07_FORBIDDEN_INPUTS),
+        "publication_route_count": len(routes),
+        "source_fact_count": len(facts),
     }
 
 
@@ -4173,6 +4462,9 @@ def ratchet_payload(port_map: Mapping[str, Any]) -> dict[str, Any]:
         "adapted_stress_test_contract_sha256": file_digest(ADAPTED_STRESS_TEST_CONTRACT),
         "native_shadow_stress_fixture_count": len(native_shadow_stress["source_hashes"]),
         "native_shadow_stress_contract_sha256": file_digest(NATIVE_SHADOW_STRESS_CONTRACT),
+        "owner_exit_publication_contract_sha256": file_digest(
+            OWNER_EXIT_PUBLICATION_CONTRACT
+        ),
         "api_contract_sha256": file_digest(API_CONTRACT),
         "api_total_item_count": api["summary"]["total_item_count"],
         "configuration_profile_count": len(CONFIGURATION_PROFILES),
@@ -4224,6 +4516,7 @@ def check_ratchet(port_map: Mapping[str, Any]) -> None:
         "adapted_test_contract_sha256",
         "adapted_stress_test_contract_sha256",
         "native_shadow_stress_contract_sha256",
+        "owner_exit_publication_contract_sha256",
         "api_contract_sha256",
         "port_map_sha256",
         "upstream_test_contract_sha256",
@@ -7275,6 +7568,12 @@ def run_milestone0(
             write_contracts(contracts)
         else:
             check_contracts(contracts)
+        owner_exit_publication_contract = read_json(OWNER_EXIT_PUBLICATION_CONTRACT)
+        owner_exit_publication_summary = validate_owner_exit_publication_contract(
+            owner_exit_publication_contract,
+            pin,
+            source,
+        )
         port_map = load_port_map()
         check_ratchet(port_map)
         adapted_contract = read_json(ADAPTED_TEST_CONTRACT)
@@ -7340,6 +7639,7 @@ def run_milestone0(
                 "native_shadow_stress_patch": native_shadow_stress_patch,
                 "m5_gate_contract": m5_gate_summary,
                 "native_owner_exit_lifecycle_contract": native_owner_exit_lifecycle_summary,
+                "owner_exit_publication_contract": owner_exit_publication_summary,
                 "runtime_ticket_zero_test_contract": runtime_ticket_zero_summary,
                 "contracts": {relative(path): payload["summary"] for path, payload in contracts.items()},
                 "port_map": port_map_counts(port_map),
@@ -7366,6 +7666,7 @@ def run_milestone0(
         ]["comparison"]
         report = milestone0_report(pin, archive, source, profiles)
         report["contracts"] = {relative(path): payload["summary"] for path, payload in contracts.items()}
+        report["owner_exit_publication_contract"] = owner_exit_publication_summary
         report["port_map"] = port_map_counts(port_map)
         report["compiler_tls_codegen"] = compiler_tls_codegen()
         report["production_dependency_graph"] = dependency_graph
@@ -7509,6 +7810,11 @@ def main() -> int:
             with tempfile.TemporaryDirectory(prefix="crabc-mimalloc-") as temporary:
                 source = safe_extract(archive, Path(temporary), pin["archive_root"])
                 contracts = generated_contracts(source, pin)
+                validate_owner_exit_publication_contract(
+                    read_json(OWNER_EXIT_PUBLICATION_CONTRACT),
+                    pin,
+                    source,
+                )
                 write_contracts(contracts)
                 print("\n".join(str(path) for path in contracts))
             return 0

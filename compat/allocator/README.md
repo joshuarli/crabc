@@ -1910,6 +1910,16 @@ remote-free routing, thread exit/teardown/lifecycle, abandonment/adoption,
 concurrent collection, public `mi_*` behavior or runtime, libc integration,
 backend promotion, public x86 support, or AArch64 evidence.
 
+`owner-exit-publication-v3.5.0.json` is a pinned-source order gate, not
+runtime parity evidence. `validate_owner_exit_publication_contract` in
+`compat/allocator/run.py` checks the source sequence from queue detach through
+the abandoned identity, then either mapped bitmap/count or non-arena private
+OS-list publication, before common unown. It separately records the empty
+terminal-release branches and prohibits reconstructing a stale W07 owner-exit
+claim from a raw page, block, remote-head, or departed-Theap hint; only the
+typed drain, a current PageMap resolution, and the matching publication
+capability can authorize a later route.
+
 Maintainer-only contract operations run directly on the host and require a
 review of their diffs:
 
@@ -1946,6 +1956,7 @@ snapshot after review; the normal gate never updates its own baseline.
 | `test-adapter/` | Standalone default-off Rust staticlib/cdylib, private C header, and checked-in wrapper for the existing allocator fixture. |
 | `runtime-ticket-zero-test-v3.5.0.json` | Reviewed source map, eleven-symbol inventory, one-shot caller contract, and native link contract for the process-lifetime ticket-zero C witness, including scalar-only lifecycle stability auditing plus retained narrow, persistent mixed-local, live-owner remote-free, a fresh-B mixed post-exit owner route, and alternating sole-medium/direct-small reclamation worker round trips through one existing export. |
 | `native-owner-exit-lifecycle-v3.5.0.json` | Reviewed direct-engine Gate 5C suite: exact Cargo feature set, fifteen focused runtime/source traversal checks, and the required owner-exit scenario coverage. |
+| `owner-exit-publication-v3.5.0.json` | Pinned-source order gate for collection, queue detach, abandoned identity, mapped bitmap/count or non-arena OS-list publication, and common unown. It keeps empty terminal release distinct and prohibits treating a raw page/block snapshot or Loom-only W07 model as a reconstructed owner-exit claim. |
 | `m5-gate-v3.5.0.json` | Versioned full-lane contract for the 128-cycle lifecycle schedule and its current Gate 5A--5E acceptance/blocker classification. |
 | `runtime-ticket-zero-adapter/` | Separate `no_std` staticlib/cdylib and direct C fixture for the hidden ticket-zero runtime owner; it has no libc allocator or `mi_*` export. |
 | `port-map.toml` | AArch64 source-unit and meaningful-item translation/verification ledger with separate monotonic status fields. Native x86-64 parity must not reuse its AArch64 statuses. |

@@ -10,6 +10,7 @@
   "format": 1,
   "native_shadow_stress_contract_sha256": "c6d082f9cada1c97a1d41cb71c11ace2740a0347debe6345c8d1542206d98b12",
   "native_shadow_stress_fixture_count": 1,
+  "owner_exit_publication_contract_sha256": "5225a08ef5da9dd9e892d87381379016c15d255cc8566f8a610d69769d15572c",
   "port_map_counts": {
     "differential_verified": 15,
     "exported": 4,

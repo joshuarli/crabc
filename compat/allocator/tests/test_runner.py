@@ -1375,6 +1375,108 @@ class ContractTests(unittest.TestCase):
         self.assertEqual(pin["revision"], "18b08671c9302247bfb682286e6bf3cc1773f801")
         self.assertEqual(pin["tag_object"], "438b0c4b78d2599aede7fca3ddacc28863b0eae8")
 
+    def test_owner_exit_publication_contract_keeps_source_order_and_rejects_raw_reconstruction(self) -> None:
+        contract = RUNNER.read_json(RUNNER.OWNER_EXIT_PUBLICATION_CONTRACT)
+        pin = RUNNER.load_pin()
+        source_text = {
+            "src/init.c": """
+                void mi_thread_theaps_done(void) {
+                    mi_lock(&tld->theaps_lock) { }
+                    _mi_theap_collect_abandon(theap);
+                    mi_assert_internal(theap->page_count==0);
+                }
+            """,
+            "src/theap.c": """
+                void mi_theap_page_collect(void) {
+                    _mi_page_free_collect(page, collect >= MI_FORCE);
+                    if (mi_page_all_free(page)) { }
+                    else if (collect == MI_ABANDON) { }
+                    _mi_page_abandon(page, pq);
+                }
+            """,
+            "src/page.c": """
+                void _mi_page_abandon(void) {
+                    _mi_page_free_collect(page, false);
+                    if (mi_page_all_free(page)) { }
+                    _mi_page_free(page, pq);
+                    mi_page_queue_remove(pq, page);
+                    mi_page_set_theap(page, NULL);
+                    _mi_arenas_page_abandon(page, theap);
+                }
+            """,
+            "include/mimalloc/internal.h": """
+                void mi_page_set_theap(void) {
+                    page->theap = theap;
+                    theap == NULL ? MI_THREADID_ABANDONED : theap->tld->thread_id;
+                    mi_atomic_cas_weak_release(&page->xthread_id, &xtid_old, xtid);
+                }
+            """,
+            "src/arena.c": """
+                void _mi_arenas_page_abandon(void) {
+                    if (page->memid.memkind==MI_MEM_ARENA && !mi_page_is_full(page)) { }
+                    mi_page_set_abandoned_mapped(page);
+                    mi_bitmap_set(arena_pages->pages_abandoned[bin], slice_index);
+                    mi_atomic_increment_relaxed(&heap->abandoned_count[bin]);
+                    mi_abandoned_page_unown(page, current_theapx);
+                    if (page->memid.memkind != MI_MEM_ARENA) { }
+                    mi_lock(&heap->os_abandoned_pages_lock) { }
+                    heap->os_abandoned_pages = page;
+                    mi_theapx_stat_increase(heap, current_theapx, pages_abandoned, 1);
+                    mi_abandoned_page_unown(page, current_theapx);
+                }
+            """,
+            "src/free.c": """
+                void mi_abandoned_page_try_free(void) {
+                    if (!mi_page_all_free(page)) return false;
+                    _mi_arenas_page_unabandon(page,NULL);
+                    _mi_arenas_page_free(page,NULL);
+                }
+            """,
+        }
+
+        with tempfile.TemporaryDirectory() as temporary:
+            source = Path(temporary)
+            for path, text in source_text.items():
+                target = source / path
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text(text, encoding="utf-8")
+
+            self.assertEqual(
+                RUNNER.validate_owner_exit_publication_contract(contract, pin, source),
+                {
+                    "forbidden_reconstruction_input_count": 4,
+                    "publication_route_count": 2,
+                    "source_fact_count": 8,
+                },
+            )
+
+            stale_claim = json.loads(json.dumps(contract))
+            stale_claim["stale_w07_claim"]["claim_reconstruction"] = "allowed"
+            with self.assertRaisesRegex(RUNNER.HarnessError, "stale W07 claim"):
+                RUNNER.validate_owner_exit_publication_contract(stale_claim, pin, source)
+
+            stale_empty_release = json.loads(json.dumps(contract))
+            stale_empty_release["transition"]["empty_terminal_release"][
+                "forbidden_transition_events"
+            ] = []
+            with self.assertRaisesRegex(RUNNER.HarnessError, "empty terminal release"):
+                RUNNER.validate_owner_exit_publication_contract(
+                    stale_empty_release,
+                    pin,
+                    source,
+                )
+
+            reordered = source / "src/page.c"
+            reordered.write_text(
+                source_text["src/page.c"].replace(
+                    "mi_page_queue_remove(pq, page);\n                    mi_page_set_theap(page, NULL);",
+                    "mi_page_set_theap(page, NULL);\n                    mi_page_queue_remove(pq, page);",
+                ),
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(RUNNER.HarnessError, "queue-detach-before-abandoned-identity"):
+                RUNNER.validate_owner_exit_publication_contract(contract, pin, source)
+
     def test_port_map_covers_the_required_v3_sources_and_has_only_verified_claims(self) -> None:
         port_map = RUNNER.load_port_map()
         counts = RUNNER.port_map_counts(port_map)
