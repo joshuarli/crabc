@@ -1197,10 +1197,11 @@ Required deliverables:
 - a minimal pointer-dispatch correction for the known legal-C abort;
 - explicit gate scope on all existing M5 records.
 
-The minimal correction may temporarily query existing route scaffolding before
-caller-local state, but it must be treated as a bridge fix. It does not close
-the architecture gate and must disappear when pointer-to-page abandoned-state
-dispatch lands.
+The minimal correction derives exact pointer facts from the PageMap before it
+consults caller-local state. A valid foreign source may continue only through
+generic pointer-first free; direct `realloc` must not query route scaffolding,
+select a replacement owner, or use a parked compatibility bridge. This remains
+a bounded bridge fix and does not close the architecture gate.
 
 Acceptance:
 

@@ -2082,11 +2082,11 @@ PageMap mutation. In the
 owner-exit fixture A leaves a
 direct-small block, a non-direct-small block, a medium block, a regular-large
 block, an unaligned arena singleton, and an OS-aligned singleton live; a fresh
-no-page B first queries their exact source-recorded usable extents, then frees
-their exact C addresses through the private `NativePostExitRoute`. The same
-route may instead replace one exact detached client by recording a normal B
-allocation, copying the source-bounded prefix, and then consuming A through
-the existing typed free transition; it never exposes A's page or allocator.
+no-page B first reads their PageMap-derived usable extents, then frees their
+exact C addresses through generic pointer-first free. A detached client never
+enters B's `realloc` engine or a route replacement transition; its source
+bytes remain live until that generic free consumes it. This exposes neither
+A's page nor allocator.
 The
 same aggregate exercises A's normal return, `pthread_exit`, and deferred
 cancellation. Its cancellation path runs one cleanup handler and then one
@@ -2111,15 +2111,15 @@ general pointer registry, or a worker allocation route. The
 OS singleton must finish its private static-main-list and clipped-mapping tail
 before the route can complete. The same fixture also exercises the
 source-produced sole mapped-regular result: A returns one local medium client
-to form the immediate head, then B queries, frees, or uses the same exact
-replacement transition for the remaining medium address. The sole branch
-remains without adoption, reclaim, or allocation-time authority. The separate
+to form the immediate head, then B reads its PageMap extent or frees the
+remaining medium address. B never replaces that detached source. The sole
+branch remains without adoption, reclaim, or allocation-time authority. The separate
 `native_mimalloc_aggregate_reclaim` fixture makes an aggregate's final exact
 natural-alignment C free reach the existing final-member adoption edge only
 after all siblings have released and A's force-collection fact is present;
 the route never exposes a page, allocator, scan, or general reclaim authority.
-Genuinely over-aligned requests remain sequential-free-only. The read-only query leaves the route and its
-scheduler claim intact. Its terminal completion keeps its route-specific
+Genuinely over-aligned requests remain sequential-free-only. The PageMap-only
+query neither claims a route nor changes its scheduler state. Its terminal completion keeps its route-specific
 dormant-pair scheduler count parked until B finishes, and ticket zero allocates again only
 afterward. The selected `native_mimalloc_post_exit_split_releaser` fixture
 repeats the same route through two C worker lifecycles: nonterminal B frees
@@ -2133,13 +2133,13 @@ it offers any A address, then keeps that parked session through A's terminal
 free and frees its own client before pthread teardown. This proves the route
 can transfer A's completion beside one independently parked B session without
 turning either route into a pointer or allocator capability. In the live fixture, A stays parked with two exact native clients
-live while independently attached B/C publishers first query their respective
-source-recorded usable extents through the private handoff, then race their
-exact ledger-validated source publications. The matching
+live while independently attached B/C publishers first read their respective
+PageMap-derived usable extents without a handoff, then race their exact
+ledger-validated source publications. The matching
 `NativeLiveRemoteOwnerRegistry` entry serializes each complete
 `PARKED -> BUSY -> PARKED` operation; both publishers finish before A resumes
-ordinary malloc work. The read-only query claims and restores that entry
-without borrowing a page engine or scheduler. Each stable metadata-backed
+ordinary malloc work. The PageMap-only query neither claims nor restores that
+entry and borrows no page engine or scheduler. Each stable metadata-backed
 entry retains only an A TLS slot/generation, never a client address, page, or
 allocator.
 If B already holds one exact foreign route and needs B's own parked session,
@@ -2254,13 +2254,13 @@ zero only after B consumes the typed completion. Clearing the direct-test
 injection does not create a retry or fallback route, and the hook exposes
 neither a generic fault plan nor an allocator capability.
 `native_post_exit_with_local_session` separately proves that B may already
-hold a parked local session while it consumes A's exact route clients: the
-same parked-state boundary serves A's exact recorded usable-size queries,
-one normal B replacement with a bounded copy, and frees; the last A free
-stores a completion in the stable private registry matched to B's session.
-B detaches its live local client into a successor route, and fresh C releases
-that successor before either parked count or admission can make ticket zero
-ready. A live registry entry is one remote-publication capability, not a
+hold a local session while it reads A's PageMap extent, receives `Unavailable`
+for A's detached `realloc`, verifies A's bytes, and frees A through the generic
+pointer-first boundary. B then reallocates only its own local client; the last
+A free stores a completion in the stable private registry matched to B's
+session. B detaches its live local client into a successor route, and fresh C
+releases that successor before either parked count or admission can make ticket
+zero ready. A live registry entry is one remote-publication capability, not a
 global worker admission lock.
 The feature-gated `native_multiple_post_exit_completions` regression then
 has one B establish a parked local session, terminally consume two independent
@@ -2301,27 +2301,23 @@ general concurrent pointer dispatch.
 final exact free and prove the scheduler is still unavailable before B's
 normal finish, then prove ticket-zero reactivation afterward.
 The selected boundary has no C fallback: wrong-owner native pointers fail-stop.
-`tests/native_mimalloc_owner_exit_realloc.rs` proves the selected-only
-post-exit `realloc` transition: B allocates a normal replacement, preserves
-the bounded prefix on shrink and growth, receives a distinct zero-size
-replacement when requested, then frees it through B's local ledger. An invalid
-replacement size returns `ENOMEM` while preserving A's exact client. After
-the successful terminal route replacement stores A's proof in B TLS, B can
-continue its own local `realloc` and allocation while that proof remains
-opaque. The fixture retains the continued client in B's TSD value, whose
-destructor makes a further local `realloc` and frees it before B's native
-all-free finish can settle A's proof. B exits through `pthread_exit`: its
-cleanup handler makes and frees a local allocation, then the TSD destructor
-continues the existing client before freeing it. The same fixture also proves
-normal return's TSD-only phase and repeats the cleanup/TSD ordering through
-deferred cancellation at a real cancellation point before the native all-free
-finish settles A's proof. It does
-not yet cover general cross-thread routing beyond that exact-live ticket-zero
-free, general single-page adoption/reclaim exits, foreign worker `realloc`
-beyond the exact detached-owner transition, usable-size outside the exact
-detached route or parked live owner, general
-concurrent owner-exit traversal or arbitrary worker allocation beyond the
-bounded live-entry witnesses, and is not a Gate 5E or promotion pass.
+`tests/native_mimalloc_owner_exit_realloc.rs` proves the selected C boundary:
+an invalid or valid foreign `realloc` returns `ENOMEM` while preserving A's
+exact client and source bytes, then generic pointer-first `free` terminally
+releases A. B separately allocates its own client, preserves its prefix across
+local shrink and growth, receives its zero-size local replacement, and
+retains that client in a TSD value. The destructor makes a further local
+`realloc` and frees it before B's native all-free finish can settle A's proof. B exits through
+`pthread_exit`: its cleanup handler makes and frees a local allocation, then
+the TSD destructor continues the existing local client before freeing it. The
+same fixture also proves normal return's TSD-only phase and repeats the
+cleanup/TSD ordering through deferred cancellation at a real cancellation
+point before the native all-free finish settles A's proof. It does not yet
+cover general cross-thread routing beyond exact-live ticket-zero free,
+general single-page adoption/reclaim exits, any foreign-worker successful
+`realloc`, general concurrent owner-exit traversal, or arbitrary worker
+allocation beyond the bounded live-entry witnesses, and is not a Gate 5E or
+promotion pass.
 The same command ends with the separately reviewed
 `native-shadow-stress-v3.5.0.json` witness. It applies a behavior-named patch
 to pinned upstream `test/test-stress.c`, routes standard C allocation calls

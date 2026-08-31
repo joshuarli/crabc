@@ -150,12 +150,12 @@
     {
       "id": "foreign-worker-free-or-realloc",
       "status": "blocked",
-      "reason": "The native shadow admits only separately proved exact live-client free and one detached-owner reallocation transition; the ordinary C backend is not a semantic oracle for those bounded native-only routes."
+      "reason": "The native shadow admits separately proved exact live-client free, while a detached or foreign reallocation is deliberately refused after its PageMap facts are captured; the ordinary C backend is not a semantic oracle for those bounded native-only routes."
     },
     {
       "id": "owner-exit-and-post-exit-routing",
       "status": "blocked",
-      "reason": "Owner exit, deferred release, and post-exit replacement have their own typed lifecycle evidence. This local ABI matrix must not manufacture a general lifecycle comparison."
+      "reason": "Owner exit and deferred release have their own typed lifecycle evidence; post-exit reallocation is deliberately refused rather than routed. This local ABI matrix must not manufacture a general lifecycle comparison."
     },
     {
       "id": "dso-interposition-and-static-linking",

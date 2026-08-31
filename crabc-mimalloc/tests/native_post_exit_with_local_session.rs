@@ -52,9 +52,8 @@ fn allocate_owner_exit_aggregate() -> [usize; OWNER_EXIT_CLIENT_COUNT] {
         _ => panic!("the owner receives its OS-singleton native client"),
     };
 
-    // The B-side replacement must copy only the pinned overlap while B keeps
-    // its own independent session parked. This source client otherwise stays
-    // an ordinary aggregate member until the typed detached route consumes it.
+    // A rejected B-side foreign realloc must leave these source bytes intact
+    // until generic pointer-first free consumes this aggregate member.
     unsafe {
         medium.as_ptr().write(0x61);
         medium.as_ptr().add(4095).write(0x62);
@@ -128,24 +127,26 @@ fn native_post_exit_free_keeps_a_preexisting_b_session_continuable() {
         }
 
         // SAFETY: A supplied this exact still-live aggregate address before
-        // its typed route detached. The route must keep its own short access
-        // private while B resumes and re-parks only B's independent session
-        // for the normal replacement allocation.
+        // its typed route detached. B may read its PageMap facts and submit
+        // it to the direct realloc boundary, but cannot make it B-local.
         let medium = unsafe { core::ptr::NonNull::new_unchecked(detached_clients[2] as *mut u8) };
-        let replacement = match unsafe { native_reallocate(Some(medium), 4096) } {
-            NativePageAllocationResult::Allocated(block) => block,
-            _ => panic!("B replaces A's exact medium client beside its parked local session"),
-        };
-        assert_ne!(
-            replacement, medium,
-            "the detached A Theap cannot provide same-page reuse to B"
+        assert!(
+            unsafe { native_usable_size(medium) }.is_some_and(|usable_size| usable_size >= 64 * 1024),
+            "the PageMap pointer query reads A's detached source extent beside B's local session"
         );
-        assert_eq!(unsafe { replacement.as_ptr().read() }, 0x61);
-        assert_eq!(unsafe { replacement.as_ptr().add(4095).read() }, 0x62);
+        assert!(
+            matches!(
+                unsafe { native_reallocate(Some(medium), 4096) },
+                NativePageAllocationResult::Unavailable
+            ),
+            "B's parked local session is not a replacement route for A's detached source"
+        );
+        assert_eq!(unsafe { medium.as_ptr().read() }, 0x61);
+        assert_eq!(unsafe { medium.as_ptr().add(4095).read() }, 0x62);
         assert_eq!(
-            unsafe { native_free(replacement) },
+            unsafe { native_free(medium) },
             NativePageFreeResult::Freed,
-            "B releases its normal replacement through its own private ledger"
+            "B releases A's unchanged medium through generic pointer-first free"
         );
 
         for (index, (address, request)) in detached_clients
@@ -154,9 +155,8 @@ fn native_post_exit_free_keeps_a_preexisting_b_session_continuable() {
             .enumerate()
         {
             if index == 2 {
-                // The exact medium client was terminally consumed by the
-                // replacement above, so it must not be offered to A's route
-                // a second time.
+                // The exact medium client was consumed only by the generic
+                // pointer-first free above, so it must not be offered twice.
                 continue;
             }
             // SAFETY: A supplied each exact still-live native address before
@@ -165,7 +165,7 @@ fn native_post_exit_free_keeps_a_preexisting_b_session_continuable() {
             let block = unsafe { core::ptr::NonNull::new_unchecked(address as *mut u8) };
             assert!(
                 unsafe { native_usable_size(block) }.is_some_and(|usable_size| usable_size >= request),
-                "B's parked local session still permits A's exact read-only route query"
+                "B's parked local session still permits A's PageMap pointer query"
             );
             assert_eq!(
                 unsafe { native_free(block) },

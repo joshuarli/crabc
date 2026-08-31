@@ -1140,15 +1140,15 @@ and local `realloc` replacement return unavailable, while an exact local
 `free` remains available to complete B's source-defined exit. The direct
 local-session regression preserves sentinel bytes across the refused
 replacement before it proves the later successor or all-free completion.
-The selected C route-replacement fixture verifies the same valid-request
-refusal maps to `ENOMEM` while preserving B's source-copied replacement until
-its exact free and normal finish. Its B TSD destructor repeats that refusal,
-frees the existing client, and must complete before B's native all-free finish
-can settle A's proof. B exits through `pthread_exit`: its cleanup handler first
-receives `ENOMEM` for a new local allocation, then the TSD destructor receives
-`ENOMEM` for the existing client's valid `realloc` before freeing that client.
-The same selected fixture also proves normal return runs the TSD destructor
-without a cleanup handler and repeats the cleanup/TSD ordering through deferred
+The selected C pointer-refusal fixture verifies that a valid foreign request
+maps to `ENOMEM` while preserving A's original client and bytes until generic
+pointer-first free. It then keeps B-local replacement coverage through B's
+TSD destructor, which reallocates and frees B's existing local client before
+B's native all-free finish can settle A's proof. B exits through
+`pthread_exit`: its cleanup handler makes and frees a new local allocation,
+then the TSD destructor continues B's local client before freeing it. The same
+selected fixture also proves normal return runs the TSD destructor without a
+cleanup handler and repeats the cleanup/TSD ordering through deferred
 cancellation at a real cancellation point.
 The retired-page session regression separately leaves a normal direct-small page
 locally free and retired while one medium client stays live in another source
@@ -2206,8 +2206,9 @@ That client keeps its page registered while the worker uses only the immutable
 PageMap witness, initial owner identity, and source-constant aligned geometry;
 it borrows no page engine, scheduler claim, or stored client capability, and
 ticket zero collects the published head during its next ordinary operation.
-This route is free-only, not cross-thread reallocation, usable-size, owner
-exit, or abandoned-page routing. The
+This remote-publication route is free-only, not cross-thread reallocation,
+owner exit, or abandoned-page routing. `native_usable_size` separately reads
+an exact live client's PageMap extent without this route. The
 selected evidence includes an independently parked local-only B session and
 two separately parked A live-route owners, each with an exact B-side
 query/free witness; a worker can complete the existing all-free page drain
@@ -2215,11 +2216,11 @@ after user destructors or move a live aggregate containing direct-small,
 non-direct-small, medium,
 regular-large, arena-singleton, and OS-aligned singleton clients, or the
 source-produced sole mapped-regular result, into the private
-`NativePostExitRoute` slot. A fresh no-page worker may query one exact
-source-recorded usable extent, submit that exact address to the slot, or make
-the one bounded detached replacement; it receives no client or page
-capability. The sole mapped-regular branch grants no adoption, reclaim, or
-allocation-time authority beyond its exact free/replacement transition. An
+`NativePostExitRoute` slot. A fresh no-page worker may read one exact live
+client's PageMap usable extent or submit that exact address to generic
+pointer-first free, but a detached source never enters worker `realloc`; it
+receives no client or page capability. The sole mapped-regular branch grants
+no adoption, reclaim, allocation-time, or replacement authority. An
 aggregate's final exact naturally aligned C free may consume the
 existing final-member adoption edge only after its private ledger has reduced
 to one source-recorded normal request with A's force-collectable local-free
@@ -2233,12 +2234,12 @@ handler that also allocates and frees, then the destructor, while the same
 route carries direct-small, non-direct-small, medium, regular-large,
 arena-singleton, and OS-singleton C clients.
 While A remains parked and live, independently attached fresh no-page B/C
-publishers may each query an exact source-recorded usable extent or validate
-their exact C address against A's private ledger and atomically publish it to
-A's source remote head. A `NativeLiveRemoteOwnerRegistry` entry contains only
-that A's TLS slot/generation; it serializes those publications, a query claims
-and restores the matching entry without borrowing a page engine or scheduler,
-and each free completes `PARKED -> BUSY -> PARKED` before A resumes. No client
+publishers may each read an exact live PageMap usable extent or validate their
+exact C address against A's private ledger and atomically publish it to A's
+source remote head. A `NativeLiveRemoteOwnerRegistry` entry contains only A's
+TLS slot/generation; it serializes those publications, while the direct query
+does not claim or restore an entry or borrow a page engine or scheduler, and
+each free completes `PARKED -> BUSY -> PARKED` before A resumes. No client
 address, page, or allocator crosses that boundary. Stable metadata entries are
 reused, and a new node is appended only when the existing entries are live.
 The selected C suite releases two such producers together, then proves A
@@ -2266,16 +2267,16 @@ The selected C comparison repeats 128 fresh process epochs; a stale
 parked-count CAS retries only while the scheduler still records `BUSY` or a
 nonzero parked count. This remains a local-only admission witness, not a
 pointer registry or concurrent PageMap mutation.
-At the detached route, one synchronized B may reallocate one exact A client
-through a private allocate/copy/free transition: B records a normal
-replacement in its parked session, copies the source-bounded prefix, and only
-then enters the existing typed A free. It never reuses A's torn-down Theap in
-place. Replacement failure preserves the original client; post-free ambiguity
-retains both owners. Usable-size outside the exact detached route or parked
-live owner, general foreign worker `realloc` beyond that exact transition,
-general single-page adoption/reclaim exits, arbitrary concurrent worker
-allocation beyond the bounded live-entry witnesses, and pointer routing beyond
-the exact-live ticket-zero free remain unavailable.
+At the direct pointer boundary, a synchronized B first derives an exact A
+client's PageMap facts. `native_reallocate` rejects the foreign source as
+unavailable (the C ABI reports `ENOMEM`), leaves its bytes intact, and never
+allocates, copies, claims a route, or borrows A's torn-down Theap. Generic
+pointer-first free is the only detached-owner continuation; B's later local
+`realloc` uses only B's current owner. `native_usable_size` returns the
+captured PageMap extent for any exact live native client. General single-page
+adoption/reclaim exits, arbitrary concurrent worker allocation beyond the
+bounded live-entry witnesses, and pointer routing beyond exact-live ticket-zero
+free remain unavailable.
 `./scripts/dev.sh allocator-shadow` is the artifact-order-safe allocator ABI,
 pthread local-allocation, bounded owner-exit, and bounded live-remote-free
 evidence. It does not close the remaining general libc, remote-free,

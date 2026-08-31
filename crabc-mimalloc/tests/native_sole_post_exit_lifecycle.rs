@@ -77,32 +77,28 @@ fn native_sole_mapped_regular_route_keeps_the_dormant_pair_busy_while_b_continue
         let medium = unsafe { core::ptr::NonNull::new_unchecked(medium as *mut u8) };
         assert!(
             unsafe { native_usable_size(medium) }.is_some_and(|size| size >= 64 * 1024),
-            "the opaque sole route preserves the source-recorded usable extent"
+            "the PageMap pointer query preserves the source-recorded usable extent"
         );
         assert!(
             matches!(
                 unsafe { native_reallocate(Some(medium), usize::MAX) },
                 NativePageAllocationResult::AllocationFailed
             ),
-            "a rejected detached replacement leaves A's exact client live"
+            "an invalid request leaves A's exact client live"
         );
         assert_eq!(unsafe { medium.as_ptr().read() }, 0x52);
         assert_eq!(unsafe { medium.as_ptr().add(4095).read() }, 0x53);
         assert_eq!(unsafe { medium.as_ptr().add(64 * 1024 - 1).read() }, 0x54);
-        let replacement = match unsafe { native_reallocate(Some(medium), 4096) } {
-            NativePageAllocationResult::Allocated(block) => block,
-            _ => panic!("the detached sole route reallocates through B's local session"),
-        };
-        assert_ne!(
-            replacement, medium,
-            "an exited A Theap cannot reuse its detached source page in B"
-        );
         assert!(
-            unsafe { native_usable_size(replacement) }.is_some_and(|size| size >= 4096),
-            "B records the normal-alignment replacement in its own parked session"
+            matches!(
+                unsafe { native_reallocate(Some(medium), 4096) },
+                NativePageAllocationResult::Unavailable
+            ),
+            "the detached source cannot enter B's current-owner realloc engine"
         );
-        assert_eq!(unsafe { replacement.as_ptr().read() }, 0x52);
-        assert_eq!(unsafe { replacement.as_ptr().add(4095).read() }, 0x53);
+        assert_eq!(unsafe { medium.as_ptr().read() }, 0x52);
+        assert_eq!(unsafe { medium.as_ptr().add(4095).read() }, 0x53);
+        assert_eq!(unsafe { medium.as_ptr().add(64 * 1024 - 1).read() }, 0x54);
         let continued = match native_allocate_aligned(73, 16, false) {
             NativePageAllocationResult::Allocated(block) => block,
             _ => panic!(
@@ -122,7 +118,11 @@ fn native_sole_mapped_regular_route_keeps_the_dormant_pair_busy_while_b_continue
             NativePageFreeResult::Freed,
             "B can free its continued local client before its normal finish"
         );
-        assert_eq!(unsafe { native_free(replacement) }, NativePageFreeResult::Freed);
+        assert_eq!(
+            unsafe { native_free(medium) },
+            NativePageFreeResult::Freed,
+            "the original detached medium releases through generic pointer-first free"
+        );
         terminal_sender
             .send(())
             .expect("B reports its terminal sole-route free before finish");

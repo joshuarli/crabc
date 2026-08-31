@@ -7780,7 +7780,7 @@ unsafe fn native_initial_thread_reallocate(
     block: core::ptr::NonNull<u8>,
     new_size: usize,
 ) -> NativePageAllocationResult {
-    let result = with_current_thread_native_initial_persistent_allocator(true, |owner| {
+    let result = with_current_thread_native_initial_persistent_allocator(false, |owner| {
         // SAFETY: forwarded from `native_reallocate`'s exact-current initial
         // owner contract.
         let replacement = unsafe { owner.reallocate(block, new_size) };
@@ -7942,20 +7942,104 @@ pub fn native_test_prepare_source_published_live_owner_exit(
     NativePageAllocationResult::Allocated(live)
 }
 
+/// Looks up one exact native client before a direct caller-local pointer
+/// operation.
+///
+/// Pinned `mi_usable_size` and `mi_theap_realloc_zero_ex` derive the page and
+/// allocation geometry from the supplied client before consulting the current
+/// Heap. This bounded boundary keeps that order: PageMap facts first, then a
+/// caller-identity comparison. It deliberately has no route, registry,
+/// scheduler, or replacement continuation for a nonlocal source.
+///
+/// # Safety
+///
+/// `block` must be an exact live native-shadow allocation and remain live
+/// through the caller's complete source operation. Its lifetime keeps the
+/// selected PageMap slice and page metadata stable for this lookup.
+unsafe fn native_current_live_allocation_for_direct_pointer_operation(
+    block: core::ptr::NonNull<u8>,
+) -> Result<LiveAllocationPointer, NativePageAllocationResult> {
+    let Some(page_map) = RUNTIME_PROCESS.page_map_for_live_native_allocation() else {
+        // A caller-local engine cannot reconstruct source ownership when the
+        // one immutable PageMap witness is unavailable.
+        RUNTIME_PROCESS.retain_page_owner();
+        return Err(NativePageAllocationResult::Retained);
+    };
+    // SAFETY: forwarded from this helper's exact-live native-client contract.
+    let allocation = match unsafe { page_map.lookup_live_allocation(block) } {
+        Ok(Some(allocation)) => allocation,
+        Ok(None) => return Err(NativePageAllocationResult::Unavailable),
+        Err(_) => {
+            RUNTIME_PROCESS.retain_page_owner();
+            return Err(NativePageAllocationResult::Retained);
+        }
+    };
+    let Some(current) = current_thread_identity() else {
+        drop(allocation);
+        RUNTIME_PROCESS.retain_page_owner();
+        return Err(NativePageAllocationResult::Retained);
+    };
+    if !allocation.is_associated_with(current) {
+        // A foreign live page has supplied only immutable source facts. It
+        // does not make the caller's current owner a replacement target.
+        drop(allocation);
+        return Err(NativePageAllocationResult::Unavailable);
+    }
+    Ok(allocation)
+}
+
+/// Reallocates one PageMap-proven current native client through its existing
+/// direct owner.
+///
+/// The exact PageMap observation stays live through the local engine call so
+/// the source allocation cannot retire its selected page while the engine
+/// performs its pinned in-place/replacement decision. There is no second
+/// lookup or fallback after the current-owner comparison.
+fn native_reallocate_pointer_first_local(
+    allocation: LiveAllocationPointer,
+    new_size: usize,
+) -> NativePageAllocationResult {
+    let block = allocation.client();
+    if RUNTIME_PROCESS.is_on_initial_thread() {
+        // SAFETY: the preceding PageMap classification associated this exact
+        // live client with the persistent current initial owner.
+        let result = unsafe { native_initial_thread_reallocate(block, new_size) };
+        drop(allocation);
+        return result;
+    }
+
+    let result = with_current_thread_native_persistent_allocator(false, |allocator| {
+        // SAFETY: the caller's PageMap observation associated this exact live
+        // client with the current worker owner for this source operation.
+        unsafe { allocator.reallocate(Some(block), new_size) }
+    });
+    drop(allocation);
+    match result {
+        Ok(Some(block)) => NativePageAllocationResult::Allocated(block),
+        Ok(None) => NativePageAllocationResult::AllocationFailed,
+        Err(
+            NativePersistentThreadOwnerAccessError::NotInstalled
+            | NativePersistentThreadOwnerAccessError::Unavailable
+            | NativePersistentThreadOwnerAccessError::Retained,
+        ) => {
+            // PageMap already proved that a current owner exists. Losing its
+            // direct persistent source state cannot safely select an older
+            // session, route, or caller-local replacement owner.
+            retain_current_thread_native_persistent_owner_for_teardown();
+            NativePageAllocationResult::Retained
+        }
+    }
+}
+
 /// Reallocates one current C-facing native-shadow block on its owning thread.
 ///
 /// # Safety
 ///
 /// When present, `block` must be a live result from this same native-shadow
 /// owner and must not be concurrently accessed, remotely published, or
-/// already freed. One joined B may instead present an exact client held by a
-/// typed detached-owner route. That route privately records a normal B
-/// replacement, copies the source-defined prefix, and only then consumes A's
-/// old client through its existing terminal-free path; it does not expose an
-/// in-place, page, or general pointer-routing capability. In pinned v3.5.0,
-/// `mi_theap_realloc_zero_ex` reuses an allocation in place only when its
-/// page still belongs to the current Theap, which cannot hold after A's owner
-/// exit.
+/// already freed. A pointer whose PageMap source identity belongs to another
+/// owner is unavailable in this direct seam; it is not routed, replaced, or
+/// retried through a scheduler compatibility path.
 #[doc(hidden)]
 pub unsafe fn native_reallocate(
     block: Option<core::ptr::NonNull<u8>>,
@@ -7965,48 +8049,18 @@ pub unsafe fn native_reallocate(
         return NativePageAllocationResult::AllocationFailed;
     }
     let Some(block) = block else {
-        return native_allocate_aligned(new_size, 16, false);
+        return native_allocate_aligned(new_size, NATIVE_C_MALLOC_ALIGNMENT, false);
     };
-    if RUNTIME_PROCESS.is_on_initial_thread() {
-        // SAFETY: forwarded unchanged from this boundary's exact-current
-        // native block contract.
-        return unsafe { native_initial_thread_reallocate(block, new_size) };
-    }
-    // Phase B first derives this exact pointer's PageMap association and, for
-    // the current owner, performs realloc through the continuously stored TLS
-    // engine. Only a nonlocal/unavailable result may reach the older detached
-    // compatibility continuation below.
-    let local = unsafe { native_later_thread_reallocate(block, new_size) };
-    match local {
-        NativePageAllocationResult::Allocated(_)
-        | NativePageAllocationResult::AllocationFailed
-        | NativePageAllocationResult::Retained => return local,
-        NativePageAllocationResult::Unavailable => {}
-    }
-    // A completed A route may own this nonlocal input. This Phase-A branch is
-    // reachable only from a B shape whose older parked replacement session is
-    // still available; the persistent current-owner case returned above.
-    if current_thread_can_access_native_post_exit_route() {
-        match NATIVE_POST_EXIT_ROUTE.reallocate_exact(block, new_size) {
-            NativePostExitRouteReallocateResult::Allocated(block) => {
-                return NativePageAllocationResult::Allocated(block);
-            }
-            NativePostExitRouteReallocateResult::AllocationFailed => {
-                return NativePageAllocationResult::AllocationFailed;
-            }
-            NativePostExitRouteReallocateResult::Unavailable => {
-                return NativePageAllocationResult::Unavailable;
-            }
-            NativePostExitRouteReallocateResult::Retained => {
-                return NativePageAllocationResult::Retained;
-            }
-            NativePostExitRouteReallocateResult::NotOwned => {}
-        }
-    }
-    // `CRABC-MI-PHASE-A-DETACHED-REALLOC-CONTINUATION`: full replacement
-    // dispatch still needs W10's reviewed pointer decision plus the complete
-    // W07 -> W09 consuming old-pointer free capability.
-    local
+    // SAFETY: forwarded from this boundary's exact-live native-client
+    // contract. The returned observation remains live through the one local
+    // source reallocation below.
+    let allocation = match unsafe {
+        native_current_live_allocation_for_direct_pointer_operation(block)
+    } {
+        Ok(allocation) => allocation,
+        Err(result) => return result,
+    };
+    native_reallocate_pointer_first_local(allocation, new_size)
 }
 
 /// Applies the Phase-A pointer-only detached-owner free bridge to one route.
@@ -8351,48 +8405,33 @@ fn native_free_pointer_first_nonlocal(
     }
 }
 
-/// Returns the usable size of one current native-shadow allocation.
+/// Returns the PageMap-derived usable size of one live native allocation.
 ///
-/// A current owner uses its own live engine. A fresh no-page B may also query
-/// one exact live client held by either bounded pointer-private route: the
-/// detached aggregate or one parked live A. Each returns only A's
-/// source-recorded extent and remains active for a later exact `free`; the
-/// query itself does not touch a page engine, scheduler, or admission claim.
-/// An unavailable or foreign pointer returns no size rather than consulting
-/// the C allocator.
+/// This follows pinned `mi_usable_size`'s pointer/page geometry calculation:
+/// one immutable PageMap lookup captures the source extent, which this
+/// boundary returns directly. Unlike realloc, usable-size has no current-owner
+/// operation to select, so it performs no identity, TLS owner, route, registry,
+/// scheduler, or page-engine query.
 #[doc(hidden)]
 pub unsafe fn native_usable_size(block: core::ptr::NonNull<u8>) -> Option<usize> {
-    if RUNTIME_PROCESS.is_on_initial_thread() {
-        // SAFETY: forwarded unchanged from this boundary's exact-current
-        // native block contract.
-        return unsafe { native_initial_thread_usable_size(block) };
-    }
-    // The persistent local owner consumes W02 pointer association before any
-    // detached/live-owner compatibility ledger is inspected.
-    if let Some(usable_size) = unsafe { native_later_thread_usable_size(block) } {
-        return Some(usable_size);
-    }
-    // `CRABC-MI-PHASE-A-DETACHED-USABLE-CONTINUATION`: W10's pointer-only
-    // usable-size selection will replace these registry probes after its
-    // reviewed integration lands.
-    if current_thread_can_access_native_post_exit_route() {
-        if let Some(usable_size) = NATIVE_POST_EXIT_ROUTE.usable_size_exact(block) {
-            return Some(usable_size);
+    let Some(page_map) = RUNTIME_PROCESS.page_map_for_live_native_allocation() else {
+        RUNTIME_PROCESS.retain_page_owner();
+        return None;
+    };
+    // SAFETY: `native_usable_size` receives an exact live native client. Its
+    // allocation lifetime keeps this one PageMap source observation stable
+    // until the captured scalar has been copied below.
+    let allocation = match unsafe { page_map.lookup_live_allocation(block) } {
+        Ok(Some(allocation)) => allocation,
+        Ok(None) => return None,
+        Err(_) => {
+            RUNTIME_PROCESS.retain_page_owner();
+            return None;
         }
-        // SAFETY: the same fresh no-page B-state check prevents this
-        // read-only route from borrowing a local engine or terminal proof.
-        if let Some(usable_size) = unsafe { native_later_thread_live_remote_usable_size(block) } {
-            return Some(usable_size);
-        }
-        // The live lookup may have waited through A's `BUSY -> EMPTY`
-        // handoff after its first detached lookup missed. Recheck the
-        // replacement route before returning the persistent local miss,
-        // which cannot describe A's transition.
-        if let Some(usable_size) = NATIVE_POST_EXIT_ROUTE.usable_size_exact(block) {
-            return Some(usable_size);
-        }
-    }
-    None
+    };
+    let usable_size = allocation.usable_size();
+    drop(allocation);
+    Some(usable_size)
 }
 
 /// The allocation vocabulary shared by the source-shaped owner-exit fixtures

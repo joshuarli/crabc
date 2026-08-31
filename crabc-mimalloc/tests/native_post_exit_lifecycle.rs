@@ -59,8 +59,8 @@ fn native_post_exit_route_keeps_the_dormant_pair_busy_while_b_continues_until_b_
             0,
             "the mixed aggregate keeps its OS-singleton alignment before owner exit"
         );
-        // A rejected post-exit replacement must preserve this exact original
-        // client before B begins its source-shaped allocate/copy/free route.
+        // A rejected post-exit realloc must preserve this exact original
+        // client until the generic pointer-first free consumes it.
         unsafe {
             direct_small.as_ptr().write(0x41);
             direct_small.as_ptr().add(36).write(0x42);
@@ -131,34 +131,34 @@ fn native_post_exit_route_keeps_the_dormant_pair_busy_while_b_continues_until_b_
         let os_singleton = unsafe { core::ptr::NonNull::new_unchecked(os_singleton as *mut u8) };
         assert!(
             unsafe { native_usable_size(direct_small) }.is_some_and(|size| size >= 37),
-            "the opaque post-exit route preserves the direct-small usable extent"
+            "the PageMap pointer query preserves the direct-small usable extent"
         );
         assert!(
             unsafe { native_usable_size(non_direct_small) }.is_some_and(|size| size >= 1025),
-            "the opaque post-exit route preserves the non-direct-small usable extent"
+            "the PageMap pointer query preserves the non-direct-small usable extent"
         );
         assert!(
             unsafe { native_usable_size(medium) }.is_some_and(|size| size >= 64 * 1024),
-            "the opaque post-exit route preserves the exact medium client's usable extent"
+            "the PageMap pointer query preserves the exact medium client's usable extent"
         );
         assert!(
             unsafe { native_usable_size(large) }.is_some_and(|size| size >= 128 * 1024),
-            "the opaque post-exit route preserves the regular-large usable extent"
+            "the PageMap pointer query preserves the regular-large usable extent"
         );
         assert!(
             unsafe { native_usable_size(arena_singleton) }.is_some_and(|size| size >= 1024 * 1024),
-            "the opaque post-exit route preserves the arena-singleton usable extent"
+            "the PageMap pointer query preserves the arena-singleton usable extent"
         );
         assert!(
             unsafe { native_usable_size(os_singleton) }.is_some_and(|size| size >= 7),
-            "the opaque post-exit route preserves the OS-singleton usable extent"
+            "the PageMap pointer query preserves the OS-singleton usable extent"
         );
         assert!(
             matches!(
                 unsafe { native_reallocate(Some(medium), usize::MAX) },
                 NativePageAllocationResult::AllocationFailed
             ),
-            "a rejected detached replacement preserves the mixed-route client"
+            "an invalid request preserves the detached mixed-route client"
         );
         assert_eq!(unsafe { direct_small.as_ptr().read() }, 0x41);
         assert_eq!(unsafe { direct_small.as_ptr().add(36).read() }, 0x42);
@@ -167,21 +167,21 @@ fn native_post_exit_route_keeps_the_dormant_pair_busy_while_b_continues_until_b_
         assert_eq!(unsafe { medium.as_ptr().read() }, 0x45);
         assert_eq!(unsafe { medium.as_ptr().add(4095).read() }, 0x46);
         assert_eq!(unsafe { medium.as_ptr().add(64 * 1024 - 1).read() }, 0x46);
-        let replacement = match unsafe { native_reallocate(Some(medium), 4096) } {
-            NativePageAllocationResult::Allocated(block) => block,
-            _ => panic!("the mixed route reallocates through B's parked session"),
-        };
-        assert_ne!(
-            replacement, medium,
-            "the detached aggregate cannot reuse A's torn-down Theap page"
-        );
         assert!(
-            unsafe { native_usable_size(replacement) }.is_some_and(|size| size >= 4096),
-            "the replacement belongs to B's ordinary local ledger"
+            matches!(
+                unsafe { native_reallocate(Some(medium), 4096) },
+                NativePageAllocationResult::Unavailable
+            ),
+            "a detached source cannot enter B's current-owner realloc engine"
         );
-        assert_eq!(unsafe { replacement.as_ptr().read() }, 0x45);
-        assert_eq!(unsafe { replacement.as_ptr().add(4095).read() }, 0x46);
-        assert_eq!(unsafe { native_free(replacement) }, NativePageFreeResult::Freed);
+        assert_eq!(unsafe { medium.as_ptr().read() }, 0x45);
+        assert_eq!(unsafe { medium.as_ptr().add(4095).read() }, 0x46);
+        assert_eq!(unsafe { medium.as_ptr().add(64 * 1024 - 1).read() }, 0x46);
+        assert_eq!(
+            unsafe { native_free(medium) },
+            NativePageFreeResult::Freed,
+            "the original detached medium releases through generic pointer-first free"
+        );
         assert_eq!(unsafe { large.as_ptr().read() }, 0x47);
         assert_eq!(unsafe { large.as_ptr().add(128 * 1024 - 1).read() }, 0x48);
         assert_eq!(unsafe { arena_singleton.as_ptr().read() }, 0x49);
