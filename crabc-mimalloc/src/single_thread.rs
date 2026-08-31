@@ -7082,6 +7082,10 @@ pub(crate) enum DynamicMappedRemoteFreeError {
     InvalidBlock,
     ReclaimDisabled,
     MissingDynamicArenaPages,
+    /// Source reclaim declined after the remote free collected. The page is
+    /// still mapped and unowned, so only this handoff's existing `adopt`
+    /// operation may take a later permitted bitmap claim.
+    ReclaimRejected,
     ConcurrentOwner,
     Release,
     Queue,
@@ -7090,7 +7094,10 @@ pub(crate) enum DynamicMappedRemoteFreeError {
 
 /// A consuming mapped remote-free operation that could not restore ordinary
 /// dynamic page-engine ownership. Pre-mutation refusals keep a retryable
-/// handoff; every source ownership transition retains the handoff terminally.
+/// handoff. A rejected source reclaim also returns the mapped-unowned handoff
+/// as `Rejected`, so its existing `adopt` operation can make the one later
+/// permitted source claim without reopening the former owner. Every other
+/// source ownership transition retains the handoff terminally.
 #[must_use = "a mapped remote-free failure retains its handoff capability"]
 pub(crate) enum DynamicMappedRemoteFreeFailure<'attach, 'heap, 'arena, 'map> {
     Rejected {
@@ -34120,6 +34127,9 @@ impl<'attach, 'heap, 'arena, 'map>
                     self.terminal = true;
                     Err(terminal(self, DynamicMappedRemoteFreeError::Release))
                 }
+            }
+            Ok(abandoned::MappedAbandonedFreeResult::UnownedMapped) => {
+                Err(reject(self, DynamicMappedRemoteFreeError::ReclaimRejected))
             }
             Err(error) => {
                 self.terminal = true;

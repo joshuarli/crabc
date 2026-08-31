@@ -272,15 +272,18 @@ pub(crate) struct RetainedAdoptFailure {
 /// This is the mapped same-origin portion of
 /// `free.c:mi_free_try_collect_mt`: a producer can either find another
 /// abandoned-free owner already responsible for the decision, reclaim the
-/// page into its original live Theap, or make the page empty. Empty remains a
-/// terminal result here because `_mi_arenas_page_free` needs the separate
-/// page-map/span release authority that this bounded handoff deliberately
-/// does not own.
+/// page into its original live Theap, make the page empty, or leave a rejected
+/// reclaim mapped and unowned. Empty remains a terminal result here because
+/// `_mi_arenas_page_free` needs the separate page-map/span release authority
+/// that this bounded handoff deliberately does not own. `UnownedMapped`
+/// instead preserves the existing bitmap publication for a later permitted
+/// source claim; it retains neither the departed owner nor a terminal owner.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum MappedAbandonedFreeResult {
     PublishedToExistingOwner,
     Reclaimed { collected_remote_blocks: usize },
     Empty,
+    UnownedMapped,
 }
 
 /// Result of the mapped-abandoned prefix of `mi_free_try_collect_mt` when a
@@ -638,9 +641,12 @@ impl AdoptedPage {
 /// The existing consuming dynamic handoff is the only production caller. It
 /// supplies its original live Theap as `target_theap`; after abandoning, that
 /// is still the page's source-associated Theap and its empty regular queue is
-/// within the frozen default reclaim limit. True reabandon is intentionally
-/// absent here: upstream reaches it only from an *unmapped* abandoned page,
-/// whereas this capability proves the page is presently mapped.
+/// within the frozen default reclaim limit. If reclaim is rejected, pinned
+/// `free.c:mi_free_try_collect_mt` still visits
+/// `mi_abandoned_page_try_reabandon_to_mapped` before
+/// `mi_abandoned_page_unown_from_free`. That reabandon check is a no-op for
+/// this already-mapped capability, but the one expected-head unown remains
+/// required and returns [`MappedAbandonedFreeResult::UnownedMapped`].
 ///
 /// # Safety
 ///
@@ -650,7 +656,9 @@ impl AdoptedPage {
 /// valid until the caller requeues a successful reclaim. The caller retains
 /// the page-map, arena image, and terminal release authority throughout. A
 /// result of `Empty` retains the owned page for that terminal authority. A
-/// direct-sized small page (`block_size <= SMALL_SIZE_MAX`) must satisfy the
+/// result of `UnownedMapped` has released its low owner bit exactly once while
+/// leaving the source bitmap publication intact for a later permitted claim.
+/// A direct-sized small page (`block_size <= SMALL_SIZE_MAX`) must satisfy the
 /// pinned source `reserved >= 16` invariant; an invalid page is retained as a
 /// terminal error instead of entering partial collection.
 pub(crate) unsafe fn free_mapped_and_reclaim<M: MappedAbandonedPages + ?Sized>(
@@ -685,7 +693,13 @@ pub(crate) unsafe fn free_mapped_and_reclaim<M: MappedAbandonedPages + ?Sized>(
 
     // The frozen normal-release small-page path avoids an atomic detach of
     // its just-published head. Larger pages use the ordinary full collection.
-    // Both source paths run before the empty/reclaim decision.
+    // Both source paths run before the empty/reclaim decision. Preserve the
+    // resulting source expected head for a later rejected-reclaim unown.
+    let expected_head = if state.block_size <= crate::config::SMALL_SIZE_MAX {
+        block.as_ptr().expose_provenance()
+    } else {
+        0
+    };
     let collected_remote_blocks = if state.block_size <= crate::config::SMALL_SIZE_MAX {
         unsafe { remote_free::collect_abandoned_partly(page, block) }
     } else {
@@ -705,10 +719,21 @@ pub(crate) unsafe fn free_mapped_and_reclaim<M: MappedAbandonedPages + ?Sized>(
     if state.block_size > crate::config::MEDIUM_MAX_OBJ_SIZE
         || unsafe { ptr::read(state.theap.as_ptr()) } != target_theap.as_ptr()
     {
-        // A mapped page that cannot use the same-origin reclaim branch stays
-        // owned for a later generalized abandoned-free policy. Do not invent
-        // the unmapped reabandon route in this mapped-only handoff.
-        return Err(AbandonError::NotAbandoned);
+        // `mi_abandoned_page_try_reabandon_to_mapped` declines an already
+        // mapped page, then `mi_abandoned_page_unown_from_free` releases the
+        // one low-bit owner. Do not reopen the stale source Theap or invent a
+        // new terminal owner while the existing mapped publication is live.
+        return match unown_mapped_from_free(page, &state, map, expected_head)? {
+            MappedAbandonedFreeAfterFailedReclaimResult::PublishedToExistingOwner => {
+                Ok(MappedAbandonedFreeResult::PublishedToExistingOwner)
+            }
+            MappedAbandonedFreeAfterFailedReclaimResult::Empty => {
+                Ok(MappedAbandonedFreeResult::Empty)
+            }
+            MappedAbandonedFreeAfterFailedReclaimResult::UnownedMapped => {
+                Ok(MappedAbandonedFreeResult::UnownedMapped)
+            }
+        };
     }
     unabandon_mapped(&state, Some(map))?;
     unsafe { ptr::write(state.theap.as_ptr(), target_theap.as_ptr()) };
@@ -6224,5 +6249,12 @@ mod tests {
         assert_eq!(page.0.remote_free_test_head(), 0);
         assert_eq!(page.0.remote_free_test_used(), 1);
         assert_eq!(page.0.remote_free_test_local_chain_len(3), 2);
+    }
+
+    mod post_exit_mapped_reclaim_reabandon {
+        include!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/direct/post_exit_mapped_reclaim_reabandon.rs"
+        ));
     }
 }
