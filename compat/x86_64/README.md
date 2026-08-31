@@ -5233,7 +5233,11 @@ non-null invalid closes remain loader-owned. For a live retained non-`RTLD_NEXT`
 handle, the pinned-musl empty-name `dlsym` branch returns null and publishes
 exact `Symbol not found: `; the candidate substitutes it only after its bounded
 loader returns `loader symbol name is invalid`. Non-empty missing names, null
-symbol pointers, and invalid handles retain their existing loader paths. Pinned musl and project C/C++
+symbol pointers, and invalid handles retain their existing loader paths. For a
+writable `Dl_info`, the pinned-musl `dladdr(NULL)` branch returns zero without
+changing it or publishing `dlerror`; the bridge preserves that no-image
+observation only for a null address. Non-null failure and unavailable-record
+paths retain their existing fail-closed handling. Pinned musl and project C/C++
 headers prove the public LP64 ABI and ordinary behavior; raw clone workers
 prove diagnostic isolation without TLS, and absent/malformed records prove
 there is no ambient loader fallback. RTLD_NEXT, global promotion,

@@ -529,10 +529,16 @@ pub unsafe extern "C" fn dlerror() -> *mut c_char {
 /// # Safety
 ///
 /// `information` must point to writable `Dl_info` storage. Returned names are
-/// borrowed until this thread's next dlfcn operation.
+/// borrowed until this thread's next dlfcn operation. In this fixed graph,
+/// a null address has no containing image. Pinned musl 1.2.6 commit
+/// 9fa28ece75d8a2191de7c5bb53bed224c5947417 `ldso/dynlink.c:dladdr` returns
+/// zero at `if (!p) return 0` before writing the caller's `Dl_info` or setting
+/// a `dlerror` diagnostic. Keep only that null-address lookup branch here;
+/// non-null failure and unavailable-record handling retain their existing
+/// fail-closed paths.
 #[no_mangle]
 pub unsafe extern "C" fn dladdr(address: *const c_void, information: *mut DlInfo) -> c_int {
-    if information.is_null() {
+    if information.is_null() || address.is_null() {
         return 0;
     }
     ptr::write(

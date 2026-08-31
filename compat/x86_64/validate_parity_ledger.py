@@ -8210,6 +8210,10 @@ def require_ldso_public_fixed_graph_dlfcn_artifact(family: Mapping[str, Any]) ->
         "exact one-shot `Symbol not found: `",
         "loader failure reports `loader symbol name is invalid`",
         "non-empty missing names, null symbol pointers, and invalid handles retain their existing loader paths",
+        "`dladdr(NULL)` returns zero",
+        "caller’s `Dl_info` untouched",
+        "leaves `dlerror` clear",
+        "The bridge admits only that null-address no-image observation",
         "`RTLD_NEXT`",
         "`RTLD_GLOBAL`",
         "neither `loader.dlfcn-basic` nor `loader.dlfcn-introspection` is selected",
@@ -8261,7 +8265,7 @@ def require_ldso_public_fixed_graph_dlfcn_artifact(family: Mapping[str, Any]) ->
         "32 fixed diagnostic slots",
         "tgkill=234",
         "RTLD_DEFAULT",
-        "AArch64 libc.so and libc.a ABI manifests retain dlclose, dlinfo, dlerror, and dlsym exports",
+        "AArch64 libc.so and libc.a ABI manifests retain dladdr, dlclose, dlinfo, dlerror, and dlsym exports",
         "src/ldso/dlinfo.c:dlinfo",
         "Unsupported request %d",
         "does not consume that pending state",
@@ -8274,6 +8278,11 @@ def require_ldso_public_fixed_graph_dlfcn_artifact(family: Mapping[str, Any]) ->
         "Symbol not found: ",
         "loader symbol name is invalid",
         "non-empty missing names, null symbol pointers, and invalid handles retain their existing loader paths",
+        "ldso/dynlink.c:dladdr",
+        "if (!p) return 0",
+        "dladdr(NULL)",
+        "Dl_info",
+        "non-null failure and unavailable-record paths retain their existing fail-closed handling",
         "never searched, mapped, finalized, or unmapped",
     ):
         require(
@@ -8310,6 +8319,10 @@ def require_ldso_public_fixed_graph_dlfcn_artifact(family: Mapping[str, Any]) ->
         "empty-name dlsym branch",
         "exact `Symbol not found: `",
         "loader-confirmed `loader symbol name is invalid` failure",
+        "seeded writable `Dl_info`",
+        "dladdr(NULL)",
+        "preserve it",
+        "leave `dlerror` clear",
         "loader.dlfcn-basic",
         "public x86 support",
     ):
@@ -8360,6 +8373,9 @@ def require_ldso_public_fixed_graph_dlfcn_artifact(family: Mapping[str, Any]) ->
         "src/ldso/dlsym.c:dlsym",
         "ldso/dynlink.c:do_dlsym",
         "!symbol.is_null() && *symbol == 0",
+        "ldso/dynlink.c:dladdr",
+        "if (!p) return 0",
+        "information.is_null() || address.is_null()",
     ):
         require(
             snippet in bridge,
@@ -8378,6 +8394,9 @@ def require_ldso_public_fixed_graph_dlfcn_artifact(family: Mapping[str, Any]) ->
         '"Invalid library handle 0"',
         "typed_dlsym(mid_one, \"\")",
         '"Symbol not found: "',
+        "Dl_info null_address",
+        "typed_dladdr(NULL, &null_address)",
+        "null_address.dli_fname !=",
     ):
         require(
             snippet in probe,
@@ -8389,7 +8408,7 @@ def require_ldso_public_fixed_graph_dlfcn_artifact(family: Mapping[str, Any]) ->
     aarch64_dynamic = (
         ROOT / "compat" / "abi" / "musl-1.2.6" / "aarch64" / "libc.so.dynamic.tsv"
     ).read_text(encoding="utf-8")
-    for symbol in ("dlclose", "dlerror", "dlinfo", "dlsym"):
+    for symbol in ("dladdr", "dlclose", "dlerror", "dlinfo", "dlsym"):
         require(
             f"\n{symbol}\t" in aarch64_static,
             f"pinned AArch64 musl static manifest omits {symbol}",
@@ -8412,9 +8431,10 @@ def require_ldso_public_fixed_graph_dlfcn_artifact(family: Mapping[str, Any]) ->
             and "exact live-handle unsupported-dlinfo diagnostic" in entry["role"]
             and "exact null-dlclose return/diagnostic" in entry["role"]
             and "exact live-handle empty-dlsym diagnostic" in entry["role"]
+            and "exact null-dladdr untouched-output/no-error behavior" in entry["role"]
             for entry in oracle
         ),
-        "ldso-public-fixed-graph-dlfcn must retain its pinned musl dlinfo/dlclose/dlsym oracle",
+        "ldso-public-fixed-graph-dlfcn must retain its pinned musl dlinfo/dlclose/dlsym/dladdr oracle",
     )
     require(
         any(

@@ -501,7 +501,11 @@ handling remains loader-owned. For a live retained non-`RTLD_NEXT` handle,
 musl's `dlsym` empty-name branch returns null with one-shot `Symbol not found: `;
 the candidate substitutes that exact error only after its bounded loader reports
 `loader symbol name is invalid`. Non-empty missing names, null symbol pointers,
-and invalid handles retain their existing loader paths. Search/mapping, graph mutation, `RTLD_NEXT`,
+and invalid handles retain their existing loader paths. For a writable `Dl_info`,
+musl's `dladdr(NULL)` returns zero before modifying it or publishing `dlerror`;
+the fixed bridge preserves that no-image observation only for the null-address
+branch. Non-null failure and unavailable-record paths retain their existing
+fail-closed handling. Search/mapping, graph mutation, `RTLD_NEXT`,
 global promotion, finalization, and unload remain excluded, so neither dlfcn capability nor the
 dynamic-runtime family or public x86 platform is promoted.
 

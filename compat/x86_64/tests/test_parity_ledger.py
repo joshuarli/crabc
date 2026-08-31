@@ -953,6 +953,10 @@ class X86ParityLedgerTests(unittest.TestCase):
             "exact one-shot `Symbol not found: `",
             "loader failure reports `loader symbol name is invalid`",
             "non-empty missing names, null symbol pointers, and invalid handles retain their existing loader paths",
+            "`dladdr(NULL)` returns zero",
+            "caller’s `Dl_info` untouched",
+            "leaves `dlerror` clear",
+            "The bridge admits only that null-address no-image observation",
             "`RTLD_NEXT`",
             "`RTLD_GLOBAL`",
             "neither `loader.dlfcn-basic` nor `loader.dlfcn-introspection` is selected",
@@ -965,7 +969,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         )
         prerequisites = " ".join(artifact["x86_abi_prerequisites"])
         for phrase in (
-            "AArch64 libc.so and libc.a ABI manifests retain dlclose, dlinfo, dlerror, and dlsym exports",
+            "AArch64 libc.so and libc.a ABI manifests retain dladdr, dlclose, dlinfo, dlerror, and dlsym exports",
             "src/ldso/dlinfo.c:dlinfo",
             "Unsupported request %d",
             "does not consume that pending state",
@@ -978,6 +982,11 @@ class X86ParityLedgerTests(unittest.TestCase):
             "Symbol not found: ",
             "loader symbol name is invalid",
             "non-empty missing names, null symbol pointers, and invalid handles retain their existing loader paths",
+            "ldso/dynlink.c:dladdr",
+            "if (!p) return 0",
+            "dladdr(NULL)",
+            "Dl_info",
+            "non-null failure and unavailable-record paths retain their existing fail-closed handling",
         ):
             self.assertIn(phrase, prerequisites)
         scope = artifact["native_evidence"][0]["scope"]
@@ -992,13 +1001,17 @@ class X86ParityLedgerTests(unittest.TestCase):
             "empty-name dlsym branch",
             "exact `Symbol not found: `",
             "loader-confirmed `loader symbol name is invalid` failure",
+            "seeded writable `Dl_info`",
+            "dladdr(NULL)",
+            "preserve it",
+            "leave `dlerror` clear",
         ):
             self.assertIn(phrase, scope)
         self.assertTrue(
             any(
                 entry["kind"] == "aarch64-contract"
                 and "aarch64/libc.so.dynamic.tsv" in entry["source"]
-                and "dlclose, dlinfo, dlerror, and dlsym exports" in entry["role"]
+                and "dladdr, dlclose, dlinfo, dlerror, and dlsym exports" in entry["role"]
                 and "not a behavioral fallback" in entry["role"]
                 for entry in artifact["oracle"]
             )
