@@ -1419,6 +1419,18 @@ path. This is not processor-affinity control, topology, general `sysconf`,
 load observation, a general system-information capability, C-runtime/family
 parity, AArch64 parity, or public x86 support.
 
+`./scripts/dev-x86_64.sh libc-getloadavg` is a separate private
+`static-c-getloadavg` artifact inside the same planned `libc.posix-runtime`
+family. Its GNU/BSD-only project-header C/C++ gate and pinned-musl/
+freestanding-static fixture prove only historical `getloadavg`: nonpositive
+count/no-output/stale-`errno` behavior, the three-entry clamp, and caller
+output scaled from one adjacent Linux `sysinfo` snapshot. Musl's failed
+`sysinfo` source path reads an uninitialized local record, so it establishes
+no output oracle; the safe candidate instead publishes that errno and returns
+`-1` without output. This does not select public `sysinfo`/`uname`, `/proc`,
+processor or topology policy, general `sysconf`, a general system-information
+capability, C-runtime/family parity, AArch64 parity, or public x86 support.
+
 `./scripts/dev-x86_64.sh libc-fcntl-record-locks` is a separate private
 `static-c-fcntl-record-locks` artifact inside planned `libc.posix-runtime`.
 Its project-header C/C++ gate and pinned-musl/freestanding-static fixture prove

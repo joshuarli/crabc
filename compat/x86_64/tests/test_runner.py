@@ -1368,6 +1368,8 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             if line.strip().endswith(") ;;")
         )
         expected_groups = (
+            "getloadavg-header-abi",
+            "libc-getloadavg",
             "timerfd-header-abi|signalfd-header-abi",
             "libc-timerfd|libc-signalfd|libc-sigpause|libc-sigisemptyset|libc-sigandset-sigorset|libc-sigpending|libc-sigrtmax|libc-sigrtmin|libc-sigaddset-sigdelset-sigfillset",
             "libc-sched-yield",
@@ -1541,6 +1543,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn("libc-socket-transport", source)
         self.assertIn("libc-system-observation", source)
         self.assertIn("libc-system-information", source)
+        self.assertIn("libc-getloadavg", source)
         self.assertIn("libc-fcntl-record-locks", source)
         self.assertIn("libc-uts-identity", source)
         self.assertIn('run_musl_oracle()', source)
@@ -11771,6 +11774,14 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "sys/sysinfo.h",
         ):
             self.assertIn(required, artifact_runner)
+        self.assertIn(
+            "for separately_selected in getloadavg gethostid", artifact_runner
+        )
+        self.assertIn(
+            "processor/page candidate unexpectedly retains separately selected",
+            artifact_runner,
+        )
+        self.assertNotIn("for unselected in getloadavg", artifact_runner)
         self.assertNotIn("--whole-archive", artifact_runner)
         for symbol in ("uname", "sysinfo"):
             self.assertIn(symbol, static_export_names)
@@ -11930,6 +11941,149 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         )
         self.assertIn(
             '    libc-system-information)\n        [ "$#" -eq 0 ] || fail "libc-system-information takes no arguments"',
+            runner,
+        )
+
+    def test_libc_static_c_abi_getloadavg_artifact_stays_narrow(self) -> None:
+        """Historical load snapshots remain one private sysinfo-derived leaf."""
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        implementation = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "getloadavg.rs"
+        ).read_text(encoding="utf-8")
+        probe = (
+            ROOT / "compat" / "x86_64" / "libc_getloadavg_probe.c"
+        ).read_text(encoding="utf-8")
+        start = (
+            ROOT / "compat" / "x86_64" / "libc_getloadavg_start.S"
+        ).read_text(encoding="utf-8")
+        artifact_runner = (
+            ROOT / "compat" / "x86_64" / "run_libc_getloadavg.sh"
+        ).read_text(encoding="utf-8")
+        header_runner = (
+            ROOT / "compat" / "x86_64" / "run_getloadavg_header_abi.sh"
+        ).read_text(encoding="utf-8")
+        header_c = (
+            ROOT / "compat" / "x86_64" / "getloadavg_header_abi_probe.c"
+        ).read_text(encoding="utf-8")
+        header_cxx = (
+            ROOT / "compat" / "x86_64" / "getloadavg_header_abi_probe.cpp"
+        ).read_text(encoding="utf-8")
+        static_exports = {
+            line
+            for line in (
+                ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+            ).read_text(encoding="utf-8").splitlines()
+            if line and not line.startswith("#")
+        }
+        parity_ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        runner = RUNNER.read_text(encoding="utf-8")
+
+        self.assertIn('#[path = "getloadavg.rs"]', static_root)
+        for required in (
+            "Selected static Linux/x86-64 `getloadavg` C ABI boundary",
+            "pinned musl 1.2.6 release commit",
+            "src/legacy/getloadavg.c::getloadavg",
+            "MAX_LOAD_AVERAGES: c_int = 3",
+            "SI_LOAD_SCALE: f64 = 1.0 / 65_536.0",
+            "system_observation::sysinfo_raw",
+            "if c_status(raw_result) != 0",
+            'pub unsafe extern "C" fn getloadavg(output: *mut f64, count: c_int) -> c_int',
+        ):
+            self.assertIn(required, implementation)
+        for forbidden in (
+            "raw_syscall::",
+            "system_configuration::",
+            "fn get_nprocs",
+            "alloc::",
+            "crabc_core",
+            "crabc_mimalloc",
+        ):
+            self.assertNotIn(forbidden, implementation)
+        self.assertIn("getloadavg", static_exports)
+        self.assertEqual(
+            {symbol for symbol in static_exports if symbol.startswith("getloadavg")},
+            {"getloadavg"},
+        )
+
+        for required in (
+            "sizeof(double) == 8",
+            "getloadavg_signature",
+            "SI_LOAD_SHIFT == 16 && SYS_sysinfo == 99",
+            "snapshot_loads",
+            "matches_adjacent_snapshot",
+            "check_nonpositive_counts",
+            "check_three_loads_and_clamp",
+            "check_function_pointer_one_load",
+            "check_safe_sysinfo_error_in_child",
+            "PR_SET_NO_NEW_PRIVS",
+            "SYS_seccomp == 317",
+            "CRABC_GETLOADAVG_FREESTANDING",
+        ):
+            self.assertIn(required, probe)
+        for required in (
+            "crabc_x86_64_getloadavg_probe",
+            "ARCH_SET_FS",
+            "mov %rsi, %fs:0",
+            "mov $60, %eax",
+        ):
+            self.assertIn(required, start)
+
+        for header in (header_c, header_cxx):
+            for required in (
+                "getloadavg declaration",
+                "CRABC_GETLOADAVG_EXPECT_HIDDEN",
+                "getloadavg_signature",
+            ):
+                self.assertIn(required, header)
+        for required in (
+            "getloadavg_header_abi_probe.c",
+            "getloadavg_header_abi_probe.cpp",
+            "-D__STRICT_ANSI__",
+            "-D_POSIX_C_SOURCE=200809L",
+            "-D_XOPEN_SOURCE=700",
+            "-D_GNU_SOURCE",
+            "-D_BSD_SOURCE",
+            "nm --undefined-only",
+            "retained a mangled getloadavg reference",
+        ):
+            self.assertIn(required, header_runner)
+
+        for required in (
+            "run_getloadavg_header_abi.sh",
+            "static_c_abi_exports.txt",
+            "-nostdlib -static",
+            "-Wl,-e,_start",
+            "-Wl,--no-undefined",
+            "--disassemble=getloadavg",
+            "getloadavg candidate unexpectedly pulls",
+            "candidate errno does not use direct fs initial TLS",
+            "getloadavg lacks Linux sysinfo=99",
+            "sys/prctl.h",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn("--whole-archive", artifact_runner)
+        self.assertIn('id = "static-c-getloadavg"', parity_ledger)
+        self.assertIn(
+            'command = "./scripts/dev-x86_64.sh libc-getloadavg"', parity_ledger
+        )
+        self.assertIn("run_getloadavg_header_abi()", runner)
+        self.assertIn(
+            "/workspace/compat/x86_64/run_getloadavg_header_abi.sh", runner
+        )
+        self.assertIn("run_libc_getloadavg_probe()", runner)
+        self.assertIn(
+            "/workspace/compat/x86_64/run_libc_getloadavg.sh", runner
+        )
+        self.assertIn(
+            '    getloadavg-header-abi)\n        [ "$#" -eq 0 ] || fail "getloadavg-header-abi takes no arguments"',
+            runner,
+        )
+        self.assertIn(
+            '    libc-getloadavg)\n        [ "$#" -eq 0 ] || fail "libc-getloadavg takes no arguments"',
             runner,
         )
 

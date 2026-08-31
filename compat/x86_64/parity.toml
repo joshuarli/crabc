@@ -5032,6 +5032,58 @@ native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc
 oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source mapping: src/conf/legacy.c exports the four helpers through sysconf; src/conf/sysconf.c supplies the same fixed 128-byte sched_getaffinity CPU mask plus sysinfo page arithmetic; src/linux/sysinfo.c supplies __lsysinfo and its errno conversion. The failed C page-helper read is explicitly not a usable output oracle." }, { kind = "kernel-abi", source = "Linux 5.10 x86-64 ABI", role = "sched_getaffinity=204 rdi/rsi/rdx, sysinfo=99 rdi, fork/wait4/exit fixture isolation, prctl/seccomp classic-BPF error injection, LP64 sysinfo prefix, and raw errno contract." }, { kind = "elf-abi", source = "System V AMD64 psABI", role = "Static initial-exec TLS and Variant-II thread-pointer fixture contract." }]
 
 [[family.verified_artifact]]
+id = "static-c-getloadavg"
+description = "Private native x86 selected-static-archive historical `getloadavg` compatibility artifact inside still-planned `libc.posix-runtime`. One dependency-free `crabc-libc` archive resolves exactly `int getloadavg(double *, int)` into a freestanding C fixture after an equivalent pinned musl 1.2.6 execution. A positive request takes one private Linux `sysinfo` snapshot, clamps its count to three, and copies the selected fixed-point load words scaled by 2^-16 into caller-owned doubles. `count <= 0` returns zero or `-1` without accessing the output and preserves stale errno. Pinned musl reads its uninitialized local `struct sysinfo` after a failed syscall, so that source path has no usable output contract; this safe Rust leaf publishes the raw errno and returns `-1` without output rather than fabricate failure values. It does not select public `sysinfo` or `uname`, processor/page helpers, no `/proc` or system-file parsing, CPU-affinity/topology/scheduler policy, general `sysconf`, a general system-information capability, libc.so, CRT, loader, sysroot, allocation, family completion, promotion, or public x86 support."
+source_owners = [
+  "compat/upstreams.toml",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/errno.rs",
+  "libc/src/c_abi/x86_64/syscall.rs",
+  "libc/src/c_abi/x86_64/system_observation.rs",
+  "libc/src/c_abi/x86_64/getloadavg.rs",
+  "include/errno.h",
+  "include/features.h",
+  "include/bits/alltypes.h",
+  "include/stdlib.h",
+  "include/bits/syscall.h",
+  "include/sys/syscall.h",
+  "include/sys/sysinfo.h",
+  "include/sys/prctl.h",
+  "compat/x86_64/getloadavg_header_abi_probe.c",
+  "compat/x86_64/getloadavg_header_abi_probe.cpp",
+  "compat/x86_64/run_getloadavg_header_abi.sh",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/libc_getloadavg_probe.c",
+  "compat/x86_64/libc_getloadavg_start.S",
+  "compat/x86_64/run_libc_getloadavg.sh",
+  "compat/x86_64/run_libc_system_information.sh",
+  "compat/x86_64/aarch64_parity_inventory.json",
+  "compat/x86_64/tests/test_aarch64_parity_inventory.py",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "compat/x86_64/README.md",
+  "STATUS.md",
+  "x86-64.md",
+  "scripts/dev-x86_64.sh",
+  "scripts/check_structure.py",
+]
+x86_abi_prerequisites = [
+  "The SysV AMD64 LP64 C ABI passes `getloadavg(double *output, int count)` in rdi/rsi and returns the signed four-byte count/status in eax. A positive output designates exactly min(count, 3) writable binary64 slots; count zero returns zero and a negative count returns -1 without accessing output or changing errno.",
+  "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417 maps `src/legacy/getloadavg.c::getloadavg` directly to one `sysinfo(&si)` call. Linux/x86-64 sysinfo=99 receives the complete public record in rdi; the source clamps a positive count to three and writes `1.0 / (1 << SI_LOAD_SHIFT) * si.loads[i]` with SI_LOAD_SHIFT=16.",
+  "Pinned musl's failed sysinfo call sets errno but then reads an uninitialized C local record, so it has no defined output result to reproduce. The selected safe Rust leaf preserves that raw errno through the private sysinfo seam and returns -1 without output on this unselected failure path; native differential evidence exercises only successful valid-record snapshots.",
+  "A candidate-only raw-fork child enables PR_SET_NO_NEW_PRIVS and a classic seccomp filter that returns EPERM for sysinfo=99, then proves the safe Rust -1/errno/no-output boundary. The pinned-musl arm deliberately does not execute this source-undefined failed-record branch.",
+  "The final `-nostdlib -static` candidate has only the selected getloadavg path plus direct initial-exec errno TLS: no interpreter, DT_NEEDED, unresolved symbol, dynamic TLS model, allocator, public sysinfo/uname, processor/page helper, sysconf, or /proc extraction. Fixture-local Variant-II %fs:0 setup supplies no CRT or TLS lifecycle claim.",
+]
+x86_header_prerequisites = [
+  "The focused pinned-musl/project-first C11/C++17 `<stdlib.h>` matrix proves the exact `int getloadavg(double *, int)` declaration only under GNU and BSD selection; strict, POSIX.1-2008, and X/Open 700 profiles retain it hidden. Requested C++ references remain unmangled C linkage. The freestanding fixture additionally preprocesses errno.h, sys/prctl.h, sys/syscall.h, and sys/sysinfo.h for its candidate-only child-local error proof. It selects no general stdlib header, archive linkage, load-observation framework, or public x86 support.",
+]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-getloadavg", scope = "Pinned-musl/project GNU/BSD C/C++ header compilation plus an equivalent pinned-musl C run and one true dependency-free x86 crabc-libc `-nostdlib -static` candidate. The fixture proves the LP64 direct/function-pointer ABI, count <= 0 return/no-output/stale-errno behavior, positive one-entry and four-request three-entry clamp, caller-output bounds, and each live result against one complete adjacent raw sysinfo=99 snapshot rather than /proc policy. A candidate-only raw-forked PR_SET_NO_NEW_PRIVS/seccomp sysinfo=99 EPERM child proves the safe -1/errno/no-output boundary; musl's source-undefined failed-sysinfo output path is an uninitialized-record read and deliberately not an output oracle. It audits exact crate-owned export closure, no interpreter/DT_NEEDED/unresolved symbol or dynamic TLS model, direct initial-TLS errno access, and an emitted getloadavg sysinfo syscall while rejecting public sysinfo/uname, processor/page helpers, sysconf, allocation, and a general system-information closure. It does not establish `/proc`, CPU topology/scheduler policy, libc.so, CRT, loader, sysroot, family completion, promotion, or public x86 support." }]
+oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source and GNU/BSD declaration oracle: src/legacy/getloadavg.c::getloadavg supplies the count branch, one sysinfo call, three-entry clamp, and SI_LOAD_SHIFT fixed-point output. Its failed uninitialized-record read is explicitly not an output oracle." }, { kind = "kernel-abi", source = "Linux 5.10 x86-64 ABI", role = "sysinfo=99 rdi public-record input, SI_LOAD_SHIFT=16 load-word representation, raw errno result, and live snapshot observation contract." }, { kind = "elf-abi", source = "System V AMD64 psABI", role = "LP64 pointer/int/binary64 calling convention, GNU/BSD C++ C linkage, static initial-exec TLS, and Variant-II fixture thread-pointer contract." }]
+
+[[family.verified_artifact]]
 id = "static-c-uts-identity"
 description = "Private native x86 selected-static-archive UTS-namespace identity block. One dependency-free crabc-libc archive resolves only gethostname, sethostname, getdomainname, and setdomainname through the separately selected private uname record seam into a freestanding C fixture after an equivalent pinned-musl execution. Each reference and candidate arm starts under unshare --uts --fork in a fresh fixture-local UTS namespace; the canonical launcher supplies the one container-local CAP_SYS_ADMIN prerequisite, and all hostname/domain mutations are confined to that namespace rather than the container or host identity. It proves musl's bounded forced-NUL hostname copy, full-fit-only domain copy, direct setter errno results, and identity stability after rejected setters. This is capability-free evidence, not a UTS namespace-management capability: it does not select UTS namespace creation, entry, or control, gethostid/sethostid, system-file parsing, sysconf, process identity, a system-information framework, libc.so, CRT, dynamic TLS, pthread/TLS lifecycle, loader, sysroot, allocator, or public x86 support."
 source_owners = [

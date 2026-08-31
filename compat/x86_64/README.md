@@ -493,6 +493,8 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-readiness-waits
 ./scripts/dev-x86_64.sh libc-system-observation
 ./scripts/dev-x86_64.sh libc-system-information
+./scripts/dev-x86_64.sh getloadavg-header-abi
+./scripts/dev-x86_64.sh libc-getloadavg
 ./scripts/dev-x86_64.sh libc-uts-identity
 ./scripts/dev-x86_64.sh libc-network-byte-order
 ./scripts/dev-x86_64.sh libc-in6addr-any
@@ -4080,6 +4082,19 @@ fallback after a child-local forced affinity error, and successful
 `sysinfo`-derived physical/free-plus-buffer page calculations. It deliberately
 does not select `getloadavg`, affinity control, topology/scheduler policy,
 `/proc` parsing, general `sysconf`, dynamic runtime, or public x86 support.
+
+`libc-getloadavg` is the fixture for a separate private `static-c-getloadavg`
+`verified_artifact` gate over that archive, not a general system-information
+capability. Its GNU/BSD-only project-header C/C++ declaration matrix and one
+project-header C body first execute through pinned musl and then through a
+`-nostdlib -static` candidate. It selects only historical `getloadavg`:
+nonpositive count/no-output/stale-`errno` behavior, a positive three-entry
+clamp, and caller-owned binary64 output against an adjacent raw `sysinfo`
+snapshot. The musl source's failed `sysinfo` local-record read has no usable
+output contract; the safe candidate reports that errno with `-1` and no
+output. It excludes public `sysinfo`/`uname`, processor/page helpers, `/proc`,
+topology or scheduler policy, general `sysconf`, dynamic runtime, and public
+x86 support.
 
 `libc-uts-identity` is a separately recorded
 `static-c-uts-identity` `verified_artifact` gate over that archive, not a

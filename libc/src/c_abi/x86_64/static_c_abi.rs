@@ -455,6 +455,8 @@ mod directory_streams;
 mod system_observation;
 #[path = "system_information.rs"]
 mod system_information;
+#[path = "getloadavg.rs"]
+mod getloadavg;
 #[path = "uts_identity.rs"]
 mod uts_identity;
 #[path = "socket_transport.rs"]
