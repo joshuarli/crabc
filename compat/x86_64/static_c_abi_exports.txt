@@ -49,6 +49,9 @@ __signbitf
 __signbitl
 __signgam
 __sigsetjmp
+__strtod_l
+__strtof_l
+__strtold_l
 __xstat
 _environ
 _exit
@@ -121,6 +124,7 @@ dup
 dup2
 dup3
 eaccess
+ecvt
 environ
 epoll_create
 epoll_create1
@@ -146,6 +150,7 @@ faccessat
 fchmod
 fclose
 fcntl
+fcvt
 fdatasync
 fdopendir
 feclearexcept
@@ -203,6 +208,7 @@ futimes
 futimesat
 fwrite
 gai_strerror
+gcvt
 get_avphys_pages
 get_nprocs
 get_nprocs_conf
@@ -240,6 +246,7 @@ getrusage
 getsid
 getsockname
 getsockopt
+getsubopt
 gettimeofday
 getuid
 getxattr
@@ -581,10 +588,13 @@ strrchr
 strspn
 strstr
 strtod
+strtod_l
 strtof
+strtof_l
 strtoimax
 strtol
 strtold
+strtold_l
 strtoll
 strtoul
 strtoull
@@ -639,7 +649,16 @@ waitid
 waitpid
 wcrtomb
 wcsrtombs
+wcstod
+wcstof
+wcstoimax
+wcstol
+wcstold
+wcstoll
 wcstombs
+wcstoul
+wcstoull
+wcstoumax
 wctob
 wctomb
 write

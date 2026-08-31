@@ -692,9 +692,9 @@ errno, and pipe-observed `fputc`/`fflush(stdout)`: a valid UTF-8 conversion
 preserves stale errno, an invalid lead establishes EILSEQ, and successful
 parsing plus explicit stream output retain that datum. It rejects dynamic TLS,
 format/path/wide streams (including the separate format/scan artifact), locale
-objects, `_l` parsers, scalar libm, iconv, allocation, and ambient runtime
-dependencies. It does not establish general text/math/locale/stdio behavior,
-parity, promotion, or public x86 support.
+objects, scalar libm, iconv, allocation, and ambient runtime dependencies; it
+does not exercise the independently selected `_l` parser wrappers. It does not establish general
+text/math/locale/stdio behavior, parity, promotion, or public x86 support.
 
 `libc-directory-streams` is the separate private static C runtime artifact
 that follows that compile-only header evidence. One project-header fixture runs
@@ -868,12 +868,14 @@ C++ linkage. This is compile-only declaration evidence; the separately staged
 static artifact owns the runtime byte-scan, `errno`, range, and end-pointer
 behavior. It does not select `crabc-libc` generally or a general C runtime ABI.
 
-`float-parse-header-abi` compiles project-first and pinned-musl strict-base
-C11/C++17 `<stdlib.h>` declarations for `strtof`, `strtod`, `strtold`, and
-`atof`. It ratchets the binary32/binary64/x87 result types, 16-byte align-16
-x86 `long double` storage, and unmangled C++ linkage. This is declaration-only
-evidence: it neither links the archive nor establishes runtime/fenv behavior
-or general `<stdlib.h>` completion.
+`float-parse-header-abi` compiles project-first and pinned-musl GNU-profile
+C11/C++17 declarations for the twenty public names in
+`numeric.parse-float-locale` across `<stdlib.h>`, `<wchar.h>`, `<inttypes.h>`,
+and `<locale.h>`. It ratchets binary32/binary64/x87 results, 16-byte align-16
+x86 `long double`, four-byte `wchar_t`, LP64 `intmax_t`, `locale_t`, and
+unmangled C++ linkage. The three weak internal `__strto*_l` spellings have no
+public declaration. This remains compile-only evidence and does not establish
+general header-family or runtime support.
 
 `intmax-arithmetic-header-abi` compiles project-first and pinned-musl C/C++
 `<inttypes.h>` declarations for `imaxabs` and `imaxdiv`. Both declarations are
@@ -3240,19 +3242,29 @@ decimal convenience entries cover defined inputs only and do not write
 forms; stdio; allocation; dynamic runtime; allocator; loader; sysroot; and
 public x86 support.
 
-`libc-float-parse` is a separately recorded `static-c-float-parse`
-`verified_artifact` gate over that archive, not text/math/locale/stdio family
-completion. Its project-header C fixture first runs through pinned musl and
-then through a `-nostdlib -static` candidate. It resolves exactly `strtof`,
-`strtod`, `strtold`, and `atof` through a checked-in, source-faithful fixed-musl
-x86 assembly translation. The fixture covers the named C-locale grammar,
-end-pointer and `errno` results, binary32/binary64/x87 range boundaries, raw
-defined 10-byte binary80 payloads, and per-conversion all-four-direction
-x87/MXCSR rounding/exception cases. It accepts only NUL-terminated strings;
-the private pseudo-`FILE` route does not select real streams. Wide, `_l`,
-internal, locale-object, real-stdio, allocation, general text/locale or
-scalar/complex math, libc.so, CRT, loader, sysroot, promotion, and public x86
-support remain outside this artifact.
+`libc-float-parse` records both the low-level `static-c-float-parse` artifact
+and the completed private `numeric.parse-float-locale` verified slice, without
+completing `libc.text-math-locale-stdio`. Its project-header fixture first runs
+through pinned musl and then through a `-nostdlib -static` candidate. All
+twenty-three ledger symbols are invoked through function pointers: the four
+narrow conversions; public and weak-internal ignored-locale `_l` wrappers;
+wide floating and integer conversions; `ecvt`, `fcvt`, `gcvt`; and
+`getsubopt`. The checked-in x86 translation retains the narrow string
+pseudo-`FILE`, x87 binary80 operation order, and musl's 60-byte wide refill
+adapter. Its private refill invokes only that adapter and does not expose
+`FILE` or import general stdio. The allocation-free Rust companion removes the
+older AArch64 staging implementation's wide-input length cap and performs
+exact binary64 decimal rounding without selecting `sprintf`.
+
+The differential corpus covers narrow decimal/hex grammar, end pointers,
+`errno`, flags and all four x87/MXCSR rounding directions; raw 10-byte
+binary80 results; ignored locale handles; refill-spanning wide strings,
+Unicode whitespace, non-ASCII termination, arbitrary-length wide integers and
+overflow; exact legacy decimal strings; and in-place suboption mutation. The
+grammar remains fixed across C, POSIX, and C.UTF-8. Arbitrary locale maps or
+locale-dependent radix, real stdio, allocation, general text/locale or
+scalar/complex math, libc.so, CRT, loader, sysroot, family completion,
+promotion, and public x86 support remain outside the slice.
 
 `libc-intmax-arithmetic` is a separately recorded
 `static-c-intmax-arithmetic` `verified_artifact` gate over that archive, not a

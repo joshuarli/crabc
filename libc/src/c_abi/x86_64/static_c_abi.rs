@@ -39,7 +39,9 @@
 //! deterministic numeric `netdb.h` address/service translation and result
 //! ownership without resolver configuration, hosts, or DNS,
 //! credential-observation, integer-arithmetic, integer-parsing, selected
-//! C-locale binary32/binary64/x87-binary80 floating parsing, named
+//! C-locale binary32/binary64/x87-binary80 floating parsing plus complete
+//! fixed-C/POSIX/C.UTF-8 narrow/wide numeric parsing, legacy decimal
+//! conversion, and suboption parsing, named
 //! C/POSIX/C.UTF-8 multibyte state and fixed UTF/ASCII `iconv` conversion,
 //! bounded permanent stdin/stdout/stderr byte/block I/O with explicit flushing, selected
 //! allocation-free byte-buffer formatting and NUL-string scanning,
@@ -146,6 +148,8 @@ mod integer_arithmetic;
 mod integer_parse;
 #[path = "float_parse.rs"]
 mod float_parse;
+#[path = "float_parse_locale.rs"]
+mod float_parse_locale;
 #[path = "intmax_arithmetic.rs"]
 mod intmax_arithmetic;
 #[path = "ffs.rs"]

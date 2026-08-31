@@ -1,13 +1,15 @@
 //! Fixed musl x86-64 source-faithful C-locale floating-conversion assembly translation.
  //!
- //! This target-local leaf owns exactly `strtof`, `strtod`, `strtold`, and `atof` in the
- //! selected static archive. It accepts valid, readable NUL-terminated C
+ //! This target-local leaf owns the source-faithful narrow scanner behind
+ //! `strtof`, `strtod`, `strtold`, and `atof` in the selected static archive;
+ //! `float_parse_locale` composes its fixed-locale/wide completion. It accepts
+ //! valid, readable NUL-terminated C
  //! strings and, for every `strto*` entry, an optional writable end-pointer.
  //! The public ABI is Linux/x86-64 System V: `strtof`/`strtod`/`atof` return
  //! binary32/binary64 in `xmm0`, while `strtold` returns x87 binary80 in
- //! `st0`. It is a string-only scanner: it does not expose a public
- //! `__floatscan`, wide-character conversion, locale-object/`_l` conversion,
- //! allocation, stdio streams, locale databases, or a general text runtime.
+ //! `st0`. It does not expose public `__floatscan`, allocation, stdio streams,
+ //! locale databases, or a general text runtime. The companion wide adapter
+ //! is the only owner allowed to invoke its private one-byte refill callback.
  //!
  //! ## Fixed source and license provenance
  //!
@@ -28,12 +30,12 @@
  //! | `src/internal/shgetc.c` (`__shlim`, `__shgetc`) | `float_parse_musl_support_x86_64.S` pseudo-string reader |
  //! | `src/math/{scalbn,scalbnl,copysignl}.c` and `src/math/x86_64/{fabsl,fmodl}.c` | the same private support translation |
  //!
- //! The `__shgetc` refill route is unreachable for this source's
+ //! The `__shgetc` refill route is unreachable for this narrow source's
  //! pseudo-`FILE` construction: `strtox` stores `rend = (void *)-1` and
- //! valid public inputs are NUL terminated. Its private fallback returns EOF
- //! rather than importing musl `__uflow` or any stdio owner. That is the only
- //! intentional source-level boundary, and it is invalid to use this internal
- //! scanner with a real stream.
+ //! valid public inputs are NUL terminated. Its private fallback recognizes
+ //! only the checked `wcsto*` adapter's one-byte callback; it does not import
+ //! musl `__uflow`/`__toread` or any stdio owner. It is invalid to use this
+ //! internal scanner with any other stream.
  //!
  //! ## Code-generation provenance
  //!
@@ -53,8 +55,8 @@
  //! zero, and `errno` outcomes near underflow. This translation keeps those
 //! The native artifact verifies that fidelity for its named grammar, range,
 //! binary80 ABI, and directed-rounding corpus. It is evidence for that
-//! selected string boundary, not a claim that every C text, locale, stdio, or
-//! floating-math behavior is complete.
+//! selected fixed-locale string/wide boundary, not a claim that every C text,
+//! locale, stdio, or floating-math behavior is complete.
  //!
  //! `float_parse_musl_x86_64.S` and its support/entry siblings contain no
  //! public helper symbol. The existing target-local `__errno_location` is the
@@ -78,5 +80,13 @@ core::arch::global_asm!(
 );
 core::arch::global_asm!(
     include_str!("float_parse_musl_entry_x86_64.S"),
+    options(att_syntax)
+);
+core::arch::global_asm!(
+    include_str!("float_parse_locale_musl_x86_64.S"),
+    options(att_syntax)
+);
+core::arch::global_asm!(
+    include_str!("float_parse_locale_aliases_x86_64.S"),
     options(att_syntax)
 );

@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
-# Native Linux/x86-64 C11/C++17 floating-parser header ABI gate.
+# Native Linux/x86-64 C11/C++17 floating-parser/locale header ABI gate.
 #
 # Pinned musl 1.2.6 is the declaration and requested C++ C-linkage oracle.
 # The candidate pass uses raw GCC with only project headers and compiler
 # builtin headers, so ambient libc headers cannot hide a project mismatch.
-# This is compile-only evidence for the `strtof`, `strtod`, `strtold`, and
-# `atof` declarations, including the x87
-# binary80 result type. It neither links crabc-libc nor selects general
+# This is compile-only evidence for the complete public
+# `numeric.parse-float-locale` declaration family, including x87 binary80,
+# locale_t, wchar_t, and intmax_t result/argument types. It neither links
+# crabc-libc nor selects general
 # text/locale behavior, a C runtime, CRT, loader, sysroot, or public x86
 # support.
 set -euo pipefail
@@ -20,7 +21,7 @@ readonly PROJECT_INCLUDE="$ROOT_DIR/include"
 readonly C_PROBE="$ROOT_DIR/compat/x86_64/float_parse_header_abi_probe.c"
 readonly CXX_PROBE="$ROOT_DIR/compat/x86_64/float_parse_header_abi_probe.cpp"
 readonly -a STRICT_FEATURE_ARGS=(
-    -U_GNU_SOURCE
+    -D_GNU_SOURCE
     -U_BSD_SOURCE
     -U_XOPEN_SOURCE
     -U_POSIX_C_SOURCE
@@ -28,10 +29,26 @@ readonly -a STRICT_FEATURE_ARGS=(
     -U_DEFAULT_SOURCE
 )
 readonly -a CXX_SYMBOLS=(
-    strtof
-    strtod
-    strtold
     atof
+    ecvt
+    fcvt
+    gcvt
+    getsubopt
+    strtod
+    strtod_l
+    strtof
+    strtof_l
+    strtold
+    strtold_l
+    wcstod
+    wcstof
+    wcstoimax
+    wcstol
+    wcstold
+    wcstoll
+    wcstoul
+    wcstoull
+    wcstoumax
 )
 
 fail() {
@@ -85,7 +102,7 @@ assert_header_provenance() {
         esac
     done < <(trace_paths "$trace")
 
-    for header in stdlib.h features.h bits/alltypes.h; do
+    for header in inttypes.h locale.h stdlib.h wchar.h features.h bits/alltypes.h; do
         grep -Fq "$root/$header" "$trace" ||
             fail "$label did not preprocess $root/$header"
     done
@@ -152,7 +169,7 @@ check_cxx_c_linkage() {
         fi
     done
 
-    if printf '%s\n' "$undefined" | grep -Eq '^_Z.*(strtof|strtod|strtold|atof)'; then
+    if printf '%s\n' "$undefined" | grep -Eq '^_Z.*(atof|ecvt|fcvt|gcvt|getsubopt|strto|wcsto)'; then
         printf 'C++ linkage mismatch: %s retains a mangled float-parser reference\n' \
             "$label" >&2
         return 1
@@ -211,4 +228,4 @@ run_one reference cxx17
 run_one candidate c11
 run_one candidate cxx17
 
-printf 'x86 pinned-musl/project C11/C++17 float-parse header ABI: PASS\n'
+printf 'x86 pinned-musl/project C11/C++17 float-parse/locale header ABI: PASS\n'

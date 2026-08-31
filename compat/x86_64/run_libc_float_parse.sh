@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
-# Native Linux/x86-64 selected static crabc-libc floating-conversion evidence.
+# Native Linux/x86-64 selected static crabc-libc floating/locale conversion evidence.
 #
 # The project-header C fixture executes first against pinned musl, then as a
 # true -nostdlib static candidate linked only through the selected archive. It
-# selects exactly strtof/strtod/strtold/atof plus the already-selected x86
-# fenv and initial-TLS errno leaves needed to prove current-rounding behavior.
-# `strtold` retains the SysV x87 binary80 result ABI. Wide/_l/internal
-# conversion, allocation, stdio, locale databases, and a general text runtime
-# remain outside this artifact.
+# selects the complete `numeric.parse-float-locale` symbol set plus the
+# already-selected x86 fenv and initial-TLS errno leaves needed to prove
+# current-rounding behavior. `strtold`, `strtold_l`, `__strtold_l`, and
+# `wcstold` retain the SysV x87 binary80 result ABI. Allocation, general stdio,
+# locale databases beyond C/POSIX/C.UTF-8, and a general text runtime remain
+# outside this artifact.
 set -euo pipefail
 
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -76,7 +77,7 @@ errno_disassembly="$work_dir/errno-disassembly"; parser_disassembly="$work_dir/p
 cd "$ROOT_DIR"
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -I"$ROOT_DIR/include" -E -H \
     compat/x86_64/libc_float_parse_probe.c >/dev/null 2>"$trace"
-for header in errno.h fenv.h float.h stdint.h stdlib.h features.h bits/alltypes.h; do
+for header in errno.h fenv.h float.h inttypes.h locale.h stdint.h stdlib.h wchar.h features.h bits/alltypes.h; do
     grep -Fq "$ROOT_DIR/include/$header" "$trace" || fail "fixture did not use project $header"
 done
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -fno-builtin -fno-stack-protector \
@@ -89,12 +90,15 @@ CARGO_TARGET_DIR="$target_dir" cargo rustc --locked -p crabc-libc --lib \
 [ -f "$archive" ] || fail "cargo did not emit the x86 static libc archive"
 nm -A --defined-only "$archive" >"$archive_symbols"
 assert_selected_c_abi_surface "$archive" "$selected_symbols" "$expected_symbols"
-for symbol in __errno_location atof strtof strtod strtold fegetround fesetround fegetenv fesetenv feraiseexcept; do
+for symbol in __errno_location __strtod_l __strtof_l __strtold_l atof ecvt fcvt gcvt getsubopt \
+    strtod strtod_l strtof strtof_l strtold strtold_l wcstod wcstof wcstoimax wcstol \
+    wcstold wcstoll wcstoul wcstoull wcstoumax fegetround fesetround fegetenv fesetenv \
+    feraiseexcept; do
     grep -Eq "[[:space:]][TW][[:space:]]${symbol}$" "$archive_symbols" ||
         fail "archive does not define ${symbol}"
 done
-for unselected in strtof_l strtod_l strtold_l wcstof wcstod wcstold \
-    __floatscan __strtod_internal __strtof_internal __strtold_internal malloc calloc realloc free \
+for unselected in __floatscan __intscan __strtod_internal __strtof_internal __strtold_internal \
+    malloc calloc realloc free printf fprintf \
     rand srand drand48; do
     if grep -Eq "[[:space:]][TW][[:space:]]${unselected}$" "$archive_symbols"; then
         fail "archive accidentally exports unselected ${unselected}"
@@ -118,7 +122,10 @@ readelf --program-headers --wide "$candidate" >"$headers"
 readelf --dynamic --wide "$candidate" >"$dynamic" || true
 readelf --relocs --wide "$candidate" >"$relocs"
 objdump -d "$candidate" >"$disassembly"
-for symbol in __errno_location atof strtof strtod strtold fegetround fesetround fegetenv fesetenv feraiseexcept; do
+for symbol in __errno_location __strtod_l __strtof_l __strtold_l atof ecvt fcvt gcvt getsubopt \
+    strtod strtod_l strtof strtof_l strtold strtold_l wcstod wcstof wcstoimax wcstol \
+    wcstold wcstoll wcstoul wcstoull wcstoumax fegetround fesetround fegetenv fesetenv \
+    feraiseexcept; do
     grep -Eq "[[:space:]]${symbol}$" "$symbols" || fail "candidate lacks ${symbol}"
 done
 if awk '$7 == "UND" && NF >= 8 { print }' "$symbols" | grep -q .; then
@@ -137,8 +144,10 @@ objdump -d --disassemble=__errno_location "$candidate" >"$errno_disassembly"
 grep -Eq '%fs:0x0|%fs:-' "$errno_disassembly" ||
     fail "candidate errno does not use direct fs initial TLS"
 objdump -d --disassemble=strtof --disassemble=strtod --disassemble=strtold \
+    --disassemble=strtod_l --disassemble=wcstod --disassemble=wcstold \
+    --disassemble=ecvt --disassemble=fcvt --disassemble=gcvt \
     --disassemble=atof "$candidate" >"$parser_disassembly"
-if grep -Eq 'malloc|calloc|realloc|free|strtof_l|strtod_l|strtold_l|wcsto|__floatscan|__strtod_internal|__strtof_internal|__strtold_internal|crabc_core|mimalloc|sha_crypt' \
+if grep -Eq 'malloc|calloc|realloc|free|sprintf|snprintf|printf|fprintf|__floatscan|__intscan|__strtod_internal|__strtof_internal|__strtold_internal|crabc_core|mimalloc|sha_crypt' \
     "$symbols" "$disassembly" "$parser_disassembly"; then
     fail "candidate selects allocation, wide/locale/internal conversion, or an unowned runtime dependency"
 fi
@@ -156,4 +165,4 @@ else
     status=$?
     fail "freestanding floating-conversion fixture failed with status ${status}"
 fi
-printf 'x86 static libc floating conversion: PASS\n'
+printf 'x86 static libc floating/locale conversion: PASS\n'

@@ -179,7 +179,7 @@ sources = [
   "compat/x86_64/float_parse_header_abi_probe.cpp",
   "compat/x86_64/run_float_parse_header_abi.sh",
 ]
-headers = ["include/stdlib.h"]
+headers = ["include/inttypes.h", "include/locale.h", "include/stdlib.h", "include/wchar.h"]
 
 [[probe]]
 id = "intmax-arithmetic"

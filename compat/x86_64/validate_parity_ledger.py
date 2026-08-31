@@ -1093,6 +1093,36 @@ INTEGER_PARSE_SYMBOLS = (
 
 FLOAT_PARSE_SYMBOLS = ("strtof", "strtod", "strtold", "atof")
 
+FLOAT_PARSE_LOCALE_SYMBOLS = (
+    "atof",
+    "ecvt",
+    "fcvt",
+    "gcvt",
+    "getsubopt",
+    "strtod",
+    "strtod_l",
+    "strtof",
+    "strtof_l",
+    "strtold",
+    "strtold_l",
+    "wcstod",
+    "wcstof",
+    "wcstoimax",
+    "wcstol",
+    "wcstold",
+    "wcstoll",
+    "wcstoul",
+    "wcstoull",
+    "wcstoumax",
+    "__strtod_l",
+    "__strtof_l",
+    "__strtold_l",
+)
+
+FLOAT_PARSE_LOCALE_PUBLIC_SYMBOLS = tuple(
+    symbol for symbol in FLOAT_PARSE_LOCALE_SYMBOLS if not symbol.startswith("__")
+)
+
 STDIO_STANDARD_STREAM_DATA_SYMBOLS = ("stdin", "stdout", "stderr")
 
 STDIO_STANDARD_STREAM_FUNCTION_SYMBOLS = (
@@ -16120,6 +16150,220 @@ def require_float_parse_artifact(family: Mapping[str, Any]) -> None:
         )
 
 
+def require_float_parse_locale_slice(family: Mapping[str, Any]) -> None:
+    """Ratchet the complete fixed-locale numeric conversion capability."""
+    slices = require_verified_slices(
+        family.get("verified_slice"),
+        "family[libc.text-math-locale-stdio].verified_slice",
+        family.get("status", ""),
+        list(family.get("capabilities", [])),
+    )
+    matching = [entry for entry in slices if entry.get("id") == "numeric.parse-float-locale"]
+    require(
+        len(matching) == 1,
+        "libc.text-math-locale-stdio must contain exactly one numeric.parse-float-locale slice",
+    )
+    selected = matching[0]
+    require(
+        selected.get("capabilities") == ["numeric.parse-float-locale"],
+        "numeric.parse-float-locale slice must consume exactly its named capability",
+    )
+    description = selected["description"]
+    assert isinstance(description, str)
+    for phrase in (
+        "all twenty-three ledger symbols",
+        "C/POSIX/C.UTF-8",
+        "weak-internal",
+        "arbitrary-length wide",
+        "locale-dependent radix",
+        "general printf",
+        "family stays planned",
+        "promotion_ready=false",
+        "public_support=false",
+    ):
+        require(phrase in description, f"numeric.parse-float-locale description omits {phrase}")
+
+    owners = set(nonempty_strings(
+        selected["source_owners"], "numeric.parse-float-locale.source_owners"
+    ))
+    for owner in (
+        "compat/upstreams.toml",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/float_parse.rs",
+        "libc/src/c_abi/x86_64/float_parse_locale.rs",
+        "libc/src/c_abi/x86_64/float_parse_locale_aliases_x86_64.S",
+        "libc/src/c_abi/x86_64/float_parse_locale_musl_x86_64.S",
+        "libc/src/c_abi/x86_64/float_parse_musl_entry_x86_64.S",
+        "libc/src/c_abi/x86_64/float_parse_musl_support_x86_64.S",
+        "libc/src/c_abi/x86_64/float_parse_musl_x86_64.S",
+        "include/inttypes.h",
+        "include/locale.h",
+        "include/stdlib.h",
+        "include/wchar.h",
+        "compat/x86_64/float_parse_header_abi_probe.c",
+        "compat/x86_64/float_parse_header_abi_probe.cpp",
+        "compat/x86_64/run_float_parse_header_abi.sh",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/libc_float_parse_probe.c",
+        "compat/x86_64/libc_float_parse_start.S",
+        "compat/x86_64/run_libc_float_parse.sh",
+        "compat/x86_64/aarch64_parity_inventory.py",
+        "compat/x86_64/aarch64_parity_inventory.json",
+        "compat/x86_64/tests/test_aarch64_parity_inventory.py",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/README.md",
+        "x86-64.md",
+        "scripts/dev-x86_64.sh",
+    ):
+        require(owner in owners, f"numeric.parse-float-locale source owners omit {owner}")
+
+    prerequisites = "\n".join(nonempty_strings(
+        selected["x86_abi_prerequisites"],
+        "numeric.parse-float-locale.x86_abi_prerequisites",
+    ))
+    for phrase in (
+        "binary32/binary64 through xmm0",
+        "x87 binary80 through st0",
+        "four-byte wchar_t",
+        "wcstod",
+        "wcstol",
+        "strtod_l",
+        "getsubopt",
+        "60-byte refill",
+        "no public FILE layout",
+    ):
+        require(phrase in prerequisites, f"numeric.parse-float-locale ABI map omits {phrase}")
+
+    header_contract = "\n".join(nonempty_strings(
+        selected["x86_header_prerequisites"],
+        "numeric.parse-float-locale.x86_header_prerequisites",
+    ))
+    for phrase in (
+        "all twenty public declarations",
+        "stdlib.h",
+        "wchar.h",
+        "inttypes.h",
+        "locale.h",
+        "unmangled C++ linkage",
+        "three weak `__strto*_l`",
+    ):
+        require(phrase in header_contract, f"numeric.parse-float-locale header map omits {phrase}")
+
+    exports = static_c_abi_export_names(
+        ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+    )
+    for symbol in FLOAT_PARSE_LOCALE_SYMBOLS:
+        require(symbol in exports, f"numeric.parse-float-locale export contract omits {symbol}")
+
+    static_root = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+    ).read_text(encoding="utf-8")
+    require(
+        '#[path = "float_parse_locale.rs"]\nmod float_parse_locale;' in static_root,
+        "x86 static C ABI must compose the float_parse_locale leaf",
+    )
+    implementation = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "float_parse_locale.rs"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+        "src/locale/strtod_l.c",
+        "src/stdlib/wcstod.c",
+        "src/stdlib/wcstol.c",
+        "src/stdlib/{ecvt,fcvt,gcvt}.c",
+        "src/misc/getsubopt.c",
+        "exact binary64-to-decimal",
+        "C/POSIX/C.UTF-8",
+    ):
+        require(snippet in implementation, f"float_parse_locale leaf omits {snippet}")
+    for function in (
+        "ecvt", "fcvt", "gcvt", "getsubopt", "wcstol", "wcstoul",
+        "wcstoll", "wcstoull", "wcstoimax", "wcstoumax",
+    ):
+        require(
+            f'extern "C" fn {function}' in implementation,
+            f"float_parse_locale leaf omits {function}",
+        )
+
+    aliases = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64"
+        / "float_parse_locale_aliases_x86_64.S"
+    ).read_text(encoding="utf-8")
+    for symbol in ("strtof_l", "strtod_l", "strtold_l"):
+        require(f".globl {symbol}" in aliases, f"locale wrapper assembly omits {symbol}")
+        require(
+            f".weak __{symbol}" in aliases and f".set __{symbol}, {symbol}" in aliases,
+            f"locale wrapper assembly omits weak __{symbol} alias",
+        )
+    wide_assembly = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64"
+        / "float_parse_locale_musl_x86_64.S"
+    ).read_text(encoding="utf-8")
+    for symbol in ("wcstof", "wcstod", "wcstold"):
+        require(f".globl {symbol}" in wide_assembly, f"wide float assembly omits {symbol}")
+    for snippet in ("$60", "crabc_x86_wide_parse_do_read", "crabc_x86_float_parse_floatscan"):
+        require(snippet in wide_assembly, f"wide float assembly omits {snippet}")
+
+    header_runner = (
+        ROOT / "compat" / "x86_64" / "run_float_parse_header_abi.sh"
+    ).read_text(encoding="utf-8")
+    for symbol in FLOAT_PARSE_LOCALE_PUBLIC_SYMBOLS:
+        require(symbol in header_runner, f"float parse header runner omits {symbol}")
+    runtime_runner = (
+        ROOT / "compat" / "x86_64" / "run_libc_float_parse.sh"
+    ).read_text(encoding="utf-8")
+    fixture = (
+        ROOT / "compat" / "x86_64" / "libc_float_parse_probe.c"
+    ).read_text(encoding="utf-8")
+    for symbol in FLOAT_PARSE_LOCALE_SYMBOLS:
+        require(symbol in runtime_runner, f"float parse runtime runner omits {symbol}")
+        require(symbol in fixture, f"float parse runtime fixture omits {symbol}")
+    for snippet in ("sprintf", "__intscan", "-nostdlib -static", "--no-undefined"):
+        require(snippet in runtime_runner, f"float parse runtime runner omits {snippet}")
+    for snippet in (
+        "check_locale_argument_aliases",
+        "check_wide_floating_conversions",
+        "check_wide_integer_conversions",
+        "check_legacy_decimal_conversions",
+        "check_getsubopt",
+    ):
+        require(snippet in fixture, f"float parse runtime fixture omits {snippet}")
+
+    evidence = selected["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-float-parse"},
+        "numeric.parse-float-locale must use the closed libc-float-parse command",
+    )
+    scope = evidence[0].get("scope")
+    require(
+        isinstance(scope, str)
+        and all(
+            phrase in scope
+            for phrase in (
+                "every one of the twenty-three capability symbols",
+                "ignored locale handles",
+                "refill-spanning wide input",
+                "arbitrary-length wide integers",
+                "ecvt/fcvt/gcvt",
+                "getsubopt",
+                "initial-exec errno TLS",
+                "printf/FILE",
+                "promotion",
+                "public x86 support",
+            )
+        ),
+        "numeric.parse-float-locale evidence omits its complete non-promotion boundary",
+    )
+
+    dispatcher = (ROOT / "scripts" / "dev-x86_64.sh").read_text(encoding="utf-8")
+    for snippet in ("float-parse-header-abi)", "libc-float-parse)"):
+        require(snippet in dispatcher, f"x86 dispatcher omits {snippet}")
+
+
 def require_stdio_standard_streams_artifact(family: Mapping[str, Any]) -> None:
     """Keep the permanent standard-stream static leaf below stdio completion.
 
@@ -19268,6 +19512,7 @@ def validate_ledger(
     require_timestamp_updates_artifact(by_id["libc.posix-runtime"])
     require_ffs_artifact(by_id["libc.posix-runtime"])
     require_float_parse_artifact(by_id["libc.text-math-locale-stdio"])
+    require_float_parse_locale_slice(by_id["libc.text-math-locale-stdio"])
     require_stdio_standard_streams_artifact(by_id["libc.text-math-locale-stdio"])
     require_stdio_format_scan_artifact(by_id["libc.text-math-locale-stdio"])
     require_stdio_path_stream_artifact(by_id["libc.text-math-locale-stdio"])

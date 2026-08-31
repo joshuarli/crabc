@@ -1570,6 +1570,7 @@ source_owners = [
   "include/features.h",
   "include/arpa/inet.h",
   "include/inttypes.h",
+  "include/locale.h",
   "include/stddef.h",
   "include/stdint.h",
   "include/stdlib.h",
@@ -1605,6 +1606,7 @@ source_owners = [
   "include/utime.h",
   "include/lastlog.h",
   "include/unistd.h",
+  "include/wchar.h",
   "include/sys/mman.h",
   "include/sys/procfs.h",
   "include/sys/ptrace.h",
@@ -5834,6 +5836,50 @@ x86_header_prerequisites = [
 native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-fenv-rounding", scope = "Pinned-musl project-header C reference plus one true dependency-free x86 crabc-libc archive and `-nostdlib -static --gc-sections` candidate. The gate proves the exact closed archive export contract; function-pointer rint/rintf/rintl and nearbyint/nearbyintf/nearbyintl calls across all four independently reset MXCSR/x87 rounding modes; exact binary32/binary64/binary80 integral and signed-zero results; FE_INEXACT raising versus suppression; preservation of preexisting FE_INEXACT plus FE_DIVBYZERO; generated addsd/subsd/addss/subss and x87 fldt/faddp/subtract-pop operations; and no interpreter/DT_NEEDED/unresolved symbol, retained TLS/dynamic-TLS resolver, ambient libm, or unowned runtime dependency. It rejects sqrt*, cproj*, exp10*/pow10*, fdim*, and other unselected math from the final candidate. It excludes category/family completion, promotion, full x86-64 parity, and public x86 support." }]
 oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source mapping and C/fenv behavior oracle for src/math/{rint,rintf,rintl,nearbyint,nearbyintf,nearbyintl}.c." }, { kind = "aarch64-contract", source = "libc/src/math_lrint.rs and libc/src/math_compat.rs", role = "The existing AArch64 semantic mapping for the same public C names, with binary128 long double and target instructions kept representation-distinct." }, { kind = "elf-abi", source = "System V AMD64 psABI", role = "xmm0 binary32/binary64 and stack-argument/st0-return x87 binary80 ABI plus the split MXCSR/x87 environment." }]
 
+[[family.verified_slice]]
+id = "numeric.parse-float-locale"
+description = "Private native x86 completion of the AArch64 `numeric.parse-float-locale` capability. The selected static archive owns all twenty-three ledger symbols: narrow `atof`/`strto*`, ignored-locale public and weak-internal `_l` wrappers, arbitrary-length wide floating and integer conversions, musl-compatible static-buffer `ecvt`/`fcvt`, caller-buffered `gcvt`, and in-place `getsubopt`. C/POSIX/C.UTF-8 share the fixed decimal grammar; no arbitrary locale map, locale-dependent radix, public FILE, general printf, allocator, libc.so, CRT, loader, or sysroot is selected. The family stays planned and the repository retains promotion_ready=false and public_support=false."
+source_owners = [
+  "compat/upstreams.toml",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/float_parse.rs",
+  "libc/src/c_abi/x86_64/float_parse_locale.rs",
+  "libc/src/c_abi/x86_64/float_parse_locale_aliases_x86_64.S",
+  "libc/src/c_abi/x86_64/float_parse_locale_musl_x86_64.S",
+  "libc/src/c_abi/x86_64/float_parse_musl_entry_x86_64.S",
+  "libc/src/c_abi/x86_64/float_parse_musl_support_x86_64.S",
+  "libc/src/c_abi/x86_64/float_parse_musl_x86_64.S",
+  "include/inttypes.h",
+  "include/locale.h",
+  "include/stdlib.h",
+  "include/wchar.h",
+  "compat/x86_64/float_parse_header_abi_probe.c",
+  "compat/x86_64/float_parse_header_abi_probe.cpp",
+  "compat/x86_64/run_float_parse_header_abi.sh",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/libc_float_parse_probe.c",
+  "compat/x86_64/libc_float_parse_start.S",
+  "compat/x86_64/run_libc_float_parse.sh",
+  "compat/x86_64/aarch64_parity_inventory.py",
+  "compat/x86_64/aarch64_parity_inventory.json",
+  "compat/x86_64/tests/test_aarch64_parity_inventory.py",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "compat/x86_64/README.md",
+  "x86-64.md",
+  "scripts/dev-x86_64.sh",
+]
+x86_abi_prerequisites = [
+  "System V AMD64 returns binary32/binary64 through xmm0 and x87 binary80 through st0 in 16-byte align-16 long-double storage; four-byte wchar_t is signed and LP64 makes the six wide integer spellings share 64-bit result limits.",
+  "Pinned musl 1.2.6 src/stdlib/{strtod,wcstod,wcstol,atof,ecvt,fcvt,gcvt}.c, src/locale/strtod_l.c, src/misc/getsubopt.c, src/ctype/iswspace.c, and src/internal/{floatscan,intscan,shgetc}.c define the selected behavior. Checked assembly retains the wide 60-byte refill and x87 scanner order; Rust retains the exact wide integer and allocation-free decimal algorithms.",
+  "The private shgetc refill invokes only the selected wide adapter's one-byte callback. The narrow pseudo-FILE cannot reach it for valid NUL-terminated input; no public FILE layout, __uflow, __toread, formatted stdio, allocator, or locale database is imported.",
+]
+x86_header_prerequisites = ["The project-first/pinned-musl GNU-profile C11/C++17 matrix proves all twenty public declarations across stdlib.h, wchar.h, inttypes.h, and locale.h, including locale_t, wchar_t, intmax_t, x87 long double, and unmangled C++ linkage. The three weak `__strto*_l` ABI aliases intentionally have no public declaration."]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-float-parse", scope = "Pinned-musl project-header C reference plus one dependency-free x86 crabc-libc archive and `-nostdlib -static` candidate. Function-pointer calls cover every one of the twenty-three capability symbols; narrow decimal/hex grammar, end pointers, errno, flags, all-four-direction rounding, and raw binary80; ignored locale handles; refill-spanning wide input, Unicode whitespace, non-ASCII termination, arbitrary-length wide integers and overflow; exact ecvt/fcvt/gcvt strings; and getsubopt mutation. ELF checks ratchet exact exports, initial-exec errno TLS, x87 fldt/fstpt/fprem, and reject unresolved symbols, dynamic TLS, allocation, printf/FILE, ambient runtime, promotion, and public x86 support." }]
+oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source and differential behavior oracle for every selected narrow, wide, fixed-locale, legacy-decimal, and suboption entry." }, { kind = "aarch64-contract", source = "libc/src/c_abi.rs, libc/src/decimal_conversions.rs, libc/src/locale_exports.rs, and libc/src/program_utils_exports.rs", role = "Existing AArch64 symbol/semantic mapping; x86 deliberately removes the older wide-parser narrowing cap and uses binary80 rather than binary128 long double." }, { kind = "elf-abi", source = "System V AMD64 psABI", role = "xmm0 binary32/binary64, st0 binary80, LP64 integer, four-byte wchar_t, and initial-exec errno fixture ABI." }]
+capabilities = ["numeric.parse-float-locale"]
+
 [[family.verified_artifact]]
 id = "static-c-math-x87-extended"
 description = "Private native x86 selected-static x87 elementary long-double artifact. One dependency-free `crabc-libc` archive resolves exactly `acosl`, `asinl`, `atanl`, `atan2l`, `ceill`, `exp2l`, `expl`, `expm1l`, `fabsl`, `floorl`, `fmodl`, `log10l`, `log1pl`, `log2l`, `logl`, `lrintl`, `llrintl`, `rintl`, `remainderl`, `remquol`, `sqrtl`, and `truncl` into a freestanding project-header C fixture after an equivalent pinned-musl execution. The target-private extended source owns 20 of those x87 binary80 algorithms while the separately selected fenv-rounding and elementary-square-root leaves remain the archive's single `rintl` and `sqrtl` owners; their composed SysV stack/st0 ABI operates without promotion or narrowing through binary64. The fixture compares 1,260 complete records across all four rounding directions, defined ten-byte binary80 payloads, x87/MXCSR exception flags, integer conversions, and signed low remquo quotient bits. This artifact is deliberately narrower than `math.elementary-long-double`: it excludes sin/cos/tan, power, cube root, decomposition/scaling, nextafter, hyperbolic, error, gamma/Bessel, complex transcendental, and broader fenv-sensitive math. It does not select `math.special`, complete scalar math, libc.so, CRT/TLS lifecycle, allocator, loader, sysroot, family completion, promotion, full x86-64 parity, or public x86 support."
@@ -5925,7 +5971,7 @@ oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ec
 
 [[family.verified_artifact]]
 id = "static-c-float-parse"
-description = "Private native x86 selected-static-archive C-locale floating-conversion block. One dependency-free `crabc-libc` archive resolves exactly `strtof`, `strtod`, `strtold`, and `atof` into a freestanding project-header C fixture after an equivalent pinned-musl execution. The target-private, string-only scanner is a checked-in source-faithful assembly translation of fixed musl x86 code, not a linked foreign object: it retains its binary80 intermediate operation order while keeping the public System V binary32/binary64 `xmm0` and x87 binary80 `st0` return paths distinct. The fixture invokes all four entries through function pointers and covers C-locale grammar/end pointers, ordinary stale-errno behavior, normal/subnormal/overflow/underflow values, raw 10-byte binary80 payloads, and per-conversion reset all-four-direction x87/MXCSR rounding, errno, and exception-flag regressions for decimal and hexadecimal boundaries. It is valid only for readable NUL-terminated strings and its private pseudo-`FILE` refill fallback is not a public stream interface. This artifact excludes wide, `_l`, internal, locale-object, real-stdio, allocation, general text/locale, general scalar/complex math, libc.so, CRT, loader, sysroot, family completion, promotion, and public x86 support."
+description = "Private native x86 selected-static-archive C-locale floating-conversion block, extended across the bounded C/POSIX/C.UTF-8 profile, underlying the completed `numeric.parse-float-locale` slice. One dependency-free `crabc-libc` archive resolves `strtof`, `strtod`, `strtold`, `atof`, `ecvt`, `fcvt`, `gcvt`, `getsubopt`, all public/internal `_l` wrappers, and all wide floating/integer spellings. Its narrow and wide float paths are a checked-in source-faithful assembly translation retaining binary80 intermediate operation order, `xmm0` binary32/binary64, x87 binary80 `st0`, the string pseudo-`FILE`, and the owned wide 60-byte refill callback. Target-local Rust provides unlimited wide integer scanning and exact allocation-free decimal formatting without importing printf. The fixture covers all twenty-three symbols, raw 10-byte binary80 payloads, all-four-direction parser rounding, wide refill/Unicode/end/range behavior, legacy decimal strings, and suboption mutation. It excludes arbitrary locales/radices, real-stdio, allocation, general text/locale, general scalar/complex math, libc.so, CRT, loader, sysroot, family completion, promotion, and public x86 support."
 source_owners = [
   "compat/upstreams.toml",
   "libc/Cargo.toml",
@@ -5933,6 +5979,9 @@ source_owners = [
   "libc/src/c_abi/x86_64/static_c_abi.rs",
   "libc/src/c_abi/x86_64/errno.rs",
   "libc/src/c_abi/x86_64/float_parse.rs",
+  "libc/src/c_abi/x86_64/float_parse_locale.rs",
+  "libc/src/c_abi/x86_64/float_parse_locale_aliases_x86_64.S",
+  "libc/src/c_abi/x86_64/float_parse_locale_musl_x86_64.S",
   "libc/src/c_abi/x86_64/float_parse_musl_entry_x86_64.S",
   "libc/src/c_abi/x86_64/float_parse_musl_support_x86_64.S",
   "libc/src/c_abi/x86_64/float_parse_musl_x86_64.S",
@@ -5940,8 +5989,11 @@ source_owners = [
   "include/errno.h",
   "include/fenv.h",
   "include/float.h",
+  "include/inttypes.h",
+  "include/locale.h",
   "include/stdint.h",
   "include/stdlib.h",
+  "include/wchar.h",
   "compat/x86_64/float_parse_header_abi_probe.c",
   "compat/x86_64/float_parse_header_abi_probe.cpp",
   "compat/x86_64/run_float_parse_header_abi.sh",
@@ -5958,16 +6010,16 @@ source_owners = [
   "scripts/check_structure.py",
 ]
 x86_abi_prerequisites = [
-  "System V AMD64 passes `strtof`/`strtod`/`strtold` input and optional end pointer in rdi/rsi; strtof returns binary32 and strtod/atof return binary64 in xmm0, while strtold returns x87 binary80 in st0. Linux/x86-64 long double storage is 16-byte align-16 with only its low 10-byte f80 payload defined.",
-  "Pinned musl 1.2.6 src/stdlib/strtod.c::strtox/strtof/strtod/strtold and src/stdlib/atof.c map to the public wrappers; src/internal/floatscan.c::{scanexp,decfloat,hexfloat,__floatscan}, src/internal/shgetc.c::{__shlim,__shgetc}, src/math/scalbn.c, scalbnl.c, copysignl.c, and src/math/x86_64/{fabsl,fmodl}.c map to private target-local assembly helpers under the fixed release pin.",
-  "The string-only pseudo-FILE marks its input exhausted at the terminating NUL, so private __shgetc refill is unreachable for the selected valid input contract and returns EOF rather than importing musl __uflow; no real FILE or stdio ABI is selected.",
+  "System V AMD64 passes narrow/wide input and optional end pointers through rdi/rsi, with base or ignored locale handles in rdx; float returns binary32 and double/atof return binary64 in xmm0, while all long-double spellings return x87 binary80 in st0. Linux/x86-64 long double storage is 16-byte align-16 with only its low 10-byte f80 payload defined; wchar_t is four bytes and LP64 wide integer results are 64-bit.",
+  "Pinned musl 1.2.6 src/stdlib/strtod.c, wcstod.c, wcstol.c, atof.c, ecvt.c, fcvt.c, and gcvt.c; src/locale/strtod_l.c; src/misc/getsubopt.c; src/ctype/iswspace.c; src/internal/floatscan.c, intscan.c, and shgetc.c; src/math/scalbn.c, scalbnl.c, and copysignl.c; and src/math/x86_64/fabsl.c and fmodl.c map to the target-local assembly/Rust implementation under the fixed release pin.",
+  "The narrow pseudo-FILE marks input exhausted at NUL. The private shgetc refill invokes only the owned wide adapter's one-byte callback and never imports public __uflow/__toread; no real FILE, printf, or general stdio ABI is selected.",
   "The selected fenv boundary must preserve the live x87/MXCSR rounding direction and record the observed source path's signed-zero, errno, FE_INEXACT, FE_UNDERFLOW, and FE_OVERFLOW outcomes. The final static fixture supplies only the already-selected initial-exec errno TLS datum and %fs:0 self word; this is not a CRT or general TLS lifecycle contract.",
 ]
 x86_header_prerequisites = [
-  "The strict-base project-first/pinned-musl C11/C++17 declaration gate checks unconditional strtof, strtod, strtold, and atof pointer/result types, x86 16-byte align-16 long double storage, and unmangled C++ linkage. It selects no archive linkage or runtime behavior for any declaration, and does not complete stdlib.h or public headers.",
+  "The GNU-profile project-first/pinned-musl C11/C++17 declaration gate checks strtof, strtod, strtold, atof and all twenty public capability names across stdlib.h, wchar.h, inttypes.h, and locale.h, including x86 16-byte align-16 long double, four-byte wchar_t, LP64 intmax_t, locale_t, and unmangled C++ linkage. It selects no archive linkage or runtime behavior and no general header-family completion.",
 ]
-native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-float-parse", scope = "Pinned-musl project-header C reference plus a true dependency-free x86 crabc-libc static archive and -nostdlib -static candidate. The gate first requires the C11/C++17 declaration/linkage check, ratchets the complete selected static C export surface, rejects unresolved symbols/interpreter/DT_NEEDED/dynamic-TLS and allocation/wide/_l/internal conversion dependencies, and verifies direct initial-exec errno TLS. Function-pointer calls prove exactly strtof/strtod/strtold/atof C-locale grammar/end-pointer, stale-errno/range behavior, binary32/binary64 normal/subnormal/overflow/underflow, raw x87 80-bit-in-16-byte strtold ABI payloads, and save/restore fenv per-conversion all-four-direction decimal/hex boundary results including errno and flags. Candidate structural checks require the private source-faithful x87 fldt/fstpt/fprem path. It is one verified artifact inside still-planned libc.text-math-locale-stdio, not C text/math/locale/stdio family completion, promotion, or public x86 support." }]
-oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source mapping and C/POSIX behavior oracle for src/stdlib/strtod.c, atof.c, src/internal/floatscan.c, shgetc.c, src/math/scalbn.c, scalbnl.c, copysignl.c, and x86_64 fabsl/fmodl; the string-only pseudo-FILE EOF boundary intentionally excludes real streams and stdio." }, { kind = "elf-abi", source = "System V AMD64 psABI", role = "rdi/rsi input/end-pointer convention, xmm0 binary32/binary64 returns, x87 st0 binary80 strtold return, 16-byte align-16 long-double storage, and initial-exec errno fixture contract." }]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-float-parse", scope = "Pinned-musl project-header C reference plus a true dependency-free x86 crabc-libc static archive and -nostdlib -static candidate. The gate requires the full C11/C++17 declaration/linkage check, ratchets the complete selected static C export surface, rejects unresolved symbols/interpreter/DT_NEEDED/dynamic-TLS, allocation, printf/FILE, internal scanner exports, and ambient dependencies, and verifies direct initial-exec errno TLS. Function-pointer calls prove all twenty-three numeric.parse-float-locale symbols: strtof/strtod/strtold/atof narrow grammar/end/range/fenv, raw x87 80-bit-in-16-byte strtold ABI payloads and all-four-direction decimal/hex boundary results; ignored locale handles; refill-spanning wide float and arbitrary-length wide integer semantics; exact legacy decimal strings; and getsubopt mutation. Candidate structural checks require the source-faithful fldt/fstpt/fprem parser path. It remains inside still-planned libc.text-math-locale-stdio, not family completion, promotion, or public x86 support." }]
+oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source mapping and C/POSIX behavior oracle for src/stdlib/strtod.c, wcstod.c, wcstol.c, atof.c, ecvt.c, fcvt.c, gcvt.c, src/locale/strtod_l.c, src/misc/getsubopt.c, src/ctype/iswspace.c, src/internal/floatscan.c, intscan.c, shgetc.c, src/math/scalbn.c, scalbnl.c, copysignl.c, and x86_64 fabsl.c and fmodl.c; the private pseudo-FILE/refill boundary intentionally excludes real streams and stdio." }, { kind = "aarch64-contract", source = "libc/src/c_abi.rs, libc/src/decimal_conversions.rs, libc/src/locale_exports.rs, and libc/src/program_utils_exports.rs", role = "AArch64 semantic/export mapping, with target-distinct binary128 long double and an older bounded wide-narrowing implementation not copied to x86." }, { kind = "elf-abi", source = "System V AMD64 psABI", role = "rdi/rsi/rdx inputs, xmm0 binary32/binary64 returns, x87 st0 binary80 returns, 16-byte align-16 long-double storage, four-byte wchar_t, LP64 integers, and initial-exec errno fixture contract." }]
 
 [[family.verified_artifact]]
 id = "static-c-stdio-standard-streams"
@@ -6184,7 +6236,7 @@ oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ec
 
 [[family.verified_artifact]]
 id = "static-c-text-math-locale-stdio-composition"
-description = "Private native x86 selected-static C composition artifact inside still-planned `libc.text-math-locale-stdio`. One project-header fixture first executes through pinned musl 1.2.6 and then a dependency-free `-nostdlib -static` crabc-libc archive. It crosses only existing `setlocale`/`localeconv`/`mbrtowc` named C.UTF-8 state, `strtod` C-locale parsing, `__fpclassify` binary64 classification, direct initial-exec errno TLS, and permanent `stdout` `fputc`/`fflush` behavior: valid UTF-8 leaves stale errno, an invalid lead sets EILSEQ, a successful parse preserves that errno, and a pipe-observed explicit stream flush preserves it again. The runner requires all four existing math/complex, float-parse, locale/multibyte, and permanent-standard-stream C/C++ header matrices; ratchets the complete selected archive export list; rejects interpreter/DT_NEEDED/unresolved symbols, dynamic TLS, formatter/wide streams, locale objects, `_l` parsers, scalar libm, allocation, and ambient runtime dependencies; and reaches archive-owned Static Initial TLS v1 from the untouched entry stack. The archive may contain the separate iconv leaf, which this composition neither invokes nor establishes. The fixture does not reference or exercise the separately owned byte-format/scanner or pathname lifecycle, although the shared permanent-`fflush` target leaf may materialize selected path symbols. It is a cross-surface regression only, not another C wrapper or a claim of general text, math, locale, stdio, CRT, loader, sysroot, family completion, promotion, or public x86 support."
+description = "Private native x86 selected-static C composition artifact inside still-planned `libc.text-math-locale-stdio`. One project-header fixture first executes through pinned musl 1.2.6 and then a dependency-free `-nostdlib -static` crabc-libc archive. It crosses only existing `setlocale`/`localeconv`/`mbrtowc` named C.UTF-8 state, `strtod` C-locale parsing, `__fpclassify` binary64 classification, direct initial-exec errno TLS, and permanent `stdout` `fputc`/`fflush` behavior: valid UTF-8 leaves stale errno, an invalid lead sets EILSEQ, a successful parse preserves that errno, and a pipe-observed explicit stream flush preserves it again. The runner requires all four existing math/complex, float-parse, locale/multibyte, and permanent-standard-stream C/C++ header matrices; ratchets the complete selected archive export list; rejects interpreter/DT_NEEDED/unresolved symbols, dynamic TLS, formatter/wide streams, locale objects, scalar libm, allocation, and ambient runtime dependencies; and reaches archive-owned Static Initial TLS v1 from the untouched entry stack. The archive may contain the separate iconv leaf, which this composition neither invokes nor establishes. It does not exercise the independently selected `_l` parser wrappers. The fixture does not reference or exercise the separately owned byte-format/scanner or pathname lifecycle, although the shared permanent-`fflush` target leaf may materialize selected path symbols. It is a cross-surface regression only, not another C wrapper or a claim of general text, math, locale, stdio, CRT, loader, sysroot, family completion, promotion, or public x86 support."
 source_owners = [
   "compat/upstreams.toml",
   "libc/Cargo.toml",

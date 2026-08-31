@@ -102,7 +102,8 @@ done
 # The archive-wide export contract deliberately contains other independently
 # selected leaves. The final linked fixture below, rather than this aggregate
 # archive listing, proves this composition did not pull formatter/wide I/O,
-# locale-object, `_l`, scalar-libm, or allocation dependencies. A separate
+# locale-object, scalar-libm, or allocation dependencies. The `_l` parser
+# wrappers are now independently selected by numeric.parse-float-locale. A separate
 # iconv artifact may share the archive but is neither invoked nor established
 # by this composition. The
 # permanent `fflush` owner now also owns the separately evidenced fixed path
@@ -146,7 +147,7 @@ fi
 objdump -d --disassemble=__errno_location "$candidate" >"$errno_disassembly"
 grep -Eq '%fs:0x0|%fs:-' "$errno_disassembly" ||
     fail "candidate errno does not use direct fs initial TLS"
-if grep -Eq 'crabc_core|mimalloc|sha_crypt|printf|newlocale|strtod_l' \
+if grep -Eq 'crabc_core|mimalloc|sha_crypt|printf|newlocale|iconv' \
     "$symbols" "$disassembly"; then
     fail "candidate selects an unowned or unselected runtime dependency"
 fi

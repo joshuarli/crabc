@@ -1,23 +1,33 @@
 /* Static x86-64 floating-conversion behavior fixture.
  *
- * This fixture names only the allocation-free C-locale conversion boundary:
- * `strtof`, `strtod`, `strtold`, and `atof`.  Every entry is called through a
+ * This fixture names the complete allocation-free staged
+ * `numeric.parse-float-locale` boundary: narrow and wide floating conversion,
+ * wide integer conversion, locale-argument aliases, legacy decimal formatting,
+ * and `getsubopt`. Every entry is called through a
  * function pointer so a future freestanding archive cannot satisfy these
  * checks through a compiler builtin or an ambient C runtime.  In particular,
  * `strtold` is observed as its Linux/x86-64 SysV x87 binary80 result, not
  * narrowed through C `double` or Rust `f128`.
  *
  * Pinned behavior oracle: musl 1.2.6, commit 9fa28ece75d8a2191de7c5bb53bed224c5947417:
- * `src/stdlib/strtod.c` (`strtox`), `src/stdlib/atof.c` (`atof`), and
- * `src/internal/floatscan.c` (`__floatscan`, `decfloat`, and `hexfloat`).
+ * `src/stdlib/{strtod,wcstod,wcstol,atof,ecvt,fcvt,gcvt}.c`,
+ * `src/locale/strtod_l.c`, `src/misc/getsubopt.c`, and
+ * `src/internal/{floatscan,intscan}.c`.
  * The probe is an oracle-facing behavior fixture, not a source translation.
  */
 
 #include <errno.h>
 #include <fenv.h>
 #include <float.h>
+#include <inttypes.h>
+#include <locale.h>
 #include <stdint.h>
 #include <stdlib.h>
+#include <wchar.h>
+
+extern float __strtof_l(const char *, char **, locale_t);
+extern double __strtod_l(const char *, char **, locale_t);
+extern long double __strtold_l(const char *, char **, locale_t);
 
 #if !defined(__linux__) || !defined(__x86_64__) || !defined(__LP64__) || \
     !defined(__BYTE_ORDER__) || !defined(__ORDER_LITTLE_ENDIAN__) || \
@@ -42,6 +52,22 @@ typedef float (*strtof_fn)(const char *, char **);
 typedef double (*strtod_fn)(const char *, char **);
 typedef long double (*strtold_fn)(const char *, char **);
 typedef double (*atof_fn)(const char *);
+typedef char *(*ecvt_fn)(double, int, int *, int *);
+typedef char *(*fcvt_fn)(double, int, int *, int *);
+typedef char *(*gcvt_fn)(double, int, char *);
+typedef int (*getsubopt_fn)(char **, char *const *, char **);
+typedef float (*strtof_l_fn)(const char *, char **, locale_t);
+typedef double (*strtod_l_fn)(const char *, char **, locale_t);
+typedef long double (*strtold_l_fn)(const char *, char **, locale_t);
+typedef float (*wcstof_fn)(const wchar_t *, wchar_t **);
+typedef double (*wcstod_fn)(const wchar_t *, wchar_t **);
+typedef long double (*wcstold_fn)(const wchar_t *, wchar_t **);
+typedef long (*wcstol_fn)(const wchar_t *, wchar_t **, int);
+typedef unsigned long (*wcstoul_fn)(const wchar_t *, wchar_t **, int);
+typedef long long (*wcstoll_fn)(const wchar_t *, wchar_t **, int);
+typedef unsigned long long (*wcstoull_fn)(const wchar_t *, wchar_t **, int);
+typedef intmax_t (*wcstoimax_fn)(const wchar_t *, wchar_t **, int);
+typedef uintmax_t (*wcstoumax_fn)(const wchar_t *, wchar_t **, int);
 typedef int (*feclearexcept_fn)(int);
 typedef int (*fetestexcept_fn)(int);
 typedef int (*fegetenv_fn)(fenv_t *);
@@ -56,6 +82,25 @@ static strtof_fn volatile strtof_entry = strtof;
 static strtod_fn volatile strtod_entry = strtod;
 static strtold_fn volatile strtold_entry = strtold;
 static atof_fn volatile atof_entry = atof;
+static ecvt_fn volatile ecvt_entry = ecvt;
+static fcvt_fn volatile fcvt_entry = fcvt;
+static gcvt_fn volatile gcvt_entry = gcvt;
+static getsubopt_fn volatile getsubopt_entry = getsubopt;
+static strtof_l_fn volatile strtof_l_entry = strtof_l;
+static strtod_l_fn volatile strtod_l_entry = strtod_l;
+static strtold_l_fn volatile strtold_l_entry = strtold_l;
+static strtof_l_fn volatile internal_strtof_l_entry = __strtof_l;
+static strtod_l_fn volatile internal_strtod_l_entry = __strtod_l;
+static strtold_l_fn volatile internal_strtold_l_entry = __strtold_l;
+static wcstof_fn volatile wcstof_entry = wcstof;
+static wcstod_fn volatile wcstod_entry = wcstod;
+static wcstold_fn volatile wcstold_entry = wcstold;
+static wcstol_fn volatile wcstol_entry = wcstol;
+static wcstoul_fn volatile wcstoul_entry = wcstoul;
+static wcstoll_fn volatile wcstoll_entry = wcstoll;
+static wcstoull_fn volatile wcstoull_entry = wcstoull;
+static wcstoimax_fn volatile wcstoimax_entry = wcstoimax;
+static wcstoumax_fn volatile wcstoumax_entry = wcstoumax;
 
 typedef union {
     float value;
@@ -936,6 +981,226 @@ static int check_rounding_modes(strtof_fn parse_float, strtod_fn parse_double)
 
 #endif
 
+static int same_text(const char *actual, const char *expected)
+{
+    size_t index = 0;
+
+    while (actual[index] == expected[index] && expected[index] != '\0')
+        index++;
+    return actual[index] == expected[index];
+}
+
+static size_t wide_string_length(const wchar_t *text)
+{
+    size_t length = 0;
+
+    while (text[length] != L'\0')
+        length++;
+    return length;
+}
+
+static int check_locale_argument_aliases(void)
+{
+    const char input[] = " -0x1.8p+1tail";
+    const size_t expected_end = TEXT_END(" -0x1.8p+1");
+    locale_t ignored_locale = (locale_t)(uintptr_t)UINT64_C(0x1234);
+    char *end = NULL;
+    float_bits single;
+    double_bits paired;
+    long_double_bits extended;
+
+    errno = EINTR;
+    single.value = strtof_l_entry(input, &end, ignored_locale);
+    if (single.bits != UINT32_C(0xc0400000) || end != input + expected_end ||
+        errno != EINTR)
+        return 1;
+    end = NULL;
+    paired.value = strtod_l_entry(input, &end, ignored_locale);
+    if (paired.bits != UINT64_C(0xc008000000000000) ||
+        end != input + expected_end || errno != EINTR)
+        return 2;
+    end = NULL;
+    extended.value = strtold_l_entry(input, &end, ignored_locale);
+    if (long_double_mantissa(&extended) != UINT64_C(0xc000000000000000) ||
+        long_double_sign_exponent(&extended) != UINT16_C(0xc000) ||
+        end != input + expected_end || errno != EINTR)
+        return 3;
+
+    end = NULL;
+    single.value = internal_strtof_l_entry(input, &end, (locale_t)0);
+    if (single.bits != UINT32_C(0xc0400000) || end != input + expected_end)
+        return 4;
+    end = NULL;
+    paired.value = internal_strtod_l_entry(input, &end, (locale_t)0);
+    if (paired.bits != UINT64_C(0xc008000000000000) ||
+        end != input + expected_end)
+        return 5;
+    end = NULL;
+    extended.value = internal_strtold_l_entry(input, &end, (locale_t)0);
+    if (long_double_mantissa(&extended) != UINT64_C(0xc000000000000000) ||
+        long_double_sign_exponent(&extended) != UINT16_C(0xc000) ||
+        end != input + expected_end)
+        return 6;
+    if (internal_strtof_l_entry != strtof_l_entry)
+        return 7;
+    if (internal_strtod_l_entry != strtod_l_entry)
+        return 8;
+    if (internal_strtold_l_entry != strtold_l_entry)
+        return 9;
+    return 0;
+}
+
+static int check_wide_floating_conversions(void)
+{
+    static const wchar_t chunked[] =
+        L"1.000000000000000000000000000000000000000000000000000000000000000000000tail";
+    static const wchar_t unicode_space[] = { 0x2003, L'-', L'1', L'2', L'.', L'5', L'x', 0 };
+    static const wchar_t non_ascii[] = { L'1', L'2', 0x00e9, L'3', L'4', 0 };
+    wchar_t *end = NULL;
+    float_bits single;
+    double_bits paired;
+    long_double_bits extended;
+    size_t end_index;
+
+    errno = EDOM;
+    paired.value = wcstod_entry(chunked, &end);
+    end_index = wide_string_length(chunked) - 4;
+    if (paired.bits != UINT64_C(0x3ff0000000000000))
+        return 1;
+    if (end != chunked + end_index)
+        return 2;
+    if (errno != EDOM)
+        return 3;
+
+    end = NULL;
+    single.value = wcstof_entry(unicode_space, &end);
+    if (single.bits != UINT32_C(0xc1480000) || end != unicode_space + 6)
+        return 2;
+    end = NULL;
+    paired.value = wcstod_entry(non_ascii, &end);
+    if (paired.bits != UINT64_C(0x4028000000000000) || end != non_ascii + 2)
+        return 3;
+    end = NULL;
+    extended.value = wcstold_entry(L"0x1.8p+1tail", &end);
+    if (long_double_mantissa(&extended) != UINT64_C(0xc000000000000000) ||
+        long_double_sign_exponent(&extended) != UINT16_C(0x4000) ||
+        end != L"0x1.8p+1tail" + TEXT_END("0x1.8p+1"))
+        return 4;
+    return 0;
+}
+
+static int check_wide_integer_conversions(void)
+{
+    static const wchar_t chunked[] =
+        L"0000000000000000000000000000000000000000000000000000000000000000000042tail";
+    static const wchar_t overflow[] = L"18446744073709551616x";
+    static const wchar_t malformed[] = L" +";
+    wchar_t *end = NULL;
+
+    errno = EINTR;
+    if (wcstol_entry(chunked, &end, 10) != 42 ||
+        end != chunked + wide_string_length(chunked) - 4 || errno != EINTR)
+        return 1;
+    end = NULL;
+    if (wcstoul_entry(L"-1z", &end, 10) != (unsigned long)-1 ||
+        end != L"-1z" + 2)
+        return 2;
+    end = NULL;
+    if (wcstoll_entry(L"-9223372036854775808!", &end, 10) !=
+            (-INT64_C(9223372036854775807) - 1) ||
+        end != L"-9223372036854775808!" + 20)
+        return 3;
+    errno = EINTR;
+    end = NULL;
+    if (wcstoull_entry(overflow, &end, 10) != UINT64_MAX ||
+        end != overflow + 20 || errno != ERANGE)
+        return 4;
+    end = NULL;
+    if (wcstoimax_entry(L"0x7fffffffffffffff?", &end, 0) != INT64_MAX ||
+        end != L"0x7fffffffffffffff?" + 18)
+        return 5;
+    end = NULL;
+    if (wcstoumax_entry(L"0177?", &end, 0) != 127 || end != L"0177?" + 4)
+        return 6;
+    end = NULL;
+    if (wcstoumax_entry(L"0b101?", &end, 0) != 0 || end != L"0b101?" + 1)
+        return 7;
+    errno = EINTR;
+    end = NULL;
+    if (wcstol_entry(malformed, &end, 10) != 0 || end != malformed ||
+        errno != EINVAL)
+        return 8;
+    return 0;
+}
+
+static int check_legacy_decimal_conversions(void)
+{
+    char buffer[64];
+    char *result;
+    int decimal_point;
+    int sign;
+
+    result = ecvt_entry(12.5, 4, &decimal_point, &sign);
+    if (!same_text(result, "1250"))
+        return 1;
+    if (decimal_point != 2)
+        return 2;
+    if (sign != 0)
+        return 3;
+    result = ecvt_entry(-0.03125, 4, &decimal_point, &sign);
+    if (!same_text(result, "3125") || decimal_point != -1 || sign != 1)
+        return 2;
+    result = ecvt_entry(9.999, 3, &decimal_point, &sign);
+    if (!same_text(result, "100") || decimal_point != 2 || sign != 0)
+        return 3;
+    result = ecvt_entry(1.25, 99, &decimal_point, &sign);
+    if (!same_text(result, "125000000000000") || decimal_point != 1 || sign != 0)
+        return 4;
+
+    result = fcvt_entry(12.5, 3, &decimal_point, &sign);
+    if (!same_text(result, "12500") || decimal_point != 2 || sign != 0)
+        return 5;
+    result = fcvt_entry(0.00126, 4, &decimal_point, &sign);
+    if (!same_text(result, "13") || decimal_point != -2 || sign != 0)
+        return 6;
+    result = fcvt_entry(0.0001, 2, &decimal_point, &sign);
+    if (!same_text(result, "000") || decimal_point != 1 || sign != 0)
+        return 7;
+
+    result = gcvt_entry(12345.0, 4, buffer);
+    if (result != buffer || !same_text(buffer, "1.234e+04"))
+        return 8;
+    result = gcvt_entry(12.5, 6, buffer);
+    if (result != buffer || !same_text(buffer, "12.5"))
+        return 9;
+    result = gcvt_entry(0.000012345, 4, buffer);
+    if (result != buffer || !same_text(buffer, "1.234e-05"))
+        return 10;
+    return 0;
+}
+
+static int check_getsubopt(void)
+{
+    char options[] = "ro,size=42,unknown";
+    char key_ro[] = "ro";
+    char key_size[] = "size";
+    char *keys[] = { key_ro, key_size, NULL };
+    char *cursor = options;
+    char *value = (char *)(uintptr_t)1;
+
+    if (getsubopt_entry(&cursor, keys, &value) != 0 || value != NULL ||
+        cursor != options + 3)
+        return 1;
+    if (getsubopt_entry(&cursor, keys, &value) != 1 ||
+        !same_text(value, "42") || cursor != options + 11)
+        return 2;
+    value = (char *)(uintptr_t)1;
+    if (getsubopt_entry(&cursor, keys, &value) != -1 || value != NULL ||
+        *cursor != '\0')
+        return 3;
+    return 0;
+}
+
 int crabc_x86_64_float_parse_probe(void)
 {
     const strtof_fn parse_float = strtof_entry;
@@ -967,7 +1232,22 @@ int crabc_x86_64_float_parse_probe(void)
     if (status != 0)
         return 840 + status;
     status = check_rounding_modes(parse_float, parse_double);
-    return status == 0 ? 0 : 1620 + status;
+    if (status != 0)
+        return 1620 + status;
+    status = check_locale_argument_aliases();
+    if (status != 0)
+        return 1700 + status;
+    status = check_wide_floating_conversions();
+    if (status != 0)
+        return 1720 + status;
+    status = check_wide_integer_conversions();
+    if (status != 0)
+        return 1740 + status;
+    status = check_legacy_decimal_conversions();
+    if (status != 0)
+        return 1760 + status;
+    status = check_getsubopt();
+    return status == 0 ? 0 : 1780 + status;
 }
 
 #ifndef CRABC_FLOAT_PARSE_FREESTANDING

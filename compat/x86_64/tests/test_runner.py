@@ -8997,12 +8997,23 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn("integer-parse-header-abi", runner)
         self.assertIn("libc-integer-parse", runner)
 
-    def test_libc_static_c_abi_float_parse_artifact_stays_narrow(self) -> None:
+    def test_libc_static_c_abi_float_parse_locale_capability_is_closed(self) -> None:
         static_root = (
             ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
         ).read_text(encoding="utf-8")
         implementation = (
             ROOT / "libc" / "src" / "c_abi" / "x86_64" / "float_parse.rs"
+        ).read_text(encoding="utf-8")
+        locale_implementation = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "float_parse_locale.rs"
+        ).read_text(encoding="utf-8")
+        locale_aliases = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64"
+            / "float_parse_locale_aliases_x86_64.S"
+        ).read_text(encoding="utf-8")
+        wide_assembly = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64"
+            / "float_parse_locale_musl_x86_64.S"
         ).read_text(encoding="utf-8")
         entry_assembly = (
             ROOT
@@ -9057,9 +9068,36 @@ class X86_64CoreRunnerTests(unittest.TestCase):
 
         symbols = ("strtof", "strtod", "strtold", "atof")
         self.assertIn('#[path = "float_parse.rs"]', static_root)
+        self.assertIn('#[path = "float_parse_locale.rs"]', static_root)
         for symbol in symbols:
             self.assertIn(symbol, static_export_names)
             self.assertIn(f".globl {symbol}", entry_assembly)
+        capability_symbols = (
+            "atof", "ecvt", "fcvt", "gcvt", "getsubopt", "strtod",
+            "strtod_l", "strtof", "strtof_l", "strtold", "strtold_l",
+            "wcstod", "wcstof", "wcstoimax", "wcstol", "wcstold",
+            "wcstoll", "wcstoul", "wcstoull", "wcstoumax", "__strtod_l",
+            "__strtof_l", "__strtold_l",
+        )
+        for symbol in capability_symbols:
+            self.assertIn(symbol, static_export_names)
+            self.assertIn(symbol, probe)
+            self.assertIn(symbol, artifact_runner)
+        for symbol in ("strtof_l", "strtod_l", "strtold_l"):
+            self.assertIn(f".globl {symbol}", locale_aliases)
+            self.assertIn(f".weak __{symbol}", locale_aliases)
+        for symbol in ("wcstof", "wcstod", "wcstold"):
+            self.assertIn(f".globl {symbol}", wide_assembly)
+        for required in (
+            "src/stdlib/wcstod.c",
+            "src/stdlib/wcstol.c",
+            "src/stdlib/{ecvt,fcvt,gcvt}.c",
+            "src/locale/strtod_l.c",
+            "src/misc/getsubopt.c",
+            "exact binary64-to-decimal",
+            "C/POSIX/C.UTF-8",
+        ):
+            self.assertIn(required, locale_implementation)
         for required in (
             "musl 1.2.6 release commit",
             "src/stdlib/strtod.c",
@@ -9088,6 +9126,11 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "FE_UPWARD",
             "FE_TOWARDZERO",
             "CRABC_FLOAT_PARSE_FREESTANDING",
+            "check_locale_argument_aliases",
+            "check_wide_floating_conversions",
+            "check_wide_integer_conversions",
+            "check_legacy_decimal_conversions",
+            "check_getsubopt",
         ):
             self.assertIn(required, probe)
         for required in (
@@ -9100,14 +9143,21 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "fldt",
             "fstpt",
             "fprem",
+            "sprintf",
+            "__intscan",
         ):
             self.assertIn(required, artifact_runner)
         self.assertNotIn("--whole-archive", artifact_runner)
-        for required in ("-std=c++17", "strtof", "strtod", "strtold", "atof"):
+        for required in (
+            "-std=c++17", "strtof", "strtod", "strtold", "atof", "ecvt",
+            "fcvt", "gcvt", "getsubopt", "strtof_l", "wcstod", "wcstoimax",
+        ):
             self.assertIn(required, header_runner)
         self.assertIn("crabc_strtold_signature", header_c_probe)
         self.assertIn("crabc_strtold_signature", header_cxx_probe)
         self.assertIn('id = "static-c-float-parse"', parity_ledger)
+        self.assertIn('id = "numeric.parse-float-locale"', parity_ledger)
+        self.assertIn('capabilities = ["numeric.parse-float-locale"]', parity_ledger)
         self.assertIn(
             'command = "./scripts/dev-x86_64.sh libc-float-parse"',
             parity_ledger,

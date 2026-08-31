@@ -91,8 +91,7 @@ for symbol in atoi atol atoll strtol strtoul strtoll strtoull strtoimax strtouma
     grep -Eq "[[:space:]][TW][[:space:]]${symbol}$" "$archive_symbols" ||
         fail "archive does not define ${symbol}"
 done
-for unselected in wcstol wcstoul wcstoll wcstoull \
-    wcstoimax wcstoumax strtol_l strtoul_l strtoll_l strtoull_l \
+for unselected in strtol_l strtoul_l strtoll_l strtoull_l \
     __strtol_internal __strtoul_internal __strtoll_internal __strtoull_internal \
     __strtoimax_internal __strtoumax_internal malloc calloc realloc free rand; do
     if grep -Eq "[[:space:]][TW][[:space:]]${unselected}$" "$archive_symbols"; then

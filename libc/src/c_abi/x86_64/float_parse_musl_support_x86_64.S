@@ -258,13 +258,30 @@ crabc_x86_float_parse_fmodl:
 	.size	crabc_x86_float_parse_fmodl, .-crabc_x86_float_parse_fmodl
 	.section	.note.GNU-stack,"",@progbits
 
-/* The pseudo-string scanner never reaches __shgetc's stdio refill route:
- * strtox installs rend = (void *)-1 and input is required to be NUL
- * terminated. Retain an explicit EOF fallback so this private assembly never
- * imports __uflow or an ambient stdio implementation. */
+/* The pseudo-string scanner never reaches __shgetc's refill route: strtox
+ * installs rend = (void *)-1 and input is required to be NUL terminated. The
+ * selected wide scanner, however, installs one private read callback at FILE
+ * offset 64. This local __uflow subset invokes exactly that callback for one
+ * byte; it does not import __toread, expose FILE, or admit public stdio. */
     .text
     .type crabc_x86_float_parse_uflow,@function
 crabc_x86_float_parse_uflow:
+    movq 64(%rdi), %rax
+    testq %rax, %rax
+    je .Lcrabc_x86_float_parse_uflow_eof
+    subq $24, %rsp
+    movq %rdi, 8(%rsp)
+    leaq 7(%rsp), %rsi
+    movl $1, %edx
+    call *%rax
+    cmpq $1, %rax
+    jne .Lcrabc_x86_float_parse_uflow_stack_eof
+    movzbl 7(%rsp), %eax
+    addq $24, %rsp
+    ret
+.Lcrabc_x86_float_parse_uflow_stack_eof:
+    addq $24, %rsp
+.Lcrabc_x86_float_parse_uflow_eof:
     movl $-1, %eax
     ret
     .size crabc_x86_float_parse_uflow, .-crabc_x86_float_parse_uflow

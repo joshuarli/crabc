@@ -49,7 +49,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["status_counts"], {"foundation-verified": 8, "planned": 18})
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
-        self.assertEqual(report["verified_slice_count"], 31)
+        self.assertEqual(report["verified_slice_count"], 32)
         self.assertEqual(report["verified_artifact_count"], 114)
         self.assertEqual(report["header_layout_probe_count"], 45)
         self.assertEqual(report["public_header_inventory_count"], 183)
@@ -2259,7 +2259,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         ):
             ledger.validate_ledger(changed)
 
-    def test_float_parse_remains_a_closed_non_capability_artifact(self) -> None:
+    def test_float_parse_artifact_and_capability_slice_stay_closed(self) -> None:
         data = self.data()
         text_math = self.family(data, "libc.text-math-locale-stdio")
         self.assertEqual(text_math["status"], "planned")
@@ -2271,6 +2271,22 @@ class X86ParityLedgerTests(unittest.TestCase):
             if isinstance(entry, dict) and entry["id"] == "static-c-float-parse"
         )
         self.assertNotIn("capabilities", artifact)
+        slices = text_math["verified_slice"]
+        assert isinstance(slices, list) and len(slices) == 1
+        capability = slices[0]
+        assert isinstance(capability, dict)
+        self.assertEqual(capability["id"], "numeric.parse-float-locale")
+        self.assertEqual(
+            capability["capabilities"], ["numeric.parse-float-locale"]
+        )
+        for phrase in (
+            "all twenty-three ledger symbols",
+            "C/POSIX/C.UTF-8",
+            "arbitrary-length wide",
+            "promotion_ready=false",
+            "public_support=false",
+        ):
+            self.assertIn(phrase, capability["description"])
         for owner in (
             "libc/src/c_abi/x86_64/static_c_abi.rs",
             "libc/src/c_abi/x86_64/float_parse.rs",
@@ -2337,6 +2353,18 @@ class X86ParityLedgerTests(unittest.TestCase):
         evidence[0]["command"] = "./scripts/dev-x86_64.sh libc-fenv"
         with self.assertRaisesRegex(
             ledger.LedgerError, "closed libc-float-parse command"
+        ):
+            ledger.validate_ledger(data)
+
+        data = self.data()
+        slices = self.family(data, "libc.text-math-locale-stdio")[
+            "verified_slice"
+        ]
+        assert isinstance(slices, list) and isinstance(slices[0], dict)
+        slices[0]["capabilities"] = ["math.special"]
+        with self.assertRaisesRegex(
+            ledger.LedgerError,
+            "numeric.parse-float-locale slice must consume exactly its named capability",
         ):
             ledger.validate_ledger(data)
 

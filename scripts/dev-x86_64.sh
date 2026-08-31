@@ -73,7 +73,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   iconv-header-abi  verify x86 selected UTF/ASCII iconv C/C++ declarations and linkage
   integer-arithmetic-header-abi  compile the staged x86 C/C++ stdlib integer-arithmetic declarations
   integer-parse-header-abi  compile the staged x86 C/C++ integer-parsing declarations
-  float-parse-header-abi  verify staged x86 C/C++ strtof/strtod/strtold/atof declarations and linkage
+  float-parse-header-abi  verify complete x86 numeric.parse-float-locale declarations and linkage
   intmax-arithmetic-header-abi  compile the staged x86 C/C++ inttypes intmax-arithmetic declarations
   credential-observation-header-abi  compile the staged x86 C/C++ unistd credential-observation declarations
   child-reaping-header-abi  compile the staged x86 C/C++ sys/wait child-reaping declarations
@@ -279,7 +279,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-locale-wide-iconv  run the static x86 crabc-libc locale/wide/iconv composition slice
   libc-integer-arithmetic  run the static x86 crabc-libc integer-arithmetic slice
   libc-integer-parse  run the static x86 crabc-libc integer-parsing slice
-  libc-float-parse  run the static x86 crabc-libc float/double/x87 parsing slice
+  libc-float-parse  run the complete static x86 numeric.parse-float-locale slice
   libc-stdio-standard  run the static x86 crabc-libc permanent standard-stream slice
   libc-stdio-format-scan  run the static x86 crabc-libc byte-string format/scan slice
   libc-stdio-path-stream  run the static x86 crabc-libc fixed pathname-stream slice
