@@ -245,6 +245,7 @@ X86_RUNTIME_FOUNDATION_LIBC_SOURCES = {
     Path("libc/src/c_abi/x86_64/sched_get_priority_max.rs"),
     Path("libc/src/c_abi/x86_64/sched_get_priority_min.rs"),
     Path("libc/src/c_abi/x86_64/posix_semaphore.rs"),
+    Path("libc/src/c_abi/x86_64/mq_setattr.rs"),
     Path("libc/src/c_abi/x86_64/c11_thread_lifecycle.rs"),
     Path("libc/src/c_abi/x86_64/c11_sync.rs"),
     Path("libc/src/c_abi/x86_64/pthread_once.rs"),
@@ -3730,6 +3731,123 @@ def check_x86_crt_libc_static_tls_handoff(errors: list[str]) -> None:
         errors.append(
             "crt: first-thread x86 TLS must be libc-owned, not an rcrt1 module"
         )
+
+
+def check_x86_static_mq_setattr_boundary(errors: list[str]) -> None:
+    """Keep the selected x86 C message-queue entry point source-closed."""
+
+    static_root = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+    static_root_text = static_root.read_text(errors="replace")
+    if '#[path = "mq_setattr.rs"]' not in static_root_text:
+        errors.append(
+            "libc/src/c_abi/x86_64/static_c_abi.rs: selected mq_setattr ABI needs "
+            "its explicit private module"
+        )
+
+    source = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "mq_setattr.rs"
+    source_text = source.read_text(errors="replace")
+    for required in (
+        "Selected static Linux/x86-64 C `mq_setattr(3)` boundary",
+        "musl 1.2.6 release commit",
+        "src/mq/mq_setattr.c",
+        "mq_getsetattr=245",
+        "struct MqAttr",
+        "size_of::<MqAttr>() == 64",
+        "align_of::<MqAttr>() == 8",
+        "offset_of!(MqAttr, reserved) == 32",
+        "raw_syscall::SYS_MQ_GETSETATTR",
+        "raw_syscall::syscall3(",
+        "c_status(unsafe",
+    ):
+        if required not in source_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/mq_setattr.rs: selected mq_setattr "
+                f"boundary is missing {required!r}"
+            )
+    mq_setattr_exports = set(
+        re.findall(
+            r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(',
+            source_text,
+        )
+    )
+    if mq_setattr_exports != {"mq_setattr"}:
+        errors.append(
+            "libc/src/c_abi/x86_64/mq_setattr.rs: selected static artifact must "
+            "export only mq_setattr"
+        )
+    for forbidden in (
+        "fn mq_close(",
+        "fn mq_getattr(",
+        "fn mq_notify(",
+        "fn mq_open(",
+        "fn mq_receive(",
+        "fn mq_send(",
+        "fn mq_timedreceive(",
+        "fn mq_timedsend(",
+        "fn mq_unlink(",
+        "crabc_core",
+        "crabc_mimalloc",
+    ):
+        if forbidden in source_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/mq_setattr.rs: selected static mq_setattr "
+                f"boundary must not select {forbidden!r}"
+            )
+
+    syscall_source = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "syscall.rs"
+    if "pub(crate) const SYS_MQ_GETSETATTR: i64 = 245;" not in syscall_source.read_text(
+        errors="replace"
+    ):
+        errors.append(
+            "libc/src/c_abi/x86_64/syscall.rs: selected mq_setattr boundary is "
+            "missing SYS_MQ_GETSETATTR=245"
+        )
+
+    exports = set(
+        line
+        for line in (
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        ).read_text(errors="replace").splitlines()
+        if line and not line.startswith("#")
+    )
+    if "mq_setattr" not in exports:
+        errors.append(
+            "compat/x86_64/static_c_abi_exports.txt: selected mq_setattr export is "
+            "missing"
+        )
+    unwanted = {
+        "mq_close",
+        "mq_getattr",
+        "mq_notify",
+        "mq_open",
+        "mq_receive",
+        "mq_send",
+        "mq_timedreceive",
+        "mq_timedsend",
+        "mq_unlink",
+    }
+    if exports & unwanted:
+        errors.append(
+            "compat/x86_64/static_c_abi_exports.txt: selected mq_setattr artifact "
+            "must not add other POSIX message-queue exports"
+        )
+
+    runner = ROOT / "compat" / "x86_64" / "run_libc_mq_setattr.sh"
+    runner_text = runner.read_text(errors="replace")
+    for required in (
+        "run_mq_setattr_header_abi.sh",
+        "run_x86_mqueue_reference.sh",
+        "-nostdlib -static",
+        "-Wl,-e,_start",
+        "R_X86_64_TPOFF",
+        "mq_setattr lacks Linux syscall 245",
+        "unowned dependency",
+    ):
+        if required not in runner_text:
+            errors.append(
+                "compat/x86_64/run_libc_mq_setattr.sh: selected mq_setattr evidence "
+                f"is missing {required!r}"
+            )
 
 
 def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
@@ -13837,6 +13955,7 @@ def main() -> int:
     check_x86_dirent_header_abi(errors)
     check_x86_crt_libc_static_tls_handoff(errors)
     check_x86_libc_static_c_abi_boundary(errors)
+    check_x86_static_mq_setattr_boundary(errors)
     check_x86_rr_interval_boundary(errors)
     check_x86_sched_affinity_boundary(errors)
     check_x86_futex_boundary(errors)

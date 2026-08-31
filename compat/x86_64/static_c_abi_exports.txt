@@ -616,6 +616,7 @@ modf
 modff
 modfl
 mprotect
+mq_setattr
 msgctl
 msgget
 msgrcv

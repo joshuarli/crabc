@@ -151,7 +151,7 @@ for symbol in __errno_location __crabc_x86_static_tls_bootstrap ftok msgctl msgg
 done
 grep -Eq 'GLOBAL +HIDDEN +.*__crabc_x86_static_tls_bootstrap$' "$archive_elf_symbols" ||
     fail "archive Static Initial TLS v1 bootstrap is not hidden"
-for unselected in mq_close mq_getattr mq_notify mq_open mq_receive mq_send mq_setattr \
+for unselected in mq_close mq_getattr mq_notify mq_open mq_receive mq_send \
     mq_timedreceive mq_timedsend mq_unlink sem_close sem_open sem_unlink sem_timedwait \
     malloc free calloc realloc \
     __tls_get_addr; do

@@ -3837,6 +3837,675 @@ class X86ParityLedgerTests(unittest.TestCase):
         ):
             ledger.validate_ledger(changed)
 
+    def test_stdio_fixed_percent_scan_remains_a_closed_non_capability_artifact(
+        self,
+    ) -> None:
+        data = self.data()
+        text_math = self.family(data, "libc.text-math-locale-stdio")
+        self.assertEqual(text_math["status"], "planned")
+        artifacts = text_math["verified_artifact"]
+        assert isinstance(artifacts, list) and len(artifacts) == 46
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict)
+            and entry["id"] == "static-c-stdio-fixed-percent-scan"
+        )
+        self.assertNotIn("capabilities", artifact)
+        for owner in (
+            "libc/src/c_abi/x86_64/static_c_abi.rs",
+            "libc/src/c_abi/x86_64/stdio_format_scan.rs",
+            "libc/src/c_abi/x86_64/errno.rs",
+            "compat/x86_64/stdio_fixed_percent_scan_header_abi_probe.c",
+            "compat/x86_64/stdio_fixed_percent_scan_header_abi_probe.cpp",
+            "compat/x86_64/run_stdio_fixed_percent_scan_header_abi.sh",
+            "compat/x86_64/libc_stdio_fixed_percent_scan_probe.c",
+            "compat/x86_64/libc_stdio_fixed_percent_scan_start.S",
+            "compat/x86_64/run_libc_stdio_format_scan.sh",
+            "compat/x86_64/run_libc_stdio_fixed_percent_scan.sh",
+            "scripts/dev-x86_64.sh",
+        ):
+            self.assertIn(owner, artifact["source_owners"])
+        self.assertEqual(
+            {evidence["command"] for evidence in artifact["native_evidence"]},
+            {"./scripts/dev-x86_64.sh libc-stdio-fixed-percent-scan"},
+        )
+        for phrase in (
+            "adds no C export or capability",
+            "`sscanf`/`vsscanf`",
+            "C-locale `%%`",
+            "C11/C++17",
+            "unmangled C spellings",
+            "top-level `p[1] == '%'` branch",
+            "no va_list destination access or assignment",
+            "stale errno",
+            "pinned-musl parser-state profile",
+            "not a portable general scanf-literal claim",
+            "`%n`/`%hhn` count-store",
+            "character/string/scanset/pointer/integer/floating/wide",
+            "general scanner",
+            "general stdio",
+            "family completion",
+            "promotion",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, artifact["description"])
+
+        changed = self.data()
+        changed_artifacts = self.family(
+            changed, "libc.text-math-locale-stdio"
+        )["verified_artifact"]
+        assert isinstance(changed_artifacts, list)
+        changed_artifact = next(
+            entry
+            for entry in changed_artifacts
+            if isinstance(entry, dict)
+            and entry["id"] == "static-c-stdio-fixed-percent-scan"
+        )
+        evidence = changed_artifact["native_evidence"]
+        assert isinstance(evidence, list) and isinstance(evidence[0], dict)
+        evidence[0]["command"] = "./scripts/dev-x86_64.sh libc-stdio-format-scan"
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "closed libc-stdio-fixed-percent-scan command"
+        ):
+            ledger.validate_ledger(changed)
+
+    def test_stdio_fixed_format_whitespace_scan_remains_a_closed_non_capability_artifact(
+        self,
+    ) -> None:
+        data = self.data()
+        text_math = self.family(data, "libc.text-math-locale-stdio")
+        self.assertEqual(text_math["status"], "planned")
+        artifacts = text_math["verified_artifact"]
+        assert isinstance(artifacts, list) and len(artifacts) == 46
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict)
+            and entry["id"] == "static-c-stdio-fixed-format-whitespace-scan"
+        )
+        self.assertNotIn("capabilities", artifact)
+        for owner in (
+            "libc/src/c_abi/x86_64/static_c_abi.rs",
+            "libc/src/c_abi/x86_64/stdio_format_scan.rs",
+            "libc/src/c_abi/x86_64/errno.rs",
+            "compat/x86_64/stdio_fixed_format_whitespace_scan_header_abi_probe.c",
+            "compat/x86_64/stdio_fixed_format_whitespace_scan_header_abi_probe.cpp",
+            "compat/x86_64/run_stdio_fixed_format_whitespace_scan_header_abi.sh",
+            "compat/x86_64/libc_stdio_fixed_format_whitespace_scan_probe.c",
+            "compat/x86_64/libc_stdio_fixed_format_whitespace_scan_start.S",
+            "compat/x86_64/run_libc_stdio_format_scan.sh",
+            "compat/x86_64/run_libc_stdio_fixed_format_whitespace_scan.sh",
+            "scripts/dev-x86_64.sh",
+        ):
+            self.assertIn(owner, artifact["source_owners"])
+        self.assertEqual(
+            {evidence["command"] for evidence in artifact["native_evidence"]},
+            {"./scripts/dev-x86_64.sh libc-stdio-fixed-format-whitespace-scan"},
+        )
+        for phrase in (
+            "adds no C export or capability",
+            "`sscanf`/`vsscanf`",
+            "C-locale format-whitespace",
+            "C11/C++17",
+            "unmangled C spellings",
+            "top-level `isspace(*p)` branch",
+            "coalesces `p[1]`",
+            "zero input whitespace",
+            "all-whitespace format",
+            "no va_list destination access or assignment",
+            "stale errno",
+            "pinned-musl parser-state profile",
+            "not a portable general scanf-format-whitespace claim",
+            "literal-percent `%%`",
+            "`%n`/`%hhn` count-store",
+            "character/string/scanset/pointer/integer/floating/wide",
+            "general scanner",
+            "general stdio",
+            "family completion",
+            "promotion",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, artifact["description"])
+
+        changed = self.data()
+        changed_artifacts = self.family(
+            changed, "libc.text-math-locale-stdio"
+        )["verified_artifact"]
+        assert isinstance(changed_artifacts, list)
+        changed_artifact = next(
+            entry
+            for entry in changed_artifacts
+            if isinstance(entry, dict)
+            and entry["id"] == "static-c-stdio-fixed-format-whitespace-scan"
+        )
+        evidence = changed_artifact["native_evidence"]
+        assert isinstance(evidence, list) and isinstance(evidence[0], dict)
+        evidence[0]["command"] = "./scripts/dev-x86_64.sh libc-stdio-format-scan"
+        with self.assertRaisesRegex(
+            ledger.LedgerError,
+            "closed libc-stdio-fixed-format-whitespace-scan command",
+        ):
+            ledger.validate_ledger(changed)
+
+    def test_stdio_fixed_literal_scan_remains_a_closed_non_capability_artifact(
+        self,
+    ) -> None:
+        data = self.data()
+        text_math = self.family(data, "libc.text-math-locale-stdio")
+        self.assertEqual(text_math["status"], "planned")
+        artifacts = text_math["verified_artifact"]
+        assert isinstance(artifacts, list) and len(artifacts) == 46
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict)
+            and entry["id"] == "static-c-stdio-fixed-literal-scan"
+        )
+        self.assertNotIn("capabilities", artifact)
+        for owner in (
+            "libc/src/c_abi/x86_64/static_c_abi.rs",
+            "libc/src/c_abi/x86_64/stdio_format_scan.rs",
+            "libc/src/c_abi/x86_64/errno.rs",
+            "compat/x86_64/stdio_fixed_literal_scan_header_abi_probe.c",
+            "compat/x86_64/stdio_fixed_literal_scan_header_abi_probe.cpp",
+            "compat/x86_64/run_stdio_fixed_literal_scan_header_abi.sh",
+            "compat/x86_64/libc_stdio_fixed_literal_scan_probe.c",
+            "compat/x86_64/libc_stdio_fixed_literal_scan_start.S",
+            "compat/x86_64/run_libc_stdio_format_scan.sh",
+            "compat/x86_64/run_libc_stdio_fixed_literal_scan.sh",
+            "scripts/dev-x86_64.sh",
+        ):
+            self.assertIn(owner, artifact["source_owners"])
+        self.assertEqual(
+            {evidence["command"] for evidence in artifact["native_evidence"]},
+            {"./scripts/dev-x86_64.sh libc-stdio-fixed-literal-scan"},
+        )
+        for phrase in (
+            "adds no C export or capability",
+            "`sscanf`/`vsscanf`",
+            "non-percent, non-C-locale-format-whitespace raw-literal",
+            "C11/C++17",
+            "unmangled C spellings",
+            "top-level `*p != '%' || p[1] == '%'` arm",
+            "selected `*p != '%'` raw-literal path",
+            "mismatch after a matched prefix",
+            "later-literal EOF",
+            "no va_list destination access or assignment",
+            "stale errno",
+            "pinned-musl parser-state profile",
+            "not a portable general scanf-literal claim",
+            "literal-percent `%%`",
+            "C-locale format whitespace",
+            "`%n`/`%hhn` count-store",
+            "character/string/scanset/pointer/integer/floating/wide",
+            "general scanner",
+            "general stdio",
+            "family completion",
+            "promotion",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, artifact["description"])
+
+        changed = self.data()
+        changed_artifacts = self.family(
+            changed, "libc.text-math-locale-stdio"
+        )["verified_artifact"]
+        assert isinstance(changed_artifacts, list)
+        changed_artifact = next(
+            entry
+            for entry in changed_artifacts
+            if isinstance(entry, dict)
+            and entry["id"] == "static-c-stdio-fixed-literal-scan"
+        )
+        evidence = changed_artifact["native_evidence"]
+        assert isinstance(evidence, list) and isinstance(evidence[0], dict)
+        evidence[0]["command"] = "./scripts/dev-x86_64.sh libc-stdio-format-scan"
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "closed libc-stdio-fixed-literal-scan command"
+        ):
+            ledger.validate_ledger(changed)
+
+    def test_stdio_fixed_empty_format_scan_remains_a_closed_non_capability_artifact(
+        self,
+    ) -> None:
+        data = self.data()
+        text_math = self.family(data, "libc.text-math-locale-stdio")
+        self.assertEqual(text_math["status"], "planned")
+        artifacts = text_math["verified_artifact"]
+        assert isinstance(artifacts, list) and len(artifacts) == 46
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict)
+            and entry["id"] == "static-c-stdio-fixed-empty-format-scan"
+        )
+        self.assertNotIn("capabilities", artifact)
+        for owner in (
+            "libc/src/c_abi/x86_64/static_c_abi.rs",
+            "libc/src/c_abi/x86_64/stdio_format_scan.rs",
+            "libc/src/c_abi/x86_64/errno.rs",
+            "compat/x86_64/stdio_fixed_empty_format_scan_header_abi_probe.c",
+            "compat/x86_64/stdio_fixed_empty_format_scan_header_abi_probe.cpp",
+            "compat/x86_64/run_stdio_fixed_empty_format_scan_header_abi.sh",
+            "compat/x86_64/libc_stdio_fixed_empty_format_scan_probe.c",
+            "compat/x86_64/libc_stdio_fixed_empty_format_scan_start.S",
+            "compat/x86_64/run_libc_stdio_format_scan.sh",
+            "compat/x86_64/run_libc_stdio_fixed_empty_format_scan.sh",
+            "scripts/dev-x86_64.sh",
+        ):
+            self.assertIn(owner, artifact["source_owners"])
+        self.assertEqual(
+            {evidence["command"] for evidence in artifact["native_evidence"]},
+            {"./scripts/dev-x86_64.sh libc-stdio-fixed-empty-format-scan"},
+        )
+        for phrase in (
+            "adds no C export or capability",
+            "`sscanf`/`vsscanf`",
+            "zero-length format termination",
+            "C11/C++17",
+            "unmangled C spellings",
+            "private NUL-string FILE setup",
+            "`fmt[0] == 0`",
+            "existing zero `matches` count",
+            "literal, literal-percent, format-whitespace, or conversion",
+            "fixture-only va_list sentinel remains unadvanced",
+            "stale errno",
+            "pinned-musl format-termination profile",
+            "not a portable general scanf-empty-format claim",
+            "raw literal matching",
+            "literal-percent `%%`",
+            "C-locale format whitespace",
+            "`%n`/`%hhn` count-store",
+            "character/string/scanset/pointer/integer/floating/wide",
+            "general scanner",
+            "general stdio",
+            "family completion",
+            "promotion",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, artifact["description"])
+
+        changed = self.data()
+        changed_artifacts = self.family(
+            changed, "libc.text-math-locale-stdio"
+        )["verified_artifact"]
+        assert isinstance(changed_artifacts, list)
+        changed_artifact = next(
+            entry
+            for entry in changed_artifacts
+            if isinstance(entry, dict)
+            and entry["id"] == "static-c-stdio-fixed-empty-format-scan"
+        )
+        evidence = changed_artifact["native_evidence"]
+        assert isinstance(evidence, list) and isinstance(evidence[0], dict)
+        evidence[0]["command"] = "./scripts/dev-x86_64.sh libc-stdio-format-scan"
+        with self.assertRaisesRegex(
+            ledger.LedgerError,
+            "closed libc-stdio-fixed-empty-format-scan command",
+        ):
+            ledger.validate_ledger(changed)
+
+    def test_stdio_fixed_suppressed_character_scan_remains_a_closed_non_capability_artifact(
+        self,
+    ) -> None:
+        data = self.data()
+        text_math = self.family(data, "libc.text-math-locale-stdio")
+        self.assertEqual(text_math["status"], "planned")
+        artifacts = text_math["verified_artifact"]
+        assert isinstance(artifacts, list) and len(artifacts) == 46
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict)
+            and entry["id"] == "static-c-stdio-fixed-suppressed-character-scan"
+        )
+        self.assertNotIn("capabilities", artifact)
+        for owner in (
+            "libc/src/c_abi/x86_64/static_c_abi.rs",
+            "libc/src/c_abi/x86_64/stdio_format_scan.rs",
+            "libc/src/c_abi/x86_64/errno.rs",
+            "compat/x86_64/stdio_fixed_suppressed_character_scan_header_abi_probe.c",
+            "compat/x86_64/stdio_fixed_suppressed_character_scan_header_abi_probe.cpp",
+            "compat/x86_64/run_stdio_fixed_suppressed_character_scan_header_abi.sh",
+            "compat/x86_64/libc_stdio_fixed_suppressed_character_scan_probe.c",
+            "compat/x86_64/libc_stdio_fixed_suppressed_character_scan_start.S",
+            "compat/x86_64/run_libc_stdio_format_scan.sh",
+            "compat/x86_64/run_libc_stdio_fixed_suppressed_character_scan.sh",
+            "scripts/dev-x86_64.sh",
+        ):
+            self.assertIn(owner, artifact["source_owners"])
+        self.assertEqual(
+            {evidence["command"] for evidence in artifact["native_evidence"]},
+            {
+                "./scripts/dev-x86_64.sh "
+                "libc-stdio-fixed-suppressed-character-scan"
+            },
+        )
+        for phrase in (
+            "adds no C export or capability",
+            "literal non-wide `%*3c`",
+            "C11/C++17",
+            "unmangled C spellings",
+            "private NUL-string FILE setup",
+            "`*p == '*'`",
+            "`dest = 0`",
+            "width three and `c`",
+            "`shlim`",
+            "without `va_arg`, a destination write, or a match-count increment",
+            "fixture-only va_list sentinel remains unadvanced",
+            "nonempty short run returns matching failure",
+            "initial EOF returns EOF",
+            "high byte stays raw",
+            "stale errno",
+            "raw literal matching remains owned",
+            "pinned-musl assignment-suppression profile",
+            "not a portable general scanf-suppression claim",
+            "unsuppressed `%c`",
+            "all other widths and suppressed conversion forms",
+            "literal-percent `%%`",
+            "C-locale format whitespace",
+            "`%n`/`%hhn` count-store",
+            "string/scanset/pointer/integer/floating/wide",
+            "general scanner",
+            "general stdio",
+            "family completion",
+            "promotion",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, artifact["description"])
+
+        changed = self.data()
+        changed_artifacts = self.family(
+            changed, "libc.text-math-locale-stdio"
+        )["verified_artifact"]
+        assert isinstance(changed_artifacts, list)
+        changed_artifact = next(
+            entry
+            for entry in changed_artifacts
+            if isinstance(entry, dict)
+            and entry["id"] == "static-c-stdio-fixed-suppressed-character-scan"
+        )
+        evidence = changed_artifact["native_evidence"]
+        assert isinstance(evidence, list) and isinstance(evidence[0], dict)
+        evidence[0]["command"] = "./scripts/dev-x86_64.sh libc-stdio-format-scan"
+        with self.assertRaisesRegex(
+            ledger.LedgerError,
+            "closed libc-stdio-fixed-suppressed-character-scan command",
+        ):
+            ledger.validate_ledger(changed)
+
+    def test_stdio_fixed_suppressed_string_scan_remains_a_closed_non_capability_artifact(
+        self,
+    ) -> None:
+        data = self.data()
+        text_math = self.family(data, "libc.text-math-locale-stdio")
+        self.assertEqual(text_math["status"], "planned")
+        artifacts = text_math["verified_artifact"]
+        assert isinstance(artifacts, list) and len(artifacts) == 46
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict)
+            and entry["id"] == "static-c-stdio-fixed-suppressed-string-scan"
+        )
+        self.assertNotIn("capabilities", artifact)
+        for owner in (
+            "libc/src/c_abi/x86_64/static_c_abi.rs",
+            "libc/src/c_abi/x86_64/stdio_format_scan.rs",
+            "libc/src/c_abi/x86_64/errno.rs",
+            "compat/x86_64/stdio_fixed_suppressed_string_scan_header_abi_probe.c",
+            "compat/x86_64/stdio_fixed_suppressed_string_scan_header_abi_probe.cpp",
+            "compat/x86_64/run_stdio_fixed_suppressed_string_scan_header_abi.sh",
+            "compat/x86_64/libc_stdio_fixed_suppressed_string_scan_probe.c",
+            "compat/x86_64/libc_stdio_fixed_suppressed_string_scan_start.S",
+            "compat/x86_64/run_libc_stdio_format_scan.sh",
+            "compat/x86_64/run_libc_stdio_fixed_suppressed_string_scan.sh",
+            "scripts/dev-x86_64.sh",
+        ):
+            self.assertIn(owner, artifact["source_owners"])
+        self.assertEqual(
+            {evidence["command"] for evidence in artifact["native_evidence"]},
+            {
+                "./scripts/dev-x86_64.sh "
+                "libc-stdio-fixed-suppressed-string-scan"
+            },
+        )
+        for phrase in (
+            "adds no C export or capability",
+            "literal non-wide `%*3s`",
+            "C11/C++17",
+            "unmangled C spellings",
+            "private NUL-string FILE setup",
+            "`*p == '*'`",
+            "`dest = 0`",
+            "width three and `s`",
+            "C-locale input-whitespace skip",
+            "`shlim`",
+            "without `va_arg`, a destination write, a terminator write, or a match-count increment",
+            "nonempty short-token success",
+            "fixture-only va_list sentinel remains unadvanced",
+            "whitespace-only and initial EOF return EOF",
+            "high byte stays token data",
+            "stale errno",
+            "raw literal matching remains owned",
+            "pinned-musl assignment-suppression profile",
+            "not a portable general scanf-suppression claim",
+            "unsuppressed `%s` destination storage",
+            "all other widths and suppressed conversion forms",
+            "literal-percent `%%`",
+            "C-locale format whitespace",
+            "`%n`/`%hhn` count-store",
+            "scanset/pointer/integer/floating/wide",
+            "general scanner",
+            "general stdio",
+            "family completion",
+            "promotion",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, artifact["description"])
+
+        changed = self.data()
+        changed_artifacts = self.family(
+            changed, "libc.text-math-locale-stdio"
+        )["verified_artifact"]
+        assert isinstance(changed_artifacts, list)
+        changed_artifact = next(
+            entry
+            for entry in changed_artifacts
+            if isinstance(entry, dict)
+            and entry["id"] == "static-c-stdio-fixed-suppressed-string-scan"
+        )
+        evidence = changed_artifact["native_evidence"]
+        assert isinstance(evidence, list) and isinstance(evidence[0], dict)
+        evidence[0]["command"] = "./scripts/dev-x86_64.sh libc-stdio-format-scan"
+        with self.assertRaisesRegex(
+            ledger.LedgerError,
+            "closed libc-stdio-fixed-suppressed-string-scan command",
+        ):
+            ledger.validate_ledger(changed)
+
+    def test_stdio_fixed_suppressed_scanset_scan_remains_a_closed_non_capability_artifact(
+        self,
+    ) -> None:
+        data = self.data()
+        text_math = self.family(data, "libc.text-math-locale-stdio")
+        self.assertEqual(text_math["status"], "planned")
+        artifacts = text_math["verified_artifact"]
+        assert isinstance(artifacts, list) and len(artifacts) == 46
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict)
+            and entry["id"] == "static-c-stdio-fixed-suppressed-scanset-scan"
+        )
+        self.assertNotIn("capabilities", artifact)
+        for owner in (
+            "libc/src/c_abi/x86_64/static_c_abi.rs",
+            "libc/src/c_abi/x86_64/stdio_format_scan.rs",
+            "libc/src/c_abi/x86_64/errno.rs",
+            "compat/x86_64/stdio_fixed_suppressed_scanset_scan_header_abi_probe.c",
+            "compat/x86_64/stdio_fixed_suppressed_scanset_scan_header_abi_probe.cpp",
+            "compat/x86_64/run_stdio_fixed_suppressed_scanset_scan_header_abi.sh",
+            "compat/x86_64/libc_stdio_fixed_suppressed_scanset_scan_probe.c",
+            "compat/x86_64/libc_stdio_fixed_suppressed_scanset_scan_start.S",
+            "compat/x86_64/run_libc_stdio_format_scan.sh",
+            "compat/x86_64/run_libc_stdio_fixed_suppressed_scanset_scan.sh",
+            "scripts/dev-x86_64.sh",
+        ):
+            self.assertIn(owner, artifact["source_owners"])
+        self.assertEqual(
+            {evidence["command"] for evidence in artifact["native_evidence"]},
+            {
+                "./scripts/dev-x86_64.sh "
+                "libc-stdio-fixed-suppressed-scanset-scan"
+            },
+        )
+        for phrase in (
+            "adds no C export or capability",
+            "literal non-wide `%*3[abc]`",
+            "C11/C++17",
+            "unmangled C spellings",
+            "private NUL-string FILE setup",
+            "`*p == '*'`",
+            "`dest = 0`",
+            "literal width three and `[`",
+            "literal a/b/c byte-membership set",
+            "bypasses the ordinary input-whitespace skip",
+            "without `va_arg`, a destination write, a terminator write, or a match-count increment",
+            "nonempty short-member success",
+            "fixture-only va_list sentinel remains unadvanced",
+            "initial EOF returns EOF",
+            "high byte remains a following raw literal",
+            "stale errno",
+            "raw literal matching remains owned",
+            "pinned-musl assignment-suppression profile",
+            "not a portable general scanf-suppression or scanset claim",
+            "unsuppressed `%3[abc]` destination storage",
+            "unbounded/leading-zero/range/inverse/allocating/wide scanset grammar",
+            "literal-percent `%%`",
+            "C-locale format whitespace",
+            "`%n`/`%hhn` count-store",
+            "general scanner",
+            "general stdio",
+            "family completion",
+            "promotion",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, artifact["description"])
+
+        changed = self.data()
+        changed_artifacts = self.family(
+            changed, "libc.text-math-locale-stdio"
+        )["verified_artifact"]
+        assert isinstance(changed_artifacts, list)
+        changed_artifact = next(
+            entry
+            for entry in changed_artifacts
+            if isinstance(entry, dict)
+            and entry["id"] == "static-c-stdio-fixed-suppressed-scanset-scan"
+        )
+        evidence = changed_artifact["native_evidence"]
+        assert isinstance(evidence, list) and isinstance(evidence[0], dict)
+        evidence[0]["command"] = "./scripts/dev-x86_64.sh libc-stdio-format-scan"
+        with self.assertRaisesRegex(
+            ledger.LedgerError,
+            "closed libc-stdio-fixed-suppressed-scanset-scan command",
+        ):
+            ledger.validate_ledger(changed)
+
+    def test_stdio_fixed_suppressed_count_scan_remains_a_closed_non_capability_artifact(
+        self,
+    ) -> None:
+        data = self.data()
+        text_math = self.family(data, "libc.text-math-locale-stdio")
+        self.assertEqual(text_math["status"], "planned")
+        artifacts = text_math["verified_artifact"]
+        assert isinstance(artifacts, list) and len(artifacts) == 46
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict)
+            and entry["id"] == "static-c-stdio-fixed-suppressed-count-scan"
+        )
+        self.assertNotIn("capabilities", artifact)
+        for owner in (
+            "libc/src/c_abi/x86_64/static_c_abi.rs",
+            "libc/src/c_abi/x86_64/stdio_format_scan.rs",
+            "libc/src/c_abi/x86_64/errno.rs",
+            "compat/x86_64/stdio_fixed_suppressed_count_scan_header_abi_probe.c",
+            "compat/x86_64/stdio_fixed_suppressed_count_scan_header_abi_probe.cpp",
+            "compat/x86_64/run_stdio_fixed_suppressed_count_scan_header_abi.sh",
+            "compat/x86_64/libc_stdio_fixed_suppressed_count_scan_probe.c",
+            "compat/x86_64/libc_stdio_fixed_suppressed_count_scan_start.S",
+            "compat/x86_64/run_libc_stdio_format_scan.sh",
+            "compat/x86_64/run_libc_stdio_fixed_suppressed_count_scan.sh",
+            "scripts/dev-x86_64.sh",
+        ):
+            self.assertIn(owner, artifact["source_owners"])
+        self.assertEqual(
+            {evidence["command"] for evidence in artifact["native_evidence"]},
+            {
+                "./scripts/dev-x86_64.sh "
+                "libc-stdio-fixed-suppressed-count-scan"
+            },
+        )
+        for phrase in (
+            "adds no C export or capability",
+            "literal non-wide",
+            "%*n",
+            "C11/C++17",
+            "unmangled C spellings",
+            "private NUL-string FILE setup",
+            "*p == '*'",
+            "dest = 0",
+            "calls",
+            "store_int",
+            "current",
+            "null-destination guard returns before a store",
+            "neither reads a source byte nor increments the match count",
+            "empty-input zero-assignment success",
+            "fixture-only va_list sentinel remains unadvanced",
+            "consumed no source byte",
+            "later literal mismatch remains a zero-assignment matching failure",
+            "stale errno",
+            "raw literal matching remains owned",
+            "pinned-musl assignment-suppression count-state profile",
+            "not a portable ISO C",
+            "unsuppressed",
+            "destination storage",
+            "all other count length or width forms",
+            "literal-percent",
+            "C-locale format whitespace",
+            "FILE input",
+            "general scanner",
+            "general stdio",
+            "family completion",
+            "promotion",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, artifact["description"])
+
+        changed = self.data()
+        changed_artifacts = self.family(
+            changed, "libc.text-math-locale-stdio"
+        )["verified_artifact"]
+        assert isinstance(changed_artifacts, list)
+        changed_artifact = next(
+            entry
+            for entry in changed_artifacts
+            if isinstance(entry, dict)
+            and entry["id"] == "static-c-stdio-fixed-suppressed-count-scan"
+        )
+        evidence = changed_artifact["native_evidence"]
+        assert isinstance(evidence, list) and isinstance(evidence[0], dict)
+        evidence[0]["command"] = "./scripts/dev-x86_64.sh libc-stdio-format-scan"
+        with self.assertRaisesRegex(
+            ledger.LedgerError,
+            "closed libc-stdio-fixed-suppressed-count-scan command",
+        ):
+            ledger.validate_ledger(changed)
+
     def test_stdio_float_hex_output_remains_a_closed_non_capability_artifact(
         self,
     ) -> None:
@@ -20803,6 +21472,138 @@ class X86ParityLedgerTests(unittest.TestCase):
         assert isinstance(evidence, list) and isinstance(evidence[0], dict)
         evidence[0]["command"] = "./scripts/dev-x86_64.sh ipc-reference"
         with self.assertRaisesRegex(ledger.LedgerError, "closed libc-posix-semaphore command"):
+            ledger.validate_ledger(data)
+
+    def test_mq_setattr_artifact_keeps_its_bounded_boundary(self) -> None:
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-mq-setattr"
+        )
+        self.assertNotIn("capabilities", artifact)
+        for owner in (
+            "compat/upstreams.toml",
+            "compat/abi/musl-1.2.6/aarch64/libc.a.static.tsv",
+            "libc/src/c_abi/x86_64/static_c_abi.rs",
+            "libc/src/c_abi/x86_64/mq_setattr.rs",
+            "libc/src/c_abi/x86_64/errno.rs",
+            "libc/src/c_abi/x86_64/syscall.rs",
+            "include/mqueue.h",
+            "compat/x86_64/mq_setattr_header_abi_probe.c",
+            "compat/x86_64/mq_setattr_header_abi_probe.cpp",
+            "compat/x86_64/run_mq_setattr_header_abi.sh",
+            "compat/x86_64/static_c_abi_exports.txt",
+            "compat/x86_64/libc_mq_setattr_probe.c",
+            "compat/x86_64/libc_mq_setattr_start.S",
+            "compat/x86_64/run_libc_mq_setattr.sh",
+        ):
+            self.assertIn(owner, artifact["source_owners"])
+        self.assertEqual(
+            {entry["command"] for entry in artifact["native_evidence"]},
+            {"./scripts/dev-x86_64.sh libc-mq-setattr"},
+        )
+        for phrase in (
+            "one-symbol POSIX message-queue attribute block",
+            "`mq_setattr(mqd_t, const struct mq_attr *, struct mq_attr *)`",
+            "mq_getsetattr=245",
+            "rdi/rsi/rdx",
+            "O_NONBLOCK",
+            "stale errno",
+            "mq_open/mq_close/mq_getattr/mq_notify/mq_send/mq_receive/mq_timedreceive/mq_timedsend/mq_unlink",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, artifact["description"])
+
+        static_exports = (
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        ).read_text(encoding="utf-8").splitlines()
+        self.assertIn("mq_setattr", static_exports)
+        for symbol in (
+            "mq_close",
+            "mq_getattr",
+            "mq_notify",
+            "mq_open",
+            "mq_receive",
+            "mq_send",
+            "mq_timedreceive",
+            "mq_timedsend",
+            "mq_unlink",
+        ):
+            self.assertNotIn(symbol, static_exports)
+
+        prerequisites = artifact["x86_abi_prerequisites"]
+        assert isinstance(prerequisites, list)
+        syscall_abi = next(item for item in prerequisites if "mq_getsetattr=245" in item)
+        assert isinstance(syscall_abi, str)
+        for phrase in ("rdi/rsi/rdx", "mqd_t", "initial-TLS"):
+            self.assertIn(phrase, syscall_abi)
+        representation = next(item for item in prerequisites if "64-byte" in item)
+        assert isinstance(representation, str)
+        for phrase in ("align-8", "O_NONBLOCK", "offsets 0/8/16/24/32"):
+            self.assertIn(phrase, representation)
+        source_boundary = next(item for item in prerequisites if "src/mq/mq_setattr.c" in item)
+        assert isinstance(source_boundary, str)
+        for phrase in ("cancellation-point", "queue-name translation", "fallback"):
+            self.assertIn(phrase, source_boundary)
+
+        headers = artifact["x86_header_prerequisites"]
+        assert isinstance(headers, list) and isinstance(headers[0], str)
+        for phrase in (
+            "mqueue.h",
+            "C/C++",
+            "mq_setattr",
+            "mq_getsetattr=245",
+            "unmangled C++",
+        ):
+            self.assertIn(phrase, headers[0])
+        source_mapping = next(entry for entry in artifact["oracle"] if entry["kind"] == "c-posix")
+        self.assertIn("src/mq/mq_setattr.c", source_mapping["role"])
+        kernel_mapping = next(entry for entry in artifact["oracle"] if entry["kind"] == "kernel-abi")
+        self.assertIn("mq_getsetattr=245", kernel_mapping["role"])
+        self.assertIn("rdi/rsi/rdx", kernel_mapping["role"])
+        scope = artifact["native_evidence"][0]["scope"]
+        assert isinstance(scope, str)
+        for phrase in (
+            "Pinned-musl C differential",
+            "-nostdlib -static",
+            "nonblocking replacement",
+            "stale errno",
+            "EINVAL",
+            "EBADF",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, scope)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-mq-setattr"
+        )
+        prerequisites = artifact["x86_abi_prerequisites"]
+        assert isinstance(prerequisites, list)
+        index = next(index for index, item in enumerate(prerequisites) if "mq_getsetattr=245" in item)
+        prerequisites[index] = prerequisites[index].replace("mq_getsetattr=245", "mq_getsetattr=999")
+        with self.assertRaisesRegex(ledger.LedgerError, "three-word syscall ABI"):
+            ledger.validate_ledger(data)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-mq-setattr"
+        )
+        evidence = artifact["native_evidence"]
+        assert isinstance(evidence, list) and isinstance(evidence[0], dict)
+        evidence[0]["command"] = "./scripts/dev-x86_64.sh ipc-reference"
+        with self.assertRaisesRegex(ledger.LedgerError, "closed libc-mq-setattr command"):
             ledger.validate_ledger(data)
 
     def test_sysv_message_shared_memory_artifact_keeps_its_bounded_boundary(self) -> None:

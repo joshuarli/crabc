@@ -11,12 +11,14 @@
 //! argument and emits the current thread's immutable fixed-C-locale errno
 //! message through the existing selected error-string table. Input accepts
 //! literals and format whitespace, assignment suppression and width, the same
-//! integer length forms for `%d`/`%i`/`%u`/`%o`/`%x`/`%X`, plus `%c`, `%s`, and
-//! `%n`.
+//! integer length forms for `%d`/`%i`/`%u`/`%o`/`%x`/`%X`, plus `%c`, `%s`,
+//! `%n`, and the separately sealed literal non-wide assignment-suppressed
+//! `%*3[abc]` state.
 //!
 //! The implementation is allocation-free and has no `FILE`, stream lock,
 //! locale-object, decimal or long-double floating conversion, wide-character,
-//! scanset, positional argument, pointer-valued `%p`, or
+//! scanset grammar outside that separately sealed literal suppressed state,
+//! positional argument, pointer-valued `%p`, or
 //! `printf`/`fprintf`/`scanf`/`fscanf` boundary.  `%a`/`%A` derives its
 //! C-locale binary64 spelling from raw IEEE bits and observes the selected
 //! x86 fenv rounding direction for explicit precision; it does not select a
@@ -51,10 +53,11 @@
 //! | `src/stdio/vsnprintf.c`, `vsprintf.c`, `sprintf.c`, `snprintf.c` | byte-buffer count/truncation wrappers and C varargs entry boundary |
 //! | `src/stdio/vfprintf.c` (`printf_core`, `fmt_fp`) | selected integer/byte-string parser plus bare `%m` no-argument errno-message behavior and binary64 `%a`/`%A` spelling, flag, width, precision, and count-store behavior |
 //! | `src/errno/__strerror.h`; `src/errno/strerror.c` | selected immutable fixed-C-locale `%m` message lookup, shared directly with the existing `strerror` leaf |
-//! | `src/stdio/sscanf.c`, `vsscanf.c`, `vfscanf.c`; `src/internal/intscan.c` | NUL-terminated byte scanner, assignment/count discipline, prefix admission, and selected integer/string conversions |
+//! | `src/stdio/sscanf.c`, `vsscanf.c`, `vfscanf.c`; `src/internal/intscan.c` | NUL-terminated byte scanner, assignment/count discipline, prefix admission, selected integer/string conversions, and sealed `vfscanf` format-NUL, raw-literal, `%%`, format-whitespace, assignment-suppressed raw-character, assignment-suppressed token-string, assignment-suppressed scanset, and assignment-suppressed count states: after the string entry boundary establishes input, format-NUL returns the existing assignment count without entering a scanner state or accessing varargs; the raw literal matches one non-`%`, non-whitespace format byte without assignment; `%%` skips C-locale input whitespace before one literal percent; format whitespace coalesces its run while consuming zero or more input-space bytes without assignment; fixed non-wide `%*3c` consumes three raw bytes without a destination, va_list access, or assignment; fixed non-wide `%*3s` skips C-locale input whitespace before consuming its bounded token without a destination, va_list access, terminator, or assignment; fixed literal non-wide `%*3[abc]` consumes at most three raw `a`/`b`/`c` bytes without input-whitespace skipping, a destination, va_list access, a terminator, or an assignment; and literal non-wide `%*n` reads no source byte and performs no va_list access, count store, or assignment |
 //!
 //! The full musl formatter/scanner also owns decimal and long-double
-//! conversion, locale, wide input, scansets, positional arguments, stream
+//! conversion, locale, wide input, scansets outside the sealed literal
+//! suppressed state, positional arguments, stream
 //! buffering/cancellation, floating exception side effects, and error
 //! propagation through its complete `FILE` machinery. None of those owners is
 //! imported here. This leaf is evidence for the named static byte-string
@@ -1103,15 +1106,34 @@ unsafe fn scan_from_string(
     loop {
         let format_byte = unsafe { read_byte(directive) };
         if format_byte == 0 {
+            // musl vfscanf's top-level loop terminates before its whitespace,
+            // literal, percent, or conversion states when the fixed format is
+            // NUL. It returns the existing assignment count without entering a scanner state
+            // or accessing va_list. The private static-c-stdio-fixed-empty-format-scan artifact
+            // records only this sealed format-termination state;
+            // it does not promote general scanner behavior.
             return assignments;
         }
         if ascii_space(format_byte) {
+            // musl vfscanf's top-level format-whitespace path coalesces the
+            // format run, consumes zero or more C-locale input-space bytes,
+            // and resumes at the first nonspace without touching va_list or
+            // assignment state. The private
+            // static-c-stdio-fixed-format-whitespace-scan artifact records
+            // only this parser state; it does not promote general literal or
+            // format-whitespace scanning.
             while ascii_space(unsafe { read_byte(directive) }) {
                 directive = directive.wrapping_add(1);
             }
             cursor = unsafe { skip_input_space(cursor) };
             continue;
         }
+        // After the top-level C-locale format-whitespace state above, musl
+        // vfscanf's raw-literal arm reads exactly one non-percent format byte,
+        // distinguishes input EOF from a mismatching byte, and neither reads
+        // va_list nor changes the assignment count. The private
+        // static-c-stdio-fixed-literal-scan artifact records only this sealed
+        // raw-byte parser state; it does not promote general literal scanning.
         if format_byte != b'%' {
             if unsafe { read_byte(cursor) } == 0 {
                 return if assignments == 0 { EOF } else { assignments };
@@ -1125,6 +1147,12 @@ unsafe fn scan_from_string(
         }
         directive = directive.wrapping_add(1);
         if unsafe { read_byte(directive) } == b'%' {
+            // musl vfscanf's top-level `%%` path first consumes C-locale
+            // input whitespace, then matches exactly one percent without
+            // touching the va_list or assignment count.  The private
+            // static-c-stdio-fixed-percent-scan artifact records only this
+            // sealed parser state; it does not promote general literal scan
+            // behavior.
             cursor = unsafe { skip_input_space(cursor) };
             if unsafe { read_byte(cursor) } == 0 {
                 return if assignments == 0 { EOF } else { assignments };
@@ -1143,6 +1171,18 @@ unsafe fn scan_from_string(
         } else {
             false
         };
+        // musl vfscanf's `*` field records a null destination before it
+        // parses the width and conversion, so the selected non-wide `%*3c`
+        // path neither reads va_list nor increments matches. The private
+        // static-c-stdio-fixed-suppressed-character-scan artifact records
+        // only that three-byte raw-character suppression state, while the
+        // sibling static-c-stdio-fixed-suppressed-string-scan artifact
+        // separately records only its fixed token state, while
+        // static-c-stdio-fixed-suppressed-scanset-scan records only literal
+        // `%*3[abc]`, while static-c-stdio-fixed-suppressed-count-scan
+        // records only literal `%*n`; none promotes general suppression or
+        // conversion scanning.
+        let width_start = directive;
         let parsed_width = unsafe { parse_decimal(&mut directive) };
         let length = unsafe { parse_length(&mut directive) };
         let specifier = unsafe { read_byte(directive) };
@@ -1188,6 +1228,10 @@ unsafe fn scan_from_string(
             }
             b'c' if length == Length::None => {
                 let width = if parsed_width == 0 { 1 } else { parsed_width };
+                // With the sealed `%*3c` profile's suppress flag, destination
+                // is null: this raw loop still consumes its fixed byte width,
+                // including C-locale whitespace, but performs no store or
+                // assignment.
                 let mut copied = 0usize;
                 let destination = if suppress {
                     core::ptr::null_mut()
@@ -1215,6 +1259,10 @@ unsafe fn scan_from_string(
                 }
             }
             b's' if length == Length::None => {
+                // With the sealed `%*3s` profile's suppress flag, destination
+                // is null: musl's token path skips C-locale input whitespace,
+                // consumes up to its fixed width or the next whitespace, and
+                // makes no terminator write or assignment.
                 cursor = unsafe { skip_input_space(cursor) };
                 let width = if parsed_width == 0 {
                     usize::MAX
@@ -1252,7 +1300,56 @@ unsafe fn scan_from_string(
                     assignments += 1;
                 }
             }
+            b'['
+                if length == Length::None
+                    && suppress
+                    && parsed_width == 3
+                    && unsafe { read_byte(width_start) } == b'3'
+                    && unsafe { read_byte(width_start.wrapping_add(1)) } == b'[' =>
+            {
+                // Pinned musl's `vfscanf` builds a membership table for `[`,
+                // limits the raw source run to width, and leaves the first
+                // non-member for later format bytes. The private
+                // static-c-stdio-fixed-suppressed-scanset-scan artifact seals
+                // exactly its non-wide `%*3[abc]` no-destination state: no
+                // leading-zero width spelling, unsuppressed destination,
+                // range, inverse, allocation modifier, wide state, or general
+                // scanset grammar crosses this leaf.
+                if unsafe { read_byte(directive) } != b'a'
+                    || unsafe { read_byte(directive.wrapping_add(1)) } != b'b'
+                    || unsafe { read_byte(directive.wrapping_add(2)) } != b'c'
+                    || unsafe { read_byte(directive.wrapping_add(3)) } != b']'
+                {
+                    unsafe { errno::set_errno(EINVAL) };
+                    return assignments;
+                }
+                directive = directive.wrapping_add(4);
+                let mut copied = 0usize;
+                while copied < 3 {
+                    let byte = unsafe { read_byte(cursor) };
+                    if !matches!(byte, b'a' | b'b' | b'c') {
+                        break;
+                    }
+                    cursor = cursor.wrapping_add(1);
+                    copied += 1;
+                }
+                if copied == 0 {
+                    return if unsafe { read_byte(cursor) } == 0 && assignments == 0 {
+                        EOF
+                    } else {
+                        assignments
+                    };
+                }
+            }
             b'n' => {
+                // With the sealed `%*n` profile's suppress flag, musl's
+                // count state sees no destination: it reads no source byte,
+                // reaches neither VaList::next_arg nor assign_count, and does
+                // not increment assignments. The private
+                // static-c-stdio-fixed-suppressed-count-scan artifact records
+                // only that literal non-wide state; unsuppressed count stores,
+                // length/width variants, and general count scanning remain
+                // outside this profile.
                 if !suppress {
                     let count = unsafe { cursor.offset_from(start) as usize };
                     unsafe { assign_count(args, length, count) };
@@ -1273,7 +1370,8 @@ unsafe fn scan_from_string(
 /// `input` and `format` must be readable through their terminating NULs.
 /// `args` must contain a non-null writable destination of the exact type and
 /// extent required by each nonsuppressed directive; `%c` needs its selected
-/// width and `%s` also needs room for the trailing NUL.
+/// width and `%s` also needs room for the trailing NUL. The selected
+/// assignment-suppressed `%*3[abc]` state has no variadic destination.
 #[no_mangle]
 pub unsafe extern "C" fn vsscanf(
     input: *const c_char,

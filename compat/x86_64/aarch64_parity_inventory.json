@@ -1435,7 +1435,7 @@
       "capability_count": 9,
       "contract_state": "selected-private",
       "id": "libc.posix-runtime",
-      "verified_artifact_count": 138,
+      "verified_artifact_count": 139,
       "verified_slice_count": 3
     },
     {
@@ -1460,7 +1460,7 @@
       "capability_count": 16,
       "contract_state": "selected-private",
       "id": "libc.text-math-locale-stdio",
-      "verified_artifact_count": 66,
+      "verified_artifact_count": 74,
       "verified_slice_count": 5
     },
     {
@@ -2121,6 +2121,10 @@
     {
       "family": "libc.posix-runtime",
       "id": "static-c-mman-mapping-core"
+    },
+    {
+      "family": "libc.posix-runtime",
+      "id": "static-c-mq-setattr"
     },
     {
       "family": "libc.posix-runtime",
@@ -2788,6 +2792,38 @@
     },
     {
       "family": "libc.text-math-locale-stdio",
+      "id": "static-c-stdio-fixed-empty-format-scan"
+    },
+    {
+      "family": "libc.text-math-locale-stdio",
+      "id": "static-c-stdio-fixed-format-whitespace-scan"
+    },
+    {
+      "family": "libc.text-math-locale-stdio",
+      "id": "static-c-stdio-fixed-literal-scan"
+    },
+    {
+      "family": "libc.text-math-locale-stdio",
+      "id": "static-c-stdio-fixed-percent-scan"
+    },
+    {
+      "family": "libc.text-math-locale-stdio",
+      "id": "static-c-stdio-fixed-suppressed-character-scan"
+    },
+    {
+      "family": "libc.text-math-locale-stdio",
+      "id": "static-c-stdio-fixed-suppressed-count-scan"
+    },
+    {
+      "family": "libc.text-math-locale-stdio",
+      "id": "static-c-stdio-fixed-suppressed-scanset-scan"
+    },
+    {
+      "family": "libc.text-math-locale-stdio",
+      "id": "static-c-stdio-fixed-suppressed-string-scan"
+    },
+    {
+      "family": "libc.text-math-locale-stdio",
       "id": "static-c-stdio-float-hex-output"
     },
     {
@@ -2891,9 +2927,9 @@
     "aarch64_abi_manifest": "33dd504470f467caac7b149e747ee2b7ff8714c4fb23dfe5ad46e7f58bfe610c",
     "aarch64_capability_ledger": "128458dde00073bc0320b94972d864e66fa10d5f54e92b1b1c83081e2b4955e0",
     "aarch64_headers": "a0d35f0950abb3c060b978dfb5257cf50f70bed46ce91d371f43d65db7626b68",
-    "x86_parity_ledger": "9ad74bb3ebfb640b16d872c06e666287897c087996920d02266359e43b324014",
+    "x86_parity_ledger": "943d2f6792010b8ab5dc0b21a3d9934d4ebf621bef7b100f60b53db954b1590d",
     "x86_public_headers": "2cdcd860a423d99afef8360b6376447cf17ae926f1cd47416be817d421fca80f",
-    "x86_static_c_exports": "60760c23ca9501ae3a54a2280c01ff1a927236dc41b24022a5783c3b116eece1"
+    "x86_static_c_exports": "e192c3f35b936ef45ec57bc4b6845334ec33f0d2234a19077ada6905a5b0d4d3"
   },
   "unsupported_contracts": [
     {
@@ -2905,7 +2941,7 @@
     "promotion_family_count": 26,
     "promotion_ready": false,
     "public_support": false,
-    "selected_static_export_count": 1098,
-    "selected_static_exports_in_aarch64_dynamic_candidate_set": 1077
+    "selected_static_export_count": 1099,
+    "selected_static_exports_in_aarch64_dynamic_candidate_set": 1078
   }
 }

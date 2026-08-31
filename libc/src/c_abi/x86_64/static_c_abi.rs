@@ -548,6 +548,8 @@ mod memfd_create;
 mod readiness_waits;
 #[path = "event_descriptors.rs"]
 mod event_descriptors;
+#[path = "mq_setattr.rs"]
+mod mq_setattr;
 #[path = "aio_error.rs"]
 mod aio_error;
 #[path = "timer_fd.rs"]

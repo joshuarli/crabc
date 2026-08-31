@@ -7,13 +7,27 @@
 # and byte-string format/scan grammar. The closed `integer-scan` profile owns
 # only musl's ULLONG_MAX source-overflow behavior for narrow `%d`/`%i`/`%u`/
 # `%x` scans through the existing `sscanf`/`vsscanf` boundary. The separately
-# closed `octal-hex-scan` profile owns only the matching `%o`/`%X` behavior.
+# closed `octal-hex-scan` profile owns only the matching `%o`/`%X` behavior,
+# `fixed-percent-scan` owns only vfscanf's literal `%%` parser state,
+# `fixed-format-whitespace-scan` owns only its top-level format-whitespace
+# parser state, and `fixed-literal-scan` owns only its non-percent raw-literal
+# parser state. `fixed-empty-format-scan` owns only the format-NUL termination
+# state before vfscanf enters a format-directed scanner state or a variadic
+# destination boundary. `fixed-suppressed-character-scan` owns only the
+# no-destination non-wide `%*3c` raw-character conversion state.
+# `fixed-suppressed-string-scan` owns only the no-destination non-wide `%*3s`
+# token-string conversion state after its own C-locale input-whitespace skip.
+# `fixed-suppressed-scanset-scan` owns only the no-destination non-wide
+# literal `%*3[abc]` raw-member state, without input-whitespace skipping.
+# `fixed-suppressed-count-scan` owns only the no-destination non-wide literal
+# `%*n` count state, which reads no input and performs no count store.
 # The sibling `float-hex-output` profile selects only binary64 `%a`/`%A`
 # output, while the closed `errno-output` profile adds only bare GNU/musl `%m` C-locale
 # errno-message output through that same formatter. None selects a general
 # error-reporting, stream, locale, or ambient-formatting boundary, FILE
 # streams, printf/fprintf, scanf/fscanf, decimal or long-double floats, wide
-# text, scansets, positional arguments, pointer-valued %p, allocation, a
+# text, scanset grammar outside the separate sealed profile, positional
+# arguments, pointer-valued %p, allocation, a
 # dynamic libc, CRT, loader, sysroot, or public x86 support.
 set -euo pipefail
 
@@ -45,6 +59,62 @@ octal-hex-scan)
     readonly START_SOURCE=compat/x86_64/libc_stdio_octal_hex_scan_start.S
     readonly FREESTANDING_DEFINE=CRABC_STDIO_OCTAL_HEX_SCAN_FREESTANDING
     readonly EVIDENCE_LABEL="bounded stdio octal/uppercase-hex source scan"
+    readonly -a REQUIRED_C_ABI_SYMBOLS=(sscanf vsscanf)
+    ;;
+fixed-percent-scan)
+    readonly FIXTURE_SOURCE=compat/x86_64/libc_stdio_fixed_percent_scan_probe.c
+    readonly START_SOURCE=compat/x86_64/libc_stdio_fixed_percent_scan_start.S
+    readonly FREESTANDING_DEFINE=CRABC_STDIO_FIXED_PERCENT_SCAN_FREESTANDING
+    readonly EVIDENCE_LABEL="sealed stdio literal-percent scan"
+    readonly -a REQUIRED_C_ABI_SYMBOLS=(sscanf vsscanf)
+    ;;
+fixed-format-whitespace-scan)
+    readonly FIXTURE_SOURCE=compat/x86_64/libc_stdio_fixed_format_whitespace_scan_probe.c
+    readonly START_SOURCE=compat/x86_64/libc_stdio_fixed_format_whitespace_scan_start.S
+    readonly FREESTANDING_DEFINE=CRABC_STDIO_FIXED_FORMAT_WHITESPACE_SCAN_FREESTANDING
+    readonly EVIDENCE_LABEL="sealed stdio format-whitespace scan"
+    readonly -a REQUIRED_C_ABI_SYMBOLS=(sscanf vsscanf)
+    ;;
+fixed-literal-scan)
+    readonly FIXTURE_SOURCE=compat/x86_64/libc_stdio_fixed_literal_scan_probe.c
+    readonly START_SOURCE=compat/x86_64/libc_stdio_fixed_literal_scan_start.S
+    readonly FREESTANDING_DEFINE=CRABC_STDIO_FIXED_LITERAL_SCAN_FREESTANDING
+    readonly EVIDENCE_LABEL="sealed stdio raw-literal scan"
+    readonly -a REQUIRED_C_ABI_SYMBOLS=(sscanf vsscanf)
+    ;;
+fixed-empty-format-scan)
+    readonly FIXTURE_SOURCE=compat/x86_64/libc_stdio_fixed_empty_format_scan_probe.c
+    readonly START_SOURCE=compat/x86_64/libc_stdio_fixed_empty_format_scan_start.S
+    readonly FREESTANDING_DEFINE=CRABC_STDIO_FIXED_EMPTY_FORMAT_SCAN_FREESTANDING
+    readonly EVIDENCE_LABEL="sealed stdio empty-format scan"
+    readonly -a REQUIRED_C_ABI_SYMBOLS=(sscanf vsscanf)
+    ;;
+fixed-suppressed-character-scan)
+    readonly FIXTURE_SOURCE=compat/x86_64/libc_stdio_fixed_suppressed_character_scan_probe.c
+    readonly START_SOURCE=compat/x86_64/libc_stdio_fixed_suppressed_character_scan_start.S
+    readonly FREESTANDING_DEFINE=CRABC_STDIO_FIXED_SUPPRESSED_CHARACTER_SCAN_FREESTANDING
+    readonly EVIDENCE_LABEL="sealed stdio suppressed-character scan"
+    readonly -a REQUIRED_C_ABI_SYMBOLS=(sscanf vsscanf)
+    ;;
+fixed-suppressed-string-scan)
+    readonly FIXTURE_SOURCE=compat/x86_64/libc_stdio_fixed_suppressed_string_scan_probe.c
+    readonly START_SOURCE=compat/x86_64/libc_stdio_fixed_suppressed_string_scan_start.S
+    readonly FREESTANDING_DEFINE=CRABC_STDIO_FIXED_SUPPRESSED_STRING_SCAN_FREESTANDING
+    readonly EVIDENCE_LABEL="sealed stdio suppressed-string scan"
+    readonly -a REQUIRED_C_ABI_SYMBOLS=(sscanf vsscanf)
+    ;;
+fixed-suppressed-scanset-scan)
+    readonly FIXTURE_SOURCE=compat/x86_64/libc_stdio_fixed_suppressed_scanset_scan_probe.c
+    readonly START_SOURCE=compat/x86_64/libc_stdio_fixed_suppressed_scanset_scan_start.S
+    readonly FREESTANDING_DEFINE=CRABC_STDIO_FIXED_SUPPRESSED_SCANSET_SCAN_FREESTANDING
+    readonly EVIDENCE_LABEL="sealed stdio suppressed-scanset scan"
+    readonly -a REQUIRED_C_ABI_SYMBOLS=(sscanf vsscanf)
+    ;;
+fixed-suppressed-count-scan)
+    readonly FIXTURE_SOURCE=compat/x86_64/libc_stdio_fixed_suppressed_count_scan_probe.c
+    readonly START_SOURCE=compat/x86_64/libc_stdio_fixed_suppressed_count_scan_start.S
+    readonly FREESTANDING_DEFINE=CRABC_STDIO_FIXED_SUPPRESSED_COUNT_SCAN_FREESTANDING
+    readonly EVIDENCE_LABEL="sealed stdio suppressed-count scan"
     readonly -a REQUIRED_C_ABI_SYMBOLS=(sscanf vsscanf)
     ;;
 float-hex-output)
@@ -231,6 +301,117 @@ if [ "$EVIDENCE_PROFILE" = octal-hex-scan ]; then
     grep -Fq 'complete `%X` consumption' \
         "$ROOT_DIR/compat/x86_64/libc_stdio_octal_hex_scan_probe.c" ||
         fail "octal/uppercase-hex fixture no longer records exact consumption"
+fi
+if [ "$EVIDENCE_PROFILE" = fixed-percent-scan ]; then
+    grep -Fq "if unsafe { read_byte(directive) } == b'%'" \
+        "$ROOT_DIR/libc/src/c_abi/x86_64/stdio_format_scan.rs" ||
+        fail "literal-percent scanner branch is no longer selected"
+    grep -Fq 'cursor = unsafe { skip_input_space(cursor) };' \
+        "$ROOT_DIR/libc/src/c_abi/x86_64/stdio_format_scan.rs" ||
+        fail "literal-percent scanner no longer skips C-locale input whitespace"
+    grep -Fq "if unsafe { read_byte(cursor) } != b'%'" \
+        "$ROOT_DIR/libc/src/c_abi/x86_64/stdio_format_scan.rs" ||
+        fail "literal-percent scanner no longer matches exactly one percent"
+    grep -Fq 'without an assignment' "$ROOT_DIR/$FIXTURE_SOURCE" ||
+        fail "literal-percent fixture no longer records its assignment boundary"
+fi
+if [ "$EVIDENCE_PROFILE" = fixed-format-whitespace-scan ]; then
+    grep -Fq 'if ascii_space(format_byte)' \
+        "$ROOT_DIR/libc/src/c_abi/x86_64/stdio_format_scan.rs" ||
+        fail "format-whitespace scanner branch is no longer selected"
+    grep -Fq 'while ascii_space(unsafe { read_byte(directive) })' \
+        "$ROOT_DIR/libc/src/c_abi/x86_64/stdio_format_scan.rs" ||
+        fail "format-whitespace scanner no longer coalesces its format run"
+    grep -Fq 'cursor = unsafe { skip_input_space(cursor) };' \
+        "$ROOT_DIR/libc/src/c_abi/x86_64/stdio_format_scan.rs" ||
+        fail "format-whitespace scanner no longer consumes C-locale input space"
+    grep -Fq 'zero input whitespace' "$ROOT_DIR/$FIXTURE_SOURCE" ||
+        fail "format-whitespace fixture no longer records zero-input-space admission"
+fi
+if [ "$EVIDENCE_PROFILE" = fixed-literal-scan ]; then
+    grep -Fq "if format_byte != b'%'" \
+        "$ROOT_DIR/libc/src/c_abi/x86_64/stdio_format_scan.rs" ||
+        fail "raw-literal scanner branch is no longer selected"
+    grep -Fq 'if unsafe { read_byte(cursor) } == 0' \
+        "$ROOT_DIR/libc/src/c_abi/x86_64/stdio_format_scan.rs" ||
+        fail "raw-literal scanner no longer distinguishes input EOF"
+    grep -Fq 'if unsafe { read_byte(cursor) } != format_byte' \
+        "$ROOT_DIR/libc/src/c_abi/x86_64/stdio_format_scan.rs" ||
+        fail "raw-literal scanner no longer distinguishes matching failure"
+    grep -Fq 'zero-assignment raw literal' "$ROOT_DIR/$FIXTURE_SOURCE" ||
+        fail "raw-literal fixture no longer records its assignment boundary"
+fi
+if [ "$EVIDENCE_PROFILE" = fixed-empty-format-scan ]; then
+    grep -Fq 'if format_byte == 0' \
+        "$ROOT_DIR/libc/src/c_abi/x86_64/stdio_format_scan.rs" ||
+        fail "empty-format scanner termination is no longer selected"
+    grep -Fq 'returns the existing assignment count without entering a scanner state' \
+        "$ROOT_DIR/libc/src/c_abi/x86_64/stdio_format_scan.rs" ||
+        fail "empty-format scanner no longer retains its sealed boundary"
+    grep -Fq 'zero-assignment empty format' "$ROOT_DIR/$FIXTURE_SOURCE" ||
+        fail "empty-format fixture no longer records its assignment boundary"
+fi
+if [ "$EVIDENCE_PROFILE" = fixed-suppressed-character-scan ]; then
+    grep -Fq 'static-c-stdio-fixed-suppressed-character-scan artifact' \
+        "$ROOT_DIR/libc/src/c_abi/x86_64/stdio_format_scan.rs" ||
+        fail "suppressed-character scanner state is no longer selected"
+    grep -Fq 'let suppress = if unsafe { read_byte(directive) } == b'\''*'\''' \
+        "$ROOT_DIR/libc/src/c_abi/x86_64/stdio_format_scan.rs" ||
+        fail "suppressed-character scanner no longer parses the star field"
+    grep -Fq 'destination = if suppress' \
+        "$ROOT_DIR/libc/src/c_abi/x86_64/stdio_format_scan.rs" ||
+        fail "suppressed-character scanner no longer seals its null destination"
+    grep -Fq 'zero-assignment suppressed character' "$ROOT_DIR/$FIXTURE_SOURCE" ||
+        fail "suppressed-character fixture no longer records its assignment boundary"
+fi
+if [ "$EVIDENCE_PROFILE" = fixed-suppressed-string-scan ]; then
+    grep -Fq 'static-c-stdio-fixed-suppressed-string-scan artifact' \
+        "$ROOT_DIR/libc/src/c_abi/x86_64/stdio_format_scan.rs" ||
+        fail "suppressed-string scanner state is no longer selected"
+    grep -Fq 'let suppress = if unsafe { read_byte(directive) } == b'\''*'\''' \
+        "$ROOT_DIR/libc/src/c_abi/x86_64/stdio_format_scan.rs" ||
+        fail "suppressed-string scanner no longer parses the star field"
+    grep -Fq 'With the sealed `%*3s` profile' \
+        "$ROOT_DIR/libc/src/c_abi/x86_64/stdio_format_scan.rs" ||
+        fail "suppressed-string scanner no longer seals its null destination"
+    grep -Fq 'zero-assignment suppressed token' "$ROOT_DIR/$FIXTURE_SOURCE" ||
+        fail "suppressed-string fixture no longer records its assignment boundary"
+fi
+if [ "$EVIDENCE_PROFILE" = fixed-suppressed-scanset-scan ]; then
+    grep -Fq 'static-c-stdio-fixed-suppressed-scanset-scan artifact' \
+        "$ROOT_DIR/libc/src/c_abi/x86_64/stdio_format_scan.rs" ||
+        fail "suppressed-scanset scanner state is no longer selected"
+    grep -Fq "b'['" \
+        "$ROOT_DIR/libc/src/c_abi/x86_64/stdio_format_scan.rs" ||
+        fail "suppressed-scanset scanner no longer owns the selected bracket directive"
+    grep -Fq 'parsed_width == 3' \
+        "$ROOT_DIR/libc/src/c_abi/x86_64/stdio_format_scan.rs" ||
+        fail "suppressed-scanset scanner no longer retains its three-byte width"
+    grep -Fq "read_byte(width_start) } == b'3'" \
+        "$ROOT_DIR/libc/src/c_abi/x86_64/stdio_format_scan.rs" ||
+        fail "suppressed-scanset scanner no longer retains its literal width spelling"
+    grep -Fq "b'a' | b'b' | b'c'" \
+        "$ROOT_DIR/libc/src/c_abi/x86_64/stdio_format_scan.rs" ||
+        fail "suppressed-scanset scanner no longer retains its exact C-locale members"
+    grep -Fq 'raw narrow bytes' \
+        "$ROOT_DIR/compat/x86_64/libc_stdio_fixed_suppressed_scanset_scan_probe.c" ||
+        fail "suppressed-scanset fixture no longer records its raw-byte boundary"
+fi
+if [ "$EVIDENCE_PROFILE" = fixed-suppressed-count-scan ]; then
+    grep -Fq 'static-c-stdio-fixed-suppressed-count-scan artifact' \
+        "$ROOT_DIR/libc/src/c_abi/x86_64/stdio_format_scan.rs" ||
+        fail "suppressed-count scanner state is no longer selected"
+    grep -Fq "b'n' =>" \
+        "$ROOT_DIR/libc/src/c_abi/x86_64/stdio_format_scan.rs" ||
+        fail "suppressed-count scanner no longer owns the selected count directive"
+    grep -Fq 'With the sealed `%*n` profile' \
+        "$ROOT_DIR/libc/src/c_abi/x86_64/stdio_format_scan.rs" ||
+        fail "suppressed-count scanner no longer seals its null destination"
+    grep -Fq 'if !suppress' \
+        "$ROOT_DIR/libc/src/c_abi/x86_64/stdio_format_scan.rs" ||
+        fail "suppressed-count scanner no longer avoids count storage"
+    grep -Fq 'zero-assignment suppressed count' "$ROOT_DIR/$FIXTURE_SOURCE" ||
+        fail "suppressed-count fixture no longer records its assignment boundary"
 fi
 if timeout --foreground "$EXECUTION_TIMEOUT" "$candidate"; then
     :

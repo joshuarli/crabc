@@ -183,7 +183,9 @@ Native Linux/x86-64 staged-foundation evidence commands:
   sysv-semaphore-header-abi  verify staged x86 SysV semaphore C/C++ declarations/layouts
   posix-semaphore-header-abi  verify staged x86 POSIX semaphore C/C++ declarations/layouts
   sysv-message-shared-memory-header-abi  verify staged x86 SysV message/shared-memory C/C++ declarations/layouts
+  mq-setattr-header-abi  compile the staged x86 C/C++ mqueue.h mq_setattr declaration
   libc-event-descriptors  run the static x86 crabc-libc epoll/eventfd/inotify slice
+  libc-mq-setattr  run the static x86 crabc-libc mq_setattr slice
   libc-timerfd  run the static x86 crabc-libc timer-descriptor slice
   libc-signalfd  run the static x86 crabc-libc signal-descriptor slice
   libc-sigpause  run the static x86 crabc-libc one-signal pause slice
@@ -450,6 +452,22 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-stdio-integer-scan  run the static x86 crabc-libc bounded integer-source scan slice
   stdio-octal-hex-scan-header-abi  compile C11/C++17 scanf declaration/linkage evidence
   libc-stdio-octal-hex-scan  run the static x86 crabc-libc bounded octal/uppercase-hex scan slice
+  stdio-fixed-percent-scan-header-abi  compile C11/C++17 literal-percent scanf declaration/linkage evidence
+  libc-stdio-fixed-percent-scan  run the static x86 crabc-libc sealed literal-percent scan slice
+  stdio-fixed-format-whitespace-scan-header-abi  compile C11/C++17 format-whitespace scanf declaration/linkage evidence
+  libc-stdio-fixed-format-whitespace-scan  run the static x86 crabc-libc sealed format-whitespace scan slice
+  stdio-fixed-literal-scan-header-abi  compile C11/C++17 raw-literal scanf declaration/linkage evidence
+  libc-stdio-fixed-literal-scan  run the static x86 crabc-libc sealed raw-literal scan slice
+  stdio-fixed-empty-format-scan-header-abi  compile C11/C++17 empty-format scanf declaration/linkage evidence
+  libc-stdio-fixed-empty-format-scan  run the static x86 crabc-libc sealed empty-format scan slice
+  stdio-fixed-suppressed-character-scan-header-abi  compile C11/C++17 suppressed-character scanf declaration/linkage evidence
+  libc-stdio-fixed-suppressed-character-scan  run the static x86 crabc-libc sealed suppressed-character scan slice
+  stdio-fixed-suppressed-string-scan-header-abi  compile C11/C++17 suppressed-string scanf declaration/linkage evidence
+  libc-stdio-fixed-suppressed-string-scan  run the static x86 crabc-libc sealed suppressed-string scan slice
+  stdio-fixed-suppressed-scanset-scan-header-abi  compile C11/C++17 suppressed-scanset scanf declaration/linkage evidence
+  libc-stdio-fixed-suppressed-scanset-scan  run the static x86 crabc-libc sealed suppressed-scanset scan slice
+  stdio-fixed-suppressed-count-scan-header-abi  compile C11/C++17 suppressed-count scanf declaration/linkage evidence
+  libc-stdio-fixed-suppressed-count-scan  run the static x86 crabc-libc sealed suppressed-count scan slice
   libc-stdio-float-hex-output  run the static x86 crabc-libc binary64 hexadecimal-output slice
   libc-stdio-errno-output  run the static x86 crabc-libc errno-message format slice
   libc-stdio-path-stream  run the static x86 crabc-libc fixed pathname-stream slice
@@ -577,6 +595,13 @@ application signal, and proves Linux restores the original mask after the
 interrupted wait. It does not select a public mask/action API, process control,
 signal queues/descriptors, timers, pthread behavior, dynamic libc, or
 application startup.
+`libc-mq-setattr` exercises one separate freestanding project-header C fixture
+after the equivalent pinned-musl run. It selects only direct POSIX
+message-queue status-flag replacement through `mq_getsetattr`: the LP64
+`mq_attr` record, nonblocking flag transition, optional old-attribute output,
+stale `errno` on success, and direct `EINVAL`/`EBADF` errors. It does not
+select queue open/close/unlink, message transfer, notification, timed
+operations, general IPC, dynamic libc, or application startup.
 `libc-sigisemptyset` is a separate one-entry GNU signal-set predicate boundary.
 It reads exactly musl's first public x86 signal-set word, ignores the remaining
 128-byte-record tail, preserves stale errno, and has no syscall path. It does
@@ -2772,6 +2797,10 @@ run_libc_timerfd_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_timerfd.sh
 }
 
+run_libc_mq_setattr_probe() {
+    run_in_container bash /workspace/compat/x86_64/run_libc_mq_setattr.sh
+}
+
 run_libc_signalfd_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_signalfd.sh
 }
@@ -2938,6 +2967,10 @@ run_sleep_header_abi() {
 
 run_timerfd_header_abi() {
     run_in_container bash /workspace/compat/x86_64/run_timerfd_header_abi.sh
+}
+
+run_mq_setattr_header_abi() {
+    run_in_container bash /workspace/compat/x86_64/run_mq_setattr_header_abi.sh
 }
 
 run_signalfd_header_abi() {
@@ -4387,13 +4420,14 @@ case "$command" in
     libc-getloadavg) ;;
     sleep-header-abi) ;;
     libc-sleep) ;;
+    mq-setattr-header-abi|libc-mq-setattr) ;;
     timerfd-header-abi|signalfd-header-abi) ;;
     usleep-header-abi|libc-timerfd|libc-signalfd|libc-sigpause|libc-sigisemptyset|libc-sigandset-sigorset|libc-sigpending|libc-sigrtmax|libc-sigrtmin|libc-sched-getscheduler|libc-alarm|libc-usleep|libc-sigaddset-sigdelset-sigfillset|libc-sched-getparam|libc-sched-setparam|libc-sched-getaffinity|libc-setfsuid|libc-setfsgid|libc-personality) ;;
     libc-sched-cpucount|libc-sched-getcpu|libc-sched-priority-bounds|libc-sched-yield|libc-sched-get-priority-max|libc-sched-get-priority-min) ;;
     sched-cpucount-header-abi|sched-getscheduler-header-abi|sched-priority-bounds-header-abi|sched-get-priority-max-header-abi|sched-get-priority-min-header-abi|sched-getparam-header-abi|sched-setparam-header-abi|sched-getaffinity-header-abi|setfsuid-header-abi|setfsgid-header-abi|personality-header-abi) ;;
     ctermid-header-abi|gethostid-header-abi|endhostent-header-abi|ether-line-header-abi|res-init-header-abi|posix-spawnattr-destroy-header-abi|posix-spawnattr-getflags-header-abi|posix-spawnattr-setpgroup-header-abi|posix-spawnattr-setschedpolicy-header-abi|posix-spawn-file-actions-init-header-abi|getpagesize-header-abi|gettid-header-abi|posix-close-header-abi|isatty-header-abi|ttyname-r-header-abi|tcgetpgrp-header-abi|tcsetpgrp-header-abi|getpass-header-abi|fchdir-header-abi|ulimit-header-abi|libc-ctermid|libc-gethostid|libc-endhostent|libc-ether-line|libc-res-init|libc-posix-spawnattr-destroy|libc-posix-spawnattr-getflags|libc-posix-spawnattr-setpgroup|libc-posix-spawnattr-setschedpolicy|libc-posix-spawn-file-actions-init|libc-getpagesize|libc-gettid|libc-posix-close|libc-isatty|libc-ttyname-r|libc-tcgetpgrp|libc-tcsetpgrp|libc-getpass|libc-fchdir|libc-ulimit|mkfifo-header-abi|mkfifoat-header-abi|libc-mkfifo|libc-mkfifoat|mktemp-header-abi|libc-mktemp) ;;
     readlinkat-header-abi|libc-readlinkat|linkat-header-abi|libc-linkat|lchown-header-abi|libc-lchown|hasmntopt-header-abi|libc-hasmntopt|unlinkat-header-abi|libc-unlinkat|chown-header-abi|libc-chown|sync-header-abi|libc-sync|sync-file-range-header-abi|libc-sync-file-range) ;;
-    stdio-permanent-line-io-header-abi|stdio-octal-hex-scan-header-abi) ;;
+    stdio-permanent-line-io-header-abi|stdio-octal-hex-scan-header-abi|stdio-fixed-percent-scan-header-abi|stdio-fixed-format-whitespace-scan-header-abi|stdio-fixed-literal-scan-header-abi|stdio-fixed-empty-format-scan-header-abi|stdio-fixed-suppressed-character-scan-header-abi|stdio-fixed-suppressed-string-scan-header-abi|stdio-fixed-suppressed-scanset-scan-header-abi|stdio-fixed-suppressed-count-scan-header-abi) ;;
     math-complex-complete-header-abi|libc-math-complex-complete) ;;
     stdio-permanent-byte-io-header-abi) ;;
     stdio-permanent-status-header-abi) ;;
@@ -4476,7 +4510,7 @@ case "$command" in
     libc-pathname-lifecycle) ;;
     libc-directory-streams) ;;
     libc-lchmod-unsupported) ;;
-    libc-stdio-standard|libc-stdio-format-scan|libc-stdio-integer-scan|libc-stdio-octal-hex-scan|libc-stdio-float-hex-output|libc-stdio-errno-output|libc-stdio-permanent-line-io|libc-stdio-permanent-byte-io|libc-stdio-permanent-status|libc-stdio-permanent-freading-stdin|libc-stdio-permanent-fsetlocking-stdin|libc-stdio-permanent-fseterr-stdin|libc-stdio-permanent-freadable-stdin|libc-stdio-permanent-fwritable-stderr|libc-stdio-permanent-fbufsize-stderr|libc-stdio-permanent-flbf-stderr|libc-stdio-permanent-fileno|libc-stdio-permanent-fileno-unlocked|libc-stdio-permanent-feof-unlocked|libc-stdio-path-stream|libc-stdio-tmpfile|libc-text-math-locale-stdio-composition) ;;
+    libc-stdio-standard|libc-stdio-format-scan|libc-stdio-integer-scan|libc-stdio-octal-hex-scan|libc-stdio-fixed-percent-scan|libc-stdio-fixed-format-whitespace-scan|libc-stdio-fixed-literal-scan|libc-stdio-fixed-empty-format-scan|libc-stdio-fixed-suppressed-character-scan|libc-stdio-fixed-suppressed-string-scan|libc-stdio-fixed-suppressed-scanset-scan|libc-stdio-fixed-suppressed-count-scan|libc-stdio-float-hex-output|libc-stdio-errno-output|libc-stdio-permanent-line-io|libc-stdio-permanent-byte-io|libc-stdio-permanent-status|libc-stdio-permanent-freading-stdin|libc-stdio-permanent-fsetlocking-stdin|libc-stdio-permanent-fseterr-stdin|libc-stdio-permanent-freadable-stdin|libc-stdio-permanent-fwritable-stderr|libc-stdio-permanent-fbufsize-stderr|libc-stdio-permanent-flbf-stderr|libc-stdio-permanent-fileno|libc-stdio-permanent-fileno-unlocked|libc-stdio-permanent-feof-unlocked|libc-stdio-path-stream|libc-stdio-tmpfile|libc-text-math-locale-stdio-composition) ;;
     libc-pthread-identity) ;;
     libc-pthread-affinity) ;;
     libc-pthread-cpuclock) ;;
@@ -4725,6 +4759,46 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "stdio-octal-hex-scan-header-abi takes no arguments"
         ensure_image
         run_in_container bash /workspace/compat/x86_64/run_stdio_octal_hex_scan_header_abi.sh
+        ;;
+    stdio-fixed-percent-scan-header-abi)
+        [ "$#" -eq 0 ] || fail "stdio-fixed-percent-scan-header-abi takes no arguments"
+        ensure_image
+        run_in_container bash /workspace/compat/x86_64/run_stdio_fixed_percent_scan_header_abi.sh
+        ;;
+    stdio-fixed-format-whitespace-scan-header-abi)
+        [ "$#" -eq 0 ] || fail "stdio-fixed-format-whitespace-scan-header-abi takes no arguments"
+        ensure_image
+        run_in_container bash /workspace/compat/x86_64/run_stdio_fixed_format_whitespace_scan_header_abi.sh
+        ;;
+    stdio-fixed-literal-scan-header-abi)
+        [ "$#" -eq 0 ] || fail "stdio-fixed-literal-scan-header-abi takes no arguments"
+        ensure_image
+        run_in_container bash /workspace/compat/x86_64/run_stdio_fixed_literal_scan_header_abi.sh
+        ;;
+    stdio-fixed-empty-format-scan-header-abi)
+        [ "$#" -eq 0 ] || fail "stdio-fixed-empty-format-scan-header-abi takes no arguments"
+        ensure_image
+        run_in_container bash /workspace/compat/x86_64/run_stdio_fixed_empty_format_scan_header_abi.sh
+        ;;
+    stdio-fixed-suppressed-character-scan-header-abi)
+        [ "$#" -eq 0 ] || fail "stdio-fixed-suppressed-character-scan-header-abi takes no arguments"
+        ensure_image
+        run_in_container bash /workspace/compat/x86_64/run_stdio_fixed_suppressed_character_scan_header_abi.sh
+        ;;
+    stdio-fixed-suppressed-string-scan-header-abi)
+        [ "$#" -eq 0 ] || fail "stdio-fixed-suppressed-string-scan-header-abi takes no arguments"
+        ensure_image
+        run_in_container bash /workspace/compat/x86_64/run_stdio_fixed_suppressed_string_scan_header_abi.sh
+        ;;
+    stdio-fixed-suppressed-scanset-scan-header-abi)
+        [ "$#" -eq 0 ] || fail "stdio-fixed-suppressed-scanset-scan-header-abi takes no arguments"
+        ensure_image
+        run_in_container bash /workspace/compat/x86_64/run_stdio_fixed_suppressed_scanset_scan_header_abi.sh
+        ;;
+    stdio-fixed-suppressed-count-scan-header-abi)
+        [ "$#" -eq 0 ] || fail "stdio-fixed-suppressed-count-scan-header-abi takes no arguments"
+        ensure_image
+        run_in_container bash /workspace/compat/x86_64/run_stdio_fixed_suppressed_count_scan_header_abi.sh
         ;;
     stdio-permanent-status-header-abi)
         [ "$#" -eq 0 ] || fail "stdio-permanent-status-header-abi takes no arguments"
@@ -5035,6 +5109,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "timerfd-header-abi takes no arguments"
         ensure_image
         run_timerfd_header_abi
+        ;;
+    mq-setattr-header-abi)
+        [ "$#" -eq 0 ] || fail "mq-setattr-header-abi takes no arguments"
+        ensure_image
+        run_mq_setattr_header_abi
         ;;
     signalfd-header-abi)
         [ "$#" -eq 0 ] || fail "signalfd-header-abi takes no arguments"
@@ -6326,6 +6405,54 @@ case "$command" in
         run_in_container bash /workspace/compat/x86_64/run_stdio_octal_hex_scan_header_abi.sh
         run_in_container bash /workspace/compat/x86_64/run_libc_stdio_octal_hex_scan.sh
         ;;
+    libc-stdio-fixed-percent-scan)
+        [ "$#" -eq 0 ] || fail "libc-stdio-fixed-percent-scan takes no arguments"
+        ensure_image
+        run_in_container bash /workspace/compat/x86_64/run_stdio_fixed_percent_scan_header_abi.sh
+        run_in_container bash /workspace/compat/x86_64/run_libc_stdio_fixed_percent_scan.sh
+        ;;
+    libc-stdio-fixed-format-whitespace-scan)
+        [ "$#" -eq 0 ] || fail "libc-stdio-fixed-format-whitespace-scan takes no arguments"
+        ensure_image
+        run_in_container bash /workspace/compat/x86_64/run_stdio_fixed_format_whitespace_scan_header_abi.sh
+        run_in_container bash /workspace/compat/x86_64/run_libc_stdio_fixed_format_whitespace_scan.sh
+        ;;
+    libc-stdio-fixed-literal-scan)
+        [ "$#" -eq 0 ] || fail "libc-stdio-fixed-literal-scan takes no arguments"
+        ensure_image
+        run_in_container bash /workspace/compat/x86_64/run_stdio_fixed_literal_scan_header_abi.sh
+        run_in_container bash /workspace/compat/x86_64/run_libc_stdio_fixed_literal_scan.sh
+        ;;
+    libc-stdio-fixed-empty-format-scan)
+        [ "$#" -eq 0 ] || fail "libc-stdio-fixed-empty-format-scan takes no arguments"
+        ensure_image
+        run_in_container bash /workspace/compat/x86_64/run_stdio_fixed_empty_format_scan_header_abi.sh
+        run_in_container bash /workspace/compat/x86_64/run_libc_stdio_fixed_empty_format_scan.sh
+        ;;
+    libc-stdio-fixed-suppressed-character-scan)
+        [ "$#" -eq 0 ] || fail "libc-stdio-fixed-suppressed-character-scan takes no arguments"
+        ensure_image
+        run_in_container bash /workspace/compat/x86_64/run_stdio_fixed_suppressed_character_scan_header_abi.sh
+        run_in_container bash /workspace/compat/x86_64/run_libc_stdio_fixed_suppressed_character_scan.sh
+        ;;
+    libc-stdio-fixed-suppressed-string-scan)
+        [ "$#" -eq 0 ] || fail "libc-stdio-fixed-suppressed-string-scan takes no arguments"
+        ensure_image
+        run_in_container bash /workspace/compat/x86_64/run_stdio_fixed_suppressed_string_scan_header_abi.sh
+        run_in_container bash /workspace/compat/x86_64/run_libc_stdio_fixed_suppressed_string_scan.sh
+        ;;
+    libc-stdio-fixed-suppressed-scanset-scan)
+        [ "$#" -eq 0 ] || fail "libc-stdio-fixed-suppressed-scanset-scan takes no arguments"
+        ensure_image
+        run_in_container bash /workspace/compat/x86_64/run_stdio_fixed_suppressed_scanset_scan_header_abi.sh
+        run_in_container bash /workspace/compat/x86_64/run_libc_stdio_fixed_suppressed_scanset_scan.sh
+        ;;
+    libc-stdio-fixed-suppressed-count-scan)
+        [ "$#" -eq 0 ] || fail "libc-stdio-fixed-suppressed-count-scan takes no arguments"
+        ensure_image
+        run_in_container bash /workspace/compat/x86_64/run_stdio_fixed_suppressed_count_scan_header_abi.sh
+        run_in_container bash /workspace/compat/x86_64/run_libc_stdio_fixed_suppressed_count_scan.sh
+        ;;
     libc-stdio-float-hex-output)
         [ "$#" -eq 0 ] || fail "libc-stdio-float-hex-output takes no arguments"
         ensure_image
@@ -6650,6 +6777,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "libc-timerfd takes no arguments"
         ensure_image
         run_libc_timerfd_probe
+        ;;
+    libc-mq-setattr)
+        [ "$#" -eq 0 ] || fail "libc-mq-setattr takes no arguments"
+        ensure_image
+        run_libc_mq_setattr_probe
         ;;
     libc-signalfd)
         [ "$#" -eq 0 ] || fail "libc-signalfd takes no arguments"

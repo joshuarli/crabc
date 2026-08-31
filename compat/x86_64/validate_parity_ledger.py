@@ -1282,6 +1282,20 @@ POSIX_SEMAPHORE_UNSELECTED_SYMBOLS = (
     "sem_unlink",
 )
 
+MQ_SETATTR_SYMBOLS = ("mq_setattr",)
+
+MQ_SETATTR_UNSELECTED_SYMBOLS = (
+    "mq_close",
+    "mq_getattr",
+    "mq_notify",
+    "mq_open",
+    "mq_receive",
+    "mq_send",
+    "mq_timedreceive",
+    "mq_timedsend",
+    "mq_unlink",
+)
+
 SYSV_MESSAGE_SHARED_MEMORY_SYMBOLS = (
     "ftok",
     "msgget",
@@ -1301,7 +1315,6 @@ SYSV_MESSAGE_SHARED_MEMORY_UNSELECTED_SYMBOLS = (
     "mq_open",
     "mq_receive",
     "mq_send",
-    "mq_setattr",
     "mq_timedreceive",
     "mq_timedsend",
     "mq_unlink",
@@ -29267,6 +29280,198 @@ def require_posix_semaphore_artifact(family: Mapping[str, Any]) -> None:
     )
 
 
+def require_mq_setattr_artifact(family: Mapping[str, Any]) -> None:
+    """Keep the single selected POSIX message-queue C entry point private."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.posix-runtime].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [entry for entry in artifacts if entry.get("id") == "static-c-mq-setattr"]
+    require(
+        len(matching) == 1,
+        "libc.posix-runtime must contain exactly one static-c-mq-setattr artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-mq-setattr must not promote libc.posix-runtime",
+    )
+    artifact = matching[0]
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for phrase in (
+        "one-symbol POSIX message-queue attribute block",
+        "`mq_setattr(mqd_t, const struct mq_attr *, struct mq_attr *)`",
+        "mq_getsetattr=245",
+        "rdi/rsi/rdx",
+        "O_NONBLOCK",
+        "stale errno",
+        "mq_open/mq_close/mq_getattr/mq_notify/mq_send/mq_receive/mq_timedreceive/mq_timedsend/mq_unlink",
+        "public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"static-c-mq-setattr description omits {phrase}",
+        )
+
+    owners = set(
+        nonempty_strings(artifact["source_owners"], "static-c-mq-setattr.source_owners")
+    )
+    for owner in (
+        "compat/upstreams.toml",
+        "compat/abi/musl-1.2.6/aarch64/libc.a.static.tsv",
+        "libc/Cargo.toml",
+        "libc/src/lib.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/mq_setattr.rs",
+        "libc/src/c_abi/x86_64/errno.rs",
+        "libc/src/c_abi/x86_64/syscall.rs",
+        "include/errno.h",
+        "include/fcntl.h",
+        "include/mqueue.h",
+        "include/stddef.h",
+        "include/stdint.h",
+        "include/sys/types.h",
+        "include/sys/syscall.h",
+        "include/unistd.h",
+        "include/bits/syscall.h",
+        "compat/x86_64/mq_setattr_header_abi_probe.c",
+        "compat/x86_64/mq_setattr_header_abi_probe.cpp",
+        "compat/x86_64/run_mq_setattr_header_abi.sh",
+        "compat/x86_64/run_x86_mqueue_reference.sh",
+        "compat/x86_64/x86_mqueue_reference_probe.c",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/libc_mq_setattr_probe.c",
+        "compat/x86_64/libc_mq_setattr_start.S",
+        "compat/x86_64/run_libc_mq_setattr.sh",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/README.md",
+        "STATUS.md",
+        "x86-64.md",
+        "scripts/dev-x86_64.sh",
+        "scripts/check_structure.py",
+    ):
+        require(owner in owners, f"static-c-mq-setattr source owners omit {owner}")
+
+    prerequisites = nonempty_strings(
+        artifact["x86_abi_prerequisites"], "static-c-mq-setattr.x86_abi_prerequisites"
+    )
+    require(
+        any(
+            "mq_getsetattr=245" in item
+            and "rdi/rsi/rdx" in item
+            and "mqd_t" in item
+            and "initial-TLS" in item
+            for item in prerequisites
+        ),
+        "static-c-mq-setattr must record its three-word syscall ABI",
+    )
+    require(
+        any(
+            "64-byte" in item
+            and "align-8" in item
+            and "O_NONBLOCK" in item
+            and "offsets 0/8/16/24/32" in item
+            for item in prerequisites
+        ),
+        "static-c-mq-setattr must record its mq_attr layout and flag boundary",
+    )
+    require(
+        any(
+            "src/mq/mq_setattr.c" in item
+            and "cancellation-point" in item
+            and "queue-name translation" in item
+            and "fallback" in item
+            for item in prerequisites
+        ),
+        "static-c-mq-setattr must retain its source-closed musl boundary",
+    )
+
+    headers = nonempty_strings(
+        artifact["x86_header_prerequisites"],
+        "static-c-mq-setattr.x86_header_prerequisites",
+    )
+    require(
+        any(
+            "mqueue.h" in item
+            and "C/C++" in item
+            and "mq_setattr" in item
+            and "mq_getsetattr=245" in item
+            and "unmangled C++" in item
+            for item in headers
+        ),
+        "static-c-mq-setattr must record its direct mqueue header boundary",
+    )
+
+    static_exports = set(
+        static_c_abi_export_names(
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        )
+    )
+    require(
+        set(MQ_SETATTR_SYMBOLS) <= static_exports,
+        "static-c-mq-setattr must retain its selected export",
+    )
+    require(
+        not (static_exports & set(MQ_SETATTR_UNSELECTED_SYMBOLS)),
+        "static-c-mq-setattr must not add other POSIX message-queue exports",
+    )
+
+    oracle = artifact["oracle"]
+    assert isinstance(oracle, list)
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "c-posix"
+            and isinstance(entry.get("role"), str)
+            and "src/mq/mq_setattr.c" in entry["role"]
+            for entry in oracle
+        ),
+        "static-c-mq-setattr must retain its pinned-musl source mapping",
+    )
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "kernel-abi"
+            and isinstance(entry.get("role"), str)
+            and "mq_getsetattr=245" in entry["role"]
+            and "rdi/rsi/rdx" in entry["role"]
+            for entry in oracle
+        ),
+        "static-c-mq-setattr must retain its Linux syscall oracle",
+    )
+
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-mq-setattr"},
+        "static-c-mq-setattr must use the closed libc-mq-setattr command",
+    )
+    scope = evidence[0].get("scope")
+    require(
+        isinstance(scope, str)
+        and all(
+            phrase in scope
+            for phrase in (
+                "Pinned-musl C differential",
+                "-nostdlib -static",
+                "mq_getsetattr=245",
+                "rdi/rsi/rdx",
+                "nonblocking replacement",
+                "stale errno",
+                "EINVAL",
+                "EBADF",
+                "mq_open/mq_close/mq_getattr/mq_notify/mq_send/mq_receive/mq_timedreceive/mq_timedsend/mq_unlink",
+                "public x86 support",
+            )
+        ),
+        "static-c-mq-setattr evidence must retain its bounded runtime proof",
+    )
+
+
 def require_sysv_message_shared_memory_artifact(family: Mapping[str, Any]) -> None:
     """Keep the selected SysV message/shared-memory artifact private and exact."""
     artifacts = require_verified_artifacts(
@@ -39514,8 +39719,8 @@ def require_getsubopt_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 66,
-        "libc.text-math-locale-stdio must retain exactly sixty-six private verified artifacts",
+        len(artifacts) == 74,
+        "libc.text-math-locale-stdio must retain exactly seventy-four private verified artifacts",
     )
     matching = [
         entry for entry in artifacts if entry.get("id") == "static-c-getsubopt"
@@ -40971,8 +41176,8 @@ def require_stdio_integer_scan_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 66,
-        "libc.text-math-locale-stdio must retain exactly sixty-six private verified artifacts",
+        len(artifacts) == 74,
+        "libc.text-math-locale-stdio must retain exactly seventy-four private verified artifacts",
     )
     matching = [
         entry for entry in artifacts if entry.get("id") == "static-c-stdio-integer-scan"
@@ -41254,8 +41459,8 @@ def require_stdio_octal_hex_scan_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 66,
-        "libc.text-math-locale-stdio must retain exactly sixty-six private verified artifacts",
+        len(artifacts) == 74,
+        "libc.text-math-locale-stdio must retain exactly seventy-four private verified artifacts",
     )
     matching = [
         entry
@@ -41575,6 +41780,2880 @@ def require_stdio_octal_hex_scan_artifact(family: Mapping[str, Any]) -> None:
     )
 
 
+def require_stdio_fixed_percent_scan_artifact(family: Mapping[str, Any]) -> None:
+    """Keep musl vfscanf's literal `%%` parser state below stdio support."""
+
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.text-math-locale-stdio].verified_artifact",
+        family.get("status", ""),
+    )
+    require(
+        len(artifacts) == 74,
+        "libc.text-math-locale-stdio must retain exactly seventy-four private verified artifacts",
+    )
+    matching = [
+        entry
+        for entry in artifacts
+        if entry.get("id") == "static-c-stdio-fixed-percent-scan"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.text-math-locale-stdio must contain exactly one static-c-stdio-fixed-percent-scan artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-stdio-fixed-percent-scan must not promote libc.text-math-locale-stdio",
+    )
+    artifact = matching[0]
+    require(
+        "capabilities" not in artifact,
+        "static-c-stdio-fixed-percent-scan must not claim a scanner capability",
+    )
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for phrase in (
+        "still-planned `libc.text-math-locale-stdio`",
+        "adds no C export or capability",
+        "`sscanf`/`vsscanf`",
+        "C-locale `%%`",
+        "C11/C++17",
+        "unmangled C spellings",
+        "top-level `p[1] == '%'` branch",
+        "no va_list destination access or assignment",
+        "stale errno",
+        "pinned-musl parser-state profile",
+        "not a portable general scanf-literal claim",
+        "`%n`/`%hhn` count-store",
+        "character/string/scanset/pointer/integer/floating/wide",
+        "format whitespace beyond this `%%` branch",
+        "FILE input",
+        "byte formatting",
+        "general scanner",
+        "general stdio",
+        "family completion",
+        "promotion",
+        "public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"static-c-stdio-fixed-percent-scan description omits {phrase}",
+        )
+    owners = set(
+        string_list(
+            artifact["source_owners"],
+            "static-c-stdio-fixed-percent-scan source owners",
+        )
+    )
+    for path in (
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/stdio_format_scan.rs",
+        "libc/src/c_abi/x86_64/errno.rs",
+        "include/errno.h",
+        "include/limits.h",
+        "include/stdarg.h",
+        "include/stdio.h",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/stdio_fixed_percent_scan_header_abi_probe.c",
+        "compat/x86_64/stdio_fixed_percent_scan_header_abi_probe.cpp",
+        "compat/x86_64/run_stdio_fixed_percent_scan_header_abi.sh",
+        "compat/x86_64/libc_stdio_fixed_percent_scan_probe.c",
+        "compat/x86_64/libc_stdio_fixed_percent_scan_start.S",
+        "compat/x86_64/run_libc_stdio_format_scan.sh",
+        "compat/x86_64/run_libc_stdio_fixed_percent_scan.sh",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/README.md",
+        "STATUS.md",
+        "x86-64.md",
+        "scripts/dev-x86_64.sh",
+    ):
+        require(
+            path in owners,
+            f"static-c-stdio-fixed-percent-scan source owners omit {path}",
+        )
+    prerequisites = string_list(
+        artifact["x86_abi_prerequisites"],
+        "static-c-stdio-fixed-percent-scan.x86_abi_prerequisites",
+    )
+    require(
+        any(
+            "System V AMD64" in item
+            and "rdi/rsi" in item
+            and "no caller destination" in item
+            and "does not advance it" in item
+            and "no FILE, count-store, or floating variadic boundary" in item
+            for item in prerequisites
+        ),
+        "static-c-stdio-fixed-percent-scan must retain its direct and va_list ABI boundary",
+    )
+    require(
+        any(
+            "src/stdio/{sscanf,vsscanf,vfscanf}.c" in item
+            and "p[1] == '%'" in item
+            and "shlim" in item
+            and "isspace" in item
+            and "shgetc" in item
+            and "shcnt" in item
+            and "without store_int, va_arg, or assignment" in item
+            for item in prerequisites
+        ),
+        "static-c-stdio-fixed-percent-scan must retain its pinned-musl source map",
+    )
+    require(
+        any(
+            "initial-exec errno TLS" in item
+            and "remains stale" in item
+            and "%fs:0" in item
+            for item in prerequisites
+        ),
+        "static-c-stdio-fixed-percent-scan must retain its errno/TLS boundary",
+    )
+    header_prerequisites = string_list(
+        artifact["x86_header_prerequisites"],
+        "static-c-stdio-fixed-percent-scan.x86_header_prerequisites",
+    )
+    require(
+        len(header_prerequisites) == 1
+        and "sscanf/vsscanf" in header_prerequisites[0]
+        and "C11/C++17" in header_prerequisites[0]
+        and "unmangled C spellings" in header_prerequisites[0]
+        and "not a broader stdio-header" in header_prerequisites[0],
+        "static-c-stdio-fixed-percent-scan must retain its narrow project-header boundary",
+    )
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-stdio-fixed-percent-scan"},
+        "static-c-stdio-fixed-percent-scan must use the closed libc-stdio-fixed-percent-scan command",
+    )
+    scope = evidence[0]["scope"]
+    assert isinstance(scope, str)
+    for phrase in (
+        "Pinned-musl 1.2.6 C11/C++17 project-header declaration/linkage proof",
+        "`-nostdlib -static` candidate",
+        "unmangled C++ C spellings",
+        "literal `%%` C-locale input-whitespace skip",
+        "exactly one percent consumption",
+        "no destination or assignment",
+        "direct vsscanf forwarding with an untouched va_list",
+        "following ordinary literal",
+        "zero-assignment matching failure",
+        "whitespace-only or empty input EOF",
+        "stale errno",
+        "direct initial-exec errno TLS",
+        "pinned-musl parser-state evidence only",
+        "`%n`/`%hhn` count-store",
+        "character/string/scanset/pointer/integer/floating/wide",
+        "general literal/format-whitespace",
+        "FILE",
+        "byte-formatting",
+        "general scanner",
+        "general stdio",
+        "public-x86 claim",
+    ):
+        require(
+            phrase in scope,
+            f"static-c-stdio-fixed-percent-scan evidence scope omits {phrase}",
+        )
+    oracle = artifact["oracle"]
+    assert isinstance(oracle, list)
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "c-posix"
+            and isinstance(entry.get("role"), str)
+            and "src/stdio/{sscanf,vsscanf,vfscanf}.c" in entry["role"]
+            and "p[1] == '%'" in entry["role"]
+            and "isspace" in entry["role"]
+            and "without va_arg or assignment" in entry["role"]
+            and "matching failure from input EOF" in entry["role"]
+            for entry in oracle
+        ),
+        "static-c-stdio-fixed-percent-scan must retain its musl literal-percent oracle",
+    )
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "elf-abi"
+            and isinstance(entry.get("role"), str)
+            and "input/format pointer ABI" in entry["role"]
+            and "remains unadvanced" in entry["role"]
+            and "initial-exec errno TLS" in entry["role"]
+            for entry in oracle
+        ),
+        "static-c-stdio-fixed-percent-scan must retain its SysV/TLS oracle",
+    )
+    implementation = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "stdio_format_scan.rs"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "static-c-stdio-fixed-percent-scan",
+        "if unsafe { read_byte(directive) } == b'%'",
+        "cursor = unsafe { skip_input_space(cursor) };",
+        "if unsafe { read_byte(cursor) } != b'%'",
+        "assignment count",
+    ):
+        require(
+            snippet in implementation,
+            f"stdio literal-percent scan implementation omits {snippet}",
+        )
+    exports = static_c_abi_export_names(
+        ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+    )
+    require(
+        {"sscanf", "vsscanf"}.issubset(exports),
+        "static C ABI export contract omits the existing scan boundary",
+    )
+    for unselected in ("scanf", "fscanf", "vfscanf", "fwscanf", "swscanf"):
+        require(
+            unselected not in exports,
+            f"static-c-stdio-fixed-percent-scan must not select {unselected}",
+        )
+    fixture = (
+        ROOT / "compat" / "x86_64" / "libc_stdio_fixed_percent_scan_probe.c"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "CRABC_TYPE_IS(__typeof__(&sscanf)",
+        "call_vsscanf",
+        r'" \t\n\r\v\f%"',
+        r'"%%!"',
+        r'"\v\f"',
+        "without an assignment",
+        "matching failure",
+        "return EOF",
+        "CRABC_STDIO_FIXED_PERCENT_SCAN_FREESTANDING",
+    ):
+        require(
+            snippet in fixture,
+            f"libc-stdio-fixed-percent-scan fixture omits {snippet}",
+        )
+    start = (
+        ROOT / "compat" / "x86_64" / "libc_stdio_fixed_percent_scan_start.S"
+    ).read_text(encoding="utf-8")
+    for snippet in ("arch_prctl(ARCH_SET_FS", "%fs:0", "mov $60, %eax"):
+        require(
+            snippet in start,
+            f"libc-stdio-fixed-percent-scan start shim omits {snippet}",
+        )
+    c_header_probe = (
+        ROOT / "compat" / "x86_64" /
+        "stdio_fixed_percent_scan_header_abi_probe.c"
+    ).read_text(encoding="utf-8")
+    cxx_header_probe = (
+        ROOT / "compat" / "x86_64" /
+        "stdio_fixed_percent_scan_header_abi_probe.cpp"
+    ).read_text(encoding="utf-8")
+    header_runner = (
+        ROOT / "compat" / "x86_64" /
+        "run_stdio_fixed_percent_scan_header_abi.sh"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "CRABC_STDIO_FIXED_PERCENT_SCAN_HEADER_C11",
+        "crabc_sscanf_signature",
+        "crabc_vsscanf_signature",
+    ):
+        require(
+            snippet in c_header_probe,
+            f"literal-percent C header probe omits {snippet}",
+        )
+    for snippet in (
+        "CRABC_STDIO_FIXED_PERCENT_SCAN_HEADER_CXX17",
+        "decltype(&sscanf)",
+        "decltype(&vsscanf)",
+        "crabc_sscanf_reference",
+        "crabc_vsscanf_reference",
+    ):
+        require(
+            snippet in cxx_header_probe,
+            f"literal-percent C++ header probe omits {snippet}",
+        )
+    for snippet in (
+        "-nostdinc++",
+        "assert_cxx_c_linkage",
+        "sscanf vsscanf",
+        "mangled scanf reference",
+        "run_musl_oracle.sh",
+    ):
+        require(
+            snippet in header_runner,
+            f"literal-percent header runner omits {snippet}",
+        )
+    wrapper = (
+        ROOT / "compat" / "x86_64" / "run_libc_stdio_fixed_percent_scan.sh"
+    ).read_text(encoding="utf-8")
+    require(
+        "CRABC_STDIO_FORMAT_SCAN_PROFILE=fixed-percent-scan" in wrapper
+        and "run_libc_stdio_format_scan.sh" in wrapper,
+        "libc-stdio-fixed-percent-scan wrapper no longer selects its closed profile",
+    )
+    runner = (
+        ROOT / "compat" / "x86_64" / "run_libc_stdio_format_scan.sh"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "fixed-percent-scan)",
+        "CRABC_STDIO_FIXED_PERCENT_SCAN_FREESTANDING",
+        "libc_stdio_fixed_percent_scan_probe.c",
+        "libc_stdio_fixed_percent_scan_start.S",
+        "REQUIRED_C_ABI_SYMBOLS=(sscanf vsscanf)",
+        "literal-percent scanner branch is no longer selected",
+        "-nostdlib -static",
+        "--no-undefined",
+        "R_X86_64_TPOFF",
+        "__errno_location",
+    ):
+        require(
+            snippet in runner,
+            f"libc-stdio-fixed-percent-scan shared runner omits {snippet}",
+        )
+    dispatcher = (ROOT / "scripts" / "dev-x86_64.sh").read_text(encoding="utf-8")
+    require(
+        "libc-stdio-fixed-percent-scan)" in dispatcher
+        and "run_libc_stdio_fixed_percent_scan.sh" in dispatcher,
+        "stdio fixed-percent scanner dispatcher binding is missing",
+    )
+    require(
+        "stdio-fixed-percent-scan-header-abi)" in dispatcher
+        and "run_stdio_fixed_percent_scan_header_abi.sh" in dispatcher,
+        "stdio fixed-percent scanner header dispatcher binding is missing",
+    )
+
+
+def require_stdio_fixed_format_whitespace_scan_artifact(
+    family: Mapping[str, Any],
+) -> None:
+    """Keep musl vfscanf's format-whitespace parser state below stdio support."""
+
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.text-math-locale-stdio].verified_artifact",
+        family.get("status", ""),
+    )
+    require(
+        len(artifacts) == 74,
+        "libc.text-math-locale-stdio must retain exactly seventy-four private verified artifacts",
+    )
+    matching = [
+        entry
+        for entry in artifacts
+        if entry.get("id") == "static-c-stdio-fixed-format-whitespace-scan"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.text-math-locale-stdio must contain exactly one static-c-stdio-fixed-format-whitespace-scan artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-stdio-fixed-format-whitespace-scan must not promote libc.text-math-locale-stdio",
+    )
+    artifact = matching[0]
+    require(
+        "capabilities" not in artifact,
+        "static-c-stdio-fixed-format-whitespace-scan must not claim a scanner capability",
+    )
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for phrase in (
+        "still-planned `libc.text-math-locale-stdio`",
+        "adds no C export or capability",
+        "`sscanf`/`vsscanf`",
+        "C-locale format-whitespace",
+        "C11/C++17",
+        "unmangled C spellings",
+        "top-level `isspace(*p)` branch",
+        "coalesces `p[1]`",
+        "`shlim`",
+        "`shgetc`",
+        "`shunget`",
+        "`pos += shcnt`",
+        "no va_list destination access or assignment",
+        "zero input whitespace",
+        "all-whitespace format",
+        "later literal EOF",
+        "matching failure",
+        "stale errno",
+        "pinned-musl parser-state profile",
+        "not a portable general scanf-format-whitespace claim",
+        "literal-percent `%%`",
+        "`%n`/`%hhn` count-store",
+        "character/string/scanset/pointer/integer/floating/wide",
+        "FILE input",
+        "byte formatting",
+        "general scanner",
+        "general stdio",
+        "family completion",
+        "promotion",
+        "public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"static-c-stdio-fixed-format-whitespace-scan description omits {phrase}",
+        )
+    owners = set(
+        string_list(
+            artifact["source_owners"],
+            "static-c-stdio-fixed-format-whitespace-scan source owners",
+        )
+    )
+    for path in (
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/stdio_format_scan.rs",
+        "libc/src/c_abi/x86_64/errno.rs",
+        "include/errno.h",
+        "include/limits.h",
+        "include/stdarg.h",
+        "include/stdio.h",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/stdio_fixed_format_whitespace_scan_header_abi_probe.c",
+        "compat/x86_64/stdio_fixed_format_whitespace_scan_header_abi_probe.cpp",
+        "compat/x86_64/run_stdio_fixed_format_whitespace_scan_header_abi.sh",
+        "compat/x86_64/libc_stdio_fixed_format_whitespace_scan_probe.c",
+        "compat/x86_64/libc_stdio_fixed_format_whitespace_scan_start.S",
+        "compat/x86_64/run_libc_stdio_format_scan.sh",
+        "compat/x86_64/run_libc_stdio_fixed_format_whitespace_scan.sh",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/README.md",
+        "STATUS.md",
+        "x86-64.md",
+        "scripts/dev-x86_64.sh",
+    ):
+        require(
+            path in owners,
+            f"static-c-stdio-fixed-format-whitespace-scan source owners omit {path}",
+        )
+    prerequisites = string_list(
+        artifact["x86_abi_prerequisites"],
+        "static-c-stdio-fixed-format-whitespace-scan.x86_abi_prerequisites",
+    )
+    require(
+        any(
+            "System V AMD64" in item
+            and "rdi/rsi" in item
+            and "no caller destination" in item
+            and "does not advance it" in item
+            and "no FILE, count-store, or floating variadic boundary" in item
+            for item in prerequisites
+        ),
+        "static-c-stdio-fixed-format-whitespace-scan must retain its direct and va_list ABI boundary",
+    )
+    require(
+        any(
+            "src/stdio/{sscanf,vsscanf,vfscanf}.c" in item
+            and "isspace(*p)" in item
+            and "p[1]" in item
+            and "shlim" in item
+            and "shgetc" in item
+            and "shunget" in item
+            and "pos += shcnt" in item
+            and "without store_int, va_arg, or assignment" in item
+            for item in prerequisites
+        ),
+        "static-c-stdio-fixed-format-whitespace-scan must retain its pinned-musl source map",
+    )
+    require(
+        any(
+            "initial-exec errno TLS" in item
+            and "remains stale" in item
+            and "%fs:0" in item
+            for item in prerequisites
+        ),
+        "static-c-stdio-fixed-format-whitespace-scan must retain its errno/TLS boundary",
+    )
+    header_prerequisites = string_list(
+        artifact["x86_header_prerequisites"],
+        "static-c-stdio-fixed-format-whitespace-scan.x86_header_prerequisites",
+    )
+    require(
+        len(header_prerequisites) == 1
+        and "sscanf/vsscanf" in header_prerequisites[0]
+        and "C11/C++17" in header_prerequisites[0]
+        and "unmangled C spellings" in header_prerequisites[0]
+        and "not a broader stdio-header" in header_prerequisites[0],
+        "static-c-stdio-fixed-format-whitespace-scan must retain its narrow project-header boundary",
+    )
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-stdio-fixed-format-whitespace-scan"},
+        "static-c-stdio-fixed-format-whitespace-scan must use the closed libc-stdio-fixed-format-whitespace-scan command",
+    )
+    scope = evidence[0]["scope"]
+    assert isinstance(scope, str)
+    for phrase in (
+        "Pinned-musl 1.2.6 C11/C++17 project-header declaration/linkage proof",
+        "`-nostdlib -static` candidate",
+        "unmangled C++ C spellings",
+        "C-locale format-whitespace coalescing",
+        "zero-or-more input-space admission",
+        "no destination or assignment",
+        "direct vsscanf forwarding with an untouched va_list",
+        "all-whitespace empty-input zero success",
+        "later literal EOF",
+        "matching failure",
+        "stale errno",
+        "direct initial-exec errno TLS",
+        "pinned-musl parser-state evidence only",
+        "literal-percent",
+        "`%n`/`%hhn` count-store",
+        "character/string/scanset/pointer/integer/floating/wide",
+        "conversion",
+        "FILE",
+        "byte-formatting",
+        "general scanner",
+        "general stdio",
+        "public-x86 claim",
+    ):
+        require(
+            phrase in scope,
+            f"static-c-stdio-fixed-format-whitespace-scan evidence scope omits {phrase}",
+        )
+    oracle = artifact["oracle"]
+    assert isinstance(oracle, list)
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "c-posix"
+            and isinstance(entry.get("role"), str)
+            and "src/stdio/{sscanf,vsscanf,vfscanf}.c" in entry["role"]
+            and "isspace(*p)" in entry["role"]
+            and "p[1]" in entry["role"]
+            and "shgetc" in entry["role"]
+            and "shunget" in entry["role"]
+            and "without va_arg or assignment" in entry["role"]
+            and "matching failure from input EOF" in entry["role"]
+            for entry in oracle
+        ),
+        "static-c-stdio-fixed-format-whitespace-scan must retain its musl format-whitespace oracle",
+    )
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "elf-abi"
+            and isinstance(entry.get("role"), str)
+            and "input/format pointer ABI" in entry["role"]
+            and "remains unadvanced" in entry["role"]
+            and "initial-exec errno TLS" in entry["role"]
+            for entry in oracle
+        ),
+        "static-c-stdio-fixed-format-whitespace-scan must retain its SysV/TLS oracle",
+    )
+    implementation = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "stdio_format_scan.rs"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "static-c-stdio-fixed-format-whitespace-scan",
+        "if ascii_space(format_byte)",
+        "while ascii_space(unsafe { read_byte(directive) })",
+        "cursor = unsafe { skip_input_space(cursor) };",
+        "zero or more C-locale input-space bytes",
+    ):
+        require(
+            snippet in implementation,
+            f"stdio format-whitespace scan implementation omits {snippet}",
+        )
+    exports = static_c_abi_export_names(
+        ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+    )
+    require(
+        {"sscanf", "vsscanf"}.issubset(exports),
+        "static C ABI export contract omits the existing scan boundary",
+    )
+    for unselected in ("scanf", "fscanf", "vfscanf", "fwscanf", "swscanf"):
+        require(
+            unselected not in exports,
+            f"static-c-stdio-fixed-format-whitespace-scan must not select {unselected}",
+        )
+    fixture = (
+        ROOT / "compat" / "x86_64" /
+        "libc_stdio_fixed_format_whitespace_scan_probe.c"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "CRABC_TYPE_IS(__typeof__(&sscanf)",
+        "call_vsscanf",
+        r'" \t\n\r\v\f!"',
+        r'"\v\f?"',
+        "zero input whitespace",
+        "all-whitespace format",
+        "result != EOF",
+        "CRABC_STDIO_FIXED_FORMAT_WHITESPACE_SCAN_FREESTANDING",
+    ):
+        require(
+            snippet in fixture,
+            f"libc-stdio-fixed-format-whitespace-scan fixture omits {snippet}",
+        )
+    start = (
+        ROOT / "compat" / "x86_64" /
+        "libc_stdio_fixed_format_whitespace_scan_start.S"
+    ).read_text(encoding="utf-8")
+    for snippet in ("arch_prctl(ARCH_SET_FS", "%fs:0", "mov $60, %eax"):
+        require(
+            snippet in start,
+            f"libc-stdio-fixed-format-whitespace-scan start shim omits {snippet}",
+        )
+    c_header_probe = (
+        ROOT / "compat" / "x86_64" /
+        "stdio_fixed_format_whitespace_scan_header_abi_probe.c"
+    ).read_text(encoding="utf-8")
+    cxx_header_probe = (
+        ROOT / "compat" / "x86_64" /
+        "stdio_fixed_format_whitespace_scan_header_abi_probe.cpp"
+    ).read_text(encoding="utf-8")
+    header_runner = (
+        ROOT / "compat" / "x86_64" /
+        "run_stdio_fixed_format_whitespace_scan_header_abi.sh"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "CRABC_STDIO_FIXED_FORMAT_WHITESPACE_SCAN_HEADER_C11",
+        "crabc_sscanf_signature",
+        "crabc_vsscanf_signature",
+    ):
+        require(
+            snippet in c_header_probe,
+            f"format-whitespace C header probe omits {snippet}",
+        )
+    for snippet in (
+        "CRABC_STDIO_FIXED_FORMAT_WHITESPACE_SCAN_HEADER_CXX17",
+        "decltype(&sscanf)",
+        "decltype(&vsscanf)",
+        "crabc_sscanf_reference",
+        "crabc_vsscanf_reference",
+    ):
+        require(
+            snippet in cxx_header_probe,
+            f"format-whitespace C++ header probe omits {snippet}",
+        )
+    for snippet in (
+        "-nostdinc++",
+        "assert_cxx_c_linkage",
+        "sscanf vsscanf",
+        "mangled scanf reference",
+        "run_musl_oracle.sh",
+    ):
+        require(
+            snippet in header_runner,
+            f"format-whitespace header runner omits {snippet}",
+        )
+    wrapper = (
+        ROOT / "compat" / "x86_64" /
+        "run_libc_stdio_fixed_format_whitespace_scan.sh"
+    ).read_text(encoding="utf-8")
+    require(
+        "CRABC_STDIO_FORMAT_SCAN_PROFILE=fixed-format-whitespace-scan" in wrapper
+        and "run_libc_stdio_format_scan.sh" in wrapper,
+        "libc-stdio-fixed-format-whitespace-scan wrapper no longer selects its closed profile",
+    )
+    runner = (
+        ROOT / "compat" / "x86_64" / "run_libc_stdio_format_scan.sh"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "fixed-format-whitespace-scan)",
+        "CRABC_STDIO_FIXED_FORMAT_WHITESPACE_SCAN_FREESTANDING",
+        "libc_stdio_fixed_format_whitespace_scan_probe.c",
+        "libc_stdio_fixed_format_whitespace_scan_start.S",
+        "REQUIRED_C_ABI_SYMBOLS=(sscanf vsscanf)",
+        "format-whitespace scanner branch is no longer selected",
+        "-nostdlib -static",
+        "--no-undefined",
+        "R_X86_64_TPOFF",
+        "__errno_location",
+    ):
+        require(
+            snippet in runner,
+            f"libc-stdio-fixed-format-whitespace-scan shared runner omits {snippet}",
+        )
+    dispatcher = (ROOT / "scripts" / "dev-x86_64.sh").read_text(encoding="utf-8")
+    require(
+        "libc-stdio-fixed-format-whitespace-scan)" in dispatcher
+        and "run_libc_stdio_fixed_format_whitespace_scan.sh" in dispatcher,
+        "stdio format-whitespace scanner dispatcher binding is missing",
+    )
+    require(
+        "stdio-fixed-format-whitespace-scan-header-abi)" in dispatcher
+        and "run_stdio_fixed_format_whitespace_scan_header_abi.sh" in dispatcher,
+        "stdio format-whitespace scanner header dispatcher binding is missing",
+    )
+
+
+def require_stdio_fixed_literal_scan_artifact(
+    family: Mapping[str, Any],
+) -> None:
+    """Keep musl vfscanf's raw-literal parser state below stdio support."""
+
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.text-math-locale-stdio].verified_artifact",
+        family.get("status", ""),
+    )
+    require(
+        len(artifacts) == 74,
+        "libc.text-math-locale-stdio must retain exactly seventy-four private verified artifacts",
+    )
+    matching = [
+        entry
+        for entry in artifacts
+        if entry.get("id") == "static-c-stdio-fixed-literal-scan"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.text-math-locale-stdio must contain exactly one static-c-stdio-fixed-literal-scan artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-stdio-fixed-literal-scan must not promote libc.text-math-locale-stdio",
+    )
+    artifact = matching[0]
+    require(
+        "capabilities" not in artifact,
+        "static-c-stdio-fixed-literal-scan must not claim a scanner capability",
+    )
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for phrase in (
+        "still-planned `libc.text-math-locale-stdio`",
+        "adds no C export or capability",
+        "`sscanf`/`vsscanf`",
+        "non-percent, non-C-locale-format-whitespace raw-literal",
+        "C11/C++17",
+        "unmangled C spellings",
+        "top-level `*p != '%' || p[1] == '%'` arm",
+        "selected `*p != '%'` raw-literal path",
+        "`shlim`",
+        "`shgetc`",
+        "`shunget`",
+        "`c < 0` input failure",
+        "`pos += shcnt`",
+        "no va_list destination access or assignment",
+        "mismatch after a matched prefix",
+        "later-literal EOF",
+        "first-byte matching failure",
+        "stale errno",
+        "pinned-musl parser-state profile",
+        "not a portable general scanf-literal claim",
+        "literal-percent `%%`",
+        "C-locale format whitespace",
+        "`%n`/`%hhn` count-store",
+        "character/string/scanset/pointer/integer/floating/wide",
+        "FILE input",
+        "byte formatting",
+        "general scanner",
+        "general stdio",
+        "family completion",
+        "promotion",
+        "public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"static-c-stdio-fixed-literal-scan description omits {phrase}",
+        )
+    owners = set(
+        string_list(
+            artifact["source_owners"],
+            "static-c-stdio-fixed-literal-scan source owners",
+        )
+    )
+    for path in (
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/stdio_format_scan.rs",
+        "libc/src/c_abi/x86_64/errno.rs",
+        "include/errno.h",
+        "include/limits.h",
+        "include/stdarg.h",
+        "include/stdio.h",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/stdio_fixed_literal_scan_header_abi_probe.c",
+        "compat/x86_64/stdio_fixed_literal_scan_header_abi_probe.cpp",
+        "compat/x86_64/run_stdio_fixed_literal_scan_header_abi.sh",
+        "compat/x86_64/libc_stdio_fixed_literal_scan_probe.c",
+        "compat/x86_64/libc_stdio_fixed_literal_scan_start.S",
+        "compat/x86_64/run_libc_stdio_format_scan.sh",
+        "compat/x86_64/run_libc_stdio_fixed_literal_scan.sh",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/README.md",
+        "STATUS.md",
+        "x86-64.md",
+        "scripts/dev-x86_64.sh",
+    ):
+        require(
+            path in owners,
+            f"static-c-stdio-fixed-literal-scan source owners omit {path}",
+        )
+    prerequisites = string_list(
+        artifact["x86_abi_prerequisites"],
+        "static-c-stdio-fixed-literal-scan.x86_abi_prerequisites",
+    )
+    require(
+        any(
+            "System V AMD64" in item
+            and "rdi/rsi" in item
+            and "no caller destination" in item
+            and "does not advance it" in item
+            and "no FILE, count-store, or floating variadic boundary" in item
+            for item in prerequisites
+        ),
+        "static-c-stdio-fixed-literal-scan must retain its direct and va_list ABI boundary",
+    )
+    require(
+        any(
+            "src/stdio/{sscanf,vsscanf,vfscanf}.c" in item
+            and "*p != '%' || p[1] == '%'" in item
+            and "*p != '%'" in item
+            and "shlim" in item
+            and "shgetc" in item
+            and "shunget" in item
+            and "c < 0" in item
+            and "pos += shcnt" in item
+            and "without store_int, va_arg, or assignment" in item
+            for item in prerequisites
+        ),
+        "static-c-stdio-fixed-literal-scan must retain its pinned-musl source map",
+    )
+    require(
+        any(
+            "initial-exec errno TLS" in item
+            and "remains stale" in item
+            and "%fs:0" in item
+            for item in prerequisites
+        ),
+        "static-c-stdio-fixed-literal-scan must retain its errno/TLS boundary",
+    )
+    header_prerequisites = string_list(
+        artifact["x86_header_prerequisites"],
+        "static-c-stdio-fixed-literal-scan.x86_header_prerequisites",
+    )
+    require(
+        len(header_prerequisites) == 1
+        and "sscanf/vsscanf" in header_prerequisites[0]
+        and "C11/C++17" in header_prerequisites[0]
+        and "unmangled C spellings" in header_prerequisites[0]
+        and "not a broader stdio-header" in header_prerequisites[0],
+        "static-c-stdio-fixed-literal-scan must retain its narrow project-header boundary",
+    )
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-stdio-fixed-literal-scan"},
+        "static-c-stdio-fixed-literal-scan must use the closed libc-stdio-fixed-literal-scan command",
+    )
+    scope = evidence[0]["scope"]
+    assert isinstance(scope, str)
+    for phrase in (
+        "Pinned-musl 1.2.6 C11/C++17 project-header declaration/linkage proof",
+        "`-nostdlib -static` candidate",
+        "unmangled C++ C spellings",
+        "non-percent raw-literal matching",
+        "no destination or assignment",
+        "direct vsscanf forwarding with an untouched va_list",
+        "mismatch after a matched prefix",
+        "later-literal and initial EOF",
+        "first-byte matching failure",
+        "stale errno",
+        "direct initial-exec errno TLS",
+        "pinned-musl parser-state evidence only",
+        "literal-percent",
+        "format-whitespace",
+        "`%n`/`%hhn` count-store",
+        "character/string/scanset/pointer/integer/floating/wide",
+        "conversion",
+        "FILE",
+        "byte-formatting",
+        "general scanner",
+        "general stdio",
+        "public-x86 claim",
+    ):
+        require(
+            phrase in scope,
+            f"static-c-stdio-fixed-literal-scan evidence scope omits {phrase}",
+        )
+    oracle = artifact["oracle"]
+    assert isinstance(oracle, list)
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "c-posix"
+            and isinstance(entry.get("role"), str)
+            and "src/stdio/{sscanf,vsscanf,vfscanf}.c" in entry["role"]
+            and "*p != '%' || p[1] == '%'" in entry["role"]
+            and "selected *p != '%' raw-literal path" in entry["role"]
+            and "shgetc" in entry["role"]
+            and "shunget" in entry["role"]
+            and "without va_arg or assignment" in entry["role"]
+            and "matching failure from input EOF" in entry["role"]
+            for entry in oracle
+        ),
+        "static-c-stdio-fixed-literal-scan must retain its musl raw-literal oracle",
+    )
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "elf-abi"
+            and isinstance(entry.get("role"), str)
+            and "input/format pointer ABI" in entry["role"]
+            and "remains unadvanced" in entry["role"]
+            and "initial-exec errno TLS" in entry["role"]
+            for entry in oracle
+        ),
+        "static-c-stdio-fixed-literal-scan must retain its SysV/TLS oracle",
+    )
+    implementation = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "stdio_format_scan.rs"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "static-c-stdio-fixed-literal-scan",
+        "if format_byte != b'%'",
+        "if unsafe { read_byte(cursor) } == 0",
+        "if unsafe { read_byte(cursor) } != format_byte",
+        "distinguishes input EOF from a mismatching byte",
+    ):
+        require(
+            snippet in implementation,
+            f"stdio raw-literal scan implementation omits {snippet}",
+        )
+    exports = static_c_abi_export_names(
+        ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+    )
+    require(
+        {"sscanf", "vsscanf"}.issubset(exports),
+        "static C ABI export contract omits the existing scan boundary",
+    )
+    for unselected in ("scanf", "fscanf", "vfscanf", "fwscanf", "swscanf"):
+        require(
+            unselected not in exports,
+            f"static-c-stdio-fixed-literal-scan must not select {unselected}",
+        )
+    fixture = (
+        ROOT / "compat" / "x86_64" / "libc_stdio_fixed_literal_scan_probe.c"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "CRABC_TYPE_IS(__typeof__(&sscanf)",
+        "call_vsscanf",
+        '"crate/42", "crate/42"',
+        '"stop!", "stop?"',
+        "zero-assignment raw literal",
+        "result != EOF",
+        "CRABC_STDIO_FIXED_LITERAL_SCAN_FREESTANDING",
+    ):
+        require(
+            snippet in fixture,
+            f"libc-stdio-fixed-literal-scan fixture omits {snippet}",
+        )
+    start = (
+        ROOT / "compat" / "x86_64" / "libc_stdio_fixed_literal_scan_start.S"
+    ).read_text(encoding="utf-8")
+    for snippet in ("arch_prctl(ARCH_SET_FS", "%fs:0", "mov $60, %eax"):
+        require(
+            snippet in start,
+            f"libc-stdio-fixed-literal-scan start shim omits {snippet}",
+        )
+    c_header_probe = (
+        ROOT / "compat" / "x86_64" /
+        "stdio_fixed_literal_scan_header_abi_probe.c"
+    ).read_text(encoding="utf-8")
+    cxx_header_probe = (
+        ROOT / "compat" / "x86_64" /
+        "stdio_fixed_literal_scan_header_abi_probe.cpp"
+    ).read_text(encoding="utf-8")
+    header_runner = (
+        ROOT / "compat" / "x86_64" /
+        "run_stdio_fixed_literal_scan_header_abi.sh"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "CRABC_STDIO_FIXED_LITERAL_SCAN_HEADER_C11",
+        "crabc_sscanf_signature",
+        "crabc_vsscanf_signature",
+    ):
+        require(
+            snippet in c_header_probe,
+            f"raw-literal C header probe omits {snippet}",
+        )
+    for snippet in (
+        "CRABC_STDIO_FIXED_LITERAL_SCAN_HEADER_CXX17",
+        "decltype(&sscanf)",
+        "decltype(&vsscanf)",
+        "crabc_sscanf_reference",
+        "crabc_vsscanf_reference",
+    ):
+        require(
+            snippet in cxx_header_probe,
+            f"raw-literal C++ header probe omits {snippet}",
+        )
+    for snippet in (
+        "-nostdinc++",
+        "assert_cxx_c_linkage",
+        "sscanf vsscanf",
+        "mangled scanf reference",
+        "run_musl_oracle.sh",
+    ):
+        require(
+            snippet in header_runner,
+            f"raw-literal header runner omits {snippet}",
+        )
+    wrapper = (
+        ROOT / "compat" / "x86_64" / "run_libc_stdio_fixed_literal_scan.sh"
+    ).read_text(encoding="utf-8")
+    require(
+        "CRABC_STDIO_FORMAT_SCAN_PROFILE=fixed-literal-scan" in wrapper
+        and "run_libc_stdio_format_scan.sh" in wrapper,
+        "libc-stdio-fixed-literal-scan wrapper no longer selects its closed profile",
+    )
+    runner = (
+        ROOT / "compat" / "x86_64" / "run_libc_stdio_format_scan.sh"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "fixed-literal-scan)",
+        "CRABC_STDIO_FIXED_LITERAL_SCAN_FREESTANDING",
+        "libc_stdio_fixed_literal_scan_probe.c",
+        "libc_stdio_fixed_literal_scan_start.S",
+        "REQUIRED_C_ABI_SYMBOLS=(sscanf vsscanf)",
+        "raw-literal scanner branch is no longer selected",
+        "-nostdlib -static",
+        "--no-undefined",
+        "R_X86_64_TPOFF",
+        "__errno_location",
+    ):
+        require(
+            snippet in runner,
+            f"libc-stdio-fixed-literal-scan shared runner omits {snippet}",
+        )
+    dispatcher = (ROOT / "scripts" / "dev-x86_64.sh").read_text(encoding="utf-8")
+    require(
+        "libc-stdio-fixed-literal-scan)" in dispatcher
+        and "run_libc_stdio_fixed_literal_scan.sh" in dispatcher,
+        "stdio raw-literal scanner dispatcher binding is missing",
+    )
+    require(
+        "stdio-fixed-literal-scan-header-abi)" in dispatcher
+        and "run_stdio_fixed_literal_scan_header_abi.sh" in dispatcher,
+        "stdio raw-literal scanner header dispatcher binding is missing",
+    )
+
+
+def require_stdio_fixed_empty_format_scan_artifact(
+    family: Mapping[str, Any],
+) -> None:
+    """Keep musl vfscanf's format-NUL termination below stdio support."""
+
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.text-math-locale-stdio].verified_artifact",
+        family.get("status", ""),
+    )
+    require(
+        len(artifacts) == 74,
+        "libc.text-math-locale-stdio must retain exactly seventy-four private verified artifacts",
+    )
+    matching = [
+        entry
+        for entry in artifacts
+        if entry.get("id") == "static-c-stdio-fixed-empty-format-scan"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.text-math-locale-stdio must contain exactly one static-c-stdio-fixed-empty-format-scan artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-stdio-fixed-empty-format-scan must not promote libc.text-math-locale-stdio",
+    )
+    artifact = matching[0]
+    require(
+        "capabilities" not in artifact,
+        "static-c-stdio-fixed-empty-format-scan must not claim a scanner capability",
+    )
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for phrase in (
+        "still-planned `libc.text-math-locale-stdio`",
+        "adds no C export or capability",
+        "`sscanf`/`vsscanf`",
+        "zero-length format termination",
+        "C11/C++17",
+        "unmangled C spellings",
+        "private NUL-string FILE setup",
+        "`vfscanf` then sees `fmt[0] == 0`",
+        "`for (p=(const unsigned char *)fmt; *p; p++)`",
+        "existing zero `matches` count",
+        "literal, literal-percent, format-whitespace, or conversion",
+        "calling `va_arg`",
+        "fixture-only va_list sentinel remains unadvanced",
+        "stale errno",
+        "pinned-musl format-termination profile",
+        "not a portable general scanf-empty-format claim",
+        "raw literal matching",
+        "literal-percent `%%`",
+        "C-locale format whitespace",
+        "`%n`/`%hhn` count-store",
+        "character/string/scanset/pointer/integer/floating/wide",
+        "FILE input",
+        "byte formatting",
+        "general scanner",
+        "general stdio",
+        "family completion",
+        "promotion",
+        "public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"static-c-stdio-fixed-empty-format-scan description omits {phrase}",
+        )
+    owners = set(
+        string_list(
+            artifact["source_owners"],
+            "static-c-stdio-fixed-empty-format-scan source owners",
+        )
+    )
+    for path in (
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/stdio_format_scan.rs",
+        "libc/src/c_abi/x86_64/errno.rs",
+        "include/errno.h",
+        "include/limits.h",
+        "include/stdarg.h",
+        "include/stdio.h",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/stdio_fixed_empty_format_scan_header_abi_probe.c",
+        "compat/x86_64/stdio_fixed_empty_format_scan_header_abi_probe.cpp",
+        "compat/x86_64/run_stdio_fixed_empty_format_scan_header_abi.sh",
+        "compat/x86_64/libc_stdio_fixed_empty_format_scan_probe.c",
+        "compat/x86_64/libc_stdio_fixed_empty_format_scan_start.S",
+        "compat/x86_64/run_libc_stdio_format_scan.sh",
+        "compat/x86_64/run_libc_stdio_fixed_empty_format_scan.sh",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/README.md",
+        "STATUS.md",
+        "x86-64.md",
+        "scripts/dev-x86_64.sh",
+    ):
+        require(
+            path in owners,
+            f"static-c-stdio-fixed-empty-format-scan source owners omit {path}",
+        )
+    prerequisites = string_list(
+        artifact["x86_abi_prerequisites"],
+        "static-c-stdio-fixed-empty-format-scan.x86_abi_prerequisites",
+    )
+    require(
+        any(
+            "System V AMD64" in item
+            and "rdi/rsi" in item
+            and "no caller destination" in item
+            and "trailing sentinel unadvanced" in item
+            and "no external FILE, count-store, or floating variadic boundary" in item
+            for item in prerequisites
+        ),
+        "static-c-stdio-fixed-empty-format-scan must retain its direct and va_list ABI boundary",
+    )
+    require(
+        any(
+            "src/stdio/{sscanf,vsscanf,vfscanf}.c" in item
+            and "private string-backed FILE setup" in item
+            and "__toread" in item
+            and "for (p=(const unsigned char *)fmt; *p; p++)" in item
+            and "fmt[0] == 0" in item
+            and "matches == 0" in item
+            and "without shlim, shgetc, shunget, store_int, va_arg, destination access, or assignment" in item
+            for item in prerequisites
+        ),
+        "static-c-stdio-fixed-empty-format-scan must retain its pinned-musl source map",
+    )
+    require(
+        any(
+            "initial-exec errno TLS" in item
+            and "remains stale" in item
+            and "%fs:0" in item
+            for item in prerequisites
+        ),
+        "static-c-stdio-fixed-empty-format-scan must retain its errno/TLS boundary",
+    )
+    header_prerequisites = string_list(
+        artifact["x86_header_prerequisites"],
+        "static-c-stdio-fixed-empty-format-scan.x86_header_prerequisites",
+    )
+    require(
+        len(header_prerequisites) == 1
+        and "sscanf/vsscanf" in header_prerequisites[0]
+        and "C11/C++17" in header_prerequisites[0]
+        and "unmangled C spellings" in header_prerequisites[0]
+        and "not a broader stdio-header" in header_prerequisites[0],
+        "static-c-stdio-fixed-empty-format-scan must retain its narrow project-header boundary",
+    )
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-stdio-fixed-empty-format-scan"},
+        "static-c-stdio-fixed-empty-format-scan must use the closed libc-stdio-fixed-empty-format-scan command",
+    )
+    scope = evidence[0]["scope"]
+    assert isinstance(scope, str)
+    for phrase in (
+        "Pinned-musl 1.2.6 C11/C++17 project-header declaration/linkage proof",
+        "`-nostdlib -static` candidate",
+        "unmangled C++ C spellings",
+        "private NUL-string setup",
+        "vfscanf format-NUL termination",
+        "empty and nonempty inputs return zero",
+        "no destination or assignment",
+        "fixture-only trailing va_list sentinel",
+        "stale errno",
+        "direct initial-exec errno TLS",
+        "pinned-musl format-termination evidence only",
+        "raw literal",
+        "literal-percent",
+        "format-whitespace",
+        "`%n`/`%hhn` count-store",
+        "character/string/scanset/pointer/integer/floating/wide",
+        "conversion",
+        "FILE",
+        "byte-formatting",
+        "general scanner",
+        "general stdio",
+        "public-x86 claim",
+    ):
+        require(
+            phrase in scope,
+            f"static-c-stdio-fixed-empty-format-scan evidence scope omits {phrase}",
+        )
+    oracle = artifact["oracle"]
+    assert isinstance(oracle, list)
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "c-posix"
+            and isinstance(entry.get("role"), str)
+            and "src/stdio/{sscanf,vsscanf,vfscanf}.c" in entry["role"]
+            and "private NUL-string FILE setup" in entry["role"]
+            and "for (p=(const unsigned char *)fmt; *p; p++)" in entry["role"]
+            and "fmt[0] == 0" in entry["role"]
+            and "without literal, whitespace, percent, conversion, va_arg, destination, or assignment behavior" in entry["role"]
+            for entry in oracle
+        ),
+        "static-c-stdio-fixed-empty-format-scan must retain its musl format-NUL oracle",
+    )
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "elf-abi"
+            and isinstance(entry.get("role"), str)
+            and "input/format pointer ABI" in entry["role"]
+            and "trailing sentinel remains unadvanced" in entry["role"]
+            and "initial-exec errno TLS" in entry["role"]
+            for entry in oracle
+        ),
+        "static-c-stdio-fixed-empty-format-scan must retain its SysV/TLS oracle",
+    )
+    implementation = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "stdio_format_scan.rs"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "static-c-stdio-fixed-empty-format-scan",
+        "if format_byte == 0",
+        "without entering a scanner state",
+        "or accessing va_list",
+    ):
+        require(
+            snippet in implementation,
+            f"stdio empty-format scan implementation omits {snippet}",
+        )
+    exports = static_c_abi_export_names(
+        ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+    )
+    require(
+        {"sscanf", "vsscanf"}.issubset(exports),
+        "static C ABI export contract omits the existing scan boundary",
+    )
+    for unselected in ("scanf", "fscanf", "vfscanf", "fwscanf", "swscanf"):
+        require(
+            unselected not in exports,
+            f"static-c-stdio-fixed-empty-format-scan must not select {unselected}",
+        )
+    fixture = (
+        ROOT / "compat" / "x86_64" /
+        "libc_stdio_fixed_empty_format_scan_probe.c"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "CRABC_TYPE_IS(__typeof__(&sscanf)",
+        "call_vsscanf_empty_format",
+        'sscanf("", "")',
+        'sscanf("unread bytes", "")',
+        "zero-assignment empty format",
+        "trailing = va_arg(arguments, int)",
+        "CRABC_STDIO_FIXED_EMPTY_FORMAT_SCAN_FREESTANDING",
+    ):
+        require(
+            snippet in fixture,
+            f"libc-stdio-fixed-empty-format-scan fixture omits {snippet}",
+        )
+    start = (
+        ROOT / "compat" / "x86_64" /
+        "libc_stdio_fixed_empty_format_scan_start.S"
+    ).read_text(encoding="utf-8")
+    for snippet in ("arch_prctl(ARCH_SET_FS", "%fs:0", "mov $60, %eax"):
+        require(
+            snippet in start,
+            f"libc-stdio-fixed-empty-format-scan start shim omits {snippet}",
+        )
+    c_header_probe = (
+        ROOT / "compat" / "x86_64" /
+        "stdio_fixed_empty_format_scan_header_abi_probe.c"
+    ).read_text(encoding="utf-8")
+    cxx_header_probe = (
+        ROOT / "compat" / "x86_64" /
+        "stdio_fixed_empty_format_scan_header_abi_probe.cpp"
+    ).read_text(encoding="utf-8")
+    header_runner = (
+        ROOT / "compat" / "x86_64" /
+        "run_stdio_fixed_empty_format_scan_header_abi.sh"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "CRABC_STDIO_FIXED_EMPTY_FORMAT_SCAN_HEADER_C11",
+        "crabc_sscanf_signature",
+        "crabc_vsscanf_signature",
+    ):
+        require(
+            snippet in c_header_probe,
+            f"empty-format C header probe omits {snippet}",
+        )
+    for snippet in (
+        "CRABC_STDIO_FIXED_EMPTY_FORMAT_SCAN_HEADER_CXX17",
+        "decltype(&sscanf)",
+        "decltype(&vsscanf)",
+        "crabc_sscanf_reference",
+        "crabc_vsscanf_reference",
+    ):
+        require(
+            snippet in cxx_header_probe,
+            f"empty-format C++ header probe omits {snippet}",
+        )
+    for snippet in (
+        "-nostdinc++",
+        "assert_cxx_c_linkage",
+        "sscanf vsscanf",
+        "mangled scanf reference",
+        "run_musl_oracle.sh",
+    ):
+        require(
+            snippet in header_runner,
+            f"empty-format header runner omits {snippet}",
+        )
+    wrapper = (
+        ROOT / "compat" / "x86_64" /
+        "run_libc_stdio_fixed_empty_format_scan.sh"
+    ).read_text(encoding="utf-8")
+    require(
+        "CRABC_STDIO_FORMAT_SCAN_PROFILE=fixed-empty-format-scan" in wrapper
+        and "run_libc_stdio_format_scan.sh" in wrapper,
+        "libc-stdio-fixed-empty-format-scan wrapper no longer selects its closed profile",
+    )
+    runner = (
+        ROOT / "compat" / "x86_64" / "run_libc_stdio_format_scan.sh"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "fixed-empty-format-scan)",
+        "CRABC_STDIO_FIXED_EMPTY_FORMAT_SCAN_FREESTANDING",
+        "libc_stdio_fixed_empty_format_scan_probe.c",
+        "libc_stdio_fixed_empty_format_scan_start.S",
+        "REQUIRED_C_ABI_SYMBOLS=(sscanf vsscanf)",
+        "empty-format scanner termination is no longer selected",
+        "-nostdlib -static",
+        "--no-undefined",
+        "R_X86_64_TPOFF",
+        "__errno_location",
+    ):
+        require(
+            snippet in runner,
+            f"libc-stdio-fixed-empty-format-scan shared runner omits {snippet}",
+        )
+    dispatcher = (ROOT / "scripts" / "dev-x86_64.sh").read_text(encoding="utf-8")
+    require(
+        "libc-stdio-fixed-empty-format-scan)" in dispatcher
+        and "run_libc_stdio_fixed_empty_format_scan.sh" in dispatcher,
+        "stdio empty-format scanner dispatcher binding is missing",
+    )
+    require(
+        "stdio-fixed-empty-format-scan-header-abi)" in dispatcher
+        and "run_stdio_fixed_empty_format_scan_header_abi.sh" in dispatcher,
+        "stdio empty-format scanner header dispatcher binding is missing",
+    )
+
+
+def require_stdio_fixed_suppressed_character_scan_artifact(
+    family: Mapping[str, Any],
+) -> None:
+    """Keep one musl `%*3c` state below general scanner support."""
+
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.text-math-locale-stdio].verified_artifact",
+        family.get("status", ""),
+    )
+    require(
+        len(artifacts) == 74,
+        "libc.text-math-locale-stdio must retain exactly seventy-four private verified artifacts",
+    )
+    matching = [
+        entry
+        for entry in artifacts
+        if entry.get("id") == "static-c-stdio-fixed-suppressed-character-scan"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.text-math-locale-stdio must contain exactly one static-c-stdio-fixed-suppressed-character-scan artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-stdio-fixed-suppressed-character-scan must not promote libc.text-math-locale-stdio",
+    )
+    artifact = matching[0]
+    require(
+        "capabilities" not in artifact,
+        "static-c-stdio-fixed-suppressed-character-scan must not claim a scanner capability",
+    )
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for phrase in (
+        "still-planned `libc.text-math-locale-stdio`",
+        "adds no C export or capability",
+        "literal non-wide `%*3c` state only",
+        "C11/C++17",
+        "unmangled C spellings",
+        "private NUL-string FILE setup",
+        "`*p == '*'`",
+        "`dest = 0`",
+        "width three and `c`",
+        "`shlim`",
+        "without `va_arg`, a destination write, or a match-count increment",
+        "fixture-only va_list sentinel remains unadvanced",
+        "nonempty short run returns matching failure",
+        "initial EOF returns EOF",
+        "high byte stays raw",
+        "stale errno",
+        "following fixed literal merely witnesses exact raw-byte consumption",
+        "raw literal matching remains owned",
+        "pinned-musl assignment-suppression profile",
+        "not a portable general scanf-suppression claim",
+        "unsuppressed `%c`",
+        "all other widths and suppressed conversion forms",
+        "literal-percent `%%`",
+        "C-locale format whitespace",
+        "`%n`/`%hhn` count-store",
+        "string/scanset/pointer/integer/floating/wide",
+        "FILE input",
+        "byte formatting",
+        "general scanner",
+        "general stdio",
+        "family completion",
+        "promotion",
+        "public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"static-c-stdio-fixed-suppressed-character-scan description omits {phrase}",
+        )
+    owners = set(
+        string_list(
+            artifact["source_owners"],
+            "static-c-stdio-fixed-suppressed-character-scan source owners",
+        )
+    )
+    for path in (
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/stdio_format_scan.rs",
+        "libc/src/c_abi/x86_64/errno.rs",
+        "include/errno.h",
+        "include/limits.h",
+        "include/stdarg.h",
+        "include/stdio.h",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/stdio_fixed_suppressed_character_scan_header_abi_probe.c",
+        "compat/x86_64/stdio_fixed_suppressed_character_scan_header_abi_probe.cpp",
+        "compat/x86_64/run_stdio_fixed_suppressed_character_scan_header_abi.sh",
+        "compat/x86_64/libc_stdio_fixed_suppressed_character_scan_probe.c",
+        "compat/x86_64/libc_stdio_fixed_suppressed_character_scan_start.S",
+        "compat/x86_64/run_libc_stdio_format_scan.sh",
+        "compat/x86_64/run_libc_stdio_fixed_suppressed_character_scan.sh",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/README.md",
+        "STATUS.md",
+        "x86-64.md",
+        "scripts/dev-x86_64.sh",
+    ):
+        require(
+            path in owners,
+            f"static-c-stdio-fixed-suppressed-character-scan source owners omit {path}",
+        )
+    prerequisites = string_list(
+        artifact["x86_abi_prerequisites"],
+        "static-c-stdio-fixed-suppressed-character-scan.x86_abi_prerequisites",
+    )
+    require(
+        any(
+            "System V AMD64" in item
+            and "rdi/rsi" in item
+            and "`%*3c`" in item
+            and "no caller destination" in item
+            and "trailing sentinel unadvanced" in item
+            and "no external FILE, count-store, or floating variadic boundary" in item
+            for item in prerequisites
+        ),
+        "static-c-stdio-fixed-suppressed-character-scan must retain its direct and va_list ABI boundary",
+    )
+    require(
+        any(
+            "src/stdio/{sscanf,vsscanf,vfscanf}.c" in item
+            and "private string-backed FILE setup" in item
+            and "__toread" in item
+            and "*p == '*'" in item
+            and "dest = 0" in item
+            and "width three and c" in item
+            and "shlim(f, width)" in item
+            and "exactly three raw bytes" in item
+            and "without va_arg, destination write, or matches++" in item
+            for item in prerequisites
+        ),
+        "static-c-stdio-fixed-suppressed-character-scan must retain its pinned-musl source map",
+    )
+    require(
+        any(
+            "initial-exec errno TLS" in item
+            and "remains stale" in item
+            and "%fs:0" in item
+            for item in prerequisites
+        ),
+        "static-c-stdio-fixed-suppressed-character-scan must retain its errno/TLS boundary",
+    )
+    header_prerequisites = string_list(
+        artifact["x86_header_prerequisites"],
+        "static-c-stdio-fixed-suppressed-character-scan.x86_header_prerequisites",
+    )
+    require(
+        len(header_prerequisites) == 1
+        and "sscanf/vsscanf" in header_prerequisites[0]
+        and "C11/C++17" in header_prerequisites[0]
+        and "unmangled C spellings" in header_prerequisites[0]
+        and "not a broader stdio-header" in header_prerequisites[0],
+        "static-c-stdio-fixed-suppressed-character-scan must retain its narrow project-header boundary",
+    )
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-stdio-fixed-suppressed-character-scan"},
+        "static-c-stdio-fixed-suppressed-character-scan must use the closed libc-stdio-fixed-suppressed-character-scan command",
+    )
+    scope = evidence[0]["scope"]
+    assert isinstance(scope, str)
+    for phrase in (
+        "Pinned-musl 1.2.6 C11/C++17 project-header declaration/linkage proof",
+        "`-nostdlib -static` candidate",
+        "unmangled C++ C spellings",
+        "non-wide `%*3c` suppression",
+        "exactly three raw bytes",
+        "no destination or assignment",
+        "fixture-only trailing va_list sentinel",
+        "nonempty-short matching failure",
+        "initial EOF",
+        "raw high byte",
+        "stale errno",
+        "following literal only exposes source consumption",
+        "direct initial-exec errno TLS",
+        "pinned-musl assignment-suppression evidence only",
+        "unsuppressed character",
+        "other suppression",
+        "literal-percent",
+        "format-whitespace",
+        "`%n`/`%hhn` count-store",
+        "string/scanset/pointer/integer/floating/wide",
+        "general scanner",
+        "general stdio",
+        "public-x86 claim",
+    ):
+        require(
+            phrase in scope,
+            f"static-c-stdio-fixed-suppressed-character-scan evidence scope omits {phrase}",
+        )
+    oracle = artifact["oracle"]
+    assert isinstance(oracle, list)
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "c-posix"
+            and isinstance(entry.get("role"), str)
+            and "src/stdio/{sscanf,vsscanf,vfscanf}.c" in entry["role"]
+            and "private NUL-string FILE setup" in entry["role"]
+            and "*p == '*'" in entry["role"]
+            and "dest null" in entry["role"]
+            and "width three and c" in entry["role"]
+            and "shlim" in entry["role"]
+            and "without va_arg or a destination write" in entry["role"]
+            for entry in oracle
+        ),
+        "static-c-stdio-fixed-suppressed-character-scan must retain its musl suppression oracle",
+    )
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "elf-abi"
+            and isinstance(entry.get("role"), str)
+            and "input/format pointer ABI" in entry["role"]
+            and "trailing sentinel remains unadvanced" in entry["role"]
+            and "initial-exec errno TLS" in entry["role"]
+            for entry in oracle
+        ),
+        "static-c-stdio-fixed-suppressed-character-scan must retain its SysV/TLS oracle",
+    )
+    implementation = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "stdio_format_scan.rs"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "static-c-stdio-fixed-suppressed-character-scan artifact",
+        "let suppress = if unsafe { read_byte(directive) } == b'*'",
+        "With the sealed `%*3c` profile's suppress flag",
+        "destination = if suppress",
+    ):
+        require(
+            snippet in implementation,
+            f"stdio suppressed-character scan implementation omits {snippet}",
+        )
+    exports = static_c_abi_export_names(
+        ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+    )
+    require(
+        {"sscanf", "vsscanf"}.issubset(exports),
+        "static C ABI export contract omits the existing scan boundary",
+    )
+    for unselected in ("scanf", "fscanf", "vfscanf", "fwscanf", "swscanf"):
+        require(
+            unselected not in exports,
+            f"static-c-stdio-fixed-suppressed-character-scan must not select {unselected}",
+        )
+    fixture = (
+        ROOT / "compat" / "x86_64" /
+        "libc_stdio_fixed_suppressed_character_scan_probe.c"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "CRABC_TYPE_IS(__typeof__(&sscanf)",
+        "call_vsscanf_suppressed_character",
+        '"%*3c!"',
+        "zero-assignment suppressed character",
+        "trailing = va_arg(arguments, int)",
+        "CRABC_STDIO_FIXED_SUPPRESSED_CHARACTER_SCAN_FREESTANDING",
+    ):
+        require(
+            snippet in fixture,
+            f"libc-stdio-fixed-suppressed-character-scan fixture omits {snippet}",
+        )
+    start = (
+        ROOT / "compat" / "x86_64" /
+        "libc_stdio_fixed_suppressed_character_scan_start.S"
+    ).read_text(encoding="utf-8")
+    for snippet in ("arch_prctl(ARCH_SET_FS", "%fs:0", "mov $60, %eax"):
+        require(
+            snippet in start,
+            f"libc-stdio-fixed-suppressed-character-scan start shim omits {snippet}",
+        )
+    c_header_probe = (
+        ROOT / "compat" / "x86_64" /
+        "stdio_fixed_suppressed_character_scan_header_abi_probe.c"
+    ).read_text(encoding="utf-8")
+    cxx_header_probe = (
+        ROOT / "compat" / "x86_64" /
+        "stdio_fixed_suppressed_character_scan_header_abi_probe.cpp"
+    ).read_text(encoding="utf-8")
+    header_runner = (
+        ROOT / "compat" / "x86_64" /
+        "run_stdio_fixed_suppressed_character_scan_header_abi.sh"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "CRABC_STDIO_FIXED_SUPPRESSED_CHARACTER_SCAN_HEADER_C11",
+        "crabc_sscanf_signature",
+        "crabc_vsscanf_signature",
+    ):
+        require(
+            snippet in c_header_probe,
+            f"suppressed-character C header probe omits {snippet}",
+        )
+    for snippet in (
+        "CRABC_STDIO_FIXED_SUPPRESSED_CHARACTER_SCAN_HEADER_CXX17",
+        "decltype(&sscanf)",
+        "decltype(&vsscanf)",
+        "crabc_sscanf_reference",
+        "crabc_vsscanf_reference",
+    ):
+        require(
+            snippet in cxx_header_probe,
+            f"suppressed-character C++ header probe omits {snippet}",
+        )
+    for snippet in (
+        "-nostdinc++",
+        "assert_cxx_c_linkage",
+        "sscanf vsscanf",
+        "mangled scanf reference",
+        "run_musl_oracle.sh",
+    ):
+        require(
+            snippet in header_runner,
+            f"suppressed-character header runner omits {snippet}",
+        )
+    wrapper = (
+        ROOT / "compat" / "x86_64" /
+        "run_libc_stdio_fixed_suppressed_character_scan.sh"
+    ).read_text(encoding="utf-8")
+    require(
+        "CRABC_STDIO_FORMAT_SCAN_PROFILE=fixed-suppressed-character-scan" in wrapper
+        and "run_libc_stdio_format_scan.sh" in wrapper,
+        "libc-stdio-fixed-suppressed-character-scan wrapper no longer selects its closed profile",
+    )
+    runner = (
+        ROOT / "compat" / "x86_64" / "run_libc_stdio_format_scan.sh"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "fixed-suppressed-character-scan)",
+        "CRABC_STDIO_FIXED_SUPPRESSED_CHARACTER_SCAN_FREESTANDING",
+        "libc_stdio_fixed_suppressed_character_scan_probe.c",
+        "libc_stdio_fixed_suppressed_character_scan_start.S",
+        "REQUIRED_C_ABI_SYMBOLS=(sscanf vsscanf)",
+        "suppressed-character scanner state is no longer selected",
+        "-nostdlib -static",
+        "--no-undefined",
+        "R_X86_64_TPOFF",
+        "__errno_location",
+    ):
+        require(
+            snippet in runner,
+            f"libc-stdio-fixed-suppressed-character-scan shared runner omits {snippet}",
+        )
+    dispatcher = (ROOT / "scripts" / "dev-x86_64.sh").read_text(encoding="utf-8")
+    require(
+        "libc-stdio-fixed-suppressed-character-scan)" in dispatcher
+        and "run_libc_stdio_fixed_suppressed_character_scan.sh" in dispatcher,
+        "stdio suppressed-character scanner dispatcher binding is missing",
+    )
+    require(
+        "stdio-fixed-suppressed-character-scan-header-abi)" in dispatcher
+        and "run_stdio_fixed_suppressed_character_scan_header_abi.sh" in dispatcher,
+        "stdio suppressed-character scanner header dispatcher binding is missing",
+    )
+
+
+def require_stdio_fixed_suppressed_string_scan_artifact(
+    family: Mapping[str, Any],
+) -> None:
+    """Keep one musl `%*3s` state below general scanner support."""
+
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.text-math-locale-stdio].verified_artifact",
+        family.get("status", ""),
+    )
+    require(
+        len(artifacts) == 74,
+        "libc.text-math-locale-stdio must retain exactly seventy-four private verified artifacts",
+    )
+    matching = [
+        entry
+        for entry in artifacts
+        if entry.get("id") == "static-c-stdio-fixed-suppressed-string-scan"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.text-math-locale-stdio must contain exactly one static-c-stdio-fixed-suppressed-string-scan artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-stdio-fixed-suppressed-string-scan must not promote libc.text-math-locale-stdio",
+    )
+    artifact = matching[0]
+    require(
+        "capabilities" not in artifact,
+        "static-c-stdio-fixed-suppressed-string-scan must not claim a scanner capability",
+    )
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for phrase in (
+        "still-planned `libc.text-math-locale-stdio`",
+        "adds no C export or capability",
+        "literal non-wide `%*3s` state only",
+        "C11/C++17",
+        "unmangled C spellings",
+        "private NUL-string FILE setup",
+        "`*p == '*'`",
+        "`dest = 0`",
+        "width three and `s`",
+        "C-locale input-whitespace skip",
+        "limits the token with `shlim`",
+        "without `va_arg`, a destination write, a terminator write, or a match-count increment",
+        "nonempty short-token success",
+        "exact-width source consumption before a following literal",
+        "fixture-only va_list sentinel remains unadvanced",
+        "whitespace-only and initial EOF return EOF",
+        "high byte stays token data",
+        "stale errno",
+        "following fixed literal merely witnesses bounded token consumption",
+        "raw literal matching remains owned",
+        "pinned-musl assignment-suppression profile",
+        "not a portable general scanf-suppression claim",
+        "unsuppressed `%s` destination storage",
+        "all other widths and suppressed conversion forms",
+        "literal-percent `%%`",
+        "C-locale format whitespace",
+        "`%n`/`%hhn` count-store",
+        "scanset/pointer/integer/floating/wide",
+        "FILE input",
+        "byte formatting",
+        "general scanner",
+        "general stdio",
+        "family completion",
+        "promotion",
+        "public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"static-c-stdio-fixed-suppressed-string-scan description omits {phrase}",
+        )
+    owners = set(
+        string_list(
+            artifact["source_owners"],
+            "static-c-stdio-fixed-suppressed-string-scan source owners",
+        )
+    )
+    for path in (
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/stdio_format_scan.rs",
+        "libc/src/c_abi/x86_64/errno.rs",
+        "include/errno.h",
+        "include/limits.h",
+        "include/stdarg.h",
+        "include/stdio.h",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/stdio_fixed_suppressed_string_scan_header_abi_probe.c",
+        "compat/x86_64/stdio_fixed_suppressed_string_scan_header_abi_probe.cpp",
+        "compat/x86_64/run_stdio_fixed_suppressed_string_scan_header_abi.sh",
+        "compat/x86_64/libc_stdio_fixed_suppressed_string_scan_probe.c",
+        "compat/x86_64/libc_stdio_fixed_suppressed_string_scan_start.S",
+        "compat/x86_64/run_libc_stdio_format_scan.sh",
+        "compat/x86_64/run_libc_stdio_fixed_suppressed_string_scan.sh",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/README.md",
+        "STATUS.md",
+        "x86-64.md",
+        "scripts/dev-x86_64.sh",
+    ):
+        require(
+            path in owners,
+            f"static-c-stdio-fixed-suppressed-string-scan source owners omit {path}",
+        )
+    prerequisites = string_list(
+        artifact["x86_abi_prerequisites"],
+        "static-c-stdio-fixed-suppressed-string-scan.x86_abi_prerequisites",
+    )
+    require(
+        any(
+            "System V AMD64" in item
+            and "rdi/rsi" in item
+            and "`%*3s`" in item
+            and "no caller destination" in item
+            and "trailing sentinel unadvanced" in item
+            and "no external FILE, count-store, or floating variadic boundary" in item
+            for item in prerequisites
+        ),
+        "static-c-stdio-fixed-suppressed-string-scan must retain its direct and va_list ABI boundary",
+    )
+    require(
+        any(
+            "src/stdio/{sscanf,vsscanf,vfscanf}.c" in item
+            and "private string-backed FILE setup" in item
+            and "__toread" in item
+            and "*p == '*'" in item
+            and "dest = 0" in item
+            and "width three and s" in item
+            and "shlim(f, 0)" in item
+            and "C-locale input-whitespace skip" in item
+            and "shlim(f, width)" in item
+            and "at most three narrow non-whitespace token bytes" in item
+            and "without va_arg, destination write, terminator write, or matches++" in item
+            for item in prerequisites
+        ),
+        "static-c-stdio-fixed-suppressed-string-scan must retain its pinned-musl source map",
+    )
+    require(
+        any(
+            "initial-exec errno TLS" in item
+            and "remains stale" in item
+            and "%*3ls" in item
+            and "%fs:0" in item
+            for item in prerequisites
+        ),
+        "static-c-stdio-fixed-suppressed-string-scan must retain its errno/TLS boundary",
+    )
+    header_prerequisites = string_list(
+        artifact["x86_header_prerequisites"],
+        "static-c-stdio-fixed-suppressed-string-scan.x86_header_prerequisites",
+    )
+    require(
+        len(header_prerequisites) == 1
+        and "sscanf/vsscanf" in header_prerequisites[0]
+        and "C11/C++17" in header_prerequisites[0]
+        and "unmangled C spellings" in header_prerequisites[0]
+        and "not a broader stdio-header" in header_prerequisites[0],
+        "static-c-stdio-fixed-suppressed-string-scan must retain its narrow project-header boundary",
+    )
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-stdio-fixed-suppressed-string-scan"},
+        "static-c-stdio-fixed-suppressed-string-scan must use the closed libc-stdio-fixed-suppressed-string-scan command",
+    )
+    scope = evidence[0]["scope"]
+    assert isinstance(scope, str)
+    for phrase in (
+        "Pinned-musl 1.2.6 C11/C++17 project-header declaration/linkage proof",
+        "`-nostdlib -static` candidate",
+        "unmangled C++ C spellings",
+        "non-wide `%*3s` suppression",
+        "leading C-locale input whitespace",
+        "bounded non-whitespace token",
+        "no destination, terminator, or assignment",
+        "fixture-only trailing va_list sentinel",
+        "nonempty short token",
+        "whitespace-only and initial EOF",
+        "raw high byte",
+        "stale errno",
+        "following literal only exposes exact-width source consumption",
+        "candidate-only `%*3ls` rejects with EINVAL",
+        "direct initial-exec errno TLS",
+        "pinned-musl assignment-suppression evidence only",
+        "unsuppressed string storage",
+        "character suppression",
+        "other suppression",
+        "literal-percent",
+        "format-whitespace",
+        "`%n`/`%hhn` count-store",
+        "scanset/pointer/integer/floating/wide",
+        "general scanner",
+        "general stdio",
+        "public-x86 claim",
+    ):
+        require(
+            phrase in scope,
+            f"static-c-stdio-fixed-suppressed-string-scan evidence scope omits {phrase}",
+        )
+    oracle = artifact["oracle"]
+    assert isinstance(oracle, list)
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "c-posix"
+            and isinstance(entry.get("role"), str)
+            and "src/stdio/{sscanf,vsscanf,vfscanf}.c" in entry["role"]
+            and "private NUL-string FILE setup" in entry["role"]
+            and "*p == '*'" in entry["role"]
+            and "dest null" in entry["role"]
+            and "width three and s" in entry["role"]
+            and "C-locale input-whitespace skip" in entry["role"]
+            and "shlim" in entry["role"]
+            and "without va_arg, a destination write, or a terminator write" in entry["role"]
+            for entry in oracle
+        ),
+        "static-c-stdio-fixed-suppressed-string-scan must retain its musl suppression oracle",
+    )
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "elf-abi"
+            and isinstance(entry.get("role"), str)
+            and "input/format pointer ABI" in entry["role"]
+            and "trailing sentinel remains unadvanced" in entry["role"]
+            and "initial-exec errno TLS" in entry["role"]
+            for entry in oracle
+        ),
+        "static-c-stdio-fixed-suppressed-string-scan must retain its SysV/TLS oracle",
+    )
+    implementation = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "stdio_format_scan.rs"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "static-c-stdio-fixed-suppressed-string-scan artifact",
+        "let suppress = if unsafe { read_byte(directive) } == b'*'",
+        "With the sealed `%*3s` profile's suppress flag",
+        "destination = if suppress",
+    ):
+        require(
+            snippet in implementation,
+            f"stdio suppressed-string scan implementation omits {snippet}",
+        )
+    exports = static_c_abi_export_names(
+        ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+    )
+    require(
+        {"sscanf", "vsscanf"}.issubset(exports),
+        "static C ABI export contract omits the existing scan boundary",
+    )
+    for unselected in ("scanf", "fscanf", "vfscanf", "fwscanf", "swscanf"):
+        require(
+            unselected not in exports,
+            f"static-c-stdio-fixed-suppressed-string-scan must not select {unselected}",
+        )
+    fixture = (
+        ROOT / "compat" / "x86_64" /
+        "libc_stdio_fixed_suppressed_string_scan_probe.c"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "CRABC_TYPE_IS(__typeof__(&sscanf)",
+        "call_vsscanf_suppressed_string",
+        '"%*3s!"',
+        "zero-assignment suppressed token",
+        "trailing = va_arg(arguments, int)",
+        '"%*3ls"',
+        "CRABC_STDIO_FIXED_SUPPRESSED_STRING_SCAN_FREESTANDING",
+    ):
+        require(
+            snippet in fixture,
+            f"libc-stdio-fixed-suppressed-string-scan fixture omits {snippet}",
+        )
+    start = (
+        ROOT / "compat" / "x86_64" /
+        "libc_stdio_fixed_suppressed_string_scan_start.S"
+    ).read_text(encoding="utf-8")
+    for snippet in ("arch_prctl(ARCH_SET_FS", "%fs:0", "mov $60, %eax"):
+        require(
+            snippet in start,
+            f"libc-stdio-fixed-suppressed-string-scan start shim omits {snippet}",
+        )
+    c_header_probe = (
+        ROOT / "compat" / "x86_64" /
+        "stdio_fixed_suppressed_string_scan_header_abi_probe.c"
+    ).read_text(encoding="utf-8")
+    cxx_header_probe = (
+        ROOT / "compat" / "x86_64" /
+        "stdio_fixed_suppressed_string_scan_header_abi_probe.cpp"
+    ).read_text(encoding="utf-8")
+    header_runner = (
+        ROOT / "compat" / "x86_64" /
+        "run_stdio_fixed_suppressed_string_scan_header_abi.sh"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "CRABC_STDIO_FIXED_SUPPRESSED_STRING_SCAN_HEADER_C11",
+        "crabc_sscanf_signature",
+        "crabc_vsscanf_signature",
+    ):
+        require(
+            snippet in c_header_probe,
+            f"suppressed-string C header probe omits {snippet}",
+        )
+    for snippet in (
+        "CRABC_STDIO_FIXED_SUPPRESSED_STRING_SCAN_HEADER_CXX17",
+        "decltype(&sscanf)",
+        "decltype(&vsscanf)",
+        "crabc_sscanf_reference",
+        "crabc_vsscanf_reference",
+    ):
+        require(
+            snippet in cxx_header_probe,
+            f"suppressed-string C++ header probe omits {snippet}",
+        )
+    for snippet in (
+        "-nostdinc++",
+        "assert_cxx_c_linkage",
+        "sscanf vsscanf",
+        "mangled scanf reference",
+        "run_musl_oracle.sh",
+    ):
+        require(
+            snippet in header_runner,
+            f"suppressed-string header runner omits {snippet}",
+        )
+    wrapper = (
+        ROOT / "compat" / "x86_64" /
+        "run_libc_stdio_fixed_suppressed_string_scan.sh"
+    ).read_text(encoding="utf-8")
+    require(
+        "CRABC_STDIO_FORMAT_SCAN_PROFILE=fixed-suppressed-string-scan" in wrapper
+        and "run_libc_stdio_format_scan.sh" in wrapper,
+        "libc-stdio-fixed-suppressed-string-scan wrapper no longer selects its closed profile",
+    )
+    runner = (
+        ROOT / "compat" / "x86_64" / "run_libc_stdio_format_scan.sh"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "fixed-suppressed-string-scan)",
+        "CRABC_STDIO_FIXED_SUPPRESSED_STRING_SCAN_FREESTANDING",
+        "libc_stdio_fixed_suppressed_string_scan_probe.c",
+        "libc_stdio_fixed_suppressed_string_scan_start.S",
+        "REQUIRED_C_ABI_SYMBOLS=(sscanf vsscanf)",
+        "suppressed-string scanner state is no longer selected",
+        "-nostdlib -static",
+        "--no-undefined",
+        "R_X86_64_TPOFF",
+        "__errno_location",
+    ):
+        require(
+            snippet in runner,
+            f"libc-stdio-fixed-suppressed-string-scan shared runner omits {snippet}",
+        )
+    dispatcher = (ROOT / "scripts" / "dev-x86_64.sh").read_text(encoding="utf-8")
+    require(
+        "libc-stdio-fixed-suppressed-string-scan)" in dispatcher
+        and "run_libc_stdio_fixed_suppressed_string_scan.sh" in dispatcher,
+        "stdio suppressed-string scanner dispatcher binding is missing",
+    )
+    require(
+        "stdio-fixed-suppressed-string-scan-header-abi)" in dispatcher
+        and "run_stdio_fixed_suppressed_string_scan_header_abi.sh" in dispatcher,
+        "stdio suppressed-string scanner header dispatcher binding is missing",
+    )
+
+
+def require_stdio_fixed_suppressed_scanset_scan_artifact(
+    family: Mapping[str, Any],
+) -> None:
+    """Keep one no-destination bracket state private and source-bounded."""
+
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.text-math-locale-stdio].verified_artifact",
+        family.get("status", ""),
+    )
+    require(
+        len(artifacts) == 74,
+        "libc.text-math-locale-stdio must retain exactly seventy-four private verified artifacts",
+    )
+    matching = [
+        entry
+        for entry in artifacts
+        if entry.get("id") == "static-c-stdio-fixed-suppressed-scanset-scan"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.text-math-locale-stdio must retain exactly one static-c-stdio-fixed-suppressed-scanset-scan artifact",
+    )
+    artifact = matching[0]
+    require(
+        "capabilities" not in artifact,
+        "static-c-stdio-fixed-suppressed-scanset-scan must not promote a capability",
+    )
+    description = artifact.get("description")
+    require(
+        isinstance(description, str),
+        "static-c-stdio-fixed-suppressed-scanset-scan must retain a string description",
+    )
+    for phrase in (
+        "adds no C export or capability",
+        "literal non-wide `%*3[abc]`",
+        "C11/C++17",
+        "unmangled C spellings",
+        "private NUL-string FILE setup",
+        "`*p == '*'`",
+        "`dest = 0`",
+        "literal width three and `[`",
+        "literal a/b/c byte-membership set",
+        "bypasses the ordinary input-whitespace skip",
+        "limits the raw member run with `shlim`",
+        "without `va_arg`, a destination write, a terminator write, or a match-count increment",
+        "nonempty short-member success",
+        "fixture-only va_list sentinel remains unadvanced",
+        "leading C-locale whitespace and a first non-member are matching failure",
+        "initial EOF returns EOF",
+        "high byte remains a following raw literal",
+        "stale errno",
+        "raw literal matching remains owned",
+        "pinned-musl assignment-suppression profile",
+        "not a portable general scanf-suppression or scanset claim",
+        "unsuppressed `%3[abc]` destination storage",
+        "all other widths and suppressed conversion forms",
+        "unbounded/leading-zero/range/inverse/allocating/wide scanset grammar",
+        "literal-percent `%%`",
+        "C-locale format whitespace",
+        "`%n`/`%hhn` count-store",
+        "FILE input",
+        "general scanner",
+        "general stdio",
+        "family completion",
+        "promotion",
+        "public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"static-c-stdio-fixed-suppressed-scanset-scan description omits {phrase}",
+        )
+    owners = set(
+        string_list(
+            artifact["source_owners"],
+            "static-c-stdio-fixed-suppressed-scanset-scan source owners",
+        )
+    )
+    for path in (
+        "compat/upstreams.toml",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/stdio_format_scan.rs",
+        "libc/src/c_abi/x86_64/errno.rs",
+        "include/errno.h",
+        "include/limits.h",
+        "include/stdarg.h",
+        "include/stdio.h",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/stdio_fixed_suppressed_scanset_scan_header_abi_probe.c",
+        "compat/x86_64/stdio_fixed_suppressed_scanset_scan_header_abi_probe.cpp",
+        "compat/x86_64/run_stdio_fixed_suppressed_scanset_scan_header_abi.sh",
+        "compat/x86_64/libc_stdio_fixed_suppressed_scanset_scan_probe.c",
+        "compat/x86_64/libc_stdio_fixed_suppressed_scanset_scan_start.S",
+        "compat/x86_64/run_libc_stdio_format_scan.sh",
+        "compat/x86_64/run_libc_stdio_fixed_suppressed_scanset_scan.sh",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/README.md",
+        "STATUS.md",
+        "x86-64.md",
+        "scripts/dev-x86_64.sh",
+    ):
+        require(
+            path in owners,
+            f"static-c-stdio-fixed-suppressed-scanset-scan source owners omit {path}",
+        )
+    prerequisites = string_list(
+        artifact["x86_abi_prerequisites"],
+        "static-c-stdio-fixed-suppressed-scanset-scan.x86_abi_prerequisites",
+    )
+    require(
+        any(
+            "System V AMD64" in item
+            and "rdi/rsi" in item
+            and "`%*3[abc]`" in item
+            and "no caller destination" in item
+            and "trailing sentinel unadvanced" in item
+            and "no external FILE, count-store, or floating variadic boundary" in item
+            for item in prerequisites
+        ),
+        "static-c-stdio-fixed-suppressed-scanset-scan must retain its direct and va_list ABI boundary",
+    )
+    require(
+        any(
+            "src/stdio/{sscanf,vsscanf,vfscanf}.c" in item
+            and "private string-backed FILE setup" in item
+            and "__toread" in item
+            and "*p == '*'" in item
+            and "dest = 0" in item
+            and "literal width three and [" in item
+            and "byte-membership table for a/b/c" in item
+            and "bypasses default isspace input skipping" in item
+            and "shlim(f, width)" in item
+            and "shungets the first non-member" in item
+            and "without va_arg, destination write, or terminator write" in item
+            for item in prerequisites
+        ),
+        "static-c-stdio-fixed-suppressed-scanset-scan must retain its pinned-musl source map",
+    )
+    require(
+        any(
+            "initial-exec errno TLS" in item
+            and "remains stale" in item
+            and "unbounded, leading-zero, unsuppressed, range, inverse, and wide" in item
+            and "%fs:0" in item
+            for item in prerequisites
+        ),
+        "static-c-stdio-fixed-suppressed-scanset-scan must retain its errno/TLS boundary",
+    )
+    header_prerequisites = string_list(
+        artifact["x86_header_prerequisites"],
+        "static-c-stdio-fixed-suppressed-scanset-scan.x86_header_prerequisites",
+    )
+    require(
+        len(header_prerequisites) == 1
+        and "sscanf/vsscanf" in header_prerequisites[0]
+        and "C11/C++17" in header_prerequisites[0]
+        and "unmangled C spellings" in header_prerequisites[0]
+        and "not a broader stdio-header" in header_prerequisites[0],
+        "static-c-stdio-fixed-suppressed-scanset-scan must retain its narrow project-header boundary",
+    )
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-stdio-fixed-suppressed-scanset-scan"},
+        "static-c-stdio-fixed-suppressed-scanset-scan must use closed libc-stdio-fixed-suppressed-scanset-scan command",
+    )
+    scope = evidence[0]["scope"]
+    assert isinstance(scope, str)
+    for phrase in (
+        "Pinned-musl 1.2.6 C11/C++17 project-header declaration/linkage proof",
+        "`-nostdlib -static` candidate",
+        "unmangled C++ C spellings",
+        "non-wide literal `%*3[abc]` suppression",
+        "bounded raw a/b/c member run",
+        "without leading input-whitespace skip, destination, terminator, or assignment",
+        "fixture-only trailing va_list sentinel",
+        "nonempty short run",
+        "first non-member is matching failure",
+        "initial EOF is distinct",
+        "high byte remains a following raw literal",
+        "stale errno",
+        "candidate-only unbounded, leading-zero, unsuppressed, range, inverse, and `%*3l[abc]` forms reject with EINVAL",
+        "direct initial-exec errno TLS",
+        "pinned-musl assignment-suppression evidence only",
+        "unsuppressed scanset storage",
+        "general scanset",
+        "general scanner",
+        "general stdio",
+        "public-x86 claim",
+    ):
+        require(
+            phrase in scope,
+            f"static-c-stdio-fixed-suppressed-scanset-scan evidence scope omits {phrase}",
+        )
+    oracle = artifact["oracle"]
+    assert isinstance(oracle, list)
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "c-posix"
+            and isinstance(entry.get("role"), str)
+            and "src/stdio/{sscanf,vsscanf,vfscanf}.c" in entry["role"]
+            and "private NUL-string FILE setup" in entry["role"]
+            and "*p == '*'" in entry["role"]
+            and "dest null" in entry["role"]
+            and "literal width three and [" in entry["role"]
+            and "a/b/c bracket membership table" in entry["role"]
+            and "bypasses default input-whitespace skipping" in entry["role"]
+            and "shungets the first non-member" in entry["role"]
+            and "without va_arg, a destination write, or a terminator write" in entry["role"]
+            for entry in oracle
+        ),
+        "static-c-stdio-fixed-suppressed-scanset-scan must retain its musl suppression oracle",
+    )
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "elf-abi"
+            and isinstance(entry.get("role"), str)
+            and "input/format pointer ABI" in entry["role"]
+            and "trailing sentinel remains unadvanced" in entry["role"]
+            and "initial-exec errno TLS" in entry["role"]
+            for entry in oracle
+        ),
+        "static-c-stdio-fixed-suppressed-scanset-scan must retain its SysV/TLS oracle",
+    )
+    implementation = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "stdio_format_scan.rs"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "static-c-stdio-fixed-suppressed-scanset-scan artifact",
+        "let width_start = directive;",
+        "&& suppress",
+        "parsed_width == 3",
+        "read_byte(width_start) } == b'3'",
+        "b'a' | b'b' | b'c'",
+        "no-destination state",
+    ):
+        require(
+            snippet in implementation,
+            f"stdio suppressed-scanset scan implementation omits {snippet}",
+        )
+    exports = static_c_abi_export_names(
+        ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+    )
+    require(
+        {"sscanf", "vsscanf"}.issubset(exports),
+        "static C ABI export contract omits the existing scan boundary",
+    )
+    for unselected in ("scanf", "fscanf", "vfscanf", "fwscanf", "swscanf"):
+        require(
+            unselected not in exports,
+            f"static-c-stdio-fixed-suppressed-scanset-scan must not select {unselected}",
+        )
+    fixture = (
+        ROOT / "compat" / "x86_64" /
+        "libc_stdio_fixed_suppressed_scanset_scan_probe.c"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "CRABC_TYPE_IS(__typeof__(&sscanf)",
+        "call_vsscanf_suppressed_scanset",
+        '"%*3[abc]!"',
+        "shorter than width three succeeds",
+        "does not skip leading C-locale input",
+        "high_format",
+        '"%*[abc]"',
+        '"%*03[abc]"',
+        '"%*3[a-z]"',
+        '"%*3[^abc]"',
+        '"%*3l[abc]"',
+        "CRABC_STDIO_FIXED_SUPPRESSED_SCANSET_SCAN_FREESTANDING",
+    ):
+        require(
+            snippet in fixture,
+            f"libc-stdio-fixed-suppressed-scanset-scan fixture omits {snippet}",
+        )
+    start = (
+        ROOT / "compat" / "x86_64" /
+        "libc_stdio_fixed_suppressed_scanset_scan_start.S"
+    ).read_text(encoding="utf-8")
+    for snippet in ("arch_prctl(ARCH_SET_FS", "%fs:0", "mov $60, %eax"):
+        require(
+            snippet in start,
+            f"libc-stdio-fixed-suppressed-scanset-scan start shim omits {snippet}",
+        )
+    c_header_probe = (
+        ROOT / "compat" / "x86_64" /
+        "stdio_fixed_suppressed_scanset_scan_header_abi_probe.c"
+    ).read_text(encoding="utf-8")
+    cxx_header_probe = (
+        ROOT / "compat" / "x86_64" /
+        "stdio_fixed_suppressed_scanset_scan_header_abi_probe.cpp"
+    ).read_text(encoding="utf-8")
+    header_runner = (
+        ROOT / "compat" / "x86_64" /
+        "run_stdio_fixed_suppressed_scanset_scan_header_abi.sh"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "CRABC_STDIO_FIXED_SUPPRESSED_SCANSET_SCAN_HEADER_C11",
+        "crabc_sscanf_signature",
+        "crabc_vsscanf_signature",
+    ):
+        require(
+            snippet in c_header_probe,
+            f"suppressed-scanset C header probe omits {snippet}",
+        )
+    for snippet in (
+        "CRABC_STDIO_FIXED_SUPPRESSED_SCANSET_SCAN_HEADER_CXX17",
+        "decltype(&sscanf)",
+        "decltype(&vsscanf)",
+        "crabc_sscanf_reference",
+        "crabc_vsscanf_reference",
+    ):
+        require(
+            snippet in cxx_header_probe,
+            f"suppressed-scanset C++ header probe omits {snippet}",
+        )
+    for snippet in (
+        "-nostdinc++",
+        "assert_cxx_c_linkage",
+        "sscanf vsscanf",
+        "mangled scanf reference",
+        "run_musl_oracle.sh",
+    ):
+        require(
+            snippet in header_runner,
+            f"suppressed-scanset header runner omits {snippet}",
+        )
+    wrapper = (
+        ROOT / "compat" / "x86_64" /
+        "run_libc_stdio_fixed_suppressed_scanset_scan.sh"
+    ).read_text(encoding="utf-8")
+    require(
+        "CRABC_STDIO_FORMAT_SCAN_PROFILE=fixed-suppressed-scanset-scan" in wrapper
+        and "run_libc_stdio_format_scan.sh" in wrapper,
+        "libc-stdio-fixed-suppressed-scanset-scan wrapper no longer selects its closed profile",
+    )
+    runner = (
+        ROOT / "compat" / "x86_64" / "run_libc_stdio_format_scan.sh"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "fixed-suppressed-scanset-scan)",
+        "CRABC_STDIO_FIXED_SUPPRESSED_SCANSET_SCAN_FREESTANDING",
+        "libc_stdio_fixed_suppressed_scanset_scan_probe.c",
+        "libc_stdio_fixed_suppressed_scanset_scan_start.S",
+        "REQUIRED_C_ABI_SYMBOLS=(sscanf vsscanf)",
+        "suppressed-scanset scanner state is no longer selected",
+        "-nostdlib -static",
+        "--no-undefined",
+        "R_X86_64_TPOFF",
+        "__errno_location",
+    ):
+        require(
+            snippet in runner,
+            f"libc-stdio-fixed-suppressed-scanset-scan shared runner omits {snippet}",
+        )
+    dispatcher = (ROOT / "scripts" / "dev-x86_64.sh").read_text(encoding="utf-8")
+    require(
+        "libc-stdio-fixed-suppressed-scanset-scan)" in dispatcher
+        and "run_libc_stdio_fixed_suppressed_scanset_scan.sh" in dispatcher,
+        "stdio suppressed-scanset scanner dispatcher binding is missing",
+    )
+    require(
+        "stdio-fixed-suppressed-scanset-scan-header-abi)" in dispatcher
+        and "run_stdio_fixed_suppressed_scanset_scan_header_abi.sh" in dispatcher,
+        "stdio suppressed-scanset scanner header dispatcher binding is missing",
+    )
+
+
+def require_stdio_fixed_suppressed_count_scan_artifact(
+    family: Mapping[str, Any],
+) -> None:
+    """Keep one no-destination count state private and source-bounded."""
+
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.text-math-locale-stdio].verified_artifact",
+        family.get("status", ""),
+    )
+    require(
+        len(artifacts) == 74,
+        "libc.text-math-locale-stdio must retain exactly seventy-four private verified artifacts",
+    )
+    matching = [
+        entry
+        for entry in artifacts
+        if entry.get("id") == "static-c-stdio-fixed-suppressed-count-scan"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.text-math-locale-stdio must retain exactly one static-c-stdio-fixed-suppressed-count-scan artifact",
+    )
+    artifact = matching[0]
+    require(
+        "capabilities" not in artifact,
+        "static-c-stdio-fixed-suppressed-count-scan must not promote a capability",
+    )
+    description = artifact.get("description")
+    require(
+        isinstance(description, str),
+        "static-c-stdio-fixed-suppressed-count-scan must retain a string description",
+    )
+    for phrase in (
+        "adds no C export or capability",
+        "literal non-wide",
+        "%*n",
+        "C11/C++17",
+        "unmangled C spellings",
+        "private NUL-string FILE setup",
+        "*p == '*'",
+        "dest = 0",
+        "store_int",
+        "current",
+        "null-destination guard returns before a store",
+        "neither reads a source byte nor increments the match count",
+        "empty-input zero-assignment success",
+        "fixture-only va_list sentinel remains unadvanced",
+        "consumed no source byte",
+        "later literal mismatch remains a zero-assignment matching failure",
+        "stale errno",
+        "raw literal matching remains owned",
+        "pinned-musl assignment-suppression count-state profile",
+        "not a portable ISO C",
+        "unsuppressed",
+        "destination storage",
+        "all other count length or width forms",
+        "literal-percent",
+        "C-locale format whitespace",
+        "FILE input",
+        "general scanner",
+        "general stdio",
+        "family completion",
+        "promotion",
+        "public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"static-c-stdio-fixed-suppressed-count-scan description omits {phrase}",
+        )
+    owners = set(
+        string_list(
+            artifact["source_owners"],
+            "static-c-stdio-fixed-suppressed-count-scan source owners",
+        )
+    )
+    for path in (
+        "compat/upstreams.toml",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/stdio_format_scan.rs",
+        "libc/src/c_abi/x86_64/errno.rs",
+        "include/errno.h",
+        "include/limits.h",
+        "include/stdarg.h",
+        "include/stdio.h",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/stdio_fixed_suppressed_count_scan_header_abi_probe.c",
+        "compat/x86_64/stdio_fixed_suppressed_count_scan_header_abi_probe.cpp",
+        "compat/x86_64/run_stdio_fixed_suppressed_count_scan_header_abi.sh",
+        "compat/x86_64/libc_stdio_fixed_suppressed_count_scan_probe.c",
+        "compat/x86_64/libc_stdio_fixed_suppressed_count_scan_start.S",
+        "compat/x86_64/run_libc_stdio_format_scan.sh",
+        "compat/x86_64/run_libc_stdio_fixed_suppressed_count_scan.sh",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/README.md",
+        "STATUS.md",
+        "x86-64.md",
+        "scripts/dev-x86_64.sh",
+    ):
+        require(
+            path in owners,
+            f"static-c-stdio-fixed-suppressed-count-scan source owners omit {path}",
+        )
+    prerequisites = string_list(
+        artifact["x86_abi_prerequisites"],
+        "static-c-stdio-fixed-suppressed-count-scan.x86_abi_prerequisites",
+    )
+    require(
+        any(
+            "System V AMD64" in item
+            and "rdi/rsi" in item
+            and "%*n" in item
+            and "no caller destination" in item
+            and "trailing sentinel unadvanced" in item
+            and "no external FILE, output, pointer, or floating variadic boundary"
+            in item
+            for item in prerequisites
+        ),
+        "static-c-stdio-fixed-suppressed-count-scan must retain its direct and va_list ABI boundary",
+    )
+    require(
+        any(
+            "src/stdio/{sscanf,vsscanf,vfscanf}.c" in item
+            and "private string-backed FILE setup" in item
+            and "__toread" in item
+            and "*p == '*'" in item
+            and "dest = 0" in item
+            and "width zero and size default for literal n" in item
+            and "store_int(dest, size, pos)" in item
+            and "null-destination guard returns without a store" in item
+            and "without shlim, a source read, va_arg, destination write, or matches++"
+            in item
+            for item in prerequisites
+        ),
+        "static-c-stdio-fixed-suppressed-count-scan must retain its pinned-musl source map",
+    )
+    require(
+        any(
+            "initial-exec errno TLS" in item
+            and "remains stale" in item
+            and "%fs:0" in item
+            for item in prerequisites
+        ),
+        "static-c-stdio-fixed-suppressed-count-scan must retain its errno/TLS boundary",
+    )
+    header_prerequisites = string_list(
+        artifact["x86_header_prerequisites"],
+        "static-c-stdio-fixed-suppressed-count-scan.x86_header_prerequisites",
+    )
+    require(
+        len(header_prerequisites) == 1
+        and "sscanf/vsscanf" in header_prerequisites[0]
+        and "C11/C++17" in header_prerequisites[0]
+        and "unmangled C spellings" in header_prerequisites[0]
+        and "not a broader stdio-header" in header_prerequisites[0],
+        "static-c-stdio-fixed-suppressed-count-scan must retain its narrow project-header boundary",
+    )
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-stdio-fixed-suppressed-count-scan"},
+        "static-c-stdio-fixed-suppressed-count-scan must use closed libc-stdio-fixed-suppressed-count-scan command",
+    )
+    scope = evidence[0]["scope"]
+    assert isinstance(scope, str)
+    for phrase in (
+        "Pinned-musl 1.2.6 C11/C++17 project-header declaration/linkage proof",
+        "-nostdlib -static",
+        "unmangled C++ C spellings",
+        "literal non-wide",
+        "%*n",
+        "no destination",
+        "reads no source byte",
+        "no va_arg or count store",
+        "no assignment",
+        "fixture-only trailing va_list sentinel",
+        "empty input succeeds with zero assignments",
+        "following raw literal observes no source consumption",
+        "later literal mismatch remains zero-assignment",
+        "stale errno",
+        "direct initial-exec errno TLS",
+        "pinned-musl assignment-suppression count-state evidence only",
+        "portable ISO C",
+        "unsuppressed count storage",
+        "other count length/width forms",
+        "character/string/scanset suppression",
+        "general scanner",
+        "general stdio",
+        "public-x86 claim",
+    ):
+        require(
+            phrase in scope,
+            f"static-c-stdio-fixed-suppressed-count-scan evidence scope omits {phrase}",
+        )
+    oracle = artifact["oracle"]
+    assert isinstance(oracle, list)
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "c-posix"
+            and isinstance(entry.get("role"), str)
+            and "src/stdio/{sscanf,vsscanf,vfscanf}.c" in entry["role"]
+            and "private NUL-string FILE setup" in entry["role"]
+            and "*p == '*'" in entry["role"]
+            and "dest null" in entry["role"]
+            and "null-guarded store_int" in entry["role"]
+            and "without a source read, shlim, va_arg, destination write, or match-count increment"
+            in entry["role"]
+            for entry in oracle
+        ),
+        "static-c-stdio-fixed-suppressed-count-scan must retain its musl suppression oracle",
+    )
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "elf-abi"
+            and isinstance(entry.get("role"), str)
+            and "input/format pointer ABI" in entry["role"]
+            and "trailing sentinel remains unadvanced" in entry["role"]
+            and "initial-exec errno TLS" in entry["role"]
+            for entry in oracle
+        ),
+        "static-c-stdio-fixed-suppressed-count-scan must retain its SysV/TLS oracle",
+    )
+    implementation = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "stdio_format_scan.rs"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "static-c-stdio-fixed-suppressed-count-scan artifact",
+        "let suppress = if unsafe { read_byte(directive) } == b'*'",
+        "With the sealed",
+        "count state sees no destination",
+        "neither VaList::next_arg nor assign_count",
+        "if !suppress",
+    ):
+        require(
+            snippet in implementation,
+            f"stdio suppressed-count scan implementation omits {snippet}",
+        )
+    exports = static_c_abi_export_names(
+        ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+    )
+    require(
+        {"sscanf", "vsscanf"}.issubset(exports),
+        "static C ABI export contract omits the existing scan boundary",
+    )
+    for unselected in ("scanf", "fscanf", "vfscanf", "fwscanf", "swscanf"):
+        require(
+            unselected not in exports,
+            f"static-c-stdio-fixed-suppressed-count-scan must not select {unselected}",
+        )
+    fixture = (
+        ROOT / "compat" / "x86_64" /
+        "libc_stdio_fixed_suppressed_count_scan_probe.c"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "CRABC_TYPE_IS(__typeof__(&sscanf)",
+        "call_vsscanf_suppressed_count",
+        '"%*n"',
+        '"a%*nb"',
+        "zero-assignment suppressed count",
+        "does not consume input",
+        "CRABC_STDIO_FIXED_SUPPRESSED_COUNT_SCAN_FREESTANDING",
+    ):
+        require(
+            snippet in fixture,
+            f"libc-stdio-fixed-suppressed-count-scan fixture omits {snippet}",
+        )
+    start = (
+        ROOT / "compat" / "x86_64" /
+        "libc_stdio_fixed_suppressed_count_scan_start.S"
+    ).read_text(encoding="utf-8")
+    for snippet in ("arch_prctl(ARCH_SET_FS", "%fs:0", "mov $60, %eax"):
+        require(
+            snippet in start,
+            f"libc-stdio-fixed-suppressed-count-scan start shim omits {snippet}",
+        )
+    c_header_probe = (
+        ROOT / "compat" / "x86_64" /
+        "stdio_fixed_suppressed_count_scan_header_abi_probe.c"
+    ).read_text(encoding="utf-8")
+    cxx_header_probe = (
+        ROOT / "compat" / "x86_64" /
+        "stdio_fixed_suppressed_count_scan_header_abi_probe.cpp"
+    ).read_text(encoding="utf-8")
+    header_runner = (
+        ROOT / "compat" / "x86_64" /
+        "run_stdio_fixed_suppressed_count_scan_header_abi.sh"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "CRABC_STDIO_FIXED_SUPPRESSED_COUNT_SCAN_HEADER_C11",
+        "crabc_sscanf_signature",
+        "crabc_vsscanf_signature",
+    ):
+        require(
+            snippet in c_header_probe,
+            f"suppressed-count C header probe omits {snippet}",
+        )
+    for snippet in (
+        "CRABC_STDIO_FIXED_SUPPRESSED_COUNT_SCAN_HEADER_CXX17",
+        "decltype(&sscanf)",
+        "decltype(&vsscanf)",
+        "crabc_sscanf_reference",
+        "crabc_vsscanf_reference",
+    ):
+        require(
+            snippet in cxx_header_probe,
+            f"suppressed-count C++ header probe omits {snippet}",
+        )
+    for snippet in (
+        "-nostdinc++",
+        "assert_cxx_c_linkage",
+        "sscanf vsscanf",
+        "mangled scanf reference",
+        "run_musl_oracle.sh",
+    ):
+        require(
+            snippet in header_runner,
+            f"suppressed-count header runner omits {snippet}",
+        )
+    wrapper = (
+        ROOT / "compat" / "x86_64" /
+        "run_libc_stdio_fixed_suppressed_count_scan.sh"
+    ).read_text(encoding="utf-8")
+    require(
+        "CRABC_STDIO_FORMAT_SCAN_PROFILE=fixed-suppressed-count-scan" in wrapper
+        and "run_libc_stdio_format_scan.sh" in wrapper,
+        "libc-stdio-fixed-suppressed-count-scan wrapper no longer selects its closed profile",
+    )
+    runner = (
+        ROOT / "compat" / "x86_64" / "run_libc_stdio_format_scan.sh"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "fixed-suppressed-count-scan)",
+        "CRABC_STDIO_FIXED_SUPPRESSED_COUNT_SCAN_FREESTANDING",
+        "libc_stdio_fixed_suppressed_count_scan_probe.c",
+        "libc_stdio_fixed_suppressed_count_scan_start.S",
+        "REQUIRED_C_ABI_SYMBOLS=(sscanf vsscanf)",
+        "suppressed-count scanner state is no longer selected",
+        "-nostdlib -static",
+        "--no-undefined",
+        "R_X86_64_TPOFF",
+        "__errno_location",
+    ):
+        require(
+            snippet in runner,
+            f"libc-stdio-fixed-suppressed-count-scan shared runner omits {snippet}",
+        )
+    dispatcher = (ROOT / "scripts" / "dev-x86_64.sh").read_text(encoding="utf-8")
+    require(
+        "libc-stdio-fixed-suppressed-count-scan)" in dispatcher
+        and "run_libc_stdio_fixed_suppressed_count_scan.sh" in dispatcher,
+        "stdio suppressed-count scanner dispatcher binding is missing",
+    )
+    require(
+        "stdio-fixed-suppressed-count-scan-header-abi)" in dispatcher
+        and "run_stdio_fixed_suppressed_count_scan_header_abi.sh" in dispatcher,
+        "stdio suppressed-count scanner header dispatcher binding is missing",
+    )
+
+
 def require_stdio_float_hex_output_artifact(family: Mapping[str, Any]) -> None:
     """Keep binary64 hexadecimal output distinct from general float stdio."""
 
@@ -41780,8 +44859,8 @@ def require_stdio_errno_output_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 66,
-        "libc.text-math-locale-stdio must retain exactly sixty-six private verified artifacts",
+        len(artifacts) == 74,
+        "libc.text-math-locale-stdio must retain exactly seventy-four private verified artifacts",
     )
     matching = [
         entry for entry in artifacts if entry.get("id") == "static-c-stdio-errno-output"
@@ -42301,8 +45380,8 @@ def require_stdio_permanent_byte_io_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 66,
-        "libc.text-math-locale-stdio must retain exactly sixty-six private verified artifacts",
+        len(artifacts) == 74,
+        "libc.text-math-locale-stdio must retain exactly seventy-four private verified artifacts",
     )
     matching = [
         entry
@@ -42628,8 +45707,8 @@ def require_stdio_permanent_status_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 66,
-        "libc.text-math-locale-stdio must retain exactly sixty-six private verified artifacts",
+        len(artifacts) == 74,
+        "libc.text-math-locale-stdio must retain exactly seventy-four private verified artifacts",
     )
     matching = [
         entry
@@ -42955,8 +46034,8 @@ def require_stdio_permanent_freading_stdin_artifact(
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 66,
-        "libc.text-math-locale-stdio must retain exactly sixty-six private verified artifacts",
+        len(artifacts) == 74,
+        "libc.text-math-locale-stdio must retain exactly seventy-four private verified artifacts",
     )
     matching = [
         entry
@@ -43323,8 +46402,8 @@ def require_stdio_permanent_fsetlocking_stdin_artifact(
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 66,
-        "libc.text-math-locale-stdio must retain exactly sixty-six private verified artifacts",
+        len(artifacts) == 74,
+        "libc.text-math-locale-stdio must retain exactly seventy-four private verified artifacts",
     )
     matching = [
         entry
@@ -43707,8 +46786,8 @@ def require_stdio_permanent_fseterr_stdin_artifact(
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 66,
-        "libc.text-math-locale-stdio must retain exactly sixty-six private verified artifacts",
+        len(artifacts) == 74,
+        "libc.text-math-locale-stdio must retain exactly seventy-four private verified artifacts",
     )
     matching = [
         entry
@@ -44088,8 +47167,8 @@ def require_stdio_permanent_freadable_stdin_artifact(
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 66,
-        "libc.text-math-locale-stdio must retain exactly sixty-six private verified artifacts",
+        len(artifacts) == 74,
+        "libc.text-math-locale-stdio must retain exactly seventy-four private verified artifacts",
     )
     matching = [
         entry
@@ -44444,8 +47523,8 @@ def require_stdio_permanent_fwritable_stderr_artifact(
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 66,
-        "libc.text-math-locale-stdio must retain exactly sixty-six private verified artifacts",
+        len(artifacts) == 74,
+        "libc.text-math-locale-stdio must retain exactly seventy-four private verified artifacts",
     )
     matching = [
         entry
@@ -44806,8 +47885,8 @@ def require_stdio_permanent_fbufsize_stderr_artifact(
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 66,
-        "libc.text-math-locale-stdio must retain exactly sixty-six private verified artifacts",
+        len(artifacts) == 74,
+        "libc.text-math-locale-stdio must retain exactly seventy-four private verified artifacts",
     )
     matching = [
         entry
@@ -45180,8 +48259,8 @@ def require_stdio_permanent_flbf_stderr_artifact(
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 66,
-        "libc.text-math-locale-stdio must retain exactly sixty-six private verified artifacts",
+        len(artifacts) == 74,
+        "libc.text-math-locale-stdio must retain exactly seventy-four private verified artifacts",
     )
     matching = [
         entry
@@ -45547,8 +48626,8 @@ def require_stdio_permanent_feof_unlocked_artifact(
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 66,
-        "libc.text-math-locale-stdio must retain exactly sixty-six private verified artifacts",
+        len(artifacts) == 74,
+        "libc.text-math-locale-stdio must retain exactly seventy-four private verified artifacts",
     )
     matching = [
         entry
@@ -45915,8 +48994,8 @@ def require_stdio_permanent_fileno_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 66,
-        "libc.text-math-locale-stdio must retain exactly sixty-six private verified artifacts",
+        len(artifacts) == 74,
+        "libc.text-math-locale-stdio must retain exactly seventy-four private verified artifacts",
     )
     matching = [
         entry
@@ -46220,8 +49299,8 @@ def require_stdio_permanent_fileno_unlocked_artifact(
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 66,
-        "libc.text-math-locale-stdio must retain exactly sixty-six private verified artifacts",
+        len(artifacts) == 74,
+        "libc.text-math-locale-stdio must retain exactly seventy-four private verified artifacts",
     )
     matching = [
         entry
@@ -49757,8 +52836,8 @@ def require_math_exp2_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 66,
-        "libc.text-math-locale-stdio must retain exactly sixty-six private verified artifacts",
+        len(artifacts) == 74,
+        "libc.text-math-locale-stdio must retain exactly seventy-four private verified artifacts",
     )
     matching = [entry for entry in artifacts if entry.get("id") == "static-c-math-exp2"]
     require(
@@ -50017,8 +53096,8 @@ def require_math_expm1_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 66,
-        "libc.text-math-locale-stdio must retain exactly sixty-six private verified artifacts",
+        len(artifacts) == 74,
+        "libc.text-math-locale-stdio must retain exactly seventy-four private verified artifacts",
     )
     matching = [entry for entry in artifacts if entry.get("id") == "static-c-math-expm1"]
     require(
@@ -50255,8 +53334,8 @@ def require_math_log10_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 66,
-        "libc.text-math-locale-stdio must retain exactly sixty-six private verified artifacts",
+        len(artifacts) == 74,
+        "libc.text-math-locale-stdio must retain exactly seventy-four private verified artifacts",
     )
     matching = [entry for entry in artifacts if entry.get("id") == "static-c-math-log10"]
     require(
@@ -50500,8 +53579,8 @@ def require_math_ceil_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 66,
-        "libc.text-math-locale-stdio must retain exactly sixty-six private verified artifacts",
+        len(artifacts) == 74,
+        "libc.text-math-locale-stdio must retain exactly seventy-four private verified artifacts",
     )
     matching = [entry for entry in artifacts if entry.get("id") == "static-c-math-ceil"]
     require(
@@ -50725,8 +53804,8 @@ def require_math_floor_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 66,
-        "libc.text-math-locale-stdio must retain exactly sixty-six private verified artifacts",
+        len(artifacts) == 74,
+        "libc.text-math-locale-stdio must retain exactly seventy-four private verified artifacts",
     )
     matching = [entry for entry in artifacts if entry.get("id") == "static-c-math-floor"]
     require(
@@ -50951,8 +54030,8 @@ def require_math_round_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 66,
-        "libc.text-math-locale-stdio must retain exactly sixty-six private verified artifacts",
+        len(artifacts) == 74,
+        "libc.text-math-locale-stdio must retain exactly seventy-four private verified artifacts",
     )
     matching = [entry for entry in artifacts if entry.get("id") == "static-c-math-round"]
     require(
@@ -51179,8 +54258,8 @@ def require_math_log2_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 66,
-        "libc.text-math-locale-stdio must retain exactly sixty-six private verified artifacts",
+        len(artifacts) == 74,
+        "libc.text-math-locale-stdio must retain exactly seventy-four private verified artifacts",
     )
     matching = [entry for entry in artifacts if entry.get("id") == "static-c-math-log2"]
     require(
@@ -52163,8 +55242,8 @@ def require_locale_wide_iconv_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 66,
-        "libc.text-math-locale-stdio must retain exactly sixty-six private verified artifacts",
+        len(artifacts) == 74,
+        "libc.text-math-locale-stdio must retain exactly seventy-four private verified artifacts",
     )
     matching = [
         entry for entry in artifacts if entry.get("id") == "static-c-locale-wide-iconv"
@@ -53223,8 +56302,8 @@ def require_locale_error_strings_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 66,
-        "libc.text-math-locale-stdio must retain exactly sixty-six private verified artifacts",
+        len(artifacts) == 74,
+        "libc.text-math-locale-stdio must retain exactly seventy-four private verified artifacts",
     )
     matching = [
         entry for entry in artifacts if entry.get("id") == "static-c-locale-error-strings"
@@ -57913,6 +60992,7 @@ def validate_ledger(
     require_socket_messages_artifact(by_id["libc.posix-runtime"])
     require_sysv_semaphore_artifact(by_id["libc.posix-runtime"])
     require_posix_semaphore_artifact(by_id["libc.posix-runtime"])
+    require_mq_setattr_artifact(by_id["libc.posix-runtime"])
     require_sysv_message_shared_memory_artifact(by_id["libc.posix-runtime"])
     require_event_descriptors_artifact(by_id["libc.posix-runtime"])
     require_pathname_lifecycle_artifact(by_id["libc.posix-runtime"])
@@ -57965,6 +61045,30 @@ def validate_ledger(
     require_stdio_format_scan_artifact(by_id["libc.text-math-locale-stdio"])
     require_stdio_integer_scan_artifact(by_id["libc.text-math-locale-stdio"])
     require_stdio_octal_hex_scan_artifact(by_id["libc.text-math-locale-stdio"])
+    require_stdio_fixed_percent_scan_artifact(
+        by_id["libc.text-math-locale-stdio"]
+    )
+    require_stdio_fixed_format_whitespace_scan_artifact(
+        by_id["libc.text-math-locale-stdio"]
+    )
+    require_stdio_fixed_literal_scan_artifact(
+        by_id["libc.text-math-locale-stdio"]
+    )
+    require_stdio_fixed_empty_format_scan_artifact(
+        by_id["libc.text-math-locale-stdio"]
+    )
+    require_stdio_fixed_suppressed_character_scan_artifact(
+        by_id["libc.text-math-locale-stdio"]
+    )
+    require_stdio_fixed_suppressed_string_scan_artifact(
+        by_id["libc.text-math-locale-stdio"]
+    )
+    require_stdio_fixed_suppressed_scanset_scan_artifact(
+        by_id["libc.text-math-locale-stdio"]
+    )
+    require_stdio_fixed_suppressed_count_scan_artifact(
+        by_id["libc.text-math-locale-stdio"]
+    )
     require_stdio_float_hex_output_artifact(by_id["libc.text-math-locale-stdio"])
     require_stdio_errno_output_artifact(by_id["libc.text-math-locale-stdio"])
     require_stdio_permanent_line_io_artifact(by_id["libc.text-math-locale-stdio"])

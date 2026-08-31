@@ -17308,6 +17308,1061 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn("stdio-octal-hex-scan-header-abi", dispatcher)
         self.assertIn("run_stdio_octal_hex_scan_header_abi.sh", dispatcher)
 
+    def test_libc_static_c_abi_stdio_fixed_percent_scan_stays_narrow(
+        self,
+    ) -> None:
+        implementation = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" /
+            "stdio_format_scan.rs"
+        ).read_text(encoding="utf-8")
+        fixture = (
+            ROOT / "compat" / "x86_64" /
+            "libc_stdio_fixed_percent_scan_probe.c"
+        ).read_text(encoding="utf-8")
+        start = (
+            ROOT / "compat" / "x86_64" /
+            "libc_stdio_fixed_percent_scan_start.S"
+        ).read_text(encoding="utf-8")
+        c_header_probe = (
+            ROOT / "compat" / "x86_64" /
+            "stdio_fixed_percent_scan_header_abi_probe.c"
+        ).read_text(encoding="utf-8")
+        cxx_header_probe = (
+            ROOT / "compat" / "x86_64" /
+            "stdio_fixed_percent_scan_header_abi_probe.cpp"
+        ).read_text(encoding="utf-8")
+        header_runner = (
+            ROOT / "compat" / "x86_64" /
+            "run_stdio_fixed_percent_scan_header_abi.sh"
+        ).read_text(encoding="utf-8")
+        wrapper = (
+            ROOT / "compat" / "x86_64" /
+            "run_libc_stdio_fixed_percent_scan.sh"
+        ).read_text(encoding="utf-8")
+        shared_runner = (
+            ROOT / "compat" / "x86_64" /
+            "run_libc_stdio_format_scan.sh"
+        ).read_text(encoding="utf-8")
+        static_exports = (
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        ).read_text(encoding="utf-8")
+        static_export_names = {
+            line
+            for line in static_exports.splitlines()
+            if line and not line.startswith("#")
+        }
+        parity_ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        dispatcher = RUNNER.read_text(encoding="utf-8")
+
+        for required in (
+            "static-c-stdio-fixed-percent-scan",
+            "if unsafe { read_byte(directive) } == b'%'",
+            "skip_input_space(cursor)",
+            "if unsafe { read_byte(cursor) } != b'%'",
+        ):
+            self.assertIn(required, implementation)
+        self.assertIn("sscanf", static_export_names)
+        self.assertIn("vsscanf", static_export_names)
+        for unselected in ("scanf", "fscanf", "vfscanf", "fwscanf", "swscanf"):
+            self.assertNotIn(unselected, static_export_names)
+        for required in (
+            "CRABC_TYPE_IS(__typeof__(&sscanf)",
+            "call_vsscanf",
+            r'" \t\n\r\v\f%"',
+            r'"%%!"',
+            r'"\v\f"',
+            "without an assignment",
+            "CRABC_STDIO_FIXED_PERCENT_SCAN_FREESTANDING",
+        ):
+            self.assertIn(required, fixture)
+        for required in (
+            "arch_prctl(ARCH_SET_FS",
+            "%fs:0",
+            "mov $60, %eax",
+        ):
+            self.assertIn(required, start)
+        for required in (
+            "CRABC_STDIO_FIXED_PERCENT_SCAN_HEADER_C11",
+            "crabc_sscanf_signature",
+            "crabc_vsscanf_signature",
+        ):
+            self.assertIn(required, c_header_probe)
+        for required in (
+            "CRABC_STDIO_FIXED_PERCENT_SCAN_HEADER_CXX17",
+            "decltype(&sscanf)",
+            "decltype(&vsscanf)",
+            "crabc_sscanf_reference",
+            "crabc_vsscanf_reference",
+        ):
+            self.assertIn(required, cxx_header_probe)
+        for required in (
+            "-nostdinc++",
+            "assert_cxx_c_linkage",
+            "sscanf vsscanf",
+            "mangled scanf reference",
+            "run_musl_oracle.sh",
+        ):
+            self.assertIn(required, header_runner)
+        self.assertIn(
+            "CRABC_STDIO_FORMAT_SCAN_PROFILE=fixed-percent-scan", wrapper
+        )
+        self.assertIn("run_libc_stdio_format_scan.sh", wrapper)
+        for required in (
+            "fixed-percent-scan)",
+            "CRABC_STDIO_FIXED_PERCENT_SCAN_FREESTANDING",
+            "libc_stdio_fixed_percent_scan_probe.c",
+            "libc_stdio_fixed_percent_scan_start.S",
+            "REQUIRED_C_ABI_SYMBOLS=(sscanf vsscanf)",
+            "literal-percent scanner branch is no longer selected",
+            "-nostdlib -static",
+            "--no-undefined",
+            "R_X86_64_TPOFF",
+            "__errno_location",
+        ):
+            self.assertIn(required, shared_runner)
+        self.assertNotIn("--whole-archive", shared_runner)
+        self.assertIn('id = "static-c-stdio-fixed-percent-scan"', parity_ledger)
+        self.assertIn(
+            'command = "./scripts/dev-x86_64.sh libc-stdio-fixed-percent-scan"',
+            parity_ledger,
+        )
+        self.assertIn("libc-stdio-fixed-percent-scan", dispatcher)
+        self.assertIn("run_libc_stdio_fixed_percent_scan.sh", dispatcher)
+        self.assertIn("stdio-fixed-percent-scan-header-abi", dispatcher)
+        self.assertIn("run_stdio_fixed_percent_scan_header_abi.sh", dispatcher)
+
+    def test_libc_static_c_abi_stdio_fixed_format_whitespace_scan_stays_narrow(
+        self,
+    ) -> None:
+        implementation = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" /
+            "stdio_format_scan.rs"
+        ).read_text(encoding="utf-8")
+        fixture = (
+            ROOT / "compat" / "x86_64" /
+            "libc_stdio_fixed_format_whitespace_scan_probe.c"
+        ).read_text(encoding="utf-8")
+        start = (
+            ROOT / "compat" / "x86_64" /
+            "libc_stdio_fixed_format_whitespace_scan_start.S"
+        ).read_text(encoding="utf-8")
+        c_header_probe = (
+            ROOT / "compat" / "x86_64" /
+            "stdio_fixed_format_whitespace_scan_header_abi_probe.c"
+        ).read_text(encoding="utf-8")
+        cxx_header_probe = (
+            ROOT / "compat" / "x86_64" /
+            "stdio_fixed_format_whitespace_scan_header_abi_probe.cpp"
+        ).read_text(encoding="utf-8")
+        header_runner = (
+            ROOT / "compat" / "x86_64" /
+            "run_stdio_fixed_format_whitespace_scan_header_abi.sh"
+        ).read_text(encoding="utf-8")
+        wrapper = (
+            ROOT / "compat" / "x86_64" /
+            "run_libc_stdio_fixed_format_whitespace_scan.sh"
+        ).read_text(encoding="utf-8")
+        shared_runner = (
+            ROOT / "compat" / "x86_64" /
+            "run_libc_stdio_format_scan.sh"
+        ).read_text(encoding="utf-8")
+        static_exports = (
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        ).read_text(encoding="utf-8")
+        static_export_names = {
+            line
+            for line in static_exports.splitlines()
+            if line and not line.startswith("#")
+        }
+        parity_ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        dispatcher = RUNNER.read_text(encoding="utf-8")
+
+        for required in (
+            "static-c-stdio-fixed-format-whitespace-scan",
+            "if ascii_space(format_byte)",
+            "while ascii_space(unsafe { read_byte(directive) })",
+            "cursor = unsafe { skip_input_space(cursor) };",
+        ):
+            self.assertIn(required, implementation)
+        self.assertIn("sscanf", static_export_names)
+        self.assertIn("vsscanf", static_export_names)
+        for unselected in ("scanf", "fscanf", "vfscanf", "fwscanf", "swscanf"):
+            self.assertNotIn(unselected, static_export_names)
+        for required in (
+            "CRABC_TYPE_IS(__typeof__(&sscanf)",
+            "call_vsscanf",
+            r'" \t\n\r\v\f!"',
+            r'"\v\f?"',
+            "zero input whitespace",
+            "result != EOF",
+            "CRABC_STDIO_FIXED_FORMAT_WHITESPACE_SCAN_FREESTANDING",
+        ):
+            self.assertIn(required, fixture)
+        for required in (
+            "arch_prctl(ARCH_SET_FS",
+            "%fs:0",
+            "mov $60, %eax",
+        ):
+            self.assertIn(required, start)
+        for required in (
+            "CRABC_STDIO_FIXED_FORMAT_WHITESPACE_SCAN_HEADER_C11",
+            "crabc_sscanf_signature",
+            "crabc_vsscanf_signature",
+        ):
+            self.assertIn(required, c_header_probe)
+        for required in (
+            "CRABC_STDIO_FIXED_FORMAT_WHITESPACE_SCAN_HEADER_CXX17",
+            "decltype(&sscanf)",
+            "decltype(&vsscanf)",
+            "crabc_sscanf_reference",
+            "crabc_vsscanf_reference",
+        ):
+            self.assertIn(required, cxx_header_probe)
+        for required in (
+            "-nostdinc++",
+            "assert_cxx_c_linkage",
+            "sscanf vsscanf",
+            "mangled scanf reference",
+            "run_musl_oracle.sh",
+        ):
+            self.assertIn(required, header_runner)
+        self.assertIn(
+            "CRABC_STDIO_FORMAT_SCAN_PROFILE=fixed-format-whitespace-scan",
+            wrapper,
+        )
+        self.assertIn("run_libc_stdio_format_scan.sh", wrapper)
+        for required in (
+            "fixed-format-whitespace-scan)",
+            "CRABC_STDIO_FIXED_FORMAT_WHITESPACE_SCAN_FREESTANDING",
+            "libc_stdio_fixed_format_whitespace_scan_probe.c",
+            "libc_stdio_fixed_format_whitespace_scan_start.S",
+            "REQUIRED_C_ABI_SYMBOLS=(sscanf vsscanf)",
+            "format-whitespace scanner branch is no longer selected",
+            "-nostdlib -static",
+            "--no-undefined",
+            "R_X86_64_TPOFF",
+            "__errno_location",
+        ):
+            self.assertIn(required, shared_runner)
+        self.assertNotIn("--whole-archive", shared_runner)
+        self.assertIn(
+            'id = "static-c-stdio-fixed-format-whitespace-scan"', parity_ledger
+        )
+        self.assertIn(
+            'command = "./scripts/dev-x86_64.sh libc-stdio-fixed-format-whitespace-scan"',
+            parity_ledger,
+        )
+        self.assertIn("libc-stdio-fixed-format-whitespace-scan", dispatcher)
+        self.assertIn("run_libc_stdio_fixed_format_whitespace_scan.sh", dispatcher)
+        self.assertIn("stdio-fixed-format-whitespace-scan-header-abi", dispatcher)
+        self.assertIn(
+            "run_stdio_fixed_format_whitespace_scan_header_abi.sh", dispatcher
+        )
+
+    def test_libc_static_c_abi_stdio_fixed_literal_scan_stays_narrow(
+        self,
+    ) -> None:
+        implementation = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" /
+            "stdio_format_scan.rs"
+        ).read_text(encoding="utf-8")
+        fixture = (
+            ROOT / "compat" / "x86_64" /
+            "libc_stdio_fixed_literal_scan_probe.c"
+        ).read_text(encoding="utf-8")
+        start = (
+            ROOT / "compat" / "x86_64" /
+            "libc_stdio_fixed_literal_scan_start.S"
+        ).read_text(encoding="utf-8")
+        c_header_probe = (
+            ROOT / "compat" / "x86_64" /
+            "stdio_fixed_literal_scan_header_abi_probe.c"
+        ).read_text(encoding="utf-8")
+        cxx_header_probe = (
+            ROOT / "compat" / "x86_64" /
+            "stdio_fixed_literal_scan_header_abi_probe.cpp"
+        ).read_text(encoding="utf-8")
+        header_runner = (
+            ROOT / "compat" / "x86_64" /
+            "run_stdio_fixed_literal_scan_header_abi.sh"
+        ).read_text(encoding="utf-8")
+        wrapper = (
+            ROOT / "compat" / "x86_64" /
+            "run_libc_stdio_fixed_literal_scan.sh"
+        ).read_text(encoding="utf-8")
+        shared_runner = (
+            ROOT / "compat" / "x86_64" /
+            "run_libc_stdio_format_scan.sh"
+        ).read_text(encoding="utf-8")
+        static_exports = (
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        ).read_text(encoding="utf-8")
+        static_export_names = {
+            line
+            for line in static_exports.splitlines()
+            if line and not line.startswith("#")
+        }
+        parity_ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        dispatcher = RUNNER.read_text(encoding="utf-8")
+
+        for required in (
+            "static-c-stdio-fixed-literal-scan",
+            "if format_byte != b'%'",
+            "if unsafe { read_byte(cursor) } == 0",
+            "if unsafe { read_byte(cursor) } != format_byte",
+        ):
+            self.assertIn(required, implementation)
+        self.assertIn("sscanf", static_export_names)
+        self.assertIn("vsscanf", static_export_names)
+        for unselected in ("scanf", "fscanf", "vfscanf", "fwscanf", "swscanf"):
+            self.assertNotIn(unselected, static_export_names)
+        for required in (
+            "CRABC_TYPE_IS(__typeof__(&sscanf)",
+            "call_vsscanf",
+            '"crate/42", "crate/42"',
+            '"stop!", "stop?"',
+            "zero-assignment raw literal",
+            "result != EOF",
+            "CRABC_STDIO_FIXED_LITERAL_SCAN_FREESTANDING",
+        ):
+            self.assertIn(required, fixture)
+        for required in (
+            "arch_prctl(ARCH_SET_FS",
+            "%fs:0",
+            "mov $60, %eax",
+        ):
+            self.assertIn(required, start)
+        for required in (
+            "CRABC_STDIO_FIXED_LITERAL_SCAN_HEADER_C11",
+            "crabc_sscanf_signature",
+            "crabc_vsscanf_signature",
+        ):
+            self.assertIn(required, c_header_probe)
+        for required in (
+            "CRABC_STDIO_FIXED_LITERAL_SCAN_HEADER_CXX17",
+            "decltype(&sscanf)",
+            "decltype(&vsscanf)",
+            "crabc_sscanf_reference",
+            "crabc_vsscanf_reference",
+        ):
+            self.assertIn(required, cxx_header_probe)
+        for required in (
+            "-nostdinc++",
+            "assert_cxx_c_linkage",
+            "sscanf vsscanf",
+            "mangled scanf reference",
+            "run_musl_oracle.sh",
+        ):
+            self.assertIn(required, header_runner)
+        self.assertIn("CRABC_STDIO_FORMAT_SCAN_PROFILE=fixed-literal-scan", wrapper)
+        self.assertIn("run_libc_stdio_format_scan.sh", wrapper)
+        for required in (
+            "fixed-literal-scan)",
+            "CRABC_STDIO_FIXED_LITERAL_SCAN_FREESTANDING",
+            "libc_stdio_fixed_literal_scan_probe.c",
+            "libc_stdio_fixed_literal_scan_start.S",
+            "REQUIRED_C_ABI_SYMBOLS=(sscanf vsscanf)",
+            "raw-literal scanner branch is no longer selected",
+            "-nostdlib -static",
+            "--no-undefined",
+            "R_X86_64_TPOFF",
+            "__errno_location",
+        ):
+            self.assertIn(required, shared_runner)
+        self.assertNotIn("--whole-archive", shared_runner)
+        self.assertIn('id = "static-c-stdio-fixed-literal-scan"', parity_ledger)
+        self.assertIn(
+            'command = "./scripts/dev-x86_64.sh libc-stdio-fixed-literal-scan"',
+            parity_ledger,
+        )
+        self.assertIn("libc-stdio-fixed-literal-scan", dispatcher)
+        self.assertIn("run_libc_stdio_fixed_literal_scan.sh", dispatcher)
+        self.assertIn("stdio-fixed-literal-scan-header-abi", dispatcher)
+        self.assertIn("run_stdio_fixed_literal_scan_header_abi.sh", dispatcher)
+
+    def test_libc_static_c_abi_stdio_fixed_empty_format_scan_stays_narrow(
+        self,
+    ) -> None:
+        implementation = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" /
+            "stdio_format_scan.rs"
+        ).read_text(encoding="utf-8")
+        fixture = (
+            ROOT / "compat" / "x86_64" /
+            "libc_stdio_fixed_empty_format_scan_probe.c"
+        ).read_text(encoding="utf-8")
+        start = (
+            ROOT / "compat" / "x86_64" /
+            "libc_stdio_fixed_empty_format_scan_start.S"
+        ).read_text(encoding="utf-8")
+        c_header_probe = (
+            ROOT / "compat" / "x86_64" /
+            "stdio_fixed_empty_format_scan_header_abi_probe.c"
+        ).read_text(encoding="utf-8")
+        cxx_header_probe = (
+            ROOT / "compat" / "x86_64" /
+            "stdio_fixed_empty_format_scan_header_abi_probe.cpp"
+        ).read_text(encoding="utf-8")
+        header_runner = (
+            ROOT / "compat" / "x86_64" /
+            "run_stdio_fixed_empty_format_scan_header_abi.sh"
+        ).read_text(encoding="utf-8")
+        wrapper = (
+            ROOT / "compat" / "x86_64" /
+            "run_libc_stdio_fixed_empty_format_scan.sh"
+        ).read_text(encoding="utf-8")
+        shared_runner = (
+            ROOT / "compat" / "x86_64" /
+            "run_libc_stdio_format_scan.sh"
+        ).read_text(encoding="utf-8")
+        static_exports = (
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        ).read_text(encoding="utf-8")
+        static_export_names = {
+            line
+            for line in static_exports.splitlines()
+            if line and not line.startswith("#")
+        }
+        parity_ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        dispatcher = RUNNER.read_text(encoding="utf-8")
+
+        for required in (
+            "static-c-stdio-fixed-empty-format-scan",
+            "if format_byte == 0",
+            "without entering a scanner state",
+            "or accessing va_list",
+        ):
+            self.assertIn(required, implementation)
+        self.assertIn("sscanf", static_export_names)
+        self.assertIn("vsscanf", static_export_names)
+        for unselected in ("scanf", "fscanf", "vfscanf", "fwscanf", "swscanf"):
+            self.assertNotIn(unselected, static_export_names)
+        for required in (
+            "CRABC_TYPE_IS(__typeof__(&sscanf)",
+            "call_vsscanf_empty_format",
+            'sscanf("", "")',
+            'sscanf("unread bytes", "")',
+            "zero-assignment empty format",
+            "trailing = va_arg(arguments, int)",
+            "CRABC_STDIO_FIXED_EMPTY_FORMAT_SCAN_FREESTANDING",
+        ):
+            self.assertIn(required, fixture)
+        for required in (
+            "arch_prctl(ARCH_SET_FS",
+            "%fs:0",
+            "mov $60, %eax",
+        ):
+            self.assertIn(required, start)
+        for required in (
+            "CRABC_STDIO_FIXED_EMPTY_FORMAT_SCAN_HEADER_C11",
+            "crabc_sscanf_signature",
+            "crabc_vsscanf_signature",
+        ):
+            self.assertIn(required, c_header_probe)
+        for required in (
+            "CRABC_STDIO_FIXED_EMPTY_FORMAT_SCAN_HEADER_CXX17",
+            "decltype(&sscanf)",
+            "decltype(&vsscanf)",
+            "crabc_sscanf_reference",
+            "crabc_vsscanf_reference",
+        ):
+            self.assertIn(required, cxx_header_probe)
+        for required in (
+            "-nostdinc++",
+            "assert_cxx_c_linkage",
+            "sscanf vsscanf",
+            "mangled scanf reference",
+            "run_musl_oracle.sh",
+        ):
+            self.assertIn(required, header_runner)
+        self.assertIn(
+            "CRABC_STDIO_FORMAT_SCAN_PROFILE=fixed-empty-format-scan", wrapper
+        )
+        self.assertIn("run_libc_stdio_format_scan.sh", wrapper)
+        for required in (
+            "fixed-empty-format-scan)",
+            "CRABC_STDIO_FIXED_EMPTY_FORMAT_SCAN_FREESTANDING",
+            "libc_stdio_fixed_empty_format_scan_probe.c",
+            "libc_stdio_fixed_empty_format_scan_start.S",
+            "REQUIRED_C_ABI_SYMBOLS=(sscanf vsscanf)",
+            "empty-format scanner termination is no longer selected",
+            "-nostdlib -static",
+            "--no-undefined",
+            "R_X86_64_TPOFF",
+            "__errno_location",
+        ):
+            self.assertIn(required, shared_runner)
+        self.assertNotIn("--whole-archive", shared_runner)
+        self.assertIn(
+            'id = "static-c-stdio-fixed-empty-format-scan"', parity_ledger
+        )
+        self.assertIn(
+            'command = "./scripts/dev-x86_64.sh libc-stdio-fixed-empty-format-scan"',
+            parity_ledger,
+        )
+        self.assertIn("libc-stdio-fixed-empty-format-scan", dispatcher)
+        self.assertIn("run_libc_stdio_fixed_empty_format_scan.sh", dispatcher)
+        self.assertIn("stdio-fixed-empty-format-scan-header-abi", dispatcher)
+        self.assertIn(
+            "run_stdio_fixed_empty_format_scan_header_abi.sh", dispatcher
+        )
+
+    def test_libc_static_c_abi_stdio_fixed_suppressed_character_scan_stays_narrow(
+        self,
+    ) -> None:
+        implementation = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" /
+            "stdio_format_scan.rs"
+        ).read_text(encoding="utf-8")
+        fixture = (
+            ROOT / "compat" / "x86_64" /
+            "libc_stdio_fixed_suppressed_character_scan_probe.c"
+        ).read_text(encoding="utf-8")
+        start = (
+            ROOT / "compat" / "x86_64" /
+            "libc_stdio_fixed_suppressed_character_scan_start.S"
+        ).read_text(encoding="utf-8")
+        c_header_probe = (
+            ROOT / "compat" / "x86_64" /
+            "stdio_fixed_suppressed_character_scan_header_abi_probe.c"
+        ).read_text(encoding="utf-8")
+        cxx_header_probe = (
+            ROOT / "compat" / "x86_64" /
+            "stdio_fixed_suppressed_character_scan_header_abi_probe.cpp"
+        ).read_text(encoding="utf-8")
+        header_runner = (
+            ROOT / "compat" / "x86_64" /
+            "run_stdio_fixed_suppressed_character_scan_header_abi.sh"
+        ).read_text(encoding="utf-8")
+        wrapper = (
+            ROOT / "compat" / "x86_64" /
+            "run_libc_stdio_fixed_suppressed_character_scan.sh"
+        ).read_text(encoding="utf-8")
+        shared_runner = (
+            ROOT / "compat" / "x86_64" /
+            "run_libc_stdio_format_scan.sh"
+        ).read_text(encoding="utf-8")
+        static_exports = (
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        ).read_text(encoding="utf-8")
+        static_export_names = {
+            line
+            for line in static_exports.splitlines()
+            if line and not line.startswith("#")
+        }
+        parity_ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        dispatcher = RUNNER.read_text(encoding="utf-8")
+
+        for required in (
+            "static-c-stdio-fixed-suppressed-character-scan",
+            "let suppress = if unsafe { read_byte(directive) } == b'*'",
+            "destination = if suppress",
+            "With the sealed `%*3c` profile's suppress flag",
+        ):
+            self.assertIn(required, implementation)
+        self.assertIn("sscanf", static_export_names)
+        self.assertIn("vsscanf", static_export_names)
+        for unselected in ("scanf", "fscanf", "vfscanf", "fwscanf", "swscanf"):
+            self.assertNotIn(unselected, static_export_names)
+        for required in (
+            "CRABC_TYPE_IS(__typeof__(&sscanf)",
+            "call_vsscanf_suppressed_character",
+            '"%*3c!"',
+            "zero-assignment suppressed character",
+            "trailing = va_arg(arguments, int)",
+            "CRABC_STDIO_FIXED_SUPPRESSED_CHARACTER_SCAN_FREESTANDING",
+        ):
+            self.assertIn(required, fixture)
+        for required in (
+            "arch_prctl(ARCH_SET_FS",
+            "%fs:0",
+            "mov $60, %eax",
+        ):
+            self.assertIn(required, start)
+        for required in (
+            "CRABC_STDIO_FIXED_SUPPRESSED_CHARACTER_SCAN_HEADER_C11",
+            "crabc_sscanf_signature",
+            "crabc_vsscanf_signature",
+        ):
+            self.assertIn(required, c_header_probe)
+        for required in (
+            "CRABC_STDIO_FIXED_SUPPRESSED_CHARACTER_SCAN_HEADER_CXX17",
+            "decltype(&sscanf)",
+            "decltype(&vsscanf)",
+            "crabc_sscanf_reference",
+            "crabc_vsscanf_reference",
+        ):
+            self.assertIn(required, cxx_header_probe)
+        for required in (
+            "-nostdinc++",
+            "assert_cxx_c_linkage",
+            "sscanf vsscanf",
+            "mangled scanf reference",
+            "run_musl_oracle.sh",
+        ):
+            self.assertIn(required, header_runner)
+        self.assertIn(
+            "CRABC_STDIO_FORMAT_SCAN_PROFILE=fixed-suppressed-character-scan",
+            wrapper,
+        )
+        self.assertIn("run_libc_stdio_format_scan.sh", wrapper)
+        for required in (
+            "fixed-suppressed-character-scan)",
+            "CRABC_STDIO_FIXED_SUPPRESSED_CHARACTER_SCAN_FREESTANDING",
+            "libc_stdio_fixed_suppressed_character_scan_probe.c",
+            "libc_stdio_fixed_suppressed_character_scan_start.S",
+            "REQUIRED_C_ABI_SYMBOLS=(sscanf vsscanf)",
+            "suppressed-character scanner state is no longer selected",
+            "-nostdlib -static",
+            "--no-undefined",
+            "R_X86_64_TPOFF",
+            "__errno_location",
+        ):
+            self.assertIn(required, shared_runner)
+        self.assertNotIn("--whole-archive", shared_runner)
+        self.assertIn(
+            'id = "static-c-stdio-fixed-suppressed-character-scan"',
+            parity_ledger,
+        )
+        self.assertIn(
+            'command = "./scripts/dev-x86_64.sh libc-stdio-fixed-suppressed-character-scan"',
+            parity_ledger,
+        )
+        self.assertIn("libc-stdio-fixed-suppressed-character-scan", dispatcher)
+        self.assertIn(
+            "run_libc_stdio_fixed_suppressed_character_scan.sh", dispatcher
+        )
+        self.assertIn(
+            "stdio-fixed-suppressed-character-scan-header-abi", dispatcher
+        )
+        self.assertIn(
+            "run_stdio_fixed_suppressed_character_scan_header_abi.sh", dispatcher
+        )
+
+    def test_libc_static_c_abi_stdio_fixed_suppressed_string_scan_stays_narrow(
+        self,
+    ) -> None:
+        implementation = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" /
+            "stdio_format_scan.rs"
+        ).read_text(encoding="utf-8")
+        fixture = (
+            ROOT / "compat" / "x86_64" /
+            "libc_stdio_fixed_suppressed_string_scan_probe.c"
+        ).read_text(encoding="utf-8")
+        start = (
+            ROOT / "compat" / "x86_64" /
+            "libc_stdio_fixed_suppressed_string_scan_start.S"
+        ).read_text(encoding="utf-8")
+        c_header_probe = (
+            ROOT / "compat" / "x86_64" /
+            "stdio_fixed_suppressed_string_scan_header_abi_probe.c"
+        ).read_text(encoding="utf-8")
+        cxx_header_probe = (
+            ROOT / "compat" / "x86_64" /
+            "stdio_fixed_suppressed_string_scan_header_abi_probe.cpp"
+        ).read_text(encoding="utf-8")
+        header_runner = (
+            ROOT / "compat" / "x86_64" /
+            "run_stdio_fixed_suppressed_string_scan_header_abi.sh"
+        ).read_text(encoding="utf-8")
+        wrapper = (
+            ROOT / "compat" / "x86_64" /
+            "run_libc_stdio_fixed_suppressed_string_scan.sh"
+        ).read_text(encoding="utf-8")
+        shared_runner = (
+            ROOT / "compat" / "x86_64" /
+            "run_libc_stdio_format_scan.sh"
+        ).read_text(encoding="utf-8")
+        static_exports = (
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        ).read_text(encoding="utf-8")
+        static_export_names = {
+            line
+            for line in static_exports.splitlines()
+            if line and not line.startswith("#")
+        }
+        parity_ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        dispatcher = RUNNER.read_text(encoding="utf-8")
+
+        for required in (
+            "static-c-stdio-fixed-suppressed-string-scan",
+            "let suppress = if unsafe { read_byte(directive) } == b'*'",
+            "With the sealed `%*3s` profile's suppress flag",
+            "destination = if suppress",
+        ):
+            self.assertIn(required, implementation)
+        self.assertIn("sscanf", static_export_names)
+        self.assertIn("vsscanf", static_export_names)
+        for unselected in ("scanf", "fscanf", "vfscanf", "fwscanf", "swscanf"):
+            self.assertNotIn(unselected, static_export_names)
+        for required in (
+            "CRABC_TYPE_IS(__typeof__(&sscanf)",
+            "call_vsscanf_suppressed_string",
+            '"%*3s!"',
+            "zero-assignment suppressed token",
+            "trailing = va_arg(arguments, int)",
+            '"%*3ls"',
+            "CRABC_STDIO_FIXED_SUPPRESSED_STRING_SCAN_FREESTANDING",
+        ):
+            self.assertIn(required, fixture)
+        for required in (
+            "arch_prctl(ARCH_SET_FS",
+            "%fs:0",
+            "mov $60, %eax",
+        ):
+            self.assertIn(required, start)
+        for required in (
+            "CRABC_STDIO_FIXED_SUPPRESSED_STRING_SCAN_HEADER_C11",
+            "crabc_sscanf_signature",
+            "crabc_vsscanf_signature",
+        ):
+            self.assertIn(required, c_header_probe)
+        for required in (
+            "CRABC_STDIO_FIXED_SUPPRESSED_STRING_SCAN_HEADER_CXX17",
+            "decltype(&sscanf)",
+            "decltype(&vsscanf)",
+            "crabc_sscanf_reference",
+            "crabc_vsscanf_reference",
+        ):
+            self.assertIn(required, cxx_header_probe)
+        for required in (
+            "-nostdinc++",
+            "assert_cxx_c_linkage",
+            "sscanf vsscanf",
+            "mangled scanf reference",
+            "run_musl_oracle.sh",
+        ):
+            self.assertIn(required, header_runner)
+        self.assertIn(
+            "CRABC_STDIO_FORMAT_SCAN_PROFILE=fixed-suppressed-string-scan",
+            wrapper,
+        )
+        self.assertIn("run_libc_stdio_format_scan.sh", wrapper)
+        for required in (
+            "fixed-suppressed-string-scan)",
+            "CRABC_STDIO_FIXED_SUPPRESSED_STRING_SCAN_FREESTANDING",
+            "libc_stdio_fixed_suppressed_string_scan_probe.c",
+            "libc_stdio_fixed_suppressed_string_scan_start.S",
+            "REQUIRED_C_ABI_SYMBOLS=(sscanf vsscanf)",
+            "suppressed-string scanner state is no longer selected",
+            "-nostdlib -static",
+            "--no-undefined",
+            "R_X86_64_TPOFF",
+            "__errno_location",
+        ):
+            self.assertIn(required, shared_runner)
+        self.assertNotIn("--whole-archive", shared_runner)
+        self.assertIn(
+            'id = "static-c-stdio-fixed-suppressed-string-scan"',
+            parity_ledger,
+        )
+        self.assertIn(
+            'command = "./scripts/dev-x86_64.sh libc-stdio-fixed-suppressed-string-scan"',
+            parity_ledger,
+        )
+        self.assertIn("libc-stdio-fixed-suppressed-string-scan", dispatcher)
+        self.assertIn(
+            "run_libc_stdio_fixed_suppressed_string_scan.sh", dispatcher
+        )
+        self.assertIn(
+            "stdio-fixed-suppressed-string-scan-header-abi", dispatcher
+        )
+        self.assertIn(
+            "run_stdio_fixed_suppressed_string_scan_header_abi.sh", dispatcher
+        )
+
+    def test_libc_static_c_abi_stdio_fixed_suppressed_scanset_scan_stays_narrow(
+        self,
+    ) -> None:
+        implementation = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" /
+            "stdio_format_scan.rs"
+        ).read_text(encoding="utf-8")
+        fixture = (
+            ROOT / "compat" / "x86_64" /
+            "libc_stdio_fixed_suppressed_scanset_scan_probe.c"
+        ).read_text(encoding="utf-8")
+        start = (
+            ROOT / "compat" / "x86_64" /
+            "libc_stdio_fixed_suppressed_scanset_scan_start.S"
+        ).read_text(encoding="utf-8")
+        c_header_probe = (
+            ROOT / "compat" / "x86_64" /
+            "stdio_fixed_suppressed_scanset_scan_header_abi_probe.c"
+        ).read_text(encoding="utf-8")
+        cxx_header_probe = (
+            ROOT / "compat" / "x86_64" /
+            "stdio_fixed_suppressed_scanset_scan_header_abi_probe.cpp"
+        ).read_text(encoding="utf-8")
+        header_runner = (
+            ROOT / "compat" / "x86_64" /
+            "run_stdio_fixed_suppressed_scanset_scan_header_abi.sh"
+        ).read_text(encoding="utf-8")
+        wrapper = (
+            ROOT / "compat" / "x86_64" /
+            "run_libc_stdio_fixed_suppressed_scanset_scan.sh"
+        ).read_text(encoding="utf-8")
+        shared_runner = (
+            ROOT / "compat" / "x86_64" /
+            "run_libc_stdio_format_scan.sh"
+        ).read_text(encoding="utf-8")
+        static_exports = (
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        ).read_text(encoding="utf-8")
+        static_export_names = {
+            line
+            for line in static_exports.splitlines()
+            if line and not line.startswith("#")
+        }
+        parity_ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        dispatcher = RUNNER.read_text(encoding="utf-8")
+
+        for required in (
+            "static-c-stdio-fixed-suppressed-scanset-scan artifact",
+            "let width_start = directive;",
+            "&& suppress",
+            "parsed_width == 3",
+            "read_byte(width_start) } == b'3'",
+            "b'a' | b'b' | b'c'",
+            "no-destination state",
+        ):
+            self.assertIn(required, implementation)
+        self.assertIn("sscanf", static_export_names)
+        self.assertIn("vsscanf", static_export_names)
+        for unselected in ("scanf", "fscanf", "vfscanf", "fwscanf", "swscanf"):
+            self.assertNotIn(unselected, static_export_names)
+        for required in (
+            "CRABC_TYPE_IS(__typeof__(&sscanf)",
+            "call_vsscanf_suppressed_scanset",
+            '"%*3[abc]!"',
+            "shorter than width three succeeds",
+            "does not skip leading C-locale input",
+            "high_format",
+            '"%*[abc]"',
+            '"%*03[abc]"',
+            '"%*3[a-z]"',
+            '"%*3[^abc]"',
+            '"%*3l[abc]"',
+            "CRABC_STDIO_FIXED_SUPPRESSED_SCANSET_SCAN_FREESTANDING",
+        ):
+            self.assertIn(required, fixture)
+        for required in (
+            "arch_prctl(ARCH_SET_FS",
+            "%fs:0",
+            "mov $60, %eax",
+        ):
+            self.assertIn(required, start)
+        for required in (
+            "CRABC_STDIO_FIXED_SUPPRESSED_SCANSET_SCAN_HEADER_C11",
+            "crabc_sscanf_signature",
+            "crabc_vsscanf_signature",
+        ):
+            self.assertIn(required, c_header_probe)
+        for required in (
+            "CRABC_STDIO_FIXED_SUPPRESSED_SCANSET_SCAN_HEADER_CXX17",
+            "decltype(&sscanf)",
+            "decltype(&vsscanf)",
+            "crabc_sscanf_reference",
+            "crabc_vsscanf_reference",
+        ):
+            self.assertIn(required, cxx_header_probe)
+        for required in (
+            "-nostdinc++",
+            "assert_cxx_c_linkage",
+            "sscanf vsscanf",
+            "mangled scanf reference",
+            "run_musl_oracle.sh",
+        ):
+            self.assertIn(required, header_runner)
+        self.assertIn(
+            "CRABC_STDIO_FORMAT_SCAN_PROFILE=fixed-suppressed-scanset-scan",
+            wrapper,
+        )
+        self.assertIn("run_libc_stdio_format_scan.sh", wrapper)
+        for required in (
+            "fixed-suppressed-scanset-scan)",
+            "CRABC_STDIO_FIXED_SUPPRESSED_SCANSET_SCAN_FREESTANDING",
+            "libc_stdio_fixed_suppressed_scanset_scan_probe.c",
+            "libc_stdio_fixed_suppressed_scanset_scan_start.S",
+            "REQUIRED_C_ABI_SYMBOLS=(sscanf vsscanf)",
+            "suppressed-scanset scanner state is no longer selected",
+            "-nostdlib -static",
+            "--no-undefined",
+            "R_X86_64_TPOFF",
+            "__errno_location",
+        ):
+            self.assertIn(required, shared_runner)
+        self.assertNotIn("--whole-archive", shared_runner)
+        self.assertIn(
+            'id = "static-c-stdio-fixed-suppressed-scanset-scan"',
+            parity_ledger,
+        )
+        self.assertIn(
+            'command = "./scripts/dev-x86_64.sh libc-stdio-fixed-suppressed-scanset-scan"',
+            parity_ledger,
+        )
+        self.assertIn("libc-stdio-fixed-suppressed-scanset-scan", dispatcher)
+        self.assertIn(
+            "run_libc_stdio_fixed_suppressed_scanset_scan.sh", dispatcher
+        )
+        self.assertIn(
+            "stdio-fixed-suppressed-scanset-scan-header-abi", dispatcher
+        )
+        self.assertIn(
+            "run_stdio_fixed_suppressed_scanset_scan_header_abi.sh", dispatcher
+        )
+
+    def test_libc_static_c_abi_stdio_fixed_suppressed_count_scan_stays_narrow(
+        self,
+    ) -> None:
+        implementation = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" /
+            "stdio_format_scan.rs"
+        ).read_text(encoding="utf-8")
+        fixture = (
+            ROOT / "compat" / "x86_64" /
+            "libc_stdio_fixed_suppressed_count_scan_probe.c"
+        ).read_text(encoding="utf-8")
+        start = (
+            ROOT / "compat" / "x86_64" /
+            "libc_stdio_fixed_suppressed_count_scan_start.S"
+        ).read_text(encoding="utf-8")
+        c_header_probe = (
+            ROOT / "compat" / "x86_64" /
+            "stdio_fixed_suppressed_count_scan_header_abi_probe.c"
+        ).read_text(encoding="utf-8")
+        cxx_header_probe = (
+            ROOT / "compat" / "x86_64" /
+            "stdio_fixed_suppressed_count_scan_header_abi_probe.cpp"
+        ).read_text(encoding="utf-8")
+        header_runner = (
+            ROOT / "compat" / "x86_64" /
+            "run_stdio_fixed_suppressed_count_scan_header_abi.sh"
+        ).read_text(encoding="utf-8")
+        wrapper = (
+            ROOT / "compat" / "x86_64" /
+            "run_libc_stdio_fixed_suppressed_count_scan.sh"
+        ).read_text(encoding="utf-8")
+        shared_runner = (
+            ROOT / "compat" / "x86_64" /
+            "run_libc_stdio_format_scan.sh"
+        ).read_text(encoding="utf-8")
+        static_exports = (
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        ).read_text(encoding="utf-8")
+        static_export_names = {
+            line
+            for line in static_exports.splitlines()
+            if line and not line.startswith("#")
+        }
+        parity_ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        dispatcher = RUNNER.read_text(encoding="utf-8")
+
+        for required in (
+            "static-c-stdio-fixed-suppressed-count-scan artifact",
+            "With the sealed",
+            "count state sees no destination",
+            "neither VaList::next_arg nor assign_count",
+            "if !suppress",
+        ):
+            self.assertIn(required, implementation)
+        self.assertIn("sscanf", static_export_names)
+        self.assertIn("vsscanf", static_export_names)
+        for unselected in ("scanf", "fscanf", "vfscanf", "fwscanf", "swscanf"):
+            self.assertNotIn(unselected, static_export_names)
+        for required in (
+            "CRABC_TYPE_IS(__typeof__(&sscanf)",
+            "call_vsscanf_suppressed_count",
+            '"%*n"',
+            '"a%*nb"',
+            "zero-assignment suppressed count",
+            "does not consume input",
+            "CRABC_STDIO_FIXED_SUPPRESSED_COUNT_SCAN_FREESTANDING",
+        ):
+            self.assertIn(required, fixture)
+        for required in (
+            "arch_prctl(ARCH_SET_FS",
+            "%fs:0",
+            "mov $60, %eax",
+        ):
+            self.assertIn(required, start)
+        for required in (
+            "CRABC_STDIO_FIXED_SUPPRESSED_COUNT_SCAN_HEADER_C11",
+            "crabc_sscanf_signature",
+            "crabc_vsscanf_signature",
+        ):
+            self.assertIn(required, c_header_probe)
+        for required in (
+            "CRABC_STDIO_FIXED_SUPPRESSED_COUNT_SCAN_HEADER_CXX17",
+            "decltype(&sscanf)",
+            "decltype(&vsscanf)",
+            "crabc_sscanf_reference",
+            "crabc_vsscanf_reference",
+        ):
+            self.assertIn(required, cxx_header_probe)
+        for required in (
+            "-nostdinc++",
+            "assert_cxx_c_linkage",
+            "sscanf vsscanf",
+            "mangled scanf reference",
+            "run_musl_oracle.sh",
+        ):
+            self.assertIn(required, header_runner)
+        self.assertIn(
+            "CRABC_STDIO_FORMAT_SCAN_PROFILE=fixed-suppressed-count-scan",
+            wrapper,
+        )
+        self.assertIn("run_libc_stdio_format_scan.sh", wrapper)
+        for required in (
+            "fixed-suppressed-count-scan)",
+            "CRABC_STDIO_FIXED_SUPPRESSED_COUNT_SCAN_FREESTANDING",
+            "libc_stdio_fixed_suppressed_count_scan_probe.c",
+            "libc_stdio_fixed_suppressed_count_scan_start.S",
+            "REQUIRED_C_ABI_SYMBOLS=(sscanf vsscanf)",
+            "suppressed-count scanner state is no longer selected",
+            "-nostdlib -static",
+            "--no-undefined",
+            "R_X86_64_TPOFF",
+            "__errno_location",
+        ):
+            self.assertIn(required, shared_runner)
+        self.assertNotIn("--whole-archive", shared_runner)
+        self.assertIn(
+            'id = "static-c-stdio-fixed-suppressed-count-scan"',
+            parity_ledger,
+        )
+        self.assertIn(
+            'command = "./scripts/dev-x86_64.sh libc-stdio-fixed-suppressed-count-scan"',
+            parity_ledger,
+        )
+        self.assertIn("libc-stdio-fixed-suppressed-count-scan", dispatcher)
+        self.assertIn(
+            "run_libc_stdio_fixed_suppressed_count_scan.sh", dispatcher
+        )
+        self.assertIn(
+            "stdio-fixed-suppressed-count-scan-header-abi", dispatcher
+        )
+        self.assertIn(
+            "run_stdio_fixed_suppressed_count_scan_header_abi.sh", dispatcher
+        )
+
     def test_libc_static_c_abi_stdio_float_hex_output_stays_narrow(self) -> None:
         implementation = (
             ROOT / "libc" / "src" / "c_abi" / "x86_64" /
@@ -23985,6 +25040,164 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             runner,
         )
 
+    def test_libc_static_c_abi_mq_setattr_artifact_stays_narrow(self) -> None:
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        implementation = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "mq_setattr.rs"
+        ).read_text(encoding="utf-8")
+        syscall = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "syscall.rs"
+        ).read_text(encoding="utf-8")
+        header_c_probe = (
+            ROOT / "compat" / "x86_64" / "mq_setattr_header_abi_probe.c"
+        ).read_text(encoding="utf-8")
+        header_cxx_probe = (
+            ROOT / "compat" / "x86_64" / "mq_setattr_header_abi_probe.cpp"
+        ).read_text(encoding="utf-8")
+        header_runner = (
+            ROOT / "compat" / "x86_64" / "run_mq_setattr_header_abi.sh"
+        ).read_text(encoding="utf-8")
+        probe = (
+            ROOT / "compat" / "x86_64" / "libc_mq_setattr_probe.c"
+        ).read_text(encoding="utf-8")
+        start = (
+            ROOT / "compat" / "x86_64" / "libc_mq_setattr_start.S"
+        ).read_text(encoding="utf-8")
+        artifact_runner = (
+            ROOT / "compat" / "x86_64" / "run_libc_mq_setattr.sh"
+        ).read_text(encoding="utf-8")
+        static_export_names = {
+            line
+            for line in (
+                ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+            ).read_text(encoding="utf-8").splitlines()
+            if line and not line.startswith("#")
+        }
+        parity_ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        runner = RUNNER.read_text(encoding="utf-8")
+
+        self.assertIn('#[path = "mq_setattr.rs"]', static_root)
+        for required in (
+            "Selected static Linux/x86-64 C `mq_setattr(3)` boundary",
+            "musl 1.2.6 release commit",
+            "src/mq/mq_setattr.c",
+            "struct MqAttr",
+            "size_of::<MqAttr>() == 64",
+            "align_of::<MqAttr>() == 8",
+            "offset_of!(MqAttr, reserved) == 32",
+            "raw_syscall::SYS_MQ_GETSETATTR",
+            "raw_syscall::syscall3(",
+            "c_status(unsafe",
+        ):
+            self.assertIn(required, implementation)
+        self.assertIn("pub(crate) const SYS_MQ_GETSETATTR: i64 = 245;", syscall)
+        self.assertIn("fn mq_setattr(", implementation)
+        for forbidden in (
+            "fn mq_close(",
+            "fn mq_getattr(",
+            "fn mq_notify(",
+            "fn mq_open(",
+            "fn mq_receive(",
+            "fn mq_send(",
+            "fn mq_timedreceive(",
+            "fn mq_timedsend(",
+            "fn mq_unlink(",
+            "crabc_core",
+        ):
+            self.assertNotIn(forbidden, implementation)
+
+        for header_probe in (header_c_probe, header_cxx_probe):
+            for required in (
+                "mqueue.h",
+                "sizeof(mqd_t) == sizeof(int)",
+                "mq_attr",
+                "mq_setattr",
+                "SYS_mq_getsetattr == 245",
+            ):
+                self.assertIn(required, header_probe)
+        for required in (
+            "ORACLE_CC",
+            "mqueue.h",
+            "mq_setattr_header_abi_probe.c",
+            "mq_setattr_header_abi_probe.cpp",
+            "pinned-musl C/C++",
+        ):
+            self.assertIn(required, header_runner)
+
+        for required in (
+            "#include <mqueue.h>",
+            "SYS_mq_open == 240",
+            "SYS_mq_getsetattr == 245",
+            "O_NONBLOCK == 0x800",
+            "mq_setattr(descriptor, &new_attributes, &old_attributes)",
+            "errno != ERANGE",
+            "errno != EDOM",
+            "new_attributes.mq_flags = 1",
+            "errno != EINVAL",
+            "mq_setattr(-1",
+            "errno != EBADF",
+            "SYS_mq_unlink",
+        ):
+            self.assertIn(required, probe)
+        for required in (
+            "ARCH_SET_FS",
+            "crabc_x86_64_mq_setattr_probe",
+            "mov $60, %eax",
+        ):
+            self.assertIn(required, start)
+
+        for required in (
+            "static_c_abi_exports.txt",
+            "run_mq_setattr_header_abi.sh",
+            "run_x86_mqueue_reference.sh",
+            "-nostdlib -static",
+            "-Wl,-e,_start",
+            "R_X86_64_TPOFF",
+            "mq_setattr lacks Linux syscall 245",
+            "unowned dependency",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn("--whole-archive", artifact_runner)
+        self.assertIn("mq_setattr", static_export_names)
+        self.assertFalse(
+            static_export_names
+            & {
+                "mq_close",
+                "mq_getattr",
+                "mq_notify",
+                "mq_open",
+                "mq_receive",
+                "mq_send",
+                "mq_timedreceive",
+                "mq_timedsend",
+                "mq_unlink",
+            }
+        )
+        self.assertIn('id = "static-c-mq-setattr"', parity_ledger)
+        self.assertIn(
+            'command = "./scripts/dev-x86_64.sh libc-mq-setattr"', parity_ledger
+        )
+        self.assertIn("run_mq_setattr_header_abi()", runner)
+        self.assertIn(
+            "/workspace/compat/x86_64/run_mq_setattr_header_abi.sh", runner
+        )
+        self.assertIn("run_libc_mq_setattr_probe()", runner)
+        self.assertIn(
+            "/workspace/compat/x86_64/run_libc_mq_setattr.sh", runner
+        )
+        self.assertIn(
+            '    mq-setattr-header-abi)\n        [ "$#" -eq 0 ] || fail "mq-setattr-header-abi takes no arguments"',
+            runner,
+        )
+        self.assertIn(
+            '    libc-mq-setattr)\n        [ "$#" -eq 0 ] || fail "libc-mq-setattr takes no arguments"',
+            runner,
+        )
+
     def test_libc_static_c_abi_sysv_semaphore_artifact_stays_narrow(self) -> None:
         static_root = (
             ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
@@ -24361,7 +25574,6 @@ class X86_64CoreRunnerTests(unittest.TestCase):
                 "mq_open",
                 "mq_receive",
                 "mq_send",
-                "mq_setattr",
                 "mq_timedreceive",
                 "mq_timedsend",
                 "mq_unlink",
