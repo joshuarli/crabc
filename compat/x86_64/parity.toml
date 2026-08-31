@@ -3244,6 +3244,50 @@ oracle = [
 ]
 
 [[family.verified_artifact]]
+id = "static-c-getpagesize"
+description = "Private native x86 selected-static-archive `getpagesize` C ABI artifact derived from the existing `system_configuration.rs` source owner inside still-planned `libc.posix-runtime`. Pinned musl 1.2.6 `src/legacy/getpagesize.c` is a complete no-argument leaf: on x86_64 its `PAGE_SIZE` resolves through `arch/x86_64/bits/limits.h` to the fixed `PAGESIZE=4096`, so `int getpagesize(void)` returns 4096 with no caller memory, errno, TLS, syscall, auxv, startup, allocator, or mutable-state path. The source object also owns selected sysconf/confstr/pathconf/fpathconf/getdtablesize entries, but the dedicated true `-nostdlib -static` candidate links it with `--gc-sections` and retains only `getpagesize`; the final ELF rejects those neighboring C ABI symbols and every system-configuration dependency. This capability-free evidence does not change or promote the broad `static-c-system-configuration` artifact. It does not select general page-size discovery, sysconf, confstr, pathconf, fpathconf, getdtablesize, filesystem capacity/path policy, `/proc`, auxv-derived configuration, libc.so, CRT, C runtime, pthread/TLS lifecycle, loader, sysroot, family completion, promotion, or public x86 support."
+source_owners = [
+  "compat/upstreams.toml",
+  "compat/abi/musl-1.2.6/aarch64/libc.a.static.tsv",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/system_configuration.rs",
+  "include/features.h",
+  "include/unistd.h",
+  "compat/x86_64/getpagesize_header_abi_probe.c",
+  "compat/x86_64/getpagesize_header_abi_probe.cpp",
+  "compat/x86_64/run_getpagesize_header_abi.sh",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/libc_getpagesize_probe.c",
+  "compat/x86_64/libc_getpagesize_start.S",
+  "compat/x86_64/run_libc_getpagesize.sh",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "compat/x86_64/aarch64_parity_inventory.py",
+  "compat/x86_64/aarch64_parity_inventory.json",
+  "compat/x86_64/README.md",
+  "STATUS.md",
+  "x86-64.md",
+  "scripts/dev-x86_64.sh",
+  "scripts/check_structure.py",
+]
+x86_abi_prerequisites = [
+  "The System V AMD64 C ABI passes no argument to `getpagesize(void)` and returns its signed four-byte int in eax. On Linux/x86_64 the selected musl result is exactly 4096; no caller-owned memory, errno, TLS, register input, or startup/auxv record participates.",
+  "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417 maps `src/legacy/getpagesize.c` directly to the existing x86 source: its body is `return PAGE_SIZE`, while `arch/x86_64/bits/limits.h` fixes `PAGESIZE=4096`. The pinned AArch64 static ABI inventory fixes `getpagesize\tgetpagesize.lo\tT\tGLOBAL\t0\tc` ownership; this artifact does not use that AArch64 page-size value as an x86 runtime input.",
+  "The existing system-configuration archive member may co-own sysconf/confstr/pathconf/fpathconf/getdtablesize, but the dedicated `-nostdlib -static -Wl,--gc-sections` candidate retains only getpagesize. It has no unresolved symbol, interpreter, DT_NEEDED entry, no PT_TLS, no dynamic TLS model, PLT, ambient libc, no errno, auxv, prlimit64, filesystem, or allocator path, and getpagesize itself has no call or syscall instruction.",
+]
+x86_header_prerequisites = [
+  "The dedicated pinned-musl/project-first C11/C++17 `<unistd.h>` gate proves `int getpagesize(void)` under GNU/BSD selection, default/strict/POSIX/XOPEN C hiding, exact signature, and unmangled C++ linkage. It traces project unistd.h and features.h only; it does not select broader unistd headers, sysconf/pathconf behavior, installed-header completion, archive linkage, or public x86 support.",
+]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-getpagesize", scope = "Pinned-musl/project GNU/BSD C/C++ header compilation plus equivalent pinned-musl C execution and one true x86 crabc-libc `-nostdlib -static -Wl,--gc-sections` candidate. The fixture ratchets the exact pinned AArch64 getpagesize.lo static-ABI row, existing one-member archive ownership, `int getpagesize(void)` direct and function-pointer 4096 results, and project unistd.h/features.h provenance. It proves the final candidate retains getpagesize while rejecting sysconf/confstr/pathconf/fpathconf/getdtablesize and __errno_location, plus no interpreter, DT_NEEDED, unresolved symbols, PT_TLS, dynamic TLS model, PLT, ambient libc, auxv, prlimit64, filesystem, allocator, and no call or syscall in getpagesize. It does not select general page-size discovery, sysconf, confstr, pathconf, fpathconf, getdtablesize, C runtime, libc.so, CRT, pthread/TLS lifecycle, loader, sysroot, family completion, promotion, or public x86 support." }]
+oracle = [
+  { kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source and declaration oracle: src/legacy/getpagesize.c returns PAGE_SIZE; arch/x86_64/bits/limits.h fixes PAGESIZE=4096; include/unistd.h provides the GNU/BSD declaration boundary." },
+  { kind = "elf-abi", source = "System V AMD64 psABI", role = "No-argument int return in eax, C++ C linkage, link-time section collection, and true-static ET_EXEC closure contract." },
+]
+
+[[family.verified_artifact]]
 id = "static-c-mman-mapping-core"
 description = "Private native x86 selected-static-archive caller-owned mapping-core block. One dependency-free `crabc-libc` archive resolves exactly `mmap`, `munmap`, `mprotect`, `madvise`, `posix_madvise`, and `mincore` into a freestanding C fixture after an equivalent pinned-musl execution. The existing project-first C/C++ `sys/mman.h` gate proves their declarations while the artifact proves archive linkage and behavior: musl's non-page-aligned-offset and `PTRDIFF_MAX` `mmap` rejections, anonymous non-fixed `EPERM` to `ENOMEM` fallback, page-rounded unaligned `mprotect`, ordinary GNU advice/errno behavior, POSIX `DONTNEED` no-op and direct-positive-error/no-errno behavior, and page-residency vector/partial-range behavior. Pinned musl calls private `__vm_wait` around MAP_FIXED mapping and unmap; this static artifact retains an explicitly local no-op call site because it owns no loader/allocator VM state, so it does not claim that process-wide synchronization contract. It excludes the separately owned no-cancellation `msync` sibling and all pthread-cancellation semantics, variadic `mremap`, `mlock*`, remap_file_pages, shm/memfd, mapping policy, allocator, libc.so, CRT, dynamic TLS lifecycle, loader, sysroot, or public x86 support. This is only a verified artifact within planned `libc.posix-runtime`, not family, header, C-runtime, or public-platform completion."
 source_owners = [

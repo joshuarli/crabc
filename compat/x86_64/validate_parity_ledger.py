@@ -1194,6 +1194,8 @@ TIMEGM_UTC_SYMBOLS = ("timegm",)
 
 GMTIME_R_UTC_SYMBOLS = ("gmtime_r",)
 
+GETPAGESIZE_SYMBOLS = ("getpagesize",)
+
 MEMORY_SYNC_SYMBOLS = ("msync",)
 
 MEMFD_CREATE_SYMBOLS = ("memfd_create",)
@@ -16255,6 +16257,288 @@ def require_system_configuration_artifact(family: Mapping[str, Any]) -> None:
         == {"./scripts/dev-x86_64.sh libc-system-configuration"},
         "static-c-system-configuration must use the closed libc-system-configuration command",
     )
+
+
+def require_getpagesize_artifact(family: Mapping[str, Any]) -> None:
+    """Keep one inherited constant-page leaf below configuration promotion."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.posix-runtime].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [entry for entry in artifacts if entry.get("id") == "static-c-getpagesize"]
+    require(
+        len(matching) == 1,
+        "libc.posix-runtime must contain exactly one static-c-getpagesize artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-getpagesize must not promote libc.posix-runtime",
+    )
+    artifact = matching[0]
+    require(
+        "capabilities" not in artifact,
+        "static-c-getpagesize must not promote a system-configuration capability",
+    )
+    description = artifact.get("description")
+    require(isinstance(description, str), "static-c-getpagesize needs a description")
+    for phrase in (
+        "Private native x86 selected-static-archive `getpagesize` C ABI artifact",
+        "existing `system_configuration.rs` source owner",
+        "still-planned `libc.posix-runtime`",
+        "src/legacy/getpagesize.c",
+        "PAGESIZE=4096",
+        "no caller memory, errno, TLS, syscall, auxv, startup, allocator",
+        "`--gc-sections`",
+        "retains only `getpagesize`",
+        "does not change or promote the broad `static-c-system-configuration` artifact",
+        "general page-size discovery",
+        "sysconf",
+        "pathconf",
+        "getdtablesize",
+        "C runtime",
+        "family completion",
+        "promotion",
+        "public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"static-c-getpagesize description omits {phrase}",
+        )
+
+    owners = set(
+        nonempty_strings(
+            artifact.get("source_owners"), "static-c-getpagesize.source_owners"
+        )
+    )
+    for owner in (
+        "compat/upstreams.toml",
+        "compat/abi/musl-1.2.6/aarch64/libc.a.static.tsv",
+        "libc/Cargo.toml",
+        "libc/src/lib.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/system_configuration.rs",
+        "include/features.h",
+        "include/unistd.h",
+        "compat/x86_64/getpagesize_header_abi_probe.c",
+        "compat/x86_64/getpagesize_header_abi_probe.cpp",
+        "compat/x86_64/run_getpagesize_header_abi.sh",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/libc_getpagesize_probe.c",
+        "compat/x86_64/libc_getpagesize_start.S",
+        "compat/x86_64/run_libc_getpagesize.sh",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/aarch64_parity_inventory.py",
+        "compat/x86_64/aarch64_parity_inventory.json",
+        "compat/x86_64/README.md",
+        "STATUS.md",
+        "x86-64.md",
+        "scripts/dev-x86_64.sh",
+        "scripts/check_structure.py",
+    ):
+        require(owner in owners, f"static-c-getpagesize source owners omit {owner}")
+
+    prerequisites = nonempty_strings(
+        artifact.get("x86_abi_prerequisites"),
+        "static-c-getpagesize.x86_abi_prerequisites",
+    )
+    require(
+        any(
+            "System V AMD64" in item
+            and "no argument" in item
+            and "four-byte int" in item
+            and "eax" in item
+            and "4096" in item
+            and "no caller-owned memory" in item
+            for item in prerequisites
+        ),
+        "static-c-getpagesize must retain its no-argument x86 int ABI",
+    )
+    require(
+        any(
+            "9fa28ece75d8a2191de7c5bb53bed224c5947417" in item
+            and "src/legacy/getpagesize.c" in item
+            and "arch/x86_64/bits/limits.h" in item
+            and "PAGESIZE=4096" in item
+            and "getpagesize\tgetpagesize.lo\tT\tGLOBAL\t0\tc" in item
+            for item in prerequisites
+        ),
+        "static-c-getpagesize must retain pinned-musl source and ABI provenance",
+    )
+    require(
+        any(
+            "system-configuration archive member" in item
+            and "--gc-sections" in item
+            and "only getpagesize" in item
+            and "no PT_TLS" in item
+            and "no errno" in item
+            and "no call or syscall instruction" in item
+            for item in prerequisites
+        ),
+        "static-c-getpagesize must retain its final-link isolation boundary",
+    )
+
+    headers = nonempty_strings(
+        artifact.get("x86_header_prerequisites"),
+        "static-c-getpagesize.x86_header_prerequisites",
+    )
+    require(
+        any(
+            "int getpagesize(void)" in item
+            and "GNU/BSD" in item
+            and "default/strict/POSIX/XOPEN C hiding" in item
+            and "unmangled C++ linkage" in item
+            and "unistd.h" in item
+            and "features.h" in item
+            for item in headers
+        ),
+        "static-c-getpagesize must retain its focused C/C++ header ABI",
+    )
+
+    evidence = artifact.get("native_evidence")
+    require(isinstance(evidence, list), "static-c-getpagesize needs evidence")
+    require(
+        {entry.get("command") for entry in evidence if isinstance(entry, Mapping)}
+        == {"./scripts/dev-x86_64.sh libc-getpagesize"},
+        "static-c-getpagesize must use the closed libc-getpagesize command",
+    )
+    scope = evidence[0].get("scope")
+    require(
+        isinstance(scope, str)
+        and all(
+            phrase in scope
+            for phrase in (
+                "Pinned-musl/project GNU/BSD C/C++ header",
+                "`-nostdlib -static -Wl,--gc-sections` candidate",
+                "getpagesize.lo",
+                "direct and function-pointer 4096 results",
+                "rejecting sysconf/confstr/pathconf/fpathconf/getdtablesize",
+                "__errno_location",
+                "no interpreter, DT_NEEDED, unresolved symbols, PT_TLS",
+                "no call or syscall in getpagesize",
+                "C runtime",
+                "public x86 support",
+            )
+        ),
+        "static-c-getpagesize evidence must retain its isolated static contract",
+    )
+
+    exports = set(
+        static_c_abi_export_names(
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        )
+    )
+    require(
+        set(GETPAGESIZE_SYMBOLS) <= exports,
+        "static-c-getpagesize must retain its selected export",
+    )
+    require(
+        {symbol for symbol in exports if symbol.startswith("getpagesize")}
+        == set(GETPAGESIZE_SYMBOLS),
+        "static-c-getpagesize must expose only getpagesize",
+    )
+
+    static_root = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+    ).read_text(encoding="utf-8")
+    require(
+        '#[path = "system_configuration.rs"]\nmod system_configuration;' in static_root,
+        "x86 static C ABI must retain the existing system-configuration source owner",
+    )
+    source = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "system_configuration.rs"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "src/legacy/getpagesize.c",
+        "X86_64_LINUX_PAGE_SIZE",
+        "pub extern \"C\" fn getpagesize() -> c_int",
+        "x86-64 Linux ABI has a 4096-byte base page size",
+    ):
+        require(snippet in source, f"existing getpagesize source omits {snippet}")
+    getpagesize_body = source[
+        source.index("/// Return Linux/x86-64's fixed base page size.") : source.index(
+            "/// Return the calling process's soft descriptor limit"
+        )
+    ]
+    for forbidden in ("raw_syscall", "errno", "getauxval", "sysconf", "pathconf"):
+        require(
+            forbidden not in getpagesize_body,
+            f"getpagesize source body must not select {forbidden}",
+        )
+
+    runner = (ROOT / "compat" / "x86_64" / "run_libc_getpagesize.sh").read_text(
+        encoding="utf-8"
+    )
+    for snippet in (
+        "run_musl_oracle.sh",
+        "run_getpagesize_header_abi.sh",
+        "getpagesize.lo",
+        "archive_member_for_symbol",
+        "--gc-sections",
+        "-nostdlib -static",
+        "--no-undefined",
+        "candidate retained broad system-configuration C ABI symbols",
+        "candidate getpagesize unexpectedly performs a call or syscall",
+    ):
+        require(snippet in runner, f"getpagesize runner omits {snippet}")
+    require(
+        "--whole-archive" not in runner,
+        "getpagesize runner must not force-link the archive",
+    )
+
+    probe = (ROOT / "compat" / "x86_64" / "libc_getpagesize_probe.c").read_text(
+        encoding="utf-8"
+    )
+    for snippet in (
+        "getpagesize_signature",
+        "_Static_assert",
+        "check_fixed_x86_page_size",
+        "indirect = getpagesize",
+        "CRABC_GETPAGESIZE_FREESTANDING",
+    ):
+        require(snippet in probe, f"getpagesize probe omits {snippet}")
+    start = (ROOT / "compat" / "x86_64" / "libc_getpagesize_start.S").read_text(
+        encoding="utf-8"
+    )
+    for snippet in ("crabc_x86_64_getpagesize_probe", "mov $60, %eax"):
+        require(snippet in start, f"getpagesize start shim omits {snippet}")
+
+    header_c = (
+        ROOT / "compat" / "x86_64" / "getpagesize_header_abi_probe.c"
+    ).read_text(encoding="utf-8")
+    header_cxx = (
+        ROOT / "compat" / "x86_64" / "getpagesize_header_abi_probe.cpp"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "getpagesize_signature",
+        "CRABC_EXPECT_GETPAGESIZE",
+        "CRABC_REQUIRE_GETPAGESIZE_HIDDEN",
+    ):
+        require(snippet in header_c, f"getpagesize C header probe omits {snippet}")
+        require(snippet in header_cxx, f"getpagesize C++ header probe omits {snippet}")
+    header_runner = (
+        ROOT / "compat" / "x86_64" / "run_getpagesize_header_abi.sh"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "getpagesize_header_abi_probe.c",
+        "getpagesize_header_abi_probe.cpp",
+        "bsd_definitions=(-D_BSD_SOURCE -DCRABC_EXPECT_GETPAGESIZE)",
+        "gnu_definitions=(-D_GNU_SOURCE -DCRABC_EXPECT_GETPAGESIZE)",
+        "outside GNU/BSD C selectors",
+        "retained a mangled getpagesize reference",
+    ):
+        require(snippet in header_runner, f"getpagesize header runner omits {snippet}")
+
+    dispatcher = (ROOT / "scripts" / "dev-x86_64.sh").read_text(encoding="utf-8")
+    for snippet in (
+        "getpagesize-header-abi)",
+        "run_getpagesize_header_abi",
+        "libc-getpagesize)",
+        "run_libc_getpagesize",
+    ):
+        require(snippet in dispatcher, f"getpagesize dispatcher omits {snippet}")
 
 
 def require_system_information_artifact(family: Mapping[str, Any]) -> None:
@@ -39814,6 +40098,7 @@ def validate_ledger(
     require_timegm_utc_artifact(by_id["libc.posix-runtime"])
     require_gmtime_r_utc_artifact(by_id["libc.posix-runtime"])
     require_system_configuration_artifact(by_id["libc.posix-runtime"])
+    require_getpagesize_artifact(by_id["libc.posix-runtime"])
     require_system_information_artifact(by_id["libc.posix-runtime"])
     require_mapping_core_artifact(by_id["libc.posix-runtime"])
     require_memory_sync_artifact(by_id["libc.posix-runtime"])

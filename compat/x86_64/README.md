@@ -278,6 +278,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh filesystem-capacity-header-abi
 ./scripts/dev-x86_64.sh vector-io-header-abi
 ./scripts/dev-x86_64.sh unistd-header-abi
+./scripts/dev-x86_64.sh getpagesize-header-abi
 ./scripts/dev-x86_64.sh system-header-abi
 ./scripts/dev-x86_64.sh syscall-header-abi
 ./scripts/dev-x86_64.sh signal-header-abi
@@ -454,6 +455,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-timegm
 ./scripts/dev-x86_64.sh libc-gmtime-r
 ./scripts/dev-x86_64.sh libc-system-configuration
+./scripts/dev-x86_64.sh libc-getpagesize
 ./scripts/dev-x86_64.sh libc-mapping-core
 ./scripts/dev-x86_64.sh libc-memory-sync
 ./scripts/dev-x86_64.sh libc-memory-locking
@@ -1435,6 +1437,14 @@ declarations, including the staged x86 LP64 POSIX/GNU selectors, process and
 system helper declarations, GNU hostname/domain-name signatures, lock
 constants, and large-file aliases. It is source-only and does not select C
 process, filesystem, descriptor, namespace, or UTS-identity behavior.
+
+`getpagesize-header-abi` is a separate project-first/pinned-musl C11/C++17
+`<unistd.h>` declaration gate for only `int getpagesize(void)`. It proves
+GNU/BSD visibility, the exact no-argument signed-int signature, and unmangled
+C++ linkage while proving default, strict, POSIX, and XOPEN hiding. It is
+header-only evidence; it does not select general page-size discovery,
+`sysconf`/path configuration behavior, archive linkage, C runtime, or public
+x86 support.
 
 `system-header-abi` compiles project and pinned-musl C/C++ `<sys/utsname.h>`
 and `<sys/sysinfo.h>` declarations, including the GNU 65-byte `nodename` and
@@ -3708,6 +3718,21 @@ excludes the rest of musl's
 `sysconf` table, `statfs`/`statvfs`, filesystem policy, `/proc`, startup-owned
 auxv/`getauxval`, dynamic runtime, and public x86 support.
 
+`libc-getpagesize` is a separate private `static-c-getpagesize`
+`verified_artifact`, derived from the existing
+`system_configuration.rs` owner rather than a new configuration subsystem.
+Pinned musl 1.2.6 `src/legacy/getpagesize.c` returns `PAGE_SIZE`; its x86_64
+limits source fixes that result at 4096. After the GNU/BSD-only C/C++ header
+gate, the fixture runs the same C body against pinned musl and then links one
+true `-nostdlib -static -Wl,--gc-sections` candidate. Direct and
+function-pointer calls both return 4096. Although the source object also owns
+the selected system-configuration entries, final-link collection retains only
+`getpagesize` and rejects `sysconf`, `confstr`, `pathconf`,
+`fpathconf`, `getdtablesize`, errno/TLS, auxv, filesystem, allocator, PLT,
+and call/syscall paths. This does not alter or promote
+`static-c-system-configuration`; it is not general page-size discovery,
+`sysconf`/path configuration, C-runtime, CRT, or public x86 support.
+
 `libc-mapping-core` is a separately recorded `static-c-mman-mapping-core`
 `verified_artifact` gate over that archive, not a general C mapping or runtime
 capability. Its project-header C body first executes through pinned musl and
@@ -5529,6 +5554,7 @@ Apart from the narrowly named `libc-stat-compat`, `libc-credentials`,
 `libc-timegm`,
 `libc-gmtime-r`,
 `libc-system-configuration`,
+`libc-getpagesize`,
 `libc-mapping-core`,
 `libc-memory-sync`,
 `libc-memory-locking`,

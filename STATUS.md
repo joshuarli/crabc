@@ -1406,6 +1406,21 @@ path. This is not processor-affinity control, topology, general `sysconf`,
 load observation, a general system-information capability, C-runtime/family
 parity, AArch64 parity, or public x86 support.
 
+`./scripts/dev-x86_64.sh libc-getpagesize` is a separate private
+`static-c-getpagesize` artifact inside the same planned family. It maps
+pinned musl 1.2.6 `src/legacy/getpagesize.c` to the existing
+`system_configuration.rs` source owner: x86_64 `PAGESIZE=4096` makes
+`int getpagesize(void)` a no-argument constant leaf. Its C/C++ `<unistd.h>`
+gate proves GNU/BSD visibility and exact unmangled linkage while
+default/strict/POSIX/XOPEN profiles hide it. The true
+`-nostdlib -static -Wl,--gc-sections` fixture verifies direct and
+function-pointer 4096 results while its final candidate retains only
+`getpagesize`, rejecting co-owned `sysconf`, `confstr`, `pathconf`,
+`fpathconf`, and `getdtablesize` plus errno/TLS, auxv, filesystem,
+allocator, PLT, call, and syscall paths. This does not promote the broader
+system-configuration artifact or claim general page-size discovery, C runtime,
+CRT, family completion, or public x86 support.
+
 `./scripts/dev-x86_64.sh libc-fcntl-record-locks` is a separate private
 `static-c-fcntl-record-locks` artifact inside planned `libc.posix-runtime`.
 Its project-header C/C++ gate and pinned-musl/freestanding-static fixture prove
