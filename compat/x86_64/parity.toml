@@ -5718,13 +5718,14 @@ oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ec
 
 [[family.verified_artifact]]
 id = "static-c-math-complex-foundation"
-description = "Private native x86 selected-static long-double/complex foundation. One dependency-free `crabc-libc` archive resolves exactly `__fpclassify`, `__fpclassifyf`, `__fpclassifyl`, `__signbit`, `__signbitf`, `__signbitl`, and the C99 `creal`, `crealf`, `creall`, `cimag`, `cimagf`, `cimagl`, `conj`, `conjf`, and `conjl` entries into a freestanding C fixture after an equivalent pinned-musl execution. The leaf preserves the SysV AMD64 x87 storage, argument, and return ABI for 80-bit long double and 32-byte long-double complex while retaining the ordinary SSE ABI for float/double complex. This artifact excludes scalar math, cabs/carg/cproj, complex powers and transcendentals, errno/fenv behavior beyond the named classifiers, libm, libc.so, CRT, loader, sysroot, and public x86 support."
+description = "Private native x86 selected-static long-double/complex projection foundation. One dependency-free `crabc-libc` archive resolves exactly `__fpclassify`, `__fpclassifyf`, `__fpclassifyl`, `__signbit`, `__signbitf`, `__signbitl`, and the C99 `creal`, `crealf`, `creall`, `cimag`, `cimagf`, `cimagl`, `conj`, `conjf`, `conjl`, `cproj`, `cprojf`, and `cprojl` entries into a freestanding C fixture after an equivalent pinned-musl execution. The leaf preserves the SysV AMD64 x87 storage, argument, and return ABI for 80-bit long double and 32-byte long-double complex while retaining the ordinary SSE ABI for float/double complex. Projection maps either infinite component to positive real infinity and an imaginary signed zero while returning finite/NaN-only inputs unchanged. This artifact excludes scalar math, cabs/carg, complex powers and transcendentals, errno/fenv behavior beyond the named classifiers, libm, libc.so, CRT, loader, sysroot, family completion, promotion, and public x86 support."
 source_owners = [
   "compat/upstreams.toml",
   "libc/Cargo.toml",
   "libc/src/lib.rs",
   "libc/src/c_abi/x86_64/static_c_abi.rs",
   "libc/src/c_abi/x86_64/math_complex.rs",
+  "libc/src/c_abi/x86_64/complex_projection.rs",
   "include/complex.h",
   "include/float.h",
   "include/math.h",
@@ -5742,15 +5743,96 @@ source_owners = [
 ]
 x86_abi_prerequisites = [
   "System V AMD64 stores an x87 80-bit long double in 16-byte align-16 storage; scalar long-double arguments use stack storage and scalar results use st0. A long double complex uses 32-byte align-16 stack storage and returns real in st0 plus imaginary in st1.",
-  "System V AMD64 float complex occupies one SSE eightbyte, while double complex uses real xmm0 and imaginary xmm1; the selected accessors/conjugation leaf changes only the documented return component or sign bit.",
-  "Pinned musl 1.2.6 src/math/__fpclassify.c, __fpclassifyf.c, __fpclassifyl.c, __signbit.c, __signbitf.c, and __signbitl.c define the selected binary32/binary64/x87 classification and sign contracts; src/complex/{creal,crealf,creall,cimag,cimagf,cimagl,conj,conjf,conjl}.c map the selected stateless C99 entries. Rust has no stable C f80 representation, so one target-private assembly leaf implements that ABI without sharing AArch64 binary128 code.",
+  "System V AMD64 float complex occupies one SSE eightbyte, while double complex uses real xmm0 and imaginary xmm1; the selected accessors/conjugation leaf changes only the documented return component or sign bit, and cproj*/cprojl preserve those register versus x87 return classes.",
+  "Pinned musl 1.2.6 src/math/__fpclassify.c, __fpclassifyf.c, __fpclassifyl.c, __signbit.c, __signbitf.c, and __signbitl.c define the selected binary32/binary64/x87 classification and sign contracts; src/complex/{creal,crealf,creall,cimag,cimagf,cimagl,conj,conjf,conjl,cproj,cprojf,cprojl}.c map the selected stateless C99 entries. AArch64's complex_basic_exports.rs owns the same projection rule with binary128 long double; Rust has no stable C f80 representation, so target-private assembly implements the x86 ABI without sharing that representation.",
 ]
 x86_header_prerequisites = [
   "The separate project-first/pinned-musl C11/C++ header gate runs in default SSE and -mfpmath=387 modes. It proves long-double/complex storage, float_t/double_t selection, math_errhandling/fast-FMA policy, GNU HUGE, C complex accessor macros, tgmath dispatch and single evaluation, relational-predicate single evaluation, and unmangled C++ references for the selected ABI symbols.",
   "C callers use musl's function-like creal*/cimag* macros for ordinary expressions and parenthesize their names to take the ABI function addresses; C++ sees the declarations inside extern C. The static fixture deliberately takes each selected address and does not infer general math or complex runtime support from header declarations.",
 ]
-native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-math-complex", scope = "Pinned-musl C reference plus one true dependency-free x86 crabc-libc static archive and freestanding C candidate. The gate proves project-header provenance; exact closed archive exports; selected function-pointer ABI calls for binary32/binary64/x87 zero/subnormal/normal/infinity/NaN and signed zero plus float/double/long-double real/imaginary access and conjugation; no interpreter/DT_NEEDED/unresolved symbol or TLS/dynamic-TLS resolver; no libm or unowned runtime dependency; and generated x87 fldt/fchs instructions. It rejects unselected cabs/carg/cproj, complex power/transcendental, and scalar-math exports. It does not select libc.so, a general libc/libm, CRT startup, pthreads, allocator, loader, sysroot, or public x86 support." }]
-oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source mapping and C/POSIX behavior oracle for the selected src/math binary32/binary64/x87 classifiers/sign predicates and src/complex accessors/conjugation leaves." }, { kind = "elf-abi", source = "System V AMD64 psABI", role = "x87 long-double and complex-long-double storage/calling/return convention plus float/double complex SSE register contract." }]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-math-complex", scope = "Pinned-musl C reference plus one true dependency-free x86 crabc-libc static archive and `-nostdlib -static --gc-sections` freestanding C candidate in default SSE and `-mfpmath=387` modes. The gate proves project-header provenance; exact closed archive exports; selected function-pointer ABI calls for binary32/binary64/x87 zero/subnormal/normal/infinity/NaN and signed zero; float/double/long-double real/imaginary access and conjugation; and cproj* ordinary, either-infinite-component, signed-imaginary-zero, and NaN-only preservation. It proves no interpreter/DT_NEEDED/unresolved symbol or TLS/dynamic-TLS resolver, no libm or unowned runtime dependency, and generated x87 fldt/fldz/fchs instructions. It rejects unselected cabs/carg, complex power/transcendental, and scalar-math exports. It does not select libc.so, a general libc/libm, CRT startup, pthreads, allocator, loader, sysroot, family completion, promotion, or public x86 support." }]
+oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source mapping and C/POSIX behavior oracle for the selected src/math binary32/binary64/x87 classifiers/sign predicates and src/complex accessors/conjugation/projection leaves." }, { kind = "aarch64-contract", source = "libc/src/complex_basic_exports.rs", role = "The public AArch64 complex projection rule, with binary128 long double kept representation-distinct from x86 binary80." }, { kind = "elf-abi", source = "System V AMD64 psABI", role = "x87 long-double and complex-long-double storage/calling/return convention plus float/double complex SSE register contract." }]
+
+[[family.verified_artifact]]
+id = "static-c-elementary-sqrt-fenv"
+description = "Private native x86 selected-static elementary square-root/fenv artifact inside still-planned `libc.text-math-locale-stdio`. One dependency-free `crabc-libc` archive resolves exactly `sqrt`, `sqrtf`, and x87 binary80 `sqrtl` into a freestanding project-header C fixture after an equivalent pinned-musl execution. The fixed target-private musl instruction leaves preserve MXCSR rounding/exception state for binary32/binary64 and x87 control/status state for binary80. Function-pointer calls prove all four rounding modes, exact inexact results, signed zero, positive infinity, NaN propagation, and negative-domain NaN plus `FE_INVALID`. This artifact excludes every other elementary function, math errno policy, general scalar/complex math or libm, libc.so, CRT/TLS lifecycle, loader, sysroot, family completion, promotion, full x86-64 parity, and public x86 support."
+source_owners = [
+  "compat/upstreams.toml",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/elementary_sqrt.rs",
+  "libc/src/c_abi/x86_64/fenv.rs",
+  "libc/src/c_abi/x86_64/math_complex.rs",
+  "include/fenv.h",
+  "include/math.h",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/libc_elementary_sqrt_fenv_probe.c",
+  "compat/x86_64/libc_elementary_sqrt_fenv_start.S",
+  "compat/x86_64/run_libc_elementary_sqrt_fenv.sh",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "compat/x86_64/README.md",
+  "SCOPE.md",
+  "COMPATIBILITY-PROFILE.md",
+  "STATUS.md",
+  "x86-64.md",
+  "scripts/dev-x86_64.sh",
+  "scripts/check_structure.py",
+]
+x86_abi_prerequisites = [
+  "Pinned musl 1.2.6 src/math/x86_64/sqrt.c, sqrtf.c, and sqrtl.c define the complete selected implementation: one sqrtsd, one sqrtss, and one x87 fsqrt operation, respectively. The checked-in Rust global-assembly leaf retains that exact MIT-licensed target-specific source map without importing AArch64's software binary32/binary64 or binary128 implementation.",
+  "System V AMD64 passes binary32 and binary64 scalars in xmm0 and returns them in xmm0. Its 16-byte align-16 long-double storage carries one x87 binary80 value; a scalar long-double argument uses stack storage at rsp+8 and returns through st0.",
+  "The x86 floating environment is deliberately split: sqrt/sqrtf consume MXCSR rounding and exception fields, while sqrtl consumes the x87 control word and status word. The existing selected fenv leaf sets both environments, and the fixture restores its original environment before returning.",
+]
+x86_header_prerequisites = [
+  "The existing math-complex project-header-first/pinned-musl C11/C++17 matrix proves the public sqrt/sqrtf/sqrtl declarations and x87 long-double constants. This runtime artifact adds no installed declaration or macro surface.",
+  "The focused C fixture preprocesses project fenv.h, math.h, stdint.h, features.h, and bits/alltypes.h before the candidate link, then takes parenthesized function addresses so compiler builtins cannot replace the three selected C ABI calls.",
+]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-elementary-sqrt-fenv", scope = "Pinned-musl project-header C reference plus one true dependency-free x86 crabc-libc archive and `-nostdlib -static --gc-sections` candidate. The gate proves the exact closed archive export contract; function-pointer sqrt/sqrtf/sqrtl calls under all four independently reset rounding modes; exact binary32/binary64/binary80 results and FE_INEXACT; signed zero, infinity, NaN, and negative-domain FE_INVALID; generated sqrtsd/sqrtss/fldt/fsqrt instructions; and no interpreter/DT_NEEDED/unresolved symbol, retained TLS/dynamic-TLS resolver, ambient libm, or unowned runtime dependency. It rejects every other scalar and complex math name from the final candidate. It excludes math errno policy, general scalar/complex math, libc.so, CRT/TLS lifecycle, loader, sysroot, family completion, promotion, full x86-64 parity, and public x86 support." }]
+oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source mapping and C/fenv behavior oracle for exactly src/math/x86_64/sqrt.c, sqrtf.c, and sqrtl.c." }, { kind = "elf-abi", source = "System V AMD64 psABI", role = "xmm0 binary32/binary64 argument/return ABI and stack-argument/st0-return x87 binary80 ABI." }]
+
+[[family.verified_artifact]]
+id = "static-c-fenv-sensitive-rounding"
+description = "Private native x86 selected-static `math.elementary-fenv-sensitive` rounding artifact inside still-planned `libc.text-math-locale-stdio`. One dependency-free `crabc-libc` archive resolves exactly `rint`, `rintf`, x87 binary80 `rintl`, `nearbyint`, `nearbyintf`, and `nearbyintl` into a freestanding project-header C fixture after an equivalent pinned-musl execution. The fixed target-private leaves preserve MXCSR behavior for binary32/binary64 and x87 control/status behavior for binary80: all six obey all four current rounding modes and preserve signed zero, `rint*` raises `FE_INEXACT` for fractional inputs, and `nearbyint*` suppresses only a newly raised inexact while retaining preexisting `FE_INEXACT` and unrelated exception flags. This artifact excludes `exp10*`/`pow10*`, `fdim*`, integer-result rounding, the rest of `math.elementary-fenv-sensitive`, general scalar/complex math or libm, libc.so, CRT/TLS lifecycle, loader, sysroot, family completion, promotion, full x86-64 parity, and public x86 support."
+source_owners = [
+  "compat/upstreams.toml",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "libc/src/math_lrint.rs",
+  "libc/src/math_compat.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/fenv.rs",
+  "libc/src/c_abi/x86_64/fenv_rounding.rs",
+  "include/fenv.h",
+  "include/math.h",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/libc_fenv_rounding_probe.c",
+  "compat/x86_64/libc_fenv_rounding_start.S",
+  "compat/x86_64/run_libc_fenv_rounding.sh",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "compat/x86_64/README.md",
+  "SCOPE.md",
+  "COMPATIBILITY-PROFILE.md",
+  "STATUS.md",
+  "x86-64.md",
+  "scripts/dev-x86_64.sh",
+  "scripts/check_structure.py",
+]
+x86_abi_prerequisites = [
+  "Pinned musl 1.2.6 src/math/rint.c, rintf.c, and rintl.c define the add/subtract-by-toint rounding algorithms; src/math/nearbyint.c, nearbyintf.c, and nearbyintl.c define the observe-rint-clear-only-new-FE_INEXACT protocol. The checked-in Rust global-assembly leaf retains that MIT-licensed operation order because compiler optimization without FENV_ACCESS can reorder the clear before the rounding call.",
+  "Default System V AMD64 uses FLT_EVAL_METHOD=0: binary32/binary64 arguments and results use xmm0, their toint arithmetic consumes MXCSR, and the 16-byte align-16 long-double argument at rsp+8 carries x87 binary80 returned through st0. The existing fenv leaf sets and observes both halves of that split environment.",
+  "AArch64 maps rint/rintf through libc/src/math_lrint.rs and nearbyint/nearbyintf through libc/src/math_compat.rs with binary128 long double and target `frinti`; that semantic contract is retained, but neither the long-double representation nor AArch64 instruction sequence is shared with x86.",
+]
+x86_header_prerequisites = [
+  "The existing math-complex project-header-first/pinned-musl C11/C++17 matrix proves the public rint*/nearbyint* declarations and x87 long-double constants. This runtime artifact adds no installed declaration or macro surface.",
+  "The focused C fixture preprocesses project fenv.h, math.h, stdint.h, features.h, and bits/alltypes.h, then takes parenthesized function addresses so compiler builtins cannot replace the six selected C ABI calls.",
+]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-fenv-rounding", scope = "Pinned-musl project-header C reference plus one true dependency-free x86 crabc-libc archive and `-nostdlib -static --gc-sections` candidate. The gate proves the exact closed archive export contract; function-pointer rint/rintf/rintl and nearbyint/nearbyintf/nearbyintl calls across all four independently reset MXCSR/x87 rounding modes; exact binary32/binary64/binary80 integral and signed-zero results; FE_INEXACT raising versus suppression; preservation of preexisting FE_INEXACT plus FE_DIVBYZERO; generated addsd/subsd/addss/subss and x87 fldt/faddp/subtract-pop operations; and no interpreter/DT_NEEDED/unresolved symbol, retained TLS/dynamic-TLS resolver, ambient libm, or unowned runtime dependency. It rejects sqrt*, cproj*, exp10*/pow10*, fdim*, and other unselected math from the final candidate. It excludes category/family completion, promotion, full x86-64 parity, and public x86 support." }]
+oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source mapping and C/fenv behavior oracle for src/math/{rint,rintf,rintl,nearbyint,nearbyintf,nearbyintl}.c." }, { kind = "aarch64-contract", source = "libc/src/math_lrint.rs and libc/src/math_compat.rs", role = "The existing AArch64 semantic mapping for the same public C names, with binary128 long double and target instructions kept representation-distinct." }, { kind = "elf-abi", source = "System V AMD64 psABI", role = "xmm0 binary32/binary64 and stack-argument/st0-return x87 binary80 ABI plus the split MXCSR/x87 environment." }]
 
 [[family.verified_artifact]]
 id = "static-c-float-parse"

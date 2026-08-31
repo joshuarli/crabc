@@ -3,8 +3,9 @@
 //! This target root owns one dependency-free `libc.a` artifact containing the
 //! independently evidenced metadata and credential verticals alongside the x86
 //! bulk-memory, floating-environment, continuation, binary32/binary64/x87
-//! classification/sign, and basic complex accessor/conjugation primitives as a
-//! real C bootstrap block, plus deliberately narrow simple signal action/mask,
+//! classification/sign, complex accessor/conjugation/projection, hardware
+//! square root, and selected fenv-sensitive rounding primitives as a real C
+//! bootstrap block, plus deliberately narrow simple signal action/mask,
 //! bounded process-signal execution, and fixed-minimum alternate signal-stack
 //! behavior, one default-attribute
 //! create/explicit-exit/join/detach worker and its typed C11
@@ -153,6 +154,12 @@ mod random_entropy;
 mod fenv;
 #[path = "math_complex.rs"]
 mod math_complex;
+#[path = "complex_projection.rs"]
+mod complex_projection;
+#[path = "elementary_sqrt.rs"]
+mod elementary_sqrt;
+#[path = "fenv_rounding.rs"]
+mod fenv_rounding;
 #[path = "setjmp.rs"]
 mod setjmp;
 #[path = "signal_foundation.rs"]

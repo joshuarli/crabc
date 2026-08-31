@@ -53,25 +53,27 @@ CARGO_TARGET_DIR="$target_dir" cargo rustc --locked -p crabc-libc --lib --target
 nm -A --defined-only "$archive" >"$archive_symbols"
 assert_selected_c_abi_surface "$archive" "$selected_symbols" "$expected_symbols"
 for symbol in __fpclassify __fpclassifyf __fpclassifyl __signbit __signbitf \
-	__signbitl creal crealf creall cimag cimagf cimagl conj conjf conjl; do
+	__signbitl creal crealf creall cimag cimagf cimagl conj conjf conjl \
+	cproj cprojf cprojl; do
 	grep -Eq "[[:space:]][TW][[:space:]]${symbol}$" "$archive_symbols" || fail "archive does not define $symbol"
 done
-for unselected in cabs cabsf cabsl carg cargf cargl cproj cprojf cprojl cpow cpowf cpowl cexp cexpf cexpl sin sinf sinl csin csinf csinl; do
+for unselected in cabs cabsf cabsl carg cargf cargl cpow cpowf cpowl cexp cexpf cexpl sin sinf sinl csin csinf csinl; do
 	if grep -Eq "[[:space:]][TW][[:space:]]${unselected}$" "$archive_symbols"; then
 		fail "archive accidentally exports unselected ${unselected}"
 	fi
 done
-"$ORACLE_CC" -std=c11 -D_GNU_SOURCE -DCRABC_MATH_COMPLEX_FREESTANDING -I"$ROOT_DIR/include" -nostdlib -static -fno-pie -no-pie -ffreestanding -fno-builtin -fno-stack-protector -Wl,-e,_start -Wl,--no-undefined compat/x86_64/libc_math_complex_probe.c compat/x86_64/libc_math_complex_start.S "$archive" -o "$candidate"
+"$ORACLE_CC" -std=c11 -D_GNU_SOURCE -DCRABC_MATH_COMPLEX_FREESTANDING -I"$ROOT_DIR/include" -nostdlib -static -fno-pie -no-pie -ffreestanding -fno-builtin -fno-stack-protector -Wl,-e,_start -Wl,--no-undefined -Wl,--gc-sections compat/x86_64/libc_math_complex_probe.c compat/x86_64/libc_math_complex_start.S "$archive" -o "$candidate"
 readelf --symbols --wide "$candidate" >"$symbols"; readelf --program-headers --wide "$candidate" >"$headers"; readelf --dynamic --wide "$candidate" >"$dynamic" || true; readelf --relocs --wide "$candidate" >"$relocs"; objdump -d "$candidate" >"$disassembly"
 for symbol in __fpclassify __fpclassifyf __fpclassifyl __signbit __signbitf \
-	__signbitl creal crealf creall cimag cimagf cimagl conj conjf conjl; do
+	__signbitl creal crealf creall cimag cimagf cimagl conj conjf conjl \
+	cproj cprojf cprojl; do
 	grep -Eq "[[:space:]]${symbol}$" "$symbols" || fail "candidate lacks ${symbol}"
 done
 if awk '$7 == "UND" && NF >= 8 { print }' "$symbols" | grep -q .; then fail "candidate has unresolved symbols"; fi
 if grep -Eq 'Requesting program interpreter|INTERP|NEEDED' "$headers" "$dynamic"; then fail "candidate is dynamic"; fi
 if grep -Eq '[[:space:]]TLS[[:space:]]|TLSGD|TLSLD|TLSDESC|GOTTPOFF|DTPMOD(64)?|DTPOFF(32|64)?|__tls_get_addr' "$headers" "$relocs" "$symbols" "$disassembly"; then fail "candidate retains TLS"; fi
 if grep -Eq 'crabc_core|mimalloc|sha_crypt|libm' "$symbols" "$disassembly"; then fail "candidate selects an unowned math/runtime dependency"; fi
-for instruction in fldt fchs; do
+for instruction in fldt fldz fchs; do
 	grep -Eq "[[:space:]]${instruction}([[:space:]]|$)" "$disassembly" || fail "candidate lacks ${instruction}"
 done
 if "$candidate"; then
@@ -85,11 +87,11 @@ fi
 # archive whose dependency boundary this runner owns.
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -mfpmath=387 -fno-builtin -fno-stack-protector compat/x86_64/libc_math_complex_probe.c -o "$x87_reference"
 "$x87_reference" || fail "pinned-musl x87 math/complex fixture failed"
-"$ORACLE_CC" -std=c11 -D_GNU_SOURCE -DCRABC_MATH_COMPLEX_FREESTANDING -I"$ROOT_DIR/include" -mfpmath=387 -nostdlib -static -fno-pie -no-pie -ffreestanding -fno-builtin -fno-stack-protector -Wl,-e,_start -Wl,--no-undefined compat/x86_64/libc_math_complex_probe.c compat/x86_64/libc_math_complex_start.S "$archive" -o "$x87_candidate"
+"$ORACLE_CC" -std=c11 -D_GNU_SOURCE -DCRABC_MATH_COMPLEX_FREESTANDING -I"$ROOT_DIR/include" -mfpmath=387 -nostdlib -static -fno-pie -no-pie -ffreestanding -fno-builtin -fno-stack-protector -Wl,-e,_start -Wl,--no-undefined -Wl,--gc-sections compat/x86_64/libc_math_complex_probe.c compat/x86_64/libc_math_complex_start.S "$archive" -o "$x87_candidate"
 if "$x87_candidate"; then
 	:
 else
 	status=$?
 	fail "freestanding x87 math/complex fixture failed with exit status ${status}"
 fi
-printf 'x86 static libc long-double/complex foundation: PASS\n'
+printf 'x86 static libc long-double/complex projection foundation: PASS\n'

@@ -371,6 +371,41 @@ not complete `pattern.regex`, select `wordexp`, expose a Rust regex API or C
 allocator, or promote the still-planned text/math/locale/stdio family or
 public x86 support.
 
+The private `static-c-math-complex-foundation` artifact now includes the
+stateless C99 `cproj*` projection vertical alongside the existing
+classification/sign, accessor, and conjugation foundation. Its pinned-musl and
+freestanding default-SSE/`-mfpmath=387` fixture proves float/double/binary80
+ordinary, either-infinite-component, signed-imaginary-zero, and NaN-only
+behavior. The x87 long-double ABI remains target-private while the semantic
+rule is mapped to AArch64's binary128 `complex_basic_exports.rs`; `cabs*`,
+`carg*`, powers, transcendentals, general complex completion, promotion, and
+public x86 support remain unselected.
+
+The x86 static C archive now also has one private
+`static-c-elementary-sqrt-fenv` artifact inside still-planned
+`libc.text-math-locale-stdio`:
+`./scripts/dev-x86_64.sh libc-elementary-sqrt-fenv` runs the same project-header
+C fixture through pinned musl and a dependency-free freestanding candidate.
+It selects exactly `sqrt`, `sqrtf`, and x87 binary80 `sqrtl`, preserving the
+split MXCSR/x87 rounding and exception state and proving all four modes,
+inexact results, signed zero, infinities, NaNs, and negative-domain
+`FE_INVALID`. It does not select another elementary function, math errno
+policy, general scalar/complex math, libc.so, CRT/TLS lifecycle, loader,
+sysroot, family completion, promotion, full x86-64 parity, or public x86
+support.
+
+The separate private `static-c-fenv-sensitive-rounding` artifact is the first
+actual x86 slice of `math.elementary-fenv-sensitive`:
+`./scripts/dev-x86_64.sh libc-fenv-rounding` proves `rint*` and `nearbyint*`
+for binary32, binary64, and x87 binary80 against pinned musl. All six obey all
+four MXCSR/x87 rounding modes and preserve signed zero; `rint*` raises
+`FE_INEXACT`, while `nearbyint*` suppresses only a newly raised inexact and
+retains preexisting exception flags. It is mapped to the AArch64
+`math_lrint.rs`/`math_compat.rs` contract but keeps the binary80 ABI and
+instruction order target-private. `exp10*`/`pow10*`, `fdim*`, integer-result
+rounding, category/family completion, promotion, and public x86 support remain
+unselected.
+
 The x86 static C archive also has one private caller-owned mapping-core
 artifact: `./scripts/dev-x86_64.sh libc-mapping-core` runs the project-header
 C/C++ `sys/mman.h` gate and then one pinned-musl/freestanding-static proof for

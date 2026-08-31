@@ -1460,7 +1460,7 @@
       "capability_count": 16,
       "contract_state": "selected-private",
       "id": "libc.text-math-locale-stdio",
-      "verified_artifact_count": 9,
+      "verified_artifact_count": 11,
       "verified_slice_count": 0
     },
     {
@@ -2064,6 +2064,14 @@
     },
     {
       "family": "libc.text-math-locale-stdio",
+      "id": "static-c-elementary-sqrt-fenv"
+    },
+    {
+      "family": "libc.text-math-locale-stdio",
+      "id": "static-c-fenv-sensitive-rounding"
+    },
+    {
+      "family": "libc.text-math-locale-stdio",
       "id": "static-c-float-parse"
     },
     {
@@ -2107,9 +2115,9 @@
     "aarch64_abi_manifest": "33dd504470f467caac7b149e747ee2b7ff8714c4fb23dfe5ad46e7f58bfe610c",
     "aarch64_capability_ledger": "128458dde00073bc0320b94972d864e66fa10d5f54e92b1b1c83081e2b4955e0",
     "aarch64_headers": "a0d35f0950abb3c060b978dfb5257cf50f70bed46ce91d371f43d65db7626b68",
-    "x86_parity_ledger": "c48bb1b7eb71ae60e21c429af873988b225ea8ba6d32d0db92ae530f8160b40f",
+    "x86_parity_ledger": "b7a77a4ea817dbfa8fa496c878dead28ecae51a40ecbe063dc84dd5c80f14051",
     "x86_public_headers": "2cdcd860a423d99afef8360b6376447cf17ae926f1cd47416be817d421fca80f",
-    "x86_static_c_exports": "c92427d0933de4be3ec32cc23dcd9b099ef1743267223dadd3a7460c76ef4f17"
+    "x86_static_c_exports": "9ffad4a5de87081a44cbcfad1f0f6705c325be35cf1ce966f613cc9ca301740c"
   },
   "unsupported_contracts": [
     {
@@ -2121,7 +2129,7 @@
     "promotion_family_count": 26,
     "promotion_ready": false,
     "public_support": false,
-    "selected_static_export_count": 530,
-    "selected_static_exports_in_aarch64_dynamic_candidate_set": 518
+    "selected_static_export_count": 542,
+    "selected_static_exports_in_aarch64_dynamic_candidate_set": 530
   }
 }

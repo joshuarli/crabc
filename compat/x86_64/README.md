@@ -439,6 +439,8 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-foundation
 ./scripts/dev-x86_64.sh libc-fenv
 ./scripts/dev-x86_64.sh libc-math-complex
+./scripts/dev-x86_64.sh libc-elementary-sqrt-fenv
+./scripts/dev-x86_64.sh libc-fenv-rounding
 ./scripts/dev-x86_64.sh libc-locale-multibyte
 ./scripts/dev-x86_64.sh libc-locale-wide-iconv
 ./scripts/dev-x86_64.sh libc-memory
@@ -3332,13 +3334,46 @@ leaf evidence; the same implementation is selected only through
 `static-c-math-complex-foundation` artifact. Its freestanding project-header C
 fixture runs first through pinned musl and then through one `-nostdlib -static`
 candidate archive. It selects exactly binary32/binary64/x87
-`__fpclassify*`/`__signbit*` plus the `creal*`/`cimag*`/`conj*` ABI entries,
+`__fpclassify*`/`__signbit*` plus the
+`creal*`/`cimag*`/`conj*`/`cproj*` ABI entries,
 proving zero/subnormal/normal/infinity/NaN and signed-zero classification plus
-float/double/long-double complex access and conjugation. The gate rejects
-ambient `libm`, unselected `cabs*`/`carg*`/`cproj*`, powers, and
+float/double/long-double complex access, conjugation, and projection for
+ordinary, either-infinite-component, signed-imaginary-zero, and NaN-only
+inputs. The semantic rule maps AArch64's binary128
+`complex_basic_exports.rs`, while the binary80 ABI stays target-private. The
+gate rejects ambient `libm`, unselected `cabs*`/`carg*`, powers, and
 transcendentals. It is only a classification/sign and x87 long-double/complex
-foundation, not scalar/complex math completion, `libc.so`, CRT/TLS lifecycle,
-loader, sysroot, or public x86 support.
+projection foundation, not scalar/complex math completion, `libc.so`,
+CRT/TLS lifecycle, loader, sysroot, promotion, or public x86 support.
+
+`libc-elementary-sqrt-fenv` is the separate non-promoting
+`static-c-elementary-sqrt-fenv` artifact inside still-planned
+`libc.text-math-locale-stdio`. Its project-header C fixture runs first through
+pinned musl and then through one garbage-collected `-nostdlib -static`
+candidate archive. It calls parenthesized `sqrt`, `sqrtf`, and `sqrtl`
+function addresses under independently reset nearest, downward, upward, and
+toward-zero modes. Exact binary32/binary64/binary80 results, `FE_INEXACT`,
+signed zero, infinity, NaN, and negative-domain `FE_INVALID` prove the split
+MXCSR/x87 environment, while ELF/disassembly gates require `sqrtsd`, `sqrtss`,
+`fldt`, and `fsqrt` without ambient libm or retained TLS. This selects no
+other elementary function, math errno policy, general scalar/complex math,
+`libc.so`, CRT/TLS lifecycle, loader, sysroot, family completion, promotion,
+full x86-64 parity, or public x86 support.
+
+`libc-fenv-rounding` is the separate non-promoting
+`static-c-fenv-sensitive-rounding` artifact inside still-planned
+`libc.text-math-locale-stdio`. Its project-header C fixture runs first through
+pinned musl and then through a garbage-collected `-nostdlib -static` candidate.
+It takes parenthesized `rint*` and `nearbyint*` addresses for binary32,
+binary64, and x87 binary80. All four independently reset modes, exact integral
+and signed-zero results, FE_INEXACT raising versus suppression, and retention
+of preexisting FE_INEXACT plus FE_DIVBYZERO prove the split MXCSR/x87
+environment. The implementation maps AArch64's `math_lrint.rs` and
+`math_compat.rs` semantics but keeps the binary80 ABI and fenv operation order
+target-private. ELF/disassembly gates reject dynamic/TLS dependencies,
+ambient libm, and unselected `sqrt*`, `cproj*`, `exp10*`/`pow10*`, and `fdim*`.
+It does not complete `math.elementary-fenv-sensitive`, the containing family,
+general math, promotion, full x86-64 parity, or public x86 support.
 
 `locale-multibyte-header-abi` and `libc-locale-multibyte` are one separate,
 non-promoting named-locale/text artifact. The strict C11/C++17 header matrix
@@ -3811,7 +3846,8 @@ Apart from the narrowly named `libc-stat-compat`, `libc-credentials`,
 `libc-byte-strings`, `libc-random-entropy`, `libc-memory-search`,
 `libc-string-copy`, `libc-ctype`, `libc-integer-arithmetic`,
 `libc-integer-parse`, `libc-float-parse`, `libc-intmax-arithmetic`, `libc-credential-observation`,
-`libc-ffs`, and `libc-math-complex` static archive harnesses, and the separately scoped
+`libc-ffs`, `libc-math-complex`, `libc-elementary-sqrt-fenv`, and
+`libc-fenv-rounding` static archive harnesses, and the separately scoped
 `static-pie` CRT gate, and the bounded `owned-static-sysroot` installed
 artifact gate, the lane owns no
 allocator evidence and exposes no generic Cargo, shell, general `crabc-libc`

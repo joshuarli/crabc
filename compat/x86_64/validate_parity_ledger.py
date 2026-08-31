@@ -1395,6 +1395,19 @@ MATH_COMPLEX_FOUNDATION_SYMBOLS = (
     "conjl",
 )
 
+COMPLEX_PROJECTION_SYMBOLS = ("cproj", "cprojf", "cprojl")
+
+ELEMENTARY_SQRT_FENV_SYMBOLS = ("sqrt", "sqrtf", "sqrtl")
+
+FENV_SENSITIVE_ROUNDING_SYMBOLS = (
+    "nearbyint",
+    "nearbyintf",
+    "nearbyintl",
+    "rint",
+    "rintf",
+    "rintl",
+)
+
 NAMED_LOCALE_MULTIBYTE_SYMBOLS = (
     "__ctype_get_mb_cur_max",
     "btowc",
@@ -16966,19 +16979,21 @@ def require_math_complex_foundation_artifact(family: Mapping[str, Any]) -> None:
     artifact = matching[0]
     description = artifact["description"]
     assert isinstance(description, str)
-    for symbol in MATH_COMPLEX_FOUNDATION_SYMBOLS:
+    for symbol in MATH_COMPLEX_FOUNDATION_SYMBOLS + COMPLEX_PROJECTION_SYMBOLS:
         require(
             symbol in description,
             f"static-c-math-complex-foundation description omits {symbol}",
         )
     for phrase in (
-        "long-double/complex foundation",
+        "long-double/complex projection foundation",
         "x87",
         "scalar math",
-        "cabs/carg/cproj",
+        "cabs/carg",
         "complex powers and transcendentals",
         "libm",
         "libc.so",
+        "family completion",
+        "promotion",
         "public x86 support",
     ):
         require(
@@ -16992,6 +17007,7 @@ def require_math_complex_foundation_artifact(family: Mapping[str, Any]) -> None:
     for owner in (
         "libc/src/c_abi/x86_64/static_c_abi.rs",
         "libc/src/c_abi/x86_64/math_complex.rs",
+        "libc/src/c_abi/x86_64/complex_projection.rs",
         "include/complex.h",
         "include/float.h",
         "include/math.h",
@@ -17036,7 +17052,8 @@ def require_math_complex_foundation_artifact(family: Mapping[str, Any]) -> None:
             and "__signbitf.c" in item
             and "__signbitl.c" in item
             and "src/complex/" in item
-            and "AArch64 binary128" in item
+            and "cprojf" in item
+            and "AArch64's complex_basic_exports.rs" in item
             for item in abi_prerequisites
         ),
         "static-c-math-complex-foundation must record its pinned-musl and target boundary",
@@ -17071,6 +17088,10 @@ def require_math_complex_foundation_artifact(family: Mapping[str, Any]) -> None:
         '#[path = "math_complex.rs"]\nmod math_complex;' in static_root,
         "x86 static C ABI must compose the math_complex leaf",
     )
+    require(
+        '#[path = "complex_projection.rs"]\nmod complex_projection;' in static_root,
+        "x86 static C ABI must compose the complex_projection leaf",
+    )
     implementation = (ROOT / "libc" / "src" / "c_abi" / "x86_64" / "math_complex.rs").read_text(
         encoding="utf-8"
     )
@@ -17084,6 +17105,16 @@ def require_math_complex_foundation_artifact(family: Mapping[str, Any]) -> None:
             instruction in implementation,
             f"math_complex leaf omits its required {instruction} ABI operation",
         )
+    projection = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "complex_projection.rs"
+    ).read_text(encoding="utf-8")
+    for symbol in COMPLEX_PROJECTION_SYMBOLS:
+        require(
+            f".global {symbol}" in projection,
+            f"complex_projection leaf omits {symbol}",
+        )
+    for snippet in ("complex_basic_exports.rs", "fldz", "fld tbyte ptr", "public x86 support"):
+        require(snippet in projection, f"complex_projection leaf omits {snippet}")
 
     exports = [
         line
@@ -17096,7 +17127,7 @@ def require_math_complex_foundation_artifact(family: Mapping[str, Any]) -> None:
         exports == sorted(exports),
         "static C ABI export contract must remain ASCII-sorted",
     )
-    for symbol in MATH_COMPLEX_FOUNDATION_SYMBOLS:
+    for symbol in MATH_COMPLEX_FOUNDATION_SYMBOLS + COMPLEX_PROJECTION_SYMBOLS:
         require(
             symbol in exports,
             f"static C ABI export contract omits {symbol}",
@@ -17108,7 +17139,9 @@ def require_math_complex_foundation_artifact(family: Mapping[str, Any]) -> None:
     for snippet in (
         "-nostdlib -static",
         "--no-undefined",
+        "--gc-sections",
         "fldt",
+        "fldz",
         "fchs",
         "cabs",
         "carg",
@@ -17119,6 +17152,346 @@ def require_math_complex_foundation_artifact(family: Mapping[str, Any]) -> None:
             snippet in runner,
             f"libc-math-complex runner omits {snippet}",
         )
+
+
+def require_elementary_sqrt_fenv_artifact(family: Mapping[str, Any]) -> None:
+    """Keep the three hardware square roots below general math completion."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.text-math-locale-stdio].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [
+        entry
+        for entry in artifacts
+        if entry.get("id") == "static-c-elementary-sqrt-fenv"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.text-math-locale-stdio must contain exactly one static-c-elementary-sqrt-fenv artifact",
+    )
+    artifact = matching[0]
+    require(
+        "capabilities" not in artifact,
+        "static-c-elementary-sqrt-fenv must remain a non-capability artifact",
+    )
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for phrase in (
+        "elementary square-root/fenv artifact",
+        "sqrt",
+        "sqrtf",
+        "sqrtl",
+        "MXCSR",
+        "x87",
+        "all four rounding modes",
+        "FE_INVALID",
+        "every other elementary function",
+        "math errno policy",
+        "family completion",
+        "promotion",
+        "public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"static-c-elementary-sqrt-fenv description omits {phrase}",
+        )
+
+    owners = nonempty_strings(
+        artifact["source_owners"], "static-c-elementary-sqrt-fenv.source_owners"
+    )
+    for owner in (
+        "libc/src/c_abi/x86_64/elementary_sqrt.rs",
+        "libc/src/c_abi/x86_64/fenv.rs",
+        "include/fenv.h",
+        "include/math.h",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/libc_elementary_sqrt_fenv_probe.c",
+        "compat/x86_64/libc_elementary_sqrt_fenv_start.S",
+        "compat/x86_64/run_libc_elementary_sqrt_fenv.sh",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/README.md",
+        "STATUS.md",
+        "x86-64.md",
+        "scripts/dev-x86_64.sh",
+        "scripts/check_structure.py",
+    ):
+        require(owner in owners, f"static-c-elementary-sqrt-fenv omits {owner}")
+
+    abi_prerequisites = nonempty_strings(
+        artifact["x86_abi_prerequisites"],
+        "static-c-elementary-sqrt-fenv.x86_abi_prerequisites",
+    )
+    require(
+        any(
+            "src/math/x86_64/sqrt.c" in item
+            and "sqrtf.c" in item
+            and "sqrtl.c" in item
+            and "sqrtsd" in item
+            and "sqrtss" in item
+            and "fsqrt" in item
+            for item in abi_prerequisites
+        ),
+        "static-c-elementary-sqrt-fenv must record its exact pinned-musl source map",
+    )
+    require(
+        any("rsp+8" in item and "st0" in item and "xmm0" in item for item in abi_prerequisites),
+        "static-c-elementary-sqrt-fenv must record its scalar SysV ABI",
+    )
+    require(
+        any("MXCSR" in item and "x87 control word" in item for item in abi_prerequisites),
+        "static-c-elementary-sqrt-fenv must record the split x86 environment",
+    )
+
+    header_prerequisites = nonempty_strings(
+        artifact["x86_header_prerequisites"],
+        "static-c-elementary-sqrt-fenv.x86_header_prerequisites",
+    )
+    require(
+        any("parenthesized function addresses" in item for item in header_prerequisites),
+        "static-c-elementary-sqrt-fenv must exclude compiler builtin substitution",
+    )
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-elementary-sqrt-fenv"},
+        "static-c-elementary-sqrt-fenv must use the closed libc-elementary-sqrt-fenv command",
+    )
+
+    static_root = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+    ).read_text(encoding="utf-8")
+    require(
+        '#[path = "elementary_sqrt.rs"]\nmod elementary_sqrt;' in static_root,
+        "x86 static C ABI must compose the elementary_sqrt leaf",
+    )
+    implementation = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "elementary_sqrt.rs"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        ".global sqrt",
+        ".global sqrtf",
+        ".global sqrtl",
+        "sqrtsd xmm0, xmm0",
+        "sqrtss xmm0, xmm0",
+        "fld tbyte ptr [rsp + 8]",
+        "fsqrt",
+    ):
+        require(snippet in implementation, f"elementary_sqrt leaf omits {snippet}")
+
+    exports = [
+        line
+        for line in (ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt")
+        .read_text(encoding="utf-8")
+        .splitlines()
+        if line and not line.startswith("#")
+    ]
+    for symbol in ELEMENTARY_SQRT_FENV_SYMBOLS:
+        require(symbol in exports, f"static C ABI export contract omits {symbol}")
+
+    runner = (
+        ROOT / "compat" / "x86_64" / "run_libc_elementary_sqrt_fenv.sh"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "-nostdlib -static",
+        "--gc-sections",
+        "sqrtsd",
+        "sqrtss",
+        "fldt",
+        "fsqrt",
+        "candidate accidentally retains unselected",
+        "candidate retains TLS",
+    ):
+        require(snippet in runner, f"libc-elementary-sqrt-fenv runner omits {snippet}")
+    dispatcher = (ROOT / "scripts" / "dev-x86_64.sh").read_text(encoding="utf-8")
+    for snippet in (
+        "libc-elementary-sqrt-fenv)",
+        "run_libc_elementary_sqrt_fenv_probe()",
+        "/workspace/compat/x86_64/run_libc_elementary_sqrt_fenv.sh",
+    ):
+        require(snippet in dispatcher, f"x86 dispatcher omits {snippet}")
+
+
+def require_fenv_sensitive_rounding_artifact(family: Mapping[str, Any]) -> None:
+    """Ratchet the selected rint/nearbyint vertical without category promotion."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.text-math-locale-stdio].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [
+        entry
+        for entry in artifacts
+        if entry.get("id") == "static-c-fenv-sensitive-rounding"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.text-math-locale-stdio must contain exactly one static-c-fenv-sensitive-rounding artifact",
+    )
+    artifact = matching[0]
+    require(
+        "capabilities" not in artifact,
+        "static-c-fenv-sensitive-rounding must remain a non-capability artifact",
+    )
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for symbol in FENV_SENSITIVE_ROUNDING_SYMBOLS:
+        require(
+            symbol in description,
+            f"static-c-fenv-sensitive-rounding description omits {symbol}",
+        )
+    for phrase in (
+        "`math.elementary-fenv-sensitive` rounding artifact",
+        "all four current rounding modes",
+        "FE_INEXACT",
+        "preexisting",
+        "`exp10*`/`pow10*`",
+        "`fdim*`",
+        "integer-result rounding",
+        "family completion",
+        "promotion",
+        "public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"static-c-fenv-sensitive-rounding description omits {phrase}",
+        )
+
+    owners = nonempty_strings(
+        artifact["source_owners"], "static-c-fenv-sensitive-rounding.source_owners"
+    )
+    for owner in (
+        "libc/src/math_lrint.rs",
+        "libc/src/math_compat.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/fenv.rs",
+        "libc/src/c_abi/x86_64/fenv_rounding.rs",
+        "include/fenv.h",
+        "include/math.h",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/libc_fenv_rounding_probe.c",
+        "compat/x86_64/libc_fenv_rounding_start.S",
+        "compat/x86_64/run_libc_fenv_rounding.sh",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/README.md",
+        "STATUS.md",
+        "x86-64.md",
+        "scripts/dev-x86_64.sh",
+        "scripts/check_structure.py",
+    ):
+        require(owner in owners, f"static-c-fenv-sensitive-rounding omits {owner}")
+
+    prerequisites = " ".join(
+        nonempty_strings(
+            artifact["x86_abi_prerequisites"],
+            "static-c-fenv-sensitive-rounding.x86_abi_prerequisites",
+        )
+    )
+    for phrase in (
+        "src/math/rint.c",
+        "nearbyintl.c",
+        "FENV_ACCESS",
+        "FLT_EVAL_METHOD=0",
+        "MXCSR",
+        "rsp+8",
+        "st0",
+        "libc/src/math_lrint.rs",
+        "libc/src/math_compat.rs",
+        "binary128 long double",
+    ):
+        require(
+            phrase in prerequisites,
+            f"static-c-fenv-sensitive-rounding prerequisites omit {phrase}",
+        )
+    header_prerequisites = " ".join(
+        nonempty_strings(
+            artifact["x86_header_prerequisites"],
+            "static-c-fenv-sensitive-rounding.x86_header_prerequisites",
+        )
+    )
+    require(
+        "parenthesized function addresses" in header_prerequisites,
+        "static-c-fenv-sensitive-rounding must exclude compiler builtin substitution",
+    )
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-fenv-rounding"},
+        "static-c-fenv-sensitive-rounding must use the closed libc-fenv-rounding command",
+    )
+
+    static_root = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+    ).read_text(encoding="utf-8")
+    require(
+        '#[path = "fenv_rounding.rs"]\nmod fenv_rounding;' in static_root,
+        "x86 static C ABI must compose the fenv_rounding leaf",
+    )
+    implementation = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "fenv_rounding.rs"
+    ).read_text(encoding="utf-8")
+    for symbol in FENV_SENSITIVE_ROUNDING_SYMBOLS:
+        require(
+            f".global {symbol}" in implementation,
+            f"fenv_rounding leaf omits {symbol}",
+        )
+    for snippet in (
+        "src/math/rint.c",
+        "src/math/nearbyint.c",
+        "math_lrint.rs",
+        "math_compat.rs",
+        "addsd",
+        "subsd",
+        "addss",
+        "subss",
+        "faddp",
+        "fsubp",
+        "call fetestexcept",
+        "call feclearexcept",
+        "public x86 support",
+    ):
+        require(snippet in implementation, f"fenv_rounding leaf omits {snippet}")
+
+    exports = [
+        line
+        for line in (ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt")
+        .read_text(encoding="utf-8")
+        .splitlines()
+        if line and not line.startswith("#")
+    ]
+    require(exports == sorted(exports), "static C ABI export contract must remain ASCII-sorted")
+    for symbol in FENV_SENSITIVE_ROUNDING_SYMBOLS:
+        require(symbol in exports, f"static C ABI export contract omits {symbol}")
+
+    runner = (ROOT / "compat" / "x86_64" / "run_libc_fenv_rounding.sh").read_text(
+        encoding="utf-8"
+    )
+    for snippet in (
+        "-nostdlib -static",
+        "--gc-sections",
+        "candidate accidentally retains unselected",
+        "candidate retains TLS",
+        "addsd",
+        "subsd",
+        "addss",
+        "subss",
+        "faddp",
+        "fsubr?p",
+    ):
+        require(snippet in runner, f"libc-fenv-rounding runner omits {snippet}")
+    dispatcher = (ROOT / "scripts" / "dev-x86_64.sh").read_text(encoding="utf-8")
+    for snippet in (
+        "libc-fenv-rounding)",
+        "run_libc_fenv_rounding_probe()",
+        "/workspace/compat/x86_64/run_libc_fenv_rounding.sh",
+    ):
+        require(snippet in dispatcher, f"x86 dispatcher omits {snippet}")
 
 
 def require_named_locale_multibyte_artifact(family: Mapping[str, Any]) -> None:
@@ -17568,8 +17941,8 @@ def require_locale_wide_iconv_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 9,
-        "libc.text-math-locale-stdio must retain exactly nine private verified artifacts",
+        len(artifacts) == 11,
+        "libc.text-math-locale-stdio must retain exactly eleven private verified artifacts",
     )
     matching = [
         entry for entry in artifacts if entry.get("id") == "static-c-locale-wide-iconv"
@@ -18415,6 +18788,8 @@ def validate_ledger(
     require_stdio_format_scan_artifact(by_id["libc.text-math-locale-stdio"])
     require_stdio_path_stream_artifact(by_id["libc.text-math-locale-stdio"])
     require_math_complex_foundation_artifact(by_id["libc.text-math-locale-stdio"])
+    require_elementary_sqrt_fenv_artifact(by_id["libc.text-math-locale-stdio"])
+    require_fenv_sensitive_rounding_artifact(by_id["libc.text-math-locale-stdio"])
     require_named_locale_multibyte_artifact(by_id["libc.text-math-locale-stdio"])
     require_same_object_static_c_abi_artifact(by_id["compat.abi-differential"])
     require_posix_process_abi_admission_artifact(by_id["compat.posix-process"])

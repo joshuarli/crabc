@@ -1,12 +1,14 @@
-//! Selected static Linux/x86-64 long-double classification and basic complex ABI.
+//! Selected static Linux/x86-64 long-double classification and complex ABI foundation.
 //!
 //! This is a deliberately small x87 ABI foundation, not a scalar or complex
 //! math implementation. It owns only `__fpclassify*`, `__signbit*`, and the
 //! C99 `creal*`, `cimag*`, and `conj*` function symbols. The public header
 //! still declares many further math/complex APIs; none of them are selected by
-//! this leaf, and `cabs*`, `carg*`, `cproj*`, powers, transcendentals, errno,
-//! fenv behavior beyond classification, libm, libc.so, CRT, loader, sysroot,
-//! and public x86 support all remain outside its contract.
+//! this leaf. The separately mapped `complex_projection.rs` sibling composes
+//! `cproj*` into the same native artifact without blurring this source map.
+//! `cabs*`, `carg*`, powers, transcendentals, errno, fenv behavior beyond
+//! classification, libm, libc.so, CRT, loader, sysroot, and public x86 support
+//! all remain outside its contract.
 //!
 //! Translation provenance is pinned musl 1.2.6 release commit
 //! `9fa28ece75d8a2191de7c5bb53bed224c5947417`, under musl's MIT license:

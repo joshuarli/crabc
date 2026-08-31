@@ -50,7 +50,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 30)
-        self.assertEqual(report["verified_artifact_count"], 111)
+        self.assertEqual(report["verified_artifact_count"], 113)
         self.assertEqual(report["header_layout_probe_count"], 45)
         self.assertEqual(report["public_header_inventory_count"], 183)
         self.assertEqual(report["header_foundation_header_count"], 191)
@@ -2264,7 +2264,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         text_math = self.family(data, "libc.text-math-locale-stdio")
         self.assertEqual(text_math["status"], "planned")
         artifacts = text_math["verified_artifact"]
-        assert isinstance(artifacts, list) and len(artifacts) == 9
+        assert isinstance(artifacts, list) and len(artifacts) == 11
         artifact = next(
             entry
             for entry in artifacts
@@ -2347,7 +2347,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         text_math = self.family(data, "libc.text-math-locale-stdio")
         self.assertEqual(text_math["status"], "planned")
         artifacts = text_math["verified_artifact"]
-        assert isinstance(artifacts, list) and len(artifacts) == 9
+        assert isinstance(artifacts, list) and len(artifacts) == 11
         artifact = next(
             entry
             for entry in artifacts
@@ -2608,7 +2608,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         text_math = self.family(data, "libc.text-math-locale-stdio")
         self.assertEqual(text_math["status"], "planned")
         artifacts = text_math["verified_artifact"]
-        assert isinstance(artifacts, list) and len(artifacts) == 9
+        assert isinstance(artifacts, list) and len(artifacts) == 11
         artifacts_by_id = {
             entry["id"]: entry for entry in artifacts if isinstance(entry, dict)
         }
@@ -2617,6 +2617,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         for owner in (
             "libc/src/c_abi/x86_64/static_c_abi.rs",
             "libc/src/c_abi/x86_64/math_complex.rs",
+            "libc/src/c_abi/x86_64/complex_projection.rs",
             "include/complex.h",
             "include/float.h",
             "include/math.h",
@@ -2634,14 +2635,17 @@ class X86ParityLedgerTests(unittest.TestCase):
             {"./scripts/dev-x86_64.sh libc-math-complex"},
         )
         for phrase in (
-            "long-double/complex foundation",
+            "long-double/complex projection foundation",
             "__fpclassify",
             "__fpclassifyf",
             "__fpclassifyl",
             "__signbit",
             "__signbitf",
             "__signbitl",
-            "cabs/carg/cproj",
+            "cproj",
+            "cprojf",
+            "cprojl",
+            "cabs/carg",
             "complex powers and transcendentals",
             "public x86 support",
         ):
@@ -2679,6 +2683,177 @@ class X86ParityLedgerTests(unittest.TestCase):
         with self.assertRaisesRegex(ledger.LedgerError, "closed libc-math-complex command"):
             ledger.validate_ledger(data)
 
+    def test_elementary_sqrt_fenv_remains_a_closed_non_capability_artifact(
+        self,
+    ) -> None:
+        data = self.data()
+        text_math = self.family(data, "libc.text-math-locale-stdio")
+        self.assertEqual(text_math["status"], "planned")
+        artifacts = text_math["verified_artifact"]
+        assert isinstance(artifacts, list) and len(artifacts) == 11
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict)
+            and entry["id"] == "static-c-elementary-sqrt-fenv"
+        )
+        self.assertNotIn("capabilities", artifact)
+        for owner in (
+            "libc/src/c_abi/x86_64/elementary_sqrt.rs",
+            "libc/src/c_abi/x86_64/fenv.rs",
+            "include/fenv.h",
+            "include/math.h",
+            "compat/x86_64/libc_elementary_sqrt_fenv_probe.c",
+            "compat/x86_64/libc_elementary_sqrt_fenv_start.S",
+            "compat/x86_64/run_libc_elementary_sqrt_fenv.sh",
+            "compat/x86_64/tests/test_runner.py",
+            "compat/x86_64/validate_parity_ledger.py",
+            "scripts/check_structure.py",
+        ):
+            self.assertIn(owner, artifact["source_owners"])
+        for phrase in (
+            "elementary square-root/fenv artifact",
+            "sqrt",
+            "sqrtf",
+            "sqrtl",
+            "MXCSR",
+            "x87",
+            "all four rounding modes",
+            "FE_INVALID",
+            "every other elementary function",
+            "math errno policy",
+            "family completion",
+            "promotion",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, artifact["description"])
+        self.assertEqual(
+            {evidence["command"] for evidence in artifact["native_evidence"]},
+            {"./scripts/dev-x86_64.sh libc-elementary-sqrt-fenv"},
+        )
+
+        changed = self.data()
+        changed_artifacts = self.family(
+            changed, "libc.text-math-locale-stdio"
+        )["verified_artifact"]
+        assert isinstance(changed_artifacts, list)
+        changed_artifact = next(
+            entry
+            for entry in changed_artifacts
+            if isinstance(entry, dict)
+            and entry["id"] == "static-c-elementary-sqrt-fenv"
+        )
+        changed_artifact["description"] = changed_artifact["description"].replace(
+            "public x86 support", "x86 support"
+        )
+        with self.assertRaisesRegex(ledger.LedgerError, "public x86 support"):
+            ledger.validate_ledger(changed)
+
+        changed = self.data()
+        changed_artifacts = self.family(
+            changed, "libc.text-math-locale-stdio"
+        )["verified_artifact"]
+        assert isinstance(changed_artifacts, list)
+        changed_artifact = next(
+            entry
+            for entry in changed_artifacts
+            if isinstance(entry, dict)
+            and entry["id"] == "static-c-elementary-sqrt-fenv"
+        )
+        evidence = changed_artifact["native_evidence"]
+        assert isinstance(evidence, list) and isinstance(evidence[0], dict)
+        evidence[0]["command"] = "./scripts/dev-x86_64.sh libc-fenv"
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "closed libc-elementary-sqrt-fenv command"
+        ):
+            ledger.validate_ledger(changed)
+
+    def test_fenv_sensitive_rounding_remains_a_closed_non_capability_artifact(
+        self,
+    ) -> None:
+        data = self.data()
+        text_math = self.family(data, "libc.text-math-locale-stdio")
+        self.assertEqual(text_math["status"], "planned")
+        artifacts = text_math["verified_artifact"]
+        assert isinstance(artifacts, list) and len(artifacts) == 11
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict)
+            and entry["id"] == "static-c-fenv-sensitive-rounding"
+        )
+        self.assertNotIn("capabilities", artifact)
+        for owner in (
+            "libc/src/math_lrint.rs",
+            "libc/src/math_compat.rs",
+            "libc/src/c_abi/x86_64/fenv.rs",
+            "libc/src/c_abi/x86_64/fenv_rounding.rs",
+            "include/fenv.h",
+            "include/math.h",
+            "compat/x86_64/libc_fenv_rounding_probe.c",
+            "compat/x86_64/libc_fenv_rounding_start.S",
+            "compat/x86_64/run_libc_fenv_rounding.sh",
+            "compat/x86_64/tests/test_runner.py",
+            "compat/x86_64/validate_parity_ledger.py",
+            "scripts/check_structure.py",
+        ):
+            self.assertIn(owner, artifact["source_owners"])
+        for phrase in (
+            "`math.elementary-fenv-sensitive` rounding artifact",
+            "rint",
+            "rintf",
+            "rintl",
+            "nearbyint",
+            "nearbyintf",
+            "nearbyintl",
+            "all four current rounding modes",
+            "preexisting",
+            "`exp10*`/`pow10*`",
+            "`fdim*`",
+            "family completion",
+            "promotion",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, artifact["description"])
+        self.assertEqual(
+            {evidence["command"] for evidence in artifact["native_evidence"]},
+            {"./scripts/dev-x86_64.sh libc-fenv-rounding"},
+        )
+
+        changed = self.data()
+        changed_artifacts = self.family(
+            changed, "libc.text-math-locale-stdio"
+        )["verified_artifact"]
+        assert isinstance(changed_artifacts, list)
+        changed_artifact = next(
+            entry
+            for entry in changed_artifacts
+            if isinstance(entry, dict)
+            and entry["id"] == "static-c-fenv-sensitive-rounding"
+        )
+        changed_artifact["description"] = changed_artifact["description"].replace(
+            "public x86 support", "x86 support"
+        )
+        with self.assertRaisesRegex(ledger.LedgerError, "public x86 support"):
+            ledger.validate_ledger(changed)
+
+        changed = self.data()
+        changed_artifacts = self.family(
+            changed, "libc.text-math-locale-stdio"
+        )["verified_artifact"]
+        assert isinstance(changed_artifacts, list)
+        changed_artifact = next(
+            entry
+            for entry in changed_artifacts
+            if isinstance(entry, dict)
+            and entry["id"] == "static-c-fenv-sensitive-rounding"
+        )
+        evidence = changed_artifact["native_evidence"]
+        assert isinstance(evidence, list) and isinstance(evidence[0], dict)
+        evidence[0]["command"] = "./scripts/dev-x86_64.sh libc-fenv"
+        with self.assertRaisesRegex(ledger.LedgerError, "closed libc-fenv-rounding command"):
+            ledger.validate_ledger(changed)
+
     def test_named_locale_multibyte_remains_a_closed_non_capability_artifact(
         self,
     ) -> None:
@@ -2686,7 +2861,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         text_math = self.family(data, "libc.text-math-locale-stdio")
         self.assertEqual(text_math["status"], "planned")
         artifacts = text_math["verified_artifact"]
-        assert isinstance(artifacts, list) and len(artifacts) == 9
+        assert isinstance(artifacts, list) and len(artifacts) == 11
         artifact = next(
             entry
             for entry in artifacts
@@ -2790,7 +2965,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         data = self.data()
         text_math = self.family(data, "libc.text-math-locale-stdio")
         artifacts = text_math["verified_artifact"]
-        assert isinstance(artifacts, list) and len(artifacts) == 9
+        assert isinstance(artifacts, list) and len(artifacts) == 11
         artifact = next(
             entry
             for entry in artifacts

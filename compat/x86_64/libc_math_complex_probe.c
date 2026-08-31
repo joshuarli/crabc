@@ -3,8 +3,8 @@
  *
  * The selected surface is intentionally tiny: binary32/binary64/x87
  * `__fpclassify*` and `__signbit*`, plus the C99 real/imaginary accessors and
- * conjugation for float, double, and long double complex. It excludes scalar
- * math, cabs/carg, projection, powers, transcendentals, errno/fenv behavior
+ * conjugation and C99 projection for float, double, and long double complex.
+ * It excludes scalar math, cabs/carg, powers, transcendentals, errno/fenv behavior
  * beyond named classification, libm, libc.so, and all lifecycle/runtime
  * claims.
  */
@@ -56,6 +56,9 @@ static long_real_function direct_cimagl = (cimagl);
 static float_complex_function direct_conjf = conjf;
 static double_complex_function direct_conj = conj;
 static long_complex_function direct_conjl = conjl;
+static float_complex_function direct_cprojf = cprojf;
+static double_complex_function direct_cproj = cproj;
+static long_complex_function direct_cprojl = cprojl;
 static double_classify_function direct_fpclassify = archive_fpclassify;
 static float_classify_function direct_fpclassifyf = archive_fpclassifyf;
 static double_classify_function direct_signbit = archive_signbit;
@@ -146,6 +149,68 @@ static int check_long_accessors_and_conjugation(void)
 	return 0;
 }
 
+static int check_float_projection(void)
+{
+	float complex ordinary = direct_cprojf(CMPLXF(-1.25f, -0.5f));
+	float complex projected_real = direct_cprojf(CMPLXF(HUGE_VALF, -2.0f));
+	float complex projected_imaginary = direct_cprojf(CMPLXF(2.0f, -HUGE_VALF));
+	float complex nan_only = direct_cprojf(CMPLXF(__builtin_nanf(""), -3.0f));
+
+	if (crealf(ordinary) != -1.25f || cimagf(ordinary) != -0.5f)
+		return 1;
+	if (!isinf(crealf(projected_real)) || signbit(crealf(projected_real)) ||
+		cimagf(projected_real) != 0.0f || !signbit(cimagf(projected_real)))
+		return 2;
+	if (!isinf(crealf(projected_imaginary)) ||
+		cimagf(projected_imaginary) != 0.0f ||
+		!signbit(cimagf(projected_imaginary)))
+		return 3;
+	if (!isnan(crealf(nan_only)) || cimagf(nan_only) != -3.0f)
+		return 4;
+	return 0;
+}
+
+static int check_double_projection(void)
+{
+	double complex ordinary = direct_cproj(CMPLX(-1.25, -0.5));
+	double complex projected_real = direct_cproj(CMPLX(HUGE_VAL, -2.0));
+	double complex projected_imaginary = direct_cproj(CMPLX(2.0, -HUGE_VAL));
+	double complex nan_only = direct_cproj(CMPLX(__builtin_nan(""), -3.0));
+
+	if (creal(ordinary) != -1.25 || cimag(ordinary) != -0.5)
+		return 1;
+	if (!isinf(creal(projected_real)) || signbit(creal(projected_real)) ||
+		cimag(projected_real) != 0.0 || !signbit(cimag(projected_real)))
+		return 2;
+	if (!isinf(creal(projected_imaginary)) ||
+		cimag(projected_imaginary) != 0.0 || signbit(cimag(projected_imaginary)) == 0)
+		return 3;
+	if (!isnan(creal(nan_only)) || cimag(nan_only) != -3.0)
+		return 4;
+	return 0;
+}
+
+static int check_long_projection(void)
+{
+	long double complex ordinary = direct_cprojl(CMPLXL(-1.25L, -0.5L));
+	long double complex projected_real = direct_cprojl(CMPLXL(HUGE_VALL, -2.0L));
+	long double complex projected_imaginary = direct_cprojl(CMPLXL(2.0L, -HUGE_VALL));
+	long double complex nan_only = direct_cprojl(CMPLXL(__builtin_nanl(""), -3.0L));
+
+	if (creall(ordinary) != -1.25L || cimagl(ordinary) != -0.5L)
+		return 1;
+	if (!isinf(creall(projected_real)) || direct_signbitl(creall(projected_real)) ||
+		cimagl(projected_real) != 0.0L || !direct_signbitl(cimagl(projected_real)))
+		return 2;
+	if (!isinf(creall(projected_imaginary)) ||
+		cimagl(projected_imaginary) != 0.0L ||
+		!direct_signbitl(cimagl(projected_imaginary)))
+		return 3;
+	if (!isnan(creall(nan_only)) || cimagl(nan_only) != -3.0L)
+		return 4;
+	return 0;
+}
+
 int crabc_x86_64_math_complex_probe(void)
 {
 	int status = check_scalar_classification();
@@ -163,7 +228,16 @@ int crabc_x86_64_math_complex_probe(void)
 	if (status != 0)
 		return 30 + status;
 	status = check_long_accessors_and_conjugation();
-	return status == 0 ? 0 : 40 + status;
+	if (status != 0)
+		return 40 + status;
+	status = check_float_projection();
+	if (status != 0)
+		return 50 + status;
+	status = check_double_projection();
+	if (status != 0)
+		return 60 + status;
+	status = check_long_projection();
+	return status == 0 ? 0 : 70 + status;
 }
 
 #ifndef CRABC_MATH_COMPLEX_FREESTANDING

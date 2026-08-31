@@ -98,6 +98,9 @@ conj
 conjf
 conjl
 connect
+cproj
+cprojf
+cprojl
 creal
 crealf
 creall
@@ -296,6 +299,9 @@ mtx_unlock
 munlock
 munmap
 nanosleep
+nearbyint
+nearbyintf
+nearbyintl
 nice
 open
 openat
@@ -388,6 +394,9 @@ rename
 rewind
 rewinddir
 rindex
+rint
+rintf
+rintl
 rmdir
 rust_eh_personality
 seekdir
@@ -450,6 +459,9 @@ sockatmark
 socket
 socketpair
 sprintf
+sqrt
+sqrtf
+sqrtl
 sscanf
 stat
 statfs

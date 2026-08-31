@@ -135,7 +135,8 @@ X86_RUNTIME_FOUNDATION_LDSO_SOURCES = {
 # descriptor creation, nanosleep, and clock_nanosleep, descriptor entry, selected
 # filesystem access, bounded fcntl
 # status control, bounded generic ioctl, and the
-# basic x87 classification/sign plus complex accessor/conjugation foundation.
+# basic x87 classification/sign plus complex accessor/conjugation/projection
+# foundation and selected fenv-sensitive rounding.
 # The older leaves remain source-only. Keeping exact file boundaries makes
 # every later C-runtime admission deliberate rather than a directory-wide x86
 # exception.
@@ -165,6 +166,9 @@ X86_RUNTIME_FOUNDATION_LIBC_SOURCES = {
     Path("libc/src/c_abi/x86_64/integer_parse.rs"),
     Path("libc/src/c_abi/x86_64/intmax_arithmetic.rs"),
     Path("libc/src/c_abi/x86_64/math_complex.rs"),
+    Path("libc/src/c_abi/x86_64/complex_projection.rs"),
+    Path("libc/src/c_abi/x86_64/elementary_sqrt.rs"),
+    Path("libc/src/c_abi/x86_64/fenv_rounding.rs"),
     Path("libc/src/c_abi/x86_64/memory_search.rs"),
     Path("libc/src/c_abi/x86_64/memory_sync.rs"),
     Path("libc/src/c_abi/x86_64/memfd_create.rs"),
@@ -4112,6 +4116,80 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
             errors.append(
                 "libc/src/c_abi/x86_64/fenv.rs: selected static fenv boundary "
                 f"is missing {required!r}"
+            )
+
+    elementary_sqrt_source = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "elementary_sqrt.rs"
+    )
+    elementary_sqrt_text = elementary_sqrt_source.read_text(errors="replace")
+    for required in (
+        "src/math/x86_64/sqrt.c",
+        "src/math/x86_64/sqrtf.c",
+        "src/math/x86_64/sqrtl.c",
+        ".global sqrt",
+        ".global sqrtf",
+        ".global sqrtl",
+        "sqrtsd xmm0, xmm0",
+        "sqrtss xmm0, xmm0",
+        "fld tbyte ptr [rsp + 8]",
+        "fsqrt",
+        "public x86 support",
+    ):
+        if required not in elementary_sqrt_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/elementary_sqrt.rs: selected static "
+                f"square-root boundary is missing {required!r}"
+            )
+
+    fenv_rounding_source = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "fenv_rounding.rs"
+    )
+    fenv_rounding_text = fenv_rounding_source.read_text(errors="replace")
+    for required in (
+        "src/math/rint.c",
+        "src/math/nearbyint.c",
+        "math_lrint.rs",
+        "math_compat.rs",
+        ".global rint",
+        ".global rintf",
+        ".global rintl",
+        ".global nearbyint",
+        ".global nearbyintf",
+        ".global nearbyintl",
+        "addsd",
+        "subsd",
+        "addss",
+        "subss",
+        "faddp",
+        "fsubp",
+        "call fetestexcept",
+        "call feclearexcept",
+        "public x86 support",
+    ):
+        if required not in fenv_rounding_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/fenv_rounding.rs: selected static "
+                f"fenv-sensitive rounding boundary is missing {required!r}"
+            )
+
+    complex_projection_source = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "complex_projection.rs"
+    )
+    complex_projection_text = complex_projection_source.read_text(errors="replace")
+    for required in (
+        "src/complex/{cproj,cprojf,cprojl}.c",
+        "complex_basic_exports.rs",
+        ".global cproj",
+        ".global cprojf",
+        ".global cprojl",
+        "fldz",
+        "fld tbyte ptr",
+        "public x86 support",
+    ):
+        if required not in complex_projection_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/complex_projection.rs: selected static "
+                f"complex projection boundary is missing {required!r}"
             )
 
     setjmp_source = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "setjmp.rs"
