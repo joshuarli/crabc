@@ -34,14 +34,14 @@ fn run(binary: &std::path::Path) -> Output {
 }
 
 #[test]
-fn native_mimalloc_owner_exit_realloc_continues_b_client_through_all_exit_paths() {
+fn native_mimalloc_owner_exit_realloc_replaces_source_through_b_persistent_owner_across_exit_paths() {
     let candidate = test_support::TempArtifact::new("native-mimalloc-owner-exit-realloc-candidate");
     compile_fixture(&candidate);
 
     let output = run(&candidate);
     assert!(
         output.status.success(),
-        "the selected native shadow rejected its post-exit realloc contract with {:?}: {}",
+        "the native mimalloc post-owner-exit realloc lifecycle regression failed with {:?}: {}",
         output.status.code(),
         String::from_utf8_lossy(&output.stderr),
     );

@@ -1,13 +1,15 @@
 /*
- * A exits with one source-shaped sole mapped-medium route. B's exact
- * `realloc` observes A's PageMap source facts but cannot enter A's torn-down
- * Theap or use B's engine as a replacement route. It must fail while leaving
- * A's client intact, after which generic pointer-first `free` releases it.
+ * A allocates one 64 KiB source client and exits. `pthread_join` publishes
+ * that completed owner lifecycle before main starts B. Pinned mimalloc's
+ * `mi_theap_realloc_zero` cannot retain A's client in place through B's
+ * persistent default owner: it allocates B's replacement, copies the bounded
+ * prefix, then consumes A's source client once through `mi_free`.
  *
- * This is a selected-shadow lifecycle fixture, not a general cross-thread
- * realloc claim. Its synchronized A/B handoff proves that the rejected
- * detached reallocation preserves A's original C client and contents, while
- * an independently allocated B-local client still supports replacement.
+ * This public-C/Pthreads regression first proves that an overflowing request
+ * leaves A's source intact. It then proves the valid replacement, including
+ * B's continued local lifecycle through normal return, `pthread_exit`, and
+ * deferred cancellation. It is not a general concurrent foreign-`realloc`
+ * claim and uses no allocator-private API.
  */
 #include <errno.h>
 #include <pthread.h>
@@ -48,10 +50,10 @@ static int terminal_proof_replacement_is_valid(const unsigned char *replacement)
 }
 
 /* `pthread_exit` and cancellation invoke this cleanup before their TSD
- * destructors. It covers the user-owned phase between B's terminal A free and
- * the native lifecycle finish: a completed A proof remains opaque and
- * unreleased while B independently resumes, uses, and re-parks its own
- * session. */
+ * destructors. It covers the user-owned phase after B's replacement has
+ * consumed A's source and before the native lifecycle finish: A's completion
+ * remains opaque and unreleased while B independently resumes, uses, and
+ * re-parks its own session. */
 static void terminal_proof_cleanup(void *opaque)
 {
     unsigned char *continued;
@@ -85,10 +87,11 @@ static int terminal_proof_cleanup_order_is_valid(void)
     return terminal_proof_cleanup_calls == expected;
 }
 
-/* This destructor runs after B has terminally freed A's route client, but
- * before libc calls the native owner finish. It proves that B may continue
- * its own local session at the exact pthread TSD ordering point; A's opaque
- * completion remains pending until that later native finish. */
+/* This destructor runs after B's successful replacement has consumed A's
+ * source client, but before libc calls the native owner finish. It proves
+ * that B may continue its own local session at the exact pthread TSD ordering
+ * point; A's opaque completion remains pending until that later native
+ * finish. */
 static void terminal_proof_destructor(void *value)
 {
     unsigned char *replacement = terminal_proof_replacement;
@@ -124,82 +127,79 @@ static void *owner_worker(void *opaque)
     return NULL;
 }
 
-static void *release_worker(void *opaque)
+static void *replacement_worker(void *opaque)
 {
+    unsigned char *source = shared_medium;
     unsigned char *replacement;
     unsigned char *continued;
     unsigned char *local;
 
     (void)opaque;
-    if (shared_medium == NULL)
+    if (source == NULL)
         return (void *)(uintptr_t)1;
     errno = 0;
-    replacement = realloc(shared_medium, SIZE_MAX);
+    replacement = realloc(source, SIZE_MAX);
     if (replacement != NULL)
         return (void *)(uintptr_t)2;
     if (errno != ENOMEM)
         return (void *)(uintptr_t)3;
-    if (shared_medium[0] != 0x61
-            || shared_medium[4095] != 0x62
-            || shared_medium[64 * 1024 - 1] != 0x63)
+    if (source[0] != 0x61
+            || source[4095] != 0x62
+            || source[64 * 1024 - 1] != 0x63)
         return (void *)(uintptr_t)4;
 
-    errno = 0;
-    replacement = realloc(shared_medium, replacement_size);
-    if (replacement != NULL)
-        return (void *)(uintptr_t)5;
-    if (errno != ENOMEM)
-        return (void *)(uintptr_t)6;
-    if (shared_medium[0] != 0x61
-            || shared_medium[4095] != 0x62
-            || shared_medium[64 * 1024 - 1] != 0x63)
-        return (void *)(uintptr_t)7;
-    free(shared_medium);
-    shared_medium = NULL;
-
-    replacement = malloc(64 * 1024);
-    if (replacement == NULL)
-        return (void *)(uintptr_t)8;
-    replacement[0] = 0x61;
-    replacement[4095] = 0x62;
-    replacement[64 * 1024 - 1] = 0x63;
-    replacement = realloc(replacement, replacement_size);
-    if (replacement == NULL)
-        return (void *)(uintptr_t)9;
-    if (!terminal_proof_replacement_is_valid(replacement)) {
-        free(replacement);
-        return (void *)(uintptr_t)10;
-    }
-    /* Generic pointer-first free has terminally released A's client. B now
-     * exercises only its own ordinary local replacement before its source
-     * finish settles the opaque A completion. */
-    errno = 0;
-    continued = realloc(replacement, 128 * 1024);
-    if (continued == NULL)
-        return (void *)(uintptr_t)11;
-    if (!terminal_proof_replacement_is_valid(continued)) {
-        free(continued);
-        return (void *)(uintptr_t)12;
-    }
-    replacement = continued;
+    /* Establish B's persistent local owner before it receives A's source.
+     * This client stays live while B replaces A's source and then continues
+     * its own replacement work. */
     local = malloc(73);
-    if (local == NULL) {
-        free(replacement);
-        return (void *)(uintptr_t)13;
-    }
+    if (local == NULL)
+        return (void *)(uintptr_t)5;
     local[0] = 0x71;
     local[72] = 0x72;
     if (local[0] != 0x71 || local[72] != 0x72) {
         free(local);
+        return (void *)(uintptr_t)6;
+    }
+    replacement = realloc(source, replacement_size);
+    if (replacement == NULL) {
+        free(local);
+        return (void *)(uintptr_t)7;
+    }
+    /* A successful source replacement has consumed `source`; withdraw every
+     * shared alias before B continues with only its replacement client. */
+    shared_medium = NULL;
+    if (!terminal_proof_replacement_is_valid(replacement)) {
+        free(local);
         free(replacement);
-        return (void *)(uintptr_t)14;
+        return (void *)(uintptr_t)8;
+    }
+    /* The source replacement is now B's ordinary client. Its next realloc,
+     * retained local client, and TSD continuation prove B remains usable
+     * until B's own pthread lifecycle finishes. */
+    errno = 0;
+    continued = realloc(replacement, 128 * 1024);
+    if (continued == NULL) {
+        free(local);
+        free(replacement);
+        return (void *)(uintptr_t)9;
+    }
+    if (!terminal_proof_replacement_is_valid(continued)) {
+        free(local);
+        free(continued);
+        return (void *)(uintptr_t)10;
+    }
+    replacement = continued;
+    if (local[0] != 0x71 || local[72] != 0x72) {
+        free(local);
+        free(replacement);
+        return (void *)(uintptr_t)11;
     }
     free(local);
     terminal_proof_replacement = replacement;
     if (pthread_setspecific(terminal_proof_destructor_key, (void *)(uintptr_t)1) != 0) {
         terminal_proof_replacement = NULL;
         free(replacement);
-        return (void *)(uintptr_t)15;
+        return (void *)(uintptr_t)12;
     }
     if (terminal_proof_exit_kind == TERMINAL_PROOF_CANCELLATION) {
         /* Main cannot request deferred cancellation until both cleanup
@@ -208,11 +208,11 @@ static void *release_worker(void *opaque)
          * first, then unlock, then the TSD destructor continues B's local
          * `realloc` before the native finish can release A's admission. */
         if (pthread_mutex_lock(&terminal_proof_cancel_mutex) != 0)
-            return (void *)(uintptr_t)16;
+            return (void *)(uintptr_t)13;
         terminal_proof_cancel_ready = 1;
         if (pthread_cond_signal(&terminal_proof_cancel_cond) != 0) {
             (void)pthread_mutex_unlock(&terminal_proof_cancel_mutex);
-            return (void *)(uintptr_t)17;
+            return (void *)(uintptr_t)14;
         }
         pthread_cleanup_push(terminal_proof_cancel_unlock,
                 &terminal_proof_cancel_mutex);
@@ -235,7 +235,7 @@ static void *release_worker(void *opaque)
 int main(void)
 {
     pthread_t owner;
-    pthread_t releaser;
+    pthread_t replacement;
     void *result = (void *)(uintptr_t)5;
     unsigned char *after;
 
@@ -265,9 +265,12 @@ int main(void)
         terminal_proof_destructor_failed = 0;
         if (pthread_create(&owner, NULL, owner_worker, NULL) != 0)
             return 1;
+        /* `pthread_join` completes A's publication and owner exit before
+         * main creates B, so the replacement path is serialized rather than
+         * a concurrent foreign-pointer race. */
         if (pthread_join(owner, &result) != 0 || result != NULL)
             return 2;
-        if (pthread_create(&releaser, NULL, release_worker, NULL) != 0)
+        if (pthread_create(&replacement, NULL, replacement_worker, NULL) != 0)
             return 3;
         result = (void *)(uintptr_t)6;
         if (terminal_proof_exit_kind == TERMINAL_PROOF_CANCELLATION) {
@@ -282,12 +285,12 @@ int main(void)
             }
             if (pthread_mutex_unlock(&terminal_proof_cancel_mutex) != 0)
                 return 6;
-            if (pthread_cancel(releaser) != 0)
+            if (pthread_cancel(replacement) != 0)
                 return 7;
             result = NULL;
-            if (pthread_join(releaser, &result) != 0 || result != PTHREAD_CANCELED)
+            if (pthread_join(replacement, &result) != 0 || result != PTHREAD_CANCELED)
                 return 8;
-        } else if (pthread_join(releaser, &result) != 0 || result != NULL) {
+        } else if (pthread_join(replacement, &result) != 0 || result != NULL) {
             return 9;
         }
         if (terminal_proof_destructor_calls != 1
