@@ -1370,7 +1370,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         expected_groups = (
             "timerfd-header-abi|signalfd-header-abi",
             "libc-timerfd|libc-signalfd|libc-sigpause|libc-sigisemptyset|libc-sigandset-sigorset|libc-sigpending|libc-sigrtmax|libc-sigrtmin|libc-sched-getscheduler|libc-sigaddset-sigdelset-sigfillset",
-            "libc-sched-yield",
+            "libc-sched-getcpu|libc-sched-yield",
             "sched-getscheduler-header-abi",
             "ctermid-header-abi|gethostid-header-abi|getpagesize-header-abi|gettid-header-abi|isatty-header-abi|tcgetpgrp-header-abi|tcsetpgrp-header-abi|getpass-header-abi|libc-ctermid|libc-gethostid|libc-getpagesize|libc-gettid|libc-isatty|libc-tcgetpgrp|libc-tcsetpgrp|libc-getpass|mkfifo-header-abi|mkfifoat-header-abi|libc-mkfifo|libc-mkfifoat|mktemp-header-abi|libc-mktemp",
             "readlinkat-header-abi|libc-readlinkat",
@@ -1423,7 +1423,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "xattr-header-abi",
             "madvise-reference",
             "ctype-header-abi|locale-profile-header-abi|locale-multibyte-header-abi|iconv-header-abi|wide-character-header-abi|locale-object-wide-header-abi|locale-narrow-header-abi",
-            "integer-arithmetic-header-abi|integer-parse-header-abi|float-parse-header-abi|getsubopt-header-abi|intmax-arithmetic-header-abi|credential-observation-header-abi|login-name-header-abi|child-reaping-header-abi|immediate-termination-header-abi|sched-yield-header-abi|bsearch-header-abi|linear-search-header-abi|qsort-header-abi|callback-algorithms-header-abi",
+            "integer-arithmetic-header-abi|integer-parse-header-abi|float-parse-header-abi|getsubopt-header-abi|intmax-arithmetic-header-abi|credential-observation-header-abi|login-name-header-abi|child-reaping-header-abi|immediate-termination-header-abi|sched-getcpu-header-abi|sched-yield-header-abi|bsearch-header-abi|linear-search-header-abi|qsort-header-abi|callback-algorithms-header-abi",
             "posix-exit-header-abi",
             "ffs-header-abi",
             "byte-strings-header-abi",
@@ -7186,6 +7186,135 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         )
         self.assertIn("sched-yield-header-abi", runner)
         self.assertIn("libc-sched-yield", runner)
+
+    def test_libc_static_c_abi_sched_getcpu_artifact_stays_vdso_free(
+        self,
+    ) -> None:
+        """The GNU CPU observation is one raw-fallback C ABI leaf."""
+
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        source_path = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "sched_getcpu.rs"
+        )
+        probe_path = ROOT / "compat" / "x86_64" / "libc_sched_getcpu_probe.c"
+        start_path = ROOT / "compat" / "x86_64" / "libc_sched_getcpu_start.S"
+        artifact_runner_path = (
+            ROOT / "compat" / "x86_64" / "run_libc_sched_getcpu.sh"
+        )
+        header_c_path = (
+            ROOT / "compat" / "x86_64" / "sched_getcpu_header_abi_probe.c"
+        )
+        header_cxx_path = (
+            ROOT / "compat" / "x86_64" / "sched_getcpu_header_abi_probe.cpp"
+        )
+        header_runner_path = (
+            ROOT / "compat" / "x86_64" / "run_sched_getcpu_header_abi.sh"
+        )
+        static_exports = {
+            line
+            for line in (
+                ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+            ).read_text(encoding="utf-8").splitlines()
+            if line and not line.startswith("#")
+        }
+        parity_ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        runner = RUNNER.read_text(encoding="utf-8")
+
+        for path in (
+            source_path,
+            probe_path,
+            start_path,
+            artifact_runner_path,
+            header_c_path,
+            header_cxx_path,
+            header_runner_path,
+        ):
+            self.assertTrue(path.is_file(), f"missing sched_getcpu artifact input: {path}")
+
+        source = source_path.read_text(encoding="utf-8")
+        probe = probe_path.read_text(encoding="utf-8")
+        start = start_path.read_text(encoding="utf-8")
+        artifact_runner = artifact_runner_path.read_text(encoding="utf-8")
+        header_runner = header_runner_path.read_text(encoding="utf-8")
+        sched_header = (ROOT / "include" / "sched.h").read_text(encoding="utf-8")
+
+        self.assertIn('#[path = "sched_getcpu.rs"]', static_root)
+        self.assertIn("sched_getcpu", static_exports)
+        for required in (
+            "musl 1.2.6 release commit",
+            "src/sched/sched_getcpu.c::sched_getcpu",
+            "VDSO_GETCPU_SYM",
+            "SYS_GETCPU",
+            "raw_syscall::syscall3",
+            "c_status(result)",
+            "raw syscall fallback",
+            'pub extern "C" fn sched_getcpu() -> c_int',
+            "scheduler policy",
+            "affinity",
+            "public x86 support",
+        ):
+            self.assertIn(required, source)
+        for forbidden in (
+            "crabc_core",
+            "crabc_mimalloc",
+            "sched_getaffinity(",
+            "sched_setaffinity(",
+            "sched_getparam(",
+            "sched_getscheduler(",
+            "sched_yield(",
+            "__tls_get_addr",
+        ):
+            self.assertNotIn(forbidden, source)
+
+        self.assertIn("int sched_getcpu(void);", sched_header)
+        for required in (
+            "#include <sched.h>",
+            "SYS_getcpu == 309",
+            "sched_getcpu_signature",
+            "stale errno",
+            "CRABC_SCHED_GETCPU_FREESTANDING",
+        ):
+            self.assertIn(required, probe)
+        for required in (
+            "ARCH_SET_FS",
+            "mov %rsi, %fs:0",
+            "crabc_x86_64_sched_getcpu_probe",
+        ):
+            self.assertIn(required, start)
+        for header_path in (header_c_path, header_cxx_path):
+            header_probe = header_path.read_text(encoding="utf-8")
+            self.assertIn("sched_getcpu_signature", header_probe)
+            self.assertIn("sched_getcpu", header_probe)
+        for required in (
+            "strict",
+            "GNU",
+            "-std=c++17",
+            "nm --undefined-only",
+            "mangled",
+        ):
+            self.assertIn(required, header_runner)
+        for required in (
+            "static_c_abi_exports.txt",
+            "run_sched_getcpu_header_abi.sh",
+            "-nostdlib -static",
+            "-Wl,-e,_start",
+            "sched_getcpu lacks getcpu syscall 309",
+            "initial errno TLS",
+            "env -i",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn("--whole-archive", artifact_runner)
+        self.assertIn('id = "static-c-sched-getcpu"', parity_ledger)
+        self.assertIn(
+            'command = "./scripts/dev-x86_64.sh libc-sched-getcpu"',
+            parity_ledger,
+        )
+        self.assertIn("sched-getcpu-header-abi", runner)
+        self.assertIn("libc-sched-getcpu", runner)
 
     def test_libc_static_c_abi_pthread_cpuclock_artifact_stays_self_only(
         self,

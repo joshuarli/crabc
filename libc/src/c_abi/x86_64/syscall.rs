@@ -32,7 +32,8 @@
 //! private condition-variable handoff use mmap, munmap, futex, gettid
 //! identity validation, the selected raw thread exit, the direct C11
 //! `thrd_yield` sched_yield=24 boundary, and the separate status-returning
-//! POSIX `sched_yield` boundary here. The separately selected
+//! POSIX `sched_yield` boundary and GNU current-CPU observation use this
+//! module. The separately selected
 //! bootstrapped-main pthread task-name pair uses direct prctl=157 here;
 //! it does not expose a general prctl C API. Static Initial
 //! TLS v1 additionally uses arch_prctl(ARCH_SET_FS) while it validates and
@@ -429,6 +430,7 @@ pub(crate) const SYS_RECVMMSG: i64 = 299;
 pub(crate) const SYS_PRLIMIT64: i64 = 302;
 pub(crate) const SYS_SYNCFS: i64 = 306;
 pub(crate) const SYS_SENDMMSG: i64 = 307;
+pub(crate) const SYS_GETCPU: i64 = 309;
 pub(crate) const SYS_RENAMEAT2: i64 = 316;
 pub(crate) const SYS_GETRANDOM: i64 = 318;
 pub(crate) const SYS_MEMFD_CREATE: i64 = 319;

@@ -1178,6 +1178,7 @@ CHILD_REAPING_SYMBOLS = ("wait", "waitpid", "waitid")
 IMMEDIATE_TERMINATION_SYMBOLS = ("_Exit",)
 POSIX_EXIT_SYMBOLS = ("_exit",)
 SCHED_YIELD_SYMBOLS = ("sched_yield",)
+SCHED_GETCPU_SYMBOLS = ("sched_getcpu",)
 
 CALLBACK_ALGORITHM_SYMBOLS = ("bsearch", "__qsort_r", "qsort", "qsort_r")
 
@@ -15774,6 +15775,224 @@ def require_static_sched_yield_artifact(family: Mapping[str, Any]) -> None:
         require(
             snippet in dispatcher,
             f"static-c-sched-yield dispatcher omits {snippet}",
+        )
+
+
+def require_static_sched_getcpu_artifact(family: Mapping[str, Any]) -> None:
+    """Keep GNU current-CPU observation to musl's vDSO-free fallback."""
+
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.posix-runtime].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [
+        entry for entry in artifacts if entry.get("id") == "static-c-sched-getcpu"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.posix-runtime must contain exactly one static-c-sched-getcpu artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-sched-getcpu must not promote libc.posix-runtime",
+    )
+    artifact = matching[0]
+    require(
+        "capabilities" not in artifact,
+        "static-c-sched-getcpu must not carry capabilities",
+    )
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for phrase in (
+        "GNU `sched_getcpu`",
+        "raw-syscall-fallback",
+        "src/sched/sched_getcpu.c::sched_getcpu",
+        "VDSO_GETCPU_SYM",
+        "raw Linux fallback",
+        "stale errno",
+        "getcpu=309",
+        "`-1` with `errno=EPERM`",
+        "candidate-only",
+        "strict/POSIX/XOPEN",
+        "CPU/NUMA/cache",
+        "scheduler policy/parameters/priority/yield",
+        "clocks/timers/calendar/timezone/environment",
+        "family completion, promotion, or public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"static-c-sched-getcpu description omits {phrase}",
+        )
+
+    owners = set(
+        nonempty_strings(
+            artifact["source_owners"], "static-c-sched-getcpu.source_owners"
+        )
+    )
+    for owner in (
+        "crabc-core/src/thread.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/sched_getcpu.rs",
+        "libc/src/c_abi/x86_64/errno.rs",
+        "libc/src/c_abi/x86_64/syscall.rs",
+        "include/sched.h",
+        "compat/x86_64/sched_getcpu_header_abi_probe.c",
+        "compat/x86_64/sched_getcpu_header_abi_probe.cpp",
+        "compat/x86_64/run_sched_getcpu_header_abi.sh",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/libc_sched_getcpu_probe.c",
+        "compat/x86_64/libc_sched_getcpu_start.S",
+        "compat/x86_64/run_libc_sched_getcpu.sh",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "scripts/dev-x86_64.sh",
+        "scripts/check_structure.py",
+    ):
+        require(
+            owner in owners,
+            f"static-c-sched-getcpu source ownership omits {owner}",
+        )
+
+    prerequisite_text = " ".join(
+        nonempty_strings(
+            artifact["x86_abi_prerequisites"],
+            "static-c-sched-getcpu.x86_abi_prerequisites",
+        )
+    )
+    for phrase in (
+        "int sched_getcpu(void)",
+        "eax",
+        "getcpu=309",
+        "rdi",
+        "rsi/rdx",
+        "c_status",
+        "src/sched/sched_getcpu.c::sched_getcpu",
+        "VDSO_GETCPU_SYM",
+        "syscall(SYS_getcpu, &cpu, 0, 0)",
+        "vDSO resolver",
+        "stale errno",
+        "prctl=157",
+        "seccomp=317",
+        "-1/EPERM",
+        "not evidence about musl's optional vDSO path",
+        "Variant-II %fs:0",
+    ):
+        require(
+            phrase in prerequisite_text,
+            f"static-c-sched-getcpu ABI prerequisites omit {phrase}",
+        )
+
+    header_text = " ".join(
+        nonempty_strings(
+            artifact["x86_header_prerequisites"],
+            "static-c-sched-getcpu.x86_header_prerequisites",
+        )
+    )
+    for phrase in (
+        "GNU C11/C++17",
+        "int sched_getcpu(void)",
+        "getcpu=309",
+        "unmangled C++ reference",
+        "Strict, POSIX, and XOPEN",
+        "_GNU_SOURCE",
+        "installed-header completion",
+    ):
+        require(
+            phrase in header_text,
+            f"static-c-sched-getcpu header prerequisites omit {phrase}",
+        )
+
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-sched-getcpu"},
+        "static-c-sched-getcpu must use the closed libc-sched-getcpu command",
+    )
+    scope = evidence[0].get("scope")
+    require(
+        isinstance(scope, str)
+        and all(
+            phrase in scope
+            for phrase in (
+                "Pinned-musl 1.2.6 project-header normal C reference",
+                "strict/POSIX/XOPEN/GNU C/C++",
+                "`-nostdlib -static`",
+                "normal nonnegative sched_getcpu observations preserve stale errno",
+                "candidate-only BPF seccomp-forced raw EPERM",
+                "getcpu=309",
+                "vDSO-free closure",
+                "env -i",
+                "CPU topology/migration policy",
+                "promotion",
+                "public x86 support",
+            )
+        ),
+        "static-c-sched-getcpu evidence must retain its observable bounded contract",
+    )
+    oracle = artifact["oracle"]
+    assert isinstance(oracle, list)
+    oracle_text = " ".join(
+        str(entry.get("role", "")) for entry in oracle if isinstance(entry, Mapping)
+    )
+    require(
+        "src/sched/sched_getcpu.c::sched_getcpu" in oracle_text
+        and "syscall(SYS_getcpu)" in oracle_text
+        and "VDSO_GETCPU_SYM" in oracle_text,
+        "static-c-sched-getcpu must retain the exact musl fallback mapping",
+    )
+    exports = set(
+        static_c_abi_export_names(
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        )
+    )
+    require(
+        set(SCHED_GETCPU_SYMBOLS) <= exports,
+        "static-c-sched-getcpu must retain its exact selected export set",
+    )
+    source = (ROOT / "libc" / "src" / "c_abi" / "x86_64" / "sched_getcpu.rs").read_text(
+        encoding="utf-8"
+    )
+    for phrase in (
+        "src/sched/sched_getcpu.c::sched_getcpu",
+        "VDSO_GETCPU_SYM",
+        "raw syscall fallback",
+        "raw_syscall::SYS_GETCPU",
+        "raw_syscall::syscall3",
+        "c_status(result)",
+        'pub extern "C" fn sched_getcpu() -> c_int',
+        "public x86 support",
+    ):
+        require(
+            phrase in source,
+            f"static-c-sched-getcpu source omits {phrase}",
+        )
+    for forbidden in (
+        "crabc_core",
+        "crabc_mimalloc",
+        "sched_getaffinity(",
+        "sched_setaffinity(",
+        "sched_getparam(",
+        "sched_getscheduler(",
+        "sched_yield(",
+        "__tls_get_addr",
+    ):
+        require(
+            forbidden not in source,
+            f"static-c-sched-getcpu source must not select {forbidden}",
+        )
+    dispatcher = (ROOT / "scripts" / "dev-x86_64.sh").read_text(encoding="utf-8")
+    for snippet in (
+        "run_sched_getcpu_header_abi()",
+        "run_libc_sched_getcpu_probe()",
+        "sched-getcpu-header-abi)",
+        "libc-sched-getcpu)",
+    ):
+        require(
+            snippet in dispatcher,
+            f"static-c-sched-getcpu dispatcher omits {snippet}",
         )
 
 
@@ -41218,6 +41437,7 @@ def validate_ledger(
     require_immediate_termination_artifact(by_id["libc.posix-runtime"])
     require_static_posix_exit_artifact(by_id["libc.posix-runtime"])
     require_static_sched_yield_artifact(by_id["libc.posix-runtime"])
+    require_static_sched_getcpu_artifact(by_id["libc.posix-runtime"])
     require_readlinkat_artifact(by_id["libc.posix-runtime"])
     require_callback_algorithms_artifact(by_id["libc.posix-runtime"])
     require_clock_gettime_artifact(by_id["libc.posix-runtime"])

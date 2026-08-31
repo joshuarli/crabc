@@ -705,6 +705,7 @@ scalblnl
 scalbn
 scalbnf
 scalbnl
+sched_getcpu
 sched_getscheduler
 sched_yield
 secure_getenv

@@ -72,6 +72,7 @@ typedef struct cpu_set_t {
 #define CLONE_IO            0x80000000
 
 int clone(int (*)(void *), void *, int, void *, ...);
+int sched_getcpu(void);
 #endif
 
 int sched_get_priority_max(int);

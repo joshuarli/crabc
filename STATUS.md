@@ -1406,6 +1406,20 @@ does not select scheduler policy/parameters, affinity, thread lifecycle,
 process control, CRT, loader, sysroot, family completion, promotion, or public
 x86 support.
 
+`./scripts/dev-x86_64.sh libc-sched-getcpu` is a distinct private
+`static-c-sched-getcpu` GNU current-CPU observation artifact, not scheduler or
+time support. Its GNU-only C/C++ `<sched.h>` declaration gate and
+pinned-musl/true-static fixture map the result and errno convention to musl
+1.2.6 `src/sched/sched_getcpu.c::sched_getcpu`. Musl may use a private x86
+vDSO resolver/cache before its direct fallback; this static leaf deliberately
+uses only the direct `getcpu=309` fallback, with no resolver or dynamic state.
+Normal nonnegative observations preserve stale `errno`; a candidate-only
+seccomp denial proves that fallback's `-1`/`EPERM` conversion and is not a
+comparison of musl's optional vDSO path. CPU/NUMA/cache output, topology or
+migration policy, affinity, scheduler policy/parameters/priority/yield,
+thread state, clocks/timers/calendar/timezone/environment, CRT, loader,
+sysroot, family completion, promotion, and public x86 support remain excluded.
+
 `./scripts/dev-x86_64.sh libc-timegm` is a distinct private
 `static-c-timegm-utc` artifact in still-planned `libc.posix-runtime`. Its
 pinned-musl and true-static C fixture selects only GNU/BSD `timegm` as a

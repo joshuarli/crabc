@@ -5056,6 +5056,58 @@ native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc
 oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source and declaration/behavior oracle for src/sched/sched_yield.c::sched_yield: syscall(SYS_sched_yield) applies ordinary status/errno translation, unlike C11 thrd_yield's raw-result discard." }, { kind = "kernel-abi", source = "Linux 5.10 x86-64 ABI", role = "sched_yield=24 no-argument rax result and fixture-only prctl=157/seccomp=317 forced raw-EPERM contract." }, { kind = "elf-abi", source = "System V AMD64 psABI", role = "No-argument signed-int C ABI and freestanding static initial-exec errno fixture contract." }]
 
 [[family.verified_artifact]]
+id = "static-c-sched-getcpu"
+description = "Private native x86 static GNU `sched_getcpu` raw-syscall-fallback observation artifact inside still-planned `libc.posix-runtime`. One project-header C fixture first executes through pinned musl and then through a true dependency-free `-nostdlib -static` candidate linked only with the selected `crabc-libc` archive. Pinned musl 1.2.6 `src/sched/sched_getcpu.c::sched_getcpu` can use its private x86 `VDSO_GETCPU_SYM` resolver/cache before its direct `getcpu` fallback; this leaf deliberately selects only that raw Linux fallback, with no vDSO resolver or dynamic process-lifetime state. Normal nonnegative current-CPU observations preserve stale errno, while a candidate-only fixture-local seccomp denial proves raw `getcpu=309` becomes `-1` with `errno=EPERM`; that forced raw-error phase is intentionally not a musl vDSO comparison. The GNU-only C/C++ header matrix proves exactly `int sched_getcpu(void)` and unmangled linkage; strict/POSIX/XOPEN profiles hide it. This artifact selects no CPU/NUMA/cache result, topology or migration policy, affinity, scheduler policy/parameters/priority/yield, thread state, clocks/timers/calendar/timezone/environment, libc.so, CRT, loader, sysroot, dynamic TLS lifecycle, family completion, promotion, or public x86 support."
+source_owners = [
+  "compat/upstreams.toml",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "crabc-core/src/thread.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/sched_getcpu.rs",
+  "libc/src/c_abi/x86_64/errno.rs",
+  "libc/src/c_abi/x86_64/syscall.rs",
+  "libc/src/c_abi/x86_64/static_tls.rs",
+  "include/features.h",
+  "include/sched.h",
+  "include/sys/types.h",
+  "include/time.h",
+  "include/sys/prctl.h",
+  "include/sys/syscall.h",
+  "include/bits/alltypes.h",
+  "include/bits/syscall.h",
+  "compat/x86_64/sched_getcpu_header_abi_probe.c",
+  "compat/x86_64/sched_getcpu_header_abi_probe.cpp",
+  "compat/x86_64/run_sched_getcpu_header_abi.sh",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/libc_sched_getcpu_probe.c",
+  "compat/x86_64/libc_sched_getcpu_start.S",
+  "compat/x86_64/run_libc_sched_getcpu.sh",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "compat/x86_64/aarch64_parity_inventory.py",
+  "compat/x86_64/aarch64_parity_inventory.json",
+  "compat/x86_64/README.md",
+  "STATUS.md",
+  "x86-64.md",
+  "scripts/dev-x86_64.sh",
+  "scripts/check_structure.py",
+]
+x86_abi_prerequisites = [
+  "The SysV AMD64 GNU `int sched_getcpu(void)` ABI consumes no C argument registers and returns the signed int in eax. Linux 5.10 x86-64 getcpu=309 receives private unsigned CPU storage in rdi and null node/cache words in rsi/rdx; raw zero returns that nonnegative CPU, while a raw negative Linux error becomes -1 plus the calling initial-TLS errno through c_status.",
+  "Pinned musl 1.2.6 src/sched/sched_getcpu.c::sched_getcpu maps the public result and errno contract. The existing target-local crabc-core/src/thread.rs seam separately uses direct getcpu with CPU/NUMA output; this C ABI leaf remains an independent CPU-only mapping. Musl's x86 VDSO_GETCPU_SYM resolver/cache is a separate private fast path; this static artifact deliberately retains only musl's direct syscall(SYS_getcpu, &cpu, 0, 0) fallback and must not add a vDSO resolver, atomics, or dynamic state.",
+  "Normal candidate and pinned-musl executions require a nonnegative instantaneous CPU observation and stale errno preservation without assuming CPU stability across calls. Fixture-only classic BPF after PR_SET_NO_NEW_PRIVS through prctl=157 and seccomp=317 denies only getcpu=309 with EPERM; the candidate's -1/EPERM result proves its selected raw-fallback translator and is not evidence about musl's optional vDSO path.",
+  "The final static candidate has the archive-owned PT_TLS initial errno datum with direct Variant-II %fs:0/TPOFF access and no TLSGD/TLSLD/TLSDESC/GOTTPOFF/DTPMOD/DTPOFF form or __tls_get_addr. The test-only entry shim supplies one thread-pointer self word; it does not claim CRT, dynamic TLS, pthread, or loader behavior.",
+]
+x86_header_prerequisites = [
+  "Pinned-musl/project GNU C11/C++17 sched.h probes require exactly `int sched_getcpu(void)`, getcpu=309, and an unmangled C++ reference. Strict, POSIX, and XOPEN C11/C++17 probes require the declaration to remain hidden, matching musl's _GNU_SOURCE profile.",
+  "The fixture preprocesses only project sched.h, sys/types.h, time.h, sys/prctl.h, sys/syscall.h, features.h, bits/alltypes.h, and bits/syscall.h. It is declaration and selected static-link evidence, not installed-header completion or a scheduler/time capability claim.",
+]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-sched-getcpu", scope = "Pinned-musl 1.2.6 project-header normal C reference plus the separate strict/POSIX/XOPEN/GNU C/C++ declaration gate and a true dependency-free x86 crabc-libc archive with a `-nostdlib -static` candidate. The fixture proves normal nonnegative sched_getcpu observations preserve stale errno; its candidate-only BPF seccomp-forced raw EPERM proves the selected getcpu=309 fallback returns -1/EPERM without claiming musl's optional vDSO path. Header/archive/final-ELF/source/disassembly checks require exactly the GNU export, direct getcpu=309 syscall, initial errno TLS, and a vDSO-free closure under env -i while rejecting an interpreter/DT_NEEDED/unresolved symbol, dynamic TLS resolver, affinity/policy/priority/yield, clocks/timers/calendar/timezone, or ambient runtime. It excludes CPU topology/migration policy, scheduler capability, thread state, libc.so, CRT, loader, sysroot, family completion, promotion, and public x86 support." }]
+oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source and GNU declaration/behavior oracle for src/sched/sched_getcpu.c::sched_getcpu: the selected raw syscall(SYS_getcpu) fallback returns the CPU or ordinary status/errno translation, while x86 may first use private VDSO_GETCPU_SYM state." }, { kind = "kernel-abi", source = "Linux 5.10 x86-64 ABI", role = "getcpu=309 rdi/rsi/rdx private-output and raw-errno contract plus fixture-only prctl=157/seccomp=317 EPERM observation boundary." }, { kind = "elf-abi", source = "System V AMD64 psABI", role = "No-argument signed-int C ABI, direct syscall register convention, and freestanding static initial-exec errno TLS boundary." }]
+
+[[family.verified_artifact]]
 id = "static-c-readiness-signal-waits"
 description = "Private native x86 selected-static-archive readiness/signal-waits block. One dependency-free `crabc-libc` archive resolves only `poll`, GNU `ppoll`, `select`, `pselect`, `pause`, and `sigsuspend` into a freestanding C fixture after an equivalent pinned-musl execution. The fixture uses already-selected pipe and simple signal-control calls only as plumbing, then proves empty/readable/hangup/invalid descriptor readiness, copied public timeout records, select's local timeval normalization and validation, atomic temporary-mask delivery/restoration for ppoll/pselect/sigsuspend, and the emitted direct pause syscall path. This artifact is deliberately narrower than readiness, event, or signal capabilities. It does not exercise epoll/eventfd; a separate artifact owns those archive exports. C socket/open/path/fcntl/vector-I/O APIs, AIO, generic signal delivery or signal-wait APIs, process lifecycle, timers, pthread cancellation or mask policy, libc.so, CRT, dynamic TLS, loader, sysroot, allocator, or public x86 support remain excluded."
 source_owners = [

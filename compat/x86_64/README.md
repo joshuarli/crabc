@@ -256,6 +256,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh child-reaping-header-abi
 ./scripts/dev-x86_64.sh immediate-termination-header-abi
 ./scripts/dev-x86_64.sh posix-exit-header-abi
+./scripts/dev-x86_64.sh sched-getcpu-header-abi
 ./scripts/dev-x86_64.sh sched-yield-header-abi
 ./scripts/dev-x86_64.sh callback-algorithms-header-abi
 ./scripts/dev-x86_64.sh ffs-header-abi
@@ -497,6 +498,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-descriptor-pipeline
 ./scripts/dev-x86_64.sh libc-timestamp-updates
 ./scripts/dev-x86_64.sh libc-process-resources
+./scripts/dev-x86_64.sh libc-sched-getcpu
 ./scripts/dev-x86_64.sh libc-sched-yield
 ./scripts/dev-x86_64.sh libc-readiness-waits
 ./scripts/dev-x86_64.sh libc-system-observation
@@ -1298,6 +1300,12 @@ POSIX, XOPEN, and GNU C11/C++17 `<sched.h>` declarations for
 `int sched_yield(void)`. It proves the unconditional no-argument signed-int
 declaration and unmangled C++ linkage only; it is not scheduler-policy,
 affinity, thread-lifecycle, or general-header-completion evidence.
+
+`sched-getcpu-header-abi` separately compiles project-first and pinned-musl
+GNU C11/C++17 `<sched.h>` declarations for `int sched_getcpu(void)`, with
+strict, POSIX, and XOPEN profiles required to hide it. It proves only the
+GNU declaration and unmangled C++ linkage, not CPU affinity/topology,
+scheduler policy, time support, or general-header completion.
 
 `callback-algorithms-header-abi` compiles project-first and pinned-musl C/C++
 `<stdlib.h>` declarations for `bsearch`, `qsort`, and GNU/BSD `qsort_r`.
@@ -4123,6 +4131,18 @@ stale `errno` unchanged, while fixture-local seccomp forces raw `EPERM` and
 proves `-1` with `errno=EPERM`. It excludes scheduler handoff, fairness,
 policy/parameters, affinity, C11/pthread and process lifecycle, general
 runtime, family completion, promotion, and public x86 support.
+
+`libc-sched-getcpu` is a distinct private `static-c-sched-getcpu` GNU
+current-CPU observation artifact, not a scheduler or time capability. Its
+project-header fixture first runs against pinned musl and then through a true
+`-nostdlib -static` candidate. Musl's x86 source may use a private vDSO
+resolver/cache before its direct fallback; this artifact implements and proves
+only direct `getcpu=309`, so a candidate-only seccomp-forced `EPERM` validates
+the raw `-1`/errno conversion rather than comparing musl's vDSO route. Normal
+nonnegative observations preserve stale errno. It excludes CPU/NUMA/cache
+output, topology/migration policy, affinity, scheduler policy/parameters/
+priority/yield, thread state, clocks/timers/calendar/timezone/environment,
+general runtime, family completion, promotion, and public x86 support.
 
 `libc-readiness-waits` is the fixture for a separately recorded
 `static-c-readiness-signal-waits` `verified_artifact` gate over that archive,
