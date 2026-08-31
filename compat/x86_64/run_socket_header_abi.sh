@@ -5,9 +5,9 @@
 # headers are placed first for the candidate pass; neither pass links or
 # selects crabc-libc. A separate tiny C executable evaluates the installed
 # IPv6 address-classification macros against both header sets, while the C/C++
-# probes retain the immutable in6addr_any declaration and C++ data-symbol
-# linkage. Socket options and vectored/ancillary-message APIs are intentionally
-# outside this declaration slice.
+# probes retain the immutable in6addr_any and in6addr_loopback declarations and
+# C++ data-symbol linkage. Socket options and vectored/ancillary-message APIs
+# are intentionally outside this declaration slice.
 set -euo pipefail
 
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -56,10 +56,24 @@ check_cxx_in6addr_any_linkage() {
     fi
 }
 
+check_cxx_in6addr_loopback_linkage() {
+    local tree="$1"
+    local object="$2"
+    local undefined
+
+    undefined="$(nm --undefined-only "$object")"
+    printf '%s\n' "$undefined" | grep -Eq '[[:space:]]in6addr_loopback$' ||
+        fail "$tree C++ probe does not retain C linkage for in6addr_loopback"
+    if printf '%s\n' "$undefined" | grep -Eq '_Z.*in6addr_loopback'; then
+        fail "$tree C++ probe retained a mangled in6addr_loopback reference"
+    fi
+}
+
 # First prove that the fixtures match the pinned musl declarations themselves.
 "$ORACLE_CC" -std=c11 -fsyntax-only "$c_probe"
 "$ORACLE_CC" -std=c++17 -x c++ -c "$cxx_probe" -o "$musl_cxx_object"
 check_cxx_in6addr_any_linkage pinned-musl "$musl_cxx_object"
+check_cxx_in6addr_loopback_linkage pinned-musl "$musl_cxx_object"
 "$ORACLE_CC" -std=c11 "$ipv6_macro_probe" -o "$musl_ipv6_macro"
 "$musl_ipv6_macro"
 
@@ -73,6 +87,7 @@ grep -Fq "$ROOT_DIR/include/sys/socket.h" "$header_trace" || {
 "$ORACLE_CC" -std=c++17 -x c++ -I "$ROOT_DIR/include" -c "$cxx_probe" \
     -o "$project_cxx_object"
 check_cxx_in6addr_any_linkage project "$project_cxx_object"
+check_cxx_in6addr_loopback_linkage project "$project_cxx_object"
 "$ORACLE_CC" -std=c11 -I "$ROOT_DIR/include" "$ipv6_macro_probe" \
     -o "$project_ipv6_macro"
 "$project_ipv6_macro"

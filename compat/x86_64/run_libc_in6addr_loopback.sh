@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
-# Native Linux/x86-64 selected static crabc-libc in6addr_any evidence.
+# Native Linux/x86-64 selected static crabc-libc in6addr_loopback evidence.
 #
 # The project-header fixture first runs against pinned musl 1.2.6, then as a
 # true archive-free `-nostdlib -static` executable linked from exactly one
 # extracted crabc object. It selects only the immutable sixteen-byte IPv6
-# unspecified-address object. Musl maps it to in6addr_any.c; its independent
-# in6addr_loopback.c sibling is separately selected but this final candidate
-# excludes it. It does not select in6addr_loopback, IPv6 socket transport,
-# address conversion, resolver configuration, DNS, netdb, interfaces, Ethernet,
-# errno, TLS, allocation, or an ambient runtime.
+# loopback-address object. Musl maps it to in6addr_loopback.c; its independent
+# in6addr_any.c sibling is separately selected but this final candidate
+# excludes it. It does not select in6addr_any,
+# IPv6 socket transport, address conversion, resolver configuration, DNS,
+# netdb, interfaces, Ethernet, errno, TLS, allocation, or an ambient runtime.
 set -euo pipefail
 export LC_ALL=C
 
@@ -17,7 +17,7 @@ readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
 readonly STATIC_C_ABI_EXPORTS="$ROOT_DIR/compat/x86_64/static_c_abi_exports.txt"
 
 fail() {
-    printf 'ERROR: x86 static libc in6addr_any: %s\n' "$*" >&2
+    printf 'ERROR: x86 static libc in6addr_loopback: %s\n' "$*" >&2
     exit 1
 }
 
@@ -73,17 +73,17 @@ extract_selected_member() {
         for member in "${members[@]}"; do
             definitions="$(nm -g --defined-only "$member")"
             if printf '%s\n' "$definitions" |
-                grep -Eq '[[:space:]][R][[:space:]]in6addr_any$'; then
+                grep -Eq '[[:space:]][R][[:space:]]in6addr_loopback$'; then
                 if printf '%s\n' "$definitions" |
-                    grep -Eq '[[:space:]][R][[:space:]]in6addr_loopback$'; then
-                    fail "in6addr_any archive member also defines in6addr_loopback"
+                    grep -Eq '[[:space:]][R][[:space:]]in6addr_any$'; then
+                    fail "in6addr_loopback archive member also defines in6addr_any"
                 fi
                 printf '%s\n' "$member"
             fi
         done
     ) >"$matches_path"
     mapfile -t matches <"$matches_path"
-    [ "${#matches[@]}" = 1 ] || fail "in6addr_any must have exactly one selected archive member"
+    [ "${#matches[@]}" = 1 ] || fail "in6addr_loopback must have exactly one selected archive member"
     printf '%s/%s\n' "$members_path" "${matches[0]}"
 }
 
@@ -95,23 +95,23 @@ done
 
 bash "$ROOT_DIR/compat/x86_64/run_musl_oracle.sh" >/dev/null
 
-work_dir="$(mktemp -d /tmp/crabc-x86-64-libc-in6addr-any.XXXXXX)"
+work_dir="$(mktemp -d /tmp/crabc-x86-64-libc-in6addr-loopback.XXXXXX)"
 trap 'rm -rf -- "$work_dir"' EXIT
 cargo_target="$work_dir/cargo-target"
-reference="$work_dir/musl-in6addr-any-reference"
-candidate="$work_dir/crabc-static-in6addr-any-candidate"
+reference="$work_dir/musl-in6addr-loopback-reference"
+candidate="$work_dir/crabc-static-in6addr-loopback-candidate"
 archive="$cargo_target/x86_64-unknown-linux-musl/debug/libc.a"
 musl_archive="$("$ORACLE_CC" -print-file-name=libc.a)"
-musl_object="$work_dir/musl-in6addr-any.o"
-musl_loopback_object="$work_dir/musl-in6addr-loopback.o"
-musl_any_bytes="$work_dir/musl-in6addr-any-bytes"
+musl_object="$work_dir/musl-in6addr-loopback.o"
+musl_any_object="$work_dir/musl-in6addr-any.o"
 musl_loopback_bytes="$work_dir/musl-in6addr-loopback-bytes"
+musl_any_bytes="$work_dir/musl-in6addr-any-bytes"
 header_trace="$work_dir/header-trace"
 archive_symbols="$work_dir/archive-symbols"
 selected_c_abi_symbols="$work_dir/selected-c-abi-symbols"
 expected_c_abi_symbols="$work_dir/expected-c-abi-symbols"
-selected_members="$work_dir/selected-in6addr-any-members"
-selected_member_names="$work_dir/selected-in6addr-any-member-names"
+selected_members="$work_dir/selected-in6addr-loopback-members"
+selected_member_names="$work_dir/selected-in6addr-loopback-member-names"
 candidate_symbols="$work_dir/candidate-symbols"
 candidate_program_headers="$work_dir/candidate-program-headers"
 candidate_dynamic="$work_dir/candidate-dynamic"
@@ -124,34 +124,36 @@ case "$musl_archive" in
     *) fail "pinned musl compiler did not report an absolute libc.a path" ;;
 esac
 [ -f "$musl_archive" ] || fail "pinned musl static archive is missing"
-ar p "$musl_archive" in6addr_any.lo >"$musl_object"
+ar p "$musl_archive" in6addr_loopback.lo >"$musl_object"
 readelf --symbols --wide "$musl_object" |
-    grep -Eq '[[:space:]]FILE[[:space:]]+LOCAL[[:space:]]+DEFAULT[[:space:]]+ABS[[:space:]]+in6addr_any\.c$' ||
-    fail "pinned musl in6addr_any object no longer maps to in6addr_any.c"
-readelf --symbols --wide "$musl_object" |
-    grep -Eq '[[:space:]]16[[:space:]]+OBJECT[[:space:]]+GLOBAL[[:space:]]+DEFAULT[[:space:]]+[0-9]+[[:space:]]+in6addr_any$' ||
-    fail "pinned musl in6addr_any object layout drifted"
-if [ -n "$(nm --undefined-only "$musl_object")" ]; then
-    fail "pinned musl in6addr_any object unexpectedly has a dependency"
-fi
-readelf --hex-dump=.rodata.in6addr_any "$musl_object" >"$musl_any_bytes"
-grep -Eq '00000000[[:space:]]+00000000[[:space:]]+00000000[[:space:]]+00000000[[:space:]]+00000000' \
-    "$musl_any_bytes" || fail "pinned musl in6addr_any bytes drifted from all zero"
-
-ar p "$musl_archive" in6addr_loopback.lo >"$musl_loopback_object"
-readelf --symbols --wide "$musl_loopback_object" |
     grep -Eq '[[:space:]]FILE[[:space:]]+LOCAL[[:space:]]+DEFAULT[[:space:]]+ABS[[:space:]]+in6addr_loopback\.c$' ||
-    fail "pinned musl loopback sibling no longer maps independently"
-readelf --symbols --wide "$musl_loopback_object" |
+    fail "pinned musl in6addr_loopback object no longer maps to in6addr_loopback.c"
+readelf --symbols --wide "$musl_object" |
     grep -Eq '[[:space:]]16[[:space:]]+OBJECT[[:space:]]+GLOBAL[[:space:]]+DEFAULT[[:space:]]+[0-9]+[[:space:]]+in6addr_loopback$' ||
-    fail "pinned musl loopback sibling layout drifted"
-readelf --hex-dump=.rodata.in6addr_loopback "$musl_loopback_object" \
-    >"$musl_loopback_bytes"
-grep -Eq '00000000[[:space:]]+00000000[[:space:]]+00000000[[:space:]]+00000000[[:space:]]+00000001' \
-    "$musl_loopback_bytes" || fail "pinned musl loopback sibling bytes drifted"
+    fail "pinned musl in6addr_loopback object layout drifted"
+if [ -n "$(nm --undefined-only "$musl_object")" ]; then
+    fail "pinned musl in6addr_loopback object unexpectedly has a dependency"
+fi
+readelf --hex-dump=.rodata.in6addr_loopback "$musl_object" >"$musl_loopback_bytes"
+grep -Eq '00000000[[:space:]]+00000000[[:space:]]+00000000[[:space:]]+00000001' \
+    "$musl_loopback_bytes" || fail "pinned musl in6addr_loopback bytes drifted"
+
+ar p "$musl_archive" in6addr_any.lo >"$musl_any_object"
+readelf --symbols --wide "$musl_any_object" |
+    grep -Eq '[[:space:]]FILE[[:space:]]+LOCAL[[:space:]]+DEFAULT[[:space:]]+ABS[[:space:]]+in6addr_any\.c$' ||
+    fail "pinned musl unspecified sibling no longer maps independently"
+readelf --symbols --wide "$musl_any_object" |
+    grep -Eq '[[:space:]]16[[:space:]]+OBJECT[[:space:]]+GLOBAL[[:space:]]+DEFAULT[[:space:]]+[0-9]+[[:space:]]+in6addr_any$' ||
+    fail "pinned musl unspecified sibling layout drifted"
+if [ -n "$(nm --undefined-only "$musl_any_object")" ]; then
+    fail "pinned musl unspecified sibling unexpectedly has a dependency"
+fi
+readelf --hex-dump=.rodata.in6addr_any "$musl_any_object" >"$musl_any_bytes"
+grep -Eq '00000000[[:space:]]+00000000[[:space:]]+00000000[[:space:]]+00000000' \
+    "$musl_any_bytes" || fail "pinned musl unspecified sibling bytes drifted"
 
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -I"$ROOT_DIR/include" -E -H \
-    compat/x86_64/libc_in6addr_any_probe.c >/dev/null 2>"$header_trace"
+    compat/x86_64/libc_in6addr_loopback_probe.c >/dev/null 2>"$header_trace"
 for header in netinet/in.h arpa/inet.h stddef.h stdint.h sys/socket.h sys/types.h \
     bits/alltypes.h; do
     grep -Fq "$ROOT_DIR/include/$header" "$header_trace" ||
@@ -159,13 +161,13 @@ for header in netinet/in.h arpa/inet.h stddef.h stdint.h sys/socket.h sys/types.
 done
 
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -fno-builtin -fno-stack-protector \
-    -I"$ROOT_DIR/include" compat/x86_64/libc_in6addr_any_probe.c \
+    -I"$ROOT_DIR/include" compat/x86_64/libc_in6addr_loopback_probe.c \
     -o "$reference"
 if env -i LC_ALL=C TZ=UTC "$reference"; then
     :
 else
     status=$?
-    fail "pinned-musl in6addr_any fixture exited ${status}"
+    fail "pinned-musl in6addr_loopback fixture exited ${status}"
 fi
 
 CARGO_TARGET_DIR="$cargo_target" cargo rustc --locked -p crabc-libc --lib \
@@ -176,27 +178,27 @@ CARGO_TARGET_DIR="$cargo_target" cargo rustc --locked -p crabc-libc --lib \
 nm -A --defined-only "$archive" >"$archive_symbols"
 assert_selected_c_abi_surface "$archive" "$selected_c_abi_symbols" \
     "$expected_c_abi_symbols"
-grep -Eq '[[:space:]][R][[:space:]]in6addr_any$' "$archive_symbols" ||
-    fail "archive does not define immutable in6addr_any"
+grep -Eq '[[:space:]][R][[:space:]]in6addr_loopback$' "$archive_symbols" ||
+    fail "archive does not define immutable in6addr_loopback"
 selected_member="$(extract_selected_member "$archive" "$selected_members" \
     "$selected_member_names")"
-[ -f "$selected_member" ] || fail "selected in6addr_any member is missing"
+[ -f "$selected_member" ] || fail "selected in6addr_loopback member is missing"
 
-"$ORACLE_CC" -std=c11 -D_GNU_SOURCE -DCRABC_IN6ADDR_ANY_FREESTANDING \
+"$ORACLE_CC" -std=c11 -D_GNU_SOURCE -DCRABC_IN6ADDR_LOOPBACK_FREESTANDING \
     -I"$ROOT_DIR/include" -nostdlib -static -fno-pie -no-pie \
     -ffreestanding -fno-builtin -fno-stack-protector -Wl,-e,_start \
-    -Wl,--gc-sections -Wl,--no-undefined compat/x86_64/libc_in6addr_any_probe.c \
-    compat/x86_64/libc_in6addr_any_start.S "$selected_member" -o "$candidate"
+    -Wl,--gc-sections -Wl,--no-undefined compat/x86_64/libc_in6addr_loopback_probe.c \
+    compat/x86_64/libc_in6addr_loopback_start.S "$selected_member" -o "$candidate"
 
 readelf --symbols --wide "$candidate" >"$candidate_symbols"
 readelf --program-headers --wide "$candidate" >"$candidate_program_headers"
 readelf --dynamic --wide "$candidate" >"$candidate_dynamic" || true
 readelf --relocs --wide "$candidate" >"$candidate_relocations"
 objdump -d "$candidate" >"$candidate_disassembly"
-grep -Eq '[[:space:]][R][[:space:]]in6addr_any$' <(nm -g --defined-only "$candidate") ||
-    fail "archive-free candidate does not retain read-only in6addr_any"
-candidate_size="$(awk '$4 == "OBJECT" && $5 == "GLOBAL" && $6 == "DEFAULT" && $8 == "in6addr_any" { print $3; exit }' "$candidate_symbols")"
-[ "$candidate_size" = 16 ] || fail "candidate in6addr_any does not retain its sixteen-byte ABI"
+grep -Eq '[[:space:]][R][[:space:]]in6addr_loopback$' <(nm -g --defined-only "$candidate") ||
+    fail "archive-free candidate does not retain read-only in6addr_loopback"
+candidate_size="$(awk '$4 == "OBJECT" && $5 == "GLOBAL" && $6 == "DEFAULT" && $8 == "in6addr_loopback" { print $3; exit }' "$candidate_symbols")"
+[ "$candidate_size" = 16 ] || fail "candidate in6addr_loopback does not retain its sixteen-byte ABI"
 unresolved_symbols="$(awk '$7 == "UND" && NF >= 8 { print }' "$candidate_symbols")"
 if [ -n "$unresolved_symbols" ]; then
     printf '%s\n' "$unresolved_symbols" >&2
@@ -215,7 +217,7 @@ if grep -Eq 'TLSGD|TLSLD|TLSDESC|GOTTPOFF|DTPMOD(64)?|DTPOFF(32|64)?|__tls_get_a
     "$candidate_relocations" "$candidate_symbols" "$candidate_disassembly"; then
     fail "archive-free candidate selects errno, h_errno, or a TLS runtime"
 fi
-for unselected in in6addr_loopback htonl htons ntohl ntohs inet_addr inet_aton \
+for unselected in in6addr_any htonl htons ntohl ntohs inet_addr inet_aton \
     inet_ntop inet_pton inet_ntoa inet_network inet_makeaddr inet_lnaof inet_netof \
     __h_errno_location h_errno hstrerror freeaddrinfo gai_strerror getaddrinfo \
     gethostbyaddr gethostbyname gethostbyname2 gethostent getnameinfo \
@@ -236,7 +238,7 @@ if env -i LC_ALL=C TZ=UTC "$candidate"; then
     :
 else
     status=$?
-    fail "freestanding in6addr_any fixture exited ${status}"
+    fail "freestanding in6addr_loopback fixture exited ${status}"
 fi
 
-printf 'x86 static crabc-libc in6addr_any: PASS\n'
+printf 'x86 static crabc-libc in6addr_loopback: PASS\n'

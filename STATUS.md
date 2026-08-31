@@ -23,12 +23,25 @@ musl 1.2.6 and then through an archive-free `-nostdlib -static` candidate
 linked from exactly one extracted object, never `libc.a`. It selects only the
 immutable 16-byte all-zero `in6addr_any` object from musl
 `src/network/in6addr_any.c`; its separate final-octet-one
-`in6addr_loopback.c` sibling remains unselected. The shared socket-header C/C++
-gate also proves musl's union-backed align-4 `struct in6_addr` layout and
-unmangled C++ data reference. This has no code, errno, TLS, address conversion,
-socket transport, `/etc/hosts`, `/etc/resolv.conf`, resolver/DNS/netdb,
-interface, or Ethernet behavior; it is not network completion, promotion, or
-public x86 support.
+`in6addr_loopback.c` sibling is independently selected but excluded from this
+candidate. The shared socket-header C/C++ gate also proves musl's union-backed
+align-4 `struct in6_addr` layout and unmangled C++ data references. This has no
+code, errno, TLS, address conversion, socket transport, `/etc/hosts`,
+`/etc/resolv.conf`, resolver/DNS/netdb, interface, or Ethernet behavior; it is
+not network completion, promotion, or public x86 support.
+
+`./scripts/dev-x86_64.sh libc-in6addr-loopback` is a separate private
+`static-c-in6addr-loopback` data-object artifact inside still-planned
+`libc.posix-runtime`. Its project-header fixture first executes through pinned
+musl 1.2.6 and then through an archive-free `-nostdlib -static` candidate
+linked from exactly one extracted object, never `libc.a`. It selects only the
+immutable 16-byte fifteen-zero-final-one `in6addr_loopback` object from musl
+`src/network/in6addr_loopback.c`; its all-zero `in6addr_any.c` sibling remains
+outside this candidate. The shared C/C++ header gate proves the exact const
+data declaration and unmangled linkage. This has no code, errno, TLS, address
+conversion, socket transport, `/etc/hosts`, `/etc/resolv.conf`, resolver/DNS/
+netdb, interface, or Ethernet behavior; it is not network completion,
+promotion, or public x86 support.
 
 `./scripts/dev-x86_64.sh libc-inet-ntoa` is a private
 `static-c-inet-ntoa-scratch` artifact inside still-planned `libc.resolver`.

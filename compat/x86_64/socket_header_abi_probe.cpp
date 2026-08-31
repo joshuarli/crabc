@@ -63,9 +63,12 @@ using recvfrom_function = ssize_t (*)(int, void *, size_t, int, sockaddr *, sock
 using shutdown_function = int (*)(int, int);
 using socket_name_function = int (*)(int, sockaddr *, socklen_t *);
 using in6addr_any_pointer = const in6_addr *;
+using in6addr_loopback_pointer = const in6_addr *;
 
 static_assert(__is_same(decltype(&in6addr_any), in6addr_any_pointer),
     "in6addr_any C++ declaration");
+static_assert(__is_same(decltype(&in6addr_loopback), in6addr_loopback_pointer),
+    "in6addr_loopback C++ declaration");
 
 static_assert(__is_same(decltype(&socket), socket_function), "socket C++ declaration");
 static_assert(__is_same(decltype(&socketpair), socketpair_function),
@@ -103,10 +106,16 @@ extern "C" int shutdown(int, int);
 extern "C" int getsockname(int, sockaddr *, socklen_t *);
 extern "C" int getpeername(int, sockaddr *, socklen_t *);
 extern "C" const in6_addr in6addr_any;
+extern "C" const in6_addr in6addr_loopback;
 
 const volatile in6_addr *crabc_x86_64_in6addr_any_header_abi_address()
 {
     return &in6addr_any;
+}
+
+const volatile in6_addr *crabc_x86_64_in6addr_loopback_header_abi_address()
+{
+    return &in6addr_loopback;
 }
 
 int crabc_x86_64_socket_header_abi_probe_cpp()
