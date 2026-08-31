@@ -4922,6 +4922,61 @@ native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc
 oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl resource-limit, usage, priority, nice, declarations, and errno behavior oracle." }, { kind = "kernel-abi", source = "Linux 5.10 x86-64 ABI", role = "prlimit64/getrusage/getpriority/setpriority register, public-prefix, raw-result, and errno contract." }, { kind = "elf-abi", source = "System V AMD64 psABI", role = "Static initial-exec TLS and Variant-II thread-pointer fixture contract." }]
 
 [[family.verified_artifact]]
+id = "static-c-ulimit"
+description = "Private native x86 selected-static-archive `ulimit` compatibility artifact within still-planned `libc.posix-runtime`. One project-header C fixture runs through pinned musl and then a true static archive candidate, resolving exactly `long ulimit(int, ...)`. It selects only musl's historical `RLIMIT_FSIZE=1` adapter: `UL_GETFSIZE` and every unknown command query without reading a vararg; only `UL_SETFSIZE` consumes one long vararg, uses musl's `512ULL` block conversion, and replaces the calling process soft limit through Linux `prlimit64=302`. The disposable processes preserve stale errno on successful query/set and verify the hard limit stays unchanged. This process-global mutation remains caller-owned. It does not select public C `getrlimit`/`setrlimit`/`prlimit` entries, general process resources/accounting/scheduler/file-size policy, filesystem behavior, pthreads, CRT, loader, dynamic TLS, family completion, promotion, or public x86 support."
+source_owners = [
+  "compat/upstreams.toml",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/ulimit.rs",
+  "libc/src/c_abi/x86_64/errno.rs",
+  "libc/src/c_abi/x86_64/syscall.rs",
+  "libc/src/c_abi/x86_64/static_tls.rs",
+  "include/errno.h",
+  "include/stddef.h",
+  "include/sys/resource.h",
+  "include/sys/syscall.h",
+  "include/sys/types.h",
+  "include/sys/time.h",
+  "include/ulimit.h",
+  "include/features.h",
+  "include/bits/alltypes.h",
+  "include/bits/syscall.h",
+  "compat/x86_64/ulimit_header_abi_probe.c",
+  "compat/x86_64/ulimit_header_abi_probe.cpp",
+  "compat/x86_64/run_ulimit_header_abi.sh",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/libc_ulimit_probe.c",
+  "compat/x86_64/libc_ulimit_start.S",
+  "compat/x86_64/run_libc_ulimit.sh",
+  "compat/x86_64/aarch64_parity_inventory.py",
+  "compat/x86_64/aarch64_parity_inventory.json",
+  "compat/x86_64/tests/test_aarch64_parity_inventory.py",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "compat/x86_64/README.md",
+  "STATUS.md",
+  "x86-64.md",
+  "scripts/dev-x86_64.sh",
+  "scripts/check_structure.py",
+]
+x86_abi_prerequisites = [
+  "The SysV AMD64 variadic ABI supplies `ulimit`'s int command in edi, preserves the promoted long vararg in rsi only for `UL_SETFSIZE=2`, and returns the signed long in rax. Linux 5.10 x86-64 `prlimit64=302` receives pid/resource/new-limit/old-limit in rdi/rsi/rdx/r10, not the normal C fourth-word rcx",
+  "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417 `src/legacy/ulimit.c` maps its `getrlimit`/`setrlimit` pair, `RLIMIT_FSIZE`, and `512ULL` conversion to the direct Linux 5.10 prlimit64 route. The pre-baseline fallback and pthread `__synccall` path are deliberately unselected",
+  "Each disposable reference/candidate process observes `UL_GETFSIZE`, unknown-command 1977 without a vararg, and `UL_SETFSIZE`; it retains stale E2BIG errno on successful paths, checks the 512-byte soft-limit result, and keeps rlim_max unchanged without asserting host resource policy",
+  "The final `-nostdlib -static` candidate has a PT_TLS errno datum with direct initial-exec TPOFF access and no interpreter, DT_NEEDED, unresolved symbol, dynamic TLS resolver, or C getrlimit/setrlimit/prlimit entry. Fixture-local startup writes one Variant-II thread-pointer self word at %fs:0 without claiming CRT or TLS lifecycle",
+]
+x86_header_prerequisites = ["The pinned-musl/project C11/C++17 `<ulimit.h>` gate proves unconditional `long ulimit(int, ...)`, `UL_GETFSIZE=1`, `UL_SETFSIZE=2`, and unmangled C++ linkage under default, strict, POSIX, X/Open, GNU, and BSD profiles. It validates that one historical declaration only; no resource-header family, archive linkage, or public x86 support is selected."]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-ulimit", scope = "Pinned-musl C reference plus the default/strict/POSIX/X/Open/GNU/BSD C11/C++17 `<ulimit.h>` gate, a true dependency-free x86 crabc-libc archive, and a `-nostdlib -static` candidate. It ratchets the exact archive export, static TLS/ELF closure, and direct `prlimit64=302` code path. The common fixture proves `UL_GETFSIZE`, unknown-command no-vararg query, and `UL_SETFSIZE` 512-byte conversion in disposable reference/candidate processes, including stale-errno success and unchanged hard limit. It rejects C getrlimit/setrlimit/prlimit resource entries. It does not select general process resources, accounting, scheduler/file-size or filesystem policy, family completion, promotion, or public x86 support." }]
+oracle = [
+  { kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source/declaration oracle: src/legacy/ulimit.c calls getrlimit then conditionally setrlimit for RLIMIT_FSIZE, returns rlim_cur / 512ULL, and leaves every non-UL_SETFSIZE command on the no-vararg query path." },
+  { kind = "kernel-abi", source = "Linux 5.10 x86-64 ABI", role = "prlimit64=302 four-register resource-limit and raw errno contract for process zero and RLIMIT_FSIZE." },
+  { kind = "elf-abi", source = "System V AMD64 psABI", role = "LP64 variadic command/long result convention and fixture-local static initial-exec TLS boundary." },
+]
+
+[[family.verified_artifact]]
 id = "static-c-sched-yield"
 description = "Private native x86 selected-static-archive POSIX `sched_yield` leaf. One dependency-free `crabc-libc` archive resolves exactly `sched_yield(void)` into a freestanding C fixture after an equivalent pinned-musl execution. The separate strict/POSIX/XOPEN/GNU C/C++ header gate proves the unconditional no-argument signed-int declaration and unmangled C++ linkage. The static fixture proves a normal successful yield preserves stale errno, then uses fixture-local classic BPF only to force the raw Linux `-EPERM` result and prove musl's status bridge returns `-1` with `errno=EPERM`. It is distinct from the separate C11 `thrd_yield` artifact, whose void source intentionally discards that same raw result. This artifact establishes no scheduler handoff, fairness, peer-progress, scheduler policy/parameter API, affinity, C11 or pthread lifecycle, process lifecycle, libc.so, CRT, dynamic TLS, loader, sysroot, allocator, family completion, promotion, or public x86 support."
 source_owners = [

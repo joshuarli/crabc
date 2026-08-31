@@ -4327,6 +4327,20 @@ stale-errno success. Raw setup/observation does not select C
 `chdir`/`getcwd`/open/fcntl, a broader descriptor/procfs/pathname boundary,
 family completion, promotion, or public x86 support.
 
+`ulimit-header-abi` and `libc-ulimit` are a separate private,
+capability-free `static-c-ulimit` artifact in planned `libc.posix-runtime`.
+The C11/C++17 project-header/pinned-musl matrix proves only unconditional
+`<ulimit.h>` `long ulimit(int, ...)` under default, strict, POSIX, X/Open,
+GNU, and BSD profiles. The same body runs through pinned musl and a true
+`-nostdlib -static` candidate. It maps musl 1.2.6 `src/legacy/ulimit.c` only:
+`UL_GETFSIZE` and unknown command 1977 use the no-vararg `RLIMIT_FSIZE` query;
+only `UL_SETFSIZE` reads one long, performs musl's `512ULL` conversion, and
+uses direct `prlimit64=302`. The disposable reference/candidate processes
+retain stale errno on successful calls and check the hard limit remains
+unchanged. It excludes public C `getrlimit`/`setrlimit`/`prlimit`, general
+resource/accounting/scheduler/file-size policy, filesystem behavior, family
+completion, promotion, and public x86 support.
+
 `libc-byte-strings` is a separately recorded
 `static-c-byte-strings` `verified_artifact` gate over that archive, not a
 promotion of the Rust-subsumed text capabilities. Its project-header C body

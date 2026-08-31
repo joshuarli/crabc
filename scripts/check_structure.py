@@ -219,6 +219,7 @@ X86_RUNTIME_FOUNDATION_LIBC_SOURCES = {
     Path("libc/src/c_abi/x86_64/auxv_observation.rs"),
     Path("libc/src/c_abi/x86_64/process_globals.rs"),
     Path("libc/src/c_abi/x86_64/process_resources.rs"),
+    Path("libc/src/c_abi/x86_64/ulimit.rs"),
     Path("libc/src/c_abi/x86_64/sched_yield.rs"),
     Path("libc/src/c_abi/x86_64/posix_semaphore.rs"),
     Path("libc/src/c_abi/x86_64/c11_thread_lifecycle.rs"),
@@ -3799,6 +3800,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         '#[path = "ioctl.rs"]',
         '#[path = "descriptor_io.rs"]',
         '#[path = "process_resources.rs"]',
+        '#[path = "ulimit.rs"]',
         '#[path = "memory_mapping.rs"]',
         '#[path = "memory_sync.rs"]',
         '#[path = "memory_locking.rs"]',
@@ -8488,6 +8490,61 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
                 f"boundary must not select {forbidden!r}"
             )
 
+    ulimit_source = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "ulimit.rs"
+    ulimit_text = ulimit_source.read_text(errors="replace")
+    for required in (
+        "Selected static Linux/x86-64 `ulimit` C ABI boundary",
+        "musl 1.2.6 release commit",
+        "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+        "src/legacy/ulimit.c",
+        "RLIMIT_FSIZE: c_int = 1",
+        "UL_SETFSIZE: c_int = 2",
+        "raw_syscall::SYS_PRLIMIT64",
+        "wrapping_mul(BLOCK_BYTES)",
+        "global_asm!",
+        ".global ulimit",
+        "ulimit_query",
+        "ulimit_set",
+    ):
+        if required not in ulimit_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/ulimit.rs: selected static historical "
+                f"ulimit boundary is missing {required!r}"
+            )
+    ulimit_rust_exports = set(
+        re.findall(
+            r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(',
+            ulimit_text,
+        )
+    )
+    if ulimit_rust_exports:
+        errors.append(
+            "libc/src/c_abi/x86_64/ulimit.rs: selected static historical "
+            "ulimit artifact must retain its assembly-only variadic boundary"
+        )
+    ulimit_assembly_exports = set(
+        re.findall(r"(?m)^\s*\.global\s+(\w+)\s*$", ulimit_text)
+    )
+    if ulimit_assembly_exports != {"ulimit"}:
+        errors.append(
+            "libc/src/c_abi/x86_64/ulimit.rs: selected static historical "
+            "ulimit artifact must export only ulimit through assembly"
+        )
+    for forbidden in (
+        "process_resources::",
+        "pub extern \"C\" fn getrlimit",
+        "pub extern \"C\" fn setrlimit",
+        "pub extern \"C\" fn prlimit",
+        "alloc::",
+        "crabc_core",
+        "crabc_mimalloc",
+    ):
+        if forbidden in ulimit_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/ulimit.rs: selected static historical "
+                f"ulimit boundary must not select {forbidden!r}"
+            )
+
     descriptor_control_source = (
         ROOT / "libc" / "src" / "c_abi" / "x86_64" / "descriptor_control.rs"
     )
@@ -10575,6 +10632,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         descriptor_entry_text,
         filesystem_access_text,
         fchdir_text,
+        ulimit_text,
         mktemp_text,
         descriptor_control_text,
         descriptor_io_text,
@@ -10628,6 +10686,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
                 fenv_text,
                 setjmp_text,
                 descriptor_control_text,
+                ulimit_text,
             )
         )
     )
@@ -10870,6 +10929,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         "getgid",
         "geteuid",
         "getegid",
+        "ulimit",
         "umask",
         "setsid",
         "setpgid",
@@ -11186,6 +11246,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         ("descriptor_entry.rs", descriptor_entry_text),
         ("filesystem_access.rs", filesystem_access_text),
         ("fchdir.rs", fchdir_text),
+        ("ulimit.rs", ulimit_text),
         ("descriptor_control.rs", descriptor_control_text),
         ("timestamp_updates.rs", timestamp_text),
         ("descriptor_io.rs", descriptor_io_text),

@@ -50,7 +50,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 41)
-        self.assertEqual(report["verified_artifact_count"], 199)
+        self.assertEqual(report["verified_artifact_count"], 200)
         self.assertEqual(report["header_layout_probe_count"], 46)
         self.assertEqual(report["public_header_inventory_count"], 183)
         self.assertEqual(report["header_foundation_header_count"], 191)
@@ -17951,6 +17951,128 @@ class X86ParityLedgerTests(unittest.TestCase):
         with self.assertRaisesRegex(
             ledger.LedgerError,
             "static-c-fchdir evidence must retain its narrow static runtime regression",
+        ):
+            ledger.validate_ledger(data)
+
+    def test_ulimit_artifact_stays_private_and_vararg_bounded(self) -> None:
+        data = self.data()
+        family = self.family(data, "libc.posix-runtime")
+        self.assertEqual(family["status"], "planned")
+        artifacts = family["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-ulimit"
+        )
+        self.assertNotIn("capabilities", artifact)
+        for phrase in (
+            "selected-static-archive `ulimit` compatibility artifact",
+            "exactly `long ulimit(int, ...)`",
+            "`RLIMIT_FSIZE=1`",
+            "`UL_GETFSIZE`",
+            "`UL_SETFSIZE`",
+            "`512ULL`",
+            "`prlimit64=302`",
+            "process-global",
+            "public C `getrlimit`/`setrlimit`/`prlimit` entries",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, artifact["description"])
+
+        owners = artifact["source_owners"]
+        assert isinstance(owners, list)
+        for owner in (
+            "libc/src/c_abi/x86_64/ulimit.rs",
+            "include/ulimit.h",
+            "include/sys/resource.h",
+            "compat/x86_64/ulimit_header_abi_probe.c",
+            "compat/x86_64/ulimit_header_abi_probe.cpp",
+            "compat/x86_64/run_ulimit_header_abi.sh",
+            "compat/x86_64/libc_ulimit_probe.c",
+            "compat/x86_64/libc_ulimit_start.S",
+            "compat/x86_64/run_libc_ulimit.sh",
+            "compat/x86_64/static_c_abi_exports.txt",
+        ):
+            self.assertIn(owner, owners)
+
+        prerequisites = artifact["x86_abi_prerequisites"]
+        assert isinstance(prerequisites, list)
+        self.assertTrue(
+            any(
+                "SysV AMD64" in item
+                and "edi" in item
+                and "rsi" in item
+                and "rax" in item
+                and "UL_SETFSIZE=2" in item
+                and "prlimit64=302" in item
+                and "rdi/rsi/rdx/r10" in item
+                for item in prerequisites
+            )
+        )
+        self.assertTrue(
+            any(
+                "src/legacy/ulimit.c" in item
+                and "getrlimit" in item
+                and "setrlimit" in item
+                and "RLIMIT_FSIZE" in item
+                and "512ULL" in item
+                for item in prerequisites
+            )
+        )
+        self.assertTrue(
+            any(
+                "disposable reference/candidate process" in item
+                and "unknown-command 1977" in item
+                and "stale E2BIG" in item
+                and "rlim_max unchanged" in item
+                for item in prerequisites
+            )
+        )
+
+        headers = artifact["x86_header_prerequisites"]
+        assert isinstance(headers, list) and isinstance(headers[0], str)
+        for phrase in (
+            "C11/C++17",
+            "`<ulimit.h>`",
+            "unconditional `long ulimit(int, ...)`",
+            "default, strict, POSIX, X/Open, GNU, and BSD",
+            "unmangled C++ linkage",
+        ):
+            self.assertIn(phrase, headers[0])
+
+        evidence = artifact["native_evidence"]
+        assert isinstance(evidence, list) and isinstance(evidence[0], dict)
+        self.assertEqual(evidence[0]["command"], "./scripts/dev-x86_64.sh libc-ulimit")
+        for phrase in (
+            "default/strict/POSIX/X/Open/GNU/BSD",
+            "`-nostdlib -static` candidate",
+            "prlimit64=302",
+            "UL_GETFSIZE",
+            "unknown-command",
+            "UL_SETFSIZE",
+            "stale-errno success",
+            "C getrlimit/setrlimit/prlimit",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, evidence[0]["scope"])
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-ulimit"
+        )
+        evidence = artifact["native_evidence"]
+        assert isinstance(evidence, list) and isinstance(evidence[0], dict)
+        evidence[0]["scope"] = evidence[0]["scope"].replace(
+            "unknown-command", "generic command behavior"
+        )
+        with self.assertRaisesRegex(
+            ledger.LedgerError,
+            "static-c-ulimit evidence must retain its narrow static runtime regression",
         ):
             ledger.validate_ledger(data)
 

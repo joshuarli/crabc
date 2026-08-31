@@ -1882,6 +1882,20 @@ all raw setup/observation outside the C ABI claim. It does not select public C
 `chdir`/`getcwd`, general descriptor/procfs/pathname behavior, CWD capability
 completion, family/platform parity, or public x86 support.
 
+`./scripts/dev-x86_64.sh ulimit-header-abi` and
+`./scripts/dev-x86_64.sh libc-ulimit` add a separate capability-free
+`static-c-ulimit` artifact in the same planned `libc.posix-runtime` family.
+The default/strict/POSIX/X/Open/GNU/BSD C11/C++17 `<ulimit.h>` matrix fixes
+only unconditional `long ulimit(int, ...)` linkage. Its pinned-musl and true
+`-nostdlib -static` fixture maps musl 1.2.6 `src/legacy/ulimit.c` exactly:
+`UL_GETFSIZE` and unknown commands make the no-vararg `RLIMIT_FSIZE` query,
+while only `UL_SETFSIZE` consumes a long and applies the `512ULL` block
+conversion through direct `prlimit64=302`. Disposable processes preserve stale
+errno on success and check the hard limit remains unchanged. This does not
+select public C `getrlimit`/`setrlimit`/`prlimit`, general resources,
+accounting, scheduler or file-size policy, filesystem behavior, family
+completion, promotion, or public x86 support.
+
 `./scripts/dev-x86_64.sh libc-header-layouts-baseline` now adds one private
 `static-c-header-layouts-baseline` artifact within still-planned
 `libc.headers-layouts`. It composes the existing selected archive through a

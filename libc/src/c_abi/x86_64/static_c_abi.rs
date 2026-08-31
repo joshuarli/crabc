@@ -437,6 +437,8 @@ mod sync;
 mod vector_io;
 #[path = "process_resources.rs"]
 mod process_resources;
+#[path = "ulimit.rs"]
+mod ulimit;
 #[path = "system_configuration.rs"]
 mod system_configuration;
 #[path = "memory_mapping.rs"]

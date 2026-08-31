@@ -898,6 +898,7 @@ tss_delete
 tss_get
 tss_set
 twalk
+ulimit
 umask
 uname
 ungetc
