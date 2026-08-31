@@ -770,6 +770,34 @@ pub unsafe extern "C" fn __freadable(stream: *mut StandardStream) -> c_int {
     unsafe { ((*stream).flags & F_NORD == 0) as c_int }
 }
 
+/// Observe musl's fixed permanent-stderr writable-access predicate.
+///
+/// Musl 1.2.6 `src/stdio/ext.c` implements `__fwritable` as
+/// `!(f->flags & F_NOWR)`. The owned stderr object is permanently initialized
+/// without `F_NOWR`, so this one private adapter has the exact
+/// process-lifetime result `1` without importing musl's general FILE access
+/// mode, write cursor, or output state. It intentionally rejects every
+/// pointer other than stderr; the result does not select input, another
+/// permanent stream, pathname state, output transitions, or any other
+/// stdio-extension helper.
+///
+/// # Safety
+///
+/// `stream` must be the exported process-lifetime `stderr` pointer. Its
+/// observation is externally serialized with the selected permanent stream.
+#[no_mangle]
+pub unsafe extern "C" fn __fwritable(stream: *mut StandardStream) -> c_int {
+    // The static flags are complete before first use; this query must not
+    // trigger shared permanent-stream buffer initialization.
+    if stream != ptr::addr_of_mut!(STDERR_STREAM) {
+        // SAFETY: no caller stream was dereferenced on this closed boundary.
+        unsafe { reject_stream() };
+        return 0;
+    }
+    // SAFETY: pointer equality above proves this is the fixed stderr record.
+    unsafe { ((*stream).flags & F_NOWR == 0) as c_int }
+}
+
 // Musl's `weak_alias(fileno, fileno_unlocked)` preserves both a weak archive
 // override point and one ELF address. A Rust forwarding wrapper would create a
 // second address, so retain the source-specific GNU/BSD alias in assembler.

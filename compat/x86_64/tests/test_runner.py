@@ -1388,6 +1388,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "stdio-permanent-byte-io-header-abi",
             "stdio-permanent-status-header-abi",
             "stdio-permanent-freadable-stdin-header-abi",
+            "stdio-permanent-fwritable-stderr-header-abi",
             "stdio-permanent-fileno-header-abi",
             "stdio-permanent-fileno-unlocked-header-abi",
             "stdio-permanent-feof-unlocked-header-abi",
@@ -1397,6 +1398,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "ldso-public-dlfcn|ldso-dladdr-symbol-bounds",
             "ldso-bounded-dlopen",
             "math-special-header-abi|libc-math-special",
+            "math-exp2-header-abi|math-expm1-header-abi|math-log10-header-abi|libc-math-exp2|libc-math-expm1|libc-math-log10",
             "inet-address-header-abi|nameser-header-abi",
             "libc-network-byte-order|libc-dn-skipname|libc-ns-get16|libc-ns-get32|libc-ns-put16",
             "ldso-target-root",
@@ -1433,7 +1435,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "xattr-header-abi",
             "madvise-reference",
             "ctype-header-abi|locale-profile-header-abi|locale-multibyte-header-abi|iconv-header-abi|wide-character-header-abi|locale-object-wide-header-abi|locale-narrow-header-abi",
-            "integer-arithmetic-header-abi|integer-parse-header-abi|float-parse-header-abi|getsubopt-header-abi|intmax-arithmetic-header-abi|credential-observation-header-abi|login-name-header-abi|child-reaping-header-abi|immediate-termination-header-abi|sched-getcpu-header-abi|sched-yield-header-abi|bsearch-header-abi|linear-search-header-abi|qsort-header-abi|callback-algorithms-header-abi",
+            "integer-arithmetic-header-abi|integer-parse-header-abi|float-parse-header-abi|getsubopt-header-abi|intmax-arithmetic-header-abi|credential-observation-header-abi|login-name-header-abi|child-reaping-header-abi|immediate-termination-header-abi|sched-getcpu-header-abi|sched-yield-header-abi|bsearch-header-abi|linear-search-header-abi|intrusive-queue-header-abi|qsort-header-abi|callback-algorithms-header-abi",
             "posix-exit-header-abi",
             "ffs-header-abi",
             "byte-strings-header-abi",
@@ -1452,7 +1454,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "libc-pathname-lifecycle",
             "libc-directory-streams",
             "libc-lchmod-unsupported",
-            "libc-stdio-standard|libc-stdio-format-scan|libc-stdio-integer-scan|libc-stdio-octal-hex-scan|libc-stdio-float-hex-output|libc-stdio-errno-output|libc-stdio-permanent-line-io|libc-stdio-permanent-byte-io|libc-stdio-permanent-status|libc-stdio-permanent-freadable-stdin|libc-stdio-permanent-fileno|libc-stdio-permanent-fileno-unlocked|libc-stdio-permanent-feof-unlocked|libc-stdio-path-stream|libc-stdio-tmpfile|libc-text-math-locale-stdio-composition",
+            "libc-stdio-standard|libc-stdio-format-scan|libc-stdio-integer-scan|libc-stdio-octal-hex-scan|libc-stdio-float-hex-output|libc-stdio-errno-output|libc-stdio-permanent-line-io|libc-stdio-permanent-byte-io|libc-stdio-permanent-status|libc-stdio-permanent-freadable-stdin|libc-stdio-permanent-fwritable-stderr|libc-stdio-permanent-fileno|libc-stdio-permanent-fileno-unlocked|libc-stdio-permanent-feof-unlocked|libc-stdio-path-stream|libc-stdio-tmpfile|libc-text-math-locale-stdio-composition",
             "libc-pthread-identity",
             "libc-pthread-affinity",
             "libc-pthread-cpuclock",
@@ -1475,7 +1477,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "libc-static-c-abi-same-object-differential|qualification-posix-abi-admission",
             "libc-interface-discovery",
             "libc-posix-exit",
-            "libc-readiness-waits|libc-system-observation|libc-system-information|libc-fcntl-record-locks|libc-flock|libc-sendfile|libc-posix-fallocate|libc-descriptor-advice|libc-filesystem-capacity|libc-uts-identity|libc-ctype|libc-locale-profile|libc-locale-multibyte|libc-locale-wide-iconv|libc-wide-character|libc-locale-object-wide|libc-locale-narrow|libc-locale-ctype-locators|libc-locale-error-strings|libc-regex|libc-integer-arithmetic|libc-integer-parse|libc-float-parse|libc-getsubopt|libc-intmax-arithmetic|libc-credential-observation|libc-secure-environment|libc-login-name|libc-child-reaping|libc-immediate-termination|libc-bsearch|libc-linear-search|libc-qsort|libc-callback-algorithms|libc-search-tree-intrusive|libc-search-hash-table|libc-gettext-catalog|libc-access|libc-clock-gettime|libc-time-observation|libc-difftime|libc-timegm|libc-gmtime-r|libc-system-configuration|libc-mapping-core|libc-header-layouts-baseline|libc-nanosleep|libc-clock-nanosleep|libc-descriptor-entry|libc-fcntl-status-control|libc-ioctl|libc-ffs|libc-byte-strings|libc-in6addr-any|libc-in6addr-loopback|libc-process-globals-getopt|libc-auxv-observation|libc-inet-address|libc-inet-ntoa|libc-inet-classful|libc-hstrerror|libc-numeric-netdb|libc-random-entropy|libc-memory-search|libc-string-copy|libc-error-strings|libc-strsignal|libc-descriptor-pipeline",
+            "libc-readiness-waits|libc-system-observation|libc-system-information|libc-fcntl-record-locks|libc-flock|libc-sendfile|libc-posix-fallocate|libc-descriptor-advice|libc-filesystem-capacity|libc-uts-identity|libc-ctype|libc-locale-profile|libc-locale-multibyte|libc-locale-wide-iconv|libc-wide-character|libc-locale-object-wide|libc-locale-narrow|libc-locale-ctype-locators|libc-locale-error-strings|libc-regex|libc-integer-arithmetic|libc-integer-parse|libc-float-parse|libc-getsubopt|libc-intmax-arithmetic|libc-credential-observation|libc-secure-environment|libc-login-name|libc-child-reaping|libc-immediate-termination|libc-bsearch|libc-linear-search|libc-intrusive-queue|libc-qsort|libc-callback-algorithms|libc-search-tree-intrusive|libc-search-hash-table|libc-gettext-catalog|libc-access|libc-clock-gettime|libc-time-observation|libc-difftime|libc-timegm|libc-gmtime-r|libc-system-configuration|libc-mapping-core|libc-header-layouts-baseline|libc-nanosleep|libc-clock-nanosleep|libc-descriptor-entry|libc-fcntl-status-control|libc-ioctl|libc-ffs|libc-byte-strings|libc-in6addr-any|libc-in6addr-loopback|libc-process-globals-getopt|libc-auxv-observation|libc-inet-address|libc-inet-ntoa|libc-inet-classful|libc-hstrerror|libc-numeric-netdb|libc-random-entropy|libc-memory-search|libc-string-copy|libc-error-strings|libc-strsignal|libc-descriptor-pipeline",
             "libc-vector-io|libc-uio-cxx-linkage",
             "libc-sysv-semaphore|libc-posix-semaphore",
             "libc-sysv-message-shared-memory",
@@ -16109,7 +16111,6 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         for symbol in (
             "__fwriting",
             "__freading",
-            "__fwritable",
             "__flbf",
             "__fbufsize",
             "__fpending",
@@ -16192,6 +16193,136 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "run_stdio_permanent_freadable_stdin_header_abi.sh", dispatcher
         )
         self.assertIn("run_libc_stdio_permanent_freadable_stdin.sh", dispatcher)
+
+    def test_libc_static_c_abi_stdio_permanent_fwritable_stderr_stays_bounded(
+        self,
+    ) -> None:
+        """__fwritable observes fixed stderr F_NOWR only, not general output."""
+        implementation = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "stdio_standard.rs"
+        ).read_text(encoding="utf-8")
+        c_header_probe = (
+            ROOT / "compat" / "x86_64" /
+            "stdio_permanent_fwritable_stderr_header_abi_probe.c"
+        ).read_text(encoding="utf-8")
+        cxx_header_probe = (
+            ROOT / "compat" / "x86_64" /
+            "stdio_permanent_fwritable_stderr_header_abi_probe.cpp"
+        ).read_text(encoding="utf-8")
+        header_runner = (
+            ROOT / "compat" / "x86_64" /
+            "run_stdio_permanent_fwritable_stderr_header_abi.sh"
+        ).read_text(encoding="utf-8")
+        fixture = (
+            ROOT / "compat" / "x86_64" /
+            "libc_stdio_permanent_fwritable_stderr_probe.c"
+        ).read_text(encoding="utf-8")
+        start = (
+            ROOT / "compat" / "x86_64" /
+            "libc_stdio_permanent_fwritable_stderr_start.S"
+        ).read_text(encoding="utf-8")
+        runner = (
+            ROOT / "compat" / "x86_64" /
+            "run_libc_stdio_permanent_fwritable_stderr.sh"
+        ).read_text(encoding="utf-8")
+        exports = {
+            line
+            for line in (
+                ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+            ).read_text(encoding="utf-8").splitlines()
+            if line and not line.startswith("#")
+        }
+        ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        dispatcher = RUNNER.read_text(encoding="utf-8")
+
+        self.assertIn("__fwritable", exports)
+        for symbol in (
+            "__fwriting",
+            "__freading",
+            "__flbf",
+            "__fbufsize",
+            "__fpending",
+            "__fpurge",
+            "__fsetlocking",
+            "_flushlbf",
+        ):
+            self.assertNotIn(symbol, exports)
+        for required in (
+            "src/stdio/ext.c",
+            'pub unsafe extern "C" fn __fwritable',
+            "!(f->flags & F_NOWR)",
+            "stream != ptr::addr_of_mut!(STDERR_STREAM)",
+            "StandardStream::new(2, F_PERM | F_NORD)",
+            "((*stream).flags & F_NOWR == 0) as c_int",
+        ):
+            self.assertIn(required, implementation)
+        for probe in (c_header_probe, cxx_header_probe):
+            for required in ("stdio_ext.h", "__fwritable", "FILE", "FWRITABLE_STDERR"):
+                self.assertIn(required, probe)
+        for required in (
+            "CRABC_STDIO_PERMANENT_FWRITABLE_STDERR_C11",
+            "CRABC_STDIO_PERMANENT_FWRITABLE_STDERR_CXX17",
+            "stdio_ext.h stdio.h features.h bits/alltypes.h",
+            "-nostdinc",
+            "-nostdinc++",
+            "assert_cxx_c_linkage",
+            "run_musl_oracle.sh",
+        ):
+            self.assertIn(required, header_runner)
+        for required in (
+            "fwritable_entry(stderr) != 1",
+            "__fwritable(stderr) != 1",
+            "CRABC_STDIO_PERMANENT_FWRITABLE_STDERR_FREESTANDING",
+        ):
+            self.assertIn(required, fixture)
+        for forbidden in (
+            "fputc",
+            "fflush",
+            "fgetc",
+            "stdin",
+            "stdout",
+            "fopen",
+            "tmpfile",
+            "dup",
+            "close",
+            "setvbuf",
+            "__fwriting",
+        ):
+            self.assertNotIn(forbidden, fixture)
+        for required in (
+            "__crabc_x86_static_tls_bootstrap",
+            "crabc_x86_64_stdio_permanent_fwritable_stderr_probe",
+            "mov $231, %eax",
+        ):
+            self.assertIn(required, start)
+        for required in (
+            "ORACLE_ARCHIVE",
+            "run_stdio_permanent_fwritable_stderr_header_abi.sh",
+            "STATIC_C_ABI_EXPORTS",
+            "strong __fwritable",
+            "__fwriting",
+            "-nostdlib -static",
+            "dynamic TLS model",
+            "unowned runtime dependency",
+            "__fwritable unexpectedly contains a syscall path",
+            "__crabc_x86_static_tls_bootstrap",
+        ):
+            self.assertIn(required, runner)
+        self.assertNotIn("--whole-archive", runner)
+        self.assertIn('id = "static-c-stdio-permanent-fwritable-stderr"', ledger)
+        self.assertIn(
+            'command = "./scripts/dev-x86_64.sh libc-stdio-permanent-fwritable-stderr"',
+            ledger,
+        )
+        self.assertIn("does not select `stdio.stream-io`", ledger)
+        self.assertIn("stdio-permanent-fwritable-stderr-header-abi", dispatcher)
+        self.assertIn("libc-stdio-permanent-fwritable-stderr", dispatcher)
+        self.assertIn(
+            "run_stdio_permanent_fwritable_stderr_header_abi.sh", dispatcher
+        )
+        self.assertIn("run_libc_stdio_permanent_fwritable_stderr.sh", dispatcher)
 
     def test_libc_static_c_abi_stdio_permanent_feof_unlocked_stays_bounded(
         self,

@@ -27,6 +27,7 @@ __fpclassifyl
 __freadable
 __funcs_on_exit
 __futimesat
+__fwritable
 __fxstat
 __fxstatat
 __getauxval
