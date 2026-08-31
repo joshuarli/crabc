@@ -664,6 +664,7 @@ readahead
 readdir
 readdir_r
 readlink
+readlinkat
 readv
 recv
 recvfrom

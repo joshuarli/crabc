@@ -135,6 +135,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   getpass-header-abi  compile the staged x86 C/C++ getpass declaration
   mkfifo-header-abi  verify selected x86 mkfifo C/C++ declarations
   mkfifoat-header-abi  verify selected x86 mkfifoat C/C++ declarations
+  readlinkat-header-abi  verify selected x86 POSIX readlinkat C/C++ declarations
   mktemp-header-abi  compile the staged x86 C/C++ mktemp declaration
   mman-header-abi  compile the staged x86 C/C++ mapping-header declarations
   memory-sync-header-abi  verify selected x86 msync C/C++ declarations
@@ -293,6 +294,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-getpass  run the static x86 crabc-libc getpass terminal slice
   libc-mkfifo  run the static x86 crabc-libc mkfifo leaf
   libc-mkfifoat  run the static x86 crabc-libc mkfifoat leaf
+  libc-readlinkat  run the static x86 crabc-libc readlinkat leaf
   libc-mktemp  run the static x86 crabc-libc historical mktemp slice
   libc-process-context  run the static x86 crabc-libc selected process-context slice
   libc-environment  run the static x86 crabc-libc bounded environment slice
@@ -2598,6 +2600,9 @@ run_mkfifoat_header_abi() {
     run_in_container bash /workspace/compat/x86_64/run_mkfifoat_header_abi.sh
 }
 
+run_readlinkat_header_abi() {
+    run_in_container bash /workspace/compat/x86_64/run_readlinkat_header_abi.sh
+}
 run_mman_header_abi() {
     run_in_container bash /workspace/compat/x86_64/run_mman_header_abi.sh
 }
@@ -3511,6 +3516,9 @@ run_libc_descriptor_io_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_descriptor_io.sh
 }
 
+run_libc_readlinkat_probe() {
+    run_in_container bash /workspace/compat/x86_64/run_libc_readlinkat.sh
+}
 run_libc_descriptor_lifecycle_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_descriptor_lifecycle.sh
 }
@@ -3757,6 +3765,7 @@ case "$command" in
     libc-timerfd|libc-signalfd|libc-sigpause|libc-sigisemptyset|libc-sigandset-sigorset|libc-sigpending|libc-sigrtmax|libc-sigrtmin|libc-sigaddset-sigdelset-sigfillset) ;;
     libc-sched-yield) ;;
     ctermid-header-abi|gethostid-header-abi|isatty-header-abi|tcgetpgrp-header-abi|tcsetpgrp-header-abi|getpass-header-abi|libc-ctermid|libc-gethostid|libc-isatty|libc-tcgetpgrp|libc-tcsetpgrp|libc-getpass|mkfifo-header-abi|mkfifoat-header-abi|libc-mkfifo|libc-mkfifoat|mktemp-header-abi|libc-mktemp) ;;
+    readlinkat-header-abi|libc-readlinkat) ;;
     stdio-permanent-line-io-header-abi|stdio-octal-hex-scan-header-abi) ;;
     math-complex-complete-header-abi|libc-math-complex-complete) ;;
     stdio-permanent-byte-io-header-abi) ;;
@@ -4323,6 +4332,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "mkfifoat-header-abi takes no arguments"
         ensure_image
         run_mkfifoat_header_abi
+        ;;
+    readlinkat-header-abi)
+        [ "$#" -eq 0 ] || fail "readlinkat-header-abi takes no arguments"
+        ensure_image
+        run_readlinkat_header_abi
         ;;
     mktemp-header-abi)
         [ "$#" -eq 0 ] || fail "mktemp-header-abi takes no arguments"
@@ -5067,6 +5081,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "libc-mkfifoat takes no arguments"
         ensure_image
         run_libc_mkfifoat_probe
+        ;;
+    libc-readlinkat)
+        [ "$#" -eq 0 ] || fail "libc-readlinkat takes no arguments"
+        ensure_image
+        run_libc_readlinkat_probe
         ;;
     libc-mktemp)
         [ "$#" -eq 0 ] || fail "libc-mktemp takes no arguments"

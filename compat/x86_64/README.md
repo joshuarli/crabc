@@ -296,6 +296,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh pathname-lifecycle-header-abi
 ./scripts/dev-x86_64.sh mkfifo-header-abi
 ./scripts/dev-x86_64.sh mkfifoat-header-abi
+./scripts/dev-x86_64.sh readlinkat-header-abi
 ./scripts/dev-x86_64.sh mm-abi-reference
 ./scripts/dev-x86_64.sh mlock-reference
 ./scripts/dev-x86_64.sh msync-reference
@@ -483,6 +484,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-pathname-lifecycle
 ./scripts/dev-x86_64.sh libc-mkfifo
 ./scripts/dev-x86_64.sh libc-mkfifoat
+./scripts/dev-x86_64.sh libc-readlinkat
 ./scripts/dev-x86_64.sh libc-extended-attributes
 ./scripts/dev-x86_64.sh libc-descriptor-io
 ./scripts/dev-x86_64.sh libc-descriptor-lifecycle
@@ -1046,6 +1048,18 @@ and null-path `EFAULT` under a child-local shell `umask 000`. It neither chooses
 `AT_FDCWD` nor selects `mkfifo`, `mknod`, `mknodat`, device nodes, C umask/CWD/
 pathname policy, `filesystem.special-nodes`, allocation, locale/terminal/
 environment/process state, family promotion, or public x86 support.
+
+`readlinkat-header-abi` is an eight-profile C11/C++17 project-header/
+pinned-musl matrix for unconditional `readlinkat(int, const char *, char *,
+size_t)`, including the x86 LP64 scalar types and unmangled C++ linkage. Its
+paired private `libc-readlinkat` static artifact selects only musl's direct
+Linux x86-64 `readlinkat=267` body. A raw-created symbolic link and regular
+sibling prove full/truncated non-NUL caller output, stale `errno` success,
+`ENOENT`/`EINVAL`/`EBADF`/`EFAULT`, and the zero-capacity private-dummy rule:
+the selected C call returns zero without changing caller storage while the raw
+zero-capacity request reports `EINVAL`. It excludes ordinary `readlink`, other
+*at entries, pathname/CWD policy, directory streams, allocation, cancellation,
+a Rust facade, family completion, promotion, and public x86 support.
 
 `libc-extended-attributes` is the separate private static C runtime artifact
 paired with that header gate. Its project-header fixture first runs through
@@ -5570,6 +5584,7 @@ Apart from the narrowly named `libc-stat-compat`, `libc-credentials`,
 `libc-pathname-lifecycle`,
 `libc-mkfifo`,
 `libc-mkfifoat`,
+`libc-readlinkat`,
 `libc-descriptor-io`,
 `libc-descriptor-lifecycle`,
 `libc-descriptor-pipeline`,

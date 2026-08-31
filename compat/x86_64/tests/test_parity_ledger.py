@@ -50,7 +50,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 41)
-        self.assertEqual(report["verified_artifact_count"], 194)
+        self.assertEqual(report["verified_artifact_count"], 195)
         self.assertEqual(report["header_layout_probe_count"], 46)
         self.assertEqual(report["public_header_inventory_count"], 183)
         self.assertEqual(report["header_foundation_header_count"], 191)
@@ -6729,7 +6729,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             "does not select libc.so", credentials["native_evidence"][0]["scope"]
         )
         posix_artifacts = posix_runtime["verified_artifact"]
-        assert isinstance(posix_artifacts, list) and len(posix_artifacts) == 81
+        assert isinstance(posix_artifacts, list) and len(posix_artifacts) == 82
         artifacts_by_id = {
             artifact["id"]: artifact
             for artifact in posix_artifacts
@@ -16240,6 +16240,220 @@ class X86ParityLedgerTests(unittest.TestCase):
         assert isinstance(prerequisites, list)
         index = next(index for index, item in enumerate(prerequisites) if "mknodat=259" in item)
         prerequisites[index] = prerequisites[index].replace("mknodat=259", "mknodat=999")
+        with self.assertRaisesRegex(ledger.LedgerError, "Linux syscall register ABI"):
+            ledger.validate_ledger(data)
+
+    def test_readlinkat_artifact_keeps_its_c_only_buffer_boundary(self) -> None:
+        data = self.data()
+        family = self.family(data, "libc.posix-runtime")
+        self.assertEqual(family["status"], "planned")
+        artifacts = family["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-readlinkat"
+        )
+        self.assertNotIn("capabilities", artifact)
+        for owner in (
+            "COMPATIBILITY-PROFILE.md",
+            "compat/upstreams.toml",
+            "libc/src/c_abi/x86_64/static_c_abi.rs",
+            "libc/src/c_abi/x86_64/readlinkat.rs",
+            "libc/src/c_abi/x86_64/errno.rs",
+            "libc/src/c_abi/x86_64/syscall.rs",
+            "libc/src/c_abi/x86_64/static_tls.rs",
+            "include/errno.h",
+            "include/fcntl.h",
+            "include/stdint.h",
+            "include/sys/syscall.h",
+            "include/sys/types.h",
+            "include/unistd.h",
+            "include/bits/alltypes.h",
+            "include/bits/syscall.h",
+            "compat/x86_64/readlinkat_header_abi_probe.c",
+            "compat/x86_64/readlinkat_header_abi_probe.cpp",
+            "compat/x86_64/run_readlinkat_header_abi.sh",
+            "compat/x86_64/static_c_abi_exports.txt",
+            "compat/x86_64/libc_readlinkat_probe.c",
+            "compat/x86_64/libc_readlinkat_start.S",
+            "compat/x86_64/run_libc_readlinkat.sh",
+            "compat/x86_64/aarch64_parity_inventory.json",
+            "compat/x86_64/validate_parity_ledger.py",
+            "scripts/dev-x86_64.sh",
+        ):
+            self.assertIn(owner, artifact["source_owners"])
+        for phrase in (
+            "selected-static-archive `readlinkat`",
+            "still-planned `libc.posix-runtime`",
+            "pinned musl 1.2.6",
+            "`-nostdlib -static`",
+            "caller-supplied directory descriptor",
+            "readlinkat=267",
+            "full/truncated non-NUL output",
+            "stale errno",
+            "ENOENT/EINVAL/EBADF/EFAULT",
+            "private one-byte dummy",
+            "direct zero-capacity syscall reports EINVAL",
+            "ordinary `readlink`",
+            "other *at entries",
+            "pathname parsing/canonicalization",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, artifact["description"])
+        self.assertEqual(
+            {entry["command"] for entry in artifact["native_evidence"]},
+            {"./scripts/dev-x86_64.sh libc-readlinkat"},
+        )
+
+        prerequisites = artifact["x86_abi_prerequisites"]
+        assert isinstance(prerequisites, list)
+        syscall_abi = next(item for item in prerequisites if "readlinkat=267" in item)
+        assert isinstance(syscall_abi, str)
+        for phrase in (
+            "rdi",
+            "rsi",
+            "rdx",
+            "r10",
+            "ssize_t",
+            "-4095",
+            "initial-TLS errno",
+        ):
+            self.assertIn(phrase, syscall_abi)
+        source_mapping = next(
+            item for item in prerequisites if "src/unistd/readlinkat.c" in item
+        )
+        assert isinstance(source_mapping, str)
+        for phrase in (
+            "char dummy[1]",
+            "__syscall(SYS_readlinkat, fd, path, buf, bufsize)",
+            "__syscall_ret",
+            "Linux 5.10",
+            "syscall_cp",
+        ):
+            self.assertIn(phrase, source_mapping)
+        request_proof = next(item for item in prerequisites if "raw-creates" in item)
+        assert isinstance(request_proof, str)
+        for phrase in (
+            "non-NUL",
+            "stale errno",
+            "zero capacity",
+            "raw EINVAL",
+            "ENOENT/EINVAL/EBADF/EFAULT",
+            "ordinary readlink",
+            "other *at entries",
+        ):
+            self.assertIn(phrase, request_proof)
+
+        headers = artifact["x86_header_prerequisites"]
+        assert isinstance(headers, list) and isinstance(headers[0], str)
+        for phrase in (
+            "eight-profile",
+            "unistd.h",
+            "readlinkat(int, const char *, char *, size_t)",
+            "four-byte int",
+            "eight-byte size_t/ssize_t",
+            "All eight",
+            "none hides it",
+            "unmangled C++",
+        ):
+            self.assertIn(phrase, headers[0])
+
+        exports = set(
+            (ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt")
+            .read_text(encoding="utf-8")
+            .splitlines()
+        )
+        self.assertIn("readlinkat", exports)
+        self.assertNotIn("open_by_handle_at", exports)
+
+        implementation = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "readlinkat.rs"
+        ).read_text(encoding="utf-8")
+        for snippet in (
+            "src/unistd/readlinkat.c",
+            "char dummy[1]",
+            "__syscall(SYS_readlinkat, fd, path, buf, bufsize)",
+            "fn readlinkat",
+            "raw_syscall::SYS_READLINKAT",
+            "raw_syscall::syscall4(",
+            "i64::from(directory_descriptor)",
+            "c_ssize_status(result)",
+            "readlinkat=267",
+        ):
+            self.assertIn(snippet, implementation)
+        for forbidden in (
+            "fn readlink(",
+            "raw_syscall::SYS_READLINK,",
+            "fn linkat(",
+            "fn symlinkat(",
+            "fn unlinkat(",
+            "crabc_core",
+            "mimalloc",
+            "alloc::",
+        ):
+            self.assertNotIn(forbidden, implementation)
+
+        header_runner = (
+            ROOT / "compat" / "x86_64" / "run_readlinkat_header_abi.sh"
+        ).read_text(encoding="utf-8")
+        for snippet in (
+            "MUSL_ROOT=/opt/musl-1.2.6",
+            "EXPECTED_PROFILE_COUNT=8",
+            "EXPECTED_VISIBLE_PROFILE_COUNT=8",
+            "EXPECTED_HIDDEN_PROFILE_COUNT=0",
+            "unistd.h",
+            "readlinkat",
+            "unmangled",
+        ):
+            self.assertIn(snippet, header_runner)
+        probe = (
+            ROOT / "compat" / "x86_64" / "libc_readlinkat_probe.c"
+        ).read_text(encoding="utf-8")
+        for snippet in (
+            "SYS_readlinkat == 267",
+            "stale errno",
+            "non-NUL",
+            "EINTR",
+            "EINVAL",
+            "ENOENT",
+            "EBADF",
+            "EFAULT",
+            "CRABC_READLINKAT_FREESTANDING",
+        ):
+            self.assertIn(snippet, probe)
+        runner = (
+            ROOT / "compat" / "x86_64" / "run_libc_readlinkat.sh"
+        ).read_text(encoding="utf-8")
+        for snippet in (
+            "run_musl_oracle.sh",
+            "run_readlinkat_header_abi.sh",
+            "-nostdlib -static",
+            "--no-undefined",
+            "assert_selected_c_abi_surface",
+            "readlinkat=267",
+            "%r10",
+            "CRABC_READLINKAT_FREESTANDING",
+            "readlinkat candidate exports an unselected pathname entry",
+        ):
+            self.assertIn(snippet, runner)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-readlinkat"
+        )
+        prerequisites = artifact["x86_abi_prerequisites"]
+        assert isinstance(prerequisites, list)
+        index = next(
+            index for index, item in enumerate(prerequisites) if "readlinkat=267" in item
+        )
+        prerequisites[index] = prerequisites[index].replace(
+            "readlinkat=267", "readlinkat=999"
+        )
         with self.assertRaisesRegex(ledger.LedgerError, "Linux syscall register ABI"):
             ledger.validate_ledger(data)
 

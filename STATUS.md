@@ -1559,6 +1559,18 @@ device-node/C-umask/CWD/pathname policy, locale/process state, the broader
 `filesystem.special-nodes` capability, family completion, promotion, or public
 x86 support.
 
+`./scripts/dev-x86_64.sh readlinkat-header-abi` is a separate eight-profile
+C11/C++17 project-header/pinned-musl declaration gate for
+`readlinkat(int, const char *, char *, size_t)`. Its paired private
+`./scripts/dev-x86_64.sh libc-readlinkat` artifact maps only musl 1.2.6's
+direct Linux x86-64 `readlinkat=267` body. Its raw-owned fixture proves
+full/truncated non-NUL caller bytes, stale-errno success, the direct
+`ENOENT`/`EINVAL`/`EBADF`/`EFAULT` paths, and musl's zero-capacity private
+one-byte dummy: that call returns zero while preserving the caller buffer,
+where a raw zero-capacity request returns `EINVAL`. Ordinary `readlink`, other
+*at entries, pathname/CWD policy, directory streams, allocation, cancellation,
+a Rust facade, promotion, and public x86 support remain excluded.
+
 `./scripts/dev-x86_64.sh libc-descriptor-lifecycle` is a separate private
 `static-c-descriptor-lifecycle` composition artifact inside that same planned
 family. It runs one project-header C body through pinned musl and then a

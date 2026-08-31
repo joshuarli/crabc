@@ -4862,6 +4862,59 @@ native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc
 oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl resource-limit, usage, priority, nice, declarations, and errno behavior oracle." }, { kind = "kernel-abi", source = "Linux 5.10 x86-64 ABI", role = "prlimit64/getrusage/getpriority/setpriority register, public-prefix, raw-result, and errno contract." }, { kind = "elf-abi", source = "System V AMD64 psABI", role = "Static initial-exec TLS and Variant-II thread-pointer fixture contract." }]
 
 [[family.verified_artifact]]
+id = "static-c-readlinkat"
+description = "Private native x86 selected-static-archive `readlinkat` leaf within still-planned `libc.posix-runtime`. One project-header C body runs first through pinned musl 1.2.6 and then through a true `-nostdlib -static` crabc-libc candidate. It resolves only `readlinkat(int, const char *, char *, size_t)`: musl's direct body passes the caller-supplied directory descriptor, pathname, output pointer, and nonzero capacity unchanged to Linux x86-64 `readlinkat=267`. The raw-owned fixture creates one symbolic link and one regular sibling, then compares C and raw full/truncated non-NUL output, stale errno success, missing/regular/bad-dirfd/null-path ENOENT/EINVAL/EBADF/EFAULT, and zero capacity. For zero capacity musl supplies a private one-byte dummy, returns zero after a positive raw result, preserves stale errno, and leaves caller storage untouched while the direct zero-capacity syscall reports EINVAL. It does not select ordinary `readlink`, `linkat`/`symlinkat`/`unlinkat` or other *at entries, pathname parsing/canonicalization, CWD state, directory streams, allocation, cancellation, a Rust facade, libc.so, CRT, loader, sysroot, filesystem capability completion, promotion, or public x86 support."
+source_owners = [
+  "COMPATIBILITY-PROFILE.md",
+  "compat/upstreams.toml",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/readlinkat.rs",
+  "libc/src/c_abi/x86_64/errno.rs",
+  "libc/src/c_abi/x86_64/syscall.rs",
+  "libc/src/c_abi/x86_64/static_tls.rs",
+  "include/errno.h",
+  "include/fcntl.h",
+  "include/stdint.h",
+  "include/sys/syscall.h",
+  "include/sys/types.h",
+  "include/unistd.h",
+  "include/bits/alltypes.h",
+  "include/bits/syscall.h",
+  "compat/abi/musl-1.2.6/aarch64/libc.a.static.tsv",
+  "compat/x86_64/readlinkat_header_abi_probe.c",
+  "compat/x86_64/readlinkat_header_abi_probe.cpp",
+  "compat/x86_64/run_readlinkat_header_abi.sh",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/libc_readlinkat_probe.c",
+  "compat/x86_64/libc_readlinkat_start.S",
+  "compat/x86_64/run_libc_readlinkat.sh",
+  "compat/x86_64/aarch64_parity_inventory.py",
+  "compat/x86_64/aarch64_parity_inventory.json",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "compat/x86_64/README.md",
+  "STATUS.md",
+  "x86-64.md",
+  "scripts/dev-x86_64.sh",
+  "scripts/check_structure.py",
+]
+x86_abi_prerequisites = [
+  "The SysV AMD64 C ABI passes readlinkat's signed four-byte dirfd in rdi, pathname in rsi, caller output pointer in rdx, and eight-byte capacity from C rcx into Linux r10; returns signed eight-byte ssize_t in rax. The private Linux x86-64 readlinkat=267 request receives those unchanged words; only raw -4095 through -1 results publish selected initial-TLS errno.",
+  "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417 maps src/unistd/readlinkat.c exactly: it substitutes `char dummy[1]` only when `!bufsize`, invokes `__syscall(SYS_readlinkat, fd, path, buf, bufsize)`, changes a positive dummy result to zero, and passes the rest through `__syscall_ret`. Linux 5.10 supplies the direct x86-64 request; no fallback/retry/path copy/allocation/policy or syscall_cp cancellation layer is selected.",
+  "The native runner raw-creates one symbolic link and a regular sibling, then compares the selected C call with direct raw readlinkat output. It proves full and truncated caller-buffered non-NUL prefixes, stale errno on success, zero capacity's private dummy/zero result and untouched caller buffer against raw EINVAL, plus missing/regular/bad-dirfd/null-path ENOENT/EINVAL/EBADF/EFAULT. It does not own ordinary readlink, other *at entries, pathname/CWD policy, or generic filesystem behavior.",
+  "The final static candidate has a PT_TLS errno datum with direct initial-exec TPOFF access and no TLSGD/TLSLD/TLSDESC/GOTTPOFF/DTPMOD/DTPOFF model form or __tls_get_addr; fixture-local startup delegates to the archive Static Initial TLS v1 bootstrap without claiming CRT or TLS lifecycle.",
+]
+x86_header_prerequisites = ["The eight-profile C11/C++17 project-first/pinned-musl unistd.h matrix proves unconditional `readlinkat(int, const char *, char *, size_t)`, x86 signed four-byte int and eight-byte size_t/ssize_t, and unmangled C++ linkage. All eight default/GNU/strict/POSIX/X/Open/BSD C/C++ profiles expose it; none hides it. This is declaration evidence for one caller-buffered C leaf, not ordinary readlink, an *at family, pathname policy, installed-header, or public x86 support claim."]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-readlinkat", scope = "Pinned-musl project-header C reference plus a true dependency-free x86 `-nostdlib -static` crabc-libc candidate. The gate runs the eight-profile readlinkat C/C++ header matrix with all eight visible and none hidden; ratchets the exact crate-owned archive export; rejects interpreter/DT_NEEDED, unresolved symbols, dynamic TLS, and unowned runtime dependencies; proves direct initial-TLS errno; disassembles direct readlinkat=267 with r10 capacity transfer; and compares one raw-created symbolic link's full/truncated non-NUL caller output, stale-errno success, zero-capacity private dummy zero result and untouched caller storage versus raw EINVAL, plus missing ENOENT, regular EINVAL, bad-dirfd EBADF, and null-path EFAULT. It does not select ordinary readlink, other *at entries, pathname/CWD policy, directory streams, allocation, cancellation, a Rust facade, libc.so, CRT, loader, sysroot, filesystem capability completion, promotion, or public x86 support." }]
+oracle = [
+  { kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source and POSIX declaration oracle for include/unistd.h plus src/unistd/readlinkat.c. Its direct body substitutes `char dummy[1]` for zero bufsize, invokes `__syscall(SYS_readlinkat, fd, path, buf, bufsize)`, converts a positive dummy result to zero, then uses __syscall_ret; it has no allocation, pathname policy, or syscall_cp cancellation layer." },
+  { kind = "kernel-abi", source = "Linux 5.10 x86-64 ABI", role = "readlinkat=267 rdi/rsi/rdx/r10 request words, non-NUL caller-buffer output and truncation, raw zero-capacity EINVAL, and direct errno contract." },
+  { kind = "elf-abi", source = "System V AMD64 psABI", role = "LP64 int/pointer/size_t/ssize_t calling convention, unmangled C++ linkage, and static initial-exec TLS fixture contract." },
+]
+[[family.verified_artifact]]
 id = "static-c-sched-yield"
 description = "Private native x86 selected-static-archive POSIX `sched_yield` leaf. One dependency-free `crabc-libc` archive resolves exactly `sched_yield(void)` into a freestanding C fixture after an equivalent pinned-musl execution. The separate strict/POSIX/XOPEN/GNU C/C++ header gate proves the unconditional no-argument signed-int declaration and unmangled C++ linkage. The static fixture proves a normal successful yield preserves stale errno, then uses fixture-local classic BPF only to force the raw Linux `-EPERM` result and prove musl's status bridge returns `-1` with `errno=EPERM`. It is distinct from the separate C11 `thrd_yield` artifact, whose void source intentionally discards that same raw result. This artifact establishes no scheduler handoff, fairness, peer-progress, scheduler policy/parameter API, affinity, C11 or pthread lifecycle, process lifecycle, libc.so, CRT, dynamic TLS, loader, sysroot, allocator, family completion, promotion, or public x86 support."
 source_owners = [

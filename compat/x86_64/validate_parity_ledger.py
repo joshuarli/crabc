@@ -15313,6 +15313,301 @@ def require_static_posix_exit_artifact(family: Mapping[str, Any]) -> None:
         require(snippet in dispatcher, f"static-c-posix-exit dispatcher omits {snippet}")
 
 
+def require_readlinkat_artifact(family: Mapping[str, Any]) -> None:
+    """Keep one caller-buffered *at query isolated from pathname policy."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.posix-runtime].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [entry for entry in artifacts if entry.get("id") == "static-c-readlinkat"]
+    require(
+        len(matching) == 1,
+        "libc.posix-runtime must contain exactly one static-c-readlinkat artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-readlinkat must not promote libc.posix-runtime",
+    )
+    artifact = matching[0]
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for phrase in (
+        "selected-static-archive `readlinkat`",
+        "still-planned `libc.posix-runtime`",
+        "pinned musl 1.2.6",
+        "`-nostdlib -static`",
+        "caller-supplied directory descriptor",
+        "readlinkat=267",
+        "full/truncated non-NUL output",
+        "stale errno",
+        "ENOENT/EINVAL/EBADF/EFAULT",
+        "private one-byte dummy",
+        "direct zero-capacity syscall reports EINVAL",
+        "ordinary `readlink`",
+        "other *at entries",
+        "pathname parsing/canonicalization",
+        "public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"static-c-readlinkat description omits {phrase}",
+        )
+
+    owners = set(
+        nonempty_strings(artifact["source_owners"], "static-c-readlinkat.source_owners")
+    )
+    for owner in (
+        "COMPATIBILITY-PROFILE.md",
+        "compat/upstreams.toml",
+        "libc/Cargo.toml",
+        "libc/src/lib.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/readlinkat.rs",
+        "libc/src/c_abi/x86_64/errno.rs",
+        "libc/src/c_abi/x86_64/syscall.rs",
+        "libc/src/c_abi/x86_64/static_tls.rs",
+        "include/errno.h",
+        "include/fcntl.h",
+        "include/stdint.h",
+        "include/sys/syscall.h",
+        "include/sys/types.h",
+        "include/unistd.h",
+        "include/bits/alltypes.h",
+        "include/bits/syscall.h",
+        "compat/abi/musl-1.2.6/aarch64/libc.a.static.tsv",
+        "compat/x86_64/readlinkat_header_abi_probe.c",
+        "compat/x86_64/readlinkat_header_abi_probe.cpp",
+        "compat/x86_64/run_readlinkat_header_abi.sh",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/libc_readlinkat_probe.c",
+        "compat/x86_64/libc_readlinkat_start.S",
+        "compat/x86_64/run_libc_readlinkat.sh",
+        "compat/x86_64/aarch64_parity_inventory.py",
+        "compat/x86_64/aarch64_parity_inventory.json",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/README.md",
+        "STATUS.md",
+        "x86-64.md",
+        "scripts/dev-x86_64.sh",
+        "scripts/check_structure.py",
+    ):
+        require(
+            owner in owners,
+            f"static-c-readlinkat source owners omit {owner}",
+        )
+
+    prerequisites = nonempty_strings(
+        artifact["x86_abi_prerequisites"], "static-c-readlinkat.x86_abi_prerequisites"
+    )
+    require(
+        any(
+            "readlinkat=267" in item
+            and "rdi" in item
+            and "rsi" in item
+            and "rdx" in item
+            and "r10" in item
+            and "ssize_t" in item
+            and "-4095" in item
+            and "initial-TLS errno" in item
+            for item in prerequisites
+        ),
+        "static-c-readlinkat must record its Linux syscall register ABI",
+    )
+    require(
+        any(
+            "src/unistd/readlinkat.c" in item
+            and "char dummy[1]" in item
+            and "__syscall(SYS_readlinkat, fd, path, buf, bufsize)" in item
+            and "__syscall_ret" in item
+            and "Linux 5.10" in item
+            and "syscall_cp" in item
+            for item in prerequisites
+        ),
+        "static-c-readlinkat must record its direct pinned-musl mapping",
+    )
+    require(
+        any(
+            "raw-creates" in item
+            and "non-NUL" in item
+            and "stale errno" in item
+            and "zero capacity" in item
+            and "raw EINVAL" in item
+            and "ENOENT/EINVAL/EBADF/EFAULT" in item
+            and "ordinary readlink" in item
+            and "other *at entries" in item
+            for item in prerequisites
+        ),
+        "static-c-readlinkat must record its bounded caller-buffer and errno proof",
+    )
+    require(
+        any(
+            "PT_TLS errno datum" in item
+            and "initial-exec TPOFF" in item
+            and "__tls_get_addr" in item
+            for item in prerequisites
+        ),
+        "static-c-readlinkat must record its static TLS boundary",
+    )
+
+    headers = nonempty_strings(
+        artifact["x86_header_prerequisites"], "static-c-readlinkat.x86_header_prerequisites"
+    )
+    require(
+        any(
+            "eight-profile" in item
+            and "unistd.h" in item
+            and "readlinkat(int, const char *, char *, size_t)" in item
+            and "four-byte int" in item
+            and "eight-byte size_t/ssize_t" in item
+            and "All eight" in item
+            and "none hides it" in item
+            and "unmangled C++" in item
+            for item in headers
+        ),
+        "static-c-readlinkat must retain its unconditional project-header ABI boundary",
+    )
+
+    static_exports = set(
+        static_c_abi_export_names(ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt")
+    )
+    require(
+        "readlinkat" in static_exports,
+        "static-c-readlinkat must export readlinkat",
+    )
+    require(
+        "open_by_handle_at" not in static_exports,
+        "static-c-readlinkat must not add open_by_handle_at",
+    )
+    static_root = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+    ).read_text(encoding="utf-8")
+    require(
+        '#[path = "readlinkat.rs"]\nmod readlinkat;' in static_root,
+        "x86 static C ABI must compose the readlinkat leaf",
+    )
+    implementation = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "readlinkat.rs"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "src/unistd/readlinkat.c",
+        "char dummy[1]",
+        "__syscall(SYS_readlinkat, fd, path, buf, bufsize)",
+        "fn readlinkat",
+        "raw_syscall::SYS_READLINKAT",
+        "raw_syscall::syscall4(",
+        "i64::from(directory_descriptor)",
+        "c_ssize_status(result)",
+        "readlinkat=267",
+    ):
+        require(snippet in implementation, f"readlinkat leaf omits {snippet}")
+    for forbidden in (
+        "fn readlink(",
+        "raw_syscall::SYS_READLINK,",
+        "fn linkat(",
+        "fn symlinkat(",
+        "fn unlinkat(",
+        "crabc_core",
+        "mimalloc",
+        "alloc::",
+        "Vec<",
+    ):
+        require(
+            forbidden not in implementation,
+            f"readlinkat leaf unexpectedly contains {forbidden}",
+        )
+    syscall_source = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "syscall.rs"
+    ).read_text(encoding="utf-8")
+    require(
+        "pub(crate) const SYS_READLINKAT: i64 = 267;" in syscall_source,
+        "x86 syscall table must retain readlinkat=267",
+    )
+
+    oracle = artifact["oracle"]
+    assert isinstance(oracle, list)
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "c-posix"
+            and isinstance(entry.get("role"), str)
+            and "include/unistd.h" in entry["role"]
+            and "src/unistd/readlinkat.c" in entry["role"]
+            and "char dummy[1]" in entry["role"]
+            and "__syscall(SYS_readlinkat, fd, path, buf, bufsize)" in entry["role"]
+            and "__syscall_ret" in entry["role"]
+            for entry in oracle
+        ),
+        "static-c-readlinkat must retain its pinned-musl readlinkat source mapping",
+    )
+
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-readlinkat"},
+        "static-c-readlinkat must use the dedicated native command",
+    )
+    scope = evidence[0].get("scope")
+    require(
+        isinstance(scope, str)
+        and all(
+            phrase in scope
+            for phrase in (
+                "`-nostdlib -static`",
+                "all eight visible and none hidden",
+                "readlinkat=267",
+                "r10 capacity transfer",
+                "non-NUL",
+                "stale-errno success",
+                "zero-capacity private dummy zero result",
+                "raw EINVAL",
+                "ENOENT",
+                "EINVAL",
+                "EBADF",
+                "EFAULT",
+                "ordinary readlink",
+                "other *at entries",
+                "public x86 support",
+            )
+        ),
+        "static-c-readlinkat evidence must retain its exact static caller-buffer regression",
+    )
+    header_runner = (
+        ROOT / "compat" / "x86_64" / "run_readlinkat_header_abi.sh"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "MUSL_ROOT=/opt/musl-1.2.6",
+        "EXPECTED_PROFILE_COUNT=8",
+        "EXPECTED_VISIBLE_PROFILE_COUNT=8",
+        "EXPECTED_HIDDEN_PROFILE_COUNT=0",
+        "unistd.h",
+        "readlinkat",
+        "unmangled",
+    ):
+        require(
+            snippet in header_runner,
+            f"readlinkat header runner omits {snippet}",
+        )
+    runner = (ROOT / "compat" / "x86_64" / "run_libc_readlinkat.sh").read_text(
+        encoding="utf-8"
+    )
+    for snippet in (
+        "run_musl_oracle.sh",
+        "run_readlinkat_header_abi.sh",
+        "-nostdlib -static",
+        "--no-undefined",
+        "assert_selected_c_abi_surface",
+        "readlinkat=267",
+        "%r10",
+        "CRABC_READLINKAT_FREESTANDING",
+        "readlinkat candidate exports an unselected pathname entry",
+    ):
+        require(snippet in runner, f"readlinkat runner omits {snippet}")
+
+
 def require_static_sched_yield_artifact(family: Mapping[str, Any]) -> None:
     """Keep musl's status-returning POSIX scheduler-yield closure bounded."""
 
@@ -39971,6 +40266,7 @@ def validate_ledger(
     require_immediate_termination_artifact(by_id["libc.posix-runtime"])
     require_static_posix_exit_artifact(by_id["libc.posix-runtime"])
     require_static_sched_yield_artifact(by_id["libc.posix-runtime"])
+    require_readlinkat_artifact(by_id["libc.posix-runtime"])
     require_callback_algorithms_artifact(by_id["libc.posix-runtime"])
     require_clock_gettime_artifact(by_id["libc.posix-runtime"])
     require_time_observation_artifact(by_id["libc.posix-runtime"])

@@ -93,8 +93,9 @@
 //! conversion artifact, and one fixed-UTC `timegm` conversion artifact, plus one
 //! bounded System V message-queue/shared-memory artifact, one bounded
 //! unnamed POSIX semaphore artifact, and one bounded event-descriptor
-//! artifact, one bounded pathname-mutation/lifecycle artifact, and one
-//! bounded directory-stream/raw-directory artifact.
+//! artifact, one bounded pathname-mutation/lifecycle artifact, one distinct
+//! caller-buffered descriptor-relative readlinkat leaf, and one bounded
+//! directory-stream/raw-directory artifact.
 //! The fixed-graph dlfcn bridge is a separate public-C spelling over the
 //! loader-owned immutable RuntimeV1-prefix record. It owns only bounded
 //! per-thread diagnostics and borrowed C views of copied loader metadata; it
@@ -449,6 +450,8 @@ mod timer_fd;
 mod signal_fd;
 #[path = "pathname_lifecycle.rs"]
 mod pathname_lifecycle;
+#[path = "readlinkat.rs"]
+mod readlinkat;
 #[path = "directory_streams.rs"]
 mod directory_streams;
 #[path = "system_observation.rs"]
