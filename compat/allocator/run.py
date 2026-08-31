@@ -214,6 +214,7 @@ NATIVE_OWNER_EXIT_REQUIRED_SCENARIOS = frozenset(
         "multiple-bins-and-page-kinds",
         "multiple-live-pages",
         "old-theap-teardown",
+        "post-exit-claim-page-map-lifetime",
         "post-exit-page-map-and-live-remote",
         "remote-free-after-exit",
         "remote-free-before-exit",
@@ -1890,6 +1891,17 @@ def validate_native_owner_exit_lifecycle_contract(
         )
         if not isinstance(target, str) or not re.fullmatch(target_pattern, target):
             raise HarnessError(f"native owner-exit lifecycle check {check_id} has an invalid target")
+        if kind == "integration-test":
+            # The contract intentionally names direct first-party test targets,
+            # rather than accepting a Cargo target string that could survive
+            # after its source witness was removed.  This keeps Gate 5C from
+            # spending a full lane on a retired session route before failing.
+            integration_target = ROOT / "crabc-mimalloc" / "tests" / f"{target}.rs"
+            if not integration_target.is_file():
+                raise HarnessError(
+                    "native owner-exit lifecycle check "
+                    f"{check_id} names no current integration test target: {target}"
+                )
         expected_passed_test_count = raw_check.get("expected_passed_test_count")
         if (
             not isinstance(expected_passed_test_count, int)

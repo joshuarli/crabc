@@ -25,13 +25,14 @@ the Rust-port differential and performance baseline if work resumes.
 Gate 5C—the source-shaped owner-exit traversal with live allocations—is
 accepted for the direct native-engine lifecycle surface. The checked
 [`native-owner-exit-lifecycle-v3.5.0.json`](../../compat/allocator/native-owner-exit-lifecycle-v3.5.0.json)
-contract runs twelve exact direct runtime and focused source-traversal checks:
-mixed page classes, pre/post-exit source publication, empty versus abandoned
-pages, source-permitted final-member adoption, terminal ownership ordering,
-and failed OS release. The terminal proof remains private to the final B
-worker until that worker's normal finish. This does not accept a general
-concurrent pointer/PageMap route, the nondefault libc shadow ABI, or Gates 5D
-and 5E; the C backend remains default.
+contract runs fifteen exact direct runtime and focused source-traversal checks:
+mixed page classes, pointer-first pre/post-exit publication, source-selected
+live-medium abandonment, same-page PageMap-claim lifetime, empty versus
+abandoned pages, source-permitted final-member adoption, terminal ownership
+ordering, and failed OS release. The direct witnesses retain their exact
+client inputs inside the test process; they do not accept a general concurrent
+pointer/PageMap route, the nondefault libc shadow ABI, or Gates 5D and 5E; the
+C backend remains default.
 
 The workspace now contains the `crabc-mimalloc` crate with source-mapped
 configuration, arithmetic, types, provenance, atomic operations, size classes,

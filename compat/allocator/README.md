@@ -960,9 +960,10 @@ silently run that distinct full-lane witness. `allocator --full` also executes
 the reviewed
 [`native-owner-exit-lifecycle-v3.5.0.json`](native-owner-exit-lifecycle-v3.5.0.json)
 suite: fifteen focused direct `crabc-mimalloc` checks spanning the mixed runtime
-route, source publication before and after exit, live-owner-to-post-exit
-handoff ordering, aggregate final-member reclamation, failed OS terminal
-release, terminal finish ordering, and source traversal filters. It records
+route, pointer-first publication before and after exit, source-selected live
+medium abandonment, same-page PageMap-claim lifetime, aggregate final-member
+reclamation, failed OS terminal release, terminal finish ordering, and source
+traversal filters. It records
 Gate 5C as passed only when that complete checked
 record is present; the suite is direct-engine lifecycle evidence, not a
 shadow-ABI or general concurrent-routing claim. It then runs the same 128-cycle,

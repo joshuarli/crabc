@@ -25,22 +25,30 @@
     },
     {
       "expected_passed_test_count": 1,
-      "id": "joined-source-publication-after-exit",
+      "id": "post-exit-same-page-remote-producers",
       "kind": "integration-test",
       "scenarios": [
-        "empty-during-exit-collection",
         "remote-free-after-exit"
       ],
-      "target": "runtime_lifecycle_session_post_exit_publisher"
+      "target": "native_post_exit_claimed_remote_producers"
     },
     {
       "expected_passed_test_count": 1,
-      "id": "mapped-medium-source-publication-after-exit",
+      "id": "source-selected-medium-after-retired-large-prepass",
       "kind": "integration-test",
       "scenarios": [
         "live-page-abandonment"
       ],
-      "target": "runtime_lifecycle_session_post_exit_mapped_medium_publisher"
+      "target": "native_source_selected_medium_owner_exit"
+    },
+    {
+      "expected_passed_test_count": 1,
+      "id": "post-exit-claim-page-map-lifetime",
+      "kind": "integration-test",
+      "scenarios": [
+        "post-exit-claim-page-map-lifetime"
+      ],
+      "target": "native_post_exit_claim_page_map_lifetime"
     },
     {
       "expected_passed_test_count": 1,

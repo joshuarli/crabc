@@ -1391,12 +1391,15 @@ without an irreversible speculative claim. A resulting aggregate-free or sole-ad
   parked-session finish, ordinary parked-session owner exit, and the
   parked-session scoped B/C publication route, for eight epochs from seed
   `0x9e3779b97f4a7c15`, proving ticket-zero reactivation after each.
-  `crabc-mimalloc/tests/runtime_lifecycle_session_post_exit_publisher.rs`
-  separately proves the active-session pair reaches B/C without exposing a
-  client address. `crabc-mimalloc/tests/runtime_lifecycle_session_initial_mapped_medium_post_exit_publisher.rs`
-  separately proves that an ordinary A-local free leaves a distinct medium
-  mapped and non-full before owner exit, then the existing bounded B/C/D
-  medium publisher group drains through the generic aggregate route. The
+  The former session-publisher integration targets were removed with that
+  façade. The current direct pointer-first witnesses instead prove post-exit
+  same-page producer collection in
+  `crabc-mimalloc/tests/native_post_exit_claimed_remote_producers.rs`, retain
+  a live PageMap entry through the winning claim tail in
+  `crabc-mimalloc/tests/native_post_exit_claim_page_map_lifetime.rs`, and
+  select the live medium only after the retired-large prepass in
+  `crabc-mimalloc/tests/native_source_selected_medium_owner_exit.rs`. They do
+  not revive a session route or client-ledger capability. The
   `crabc-mimalloc/tests/native_post_exit_split_releaser_lifecycle.rs`
   then proves one detached aggregate can outlive a nonterminal B no-page
   lifecycle and reach terminal source release through fresh C: A's parked

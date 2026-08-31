@@ -1723,7 +1723,7 @@ class ContractTests(unittest.TestCase):
             RUNNER.load_pin(),
         )
 
-        self.assertEqual(summary["check_count"], 14)
+        self.assertEqual(summary["check_count"], 15)
         self.assertEqual(
             summary["scenario_coverage"],
             sorted(RUNNER.NATIVE_OWNER_EXIT_REQUIRED_SCENARIOS),
@@ -1767,6 +1767,16 @@ class ContractTests(unittest.TestCase):
             ],
         )
 
+    def test_native_owner_exit_lifecycle_contract_rejects_retired_integration_target(self) -> None:
+        contract = RUNNER.read_json(RUNNER.NATIVE_OWNER_EXIT_LIFECYCLE_CONTRACT)
+        contract["checks"][0]["target"] = "retired_owner_exit_session"
+
+        with self.assertRaisesRegex(RUNNER.HarnessError, "current integration test target"):
+            RUNNER.validate_native_owner_exit_lifecycle_contract(
+                contract,
+                RUNNER.load_pin(),
+            )
+
     def test_native_owner_exit_lifecycle_runner_records_every_reviewed_check(self) -> None:
         contract = RUNNER.read_json(RUNNER.NATIVE_OWNER_EXIT_LIFECYCLE_CONTRACT)
         result = {
@@ -1781,9 +1791,9 @@ class ContractTests(unittest.TestCase):
             report = RUNNER.run_native_owner_exit_lifecycle(contract, RUNNER.load_pin())
 
         self.assertEqual(report["status"], "passed")
-        self.assertEqual(report["check_count"], 14)
-        self.assertEqual(len(report["checks"]), 14)
-        self.assertEqual(command_record.call_count, 14)
+        self.assertEqual(report["check_count"], 15)
+        self.assertEqual(len(report["checks"]), 15)
+        self.assertEqual(command_record.call_count, 15)
         self.assertTrue(
             all(call.kwargs["timeout_seconds"] == 300 for call in command_record.call_args_list)
         )
