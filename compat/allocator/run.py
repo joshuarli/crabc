@@ -1902,6 +1902,29 @@ def validate_native_owner_exit_lifecycle_contract(
                     "native owner-exit lifecycle check "
                     f"{check_id} names no current integration test target: {target}"
                 )
+        else:
+            unit_target_parts = target.split("::")
+            if len(unit_target_parts) != 3 or unit_target_parts[1] != "tests":
+                raise HarnessError(
+                    "native owner-exit lifecycle check "
+                    f"{check_id} has an unsupported source test filter: {target}"
+                )
+            unit_module, _, unit_test = unit_target_parts
+            unit_source = ROOT / "crabc-mimalloc" / "src" / f"{unit_module}.rs"
+            if not unit_source.is_file():
+                raise HarnessError(
+                    "native owner-exit lifecycle check "
+                    f"{check_id} names no current source test filter: {target}"
+                )
+            unit_source_text = unit_source.read_text(encoding="utf-8")
+            if not re.search(
+                rf"(?m)^\s*fn\s+{re.escape(unit_test)}\s*(?:<[^>]*>)?\s*\(",
+                unit_source_text,
+            ):
+                raise HarnessError(
+                    "native owner-exit lifecycle check "
+                    f"{check_id} names no current source test filter: {target}"
+                )
         expected_passed_test_count = raw_check.get("expected_passed_test_count")
         if (
             not isinstance(expected_passed_test_count, int)

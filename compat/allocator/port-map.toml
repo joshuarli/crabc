@@ -1598,10 +1598,10 @@ upstream = "src/theap.c"
 # current implementation and source map below cover nonfull/full regular small,
 # medium, and large pages plus live arena and OS-aligned singletons; changing
 # this key would erase its previously proven status.
-# The focused `later_thread_exit_mapped_one_block_handoff_rejects_then_general_route_releases_live_pages`
-# regression preserves the legacy sole-page `NotOnlyPage` refusal for a live
-# mapped medium plus a live arena singleton, then consumes the returned drain
-# through this aggregate and releases the medium before the singleton.
+# The focused `later_thread_exit_generic_route_releases_mixed_live_medium_and_singleton`
+# regression selects a live mapped medium plus arena singleton from the source
+# traversal, tears down the old Theap/TLD, and releases the medium before the
+# singleton without a caller-selected one-page handoff.
 name = "later-main-mapped-medium-pages-post-exit-registry"
 source_region = "mi_theap_collect_ex's `_mi_deferred_free` invocation and mi_theap_page_collect plus _mi_theap_collect_abandon from src/theap.c:89-152; `_mi_deferred_free` from src/page.c:987-1004; _mi_theap_collect_retired/the source retirement state machine from src/page.c:414-518; _mi_page_free_collect(force=true), _mi_page_abandon, and page queue detach from src/page.c:214-302; regular small, medium, large, and singleton page selection, mapped/initially-unmapped arena abandonment/count pairing, and non-arena `heap->os_abandoned_pages` link/removal from src/arena.c:951-1114,1183-1204,1304-1424; the failed-reclaim tail in src/free.c:372-514; and clipped OS PageMap/alias/metadata/mapping release from src/alloc-aligned.c and src/os.c"
 rust_module = "crabc_mimalloc::main_heap_page, crabc_mimalloc::main_heap_thread, crabc_mimalloc::single_thread, crabc_mimalloc::deferred_free, crabc_mimalloc::abandoned, crabc_mimalloc::process_page_map, crabc_mimalloc::arena, crabc_mimalloc::os_page, and crabc_mimalloc::types"

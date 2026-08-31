@@ -1777,6 +1777,16 @@ class ContractTests(unittest.TestCase):
                 RUNNER.load_pin(),
             )
 
+    def test_native_owner_exit_lifecycle_contract_rejects_retired_source_filter(self) -> None:
+        contract = RUNNER.read_json(RUNNER.NATIVE_OWNER_EXIT_LIFECYCLE_CONTRACT)
+        contract["checks"][-1]["target"] = "main_heap_page::tests::retired_owner_exit_filter"
+
+        with self.assertRaisesRegex(RUNNER.HarnessError, "current source test filter"):
+            RUNNER.validate_native_owner_exit_lifecycle_contract(
+                contract,
+                RUNNER.load_pin(),
+            )
+
     def test_native_owner_exit_lifecycle_runner_records_every_reviewed_check(self) -> None:
         contract = RUNNER.read_json(RUNNER.NATIVE_OWNER_EXIT_LIFECYCLE_CONTRACT)
         result = {

@@ -910,12 +910,15 @@ transfer capability.
   raw failed-reclaim release, `pages_main` clear, and subsequent root/list/TLD
   teardown; `later_thread_exit_singleton_handoff_rejects_before_detach_when_another_page_is_live`
   proves a second live page leaves both registrations intact;
-  `later_thread_exit_mapped_one_block_handoff_releases_after_its_final_free`
-  proves main-bitmap/count publication, retained PageMap registration,
-  mapped-bit quiescence/count consumption, empty-before-reclaim release, and
-  subsequent root/list/TLD
-  teardown; `later_thread_exit_mapped_one_block_handoff_rejects_before_detach_when_another_page_is_live`
-  proves the medium handoff does not skip another live page;
+  The former caller-selected mapped-one-block handoff regressions are
+  superseded by source selection. The
+  `later_thread_exit_generic_source_selected_medium_releases_after_its_final_free`
+  regression proves main-bitmap/count publication, retained PageMap
+  registration, mapped-bit quiescence/count consumption, empty-before-reclaim
+  release, and subsequent root/list/TLD teardown. The
+  `later_thread_exit_generic_route_releases_mixed_live_medium_and_singleton`
+  regression proves the source traversal selects both live pages without
+  skipping either one;
   `later_thread_exit_full_singleton_pages_route_releases_each_same_size_page`
   proves two full same-size arena singleton members detach before old-Theap/TLD
   teardown, remain PageMap-routable without a static-main abandoned bitmap,

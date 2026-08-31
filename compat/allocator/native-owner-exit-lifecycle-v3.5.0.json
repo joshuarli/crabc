@@ -133,13 +133,13 @@
     },
     {
       "expected_passed_test_count": 1,
-      "id": "source-general-route-after-sole-rejection",
+      "id": "source-generic-route-with-live-medium-and-singleton",
       "kind": "unit-test-filter",
       "scenarios": [
         "general-production-traversal",
         "old-theap-teardown"
       ],
-      "target": "main_heap_page::tests::later_thread_exit_mapped_one_block_handoff_rejects_then_general_route_releases_live_pages"
+      "target": "main_heap_page::tests::later_thread_exit_generic_route_releases_mixed_live_medium_and_singleton"
     },
     {
       "expected_passed_test_count": 1,
