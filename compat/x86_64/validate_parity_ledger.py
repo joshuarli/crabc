@@ -1437,6 +1437,7 @@ INET_NTOA_SYMBOLS = ("inet_ntoa",)
 
 GETHOSTID_SYMBOLS = ("gethostid",)
 GETTID_SYMBOLS = ("gettid",)
+POSIX_CLOSE_SYMBOLS = ("posix_close",)
 
 INET_CLASSFUL_SYMBOLS = ("inet_lnaof", "inet_makeaddr")
 
@@ -27877,6 +27878,289 @@ def require_gettid_artifact(family: Mapping[str, Any]) -> None:
         "run_libc_gettid_probe",
     ):
         require(snippet in dispatcher, f"gettid dispatcher omits {snippet}")
+
+
+def require_posix_close_artifact(family: Mapping[str, Any]) -> None:
+    """Keep musl's flag-ignored close spelling private and one-symbol."""
+
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.c-abi-compat].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [entry for entry in artifacts if entry.get("id") == "static-c-posix-close"]
+    require(
+        len(matching) == 1,
+        "libc.c-abi-compat must contain exactly one static-c-posix-close artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-posix-close must not promote libc.c-abi-compat",
+    )
+    artifact = matching[0]
+    require(
+        "capabilities" not in artifact,
+        "static-c-posix-close must not promote a descriptor capability",
+    )
+
+    description = artifact.get("description")
+    require(isinstance(description, str), "static-c-posix-close needs a description")
+    for phrase in (
+        "POSIX `posix_close` flag-ignored compatibility boundary",
+        "still-planned `libc.c-abi-compat`",
+        "`int posix_close(int, int)`",
+        "`src/unistd/posix_close.c::posix_close`",
+        "`close(fd)`",
+        "EINTR",
+        "direct `close=3`",
+        "Direct and function-pointer calls",
+        "generic descriptor I/O",
+        "cancellation/AIO coordination",
+        "family completion",
+        "promotion",
+        "public x86 support",
+    ):
+        require(phrase in description, f"static-c-posix-close description omits {phrase}")
+
+    owners = set(
+        nonempty_strings(
+            artifact.get("source_owners"), "static-c-posix-close.source_owners"
+        )
+    )
+    for owner in (
+        "compat/upstreams.toml",
+        "libc/Cargo.toml",
+        "libc/src/lib.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/posix_close.rs",
+        "libc/src/c_abi/x86_64/errno.rs",
+        "libc/src/c_abi/x86_64/static_tls.rs",
+        "libc/src/c_abi/x86_64/syscall.rs",
+        "include/errno.h",
+        "include/features.h",
+        "include/stdint.h",
+        "include/sys/syscall.h",
+        "include/unistd.h",
+        "compat/x86_64/posix_close_header_abi_probe.c",
+        "compat/x86_64/posix_close_header_abi_probe.cpp",
+        "compat/x86_64/run_posix_close_header_abi.sh",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/libc_posix_close_probe.c",
+        "compat/x86_64/libc_posix_close_start.S",
+        "compat/x86_64/run_libc_posix_close.sh",
+        "compat/x86_64/aarch64_parity_inventory.py",
+        "compat/x86_64/aarch64_parity_inventory.json",
+        "compat/x86_64/tests/test_aarch64_parity_inventory.py",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/README.md",
+        "STATUS.md",
+        "x86-64.md",
+        "scripts/dev-x86_64.sh",
+        "scripts/check_structure.py",
+    ):
+        require(owner in owners, f"static-c-posix-close source owners omit {owner}")
+
+    prerequisites = nonempty_strings(
+        artifact.get("x86_abi_prerequisites"),
+        "static-c-posix-close.x86_abi_prerequisites",
+    )
+    require(
+        any(
+            "SysV AMD64" in item
+            and "int posix_close(int, int)" in item
+            and "edi" in item
+            and "esi" in item
+            and "eax" in item
+            and "close=3" in item
+            for item in prerequisites
+        ),
+        "static-c-posix-close must retain its two-int close ABI",
+    )
+    require(
+        any(
+            "9fa28ece75d8a2191de7c5bb53bed224c5947417" in item
+            and "src/unistd/posix_close.c::posix_close" in item
+            and "ignored flags" in item
+            and "src/unistd/close.c::close" in item
+            and "EINTR" in item
+            and "cancellation/AIO" in item
+            for item in prerequisites
+        ),
+        "static-c-posix-close must retain its pinned-musl close mapping",
+    )
+    require(
+        any(
+            "`-nostdlib -static`" in item
+            and "no interpreter" in item
+            and "dynamic TLS model" in item
+            and "direct initial-TLS errno support" in item
+            and "rejects `close`" in item
+            for item in prerequisites
+        ),
+        "static-c-posix-close must retain its closed static boundary",
+    )
+
+    headers = nonempty_strings(
+        artifact.get("x86_header_prerequisites"),
+        "static-c-posix-close.x86_header_prerequisites",
+    )
+    require(
+        any(
+            "unconditional `int posix_close(int, int)`" in item
+            and "strict, POSIX, X/Open, and GNU" in item
+            and "unmangled C++ linkage" in item
+            for item in headers
+        ),
+        "static-c-posix-close must retain its unconditional C/C++ header ABI",
+    )
+
+    evidence = artifact.get("native_evidence")
+    require(isinstance(evidence, list), "static-c-posix-close needs evidence")
+    require(
+        {entry.get("command") for entry in evidence if isinstance(entry, Mapping)}
+        == {"./scripts/dev-x86_64.sh libc-posix-close"},
+        "static-c-posix-close must use the closed libc-posix-close command",
+    )
+    scope = evidence[0].get("scope")
+    require(
+        isinstance(scope, str)
+        and all(
+            phrase in scope
+            for phrase in (
+                "Pinned-musl/project C/C++ header",
+                "true x86 crabc-libc `-nostdlib -static` candidate",
+                "direct and function-pointer close",
+                "arbitrary ignored flags",
+                "-1/EBADF",
+                "posix_close.lo/AArch64 ownership",
+                "no interpreter/DT_NEEDED/unresolved symbol/dynamic-TLS model/allocator",
+                "direct close=3",
+                "rejecting `close` and generic descriptor-I/O extraction",
+                "cancellation/AIO coordination",
+                "family completion",
+                "promotion",
+                "public x86 support",
+            )
+        ),
+        "static-c-posix-close evidence must retain its bounded static closure",
+    )
+
+    exports = set(
+        static_c_abi_export_names(
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        )
+    )
+    require(
+        set(POSIX_CLOSE_SYMBOLS) <= exports,
+        "static-c-posix-close must retain its selected export",
+    )
+    require(
+        {symbol for symbol in exports if symbol.startswith("posix_close")}
+        == set(POSIX_CLOSE_SYMBOLS),
+        "static-c-posix-close must expose only posix_close",
+    )
+
+    static_root = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+    ).read_text(encoding="utf-8")
+    require(
+        '#[path = "posix_close.rs"]\nmod posix_close;' in static_root,
+        "x86 static C ABI must compose the posix_close leaf",
+    )
+    source = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "posix_close.rs"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "Selected static Linux/x86-64 `posix_close` C ABI boundary",
+        "pinned musl 1.2.6 release commit",
+        "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+        "src/unistd/posix_close.c::posix_close",
+        "src/unistd/close.c::close",
+        "System V AMD64 ABI",
+        'pub extern "C" fn posix_close(file_descriptor: c_int, _flags: c_int) -> c_int',
+        "raw_syscall::syscall1(raw_syscall::SYS_CLOSE",
+        "if result == -EINTR",
+        "c_status(result)",
+    ):
+        require(snippet in source, f"posix_close implementation omits {snippet}")
+    for forbidden in (
+        "descriptor_io::",
+        "static_tls::",
+        "raw_syscall::SYS_OPEN",
+        "crabc_core",
+        "crabc_mimalloc",
+    ):
+        require(forbidden not in source, f"posix_close leaf widens into {forbidden}")
+
+    runner = (
+        ROOT / "compat" / "x86_64" / "run_libc_posix_close.sh"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "run_musl_oracle.sh",
+        "run_posix_close_header_abi.sh",
+        "posix_close.lo",
+        "static_c_abi_exports.txt",
+        "-nostdlib -static",
+        "--no-undefined",
+        "archive does not define $symbol",
+        "candidate lacks posix_close",
+        "candidate exports an unselected descriptor entry",
+        "posix_close lacks Linux x86-64 close=3",
+        "posix_close delegates to an unselected descriptor entry",
+        "candidate retains a dynamic TLS model",
+    ):
+        require(snippet in runner, f"posix_close runner omits {snippet}")
+
+    probe = (
+        ROOT / "compat" / "x86_64" / "libc_posix_close_probe.c"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "sizeof(int) == 4",
+        "typedef int (*posix_close_signature)(int, int)",
+        "const posix_close_signature function = posix_close",
+        "0x7fffffff",
+        "errno = EINTR",
+        "errno = E2BIG",
+        "posix_close(-1, 0)",
+        "function(-1, 0x1234)",
+        "CRABC_POSIX_CLOSE_FREESTANDING",
+    ):
+        require(snippet in probe, f"posix_close probe omits {snippet}")
+
+    header_c = (
+        ROOT / "compat" / "x86_64" / "posix_close_header_abi_probe.c"
+    ).read_text(encoding="utf-8")
+    header_cxx = (
+        ROOT / "compat" / "x86_64" / "posix_close_header_abi_probe.cpp"
+    ).read_text(encoding="utf-8")
+    for snippet in ("posix_close declaration", "posix_close_function"):
+        require(snippet in header_c, f"posix_close C header probe omits {snippet}")
+        require(snippet in header_cxx, f"posix_close C++ header probe omits {snippet}")
+
+    header_runner = (
+        ROOT / "compat" / "x86_64" / "run_posix_close_header_abi.sh"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "posix_close_header_abi_probe.c",
+        "posix_close_header_abi_probe.cpp",
+        "Pinned musl 1.2.6",
+        "unconditional in musl's unistd.h",
+        "c11-strict",
+        "cxx17-gnu",
+        "retained a mangled posix_close reference",
+    ):
+        require(snippet in header_runner, f"posix_close header runner omits {snippet}")
+
+    dispatcher = (ROOT / "scripts" / "dev-x86_64.sh").read_text(encoding="utf-8")
+    for snippet in (
+        "posix-close-header-abi)",
+        "run_posix_close_header_abi",
+        "libc-posix-close)",
+        "run_libc_posix_close_probe",
+    ):
+        require(snippet in dispatcher, f"posix_close dispatcher omits {snippet}")
 def require_dn_skipname_artifact(family: Mapping[str, Any]) -> None:
     """Keep the dependency-free DNS wire-span codec out of resolver state."""
     artifacts = require_verified_artifacts(
@@ -42853,6 +43137,7 @@ def validate_ledger(
     require_hstrerror_artifact(by_id["libc.resolver"])
     require_gethostid_artifact(by_id["libc.c-abi-compat"])
     require_gettid_artifact(by_id["libc.c-abi-compat"])
+    require_posix_close_artifact(by_id["libc.c-abi-compat"])
     require_qsort_artifact(by_id["libc.c-abi-compat"])
     require_bsearch_artifact(by_id["libc.c-abi-compat"])
     require_linear_search_artifact(by_id["libc.c-abi-compat"])

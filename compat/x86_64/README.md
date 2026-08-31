@@ -431,6 +431,8 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-gethostid
 ./scripts/dev-x86_64.sh gettid-header-abi
 ./scripts/dev-x86_64.sh libc-gettid
+./scripts/dev-x86_64.sh posix-close-header-abi
+./scripts/dev-x86_64.sh libc-posix-close
 ./scripts/dev-x86_64.sh isatty-header-abi
 ./scripts/dev-x86_64.sh libc-isatty
 ./scripts/dev-x86_64.sh tcgetpgrp-header-abi
@@ -3503,6 +3505,21 @@ process/scheduler/pthread behavior. It does not select process.globals,
 libc.so, CRT, loader, sysroot, family completion, promotion, or public x86
 support.
 
+`posix-close-header-abi` and `libc-posix-close` record a separate private
+`static-c-posix-close` artifact inside still-planned `libc.c-abi-compat`, not
+a descriptor or filesystem capability. The pinned-musl/project `<unistd.h>`
+C/C++ matrix proves unconditional `int posix_close(int, int)` visibility under
+strict, POSIX, X/Open, and GNU profiles, its exact two-int type, and unmangled
+C++ linkage. The shared C body then executes through pinned musl and one true
+`-nostdlib -static` candidate. Musl's source ignores flags and delegates to
+close; the isolated candidate proves direct and function-pointer closure of
+fixture-owned descriptors, stale-errno preservation, and `EBADF`, while
+retaining only direct `close=3` plus its no-retry `EINTR` success mapping. The
+closed candidate rejects `close` and generic descriptor-I/O extraction. It
+does not select descriptor lifetime/ownership policy, cancellation/AIO
+coordination, filesystem policy, libc.so, CRT, loader, sysroot, family
+completion, promotion, or public x86 support.
+
 `libc-isatty` is a separately recorded static `static-c-isatty`
 `verified_artifact` gate over that archive, not a terminal capability. Its
 strict/POSIX/X/Open/GNU/BSD C/C++ `unistd.h` declaration gate and one
@@ -5716,6 +5733,7 @@ Apart from the narrowly named `libc-stat-compat`, `libc-credentials`,
 `libc-ctermid`,
 `libc-gethostid`,
 `libc-gettid`,
+`libc-posix-close`,
 `libc-isatty`,
 `libc-tcgetpgrp`,
 `libc-tcsetpgrp`,

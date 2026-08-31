@@ -191,6 +191,18 @@ pinned-musl current-task result. It selects no process identity/session
 aggregate, scheduler behavior, pthread/TLS lifecycle, errno, process.globals,
 family completion, promotion, or public x86 support.
 
+`./scripts/dev-x86_64.sh libc-posix-close` is a separate private
+`static-c-posix-close` artifact inside still-planned `libc.c-abi-compat`. Its
+pinned-musl/project C/C++ `<unistd.h>` matrix proves unconditional
+`int posix_close(int, int)` visibility and unmangled linkage under strict,
+POSIX, X/Open, and GNU profiles. Musl 1.2.6 ignores the flags word and
+delegates to close; the isolated true-static adapter retains only direct
+`close=3`, no-retry `EINTR` success, stale-errno preservation, and invalid-fd
+`EBADF` behavior through direct and function-pointer calls. It does not select
+`close`, generic descriptor I/O, descriptor lifetime or ownership policy,
+cancellation/AIO coordination, filesystem policy, family completion,
+promotion, or public x86 support.
+
 `./scripts/dev-x86_64.sh libc-isatty` is a separate private `static-c-isatty`
 artifact inside still-planned `libc.posix-runtime`. Its strict/POSIX/X/Open/GNU/
 BSD C/C++ declaration gate and pinned-musl/static C fixture select only
