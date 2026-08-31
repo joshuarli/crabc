@@ -188,6 +188,13 @@ struct CurrentSource {};
         with self.assertRaisesRegex(RATCHET.RatchetError, "removal_condition"):
             RATCHET.validate_manifest(invalid)
 
+    def test_obsolete_phase_a_detached_route_scans_are_absent(self) -> None:
+        source = (ROOT / "crabc-mimalloc/src/runtime_lifecycle.rs").read_text(
+            encoding="utf-8"
+        )
+        self.assertNotIn("native_free_detached_route_phase_a", source)
+        self.assertNotIn("native_free_detached_route_entry_phase_a", source)
+
     def test_phase_a_bridge_manifest_requires_a_sole_identity_branch(self) -> None:
         invalid = copy.deepcopy(self.manifest)
         invalid["caller_identity_first_free_dispatch"]["maximum_phase_a_identity_matches"] = 2
