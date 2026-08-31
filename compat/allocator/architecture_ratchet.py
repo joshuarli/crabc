@@ -1098,6 +1098,221 @@ def phase_bc_call_chain(
     return [functions_by_node[item].identity() for item in reversed(nodes)]
 
 
+PAGE_MAP_LIVE_ALLOCATION_LOOKUP = re.compile(r"\.lookup_live_allocation\s*\(")
+SOURCE_ALLOCATION_ASSOCIATION = re.compile(
+    r"\b(?P<allocation>[A-Za-z_][A-Za-z0-9_]*)\s*\.\s*is_associated_with\s*\(\s*"
+    r"(?P<current>[A-Za-z_][A-Za-z0-9_]*)\s*\)"
+)
+NEGATIVE_SOURCE_ALLOCATION_ASSOCIATION = re.compile(
+    r"\bif\s*!\s*\(?\s*(?P<allocation>[A-Za-z_][A-Za-z0-9_]*)\s*\.\s*"
+    r"is_associated_with\s*\(\s*(?P<current>[A-Za-z_][A-Za-z0-9_]*)\s*\)\s*\)?\s*\{"
+)
+UNAVAILABLE_ALLOCATION_RESULT = re.compile(
+    r"\breturn\s+Err\s*\(\s*NativePageAllocationResult\s*::\s*Unavailable\s*\)"
+)
+RUST_FREE_CALL_SITE = re.compile(
+    r"(?<![A-Za-z0-9_.])(?:[A-Za-z_][A-Za-z0-9_]*\s*::\s*)*"
+    r"(?P<name>[A-Za-z_][A-Za-z0-9_]*)\s*(?:::\s*<[^(){};]*>)?\s*\(",
+    re.MULTILINE,
+)
+
+
+def native_reallocate_pointer_first_dispatch(
+    root: Path, manifest: Mapping[str, Any]
+) -> dict[str, object]:
+    """Reject a selected-source realloc path that refuses a foreign PageMap fact.
+
+    The bounded witness starts at the public `native_reallocate` boundary and
+    follows only name-resolved helpers in the selected runtime source.  It
+    records the source PageMap lookup before an association decision, then
+    rejects the precise legacy branch that classifies a foreign source against
+    the caller's current identity and returns `Unavailable`.  This cannot
+    prove a complete realloc implementation; it prevents that known nonlocal
+    refusal from being reintroduced while the broader architecture remains
+    runtime-evidence gated.
+    """
+
+    selected = required_mapping(manifest["selected_production"], "selected_production")
+    path = required_string(
+        selected.get("runtime_source"), "selected_production.runtime_source"
+    )
+    cfg_environment = required_mapping(
+        phase_bc_policy(manifest)["cfg_environment"], "phase_bc_call_graph.cfg_environment"
+    )
+    functions = selected_rust_functions(root, path, cfg_environment)
+    functions_by_node = {function.node: function for function in functions}
+    functions_by_name: dict[str, set[str]] = {}
+    for function in functions:
+        functions_by_name.setdefault(function.name, set()).add(function.node)
+    entries = [
+        function
+        for function in functions
+        if function.name == "native_reallocate" and function.public
+    ]
+    if len(entries) != 1:
+        raise RatchetError(
+            "selected runtime source resolves native_reallocate to "
+            f"{len(entries)} public functions"
+        )
+    entry = entries[0]
+    # `RUST_CALL_SITE` intentionally over-approximates methods for the broad
+    # Phase-B/C witness.  That would pull unrelated `free`, `drop`, and
+    # `allocate` methods into this narrow reallocation boundary, so resolve
+    # only unambiguous free-function calls here.  The null-pointer allocation
+    # arm is intentionally outside old-pointer source routing.
+    edges: dict[str, set[str]] = {}
+    call_offsets: dict[tuple[str, str], list[int]] = {}
+    for function in functions:
+        targets: set[str] = set()
+        for call in RUST_FREE_CALL_SITE.finditer(function.body):
+            candidates = functions_by_name.get(call.group("name"), set())
+            if len(candidates) != 1:
+                continue
+            target = next(iter(candidates))
+            if (
+                function.node == entry.node
+                and functions_by_node[target].name == "native_allocate_aligned"
+            ):
+                continue
+            targets.add(target)
+            call_offsets.setdefault((function.node, target), []).append(call.start())
+        edges[function.node] = targets
+    reachable, predecessor = phase_bc_reachable_functions(entries, functions_by_node, edges)
+
+    lookup_reach_cache: dict[str, bool] = {}
+
+    def function_reaches_page_map_lookup(
+        node: str, visiting: frozenset[str] = frozenset()
+    ) -> bool:
+        cached = lookup_reach_cache.get(node)
+        if cached:
+            return True
+        if node in visiting:
+            return False
+        function = functions_by_node[node]
+        if PAGE_MAP_LIVE_ALLOCATION_LOOKUP.search(function.body):
+            lookup_reach_cache[node] = True
+            return True
+        result = any(
+            function_reaches_page_map_lookup(target, visiting | {node})
+            for target in edges.get(node, set())
+            if target in functions_by_node
+        )
+        if result:
+            lookup_reach_cache[node] = True
+        return result
+
+    def source_lookup_in_prefix(function: RustFunction, offset: int) -> bool:
+        prefix = function.body[:offset]
+        if PAGE_MAP_LIVE_ALLOCATION_LOOKUP.search(prefix):
+            return True
+        for call in RUST_FREE_CALL_SITE.finditer(prefix):
+            targets = functions_by_name.get(call.group("name"), set())
+            # An ambiguous local name is not a source-fact witness unless all
+            # its selected definitions can establish PageMap classification.
+            if len(targets) == 1 and all(
+                function_reaches_page_map_lookup(target) for target in targets
+            ):
+                return True
+        return False
+
+    def source_lookup_precedes(function: RustFunction, offset: int) -> bool:
+        if source_lookup_in_prefix(function, offset):
+            return True
+        child = function.node
+        parent = predecessor.get(child)
+        while parent is not None:
+            offsets = call_offsets.get((parent, child), [])
+            if any(
+                source_lookup_in_prefix(functions_by_node[parent], call_offset)
+                for call_offset in offsets
+            ):
+                return True
+            child = parent
+            parent = predecessor.get(child)
+        return False
+
+    def source_match(function: RustFunction, offset: int, pattern: str) -> dict[str, object]:
+        return {
+            "call_chain": phase_bc_call_chain(function.node, predecessor, functions_by_node),
+            "function": function.name,
+            "line": function.body_line + function.body.count("\n", 0, offset),
+            "path": function.path,
+            "pattern": pattern,
+        }
+
+    page_map_lookups: list[dict[str, object]] = []
+    source_routing_decisions: list[dict[str, object]] = []
+    caller_current_refusals: list[dict[str, object]] = []
+    for node in sorted(reachable):
+        function = functions_by_node[node]
+        for match in PAGE_MAP_LIVE_ALLOCATION_LOOKUP.finditer(function.body):
+            page_map_lookups.append(
+                source_match(function, match.start(), PAGE_MAP_LIVE_ALLOCATION_LOOKUP.pattern)
+            )
+        for match in SOURCE_ALLOCATION_ASSOCIATION.finditer(function.body):
+            decision = source_match(function, match.start(), SOURCE_ALLOCATION_ASSOCIATION.pattern)
+            decision["page_map_fact_precedes"] = source_lookup_precedes(function, match.start())
+            source_routing_decisions.append(decision)
+        for match in NEGATIVE_SOURCE_ALLOCATION_ASSOCIATION.finditer(function.body):
+            opening = match.end() - 1
+            closing = matching_rust_delimiter(function.body, opening, "{", "}")
+            branch = function.body[opening + 1 : closing]
+            current = match.group("current")
+            current_binding = re.compile(
+                rf"\blet\s+(?:Some\s*\(\s*)?{re.escape(current)}\s*\)?\s*=\s*"
+                r"current_thread_identity\s*\("
+            )
+            if not current_binding.search(function.body[: match.start()]):
+                continue
+            if not UNAVAILABLE_ALLOCATION_RESULT.search(branch):
+                continue
+            refusal = source_match(
+                function, match.start(), NEGATIVE_SOURCE_ALLOCATION_ASSOCIATION.pattern
+            )
+            refusal["page_map_fact_precedes"] = source_lookup_precedes(function, match.start())
+            caller_current_refusals.append(refusal)
+
+    page_map_lookups.sort(key=lambda item: (item["path"], item["line"], item["function"]))
+    source_routing_decisions.sort(
+        key=lambda item: (item["path"], item["line"], item["function"])
+    )
+    caller_current_refusals.sort(
+        key=lambda item: (item["path"], item["line"], item["function"])
+    )
+    page_map_first = bool(page_map_lookups) and all(
+        bool(item["page_map_fact_precedes"]) for item in source_routing_decisions
+    )
+    if caller_current_refusals:
+        status = "forbidden_caller_current_nonlocal_refusal"
+    elif not page_map_first:
+        status = "missing_page_map_first_source_routing"
+    else:
+        status = "page_map_first"
+    structural_violation = bool(caller_current_refusals) or not page_map_first
+    reachable_functions = sorted(
+        (functions_by_node[node] for node in reachable),
+        key=lambda function: (function.path, function.line, function.name),
+    )
+    return {
+        "caller_current_nonlocal_refusals": caller_current_refusals,
+        "evidence_kind": "syntactic selected-runtime realloc may-reachability",
+        "final_acceptance": False,
+        "function": entry.name,
+        "page_map_first_source_routing": page_map_first,
+        "page_map_lookup_matches": page_map_lookups,
+        "reachable_functions": [function.identity() for function in reachable_functions],
+        "source_routing_decisions": source_routing_decisions,
+        "status": status,
+        "structural_violation": structural_violation,
+        "warning": (
+            "This selected-source witness rejects the known caller-current nonlocal realloc "
+            "refusal and requires a PageMap-first source-routing shape. It cannot prove "
+            "dynamic realloc correctness, allocation/copy/free behavior, or final architecture acceptance."
+        ),
+    }
+
+
 def phase_bc_ratchet_matches(
     ratchet_name: str,
     ratchet: Mapping[str, Any],
@@ -1886,6 +2101,9 @@ def gate_unmet(report: Mapping[str, Any]) -> list[str]:
         unmet.append("caller-identity-first native_free dispatch")
     elif caller_dispatch["status"] == "phase_a_bridge":
         unmet.append("temporary Phase-A caller-identity native_free bridge")
+    reallocate_dispatch = report["native_reallocate_pointer_first_dispatch"]
+    if reallocate_dispatch["structural_violation"]:
+        unmet.append("native_reallocate caller-current nonlocal refusal")
     for name, metric in report["metrics"].items():
         if metric["source_indicator_count"]:
             unmet.append(f"{name} has selected-source indicators")
@@ -1932,6 +2150,7 @@ def evaluate(root: Path, manifest_path: Path, runtime_evidence_path: Path | None
     signals = collect_static_signals(root, manifest)
     metrics = metric_statuses(manifest, signals)
     caller_dispatch = caller_identity_first_free_dispatch(root, manifest)
+    reallocate_dispatch = native_reallocate_pointer_first_dispatch(root, manifest)
     phase_bc = phase_bc_selected_production_reachability(root, manifest)
     runtime = load_runtime_evidence(runtime_evidence_path, selected, manifest, root)
     report: dict[str, object] = {
@@ -1941,6 +2160,7 @@ def evaluate(root: Path, manifest_path: Path, runtime_evidence_path: Path | None
         "selected_production": selected,
         "metrics": metrics,
         "caller_identity_first_free_dispatch": caller_dispatch,
+        "native_reallocate_pointer_first_dispatch": reallocate_dispatch,
         "phase_bc_selected_production_reachability": phase_bc,
         "forbidden_scaffolding_compiled": collect_forbidden_scaffolding(root, manifest),
         "unmodified_upstream_stress": upstream_stress_capability(root, manifest),
@@ -1950,11 +2170,18 @@ def evaluate(root: Path, manifest_path: Path, runtime_evidence_path: Path | None
                 [*ratchet_regressions(manifest, signals), *phase_bc["regressions"]]
             )
         },
-        "structural_violations": (
-            ["caller-identity-first native_free dispatch"]
-            if caller_dispatch["structural_violation"]
-            else []
-        ),
+        "structural_violations": [
+            *(
+                ["caller-identity-first native_free dispatch"]
+                if caller_dispatch["structural_violation"]
+                else []
+            ),
+            *(
+                ["native_reallocate caller-current nonlocal refusal"]
+                if reallocate_dispatch["structural_violation"]
+                else []
+            ),
+        ],
     }
     unmet = gate_unmet(report)
     report["summary"] = {
