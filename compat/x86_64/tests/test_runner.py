@@ -22543,6 +22543,100 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         ):
             self.assertIn(required, assembly)
 
+    def test_math_ceil_runner_keeps_the_binary32_binary64_static_boundary(self) -> None:
+        dispatcher = RUNNER.read_text(encoding="utf-8")
+        runner = (ROOT / "compat" / "x86_64" / "run_libc_math_ceil.sh").read_text(
+            encoding="utf-8"
+        )
+        probe = (ROOT / "compat" / "x86_64" / "libc_math_ceil_probe.c").read_text(
+            encoding="utf-8"
+        )
+        header = (
+            ROOT / "compat" / "x86_64" / "math_ceil_header_abi_probe.cpp"
+        ).read_text(encoding="utf-8")
+        leaf = (ROOT / "libc" / "src" / "c_abi" / "x86_64" / "math_ceil.rs").read_text(
+            encoding="utf-8"
+        )
+        assembly = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "math_ceil_musl_x86_64.S"
+        ).read_text(encoding="utf-8")
+        generator = (
+            ROOT / "compat" / "x86_64" / "generate_libc_math_ceil.py"
+        ).read_text(encoding="utf-8")
+
+        for required in (
+            "libc-math-ceil)",
+            "run_libc_math_ceil_probe()",
+            "/workspace/compat/x86_64/run_libc_math_ceil.sh",
+        ):
+            self.assertIn(required, dispatcher)
+        for required in (
+            "-nostdlib -static",
+            "--no-undefined",
+            "--gc-sections",
+            "math_ceil_header_abi_probe.cpp",
+            "strong crabc-owned",
+            "weak compiler-builtins",
+            "candidate accidentally retains unselected",
+            "candidate retains TLS",
+            "addsd subsd addss",
+            "ceill floor",
+        ):
+            self.assertIn(required, runner)
+        for required in (
+            "direct_ceil",
+            "direct_ceilf",
+            "CEIL_RECORD_WORDS 4",
+            "binary64_inputs",
+            "binary32_inputs",
+            "FE_TONEAREST",
+            "FE_DOWNWARD",
+            "FE_UPWARD",
+            "FE_TOWARDZERO",
+            "fegetround",
+            "fetestexcept",
+            "0x7ff0000000000042",
+            "0x7f800042",
+        ):
+            self.assertIn(required, probe)
+        for required in (
+            "double_unary_signature",
+            "float_unary_signature",
+            "direct_ceil",
+            "direct_ceilf",
+        ):
+            self.assertIn(required, header)
+        for required in (
+            "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+            "d585fd3b613c66151fc3249e8ed44f77020cb5e6c1e635a616d3f9f82460512a",
+            "src/math/ceil.c",
+            "src/math/ceilf.c",
+            "-frounding-math",
+            "`toint` add/subtract sequence",
+            "`FE_INEXACT`",
+            'include_str!("math_ceil_musl_x86_64.S")',
+            "public x86 support",
+        ):
+            self.assertIn(required, leaf)
+        for required in (
+            "2ebc86943f5cdac77729695b304a08f6308e7a218f9d484cec5675006b207d88",
+            '"src/math/ceil.c"',
+            '"src/math/ceilf.c"',
+            '"15.2.0"',
+            '"-frounding-math"',
+            "musl's MIT license",
+        ):
+            self.assertIn(required, generator)
+        for required in (
+            "musl's MIT license",
+            "\t.globl\tceil\n",
+            "\t.globl\tceilf\n",
+            "addsd",
+            "subsd",
+            "addss",
+        ):
+            self.assertIn(required, assembly)
+
     def test_facade_keeps_native_pattern_archives_checked(self) -> None:
         source = RUNNER.read_text(encoding="utf-8")
         fnmatch_verifier = (

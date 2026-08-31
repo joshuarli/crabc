@@ -129,6 +129,8 @@ ccosh
 ccoshf
 ccoshl
 ccosl
+ceil
+ceilf
 ceill
 cexp
 cexpf
