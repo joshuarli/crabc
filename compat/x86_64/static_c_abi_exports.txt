@@ -490,6 +490,7 @@ lgammal
 lgammal_r
 lgetxattr
 link
+linkat
 listen
 listxattr
 llabs

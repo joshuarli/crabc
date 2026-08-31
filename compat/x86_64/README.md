@@ -299,6 +299,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh mkfifo-header-abi
 ./scripts/dev-x86_64.sh mkfifoat-header-abi
 ./scripts/dev-x86_64.sh readlinkat-header-abi
+./scripts/dev-x86_64.sh linkat-header-abi
 ./scripts/dev-x86_64.sh mm-abi-reference
 ./scripts/dev-x86_64.sh mlock-reference
 ./scripts/dev-x86_64.sh msync-reference
@@ -493,6 +494,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-mkfifo
 ./scripts/dev-x86_64.sh libc-mkfifoat
 ./scripts/dev-x86_64.sh libc-readlinkat
+./scripts/dev-x86_64.sh libc-linkat
 ./scripts/dev-x86_64.sh libc-extended-attributes
 ./scripts/dev-x86_64.sh libc-descriptor-io
 ./scripts/dev-x86_64.sh libc-descriptor-lifecycle
@@ -1071,6 +1073,21 @@ the selected C call returns zero without changing caller storage while the raw
 zero-capacity request reports `EINVAL`. It excludes ordinary `readlink`, other
 *at entries, pathname/CWD policy, directory streams, allocation, cancellation,
 a Rust facade, family completion, promotion, and public x86 support.
+
+`linkat-header-abi` is a separate eight-profile C11/C++17 project-header/
+pinned-musl matrix for unconditional `linkat(int, const char *, int, const
+char *, int)`, four-byte x86 LP64 `int` spelling, pointer arguments, and
+unmangled C++ linkage. Its paired private `libc-linkat` static artifact selects
+only musl 1.2.6's direct Linux x86-64 `linkat=265` body. The fixture creates a
+regular source under one raw-opened directory descriptor and verifies the
+candidate makes a descriptor-relative same-inode hard link in another against
+a raw request; a raw-created source symlink proves forwarded
+`AT_SYMLINK_FOLLOW`. It also proves stale `errno` success, duplicate `EEXIST`,
+bad old/new dirfds `EBADF`, null old/new path `EFAULT`, missing-source `ENOENT`,
+and invalid flags `EINVAL`. It excludes ordinary `link`, every other *at entry,
+pathname/CWD/namespace policy, directory streams, allocation, cancellation, a
+Rust facade, filesystem capability completion, family promotion, and public x86
+support.
 
 `libc-extended-attributes` is the separate private static C runtime artifact
 paired with that header gate. Its project-header fixture first runs through
@@ -5725,6 +5742,7 @@ Apart from the narrowly named `libc-stat-compat`, `libc-credentials`,
 `libc-mkfifo`,
 `libc-mkfifoat`,
 `libc-readlinkat`,
+`libc-linkat`,
 `libc-descriptor-io`,
 `libc-descriptor-lifecycle`,
 `libc-descriptor-pipeline`,

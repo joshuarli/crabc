@@ -96,7 +96,8 @@
 //! bounded System V message-queue/shared-memory artifact, one bounded
 //! unnamed POSIX semaphore artifact, and one bounded event-descriptor
 //! artifact, one bounded pathname-mutation/lifecycle artifact, one distinct
-//! caller-buffered descriptor-relative readlinkat leaf, and one bounded
+//! caller-buffered descriptor-relative readlinkat leaf, one distinct
+//! caller-supplied-directory hard-link linkat leaf, and one bounded
 //! directory-stream/raw-directory artifact.
 //! The fixed-graph dlfcn bridge is a separate public-C spelling over the
 //! loader-owned immutable RuntimeV1-prefix record. It owns only bounded
@@ -464,6 +465,8 @@ mod signal_fd;
 mod pathname_lifecycle;
 #[path = "readlinkat.rs"]
 mod readlinkat;
+#[path = "linkat.rs"]
+mod linkat;
 #[path = "directory_streams.rs"]
 mod directory_streams;
 #[path = "system_observation.rs"]

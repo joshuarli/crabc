@@ -1637,6 +1637,21 @@ where a raw zero-capacity request returns `EINVAL`. Ordinary `readlink`, other
 *at entries, pathname/CWD policy, directory streams, allocation, cancellation,
 a Rust facade, promotion, and public x86 support remain excluded.
 
+`./scripts/dev-x86_64.sh linkat-header-abi` is a distinct eight-profile
+C11/C++17 project-header/pinned-musl declaration gate for unconditional
+`linkat(int, const char *, int, const char *, int)`, x86 LP64 scalar spelling,
+and unmangled C++ linkage. Its paired private
+`./scripts/dev-x86_64.sh libc-linkat` artifact maps only musl 1.2.6's direct
+Linux x86-64 `linkat=265` body. A raw-owned fixture opens two caller-supplied
+fixture directory descriptors and a regular source, then proves the selected
+call creates a descriptor-relative same-inode hard link against a raw request.
+A raw-created source symlink proves forwarding `AT_SYMLINK_FOLLOW`; the fixture
+also checks stale-errno success, duplicate `EEXIST`, bad old/new dirfds
+`EBADF`, null old/new paths `EFAULT`, a missing source `ENOENT`, and invalid
+flags `EINVAL`. It excludes ordinary `link`, every other *at entry, pathname/
+CWD/namespace policy, directory streams, allocation, cancellation, a Rust
+facade, filesystem capability completion, promotion, and public x86 support.
+
 `./scripts/dev-x86_64.sh libc-descriptor-lifecycle` is a separate private
 `static-c-descriptor-lifecycle` composition artifact inside that same planned
 family. It runs one project-header C body through pinned musl and then a

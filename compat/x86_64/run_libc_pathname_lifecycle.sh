@@ -158,8 +158,8 @@ for symbol in __errno_location __crabc_x86_static_tls_bootstrap chdir getcwd mkd
 done
 grep -Eq 'GLOBAL +HIDDEN +.*__crabc_x86_static_tls_bootstrap$' "$archive_elf_symbols" ||
     fail "archive Static Initial TLS v1 bootstrap is not hidden"
-for unselected in fchdir chroot realpath renameat renameat2 unlinkat linkat symlinkat \
-    readlinkat mkdirat fchmodat scandir malloc free \
+for unselected in fchdir chroot realpath renameat renameat2 unlinkat symlinkat \
+    mkdirat fchmodat scandir malloc free \
     calloc realloc __tls_get_addr; do
     if grep -Eq "[[:space:]][TW][[:space:]]${unselected}$" "$archive_symbols"; then
         fail "archive accidentally exports unselected $unselected"

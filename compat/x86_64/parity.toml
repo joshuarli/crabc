@@ -5066,6 +5066,63 @@ oracle = [
   { kind = "kernel-abi", source = "Linux 5.10 x86-64 ABI", role = "readlinkat=267 rdi/rsi/rdx/r10 request words, non-NUL caller-buffer output and truncation, raw zero-capacity EINVAL, and direct errno contract." },
   { kind = "elf-abi", source = "System V AMD64 psABI", role = "LP64 int/pointer/size_t/ssize_t calling convention, unmangled C++ linkage, and static initial-exec TLS fixture contract." },
 ]
+
+[[family.verified_artifact]]
+id = "static-c-linkat"
+description = "Private native x86 selected-static-archive `linkat` leaf within still-planned `libc.posix-runtime`. One project-header C body runs first through pinned musl 1.2.6 and then through a true `-nostdlib -static` crabc-libc candidate. It resolves only `linkat(int, const char *, int, const char *, int)`: musl's direct `syscall(SYS_linkat, fd1, existing, fd2, new, flag)` passes caller-supplied old/new directory descriptors, pathnames, and flags unchanged to Linux x86-64 `linkat=265`. The raw-owned fixture creates two fixture directories and one regular source, then checks the candidate's descriptor-relative same-inode hard link against one raw request. A raw-created source symlink proves candidate `AT_SYMLINK_FOLLOW` reaches the fifth syscall word. The candidate proves stale errno on success, duplicate `EEXIST`, bad old/new dirfds `EBADF`, null old/new path `EFAULT`, missing-source `ENOENT`, and invalid flags `EINVAL`. It does not select ordinary `link`, `symlink`/`symlinkat`, `readlink`/`readlinkat`, `unlink`/`unlinkat`, `rename`/`renameat`, `mkdir`/`mkdirat`, any other *at entry, a pathname lifecycle family, CWD or namespace policy, directory streams, allocation, cancellation, a Rust facade, libc.so, CRT, loader, sysroot, filesystem capability completion, promotion, or public x86 support."
+source_owners = [
+  "COMPATIBILITY-PROFILE.md",
+  "compat/upstreams.toml",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/linkat.rs",
+  "libc/src/c_abi/x86_64/errno.rs",
+  "libc/src/c_abi/x86_64/syscall.rs",
+  "libc/src/c_abi/x86_64/static_tls.rs",
+  "include/errno.h",
+  "include/fcntl.h",
+  "include/stdint.h",
+  "include/sys/stat.h",
+  "include/sys/syscall.h",
+  "include/sys/types.h",
+  "include/unistd.h",
+  "include/bits/alltypes.h",
+  "include/bits/fcntl.h",
+  "include/bits/stat.h",
+  "include/bits/syscall.h",
+  "compat/abi/musl-1.2.6/aarch64/libc.a.static.tsv",
+  "compat/x86_64/linkat_header_abi_probe.c",
+  "compat/x86_64/linkat_header_abi_probe.cpp",
+  "compat/x86_64/run_linkat_header_abi.sh",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/libc_linkat_probe.c",
+  "compat/x86_64/libc_linkat_start.S",
+  "compat/x86_64/run_libc_linkat.sh",
+  "compat/x86_64/aarch64_parity_inventory.py",
+  "compat/x86_64/aarch64_parity_inventory.json",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "compat/x86_64/README.md",
+  "STATUS.md",
+  "x86-64.md",
+  "scripts/dev-x86_64.sh",
+  "scripts/check_structure.py",
+]
+x86_abi_prerequisites = [
+  "The SysV AMD64 C ABI passes linkat's signed four-byte old dirfd in rdi, old pathname in rsi, signed four-byte new dirfd in rdx, new pathname from C rcx into Linux r10, and signed four-byte flags in r8; it returns signed int in eax. The private Linux x86-64 linkat=265 request receives exactly those words in rdi/rsi/rdx/r10/r8; only raw -4095 through -1 results publish selected initial-TLS errno.",
+  "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417 maps src/unistd/linkat.c exactly: `linkat` returns `syscall(SYS_linkat, fd1, existing, fd2, new, flag)`. Linux 5.10 supplies that direct request, so the static leaf adds no cancellation wrapper, fallback, pathname copy, allocation, retry, or policy layer.",
+  "The native runner raw-creates and opens two fixture directories plus one regular source, then checks the candidate's descriptor-relative same-inode hard link against a raw linkat request. A raw-created source symlink and candidate AT_SYMLINK_FOLLOW prove the fifth flag word; it proves stale errno success, duplicate EEXIST, bad old/new dirfd EBADF, null old/new path EFAULT, missing source ENOENT, and invalid flags EINVAL. Fixture-only raw mkdirat/openat/newfstatat/symlinkat/linkat/unlinkat/close is setup, observation, comparison, and cleanup: the candidate does not choose AT_FDCWD, ordinary link, another *at entry, or a pathname/CWD/namespace policy.",
+  "The final static candidate has a PT_TLS errno datum with direct initial-exec TPOFF access and no TLSGD/TLSLD/TLSDESC/GOTTPOFF/DTPMOD/DTPOFF model form or __tls_get_addr; fixture-local startup delegates to the archive Static Initial TLS v1 bootstrap without claiming CRT or TLS lifecycle.",
+]
+x86_header_prerequisites = ["The eight-profile C11/C++17 project-first/pinned-musl unistd.h matrix proves unconditional `linkat(int, const char *, int, const char *, int)`, x86 LP64 pointer and four-byte int spelling, and unmangled C++ linkage. All eight default/GNU/strict/POSIX/X/Open/BSD C/C++ profiles expose it; none hides it. This is declaration evidence for one descriptor-relative hard-link C leaf, not ordinary link, an *at family, pathname policy, installed-header completion, or public x86 support claim."]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-linkat", scope = "Pinned-musl project-header C reference plus a true dependency-free x86 `-nostdlib -static` crabc-libc candidate. The gate runs the eight-profile linkat C/C++ header matrix with all eight visible and none hidden; ratchets the exact crate-owned archive export; rejects interpreter/DT_NEEDED, unresolved symbols, dynamic TLS, and unowned runtime dependencies; proves direct initial-TLS errno; disassembles direct linkat=265 with rdi/rsi/rdx/r10/r8; and checks caller-supplied old/new dirfd same-inode hard links against a raw request, raw-created source-symlink AT_SYMLINK_FOLLOW behavior, stale-errno success, EEXIST, EBADF, EFAULT, ENOENT, and EINVAL. It does not select ordinary link, other *at entries, a pathname lifecycle family, CWD/namespace policy, directory streams, allocation, cancellation, a Rust facade, libc.so, CRT, loader, sysroot, filesystem capability completion, promotion, or public x86 support." }]
+oracle = [
+  { kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source and POSIX declaration oracle for include/unistd.h plus src/unistd/linkat.c. Its complete body is `return syscall(SYS_linkat, fd1, existing, fd2, new, flag);`; the direct Linux closure is an intentional private implementation boundary, not ordinary link, another *at entry, or pathname-family completion." },
+  { kind = "kernel-abi", source = "Linux 5.10 x86-64 ABI", role = "linkat=265 rdi/rsi/rdx/r10/r8 request words, descriptor-relative same-inode hard-link creation, AT_SYMLINK_FOLLOW fifth-word behavior, raw errno, and raw mkdirat/openat/newfstatat/symlinkat/linkat/unlinkat fixture setup, observation, comparison, and cleanup." },
+  { kind = "elf-abi", source = "System V AMD64 psABI", role = "LP64 pointer/int C calling convention, unmangled C++ linkage, and static initial-exec TLS fixture contract." },
+]
 [[family.verified_artifact]]
 id = "static-c-sched-yield"
 description = "Private native x86 selected-static-archive POSIX `sched_yield` leaf. One dependency-free `crabc-libc` archive resolves exactly `sched_yield(void)` into a freestanding C fixture after an equivalent pinned-musl execution. The separate strict/POSIX/XOPEN/GNU C/C++ header gate proves the unconditional no-argument signed-int declaration and unmangled C++ linkage. The static fixture proves a normal successful yield preserves stale errno, then uses fixture-local classic BPF only to force the raw Linux `-EPERM` result and prove musl's status bridge returns `-1` with `errno=EPERM`. It is distinct from the separate C11 `thrd_yield` artifact, whose void source intentionally discards that same raw result. This artifact establishes no scheduler handoff, fairness, peer-progress, scheduler policy/parameter API, affinity, C11 or pthread lifecycle, process lifecycle, libc.so, CRT, dynamic TLS, loader, sysroot, allocator, family completion, promotion, or public x86 support."

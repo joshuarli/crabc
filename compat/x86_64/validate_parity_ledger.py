@@ -1336,7 +1336,6 @@ PATHNAME_LIFECYCLE_UNSELECTED_SYMBOLS = (
     "chroot",
     "fchdir",
     "fchmodat",
-    "linkat",
     "mkdirat",
     "realpath",
     "renameat",
@@ -15685,6 +15684,298 @@ def require_readlinkat_artifact(family: Mapping[str, Any]) -> None:
         "readlinkat candidate exports an unselected pathname entry",
     ):
         require(snippet in runner, f"readlinkat runner omits {snippet}")
+
+
+def require_linkat_artifact(family: Mapping[str, Any]) -> None:
+    """Keep musl's direct caller-dirfd hard-link leaf out of pathname policy."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.posix-runtime].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [entry for entry in artifacts if entry.get("id") == "static-c-linkat"]
+    require(
+        len(matching) == 1,
+        "libc.posix-runtime must contain exactly one static-c-linkat artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-linkat must not promote libc.posix-runtime",
+    )
+    artifact = matching[0]
+    require(
+        "capabilities" not in artifact,
+        "static-c-linkat must remain a private artifact rather than a capability",
+    )
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for phrase in (
+        "selected-static-archive `linkat`",
+        "still-planned `libc.posix-runtime`",
+        "pinned musl 1.2.6",
+        "`-nostdlib -static`",
+        "caller-supplied old/new directory descriptors",
+        "linkat=265",
+        "same-inode hard link",
+        "AT_SYMLINK_FOLLOW",
+        "stale errno",
+        "EEXIST",
+        "EBADF",
+        "EFAULT",
+        "ENOENT",
+        "EINVAL",
+        "ordinary `link`",
+        "other *at entry",
+        "pathname lifecycle family",
+        "public x86 support",
+    ):
+        require(phrase in description, f"static-c-linkat description omits {phrase}")
+
+    owners = set(nonempty_strings(artifact["source_owners"], "static-c-linkat.source_owners"))
+    for owner in (
+        "COMPATIBILITY-PROFILE.md",
+        "compat/upstreams.toml",
+        "libc/Cargo.toml",
+        "libc/src/lib.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/linkat.rs",
+        "libc/src/c_abi/x86_64/errno.rs",
+        "libc/src/c_abi/x86_64/syscall.rs",
+        "libc/src/c_abi/x86_64/static_tls.rs",
+        "include/errno.h",
+        "include/fcntl.h",
+        "include/stdint.h",
+        "include/sys/stat.h",
+        "include/sys/syscall.h",
+        "include/sys/types.h",
+        "include/unistd.h",
+        "include/bits/alltypes.h",
+        "include/bits/fcntl.h",
+        "include/bits/stat.h",
+        "include/bits/syscall.h",
+        "compat/abi/musl-1.2.6/aarch64/libc.a.static.tsv",
+        "compat/x86_64/linkat_header_abi_probe.c",
+        "compat/x86_64/linkat_header_abi_probe.cpp",
+        "compat/x86_64/run_linkat_header_abi.sh",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/libc_linkat_probe.c",
+        "compat/x86_64/libc_linkat_start.S",
+        "compat/x86_64/run_libc_linkat.sh",
+        "compat/x86_64/aarch64_parity_inventory.py",
+        "compat/x86_64/aarch64_parity_inventory.json",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/README.md",
+        "STATUS.md",
+        "x86-64.md",
+        "scripts/dev-x86_64.sh",
+        "scripts/check_structure.py",
+    ):
+        require(owner in owners, f"static-c-linkat source owners omit {owner}")
+
+    prerequisites = nonempty_strings(
+        artifact["x86_abi_prerequisites"], "static-c-linkat.x86_abi_prerequisites"
+    )
+    require(
+        any(
+            "linkat=265" in item
+            and "rdi" in item
+            and "rsi" in item
+            and "rdx" in item
+            and "r10" in item
+            and "r8" in item
+            and "-4095" in item
+            and "initial-TLS errno" in item
+            for item in prerequisites
+        ),
+        "static-c-linkat must record its Linux syscall register ABI",
+    )
+    require(
+        any(
+            "src/unistd/linkat.c" in item
+            and "syscall(SYS_linkat, fd1, existing, fd2, new, flag)" in item
+            and "Linux 5.10" in item
+            and "cancellation wrapper" in item
+            for item in prerequisites
+        ),
+        "static-c-linkat must record its direct pinned-musl mapping",
+    )
+    require(
+        any(
+            "raw-creates" in item
+            and "same-inode hard link" in item
+            and "AT_SYMLINK_FOLLOW" in item
+            and "stale errno" in item
+            and "EEXIST" in item
+            and "EBADF" in item
+            and "EFAULT" in item
+            and "ENOENT" in item
+            and "EINVAL" in item
+            and "AT_FDCWD" in item
+            and "other *at entry" in item
+            for item in prerequisites
+        ),
+        "static-c-linkat must retain its bounded caller-dirfd and flag proof",
+    )
+    require(
+        any(
+            "PT_TLS errno datum" in item
+            and "initial-exec TPOFF" in item
+            and "__tls_get_addr" in item
+            for item in prerequisites
+        ),
+        "static-c-linkat must record its static TLS boundary",
+    )
+
+    headers = nonempty_strings(
+        artifact["x86_header_prerequisites"], "static-c-linkat.x86_header_prerequisites"
+    )
+    require(
+        any(
+            "eight-profile" in item
+            and "unistd.h" in item
+            and "linkat(int, const char *, int, const char *, int)" in item
+            and "four-byte int" in item
+            and "All eight" in item
+            and "none hides it" in item
+            and "unmangled C++" in item
+            for item in headers
+        ),
+        "static-c-linkat must retain its unconditional project-header ABI boundary",
+    )
+
+    static_exports = set(
+        static_c_abi_export_names(ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt")
+    )
+    require("linkat" in static_exports, "static-c-linkat must export linkat")
+    for forbidden in ("unlinkat", "renameat", "renameat2", "fchmodat"):
+        require(
+            forbidden not in static_exports,
+            f"static-c-linkat must not add {forbidden}",
+        )
+    static_root = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+    ).read_text(encoding="utf-8")
+    require(
+        '#[path = "linkat.rs"]\nmod linkat;' in static_root,
+        "x86 static C ABI must compose the linkat leaf",
+    )
+    implementation = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "linkat.rs"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "src/unistd/linkat.c",
+        "syscall(SYS_linkat, fd1, existing, fd2, new, flag)",
+        "fn linkat",
+        "raw_syscall::SYS_LINKAT",
+        "raw_syscall::syscall5(",
+        "i64::from(existing_directory_descriptor)",
+        "i64::from(new_directory_descriptor)",
+        "i64::from(flags)",
+        "c_status(result)",
+        "linkat=265",
+    ):
+        require(snippet in implementation, f"linkat leaf omits {snippet}")
+    for forbidden in (
+        "const AT_FDCWD",
+        "fn link(",
+        "fn symlinkat(",
+        "fn readlinkat(",
+        "fn unlinkat(",
+        "fn renameat(",
+        "crabc_core",
+        "mimalloc",
+        "alloc::",
+        "Vec<",
+    ):
+        require(
+            forbidden not in implementation,
+            f"linkat leaf unexpectedly contains {forbidden}",
+        )
+    syscall_source = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "syscall.rs"
+    ).read_text(encoding="utf-8")
+    require(
+        "pub(crate) const SYS_LINKAT: i64 = 265;" in syscall_source,
+        "x86 syscall table must retain linkat=265",
+    )
+
+    oracle = artifact["oracle"]
+    assert isinstance(oracle, list)
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "c-posix"
+            and isinstance(entry.get("role"), str)
+            and "include/unistd.h" in entry["role"]
+            and "src/unistd/linkat.c" in entry["role"]
+            and "return syscall(SYS_linkat, fd1, existing, fd2, new, flag);" in entry["role"]
+            for entry in oracle
+        ),
+        "static-c-linkat must retain its pinned-musl linkat source mapping",
+    )
+
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence} == {"./scripts/dev-x86_64.sh libc-linkat"},
+        "static-c-linkat must use the dedicated native command",
+    )
+    scope = evidence[0].get("scope")
+    require(
+        isinstance(scope, str)
+        and all(
+            phrase in scope
+            for phrase in (
+                "`-nostdlib -static`",
+                "all eight visible and none hidden",
+                "linkat=265",
+                "rdi/rsi/rdx/r10/r8",
+                "same-inode hard links",
+                "AT_SYMLINK_FOLLOW",
+                "stale-errno success",
+                "EEXIST",
+                "EBADF",
+                "EFAULT",
+                "ENOENT",
+                "EINVAL",
+                "ordinary link",
+                "other *at entries",
+                "public x86 support",
+            )
+        ),
+        "static-c-linkat evidence must retain its exact static caller-dirfd regression",
+    )
+    header_runner = (
+        ROOT / "compat" / "x86_64" / "run_linkat_header_abi.sh"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "MUSL_ROOT=/opt/musl-1.2.6",
+        "EXPECTED_PROFILE_COUNT=8",
+        "EXPECTED_VISIBLE_PROFILE_COUNT=8",
+        "EXPECTED_HIDDEN_PROFILE_COUNT=0",
+        "unistd.h",
+        "linkat",
+        "unmangled",
+    ):
+        require(snippet in header_runner, f"linkat header runner omits {snippet}")
+    runner = (ROOT / "compat" / "x86_64" / "run_libc_linkat.sh").read_text(
+        encoding="utf-8"
+    )
+    for snippet in (
+        "run_musl_oracle.sh",
+        "run_linkat_header_abi.sh",
+        "-nostdlib -static",
+        "--no-undefined",
+        "assert_selected_c_abi_surface",
+        "linkat=265",
+        "%r10",
+        "%r8",
+        "CRABC_LINKAT_FREESTANDING",
+        "linkat candidate exports an unselected pathname entry",
+    ):
+        require(snippet in runner, f"linkat runner omits {snippet}")
 
 
 def require_static_sched_yield_artifact(family: Mapping[str, Any]) -> None:
@@ -42063,6 +42354,7 @@ def validate_ledger(
     require_static_sched_yield_artifact(by_id["libc.posix-runtime"])
     require_static_sched_getcpu_artifact(by_id["libc.posix-runtime"])
     require_readlinkat_artifact(by_id["libc.posix-runtime"])
+    require_linkat_artifact(by_id["libc.posix-runtime"])
     require_callback_algorithms_artifact(by_id["libc.posix-runtime"])
     require_clock_gettime_artifact(by_id["libc.posix-runtime"])
     require_time_observation_artifact(by_id["libc.posix-runtime"])
