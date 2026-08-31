@@ -111,6 +111,8 @@ Native Linux/x86-64 staged-foundation evidence commands:
   sched-getcpu-header-abi  verify selected x86 GNU sched_getcpu C/C++ ABI profiles
   sched-priority-bounds-header-abi  verify selected x86 sched priority-bounds C/C++ ABI profiles
   sched-yield-header-abi  verify selected x86 sched_yield C/C++ ABI profiles
+  sched-get-priority-max-header-abi  verify selected x86 sched_get_priority_max C/C++ ABI profiles
+  sched-get-priority-min-header-abi  verify selected x86 sched_get_priority_min C/C++ ABI profiles
   bsearch-header-abi  verify staged x86 C/C++ stdlib bsearch declaration and linkage
   linear-search-header-abi  verify staged x86 C/C++ search.h lfind/lsearch declarations and linkage
   intrusive-queue-header-abi  verify staged x86 C/C++ search.h insque/remque declarations and linkage
@@ -211,6 +213,8 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-pathname-lifecycle  run the static x86 crabc-libc pathname-lifecycle slice
   libc-directory-streams  run the static x86 crabc-libc directory-stream slice
   libc-lchmod-unsupported  run the static x86 crabc-libc lchmod unsupported slice
+  libc-fchdir  run the static x86 crabc-libc fchdir O_PATH fallback slice
+  libc-ulimit  run the static x86 crabc-libc historical RLIMIT_FSIZE slice
   mm-abi-reference  verify pinned-musl x86 mapping syscall and flag constants
   mapping-reference  verify pinned-musl/raw x86 anonymous mapping lifecycle
   memory-vm-reference  verify pinned-musl/raw x86 raw-break and VM-policy seam
@@ -419,6 +423,8 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-sched-getcpu  run the static x86 crabc-libc GNU current-CPU observation slice
   libc-sched-priority-bounds  run the static x86 crabc-libc scheduler priority-bounds slice
   libc-sched-yield  run the static x86 crabc-libc POSIX scheduler-yield slice
+  libc-sched-get-priority-max  run the static x86 crabc-libc scheduler priority-maximum slice
+  libc-sched-get-priority-min  run the static x86 crabc-libc scheduler priority-minimum slice
   libc-readiness-waits  run the static x86 crabc-libc readiness/signal-waits slice
   libc-system-observation  run the static x86 crabc-libc uname/sysinfo slice
   libc-system-information  run the static x86 crabc-libc processor/page slice
@@ -2854,6 +2860,14 @@ run_libc_lchmod_unsupported() {
     run_in_container bash /workspace/compat/x86_64/run_libc_lchmod_unsupported.sh
 }
 
+run_libc_fchdir() {
+    run_in_container bash /workspace/compat/x86_64/run_libc_fchdir.sh
+}
+
+run_libc_ulimit() {
+    run_in_container bash /workspace/compat/x86_64/run_libc_ulimit.sh
+}
+
 run_ffs_header_abi() {
     run_in_container bash /workspace/compat/x86_64/run_ffs_header_abi.sh
 }
@@ -3070,6 +3084,15 @@ run_lchown_header_abi() {
 run_hasmntopt_header_abi() {
     run_in_container bash /workspace/compat/x86_64/run_hasmntopt_header_abi.sh
 }
+
+run_fchdir_header_abi() {
+    run_in_container bash /workspace/compat/x86_64/run_fchdir_header_abi.sh
+}
+
+run_ulimit_header_abi() {
+    run_in_container bash /workspace/compat/x86_64/run_ulimit_header_abi.sh
+}
+
 run_mman_header_abi() {
     run_in_container bash /workspace/compat/x86_64/run_mman_header_abi.sh
 }
@@ -4098,6 +4121,14 @@ run_libc_sched_yield_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_sched_yield.sh
 }
 
+run_libc_sched_get_priority_max_probe() {
+    run_in_container bash /workspace/compat/x86_64/run_libc_sched_get_priority_max.sh
+}
+
+run_libc_sched_get_priority_min_probe() {
+    run_in_container bash /workspace/compat/x86_64/run_libc_sched_get_priority_min.sh
+}
+
 run_libc_sched_cpucount_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_sched_cpucount.sh
 }
@@ -4358,9 +4389,9 @@ case "$command" in
     libc-sleep) ;;
     timerfd-header-abi|signalfd-header-abi) ;;
     usleep-header-abi|libc-timerfd|libc-signalfd|libc-sigpause|libc-sigisemptyset|libc-sigandset-sigorset|libc-sigpending|libc-sigrtmax|libc-sigrtmin|libc-sched-getscheduler|libc-alarm|libc-usleep|libc-sigaddset-sigdelset-sigfillset|libc-sched-getparam|libc-sched-setparam|libc-sched-getaffinity|libc-setfsuid|libc-setfsgid|libc-personality) ;;
-    libc-sched-cpucount|libc-sched-getcpu|libc-sched-priority-bounds|libc-sched-yield) ;;
-    sched-cpucount-header-abi|sched-getscheduler-header-abi|sched-priority-bounds-header-abi|sched-getparam-header-abi|sched-setparam-header-abi|sched-getaffinity-header-abi|setfsuid-header-abi|setfsgid-header-abi|personality-header-abi) ;;
-    ctermid-header-abi|gethostid-header-abi|endhostent-header-abi|ether-line-header-abi|res-init-header-abi|posix-spawnattr-destroy-header-abi|posix-spawnattr-getflags-header-abi|posix-spawnattr-setpgroup-header-abi|posix-spawnattr-setschedpolicy-header-abi|posix-spawn-file-actions-init-header-abi|getpagesize-header-abi|gettid-header-abi|posix-close-header-abi|isatty-header-abi|ttyname-r-header-abi|tcgetpgrp-header-abi|tcsetpgrp-header-abi|getpass-header-abi|libc-ctermid|libc-gethostid|libc-endhostent|libc-ether-line|libc-res-init|libc-posix-spawnattr-destroy|libc-posix-spawnattr-getflags|libc-posix-spawnattr-setpgroup|libc-posix-spawnattr-setschedpolicy|libc-posix-spawn-file-actions-init|libc-getpagesize|libc-gettid|libc-posix-close|libc-isatty|libc-ttyname-r|libc-tcgetpgrp|libc-tcsetpgrp|libc-getpass|mkfifo-header-abi|mkfifoat-header-abi|libc-mkfifo|libc-mkfifoat|mktemp-header-abi|libc-mktemp) ;;
+    libc-sched-cpucount|libc-sched-getcpu|libc-sched-priority-bounds|libc-sched-yield|libc-sched-get-priority-max|libc-sched-get-priority-min) ;;
+    sched-cpucount-header-abi|sched-getscheduler-header-abi|sched-priority-bounds-header-abi|sched-get-priority-max-header-abi|sched-get-priority-min-header-abi|sched-getparam-header-abi|sched-setparam-header-abi|sched-getaffinity-header-abi|setfsuid-header-abi|setfsgid-header-abi|personality-header-abi) ;;
+    ctermid-header-abi|gethostid-header-abi|endhostent-header-abi|ether-line-header-abi|res-init-header-abi|posix-spawnattr-destroy-header-abi|posix-spawnattr-getflags-header-abi|posix-spawnattr-setpgroup-header-abi|posix-spawnattr-setschedpolicy-header-abi|posix-spawn-file-actions-init-header-abi|getpagesize-header-abi|gettid-header-abi|posix-close-header-abi|isatty-header-abi|ttyname-r-header-abi|tcgetpgrp-header-abi|tcsetpgrp-header-abi|getpass-header-abi|fchdir-header-abi|ulimit-header-abi|libc-ctermid|libc-gethostid|libc-endhostent|libc-ether-line|libc-res-init|libc-posix-spawnattr-destroy|libc-posix-spawnattr-getflags|libc-posix-spawnattr-setpgroup|libc-posix-spawnattr-setschedpolicy|libc-posix-spawn-file-actions-init|libc-getpagesize|libc-gettid|libc-posix-close|libc-isatty|libc-ttyname-r|libc-tcgetpgrp|libc-tcsetpgrp|libc-getpass|libc-fchdir|libc-ulimit|mkfifo-header-abi|mkfifoat-header-abi|libc-mkfifo|libc-mkfifoat|mktemp-header-abi|libc-mktemp) ;;
     readlinkat-header-abi|libc-readlinkat|linkat-header-abi|libc-linkat|lchown-header-abi|libc-lchown|hasmntopt-header-abi|libc-hasmntopt|unlinkat-header-abi|libc-unlinkat|chown-header-abi|libc-chown|sync-header-abi|libc-sync|sync-file-range-header-abi|libc-sync-file-range) ;;
     stdio-permanent-line-io-header-abi|stdio-octal-hex-scan-header-abi) ;;
     math-complex-complete-header-abi|libc-math-complex-complete) ;;
@@ -4905,6 +4936,16 @@ case "$command" in
         ensure_image
         run_sched_priority_bounds_header_abi
         ;;
+    sched-get-priority-max-header-abi)
+        [ "$#" -eq 0 ] || fail "sched-get-priority-max-header-abi takes no arguments"
+        ensure_image
+        run_sched_get_priority_max_header_abi
+        ;;
+    sched-get-priority-min-header-abi)
+        [ "$#" -eq 0 ] || fail "sched-get-priority-min-header-abi takes no arguments"
+        ensure_image
+        run_sched_get_priority_min_header_abi
+        ;;
     callback-algorithms-header-abi)
         [ "$#" -eq 0 ] || fail "callback-algorithms-header-abi takes no arguments"
         ensure_image
@@ -5139,6 +5180,16 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "hasmntopt-header-abi takes no arguments"
         ensure_image
         run_hasmntopt_header_abi
+        ;;
+    fchdir-header-abi)
+        [ "$#" -eq 0 ] || fail "fchdir-header-abi takes no arguments"
+        ensure_image
+        run_fchdir_header_abi
+        ;;
+    ulimit-header-abi)
+        [ "$#" -eq 0 ] || fail "ulimit-header-abi takes no arguments"
+        ensure_image
+        run_ulimit_header_abi
         ;;
     mktemp-header-abi)
         [ "$#" -eq 0 ] || fail "mktemp-header-abi takes no arguments"
@@ -5999,6 +6050,16 @@ case "$command" in
         ensure_image
         run_libc_hasmntopt_probe
         ;;
+    libc-fchdir)
+        [ "$#" -eq 0 ] || fail "libc-fchdir takes no arguments"
+        ensure_image
+        run_libc_fchdir
+        ;;
+    libc-ulimit)
+        [ "$#" -eq 0 ] || fail "libc-ulimit takes no arguments"
+        ensure_image
+        run_libc_ulimit
+        ;;
     libc-mktemp)
         [ "$#" -eq 0 ] || fail "libc-mktemp takes no arguments"
         ensure_image
@@ -6063,6 +6124,16 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "libc-sched-yield takes no arguments"
         ensure_image
         run_libc_sched_yield_probe
+        ;;
+    libc-sched-get-priority-max)
+        [ "$#" -eq 0 ] || fail "libc-sched-get-priority-max takes no arguments"
+        ensure_image
+        run_libc_sched_get_priority_max_probe
+        ;;
+    libc-sched-get-priority-min)
+        [ "$#" -eq 0 ] || fail "libc-sched-get-priority-min takes no arguments"
+        ensure_image
+        run_libc_sched_get_priority_min_probe
         ;;
     libc-sched-cpucount)
         [ "$#" -eq 0 ] || fail "libc-sched-cpucount takes no arguments"

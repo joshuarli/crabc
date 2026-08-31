@@ -5961,6 +5961,61 @@ oracle = [
 ]
 
 [[family.verified_artifact]]
+id = "static-c-ulimit"
+description = "Private native x86 selected-static-archive `ulimit` compatibility artifact within still-planned `libc.posix-runtime`. One project-header C fixture runs through pinned musl and then a true static archive candidate, resolving exactly `long ulimit(int, ...)`. It selects only musl's historical `RLIMIT_FSIZE=1` adapter: `UL_GETFSIZE` and every unknown command query without reading a vararg; only `UL_SETFSIZE` consumes one long vararg, uses musl's `512ULL` block conversion, and replaces the calling process soft limit through Linux `prlimit64=302`. The disposable processes preserve stale errno on successful query/set and verify the hard limit stays unchanged. This process-global mutation remains caller-owned. It does not select public C `getrlimit`/`setrlimit`/`prlimit` entries, general process resources/accounting/scheduler/file-size policy, filesystem behavior, pthreads, CRT, loader, dynamic TLS, family completion, promotion, or public x86 support."
+source_owners = [
+  "compat/upstreams.toml",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/ulimit.rs",
+  "libc/src/c_abi/x86_64/errno.rs",
+  "libc/src/c_abi/x86_64/syscall.rs",
+  "libc/src/c_abi/x86_64/static_tls.rs",
+  "include/errno.h",
+  "include/stddef.h",
+  "include/sys/resource.h",
+  "include/sys/syscall.h",
+  "include/sys/types.h",
+  "include/sys/time.h",
+  "include/ulimit.h",
+  "include/features.h",
+  "include/bits/alltypes.h",
+  "include/bits/syscall.h",
+  "compat/x86_64/ulimit_header_abi_probe.c",
+  "compat/x86_64/ulimit_header_abi_probe.cpp",
+  "compat/x86_64/run_ulimit_header_abi.sh",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/libc_ulimit_probe.c",
+  "compat/x86_64/libc_ulimit_start.S",
+  "compat/x86_64/run_libc_ulimit.sh",
+  "compat/x86_64/aarch64_parity_inventory.py",
+  "compat/x86_64/aarch64_parity_inventory.json",
+  "compat/x86_64/tests/test_aarch64_parity_inventory.py",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "compat/x86_64/README.md",
+  "STATUS.md",
+  "x86-64.md",
+  "scripts/dev-x86_64.sh",
+  "scripts/check_structure.py",
+]
+x86_abi_prerequisites = [
+  "The SysV AMD64 variadic ABI supplies `ulimit`'s int command in edi, preserves the promoted long vararg in rsi only for `UL_SETFSIZE=2`, and returns the signed long in rax. Linux 5.10 x86-64 `prlimit64=302` receives pid/resource/new-limit/old-limit in rdi/rsi/rdx/r10, not the normal C fourth-word rcx",
+  "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417 `src/legacy/ulimit.c` maps its `getrlimit`/`setrlimit` pair, `RLIMIT_FSIZE`, and `512ULL` conversion to the direct Linux 5.10 prlimit64 route. The pre-baseline fallback and pthread `__synccall` path are deliberately unselected",
+  "Each disposable reference/candidate process observes `UL_GETFSIZE`, unknown-command 1977 without a vararg, and `UL_SETFSIZE`; it retains stale E2BIG errno on successful paths, checks the 512-byte soft-limit result, and keeps rlim_max unchanged without asserting host resource policy",
+  "The final `-nostdlib -static` candidate has a PT_TLS errno datum with direct initial-exec TPOFF access and no interpreter, DT_NEEDED, unresolved symbol, dynamic TLS resolver, or C getrlimit/setrlimit/prlimit entry. Fixture-local startup writes one Variant-II thread-pointer self word at %fs:0 without claiming CRT or TLS lifecycle",
+]
+x86_header_prerequisites = ["The pinned-musl/project C11/C++17 `<ulimit.h>` gate proves unconditional `long ulimit(int, ...)`, `UL_GETFSIZE=1`, `UL_SETFSIZE=2`, and unmangled C++ linkage under default, strict, POSIX, X/Open, GNU, and BSD profiles. It validates that one historical declaration only; no resource-header family, archive linkage, or public x86 support is selected."]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-ulimit", scope = "Pinned-musl C reference plus the default/strict/POSIX/X/Open/GNU/BSD C11/C++17 `<ulimit.h>` gate, a true dependency-free x86 crabc-libc archive, and a `-nostdlib -static` candidate. It ratchets the exact archive export, static TLS/ELF closure, and direct `prlimit64=302` code path. The common fixture proves `UL_GETFSIZE`, unknown-command no-vararg query, and `UL_SETFSIZE` 512-byte conversion in disposable reference/candidate processes, including stale-errno success and unchanged hard limit. It rejects C getrlimit/setrlimit/prlimit resource entries. It does not select general process resources, accounting, scheduler/file-size or filesystem policy, family completion, promotion, or public x86 support." }]
+oracle = [
+  { kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source/declaration oracle: src/legacy/ulimit.c calls getrlimit then conditionally setrlimit for RLIMIT_FSIZE, returns rlim_cur / 512ULL, and leaves every non-UL_SETFSIZE command on the no-vararg query path." },
+  { kind = "kernel-abi", source = "Linux 5.10 x86-64 ABI", role = "prlimit64=302 four-register resource-limit and raw errno contract for process zero and RLIMIT_FSIZE." },
+  { kind = "elf-abi", source = "System V AMD64 psABI", role = "LP64 variadic command/long result convention and fixture-local static initial-exec TLS boundary." },
+]
+
+[[family.verified_artifact]]
 id = "static-c-sched-yield"
 description = "Private native x86 selected-static-archive POSIX `sched_yield` leaf. One dependency-free `crabc-libc` archive resolves exactly `sched_yield(void)` into a freestanding C fixture after an equivalent pinned-musl execution. The separate strict/POSIX/XOPEN/GNU C/C++ header gate proves the unconditional no-argument signed-int declaration and unmangled C++ linkage. The static fixture proves a normal successful yield preserves stale errno, then uses fixture-local classic BPF only to force the raw Linux `-EPERM` result and prove musl's status bridge returns `-1` with `errno=EPERM`. It is distinct from the separate C11 `thrd_yield` artifact, whose void source intentionally discards that same raw result. This artifact establishes no scheduler handoff, fairness, peer-progress, scheduler policy/parameter API, affinity, C11 or pthread lifecycle, process lifecycle, libc.so, CRT, dynamic TLS, loader, sysroot, allocator, family completion, promotion, or public x86 support."
 source_owners = [
@@ -6159,6 +6214,112 @@ oracle = [
   { kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT C declaration and behavior oracle for src/sched/sched_get_priority_max.c: sched_get_priority_max is syscall(SYS_sched_get_priority_max, policy), and sched_get_priority_min is syscall(SYS_sched_get_priority_min, policy)." },
   { kind = "kernel-abi", source = "Linux 5.10 x86-64 ABI", role = "sched_get_priority_max=146 and sched_get_priority_min=147 one-scalar syscall register mapping, successful scalar bounds, and raw errno contract." },
   { kind = "elf-abi", source = "System V AMD64 psABI", role = "One-int rdi/eax C ABI and true-static initial-TLS errno fixture boundary." },
+]
+
+[[family.verified_artifact]]
+id = "static-c-sched-get-priority-max"
+description = "Private native x86 selected-static-archive `sched_get_priority_max` query leaf. One dependency-free `crabc-libc` archive resolves exactly `int sched_get_priority_max(int)` into a freestanding C fixture after equivalent pinned-musl execution. The separate strict/POSIX/XOPEN/GNU C/C++ header gate proves the unconditional signed-int declaration, Linux SCHED_OTHER/FIFO/RR constants, and unmangled C++ linkage. The common fixture observes SCHED_OTHER=0, SCHED_FIFO=99, SCHED_RR=99, successful-query preservation of stale errno, and invalid-policy `-1`/EINVAL. Pinned musl's same source file also defines `sched_get_priority_min`; that separate private artifact is not linked by this leaf. This artifact establishes no scheduler policy selection or mutation, priority-minimum query, scheduler parameters, affinity, scheduling-progress/fairness guarantee, C11/pthread lifecycle, process lifecycle, libc.so, CRT, dynamic TLS, loader, sysroot, family completion, promotion, or public x86 support."
+source_owners = [
+  "compat/upstreams.toml",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/sched_get_priority_max.rs",
+  "libc/src/c_abi/x86_64/errno.rs",
+  "libc/src/c_abi/x86_64/syscall.rs",
+  "libc/src/c_abi/x86_64/static_tls.rs",
+  "include/errno.h",
+  "include/sched.h",
+  "include/sys/syscall.h",
+  "include/sys/types.h",
+  "include/time.h",
+  "include/features.h",
+  "include/bits/alltypes.h",
+  "include/bits/syscall.h",
+  "compat/x86_64/sched_get_priority_max_header_abi_probe.c",
+  "compat/x86_64/sched_get_priority_max_header_abi_probe.cpp",
+  "compat/x86_64/run_sched_get_priority_max_header_abi.sh",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/libc_sched_get_priority_max_probe.c",
+  "compat/x86_64/libc_sched_get_priority_max_start.S",
+  "compat/x86_64/run_libc_sched_get_priority_max.sh",
+  "compat/x86_64/aarch64_parity_inventory.py",
+  "compat/x86_64/aarch64_parity_inventory.json",
+  "compat/x86_64/tests/test_aarch64_parity_inventory.py",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "compat/x86_64/README.md",
+  "STATUS.md",
+  "x86-64.md",
+  "scripts/dev-x86_64.sh",
+  "scripts/check_structure.py",
+]
+x86_abi_prerequisites = [
+  "The SysV AMD64 `int sched_get_priority_max(int)` ABI supplies the signed policy selector in edi/rdi and returns the signed priority or -1 in eax. Linux 5.10 x86-64 `sched_get_priority_max=146` consumes that one syscall word and returns either a nonnegative priority or a raw -errno word",
+  "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417 `src/sched/sched_get_priority_max.c::sched_get_priority_max` is `syscall(SYS_sched_get_priority_max, policy)`. The same source file's sched_get_priority_min sibling is a separate artifact",
+  "The shared pinned-musl/candidate fixture observes SCHED_OTHER=0, SCHED_FIFO=99, SCHED_RR=99, stale errno preservation on each successful query, and invalid policy -1/EINVAL without asserting host scheduling policy",
+  "The final `-nostdlib -static` candidate has a PT_TLS errno datum with direct initial-exec TPOFF access and no interpreter, DT_NEEDED, unresolved symbol, dynamic TLS resolver, or unowned runtime. Fixture-local startup writes one Variant-II %fs:0 thread-pointer self word without claiming CRT or TLS lifecycle",
+]
+x86_header_prerequisites = ["The strict/POSIX/XOPEN/GNU pinned-musl/project-header C11/C++17 `sched.h` gate proves unconditional `int sched_get_priority_max(int)`, SCHED_OTHER=0/SCHED_FIFO=1/SCHED_RR=2, and an unmangled C++ reference. It checks declaration/linkage only: priority-minimum query behavior is outside this header-only gate; scheduler policy/parameters, affinity, C11/pthread lifecycle, archive linkage, installed-header completion, and public x86 support remain unselected."]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-sched-get-priority-max", scope = "Pinned-musl C reference plus the separate strict/POSIX/XOPEN/GNU C/C++ project-header gate, a true dependency-free x86 crabc-libc archive, and a `-nostdlib -static` candidate. The same fixture proves SCHED_OTHER=0, SCHED_FIFO=99, SCHED_RR=99, stale errno preservation on success, and invalid policy -1/EINVAL; emitted code uses direct sched_get_priority_max=146 and errno TLS. Archive/final ELF checks require the exact export, reject an interpreter/DT_NEEDED/unresolved symbol/dynamic TLS resolver or unowned runtime, and ensure final closure omits sched_get_priority_min, policy/parameter/affinity, C11/pthread, timer, and process-lifecycle entries. It excludes scheduler policy/fairness/progress guarantees, family completion, promotion, and public x86 support." }]
+oracle = [
+  { kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source and declaration/behavior oracle for src/sched/sched_get_priority_max.c::sched_get_priority_max: syscall(SYS_sched_get_priority_max, policy) applies ordinary status/errno translation. The source sibling sched_get_priority_min is outside this artifact." },
+  { kind = "kernel-abi", source = "Linux 5.10 x86-64 ABI", role = "sched_get_priority_max=146 one signed policy word and raw priority/EINVAL result contract." },
+  { kind = "elf-abi", source = "System V AMD64 psABI", role = "One signed-int argument/result ABI and freestanding static initial-exec errno fixture contract." },
+]
+
+[[family.verified_artifact]]
+id = "static-c-sched-get-priority-min"
+description = "Private native x86 selected-static-archive `sched_get_priority_min` query leaf. One dependency-free `crabc-libc` archive resolves exactly `int sched_get_priority_min(int)` into a freestanding C fixture after equivalent pinned-musl execution. The separate strict/POSIX/XOPEN/GNU C/C++ header gate proves the unconditional signed-int declaration, Linux SCHED_OTHER/FIFO/RR constants, and unmangled C++ linkage. The common fixture observes SCHED_OTHER=0, SCHED_FIFO=1, SCHED_RR=1, successful-query preservation of stale errno, and invalid-policy `-1`/EINVAL. Pinned musl's same source file also defines `sched_get_priority_max`; that separate private artifact is not linked by this leaf. This artifact establishes no scheduler policy selection or mutation, priority-maximum query, scheduler parameters, affinity, scheduling-progress/fairness guarantee, C11/pthread lifecycle, process lifecycle, libc.so, CRT, dynamic TLS, loader, sysroot, family completion, promotion, or public x86 support."
+source_owners = [
+  "compat/upstreams.toml",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/sched_get_priority_min.rs",
+  "libc/src/c_abi/x86_64/errno.rs",
+  "libc/src/c_abi/x86_64/syscall.rs",
+  "libc/src/c_abi/x86_64/static_tls.rs",
+  "include/errno.h",
+  "include/sched.h",
+  "include/sys/syscall.h",
+  "include/sys/types.h",
+  "include/time.h",
+  "include/features.h",
+  "include/bits/alltypes.h",
+  "include/bits/syscall.h",
+  "compat/x86_64/sched_get_priority_min_header_abi_probe.c",
+  "compat/x86_64/sched_get_priority_min_header_abi_probe.cpp",
+  "compat/x86_64/run_sched_get_priority_min_header_abi.sh",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/libc_sched_get_priority_min_probe.c",
+  "compat/x86_64/libc_sched_get_priority_min_start.S",
+  "compat/x86_64/run_libc_sched_get_priority_min.sh",
+  "compat/x86_64/aarch64_parity_inventory.py",
+  "compat/x86_64/aarch64_parity_inventory.json",
+  "compat/x86_64/tests/test_aarch64_parity_inventory.py",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "compat/x86_64/README.md",
+  "STATUS.md",
+  "x86-64.md",
+  "scripts/dev-x86_64.sh",
+  "scripts/check_structure.py",
+]
+x86_abi_prerequisites = [
+  "The SysV AMD64 `int sched_get_priority_min(int)` ABI supplies the signed policy selector in edi/rdi and returns the signed priority or -1 in eax. Linux 5.10 x86-64 `sched_get_priority_min=147` consumes that one syscall word and returns either a nonnegative priority or a raw -errno word",
+  "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417 `src/sched/sched_get_priority_max.c::sched_get_priority_min` is `syscall(SYS_sched_get_priority_min, policy)`. The same source file's sched_get_priority_max sibling is a separate artifact",
+  "The shared pinned-musl/candidate fixture observes SCHED_OTHER=0, SCHED_FIFO=1, SCHED_RR=1, stale errno preservation on each successful query, and invalid policy -1/EINVAL without asserting host scheduling policy",
+  "The final `-nostdlib -static` candidate has a PT_TLS errno datum with direct initial-exec TPOFF access and no interpreter, DT_NEEDED, unresolved symbol, dynamic TLS resolver, or unowned runtime. Fixture-local startup writes one Variant-II %fs:0 thread-pointer self word without claiming CRT or TLS lifecycle",
+]
+x86_header_prerequisites = ["The strict/POSIX/XOPEN/GNU pinned-musl/project-header C11/C++17 `sched.h` gate proves unconditional `int sched_get_priority_min(int)`, SCHED_OTHER=0/SCHED_FIFO=1/SCHED_RR=2, and an unmangled C++ reference. It checks declaration/linkage only: priority-maximum query behavior is outside this header-only gate; scheduler policy/parameters, affinity, C11/pthread lifecycle, archive linkage, installed-header completion, and public x86 support remain unselected."]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-sched-get-priority-min", scope = "Pinned-musl C reference plus the separate strict/POSIX/XOPEN/GNU C/C++ project-header gate, a true dependency-free x86 crabc-libc archive, and a `-nostdlib -static` candidate. The same fixture proves SCHED_OTHER=0, SCHED_FIFO=1, SCHED_RR=1, stale errno preservation on success, and invalid policy -1/EINVAL; emitted code uses direct sched_get_priority_min=147 and errno TLS. Archive/final ELF checks require the exact export, reject an interpreter/DT_NEEDED/unresolved symbol/dynamic TLS resolver or unowned runtime, and ensure final closure omits sched_get_priority_max, policy/parameter/affinity, C11/pthread, timer, and process-lifecycle entries. It excludes scheduler policy/fairness/progress guarantees, family completion, promotion, and public x86 support." }]
+oracle = [
+  { kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source and declaration/behavior oracle for src/sched/sched_get_priority_max.c::sched_get_priority_min: syscall(SYS_sched_get_priority_min, policy) applies ordinary status/errno translation. The source sibling sched_get_priority_max is outside this artifact." },
+  { kind = "kernel-abi", source = "Linux 5.10 x86-64 ABI", role = "sched_get_priority_min=147 one signed policy word and raw priority/EINVAL result contract." },
+  { kind = "elf-abi", source = "System V AMD64 psABI", role = "One signed-int argument/result ABI and freestanding static initial-exec errno fixture contract." },
 ]
 
 [[family.verified_artifact]]
@@ -6913,6 +7074,62 @@ x86_abi_prerequisites = [
 x86_header_prerequisites = ["The paired eight-profile C11/C++17 header matrix compares pinned musl and raw-GCC project-first fcntl.h, stdio.h, sys/stat.h, sys/types.h, and unistd.h declarations, LP64 size_t/ssize_t/off_t/mode_t spellings, selected mode and O_PATH constants, and unmangled C++ references. The freestanding fixture then preprocesses project errno.h, fcntl.h, stddef.h, stdio.h, sys/stat.h, sys/syscall.h, sys/types.h, unistd.h, bits/alltypes.h, bits/fcntl.h, bits/stat.h, and bits/syscall.h; it selects no general installed-header or C ABI completion."]
 native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-pathname-lifecycle", scope = "Pinned-musl C reference plus a true dependency-free x86 crabc-libc static archive and `-nostdlib -static` candidate. The gate runs the project-first/pinned-musl eight-profile C/C++ pathname-lifecycle header matrix; proves project-header provenance; exact crate-owned C object-member exports separately from compiler-builtins; no interpreter/DT_NEEDED/unresolved symbol or final-artifact dynamic TLS model; direct initial-TLS errno access; emitted getcwd=79, chdir=80, rename=82, mkdir=83, rmdir=84, link=86, unlink=87, symlink=88, readlink=89, chmod=90, fchmod=91, truncate=76, and fcntl=72 paths; caller-buffer getcwd plus the intentional EINVAL null-buffer profile; hard/symbolic links, rename, readlink zero-capacity behavior, remove EISDIR retry, mode changes, O_PATH fchmod fallback, truncation, and local cleanup. It does not select allocation, pathname canonicalization, directory streams, xattr/ACL policy, mount/namespace management, cancellation, libc.so, general startup, allocator, loader, sysroot, family completion, promotion, or public x86 support." }]
 oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source mapping: src/unistd/chdir.c, getcwd.c, link.c, readlink.c, rmdir.c, symlink.c, truncate.c, and unlink.c; src/stat/chmod.c, fchmod.c, and mkdir.c; src/stdio/remove.c and rename.c; and src/internal/procfdname.c define this selected pathname boundary. The allocator-requiring null-buffer getcwd extension is explicitly omitted from the static candidate." }, { kind = "kernel-abi", source = "Linux 5.10 x86-64 ABI", role = "chdir/getcwd/rename/mkdir/rmdir/link/unlink/symlink/readlink/chmod/fchmod/truncate/fcntl numbers, rdi/rsi/rdx order, raw errno, O_PATH descriptor, procfs, pathname, mode, and truncation behavior." }, { kind = "elf-abi", source = "System V AMD64 psABI", role = "LP64 pathname pointer, size/off/mode scalar, and static initial-exec TLS fixture contract." }]
+
+[[family.verified_artifact]]
+id = "static-c-fchdir"
+description = "Private native x86 selected-static-archive `fchdir` compatibility artifact inside still-planned `libc.posix-runtime`. One dedicated `crabc-libc` leaf resolves exactly `int fchdir(int)` through a project-header C fixture after equivalent pinned musl 1.2.6 execution. It first issues Linux `fchdir=81`; only direct `EBADF` with a successful `fcntl=72` `F_GETFD=1` liveness probe takes musl's fixed 27-byte `/proc/self/fd/<decimal>` fallback through Linux `chdir=80`. The child-contained fixture proves a live O_PATH `/proc` directory reaches that fallback and restores the saved ordinary directory descriptor, while a live O_PATH `/proc/cpuinfo` descriptor reports ENOTDIR and `-1` retains EBADF. Raw openat/getcwd/close operations are fixture setup and observation only. The CWD effect is process-global and remains caller-owned; this artifact does not select the public C `chdir`/`getcwd` entries, a general descriptor or procfs API, path parsing/canonicalization, filesystem policy, CWD capability completion, libc.so, CRT, loader, sysroot, family completion, promotion, or public x86 support."
+source_owners = [
+  "compat/upstreams.toml",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/fchdir.rs",
+  "libc/src/c_abi/x86_64/errno.rs",
+  "libc/src/c_abi/x86_64/syscall.rs",
+  "libc/src/c_abi/x86_64/static_tls.rs",
+  "include/errno.h",
+  "include/fcntl.h",
+  "include/stddef.h",
+  "include/sys/syscall.h",
+  "include/sys/types.h",
+  "include/unistd.h",
+  "include/features.h",
+  "include/bits/fcntl.h",
+  "include/bits/syscall.h",
+  "compat/x86_64/fchdir_header_abi_probe.c",
+  "compat/x86_64/fchdir_header_abi_probe.cpp",
+  "compat/x86_64/run_fchdir_header_abi.sh",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/libc_fchdir_probe.c",
+  "compat/x86_64/libc_fchdir_start.S",
+  "compat/x86_64/run_libc_fchdir.sh",
+  "compat/x86_64/aarch64_parity_inventory.py",
+  "compat/x86_64/aarch64_parity_inventory.json",
+  "compat/x86_64/tests/test_aarch64_parity_inventory.py",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "compat/x86_64/README.md",
+  "STATUS.md",
+  "x86-64.md",
+  "scripts/dev-x86_64.sh",
+  "scripts/check_structure.py",
+]
+x86_abi_prerequisites = [
+  "The SysV AMD64 ABI passes signed four-byte `int fchdir(int)` in edi and returns signed int in eax. Linux x86-64 `fchdir=81` receives the descriptor in rdi; its sole intermediate `fcntl=72` F_GETFD=1 liveness probe uses rdi/rsi; and fallback `chdir=80` receives the fixed pathname in rdi. Only raw Linux -4095 through -1 results publish selected initial-TLS errno.",
+  "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417 maps src/unistd/fchdir.c plus src/internal/procfdname.c exactly: after raw fchdir returns -EBADF and F_GETFD succeeds, it writes `/proc/self/fd/<decimal>` into `char buf[15+3*sizeof(int)]` (27 x86 bytes) and invokes chdir. Linux 5.10 supplies all three legacy x86 syscalls; no broader procfs or descriptor fallback is selected.",
+  "The common pinned-musl/candidate C body opens only fixture descriptors with raw openat, captures/restores its own CWD with raw getcwd/fchdir, and proves stale E2BIG survives both successful O_PATH `/proc` fallback and ordinary saved-directory direct fchdir. A live O_PATH `/proc/cpuinfo` descriptor reaches fallback and returns ENOTDIR, while fchdir(-1) remains -1/EBADF; CWD mutation stays inside each disposable reference/candidate process.",
+  "The final `-nostdlib -static` candidate has the selected PT_TLS errno datum with direct initial-exec TPOFF access, no interpreter, DT_NEEDED, unresolved symbol, dynamic TLS model, allocator, loader, or external C pathname/descriptor entry. Its fchdir disassembly retains direct fchdir=81, fcntl=72, and chdir=80 syscall instructions and the fixed procfd spelling.",
+]
+x86_header_prerequisites = [
+  "The focused pinned-musl/project-first C11/C++17 `<unistd.h>` matrix proves unconditional `int fchdir(int)` under default, strict, POSIX, X/Open, GNU, and BSD selectors, exact signed-int function-pointer shape, and unmangled C++ linkage. It is one declaration boundary, not general unistd, CWD, filesystem, installed-header, or public x86 support.",
+]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-fchdir", scope = "Pinned-musl/project default/strict/POSIX/X/Open/GNU/BSD C/C++ `<unistd.h>` compilation plus one project-header C body through pinned musl and a true x86 `-nostdlib -static` candidate. The gate ratchets the selected archive surface; rejects interpreter/DT_NEEDED, unresolved symbols, dynamic TLS, and unowned runtime dependencies; proves direct initial-TLS errno; disassembles fchdir=81, fcntl=72, and chdir=80 plus `/proc/self/fd/`; and differentially proves live O_PATH `/proc` fallback, ordinary descriptor restoration, O_PATH non-directory ENOTDIR, invalid EBADF, and stale-errno success in disposable processes. Raw setup/observation does not select C chdir/getcwd/open/fcntl or a broader descriptor/procfs/pathname API. It does not select filesystem/CWD capability completion, libc.so, CRT, loader, sysroot, family completion, promotion, or public x86 support." }]
+oracle = [
+  { kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source, unconditional `<unistd.h>` declaration, and behavior oracle for src/unistd/fchdir.c and src/internal/procfdname.c: raw fchdir first, only -EBADF plus successful F_GETFD fallback, fixed 15+3*sizeof(int) procfd bytes, then chdir." },
+  { kind = "kernel-abi", source = "Linux 5.10 x86-64 ABI", role = "fchdir=81, fcntl=72 F_GETFD=1, chdir=80, raw errno, O_PATH descriptor behavior, procfs descriptor symlink resolution, and process-global CWD transition contract." },
+  { kind = "elf-abi", source = "System V AMD64 psABI", role = "signed-int edi/eax call boundary, unmangled C++ linkage, and static initial-exec TLS fixture contract." },
+]
 
 [[family.verified_artifact]]
 id = "static-c-mkfifo"

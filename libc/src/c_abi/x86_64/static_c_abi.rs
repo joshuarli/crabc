@@ -486,6 +486,8 @@ mod sleep;
 mod descriptor_entry;
 #[path = "filesystem_access.rs"]
 mod filesystem_access;
+#[path = "fchdir.rs"]
+mod fchdir;
 #[path = "mktemp.rs"]
 mod mktemp;
 #[path = "lchmod_unsupported.rs"]
@@ -526,6 +528,8 @@ mod membarrier;
 mod vector_io;
 #[path = "process_resources.rs"]
 mod process_resources;
+#[path = "ulimit.rs"]
+mod ulimit;
 #[path = "system_configuration.rs"]
 mod system_configuration;
 #[path = "memory_mapping.rs"]

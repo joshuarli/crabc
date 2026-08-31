@@ -1356,9 +1356,11 @@ PATHNAME_LIFECYCLE_SYMBOLS = (
     "truncate",
 )
 
+FCHDIR_SYMBOLS = ("fchdir",)
+ULIMIT_SYMBOLS = ("ulimit",)
+
 PATHNAME_LIFECYCLE_UNSELECTED_SYMBOLS = (
     "chroot",
-    "fchdir",
     "fchmodat",
     "mkdirat",
     "realpath",
@@ -30027,6 +30029,674 @@ def require_pathname_lifecycle_artifact(family: Mapping[str, Any]) -> None:
     )
 
 
+def require_fchdir_artifact(family: Mapping[str, Any]) -> None:
+    """Keep the musl O_PATH fchdir fallback private and process-contained."""
+
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.posix-runtime].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [entry for entry in artifacts if entry.get("id") == "static-c-fchdir"]
+    require(
+        len(matching) == 1,
+        "libc.posix-runtime must contain exactly one static-c-fchdir artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-fchdir must not promote libc.posix-runtime",
+    )
+    artifact = matching[0]
+    require(
+        "capabilities" not in artifact,
+        "static-c-fchdir must remain capability-free",
+    )
+
+    description = artifact.get("description")
+    require(isinstance(description, str), "static-c-fchdir needs a description")
+    for phrase in (
+        "selected-static-archive `fchdir` compatibility artifact",
+        "still-planned `libc.posix-runtime`",
+        "exactly `int fchdir(int)`",
+        "Linux `fchdir=81`",
+        "`fcntl=72` `F_GETFD=1`",
+        "27-byte `/proc/self/fd/<decimal>` fallback",
+        "Linux `chdir=80`",
+        "O_PATH `/proc`",
+        "O_PATH `/proc/cpuinfo`",
+        "ENOTDIR",
+        "EBADF",
+        "process-global",
+        "public C `chdir`/`getcwd` entries",
+        "family completion, promotion, or public x86 support",
+    ):
+        require(phrase in description, f"static-c-fchdir description omits {phrase}")
+
+    owners = set(
+        nonempty_strings(artifact.get("source_owners"), "static-c-fchdir.source_owners")
+    )
+    for owner in (
+        "compat/upstreams.toml",
+        "libc/Cargo.toml",
+        "libc/src/lib.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/fchdir.rs",
+        "libc/src/c_abi/x86_64/errno.rs",
+        "libc/src/c_abi/x86_64/syscall.rs",
+        "libc/src/c_abi/x86_64/static_tls.rs",
+        "include/errno.h",
+        "include/fcntl.h",
+        "include/stddef.h",
+        "include/sys/syscall.h",
+        "include/sys/types.h",
+        "include/unistd.h",
+        "include/features.h",
+        "include/bits/fcntl.h",
+        "include/bits/syscall.h",
+        "compat/x86_64/fchdir_header_abi_probe.c",
+        "compat/x86_64/fchdir_header_abi_probe.cpp",
+        "compat/x86_64/run_fchdir_header_abi.sh",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/libc_fchdir_probe.c",
+        "compat/x86_64/libc_fchdir_start.S",
+        "compat/x86_64/run_libc_fchdir.sh",
+        "compat/x86_64/aarch64_parity_inventory.py",
+        "compat/x86_64/aarch64_parity_inventory.json",
+        "compat/x86_64/tests/test_aarch64_parity_inventory.py",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/README.md",
+        "STATUS.md",
+        "x86-64.md",
+        "scripts/dev-x86_64.sh",
+        "scripts/check_structure.py",
+    ):
+        require(owner in owners, f"static-c-fchdir source owners omit {owner}")
+
+    prerequisites = nonempty_strings(
+        artifact.get("x86_abi_prerequisites"), "static-c-fchdir.x86_abi_prerequisites"
+    )
+    require(
+        any(
+            "SysV AMD64" in item
+            and "edi" in item
+            and "eax" in item
+            and "fchdir=81" in item
+            and "fcntl=72" in item
+            and "F_GETFD=1" in item
+            and "chdir=80" in item
+            for item in prerequisites
+        ),
+        "static-c-fchdir must retain its Linux syscall register ABI",
+    )
+    require(
+        any(
+            "9fa28ece75d8a2191de7c5bb53bed224c5947417" in item
+            and "src/unistd/fchdir.c" in item
+            and "src/internal/procfdname.c" in item
+            and "15+3*sizeof(int)" in item
+            and "27 x86 bytes" in item
+            and "-EBADF" in item
+            for item in prerequisites
+        ),
+        "static-c-fchdir must retain its exact pinned-musl fallback mapping",
+    )
+    require(
+        any(
+            "O_PATH `/proc`" in item
+            and "stale E2BIG" in item
+            and "O_PATH `/proc/cpuinfo`" in item
+            and "ENOTDIR" in item
+            and "fchdir(-1)" in item
+            and "EBADF" in item
+            and "disposable reference/candidate process" in item
+            for item in prerequisites
+        ),
+        "static-c-fchdir must retain its contained differential behavior",
+    )
+    require(
+        any(
+            "`-nostdlib -static`" in item
+            and "PT_TLS errno datum" in item
+            and "no interpreter, DT_NEEDED" in item
+            and "fchdir=81, fcntl=72, and chdir=80" in item
+            for item in prerequisites
+        ),
+        "static-c-fchdir must retain its static TLS closure",
+    )
+
+    headers = nonempty_strings(
+        artifact.get("x86_header_prerequisites"), "static-c-fchdir.x86_header_prerequisites"
+    )
+    require(
+        any(
+            "C11/C++17" in item
+            and "`<unistd.h>`" in item
+            and "unconditional `int fchdir(int)`" in item
+            and "default, strict, POSIX, X/Open, GNU, and BSD" in item
+            and "unmangled C++ linkage" in item
+            for item in headers
+        ),
+        "static-c-fchdir must retain its focused C/C++ header ABI",
+    )
+
+    evidence = artifact.get("native_evidence")
+    require(isinstance(evidence, list), "static-c-fchdir needs evidence")
+    require(
+        {entry.get("command") for entry in evidence if isinstance(entry, Mapping)}
+        == {"./scripts/dev-x86_64.sh libc-fchdir"},
+        "static-c-fchdir must use the closed libc-fchdir command",
+    )
+    scope = evidence[0].get("scope")
+    require(
+        isinstance(scope, str)
+        and all(
+            phrase in scope
+            for phrase in (
+                "default/strict/POSIX/X/Open/GNU/BSD",
+                "`-nostdlib -static` candidate",
+                "fchdir=81, fcntl=72, and chdir=80",
+                "`/proc/self/fd/`",
+                "live O_PATH `/proc` fallback",
+                "O_PATH non-directory ENOTDIR",
+                "invalid EBADF",
+                "stale-errno success",
+                "C chdir/getcwd/open/fcntl",
+                "family completion",
+                "promotion",
+                "public x86 support",
+            )
+        ),
+        "static-c-fchdir evidence must retain its narrow static runtime regression",
+    )
+
+    oracle = artifact.get("oracle")
+    require(isinstance(oracle, list), "static-c-fchdir needs an oracle")
+    oracle_text = " ".join(
+        str(entry.get("role", "")) for entry in oracle if isinstance(entry, Mapping)
+    )
+    require(
+        "src/unistd/fchdir.c" in oracle_text
+        and "src/internal/procfdname.c" in oracle_text
+        and "-EBADF plus successful F_GETFD" in oracle_text
+        and "fchdir=81" in oracle_text
+        and "process-global CWD" in oracle_text,
+        "static-c-fchdir must retain its source/kernel closure",
+    )
+
+    exports = set(
+        static_c_abi_export_names(
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        )
+    )
+    require(
+        set(FCHDIR_SYMBOLS) <= exports,
+        "static-c-fchdir must retain its selected export",
+    )
+
+    static_root = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+    ).read_text(encoding="utf-8")
+    require(
+        '#[path = "fchdir.rs"]\nmod fchdir;' in static_root,
+        "x86 static C ABI must compose the fchdir leaf",
+    )
+    source = (ROOT / "libc" / "src" / "c_abi" / "x86_64" / "fchdir.rs").read_text(
+        encoding="utf-8"
+    )
+    for snippet in (
+        "Selected static Linux/x86-64 `fchdir` C ABI boundary",
+        "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+        "src/unistd/fchdir.c",
+        "src/internal/procfdname.c",
+        "SYS_FCHDIR: i64 = 81",
+        "F_GETFD: i64 = 1",
+        "SYS_CHDIR: i64 = 80",
+        "PROC_FD_NAME_SIZE: usize = 15 + 3 * size_of::<c_int>()",
+        "fn procfdname",
+        "if direct != -EBADF",
+        "raw_syscall::SYS_FCNTL",
+        'pub extern "C" fn fchdir',
+    ):
+        require(snippet in source, f"fchdir implementation omits {snippet}")
+    source_exports = set(
+        re.findall(r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(', source)
+    )
+    require(source_exports == set(FCHDIR_SYMBOLS), "fchdir leaf must export only fchdir")
+    for forbidden in (
+        "pathname_lifecycle::",
+        "raw_syscall::SYS_OPEN",
+        "raw_syscall::SYS_OPENAT",
+        "raw_syscall::SYS_GETCWD",
+        "alloc::",
+        "crabc_core",
+        "crabc_mimalloc",
+    ):
+        require(forbidden not in source, f"fchdir leaf widens into {forbidden}")
+
+    runner = (ROOT / "compat" / "x86_64" / "run_libc_fchdir.sh").read_text(
+        encoding="utf-8"
+    )
+    for snippet in (
+        "run_musl_oracle.sh",
+        "run_fchdir_header_abi.sh",
+        "static_c_abi_exports.txt",
+        "-nostdlib -static",
+        "-Wl,--no-undefined",
+        "__crabc_x86_static_tls_bootstrap fchdir",
+        "--disassemble=fchdir",
+        "fchdir lacks Linux syscall",
+        "0x51 0x48 0x50",
+        "/proc/self/fd/",
+        "candidate selects a broader C filesystem or descriptor entry",
+        "direct fs initial TLS",
+    ):
+        require(snippet in runner, f"fchdir runner omits {snippet}")
+
+    probe = (ROOT / "compat" / "x86_64" / "libc_fchdir_probe.c").read_text(
+        encoding="utf-8"
+    )
+    for snippet in (
+        "#include <fcntl.h>",
+        "#include <sys/syscall.h>",
+        "#include <unistd.h>",
+        "SYS_fchdir == 81",
+        "const fchdir_signature function = fchdir",
+        "check_path_directory_fallback",
+        "O_PATH | O_DIRECTORY | O_CLOEXEC",
+        '"/proc/cpuinfo"',
+        "ENOTDIR",
+        "raw_restore_cwd",
+        "CRABC_FCHDIR_FREESTANDING",
+    ):
+        require(snippet in probe, f"fchdir probe omits {snippet}")
+    start = (ROOT / "compat" / "x86_64" / "libc_fchdir_start.S").read_text(
+        encoding="utf-8"
+    )
+    for snippet in (
+        "__crabc_x86_static_tls_bootstrap",
+        "crabc_x86_64_fchdir_probe",
+        "exit_group",
+    ):
+        require(snippet in start, f"fchdir start shim omits {snippet}")
+
+    header_c = (ROOT / "compat" / "x86_64" / "fchdir_header_abi_probe.c").read_text(
+        encoding="utf-8"
+    )
+    header_cxx = (
+        ROOT / "compat" / "x86_64" / "fchdir_header_abi_probe.cpp"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "#include <unistd.h>",
+        "fchdir_signature",
+        "fchdir declaration",
+        "CRABC_EXPECT_FCHDIR",
+    ):
+        require(snippet in header_c, f"fchdir C header probe omits {snippet}")
+        require(snippet in header_cxx, f"fchdir C++ header probe omits {snippet}")
+    header_runner = (
+        ROOT / "compat" / "x86_64" / "run_fchdir_header_abi.sh"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "fchdir_header_abi_probe.c",
+        "fchdir_header_abi_probe.cpp",
+        "Pinned musl 1.2.6",
+        "default",
+        "strict",
+        "posix-source",
+        "posix-2008",
+        "xopen",
+        "gnu",
+        "bsd",
+        "retained a mangled fchdir reference",
+    ):
+        require(snippet in header_runner, f"fchdir header runner omits {snippet}")
+    dispatcher = (ROOT / "scripts" / "dev-x86_64.sh").read_text(encoding="utf-8")
+    for snippet in (
+        "fchdir-header-abi)",
+        "run_fchdir_header_abi",
+        "libc-fchdir)",
+        "run_libc_fchdir",
+    ):
+        require(snippet in dispatcher, f"fchdir dispatcher omits {snippet}")
+
+
+def require_ulimit_artifact(family: Mapping[str, Any]) -> None:
+    """Keep the historical variadic ulimit adapter private and exact."""
+
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.posix-runtime].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [entry for entry in artifacts if entry.get("id") == "static-c-ulimit"]
+    require(
+        len(matching) == 1,
+        "libc.posix-runtime must contain exactly one static-c-ulimit artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-ulimit must not promote libc.posix-runtime",
+    )
+    artifact = matching[0]
+    require(
+        "capabilities" not in artifact,
+        "static-c-ulimit must remain capability-free",
+    )
+
+    description = artifact.get("description")
+    require(isinstance(description, str), "static-c-ulimit needs a description")
+    for phrase in (
+        "selected-static-archive `ulimit` compatibility artifact",
+        "still-planned `libc.posix-runtime`",
+        "exactly `long ulimit(int, ...)`",
+        "`RLIMIT_FSIZE=1`",
+        "`UL_GETFSIZE`",
+        "`UL_SETFSIZE`",
+        "`512ULL`",
+        "`prlimit64=302`",
+        "process-global",
+        "public C `getrlimit`/`setrlimit`/`prlimit` entries",
+        "family completion, promotion, or public x86 support",
+    ):
+        require(phrase in description, f"static-c-ulimit description omits {phrase}")
+
+    owners = set(
+        nonempty_strings(artifact.get("source_owners"), "static-c-ulimit.source_owners")
+    )
+    for owner in (
+        "compat/upstreams.toml",
+        "libc/Cargo.toml",
+        "libc/src/lib.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/ulimit.rs",
+        "libc/src/c_abi/x86_64/errno.rs",
+        "libc/src/c_abi/x86_64/syscall.rs",
+        "libc/src/c_abi/x86_64/static_tls.rs",
+        "include/errno.h",
+        "include/stddef.h",
+        "include/sys/resource.h",
+        "include/sys/syscall.h",
+        "include/sys/types.h",
+        "include/ulimit.h",
+        "include/bits/alltypes.h",
+        "include/bits/syscall.h",
+        "compat/x86_64/ulimit_header_abi_probe.c",
+        "compat/x86_64/ulimit_header_abi_probe.cpp",
+        "compat/x86_64/run_ulimit_header_abi.sh",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/libc_ulimit_probe.c",
+        "compat/x86_64/libc_ulimit_start.S",
+        "compat/x86_64/run_libc_ulimit.sh",
+        "compat/x86_64/aarch64_parity_inventory.py",
+        "compat/x86_64/aarch64_parity_inventory.json",
+        "compat/x86_64/tests/test_aarch64_parity_inventory.py",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/README.md",
+        "STATUS.md",
+        "x86-64.md",
+        "scripts/dev-x86_64.sh",
+        "scripts/check_structure.py",
+    ):
+        require(owner in owners, f"static-c-ulimit source owners omit {owner}")
+
+    prerequisites = nonempty_strings(
+        artifact.get("x86_abi_prerequisites"), "static-c-ulimit.x86_abi_prerequisites"
+    )
+    require(
+        any(
+            "SysV AMD64" in item
+            and "edi" in item
+            and "rsi" in item
+            and "rax" in item
+            and "UL_SETFSIZE=2" in item
+            and "prlimit64=302" in item
+            and "rdi/rsi/rdx/r10" in item
+            for item in prerequisites
+        ),
+        "static-c-ulimit must retain its variadic and syscall register ABI",
+    )
+    require(
+        any(
+            "9fa28ece75d8a2191de7c5bb53bed224c5947417" in item
+            and "src/legacy/ulimit.c" in item
+            and "getrlimit" in item
+            and "setrlimit" in item
+            and "RLIMIT_FSIZE" in item
+            and "512ULL" in item
+            and "__synccall" in item
+            for item in prerequisites
+        ),
+        "static-c-ulimit must retain its exact pinned-musl source mapping",
+    )
+    require(
+        any(
+            "disposable reference/candidate process" in item
+            and "UL_GETFSIZE" in item
+            and "unknown-command 1977" in item
+            and "UL_SETFSIZE" in item
+            and "stale E2BIG" in item
+            and "rlim_max unchanged" in item
+            for item in prerequisites
+        ),
+        "static-c-ulimit must retain its contained differential behavior",
+    )
+    require(
+        any(
+            "`-nostdlib -static`" in item
+            and "PT_TLS errno datum" in item
+            and "no interpreter, DT_NEEDED" in item
+            and "C getrlimit/setrlimit/prlimit" in item
+            for item in prerequisites
+        ),
+        "static-c-ulimit must retain its static TLS closure",
+    )
+
+    headers = nonempty_strings(
+        artifact.get("x86_header_prerequisites"), "static-c-ulimit.x86_header_prerequisites"
+    )
+    require(
+        any(
+            "C11/C++17" in item
+            and "`<ulimit.h>`" in item
+            and "unconditional `long ulimit(int, ...)`" in item
+            and "default, strict, POSIX, X/Open, GNU, and BSD" in item
+            and "unmangled C++ linkage" in item
+            for item in headers
+        ),
+        "static-c-ulimit must retain its focused C/C++ header ABI",
+    )
+
+    evidence = artifact.get("native_evidence")
+    require(isinstance(evidence, list), "static-c-ulimit needs evidence")
+    require(
+        {entry.get("command") for entry in evidence if isinstance(entry, Mapping)}
+        == {"./scripts/dev-x86_64.sh libc-ulimit"},
+        "static-c-ulimit must use the closed libc-ulimit command",
+    )
+    scope = evidence[0].get("scope")
+    require(
+        isinstance(scope, str)
+        and all(
+            phrase in scope
+            for phrase in (
+                "default/strict/POSIX/X/Open/GNU/BSD",
+                "`-nostdlib -static` candidate",
+                "prlimit64=302",
+                "UL_GETFSIZE",
+                "unknown-command",
+                "UL_SETFSIZE",
+                "stale-errno success",
+                "C getrlimit/setrlimit/prlimit",
+                "family completion",
+                "promotion",
+                "public x86 support",
+            )
+        ),
+        "static-c-ulimit evidence must retain its narrow static runtime regression",
+    )
+
+    oracle = artifact.get("oracle")
+    require(isinstance(oracle, list), "static-c-ulimit needs an oracle")
+    oracle_text = " ".join(
+        str(entry.get("role", "")) for entry in oracle if isinstance(entry, Mapping)
+    )
+    require(
+        "src/legacy/ulimit.c" in oracle_text
+        and "getrlimit" in oracle_text
+        and "setrlimit" in oracle_text
+        and "RLIMIT_FSIZE" in oracle_text
+        and "512ULL" in oracle_text
+        and "prlimit64=302" in oracle_text,
+        "static-c-ulimit must retain its source/kernel closure",
+    )
+
+    exports = set(
+        static_c_abi_export_names(
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        )
+    )
+    require(
+        set(ULIMIT_SYMBOLS) <= exports,
+        "static-c-ulimit must retain its selected export",
+    )
+
+    static_root = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+    ).read_text(encoding="utf-8")
+    require(
+        '#[path = "ulimit.rs"]\nmod ulimit;' in static_root,
+        "x86 static C ABI must compose the ulimit leaf",
+    )
+    source = (ROOT / "libc" / "src" / "c_abi" / "x86_64" / "ulimit.rs").read_text(
+        encoding="utf-8"
+    )
+    for snippet in (
+        "Selected static Linux/x86-64 `ulimit` C ABI boundary",
+        "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+        "src/legacy/ulimit.c",
+        "RLIMIT_FSIZE: c_int = 1",
+        "UL_SETFSIZE: c_int = 2",
+        "raw_syscall::SYS_PRLIMIT64",
+        "wrapping_mul(BLOCK_BYTES)",
+        "global_asm!",
+        ".global ulimit",
+        "ulimit_query",
+        "ulimit_set",
+    ):
+        require(snippet in source, f"ulimit implementation omits {snippet}")
+    source_exports = set(
+        re.findall(r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(', source)
+    )
+    require(
+        not source_exports,
+        "ulimit leaf must retain the assembly-only public variadic boundary",
+    )
+    assembly_exports = set(re.findall(r"(?m)^\s*\.global\s+(\w+)\s*$", source))
+    require(
+        assembly_exports == set(ULIMIT_SYMBOLS),
+        "ulimit leaf must export only ulimit through its assembly boundary",
+    )
+    for forbidden in (
+        "process_resources::",
+        "pub extern \"C\" fn getrlimit",
+        "pub extern \"C\" fn setrlimit",
+        "pub extern \"C\" fn prlimit",
+        "alloc::",
+        "crabc_core",
+        "crabc_mimalloc",
+    ):
+        require(forbidden not in source, f"ulimit leaf widens into {forbidden}")
+
+    runner = (ROOT / "compat" / "x86_64" / "run_libc_ulimit.sh").read_text(
+        encoding="utf-8"
+    )
+    for snippet in (
+        "run_musl_oracle.sh",
+        "run_ulimit_header_abi.sh",
+        "static_c_abi_exports.txt",
+        "-nostdlib -static",
+        "-Wl,--no-undefined",
+        "__crabc_x86_static_tls_bootstrap ulimit",
+        "--disassemble=ulimit",
+        "candidate selects a broader C resource entry",
+        "0x12e",
+        "direct fs initial TLS",
+    ):
+        require(snippet in runner, f"ulimit runner omits {snippet}")
+
+    probe = (ROOT / "compat" / "x86_64" / "libc_ulimit_probe.c").read_text(
+        encoding="utf-8"
+    )
+    for snippet in (
+        "#include <errno.h>",
+        "#include <sys/resource.h>",
+        "#include <sys/syscall.h>",
+        "#include <ulimit.h>",
+        "SYS_prlimit64 == 302",
+        "const ulimit_signature function = ulimit",
+        "UL_GETFSIZE",
+        "UL_SETFSIZE",
+        "expected_current",
+        "E2BIG",
+        "CRABC_ULIMIT_FREESTANDING",
+    ):
+        require(snippet in probe, f"ulimit probe omits {snippet}")
+    start = (ROOT / "compat" / "x86_64" / "libc_ulimit_start.S").read_text(
+        encoding="utf-8"
+    )
+    for snippet in (
+        "__crabc_x86_static_tls_bootstrap",
+        "crabc_x86_64_ulimit_probe",
+        "exit_group",
+    ):
+        require(snippet in start, f"ulimit start shim omits {snippet}")
+
+    header_c = (ROOT / "compat" / "x86_64" / "ulimit_header_abi_probe.c").read_text(
+        encoding="utf-8"
+    )
+    header_cxx = (
+        ROOT / "compat" / "x86_64" / "ulimit_header_abi_probe.cpp"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "#include <ulimit.h>",
+        "ulimit_signature",
+        "UL_GETFSIZE",
+        "UL_SETFSIZE",
+        "CRABC_EXPECT_ULIMIT",
+    ):
+        require(snippet in header_c, f"ulimit C header probe omits {snippet}")
+        require(snippet in header_cxx, f"ulimit C++ header probe omits {snippet}")
+    header_runner = (
+        ROOT / "compat" / "x86_64" / "run_ulimit_header_abi.sh"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "ulimit_header_abi_probe.c",
+        "ulimit_header_abi_probe.cpp",
+        "Pinned musl 1.2.6",
+        "default",
+        "strict",
+        "posix-source",
+        "posix-2008",
+        "xopen",
+        "gnu",
+        "bsd",
+        "retained a mangled ulimit reference",
+    ):
+        require(snippet in header_runner, f"ulimit header runner omits {snippet}")
+    dispatcher = (ROOT / "scripts" / "dev-x86_64.sh").read_text(encoding="utf-8")
+    for snippet in (
+        "ulimit-header-abi)",
+        "run_ulimit_header_abi",
+        "libc-ulimit)",
+        "run_libc_ulimit",
+    ):
+        require(snippet in dispatcher, f"ulimit dispatcher omits {snippet}")
+
+
 def require_directory_streams_artifact(family: Mapping[str, Any]) -> None:
     """Keep the selected static C directory boundary private and exact."""
     artifacts = require_verified_artifacts(
@@ -57135,6 +57805,20 @@ def validate_ledger(
                 "compat/x86_64/run_libc_rand_r.sh",
                 ("rand_r",),
             ),
+            (
+                "static-c-sched-get-priority-max",
+                "./scripts/dev-x86_64.sh libc-sched-get-priority-max",
+                "libc/src/c_abi/x86_64/sched_get_priority_max.rs",
+                "compat/x86_64/run_libc_sched_get_priority_max.sh",
+                ("sched_get_priority_max",),
+            ),
+            (
+                "static-c-sched-get-priority-min",
+                "./scripts/dev-x86_64.sh libc-sched-get-priority-min",
+                "libc/src/c_abi/x86_64/sched_get_priority_min.rs",
+                "compat/x86_64/run_libc_sched_get_priority_min.sh",
+                ("sched_get_priority_min",),
+            ),
         ),
     )
     require_posix_spawnattr_init_artifact(by_id["libc.posix-runtime"])
@@ -57232,6 +57916,8 @@ def validate_ledger(
     require_sysv_message_shared_memory_artifact(by_id["libc.posix-runtime"])
     require_event_descriptors_artifact(by_id["libc.posix-runtime"])
     require_pathname_lifecycle_artifact(by_id["libc.posix-runtime"])
+    require_fchdir_artifact(by_id["libc.posix-runtime"])
+    require_ulimit_artifact(by_id["libc.posix-runtime"])
     require_directory_streams_artifact(by_id["libc.posix-runtime"])
     require_extended_attributes_artifact(by_id["libc.posix-runtime"])
     require_inet_address_artifact(by_id["libc.resolver"])

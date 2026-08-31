@@ -25495,7 +25495,6 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertFalse(
             static_export_names
             & {
-                "fchdir",
                 "chroot",
                 "realpath",
                 "renameat",
@@ -25528,6 +25527,288 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         )
         self.assertIn(
             '    libc-pathname-lifecycle)\n        [ "$#" -eq 0 ] || fail "libc-pathname-lifecycle takes no arguments"',
+            runner,
+        )
+
+    def test_libc_static_c_abi_fchdir_artifact_stays_bounded(self) -> None:
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        implementation = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "fchdir.rs"
+        ).read_text(encoding="utf-8")
+        header_c_probe = (
+            ROOT / "compat" / "x86_64" / "fchdir_header_abi_probe.c"
+        ).read_text(encoding="utf-8")
+        header_cxx_probe = (
+            ROOT / "compat" / "x86_64" / "fchdir_header_abi_probe.cpp"
+        ).read_text(encoding="utf-8")
+        header_runner = (
+            ROOT / "compat" / "x86_64" / "run_fchdir_header_abi.sh"
+        ).read_text(encoding="utf-8")
+        probe = (ROOT / "compat" / "x86_64" / "libc_fchdir_probe.c").read_text(
+            encoding="utf-8"
+        )
+        start = (ROOT / "compat" / "x86_64" / "libc_fchdir_start.S").read_text(
+            encoding="utf-8"
+        )
+        artifact_runner = (
+            ROOT / "compat" / "x86_64" / "run_libc_fchdir.sh"
+        ).read_text(encoding="utf-8")
+        static_export_names = {
+            line
+            for line in (
+                ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+            ).read_text(encoding="utf-8").splitlines()
+            if line and not line.startswith("#")
+        }
+        parity_ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        runner = RUNNER.read_text(encoding="utf-8")
+
+        self.assertIn('#[path = "fchdir.rs"]', static_root)
+        for required in (
+            "Selected static Linux/x86-64 `fchdir` C ABI boundary",
+            "musl 1.2.6 release commit",
+            "src/unistd/fchdir.c",
+            "src/internal/procfdname.c",
+            "SYS_FCHDIR: i64 = 81",
+            "F_GETFD: i64 = 1",
+            "SYS_CHDIR: i64 = 80",
+            "PROC_FD_NAME_SIZE: usize = 15 + 3 * size_of::<c_int>()",
+            "fn procfdname",
+            "if direct != -EBADF",
+            "raw_syscall::SYS_FCNTL",
+            'pub extern "C" fn fchdir',
+        ):
+            self.assertIn(required, implementation)
+        for forbidden in (
+            "pathname_lifecycle::",
+            "raw_syscall::SYS_OPEN",
+            "raw_syscall::SYS_OPENAT",
+            "raw_syscall::SYS_GETCWD",
+            "alloc::",
+            "crabc_core",
+            "crabc_mimalloc",
+        ):
+            self.assertNotIn(forbidden, implementation)
+        self.assertIn("fchdir", static_export_names)
+
+        for header_probe in (header_c_probe, header_cxx_probe):
+            for required in (
+                "#include <unistd.h>",
+                "fchdir_signature",
+                "fchdir declaration",
+                "CRABC_EXPECT_FCHDIR",
+            ):
+                self.assertIn(required, header_probe)
+        for required in (
+            "Pinned musl 1.2.6",
+            "compile_profile default",
+            "compile_profile strict",
+            "compile_profile posix-source",
+            "compile_profile posix-2008",
+            "compile_profile xopen",
+            "compile_profile gnu",
+            "compile_profile bsd",
+            "retained a mangled fchdir reference",
+        ):
+            self.assertIn(required, header_runner)
+
+        for required in (
+            "#include <errno.h>",
+            "#include <fcntl.h>",
+            "#include <sys/syscall.h>",
+            "#include <unistd.h>",
+            "SYS_fchdir == 81",
+            "const fchdir_signature function = fchdir",
+            "check_path_directory_fallback",
+            "O_PATH | O_DIRECTORY | O_CLOEXEC",
+            '"/proc/cpuinfo"',
+            "ENOTDIR",
+            "raw_restore_cwd",
+            "CRABC_FCHDIR_FREESTANDING",
+        ):
+            self.assertIn(required, probe)
+        for required in (
+            "__crabc_x86_static_tls_bootstrap",
+            "crabc_x86_64_fchdir_probe",
+            "exit_group",
+        ):
+            self.assertIn(required, start)
+
+        for required in (
+            "run_musl_oracle.sh",
+            "run_fchdir_header_abi.sh",
+            "static_c_abi_exports.txt",
+            "-nostdlib -static",
+            "-Wl,--no-undefined",
+            "__crabc_x86_static_tls_bootstrap fchdir",
+            "--disassemble=fchdir",
+            "0x51 0x48 0x50",
+            "/proc/self/fd/",
+            "candidate selects a broader C filesystem or descriptor entry",
+            "direct fs initial TLS",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn("--whole-archive", artifact_runner)
+
+        self.assertIn('id = "static-c-fchdir"', parity_ledger)
+        self.assertIn(
+            'command = "./scripts/dev-x86_64.sh libc-fchdir"', parity_ledger
+        )
+        self.assertIn("run_fchdir_header_abi()", runner)
+        self.assertIn(
+            "/workspace/compat/x86_64/run_fchdir_header_abi.sh", runner
+        )
+        self.assertIn("run_libc_fchdir()", runner)
+        self.assertIn("/workspace/compat/x86_64/run_libc_fchdir.sh", runner)
+        self.assertIn(
+            '    fchdir-header-abi)\n        [ "$#" -eq 0 ] || fail "fchdir-header-abi takes no arguments"',
+            runner,
+        )
+        self.assertIn(
+            '    libc-fchdir)\n        [ "$#" -eq 0 ] || fail "libc-fchdir takes no arguments"',
+            runner,
+        )
+
+    def test_libc_static_c_abi_ulimit_artifact_stays_bounded(self) -> None:
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        implementation = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "ulimit.rs"
+        ).read_text(encoding="utf-8")
+        header_c_probe = (
+            ROOT / "compat" / "x86_64" / "ulimit_header_abi_probe.c"
+        ).read_text(encoding="utf-8")
+        header_cxx_probe = (
+            ROOT / "compat" / "x86_64" / "ulimit_header_abi_probe.cpp"
+        ).read_text(encoding="utf-8")
+        header_runner = (
+            ROOT / "compat" / "x86_64" / "run_ulimit_header_abi.sh"
+        ).read_text(encoding="utf-8")
+        probe = (ROOT / "compat" / "x86_64" / "libc_ulimit_probe.c").read_text(
+            encoding="utf-8"
+        )
+        start = (ROOT / "compat" / "x86_64" / "libc_ulimit_start.S").read_text(
+            encoding="utf-8"
+        )
+        artifact_runner = (
+            ROOT / "compat" / "x86_64" / "run_libc_ulimit.sh"
+        ).read_text(encoding="utf-8")
+        static_export_names = {
+            line
+            for line in (
+                ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+            ).read_text(encoding="utf-8").splitlines()
+            if line and not line.startswith("#")
+        }
+        parity_ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        runner = RUNNER.read_text(encoding="utf-8")
+
+        self.assertIn('#[path = "ulimit.rs"]', static_root)
+        for required in (
+            "Selected static Linux/x86-64 `ulimit` C ABI boundary",
+            "musl 1.2.6 release commit",
+            "src/legacy/ulimit.c",
+            "UL_SETFSIZE: c_int = 2",
+            "RLIMIT_FSIZE: c_int = 1",
+            "SYS_PRLIMIT64",
+            "wrapping_mul(BLOCK_BYTES)",
+            ".global ulimit",
+            "ulimit_query",
+            "ulimit_set",
+        ):
+            self.assertIn(required, implementation)
+        for forbidden in (
+            "process_resources::",
+            "crabc_core",
+            "crabc_mimalloc",
+            "alloc::",
+            "pub extern \"C\" fn getrlimit",
+            "pub extern \"C\" fn setrlimit",
+        ):
+            self.assertNotIn(forbidden, implementation)
+        self.assertIn("ulimit", static_export_names)
+
+        for header_probe in (header_c_probe, header_cxx_probe):
+            for required in (
+                "#include <ulimit.h>",
+                "ulimit_signature",
+                "UL_GETFSIZE",
+                "UL_SETFSIZE",
+                "CRABC_EXPECT_ULIMIT",
+            ):
+                self.assertIn(required, header_probe)
+        for required in (
+            "Pinned musl 1.2.6",
+            "compile_profile default",
+            "compile_profile strict",
+            "compile_profile posix-source",
+            "compile_profile posix-2008",
+            "compile_profile xopen",
+            "compile_profile gnu",
+            "compile_profile bsd",
+            "retained a mangled ulimit reference",
+        ):
+            self.assertIn(required, header_runner)
+
+        for required in (
+            "#include <errno.h>",
+            "#include <sys/resource.h>",
+            "#include <sys/syscall.h>",
+            "#include <ulimit.h>",
+            "SYS_prlimit64 == 302",
+            "const ulimit_signature function = ulimit",
+            "UL_GETFSIZE",
+            "UL_SETFSIZE",
+            "expected_current",
+            "E2BIG",
+            "CRABC_ULIMIT_FREESTANDING",
+        ):
+            self.assertIn(required, probe)
+        for required in (
+            "__crabc_x86_static_tls_bootstrap",
+            "crabc_x86_64_ulimit_probe",
+            "exit_group",
+        ):
+            self.assertIn(required, start)
+
+        for required in (
+            "run_musl_oracle.sh",
+            "run_ulimit_header_abi.sh",
+            "static_c_abi_exports.txt",
+            "-nostdlib -static",
+            "-Wl,--no-undefined",
+            "__crabc_x86_static_tls_bootstrap ulimit",
+            "--disassemble=ulimit",
+            "0x12e",
+            "candidate selects a broader C resource entry",
+            "direct fs initial TLS",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn("--whole-archive", artifact_runner)
+
+        self.assertIn('id = "static-c-ulimit"', parity_ledger)
+        self.assertIn(
+            'command = "./scripts/dev-x86_64.sh libc-ulimit"', parity_ledger
+        )
+        self.assertIn("run_ulimit_header_abi()", runner)
+        self.assertIn(
+            "/workspace/compat/x86_64/run_ulimit_header_abi.sh", runner
+        )
+        self.assertIn("run_libc_ulimit()", runner)
+        self.assertIn("/workspace/compat/x86_64/run_libc_ulimit.sh", runner)
+        self.assertIn(
+            '    ulimit-header-abi)\n        [ "$#" -eq 0 ] || fail "ulimit-header-abi takes no arguments"',
+            runner,
+        )
+        self.assertIn(
+            '    libc-ulimit)\n        [ "$#" -eq 0 ] || fail "libc-ulimit takes no arguments"',
             runner,
         )
 

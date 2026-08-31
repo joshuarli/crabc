@@ -293,6 +293,7 @@ fabs
 fabsf
 fabsl
 faccessat
+fchdir
 fchmod
 fclose
 fcntl
@@ -1025,6 +1026,7 @@ tss_get
 tss_set
 ttyname_r
 twalk
+ulimit
 umask
 uname
 ungetc

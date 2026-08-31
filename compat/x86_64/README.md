@@ -273,6 +273,8 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh sched-cpucount-header-abi
 ./scripts/dev-x86_64.sh sched-getcpu-header-abi
 ./scripts/dev-x86_64.sh sched-yield-header-abi
+./scripts/dev-x86_64.sh sched-get-priority-max-header-abi
+./scripts/dev-x86_64.sh sched-get-priority-min-header-abi
 ./scripts/dev-x86_64.sh callback-algorithms-header-abi
 ./scripts/dev-x86_64.sh ffs-header-abi
 ./scripts/dev-x86_64.sh memccpy-header-abi
@@ -545,6 +547,8 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-sched-cpucount
 ./scripts/dev-x86_64.sh libc-sched-getcpu
 ./scripts/dev-x86_64.sh libc-sched-yield
+./scripts/dev-x86_64.sh libc-sched-get-priority-max
+./scripts/dev-x86_64.sh libc-sched-get-priority-min
 ./scripts/dev-x86_64.sh libc-readiness-waits
 ./scripts/dev-x86_64.sh libc-system-observation
 ./scripts/dev-x86_64.sh libc-system-information
@@ -6090,6 +6094,10 @@ its direct range effects; it does not broaden the public x86 support boundary.
 global-sync regression proves only the unit-returning system-wide `sync(2)`
 request after dirtying a disposable regular file; it deliberately makes no
 timing, per-file, crash, or storage-media durability assertion. The
+separate `libc-sync` static C ABI fixture adds only musl's feature-selected
+`void sync(void)` spelling to that existing raw/pinned-musl boundary. It is not
+`syncfs`, `sync_file_range`, `fsync`, `fdatasync`, descriptor/pathname support,
+or a filesystem capability. The
 syncfs regression proves regular-file and pipefs acceptance through a live
 borrowed descriptor, regular-file position stability, and raw-core `EBADF`
 after closure without manufacturing an invalid safe descriptor borrow. It is
