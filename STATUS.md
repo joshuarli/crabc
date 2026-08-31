@@ -30,6 +30,18 @@ page-edge input. It excludes overlap support, general bulk-memory/C-string
 work, errno/TLS, allocation, syscall, stdio including f400 work,
 resolver/DNS/netdb, sockets, promotion, and public x86 support.
 
+`./scripts/dev-x86_64.sh libc-aio-error` is a separate private
+`static-c-aio-error` observation artifact inside still-planned
+`libc.posix-runtime`. Its paired `./scripts/dev-x86_64.sh aio-error-header-abi`
+gate compares the GNU-profile C/C++ `<aio.h>` `aio_error` declaration, 168-byte
+align-8 `struct aiocb`, volatile `__err` at offset 112, large-file alias, and
+unmangled C++ linkage with pinned musl 1.2.6. The same project-header fixture
+then runs through exactly one extracted `aio_error` object in an archive-free
+`-nostdlib -static` candidate, never `libc.a`, and checks musl's compiler-only
+barrier plus sign-bit mask. It selects no AIO submission, return, wait,
+cancellation, completion, I/O, state, errno/TLS, resolver/DNS/netdb, or public
+x86 support.
+
 `./scripts/dev-x86_64.sh libc-in6addr-any` is a private
 `static-c-in6addr-any` data-object artifact inside still-planned
 `libc.posix-runtime`. Its project-header fixture first executes through pinned

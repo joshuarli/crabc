@@ -184,6 +184,7 @@ X86_RUNTIME_FOUNDATION_LIBC_SOURCES = {
     Path("libc/src/c_abi/x86_64/math_special.rs"),
     Path("libc/src/c_abi/x86_64/math_x87_extended.rs"),
     Path("libc/src/c_abi/x86_64/memccpy.rs"),
+    Path("libc/src/c_abi/x86_64/aio_error.rs"),
     Path("libc/src/c_abi/x86_64/memory_search.rs"),
     Path("libc/src/c_abi/x86_64/memory_sync.rs"),
     Path("libc/src/c_abi/x86_64/memfd_create.rs"),
@@ -3764,6 +3765,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         '#[path = "socket_messages.rs"]',
         '#[path = "posix_semaphore.rs"]',
         '#[path = "memccpy.rs"]',
+        '#[path = "aio_error.rs"]',
         '#[path = "byte_strings.rs"]',
         '#[path = "random_entropy.rs"]',
         '#[path = "memory_search.rs"]',
@@ -9677,6 +9679,155 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
             "must not link libc.a"
         )
 
+    aio_error_probe_source = ROOT / "compat" / "x86_64" / "libc_aio_error_probe.c"
+    aio_error_start_source = ROOT / "compat" / "x86_64" / "libc_aio_error_start.S"
+    aio_error_runner_source = ROOT / "compat" / "x86_64" / "run_libc_aio_error.sh"
+    for path in (aio_error_probe_source, aio_error_start_source, aio_error_runner_source):
+        if not path.is_file():
+            errors.append(
+                f"x86 static aio_error artifact is missing {path.relative_to(ROOT)}"
+            )
+            return
+
+    aio_error_source = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "aio_error.rs"
+    aio_error_text = aio_error_source.read_text(errors="replace")
+    aio_error_probe = aio_error_probe_source.read_text(errors="replace")
+    aio_error_start = aio_error_start_source.read_text(errors="replace")
+    aio_error_runner = aio_error_runner_source.read_text(errors="replace")
+    for required in (
+        "Selected static Linux/x86-64 `aio_error` C ABI boundary",
+        "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+        "src/aio/aio.c::aio_error",
+        "const AIOCB_ERR_OFFSET: usize = 112",
+        "const AIO_ERROR_MASK: c_int = 0x7fff_ffff",
+        "compiler_fence(Ordering::SeqCst)",
+        "asm!(",
+        'pub unsafe extern "C" fn aio_error',
+        "caller-provided AIO/external synchronization",
+    ):
+        if required not in aio_error_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/aio_error.rs: selected static observation "
+                f"boundary is missing {required!r}"
+            )
+    aio_error_exports = set(
+        re.findall(
+            r'(?m)^pub\s+unsafe\s+extern\s+"C"\s+fn\s+(\w+)\s*\(', aio_error_text
+        )
+    )
+    if aio_error_exports != {"aio_error"}:
+        errors.append(
+            "libc/src/c_abi/x86_64/aio_error.rs: selected static artifact "
+            "must export only aio_error"
+        )
+    for forbidden in (
+        "static mut",
+        "raw_syscall",
+        "__errno_location",
+        "__h_errno_location",
+        "getaddrinfo",
+        "socket(",
+        "std::",
+        "alloc::",
+        "crabc_core",
+        "crabc_mimalloc",
+        "fn aio_read",
+        "fn aio_write",
+        "fn aio_return",
+        "fn aio_cancel",
+        "fn aio_suspend",
+        "fn aio_fsync",
+        "fn lio_listio",
+    ):
+        if forbidden in aio_error_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/aio_error.rs: selected static observation "
+                f"boundary must not select {forbidden!r}"
+            )
+
+    aio_error_header_c = (
+        ROOT / "compat" / "x86_64" / "aio_error_header_abi_probe.c"
+    ).read_text(errors="replace")
+    aio_error_header_cpp = (
+        ROOT / "compat" / "x86_64" / "aio_error_header_abi_probe.cpp"
+    ).read_text(errors="replace")
+    aio_error_header_runner = (
+        ROOT / "compat" / "x86_64" / "run_aio_error_header_abi.sh"
+    ).read_text(errors="replace")
+    for header_probe in (aio_error_header_c, aio_error_header_cpp):
+        for required in (
+            "#include <aio.h>",
+            "aio_error_signature",
+            "sizeof(struct aiocb) == 168",
+            "__err) == 112",
+        ):
+            if required not in header_probe:
+                errors.append(
+                    "compat/x86_64 aio_error C/C++ header probe: selected "
+                    f"observation ABI is missing {required!r}"
+                )
+    for required in (
+        "-D_GNU_SOURCE",
+        "-D_LARGEFILE64_SOURCE",
+        "nm --undefined-only",
+        "_Z.*aio_error",
+    ):
+        if required not in aio_error_header_runner:
+            errors.append(
+                "compat/x86_64/run_aio_error_header_abi.sh: selected observation "
+                f"declaration evidence is missing {required!r}"
+            )
+    for required in (
+        "#include <aio.h>",
+        "aio_error_signature",
+        "sizeof(struct aiocb) == 168",
+        "__err) == 112",
+        "0x7fffffff",
+        "-2147483647 - 1",
+        "CRABC_AIO_ERROR_FREESTANDING",
+    ):
+        if required not in aio_error_probe:
+            errors.append(
+                "compat/x86_64/libc_aio_error_probe.c: static observation "
+                f"regression is missing {required!r}"
+            )
+    for required in ("crabc_x86_64_aio_error_probe", "mov $60, %eax"):
+        if required not in aio_error_start:
+            errors.append(
+                "compat/x86_64/libc_aio_error_start.S: static observation "
+                f"entry is missing {required!r}"
+            )
+    if "ARCH_SET_FS" in aio_error_start:
+        errors.append(
+            "compat/x86_64/libc_aio_error_start.S: observation entry must not "
+            "bootstrap TLS"
+        )
+    for required in (
+        "run_aio_error_header_abi.sh",
+        "AARCH64_STATIC_TSV",
+        "aio.lo",
+        "aio.c",
+        "assert_selected_c_abi_surface",
+        "extract_selected_member",
+        "aio_error archive member also defines an AIO operation sibling",
+        "-nostdlib -static",
+        '"$selected_member" -o "$candidate"',
+        "candidate unexpectedly selects TLS",
+        "aio_cancel aio_fsync aio_read aio_return aio_suspend aio_write",
+        "__errno_location __h_errno_location h_errno getaddrinfo socket",
+        "call|syscall",
+    ):
+        if required not in aio_error_runner:
+            errors.append(
+                "compat/x86_64/run_libc_aio_error.sh: archive-free static "
+                f"observation evidence is missing {required!r}"
+            )
+    if '"$archive" -o "$candidate"' in aio_error_runner:
+        errors.append(
+            "compat/x86_64/run_libc_aio_error.sh: final observation candidate "
+            "must not link libc.a"
+        )
+
     byte_strings_source = (
         ROOT / "libc" / "src" / "c_abi" / "x86_64" / "byte_strings.rs"
     )
@@ -10422,6 +10573,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         ns_put32_text,
         ns_skiprr_text,
         memccpy_text,
+        aio_error_text,
         byte_strings_text,
         random_entropy_text,
         memory_search_text,
@@ -10771,6 +10923,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         "ns_put32",
         "ns_skiprr",
         "memccpy",
+        "aio_error",
         "uname",
         "sysinfo",
         "gethostname",
@@ -10908,7 +11061,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
             "signal-control, bounded process-signal execution, and one legacy single-signal pause wait, bounded pthread create/exit/join/detach initial-TLS worker, its private selected-main/worker pthread-key/C11-TSS lifecycle, private process-normal pthread mutexes and their musl private condition-variable handoff, the complete selected rwlock/attribute family with private-or-shared futex operation, plus the distinct C11 plain-sync adapter and normal-return pthread/C11 once state machine, its typed C11 create/exit/join/detach sibling, and pthread/C11 identity aliases, named termios-control, selected process-context, child-reaping, C11 immediate termination, callback algorithms, direct clock_gettime, caller-owned mapping-core, no-cancellation mapping synchronization, direct anonymous-memory descriptor creation, nanosleep, and clock_nanosleep, selected "
             "descriptor-entry, selected filesystem-access, bounded descriptor-control, timestamp updates, and descriptor-I/O, selected process-resources, selected readiness/signal-waits, "
             "selected socket transport and selected socket-message/options, selected system-observation, selected UTS-identity, "
-            "immutable IPv6 unspecified-address and loopback-address data objects, immutable nameserver flag-accessor data, selected nameserver wire codecs and resource-record span accounting, selected numeric-address codecs and legacy classful IPv4 arithmetic, fixed-profile h_errno message text, bounded marker-terminated byte transfer, byte-string, random-entropy, memory-search, C-string-copy, immutable error-string, "
+            "immutable IPv6 unspecified-address and loopback-address data objects, immutable nameserver flag-accessor data, selected nameserver wire codecs and resource-record span accounting, selected numeric-address codecs and legacy classful IPv4 arithmetic, fixed-profile h_errno message text, bounded marker-terminated byte transfer, one read-only asynchronous-I/O error-word observation, byte-string, random-entropy, memory-search, C-string-copy, immutable error-string, "
             "fixed-C-locale ctype, integer-arithmetic, integer-parsing, intmax-arithmetic, credential-observation, and "
             "environment-backed login-name observation, find-first-set, startup-published program names, short/GNU-long "
             "getopt state and aliases, callback-tree/hash-table search, and the "
@@ -10985,6 +11138,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         ("ns_put32.rs", ns_put32_text),
         ("ns_skiprr.rs", ns_skiprr_text),
         ("memccpy.rs", memccpy_text),
+        ("aio_error.rs", aio_error_text),
         ("random_entropy.rs", random_entropy_text),
         ("memory_search.rs", memory_search_text),
         ("string_copy.rs", string_copy_text),

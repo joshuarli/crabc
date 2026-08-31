@@ -75,6 +75,7 @@ accept4
 access
 acoshl
 acosl
+aio_error
 alphasort
 asinhl
 asinl

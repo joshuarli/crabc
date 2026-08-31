@@ -50,8 +50,8 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 40)
-        self.assertEqual(report["verified_artifact_count"], 167)
-        self.assertEqual(report["header_layout_probe_count"], 48)
+        self.assertEqual(report["verified_artifact_count"], 168)
+        self.assertEqual(report["header_layout_probe_count"], 49)
         self.assertEqual(report["public_header_inventory_count"], 183)
         self.assertEqual(report["header_foundation_header_count"], 191)
         self.assertEqual(report["header_foundation_pinned_header_count"], 183)
@@ -1340,7 +1340,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         report = ledger.validate_ledger(data, header_layout_manifest=manifest)
         headers_layouts = self.family(data, "libc.headers-layouts")
 
-        self.assertEqual(report["header_layout_probe_count"], 47)
+        self.assertEqual(report["header_layout_probe_count"], 49)
         self.assertEqual(manifest["schema"], "crabc.x86_64-headers-layouts/v1")
         self.assertEqual(manifest["status"], "planned")
         self.assertEqual(manifest["family"], "libc.headers-layouts")
@@ -1556,6 +1556,18 @@ class X86ParityLedgerTests(unittest.TestCase):
                 "compat/x86_64/event_descriptors_header_abi_probe.c",
                 "compat/x86_64/event_descriptors_header_abi_probe.cpp",
                 "compat/x86_64/run_event_descriptors_header_abi.sh",
+            ],
+        )
+        aio_error = next(probe for probe in probes if probe["id"] == "aio-error")
+        assert isinstance(aio_error, dict)
+        self.assertEqual(aio_error["kind"], "compile-only")
+        self.assertEqual(aio_error["headers"], ["include/aio.h"])
+        self.assertEqual(
+            aio_error["sources"],
+            [
+                "compat/x86_64/aio_error_header_abi_probe.c",
+                "compat/x86_64/aio_error_header_abi_probe.cpp",
+                "compat/x86_64/run_aio_error_header_abi.sh",
             ],
         )
         dirent = next(probe for probe in probes if probe["id"] == "dirent")
@@ -7199,6 +7211,10 @@ class X86ParityLedgerTests(unittest.TestCase):
             "compat/x86_64/memccpy_header_abi_probe.c",
             "compat/x86_64/memccpy_header_abi_probe.cpp",
             "compat/x86_64/run_memccpy_header_abi.sh",
+            "include/aio.h",
+            "compat/x86_64/aio_error_header_abi_probe.c",
+            "compat/x86_64/aio_error_header_abi_probe.cpp",
+            "compat/x86_64/run_aio_error_header_abi.sh",
             "compat/x86_64/memory_search_header_abi_probe.c",
             "compat/x86_64/memory_search_header_abi_probe.cpp",
             "compat/x86_64/run_memory_search_header_abi.sh",
@@ -7211,6 +7227,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertIn("./scripts/dev-x86_64.sh select-header-abi", header_commands)
         self.assertIn("./scripts/dev-x86_64.sh byte-strings-header-abi", header_commands)
         self.assertIn("./scripts/dev-x86_64.sh memccpy-header-abi", header_commands)
+        self.assertIn("./scripts/dev-x86_64.sh aio-error-header-abi", header_commands)
         self.assertIn("./scripts/dev-x86_64.sh integer-parse-header-abi", header_commands)
         self.assertIn("./scripts/dev-x86_64.sh intmax-arithmetic-header-abi", header_commands)
         self.assertIn(
@@ -11231,6 +11248,81 @@ class X86ParityLedgerTests(unittest.TestCase):
         assert isinstance(evidence, list) and isinstance(evidence[0], dict)
         evidence[0]["command"] = "./scripts/dev-x86_64.sh libc-memory-search"
         with self.assertRaisesRegex(ledger.LedgerError, "closed libc-memccpy command"):
+            ledger.validate_ledger(changed)
+
+    def test_aio_error_artifact_keeps_its_archive_free_observation_boundary(self) -> None:
+        data = self.data()
+        family = self.family(data, "libc.posix-runtime")
+        self.assertEqual(family["status"], "planned")
+        artifacts = family["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-aio-error"
+        )
+        self.assertNotIn("capabilities", artifact)
+        for owner in (
+            "libc/src/c_abi/x86_64/aio_error.rs",
+            "include/aio.h",
+            "compat/x86_64/aio_error_header_abi_probe.c",
+            "compat/x86_64/aio_error_header_abi_probe.cpp",
+            "compat/x86_64/run_aio_error_header_abi.sh",
+            "compat/x86_64/libc_aio_error_probe.c",
+            "compat/x86_64/libc_aio_error_start.S",
+            "compat/x86_64/run_libc_aio_error.sh",
+            "compat/x86_64/aarch64_parity_inventory.py",
+            "compat/x86_64/aarch64_parity_inventory.json",
+        ):
+            self.assertIn(owner, artifact["source_owners"])
+        self.assertEqual(
+            {evidence["command"] for evidence in artifact["native_evidence"]},
+            {"./scripts/dev-x86_64.sh libc-aio-error"},
+        )
+        for phrase in (
+            "archive-free `-nostdlib -static` candidate",
+            "exactly one extracted `aio_error` object",
+            "never `libc.a`",
+            "volatile `struct aiocb::__err` load",
+            "168-byte align-8",
+            "AIO request submission",
+            "resolver/DNS/netdb",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, artifact["description"])
+        mapping = next(entry for entry in artifact["oracle"] if entry["kind"] == "c-posix")
+        self.assertIn("src/aio/aio.c::aio_error", mapping["role"])
+
+        changed = copy.deepcopy(data)
+        changed_artifacts = self.family(changed, "libc.posix-runtime")[
+            "verified_artifact"
+        ]
+        assert isinstance(changed_artifacts, list)
+        changed_artifact = next(
+            entry
+            for entry in changed_artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-aio-error"
+        )
+        changed_artifact["description"] = changed_artifact["description"].replace(
+            "never `libc.a`", "uses `libc.a`"
+        )
+        with self.assertRaisesRegex(ledger.LedgerError, "never `libc.a`"):
+            ledger.validate_ledger(changed)
+
+        changed = copy.deepcopy(data)
+        changed_artifacts = self.family(changed, "libc.posix-runtime")[
+            "verified_artifact"
+        ]
+        assert isinstance(changed_artifacts, list)
+        changed_artifact = next(
+            entry
+            for entry in changed_artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-aio-error"
+        )
+        evidence = changed_artifact["native_evidence"]
+        assert isinstance(evidence, list) and isinstance(evidence[0], dict)
+        evidence[0]["command"] = "./scripts/dev-x86_64.sh libc-memccpy"
+        with self.assertRaisesRegex(ledger.LedgerError, "closed libc-aio-error command"):
             ledger.validate_ledger(changed)
 
     def test_integer_parse_artifact_keeps_its_closed_mapping_contract(self) -> None:

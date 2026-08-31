@@ -88,6 +88,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   callback-algorithms-header-abi  compile the staged x86 C/C++ stdlib callback-algorithm declarations
   ffs-header-abi  compile the staged x86 C/C++ strings.h find-first-set declarations
   memccpy-header-abi  compile the staged x86 C/C++ string.h memccpy declarations
+  aio-error-header-abi  verify x86 <aio.h> aio_error C/C++ declaration and layout
   byte-strings-header-abi  compile the staged x86 C/C++ string.h byte-string declarations
   memory-search-header-abi  compile the staged x86 C/C++ memory-search declarations
   string-copy-header-abi  compile the staged x86 C/C++ C-string-copy declarations
@@ -336,6 +337,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-credential-observation  run the static x86 crabc-libc credential-observation slice
   libc-ffs  run the static x86 crabc-libc find-first-set slice
   libc-memccpy  run the archive-free static x86 crabc-libc memccpy slice
+  libc-aio-error  run the archive-free static x86 crabc-libc aio_error slice
   libc-byte-strings  run the static x86 crabc-libc byte-string slice
   libc-network-byte-order  run the static x86 crabc-libc network byte-order slice
   libc-in6addr-any  run the archive-free static x86 crabc-libc IPv6 unspecified-address object slice
@@ -2164,6 +2166,10 @@ run_memccpy_header_abi() {
     run_in_container bash /workspace/compat/x86_64/run_memccpy_header_abi.sh
 }
 
+run_aio_error_header_abi() {
+    run_in_container bash /workspace/compat/x86_64/run_aio_error_header_abi.sh
+}
+
 run_byte_strings_header_abi() {
     run_in_container bash /workspace/compat/x86_64/run_byte_strings_header_abi.sh
 }
@@ -3399,6 +3405,7 @@ case "$command" in
     integer-arithmetic-header-abi|integer-parse-header-abi|float-parse-header-abi|intmax-arithmetic-header-abi|credential-observation-header-abi|login-name-header-abi|child-reaping-header-abi|immediate-termination-header-abi|callback-algorithms-header-abi) ;;
     ffs-header-abi) ;;
     memccpy-header-abi) ;;
+    aio-error-header-abi) ;;
     byte-strings-header-abi) ;;
     memory-search-header-abi) ;;
     string-copy-header-abi) ;;
@@ -3429,7 +3436,7 @@ case "$command" in
     libc-static-c-abi-differential) ;;
     libc-static-c-abi-same-object-differential|qualification-posix-abi-admission) ;;
     libc-interface-discovery) ;;
-    libc-readiness-waits|libc-system-observation|libc-system-information|libc-fcntl-record-locks|libc-flock|libc-sendfile|libc-posix-fallocate|libc-descriptor-advice|libc-filesystem-capacity|libc-uts-identity|libc-ctype|libc-locale-profile|libc-locale-multibyte|libc-locale-wide-iconv|libc-wide-character|libc-locale-object-wide|libc-locale-narrow|libc-locale-ctype-locators|libc-locale-error-strings|libc-regex|libc-integer-arithmetic|libc-integer-parse|libc-float-parse|libc-intmax-arithmetic|libc-credential-observation|libc-login-name|libc-child-reaping|libc-immediate-termination|libc-callback-algorithms|libc-search-tree-intrusive|libc-search-hash-table|libc-gettext-catalog|libc-access|libc-clock-gettime|libc-time-observation|libc-system-configuration|libc-mapping-core|libc-header-layouts-baseline|libc-nanosleep|libc-clock-nanosleep|libc-descriptor-entry|libc-fcntl-status-control|libc-ioctl|libc-ffs|libc-memccpy|libc-byte-strings|libc-in6addr-any|libc-in6addr-loopback|libc-process-globals-getopt|libc-auxv-observation|libc-inet-address|libc-inet-ntoa|libc-inet-classful|libc-inet-netof|libc-inet-network|libc-hstrerror|libc-endservent|libc-numeric-netdb|libc-random-entropy|libc-memory-search|libc-string-copy|libc-error-strings|libc-strsignal|libc-descriptor-pipeline) ;;
+    libc-readiness-waits|libc-system-observation|libc-system-information|libc-fcntl-record-locks|libc-flock|libc-sendfile|libc-posix-fallocate|libc-descriptor-advice|libc-filesystem-capacity|libc-uts-identity|libc-ctype|libc-locale-profile|libc-locale-multibyte|libc-locale-wide-iconv|libc-wide-character|libc-locale-object-wide|libc-locale-narrow|libc-locale-ctype-locators|libc-locale-error-strings|libc-regex|libc-integer-arithmetic|libc-integer-parse|libc-float-parse|libc-intmax-arithmetic|libc-credential-observation|libc-login-name|libc-child-reaping|libc-immediate-termination|libc-callback-algorithms|libc-search-tree-intrusive|libc-search-hash-table|libc-gettext-catalog|libc-access|libc-clock-gettime|libc-time-observation|libc-system-configuration|libc-mapping-core|libc-header-layouts-baseline|libc-nanosleep|libc-clock-nanosleep|libc-descriptor-entry|libc-fcntl-status-control|libc-ioctl|libc-ffs|libc-memccpy|libc-aio-error|libc-byte-strings|libc-in6addr-any|libc-in6addr-loopback|libc-process-globals-getopt|libc-auxv-observation|libc-inet-address|libc-inet-ntoa|libc-inet-classful|libc-inet-netof|libc-inet-network|libc-hstrerror|libc-endservent|libc-numeric-netdb|libc-random-entropy|libc-memory-search|libc-string-copy|libc-error-strings|libc-strsignal|libc-descriptor-pipeline) ;;
     libc-vector-io|libc-uio-cxx-linkage) ;;
     libc-sysv-semaphore|libc-posix-semaphore) ;;
     libc-sysv-message-shared-memory) ;;
@@ -3690,6 +3697,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "memccpy-header-abi takes no arguments"
         ensure_image
         run_memccpy_header_abi
+        ;;
+    aio-error-header-abi)
+        [ "$#" -eq 0 ] || fail "aio-error-header-abi takes no arguments"
+        ensure_image
+        run_aio_error_header_abi
         ;;
     byte-strings-header-abi)
         [ "$#" -eq 0 ] || fail "byte-strings-header-abi takes no arguments"
@@ -4959,6 +4971,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "libc-memccpy takes no arguments"
         ensure_image
         run_in_container bash /workspace/compat/x86_64/run_libc_memccpy.sh
+        ;;
+    libc-aio-error)
+        [ "$#" -eq 0 ] || fail "libc-aio-error takes no arguments"
+        ensure_image
+        run_in_container bash /workspace/compat/x86_64/run_libc_aio_error.sh
         ;;
     libc-byte-strings)
         [ "$#" -eq 0 ] || fail "libc-byte-strings takes no arguments"

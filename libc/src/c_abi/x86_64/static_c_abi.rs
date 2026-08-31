@@ -87,7 +87,8 @@
 //! and `clock_nanosleep`, and direct clock-observation artifacts, plus one
 //! bounded System V message-queue/shared-memory artifact, one bounded
 //! unnamed POSIX semaphore artifact, and one bounded event-descriptor
-//! artifact, one bounded pathname-mutation/lifecycle artifact, and one
+//! artifact, one read-only asynchronous-I/O error-word observation, one
+//! bounded pathname-mutation/lifecycle artifact, and one
 //! bounded directory-stream/raw-directory artifact.
 //! The fixed-graph dlfcn bridge is a separate public-C spelling over the
 //! loader-owned immutable RuntimeV1-prefix record. It owns only bounded
@@ -373,6 +374,8 @@ mod memfd_create;
 mod readiness_waits;
 #[path = "event_descriptors.rs"]
 mod event_descriptors;
+#[path = "aio_error.rs"]
+mod aio_error;
 #[path = "timer_fd.rs"]
 mod timer_fd;
 #[path = "signal_fd.rs"]

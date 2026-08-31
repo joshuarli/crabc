@@ -11888,6 +11888,105 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn("memccpy-header-abi", runner)
         self.assertIn("libc-memccpy", runner)
 
+    def test_libc_static_c_abi_aio_error_artifact_stays_archive_free(self) -> None:
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        aio_error = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "aio_error.rs"
+        ).read_text(encoding="utf-8")
+        probe = (
+            ROOT / "compat" / "x86_64" / "libc_aio_error_probe.c"
+        ).read_text(encoding="utf-8")
+        start = (
+            ROOT / "compat" / "x86_64" / "libc_aio_error_start.S"
+        ).read_text(encoding="utf-8")
+        artifact_runner = (
+            ROOT / "compat" / "x86_64" / "run_libc_aio_error.sh"
+        ).read_text(encoding="utf-8")
+        header_runner = (
+            ROOT / "compat" / "x86_64" / "run_aio_error_header_abi.sh"
+        ).read_text(encoding="utf-8")
+        static_exports = (
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        ).read_text(encoding="utf-8")
+        static_export_names = {
+            line for line in static_exports.splitlines()
+            if line and not line.startswith("#")
+        }
+        parity_ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        runner = RUNNER.read_text(encoding="utf-8")
+
+        self.assertIn('#[path = "aio_error.rs"]', static_root)
+        for required in (
+            "musl 1.2.6 release commit",
+            "src/aio/aio.c::aio_error",
+            "const AIOCB_ERR_OFFSET: usize = 112",
+            "const AIO_ERROR_MASK: c_int = 0x7fff_ffff",
+            "compiler_fence(Ordering::SeqCst)",
+            "asm!(",
+            "fn aio_error",
+            "caller-provided AIO/external synchronization",
+        ):
+            self.assertIn(required, aio_error)
+        for forbidden in (
+            "crabc_core",
+            "crabc_mimalloc",
+            "raw_syscall",
+            "__errno_location",
+            "fn aio_read",
+            "fn aio_write",
+            "fn aio_return",
+            "fn aio_cancel",
+            "fn aio_suspend",
+            "fn aio_fsync",
+            "fn lio_listio",
+            "__tls_get_addr",
+        ):
+            self.assertNotIn(forbidden, aio_error)
+        for required in (
+            "#include <aio.h>",
+            "aio_error_signature",
+            "sizeof(struct aiocb) == 168",
+            "__err) == 112",
+            "0x7fffffff",
+            "-2147483647 - 1",
+            "CRABC_AIO_ERROR_FREESTANDING",
+        ):
+            self.assertIn(required, probe)
+        self.assertIn("crabc_x86_64_aio_error_probe", start)
+        self.assertIn("mov $60, %eax", start)
+        self.assertNotIn("ARCH_SET_FS", start)
+        for required in (
+            "static_c_abi_exports.txt",
+            "aio.lo",
+            "aio.c",
+            "extract_selected_member",
+            "-nostdlib -static",
+            '"$selected_member" -o "$candidate"',
+            "candidate unexpectedly selects TLS",
+            "aio_cancel aio_fsync aio_read aio_return aio_suspend aio_write",
+            "call|syscall",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn('"$archive" -o "$candidate"', artifact_runner)
+        for required in (
+            "-D_GNU_SOURCE",
+            "-D_LARGEFILE64_SOURCE",
+            "_Z.*aio_error",
+            "project C aio_error header contract drifted",
+        ):
+            self.assertIn(required, header_runner)
+        self.assertIn("aio_error", static_export_names)
+        self.assertIn('id = "static-c-aio-error"', parity_ledger)
+        self.assertIn(
+            'command = "./scripts/dev-x86_64.sh libc-aio-error"', parity_ledger
+        )
+        self.assertIn("aio-error-header-abi", runner)
+        self.assertIn("libc-aio-error", runner)
+
     def test_libc_static_c_abi_memory_search_artifact_stays_narrow(self) -> None:
         static_root = (
             ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"

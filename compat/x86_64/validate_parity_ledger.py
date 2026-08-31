@@ -696,6 +696,7 @@ EXPECTED_HEADER_LAYOUT_PROBES = {
     "callback-algorithms": "./scripts/dev-x86_64.sh callback-algorithms-header-abi",
     "ffs": "./scripts/dev-x86_64.sh ffs-header-abi",
     "memccpy": "./scripts/dev-x86_64.sh memccpy-header-abi",
+    "aio-error": "./scripts/dev-x86_64.sh aio-error-header-abi",
     "byte-strings": "./scripts/dev-x86_64.sh byte-strings-header-abi",
     "memory-search": "./scripts/dev-x86_64.sh memory-search-header-abi",
     "string-copy": "./scripts/dev-x86_64.sh string-copy-header-abi",
@@ -828,6 +829,11 @@ EXPECTED_HEADER_LAYOUT_SOURCES = {
         "compat/x86_64/memccpy_header_abi_probe.c",
         "compat/x86_64/memccpy_header_abi_probe.cpp",
         "compat/x86_64/run_memccpy_header_abi.sh",
+    ),
+    "aio-error": (
+        "compat/x86_64/aio_error_header_abi_probe.c",
+        "compat/x86_64/aio_error_header_abi_probe.cpp",
+        "compat/x86_64/run_aio_error_header_abi.sh",
     ),
     "byte-strings": (
         "compat/x86_64/byte_strings_header_abi_probe.c",
@@ -1058,6 +1064,8 @@ RANDOM_ENTROPY_SYMBOLS = ("getrandom", "getentropy")
 MEMORY_SEARCH_SYMBOLS = ("memchr", "memrchr", "memmem")
 
 MEMCCPY_SYMBOLS = ("memccpy",)
+
+AIO_ERROR_SYMBOLS = ("aio_error",)
 
 STRING_COPY_SYMBOLS = (
     "stpcpy",
@@ -1291,7 +1299,6 @@ EVENT_DESCRIPTOR_SYMBOLS = (
 
 EVENT_DESCRIPTOR_UNSELECTED_SYMBOLS = (
     "aio_cancel",
-    "aio_error",
     "aio_fsync",
     "aio_read",
     "aio_return",
@@ -11194,6 +11201,333 @@ def require_memccpy_artifact(family: Mapping[str, Any]) -> None:
         and "libc-memccpy)" in dispatch
         and "run_libc_memccpy.sh" in dispatch,
         "memccpy dispatcher bindings are missing",
+    )
+
+
+def require_aio_error_artifact(family: Mapping[str, Any]) -> None:
+    """Keep the one read-only AIO error observation outside AIO lifecycle work."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.posix-runtime].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [entry for entry in artifacts if entry.get("id") == "static-c-aio-error"]
+    require(
+        len(matching) == 1,
+        "libc.posix-runtime must contain exactly one static-c-aio-error artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-aio-error must not promote libc.posix-runtime",
+    )
+    artifact = matching[0]
+    require(
+        "capabilities" not in artifact,
+        "static-c-aio-error must not claim a general runtime capability",
+    )
+
+    description = artifact.get("description")
+    require(isinstance(description, str), "static-c-aio-error needs a description")
+    for phrase in (
+        "Private native x86 static `aio_error` observation C ABI artifact",
+        "still-planned `libc.posix-runtime`",
+        "archive-free `-nostdlib -static` candidate",
+        "exactly one extracted `aio_error` object",
+        "never `libc.a`",
+        "x86 compiler-only `a_barrier()`",
+        "volatile `struct aiocb::__err` load",
+        "`& 0x7fffffff` mask",
+        "168-byte align-8",
+        "offset 112",
+        "AIO request submission",
+        "`aio_return`",
+        "resolver/DNS/netdb",
+        "public x86 support",
+    ):
+        require(phrase in description, f"static-c-aio-error description omits {phrase}")
+
+    owners = set(
+        nonempty_strings(artifact.get("source_owners"), "static-c-aio-error.source_owners")
+    )
+    for owner in (
+        "compat/upstreams.toml",
+        "compat/abi/musl-1.2.6/aarch64/libc.a.static.tsv",
+        "compat/x86_64/headers-layouts.toml",
+        "compat/x86_64/headers-layouts-foundation.toml",
+        "libc/Cargo.toml",
+        "libc/src/lib.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/aio_error.rs",
+        "include/aio.h",
+        "compat/x86_64/aio_error_header_abi_probe.c",
+        "compat/x86_64/aio_error_header_abi_probe.cpp",
+        "compat/x86_64/run_aio_error_header_abi.sh",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/libc_aio_error_probe.c",
+        "compat/x86_64/libc_aio_error_start.S",
+        "compat/x86_64/run_libc_aio_error.sh",
+        "compat/x86_64/aarch64_parity_inventory.py",
+        "compat/x86_64/aarch64_parity_inventory.json",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/README.md",
+        "STATUS.md",
+        "x86-64.md",
+        "scripts/dev-x86_64.sh",
+        "scripts/check_structure.py",
+    ):
+        require(owner in owners, f"static-c-aio-error source owners omit {owner}")
+
+    prerequisites = nonempty_strings(
+        artifact.get("x86_abi_prerequisites"), "static-c-aio-error.x86_abi_prerequisites"
+    )
+    require(
+        any(
+            "SysV AMD64 LP64" in item
+            and "int aio_error(const struct aiocb *)" in item
+            and "rdi" in item
+            and "eax" in item
+            and "168 bytes" in item
+            and "offset 112" in item
+            for item in prerequisites
+        ),
+        "static-c-aio-error must retain its pointer/int ABI and public layout",
+    )
+    require(
+        any(
+            "9fa28ece75d8a2191de7c5bb53bed224c5947417" in item
+            and "src/aio/aio.c::aio_error" in item
+            and "aio.lo" in item
+            and "a_barrier" in item
+            and "0x7fffffff" in item
+            and "submitting, waiting for, or completing" in item
+            for item in prerequisites
+        ),
+        "static-c-aio-error must retain its pinned-musl observation mapping",
+    )
+    require(
+        any(
+            "exactly one extracted `aio_error` object" in item
+            and "never libc.a" in item
+            and "no interpreter" in item
+            and "TLS/errno" in item
+            and "call, syscall" in item
+            for item in prerequisites
+        ),
+        "static-c-aio-error must retain its archive-free static closure",
+    )
+
+    headers = nonempty_strings(
+        artifact.get("x86_header_prerequisites"),
+        "static-c-aio-error.x86_header_prerequisites",
+    )
+    require(
+        any(
+            "GNU-profile project `<aio.h>`" in item
+            and "int aio_error(const struct aiocb *)" in item
+            and "168-byte align-8 aiocb layout" in item
+            and "volatile __err offset 112" in item
+            and "_LARGEFILE64_SOURCE" in item
+            and "unmangled C++ C linkage" in item
+            and "incomplete" in item
+            for item in headers
+        ),
+        "static-c-aio-error must retain its C/C++ aio header boundary",
+    )
+
+    exports = set(
+        static_c_abi_export_names(
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        )
+    )
+    require(
+        set(AIO_ERROR_SYMBOLS) <= exports,
+        "static-c-aio-error must retain its selected export",
+    )
+
+    static_root = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+    ).read_text(encoding="utf-8")
+    require(
+        '#[path = "aio_error.rs"]\nmod aio_error;' in static_root,
+        "x86 static C ABI must compose the aio_error leaf",
+    )
+    implementation = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "aio_error.rs"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+        "src/aio/aio.c::aio_error",
+        "const AIOCB_ERR_OFFSET: usize = 112",
+        "const AIO_ERROR_MASK: c_int = 0x7fff_ffff",
+        "compiler_fence(Ordering::SeqCst)",
+        "asm!(",
+        'pub unsafe extern "C" fn aio_error',
+        "caller-provided AIO/external synchronization",
+    ):
+        require(snippet in implementation, f"aio_error leaf omits {snippet}")
+    exported_functions = set(
+        re.findall(
+            r'(?m)^pub\s+unsafe\s+extern\s+"C"\s+fn\s+(\w+)\s*\(', implementation
+        )
+    )
+    require(
+        exported_functions == set(AIO_ERROR_SYMBOLS),
+        "aio_error leaf must export only aio_error",
+    )
+    for forbidden in (
+        "static mut",
+        "raw_syscall",
+        "__errno_location",
+        "__h_errno_location",
+        "getaddrinfo",
+        "socket(",
+        "std::",
+        "alloc::",
+        "crabc_core",
+        "crabc_mimalloc",
+        "fn aio_read",
+        "fn aio_write",
+        "fn aio_return",
+        "fn aio_cancel",
+        "fn aio_suspend",
+        "fn aio_fsync",
+        "fn lio_listio",
+    ):
+        require(forbidden not in implementation, f"aio_error leaf widens into {forbidden}")
+
+    header_c = (
+        ROOT / "compat" / "x86_64" / "aio_error_header_abi_probe.c"
+    ).read_text(encoding="utf-8")
+    header_cpp = (
+        ROOT / "compat" / "x86_64" / "aio_error_header_abi_probe.cpp"
+    ).read_text(encoding="utf-8")
+    header_runner = (
+        ROOT / "compat" / "x86_64" / "run_aio_error_header_abi.sh"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "#include <aio.h>",
+        "aio_error_signature",
+        "sizeof(struct aiocb) == 168",
+        "__err) == 112",
+    ):
+        require(snippet in header_c, f"aio_error C header probe omits {snippet}")
+        require(snippet in header_cpp, f"aio_error C++ header probe omits {snippet}")
+    for snippet in (
+        "-D_GNU_SOURCE",
+        "-D_LARGEFILE64_SOURCE",
+        "nm --undefined-only",
+        "_Z.*aio_error",
+        "project C aio_error header contract drifted",
+    ):
+        require(snippet in header_runner, f"aio_error header runner omits {snippet}")
+
+    fixture = (
+        ROOT / "compat" / "x86_64" / "libc_aio_error_probe.c"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "#include <aio.h>",
+        "aio_error_signature",
+        "sizeof(struct aiocb) == 168",
+        "__err) == 112",
+        "0x7fffffff",
+        "-2147483647 - 1",
+        "CRABC_AIO_ERROR_FREESTANDING",
+    ):
+        require(snippet in fixture, f"aio_error fixture omits {snippet}")
+    start = (
+        ROOT / "compat" / "x86_64" / "libc_aio_error_start.S"
+    ).read_text(encoding="utf-8")
+    for snippet in ("crabc_x86_64_aio_error_probe", "mov $60, %eax"):
+        require(snippet in start, f"aio_error static entry omits {snippet}")
+    require("ARCH_SET_FS" not in start, "aio_error static entry must not bootstrap TLS")
+
+    runner = (
+        ROOT / "compat" / "x86_64" / "run_libc_aio_error.sh"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "run_aio_error_header_abi.sh",
+        "AARCH64_STATIC_TSV",
+        "aio.lo",
+        "aio.c",
+        "assert_selected_c_abi_surface",
+        "extract_selected_member",
+        "aio_error archive member also defines an AIO operation sibling",
+        "-nostdlib -static",
+        '"$selected_member" -o "$candidate"',
+        "candidate unexpectedly selects TLS",
+        "never from libc.a",
+        "aio_cancel aio_fsync aio_read aio_return aio_suspend aio_write",
+        "__errno_location __h_errno_location h_errno getaddrinfo socket",
+        "call|syscall",
+    ):
+        require(snippet in runner, f"aio_error runner omits {snippet}")
+    require(
+        '"$archive" -o "$candidate"' not in runner,
+        "aio_error final candidate must not link libc.a",
+    )
+
+    oracle = artifact.get("oracle")
+    require(isinstance(oracle, list), "static-c-aio-error needs oracle evidence")
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "c-posix"
+            and isinstance(entry.get("role"), str)
+            and "src/aio/aio.c::aio_error" in entry["role"]
+            and "a_barrier" in entry["role"]
+            and "0x80000000" in entry["role"]
+            for entry in oracle
+        ),
+        "static-c-aio-error must retain its pinned-musl observation oracle",
+    )
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "elf-abi"
+            and isinstance(entry.get("role"), str)
+            and "LP64" in entry["role"]
+            and "archive-free static final-ELF boundary" in entry["role"]
+            for entry in oracle
+        ),
+        "static-c-aio-error must retain its static ELF ABI oracle",
+    )
+
+    evidence = artifact.get("native_evidence")
+    require(isinstance(evidence, list), "static-c-aio-error needs evidence")
+    require(
+        {entry.get("command") for entry in evidence if isinstance(entry, Mapping)}
+        == {"./scripts/dev-x86_64.sh libc-aio-error"},
+        "static-c-aio-error must use the closed libc-aio-error command",
+    )
+    scope = evidence[0].get("scope")
+    require(isinstance(scope, str), "static-c-aio-error evidence needs a scope")
+    for phrase in (
+        "GNU-profile C/C++ <aio.h> header proof",
+        "true x86 `-nostdlib -static` candidate",
+        "`aio.lo` source mapping",
+        "one extracted `aio_error` object",
+        "never `libc.a`",
+        "x86 compiler-only barrier",
+        "168-byte align-8 aiocb/volatile __err offset 112 ABI",
+        "zero/positive/sign-bit error mask behavior",
+        "no interpreter/DT_NEEDED/unresolved symbol/dynamic-TLS model",
+        "calls/syscalls",
+        "AIO request submission",
+        "aio_return",
+        "resolver/DNS/netdb",
+        "public x86 support",
+    ):
+        require(phrase in scope, f"static-c-aio-error evidence omits {phrase}")
+
+    dispatch = (ROOT / "scripts" / "dev-x86_64.sh").read_text(encoding="utf-8")
+    require(
+        "aio-error-header-abi)" in dispatch
+        and "run_aio_error_header_abi.sh" in dispatch
+        and "libc-aio-error)" in dispatch
+        and "run_libc_aio_error.sh" in dispatch,
+        "aio_error dispatcher bindings are missing",
     )
 
 
@@ -34022,6 +34356,7 @@ def validate_ledger(
     require_random_entropy_artifact(by_id["libc.posix-runtime"])
     require_memory_search_artifact(by_id["libc.posix-runtime"])
     require_memccpy_artifact(by_id["libc.posix-runtime"])
+    require_aio_error_artifact(by_id["libc.posix-runtime"])
     require_string_copy_artifact(by_id["libc.posix-runtime"])
     require_error_strings_artifact(by_id["libc.c-abi-compat"])
     require_error_strsignal_slice(by_id["libc.c-abi-compat"])
