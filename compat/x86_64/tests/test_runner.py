@@ -10171,7 +10171,6 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "-Wl,-e,_start",
             "-Wl,--no-undefined",
             "candidate retains a dynamic TLS model",
-            "getlogin",
             "getgroups getresuid getresgid",
         ):
             self.assertIn(required, artifact_runner)

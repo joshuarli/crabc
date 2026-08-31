@@ -3826,7 +3826,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             "does not select libc.so", credentials["native_evidence"][0]["scope"]
         )
         posix_artifacts = posix_runtime["verified_artifact"]
-        assert isinstance(posix_artifacts, list) and len(posix_artifacts) == 56
+        assert isinstance(posix_artifacts, list) and len(posix_artifacts) == 57
         artifacts_by_id = {
             artifact["id"]: artifact
             for artifact in posix_artifacts
