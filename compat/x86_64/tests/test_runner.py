@@ -1370,7 +1370,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         expected_groups = (
             "timerfd-header-abi|signalfd-header-abi",
             "libc-timerfd|libc-signalfd|libc-sigpause|libc-sigisemptyset|libc-sigandset-sigorset|libc-sigpending|libc-sigrtmax|libc-sigrtmin|libc-sigaddset-sigdelset-sigfillset",
-            "ctermid-header-abi|gethostid-header-abi|getpagesize-header-abi|getdtablesize-header-abi|confstr-header-abi|isatty-header-abi|tcgetpgrp-header-abi|tcsetpgrp-header-abi|getpass-header-abi|libc-ctermid|libc-gethostid|libc-getpagesize|libc-getdtablesize|libc-confstr|libc-isatty|libc-tcgetpgrp|libc-tcsetpgrp|libc-getpass|mkfifo-header-abi|mkfifoat-header-abi|libc-mkfifo|libc-mkfifoat|mktemp-header-abi|libc-mktemp",
+            "ctermid-header-abi|gethostid-header-abi|getpagesize-header-abi|getdtablesize-header-abi|confstr-header-abi|fpathconf-header-abi|isatty-header-abi|tcgetpgrp-header-abi|tcsetpgrp-header-abi|getpass-header-abi|libc-ctermid|libc-gethostid|libc-getpagesize|libc-getdtablesize|libc-confstr|libc-fpathconf|libc-isatty|libc-tcgetpgrp|libc-tcsetpgrp|libc-getpass|mkfifo-header-abi|mkfifoat-header-abi|libc-mkfifo|libc-mkfifoat|mktemp-header-abi|libc-mktemp",
             "stdio-permanent-line-io-header-abi|stdio-octal-hex-scan-header-abi",
             "math-complex-complete-header-abi|libc-math-complex-complete",
             "stdio-permanent-byte-io-header-abi",
@@ -17650,6 +17650,145 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         )
         self.assertIn(
             '    libc-confstr)\n        [ "$#" -eq 0 ] || fail "libc-confstr takes no arguments"',
+            runner,
+        )
+
+    def test_libc_static_c_abi_fpathconf_artifact_stays_section_isolated(self) -> None:
+        """The selected fpathconf table must not widen configuration/runtime support."""
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        source_path = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "system_configuration.rs"
+        )
+        header_c_path = ROOT / "compat" / "x86_64" / "fpathconf_header_abi_probe.c"
+        header_cxx_path = (
+            ROOT / "compat" / "x86_64" / "fpathconf_header_abi_probe.cpp"
+        )
+        header_runner_path = (
+            ROOT / "compat" / "x86_64" / "run_fpathconf_header_abi.sh"
+        )
+        probe_path = ROOT / "compat" / "x86_64" / "libc_fpathconf_probe.c"
+        start_path = ROOT / "compat" / "x86_64" / "libc_fpathconf_start.S"
+        artifact_runner_path = ROOT / "compat" / "x86_64" / "run_libc_fpathconf.sh"
+        for path in (
+            source_path,
+            header_c_path,
+            header_cxx_path,
+            header_runner_path,
+            probe_path,
+            start_path,
+            artifact_runner_path,
+        ):
+            self.assertTrue(path.is_file(), f"missing fpathconf artifact input: {path}")
+
+        source = source_path.read_text(encoding="utf-8")
+        header_c = header_c_path.read_text(encoding="utf-8")
+        header_cxx = header_cxx_path.read_text(encoding="utf-8")
+        header_runner = header_runner_path.read_text(encoding="utf-8")
+        probe = probe_path.read_text(encoding="utf-8")
+        start = start_path.read_text(encoding="utf-8")
+        artifact_runner = artifact_runner_path.read_text(encoding="utf-8")
+        static_exports = {
+            line
+            for line in (
+                ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+            ).read_text(encoding="utf-8").splitlines()
+            if line and not line.startswith("#")
+        }
+        parity_ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        runner = RUNNER.read_text(encoding="utf-8")
+
+        self.assertIn('#[path = "system_configuration.rs"]', static_root)
+        for required in (
+            "src/conf/fpathconf.c",
+            "fd-independent selector table",
+            "unchecked negative C-array index remains outside differential admission",
+            "fn pathconf_value",
+            "unsafe fn selected_pathconf",
+            'pub extern "C" fn fpathconf',
+            "Valid selectors therefore do not fail for an invalid",
+        ):
+            self.assertIn(required, source)
+        fpathconf_body = source[
+            source.index("/// Return a selected path configuration value for an open descriptor.") : source.index(
+                "/// Return a selected path configuration value for a pathname."
+            )
+        ]
+        for forbidden in ("raw_syscall", 'pub extern "C" fn pathconf', "getauxval", "alloc::"):
+            self.assertNotIn(forbidden, fpathconf_body)
+
+        for header_probe in (header_c, header_cxx):
+            for required in ("fpathconf_signature", "fpathconf", "long"):
+                self.assertIn(required, header_probe)
+        for required in (
+            "CANDIDATE_CC=/usr/bin/gcc",
+            "-nostdinc",
+            "-nostdinc++",
+            "compile_profile strict",
+            "compile_profile posix",
+            "compile_profile xopen",
+            "compile_profile gnu",
+            "compile_profile bsd",
+            "retained a mangled fpathconf reference",
+            "escaped its declared roots",
+        ):
+            self.assertIn(required, header_runner)
+
+        for required in (
+            "fpathconf_signature",
+            "expected_values",
+            "check_direct_values",
+            "check_indirect_values",
+            "check_nonnegative_invalid",
+            "negative selector without a source-defined result",
+            "_PC_2_SYMLINKS",
+            "E2BIG",
+            "EINVAL",
+            "CRABC_FPATHCONF_FREESTANDING",
+        ):
+            self.assertIn(required, probe)
+        for required in (
+            "crabc_x86_64_fpathconf_probe",
+            "crabc_x86_64_fpathconf_thread_pointer",
+            "mov %rsi, %fs:0",
+            "mov $60, %eax",
+        ):
+            self.assertIn(required, start)
+        for required in (
+            "run_musl_oracle.sh",
+            "run_fpathconf_header_abi.sh",
+            "fpathconf.lo",
+            "archive_member_for_symbol",
+            "-nostdlib -static",
+            "--no-undefined",
+            "--gc-sections",
+            "candidate retained neighboring system-configuration or resource C ABI symbols",
+            "candidate retained an unselected text or allocator dependency",
+            "candidate fpathconf calls outside its explicit errno seam",
+            "candidate errno accessor does not use direct initial-TLS FS access",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn("--whole-archive", artifact_runner)
+        self.assertIn("fpathconf", static_exports)
+        self.assertIn('id = "static-c-fpathconf"', parity_ledger)
+        self.assertIn(
+            'command = "./scripts/dev-x86_64.sh libc-fpathconf"', parity_ledger
+        )
+        self.assertIn("run_fpathconf_header_abi()", runner)
+        self.assertIn("run_libc_fpathconf()", runner)
+        self.assertIn(
+            "/workspace/compat/x86_64/run_fpathconf_header_abi.sh", runner
+        )
+        self.assertIn("/workspace/compat/x86_64/run_libc_fpathconf.sh", runner)
+        self.assertIn(
+            '    fpathconf-header-abi)\n        [ "$#" -eq 0 ] || fail "fpathconf-header-abi takes no arguments"',
+            runner,
+        )
+        self.assertIn(
+            '    libc-fpathconf)\n        [ "$#" -eq 0 ] || fail "libc-fpathconf takes no arguments"',
             runner,
         )
 

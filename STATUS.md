@@ -1465,6 +1465,21 @@ helpers, allocator, runtime, and C-runtime closure. This does not alter or
 promote `static-c-system-configuration`, broad system configuration, libc.so,
 CRT, pthread/TLS lifecycle, family completion, or public x86 support.
 
+`./scripts/dev-x86_64.sh libc-fpathconf` is a separate private
+`static-c-fpathconf` artifact in that same planned family. It maps pinned musl
+1.2.6 `src/conf/fpathconf.c` to the existing `system_configuration.rs` owner:
+the fixed 21-entry selector table covers names 0 through 20, ignores the
+descriptor, and preserves stale `errno`, including selected indeterminate
+`-1` values. The pinned source's defined nonnegative out-of-range route returns
+`-1` with `EINVAL`; its unchecked negative C-array index is explicitly outside
+the differential contract. Its C/C++ `<unistd.h>` matrix proves the exact
+unconditional declaration in strict, POSIX, X/Open, GNU, and BSD profiles. The
+true `-nostdlib -static -Wl,--gc-sections` candidate retains only `fpathconf`
+and its initial-TLS errno seam, rejecting sibling configuration APIs,
+text/memory helpers, allocator, and C-runtime closure. This does not alter or
+promote `static-c-system-configuration`, filesystem/path policy, libc.so, CRT,
+pthread/TLS lifecycle, family completion, or public x86 support.
+
 `./scripts/dev-x86_64.sh libc-fcntl-record-locks` is a separate private
 `static-c-fcntl-record-locks` artifact inside planned `libc.posix-runtime`.
 Its project-header C/C++ gate and pinned-musl/freestanding-static fixture prove

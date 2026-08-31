@@ -280,6 +280,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh vector-io-header-abi
 ./scripts/dev-x86_64.sh unistd-header-abi
 ./scripts/dev-x86_64.sh confstr-header-abi
+./scripts/dev-x86_64.sh fpathconf-header-abi
 ./scripts/dev-x86_64.sh getpagesize-header-abi
 ./scripts/dev-x86_64.sh getdtablesize-header-abi
 ./scripts/dev-x86_64.sh system-header-abi
@@ -459,6 +460,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-gmtime-r
 ./scripts/dev-x86_64.sh libc-system-configuration
 ./scripts/dev-x86_64.sh libc-confstr
+./scripts/dev-x86_64.sh libc-fpathconf
 ./scripts/dev-x86_64.sh libc-getpagesize
 ./scripts/dev-x86_64.sh libc-getdtablesize
 ./scripts/dev-x86_64.sh libc-mapping-core
@@ -1456,6 +1458,13 @@ process, filesystem, descriptor, namespace, or UTS-identity behavior.
 It proves an exact unconditional signature and unmangled C++ linkage in
 strict, POSIX, X/Open, GNU, and BSD profiles. It is header-only evidence; it
 does not select broad `unistd.h`, configuration behavior, archive linkage, C
+runtime, or public x86 support.
+
+`fpathconf-header-abi` is a separate project-first/pinned-musl C11/C++17
+`<unistd.h>` declaration gate for only `long fpathconf(int, int)`. It proves an
+exact unconditional signature and unmangled C++ linkage in strict, POSIX,
+X/Open, GNU, and BSD profiles. It is header-only evidence; it does not select
+broad `unistd.h`, filesystem/configuration behavior, archive linkage, C
 runtime, or public x86 support.
 
 `getpagesize-header-abi` is a separate project-first/pinned-musl C11/C++17
@@ -3775,6 +3784,22 @@ text/memory helpers, allocator, and runtime closure. This does not alter or
 promote `static-c-system-configuration`, broad system configuration, C runtime,
 CRT, pthread/TLS lifecycle, or public x86 support.
 
+`libc-fpathconf` is a separate private `static-c-fpathconf`
+`verified_artifact`, derived from the existing `system_configuration.rs` owner
+rather than a new filesystem or configuration subsystem. Pinned musl 1.2.6
+`src/conf/fpathconf.c` supplies the fixed names-0..20 table; valid selectors
+ignore the descriptor and preserve stale errno, while its defined nonnegative
+out-of-range path reports `EINVAL`. Its negative signed C-array index is not a
+source-defined musl contract and is deliberately outside the differential
+fixture. The unconditional C/C++ `<unistd.h>` gate is followed by equivalent
+pinned-musl execution and a true `-nostdlib -static -Wl,--gc-sections`
+candidate. Final-link collection retains only `fpathconf` and its initial-TLS
+errno seam, rejecting `pathconf`, `sysconf`, `confstr`, `getpagesize`,
+`getdtablesize`, text/memory helpers, allocator, and runtime closure. This does
+not alter or promote `static-c-system-configuration`, broad system
+configuration, filesystem/path policy, C runtime, CRT, pthread/TLS lifecycle,
+or public x86 support.
+
 `libc-getdtablesize` is a separate private `static-c-getdtablesize`
 `verified_artifact`, derived from that same existing
 `system_configuration.rs` source owner rather than a new configuration or
@@ -5625,6 +5650,7 @@ Apart from the narrowly named `libc-stat-compat`, `libc-credentials`,
 `libc-gmtime-r`,
 `libc-system-configuration`,
 `libc-confstr`,
+`libc-fpathconf`,
 `libc-getpagesize`,
 `libc-getdtablesize`,
 `libc-mapping-core`,

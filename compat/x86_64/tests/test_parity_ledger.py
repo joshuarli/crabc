@@ -50,7 +50,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 41)
-        self.assertEqual(report["verified_artifact_count"], 197)
+        self.assertEqual(report["verified_artifact_count"], 198)
         self.assertEqual(report["header_layout_probe_count"], 46)
         self.assertEqual(report["public_header_inventory_count"], 183)
         self.assertEqual(report["header_foundation_header_count"], 191)
@@ -14692,6 +14692,80 @@ class X86ParityLedgerTests(unittest.TestCase):
         assert isinstance(evidence, list) and isinstance(evidence[0], dict)
         evidence[0]["command"] = "./scripts/dev-x86_64.sh libc-system-configuration"
         with self.assertRaisesRegex(ledger.LedgerError, "closed libc-confstr command"):
+            ledger.validate_ledger(data)
+
+    def test_fpathconf_artifact_keeps_its_selected_table_contract(self) -> None:
+        data = self.data()
+        family = self.family(data, "libc.posix-runtime")
+        self.assertEqual(family["status"], "planned")
+        artifacts = family["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-fpathconf"
+        )
+        self.assertNotIn("capabilities", artifact)
+        for phrase in (
+            "src/conf/fpathconf.c",
+            "21-entry fixed selector table",
+            "valid selectors deliberately ignore the descriptor",
+            "negative selectors are explicitly outside this musl differential artifact",
+            "only `fpathconf` plus its required `__errno_location`",
+            "does not change or promote the broad",
+            "negative-selector behavior",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, artifact["description"])
+        self.assertEqual(
+            {entry["command"] for entry in artifact["native_evidence"]},
+            {"./scripts/dev-x86_64.sh libc-fpathconf"},
+        )
+        self.assertIn("src/conf/fpathconf.c", artifact["oracle"][0]["role"])
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-fpathconf"
+        )
+        artifact["description"] = artifact["description"].replace(
+            "negative selectors are explicitly outside this musl differential artifact",
+            "negative selectors have complete musl parity",
+        )
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "negative selectors are explicitly outside"
+        ):
+            ledger.validate_ledger(data)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-fpathconf"
+        )
+        artifact["capabilities"] = ["filesystem.configuration"]
+        with self.assertRaisesRegex(ledger.LedgerError, "must not carry capabilities"):
+            ledger.validate_ledger(data)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-fpathconf"
+        )
+        evidence = artifact["native_evidence"]
+        assert isinstance(evidence, list) and isinstance(evidence[0], dict)
+        evidence[0]["command"] = "./scripts/dev-x86_64.sh libc-system-configuration"
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "closed libc-fpathconf command"
+        ):
             ledger.validate_ledger(data)
 
     def test_mapping_core_artifact_keeps_its_closed_static_contract(self) -> None:

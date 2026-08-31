@@ -4250,6 +4250,154 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
                 f"evidence is missing {required!r}"
             )
 
+    fpathconf_source = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "system_configuration.rs"
+    )
+    fpathconf_probe_source = ROOT / "compat" / "x86_64" / "libc_fpathconf_probe.c"
+    fpathconf_start_source = ROOT / "compat" / "x86_64" / "libc_fpathconf_start.S"
+    fpathconf_runner_source = ROOT / "compat" / "x86_64" / "run_libc_fpathconf.sh"
+    fpathconf_header_c_source = (
+        ROOT / "compat" / "x86_64" / "fpathconf_header_abi_probe.c"
+    )
+    fpathconf_header_cxx_source = (
+        ROOT / "compat" / "x86_64" / "fpathconf_header_abi_probe.cpp"
+    )
+    fpathconf_header_runner_source = (
+        ROOT / "compat" / "x86_64" / "run_fpathconf_header_abi.sh"
+    )
+    for path in (
+        fpathconf_source,
+        fpathconf_probe_source,
+        fpathconf_start_source,
+        fpathconf_runner_source,
+        fpathconf_header_c_source,
+        fpathconf_header_cxx_source,
+        fpathconf_header_runner_source,
+    ):
+        if not path.is_file():
+            errors.append(
+                "x86 static fpathconf artifact is missing " f"{path.relative_to(ROOT)}"
+            )
+            return
+
+    fpathconf_text = fpathconf_source.read_text(errors="replace")
+    fpathconf_probe = fpathconf_probe_source.read_text(errors="replace")
+    fpathconf_start = fpathconf_start_source.read_text(errors="replace")
+    fpathconf_runner = fpathconf_runner_source.read_text(errors="replace")
+    fpathconf_header_c = fpathconf_header_c_source.read_text(errors="replace")
+    fpathconf_header_cxx = fpathconf_header_cxx_source.read_text(errors="replace")
+    fpathconf_header_runner = fpathconf_header_runner_source.read_text(errors="replace")
+    for required in (
+        "src/conf/fpathconf.c",
+        "fd-independent selector table",
+        "unchecked negative C-array index remains outside differential admission",
+        "fn pathconf_value",
+        "unsafe fn selected_pathconf",
+        'pub extern "C" fn fpathconf',
+        "Valid selectors therefore do not fail for an invalid",
+    ):
+        if required not in fpathconf_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/system_configuration.rs: selected "
+                f"fpathconf source is missing {required!r}"
+            )
+    fpathconf_marker = "/// Return a selected path configuration value for an open descriptor."
+    pathconf_marker = "/// Return a selected path configuration value for a pathname."
+    if fpathconf_marker not in fpathconf_text or pathconf_marker not in fpathconf_text:
+        errors.append(
+            "libc/src/c_abi/x86_64/system_configuration.rs: selected "
+            "fpathconf source boundary is missing"
+        )
+    else:
+        fpathconf_body = fpathconf_text[
+            fpathconf_text.index(fpathconf_marker) : fpathconf_text.index(pathconf_marker)
+        ]
+        for forbidden in ("raw_syscall", 'pub extern "C" fn pathconf', "getauxval", "alloc::"):
+            if forbidden in fpathconf_body:
+                errors.append(
+                    "libc/src/c_abi/x86_64/system_configuration.rs: selected "
+                    f"fpathconf leaf must not select {forbidden!r}"
+                )
+    for required in (
+        "#include <errno.h>",
+        "#include <limits.h>",
+        "#include <unistd.h>",
+        "fpathconf_signature",
+        "expected_values",
+        "check_direct_values",
+        "check_indirect_values",
+        "check_nonnegative_invalid",
+        "negative selector without a source-defined result",
+        "_PC_2_SYMLINKS",
+        "E2BIG",
+        "EINVAL",
+        "CRABC_FPATHCONF_FREESTANDING",
+    ):
+        if required not in fpathconf_probe:
+            errors.append(
+                "compat/x86_64/libc_fpathconf_probe.c: static fpathconf regression "
+                f"is missing {required!r}"
+            )
+    for required in (
+        "crabc_x86_64_fpathconf_probe",
+        "crabc_x86_64_fpathconf_thread_pointer",
+        "mov %rsi, %fs:0",
+        "mov $60, %eax",
+    ):
+        if required not in fpathconf_start:
+            errors.append(
+                "compat/x86_64/libc_fpathconf_start.S: static fpathconf entry shim "
+                f"is missing {required!r}"
+            )
+    for required in (
+        "run_musl_oracle.sh",
+        "run_fpathconf_header_abi.sh",
+        "fpathconf.lo",
+        "archive_member_for_symbol",
+        "-nostdlib -static",
+        "--no-undefined",
+        "--gc-sections",
+        "candidate retained neighboring system-configuration or resource C ABI symbols",
+        "candidate retained an unselected text or allocator dependency",
+        "candidate fpathconf unexpectedly performs a syscall",
+        "candidate fpathconf calls outside its explicit errno seam",
+        "candidate errno accessor does not use direct initial-TLS FS access",
+    ):
+        if required not in fpathconf_runner:
+            errors.append(
+                "compat/x86_64/run_libc_fpathconf.sh: static fpathconf evidence "
+                f"is missing {required!r}"
+            )
+    if "--whole-archive" in fpathconf_runner:
+        errors.append(
+            "compat/x86_64/run_libc_fpathconf.sh: static fpathconf evidence must "
+            "not force-link the archive"
+        )
+    for header_probe in (fpathconf_header_c, fpathconf_header_cxx):
+        for required in ("fpathconf_signature", "fpathconf", "long"):
+            if required not in header_probe:
+                errors.append(
+                    "x86 fpathconf header probe is missing " f"{required!r}"
+                )
+    for required in (
+        "fpathconf_header_abi_probe.c",
+        "fpathconf_header_abi_probe.cpp",
+        "-nostdinc",
+        "-nostdinc++",
+        "compile_profile strict",
+        "compile_profile posix",
+        "compile_profile xopen",
+        "compile_profile gnu",
+        "compile_profile bsd",
+        "retained a mangled fpathconf reference",
+        "escaped its declared roots",
+    ):
+        if required not in fpathconf_header_runner:
+            errors.append(
+                "compat/x86_64/run_fpathconf_header_abi.sh: fpathconf declaration "
+                f"evidence is missing {required!r}"
+            )
+
     static_startup_source = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_startup.rs"
     static_startup_text = static_startup_source.read_text(errors="replace")
     for required in (

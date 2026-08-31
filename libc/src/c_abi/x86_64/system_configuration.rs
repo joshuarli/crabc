@@ -14,8 +14,12 @@
 //! - `src/conf/sysconf.c` maps to the explicitly selected two-selector
 //!   [`sysconf`] surface.
 //! - `src/conf/confstr.c` maps to [`confstr`].
-//! - `src/conf/pathconf.c` and `src/conf/fpathconf.c` map to [`pathconf`] and
-//!   [`fpathconf`], including their deliberate path- and fd-independent table.
+//! - `src/conf/fpathconf.c` maps to [`fpathconf`]'s deliberate
+//!   fd-independent selector table. The selected positive selector boundary is
+//!   0 through 20 plus the defined nonnegative out-of-range `EINVAL` result;
+//!   musl's unchecked negative C-array index remains outside differential admission.
+//! - `src/conf/pathconf.c` maps to [`pathconf`], which reuses the same table
+//!   without dereferencing its pathname.
 //! - `src/legacy/getpagesize.c` maps to [`getpagesize`].
 //! - `src/legacy/getdtablesize.c` maps to [`getdtablesize`].
 //!
@@ -207,8 +211,8 @@ unsafe fn selected_pathconf(name: c_int) -> c_long {
 /// Return a selected path configuration value for an open descriptor.
 ///
 /// Musl's selected Linux contract is table-based, so `fd` is deliberately not
-/// dereferenced or passed to Linux. Valid selectors therefore do not fail for
-/// an invalid descriptor; valid indeterminate `-1` values preserve `errno`.
+/// dereferenced or passed to Linux. Valid selectors therefore do not fail for an invalid
+/// descriptor; valid indeterminate `-1` values preserve `errno`.
 #[no_mangle]
 pub extern "C" fn fpathconf(_fd: c_int, name: c_int) -> c_long {
     // SAFETY: this helper only publishes EINVAL for an invalid scalar selector.
