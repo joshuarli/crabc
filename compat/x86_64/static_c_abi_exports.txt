@@ -847,6 +847,8 @@ strxfrm_l
 symlink
 sysconf
 sysinfo
+tan
+tanf
 tanhl
 tanl
 tcflow

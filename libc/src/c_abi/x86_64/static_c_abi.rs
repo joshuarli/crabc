@@ -266,6 +266,8 @@ mod math_log;
 mod math_log10;
 #[path = "math_sin.rs"]
 mod math_sin;
+#[path = "math_tan.rs"]
+mod math_tan;
 #[path = "math_ceil.rs"]
 mod math_ceil;
 #[path = "math_floor.rs"]
