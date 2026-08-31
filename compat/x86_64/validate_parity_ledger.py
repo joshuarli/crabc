@@ -1266,7 +1266,6 @@ PATHNAME_LIFECYCLE_UNSELECTED_SYMBOLS = (
     "chroot",
     "fchdir",
     "fchmodat",
-    "lchmod",
     "linkat",
     "mkdirat",
     "realpath",
@@ -11226,6 +11225,139 @@ def require_filesystem_access_artifact(family: Mapping[str, Any]) -> None:
     )
 
 
+def require_lchmod_unsupported_slice(family: Mapping[str, Any]) -> None:
+    """Keep the selected fixed Linux lchmod result narrow and non-promoting."""
+    slices = require_verified_slices(
+        family.get("verified_slice"),
+        "family[libc.posix-runtime].verified_slice",
+        family.get("status", ""),
+        string_list(family.get("capabilities"), "family[libc.posix-runtime].capabilities"),
+    )
+    matching = [entry for entry in slices if entry.get("id") == "filesystem.lchmod-unsupported"]
+    require(
+        len(matching) == 1,
+        "libc.posix-runtime must contain exactly one filesystem.lchmod-unsupported slice",
+    )
+    require(
+        family.get("status") == "planned",
+        "filesystem.lchmod-unsupported must not promote libc.posix-runtime",
+    )
+    slice_entry = matching[0]
+    require(
+        slice_entry.get("capabilities") == ["filesystem.lchmod-unsupported"],
+        "filesystem.lchmod-unsupported must own exactly its one baseline capability",
+    )
+    description = slice_entry["description"]
+    assert isinstance(description, str)
+    for phrase in (
+        "selected-static-archive `lchmod`",
+        "pinned musl 1.2.6",
+        "`-nostdlib -static`",
+        "EOPNOTSUPP`/`ENOTSUP` 95",
+        "neither follows the symlink nor performs a Linux syscall",
+        "candidate-only null-path probe",
+        "absent-path behavior",
+        "fchmodat",
+        "directory streams",
+        "filesystem extensions",
+        "public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"filesystem.lchmod-unsupported description omits {phrase}",
+        )
+    owners = set(
+        nonempty_strings(
+            slice_entry["source_owners"], "filesystem.lchmod-unsupported.source_owners"
+        )
+    )
+    for owner in (
+        "libc/src/filesystem_paths_exports.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/lchmod_unsupported.rs",
+        "libc/src/c_abi/x86_64/errno.rs",
+        "include/errno.h",
+        "include/sys/stat.h",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/libc_lchmod_unsupported_probe.c",
+        "compat/x86_64/libc_lchmod_unsupported_start.S",
+        "compat/x86_64/run_libc_lchmod_unsupported.sh",
+        "scripts/dev-x86_64.sh",
+    ):
+        require(
+            owner in owners,
+            f"filesystem.lchmod-unsupported source owners omit {owner}",
+        )
+    prerequisites = nonempty_strings(
+        slice_entry["x86_abi_prerequisites"],
+        "filesystem.lchmod-unsupported.x86_abi_prerequisites",
+    )
+    require(
+        any("rdi" in item and "rsi" in item and "mode_t" in item and "-1" in item for item in prerequisites),
+        "filesystem.lchmod-unsupported must record its SysV AMD64 signature",
+    )
+    require(
+        any("EOPNOTSUPP=ENOTSUP=95" in item and "no raw syscall" in item for item in prerequisites),
+        "filesystem.lchmod-unsupported must record its fixed Linux unsupported result",
+    )
+    require(
+        any("src/stat/lchmod.c" in item and "AT_SYMLINK_NOFOLLOW" in item and "dangling symlink" in item for item in prerequisites),
+        "filesystem.lchmod-unsupported must record its pinned-musl no-follow oracle",
+    )
+    static_exports = set(
+        static_c_abi_export_names(ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt")
+    )
+    require("lchmod" in static_exports, "filesystem.lchmod-unsupported must export lchmod")
+    static_root = (ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs").read_text(encoding="utf-8")
+    require(
+        '#[path = "lchmod_unsupported.rs"]\nmod lchmod_unsupported;' in static_root,
+        "x86 static C ABI must compose the lchmod unsupported leaf",
+    )
+    implementation = (ROOT / "libc" / "src" / "c_abi" / "x86_64" / "lchmod_unsupported.rs").read_text(encoding="utf-8")
+    for snippet in ("src/stat/lchmod.c", "EOPNOTSUPP", "fn lchmod", "errno::set_errno"):
+        require(
+            snippet in implementation,
+            f"lchmod unsupported leaf omits {snippet}",
+        )
+    require("raw_syscall" not in implementation, "lchmod unsupported leaf must not issue a syscall")
+    evidence = slice_entry["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence} == {"./scripts/dev-x86_64.sh libc-lchmod-unsupported"},
+        "filesystem.lchmod-unsupported must use the dedicated native command",
+    )
+    scope = evidence[0].get("scope")
+    require(
+        isinstance(scope, str)
+        and all(
+            phrase in scope
+            for phrase in (
+                "`-nostdlib -static` candidate",
+                "symlink=88/unlink=87",
+                "-1/EOPNOTSUPP=ENOTSUP=95",
+                "candidate-only null-path fixed-result behavior",
+                "neither syscall nor chmod/fchmod/fchmodat/stat delegation",
+                "public x86 support",
+            )
+        ),
+        "filesystem.lchmod-unsupported evidence must retain its exact static regression",
+    )
+    runner = (ROOT / "compat" / "x86_64" / "run_libc_lchmod_unsupported.sh").read_text(encoding="utf-8")
+    for snippet in (
+        "run_musl_oracle.sh",
+        "-nostdlib -static",
+        "--no-undefined",
+        "assert_selected_c_abi_surface",
+        "lchmod unexpectedly issues a Linux syscall",
+        "lchmod unexpectedly follows a pathname",
+        "CRABC_LCHMOD_UNSUPPORTED_FREESTANDING",
+    ):
+        require(
+            snippet in runner,
+            f"lchmod unsupported runner omits {snippet}",
+        )
+
+
 def require_fcntl_status_control_artifact(family: Mapping[str, Any]) -> None:
     """Keep the bounded variadic C fcntl artifact honest and non-promoting."""
     artifacts = require_verified_artifacts(
@@ -16436,6 +16568,7 @@ def validate_ledger(
     require_clock_nanosleep_artifact(by_id["libc.posix-runtime"])
     require_nanosleep_artifact(by_id["libc.posix-runtime"])
     require_descriptor_entry_artifact(by_id["libc.posix-runtime"])
+    require_lchmod_unsupported_slice(by_id["libc.posix-runtime"])
     require_filesystem_access_artifact(by_id["libc.posix-runtime"])
     require_fcntl_status_control_artifact(by_id["libc.posix-runtime"])
     require_fcntl_record_locks_artifact(by_id["libc.posix-runtime"])

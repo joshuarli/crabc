@@ -894,6 +894,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "libc-extended-attributes",
             "libc-pathname-lifecycle",
             "libc-directory-streams",
+            "libc-lchmod-unsupported",
             "libc-stdio-standard|libc-text-math-locale-stdio-composition",
             "libc-pthread-identity",
             "libc-pthread-detach",
@@ -956,6 +957,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn("libc-event-descriptors", source)
         self.assertIn("libc-pathname-lifecycle", source)
         self.assertIn("libc-directory-streams", source)
+        self.assertIn("libc-lchmod-unsupported", source)
         self.assertIn("libc-process-resources", source)
         self.assertIn("libc-readiness-waits", source)
         self.assertIn("libc-socket-transport", source)
@@ -12331,7 +12333,6 @@ class X86_64CoreRunnerTests(unittest.TestCase):
                 "readlinkat",
                 "mkdirat",
                 "fchmodat",
-                "lchmod",
                 "scandir",
             }
         )

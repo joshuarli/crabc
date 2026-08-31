@@ -460,9 +460,18 @@ It proves only static C `access`, `faccessat`, `euidaccess`, and weak
 same-address `eaccess` through pinned-musl and freestanding-archive runs:
 real versus effective credentials, zero-flag legacy and flags-bearing Linux
 paths, direct errno behavior, and strong caller alias override. It is not
-filesystem capability or C-runtime parity; pathname policy, `fchmodat`/
-`lchmod`, broader C credential/process behavior, and public x86 support remain
-planned.
+filesystem capability or C-runtime parity; pathname policy, `fchmodat`,
+broader C credential/process behavior, and public x86 support remain planned.
+
+The separate private `libc-lchmod-unsupported` command
+(`./scripts/dev-x86_64.sh libc-lchmod-unsupported`) selects only the
+GNU/BSD-visible C `lchmod` ABI: a project-header fixture runs a raw-created
+dangling symlink through pinned musl and then a `-nostdlib -static` candidate.
+Both return `-1` with `EOPNOTSUPP`/`ENOTSUP` 95; the candidate deliberately
+does no pathname resolution or syscall, and its candidate-only null-path check
+proves that fixed pre-resolution boundary. It does not select `fchmodat`, path or
+permission policy, directory/extensions behavior, allocation, cancellation,
+family completion, promotion, or public x86 support.
 
 `./scripts/dev-x86_64.sh libc-descriptor-lifecycle` is a separate private
 `static-c-descriptor-lifecycle` composition artifact inside that same planned

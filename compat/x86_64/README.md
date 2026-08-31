@@ -662,6 +662,16 @@ order to the selected public `strverscmp` byte-string leaf. `scandir`,
 directory walking, broader locale collation, cancellation, full C runtime/POSIX
 parity, family promotion, and public x86 support remain excluded.
 
+`libc-lchmod-unsupported` is a private native `verified_slice`, not a
+promotion. Its project-header C fixture first runs a raw-created dangling
+symlink through pinned musl 1.2.6 and then through the exact `crabc-libc`
+archive under `-nostdlib -static`. It selects only GNU/BSD-visible `lchmod`:
+the candidate returns `-1` with `EOPNOTSUPP`/`ENOTSUP` 95 without pathname
+resolution or a Linux syscall; its candidate-only null-path check demonstrates
+that fixed pre-resolution boundary. It excludes `fchmodat`, path/permission policy,
+directory or filesystem-extension behavior, allocation, cancellation, family
+completion, promotion, and public x86 support.
+
 `libc-extended-attributes` is the separate private static C runtime artifact
 paired with that header gate. Its project-header fixture first runs through
 pinned musl 1.2.6 and then through the exact `crabc-libc` archive under
@@ -2681,7 +2691,7 @@ real-ID check, zero flags use `faccessat=269`, and nonzero flags use
 record plus fixture-local raw child prove real/effective credential separation,
 descriptor-relative and final-symlink behavior, direct errno results, stale
 errno on success, and a strong caller override of the weak alias. It excludes
-path/permission policy, `fchmodat`/`lchmod`, general C credential/process
+path/permission policy, `fchmodat`, general C credential/process
 behavior, cancellation, dynamic runtime, and public x86 support.
 
 `libc-fcntl-status-control` is a separately recorded

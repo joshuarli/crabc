@@ -107,6 +107,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-extended-attributes  run the static x86 crabc-libc extended-attribute slice
   libc-pathname-lifecycle  run the static x86 crabc-libc pathname-lifecycle slice
   libc-directory-streams  run the static x86 crabc-libc directory-stream slice
+  libc-lchmod-unsupported  run the static x86 crabc-libc lchmod unsupported slice
   mm-abi-reference  verify pinned-musl x86 mapping syscall and flag constants
   mapping-reference  verify pinned-musl/raw x86 anonymous mapping lifecycle
   memory-vm-reference  verify pinned-musl/raw x86 raw-break and VM-policy seam
@@ -1202,7 +1203,7 @@ C fixture after an equivalent pinned-musl run. It selects only `access`,
 direct `access=21` real-ID checks, zero-flag `faccessat=269`, and nonzero-flag
 `faccessat2=439` with its fourth word in r10. A runner-provisioned root-owned
 record and fixture-local raw child contain the real/effective-ID distinction;
-this does not select path policy, a filesystem capability, `fchmodat`/`lchmod`,
+this does not select path policy, a filesystem capability, `fchmodat`,
 C credential/process APIs, cancellation, dynamic runtime, or public x86
 support.
 `libc-fcntl-status-control` links that archive into a separate freestanding
@@ -1794,6 +1795,10 @@ run_libc_pathname_lifecycle() {
 
 run_libc_directory_streams() {
     run_in_container bash /workspace/compat/x86_64/run_libc_directory_streams.sh
+}
+
+run_libc_lchmod_unsupported() {
+    run_in_container bash /workspace/compat/x86_64/run_libc_lchmod_unsupported.sh
 }
 
 run_ffs_header_abi() {
@@ -2880,6 +2885,7 @@ case "$command" in
     libc-extended-attributes) ;;
     libc-pathname-lifecycle) ;;
     libc-directory-streams) ;;
+    libc-lchmod-unsupported) ;;
     libc-stdio-standard|libc-text-math-locale-stdio-composition) ;;
     libc-pthread-identity) ;;
     libc-pthread-detach) ;;
@@ -4113,6 +4119,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "libc-directory-streams takes no arguments"
         ensure_image
         run_libc_directory_streams
+        ;;
+    libc-lchmod-unsupported)
+        [ "$#" -eq 0 ] || fail "libc-lchmod-unsupported takes no arguments"
+        ensure_image
+        run_libc_lchmod_unsupported
         ;;
     libc-ffs)
         [ "$#" -eq 0 ] || fail "libc-ffs takes no arguments"

@@ -197,7 +197,7 @@ grep -Eq '[[:space:]]W[[:space:]]eaccess$' "$archive_symbols" ||
 if grep -Eq '[[:space:]]T[[:space:]]eaccess$' "$archive_symbols"; then
     fail "archive uses an eaccess wrapper instead of musl's weak alias"
 fi
-for unselected in fchmodat fchownat fchown lchmod chown syscall; do
+for unselected in fchmodat fchownat fchown chown syscall; do
     if grep -Eq "[[:space:]][TW][[:space:]]${unselected}$" "$archive_symbols"; then
         fail "archive accidentally exports unselected ${unselected}"
     fi

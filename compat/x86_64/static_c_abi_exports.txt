@@ -218,6 +218,7 @@ isxdigit
 kill
 killpg
 labs
+lchmod
 ldiv
 lgetxattr
 link

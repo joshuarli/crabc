@@ -18,7 +18,8 @@
 //! private Static Initial TLS v1 final-executable template, plus bounded weak `pthread_self`/
 //! `pthread_equal` and `thrd_current`/`thrd_equal` identity aliases,
 //! termios-control, selected process-context, child-reaping, selected
-//! descriptor-entry, selected filesystem-access, bounded fcntl status-control
+//! descriptor-entry, selected filesystem-access, fixed Linux `lchmod`
+//! unsupported compatibility, bounded fcntl status-control
 //! and nonblocking record-lock boundaries, advisory whole-file flock, bounded
 //! regular-file sendfile transfer, mode-zero POSIX range allocation,
 //! descriptor advice, timestamp updates, descriptor-I/O, vector-I/O, and
@@ -187,6 +188,8 @@ mod nanosleep;
 mod descriptor_entry;
 #[path = "filesystem_access.rs"]
 mod filesystem_access;
+#[path = "lchmod_unsupported.rs"]
+mod lchmod_unsupported;
 #[path = "extended_attributes.rs"]
 mod extended_attributes;
 #[path = "descriptor_control.rs"]

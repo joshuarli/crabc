@@ -49,7 +49,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["status_counts"], {"foundation-verified": 8, "planned": 18})
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
-        self.assertEqual(report["verified_slice_count"], 28)
+        self.assertEqual(report["verified_slice_count"], 29)
         self.assertEqual(report["verified_artifact_count"], 100)
         self.assertEqual(report["header_layout_probe_count"], 45)
         self.assertEqual(report["public_header_inventory_count"], 183)
@@ -2571,7 +2571,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             {evidence["command"] for evidence in headers_layouts["native_evidence"]},
         )
         slices = posix_runtime["verified_slice"]
-        assert isinstance(slices, list) and len(slices) == 2
+        assert isinstance(slices, list) and len(slices) == 3
         slices_by_id = {slice_entry["id"]: slice_entry for slice_entry in slices}
         stat_compat = slices_by_id["filesystem.stat-compat"]
         assert isinstance(stat_compat, dict)
@@ -8989,6 +8989,104 @@ class X86ParityLedgerTests(unittest.TestCase):
         ):
             ledger.validate_ledger(data)
 
+    def test_lchmod_unsupported_slice_keeps_its_pre_resolution_boundary(self) -> None:
+        data = self.data()
+        family = self.family(data, "libc.posix-runtime")
+        self.assertEqual(family["status"], "planned")
+        slices = family["verified_slice"]
+        assert isinstance(slices, list)
+        slice_entry = next(
+            entry
+            for entry in slices
+            if isinstance(entry, dict)
+            and entry["id"] == "filesystem.lchmod-unsupported"
+        )
+        self.assertEqual(
+            slice_entry["capabilities"], ["filesystem.lchmod-unsupported"]
+        )
+        for owner in (
+            "libc/src/filesystem_paths_exports.rs",
+            "libc/src/c_abi/x86_64/static_c_abi.rs",
+            "libc/src/c_abi/x86_64/lchmod_unsupported.rs",
+            "libc/src/c_abi/x86_64/errno.rs",
+            "include/errno.h",
+            "include/sys/stat.h",
+            "compat/x86_64/static_c_abi_exports.txt",
+            "compat/x86_64/libc_lchmod_unsupported_probe.c",
+            "compat/x86_64/libc_lchmod_unsupported_start.S",
+            "compat/x86_64/run_libc_lchmod_unsupported.sh",
+            "scripts/dev-x86_64.sh",
+        ):
+            self.assertIn(owner, slice_entry["source_owners"])
+        for phrase in (
+            "selected-static-archive `lchmod`",
+            "pinned musl 1.2.6",
+            "EOPNOTSUPP`/`ENOTSUP` 95",
+            "candidate-only null-path probe",
+            "absent-path behavior",
+            "fchmodat",
+            "directory streams",
+            "filesystem extensions",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, slice_entry["description"])
+        self.assertEqual(
+            {entry["command"] for entry in slice_entry["native_evidence"]},
+            {"./scripts/dev-x86_64.sh libc-lchmod-unsupported"},
+        )
+
+        exports = set(
+            (ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt")
+            .read_text(encoding="utf-8")
+            .splitlines()
+        )
+        self.assertIn("lchmod", exports)
+        self.assertFalse(exports & {"fchmodat", "scandir", "mkdtemp"})
+
+        probe = (
+            ROOT / "compat" / "x86_64" / "libc_lchmod_unsupported_probe.c"
+        ).read_text(encoding="utf-8")
+        self.assertIn("CRABC_LCHMOD_UNSUPPORTED_FREESTANDING", probe)
+        self.assertIn("check_unsupported((const char *)0, 0600)", probe)
+        runner = (
+            ROOT / "compat" / "x86_64" / "run_libc_lchmod_unsupported.sh"
+        ).read_text(encoding="utf-8")
+        for snippet in (
+            "run_musl_oracle.sh",
+            "-nostdlib -static",
+            "lchmod unexpectedly issues a Linux syscall",
+            "lchmod unexpectedly follows a pathname",
+        ):
+            self.assertIn(snippet, runner)
+
+        data = self.data()
+        slices = self.family(data, "libc.posix-runtime")["verified_slice"]
+        assert isinstance(slices, list)
+        slice_entry = next(
+            entry
+            for entry in slices
+            if isinstance(entry, dict)
+            and entry["id"] == "filesystem.lchmod-unsupported"
+        )
+        slice_entry["description"] = slice_entry["description"].replace(
+            "candidate-only null-path probe", "missing null-path proof"
+        )
+        with self.assertRaisesRegex(ledger.LedgerError, "candidate-only null-path probe"):
+            ledger.validate_ledger(data)
+
+        data = self.data()
+        slices = self.family(data, "libc.posix-runtime")["verified_slice"]
+        assert isinstance(slices, list)
+        slice_entry = next(
+            entry
+            for entry in slices
+            if isinstance(entry, dict)
+            and entry["id"] == "filesystem.lchmod-unsupported"
+        )
+        slice_entry["capabilities"] = ["filesystem.directory"]
+        with self.assertRaisesRegex(ledger.LedgerError, "must own exactly its one baseline capability"):
+            ledger.validate_ledger(data)
+
     def test_filesystem_access_artifact_keeps_its_closed_mapping_contract(self) -> None:
         data = self.data()
         artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
@@ -10149,7 +10247,6 @@ class X86ParityLedgerTests(unittest.TestCase):
             "chroot",
             "fchdir",
             "fchmodat",
-            "lchmod",
             "linkat",
             "mkdirat",
             "realpath",
