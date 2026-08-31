@@ -1725,6 +1725,22 @@ scheduler support: mutation or policy, parameter records, priority bounds,
 family/platform parity, promotion, and public x86 support remain outside the
 artifact.
 
+`./scripts/dev-x86_64.sh libc-sched-setparam` is a separate private
+`static-c-sched-setparam` artifact inside planned `libc.posix-runtime`.
+Pinned musl 1.2.6's `src/sched/sched_setparam.c` intentionally turns the POSIX
+process-facing `sched_setparam(pid_t, const struct sched_param *)` spelling
+into `-1`/`ENOSYS` for every PID-shaped input and every read-only record
+pointer, including null, rather than forwarding Linux x86 raw syscall 142,
+which can mutate a thread's scheduler parameter. Its true-static C body uses
+raw syscall 142 only against impossible `INT_MAX` with a valid zero parameter,
+proving non-mutating `-ESRCH`, then proves the musl C ABI result for 0, -1, and
+INT_MAX with an untouched 48-byte record and null pointers. The
+strict/POSIX/X/Open/GNU C/C++ header matrix retains the exact unmangled
+declaration and LP64 record layout. This is not scheduler support: mutation or
+policy, parameter records, priority bounds, `sched_yield`, affinity, pthread
+scheduling attributes, lifecycle, family/platform parity, promotion, and
+public x86 support remain outside the artifact.
+
 `./scripts/dev-x86_64.sh libc-sigaddset-sigdelset-sigfillset` is a separate
 private `static-c-sigset-mutation` artifact inside planned
 `libc.posix-runtime`. Its three-symbol pinned-musl/freestanding-static C proof

@@ -27,7 +27,8 @@
 //! create/explicit-exit/join/detach worker and its typed C11
 //! `thrd_create`/`thrd_exit`/`thrd_join`/`thrd_detach`/`thrd_sleep` sibling, a
 //! direct C11 `thrd_yield` leaf, one-symbol POSIX scheduler-policy observation
-//! compatibility failure and one separate scheduler-parameter observation
+//! compatibility failure, one separate scheduler-parameter observation
+//! compatibility failure, and one separate scheduler-parameter mutation
 //! compatibility failure, a
 //! process-private normal `pthread_mutex_*` block and its paired private
 //! process-private condition-variable handoff, a complete selected
@@ -326,6 +327,8 @@ mod thrd_yield;
 mod sched_getscheduler;
 #[path = "sched_getparam.rs"]
 mod sched_getparam;
+#[path = "sched_setparam.rs"]
+mod sched_setparam;
 #[path = "c11_sync.rs"]
 mod c11_sync;
 #[path = "pthread_once.rs"]

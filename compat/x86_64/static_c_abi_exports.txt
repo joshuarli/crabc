@@ -703,6 +703,7 @@ scalbnf
 scalbnl
 sched_getparam
 sched_getscheduler
+sched_setparam
 secure_getenv
 seekdir
 select

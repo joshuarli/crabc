@@ -15451,6 +15451,106 @@ class X86ParityLedgerTests(unittest.TestCase):
         ):
             ledger.validate_ledger(data)
 
+    def test_sched_setparam_artifact_keeps_its_musl_enosys_contract(self) -> None:
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-sched-setparam"
+        )
+        self.assertNotIn("capabilities", artifact)
+        for owner in (
+            "libc/src/c_abi/x86_64/sched_setparam.rs",
+            "include/sched.h",
+            "compat/x86_64/sched_setparam_header_abi_probe.c",
+            "compat/x86_64/sched_setparam_header_abi_probe.cpp",
+            "compat/x86_64/run_sched_setparam_header_abi.sh",
+            "compat/x86_64/libc_sched_setparam_probe.c",
+            "compat/x86_64/libc_sched_setparam_start.S",
+            "compat/x86_64/run_libc_sched_setparam.sh",
+            "compat/x86_64/run_libc_process_resources.sh",
+        ):
+            self.assertIn(owner, artifact["source_owners"])
+        self.assertEqual(
+            {evidence["command"] for evidence in artifact["native_evidence"]},
+            {"./scripts/dev-x86_64.sh libc-sched-setparam"},
+        )
+        for phrase in (
+            "one-symbol POSIX scheduler-parameter compatibility-failure artifact",
+            "planned `libc.posix-runtime`",
+            "exactly `sched_setparam`",
+            "`src/sched/sched_setparam.c`",
+            "`__syscall_ret(-ENOSYS)`",
+            "`-1` and writes `ENOSYS=38`",
+            "thread-scoped raw x86 syscall 142",
+            "non-mutating `-ESRCH`",
+            "48-byte `struct sched_param`",
+            "strict/POSIX/X/Open/GNU C and C++17 feature matrix",
+            "makes no raw syscall",
+            "separate `sched_getparam`, `sched_getscheduler`, C11 `thrd_yield`, and priority-bounds",
+            "scheduler-family completion, promotion, or public x86 support",
+        ):
+            self.assertIn(phrase, artifact["description"])
+        prerequisites = artifact["x86_abi_prerequisites"]
+        self.assertTrue(
+            any(
+                "pid_t" in prerequisite
+                and "edi" in prerequisite
+                and "rsi" in prerequisite
+                and "eax" in prerequisite
+                and "syscall 142" in prerequisite
+                for prerequisite in prerequisites
+            )
+        )
+        self.assertTrue(
+            any(
+                "src/sched/sched_setparam.c" in prerequisite
+                and "__syscall_ret(-ENOSYS)" in prerequisite
+                and "thread-scoped" in prerequisite
+                for prerequisite in prerequisites
+            )
+        )
+        self.assertTrue(
+            any(
+                "raw 142 only" in prerequisite
+                and "non-mutating -ESRCH" in prerequisite
+                and "untouched 48-byte record" in prerequisite
+                for prerequisite in prerequisites
+            )
+        )
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-sched-setparam"
+        )
+        artifact["description"] = "private scheduler helper"
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "static-c-sched-setparam description omits"
+        ):
+            ledger.validate_ledger(data)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-sched-setparam"
+        )
+        evidence = artifact["native_evidence"]
+        assert isinstance(evidence, list) and isinstance(evidence[0], dict)
+        evidence[0]["command"] = "./scripts/dev-x86_64.sh scheduler-reference"
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "closed libc-sched-setparam command"
+        ):
+            ledger.validate_ledger(data)
+
     def test_sigset_mutation_artifact_keeps_its_closed_static_contract(self) -> None:
         data = self.data()
         artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
