@@ -2386,6 +2386,7 @@ unsafe extern "C" fn fixed_graph_address(
             continue;
         }
         let mut best_address = 0usize;
+        let mut best_size = 0u64;
         let mut best_name = core::ptr::null();
         let mut best_name_len = 0usize;
         for symbol_index in 1..object.symcount {
@@ -2411,16 +2412,36 @@ unsafe extern "C" fn fixed_graph_address(
                 continue;
             };
             best_address = symbol_address as usize;
+            best_size = read_u64(symbol.add(16));
             best_name = symbol_name;
             best_name_len = symbol_name_len;
         }
+        // Musl's `dynlink.c:dladdr` first identifies the containing DSO and
+        // then chooses its nearest eligible dynamic symbol.  A finite symbol
+        // does not describe the rest of that DSO: when the address falls at
+        // or after `st_size`, musl retains dli_fname/dli_fbase but clears the
+        // two symbol fields.  Its unsigned `st_size - 1` comparison treats a
+        // zero-sized dynamic symbol as open-ended; preserve that deliberate
+        // compatibility detail instead of inventing a synthetic empty range.
+        // This is metadata over the already-published no-TLS fixed graph only;
+        // it neither changes symbol lookup nor admits another object.
+        let symbol_contains_address = best_address != 0
+            && (best_size == 0
+                || matches!(
+                    usize::try_from(best_size),
+                    Ok(size) if address_value - best_address < size
+                ));
         core::ptr::write(
             result,
             FixedGraphAddressV1 {
                 image_base: object.base as *mut c_void,
-                symbol_address: best_address as *mut c_void,
+                symbol_address: if symbol_contains_address {
+                    best_address as *mut c_void
+                } else {
+                    core::ptr::null_mut()
+                },
                 image_name: fixed_graph_name(object_index),
-                symbol_name: if best_name.is_null() {
+                symbol_name: if !symbol_contains_address || best_name.is_null() {
                     EMPTY_FIXED_GRAPH_TEXT
                 } else {
                     fixed_graph_text_from_bytes(best_name, best_name_len)

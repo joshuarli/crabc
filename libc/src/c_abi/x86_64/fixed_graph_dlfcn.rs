@@ -494,8 +494,17 @@ pub unsafe extern "C" fn dladdr(address: *const c_void, information: *mut DlInfo
     copy_text_to_c(storage.symbol_name.as_mut_ptr(), &found.symbol_name);
     (*information).dli_fname = storage.image_name.as_ptr().cast();
     (*information).dli_fbase = found.image_base;
-    (*information).dli_sname = storage.symbol_name.as_ptr().cast();
-    (*information).dli_saddr = found.symbol_address;
+    // A containing object with no finite dynamic symbol is a successful
+    // musl-shaped `dladdr` result, but its two symbol fields are null rather
+    // than borrowed pointers to an empty string.  The loader owns that
+    // distinction in `symbol_address`; preserve it across this copied C view.
+    if found.symbol_address.is_null() {
+        (*information).dli_sname = ptr::null();
+        (*information).dli_saddr = ptr::null_mut();
+    } else {
+        (*information).dli_sname = storage.symbol_name.as_ptr().cast();
+        (*information).dli_saddr = found.symbol_address;
+    }
     1
 }
 

@@ -6614,7 +6614,7 @@ def require_ldso_dynamic_admission_artifact(family: Mapping[str, Any]) -> None:
     assert isinstance(description, str)
     for phrase in (
         "still-planned `ldso.dynamic-runtime`",
-        "six fixed private interpreter/bridge graphs",
+        "seven fixed private interpreter/bridge graphs",
         "one bounded runtime-mapping graph",
         "R_X86_64_RELATIVE/GLOB_DAT/JUMP_SLOT",
         "bounded leaf `DT_RELR`",
@@ -6628,6 +6628,7 @@ def require_ldso_dynamic_admission_artifact(family: Mapping[str, Any]) -> None:
         "cannot map, promote, finalize, or unload",
         "public C dlfcn bridge",
         "bounded per-thread diagnostics",
+        "finite-symbol `dladdr` boundary",
         "one serialized RUNPATH mapping",
         "validated executable runtime `DT_INIT`",
         "validated inert legacy `DT_FINI` target",
@@ -6655,6 +6656,7 @@ def require_ldso_dynamic_admission_artifact(family: Mapping[str, Any]) -> None:
         "compat/x86_64/run_ldso_fixed_graph_introspection.sh",
         "compat/x86_64/run_ldso_fixed_graph_dlfcn.sh",
         "compat/x86_64/run_ldso_public_dlfcn.sh",
+        "compat/x86_64/run_ldso_dladdr_symbol_bounds.sh",
         "compat/x86_64/run_ldso_bounded_dlopen.sh",
         "compat/x86_64/run_ldso_dynamic_admission.sh",
         "scripts/dev-x86_64.sh",
@@ -6679,6 +6681,7 @@ def require_ldso_dynamic_admission_artifact(family: Mapping[str, Any]) -> None:
         "run_ldso_fixed_graph_introspection.sh",
         "run_ldso_fixed_graph_dlfcn.sh",
         "run_ldso_public_dlfcn.sh",
+        "run_ldso_dladdr_symbol_bounds.sh",
         "run_ldso_bounded_dlopen.sh",
         "bounded_plugin_legacy_initialize",
         "bounded_plugin_legacy_finalize",
@@ -6695,6 +6698,8 @@ def require_ldso_dynamic_admission_artifact(family: Mapping[str, Any]) -> None:
         "__crabc_x86_64_fixed_graph_introspection_v1",
         "__crabc_x86_64_fixed_graph_dlfcn_v1",
         "main-crabc-public-dlfcn-absent",
+        "dladdr_bounded_data",
+        "main-musl-dladdr-symbol-bounds",
         "dso-import",
         "DT_TEXTREL",
         "STATIC_TLS",
@@ -7140,6 +7145,162 @@ def require_ldso_public_fixed_graph_dlfcn_artifact(family: Mapping[str, Any]) ->
     require(
         "run_ldso_public_dlfcn.sh" in (ROOT / "scripts" / "dev-x86_64.sh").read_text(),
         "ldso-public-dlfcn dispatcher binding is missing",
+    )
+
+
+def require_ldso_fixed_graph_dladdr_symbol_bounds_artifact(
+    family: Mapping[str, Any],
+) -> None:
+    """Ratchet a finite-symbol dladdr boundary without widening dlfcn."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[ldso.dynamic-runtime].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [
+        entry
+        for entry in artifacts
+        if entry.get("id") == "ldso-fixed-graph-dladdr-symbol-bounds"
+    ]
+    require(
+        len(matching) == 1,
+        "ldso.dynamic-runtime needs exactly one ldso-fixed-graph-dladdr-symbol-bounds artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "ldso-fixed-graph-dladdr-symbol-bounds must not promote ldso.dynamic-runtime",
+    )
+    artifact = matching[0]
+    require(
+        "capabilities" not in artifact,
+        "ldso-fixed-graph-dladdr-symbol-bounds must not select capabilities",
+    )
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for phrase in (
+        "finite-symbol `dladdr` metadata artifact",
+        "still-planned `ldso.dynamic-runtime`",
+        "no-TLS main PIE -> mid.so -> leaf.so graph",
+        "weak undefined `R_X86_64_GLOB_DAT` 64-byte",
+        "four-byte `.dynsym` object",
+        "local mapped padding",
+        "first one-past byte",
+        "zero-sized-symbol open-ended rule",
+        "null symbol result rather than borrowing an empty string",
+        "exact seven public `dl*` exports",
+        "malformed/absent-record fail-closure",
+        "does not select `dlopen`",
+        "either dlfcn capability",
+        "public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"ldso-fixed-graph-dladdr-symbol-bounds description omits {phrase}",
+        )
+    expected_sources = {
+        "ldso/src/x86_64_initial_graph_source_root.rs",
+        "ldso/src/x86_64_initial_graph.rs",
+        "libc/src/c_abi/x86_64/fixed_graph_dlfcn.rs",
+        "libc/src/c_abi/x86_64/fixed_graph_dlfcn_runtime.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "include/dlfcn.h",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/ldso_public_dlfcn_start.S",
+        "compat/x86_64/ldso_dladdr_symbol_bounds_dso.c",
+        "compat/x86_64/ldso_dladdr_symbol_bounds_mid.c",
+        "compat/x86_64/ldso_dladdr_symbol_bounds_probe.c",
+        "compat/x86_64/run_ldso_dladdr_symbol_bounds.sh",
+        "scripts/dev-x86_64.sh",
+    }
+    require(
+        set(
+            string_list(
+                artifact["source_owners"],
+                "ldso-fixed-graph-dladdr-symbol-bounds source owners",
+            )
+        )
+        == expected_sources,
+        "ldso-fixed-graph-dladdr-symbol-bounds source owners drifted",
+    )
+    prerequisite_text = " ".join(
+        string_list(
+            artifact["x86_abi_prerequisites"],
+            "ldso-fixed-graph-dladdr-symbol-bounds ABI prerequisites",
+        )
+    )
+    for phrase in (
+        "STB_WEAK",
+        "R_X86_64_GLOB_DAT",
+        "0x43524142435f5844",
+        "ABI size 64",
+        "STT_OBJECT size four",
+        "address+4",
+        "same checked PT_LOAD",
+        "dynlink.c:dladdr",
+        "address - symbol_address < st_size",
+        "zero size remains open-ended",
+        "Dl_info=32",
+        "null dli_sname/dli_saddr",
+        "seven public C exports",
+        "no ambient libc/loader DT_NEEDED edge and no PT_TLS",
+    ):
+        require(
+            phrase in prerequisite_text,
+            f"ldso-fixed-graph-dladdr-symbol-bounds ABI prerequisites omit {phrase}",
+        )
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh ldso-dladdr-symbol-bounds"},
+        "ldso-fixed-graph-dladdr-symbol-bounds must use the dedicated native command",
+    )
+    scope = evidence[0]["scope"]
+    assert isinstance(scope, str)
+    for phrase in (
+        "pinned-musl 1.2.6 differential",
+        "private ET_DYN loader proof",
+        "four-byte public dynsym object plus local padding",
+        "one-past containing-image/null-symbol result",
+        "unchanged seven-symbol staged libc.a export contract",
+        "malformed and absent record fail-closure",
+        "env -i",
+        "does not select dlopen",
+        "loader.dlfcn-basic",
+        "loader.dlfcn-introspection",
+        "public x86 support",
+    ):
+        require(
+            phrase in scope,
+            f"ldso-fixed-graph-dladdr-symbol-bounds evidence scope omits {phrase}",
+        )
+    runner = (ROOT / "compat" / "x86_64" / "run_ldso_dladdr_symbol_bounds.sh").read_text()
+    for phrase in (
+        "crabc_fixed_graph_dlfcn",
+        "crabc_fixed_graph_dlfcn_malformed",
+        "static_c_abi_exports.txt",
+        "__crabc_x86_64_fixed_graph_dlfcn_v1",
+        "R_X86_64_GLOB_DAT",
+        "dladdr_bounded_data",
+        "libleaf-dladdr-symbol-bounds.so",
+        "main-musl-dladdr-symbol-bounds",
+        "main-crabc-dladdr-symbol-bounds-malformed",
+        "main-crabc-dladdr-symbol-bounds-absent",
+        "PT_TLS",
+        "env -i PATH=/usr/bin:/bin",
+    ):
+        require(
+            phrase in runner,
+            f"ldso-fixed-graph-dladdr-symbol-bounds runner omits {phrase}",
+        )
+    exports = (ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt").read_text().splitlines()
+    for symbol in (
+        "dlopen", "dlsym", "dlclose", "dlerror", "dladdr", "dlinfo", "dl_iterate_phdr"
+    ):
+        require(symbol in exports, f"static C ABI export ratchet omits {symbol}")
+    require(
+        "run_ldso_dladdr_symbol_bounds.sh" in (ROOT / "scripts" / "dev-x86_64.sh").read_text(),
+        "ldso-dladdr-symbol-bounds dispatcher binding is missing",
     )
 
 
@@ -31026,6 +31187,7 @@ def validate_ledger(
     require_ldso_fixed_graph_introspection_artifact(by_id["ldso.dynamic-runtime"])
     require_ldso_fixed_graph_dlfcn_artifact(by_id["ldso.dynamic-runtime"])
     require_ldso_public_fixed_graph_dlfcn_artifact(by_id["ldso.dynamic-runtime"])
+    require_ldso_fixed_graph_dladdr_symbol_bounds_artifact(by_id["ldso.dynamic-runtime"])
     require_ldso_bounded_runtime_dlopen_artifact(by_id["ldso.dynamic-runtime"])
     require_x86_crt_object_bundle_artifact(by_id["crt.dynamic-startup"])
     require_ldso_dynamic_admission_artifact(by_id["ldso.dynamic-runtime"])

@@ -790,7 +790,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         assert isinstance(artifact, dict)
         self.assertNotIn("capabilities", artifact)
         for phrase in (
-            "six fixed private interpreter/bridge graphs",
+            "seven fixed private interpreter/bridge graphs",
             "one bounded runtime-mapping graph",
             "R_X86_64_RELATIVE/GLOB_DAT/JUMP_SLOT",
             "R_X86_64_DTPMOD64/DTPOFF64",
@@ -798,6 +798,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             "callback-free introspection graph",
             "fixed-graph dlfcn runtime graph",
             "public C dlfcn bridge",
+            "finite-symbol `dladdr` boundary",
             "one serialized RUNPATH mapping",
             "validated executable runtime `DT_INIT`",
             "validated inert legacy `DT_FINI` target",
@@ -825,6 +826,7 @@ class X86ParityLedgerTests(unittest.TestCase):
                 "compat/x86_64/run_ldso_fixed_graph_introspection.sh",
                 "compat/x86_64/run_ldso_fixed_graph_dlfcn.sh",
                 "compat/x86_64/run_ldso_public_dlfcn.sh",
+                "compat/x86_64/run_ldso_dladdr_symbol_bounds.sh",
                 "compat/x86_64/run_ldso_bounded_dlopen.sh",
                 "compat/x86_64/run_ldso_dynamic_admission.sh",
                 "scripts/dev-x86_64.sh",
@@ -963,6 +965,73 @@ class X86ParityLedgerTests(unittest.TestCase):
         )
         assert isinstance(changed_artifact, dict)
         changed_artifact["capabilities"] = ["loader.dlfcn-basic"]
+        with self.assertRaisesRegex(
+            ledger.LedgerError,
+            "must not carry capabilities",
+        ):
+            ledger.validate_ledger(changed)
+
+    def test_fixed_graph_dladdr_symbol_bounds_stays_private_and_non_promoting(self) -> None:
+        data = self.data()
+        family = self.family(data, "ldso.dynamic-runtime")
+        self.assertEqual(family["status"], "planned")
+        artifacts = family["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if entry["id"] == "ldso-fixed-graph-dladdr-symbol-bounds"
+        )
+        assert isinstance(artifact, dict)
+        self.assertNotIn("capabilities", artifact)
+        for phrase in (
+            "finite-symbol `dladdr` metadata artifact",
+            "no-TLS main PIE -> mid.so -> leaf.so graph",
+            "four-byte `.dynsym` object",
+            "local mapped padding",
+            "first one-past byte",
+            "zero-sized-symbol open-ended rule",
+            "null symbol result rather than borrowing an empty string",
+            "exact seven public `dl*` exports",
+            "malformed/absent-record fail-closure",
+            "does not select `dlopen`",
+            "either dlfcn capability",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, artifact["description"])
+        self.assertEqual(
+            {entry["command"] for entry in artifact["native_evidence"]},
+            {"./scripts/dev-x86_64.sh ldso-dladdr-symbol-bounds"},
+        )
+        self.assertEqual(
+            set(artifact["source_owners"]),
+            {
+                "ldso/src/x86_64_initial_graph_source_root.rs",
+                "ldso/src/x86_64_initial_graph.rs",
+                "libc/src/c_abi/x86_64/fixed_graph_dlfcn.rs",
+                "libc/src/c_abi/x86_64/fixed_graph_dlfcn_runtime.rs",
+                "libc/src/c_abi/x86_64/static_c_abi.rs",
+                "include/dlfcn.h",
+                "compat/x86_64/static_c_abi_exports.txt",
+                "compat/x86_64/ldso_public_dlfcn_start.S",
+                "compat/x86_64/ldso_dladdr_symbol_bounds_dso.c",
+                "compat/x86_64/ldso_dladdr_symbol_bounds_mid.c",
+                "compat/x86_64/ldso_dladdr_symbol_bounds_probe.c",
+                "compat/x86_64/run_ldso_dladdr_symbol_bounds.sh",
+                "scripts/dev-x86_64.sh",
+            },
+        )
+
+        changed = copy.deepcopy(data)
+        changed_artifacts = self.family(changed, "ldso.dynamic-runtime")["verified_artifact"]
+        assert isinstance(changed_artifacts, list)
+        changed_artifact = next(
+            entry
+            for entry in changed_artifacts
+            if entry["id"] == "ldso-fixed-graph-dladdr-symbol-bounds"
+        )
+        assert isinstance(changed_artifact, dict)
+        changed_artifact["capabilities"] = ["loader.dlfcn-introspection"]
         with self.assertRaisesRegex(
             ledger.LedgerError,
             "must not carry capabilities",
