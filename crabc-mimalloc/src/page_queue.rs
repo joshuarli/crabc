@@ -1434,8 +1434,11 @@ mod tests {
             // SAFETY: every synthetic producer has joined before the source
             // owner begins this traversal. The test keeps the page and all
             // published blocks live and gives this callback sole access to
-            // the page-local owner fields.
-            let collected = unsafe { crate::remote_free::collect(page) }
+            // the page-local owner fields. This projection is limited to the
+            // disjoint owner-local remote-free fields used by the collector.
+            let owner = unsafe { Page::remote_free_owner_state_at(page) }
+                .expect("the source queue keeps its page owner-associated");
+            let collected = unsafe { crate::remote_free::collect(owner) }
                 .expect("the source owner force-collects the joined remote list");
             // SAFETY: the same joined-producer and exclusive-owner proof makes
             // the post-collection `used` observation stable.
@@ -1551,12 +1554,30 @@ mod tests {
         let mut full_remote = MixedCollectAbandonRemoteBlock([0; 16]);
         // SAFETY: each block and its exact live owner-associated page stay
         // pinned until the coordinator has collected all four joined remote
-        // publications. Every block is published exactly once.
+        // publications. Every block is published exactly once. These raw
+        // producer projections name only the atomic source fields used by the
+        // remote publication, not a whole page borrow.
         unsafe {
-            crate::remote_free::push(small_first, small_first_remote.pointer()).unwrap();
-            crate::remote_free::push(small_second, small_second_remote.pointer()).unwrap();
-            crate::remote_free::push(medium, medium_remote.pointer()).unwrap();
-            crate::remote_free::push(full, full_remote.pointer()).unwrap();
+            crate::remote_free::push(
+                Page::remote_free_producer_state_at(small_first),
+                small_first_remote.pointer(),
+            )
+            .unwrap();
+            crate::remote_free::push(
+                Page::remote_free_producer_state_at(small_second),
+                small_second_remote.pointer(),
+            )
+            .unwrap();
+            crate::remote_free::push(
+                Page::remote_free_producer_state_at(medium),
+                medium_remote.pointer(),
+            )
+            .unwrap();
+            crate::remote_free::push(
+                Page::remote_free_producer_state_at(full),
+                full_remote.pointer(),
+            )
+            .unwrap();
         }
 
         let events = core::cell::RefCell::new(std::vec::Vec::new());
