@@ -4272,8 +4272,165 @@ mod tests {
         assert_eq!(align_of::<Page>(), 8);
         assert_eq!(offset_of!(Page, self_), 0);
         assert_eq!(offset_of!(Page, xthread_id), 8);
+        assert_eq!(offset_of!(Page, block_size), 40);
+        assert_eq!(offset_of!(Page, page_offset), 48);
         assert_eq!(offset_of!(Page, xthread_free), 64);
         assert_eq!(offset_of!(Page, memid), 104);
+    }
+
+    #[test]
+    fn remote_free_projection_and_live_client_geometry_coexist_with_owner_mutation() {
+        const BLOCK_SIZE: usize = 64;
+        const PAGE_OFFSET: usize = size_of::<Page>();
+        const STORAGE_WORDS: usize = (PAGE_OFFSET + 2 * BLOCK_SIZE) / size_of::<usize>();
+        const LIVE_THREAD_ID: usize = 12;
+
+        assert_eq!(PAGE_OFFSET, 128);
+        assert_eq!(STORAGE_WORDS * size_of::<usize>(), 256);
+
+        // This address-stable backing contains one source-stride `Page`
+        // followed by its two-block area. It adds no metadata wrapper or
+        // sidecar: `page_offset` names the actual live block area just as in
+        // `free.c:_mi_page_ptr_unalign`.
+        let mut storage = [core::mem::MaybeUninit::<usize>::uninit(); STORAGE_WORDS];
+        let page_pointer = storage.as_mut_ptr().cast::<Page>();
+        let mut initial = Page::remote_free_test_page(2, 1);
+        initial.block_size = BLOCK_SIZE;
+        initial.page_offset = PAGE_OFFSET;
+        initial.xthread_id.store(
+            LIVE_THREAD_ID | PAGE_HAS_INTERIOR_POINTERS,
+            core::sync::atomic::Ordering::Relaxed,
+        );
+        // SAFETY: the word-aligned storage is large enough for the complete
+        // 128-byte `Page`; it is uninitialized and written exactly once.
+        unsafe { page_pointer.write(initial) };
+        // SAFETY: `page_pointer` comes from the live backing allocation and
+        // cannot be null.
+        let page = unsafe { NonNull::new_unchecked(page_pointer) };
+        // SAFETY: the initialized geometry above places this two-block area
+        // immediately after the page metadata inside the same live storage.
+        let first_block = unsafe {
+            NonNull::new_unchecked(page_pointer.cast::<u8>().add(PAGE_OFFSET))
+        };
+        // This interior address represents a still-live aligned client whose
+        // allocation keeps both metadata and block storage live through the
+        // complete scoped producer operation.
+        let client = unsafe { NonNull::new_unchecked(first_block.as_ptr().add(17)) };
+        // SAFETY: the fixture is owner-associated, remains initialized and
+        // address-stable, and this test never abandons, retires, or releases
+        // it. The returned state is used only for its owner-only `used` field.
+        let owner = unsafe { Page::remote_free_owner_state_at(page) }
+            .expect("the test page begins owner-associated");
+        // SAFETY: the same stable fixture permits the producer's atomic-only
+        // projection. Keeping this value while `owner` exists must not create
+        // a whole-page alias.
+        let producer = unsafe { Page::remote_free_producer_state_at(page) };
+        let page_address = page.as_ptr().cast::<u8>().addr();
+        let xthread_id_address = producer.xthread_id.as_ptr().cast::<u8>().addr();
+        let xthread_free_address = producer.xthread_free.as_ptr().cast::<u8>().addr();
+        let used_address = owner.used.as_ptr().cast::<u8>().addr();
+
+        assert_eq!(
+            xthread_id_address.wrapping_sub(page_address),
+            offset_of!(Page, xthread_id),
+        );
+        assert_eq!(
+            xthread_free_address.wrapping_sub(page_address),
+            offset_of!(Page, xthread_free),
+        );
+        assert_eq!(
+            used_address.wrapping_sub(page_address),
+            offset_of!(Page, used),
+        );
+        assert_eq!(owner.xthread_free, producer.xthread_free);
+        assert_eq!(
+            offset_of!(Page, xthread_id) + size_of::<core::sync::atomic::AtomicUsize>(),
+            offset_of!(Page, free),
+        );
+        assert_eq!(
+            offset_of!(Page, used) + size_of::<usize>(),
+            offset_of!(Page, local_free),
+        );
+        assert_eq!(
+            offset_of!(Page, block_size) + size_of::<usize>(),
+            offset_of!(Page, page_offset),
+        );
+        assert!(
+            offset_of!(Page, page_offset) + size_of::<usize>()
+                <= offset_of!(Page, xthread_free),
+        );
+        assert_eq!(
+            offset_of!(Page, xthread_free) + size_of::<core::sync::atomic::AtomicUsize>(),
+            offset_of!(Page, theap),
+        );
+        assert!(used_address + size_of::<usize>() <= xthread_free_address);
+        assert!(xthread_id_address + size_of::<core::sync::atomic::AtomicUsize>() <= used_address);
+
+        let published_page = std::sync::atomic::AtomicPtr::new(page.as_ptr());
+        let published_client = std::sync::atomic::AtomicPtr::new(client.as_ptr());
+        let producer_ready = std::sync::Barrier::new(2);
+        let owner_finished = std::sync::Barrier::new(2);
+        std::thread::scope(|scope| {
+            let published_page = &published_page;
+            let published_client = &published_client;
+            let producer_ready = &producer_ready;
+            let owner_finished = &owner_finished;
+            scope.spawn(move || {
+                let page = NonNull::new(
+                    published_page.load(core::sync::atomic::Ordering::Acquire),
+                )
+                .expect("the scoped page publication remains live");
+                let client = NonNull::new(
+                    published_client.load(core::sync::atomic::Ordering::Acquire),
+                )
+                .expect("the scoped live client publication remains live");
+                // SAFETY: the scoped storage and exact live client remain
+                // valid. This worker retains only raw atomic subobject
+                // pointers plus the source-permitted immutable geometry.
+                let producer = unsafe { Page::remote_free_producer_state_at(page) };
+                producer_ready.wait();
+                // SAFETY: the live interior client keeps the page and its
+                // fixed `block_size`/`page_offset` geometry alive and
+                // unchanged while the owner mutates only `used` below.
+                let expected_block = NonNull::new(
+                    page.as_ptr().cast::<u8>().wrapping_add(PAGE_OFFSET),
+                )
+                .expect("the live block area follows its page metadata");
+                assert_eq!(
+                    unsafe { Page::canonical_remote_block_for_live_client_at(page, client) },
+                    Some(expected_block),
+                );
+                // SAFETY: the projection names initialized atomic source
+                // fields. These loads intentionally form no `Page` borrow.
+                assert_eq!(
+                    unsafe { producer.xthread_id.as_ref() }
+                        .load(core::sync::atomic::Ordering::Acquire),
+                    LIVE_THREAD_ID | PAGE_HAS_INTERIOR_POINTERS,
+                );
+                assert_eq!(
+                    unsafe { producer.xthread_free.as_ref() }
+                        .load(core::sync::atomic::Ordering::Acquire),
+                    1,
+                );
+                owner_finished.wait();
+            });
+
+            producer_ready.wait();
+            // SAFETY: this test thread is the sole source owner of ordinary
+            // mutable page fields. Advancing `used` from one to two models an
+            // owner-local allocation while the first live client continues
+            // to justify the producer's immutable geometry access.
+            unsafe { owner.used.as_ptr().write(2) };
+            owner_finished.wait();
+        });
+
+        // SAFETY: the scoped producer has joined, and this raw field belongs
+        // to the owner-only projection used above.
+        assert_eq!(unsafe { owner.used.as_ptr().read() }, 2);
+        // SAFETY: all concurrent access has joined; these initialized source
+        // geometry fields were immutable throughout the live page lifetime.
+        assert_eq!(unsafe { (*page.as_ptr()).block_size }, BLOCK_SIZE);
+        assert_eq!(unsafe { (*page.as_ptr()).page_offset }, PAGE_OFFSET);
     }
 
     #[test]
