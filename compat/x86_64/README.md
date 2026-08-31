@@ -542,6 +542,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-math-tanh
 ./scripts/dev-x86_64.sh libc-math-atanh
 ./scripts/dev-x86_64.sh libc-math-acosh
+./scripts/dev-x86_64.sh libc-math-sincos
 ./scripts/dev-x86_64.sh libc-math-elementary-long-double
 ./scripts/dev-x86_64.sh libc-fdim
 ./scripts/dev-x86_64.sh libc-locale-profile
@@ -4842,6 +4843,26 @@ crabc-owned definitions, local closure providers/data/helpers, and scalar
 API/policy, special/complex/binary80 math, dynamic linkage, TLS, and ambient
 libm. Family completion, promotion, full x86-64 parity, and public x86 support
 remain unselected.
+`libc-math-sincos` is the separate non-promoting `static-c-math-sincos` GNU
+artifact for binary64/binary32 `sincos`/`sincosf`. Its project-header C fixture
+and default-SSE/`-mfpmath=387` C++ signature probes run first through pinned
+musl and then through one garbage-collected `-nostdlib -static` candidate. The
+checked GCC 15.2.0 translation of musl 1.2.6 `sincos.c`/`sincosf.c` plus
+renamed local sin/cos kernels, pio2 reducers, and floor/scalbn providers is the
+complete direct source closure: it retains source small-input, quadrant,
+large-argument, NaN, and source-ordered dual-output behavior without calling a
+selected public sin/cos sibling or ambient libm. The 512-record raw
+differential covers independent and same-address output pointers, signed zero,
+subnormal inputs, quadrant and large-reduction neighborhoods, finite extremes,
+infinities, quiet/signaling NaNs, both result payloads, flags, and requested
+versus observed MXCSR direction in all four modes. Final-link proof requires
+strong crabc-owned definitions, local kernel/reduction/floor/scalbn providers,
+and scalar `addsd`/`addss`/`subsd`/`subss`/`mulsd`/`mulss`/`cvtsd2ss`/
+`cvtss2sd`, while rejecting weak compiler-builtins fallback, `sincosl`, public
+sin/cos, tan/hyperbolic/inverse-trig functions, fenv API/policy,
+special/complex/binary80 math, dynamic linkage, TLS, and ambient libm. Family
+completion, promotion, full x86-64 parity, and public x86 support remain
+unselected.
 `libc-math-ceil` is the separate non-promoting `static-c-math-ceil` artifact
 for binary64/binary32 `ceil`/`ceilf`. Its project-header C fixture and
 default-SSE/`-mfpmath=387` C++ signature probes run first through pinned musl

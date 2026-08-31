@@ -24024,6 +24024,127 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         ):
             self.assertIn(required, assembly)
 
+    def test_math_sincos_runner_keeps_the_binary32_binary64_static_boundary(self) -> None:
+        dispatcher = RUNNER.read_text(encoding="utf-8")
+        runner = (ROOT / "compat" / "x86_64" / "run_libc_math_sincos.sh").read_text(
+            encoding="utf-8"
+        )
+        probe = (
+            ROOT / "compat" / "x86_64" / "libc_math_sincos_probe.c"
+        ).read_text(encoding="utf-8")
+        header = (
+            ROOT / "compat" / "x86_64" / "math_sincos_header_abi_probe.cpp"
+        ).read_text(encoding="utf-8")
+        header_runner = (
+            ROOT / "compat" / "x86_64" / "run_math_sincos_header_abi.sh"
+        ).read_text(encoding="utf-8")
+        leaf = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "math_sincos.rs"
+        ).read_text(encoding="utf-8")
+        assembly = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "math_sincos_musl_x86_64.S"
+        ).read_text(encoding="utf-8")
+        generator = (
+            ROOT / "compat" / "x86_64" / "generate_libc_math_sincos.py"
+        ).read_text(encoding="utf-8")
+
+        for required in (
+            "math-sincos-header-abi)",
+            "run_math_sincos_header_abi()",
+            "libc-math-sincos)",
+            "run_libc_math_sincos_probe()",
+            "/workspace/compat/x86_64/run_libc_math_sincos.sh",
+        ):
+            self.assertIn(required, dispatcher)
+        for required in (
+            "-nostdlib -static",
+            "--no-undefined",
+            "--gc-sections",
+            "run_math_sincos_header_abi.sh",
+            "strong crabc-owned",
+            "weak compiler-builtins",
+            "candidate does not retain local",
+            "candidate accidentally retains unselected",
+            "candidate retains TLS",
+            "crabc_x86_math_sincos_reduce_pio2_large",
+            "crabc_x86_math_sincos_provider_scalbn",
+            "addsd addss subsd subss mulsd mulss cvtsd2ss cvtss2sd",
+            "sincosl cos cosf cosl",
+            "math_special",
+        ):
+            self.assertIn(required, runner)
+        for required in (
+            "direct_sincos",
+            "direct_sincosf",
+            "SINCOS_RECORD_WORDS 5",
+            "SINCOS_RECORDS_PER_CALL 2",
+            "SINCOS_F64_ALIAS_TAG",
+            "SINCOS_F32_ALIAS_TAG",
+            "binary64_inputs",
+            "binary32_inputs",
+            "FE_TONEAREST",
+            "FE_DOWNWARD",
+            "FE_UPWARD",
+            "FE_TOWARDZERO",
+            "fegetround",
+            "fetestexcept",
+            "0x3ff921fb54442d18",
+            "0x3fc90fdb",
+            "0x4415af1d78b58c40",
+            "0x60ad78ec",
+            "0x7ff0000000000042",
+            "0x7f800042",
+        ):
+            self.assertIn(required, probe)
+        for required in ("double_sincos", "float_sincos", "direct_sincos", "direct_sincosf"):
+            self.assertIn(required, header)
+        for required in (
+            "math_sincos_header_abi_probe.cpp",
+            "-mfpmath=387",
+            "unmangled",
+        ):
+            self.assertIn(required, header_runner)
+        for required in (
+            "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+            "d585fd3b613c66151fc3249e8ed44f77020cb5e6c1e635a616d3f9f82460512a",
+            "src/math/sincos.c",
+            "src/math/sincosf.c",
+            "src/math/__rem_pio2_large.c",
+            "rdi`/`rsi",
+            "-ffp-contract=off",
+            'include_str!("math_sincos_musl_x86_64.S")',
+            "public x86 support",
+        ):
+            self.assertIn(required, leaf)
+        for required in (
+            "2ebc86943f5cdac77729695b304a08f6308e7a218f9d484cec5675006b207d88",
+            '"src/math/sincos.c"',
+            '"src/math/sincosf.c"',
+            '"src/math/__sin.c"',
+            '"src/math/__cosdf.c"',
+            '"src/math/__rem_pio2_large.c"',
+            '"src/math/scalbn.c"',
+            '"15.2.0"',
+            '"-frounding-math"',
+            '"-ffp-contract=off"',
+            '"-mfpmath=sse"',
+            "PRIVATE_RENAMES",
+            "retained_notices",
+        ):
+            self.assertIn(required, generator)
+        for required in (
+            "Sun Microsystems",
+            "musl's MIT license",
+            "\t.globl\tsincos\n",
+            "\t.globl\tsincosf\n",
+            "\t.local crabc_x86_math_sincos_kernel_sin",
+            "\t.local crabc_x86_math_sincos_reduce_pio2_large",
+            "\t.local crabc_x86_math_sincos_provider_scalbn",
+            "cvtsd2ss",
+            "cvtss2sd",
+        ):
+            self.assertIn(required, assembly)
+
     def test_math_ceil_runner_keeps_the_binary32_binary64_static_boundary(self) -> None:
         dispatcher = RUNNER.read_text(encoding="utf-8")
         runner = (ROOT / "compat" / "x86_64" / "run_libc_math_ceil.sh").read_text(

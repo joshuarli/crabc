@@ -784,6 +784,8 @@ sigtimedwait
 sigwait
 sigwaitinfo
 sin
+sincos
+sincosf
 sincosl
 sinf
 sinhl

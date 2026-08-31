@@ -1290,6 +1290,24 @@ definitions and final ELF checks reject weak compiler-builtins fallback,
 API/policy, special/complex/binary80 math, family completion, promotion, and
 public x86 support.
 
+The separate private `static-c-math-sincos` artifact records only GNU binary64
+`sincos` and binary32 `sincosf`: `./scripts/dev-x86_64.sh libc-math-sincos`
+runs project-header C and default-SSE/`-mfpmath=387` C++ function-pointer
+fixtures through pinned musl and one freestanding static candidate. Its
+checked GCC 15.2.0 translation of musl 1.2.6 `sincos.c`/`sincosf.c` plus
+private local sin/cos kernels, pio2 reduction, and floor/scalbn providers is
+the complete direct source closure: it retains source small-input, quadrant,
+large-argument, NaN, and dual-output store behavior without a public sin/cos
+sibling or ambient libm. The 512-record differential preserves both raw output
+bits, flags, and all four requested-and-observed MXCSR directions over
+independent and same-address output pointers; signed zero; raw subnormal and
+normal inputs; quadrant and huge-reduction neighborhoods; finite extremes;
+infinities; quiet-NaN; and signaling-NaN inputs. Strong target-owned
+definitions and final ELF checks reject weak compiler-builtins fallback,
+`sincosl`, public sin/cos, adjacent tan/hyperbolic/inverse-trig functions,
+fenv API/policy, special/complex/binary80 math, family completion, promotion,
+and public x86 support.
+
 The separate private `static-c-math-ceil` artifact records only binary64
 `ceil` and binary32 `ceilf`: `./scripts/dev-x86_64.sh libc-math-ceil` runs
 project-header C and default-SSE/`-mfpmath=387` C++ function-pointer fixtures

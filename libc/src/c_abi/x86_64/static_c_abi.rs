@@ -274,6 +274,8 @@ mod math_tanh;
 mod math_atanh;
 #[path = "math_acosh.rs"]
 mod math_acosh;
+#[path = "math_sincos.rs"]
+mod math_sincos;
 #[path = "math_ceil.rs"]
 mod math_ceil;
 #[path = "math_floor.rs"]
