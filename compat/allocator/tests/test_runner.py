@@ -665,7 +665,7 @@ class InventoryTests(unittest.TestCase):
 
     def test_linux_aarch64_classification_has_named_release_exceptions(self) -> None:
         stale = RUNNER.classify_api_item("mi_collect_reduce", "external-function")
-        self.assertEqual(stale["classification"], "unsupported-linux-aarch64")
+        self.assertEqual(stale["classification"], "upstream-unavailable-declaration")
         self.assertIn("no definition", stale["classification_reason"])
         override = RUNNER.classify_api_item("mi_malloc_size", "external-function")
         self.assertEqual(override["classification"], "override-only")
@@ -1804,17 +1804,25 @@ class ContractTests(unittest.TestCase):
 
     def test_checked_in_api_inventory_has_audited_linux_aarch64_boundaries(self) -> None:
         inventory = RUNNER.read_json(RUNNER.API_CONTRACT)
-        self.assertEqual(inventory["format"], 2)
+        self.assertEqual(inventory["format"], 3)
+        RUNNER.validate_api_parity_inventory(inventory)
         self.assertEqual(
             inventory["summary"],
             {
+                "applicable_item_count": 331,
+                "blocked_applicable_item_count": 331,
+                "blocked_required_mode_count": 42,
+                "compile_time_mode_count": 52,
                 "configuration_macro_count": 138,
                 "cxx_convenience_count": 1,
                 "cxx_template_count": 3,
                 "external_function_count": 194,
+                "inapplicable_item_count": 5,
+                "inapplicable_mode_count": 10,
                 "macro_count": 26,
                 "option_count": 52,
                 "override_macro_count": 37,
+                "required_mode_count": 42,
                 "source_only_count": 147,
                 "source_only_macro_count": 63,
                 "static_inline_count": 7,
@@ -1831,11 +1839,102 @@ class ContractTests(unittest.TestCase):
         )
         items = {item["name"]: item for item in inventory["items"]}
         self.assertEqual(items["mi_wdupenv_s"]["classification"], "unsupported-linux-aarch64")
+        self.assertEqual(items["mi_wdupenv_s"]["target_applicability"], "inapplicable")
+        self.assertTrue(items["mi_wdupenv_s"]["applicability_sources"])
         self.assertTrue(items["mi_wdupenv_s"]["oracle_release_exported"])
         self.assertEqual(items["mi_option_os_tag"]["classification"], "unsupported-linux-aarch64")
+        self.assertEqual(
+            items["mi_collect_reduce"]["classification"],
+            "upstream-unavailable-declaration",
+        )
+        self.assertEqual(items["mi_collect_reduce"]["target_applicability"], "inapplicable")
         self.assertEqual(items["mi_stats_init"]["classification"], "source-only-inline")
         self.assertEqual(items["mi_stl_allocator"]["kind"], "cxx-template")
         self.assertFalse(any(item["crabc_libc_exported"] for item in inventory["items"]))
+
+        modes = {mode["name"]: mode for mode in inventory["compile_time_modes"]}
+        self.assertEqual(modes["MI_DEBUG"]["allowed_source_tokens"], ["OFF", "ON", "INTERNAL", "FULL", "DEFAULT"])
+        self.assertEqual(modes["MI_DEBUG"]["target_applicability"], "applicable")
+        self.assertEqual(modes["MI_DEBUG"]["completion_status"], "blocked")
+        self.assertEqual(modes["MI_OSX_ZONE"]["target_applicability"], "inapplicable")
+        self.assertTrue(modes["MI_OSX_ZONE"]["applicability_sources"])
+        self.assertEqual(modes["MI_TLS_MODEL_FIXED"]["target_applicability"], "inapplicable")
+        tls_values = {
+            value["token"]: value for value in modes["MI_TLS_MODEL"]["source_values"]
+        }
+        self.assertEqual(tls_values["LOCAL"]["target_applicability"], "applicable")
+        self.assertEqual(tls_values["FIXED"]["target_applicability"], "inapplicable")
+        self.assertEqual(tls_values["WIN32"]["target_applicability"], "inapplicable")
+        track_values = {
+            value["token"]: value for value in modes["MI_TRACK"]["source_values"]
+        }
+        self.assertEqual(track_values["ETW"]["target_applicability"], "inapplicable")
+        self.assertEqual(
+            inventory["completion_tracks"]["malloc_engine_readiness"]["inventory_driven"],
+            False,
+        )
+        self.assertEqual(
+            inventory["completion_tracks"]["full_linux_aarch64_v3_5_0_parity"]["inventory_driven"],
+            True,
+        )
+
+    def test_api_parity_inventory_rejects_omissions_and_contradictions(self) -> None:
+        inventory = RUNNER.read_json(RUNNER.API_CONTRACT)
+
+        missing_item = json.loads(json.dumps(inventory))
+        missing_item["items"].pop()
+        with self.assertRaisesRegex(RUNNER.HarnessError, "API item count"):
+            RUNNER.validate_api_parity_inventory(missing_item)
+
+        missing_mode = json.loads(json.dumps(inventory))
+        missing_mode["compile_time_modes"].pop()
+        with self.assertRaisesRegex(RUNNER.HarnessError, "compile-time mode count"):
+            RUNNER.validate_api_parity_inventory(missing_mode)
+
+        contradictory = json.loads(json.dumps(inventory))
+        item = next(
+            item
+            for item in contradictory["items"]
+            if item["target_applicability"] == "applicable"
+        )
+        item["parity_requirement"] = "not-required"
+        with self.assertRaisesRegex(RUNNER.HarnessError, "applicable API item"):
+            RUNNER.validate_api_parity_inventory(contradictory)
+
+        unsupported_without_source = json.loads(json.dumps(inventory))
+        item = next(
+            item
+            for item in unsupported_without_source["items"]
+            if item["target_applicability"] == "inapplicable"
+        )
+        item["classification_reason"] = ""
+        item["applicability_sources"] = []
+        with self.assertRaisesRegex(RUNNER.HarnessError, "source-backed rationale"):
+            RUNNER.validate_api_parity_inventory(unsupported_without_source)
+
+        unsupported_value_without_source = json.loads(json.dumps(inventory))
+        mode = next(
+            mode for mode in unsupported_value_without_source["compile_time_modes"]
+            if mode["name"] == "MI_TLS_MODEL"
+        )
+        value = next(value for value in mode["source_values"] if value["token"] == "FIXED")
+        value["classification_reason"] = ""
+        value["applicability_sources"] = []
+        with self.assertRaisesRegex(RUNNER.HarnessError, "mode value.*source-backed rationale"):
+            RUNNER.validate_api_parity_inventory(unsupported_value_without_source)
+
+    def test_api_parity_inventory_keeps_readiness_separate_from_full_parity(self) -> None:
+        inventory = RUNNER.read_json(RUNNER.API_CONTRACT)
+
+        readiness = json.loads(json.dumps(inventory))
+        readiness["completion_tracks"]["malloc_engine_readiness"]["inventory_driven"] = True
+        with self.assertRaisesRegex(RUNNER.HarnessError, "readiness.*separate"):
+            RUNNER.validate_api_parity_inventory(readiness)
+
+        false_parity = json.loads(json.dumps(inventory))
+        false_parity["completion_tracks"]["full_linux_aarch64_v3_5_0_parity"]["status"] = "complete"
+        with self.assertRaisesRegex(RUNNER.HarnessError, "full parity.*blocked"):
+            RUNNER.validate_api_parity_inventory(false_parity)
 
     def test_full_and_performance_modes_have_precise_unmet_milestones(self) -> None:
         full = "allocator --full did not meet Milestone 5: m5.5c: general owner exit remains blocked"

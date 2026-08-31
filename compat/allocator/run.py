@@ -375,17 +375,38 @@ NORMAL_RELEASE_SYMBOL_EXCEPTIONS: Mapping[str, str] = {
 STALE_EXTERNAL_DECLARATIONS = frozenset({"mi_collect_reduce", "mi_stats_merge"})
 OVERRIDE_ONLY_EXTERNAL_DECLARATIONS = frozenset({"mi_malloc_size", "mi_malloc_usable_size"})
 
-# This source can compile its wide-environment helper on Linux, but crabc's
-# Linux/AArch64 C ABI deliberately has no wide-character environment surface.
-# It remains in the symbol cross-check so that the C oracle's actual export is
-# never hidden by its crabc applicability classification.
+# The wide-environment helper remains in the symbol cross-check so the C
+# oracle's actual export is never hidden by its target applicability.  Its
+# source body explicitly returns EINVAL on non-Windows targets.
 UNSUPPORTED_LINUX_AARCH64_EXTERNAL_REASONS: Mapping[str, str] = {
-    "mi_collect_reduce": NORMAL_RELEASE_SYMBOL_EXCEPTIONS["mi_collect_reduce"],
-    "mi_stats_merge": NORMAL_RELEASE_SYMBOL_EXCEPTIONS["mi_stats_merge"],
     "mi_wdupenv_s": (
-        "Windows wide-character environment API; crabc's Linux/AArch64 ABI "
-        "does not provide a wide-character environment surface. The pinned C "
-        "oracle does define the symbol, and the release-symbol contract records it."
+        "The pinned src/alloc-posix.c body explicitly reports this Windows "
+        "wide-environment operation unsupported on non-Windows targets. The "
+        "Linux C oracle still defines the EINVAL-returning symbol, and the "
+        "release-symbol contract records it."
+    ),
+}
+
+API_INAPPLICABILITY_SOURCES: Mapping[str, tuple[str, ...]] = {
+    "mi_collect_reduce": (
+        "include/mimalloc.h:450",
+        "normal-release-source-set:no-definition",
+    ),
+    "mi_option_os_tag": (
+        "include/mimalloc.h:484",
+        "src/prim/unix/prim.c:367-377",
+    ),
+    "mi_option_retry_on_oom": (
+        "include/mimalloc.h:493",
+        "src/prim/windows/prim.c:321-340",
+    ),
+    "mi_stats_merge": (
+        "include/mimalloc.h:453",
+        "normal-release-source-set:no-definition",
+    ),
+    "mi_wdupenv_s": (
+        "include/mimalloc.h:564",
+        "src/alloc-posix.c:157-175",
     ),
 }
 
@@ -465,6 +486,94 @@ GUARDED_MODE_OPTIONS = frozenset(
 UNSUPPORTED_LINUX_AARCH64_OPTIONS: Mapping[str, str] = {
     "mi_option_os_tag": "macOS-only OS logging tag option in the pinned v3.5.0 header.",
     "mi_option_retry_on_oom": "Windows-only out-of-memory retry option in the pinned v3.5.0 header.",
+}
+
+INAPPLICABLE_LINUX_AARCH64_COMPILE_MODES: Mapping[str, tuple[str, tuple[str, ...]]] = {
+    "MI_OSX_INTERPOSE": (
+        "macOS-only allocator interposition selection guarded by APPLE in the pinned root CMake configuration.",
+        ("CMakeLists.txt:36", "CMakeLists.txt:254-274"),
+    ),
+    "MI_OSX_ZONE": (
+        "macOS-only malloc-zone override selection guarded by APPLE in the pinned root CMake configuration.",
+        ("CMakeLists.txt:37", "CMakeLists.txt:254-274"),
+    ),
+    "MI_TRACK_ETW": (
+        "Windows ETW tracking alias; the pinned configuration disables ETW on non-Windows targets.",
+        ("CMakeLists.txt:82", "CMakeLists.txt:322-329"),
+    ),
+    "MI_TLS_MODEL_FIXED": (
+        "The pinned fixed-slot TLS source has slot definitions only for Apple and Windows and emits a compile error on Linux/AArch64 unless out-of-contract custom slots are supplied.",
+        ("CMakeLists.txt:74", "include/mimalloc/prim-tls.h:342-365"),
+    ),
+    "MI_WIN_DIRECT_TLS": (
+        "Windows direct TlsAlloc-slot fast-path selection.",
+        ("CMakeLists.txt:79", "CMakeLists.txt:560-563"),
+    ),
+    "MI_WIN_INIT": (
+        "Windows-only initialization strategy selector.",
+        ("CMakeLists.txt:59", "CMakeLists.txt:565-589"),
+    ),
+    "MI_WIN_INIT_USE_RAW_DLLMAIN": (
+        "Deprecated Windows raw-DllMain initialization selector.",
+        ("CMakeLists.txt:77", "CMakeLists.txt:565-577"),
+    ),
+    "MI_WIN_INIT_USE_TLS_DLLMAIN": (
+        "Deprecated Windows TLS-DllMain initialization selector.",
+        ("CMakeLists.txt:78", "CMakeLists.txt:565-582"),
+    ),
+    "MI_WIN_REDIRECT": (
+        "Windows DLL redirection-module build selector guarded by WIN32.",
+        ("CMakeLists.txt:38", "CMakeLists.txt:276-281"),
+    ),
+    "MI_WIN_USE_FLS": (
+        "Deprecated Windows Fiber Local Storage initialization selector.",
+        ("CMakeLists.txt:76", "CMakeLists.txt:565-586"),
+    ),
+}
+
+DEPRECATED_COMPILE_MODES = frozenset(
+    {
+        "MI_CHECK_FULL",
+        "MI_DEBUG_FULL",
+        "MI_DEBUG_INTERNAL",
+        "MI_LOCAL_DYNAMIC_TLS",
+        "MI_OPT_FREE_SMALL",
+        "MI_SECURE_FULL",
+        "MI_TLS_MODEL_FIXED",
+        "MI_TLS_MODEL_LOCAL",
+        "MI_TLS_MODEL_PTHREADS",
+        "MI_TRACK_ASAN",
+        "MI_TRACK_ETW",
+        "MI_TRACK_VALGRIND",
+        "MI_USE_LIBATOMIC",
+        "MI_WIN_DIRECT_TLS",
+        "MI_WIN_INIT_USE_RAW_DLLMAIN",
+        "MI_WIN_INIT_USE_TLS_DLLMAIN",
+        "MI_WIN_USE_FLS",
+    }
+)
+
+SOURCE_BUILD_CONTROL_MODES = frozenset(
+    {"MI_BUILD_TESTS", "MI_EXTRA_CPPDEFS", "MI_INSTALL_TOPLEVEL", "MI_SEE_ASM"}
+)
+
+ARTIFACT_COMPILE_MODES = frozenset({"MI_BUILD_OBJECT", "MI_BUILD_SHARED", "MI_BUILD_STATIC"})
+
+INAPPLICABLE_LINUX_AARCH64_MODE_VALUES: Mapping[
+    tuple[str, str], tuple[str, tuple[str, ...]]
+] = {
+    ("MI_TLS_MODEL", "FIXED"): (
+        "The pinned fixed-slot TLS source has no Linux fixed-slot definition and emits a compile error without an out-of-contract custom slot definition.",
+        ("CMakeLists.txt:62", "include/mimalloc/prim-tls.h:342-365"),
+    ),
+    ("MI_TLS_MODEL", "WIN32"): (
+        "The direct Win32 TlsAlloc model is platform-inapplicable to Linux/AArch64.",
+        ("CMakeLists.txt:62", "include/mimalloc/prim-tls.h:22-25", "include/mimalloc/prim-tls.h:297-341"),
+    ),
+    ("MI_TRACK", "ETW"): (
+        "The pinned root CMake configuration disables ETW tracking on non-Windows targets.",
+        ("CMakeLists.txt:24", "CMakeLists.txt:322-329"),
+    ),
 }
 
 CONFIGURATION_PROFILES: Mapping[str, tuple[str, ...]] = {
@@ -3078,6 +3187,167 @@ def macro_configuration_names(source: Path) -> set[str]:
     return names
 
 
+def cmake_compile_mode_declarations(text: str) -> list[dict[str, Any]]:
+    """Inventory each initial pinned root-CMake ``MI_*`` cache declaration."""
+
+    records: list[dict[str, Any]] = []
+    for line_number, line in enumerate(text.splitlines(), start=1):
+        option = re.match(
+            r"\s*option\(\s*(MI_[A-Za-z0-9_]+)\b.*\s+(ON|OFF|\"\")\s*\)\s*$",
+            line,
+        )
+        if option is not None:
+            records.append(
+                {
+                    "allowed_source_tokens": ["OFF", "ON"],
+                    "declaration_kind": "cmake-option",
+                    "default_source_token": option.group(2).strip('"'),
+                    "name": option.group(1),
+                    "source": {"line": line_number, "path": "CMakeLists.txt"},
+                }
+            )
+            continue
+        cache = re.match(
+            r"\s*set\(\s*(MI_[A-Za-z0-9_]+)\s+(\"[^\"]*\"|\S+)\s+"
+            r"CACHE\s+STRING\b",
+            line,
+        )
+        if cache is not None:
+            records.append(
+                {
+                    "allowed_source_tokens": [],
+                    "declaration_kind": "cmake-cache-string",
+                    "default_source_token": cache.group(2).strip('"'),
+                    "name": cache.group(1),
+                    "source": {"line": line_number, "path": "CMakeLists.txt"},
+                }
+            )
+
+    by_name = {record["name"]: record for record in records}
+    if len(by_name) != len(records) or not records:
+        raise HarnessError("pinned root CMake has duplicate or absent MI_* mode declarations")
+    for match in re.finditer(
+        r"set_property\(CACHE\s+(MI_[A-Za-z0-9_]+)\s+PROPERTY\s+STRINGS\s+([^)]*)\)",
+        text,
+    ):
+        name = match.group(1)
+        if name not in by_name:
+            raise HarnessError(f"pinned root CMake gives values for undeclared mode {name}")
+        tokens = [
+            quoted if quoted else bare
+            for quoted, bare in re.findall(r'\"([^\"]*)\"|([^\s\"]+)', match.group(2))
+        ]
+        if not tokens:
+            raise HarnessError(f"pinned root CMake has an empty value set for mode {name}")
+        by_name[name]["allowed_source_tokens"] = tokens
+    for record in records:
+        if not record["allowed_source_tokens"]:
+            raise HarnessError(
+                f"pinned root CMake cache-string mode lacks an enumerated value set: {record['name']}"
+            )
+    return records
+
+
+def compile_mode_classification(name: str) -> dict[str, Any]:
+    inapplicable = INAPPLICABLE_LINUX_AARCH64_COMPILE_MODES.get(name)
+    if inapplicable is not None:
+        reason, sources = inapplicable
+        return {
+            "applicability_sources": list(sources),
+            "classification": "unsupported-linux-aarch64",
+            "classification_reason": reason,
+            "target_applicability": "inapplicable",
+        }
+    if name in DEPRECATED_COMPILE_MODES:
+        classification = "deprecated-mode"
+        reason = "Deprecated upstream compatibility spelling retained by the pinned root CMake configuration."
+    elif name in SOURCE_BUILD_CONTROL_MODES:
+        classification = "source-build-control"
+        reason = "Applicable pinned source-build control; it remains explicitly accounted for by full mode parity."
+    elif name in ARTIFACT_COMPILE_MODES:
+        classification = "artifact-mode"
+        reason = "Applicable shared, static, or override-object artifact mode on Linux/AArch64."
+    elif name.startswith("MI_DEBUG") or name in {"MI_CHECK_FULL", "MI_NO_DEBUG", "MI_SHOW_ERRORS"}:
+        classification = "debug-mode"
+        reason = "Applicable debug and invariant-checking mode on Linux/AArch64."
+    elif name.startswith("MI_SECURE") or name == "MI_FREE_IS_CHECKED":
+        classification = "secure-mode"
+        reason = "Applicable security-hardening mode on Linux/AArch64."
+    elif name.startswith("MI_GUARDED"):
+        classification = "guarded-mode"
+        reason = "Applicable guarded-allocation mode on Linux/AArch64."
+    elif name.startswith("MI_TLS") or name == "MI_LOCAL_DYNAMIC_TLS":
+        classification = "tls-mode"
+        reason = "Applicable allocator TLS selection or compatibility spelling on Linux/AArch64."
+    elif name.startswith("MI_TRACK") or name in {"MI_DEBUG_TSAN", "MI_DEBUG_UBSAN"}:
+        classification = "instrumentation-mode"
+        reason = "Applicable allocator instrumentation selection on Linux/AArch64."
+    elif name in {"MI_OPT_ARCH", "MI_NO_OPT_ARCH", "MI_OPT_SIMD"}:
+        classification = "architecture-profile"
+        reason = "Applicable optional AArch64 optimization profile; it is distinct from the Armv8.0 production baseline."
+    elif name in {"MI_OVERRIDE", "MI_LIBC_MUSL", "MI_USE_CXX", "MI_NO_USE_CXX"}:
+        classification = "integration-mode"
+        reason = "Applicable source or libc integration selection on Linux/AArch64."
+    else:
+        classification = "allocator-mode"
+        reason = "Applicable pinned allocator compile-time mode on Linux/AArch64."
+    return {
+        "applicability_sources": [],
+        "classification": classification,
+        "classification_reason": reason,
+        "target_applicability": "applicable",
+    }
+
+
+def compile_mode_record(declaration: Mapping[str, Any]) -> dict[str, Any]:
+    classification = compile_mode_classification(str(declaration["name"]))
+    applicable = classification["target_applicability"] == "applicable"
+    source_values: list[dict[str, Any]] = []
+    for token in declaration["allowed_source_tokens"]:
+        value_inapplicable = INAPPLICABLE_LINUX_AARCH64_MODE_VALUES.get(
+            (str(declaration["name"]), str(token))
+        )
+        if not applicable:
+            value_reason = classification["classification_reason"]
+            value_sources = classification["applicability_sources"]
+            value_applicability = "inapplicable"
+        elif value_inapplicable is not None:
+            value_reason, value_source_tuple = value_inapplicable
+            value_sources = list(value_source_tuple)
+            value_applicability = "inapplicable"
+        else:
+            value_reason = "Applicable source value for this Linux/AArch64 compile-time mode."
+            value_sources = []
+            value_applicability = "applicable"
+        source_values.append(
+            {
+                "applicability_sources": value_sources,
+                "classification_reason": value_reason,
+                "target_applicability": value_applicability,
+                "token": token,
+            }
+        )
+    return {
+        **declaration,
+        **classification,
+        "completion_status": "blocked" if applicable else "not-required",
+        "differential_verified": False,
+        "implemented": False,
+        "implementation_blocker": (
+            "No complete Linux/AArch64 Rust mode implementation and required evidence chain is recorded."
+            if applicable
+            else ""
+        ),
+        "integration_verified": False,
+        "intentional_difference": "",
+        "parity_requirement": "required" if applicable else "not-required",
+        "performance_qualified": False,
+        "source_values": source_values,
+        "stress_verified": False,
+        "unit_verified": False,
+    }
+
+
 def api_group(name: str) -> str:
     if name.startswith("mi_theap_"):
         return "theap"
@@ -3177,7 +3447,12 @@ def classify_api_item(name: str, kind: str) -> dict[str, Any]:
             reason = "Marked experimental by the pinned v3.5.0 option declaration."
             profile = "linux-aarch64-experimental"
     elif kind == "external-function":
-        if name in UNSUPPORTED_LINUX_AARCH64_EXTERNAL_REASONS:
+        if name in STALE_EXTERNAL_DECLARATIONS:
+            classification = "upstream-unavailable-declaration"
+            reason = NORMAL_RELEASE_SYMBOL_EXCEPTIONS[name]
+            profile = "upstream-unavailable"
+            test_adapter_applicable = False
+        elif name in UNSUPPORTED_LINUX_AARCH64_EXTERNAL_REASONS:
             classification = "unsupported-linux-aarch64"
             reason = UNSUPPORTED_LINUX_AARCH64_EXTERNAL_REASONS[name]
             profile = "not-applicable-linux-aarch64"
@@ -3210,24 +3485,41 @@ def classify_api_item(name: str, kind: str) -> dict[str, Any]:
 
 def item_record(name: str, kind: str, headers: Sequence[str], tests: Sequence[str]) -> dict[str, Any]:
     classification = classify_api_item(name, kind)
+    target_applicability = (
+        "inapplicable"
+        if classification["classification"]
+        in {"unsupported-linux-aarch64", "upstream-unavailable-declaration"}
+        else "applicable"
+    )
+    applicable = target_applicability == "applicable"
     applicable_external = kind == "external-function" and classification["test_adapter_applicable"]
     return {
         "adapter_surface": "test-c-api-adapter-only" if applicable_external else "source-only",
         **classification,
+        "applicability_sources": list(API_INAPPLICABILITY_SOURCES.get(name, ())),
+        "completion_status": "blocked" if applicable else "not-required",
         "crabc_libc_exported": False,
         "differential_verified": False,
         "exported": False,
         "group": api_group(name) if kind in {"external-function", "option", "type"} else "source-convenience",
         "headers": list(headers),
         "implemented": False,
+        "implementation_blocker": (
+            "No public Linux/AArch64 crabc implementation and complete evidence chain is recorded for this item."
+            if applicable
+            else ""
+        ),
+        "integration_verified": False,
         "intentional_difference": "",
         "kind": kind,
         "name": name,
         "oracle_release_exported": (
             kind == "external-function" and name not in NORMAL_RELEASE_SYMBOL_EXCEPTIONS
         ),
+        "parity_requirement": "required" if applicable else "not-required",
         "performance_qualified": False,
         "stress_verified": False,
+        "target_applicability": target_applicability,
         "test_references": list(tests),
         "unit_verified": False,
     }
@@ -3239,6 +3531,246 @@ def test_sources(source: Path) -> list[Path]:
     if not paths:
         raise HarnessError("pinned mimalloc source has no upstream test sources")
     return sorted(paths)
+
+
+def validate_api_parity_inventory(inventory: Mapping[str, Any]) -> dict[str, int]:
+    """Fail closed on API/mode omissions, contradictions, and track conflation."""
+
+    if inventory.get("format") != 3:
+        raise HarnessError("unsupported Linux/AArch64 API parity inventory format")
+    items = inventory.get("items")
+    modes = inventory.get("compile_time_modes")
+    summary = inventory.get("summary")
+    if not isinstance(items, list) or not all(isinstance(item, dict) for item in items):
+        raise HarnessError("API parity inventory has invalid API items")
+    if not isinstance(modes, list) or not all(isinstance(mode, dict) for mode in modes):
+        raise HarnessError("API parity inventory has invalid compile-time modes")
+    if not isinstance(summary, dict):
+        raise HarnessError("API parity inventory has no summary")
+
+    expected_item_count = summary.get("total_item_count")
+    if type(expected_item_count) is not int or expected_item_count != len(items):
+        raise HarnessError("API item count differs from the inventory summary")
+    expected_mode_count = summary.get("compile_time_mode_count")
+    if type(expected_mode_count) is not int or expected_mode_count != len(modes):
+        raise HarnessError("compile-time mode count differs from the inventory summary")
+
+    item_keys = [(item.get("kind"), item.get("name")) for item in items]
+    if any(
+        not isinstance(kind, str) or not kind or not isinstance(name, str) or not name
+        for kind, name in item_keys
+    ) or len(item_keys) != len(set(item_keys)):
+        raise HarnessError("API parity inventory has unnamed or duplicate API items")
+    mode_names = [mode.get("name") for mode in modes]
+    if any(not isinstance(name, str) or not name for name in mode_names) or len(mode_names) != len(set(mode_names)):
+        raise HarnessError("API parity inventory has unnamed or duplicate compile-time modes")
+
+    verification_fields = (
+        "differential_verified",
+        "integration_verified",
+        "performance_qualified",
+        "stress_verified",
+        "unit_verified",
+    )
+    applicable_items: list[Mapping[str, Any]] = []
+    blocked_items: list[Mapping[str, Any]] = []
+    for item in items:
+        name = item["name"]
+        applicability = item.get("target_applicability")
+        if applicability not in {"applicable", "inapplicable"}:
+            raise HarnessError(f"API item {name} has invalid target applicability")
+        if not isinstance(item.get("classification_reason"), str):
+            raise HarnessError(f"API item {name} has an invalid classification rationale")
+        sources = item.get("applicability_sources")
+        if not isinstance(sources, list) or not all(isinstance(source, str) and source for source in sources):
+            raise HarnessError(f"API item {name} has invalid applicability sources")
+        for field in ("exported", "implemented", *verification_fields):
+            if type(item.get(field)) is not bool:
+                raise HarnessError(f"API item {name} has a non-boolean {field} status")
+        if (
+            item["exported"]
+            or any(item[field] for field in verification_fields)
+        ) and not item["implemented"]:
+            raise HarnessError(f"API item {name} has contradictory implementation/evidence status")
+
+        if applicability == "inapplicable":
+            if not item["classification_reason"] or not sources:
+                raise HarnessError(
+                    f"inapplicable API item {name} lacks a source-backed rationale"
+                )
+            if item.get("parity_requirement") != "not-required" or item.get("completion_status") != "not-required":
+                raise HarnessError(f"inapplicable API item {name} has a contradictory parity requirement")
+            if item["implemented"] or item["exported"] or any(item[field] for field in verification_fields):
+                raise HarnessError(f"inapplicable API item {name} claims implementation or evidence")
+            continue
+
+        applicable_items.append(item)
+        if item.get("parity_requirement") != "required":
+            raise HarnessError(f"applicable API item {name} is not required for full parity")
+        completion = item.get("completion_status")
+        blocker = item.get("implementation_blocker")
+        if completion == "blocked":
+            if not isinstance(blocker, str) or not blocker:
+                raise HarnessError(f"blocked applicable API item {name} lacks an implementation blocker")
+            blocked_items.append(item)
+        elif completion == "complete":
+            if blocker != "":
+                raise HarnessError(f"complete applicable API item {name} retains a blocker")
+            required = [item["implemented"], *(item[field] for field in verification_fields)]
+            if item.get("kind") == "external-function":
+                required.append(item["exported"])
+            if not all(required):
+                raise HarnessError(f"complete applicable API item {name} lacks required evidence")
+        else:
+            raise HarnessError(f"applicable API item {name} has invalid completion status")
+
+    required_modes: list[Mapping[str, Any]] = []
+    blocked_modes: list[Mapping[str, Any]] = []
+    for mode in modes:
+        name = mode["name"]
+        applicability = mode.get("target_applicability")
+        sources = mode.get("applicability_sources")
+        if applicability not in {"applicable", "inapplicable"}:
+            raise HarnessError(f"compile-time mode {name} has invalid target applicability")
+        if not isinstance(mode.get("classification_reason"), str):
+            raise HarnessError(f"compile-time mode {name} has an invalid classification rationale")
+        if not isinstance(sources, list) or not all(isinstance(source, str) and source for source in sources):
+            raise HarnessError(f"compile-time mode {name} has invalid applicability sources")
+        allowed = mode.get("allowed_source_tokens")
+        if not isinstance(allowed, list) or not allowed or not all(isinstance(token, str) for token in allowed):
+            raise HarnessError(f"compile-time mode {name} lacks its source value inventory")
+        source_values = mode.get("source_values")
+        if not isinstance(source_values, list) or not all(
+            isinstance(value, dict) for value in source_values
+        ):
+            raise HarnessError(f"compile-time mode {name} has invalid source value records")
+        value_tokens = [value.get("token") for value in source_values]
+        if value_tokens != allowed or len(value_tokens) != len(set(value_tokens)):
+            raise HarnessError(f"compile-time mode {name} omits or duplicates a source value")
+        for value in source_values:
+            token = value["token"]
+            value_applicability = value.get("target_applicability")
+            value_sources = value.get("applicability_sources")
+            if value_applicability not in {"applicable", "inapplicable"}:
+                raise HarnessError(f"compile-time mode {name} value {token} has invalid target applicability")
+            if not isinstance(value.get("classification_reason"), str):
+                raise HarnessError(f"compile-time mode {name} value {token} has an invalid rationale")
+            if not isinstance(value_sources, list) or not all(
+                isinstance(value_source, str) and value_source for value_source in value_sources
+            ):
+                raise HarnessError(f"compile-time mode {name} value {token} has invalid applicability sources")
+            if value_applicability == "inapplicable" and (
+                not value["classification_reason"] or not value_sources
+            ):
+                raise HarnessError(
+                    f"inapplicable mode value {name}={token} lacks a source-backed rationale"
+                )
+            if applicability == "inapplicable" and value_applicability != "inapplicable":
+                raise HarnessError(f"inapplicable compile-time mode {name} has an applicable source value")
+        source = mode.get("source")
+        if (
+            not isinstance(source, dict)
+            or source.get("path") != "CMakeLists.txt"
+            or type(source.get("line")) is not int
+            or source["line"] <= 0
+        ):
+            raise HarnessError(f"compile-time mode {name} lacks a source declaration anchor")
+        for field in ("implemented", *verification_fields):
+            if type(mode.get(field)) is not bool:
+                raise HarnessError(f"compile-time mode {name} has a non-boolean {field} status")
+        if any(mode[field] for field in verification_fields) and not mode["implemented"]:
+            raise HarnessError(f"compile-time mode {name} has contradictory implementation/evidence status")
+
+        if applicability == "inapplicable":
+            if not mode["classification_reason"] or not sources:
+                raise HarnessError(
+                    f"inapplicable compile-time mode {name} lacks a source-backed rationale"
+                )
+            if mode.get("parity_requirement") != "not-required" or mode.get("completion_status") != "not-required":
+                raise HarnessError(f"inapplicable compile-time mode {name} has a contradictory parity requirement")
+            if mode["implemented"] or any(mode[field] for field in verification_fields):
+                raise HarnessError(f"inapplicable compile-time mode {name} claims implementation or evidence")
+            continue
+
+        required_modes.append(mode)
+        if mode.get("parity_requirement") != "required":
+            raise HarnessError(f"applicable compile-time mode {name} is not required for full parity")
+        completion = mode.get("completion_status")
+        blocker = mode.get("implementation_blocker")
+        if completion == "blocked":
+            if not isinstance(blocker, str) or not blocker:
+                raise HarnessError(f"blocked compile-time mode {name} lacks an implementation blocker")
+            blocked_modes.append(mode)
+        elif completion == "complete":
+            if blocker != "" or not mode["implemented"] or not all(
+                mode[field] for field in verification_fields
+            ):
+                raise HarnessError(f"complete compile-time mode {name} lacks required evidence")
+        else:
+            raise HarnessError(f"applicable compile-time mode {name} has invalid completion status")
+
+    expected_summary = {
+        "applicable_item_count": len(applicable_items),
+        "blocked_applicable_item_count": len(blocked_items),
+        "blocked_required_mode_count": len(blocked_modes),
+        "compile_time_mode_count": len(modes),
+        "configuration_macro_count": len(inventory.get("resolved_configuration_macro_names", [])),
+        "cxx_convenience_count": sum(item["kind"] == "cxx-convenience" for item in items),
+        "cxx_template_count": sum(item["kind"] == "cxx-template" for item in items),
+        "external_function_count": sum(item["kind"] == "external-function" for item in items),
+        "inapplicable_item_count": len(items) - len(applicable_items),
+        "inapplicable_mode_count": len(modes) - len(required_modes),
+        "macro_count": sum(item["kind"] == "macro" for item in items),
+        "option_count": sum(item["kind"] == "option" for item in items),
+        "override_macro_count": sum(item["kind"] == "override-macro" for item in items),
+        "required_mode_count": len(required_modes),
+        "source_only_count": sum(item.get("adapter_surface") == "source-only" for item in items),
+        "source_only_macro_count": sum(item["kind"] in {"macro", "override-macro"} for item in items),
+        "static_inline_count": sum(item["kind"] == "static-inline" for item in items),
+        "total_item_count": len(items),
+        "type_count": sum(item["kind"] == "type" for item in items),
+    }
+    if summary != expected_summary:
+        raise HarnessError("API/mode parity inventory summary contradicts its item records")
+
+    tracks = inventory.get("completion_tracks")
+    if not isinstance(tracks, dict) or set(tracks) != {
+        "full_linux_aarch64_v3_5_0_parity",
+        "malloc_engine_readiness",
+    }:
+        raise HarnessError("API parity inventory lacks its two independent completion tracks")
+    readiness = tracks["malloc_engine_readiness"]
+    parity = tracks["full_linux_aarch64_v3_5_0_parity"]
+    if not isinstance(readiness, dict) or readiness.get("inventory_driven") is not False:
+        raise HarnessError("malloc-engine readiness must remain separate from the API/mode inventory")
+    if readiness.get("status") not in {"blocked", "complete"}:
+        raise HarnessError("malloc-engine readiness has an invalid separate-gate status")
+    if readiness["status"] == "blocked" and (
+        not isinstance(readiness.get("blockers"), list)
+        or not readiness["blockers"]
+        or not all(isinstance(blocker, str) and blocker for blocker in readiness["blockers"])
+    ):
+        raise HarnessError("blocked malloc-engine readiness lacks a separate-gate blocker")
+    if not isinstance(parity, dict) or parity.get("inventory_driven") is not True:
+        raise HarnessError("full parity must be driven only by the API/mode inventory")
+    expected_parity_counts = {
+        "blocked_api_item_count": len(blocked_items),
+        "blocked_compile_time_mode_count": len(blocked_modes),
+        "required_api_item_count": len(applicable_items),
+        "required_compile_time_mode_count": len(required_modes),
+    }
+    if any(parity.get(key) != value for key, value in expected_parity_counts.items()):
+        raise HarnessError("full parity track counts contradict the API/mode inventory")
+    expected_parity_status = "blocked" if blocked_items or blocked_modes else "complete"
+    if parity.get("status") != expected_parity_status:
+        raise HarnessError("full parity is marked complete while required API or mode work is blocked")
+    return {
+        "applicable_api_item_count": len(applicable_items),
+        "blocked_api_item_count": len(blocked_items),
+        "blocked_compile_time_mode_count": len(blocked_modes),
+        "compile_time_mode_count": len(modes),
+        "required_compile_time_mode_count": len(required_modes),
+    }
 
 
 def build_api_inventory(source: Path, pin: Mapping[str, str]) -> dict[str, Any]:
@@ -3279,10 +3811,52 @@ def build_api_inventory(source: Path, pin: Mapping[str, str]) -> dict[str, Any]:
         references = sorted(name for name, text in test_text.items() if re.search(rf"\b{re.escape(name)}\b", text))
         items.append(item_record(name, kind, sorted(headers), references))
 
+    compile_time_modes = [
+        compile_mode_record(declaration)
+        for declaration in cmake_compile_mode_declarations(
+            (source / "CMakeLists.txt").read_text(encoding="utf-8", errors="replace")
+        )
+    ]
     config_names = sorted(macro_configuration_names(source))
-    return {
+    applicable_items = [
+        item for item in items if item["target_applicability"] == "applicable"
+    ]
+    required_modes = [
+        mode for mode in compile_time_modes if mode["parity_requirement"] == "required"
+    ]
+    blocked_items = [
+        item for item in applicable_items if item["completion_status"] == "blocked"
+    ]
+    blocked_modes = [
+        mode for mode in required_modes if mode["completion_status"] == "blocked"
+    ]
+    inventory = {
         "archive_root": pin["archive_root"],
-        "format": 2,
+        "compile_time_mode_source": source_file_records(source, ["CMakeLists.txt"])[0],
+        "compile_time_modes": compile_time_modes,
+        "completion_tracks": {
+            "full_linux_aarch64_v3_5_0_parity": {
+                "authority": "compat/allocator/api-v3.5.0.json",
+                "blocked_api_item_count": len(blocked_items),
+                "blocked_compile_time_mode_count": len(blocked_modes),
+                "inventory_driven": True,
+                "required_api_item_count": len(applicable_items),
+                "required_compile_time_mode_count": len(required_modes),
+                "status": "blocked" if blocked_items or blocked_modes else "complete",
+            },
+            "malloc_engine_readiness": {
+                "authoritative_contracts": [
+                    "compat/allocator/architecture-gate-v3.5.0.json",
+                    "compat/allocator/m5-gate-v3.5.0.json",
+                ],
+                "blockers": [
+                    "The nondefault allocator still depends on the separate architecture and Milestone 5 acceptance gates; API or mode inventory rows cannot close those gates by inference."
+                ],
+                "inventory_driven": False,
+                "status": "blocked",
+            },
+        },
+        "format": 3,
         "items": items,
         "mimalloc_version": pin["version"],
         "pinned_archive_sha256": pin["sha256"],
@@ -3306,13 +3880,20 @@ def build_api_inventory(source: Path, pin: Mapping[str, str]) -> dict[str, Any]:
             ],
         },
         "summary": {
+            "applicable_item_count": len(applicable_items),
+            "blocked_applicable_item_count": len(blocked_items),
+            "blocked_required_mode_count": len(blocked_modes),
+            "compile_time_mode_count": len(compile_time_modes),
             "configuration_macro_count": len(config_names),
             "cxx_convenience_count": sum(item["kind"] == "cxx-convenience" for item in items),
             "cxx_template_count": sum(item["kind"] == "cxx-template" for item in items),
             "external_function_count": sum(item["kind"] == "external-function" for item in items),
+            "inapplicable_item_count": len(items) - len(applicable_items),
+            "inapplicable_mode_count": len(compile_time_modes) - len(required_modes),
             "macro_count": sum(item["kind"] == "macro" for item in items),
             "option_count": sum(item["kind"] == "option" for item in items),
             "override_macro_count": sum(item["kind"] == "override-macro" for item in items),
+            "required_mode_count": len(required_modes),
             "source_only_count": sum(item["adapter_surface"] == "source-only" for item in items),
             "source_only_macro_count": sum(item["kind"] in {"macro", "override-macro"} for item in items),
             "static_inline_count": sum(item["kind"] == "static-inline" for item in items),
@@ -3320,6 +3901,8 @@ def build_api_inventory(source: Path, pin: Mapping[str, str]) -> dict[str, Any]:
             "type_count": sum(item["kind"] == "type" for item in items),
         },
     }
+    validate_api_parity_inventory(inventory)
+    return inventory
 
 
 def build_test_inventory(source: Path, pin: Mapping[str, str]) -> dict[str, Any]:
@@ -3384,6 +3967,8 @@ def check_contracts(contracts: Mapping[Path, Mapping[str, Any]]) -> None:
         if not path.is_file():
             raise HarnessError(f"generated contract is absent: {path}; run --generate-contracts")
         checked_in = read_json(path)
+        if path == API_CONTRACT:
+            validate_api_parity_inventory(checked_in)
         if checked_in != generated:
             raise HarnessError(
                 f"generated contract is stale: {path}; run compat/allocator/run.py --generate-contracts and review the diff"
