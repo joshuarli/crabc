@@ -1799,11 +1799,13 @@ candidate libc, a general loader, dynamic CRT/sysroot, or public x86 support.
 exports the musl-shaped public dlopen/dlsym/dlclose/dlerror plus
 dladdr/dlinfo/dl_iterate_phdr surface over that exact loader record. Its
 32-live-thread TID-keyed diagnostic table does not require loader TLS. The gate
-proves public C/C++ ABI layouts, per-thread one-shot errors, and the pinned-musl
-live-handle-within-the-32-slot-bound `dlinfo(-7)` output-preserving exact `Unsupported request -7`
-diagnostic that survives one valid `RTLD_DI_LINKMAP` call, plus stale handles,
-malformed and absent records, and copied introspection, while continuing to
-exclude search, mutation, global promotion, RTLD_NEXT, finalization, and unload.
+proves public C/C++ ABI layouts, per-thread one-shot errors, the pinned-musl
+live-handle-within-the-32-slot-bound `dlinfo(-7)` output-preserving exact
+`Unsupported request -7` diagnostic that survives one valid `RTLD_DI_LINKMAP`
+call, the pinned-musl `dlclose(NULL) == 1` exact `Invalid library handle 0`
+diagnostic, stale handles, malformed and absent records, and copied
+introspection, while continuing to exclude search, mutation, global promotion,
+RTLD_NEXT, finalization, and unload.
 It remains a staged fixed-graph artifact, not capability or platform promotion.
 `ldso-dladdr-symbol-bounds` is a separate no-TLS fixed-graph differential for
 one pinned-musl `dladdr` boundary: a four-byte public leaf dynamic object names

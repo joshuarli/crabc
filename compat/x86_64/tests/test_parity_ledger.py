@@ -947,6 +947,9 @@ class X86ParityLedgerTests(unittest.TestCase):
             "without PT_TLS",
             "exact one-shot `Unsupported request %d` diagnostic",
             "a subsequent valid link-map query preserves that pending error",
+            "`dlclose` returns exactly one",
+            "exact `Invalid library handle 0`",
+            "The bridge admits only this null close diagnostic",
             "`RTLD_NEXT`",
             "`RTLD_GLOBAL`",
             "neither `loader.dlfcn-basic` nor `loader.dlfcn-introspection` is selected",
@@ -959,10 +962,14 @@ class X86ParityLedgerTests(unittest.TestCase):
         )
         prerequisites = " ".join(artifact["x86_abi_prerequisites"])
         for phrase in (
-            "AArch64 libc.so and libc.a ABI manifests retain both dlinfo and dlerror exports",
+            "AArch64 libc.so and libc.a ABI manifests retain dlclose, dlinfo, and dlerror exports",
             "src/ldso/dlinfo.c:dlinfo",
             "Unsupported request %d",
             "does not consume that pending state",
+            "src/ldso/dlclose.c:dlclose",
+            "ldso/dynlink.c:__dl_invalid_handle",
+            "Invalid library handle 0",
+            "non-null forged/stale close handling remains loader-owned",
         ):
             self.assertIn(phrase, prerequisites)
         scope = artifact["native_evidence"][0]["scope"]
@@ -971,12 +978,16 @@ class X86ParityLedgerTests(unittest.TestCase):
             "leaves its result pointer untouched",
             "exact `Unsupported request -7`",
             "valid RTLD_DI_LINKMAP query leaves that error pending",
+            "dlclose(NULL) returns exactly one",
+            "exact `Invalid library handle 0`",
+            "non-null forged/stale close handling remains loader-owned",
         ):
             self.assertIn(phrase, scope)
         self.assertTrue(
             any(
                 entry["kind"] == "aarch64-contract"
                 and "aarch64/libc.so.dynamic.tsv" in entry["source"]
+                and "dlclose, dlinfo, and dlerror exports" in entry["role"]
                 and "not a behavioral fallback" in entry["role"]
                 for entry in artifact["oracle"]
             )

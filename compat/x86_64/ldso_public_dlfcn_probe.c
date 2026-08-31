@@ -177,6 +177,12 @@ int main(void) {
     if (main_handle == NULL || mid_one == NULL || mid_one != mid_two || leaf == NULL) return 46;
 
     typed_dlerror();
+    if (typed_dlclose(NULL) != 1) return 63;
+    char *null_close = typed_dlerror();
+    if (!text_equal(null_close, "Invalid library handle 0")
+        || typed_dlerror() != NULL) return 64;
+
+    typed_dlerror();
     void *mid_symbol = typed_dlsym(mid_one, "mid_value");
     if (mid_symbol != (void *)&mid_value || ((int (*)(void))mid_symbol)() != 42
         || typed_dlerror() != NULL || typed_dlsym(RTLD_DEFAULT, "mid_value") != mid_symbol) {
