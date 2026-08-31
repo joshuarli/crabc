@@ -279,6 +279,8 @@ mod math_ceil;
 mod math_floor;
 #[path = "math_round.rs"]
 mod math_round;
+#[path = "math_log2.rs"]
+mod math_log2;
 #[path = "math_minmax.rs"]
 mod math_minmax;
 #[path = "math_x87_extended.rs"]
