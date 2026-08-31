@@ -766,6 +766,7 @@ sigandset
 sigdelset
 sigemptyset
 sigfillset
+siginterrupt
 sigisemptyset
 sigismember
 siglongjmp

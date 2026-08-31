@@ -286,6 +286,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh system-header-abi
 ./scripts/dev-x86_64.sh syscall-header-abi
 ./scripts/dev-x86_64.sh signal-header-abi
+./scripts/dev-x86_64.sh siginterrupt-header-abi
 ./scripts/dev-x86_64.sh mman-header-abi
 ./scripts/dev-x86_64.sh memory-sync-header-abi
 ./scripts/dev-x86_64.sh memory-locking-header-abi
@@ -395,6 +396,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-timerfd
 ./scripts/dev-x86_64.sh libc-signalfd
 ./scripts/dev-x86_64.sh libc-sigpause
+./scripts/dev-x86_64.sh libc-siginterrupt
 ./scripts/dev-x86_64.sh libc-sigisemptyset
 ./scripts/dev-x86_64.sh libc-sigandset-sigorset
 ./scripts/dev-x86_64.sh libc-sigpending
@@ -2951,6 +2953,23 @@ runner-owned FIFO queues blocked `SIGUSR1` before the call and proves
 `SIGUSR1`/`SIGUSR2` mask restoration. It is not a public signal mask/action
 API, generic delivery or process control, queues/signalfd, timers/readiness,
 pthread cancellation, signal-family completion, AArch64 parity, promotion, or
+public x86 support.
+
+`libc-siginterrupt` is a separate `static-c-siginterrupt`
+`verified_artifact` within planned `libc.posix-runtime`. Its project-header C
+body runs first through pinned musl 1.2.6 and then through a true
+`-nostdlib -static` candidate. It selects exactly the legacy/XSI `siginterrupt`
+body:
+query one existing `rt_sigaction=13` record, clear `SA_RESTART` for any nonzero
+flag or set it for zero, then replace the record through the private x86
+action conversion. The dedicated C/C++ `<signal.h>` matrix proves its exact
+signature and C linkage, the shared strict/POSIX/XOPEN=700/GNU/BSD/default
+profiles, and records the existing XOPEN=800 difference (musl exposes this
+legacy name while the project header deliberately hides it). A raw-contained
+fixture proves nonzero clear/zero set, preserved `SA_NODEFER`/stale errno, and
+`SIGKILL` `EINVAL`. It is not handler installation/lifetime, a general action
+API, signal-set/mask/delivery/wait policy, queues/descriptors, timers, pthread
+or process policy, signal-family completion, AArch64 parity, promotion, or
 public x86 support.
 
 `libc-sigisemptyset` is a separate `static-c-sigisemptyset`
@@ -5777,7 +5796,7 @@ startup, loader TLS, sysroot, nor public x86 support.
 Apart from the narrowly named `libc-stat-compat`, `libc-credentials`,
 `libc-bootstrap-primitives`, `libc-signal-control`, `libc-signal-execution`,
 `libc-signal-altstack`, `libc-timerfd`, `libc-signalfd`, `libc-sigpause`,
-`libc-sigisemptyset`, `libc-sigandset-sigorset`, `libc-sigpending`, and
+`libc-siginterrupt`, `libc-sigisemptyset`, `libc-sigandset-sigorset`, `libc-sigpending`, and
 `libc-sigrtmax`, `libc-sigrtmin`, `libc-sched-getscheduler`,
 `libc-sigaddset-sigdelset-sigfillset`,
 `libc-sigrtmax`, `libc-sigrtmin`, `libc-alarm`, `libc-usleep`, `libc-ftime`,

@@ -19143,6 +19143,243 @@ def require_sigpause_artifact(family: Mapping[str, Any]) -> None:
     )
 
 
+def require_siginterrupt_artifact(family: Mapping[str, Any]) -> None:
+    """Keep one legacy action-flag adapter below signal-runtime promotion."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.posix-runtime].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [
+        entry for entry in artifacts if entry.get("id") == "static-c-siginterrupt"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.posix-runtime must contain exactly one static-c-siginterrupt artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-siginterrupt must not promote libc.posix-runtime",
+    )
+    artifact = matching[0]
+    require(
+        "capabilities" not in artifact,
+        "static-c-siginterrupt must remain a private artifact without capabilities",
+    )
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for phrase in (
+        "one-symbol legacy/XSI action-flag adapter artifact",
+        "planned `libc.posix-runtime`",
+        "exactly `siginterrupt`",
+        "`src/signal/siginterrupt.c`",
+        "`rt_sigaction=13`",
+        "`SA_RESTART=0x10000000`",
+        "nonzero -7 clears",
+        "zero restores",
+        "`SA_NODEFER`",
+        "stale `E2BIG`",
+        "SIGKILL",
+        "XOPEN=800",
+        "post-POSIX.1-2024",
+        "uninitialized local storage",
+        "handler-set bookkeeping",
+        "handler installation/lifetime",
+        "general signal actions",
+        "signal masks or signal-set helpers",
+        "delivery, waits, queues, descriptors, timers",
+        "pthread policy, process control",
+        "signal-family completion, promotion, or public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"static-c-siginterrupt description omits {phrase}",
+        )
+    owners = set(
+        nonempty_strings(
+            artifact["source_owners"], "static-c-siginterrupt.source_owners"
+        )
+    )
+    for owner in (
+        "compat/upstreams.toml",
+        "libc/Cargo.toml",
+        "libc/src/lib.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/siginterrupt.rs",
+        "libc/src/c_abi/x86_64/signal_foundation.rs",
+        "libc/src/c_abi/x86_64/errno.rs",
+        "libc/src/c_abi/x86_64/syscall.rs",
+        "libc/src/c_abi/x86_64/static_tls.rs",
+        "include/errno.h",
+        "include/features.h",
+        "include/signal.h",
+        "include/stddef.h",
+        "include/stdint.h",
+        "include/sys/syscall.h",
+        "include/bits/alltypes.h",
+        "include/bits/syscall.h",
+        "compat/x86_64/siginterrupt_header_abi_probe.c",
+        "compat/x86_64/siginterrupt_header_abi_probe.cpp",
+        "compat/x86_64/run_siginterrupt_header_abi.sh",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/libc_siginterrupt_probe.c",
+        "compat/x86_64/libc_siginterrupt_start.S",
+        "compat/x86_64/run_libc_siginterrupt.sh",
+        "compat/x86_64/aarch64_parity_inventory.py",
+        "compat/x86_64/aarch64_parity_inventory.json",
+        "compat/x86_64/tests/test_aarch64_parity_inventory.py",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/README.md",
+        "STATUS.md",
+        "x86-64.md",
+        "scripts/dev-x86_64.sh",
+        "scripts/check_structure.py",
+    ):
+        require(owner in owners, f"static-c-siginterrupt source owners omit {owner}")
+    prerequisites = nonempty_strings(
+        artifact["x86_abi_prerequisites"],
+        "static-c-siginterrupt.x86_abi_prerequisites",
+    )
+    require(
+        any(
+            "int siginterrupt(int, int)" in item
+            and "edi/esi" in item
+            and "eax" in item
+            and "rt_sigaction=13" in item
+            and "rdi/rsi/rdx/r10" in item
+            and "32-byte align-eight" in item
+            and "152-byte align-eight" in item
+            for item in prerequisites
+        ),
+        "static-c-siginterrupt must record its x86 C/syscall action ABI",
+    )
+    require(
+        any(
+            "src/signal/siginterrupt.c" in item
+            and "sigaction(sig, 0, &sa)" in item
+            and "~SA_RESTART" in item
+            and "|= SA_RESTART" in item
+            and "SYS_rt_sigaction" in item
+            and "uninitialized" in item
+            and "handler bookkeeping" in item
+            for item in prerequisites
+        ),
+        "static-c-siginterrupt must retain its pinned-musl source boundary",
+    )
+    require(
+        any(
+            "nonzero -7" in item
+            and "zero sets" in item
+            and "SA_NODEFER" in item
+            and "E2BIG" in item
+            and "SIGKILL" in item
+            and "PT_TLS errno datum" in item
+            and "initial-exec TPOFF" in item
+            for item in prerequisites
+        ),
+        "static-c-siginterrupt must retain its closed static differential",
+    )
+    headers = nonempty_strings(
+        artifact["x86_header_prerequisites"],
+        "static-c-siginterrupt.x86_header_prerequisites",
+    )
+    require(
+        any(
+            "C11/C++17 `<signal.h>` matrix" in item
+            and "int siginterrupt(int, int)" in item
+            and "SA_RESTART=0x10000000" in item
+            and "Strict and POSIX.1-2008" in item
+            and "XOPEN=700, GNU, BSD, and default-source" in item
+            and "XOPEN=800 divergence" in item
+            and "unmangled C++ reference" in item
+            and "signal.h, features.h, and bits/alltypes.h" in item
+            for item in headers
+        ),
+        "static-c-siginterrupt must retain its C/C++ header matrix",
+    )
+    static_exports = set(
+        static_c_abi_export_names(
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        )
+    )
+    require(
+        "siginterrupt" in static_exports,
+        "static-c-siginterrupt must expose its exact C spelling",
+    )
+    implementation = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "siginterrupt.rs"
+    ).read_text(encoding="utf-8")
+    for required in (
+        "src/signal/siginterrupt.c",
+        "SA_RESTART",
+        "raw_syscall::SYS_RT_SIGACTION",
+        "raw_syscall::syscall4(",
+        "signal_foundation::unpack_kernel_action",
+        "signal_foundation::pack_public_action",
+        "MaybeUninit",
+        "c_status(queried)",
+        "c_status(replaced)",
+        'pub extern "C" fn siginterrupt',
+    ):
+        require(
+            required in implementation,
+            f"static-c-siginterrupt implementation omits {required}",
+        )
+    implementation_exports = set(
+        re.findall(
+            r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(',
+            implementation,
+        )
+    )
+    require(
+        implementation_exports == {"siginterrupt"},
+        "static-c-siginterrupt implementation must export only siginterrupt",
+    )
+    oracle = artifact["oracle"]
+    assert isinstance(oracle, list)
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "c-posix"
+            and isinstance(entry.get("role"), str)
+            and "src/signal/siginterrupt.c" in entry["role"]
+            and "nonzero clear/zero set" in entry["role"]
+            and "XOPEN=800" in entry["role"]
+            for entry in oracle
+        ),
+        "static-c-siginterrupt must retain its pinned-musl source/header oracle",
+    )
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-siginterrupt"},
+        "static-c-siginterrupt must use the closed libc-siginterrupt command",
+    )
+    scope = evidence[0].get("scope")
+    require(
+        isinstance(scope, str)
+        and all(
+            phrase in scope
+            for phrase in (
+                "Pinned-musl 1.2.6",
+                "C/C++ siginterrupt feature/header matrix",
+                "`-nostdlib -static` candidate",
+                "rt_sigaction=13",
+                "SA_RESTART",
+                "public sigaction/signal APIs",
+                "signal-set/mask/wait/queue/descriptor",
+                "timer, pthread, process-control",
+                "SIGKILL EINVAL",
+                "public x86 support",
+            )
+        ),
+        "static-c-siginterrupt evidence must retain its bounded static regression",
+    )
+
+
 def require_sigisemptyset_artifact(family: Mapping[str, Any]) -> None:
     """Keep one pure GNU set predicate below signal-runtime promotion."""
     artifacts = require_verified_artifacts(
@@ -43481,6 +43718,7 @@ def validate_ledger(
     require_timerfd_artifact(by_id["libc.posix-runtime"])
     require_signalfd_artifact(by_id["libc.posix-runtime"])
     require_sigpause_artifact(by_id["libc.posix-runtime"])
+    require_siginterrupt_artifact(by_id["libc.posix-runtime"])
     require_sigisemptyset_artifact(by_id["libc.posix-runtime"])
     require_sigandset_sigorset_artifact(by_id["libc.posix-runtime"])
     require_sigpending_artifact(by_id["libc.posix-runtime"])

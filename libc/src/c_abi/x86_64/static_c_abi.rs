@@ -302,6 +302,8 @@ mod signal_set_binary;
 mod signal_execution;
 #[path = "signal_pause.rs"]
 mod signal_pause;
+#[path = "siginterrupt.rs"]
+mod siginterrupt;
 #[path = "signal_altstack.rs"]
 mod signal_altstack;
 #[path = "pthread_identity.rs"]

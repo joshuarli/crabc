@@ -128,6 +128,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   system-header-abi  compile the staged x86 C/C++ system header layouts
   syscall-header-abi  compare the staged x86 syscall macro surface with musl
   signal-header-abi  compile the staged x86 GNU/POSIX signal-header layouts
+  siginterrupt-header-abi  verify x86 musl/project siginterrupt C/C++ declarations
   sched-getscheduler-header-abi  compile x86 sched_getscheduler C/C++ declarations
   termios-header-abi  compile the staged x86 C/C++ GNU termios-header layouts
   ctermid-header-abi  compile the staged x86 C/C++ POSIX/XSI ctermid declaration
@@ -157,6 +158,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-timerfd  run the static x86 crabc-libc timer-descriptor slice
   libc-signalfd  run the static x86 crabc-libc signal-descriptor slice
   libc-sigpause  run the static x86 crabc-libc one-signal pause slice
+  libc-siginterrupt  run the static x86 crabc-libc SA_RESTART adapter slice
   libc-sigisemptyset  run the static x86 crabc-libc GNU signal-set predicate slice
   libc-sigandset-sigorset  run the static x86 crabc-libc GNU signal-set binary slice
   libc-sigpending  run the static x86 crabc-libc POSIX pending-signal slice
@@ -506,6 +508,14 @@ application signal, and proves Linux restores the original mask after the
 interrupted wait. It does not select a public mask/action API, process control,
 signal queues/descriptors, timers, pthread behavior, dynamic libc, or
 application startup.
+`libc-siginterrupt` is a separate one-entry legacy/XSI action-flag boundary.
+It queries one existing kernel action, clears `SA_RESTART` for a nonzero flag or
+sets it for zero, and replaces that action through the private x86 record
+conversion. Its static fixture proves both transitions, preserved `SA_NODEFER`
+and stale errno, and Linux's `SIGKILL` replacement error. It does not select
+handler installation/lifetime, a general action API, signal sets/masks/delivery,
+waits, queues/descriptors, timers, pthread policy, dynamic libc, or application
+startup.
 `libc-sigisemptyset` is a separate one-entry GNU signal-set predicate boundary.
 It reads exactly musl's first public x86 signal-set word, ignores the remaining
 128-byte-record tail, preserves stale errno, and has no syscall path. It does
@@ -2481,6 +2491,10 @@ run_libc_sigpause_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_sigpause.sh
 }
 
+run_libc_siginterrupt_probe() {
+    run_in_container bash /workspace/compat/x86_64/run_libc_siginterrupt.sh
+}
+
 run_libc_sigisemptyset_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_sigisemptyset.sh
 }
@@ -2651,6 +2665,10 @@ run_syscall_header_abi() {
 
 run_signal_header_abi() {
     run_in_container bash /workspace/compat/x86_64/run_signal_header_abi.sh
+}
+
+run_siginterrupt_header_abi() {
+    run_in_container bash /workspace/compat/x86_64/run_siginterrupt_header_abi.sh
 }
 
 run_sched_getscheduler_header_abi() {
@@ -3879,7 +3897,7 @@ shift
 
 case "$command" in
     timerfd-header-abi|signalfd-header-abi) ;;
-    usleep-header-abi|ftime-header-abi|clock-getcpuclockid-header-abi|libc-timerfd|libc-signalfd|libc-sigpause|libc-sigisemptyset|libc-sigandset-sigorset|libc-sigpending|libc-sigrtmax|libc-sigrtmin|libc-sched-getscheduler|libc-alarm|libc-usleep|libc-ftime|libc-clock-getcpuclockid|libc-sigaddset-sigdelset-sigfillset) ;;
+    siginterrupt-header-abi|usleep-header-abi|ftime-header-abi|clock-getcpuclockid-header-abi|libc-timerfd|libc-signalfd|libc-sigpause|libc-siginterrupt|libc-sigisemptyset|libc-sigandset-sigorset|libc-sigpending|libc-sigrtmax|libc-sigrtmin|libc-sched-getscheduler|libc-alarm|libc-usleep|libc-ftime|libc-clock-getcpuclockid|libc-sigaddset-sigdelset-sigfillset) ;;
     libc-sched-getcpu|libc-sched-yield) ;;
     sched-getscheduler-header-abi) ;;
     ctermid-header-abi|gethostid-header-abi|getpagesize-header-abi|gettid-header-abi|isatty-header-abi|tcgetpgrp-header-abi|tcsetpgrp-header-abi|getpass-header-abi|libc-ctermid|libc-gethostid|libc-getpagesize|libc-gettid|libc-isatty|libc-tcgetpgrp|libc-tcsetpgrp|libc-getpass|mkfifo-header-abi|mkfifoat-header-abi|libc-mkfifo|libc-mkfifoat|mktemp-header-abi|libc-mktemp) ;;
@@ -4416,6 +4434,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "signal-header-abi takes no arguments"
         ensure_image
         run_signal_header_abi
+        ;;
+    siginterrupt-header-abi)
+        [ "$#" -eq 0 ] || fail "siginterrupt-header-abi takes no arguments"
+        ensure_image
+        run_siginterrupt_header_abi
         ;;
     sched-getscheduler-header-abi)
         [ "$#" -eq 0 ] || fail "sched-getscheduler-header-abi takes no arguments"
@@ -5746,6 +5769,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "libc-sigpause takes no arguments"
         ensure_image
         run_libc_sigpause_probe
+        ;;
+    libc-siginterrupt)
+        [ "$#" -eq 0 ] || fail "libc-siginterrupt takes no arguments"
+        ensure_image
+        run_libc_siginterrupt_probe
         ;;
     libc-sigisemptyset)
         [ "$#" -eq 0 ] || fail "libc-sigisemptyset takes no arguments"

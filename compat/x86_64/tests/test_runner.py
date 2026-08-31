@@ -1375,7 +1375,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         )
         expected_groups = (
             "timerfd-header-abi|signalfd-header-abi",
-            "usleep-header-abi|ftime-header-abi|clock-getcpuclockid-header-abi|libc-timerfd|libc-signalfd|libc-sigpause|libc-sigisemptyset|libc-sigandset-sigorset|libc-sigpending|libc-sigrtmax|libc-sigrtmin|libc-sched-getscheduler|libc-alarm|libc-usleep|libc-ftime|libc-clock-getcpuclockid|libc-sigaddset-sigdelset-sigfillset",
+            "siginterrupt-header-abi|usleep-header-abi|ftime-header-abi|clock-getcpuclockid-header-abi|libc-timerfd|libc-signalfd|libc-sigpause|libc-siginterrupt|libc-sigisemptyset|libc-sigandset-sigorset|libc-sigpending|libc-sigrtmax|libc-sigrtmin|libc-sched-getscheduler|libc-alarm|libc-usleep|libc-ftime|libc-clock-getcpuclockid|libc-sigaddset-sigdelset-sigfillset",
             "libc-sched-getcpu|libc-sched-yield",
             "sched-getscheduler-header-abi",
             "ctermid-header-abi|gethostid-header-abi|getpagesize-header-abi|gettid-header-abi|isatty-header-abi|tcgetpgrp-header-abi|tcsetpgrp-header-abi|getpass-header-abi|libc-ctermid|libc-gethostid|libc-getpagesize|libc-gettid|libc-isatty|libc-tcgetpgrp|libc-tcsetpgrp|libc-getpass|mkfifo-header-abi|mkfifoat-header-abi|libc-mkfifo|libc-mkfifoat|mktemp-header-abi|libc-mktemp",
@@ -4954,6 +4954,162 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         )
         self.assertIn("run_libc_sigpause_probe()", dispatcher)
         self.assertIn("libc-sigpause)", dispatcher)
+
+    def test_libc_static_c_abi_siginterrupt_artifact_stays_bounded(self) -> None:
+        """The legacy action-flag shim stays one direct static ABI leaf."""
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        implementation_path = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "siginterrupt.rs"
+        )
+        header_c_path = (
+            ROOT / "compat" / "x86_64" / "siginterrupt_header_abi_probe.c"
+        )
+        header_cpp_path = (
+            ROOT / "compat" / "x86_64" / "siginterrupt_header_abi_probe.cpp"
+        )
+        header_runner_path = (
+            ROOT / "compat" / "x86_64" / "run_siginterrupt_header_abi.sh"
+        )
+        probe_path = ROOT / "compat" / "x86_64" / "libc_siginterrupt_probe.c"
+        start_path = ROOT / "compat" / "x86_64" / "libc_siginterrupt_start.S"
+        artifact_runner_path = (
+            ROOT / "compat" / "x86_64" / "run_libc_siginterrupt.sh"
+        )
+        for path in (
+            implementation_path,
+            header_c_path,
+            header_cpp_path,
+            header_runner_path,
+            probe_path,
+            start_path,
+            artifact_runner_path,
+        ):
+            self.assertTrue(path.is_file(), f"missing siginterrupt artifact input: {path}")
+        self.assertTrue(header_runner_path.stat().st_mode & 0o111)
+        self.assertTrue(artifact_runner_path.stat().st_mode & 0o111)
+
+        implementation = implementation_path.read_text(encoding="utf-8")
+        header_c = header_c_path.read_text(encoding="utf-8")
+        header_cpp = header_cpp_path.read_text(encoding="utf-8")
+        header_runner = header_runner_path.read_text(encoding="utf-8")
+        probe = probe_path.read_text(encoding="utf-8")
+        start = start_path.read_text(encoding="utf-8")
+        artifact_runner = artifact_runner_path.read_text(encoding="utf-8")
+        static_exports = {
+            line
+            for line in (
+                ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+            ).read_text(encoding="utf-8").splitlines()
+            if line and not line.startswith("#")
+        }
+        parity_ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        dispatcher = RUNNER.read_text(encoding="utf-8")
+
+        self.assertIn('#[path = "siginterrupt.rs"]', static_root)
+        for required in (
+            "Selected static Linux/x86-64 `siginterrupt` C boundary",
+            "src/signal/siginterrupt.c",
+            "SA_RESTART",
+            "raw_syscall::SYS_RT_SIGACTION",
+            "raw_syscall::syscall4(",
+            "signal_foundation::unpack_kernel_action",
+            "signal_foundation::pack_public_action",
+            "MaybeUninit",
+            "c_status(queried)",
+            "c_status(replaced)",
+            'pub extern "C" fn siginterrupt',
+        ):
+            self.assertIn(required, implementation)
+        for forbidden in (
+            "signal_control",
+            "sigprocmask(",
+            "sigpending(",
+            "sigtimedwait(",
+            "sigwait",
+            "signalfd",
+            "timerfd",
+            "pthread_",
+            "process_context",
+        ):
+            self.assertNotIn(forbidden, implementation)
+
+        for header in (header_c, header_cpp):
+            for required in (
+                "CRABC_EXPECT_SIGINTERRUPT",
+                "siginterrupt_signature",
+                "SA_RESTART",
+                "CRABC_REQUIRE_SIGINTERRUPT_HIDDEN",
+            ):
+                self.assertIn(required, header)
+        for required in (
+            "reject_hidden",
+            "compile_visible",
+            "assert_xopen800_header_divergence",
+            "_POSIX_C_SOURCE=200809L",
+            "_XOPEN_SOURCE=700",
+            "_XOPEN_SOURCE=800",
+            "_GNU_SOURCE",
+            "_BSD_SOURCE",
+            "_DEFAULT_SOURCE",
+            "-U_GNU_SOURCE",
+            "nm --undefined-only",
+            "mangled siginterrupt",
+            "signal.h",
+            "features.h",
+            "bits/alltypes.h",
+        ):
+            self.assertIn(required, header_runner)
+        for required in (
+            "SYS_rt_sigaction == 13",
+            "SA_RESTART == 0x10000000",
+            "SA_NODEFER == 0x40000000",
+            "direct_siginterrupt(SIGUSR1, -7)",
+            "direct_siginterrupt(SIGUSR1, 0)",
+            "direct_siginterrupt(SIGKILL, 1)",
+            "E2BIG",
+            "CRABC_SIGINTERRUPT_FREESTANDING",
+            "raw_syscall4",
+        ):
+            self.assertIn(required, probe)
+        for required in (
+            "call __crabc_x86_static_tls_bootstrap",
+            "crabc_x86_64_siginterrupt_probe",
+            "exit_group",
+        ):
+            self.assertIn(required, start)
+        self.assertNotIn("arch_prctl", start.lower())
+        for required in (
+            "run_musl_oracle.sh",
+            "run_siginterrupt_header_abi.sh",
+            "static_c_abi_exports.txt",
+            "-nostdlib -static",
+            "-Wl,-e,_start",
+            "R_X86_64_TPOFF",
+            "assert_named_syscall siginterrupt d",
+            "SA_RESTART set/clear bit path",
+            "candidate unexpectedly pulls",
+            "crabc_x86_64_signal_restorer",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn("--whole-archive", artifact_runner)
+        self.assertIn("siginterrupt", static_exports)
+        self.assertIn('id = "static-c-siginterrupt"', parity_ledger)
+        self.assertIn(
+            'command = "./scripts/dev-x86_64.sh libc-siginterrupt"', parity_ledger
+        )
+        self.assertIn("run_siginterrupt_header_abi()", dispatcher)
+        self.assertIn("run_libc_siginterrupt_probe()", dispatcher)
+        self.assertIn(
+            "/workspace/compat/x86_64/run_libc_siginterrupt.sh", dispatcher
+        )
+        self.assertIn(
+            '    libc-siginterrupt)\n        [ "$#" -eq 0 ] || fail "libc-siginterrupt takes no arguments"',
+            dispatcher,
+        )
 
     def test_libc_static_c_abi_sigisemptyset_artifact_stays_bounded(self) -> None:
         static_root = (

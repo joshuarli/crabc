@@ -68,7 +68,11 @@ class AArch64ParityInventoryTests(unittest.TestCase):
         posix_runtime = next(
             row for row in report["families"] if row["id"] == "libc.posix-runtime"
         )
-        self.assertEqual(posix_runtime["verified_artifact_count"], 99)
+        self.assertEqual(posix_runtime["verified_artifact_count"], 100)
+        self.assertIn(
+            {"family": "libc.posix-runtime", "id": "static-c-siginterrupt"},
+            report["selected_private_artifacts"],
+        )
         self.assertIn(
             {"family": "libc.posix-runtime", "id": "static-c-clock-getcpuclockid"},
             report["selected_private_artifacts"],

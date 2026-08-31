@@ -1752,6 +1752,20 @@ public signal mask/action interface, generic delivery or process control,
 queues/signalfd, timers/readiness policy, pthread cancellation, libc.so, CRT,
 loader, sysroot, family/platform parity, promotion, or public x86 support.
 
+`./scripts/dev-x86_64.sh libc-siginterrupt` is a separate private
+`static-c-siginterrupt` artifact inside planned `libc.posix-runtime`. Its
+one-symbol pinned-musl/freestanding-static C proof maps only musl 1.2.6
+`src/signal/siginterrupt.c`: query one existing action with `rt_sigaction=13`,
+clear exactly `SA_RESTART` for a nonzero flag or set it for zero, then replace
+the action through the private x86 record conversion. The C/C++ `<signal.h>`
+matrix proves the legacy signature and records the existing XOPEN=800 policy
+split (musl exposes it; the project header deliberately hides it). The fixture
+proves nonzero clear/zero set, preserved `SA_NODEFER` and stale errno, and
+`SIGKILL` `EINVAL`. It does not select handler installation/lifetime, general
+signal actions, masks/sets/delivery/waits, descriptors/timers, pthread or
+process policy, libc.so, CRT, loader, sysroot, family/platform parity,
+promotion, or public x86 support.
+
 `./scripts/dev-x86_64.sh libc-sigisemptyset` is a separate private
 `static-c-sigisemptyset` artifact inside planned `libc.posix-runtime`. Its
 one-symbol pinned-musl/freestanding-static C proof follows musl 1.2.6's GNU

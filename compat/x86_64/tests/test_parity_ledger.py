@@ -50,7 +50,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 41)
-        self.assertEqual(report["verified_artifact_count"], 207)
+        self.assertEqual(report["verified_artifact_count"], 208)
         self.assertEqual(report["header_layout_probe_count"], 47)
         self.assertEqual(report["public_header_inventory_count"], 183)
         self.assertEqual(report["header_foundation_header_count"], 191)
@@ -15027,6 +15027,117 @@ class X86ParityLedgerTests(unittest.TestCase):
         assert isinstance(evidence, list) and isinstance(evidence[0], dict)
         evidence[0]["command"] = "./scripts/dev-x86_64.sh signal-reference"
         with self.assertRaisesRegex(ledger.LedgerError, "closed libc-sigpause command"):
+            ledger.validate_ledger(data)
+
+    def test_siginterrupt_artifact_keeps_its_closed_static_contract(self) -> None:
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-siginterrupt"
+        )
+        self.assertNotIn("capabilities", artifact)
+        for owner in (
+            "libc/src/c_abi/x86_64/siginterrupt.rs",
+            "libc/src/c_abi/x86_64/signal_foundation.rs",
+            "compat/x86_64/siginterrupt_header_abi_probe.c",
+            "compat/x86_64/siginterrupt_header_abi_probe.cpp",
+            "compat/x86_64/run_siginterrupt_header_abi.sh",
+            "compat/x86_64/libc_siginterrupt_probe.c",
+            "compat/x86_64/libc_siginterrupt_start.S",
+            "compat/x86_64/run_libc_siginterrupt.sh",
+            "compat/x86_64/aarch64_parity_inventory.json",
+            "scripts/check_structure.py",
+        ):
+            self.assertIn(owner, artifact["source_owners"])
+        self.assertEqual(
+            {evidence["command"] for evidence in artifact["native_evidence"]},
+            {"./scripts/dev-x86_64.sh libc-siginterrupt"},
+        )
+        for phrase in (
+            "one-symbol legacy/XSI action-flag adapter artifact",
+            "planned `libc.posix-runtime`",
+            "exactly `siginterrupt`",
+            "`src/signal/siginterrupt.c`",
+            "`rt_sigaction=13`",
+            "`SA_RESTART=0x10000000`",
+            "nonzero -7 clears",
+            "zero restores",
+            "`SA_NODEFER`",
+            "stale `E2BIG`",
+            "SIGKILL",
+            "XOPEN=800",
+            "post-POSIX.1-2024",
+            "uninitialized local storage",
+            "handler-set bookkeeping",
+            "handler installation/lifetime",
+            "general signal actions",
+            "signal masks or signal-set helpers",
+            "signal-family completion, promotion, or public x86 support",
+        ):
+            self.assertIn(phrase, artifact["description"])
+        prerequisites = artifact["x86_abi_prerequisites"]
+        self.assertTrue(
+            any(
+                "int siginterrupt(int, int)" in prerequisite
+                and "edi/esi" in prerequisite
+                and "rt_sigaction=13" in prerequisite
+                and "rdi/rsi/rdx/r10" in prerequisite
+                and "152-byte align-eight" in prerequisite
+                for prerequisite in prerequisites
+            )
+        )
+        self.assertTrue(
+            any(
+                "src/signal/siginterrupt.c" in prerequisite
+                and "~SA_RESTART" in prerequisite
+                and "|= SA_RESTART" in prerequisite
+                and "uninitialized" in prerequisite
+                and "handler bookkeeping" in prerequisite
+                for prerequisite in prerequisites
+            )
+        )
+        self.assertTrue(
+            any(
+                "nonzero -7" in prerequisite
+                and "zero sets" in prerequisite
+                and "SA_NODEFER" in prerequisite
+                and "E2BIG" in prerequisite
+                and "SIGKILL" in prerequisite
+                for prerequisite in prerequisites
+            )
+        )
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-siginterrupt"
+        )
+        artifact["description"] = "private signal helper"
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "static-c-siginterrupt description omits"
+        ):
+            ledger.validate_ledger(data)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-siginterrupt"
+        )
+        evidence = artifact["native_evidence"]
+        assert isinstance(evidence, list) and isinstance(evidence[0], dict)
+        evidence[0]["command"] = "./scripts/dev-x86_64.sh signal-reference"
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "closed libc-siginterrupt command"
+        ):
             ledger.validate_ledger(data)
 
     def test_sigisemptyset_artifact_keeps_its_closed_static_contract(self) -> None:

@@ -3815,6 +3815,59 @@ oracle = [
 ]
 
 [[family.verified_artifact]]
+id = "static-c-siginterrupt"
+description = "Private native x86 selected-static-archive one-symbol legacy/XSI action-flag adapter artifact inside planned `libc.posix-runtime`. One dependency-free `crabc-libc` archive exposes exactly `siginterrupt`; its freestanding project-header C fixture first runs through pinned musl 1.2.6 and then through a true `-nostdlib -static` candidate. It translates only musl 1.2.6 `src/signal/siginterrupt.c`: direct `rt_sigaction=13` query of one existing action, nonzero `flag` clears exactly `SA_RESTART=0x10000000`, zero sets it, then a replacement action call preserves the first kernel-visible mask word and other action flags. The shared raw fixture stages a disposable SIGUSR1 handler and proves nonzero -7 clears, zero restores, `SA_NODEFER` survives, stale `E2BIG` survives success, and SIGKILL reaches Linux `EINVAL` on replacement. The dedicated project/pinned-musl C11/C++17 `<signal.h>` matrix proves exact `int siginterrupt(int, int)`, `SA_RESTART`, and unmangled C++ linkage across strict/POSIX hidden and XOPEN=700/GNU/BSD/default-source visible profiles. It also records the existing header-policy divergence: musl 1.2.6 exposes this legacy name at XOPEN=800, while the project header deliberately hides it there under its post-POSIX.1-2024 XSI rule; this leaf does not alter that global feature policy. Musl ignores a failed first query then reads uninitialized local storage, so the selected sound boundary returns that query error before replacement; it also retains the existing selected signal-action substrate's exclusion of handler-set bookkeeping, internal-signal unmasking, EINTR-validity state, and SIGABRT locking. It does not select handler installation/lifetime, general signal actions, signal masks or signal-set helpers, delivery, waits, queues, descriptors, timers, pthread policy, process control, libc.so, CRT, dynamic runtime/loader/sysroot state, signal-family completion, promotion, or public x86 support."
+source_owners = [
+  "compat/upstreams.toml",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/siginterrupt.rs",
+  "libc/src/c_abi/x86_64/signal_foundation.rs",
+  "libc/src/c_abi/x86_64/errno.rs",
+  "libc/src/c_abi/x86_64/syscall.rs",
+  "libc/src/c_abi/x86_64/static_tls.rs",
+  "include/errno.h",
+  "include/features.h",
+  "include/signal.h",
+  "include/stddef.h",
+  "include/stdint.h",
+  "include/sys/syscall.h",
+  "include/bits/alltypes.h",
+  "include/bits/syscall.h",
+  "compat/x86_64/siginterrupt_header_abi_probe.c",
+  "compat/x86_64/siginterrupt_header_abi_probe.cpp",
+  "compat/x86_64/run_siginterrupt_header_abi.sh",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/libc_siginterrupt_probe.c",
+  "compat/x86_64/libc_siginterrupt_start.S",
+  "compat/x86_64/run_libc_siginterrupt.sh",
+  "compat/x86_64/aarch64_parity_inventory.py",
+  "compat/x86_64/aarch64_parity_inventory.json",
+  "compat/x86_64/tests/test_aarch64_parity_inventory.py",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "compat/x86_64/README.md",
+  "STATUS.md",
+  "x86-64.md",
+  "scripts/dev-x86_64.sh",
+  "scripts/check_structure.py",
+]
+x86_abi_prerequisites = [
+  "System V AMD64 passes `int siginterrupt(int, int)` as signed four-byte signal and flag words in edi/esi and returns its signed four-byte status in eax. Linux/x86-64 `rt_sigaction=13` receives signal/new-action/old-action/kernel-mask-size in rdi/rsi/rdx/r10. Its compact action record is 32-byte align-eight handler/flags/restorer/mask storage; the private public x86 action record is 152-byte align-eight storage with `sa_flags` at byte 136 and a sixteen-word public mask.",
+  "Pinned musl 1.2.6 `src/signal/siginterrupt.c` is the selected MIT source mapping: `sigaction(sig, 0, &sa)`, nonzero flag `sa.sa_flags &= ~SA_RESTART`, zero flag `|= SA_RESTART`, then `sigaction(sig, &sa, 0)`. The leaf performs that two-call direct `SYS_rt_sigaction` sequence through the existing private public/kernel conversion and hidden x86 restorer, without calling or exporting C sigaction. Musl's ignored-first-query uninitialized-local path is deliberately made safe by returning the raw query error; the existing bounded action substrate's handler bookkeeping/unmask/EINTR/SIGABRT policy remains excluded.",
+  "The common pinned-musl/true-static C body uses a fixture-private raw action only to stage/query/restore disposable SIGUSR1 metadata. It proves a nonzero -7 flag clears SA_RESTART, zero sets it, SA_NODEFER and the handler persist, stale E2BIG survives success, and SIGKILL's query-then-replace returns EINVAL. The final `-nostdlib -static` candidate has a PT_TLS errno datum with direct initial-exec TPOFF access; archive-owned Static Initial TLS v1 bootstrap is fixture glue only and does not claim CRT or general TLS lifecycle.",
+]
+x86_header_prerequisites = ["The dedicated project-first/pinned-musl C11/C++17 `<signal.h>` matrix proves exact `int siginterrupt(int, int)`, SA_RESTART=0x10000000, and an unmangled C++ reference. Strict and POSIX.1-2008 profiles hide it; XOPEN=700, GNU, BSD, and default-source profiles expose it. The matrix separately ratchets the pre-existing XOPEN=800 divergence: musl 1.2.6 exposes the legacy helper, while the project header intentionally hides it under its post-POSIX.1-2024 rule. Project trace provenance is signal.h, features.h, and bits/alltypes.h. This is bounded header/static-linkage evidence, not signal-header, signal-action-family, or public-support completion."]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-siginterrupt", scope = "Pinned-musl 1.2.6 project-header C reference plus the C/C++ siginterrupt feature/header matrix and a true dependency-free x86 crabc-libc archive with a `-nostdlib -static` candidate. The gate checks project-header provenance and exact crate-owned C-object export closure separately from compiler-builtins; rejects interpreter, DT_NEEDED, unresolved symbols, dynamic TLS/unowned runtime, public sigaction/signal APIs, signal-set/mask/wait/queue/descriptor, timer, pthread, process-control, allocator, auxv, and sysconf paths; proves direct initial-TLS errno and emitted rt_sigaction=13 plus the SA_RESTART set/clear path; then executes nonzero-clear/zero-set metadata transitions, preserved SA_NODEFER/stale errno, and SIGKILL EINVAL. Fixture-private raw action staging is containment only. It does not select handler lifecycle, general action or signal runtime policy, family completion, promotion, or public x86 support." }]
+oracle = [
+  { kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source and legacy signal.h declaration oracle for src/signal/siginterrupt.c: query existing action, nonzero clear/zero set of SA_RESTART, and replacement action. The evidence records the project's deliberate XOPEN=800 post-POSIX.1-2024 header-policy divergence instead of changing it." },
+  { kind = "kernel-abi", source = "Linux 5.10 x86-64 ABI", role = "rt_sigaction=13 register placement, compact action-record layout, SA_RESTART/SA_NODEFER flags, SIGKILL replacement EINVAL, and raw errno result contract." },
+  { kind = "elf-abi", source = "System V AMD64 psABI and pinned musl x86 headers", role = "int/int C calling convention, x86 public action layout, C++ C-linkage check, hidden rt_sigreturn restorer reference, and static initial-exec TLS fixture contract." },
+]
+
+[[family.verified_artifact]]
 id = "static-c-sigisemptyset"
 description = "Private native x86 selected-static-archive one-symbol GNU signal-set predicate artifact inside planned `libc.posix-runtime`. One dependency-free `crabc-libc` archive exposes exactly `sigisemptyset`; its freestanding project-header C fixture first runs through pinned musl 1.2.6 and then through a true `-nostdlib -static` candidate. The exact musl predicate returns one only when the first eight-byte public x86 signal-set word is zero, ignores the remaining public `sigset_t` tail, writes no caller storage, preserves stale errno, and makes no syscall. The shared GNU/POSIX signal-header gate proves its exact GNU signature and strict-POSIX hiding. This separate predicate leaf does not itself select the adjacent `sigandset`/`sigorset` extensions, which have their own separate bounded artifact, handlers/actions, mask or process signaling, waits, queues, descriptors, timers, pthread policy, libc.so, CRT, dynamic TLS lifecycle, loader, sysroot, family completion, promotion, or public x86 support."
 source_owners = [

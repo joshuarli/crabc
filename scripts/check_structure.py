@@ -248,6 +248,7 @@ X86_RUNTIME_FOUNDATION_LIBC_SOURCES = {
     Path("libc/src/c_abi/x86_64/signal_set_isempty.rs"),
     Path("libc/src/c_abi/x86_64/signal_set_binary.rs"),
     Path("libc/src/c_abi/x86_64/signal_pause.rs"),
+    Path("libc/src/c_abi/x86_64/siginterrupt.rs"),
     Path("libc/src/c_abi/x86_64/signal_foundation.rs"),
     Path("libc/src/c_abi/x86_64/static_c_abi.rs"),
     Path("libc/src/c_abi/x86_64/static_startup.rs"),
@@ -3762,6 +3763,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         '#[path = "signal_set_isempty.rs"]',
         '#[path = "signal_set_binary.rs"]',
         '#[path = "signal_pause.rs"]',
+        '#[path = "siginterrupt.rs"]',
         '#[path = "signal_fd.rs"]',
         '#[path = "timer_fd.rs"]',
         '#[path = "pthread_identity.rs"]',
@@ -8537,6 +8539,55 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
                 f"single-signal wait boundary must not select {forbidden!r}"
             )
 
+    siginterrupt_source = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "siginterrupt.rs"
+    siginterrupt_text = siginterrupt_source.read_text(errors="replace")
+    for required in (
+        "Selected static Linux/x86-64 `siginterrupt` C boundary",
+        "src/signal/siginterrupt.c",
+        "SA_RESTART",
+        "KERNEL_SIGSET_SIZE",
+        "raw_syscall::SYS_RT_SIGACTION",
+        "raw_syscall::syscall4(",
+        "signal_foundation::unpack_kernel_action",
+        "signal_foundation::pack_public_action",
+        "MaybeUninit",
+        "c_status(queried)",
+        "c_status(replaced)",
+        'pub extern "C" fn siginterrupt',
+    ):
+        if required not in siginterrupt_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/siginterrupt.rs: selected static "
+                f"legacy action-flag boundary is missing {required!r}"
+            )
+    siginterrupt_exports = set(
+        re.findall(
+            r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(',
+            siginterrupt_text,
+        )
+    )
+    if siginterrupt_exports != {"siginterrupt"}:
+        errors.append(
+            "libc/src/c_abi/x86_64/siginterrupt.rs: selected static artifact "
+            "must export only siginterrupt"
+        )
+    for forbidden in (
+        "signal_control",
+        "sigprocmask(",
+        "sigpending(",
+        "sigtimedwait(",
+        "sigwait",
+        "signalfd",
+        "timerfd",
+        "pthread_",
+        "process_context",
+    ):
+        if forbidden in siginterrupt_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/siginterrupt.rs: selected static "
+                f"legacy action-flag boundary must not select {forbidden!r}"
+            )
+
     signal_set_isempty_source = (
         ROOT / "libc" / "src" / "c_abi" / "x86_64" / "signal_set_isempty.rs"
     )
@@ -11795,6 +11846,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         ("signal_set_isempty.rs", signal_set_isempty_text),
         ("signal_set_binary.rs", signal_set_binary_text),
         ("signal_pause.rs", signal_pause_text),
+        ("siginterrupt.rs", siginterrupt_text),
         ("atomic.rs", atomic_text),
         ("pthread_identity.rs", pthread_identity_text),
         ("pthread_create_join.rs", pthread_create_join_text),
