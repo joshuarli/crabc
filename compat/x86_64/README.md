@@ -1282,13 +1282,14 @@ address-conversion or socket behavior, `crabc-libc`, or public x86 support.
 `nameser-header-abi` compile-checks project-first and pinned-musl C and C++
 `<resolv.h>` consumers for exactly
 `dn_skipname(const unsigned char *, const unsigned char *)` and
-`ns_get16(const unsigned char *)`. It ratchets `NS_CMPRSFLGS=0xc0`,
+`ns_get16(const unsigned char *)`, and
+`ns_put16(unsigned, unsigned char *)`. It ratchets `NS_CMPRSFLGS=0xc0`,
 `NS_MAXLABEL=63`, `NS_MAXCDNAME=255`, and `NS_MAXDNAME=1025`, then checks the
-C++ object retains both unmangled C symbols. It is declaration-only evidence
-for one caller-owned DNS wire-name span and one caller-owned 16-bit wire read;
-it does not establish archive linkage, resolver state, `/etc/resolv.conf`
-parsing, DNS packet I/O, sockets, netdb, installed-header completion, family
-promotion, or public x86 support.
+C++ object retains all three unmangled C symbols. It is declaration-only
+evidence for one caller-owned DNS wire-name span, one caller-owned 16-bit wire
+read, and one caller-owned 16-bit wire write; it does not establish archive
+linkage, resolver state, `/etc/resolv.conf` parsing, DNS packet I/O, sockets,
+netdb, installed-header completion, family promotion, or public x86 support.
 
 `inet-address-header-abi` compile-checks project-first and pinned-musl
 default/GNU/strict C and C++ `<arpa/inet.h>` profiles. It ratchets the exact
@@ -1416,6 +1417,22 @@ resolver state, `h_errno`/`errno`/TLS, `/etc/hosts` or `/etc/resolv.conf`
 access, DNS packet I/O, socket, netdb/database, parser sibling, address codec,
 integer byte-order helper, interface, Ethernet, allocation, syscall, libc.so,
 CRT, loader, sysroot, family promotion, or public x86 support.
+
+`libc-ns-put16` (`./scripts/dev-x86_64.sh libc-ns-put16`) is a distinct
+private static caller-owned nameserver 16-bit wire-write C ABI artifact inside
+still-planned `libc.resolver`, not resolver-network behavior or a promotion.
+Its project-header C fixture runs first through pinned musl 1.2.6 and then
+through an archive-free true `-nostdlib -static` candidate linked from exactly
+one extracted `ns_put16` object, never `libc.a`; the aggregate archive ratchet
+separately proves the export. Pinned musl puts the 10-byte call-free
+`ns_put16` section in `src/network/ns_parse.c` beside parser siblings, which
+remain unselected. The fixed differential covers unaligned network-order
+two-byte writes, truncation to an `unsigned` value's low 16 bits, unchanged
+neighboring bytes, and `NS_PUT16`'s cursor advance. It has no resolver state,
+`h_errno`/`errno`/TLS, `/etc/hosts` or `/etc/resolv.conf` access, DNS packet
+I/O, socket, netdb/database, parser sibling, address codec, integer byte-order
+helper, interface, Ethernet, allocation, syscall, libc.so, CRT, loader,
+sysroot, family promotion, or public x86 support.
 
 `libc-numeric-netdb` is a separate private static C `netdb.h` result-record
 artifact under still-planned `libc.resolver`. Its project-header C body first
