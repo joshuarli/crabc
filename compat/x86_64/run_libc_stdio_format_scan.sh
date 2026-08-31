@@ -15,6 +15,8 @@
 # state before vfscanf enters a format-directed scanner state or a variadic
 # destination boundary. `fixed-suppressed-character-scan` owns only the
 # no-destination non-wide `%*3c` raw-character conversion state.
+# `fixed-suppressed-string-scan` owns only the no-destination non-wide `%*3s`
+# token-string conversion state after its own C-locale input-whitespace skip.
 # The sibling `float-hex-output` profile selects only binary64 `%a`/`%A`
 # output, while the closed `errno-output` profile adds only bare GNU/musl `%m` C-locale
 # errno-message output through that same formatter. None selects a general
@@ -87,6 +89,13 @@ fixed-suppressed-character-scan)
     readonly START_SOURCE=compat/x86_64/libc_stdio_fixed_suppressed_character_scan_start.S
     readonly FREESTANDING_DEFINE=CRABC_STDIO_FIXED_SUPPRESSED_CHARACTER_SCAN_FREESTANDING
     readonly EVIDENCE_LABEL="sealed stdio suppressed-character scan"
+    readonly -a REQUIRED_C_ABI_SYMBOLS=(sscanf vsscanf)
+    ;;
+fixed-suppressed-string-scan)
+    readonly FIXTURE_SOURCE=compat/x86_64/libc_stdio_fixed_suppressed_string_scan_probe.c
+    readonly START_SOURCE=compat/x86_64/libc_stdio_fixed_suppressed_string_scan_start.S
+    readonly FREESTANDING_DEFINE=CRABC_STDIO_FIXED_SUPPRESSED_STRING_SCAN_FREESTANDING
+    readonly EVIDENCE_LABEL="sealed stdio suppressed-string scan"
     readonly -a REQUIRED_C_ABI_SYMBOLS=(sscanf vsscanf)
     ;;
 float-hex-output)
@@ -335,6 +344,19 @@ if [ "$EVIDENCE_PROFILE" = fixed-suppressed-character-scan ]; then
         fail "suppressed-character scanner no longer seals its null destination"
     grep -Fq 'zero-assignment suppressed character' "$ROOT_DIR/$FIXTURE_SOURCE" ||
         fail "suppressed-character fixture no longer records its assignment boundary"
+fi
+if [ "$EVIDENCE_PROFILE" = fixed-suppressed-string-scan ]; then
+    grep -Fq 'static-c-stdio-fixed-suppressed-string-scan artifact' \
+        "$ROOT_DIR/libc/src/c_abi/x86_64/stdio_format_scan.rs" ||
+        fail "suppressed-string scanner state is no longer selected"
+    grep -Fq 'let suppress = if unsafe { read_byte(directive) } == b'\''*'\''' \
+        "$ROOT_DIR/libc/src/c_abi/x86_64/stdio_format_scan.rs" ||
+        fail "suppressed-string scanner no longer parses the star field"
+    grep -Fq 'With the sealed `%*3s` profile' \
+        "$ROOT_DIR/libc/src/c_abi/x86_64/stdio_format_scan.rs" ||
+        fail "suppressed-string scanner no longer seals its null destination"
+    grep -Fq 'zero-assignment suppressed token' "$ROOT_DIR/$FIXTURE_SOURCE" ||
+        fail "suppressed-string fixture no longer records its assignment boundary"
 fi
 if timeout --foreground "$EXECUTION_TIMEOUT" "$candidate"; then
     :
