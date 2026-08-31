@@ -83,6 +83,13 @@ class AArch64ParityInventoryTests(unittest.TestCase):
             {
                 "id": "accounting-cross-family-regression",
                 "capabilities": ["error.reporting-termination"],
+                "native_evidence": [
+                    {
+                        "state": "verified",
+                        "command": "fixture",
+                        "scope": "fixture",
+                    }
+                ],
             }
         )
 
@@ -100,6 +107,13 @@ class AArch64ParityInventoryTests(unittest.TestCase):
             {
                 "id": "accounting-duplicate-capability-regression",
                 "capabilities": ["filesystem.lchmod-unsupported"],
+                "native_evidence": [
+                    {
+                        "state": "verified",
+                        "command": "fixture",
+                        "scope": "fixture",
+                    }
+                ],
             }
         )
 
@@ -113,7 +127,18 @@ class AArch64ParityInventoryTests(unittest.TestCase):
         family = self.family(data, "libc.posix-runtime")
         artifacts = family.setdefault("verified_artifact", [])
         assert isinstance(artifacts, list)
-        artifacts.append({"id": "static-c-error-strings"})
+        artifacts.append(
+            {
+                "id": "static-c-error-strings",
+                "native_evidence": [
+                    {
+                        "state": "verified",
+                        "command": "fixture",
+                        "scope": "fixture",
+                    }
+                ],
+            }
+        )
 
         with self.assertRaisesRegex(
             inventory.InventoryError, "duplicate verified record id"
@@ -131,6 +156,48 @@ class AArch64ParityInventoryTests(unittest.TestCase):
 
         with self.assertRaisesRegex(
             inventory.InventoryError, "must not carry capabilities"
+        ):
+            self.build_with_x86_ledger(data)
+
+    def test_inventory_rejects_a_selected_slice_without_verified_evidence(self) -> None:
+        data = inventory.load_toml(inventory.X86_LEDGER_PATH)
+        family = self.family(data, "libc.posix-runtime")
+        slices = family["verified_slice"]
+        assert isinstance(slices, list)
+        selected = next(
+            entry
+            for entry in slices
+            if entry["id"] == "filesystem.lchmod-unsupported"
+        )
+        assert isinstance(selected, dict)
+        evidence = selected["native_evidence"]
+        assert isinstance(evidence, list) and evidence
+        record = evidence[0]
+        assert isinstance(record, dict)
+        record["state"] = "required"
+
+        with self.assertRaisesRegex(
+            inventory.InventoryError, "must be entirely verified"
+        ):
+            self.build_with_x86_ledger(data)
+
+    def test_inventory_rejects_a_selected_artifact_without_verified_evidence(self) -> None:
+        data = inventory.load_toml(inventory.X86_LEDGER_PATH)
+        family = self.family(data, "libc.c-abi-compat")
+        artifacts = family["verified_artifact"]
+        assert isinstance(artifacts, list)
+        selected = next(
+            entry for entry in artifacts if entry["id"] == "static-c-error-strings"
+        )
+        assert isinstance(selected, dict)
+        evidence = selected["native_evidence"]
+        assert isinstance(evidence, list) and evidence
+        record = evidence[0]
+        assert isinstance(record, dict)
+        record["state"] = "required"
+
+        with self.assertRaisesRegex(
+            inventory.InventoryError, "must be entirely verified"
         ):
             self.build_with_x86_ledger(data)
 

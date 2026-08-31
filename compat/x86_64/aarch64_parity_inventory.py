@@ -89,6 +89,32 @@ def family_state(family: Mapping[str, Any]) -> str:
     return STATE_SELECTED if family.get("verified_slice") or family.get("verified_artifact") else STATE_MISSING
 
 
+def require_verified_native_evidence(record: Mapping[str, Any], location: str) -> None:
+    """Prevent an unproven record from entering the selected-private inventory."""
+    evidence = record.get("native_evidence")
+    require(
+        isinstance(evidence, list) and evidence,
+        f"{location}.native_evidence is missing",
+    )
+    for index, entry in enumerate(evidence):
+        evidence_location = f"{location}.native_evidence[{index}]"
+        require(
+            isinstance(entry, Mapping), f"{evidence_location} is not a table"
+        )
+        require(
+            entry.get("state") == "verified",
+            f"{location}.native_evidence must be entirely verified",
+        )
+        require(
+            isinstance(entry.get("command"), str) and entry["command"],
+            f"{evidence_location}.command is empty",
+        )
+        require(
+            isinstance(entry.get("scope"), str) and entry["scope"],
+            f"{evidence_location}.scope is empty",
+        )
+
+
 def build_inventory() -> dict[str, Any]:
     """Derive a canonical report from the actual ledger and oracle inputs."""
     x86 = load_toml(X86_LEDGER_PATH)
@@ -148,6 +174,9 @@ def build_inventory() -> dict[str, Any]:
                 f"duplicate verified record id: {record_id}",
             )
             verified_record_ids.add(record_id)
+            require_verified_native_evidence(
+                record, f"x86 verified slice {record_id}"
+            )
             values = record.get("capabilities")
             require(
                 isinstance(values, list) and values,
@@ -187,6 +216,9 @@ def build_inventory() -> dict[str, Any]:
             require(
                 "capabilities" not in record,
                 f"x86 verified artifact {record_id} must not carry capabilities",
+            )
+            require_verified_native_evidence(
+                record, f"x86 verified artifact {record_id}"
             )
             selected_artifacts.append({"family": identifier, "id": record_id})
         family_rows.append(

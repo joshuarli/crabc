@@ -21,9 +21,11 @@ The derivation validates its own selected-record boundary before it reports a
 state: every `verified_slice` must name non-duplicate capabilities owned by
 that same family, no capability may be selected by two slices, verified record
 IDs are unique across slices and artifacts, and an artifact cannot carry a
-capability claim. These checks keep a malformed ledger from turning an
-unrelated capability into `selected-private` when the inventory runs on its
-own; they do not make that state a completion or promotion decision.
+capability claim. Every selected slice or artifact must also carry nonempty
+native evidence whose records are all `verified` and have a command and scope.
+These checks keep a malformed ledger from turning an unrelated or unproven
+capability into `selected-private` when the inventory runs on its own; they do
+not make that state a completion or promotion decision.
 
 The report also checks the 183 pinned public header paths against the AArch64
 musl header oracle and records the selected x86 static-export ratchet only as
