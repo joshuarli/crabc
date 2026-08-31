@@ -408,5 +408,209 @@ class ShadowAbiMatrixContractTests(unittest.TestCase):
         )
 
 
+class NativePointerFirstGuardTests(unittest.TestCase):
+    @staticmethod
+    def dwarf_function(name: str, source_path: str, start: int, end: int) -> str:
+        return f'''\
+0x00001000:   DW_TAG_subprogram
+              DW_AT_low_pc\t(0x{start:016x})
+              DW_AT_high_pc\t(0x{end:016x})
+              DW_AT_name\t("{name}")
+              DW_AT_decl_file\t("{source_path}")
+'''
+
+    def test_native_guard_contract_covers_each_public_pointer_first_export(self) -> None:
+        contract = RUNNER.load_contract()
+        backend = RUNNER.backend_contract(contract, "native-rust-mimalloc-shadow")
+        guard = backend["native_pointer_first_guard"]
+        self.assertEqual(guard["required_elf_identity"], RUNNER.AARCH64_ELF_IDENTITY)
+        self.assertEqual(guard["required_debug_sections"], [".debug_info", ".debug_line"])
+        self.assertEqual(guard["forbidden_c_backend_symbol_prefix"], "mi_")
+        self.assertEqual(guard["exports"], list(RUNNER.NATIVE_DEBUG_GUARD_EXPORTS))
+        self.assertEqual(
+            [export["symbol"] for export in guard["exports"]],
+            ["free", "realloc", "malloc_usable_size"],
+        )
+
+        changed = copy.deepcopy(contract)
+        changed["backends"][1]["native_pointer_first_guard"]["exports"][0][
+            "pointer_first_dwarf_provenance"
+        ] = ["native_free_pointer_first_local"]
+        with mock.patch.object(RUNNER, "read_json", return_value=changed), self.assertRaisesRegex(
+            RUNNER.MatrixError, "native pointer-first guard drifted"
+        ):
+            RUNNER.load_contract()
+
+    def test_dwarf_address_resolution_uses_only_the_top_level_subprogram_attributes(self) -> None:
+        output = '''\
+0x00001000:   DW_TAG_subprogram
+              DW_AT_low_pc\t(0x0000000000001000)
+              DW_AT_high_pc\t(0x0000000000001010)
+              DW_AT_name\t("native_free")
+              DW_AT_decl_file\t("/workspace/crabc-mimalloc/src/runtime_lifecycle.rs")
+0x00001020:     DW_TAG_inlined_subroutine
+                DW_AT_low_pc\t(0x0000000000001004)
+                DW_AT_high_pc\t(0x0000000000001008)
+                DW_AT_name\t("inlined_helper")
+                DW_AT_decl_file\t("/workspace/crabc-mimalloc/src/runtime_lifecycle.rs")
+'''
+        function = RUNNER.dwarf_function_at_address(output, 0x100C)
+        self.assertEqual(
+            function,
+            {
+                "address": 0x100C,
+                "end_address": 0x1010,
+                "name": "native_free",
+                "source_path": "/workspace/crabc-mimalloc/src/runtime_lifecycle.rs",
+                "start_address": 0x1000,
+            },
+        )
+
+    def test_native_export_attestation_accepts_an_opaque_elf_label_only_with_dwarf_dispatch_evidence(self) -> None:
+        export = copy.deepcopy(RUNNER.NATIVE_DEBUG_GUARD_EXPORTS[0])
+        dynamic_symbols = "   123: 0000000000001000    72 FUNC    GLOBAL DEFAULT   12 free\n"
+        decoded_lines = [
+            {
+                "address": 0x1000,
+                "line": 67,
+                "source_path": "/workspace/libc/src/allocator_native_mimalloc.rs",
+            }
+        ]
+
+        def command_record(command: list[str] | tuple[str, ...], **_: object) -> dict[str, object]:
+            return {"command": tuple(command)}
+
+        def command_text(record: dict[str, object], _: str) -> str:
+            command = record["command"]
+            assert isinstance(command, tuple)
+            if "--disassemble=free" in command:
+                return "    1000:\t94000400 \tbl\t2000 <opaque_dispatch>\n"
+            if "--start-address=0x2000" in command:
+                return "    2000:\t94000400 \tbl\t3000 <opaque_pointer_first_helper>\n"
+            if "--lookup=0x2000" in command:
+                return self.dwarf_function(
+                    "native_free",
+                    "/workspace/crabc-mimalloc/src/runtime_lifecycle.rs",
+                    0x2000,
+                    0x2010,
+                )
+            if "--lookup=0x3000" in command:
+                return self.dwarf_function(
+                    "native_free_pointer_first_local",
+                    "/workspace/crabc-mimalloc/src/runtime_lifecycle.rs",
+                    0x3000,
+                    0x3010,
+                )
+            if "--name=native_free" in command:
+                return 'DW_AT_abstract_origin\t(0x00003000 "native_free_pointer_first_nonlocal")\n'
+            self.fail(f"unexpected command: {command}")
+
+        with mock.patch.object(RUNNER, "command_record", side_effect=command_record), mock.patch.object(
+            RUNNER, "command_text", side_effect=command_text
+        ):
+            attestation = RUNNER.native_pointer_first_export_attestation(
+                Path("/tmp/libc.so"),
+                dynamic_symbols,
+                decoded_lines,
+                "/tools/objdump",
+                "/tools/llvm-dwarfdump",
+                export,
+                "mi_",
+            )
+
+        self.assertEqual(attestation["native_dispatch"]["kind"], "direct-dwarf")
+        self.assertEqual(attestation["native_dispatch"]["name"], "native_free")
+        self.assertEqual(
+            attestation["public_direct_targets"],
+            [{"address": "0x2000", "dwarf_name": "native_free"}],
+        )
+        self.assertEqual(
+            attestation["pointer_first_dwarf_provenance"],
+            ["native_free_pointer_first_local", "native_free_pointer_first_nonlocal"],
+        )
+
+    def test_native_export_attestation_rejects_a_direct_c_mimalloc_transfer(self) -> None:
+        export = copy.deepcopy(RUNNER.NATIVE_DEBUG_GUARD_EXPORTS[0])
+        dynamic_symbols = "   123: 0000000000001000    72 FUNC    GLOBAL DEFAULT   12 free\n"
+        decoded_lines = [
+            {
+                "address": 0x1000,
+                "line": 67,
+                "source_path": "/workspace/libc/src/allocator_native_mimalloc.rs",
+            }
+        ]
+
+        def command_record(command: list[str] | tuple[str, ...], **_: object) -> dict[str, object]:
+            return {"command": tuple(command)}
+
+        def command_text(record: dict[str, object], _: str) -> str:
+            command = record["command"]
+            assert isinstance(command, tuple)
+            if "--disassemble=free" in command:
+                return "    1000:\t94000400 \tbl\t2000 <mi_free>\n"
+            self.fail(f"unexpected command: {command}")
+
+        with mock.patch.object(RUNNER, "command_record", side_effect=command_record), mock.patch.object(
+            RUNNER, "command_text", side_effect=command_text
+        ), self.assertRaisesRegex(RUNNER.MatrixError, "transfers directly to C mimalloc"):
+            RUNNER.native_pointer_first_export_attestation(
+                Path("/tmp/libc.so"),
+                dynamic_symbols,
+                decoded_lines,
+                "/tools/objdump",
+                "/tools/llvm-dwarfdump",
+                export,
+                "mi_",
+            )
+
+    def test_native_guard_requires_the_selected_artifact_and_rejects_mimalloc_relocations(self) -> None:
+        contract = RUNNER.load_contract()
+        backend = RUNNER.backend_contract(contract, "native-rust-mimalloc-shadow")
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            target = root / "target/debug"
+            target.mkdir(parents=True)
+            libc = target / "libc.so"
+            libc.write_bytes(b"selected native artifact")
+
+            with self.assertRaisesRegex(
+                RUNNER.MatrixError, "requires target-dir libc.so"
+            ):
+                RUNNER.attest_native_pointer_first_guard(
+                    root / "different/libc.so", target, backend, []
+                )
+
+            def command_record(command: list[str] | tuple[str, ...], **_: object) -> dict[str, object]:
+                return {"command": tuple(command)}
+
+            def command_text(record: dict[str, object], _: str) -> str:
+                command = record["command"]
+                assert isinstance(command, tuple)
+                if "--file-header" in command:
+                    return '''\
+ELF Header:
+  Class:                             ELF64
+  Data:                              2's complement, little endian
+  Type:                              DYN (Shared object file)
+  Machine:                           AArch64
+'''
+                if "--sections" in command:
+                    return "  [ 1] .debug_info\n  [ 2] .debug_line\n"
+                if "--dyn-syms" in command:
+                    return "\n"
+                if "--relocs" in command:
+                    return "0000000000001000  R_AARCH64_JUMP_SLOT mi_free + 0\n"
+                self.fail(f"unexpected command: {command}")
+
+            with mock.patch.object(
+                RUNNER.shutil,
+                "which",
+                side_effect=lambda name: f"/tools/{name}",
+            ), mock.patch.object(RUNNER, "command_record", side_effect=command_record), mock.patch.object(
+                RUNNER, "command_text", side_effect=command_text
+            ), self.assertRaisesRegex(RUNNER.MatrixError, "retains a C mimalloc relocation"):
+                RUNNER.attest_native_pointer_first_guard(libc, target, backend, [])
+
+
 if __name__ == "__main__":
     unittest.main()

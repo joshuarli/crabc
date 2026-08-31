@@ -3,8 +3,10 @@
 
 The matrix is intentionally narrow. It snapshots the ordinary C-backed
 ``libc.so`` before the ``native-mimalloc-shadow`` feature rebuild, attests the
-two public ``free`` routes, and runs one deterministic initial-thread C trace
-through each artifact. Two separately named nonlocal ``realloc`` cases may
+ordinary public ``free`` route, machine-checks the selected debug shadow's
+``free``/``realloc``/``malloc_usable_size`` native pointer-first boundary, and
+runs one deterministic initial-thread C trace through each artifact. Two
+separately named nonlocal ``realloc`` cases may
 only become accepted after their source-faithful fixtures run against pinned
 musl and the selected shadow artifact with exactly matching streams. It is
 neither a runtime selector nor an allocator promotion gate. General lifecycle,
@@ -43,6 +45,47 @@ OWNED_BUILTINS_RELATIVE_PATH = Path("usr/lib/libcrabc-builtins.a")
 MUSL_ORACLE_COMPILER = "musl-gcc"
 MUSL_ORACLE_VERSION = "1.2.6"
 MUSL_ORACLE_LIBRARY_ROOT = Path("/opt/musl-1.2.6/lib")
+AARCH64_ELF_IDENTITY = {
+    "class": "ELF64",
+    "data": "little-endian",
+    "type": "DYN",
+    "machine": "AArch64",
+}
+NATIVE_DEBUG_GUARD_EXPORTS: tuple[dict[str, object], ...] = (
+    {
+        "symbol": "free",
+        "binding": "GLOBAL",
+        "visibility": "DEFAULT",
+        "entry_source_path": "libc/src/allocator_native_mimalloc.rs",
+        "native_dwarf_name": "native_free",
+        "native_dwarf_source_path": "crabc-mimalloc/src/runtime_lifecycle.rs",
+        "pointer_first_dwarf_provenance": [
+            "native_free_pointer_first_local",
+            "native_free_pointer_first_nonlocal",
+        ],
+    },
+    {
+        "symbol": "realloc",
+        "binding": "GLOBAL",
+        "visibility": "DEFAULT",
+        "entry_source_path": "libc/src/allocator_native_mimalloc.rs",
+        "native_dwarf_name": "native_reallocate",
+        "native_dwarf_source_path": "crabc-mimalloc/src/runtime_lifecycle.rs",
+        "pointer_first_dwarf_provenance": [
+            "native_reallocate_pointer_first_local",
+            "native_reallocate_pointer_first_nonlocal",
+        ],
+    },
+    {
+        "symbol": "malloc_usable_size",
+        "binding": "GLOBAL",
+        "visibility": "DEFAULT",
+        "entry_source_path": "libc/src/program_utils_exports.rs",
+        "native_dwarf_name": "native_usable_size",
+        "native_dwarf_source_path": "crabc-mimalloc/src/runtime_lifecycle.rs",
+        "pointer_first_dwarf_provenance": ["lookup_live_allocation"],
+    },
+)
 
 
 # These are the only nonlocal realloc cases that may enter this ABI matrix.
@@ -216,44 +259,68 @@ def load_contract() -> dict[str, Any]:
     if not isinstance(backends, list) or len(backends) != 2:
         raise MatrixError("shadow ABI matrix requires exactly two backends")
     expected_backends = {
-        "ordinary-c-mimalloc": {
-            "cargo_features": ["default"],
-            "required": "mi_free>",
-            "forbidden": "native_free>",
-        },
-        "native-rust-mimalloc-shadow": {
-            "cargo_features": ["default", "native-mimalloc-shadow"],
-            "required": "native_free>",
-            "forbidden": "mi_free>",
-        },
+        "ordinary-c-mimalloc": ["default"],
+        "native-rust-mimalloc-shadow": ["default", "native-mimalloc-shadow"],
     }
     seen_backends: set[str] = set()
     for backend in backends:
         if not isinstance(backend, dict):
             raise MatrixError("shadow ABI matrix backend is invalid")
-        require_exact_keys(
-            backend,
-            {"id", "cargo_features", "selection", "fallback", "exported_free_route"},
-            "shadow ABI matrix backend",
-        )
         backend_id = require_string(backend["id"], "shadow ABI matrix backend id")
         expected = expected_backends.get(backend_id)
         if expected is None or backend_id in seen_backends:
             raise MatrixError("shadow ABI matrix backend inventory drifted")
         seen_backends.add(backend_id)
-        if backend["cargo_features"] != expected["cargo_features"] or backend["fallback"] is not False:
+        if backend["cargo_features"] != expected or backend["fallback"] is not False:
             raise MatrixError("shadow ABI matrix backend selection drifted")
         require_string(backend["selection"], "shadow ABI matrix backend selection")
-        route = backend["exported_free_route"]
-        if not isinstance(route, dict):
-            raise MatrixError("shadow ABI matrix free route is invalid")
-        require_exact_keys(route, {"symbol", "required_callee_suffix", "forbidden_callee_suffix"}, "shadow ABI matrix free route")
+        if backend_id == "ordinary-c-mimalloc":
+            require_exact_keys(
+                backend,
+                {"id", "cargo_features", "selection", "fallback", "exported_free_route"},
+                "shadow ABI matrix ordinary backend",
+            )
+            route = backend["exported_free_route"]
+            if not isinstance(route, dict):
+                raise MatrixError("shadow ABI matrix ordinary free route is invalid")
+            require_exact_keys(
+                route,
+                {"symbol", "required_callee_suffix", "forbidden_callee_suffix"},
+                "shadow ABI matrix ordinary free route",
+            )
+            if (
+                route["symbol"] != "free"
+                or route["required_callee_suffix"] != "mi_free>"
+                or route["forbidden_callee_suffix"] != "native_free>"
+            ):
+                raise MatrixError("shadow ABI matrix ordinary free route drifted")
+            continue
+
+        require_exact_keys(
+            backend,
+            {"id", "cargo_features", "selection", "fallback", "native_pointer_first_guard"},
+            "shadow ABI matrix native backend",
+        )
+        native_pointer_first_guard = backend["native_pointer_first_guard"]
+        if not isinstance(native_pointer_first_guard, dict):
+            raise MatrixError("shadow ABI matrix native pointer-first guard is invalid")
+        require_exact_keys(
+            native_pointer_first_guard,
+            {
+                "required_elf_identity",
+                "required_debug_sections",
+                "forbidden_c_backend_symbol_prefix",
+                "exports",
+            },
+            "shadow ABI matrix native pointer-first guard",
+        )
         if (
-            route["symbol"] != "free"
-            or route["required_callee_suffix"] != expected["required"]
-            or route["forbidden_callee_suffix"] != expected["forbidden"]
+            native_pointer_first_guard["required_elf_identity"] != AARCH64_ELF_IDENTITY
+            or native_pointer_first_guard["required_debug_sections"] != [".debug_info", ".debug_line"]
+            or native_pointer_first_guard["forbidden_c_backend_symbol_prefix"] != "mi_"
+            or native_pointer_first_guard["exports"] != list(NATIVE_DEBUG_GUARD_EXPORTS)
         ):
-            raise MatrixError("shadow ABI matrix free route drifted")
+            raise MatrixError("shadow ABI matrix native pointer-first guard drifted")
 
     semantic_cases = contract["semantic_cases"]
     expected_cases = [
@@ -668,11 +735,427 @@ def matching_cargo_fingerprints(target_dir: Path, backend: Mapping[str, Any]) ->
     return matches
 
 
-def attest_backend(libc: Path, target_dir: Path, backend: Mapping[str, Any]) -> dict[str, Any]:
-    """Prove the exported C ``free`` reaches the selected implementation."""
+def defined_dynamic_function_symbols(symbols: str, symbol: str) -> list[dict[str, Any]]:
+    """Return every defined dynamic function export with this public spelling."""
 
-    fingerprints = matching_cargo_fingerprints(target_dir, backend)
-    features = fingerprints[0][1]
+    definitions: list[dict[str, Any]] = []
+    for line in symbols.splitlines():
+        fields = line.split()
+        if len(fields) < 8 or fields[3] != "FUNC" or fields[6] == "UND":
+            continue
+        if fields[-1].split("@", 1)[0] != symbol:
+            continue
+        try:
+            address = int(fields[1], 16)
+            size = int(fields[2])
+        except ValueError as error:
+            raise MatrixError(f"dynamic {symbol} symbol has an invalid address or size") from error
+        definitions.append(
+            {
+                "address": address,
+                "binding": fields[4],
+                "section": fields[6],
+                "size": size,
+                "visibility": fields[5],
+            }
+        )
+    return definitions
+
+
+def parse_elf_identity(header: str) -> dict[str, str]:
+    """Normalize the ELF facts needed by the selected debug-artifact gate."""
+
+    fields: dict[str, str] = {}
+    for line in header.splitlines():
+        if ":" not in line:
+            continue
+        key, value = line.strip().split(":", 1)
+        fields[key] = value.strip()
+    return {
+        "class": fields.get("Class", ""),
+        "data": "little-endian" if "little endian" in fields.get("Data", "") else fields.get("Data", ""),
+        "type": fields.get("Type", "").split(maxsplit=1)[0],
+        "machine": fields.get("Machine", ""),
+    }
+
+
+def elf_section_names(output: str) -> set[str]:
+    """Extract section names without assigning meaning to their numeric indices."""
+
+    names: set[str] = set()
+    for line in output.splitlines():
+        match = re.match(r"\s*\[\s*\d+\]\s+(\S+)", line)
+        if match is not None:
+            names.add(match.group(1))
+    return names
+
+
+def decoded_line_locations(output: str) -> list[dict[str, Any]]:
+    """Read address-bearing decoded DWARF lines with their compilation source."""
+
+    current_source: str | None = None
+    locations: list[dict[str, Any]] = []
+    row = re.compile(r"^(\S+)\s+(-|\d+)\s+(0x[0-9A-Fa-f]+)(?:\s+.*)?$")
+    for line in output.splitlines():
+        if line and not line[0].isspace() and line.endswith(":") and "/" in line:
+            current_source = line[:-1]
+            continue
+        match = row.match(line)
+        if match is None or current_source is None:
+            continue
+        line_number = None if match.group(2) == "-" else int(match.group(2))
+        locations.append(
+            {
+                "address": int(match.group(3), 16),
+                "line": line_number,
+                "source_path": current_source,
+            }
+        )
+    return locations
+
+
+def locations_in_symbol_range(
+    locations: Sequence[Mapping[str, Any]], address: int, size: int
+) -> list[dict[str, Any]]:
+    """Keep only source locations owned by one defined dynamic export."""
+
+    if address <= 0 or size <= 0:
+        raise MatrixError("selected native export has an empty code range")
+    end = address + size
+    return [
+        dict(location)
+        for location in locations
+        if isinstance(location.get("address"), int) and address <= location["address"] < end
+    ]
+
+
+_DIRECT_AARCH64_BRANCH = re.compile(
+    r"^\s*[0-9A-Fa-f]+:\s+[0-9A-Fa-f]+\s+(?:b|bl)\s+([0-9A-Fa-f]+)\s+<([^>]+)>",
+    re.MULTILINE,
+)
+
+
+def direct_aarch64_branch_targets(disassembly: str) -> list[dict[str, Any]]:
+    """Return named direct branches; indirect calls stay relocation-audited separately."""
+
+    observed: list[dict[str, Any]] = []
+    seen: set[tuple[int, str]] = set()
+    for match in _DIRECT_AARCH64_BRANCH.finditer(disassembly):
+        target = (int(match.group(1), 16), match.group(2))
+        if target in seen:
+            continue
+        seen.add(target)
+        observed.append({"address": target[0], "label": target[1]})
+    return observed
+
+
+def mimalloc_transfer_labels(
+    targets: Sequence[Mapping[str, Any]], forbidden_prefix: str
+) -> list[str]:
+    """Record direct C-backend transfers without requiring any Rust symbol label."""
+
+    return sorted(
+        {
+            str(target["label"])
+            for target in targets
+            if isinstance(target.get("label"), str)
+            and str(target["label"]).split("@", 1)[0].startswith(forbidden_prefix)
+        }
+    )
+
+
+def mimalloc_relocation_symbols(relocations: str, forbidden_prefix: str) -> list[str]:
+    """Find symbol-bearing relocation records that could transfer into C mimalloc."""
+
+    pattern = re.compile(rf"(?<![A-Za-z0-9_])({re.escape(forbidden_prefix)}[A-Za-z0-9_.$@]+)")
+    return sorted(set(pattern.findall(relocations)))
+
+
+_DWARF_SUBPROGRAM = re.compile(r"(?m)^(0x[0-9A-Fa-f]+):\s+DW_TAG_subprogram\s*$")
+_DWARF_DIE = re.compile(r"(?m)^0x[0-9A-Fa-f]+:\s+DW_TAG_[A-Za-z_]+\s*$")
+_DWARF_HEX_ATTRIBUTE = re.compile(r"DW_AT_(low_pc|high_pc)\s+\(0x([0-9A-Fa-f]+)\)")
+_DWARF_NAME = re.compile(r'DW_AT_name\s+\("([^"]+)"\)')
+_DWARF_DECL_FILE = re.compile(r'DW_AT_decl_file\s+\("([^"]+)"\)')
+
+
+def dwarf_function_at_address(output: str, address: int) -> dict[str, Any] | None:
+    """Resolve an address through DWARF rather than an optimizer-chosen ELF label."""
+
+    for match in _DWARF_SUBPROGRAM.finditer(output):
+        next_die = _DWARF_DIE.search(output, match.end())
+        end = next_die.start() if next_die is not None else len(output)
+        attributes = output[match.end() : end]
+        values = {name: int(value, 16) for name, value in _DWARF_HEX_ATTRIBUTE.findall(attributes)}
+        low_pc = values.get("low_pc")
+        high_pc = values.get("high_pc")
+        if low_pc is None or high_pc is None or not low_pc <= address < high_pc:
+            continue
+        name = _DWARF_NAME.search(attributes)
+        source = _DWARF_DECL_FILE.search(attributes)
+        if name is None or source is None:
+            continue
+        return {
+            "address": address,
+            "end_address": high_pc,
+            "name": name.group(1),
+            "source_path": source.group(1),
+            "start_address": low_pc,
+        }
+    return None
+
+
+def dwarf_lookup_function(llvm_dwarfdump: str, libc: Path, address: int) -> dict[str, Any] | None:
+    output = command_text(
+        command_record((llvm_dwarfdump, f"--lookup=0x{address:x}", str(libc))),
+        "selected native DWARF address lookup",
+    )
+    return dwarf_function_at_address(output, address)
+
+
+def dwarf_subtree(llvm_dwarfdump: str, libc: Path, name: str) -> str:
+    """Inspect one debug-only Rust function definition and its inline children."""
+
+    return command_text(
+        command_record(
+            (llvm_dwarfdump, f"--name={name}", "--show-children", "--recurse-depth=8", str(libc))
+        ),
+        f"selected native {name} DWARF inline provenance inspection",
+    )
+
+
+def dwarf_name_observed(output: str, name: str) -> bool:
+    """Match a semantic DWARF name or linkage fragment, never a required ELF label."""
+
+    return re.search(rf'DW_AT_(?:name|linkage_name|abstract_origin).*{re.escape(name)}', output) is not None
+
+
+def require_native_dwarf_function(
+    function: Mapping[str, Any] | None, expected_name: str, expected_source_path: str
+) -> dict[str, Any] | None:
+    if function is None:
+        return None
+    if function.get("name") != expected_name:
+        return None
+    source_path = function.get("source_path")
+    if not isinstance(source_path, str) or not source_path.endswith(expected_source_path):
+        return None
+    return dict(function)
+
+
+def native_pointer_first_export_attestation(
+    libc: Path,
+    dynamic_symbols: str,
+    decoded_lines: Sequence[Mapping[str, Any]],
+    objdump: str,
+    llvm_dwarfdump: str,
+    export: Mapping[str, Any],
+    forbidden_prefix: str,
+) -> dict[str, Any]:
+    """Bind one public export to a native Rust dispatch using debug provenance.
+
+    The selected artifact is deliberately a debug artifact. Its direct branch
+    is resolved by destination address through DWARF, and the native function's
+    DWARF subtree supplies the pointer-first inline provenance. No mangled or
+    private ELF symbol spelling is a production ABI condition.
+    """
+
+    symbol = str(export["symbol"])
+    definitions = defined_dynamic_function_symbols(dynamic_symbols, symbol)
+    if len(definitions) != 1:
+        raise MatrixError(f"selected native artifact has wrong dynamic {symbol} definition count")
+    definition = definitions[0]
+    if (
+        definition["binding"] != export["binding"]
+        or definition["visibility"] != export["visibility"]
+    ):
+        raise MatrixError(f"selected native {symbol} dynamic binding or visibility drifted")
+
+    symbol_locations = locations_in_symbol_range(
+        decoded_lines, int(definition["address"]), int(definition["size"])
+    )
+    entry_source_path = str(export["entry_source_path"])
+    if not any(
+        isinstance(location.get("source_path"), str)
+        and str(location["source_path"]).endswith(entry_source_path)
+        for location in symbol_locations
+    ):
+        raise MatrixError(f"selected native {symbol} lacks its Rust entry DWARF provenance")
+
+    disassembly = command_text(
+        command_record((objdump, "-d", f"--disassemble={symbol}", str(libc))),
+        f"selected native {symbol} transfer inspection",
+    )
+    public_targets = direct_aarch64_branch_targets(disassembly)
+    forbidden_public = mimalloc_transfer_labels(public_targets, forbidden_prefix)
+    if forbidden_public:
+        raise MatrixError(f"selected native {symbol} transfers directly to C mimalloc")
+
+    expected_name = str(export["native_dwarf_name"])
+    expected_source_path = str(export["native_dwarf_source_path"])
+    native_dispatch: dict[str, Any] | None = None
+    checked_public_targets: list[dict[str, Any]] = []
+    for target in public_targets:
+        function = dwarf_lookup_function(llvm_dwarfdump, libc, int(target["address"]))
+        checked_public_targets.append(
+            {
+                "address": f"0x{int(target['address']):x}",
+                "dwarf_name": None if function is None else function["name"],
+            }
+        )
+        accepted = require_native_dwarf_function(function, expected_name, expected_source_path)
+        if accepted is not None:
+            native_dispatch = accepted
+            break
+
+    if native_dispatch is None:
+        raise MatrixError(f"selected native {symbol} lacks its named Rust dispatch provenance")
+
+    target_disassembly = command_text(
+        command_record(
+            (
+                objdump,
+                "-d",
+                f"--start-address=0x{int(native_dispatch['start_address']):x}",
+                f"--stop-address=0x{int(native_dispatch['end_address']):x}",
+                str(libc),
+            )
+        ),
+        f"selected native {symbol} Rust dispatch transfer inspection",
+    )
+    dispatch_targets = direct_aarch64_branch_targets(target_disassembly)
+    forbidden_dispatch = mimalloc_transfer_labels(dispatch_targets, forbidden_prefix)
+    if forbidden_dispatch:
+        raise MatrixError(f"selected native {symbol} Rust dispatch transfers directly to C mimalloc")
+
+    dispatch_target_names: set[str] = set()
+    for target in dispatch_targets:
+        function = dwarf_lookup_function(llvm_dwarfdump, libc, int(target["address"]))
+        if function is not None:
+            dispatch_target_names.add(str(function["name"]))
+    inline_provenance = dwarf_subtree(llvm_dwarfdump, libc, expected_name)
+    pointer_first_provenance = [str(name) for name in export["pointer_first_dwarf_provenance"]]
+    missing_provenance = [
+        name
+        for name in pointer_first_provenance
+        if name not in dispatch_target_names and not dwarf_name_observed(inline_provenance, name)
+    ]
+    if missing_provenance:
+        raise MatrixError(f"selected native {symbol} lacks pointer-first DWARF provenance")
+
+    return {
+        "dynamic_symbol": {
+            "address": f"0x{int(definition['address']):x}",
+            "binding": definition["binding"],
+            "size": definition["size"],
+            "visibility": definition["visibility"],
+        },
+        "entry_source_path": entry_source_path,
+        "native_dispatch": {
+            "address": f"0x{int(native_dispatch['start_address']):x}",
+            "kind": "direct-dwarf",
+            "name": expected_name,
+            "source_path": expected_source_path,
+        },
+        "pointer_first_dwarf_provenance": pointer_first_provenance,
+        "public_direct_transfer_count": len(public_targets),
+        "public_direct_targets": checked_public_targets,
+        "public_direct_mimalloc_transfers": forbidden_public,
+        "dispatch_direct_mimalloc_transfers": forbidden_dispatch,
+    }
+
+
+def attest_native_pointer_first_guard(
+    libc: Path,
+    target_dir: Path,
+    backend: Mapping[str, Any],
+    fingerprints: Sequence[tuple[Path, list[str]]],
+) -> dict[str, Any]:
+    """Fail closed unless the selected debug artifact proves all three Rust routes."""
+
+    guard = backend["native_pointer_first_guard"]
+    assert isinstance(guard, dict)
+    expected_artifact = target_dir / "libc.so"
+    if libc.expanduser().resolve() != expected_artifact.expanduser().resolve():
+        raise MatrixError("selected native pointer-first guard requires target-dir libc.so")
+    readelf = shutil.which("readelf")
+    objdump = shutil.which("objdump")
+    llvm_dwarfdump = shutil.which("llvm-dwarfdump")
+    if readelf is None or objdump is None or llvm_dwarfdump is None:
+        raise MatrixError("readelf, objdump, and llvm-dwarfdump are required for the native pointer-first guard")
+
+    header = command_text(
+        command_record((readelf, "-W", "--file-header", str(libc))),
+        "selected native ELF identity inspection",
+    )
+    identity = parse_elf_identity(header)
+    if identity != guard["required_elf_identity"]:
+        raise MatrixError("selected native artifact ELF identity drifted")
+    sections = elf_section_names(
+        command_text(
+            command_record((readelf, "-W", "--sections", str(libc))),
+            "selected native debug-section inspection",
+        )
+    )
+    required_sections = guard["required_debug_sections"]
+    assert isinstance(required_sections, list)
+    if not set(required_sections).issubset(sections):
+        raise MatrixError("selected native artifact lacks required DWARF sections")
+
+    dynamic_symbols = command_text(
+        command_record((readelf, "-W", "--dyn-syms", str(libc))),
+        "selected native dynamic-symbol inspection",
+    )
+    relocations = command_text(
+        command_record((readelf, "-W", "--relocs", str(libc))),
+        "selected native relocation inspection",
+    )
+    forbidden_prefix = str(guard["forbidden_c_backend_symbol_prefix"])
+    mimalloc_relocations = mimalloc_relocation_symbols(relocations, forbidden_prefix)
+    if mimalloc_relocations:
+        raise MatrixError("selected native artifact retains a C mimalloc relocation")
+    decoded_lines = decoded_line_locations(
+        command_text(
+            command_record((readelf, "--debug-dump=decodedline", str(libc))),
+            "selected native DWARF line inspection",
+        )
+    )
+    if not decoded_lines:
+        raise MatrixError("selected native artifact has no decoded DWARF line evidence")
+
+    exports = guard["exports"]
+    assert isinstance(exports, list)
+    return {
+        "artifact": file_record(libc),
+        "cargo_features": list(fingerprints[0][1]),
+        "cargo_fingerprints": [file_record(fingerprint) for fingerprint, _ in fingerprints],
+        "elf_identity": identity,
+        "required_debug_sections": list(required_sections),
+        "forbidden_c_backend_symbol_prefix": forbidden_prefix,
+        "mimalloc_relocations": mimalloc_relocations,
+        "public_exports": [
+            native_pointer_first_export_attestation(
+                libc,
+                dynamic_symbols,
+                decoded_lines,
+                objdump,
+                llvm_dwarfdump,
+                export,
+                forbidden_prefix,
+            )
+            for export in exports
+            if isinstance(export, dict)
+        ],
+        "status": "passed",
+    }
+
+
+def attest_ordinary_free_route(
+    libc: Path,
+    backend: Mapping[str, Any],
+    fingerprints: Sequence[tuple[Path, list[str]]],
+) -> dict[str, Any]:
+    """Preserve the ordinary C-backed snapshot check unchanged."""
+
     readelf = shutil.which("readelf")
     objdump = shutil.which("objdump")
     if readelf is None or objdump is None:
@@ -707,7 +1190,7 @@ def attest_backend(libc: Path, target_dir: Path, backend: Mapping[str, Any]) -> 
         raise MatrixError(f"{backend['id']} free branches to forbidden <{forbidden}")
     return {
         "backend": backend["id"],
-        "cargo_features": features,
+        "cargo_features": fingerprints[0][1],
         "cargo_fingerprints": [file_record(fingerprint) for fingerprint, _ in fingerprints],
         "exported_free": {
             "symbol": symbol,
@@ -717,6 +1200,22 @@ def attest_backend(libc: Path, target_dir: Path, backend: Mapping[str, Any]) -> 
         },
         "status": "passed",
     }
+
+
+def attest_backend(libc: Path, target_dir: Path, backend: Mapping[str, Any]) -> dict[str, Any]:
+    """Attest the ordinary snapshot or the selected native debug boundary."""
+
+    fingerprints = matching_cargo_fingerprints(target_dir, backend)
+    if backend["id"] == "native-rust-mimalloc-shadow":
+        native_guard = attest_native_pointer_first_guard(libc, target_dir, backend, fingerprints)
+        return {
+            "backend": backend["id"],
+            "cargo_features": native_guard["cargo_features"],
+            "cargo_fingerprints": native_guard["cargo_fingerprints"],
+            "native_pointer_first_guard": native_guard,
+            "status": "passed",
+        }
+    return attest_ordinary_free_route(libc, backend, fingerprints)
 
 
 def snapshot_ordinary_backend(contract: Mapping[str, Any], target_dir: Path, source: Path, destination: Path) -> dict[str, Any]:

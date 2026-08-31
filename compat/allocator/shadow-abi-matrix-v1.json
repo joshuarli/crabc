@@ -49,10 +49,55 @@
       ],
       "selection": "build crabc-libc with native-mimalloc-shadow after the ordinary artifact is snapshotted",
       "fallback": false,
-      "exported_free_route": {
-        "symbol": "free",
-        "required_callee_suffix": "native_free>",
-        "forbidden_callee_suffix": "mi_free>"
+      "native_pointer_first_guard": {
+        "required_elf_identity": {
+          "class": "ELF64",
+          "data": "little-endian",
+          "type": "DYN",
+          "machine": "AArch64"
+        },
+        "required_debug_sections": [
+          ".debug_info",
+          ".debug_line"
+        ],
+        "forbidden_c_backend_symbol_prefix": "mi_",
+        "exports": [
+          {
+            "symbol": "free",
+            "binding": "GLOBAL",
+            "visibility": "DEFAULT",
+            "entry_source_path": "libc/src/allocator_native_mimalloc.rs",
+            "native_dwarf_name": "native_free",
+            "native_dwarf_source_path": "crabc-mimalloc/src/runtime_lifecycle.rs",
+            "pointer_first_dwarf_provenance": [
+              "native_free_pointer_first_local",
+              "native_free_pointer_first_nonlocal"
+            ]
+          },
+          {
+            "symbol": "realloc",
+            "binding": "GLOBAL",
+            "visibility": "DEFAULT",
+            "entry_source_path": "libc/src/allocator_native_mimalloc.rs",
+            "native_dwarf_name": "native_reallocate",
+            "native_dwarf_source_path": "crabc-mimalloc/src/runtime_lifecycle.rs",
+            "pointer_first_dwarf_provenance": [
+              "native_reallocate_pointer_first_local",
+              "native_reallocate_pointer_first_nonlocal"
+            ]
+          },
+          {
+            "symbol": "malloc_usable_size",
+            "binding": "GLOBAL",
+            "visibility": "DEFAULT",
+            "entry_source_path": "libc/src/program_utils_exports.rs",
+            "native_dwarf_name": "native_usable_size",
+            "native_dwarf_source_path": "crabc-mimalloc/src/runtime_lifecycle.rs",
+            "pointer_first_dwarf_provenance": [
+              "lookup_live_allocation"
+            ]
+          }
+        ]
       }
     }
   ],
