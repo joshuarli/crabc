@@ -5924,6 +5924,148 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn("sched-setparam-header-abi)", dispatcher)
         self.assertIn("libc-sched-setparam)", dispatcher)
 
+    def test_libc_static_c_abi_sched_getaffinity_artifact_stays_bounded(self) -> None:
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        source_path = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "sched_getaffinity.rs"
+        )
+        c_header_path = (
+            ROOT / "compat" / "x86_64" / "sched_getaffinity_header_abi_probe.c"
+        )
+        cxx_header_path = (
+            ROOT / "compat" / "x86_64" / "sched_getaffinity_header_abi_probe.cpp"
+        )
+        visibility_path = (
+            ROOT / "compat" / "x86_64" / "sched_getaffinity_header_visibility_probe.c"
+        )
+        header_runner_path = (
+            ROOT / "compat" / "x86_64" / "run_sched_getaffinity_header_abi.sh"
+        )
+        probe_path = ROOT / "compat" / "x86_64" / "libc_sched_getaffinity_probe.c"
+        start_path = ROOT / "compat" / "x86_64" / "libc_sched_getaffinity_start.S"
+        artifact_runner_path = (
+            ROOT / "compat" / "x86_64" / "run_libc_sched_getaffinity.sh"
+        )
+        for path in (
+            source_path,
+            c_header_path,
+            cxx_header_path,
+            visibility_path,
+            header_runner_path,
+            probe_path,
+            start_path,
+            artifact_runner_path,
+        ):
+            self.assertTrue(path.is_file(), f"missing sched_getaffinity input: {path}")
+        self.assertTrue(header_runner_path.stat().st_mode & 0o111)
+        self.assertTrue(artifact_runner_path.stat().st_mode & 0o111)
+
+        source = source_path.read_text(encoding="utf-8")
+        c_header = c_header_path.read_text(encoding="utf-8")
+        cxx_header = cxx_header_path.read_text(encoding="utf-8")
+        visibility = visibility_path.read_text(encoding="utf-8")
+        header_runner = header_runner_path.read_text(encoding="utf-8")
+        probe = probe_path.read_text(encoding="utf-8")
+        start = start_path.read_text(encoding="utf-8")
+        artifact_runner = artifact_runner_path.read_text(encoding="utf-8")
+        static_exports = {
+            line
+            for line in (
+                ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+            ).read_text(encoding="utf-8").splitlines()
+            if line and not line.startswith("#")
+        }
+        parity_ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        dispatcher = RUNNER.read_text(encoding="utf-8")
+
+        self.assertIn('#[path = "sched_getaffinity.rs"]', static_root)
+        for required in (
+            "Bounded Linux/x86-64 static GNU scheduler-affinity observation boundary",
+            "src/sched/affinity.c::do_getaffinity",
+            "SYS_SCHED_GETAFFINITY",
+            "c_status(result)",
+            'pub unsafe extern "C" fn sched_getaffinity',
+        ):
+            self.assertIn(required, source)
+        for forbidden in (
+            "SYS_SCHED_SETAFFINITY",
+            'pub unsafe extern "C" fn sched_setaffinity',
+            "pthread_",
+            "static_tls",
+        ):
+            self.assertNotIn(forbidden, source)
+
+        for required in (
+            "__typeof__(&sched_getaffinity)",
+            "sched_getaffinity_signature)(pid_t, size_t, cpu_set_t *)",
+            "sizeof(cpu_set_t) == 128",
+            "offsetof(cpu_set_t, __bits) == 0",
+        ):
+            self.assertIn(required, c_header)
+        for required in (
+            "decltype(&sched_getaffinity)",
+            "sched_getaffinity_signature",
+            "sizeof(cpu_set_t) == 128",
+            'extern "C" void crabc_sched_getaffinity_linkage_witness',
+        ):
+            self.assertIn(required, cxx_header)
+        self.assertIn("sched_getaffinity", visibility)
+        for required in (
+            "strict posix xopen",
+            "sched_getaffinity_header_visibility_probe.c",
+            "unexpectedly exposes sched_getaffinity",
+            "unmangled sched_getaffinity",
+            "project trace omitted",
+        ):
+            self.assertIn(required, header_runner)
+
+        for required in (
+            "SYS_sched_getaffinity == 204",
+            "raw_sched_getaffinity",
+            "raw_prefix_matches",
+            "tail_is_zero",
+            "check_invalid_capacity",
+            "check_missing_task",
+            "CRABC_SCHED_GETAFFINITY_FREESTANDING",
+        ):
+            self.assertIn(required, probe)
+        for required in (
+            "call __crabc_x86_static_tls_bootstrap",
+            "crabc_x86_64_sched_getaffinity_probe",
+            "exit_group",
+        ):
+            self.assertIn(required, start)
+        self.assertNotIn("arch_prctl", start)
+
+        for required in (
+            "run_musl_oracle.sh",
+            "run_sched_getaffinity_header_abi.sh",
+            "static_c_abi_exports.txt",
+            "-nostdlib -static",
+            "-Wl,-e,_start",
+            "-Wl,--no-undefined",
+            "R_X86_64_TPOFF",
+            "assert_affinity_boundary",
+            "sched_getaffinity does not issue syscall 204",
+            "candidate unexpectedly pulls",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn("--whole-archive", artifact_runner)
+        self.assertIn("sched_getaffinity", static_exports)
+        self.assertIn('id = "static-c-sched-getaffinity"', parity_ledger)
+        self.assertIn(
+            'command = "./scripts/dev-x86_64.sh libc-sched-getaffinity"',
+            parity_ledger,
+        )
+        self.assertIn("run_sched_getaffinity_header_abi()", dispatcher)
+        self.assertIn("run_libc_sched_getaffinity_probe()", dispatcher)
+        self.assertIn("sched-getaffinity-header-abi)", dispatcher)
+        self.assertIn("libc-sched-getaffinity)", dispatcher)
+
     def test_libc_static_c_abi_sigpending_artifact_stays_bounded(self) -> None:
         static_root = (
             ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"

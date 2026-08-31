@@ -19140,6 +19140,219 @@ def require_sched_setparam_artifact(family: Mapping[str, Any]) -> None:
     )
 
 
+def require_sched_getaffinity_artifact(family: Mapping[str, Any]) -> None:
+    """Keep the GNU affinity observation leaf below scheduler promotion."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.posix-runtime].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [
+        entry for entry in artifacts if entry.get("id") == "static-c-sched-getaffinity"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.posix-runtime must contain exactly one static-c-sched-getaffinity artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-sched-getaffinity must not promote libc.posix-runtime",
+    )
+    artifact = matching[0]
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for phrase in (
+        "one-symbol GNU scheduler-affinity observation compatibility artifact",
+        "planned `libc.posix-runtime`",
+        "exactly `sched_getaffinity`",
+        "`src/sched/affinity.c::do_getaffinity`",
+        "raw syscall 204",
+        "successful positive initialized-prefix count becomes C return zero",
+        "caller-owned tail is cleared",
+        "initial-TLS errno",
+        "direct x86 byte stores",
+        "undersized `EINVAL`",
+        "missing `INT_MAX` `ESRCH`",
+        "null-mask `EFAULT`",
+        "strict/POSIX/X/Open profiles hide the GNU-only spelling",
+        "GNU C and C++17",
+        "128-byte align-8",
+        "unmangled C linkage",
+        "`sched_setaffinity`, CPU allocation/count/macro helpers",
+        "scheduler policy or parameters",
+        "pthread affinity or lifecycle",
+        "scheduler-family completion, promotion, or public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"static-c-sched-getaffinity description omits {phrase}",
+        )
+    owners = set(
+        nonempty_strings(
+            artifact["source_owners"], "static-c-sched-getaffinity.source_owners"
+        )
+    )
+    for owner in (
+        "compat/upstreams.toml",
+        "libc/Cargo.toml",
+        "libc/src/lib.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/sched_getaffinity.rs",
+        "libc/src/c_abi/x86_64/errno.rs",
+        "libc/src/c_abi/x86_64/static_tls.rs",
+        "libc/src/c_abi/x86_64/syscall.rs",
+        "include/errno.h",
+        "include/sched.h",
+        "include/sys/types.h",
+        "include/time.h",
+        "include/sys/syscall.h",
+        "include/bits/syscall.h",
+        "compat/x86_64/sched_getaffinity_header_abi_probe.c",
+        "compat/x86_64/sched_getaffinity_header_abi_probe.cpp",
+        "compat/x86_64/sched_getaffinity_header_visibility_probe.c",
+        "compat/x86_64/run_sched_getaffinity_header_abi.sh",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/libc_sched_getaffinity_probe.c",
+        "compat/x86_64/libc_sched_getaffinity_start.S",
+        "compat/x86_64/run_libc_sched_getaffinity.sh",
+        "compat/x86_64/aarch64_parity_inventory.py",
+        "compat/x86_64/aarch64_parity_inventory.json",
+        "compat/x86_64/tests/test_aarch64_parity_inventory.py",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/README.md",
+        "STATUS.md",
+        "x86-64.md",
+        "scripts/dev-x86_64.sh",
+        "scripts/check_structure.py",
+    ):
+        require(
+            owner in owners,
+            f"static-c-sched-getaffinity source owners omit {owner}",
+        )
+    prerequisites = nonempty_strings(
+        artifact["x86_abi_prerequisites"],
+        "static-c-sched-getaffinity.x86_abi_prerequisites",
+    )
+    require(
+        any(
+            "pid_t" in item
+            and "edi" in item
+            and "rsi" in item
+            and "rdx" in item
+            and "eax" in item
+            and "raw syscall 204" in item
+            and "positive initialized byte count" in item
+            for item in prerequisites
+        ),
+        "static-c-sched-getaffinity must retain its x86 syscall/result ABI",
+    )
+    require(
+        any(
+            "src/sched/affinity.c::do_getaffinity" in item
+            and "sched_getaffinity" in item
+            and "memset" in item
+            and "direct x86 byte stores" in item
+            and "sched_setaffinity" in item
+            for item in prerequisites
+        ),
+        "static-c-sched-getaffinity must retain its pinned-musl source closure",
+    )
+    require(
+        any(
+            "raw-current positive-prefix" in item
+            and "byte-identical prefix" in item
+            and "EINVAL" in item
+            and "ESRCH" in item
+            and "EFAULT" in item
+            and "Static Initial TLS v1" in item
+            for item in prerequisites
+        ),
+        "static-c-sched-getaffinity must retain its raw/C ABI differential",
+    )
+    headers = nonempty_strings(
+        artifact["x86_header_prerequisites"],
+        "static-c-sched-getaffinity.x86_header_prerequisites",
+    )
+    require(
+        any(
+            "strict/POSIX/X/Open C and C++17 visibility matrix" in item
+            and "GNU-only" in item
+            and "int sched_getaffinity(pid_t, size_t, cpu_set_t *)" in item
+            and "128-byte align-8" in item
+            and "unmangled C++ C linkage" in item
+            and "syscall.h" in item
+            for item in headers
+        ),
+        "static-c-sched-getaffinity must retain its GNU C/C++ header matrix",
+    )
+    static_exports = set(
+        static_c_abi_export_names(
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        )
+    )
+    require(
+        "sched_getaffinity" in static_exports,
+        "static-c-sched-getaffinity must expose its exact scheduler spelling",
+    )
+    oracle = artifact["oracle"]
+    assert isinstance(oracle, list)
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "c-posix"
+            and isinstance(entry.get("role"), str)
+            and "src/sched/affinity.c::do_getaffinity" in entry["role"]
+            and "tail zeroing" in entry["role"]
+            for entry in oracle
+        ),
+        "static-c-sched-getaffinity must retain its pinned-musl affinity oracle",
+    )
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "linux-uapi"
+            and isinstance(entry.get("role"), str)
+            and "204" in entry["role"]
+            and "EINVAL/ESRCH/EFAULT" in entry["role"]
+            for entry in oracle
+        ),
+        "static-c-sched-getaffinity must retain its Linux raw-syscall oracle",
+    )
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-sched-getaffinity"},
+        "static-c-sched-getaffinity must use the closed libc-sched-getaffinity command",
+    )
+    scope = evidence[0].get("scope")
+    require(
+        isinstance(scope, str)
+        and all(
+            phrase in scope
+            for phrase in (
+                "Pinned-musl 1.2.6",
+                "strict/POSIX/X/Open/GNU C/C++ header matrix",
+                "`-nostdlib -static` candidate",
+                "affinity mutation",
+                "CPU helpers",
+                "scheduler policy/parameters",
+                "pthread state/lifecycle",
+                "sched_getaffinity disassembly",
+                "raw syscall 204",
+                "no raw 203",
+                "no direct memory C ABI call",
+                "raw-current prefix/tail contrast",
+                "EINVAL, ESRCH, and EFAULT",
+                "scheduler-family completion, dynamic libc, CRT, loader, sysroot, promotion, or public x86 support",
+            )
+        ),
+        "static-c-sched-getaffinity evidence must retain its static affinity regression",
+    )
+
+
 def require_sigset_mutation_artifact(family: Mapping[str, Any]) -> None:
     """Keep pure POSIX signal-set mutation below signal-runtime promotion."""
     artifacts = require_verified_artifacts(
@@ -39563,7 +39776,6 @@ def require_static_pthread_affinity_artifact(
     for unselected in (
         "pthread_attr_getaffinity_np",
         "pthread_attr_setaffinity_np",
-        "sched_getaffinity",
         "sched_setaffinity",
     ):
         require(
@@ -40432,6 +40644,7 @@ def validate_ledger(
     require_sched_getscheduler_artifact(by_id["libc.posix-runtime"])
     require_sched_getparam_artifact(by_id["libc.posix-runtime"])
     require_sched_setparam_artifact(by_id["libc.posix-runtime"])
+    require_sched_getaffinity_artifact(by_id["libc.posix-runtime"])
     require_sigset_mutation_artifact(by_id["libc.posix-runtime"])
     require_clock_nanosleep_artifact(by_id["libc.posix-runtime"])
     require_nanosleep_artifact(by_id["libc.posix-runtime"])

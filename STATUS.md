@@ -1741,6 +1741,20 @@ policy, parameter records, priority bounds, `sched_yield`, affinity, pthread
 scheduling attributes, lifecycle, family/platform parity, promotion, and
 public x86 support remain outside the artifact.
 
+`./scripts/dev-x86_64.sh libc-sched-getaffinity` is a separate private
+`static-c-sched-getaffinity` artifact inside planned `libc.posix-runtime`.
+Pinned musl 1.2.6's `src/sched/affinity.c::do_getaffinity` forwards Linux x86
+raw syscall 204, turns its successful initialized-prefix byte count into C
+zero, and clears only the remaining caller-owned tail; raw errors become
+`-1` through initial-TLS `errno` without touching the buffer. Its true-static
+C body first proves the raw prefix/tail contract, then proves normalized C
+success with the same prefix and a zero tail plus undersized `EINVAL`, missing
+`INT_MAX` `ESRCH`, and full-size null-mask `EFAULT`. Strict/POSIX/X/Open hides
+this GNU-only spelling; GNU C/C++ retains the exact unmangled declaration and
+LP64 `cpu_set_t` layout. It does not select affinity mutation, CPU helpers,
+scheduler policy or parameters, pthread affinity/lifecycle, family/platform
+parity, promotion, or public x86 support.
+
 `./scripts/dev-x86_64.sh libc-sigaddset-sigdelset-sigfillset` is a separate
 private `static-c-sigset-mutation` artifact inside planned
 `libc.posix-runtime`. Its three-symbol pinned-musl/freestanding-static C proof

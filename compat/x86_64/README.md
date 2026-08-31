@@ -2943,6 +2943,23 @@ policy, parameter records, priority bounds, `sched_yield`, affinity, pthread
 scheduling attributes, lifecycle, scheduler-family completion, AArch64 parity,
 promotion, or public x86 support.
 
+`libc-sched-getaffinity` is a separate `static-c-sched-getaffinity`
+`verified_artifact` within planned `libc.posix-runtime`. Its one-symbol C body
+first runs through pinned musl 1.2.6 and then through a true
+`-nostdlib -static` candidate. It maps only musl's
+`src/sched/affinity.c::do_getaffinity` and `sched_getaffinity`: Linux raw x86
+syscall 204 writes a positive initialized mask prefix; the C wrapper preserves
+that prefix, clears the remaining caller tail, returns zero, and maps raw
+errors through `errno` without changing the output. The common C body proves
+raw/C prefix equivalence and zero-tail normalization for the current task,
+then validates `EINVAL` for one byte, `ESRCH` for `INT_MAX`, and `EFAULT` for
+a full-size null mask. Strict/POSIX/X/Open C/C++ hides the GNU-only spelling;
+GNU C/C++ retains exact `int sched_getaffinity(pid_t, size_t, cpu_set_t *)`,
+the 128-byte align-8 `cpu_set_t`, and unmangled C linkage. It does not select
+`sched_setaffinity`, CPU macro/helper/counting APIs, scheduler policy or
+parameters, pthread affinity/lifecycle, scheduler-family completion, AArch64
+parity, promotion, or public x86 support.
+
 `libc-sigaddset-sigdelset-sigfillset` is a separate
 `static-c-sigset-mutation` `verified_artifact` within planned
 `libc.posix-runtime`. Its project-header C body runs first through pinned musl

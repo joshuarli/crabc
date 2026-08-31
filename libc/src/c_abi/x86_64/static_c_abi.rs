@@ -28,8 +28,8 @@
 //! `thrd_create`/`thrd_exit`/`thrd_join`/`thrd_detach`/`thrd_sleep` sibling, a
 //! direct C11 `thrd_yield` leaf, one-symbol POSIX scheduler-policy observation
 //! compatibility failure, one separate scheduler-parameter observation
-//! compatibility failure, and one separate scheduler-parameter mutation
-//! compatibility failure, a
+//! compatibility failure, one separate scheduler-parameter mutation
+//! compatibility failure, and one GNU scheduler-affinity observation leaf, a
 //! process-private normal `pthread_mutex_*` block and its paired private
 //! process-private condition-variable handoff, a complete selected
 //! `pthread_rwlock_*`/`pthread_rwlockattr_*` block with private and
@@ -329,6 +329,8 @@ mod sched_getscheduler;
 mod sched_getparam;
 #[path = "sched_setparam.rs"]
 mod sched_setparam;
+#[path = "sched_getaffinity.rs"]
+mod sched_getaffinity;
 #[path = "c11_sync.rs"]
 mod c11_sync;
 #[path = "pthread_once.rs"]
