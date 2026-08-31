@@ -13,21 +13,19 @@ fn current_page_size() -> usize {
         .expect("the native Linux test process exposes AT_PAGESZ")
 }
 
-/// Two independent native workers park live source sessions before either
+/// Two independent native workers keep live persistent owners before either
 /// address crosses a thread boundary. Each fresh B worker receives only one
-/// exact C-shaped address and must find its owning A without a process-wide
-/// client table. This is the smallest regression for the former one-static-A
-/// restriction: A2's allocation used to remain local-only, so B2 could not
-/// publish its remote free while A1's route was active.
+/// exact C-shaped address, and pointer-first PageMap lookup must locate the
+/// matching A without a process-wide client table.
 #[test]
-fn two_parked_native_owners_accept_independent_remote_frees() {
+fn two_live_native_owners_accept_independent_pointer_first_remote_frees() {
     assert!(
         initialize_process(current_page_size()),
-        "the native runtime initializes before two live owners park"
+        "the native runtime initializes before two live owners begin"
     );
     assert!(
         prepare_native_later_thread_arena(),
-        "ticket zero parks the first arena before both native owners begin"
+        "ticket zero readies the first arena before both native owners begin"
     );
 
     let (owner_ready_sender, owner_ready_receiver) = mpsc::sync_channel(0);
@@ -57,7 +55,7 @@ fn two_parked_native_owners_accept_independent_remote_frees() {
             .expect("the coordinator receives only A1's exact C address");
         first_resume_receiver
             .recv()
-            .expect("A1 resumes only after B1 has restored its parked route");
+            .expect("A1 continues only after B1 completes its pointer-first free");
 
         let probe = match native_allocate_aligned(37, 16, false) {
             NativePageAllocationResult::Allocated(block) => block,
@@ -78,19 +76,18 @@ fn two_parked_native_owners_accept_independent_remote_frees() {
         );
     });
 
-    // The source scheduler admits one setup transition at a time. A1 is
-    // already completely parked before A2 enters its independent allocation
-    // transition; the route under test begins once both registry entries are
-    // simultaneously ACTIVE, before either B begins.
+    // A1 remains live before A2 creates its independent allocation. The
+    // witness begins once both PageMap-published owners have supplied their
+    // exact client addresses, before either B begins.
     let first = owner_ready_receiver
         .recv()
-        .expect("A1 parks before A2 creates its independent live route");
+        .expect("A1 remains live before A2 creates its independent live client");
 
     let second_owner = std::thread::spawn(move || {
         assert_eq!(attach_current_thread(), ThreadAttachResult::Attached);
         let remote = match native_allocate_aligned(53, 16, false) {
             NativePageAllocationResult::Allocated(block) => block,
-            _ => panic!("A2 creates its independently parked live remote client"),
+            _ => panic!("A2 creates its independently live remote client"),
         };
         let local = match native_allocate_aligned(89, 16, false) {
             NativePageAllocationResult::Allocated(block) => block,
@@ -108,7 +105,7 @@ fn two_parked_native_owners_accept_independent_remote_frees() {
             .expect("the coordinator receives only A2's exact C address");
         second_resume_receiver
             .recv()
-            .expect("A2 resumes only after B2 has restored its parked route");
+            .expect("A2 continues only after B2 completes its pointer-first free");
 
         let probe = match native_allocate_aligned(53, 16, false) {
             NativePageAllocationResult::Allocated(block) => block,
@@ -131,12 +128,12 @@ fn two_parked_native_owners_accept_independent_remote_frees() {
 
     let second = owner_ready_receiver
         .recv()
-        .expect("A2 parks before either B worker starts");
+        .expect("A2 remains live before either B worker starts");
     let first_releaser = std::thread::spawn(move || {
         assert_eq!(attach_current_thread(), ThreadAttachResult::Attached);
         let (address, request, first_byte, last_byte) = first;
-        // SAFETY: A1 keeps this exact allocation live and parked until B1
-        // finishes the source-shaped remote-free operation.
+        // SAFETY: A1 keeps this exact allocation live until B1 finishes its
+        // source-shaped pointer-first remote free.
         let block = unsafe { core::ptr::NonNull::new_unchecked(address as *mut u8) };
         // SAFETY: B1 observes the still-live C client before publishing it.
         unsafe {
@@ -148,22 +145,22 @@ fn two_parked_native_owners_accept_independent_remote_frees() {
             "B1 reads A1's captured PageMap usable extent"
         );
         assert_eq!(
-            unsafe { native_free(block) },
-            NativePageFreeResult::Freed,
-            "B1 publishes its exact A1 client through the matching parked route"
+                unsafe { native_free(block) },
+                NativePageFreeResult::Freed,
+                "B1 publishes its exact A1 client through matching PageMap state"
         );
         assert_eq!(
-            finish_current_thread_native_after_user_destructors(),
-            ThreadFinishResult::Finished,
-            "B1 returns the scheduler after its exact source publication"
+                finish_current_thread_native_after_user_destructors(),
+                ThreadFinishResult::Finished,
+                "B1 finishes its independent attachment after its exact source publication"
         );
     });
 
     let second_releaser = std::thread::spawn(move || {
         assert_eq!(attach_current_thread(), ThreadAttachResult::Attached);
         let (address, request, first_byte, last_byte) = second;
-        // SAFETY: A2 keeps this exact allocation live and parked until B2
-        // finishes the source-shaped remote-free operation.
+        // SAFETY: A2 keeps this exact allocation live until B2 finishes its
+        // source-shaped pointer-first remote free.
         let block = unsafe { core::ptr::NonNull::new_unchecked(address as *mut u8) };
         // SAFETY: B2 observes the still-live C client before publishing it.
         unsafe {
@@ -175,14 +172,14 @@ fn two_parked_native_owners_accept_independent_remote_frees() {
             "B2 reads A2's captured PageMap usable extent"
         );
         assert_eq!(
-            unsafe { native_free(block) },
-            NativePageFreeResult::Freed,
-            "B2 finds A2 even while A1's live route remains published"
+                unsafe { native_free(block) },
+                NativePageFreeResult::Freed,
+                "B2 finds A2 even while A1's independent PageMap state remains live"
         );
         assert_eq!(
-            finish_current_thread_native_after_user_destructors(),
-            ThreadFinishResult::Finished,
-            "B2 returns the scheduler after its exact source publication"
+                finish_current_thread_native_after_user_destructors(),
+                ThreadFinishResult::Finished,
+                "B2 finishes its independent attachment after its exact source publication"
         );
     });
 
@@ -194,10 +191,10 @@ fn two_parked_native_owners_accept_independent_remote_frees() {
         .expect("B2 completes A2's independent remote publication");
     first_resume_sender
         .send(())
-        .expect("A1 may resume after B1 restored its route");
+        .expect("A1 may continue after B1 completes its pointer-first free");
     second_resume_sender
         .send(())
-        .expect("A2 may resume after B2 restored its route");
+        .expect("A2 may continue after B2 completes its pointer-first free");
     first_owner
         .join()
         .expect("A1 finishes after collecting its exact remote publication");
@@ -207,11 +204,11 @@ fn two_parked_native_owners_accept_independent_remote_frees() {
 
     let resumed = match ticket_zero_allocate(73, false) {
         TicketZeroPageAllocationResult::Allocated(block) => block,
-        _ => panic!("ticket zero resumes after both live-owner routes finish"),
+        _ => panic!("ticket zero resumes after both live persistent owners finish"),
     };
     assert_eq!(
         unsafe { ticket_zero_free(resumed) },
         TicketZeroPageFreeResult::Freed,
-        "the dormant ticket-zero pair receives its local client after both routes close"
+        "the dormant ticket-zero pair receives its local client after both owners finish"
     );
 }

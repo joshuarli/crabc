@@ -97,7 +97,6 @@ class ArchitectureRatchetTests(unittest.TestCase):
             {
                 "exited_owner_admission_claim",
                 "geometry_shaped_post_exit_route",
-                "live_remote_owner_registry",
                 "per_call_parked_engine",
                 "post_exit_route_registry",
                 "prepared_owner_exit_clients",

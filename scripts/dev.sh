@@ -512,7 +512,7 @@ case "$command" in
             --loader target/debug/libldso.so \
             -- python3 compat/allocator/shadow-abi-matrix/run.py run
         # The direct runtime regressions keep the typed post-exit proof and
-        # live-owner remote-publication boundaries observable without
+        # persistent PageMap remote-publication boundaries observable without
         # accidentally selecting the ordinary C allocator artifact. They
         # cover aggregate, source-proved sole mapped-regular, parked-A source
         # remote-free, and the two nominally distinct bounded post-exit B/C/D
@@ -525,22 +525,20 @@ case "$command" in
             --test native_post_exit_with_local_session \
             --test native_live_remote_free \
             --test native_two_live_remote_owners \
+            --test native_live_remote_owner_registry_reuse \
             --test runtime_lifecycle_session_post_exit_publisher \
             --test runtime_lifecycle_session_post_exit_mapped_medium_publisher \
             --test runtime_lifecycle_session_post_exit_mapped_medium_requires_publisher \
             --test runtime_lifecycle_session_post_exit_mismatch_publisher \
             -- --test-threads=1
-        # These direct tests compile scalar-only registry audits behind their
-        # own default-off feature. They establish the detached three-route and
-        # live two-owner concurrent high-waters, then prove later epochs reuse
-        # those exact stable metadata nodes without exposing a route or client
-        # capability.
+        # These direct tests compile scalar-only post-exit registry audits
+        # behind their own default-off feature. They establish detached-route
+        # completion high-waters without exposing a route or client capability.
         run_in_container cargo test -p crabc-mimalloc \
             --features native-runtime-test-audit \
             --test native_post_exit_registry_high_water \
             --test native_multiple_post_exit_completions \
             --test native_terminal_completion_live_remote_free \
-            --test native_live_remote_owner_registry_reuse \
             -- --test-threads=1
         # The next-`munmap` injection is a separately gated direct witness:
         # a failed OS terminal release must retain the opaque B-side route and

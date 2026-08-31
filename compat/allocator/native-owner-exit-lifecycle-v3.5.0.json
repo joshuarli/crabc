@@ -35,15 +35,6 @@
     },
     {
       "expected_passed_test_count": 1,
-      "id": "live-owner-to-post-exit-handoff",
-      "kind": "unit-test-filter",
-      "scenarios": [
-        "live-owner-to-post-exit-handoff"
-      ],
-      "target": "runtime_lifecycle::tests::native_prepared_exit_keeps_live_owner_handoff_busy_until_post_exit_publication"
-    },
-    {
-      "expected_passed_test_count": 1,
       "id": "mapped-medium-source-publication-after-exit",
       "kind": "integration-test",
       "scenarios": [
@@ -91,10 +82,10 @@
     },
     {
       "expected_passed_test_count": 1,
-      "id": "completed-route-live-remote-publication",
+      "id": "post-exit-page-map-and-live-remote",
       "kind": "integration-test",
       "scenarios": [
-        "completed-route-live-remote-publication",
+        "post-exit-page-map-and-live-remote",
         "terminal-admission-order",
         "terminal-ownership-release"
       ],

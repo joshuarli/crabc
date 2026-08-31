@@ -1419,20 +1419,12 @@ without an irreversible speculative claim. A resulting aggregate-free or sole-ad
   selected fixture repeats the TSD-only normal-return phase and the
   cleanup/TSD ordering through deferred cancellation at a real cancellation
   point. The companion `native_terminal_completion_live_remote_free` direct
-  witness proves that the completed A route also does not freeze B's exact
-  source publication to a separately parked live C owner; B's normal finish
-  remains before A's proof release, while C's own all-free drain collects the
-  published C client. The
-  `native_post_exit_registry_terminal_close_waits_for_an_inflight_installation`
-  unit regression proves that terminal retention waits for an in-flight
-  detached-owner installation to complete, then permanently rejects a later
-  installation; the shared registry word cannot overwrite the in-flight route
-  back to idle. The companion
-  `native_live_owner_registry_terminal_close_waits_for_an_inflight_installation`
-  unit regression proves the same install-or-close ordering for terminal
-  raw-TLS handoffs, so a later live owner cannot publish beside one. Exact
-  frees are serialized; this is not a concurrent route or general
-  pointer-routing claim. The
+  witness proves that generic post-exit PageMap frees do not prevent B from
+  publishing an exact live C client through persistent page state; B and C
+  finish through their ordinary lifecycles. The removed installation-order
+  unit tests covered only the retired registry scaffolding. Exact frees remain
+  serialized; this is not a concurrent route or general pointer-routing
+  claim. The
   pinned AArch64 `allocator --churn` fixture executes its four existing routes
   once per deterministic seed-shuffled cycle for 128 cycles from seed
   `0xd1b54a32d192ed03` under its 30-second watchdog without changing the

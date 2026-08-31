@@ -111,9 +111,8 @@ pub use test_context::{
 pub mod __crabc_runtime {
     #[cfg(feature = "native-runtime-test-audit")]
     pub use crate::runtime_lifecycle::{
-        NativeLiveRemoteOwnerRegistryAudit, NativePostExitRouteRegistryAudit,
-        NativeRuntimeForkAdmissionAudit, NativeRuntimeLifecycleAudit,
-        native_live_remote_owner_registry_test_audit, native_post_exit_registry_test_audit,
+        NativePostExitRouteRegistryAudit, NativeRuntimeForkAdmissionAudit,
+        NativeRuntimeLifecycleAudit, native_post_exit_registry_test_audit,
         native_runtime_fork_admission_test_audit, native_runtime_lifecycle_test_audit,
     };
 

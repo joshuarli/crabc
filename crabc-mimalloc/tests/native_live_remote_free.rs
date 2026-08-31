@@ -14,14 +14,14 @@ fn current_page_size() -> usize {
 }
 
 #[test]
-fn native_live_owner_remote_free_returns_a_parked_worker_to_its_owner() {
+fn native_live_owner_remote_free_uses_pointer_first_page_map() {
     assert!(
         initialize_process(current_page_size()),
         "the native runtime initializes before its live-owner remote-free witness"
     );
     assert!(
         prepare_native_later_thread_arena(),
-        "ticket zero parks the first arena before A owns a persistent session"
+        "ticket zero readies the first arena before A owns a persistent page engine"
     );
 
     let (remote_sender, remote_receiver) = mpsc::sync_channel(0);
@@ -43,31 +43,31 @@ fn native_live_owner_remote_free_returns_a_parked_worker_to_its_owner() {
             .expect("B receives only the C-shaped remote address");
         query_receiver
             .recv()
-            .expect("A resumes only after B has restored the read-only handoff");
+            .expect("A continues after B completes the read-only PageMap query");
 
         let query_probe = match native_allocate_aligned(29, 16, false) {
             NativePageAllocationResult::Allocated(block) => block,
-            _ => panic!("A resumes its parked session after B's read-only usable-size query"),
+            _ => panic!("A continues its persistent owner after B's read-only usable-size query"),
         };
-        // SAFETY: the probe remains current only in A's resumed session.
+        // SAFETY: the probe remains current only in A's persistent owner.
         assert_eq!(unsafe { native_free(query_probe) }, NativePageFreeResult::Freed);
         free_sender
             .send(())
-            .expect("B publishes only after A proves the read-only route restored PARKED");
+            .expect("B publishes only after A completes its normal local operation");
         resume_receiver
             .recv()
-            .expect("A resumes only after B has returned the parked scheduler state");
+            .expect("A continues only after B completes its pointer-first free");
 
         let reused = match native_allocate_aligned(37, 16, false) {
             NativePageAllocationResult::Allocated(block) => block,
-            _ => panic!("A resumes its exact parked native session"),
+            _ => panic!("A continues its exact persistent native owner"),
         };
         // A may still have an ordinary local free-list entry ahead of B's
         // atomic remote head. The important C boundary is that this ordinary
         // owner operation resumes safely; its later all-free source drain
         // force-collects B's published client before it releases A's pages.
         assert_ne!(reused.as_ptr(), core::ptr::null_mut());
-        // SAFETY: both blocks remain current only in A's resumed session.
+        // SAFETY: both blocks remain current only in A's persistent owner.
         assert_eq!(unsafe { native_free(reused) }, NativePageFreeResult::Freed);
         assert_eq!(unsafe { native_free(local) }, NativePageFreeResult::Freed);
         assert_eq!(
@@ -79,12 +79,11 @@ fn native_live_owner_remote_free_returns_a_parked_worker_to_its_owner() {
 
     let remote = remote_receiver
         .recv()
-        .expect("A parks its live source engine before B enters");
+        .expect("A keeps its live persistent source engine before B enters");
     let releaser = std::thread::spawn(move || {
         assert_eq!(attach_current_thread(), ThreadAttachResult::Attached);
-        // SAFETY: A keeps this exact native allocation live and parked until
-        // B publishes its source-shaped remote free and finishes its own
-        // complete interleaving operation.
+        // SAFETY: A keeps this exact native allocation live until B publishes
+        // its source-shaped remote free and finishes its own operation.
         let remote = unsafe { core::ptr::NonNull::new_unchecked(remote as *mut u8) };
         assert!(
             unsafe { native_usable_size(remote) }.is_some_and(|size| size >= 37),
@@ -95,7 +94,7 @@ fn native_live_owner_remote_free_returns_a_parked_worker_to_its_owner() {
             .expect("A may resume before B takes the separate source publication operation");
         free_receiver
             .recv()
-            .expect("B waits for A to restore its live parked session before the source publication");
+            .expect("B waits for A to complete its local operation before the source publication");
         assert_eq!(
             unsafe { native_free(remote) },
             NativePageFreeResult::Freed,
@@ -104,7 +103,7 @@ fn native_live_owner_remote_free_returns_a_parked_worker_to_its_owner() {
         assert_eq!(
             finish_current_thread_native_after_user_destructors(),
             ThreadFinishResult::Finished,
-            "B returns the scheduler to A's parked persistent session"
+            "B finishes its independent no-page attachment after the PageMap publication"
         );
     });
     releaser
@@ -112,7 +111,7 @@ fn native_live_owner_remote_free_returns_a_parked_worker_to_its_owner() {
         .expect("B finishes its complete no-page lifecycle");
     resume_sender
         .send(())
-        .expect("A may resume after B restored the parked state");
+        .expect("A may continue after B completes the pointer-first free");
     owner
         .join()
         .expect("A collects the remote publication and finishes normally");
@@ -128,7 +127,7 @@ fn native_live_owner_remote_free_returns_a_parked_worker_to_its_owner() {
     );
 
     native_live_owner_serializes_two_exact_remote_publishers_before_collection();
-    native_live_owner_remote_free_from_parked_worker_keeps_b_local_session();
+    native_live_owner_remote_free_from_worker_keeps_b_local_owner();
 }
 
 fn native_live_owner_serializes_two_exact_remote_publishers_before_collection() {
@@ -172,14 +171,14 @@ fn native_live_owner_serializes_two_exact_remote_publishers_before_collection() 
 
         let first_probe = match native_allocate_aligned(37, 16, false) {
             NativePageAllocationResult::Allocated(block) => block,
-            _ => panic!("A resumes after both publishers restored its parked session"),
+            _ => panic!("A continues after both publishers complete their PageMap frees"),
         };
         let second_probe = match native_allocate_aligned(53, 16, false) {
             NativePageAllocationResult::Allocated(block) => block,
             _ => panic!("A performs a second ordinary operation after both publications"),
         };
         // SAFETY: the probes and local client remain current only in A's
-        // resumed session. A's all-free drain will force-collect both remote
+        // persistent owner. A's all-free drain will force-collect both remote
         // head entries before its source pages can release.
         unsafe {
             first_probe.as_ptr().write(0x57);
@@ -201,7 +200,7 @@ fn native_live_owner_serializes_two_exact_remote_publishers_before_collection() 
 
     let [first, second] = remote_receiver
         .recv()
-        .expect("A parks its live source engine before B and C enter");
+        .expect("A keeps its live source engine before B and C enter");
     let start = Arc::new(Barrier::new(3));
     let publishers = [
         (first, 37usize, 0x51u8, 0x52u8),
@@ -211,8 +210,8 @@ fn native_live_owner_serializes_two_exact_remote_publishers_before_collection() 
         let start = Arc::clone(&start);
         std::thread::spawn(move || {
             assert_eq!(attach_current_thread(), ThreadAttachResult::Attached);
-            // SAFETY: A keeps this exact allocation live and parked until
-            // this publisher completes its source-shaped remote-free route.
+            // SAFETY: A keeps this exact allocation live until this publisher
+            // completes its source-shaped PageMap remote free.
             let remote = unsafe { core::ptr::NonNull::new_unchecked(address as *mut u8) };
             // SAFETY: B/C read only their supplied live C-shaped client
             // before atomically publishing its canonical block to A.
@@ -228,12 +227,12 @@ fn native_live_owner_serializes_two_exact_remote_publishers_before_collection() 
             assert_eq!(
                 unsafe { native_free(remote) },
                 NativePageFreeResult::Freed,
-                "the static live-owner route serializes one exact source publication per publisher"
+                "the page's atomic remote head serializes one exact publication per publisher"
             );
             assert_eq!(
                 finish_current_thread_native_after_user_destructors(),
                 ThreadFinishResult::Finished,
-                "each no-page publisher finishes after returning the scheduler to A's parked session"
+                "each no-page publisher finishes after its independent PageMap publication"
             );
         })
     });
@@ -245,7 +244,7 @@ fn native_live_owner_serializes_two_exact_remote_publishers_before_collection() 
     }
     resume_sender
         .send(())
-        .expect("A may resume only after both publishers restored its parked scheduler state");
+        .expect("A may continue only after both publishers complete their PageMap frees");
     owner
         .join()
         .expect("A collects both remote publications and finishes normally");
@@ -261,14 +260,13 @@ fn native_live_owner_serializes_two_exact_remote_publishers_before_collection() 
     );
 }
 
-/// A source-shaped transfer receiver commonly has already allocated its own
-/// local bookkeeping and payload before it consumes a foreign pointer. Its
-/// parked session must therefore stay accounted while it atomically publishes
-/// A's exact live client to A's remote head.
-fn native_live_owner_remote_free_from_parked_worker_keeps_b_local_session() {
+/// A foreign-pointer releaser may already own local bookkeeping and payload.
+/// Its independent persistent owner must therefore remain usable while it
+/// atomically publishes A's exact live client to A's remote head.
+fn native_live_owner_remote_free_from_worker_keeps_b_local_owner() {
     assert!(
         prepare_native_later_thread_arena(),
-        "ticket zero restores its dormant arena before the parked receiver begins"
+        "ticket zero restores its dormant arena before the independent receiver begins"
     );
 
     let (owner_ready_sender, owner_ready_receiver) = mpsc::sync_channel(0);
@@ -282,7 +280,7 @@ fn native_live_owner_remote_free_from_parked_worker_keeps_b_local_session() {
         };
         let local = match native_allocate_aligned(73, 16, false) {
             NativePageAllocationResult::Allocated(block) => block,
-            _ => panic!("A retains a local client while B owns a parked session"),
+            _ => panic!("A retains a local client while B owns an independent persistent owner"),
         };
         // SAFETY: A owns both clients until B publishes only `remote` below.
         unsafe {
@@ -293,19 +291,19 @@ fn native_live_owner_remote_free_from_parked_worker_keeps_b_local_session() {
         }
         owner_ready_sender
             .send(())
-            .expect("B starts only after A parks the source session");
+            .expect("B starts only after A keeps its source owner live");
         remote_sender
             .send(remote.as_ptr().addr())
-            .expect("B receives only A's exact C-shaped address after its local session parks");
+            .expect("B receives only A's exact C-shaped address after it owns local state");
         resume_receiver
             .recv()
-            .expect("A waits until B restored both parked sessions");
+            .expect("A waits until B completes both of its pointer operations");
 
         let probe = match native_allocate_aligned(37, 16, false) {
             NativePageAllocationResult::Allocated(block) => block,
-            _ => panic!("A resumes after B's parked-session publication"),
+            _ => panic!("A continues after B's pointer-first publication"),
         };
-        // SAFETY: the probe and local block remain current in A's session;
+        // SAFETY: the probe and local block remain current in A's owner;
         // its source all-free drain collects B's remote-head publication.
         unsafe {
             assert_eq!(local.as_ptr().read(), 0x63);
@@ -324,21 +322,21 @@ fn native_live_owner_remote_free_from_parked_worker_keeps_b_local_session() {
         assert_eq!(attach_current_thread(), ThreadAttachResult::Attached);
         owner_ready_receiver
             .recv()
-            .expect("B waits for A's live route before creating its local session");
+            .expect("B waits for A's live owner before creating its local state");
         let local = match native_allocate_aligned(89, 16, false) {
             NativePageAllocationResult::Allocated(block) => block,
-            _ => panic!("B creates its independent parked local session"),
+            _ => panic!("B creates its independent persistent local owner"),
         };
         let remote = remote_receiver
             .recv()
-            .expect("B receives A's pointer only after B parks its local session");
-        // SAFETY: A retains this exact client live and parked; B receives no
-        // source route beyond the raw C-shaped address.
+            .expect("B receives A's pointer only after B owns its local state");
+        // SAFETY: A retains this exact client live; B receives no source
+        // capability beyond the raw C-shaped address.
         let remote = unsafe { core::ptr::NonNull::new_unchecked(remote as *mut u8) };
         assert_eq!(
-            unsafe { native_free(remote) },
-            NativePageFreeResult::Freed,
-            "B publishes A's exact client while restoring B's own parked session"
+                unsafe { native_free(remote) },
+                NativePageFreeResult::Freed,
+                "B publishes A's exact client while retaining B's own local owner"
         );
         assert_eq!(
             unsafe { native_free(local) },
@@ -346,24 +344,24 @@ fn native_live_owner_remote_free_from_parked_worker_keeps_b_local_session() {
             "B retains and frees its local client after publishing A's pointer"
         );
         assert_eq!(
-            finish_current_thread_native_after_user_destructors(),
-            ThreadFinishResult::Finished,
-            "B's all-free finish releases only B's own parked session"
+                finish_current_thread_native_after_user_destructors(),
+                ThreadFinishResult::Finished,
+                "B's all-free finish releases only B's own persistent owner"
         );
     });
     releaser
         .join()
-        .expect("B publishes A's pointer and finishes its local session");
+        .expect("B publishes A's pointer and finishes its local owner");
     resume_sender
         .send(())
-        .expect("A may resume after B restores its parked state");
+        .expect("A may continue after B finishes its independent owner");
     owner
         .join()
         .expect("A collects the publication and finishes normally");
 
     let resumed = match ticket_zero_allocate(89, false) {
         TicketZeroPageAllocationResult::Allocated(block) => block,
-        _ => panic!("ticket zero resumes after A and B complete their parked sessions"),
+        _ => panic!("ticket zero resumes after A and B complete their persistent owners"),
     };
     assert_eq!(
         unsafe { ticket_zero_free(resumed) },

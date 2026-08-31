@@ -2233,40 +2233,21 @@ allocate and free locally before this handoff through normal return,
 handler that also allocates and frees, then the destructor, while the same
 route carries direct-small, non-direct-small, medium, regular-large,
 arena-singleton, and OS-singleton C clients.
-While A remains parked and live, independently attached fresh no-page B/C
-publishers may each read an exact live PageMap usable extent or validate their
-exact C address against A's private ledger and atomically publish it to A's
-source remote head. A `NativeLiveRemoteOwnerRegistry` entry contains only A's
-TLS slot/generation; it serializes those publications, while the direct query
-does not claim or restore an entry or borrow a page engine or scheduler, and
-each free completes `PARKED -> BUSY -> PARKED` before A resumes. No client
-address, page, or allocator crosses that boundary. Stable metadata entries are
-reused, and a new node is appended only when the existing entries are live.
-The selected C suite releases two such producers together, then proves A
-collects both publications during a normal resumed operation before it exits
-with a remaining small/medium aggregate that a separate fresh worker releases
-only through `NativePostExitRoute`. The separate direct and selected-C
-`native_mimalloc_two_live_remote_owners` witnesses park A1 before A2 enters
-its own setup transition, then keep two entries active while B1/B2 each query
-and free only their matching exact client. The registry restores foreign
-entries during a scan while the source scheduler serializes both PageMap
-operations. This remains a bounded source witness, not general concurrent
-worker allocation or pointer routing. The feature-gated scalar-only
-`native_live_remote_owner_registry_reuse` regression warms that two-entry
-high-water across four later A1/A2/B1/B2 epochs: its published-node count stays
-flat, every entry returns to empty, no entry is retained, and its audit exposes
-no entry identity, TLS address, route, client, page, allocator, or release
-capability. Separately, the selected
-`native_mimalloc_parallel_local_workers` fixture pauses A after A has
-published a live entry and B after B has parked a distinct local C allocation.
-B can free only B's own client and complete B's all-free finish; A's original
-route remains valid until A later frees locally, and ticket zero reactivates
-after both finishes. A temporarily carries its matching entry `BUSY` while it
-resumes, so B cannot borrow that A between A's TLS removal and re-park.
-The selected C comparison repeats 128 fresh process epochs; a stale
-parked-count CAS retries only while the scheduler still records `BUSY` or a
-nonzero parked count. This remains a local-only admission witness, not a
-pointer registry or concurrent PageMap mutation.
+Exact live remote-free witnesses now use the allocation's persistent
+PageMap/page state directly. Independently attached B/C workers can read the
+exact immutable usable extent or atomically publish an exact live block to its
+source page's remote head without claiming A's TLS session, a scheduler token,
+or a client ledger. The matching source owner collects that head during its
+ordinary operation or finish. The direct and selected-C
+`native_mimalloc_two_live_remote_owners` witnesses keep two independent
+source pointers live while B1/B2 each operate only on the pointer they were
+given. The historical `native_live_remote_owner_registry_reuse` target is
+now an ungated repeated persistent-PageMap epoch witness: it exercises four
+A1/A2/B1/B2 epochs without an audit or reusable owner metadata. The separate
+`native_mimalloc_parallel_local_workers` fixture remains a local-admission
+witness; B frees only its own client and ticket zero reactivates after both
+ordinary finishes. None of these tests establishes general concurrent worker
+allocation, pointer routing, or PageMap mutation.
 At the direct pointer boundary, a synchronized B first derives an exact A
 client's PageMap facts. `native_reallocate` rejects the foreign source as
 unavailable (the C ABI reports `ENOMEM`), leaves its bytes intact, and never

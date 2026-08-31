@@ -2132,79 +2132,28 @@ opaque route. The owner-exit releaser also creates one local B allocation before
 it offers any A address, then keeps that parked session through A's terminal
 free and frees its own client before pthread teardown. This proves the route
 can transfer A's completion beside one independently parked B session without
-turning either route into a pointer or allocator capability. In the live fixture, A stays parked with two exact native clients
-live while independently attached B/C publishers first read their respective
-PageMap-derived usable extents without a handoff, then race their exact
-ledger-validated source publications. The matching
-`NativeLiveRemoteOwnerRegistry` entry serializes each complete
-`PARKED -> BUSY -> PARKED` operation; both publishers finish before A resumes
-ordinary malloc work. The PageMap-only query neither claims nor restores that
-entry and borrows no page engine or scheduler. Each stable metadata-backed
-entry retains only an A TLS slot/generation, never a client address, page, or
-allocator.
-If B already holds one exact foreign route and needs B's own parked session,
-the current-slot scan probes every other entry without waiting. A distinct
-`BUSY` entry makes B restore the foreign route and revalidate the exact input
-with no live-route guard held; opposite source transfers therefore cannot form
-a raw-TLS handoff wait cycle. If A exits during that retry, the live lookup
-returns `NotOwned` and the existing post-exit successor retry remains the only
-path that can consume A's transferred client.
-When that live A starts a native deferred exit, its old entry remains `BUSY`
-until the typed post-exit route has published the same private ledger, then A
-clears the old entry. A B whose first detached lookup raced that publication
-waits on `BUSY`; after it sees `EMPTY`, it retries the detached route rather
-than treating the exact transferred client as foreign. This no-gap handoff
-does not expose a pointer registry or concurrent PageMap mutation.
-The selected `native_mimalloc_source_published_exit` fixture covers the
-complementary no-local-client finish: after B publishes A's sole exact client,
-A performs no further allocator operation, so its ordinary pthread destructor
-must still force-collect the source head through the typed all-free drain
-before ticket zero can reactivate. It exposes no additional pointer or page
-capability.
-The feature-gated direct
-`native_source_published_live_owner_exit` regression covers the mixed
-ownership boundary: A's joined direct-small source publication remains solely
-for A's collector while a distinct live medium client enters the typed native
-post-exit route. B receives only that medium address, and its terminal free
-plus normal finish is still required before A's admission and ticket zero can
-release. The selected-C
-`native_mimalloc_source_published_live_owner_exit` fixture makes the same
-boundary explicit with separate actors: B publishes the small client before A
-exits, while fresh C receives only the medium address and must finish normally
-after its terminal typed free.
-The selected-C `native_mimalloc_post_exit_source_published_successor` fixture
-then composes the same source boundary with B holding A's terminal route proof.
-B frees A's routed medium, exits without another local allocator operation,
-and must source-collect B's own small client while moving only B's distinct
-medium client into a successor route. B's finished teardown settles A's proof;
-fresh C terminally frees and normally finishes B's route before ticket zero can
-reactivate. The fixture gives no worker a route-selection or general pointer
-capability.
-The selected-C `native_mimalloc_post_exit_source_published_all_free_proof`
-fixture covers the complementary no-successor lifecycle. D source-publishes
-B's only small client before B terminally frees A's routed medium; B then makes
-no further allocator operation. B must complete its typed all-free drain and
-its own attachment teardown before settling A's proof, with no B client moving
-into a new route.
-While B holds a terminal proof, the selected native boundary keeps A's parked
-token and admission private but does not freeze B's independently parked local
-session. B may make ordinary local allocation, `realloc`, and exact `free`
-operations; B's later source finish is still the only boundary that may settle
-A's proof. The direct local-session regression preserves sentinels across the
-continued local replacement before it proves the later successor or all-free
-finish.
-The separate `native_two_live_remote_owners` direct and selected-C fixtures
-park A1 before A2 enters its own setup transition, then leave both entries
-active while B1/B2 query and free only their matching exact addresses. The
-registry restores each foreign entry during an exact scan, reuses empty
-metadata entries, and still relies on the source scheduler to serialize the
-two PageMap operations.
-The feature-gated scalar-only
-`native_live_remote_owner_registry_reuse` regression warms this two-entry
-live-owner high-water and completes four later A1/A2/B1/B2 epochs. Its
-published-node count stays flat while every entry returns to empty and none is
-retained; the audit reports no entry identity, TLS address, route, client,
-page, allocator, or release capability.
+turning either route into a pointer or allocator capability. Exact live
+remote publication is pointer-first: A's persistent PageMap/page state names
+each exact live client, and B/C can query its immutable usable extent or push
+its canonical block to the source remote head without claiming A's TLS, a
+parked session, or a client ledger. A's next ordinary operation or finish
+collects that source head.
+
+`native_mimalloc_source_published_exit` covers the no-local-client finish:
+after B publishes A's sole exact client, A performs no further allocator
+operation and its ordinary pthread destructor collects the source head before
+ticket zero reactivates. `native_source_published_live_owner_exit` and its
+selected-C companion cover the mixed boundary, where one joined source
+publication is collected by A while a distinct client follows the existing
+post-exit PageMap route.
+
+The direct and selected-C `native_two_live_remote_owners` fixtures keep two
+independent live source pointers while B1/B2 each query or free only the
+pointer handed to them. The historical
+`native_live_remote_owner_registry_reuse` target is now an ungated repeated
+persistent-PageMap epoch witness; it no longer observes or compiles a registry
+audit. These fixtures do not establish general worker-pointer dispatch,
+concurrent PageMap mutation, or a worker allocator.
 The separate two-owner and three-owner fixtures make A workers detach before
 any fresh B starts. `NativePostExitRouteRegistry` keeps each typed route's
 client addresses private and each A admission parked independently in a stable
@@ -2271,18 +2220,15 @@ B finishes, then require empty completion storage and zero later-worker
 admissions afterward. It proves a typed completion boundary, not a general
 cross-thread client registry or a normal no-page finalizer for an abandoned
 owner.
-`native_terminal_completion_live_remote_free` covers the adjacent live-owner
-interleaving: after B has terminally completed A, B may source-publish one
-exact C-owned client from B's independently parked session. B still finishes
-before the private registry releases A's admission; C later force-collects
-only its own published client. This remains one exact live-owner route, not a
-general worker-pointer dispatcher.
-`tests/native_mimalloc_parallel_local_workers.rs` pauses A after it has
-published a live entry and B after B has parked a distinct local allocation;
-B can query and free only B's own client, complete its all-free thread finish,
-and leave A's route valid for A's later local free. While A is temporarily
-active, its moved `CurrentThreadPageOwnerSession` retains A's matching entry
-`BUSY` until A re-parks, so B cannot borrow that A in the resume interval. The
+`native_terminal_completion_live_remote_free` is now the adjacent
+post-exit/PageMap witness: B frees A's post-exit clients, then source-publishes
+one exact C-owned live client through persistent PageMap/page state. B and C
+finish through their own ordinary boundaries; the test does not use a live
+owner handoff or a worker-pointer dispatcher.
+`tests/native_mimalloc_parallel_local_workers.rs` pauses A with a persistent
+live allocation and B with a distinct local allocation; B can query and free
+only B's own client, complete its all-free thread finish, and leave A's source
+state valid for A's later local free. The
 fixture then proves ticket-zero reactivation after A finishes across 128 fresh
 process epochs. An already parked session retries a lost scheduler CAS only
 while the scheduler still records `BUSY` or a nonzero parked count; `READY`

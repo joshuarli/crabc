@@ -2645,32 +2645,6 @@ impl<'attachment, 'main> MainHeapThreadProcessPageAllocator<'attachment, 'main> 
         unsafe { self.engine.begin_remote_free_pair(first, second) }
     }
 
-    /// Publishes one exact client through the source remote-free head of a
-    /// separately parked live owner.
-    ///
-    /// The caller must own one complete runtime B operation while the A-side
-    /// persistent engine remains parked. That operation is either a fresh
-    /// non-parkable interleaving or a temporary resume of B's own parked
-    /// session, which re-parks before the result is visible. This wrapper
-    /// deliberately exposes no page, PageMap, or owner capability to the
-    /// native libc boundary; it returns only the source publication result.
-    ///
-    /// # Safety
-    ///
-    /// `block` must be a current native-shadow allocation tracked by that
-    /// parked A session. It may not name B's own allocation, an abandoned
-    /// page, or an already published/free client.
-    #[inline]
-    pub(crate) unsafe fn publish_remote_free_to_parked_live_owner(
-        &mut self,
-        block: NonNull<u8>,
-    ) -> Result<(), RemoteFreePreparationError> {
-        unsafe {
-            self.engine
-                .publish_remote_free_to_parked_live_owner(block)
-        }
-    }
-
     /// Returns the source capacity of one exact current local allocation's
     /// page. This private lifecycle observation never exposes the page or its
     /// metadata: its only caller sizes the bounded Gate 5B owner workload

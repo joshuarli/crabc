@@ -2512,14 +2512,12 @@ upstream = "src/free.c"
 name = "live-owner-remote-free-push-and-collection-protocol"
 source_region = "mi_free_nonnull/mi_free_generic_mt exact live-page lookup, aligned block recovery, and mi_free_block_mt normal remote push, plus mi_page_thread_free_collect/mi_page_thread_collect_to_local, mi_page_queue_find_free_ex, and the mi_page_malloc_zero direct-to-generic path"
 rust_module = "crabc_mimalloc::remote_free, crabc_mimalloc::single_thread, crabc_mimalloc::main_heap_page, crabc_mimalloc::runtime_lifecycle, and crabc_mimalloc::types"
-rust_item = "remote_free::push/collect/publish_to_head/detach_from_head, ProcessPageMapLease::{lookup_page_for_live_client,lookup_live_allocation}, LiveAllocationPointer::usable_size, Page::{is_live_owner_for_thread_at,canonical_remote_block_for_live_client_at}, native_ticket_zero_live_remote_free/native_later_thread_live_remote_free, SingleThreadAllocator::begin_remote_free, SingleThreadAllocator::publish_remote_free_to_parked_live_owner, MainHeapThreadProcessPageAllocator::publish_remote_free_to_parked_live_owner, CurrentThreadPageOwnerSessionHandle::native_publish_remote_free_to_parked_live_owner, RemoteFreeProducer, NativeLiveRemoteOwnerRegistry::{install,claim_current_slot,claim_exact_client}, NativeLiveRemoteOwnerRegistryNode/NativeLiveRemoteOwnerStorage/NativeLiveRemoteOwnerGuard, native_live_remote_owner_registry_test_audit/NativeLiveRemoteOwnerRegistryAudit, and PageRemoteFreeProducerState/PageRemoteFreeOwnerState"
-# Route correction: stable metadata-backed entries admit independently parked
-# A sessions, not a global raw-pointer table. The selected direct and C
-# witnesses park A1 before A2 enters its setup transition, then give B1/B2
-# only their matching exact addresses. A scan restores every foreign entry;
-# each matching entry serializes its exact publication while the source
-# scheduler still serializes PageMap mutation.
-intentional_difference = "This item and its address-free Loom model cover a pinned live owner-associated page's exact head publication/detach transitions. The same model also executes the separately recorded abandoned allow-collect owner-claim/unown races. Separately, an attached selected-shadow worker may free one exact live ticket-zero normal or aligned client: the client pins its PageMap slice while the worker takes only the immutable process root, initial owner identity, source-constant geometry, and source atomic remote head; it receives no page engine, scheduler/admission claim, or retained pointer capability. The private `RemoteFreeProducer` remains the ordinary source admission route: its exclusive allocator borrow and same-Theap/same-live-thread preflight admit only an active matching regular non-huge-bin or full-queue member. Separately, the nondefault native libc shadow has bounded A-live entries in a stable metadata-backed registry. Each entry contains only a parked A compiler-TLS slot/generation. A usable-size query never scans or claims that entry: it returns the exact extent captured from one immutable PageMap live-allocation lookup. For a free, B proves one raw C address against the matching ledger and takes one complete `PARKED -> BUSY -> PARKED` operation with the long PageMap lease: a fresh B uses the scoped non-parkable interleaving, while B with its own fully parked session briefly resumes and re-parks only that session. Both call the same atomic `remote_free::push`; the ledger changes only after that push and A's next ordinary operation or all-free drain collects it. A claims or removes its matching entry before every TLS inspection, resume, or teardown. Empty entries are reused; metadata allocation failure leaves that A local-only rather than publishing a fallback. Neither route is a pointer registry. A scoped `Send`/`!Sync` worker may only publish or cancel on the ordinary route; caller-proved join/quiescence remains required before queue collection. The regular source candidate scan, including a direct-cache miss, performs remote detach then false-force owner-local transfer before extension/full classification; the separately mapped full-page collector performs that transfer before release-or-unfull. Unlike infallible C collection, any Rust false-force collection error permanently poisons this private allocator, retaining the exact page, error, and optional already-popped block and rejecting later allocator entry points without further mutation. The explicit detached metadata session has no producer path and is outside this item. General/public allocation/free routing, raw-pointer lifetime registry, the separate _mi_deferred_free callback, general thread/TLS lifecycle, concurrent queue collection, arbitrary unbounded live-owner workloads, and general page retirement/release remain absent."
+rust_item = "remote_free::{push,collect,publish_to_head,detach_from_head}, ProcessPageMapLease::{lookup_page_for_live_client,lookup_live_allocation}, LiveAllocationPointer::usable_size, Page::{canonical_remote_block_for_live_client_at,remote_free_producer_state_at}, native_free/native_usable_size and their pointer-first local/nonlocal helpers, RemoteFreeProducer, and PageRemoteFreeProducerState/PageRemoteFreeOwnerState"
+# Pointer-first correction: selected direct and C witnesses hand B1/B2 only
+# matching exact addresses. Each operation derives PageMap/page facts and
+# atomically publishes to its source remote head; it neither scans stable
+# owner entries nor transfers a parked source session.
+intentional_difference = "This item and its address-free Loom model cover a pinned live owner-associated page’s exact remote-head publication/detach transitions, plus the separately recorded abandoned allow-collect owner-claim/unown races. In the selected native shadow, an attached worker proves an exact live allocation through persistent PageMap/page state, derives its immutable extent or canonical block, and atomically publishes the block without borrowing the owner’s TLS session, page engine, scheduler/admission claim, or a stored client capability. The source owner collects that head during its ordinary operation or finish. The historical live-owner target now repeats those PageMap epochs without registry metadata or audit. This is not general/public allocation/free routing, a raw-pointer lifetime registry, general thread/TLS lifecycle, concurrent queue collection, arbitrary worker allocation, or general page retirement/release."
 tests = ["crabc-mimalloc/src/remote_free.rs", "crabc-mimalloc/src/remote_free_loom.rs", "crabc-mimalloc/src/single_thread.rs", "crabc-mimalloc/src/main_heap_page.rs", "crabc-mimalloc/src/runtime_lifecycle.rs", "crabc-mimalloc/tests/native_live_remote_free.rs", "crabc-mimalloc/tests/native_two_live_remote_owners.rs", "crabc-mimalloc/tests/native_live_remote_owner_registry_reuse.rs", "tests/fixtures/native_mimalloc_live_remote_free_test.c", "tests/native_mimalloc_live_remote_free.rs", "tests/fixtures/native_mimalloc_live_remote_from_parked_worker_test.c", "tests/native_mimalloc_live_remote_from_parked_worker.rs", "tests/fixtures/native_mimalloc_source_published_exit_test.c", "tests/native_mimalloc_source_published_exit.rs", "tests/fixtures/native_mimalloc_source_published_live_owner_exit_test.c", "tests/native_mimalloc_source_published_live_owner_exit.rs", "tests/fixtures/native_mimalloc_post_exit_source_published_successor_test.c", "tests/native_mimalloc_post_exit_source_published_successor.rs", "tests/fixtures/native_mimalloc_post_exit_source_published_all_free_proof_test.c", "tests/native_mimalloc_post_exit_source_published_all_free_proof.rs", "tests/fixtures/native_mimalloc_two_live_remote_owners_test.c", "tests/native_mimalloc_two_live_remote_owners.rs", "tests/fixtures/native_mimalloc_initial_remote_free_test.c", "tests/native_mimalloc_initial_remote_free.rs", "crabc-mimalloc/src/types.rs"]
 exported = false
 implemented = true
@@ -2745,13 +2743,11 @@ upstream = "src/alloc.c"
 name = "nondefault-crabc-libc-native-mimalloc-shadow-ordinary-boundary"
 source_region = "mimalloc v3.5.0 src/alloc.c:29-159,344-451 ordinary allocation, calloc, realloc, free, and usable-size mechanics; src/free.c:100-160,221-255 exact live-page lookup, aligned block recovery, and cross-thread mi_free_block_mt publication; musl 1.2.6 malloc-family errno and zero-size C-ABI policy"
 rust_module = "crabc_libc::allocator_native_mimalloc, crabc_libc::c_abi, and crabc_libc::program_utils_exports with crabc_mimalloc::{process_page_map,runtime_lifecycle}"
-rust_item = "the `native-mimalloc-shadow` feature's malloc/free/calloc/realloc/malloc_usable_size boundary; native_allocate_aligned/native_reallocate/native_free/native_usable_size/native_reallocate_prepare_caller_persistent_owner/native_live_allocation_for_pointer_reallocation/native_reallocate_pointer_first_local/native_reallocate_pointer_first_nonlocal/native_reallocate_release_unpublished_replacement/prepare_native_later_thread_arena/prepare_native_initial_owner_for_later_thread/native_ticket_zero_live_remote_free/native_later_thread_live_remote_free; ProcessPageMapLease::{lookup_live_allocation,lookup_page_for_live_client}, LiveAllocationPointer::{client,usable_size,is_associated_with}, Page::{is_live_owner_for_thread_at,canonical_remote_block_for_live_client_at}, and remote_free::push; MainStaticRuntimeFirstArenaPageAllocator::{prepare_dormant_page_pair,prepare_live_engine_for_later_thread,with_later_thread_page_pair}; MainStaticRuntimeParkedEngine and PageAllocatorEngine::{suspend_runtime_ticket_zero,resume_runtime_ticket_zero}; CurrentThreadPageOwnerSessionHandle::{native_free,native_publish_remote_free_to_parked_live_owner}; DetachedOwnerExitClient::can_attempt_final_member_adoption, DetachedOwnerExitClientLedger::only_client_for_native_free, NativePostExitRouteStorage::{free_exact,settle_exact_free}, NativePostExitRouteRegistry::{install,free_exact,view}, TicketZeroOwnerExitFreeRoute::{free_exact_native_block,adopt_last_native_mapped_regular_member}, NativeLiveRemoteOwnerRegistry::{install,claim_current_slot,claim_current_slot_while_holding_live_remote_owner,claim_exact_client}, NativeLiveRemoteOwnerStorage::{claim,try_claim}, NativeLiveRemoteOwnerTryClaim, NativeLiveRemoteOwnerRegistryNode/NativeLiveRemoteOwnerGuard, native_live_remote_owner_registry_test_audit/NativeLiveRemoteOwnerRegistryAudit, RuntimePersistentPageEngine::publish_remote_free_to_parked_live_owner, PreparedOwnerExitClientState::PublishedToLiveOwner; NativePostExitRoute, NativePostExitRouteRegistryNode, NativePostExitRouteCompletion, RuntimeParkedPostExitRoute, ProcessPageMapPostExitAccess, and finish_current_thread_native_after_user_destructors"
-# Shadow correction: the metadata-backed live-owner registry can publish
-# independently parked A TLS sessions. The selected direct and C witnesses
-# park A1 before A2 enters its own setup transition, then give B1/B2 only
-# matching exact addresses. Per-entry claims serialize the source operation;
-# the scheduler still serializes every PageMap mutation and the nondefault
-# status does not change.
+rust_item = "the `native-mimalloc-shadow` malloc/free/calloc/realloc/malloc_usable_size boundary; native_allocate_aligned/native_reallocate/native_free/native_usable_size and their persistent-owner/pointer-first helpers; ProcessPageMapLease::{lookup_live_allocation,lookup_page_for_live_client}, LiveAllocationPointer::{client,usable_size,is_associated_with}, Page::{canonical_remote_block_for_live_client_at,remote_free_producer_state_at}, and remote_free::push; MainStaticRuntimeFirstArenaPageAllocator::{prepare_dormant_page_pair,prepare_live_engine_for_later_thread,with_later_thread_page_pair}; detached-route NativePostExitRouteStorage::{free_exact,settle_exact_free}, NativePostExitRouteRegistry::{free_exact,usable_size_exact,finish_completions_for_owner}, NativePostExitRoute, NativePostExitRouteRegistryNode, NativePostExitRouteCompletion, RuntimeParkedPostExitRoute, ProcessPageMapPostExitAccess, and finish_current_thread_native_after_user_destructors"
+# Shadow correction: live remote free is pointer-first. The selected direct
+# and C witnesses give B1/B2 only matching exact addresses; each derives
+# persistent PageMap/page facts and atomically publishes to the source remote
+# head without a session-local handoff. The nondefault status does not change.
 intentional_difference = """
 This is a compile-time, nondefault early-shadow lane, not a runtime selector or
 default-backend change. The initial thread retains the permanent ticket-zero
@@ -2898,31 +2894,18 @@ than preserving a B-held admission contract. The remaining
 registry/completion/scheduler code is deletion-pending scaffolding, forbidden
 by `native-mimalloc.md` §3.3 and Phases E/F.
 
-While A is parked and live, the separate
-`NativeLiveRemoteOwnerRegistry` keeps stable entries that each record only an
-A TLS slot/generation. An exact B free scans entries without exposing one:
-foreign entries restore before the next scan step, while a matching entry
-validates the private source client, performs one source-shaped
-`PARKED -> BUSY -> PARKED` operation, and publishes the canonical block to
-that A's remote head. A fresh B uses the scoped interleaving; B with a fully
-parked local session briefly resumes and re-parks only that session. Empty
-entries are reused and metadata growth appends a
-process-lived node only when all entries are live. The selected two-live-owner
-witness parks A1 before A2 enters setup, then lets B1/B2 consume only their
-matching exact clients; the scheduler still serializes the two PageMap
-operations. A B that already holds one exact foreign route probes the remaining
-current-slot entries with `try_claim` rather than waiting: a distinct busy
-entry makes B restore the first route and revalidate its exact input with no
-route held, preventing opposing source transfers from forming a raw-TLS wait
-cycle. If source exit replaces that first route during the retry, `native_free`
-uses its existing post-exit successor lookup after the live route reports
-`NotOwned`. Before a terminal raw-TLS entry publishes, it closes the same
-short registry mutation boundary used for live-owner installation: an in-flight
-A completes its full publication before that closure, while a later A cannot
-publish beside the discarded handoff. This does not expose a pointer registry
-or concurrent PageMap mutation. The selected boundary has no C-backend fallback: unknown, foreign,
-unsupported, or terminal native frees fail-stop, and an unavailable allocation
-reports the selected C-ABI failure.
+Exact live remote free is now pointer-first. An attached B proves the handed
+address through persistent PageMap/page state, derives its canonical source
+block, and atomically pushes it to that page's remote head. It neither scans
+owner entries nor claims A's TLS, a parked session, a scheduler token, or a
+private client ledger. A's ordinary operation or finish collects the head.
+The selected two-live-owner witness keeps A1/A2 source pointers independent
+while B1/B2 consume only their matching addresses; the historical
+`native_live_remote_owner_registry_reuse` target repeats those persistent
+PageMap epochs without registry metadata or an audit. This does not expose a
+pointer registry or concurrent PageMap mutation. The selected boundary has no
+C-backend fallback: unknown, foreign, unsupported, or terminal native frees
+fail-stop, and an unavailable allocation reports the selected C-ABI failure.
 
 General single-page adoption/reclaim owner exit, simultaneous source access,
 general
@@ -2937,24 +2920,12 @@ fixtures cannot execute the default C artifact.
 # Natural C ABI alignment through 16 bytes is ordinary provenance; wider
 # alignment remains sequential-free-only. The route keeps the final C address
 # private and exposes no page, allocator, scan, or general reclaim API.
-# Correction to the historical singular-worker wording above: the counted
-# scheduler admits an independently parked local C worker while a live entry
-# is occupied, and the registry may publish another separately parked A entry.
-# A `BUSY` entry carries no client address and only blocks a borrow of that
-# same A; neither path mutates the PageMap concurrently.
-# A native local operation or all-free destructor finish retries a lost
-# parked-count CAS only while the scheduler still encodes `BUSY` or a nonzero
-# parked count. `READY` and terminal states remain non-retryable, so this does
-# not turn the counted scheduler into a general concurrent mutation lock.
-# Native live-to-post-exit handoff ordering: a deferred A exit keeps its exact
-# `NativeLiveRemoteOwnerGuard` `BUSY` in `ThreadLifecyclePreparedPageOwner`
-# until `defer_current_thread_native_post_exit_route` Release-publishes the
-# replacement private ledger. It clears the old entry only afterward; an exact
-# B free that waited on that entry retries the typed route after it observes
-# `EMPTY`, so it cannot observe an unowned transferred client. The focused
-# `native_prepared_exit_keeps_live_owner_handoff_busy_until_post_exit_publication`
-# regression proves the held guard boundary without exposing an address, page,
-# allocator, or release capability.
+# The remaining counted scheduler and detached-route comments describe
+# test-only legacy scaffolding. Exact live remote free no longer contributes
+# a scheduler entry or a native live-to-post-exit handoff: the normal native
+# finalizer delegates to the ordinary persistent/PageMap finalizer. This
+# slice does not claim the remaining Phase F scheduler or post-exit registry
+# cleanup is complete.
 # Capacity evidence in the selected shadow lane: the local-only fixture keeps
 # 64 ordinary allocations through one active session and frees them before the
 # all-free drain. The owner-exit fixture moves 84 live C allocations through

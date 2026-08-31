@@ -5,23 +5,15 @@
 // `native-mimalloc-shadow` compile-time feature. It deliberately has no
 // runtime selector and no C-backend fallback: a successful allocation must
 // remain owned by the same native runtime that later receives its free or
-// reallocation. Its bounded worker scheduling branch admits only local
-// pointers recorded by the current parked owner session; that session starts
-// with inline private ledger storage and may grow metadata-backed storage
-// before another C allocation escapes. An attached worker may also source-push
-// one exact, still-live ticket-zero client through its page's atomic remote
-// head: that client itself pins the registered page, so this transfers no
-// page engine, scheduler claim, or stored client capability. A worker with its
-// own fully parked local session may use that same exact live-owner path; it
-// briefly resumes and re-parks only its own session for that source
-// publication. One detached multi-page regular route may later accept exact
-// frees while keeping its ledger and admission private. `native_usable_size`
-// never claims either that route or a live-owner registry entry: it returns
-// the exact usable extent captured from immutable PageMap facts for an exact
-// live native client. While A remains parked and live, a fresh no-page B may
-// source-publish an exact free, but receives no registry- or ledger-derived
-// query capability. Other cross-thread routing remains outside this early M5
-// shadow slice rather than silently handing a native pointer to libmimalloc.
+// reallocation. Persistent PageMap/page state, rather than a parked-owner
+// handoff, names an exact live native allocation. An attached worker may
+// source-push that exact client through the page's atomic remote head; the
+// client pins its registered page, so the operation transfers no page engine,
+// scheduler claim, or stored client capability. `native_usable_size` derives
+// the exact live extent from immutable PageMap facts, and generic pointer-first
+// free/reallocation continue to own post-exit dispatch. Other cross-thread
+// routing remains outside this early M5 shadow slice rather than silently
+// handing a native pointer to libmimalloc.
 
 use crabc_mimalloc::__crabc_runtime::{
     NativePageAllocationResult, NativePageFreeResult, native_allocate_aligned, native_free,

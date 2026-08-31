@@ -163,80 +163,31 @@ released. Its scalar audit proves A's admission count remains after B releases
 only its own attachment claim; the matching successful witness reaches zero
 only after B consumes the typed completion. Disabling the test injection
 cannot retry the retained route. The test hook exposes no route, client,
-PageMap, or allocator capability outside that direct evidence build. While an A session is
-still parked and live, independently attached fresh no-page B/C publishers may
-return explicitly handed exact native C clients through a private
-`NativeLiveRemoteOwnerRegistry` entry. `native_usable_size` instead derives an
-exact live client's usable extent directly from immutable PageMap facts; it
-does not scan or claim either the live-owner registry or a private ledger. A B
-that has already parked its own local session may return one explicitly handed
-exact A client, but cannot use that parked-session route to query A or gain any
-other client identity. Stable metadata-backed entries contain only an A
-compiler-TLS slot and generation; empty storage is reused and a new node is
-appended only when every entry is live. An exact-address free scan restores
-every foreign entry before considering the next. The free path proves the raw
-address against A's private ledger, performs one complete source-shaped
-`PARKED -> BUSY -> PARKED` operation, atomically pushes the canonical block to
-A's remote head, and only then marks that ledger member
-`PublishedToLiveOwner`. A fresh B uses the scoped interleaving; an already
-parked B briefly resumes and re-parks only its own session. A removes or claims
-its matching entry before every
-TLS inspection, resume, or teardown, so B cannot retain the raw TLS capability
-while A accesses its session. A's next ordinary operation or its all-free drain
-collects the source remote head. If a raw-TLS handoff becomes terminal, it
-closes the same short registry mutation boundary that installs live owners: an
-in-flight A finishes its complete publication before that closure, while a
-later A cannot publish beside the discarded handoff. Native failure
-returns the C allocation failure result, and an unknown or wrong-owner native
-pointer fail-stops instead of crossing to the C allocator. This remains a
-bounded source route, not an iterable or general pointer registry: a TLS- or
-route-detached source never enters A's in-place or local realloc engine after
-A's Theap has torn down. When its PageMap state is `Abandoned` or
-`AbandonedMapped`, W01 instead establishes B's persistent target owner and
-performs B's replacement/copy plus generic pointer-first nonlocal free without
-borrowing A's route. A true `LiveAllocationPageState::Detached` source has no
-W03 producer and fails closed as `Retained` after its unpublished replacement
-rolls back. Once pointer-first free terminally releases A and stores its proof
-in B TLS, B's subsequent local `realloc` remains current owner-only; an
-unavailable B-local operation leaves B's existing client intact until its exact
-free and normal finish. The selected C witness keeps a B-local client in its
-TSD value, whose destructor reallocates and releases that client before the
-following native all-free finish settles A's proof. On B's
-`pthread_exit`, the preceding cleanup handler also allocates and frees a new
-local client; the TSD destructor then continues the existing B-local client
-before it frees that client. The same proof repeats through normal return,
-where only the TSD destructor runs, and through deferred cancellation at a
-real cancellation point before the native all-free finish can settle A's
-proof. Usable-size is one PageMap-derived source extent for any
-exact live native client; nonmatching `Abandoned` and `AbandonedMapped`
-sources have only the W01 replacement path, while true `Detached` fails closed
-as `Retained`; other cross-thread exit/abandoned-page routing remains
-unavailable, and the ticket-zero source route is exact-live-client free-only.
-General single-page/adoption
-exits, general concurrent owner-exit traversal or worker engines, and other
-general C pointer routing remain unavailable. A live registry entry is not a
-worker-admission lock: while A owns one, a second independently parked worker
-may allocate, query, and free only its own local C clients, and another A may
-publish a separately parked entry. `CurrentThreadPageOwnerSession` holds its
-matching entry `BUSY` while A temporarily resumes, preventing B from borrowing
-that A in the interval; after B's all-free page drain and normal finish, A's
-original route remains valid. The selected
-`native_mimalloc_two_live_remote_owners` direct and C fixtures park A1 before
-A2 enters setup, then keep both entries active as B1/B2 query and free only
-their matching clients; the scheduler serializes both PageMap operations. The
-feature-gated scalar-only `native_live_remote_owner_registry_reuse` regression
-warms that two-entry high-water and completes four later A1/A2/B1/B2 epochs,
-proving the published-node count stays flat while every entry returns to empty
-and none is retained. Its audit reveals no entry identity, TLS address, route,
-client, page, allocator, or release capability. The
-separate `native_mimalloc_parallel_local_workers` fixture pauses a local B
-beside A's live entry, then runs 128 fresh process epochs through B's local
-finish, A's finish, and ticket-zero reactivation. An already parked session
-retries a lost scheduler CAS only while the scheduler still records `BUSY` or
-a nonzero parked count; `READY` and terminal states mean its own token is no
-longer represented. A first session has no token yet, so it may retry from
-`READY` after a peer completes between its sampled CAS and retry. These
-witnesses do not admit a cross-worker pointer or concurrent PageMap mutation.
+PageMap, or allocator capability outside that direct evidence build. Exact
+live remote publication is now pointer-first: independently attached B/C
+workers derive an exact live client's immutable PageMap extent or atomically
+push its canonical block to the source page's remote head. They neither claim
+A's compiler TLS nor borrow a page engine, scheduler token, or private client
+ledger. The source owner collects the head during its ordinary operation or
+finish, and `native_usable_size` is the corresponding read-only PageMap query.
+
+A detached source still never enters a worker's in-place/local reallocation
+engine. `native_reallocate` rejects a foreign live source without changing its
+bytes; generic pointer-first free is the detached-owner continuation. For an
+`Abandoned` or `AbandonedMapped` source W01 constructs B's persistent target
+owner for replacement/copy plus generic nonlocal free; a true
+`LiveAllocationPageState::Detached` source fails closed as `Retained` after
+rolling back an unpublished replacement. B-local reallocation remains
+current-owner-only.
+
+The direct and selected-C `native_mimalloc_two_live_remote_owners` witnesses
+exercise two independent PageMap-addressable source clients while B1/B2 each
+query or free only the pointer they received. The historical
+`native_live_remote_owner_registry_reuse` target is now an ungated repeated
+persistent-PageMap epoch witness, not a registry audit. The separate
+`native_mimalloc_parallel_local_workers` fixture remains a local-admission
+witness. These tests do not admit cross-worker pointer routing, concurrent
+PageMap mutation, or a general worker allocator.
 `./scripts/dev.sh allocator-shadow` rebuilds that selected libc after the
 ordinary owned sysroot and runs the allocator, owner-exit, and pthread
 TSD-destructor fixtures. It also runs the reviewed
@@ -895,23 +846,14 @@ singleton clients into a private `NativePostExitRouteRegistry` entry for exact
 frees by one or more fresh B workers, including a B with one independently
 parked local session. Each route retains its route-specific parked
 scheduler count and A's admission proof until B completes its own normal
-attachment finish. Separately, independently parked live native A sessions
-publish private `NativeLiveRemoteOwnerRegistry` entries for exact source
-remote-head publications. Each stable entry carries only its A TLS
-slot/generation, never a client address, page, or allocator; a fresh B uses a
-scoped interleaving, while a B that already has a fully parked local session
-briefly resumes and re-parks only that session before restoring A's entry to
-`PARKED`. The selected direct and C
-two-live-owner fixtures park A1 before A2 enters setup, then let B1/B2 query
-and free only their matching exact clients while the scheduler serializes the
-two PageMap operations. Terminal raw-TLS retention closes the same short
-registry mutation boundary used for installation, so later A sessions cannot
-publish beside a discarded handoff. These routes compose once in the selected C fixture:
-A collects B's exact live-owner publication through its normal resumed
-operation, then its later ordinary owner exit moves only the remaining exact clients into
-`NativePostExitRouteRegistry` for fresh C. This does not create general page-bearing
-pthread/TLS routing, general
-cross-thread pointer ownership, or a foreign-pointer registry. Separately,
+attachment finish. Exact live remote publication does not publish a parked
+session or TLS handoff. B1/B2 derive each handed exact live pointer from
+persistent PageMap/page state, then query its immutable extent or atomically
+push it to the source page's remote head. The source owner later collects that
+head through its ordinary operation or finish. The selected direct and C
+two-live-owner fixtures keep those source pointers independent; they do not
+create general page-bearing pthread/TLS routing, cross-thread pointer
+ownership, or a foreign-pointer registry. Separately,
 `MainStaticProcessPageSession` is the one internal bridge
 for the Rust lifetime gap between a ticket-zero page session and a copied
 shared-main lease. It validates the ordinary zero-page static image, then
