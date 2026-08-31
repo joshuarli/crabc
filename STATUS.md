@@ -1549,6 +1549,17 @@ zero-length success leaves stale `errno`, and a bad source descriptor maps to
 policy, `splice`/`vmsplice` transfer, cancellation, family/platform parity, or
 public x86 support.
 
+`./scripts/dev-x86_64.sh libc-splice` is a separate private `static-c-splice`
+artifact inside planned `libc.posix-runtime`. Its GNU-only project-header C/C++
+gate and pinned-musl/freestanding-static fixture prove only one regular-file-to-
+pipe explicit-input-offset `splice=275` request: wrapper/raw result and
+pointed-offset agreement, copied pipe bytes, retained file position, stale
+`errno` on success, plus direct invalid-flags `EINVAL` and bad-input `EBADF`.
+It does not select pathname opening, descriptor or pipe ownership, blocking,
+fallback, general pipe/filesystem transfer policy,
+`tee`/`vmsplice`/`sendfile`/`copy_file_range`, durability, cancellation,
+family/platform parity, or public x86 support.
+
 `./scripts/dev-x86_64.sh libc-sync-file-range` is a separate private
 `static-c-sync-file-range` artifact inside planned `libc.posix-runtime`. Its
 GNU-only project-header C/C++ gate and pinned-musl/freestanding-static fixture

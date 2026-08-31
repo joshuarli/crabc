@@ -17086,6 +17086,67 @@ class X86ParityLedgerTests(unittest.TestCase):
         ):
             ledger.validate_ledger(changed)
 
+    def test_splice_artifact_keeps_direct_file_to_pipe_boundary(self) -> None:
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-splice"
+        )
+        self.assertNotIn("capabilities", artifact)
+        for owner in (
+            "libc/src/c_abi/x86_64/static_c_abi.rs",
+            "libc/src/c_abi/x86_64/splice.rs",
+            "libc/src/c_abi/x86_64/errno.rs",
+            "libc/src/c_abi/x86_64/syscall.rs",
+            "include/fcntl.h",
+            "compat/x86_64/splice_header_abi_probe.c",
+            "compat/x86_64/splice_header_abi_probe.cpp",
+            "compat/x86_64/run_splice_header_abi.sh",
+            "compat/x86_64/libc_splice_probe.c",
+            "compat/x86_64/libc_splice_start.S",
+            "compat/x86_64/run_libc_splice.sh",
+        ):
+            self.assertIn(owner, artifact["source_owners"])
+        description = artifact["description"]
+        assert isinstance(description, str)
+        for phrase in (
+            "GNU file-to-pipe transfer block",
+            "splice=275",
+            "rdi/rsi/rdx/r10/r8/r9",
+            "pointed input-offset update",
+            "retained file descriptor position",
+            "stale `errno`",
+            "EINVAL",
+            "EBADF",
+            "general pipe/filesystem transfer policy",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, description)
+        self.assertEqual(
+            {evidence["command"] for evidence in artifact["native_evidence"]},
+            {"./scripts/dev-x86_64.sh libc-splice"},
+        )
+        self.assertIn("src/linux/splice.c", artifact["oracle"][0]["role"])
+
+        changed = self.data()
+        changed_artifacts = self.family(changed, "libc.posix-runtime")[
+            "verified_artifact"
+        ]
+        assert isinstance(changed_artifacts, list)
+        changed_artifact = next(
+            entry
+            for entry in changed_artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-splice"
+        )
+        changed_artifact["description"] = "private descriptor splice"
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "static-c-splice description omits"
+        ):
+            ledger.validate_ledger(changed)
+
     def test_sync_file_range_artifact_keeps_direct_request_boundary(self) -> None:
         data = self.data()
         artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]

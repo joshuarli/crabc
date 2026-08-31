@@ -4644,6 +4644,56 @@ oracle = [
 ]
 
 [[family.verified_artifact]]
+id = "static-c-splice"
+description = "Private native x86 selected-static-archive GNU file-to-pipe transfer block. One dependency-free `crabc-libc` archive resolves only `splice(int, off_t *, int, off_t *, size_t, unsigned)` through a freestanding C fixture after matching pinned-musl execution. It forwards Linux `splice=275` through rdi/rsi/rdx/r10/r8/r9 with caller-owned signed LP64 input/output `off_t` pointers, size_t length, and unsigned flags, mapping raw byte counts or Linux's raw -4095..=-1 range to C `ssize_t` or `-1` plus initial-TLS `errno`. The fixture compares one regular-file-to-pipe explicit-input-offset wrapper request with a sibling raw request: result, pointed input-offset update, copied pipe bytes, and retained file descriptor position agree, while a successful wrapper retains stale `errno`; invalid flags report `EINVAL` and a bad input descriptor reports `EBADF`. This does not select pathname opening, descriptor or pipe ownership, blocking, fallback, general pipe/filesystem transfer policy, `tee`/`vmsplice`/`sendfile`/`copy_file_range`, durability, cancellation, libc.so, CRT, pthread/TLS lifecycle, dynamic TLS, loader, sysroot, allocator, family completion, promotion, or public x86 support."
+source_owners = [
+  "compat/upstreams.toml",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/splice.rs",
+  "libc/src/c_abi/x86_64/errno.rs",
+  "libc/src/c_abi/x86_64/syscall.rs",
+  "include/errno.h",
+  "include/fcntl.h",
+  "include/features.h",
+  "include/sys/types.h",
+  "include/stddef.h",
+  "include/stdint.h",
+  "include/sys/syscall.h",
+  "include/bits/fcntl.h",
+  "include/bits/syscall.h",
+  "compat/x86_64/splice_header_abi_probe.c",
+  "compat/x86_64/splice_header_abi_probe.cpp",
+  "compat/x86_64/run_splice_header_abi.sh",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/libc_splice_probe.c",
+  "compat/x86_64/libc_splice_start.S",
+  "compat/x86_64/run_libc_splice.sh",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "scripts/dev-x86_64.sh",
+  "scripts/check_structure.py",
+  "compat/x86_64/README.md",
+  "STATUS.md",
+  "x86-64.md",
+]
+x86_abi_prerequisites = [
+  "Linux/x86-64 splice=275 receives signed int input/output descriptors, optional caller-owned signed LP64 off_t pointers, a size_t length, and unsigned flags in rdi/rsi/rdx/r10/r8/r9 through syscall6. The selected C wrapper returns the signed byte count or maps only Linux's raw -4095..=-1 range to C -1 plus the selected initial-TLS errno slot",
+  "The focused fixture uses raw-created, immediately unlinked regular-file inputs and raw-created pipes. One file-to-pipe explicit-input-offset request makes wrapper and sibling raw result, pointed input-offset update, pipe bytes, and retained current file position agree; wrapper success leaves stale errno unchanged, invalid flags produce EINVAL, and a bad input descriptor produces EBADF. It does not establish output-offset, pipe blocking, short/EOF, fallback, or filesystem-transfer policy",
+  "Pinned musl 1.2.6 src/linux/splice.c directly invokes syscall(SYS_splice, fd_in, off_in, fd_out, off_out, len, flags) on x86-64 without a cancellation-point wrapper or fallback. This selected x86 leaf preserves that direct path; pipe/descriptor-transfer policy and cancellation remain outside the artifact",
+  "The final static candidate has a PT_TLS errno datum with direct initial-exec TPOFF access and no TLSGD/TLSLD/TLSDESC/GOTTPOFF/DTPMOD/DTPOFF model form or __tls_get_addr; fixture-local startup writes one Variant-II thread-pointer self word at %fs:0 without claiming CRT or TLS lifecycle",
+]
+x86_header_prerequisites = ["The dedicated project-first/pinned-musl C/C++ GNU fcntl.h gate proves `ssize_t splice(int, off_t *, int, off_t *, size_t, unsigned)`, signed 64-bit x86 off_t, and unmangled C++ linkage. Strict, POSIX, XOPEN, and BSD C selector profiles keep that GNU-only spelling hidden in both header trees, while C++ follows musl's extension-visible mode. The candidate fixture additionally preprocesses project errno.h, fcntl.h, features.h, sys/types.h, stddef.h, stdint.h, sys/syscall.h, bits/fcntl.h, and bits/syscall.h. This is a bounded GNU splice header facet, not closed fcntl/header completion or a general C ABI."]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-splice", scope = "Pinned-musl C reference plus a true dependency-free x86 crabc-libc static archive and freestanding candidate. The gate proves project-header C/C++ GNU fcntl.h provenance; exact crate-owned C object-member export closure separately from compiler-builtins; no interpreter/DT_NEEDED/unresolved symbol or final-artifact dynamic TLS model; direct initial-TLS errno access; a splice=275 wrapper with rdi/rsi/rdx/r10/r8/r9 forwarding; one regular-file-to-pipe explicit-input-offset wrapper/raw result and pointed-offset agreement, copied pipe bytes, stable file position, stale errno on success, EINVAL, and EBADF. It does not select pathname opening, descriptor or pipe ownership, blocking, fallback, general pipe/filesystem transfer policy, tee/vmsplice/sendfile/copy_file_range, durability, cancellation, libc.so, CRT, pthread/TLS lifecycle, loader, sysroot, family completion, promotion, or public x86 support." }]
+oracle = [
+  { kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source mapping, GNU C declaration, direct syscall forwarding, and errno behavior oracle for src/linux/splice.c." },
+  { kind = "kernel-abi", source = "Linux 5.10 x86-64 ABI", role = "splice=275 rdi/rsi/rdx/r10/r8/r9 register order, signed off_t-pointer update, regular-file-to-pipe transfer, flags, and raw errno contract; a direct request does not establish pipe or filesystem-transfer policy." },
+  { kind = "elf-abi", source = "System V AMD64 psABI", role = "Int/LP64 off_t-pointer/size_t/unsigned C register convention and static initial-exec TLS fixture contract." },
+]
+
+[[family.verified_artifact]]
 id = "static-c-sync-file-range"
 description = "Private native x86 selected-static-archive GNU descriptor-range writeback block. One dependency-free `crabc-libc` archive resolves only `sync_file_range(int, off_t, off_t, unsigned)` through a freestanding C fixture after matching pinned-musl execution. It forwards Linux `sync_file_range=277` through rdi/rsi/rdx/r10 with signed LP64 `off_t` offset/length and unsigned flags, mapping raw status to C `-1` plus initial-TLS `errno`. The fixture compares one regular-file request's wrapper result and errno exactly with a sibling raw request, preserves its shared descriptor position, records stale errno on raw success, and proves invalid flags `EINVAL` plus a bad descriptor `EBADF`. This does not select pathname opening, descriptor ownership, cache/writeback policy, media-cache durability, system-wide `sync`/descriptor-associated `syncfs`, `fallocate`, cancellation, libc.so, CRT, pthread/TLS lifecycle, dynamic TLS, loader, sysroot, allocator, family completion, promotion, or public x86 support."
 source_owners = [

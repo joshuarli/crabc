@@ -278,6 +278,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh flock-header-abi
 ./scripts/dev-x86_64.sh sendfile-header-abi
 ./scripts/dev-x86_64.sh tee-header-abi
+./scripts/dev-x86_64.sh splice-header-abi
 ./scripts/dev-x86_64.sh sync-file-range-header-abi
 ./scripts/dev-x86_64.sh copy-file-range-header-abi
 ./scripts/dev-x86_64.sh filesystem-capacity-header-abi
@@ -491,6 +492,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-flock
 ./scripts/dev-x86_64.sh libc-sendfile
 ./scripts/dev-x86_64.sh libc-tee
+./scripts/dev-x86_64.sh libc-splice
 ./scripts/dev-x86_64.sh libc-sync-file-range
 ./scripts/dev-x86_64.sh libc-copy-file-range
 ./scripts/dev-x86_64.sh libc-posix-fallocate
@@ -1478,6 +1480,13 @@ declarations for `ssize_t tee(int, int, size_t, unsigned)`, with C++ linkage.
 It also proves default, strict, POSIX, XOPEN, and BSD C selector profiles hide
 that GNU-only spelling. It is source-only declaration evidence; it does not
 select pipe-buffer transfer behavior or `crabc-libc`.
+
+`splice-header-abi` compiles project and pinned-musl C/C++ GNU `<fcntl.h>`
+declarations for `ssize_t splice(int, off_t *, int, off_t *, size_t,
+unsigned)`, signed x86 `off_t`, and unmangled C++ linkage. Strict, POSIX,
+XOPEN, and BSD C selector profiles hide that GNU-only spelling; the C++ driver
+follows musl's extension-visible mode. It is source-only declaration evidence;
+it does not select descriptor, pipe, or transfer behavior or `crabc-libc`.
 
 `sync-file-range-header-abi` compiles project and pinned-musl C/C++ GNU
 `<fcntl.h>` declarations for `int sync_file_range(int, off_t, off_t,
@@ -4085,6 +4094,18 @@ equal destination-pipe copy, zero-length stale errno on success, and direct
 policy, `splice`/`vmsplice`, cancellation, general runtime, or public x86
 support.
 
+`libc-splice` is a separately recorded `static-c-splice` `verified_artifact`
+gate over the same archive, not a descriptor, pipe, or transfer capability.
+Its project-header C/C++ GNU `<fcntl.h>` gate runs before a pinned-musl and
+`-nostdlib -static` candidate fixture for one regular-file-to-pipe
+explicit-input-offset request. It proves `splice=275` x86 ABI forwarding,
+raw/wrapper result and pointed-offset agreement, copied pipe bytes, retained
+file position, stale `errno` on success, and direct invalid-flags `EINVAL` plus
+bad-input `EBADF`. It does not select pathname or descriptor/pipe ownership,
+blocking, fallback, general pipe/filesystem transfer policy,
+`tee`/`vmsplice`/`sendfile`/`copy_file_range`, durability, cancellation,
+general runtime, or public x86 support.
+
 `libc-sync-file-range` is a separately recorded
 `static-c-sync-file-range` `verified_artifact` gate over the same archive, not
 a descriptor/filesystem capability. Its project-header C/C++ GNU `<fcntl.h>`
@@ -5776,6 +5797,7 @@ Apart from the narrowly named `libc-stat-compat`, `libc-credentials`,
 `libc-flock`,
 `libc-sendfile`,
 `libc-tee`,
+`libc-splice`,
 `libc-sync-file-range`,
 `libc-copy-file-range`,
 `libc-posix-fallocate`,

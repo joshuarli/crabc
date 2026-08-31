@@ -257,6 +257,7 @@ X86_RUNTIME_FOUNDATION_LIBC_SOURCES = {
     Path("libc/src/c_abi/x86_64/termios_control.rs"),
     Path("libc/src/c_abi/x86_64/tee.rs"),
     Path("libc/src/c_abi/x86_64/copy_file_range.rs"),
+    Path("libc/src/c_abi/x86_64/splice.rs"),
     Path("libc/src/c_abi/x86_64/sync_file_range.rs"),
     Path("libc/src/c_abi/x86_64/grantpt.rs"),
     Path("libc/src/c_abi/x86_64/unlockpt.rs"),
@@ -3776,6 +3777,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         '#[path = "termios_control.rs"]',
         '#[path = "tee.rs"]',
         '#[path = "copy_file_range.rs"]',
+        '#[path = "splice.rs"]',
         '#[path = "sync_file_range.rs"]',
         '#[path = "grantpt.rs"]',
         '#[path = "unlockpt.rs"]',
@@ -6538,6 +6540,42 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
             errors.append(
                 "libc/src/c_abi/x86_64/copy_file_range.rs: selected static GNU "
                 f"descriptor-copy boundary must not select {forbidden!r}"
+            )
+
+    splice_source = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "splice.rs"
+    splice_text = splice_source.read_text(errors="replace")
+    for required in (
+        "musl 1.2.6 release commit",
+        "src/linux/splice.c",
+        "splice=275",
+        "rdi/rsi/rdx/r10/r8/r9",
+        "raw_syscall::SYS_SPLICE",
+        "raw_syscall::syscall6(",
+        "c_ssize_status(result)",
+        'pub unsafe extern "C" fn splice',
+        "cancellation-point",
+    ):
+        if required not in splice_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/splice.rs: selected static GNU "
+                f"file-to-pipe boundary is missing {required!r}"
+            )
+    splice_exports = set(
+        re.findall(
+            r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(',
+            splice_text,
+        )
+    )
+    if splice_exports != {"splice"}:
+        errors.append(
+            "libc/src/c_abi/x86_64/splice.rs: selected static GNU "
+            "file-to-pipe artifact must export only splice"
+        )
+    for forbidden in ("crabc_core", "crabc_mimalloc", "fn tee(", "fn vmsplice("):
+        if forbidden in splice_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/splice.rs: selected static GNU "
+                f"file-to-pipe boundary must not select {forbidden!r}"
             )
 
     sync_file_range_source = (
@@ -11030,6 +11068,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         grantpt_text,
         unlockpt_text,
         copy_file_range_text,
+        splice_text,
         tee_text,
         sync_file_range_text,
         gethostid_text,
@@ -11350,6 +11389,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         "grantpt",
         "unlockpt",
         "copy_file_range",
+        "splice",
         "tee",
         "sync_file_range",
         "gethostid",
@@ -11599,7 +11639,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
             "libc/src/c_abi/x86_64: selected static archive must export only its "
             "stat, credential, errno, bootstrap-memory/fenv/continuation, simple "
             "signal-control, separate realtime-minimum/realtime-maximum bridges, one pure GNU signal-set predicate, paired GNU binary set-operation leaf, and a three-symbol POSIX signal-set mutation leaf, bounded process-signal execution, and one legacy single-signal pause wait, bounded pthread create/exit/join/detach initial-TLS worker, its private selected-main/worker pthread-key/C11-TSS lifecycle, private process-normal pthread mutexes and their musl private condition-variable handoff, the complete selected rwlock/attribute family with private-or-shared futex operation, plus the distinct C11 plain-sync adapter and normal-return pthread/C11 once state machine, its typed C11 create/exit/join/detach sibling, and pthread/C11 identity aliases, named termios-control, direct terminal-descriptor and foreground-group observations plus one named foreground-group assignment, historical ctermid pathname spelling, constant historical gethostid compatibility, direct GNU gettid observation, selected process-context, child-reaping, C11 immediate termination, callback algorithms, direct clock_gettime, binary64 difftime, caller-buffered fixed-UTC gmtime_r, fixed-UTC timegm, a status-returning POSIX scheduler-yield leaf, caller-owned mapping-core, no-cancellation mapping synchronization, direct anonymous-memory descriptor creation, nanosleep, and clock_nanosleep, selected "
-            "POSIX _exit forwarding, descriptor-entry, selected filesystem-access, bounded descriptor-control, timestamp updates, and descriptor-I/O, selected process-resources, selected readiness/signal-waits, "
+            "POSIX _exit forwarding, descriptor-entry, selected filesystem-access, bounded descriptor-control, direct GNU file-to-pipe transfer, timestamp updates, and descriptor-I/O, selected process-resources, selected readiness/signal-waits, "
             "selected socket transport and selected socket-message/options, selected system-observation, selected UTS-identity, "
             "selected numeric-address codecs, immutable IPv6 unspecified/loopback address data objects, and legacy classful IPv4 arithmetic, fixed-profile h_errno message text, byte-string, legacy-memory adapters, source-backed memccpy/mempcpy, caller-buffer strsep, random-entropy, memory-search, C-string-copy, immutable error-string, "
             "one direct legacy wide-substring alias, fixed-C-locale ctype, integer-arithmetic, integer-parsing, intmax-arithmetic, credential-observation, and "
@@ -11655,6 +11695,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         ("grantpt.rs", grantpt_text),
         ("unlockpt.rs", unlockpt_text),
         ("copy_file_range.rs", copy_file_range_text),
+        ("splice.rs", splice_text),
         ("tee.rs", tee_text),
         ("sync_file_range.rs", sync_file_range_text),
         ("gettid.rs", gettid_text),

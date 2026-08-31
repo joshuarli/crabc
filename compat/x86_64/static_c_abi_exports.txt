@@ -788,6 +788,7 @@ snprintf
 sockatmark
 socket
 socketpair
+splice
 sprintf
 sqrt
 sqrtf

@@ -21745,6 +21745,125 @@ def require_copy_file_range_artifact(family: Mapping[str, Any]) -> None:
         )
 
 
+def require_splice_artifact(family: Mapping[str, Any]) -> None:
+    """Keep GNU C splice on one direct file-to-pipe transfer boundary."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.posix-runtime].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [entry for entry in artifacts if entry.get("id") == "static-c-splice"]
+    require(
+        len(matching) == 1,
+        "libc.posix-runtime must contain exactly one static-c-splice artifact",
+    )
+    artifact = matching[0]
+    require(
+        "capabilities" not in artifact,
+        "static-c-splice must remain selected-private rather than a capability",
+    )
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for phrase in (
+        "GNU file-to-pipe transfer block",
+        "splice=275",
+        "rdi/rsi/rdx/r10/r8/r9",
+        "pointed input-offset update",
+        "retained file descriptor position",
+        "stale `errno`",
+        "EINVAL",
+        "EBADF",
+        "general pipe/filesystem transfer policy",
+        "public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"static-c-splice description omits {phrase}",
+        )
+    owners = set(artifact["source_owners"])
+    for owner in (
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/splice.rs",
+        "libc/src/c_abi/x86_64/errno.rs",
+        "libc/src/c_abi/x86_64/syscall.rs",
+        "include/fcntl.h",
+        "compat/x86_64/splice_header_abi_probe.c",
+        "compat/x86_64/splice_header_abi_probe.cpp",
+        "compat/x86_64/run_splice_header_abi.sh",
+        "compat/x86_64/libc_splice_probe.c",
+        "compat/x86_64/libc_splice_start.S",
+        "compat/x86_64/run_libc_splice.sh",
+    ):
+        require(owner in owners, f"static-c-splice must own {owner}")
+    prerequisites = artifact["x86_abi_prerequisites"]
+    assert isinstance(prerequisites, list)
+    require(
+        any(
+            "splice=275" in item
+            and "rdi/rsi/rdx/r10/r8/r9" in item
+            and "syscall6" in item
+            for item in prerequisites
+        ),
+        "static-c-splice must record its six-word syscall ABI",
+    )
+    require(
+        any(
+            "file-to-pipe" in item
+            and "explicit-input-offset" in item
+            and "pointed input-offset update" in item
+            and "retained current file position" in item
+            and "stale errno" in item
+            and "EINVAL" in item
+            and "EBADF" in item
+            for item in prerequisites
+        ),
+        "static-c-splice must record its narrow explicit-input-offset behavior",
+    )
+    require(
+        any(
+            "src/linux/splice.c" in item and "cancellation" in item
+            for item in prerequisites
+        ),
+        "static-c-splice must record musl's direct non-cancellation path",
+    )
+    header = artifact["x86_header_prerequisites"]
+    assert isinstance(header, list)
+    require(
+        any(
+            "GNU fcntl.h" in item
+            and "Strict, POSIX, XOPEN, and BSD C" in item
+            and "hidden" in item
+            and "C++ follows musl's extension-visible mode" in item
+            for item in header
+        ),
+        "static-c-splice must retain its GNU-only C header boundary",
+    )
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-splice"},
+        "static-c-splice must use the closed libc-splice command",
+    )
+    scope = evidence[0]["scope"]
+    assert isinstance(scope, str)
+    for phrase in (
+        "splice=275",
+        "rdi/rsi/rdx/r10/r8/r9",
+        "pointed-offset agreement",
+        "stable file position",
+        "stale errno on success",
+        "EINVAL",
+        "EBADF",
+        "general pipe/filesystem transfer policy",
+        "public x86 support",
+    ):
+        require(
+            phrase in scope,
+            f"static-c-splice evidence scope omits {phrase}",
+        )
+
+
 def require_sync_file_range_artifact(family: Mapping[str, Any]) -> None:
     """Keep GNU C sync_file_range on one direct descriptor-range boundary."""
     artifacts = require_verified_artifacts(
@@ -42674,6 +42793,7 @@ def validate_ledger(
     require_sendfile_artifact(by_id["libc.posix-runtime"])
     require_tee_artifact(by_id["libc.posix-runtime"])
     require_copy_file_range_artifact(by_id["libc.posix-runtime"])
+    require_splice_artifact(by_id["libc.posix-runtime"])
     require_sync_file_range_artifact(by_id["libc.posix-runtime"])
     require_posix_fallocate_artifact(by_id["libc.posix-runtime"])
     require_descriptor_advice_artifact(by_id["libc.posix-runtime"])

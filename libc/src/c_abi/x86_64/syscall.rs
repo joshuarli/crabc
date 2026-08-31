@@ -27,9 +27,10 @@
 //! ignores a raw affinity failure in the musl-defined CPU-0 fallback case.
 //! The separately selected bounded `flock` leaf uses direct `flock=73`, the
 //! regular-file transfer leaf uses direct `sendfile=40`, the GNU descriptor-
-//! range copy leaf uses direct `copy_file_range=326`, the GNU pipe-buffer
-//! duplication leaf uses direct `tee=276`; and the GNU descriptor-range
-//! writeback leaf uses direct `sync_file_range=277`.
+//! range copy leaf uses direct `copy_file_range=326`, the GNU descriptor-to-
+//! pipe transfer leaf uses direct `splice=275`, the GNU pipe-buffer duplication
+//! leaf uses direct `tee=276`; and the GNU descriptor-range writeback leaf uses
+//! direct `sync_file_range=277`.
 //! The separately selected bounded
 //! pthread create/explicit-exit/join leaf, private normal-mutex sibling, and
 //! private condition-variable handoff use mmap, munmap, futex, gettid
@@ -344,6 +345,8 @@ pub(crate) const SYS_SENDFILE: i64 = 40;
 pub(crate) const SYS_FALLOCATE: i64 = 285;
 /// Linux x86-64 `fadvise64` uses `rdi/rsi/rdx/r10` for its four arguments.
 pub(crate) const SYS_FADVISE64: i64 = 221;
+/// Linux x86-64 `splice` uses `rdi/rsi/rdx/r10/r8/r9` for six words.
+pub(crate) const SYS_SPLICE: i64 = 275;
 /// Linux x86-64 `tee` uses `rdi/rsi/rdx/r10` for its four arguments.
 pub(crate) const SYS_TEE: i64 = 276;
 /// Linux x86-64 `sync_file_range` uses `rdi/rsi/rdx/r10` for four words.
