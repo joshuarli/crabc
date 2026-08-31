@@ -64,10 +64,13 @@ abs
 accept
 accept4
 access
+acoshl
 acosl
 alphasort
+asinhl
 asinl
 atan2l
+atanhl
 atanl
 atexit
 atof
@@ -79,6 +82,7 @@ bind
 bsearch
 btowc
 call_once
+cbrtl
 ceill
 cfgetispeed
 cfgetospeed
@@ -109,6 +113,9 @@ conj
 conjf
 conjl
 connect
+copysignl
+coshl
+cosl
 cproj
 cprojf
 cprojl
@@ -181,6 +188,9 @@ finitef
 flistxattr
 flock
 floorl
+fmal
+fmaxl
+fminl
 fmodl
 fopen
 fork
@@ -255,6 +265,7 @@ getsubopt
 gettimeofday
 getuid
 getxattr
+hypotl
 iconv
 iconv_close
 iconv_open
@@ -448,6 +459,7 @@ posix_fadvise
 posix_fallocate
 posix_getdents
 posix_madvise
+powl
 ppoll
 pread
 preadv
@@ -534,6 +546,7 @@ rint
 rintf
 rintl
 rmdir
+roundl
 rust_eh_personality
 scalb
 scalbf
@@ -601,6 +614,9 @@ sigsuspend
 sigtimedwait
 sigwait
 sigwaitinfo
+sincosl
+sinhl
+sinl
 snprintf
 sockatmark
 socket
@@ -661,6 +677,8 @@ strxfrm_l
 symlink
 sysconf
 sysinfo
+tanhl
+tanl
 tcflow
 tcflush
 tcgetattr

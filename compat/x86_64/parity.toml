@@ -6060,6 +6060,55 @@ x86_header_prerequisites = [
 native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-math-special", scope = "Pinned-musl project-header reference plus one true dependency-free crabc-libc archive and `-nostdlib -static --gc-sections` candidate. The closed export gate requires all ninety capability symbols plus __signgam/signgam, requires private local musl elementary providers, recognizes the separately selected public rint/rintf/sqrt/sqrtf siblings without attributing them to this slice, rejects other public elementary spellings, and rejects unresolved symbols, interpreter/DT_NEEDED, TLS/dynamic-TLS resolver, ambient libm, numeric floating parser, allocation, and unowned runtime dependencies. Function-pointer calls compare 5,544 exact 32-byte records over all four rounding modes: binary32/binary64 payloads, the defined ten binary80 bytes, x87/MXCSR exception flags, integer results, frexp exponents, modf components, lgamma signs/signgam state, remquo quotient bits, scaling/stepping boundaries, and ordinary/special error/gamma/Bessel cases. This completes only math.special inside still-planned libc.text-math-locale-stdio; family completion, x86 promotion, full parity, and public support remain false." }]
 oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl source, license, weak-alias/state, numerical behavior, exception, and special-value oracle for the complete math.special symbol set." }, { kind = "elf-abi", source = "System V AMD64 psABI", role = "SSE binary32/binary64, LP64 integer/pointer, and x87 binary80 stack/storage/st0 calling convention for the complete capability." }]
 
+[[family.verified_slice]]
+id = "static-c-math-elementary-long-double"
+description = "Complete private native x86 `math.elementary-long-double` capability. The slice composes the 17 already-evidenced `acosl`, `asinl`, `atan2l`, `atanl`, `ceill`, `exp2l`, `expl`, `expm1l`, `fabsl`, `floorl`, `fmodl`, `log10l`, `log1pl`, `log2l`, `logl`, `sqrtl`, and `truncl` entries with 18 new pinned-musl entries: `acoshl`, `asinhl`, `atanhl`, `cbrtl`, `copysignl`, `coshl`, `cosl`, `fmal`, `fmaxl`, `fminl`, `hypotl`, `powl`, `roundl`, `sincosl`, `sinhl`, `sinl`, `tanhl`, and `tanl`. The checked GCC 15.2.0 source translation localizes the fixed `__cosl`/`__sinl`/`__tanl` argument-reduction closure plus binary64 `floor`/`scalbn` support, so none becomes another public elementary export. Every public long-double argument, result, and `sincosl` pointed-to result preserves the SysV 16-byte binary80 ABI; musl's internal binary64 estimates remain source-oracle implementation detail rather than a public narrowing. `fmal` reuses the separately selected x87/MXCSR owner exactly as musl does without selecting fenv work. This selects exactly `math.elementary-long-double` but does not select numeric parsing, `math.elementary-fenv-sensitive`, complex math, a general libc/libm, libc.so, CRT/TLS lifecycle, allocator, loader, sysroot, family completion, promotion, full x86-64 parity, or public x86 support."
+capabilities = ["math.elementary-long-double"]
+source_owners = [
+  "compat/upstreams.toml",
+  "compat/crabc-rs/coverage.toml",
+  "docker/Dockerfile.x86_64",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/fenv.rs",
+  "libc/src/c_abi/x86_64/math_complex.rs",
+  "libc/src/c_abi/x86_64/math_x87_extended.rs",
+  "libc/src/c_abi/x86_64/math_special.rs",
+  "libc/src/c_abi/x86_64/math_elementary_long_double.rs",
+  "libc/src/c_abi/x86_64/math_elementary_long_double_musl_x86_64.S",
+  "include/fenv.h",
+  "include/float.h",
+  "include/math.h",
+  "compat/x86_64/generate_libc_math_elementary_long_double.py",
+  "compat/x86_64/math_elementary_long_double_header_abi_probe.cpp",
+  "compat/x86_64/run_math_elementary_long_double_header_abi.sh",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/libc_math_elementary_long_double_probe.c",
+  "compat/x86_64/libc_math_elementary_long_double_start.S",
+  "compat/x86_64/run_libc_math_elementary_long_double.sh",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "compat/x86_64/README.md",
+  "STATUS.md",
+  "x86-64.md",
+  "scripts/check_structure.py",
+  "scripts/dev-x86_64.sh",
+]
+x86_abi_prerequisites = [
+  "The closed capability surface is exactly the 35 symbols recorded by `compat/crabc-rs/coverage.toml` under `math.elementary-long-double`. Seventeen prior x87 entries remain owned by `math_x87_extended`; this slice adds exactly the other eighteen entries without redefining a special or fenv-sensitive public symbol.",
+  "System V AMD64 stores each binary80 long double in a 16-byte align-16 stack slot with ten defined payload bytes and returns scalar results in x87 st0. `fmal` receives three stack slots, binary80 binary operators receive two, and GNU `sincosl` receives its two ordinary INTEGER-class output pointers in rdi/rsi while preserving each binary80 pointed-to result.",
+  "Pinned musl 1.2.6 src/math/{acoshl,asinhl,atanhl,cbrtl,copysignl,coshl,cosl,fmal,fmaxl,fminl,hypotl,powl,roundl,sincosl,sinhl,sinl,tanhl,tanl}.c defines the 18 new public algorithms. The generator verifies the normalized 1.2.6 source-tree digest and GCC 15.2.0 before retaining fixed assembly and source-specific license notices.",
+  "Pinned musl src/math/{__cosl,__sinl,__tanl,__rem_pio2l,__rem_pio2_large,__polevll,floor,scalbn}.c is the exact private trigonometric closure. It is renamed under `crabc_x86_math_elementary_long_double_*` and local; existing x87, math.special, and fenv entries remain explicit archive dependencies rather than copied public exports.",
+]
+x86_header_prerequisites = [
+  "The project-first/pinned-musl C++17 gate compiles all 35 exact function-pointer signatures in default SSE and -mfpmath=387 modes. It ratchets the 16-byte align-16 binary80 representation, GNU `sincosl` output-pointer signature, and unmangled C++ references.",
+  "The runtime fixture preprocesses project fenv.h, float.h, math.h, stddef.h, stdint.h, features.h, and bits/alltypes.h before both executions, takes every named address under -fno-builtin, and emits only the ten defined bytes of each binary80 result or `sincosl` component.",
+]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-math-elementary-long-double", scope = "Pinned-musl project-header reference plus one true dependency-free crabc-libc archive and `-nostdlib -static --gc-sections` candidate. The closed export gate requires all 35 capability symbols, requires local binary80 argument-reduction providers, rejects their public spellings, and rejects unresolved symbols, interpreter/DT_NEEDED, TLS/dynamic-TLS resolver, ambient libm, numeric floating parser, allocation, sibling complex math, and unowned runtime dependencies. Function-pointer calls compare 2,764 exact 40-byte records over all four rounding modes: the defined ten binary80 bytes, both `sincosl` components, x87/MXCSR exception flags, signed zeros, finite boundaries, infinities, NaNs, powers, hyperbolic functions, and fused multiply-add cases. This completes only math.elementary-long-double inside still-planned libc.text-math-locale-stdio; family completion, x86 promotion, full parity, and public support remain false." }]
+oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl source, source-specific license, numerical behavior, exceptions, rounding, and binary80 long-double oracle for the complete math.elementary-long-double symbol set." }, { kind = "elf-abi", source = "System V AMD64 psABI", role = "Binary80 stack/storage/st0 return convention plus fmal three-operand and sincosl pointer argument ABI oracle." }]
+
 [[family.verified_artifact]]
 id = "static-c-float-parse"
 description = "Private native x86 selected-static-archive C-locale floating-conversion block, extended across the bounded C/POSIX/C.UTF-8 profile, underlying the completed `numeric.parse-float-locale` slice. One dependency-free `crabc-libc` archive resolves `strtof`, `strtod`, `strtold`, `atof`, `ecvt`, `fcvt`, `gcvt`, `getsubopt`, all public/internal `_l` wrappers, and all wide floating/integer spellings. Its narrow and wide float paths are a checked-in source-faithful assembly translation retaining binary80 intermediate operation order, `xmm0` binary32/binary64, x87 binary80 `st0`, the string pseudo-`FILE`, and the owned wide 60-byte refill callback. Target-local Rust provides unlimited wide integer scanning and exact allocation-free decimal formatting without importing printf. The fixture covers all twenty-three symbols, raw 10-byte binary80 payloads, all-four-direction parser rounding, wide refill/Unicode/end/range behavior, legacy decimal strings, and suboption mutation. It excludes arbitrary locales/radices, real-stdio, allocation, general text/locale, general scalar/complex math, libc.so, CRT, loader, sysroot, family completion, promotion, and public x86 support."

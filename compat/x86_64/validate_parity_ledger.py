@@ -1478,6 +1478,43 @@ MATH_X87_EXTENDED_LOCAL_SYMBOLS = tuple(
     if symbol not in ("rintl", "sqrtl")
 )
 
+MATH_ELEMENTARY_LONG_DOUBLE_SYMBOLS = (
+    "acoshl",
+    "acosl",
+    "asinhl",
+    "asinl",
+    "atan2l",
+    "atanhl",
+    "atanl",
+    "cbrtl",
+    "ceill",
+    "copysignl",
+    "coshl",
+    "cosl",
+    "exp2l",
+    "expl",
+    "expm1l",
+    "fabsl",
+    "floorl",
+    "fmal",
+    "fmaxl",
+    "fminl",
+    "fmodl",
+    "hypotl",
+    "log10l",
+    "log1pl",
+    "log2l",
+    "logl",
+    "powl",
+    "roundl",
+    "sincosl",
+    "sinhl",
+    "sinl",
+    "sqrtl",
+    "tanhl",
+    "tanl",
+    "truncl",
+)
 MATH_SPECIAL_SYMBOLS = (
     "__fpclassify", "__fpclassifyf", "__fpclassifyl", "__lgammal_r",
     "__signbit", "__signbitf", "__signbitl", "drem", "dremf", "erf",
@@ -18948,6 +18985,285 @@ def require_math_special_slice(family: Mapping[str, Any]) -> None:
         require(snippet in dispatcher, f"x86 dispatcher omits {snippet}")
 
 
+def require_math_elementary_long_double_slice(family: Mapping[str, Any]) -> None:
+    """Pin the complete selected binary80 elementary-math closure and evidence."""
+    slices = require_verified_slices(
+        family.get("verified_slice"),
+        "family[libc.text-math-locale-stdio].verified_slice",
+        family.get("status", ""),
+        family.get("capabilities", []),
+    )
+    matching = [
+        entry for entry in slices
+        if entry.get("id") == "static-c-math-elementary-long-double"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.text-math-locale-stdio must contain exactly one static-c-math-elementary-long-double slice",
+    )
+    artifact = matching[0]
+    require(
+        artifact.get("capabilities") == ["math.elementary-long-double"],
+        "static-c-math-elementary-long-double must select exactly math.elementary-long-double",
+    )
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for phrase in (
+        "Complete private native x86 `math.elementary-long-double` capability",
+        "17 already-evidenced",
+        "18 new pinned-musl entries",
+        "GCC 15.2.0",
+        "16-byte binary80 ABI",
+        "fmal",
+        "does not select numeric parsing",
+        "family completion",
+        "promotion",
+        "public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"static-c-math-elementary-long-double description omits {phrase}",
+        )
+
+    owners = nonempty_strings(
+        artifact["source_owners"],
+        "static-c-math-elementary-long-double.source_owners",
+    )
+    for owner in (
+        "compat/upstreams.toml",
+        "compat/crabc-rs/coverage.toml",
+        "docker/Dockerfile.x86_64",
+        "libc/Cargo.toml",
+        "libc/src/lib.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/fenv.rs",
+        "libc/src/c_abi/x86_64/math_complex.rs",
+        "libc/src/c_abi/x86_64/math_x87_extended.rs",
+        "libc/src/c_abi/x86_64/math_special.rs",
+        "libc/src/c_abi/x86_64/math_elementary_long_double.rs",
+        "libc/src/c_abi/x86_64/math_elementary_long_double_musl_x86_64.S",
+        "include/fenv.h",
+        "include/float.h",
+        "include/math.h",
+        "compat/x86_64/generate_libc_math_elementary_long_double.py",
+        "compat/x86_64/math_elementary_long_double_header_abi_probe.cpp",
+        "compat/x86_64/run_math_elementary_long_double_header_abi.sh",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/libc_math_elementary_long_double_probe.c",
+        "compat/x86_64/libc_math_elementary_long_double_start.S",
+        "compat/x86_64/run_libc_math_elementary_long_double.sh",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/README.md",
+        "STATUS.md",
+        "x86-64.md",
+        "scripts/check_structure.py",
+        "scripts/dev-x86_64.sh",
+    ):
+        require(
+            owner in owners,
+            f"static-c-math-elementary-long-double omits {owner}",
+        )
+
+    abi_prerequisites = nonempty_strings(
+        artifact["x86_abi_prerequisites"],
+        "static-c-math-elementary-long-double.x86_abi_prerequisites",
+    )
+    for snippets, message in (
+        (("35 symbols", "Seventeen", "eighteen"), "closed capability surface"),
+        (("16-byte align-16", "ten defined", "st0", "rdi/rsi"), "binary80 ABI"),
+        (("normalized 1.2.6 source-tree digest", "GCC 15.2.0", "18 new"), "source translation"),
+        (("__rem_pio2_large", "floor", "scalbn", "local"), "private trigonometric closure"),
+    ):
+        require(
+            any(all(snippet in item for snippet in snippets) for item in abi_prerequisites),
+            f"static-c-math-elementary-long-double must record its {message}",
+        )
+
+    header_prerequisites = nonempty_strings(
+        artifact["x86_header_prerequisites"],
+        "static-c-math-elementary-long-double.x86_header_prerequisites",
+    )
+    require(
+        any(
+            "C++17" in item and "all 35" in item and "-mfpmath=387" in item
+            and "sincosl" in item
+            for item in header_prerequisites
+        ),
+        "static-c-math-elementary-long-double must record its complete C++ ABI gate",
+    )
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-math-elementary-long-double"},
+        "static-c-math-elementary-long-double must use the closed libc-math-elementary-long-double command",
+    )
+    scope = evidence[0]["scope"]
+    assert isinstance(scope, str)
+    for phrase in (
+        "all 35 capability symbols",
+        "2,764 exact 40-byte records",
+        "defined ten binary80 bytes",
+        "local binary80 argument-reduction providers",
+        "family completion",
+        "public support remain false",
+    ):
+        require(
+            phrase in scope,
+            f"static-c-math-elementary-long-double evidence omits {phrase}",
+        )
+
+    static_root = (ROOT / "libc/src/c_abi/x86_64/static_c_abi.rs").read_text(
+        encoding="utf-8"
+    )
+    require(
+        '#[path = "math_elementary_long_double.rs"]\nmod math_elementary_long_double;'
+        in static_root,
+        "x86 static C ABI must compose the math_elementary_long_double leaf",
+    )
+    rust_leaf = (
+        ROOT / "libc/src/c_abi/x86_64/math_elementary_long_double.rs"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "Complete static Linux/x86-64 `math.elementary-long-double` C ABI leaf",
+        "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+        "d585fd3b613c66151fc3249e8ed44f77020cb5e6c1e635a616d3f9f82460512a",
+        'include_str!("math_elementary_long_double_musl_x86_64.S")',
+        "FreeBSD-derived `cbrtl`",
+        "OpenBSD-derived `powl`",
+        "ordinary pointer",
+        "numeric parsing",
+    ):
+        require(
+            snippet in rust_leaf,
+            f"math_elementary_long_double leaf omits {snippet}",
+        )
+
+    generator = (
+        ROOT / "compat/x86_64/generate_libc_math_elementary_long_double.py"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "2ebc86943f5cdac77729695b304a08f6308e7a218f9d484cec5675006b207d88",
+        '"src/math/acoshl.c"',
+        '"src/math/fmal.c"',
+        '"src/math/powl.c"',
+        '"src/math/tanl.c"',
+        '"src/math/__rem_pio2_large.c"',
+        '"15.2.0"',
+        "retained_notices",
+        "crabc_x86_math_elementary_long_double_internal_",
+        "crabc_x86_math_elementary_long_double_provider_",
+    ):
+        require(
+            snippet in generator,
+            f"math-elementary-long-double generator omits {snippet}",
+        )
+
+    assembly = (
+        ROOT / "libc/src/c_abi/x86_64/math_elementary_long_double_musl_x86_64.S"
+    ).read_text(encoding="utf-8")
+    for notice in (
+        "Sun Microsystems",
+        "Bruce D. Evans",
+        "David Schultz",
+        "Stephen L. Moshier",
+        "musl's MIT license",
+    ):
+        require(
+            notice in assembly,
+            f"generated math-elementary-long-double assembly omits {notice} provenance",
+        )
+    new_symbols = set(MATH_ELEMENTARY_LONG_DOUBLE_SYMBOLS) - set(MATH_X87_EXTENDED_SYMBOLS)
+    for symbol in new_symbols:
+        require(
+            f"\t.globl\t{symbol}\n" in assembly,
+            f"generated math-elementary-long-double assembly omits {symbol}",
+        )
+    for helper in (
+        "crabc_x86_math_elementary_long_double_internal_cosl",
+        "crabc_x86_math_elementary_long_double_internal_rem_pio2l",
+        "crabc_x86_math_elementary_long_double_internal_sinl",
+        "crabc_x86_math_elementary_long_double_internal_tanl",
+        "crabc_x86_math_elementary_long_double_provider_floor",
+        "crabc_x86_math_elementary_long_double_provider_scalbn",
+    ):
+        require(
+            f"\t.local\t{helper}\n" in assembly,
+            f"generated math-elementary-long-double assembly omits local {helper}",
+        )
+        require(
+            f"\t.globl\t{helper}\n" not in assembly,
+            f"generated math-elementary-long-double assembly exposes {helper}",
+        )
+
+    exports = [
+        line for line in (ROOT / "compat/x86_64/static_c_abi_exports.txt")
+        .read_text(encoding="utf-8").splitlines()
+        if line and not line.startswith("#")
+    ]
+    require(exports == sorted(exports), "static C ABI export contract must remain ASCII-sorted")
+    for symbol in MATH_ELEMENTARY_LONG_DOUBLE_SYMBOLS:
+        require(
+            symbol in exports,
+            f"static C ABI export contract omits {symbol}",
+        )
+
+    header_probe = (
+        ROOT / "compat/x86_64/math_elementary_long_double_header_abi_probe.cpp"
+    ).read_text(encoding="utf-8")
+    header_runner = (
+        ROOT / "compat/x86_64/run_math_elementary_long_double_header_abi.sh"
+    ).read_text(encoding="utf-8")
+    runtime_probe = (
+        ROOT / "compat/x86_64/libc_math_elementary_long_double_probe.c"
+    ).read_text(encoding="utf-8")
+    for symbol in MATH_ELEMENTARY_LONG_DOUBLE_SYMBOLS:
+        require(
+            f", {symbol});" in header_probe,
+            f"math-elementary-long-double C++ header probe omits typed {symbol}",
+        )
+        require(
+            symbol in header_runner,
+            f"math-elementary-long-double header runner omits {symbol}",
+        )
+        require(
+            f"direct_{symbol}" in runtime_probe,
+            f"math-elementary-long-double runtime probe omits direct {symbol}",
+        )
+
+    runner = (
+        ROOT / "compat/x86_64/run_libc_math_elementary_long_double.sh"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "EXPECTED_RECORDS=2764",
+        "RECORD_SIZE=40",
+        "--no-undefined",
+        "--gc-sections",
+        "run_math_elementary_long_double_header_abi.sh",
+        "internal_rem_pio2l internal_sinl internal_tanl provider_floor provider_scalbn",
+        "floor __cosl __p1evll __polevll __rem_pio2l __rem_pio2_large __sinl __tanl",
+        "float_parse|libm",
+        "fldt fstpt faddp fmulp fsqrt fdivp",
+        "candidate math.elementary-long-double record stream differs from pinned musl",
+    ):
+        require(
+            snippet in runner,
+            f"libc-math-elementary-long-double runner omits {snippet}",
+        )
+    dispatcher = (ROOT / "scripts/dev-x86_64.sh").read_text(encoding="utf-8")
+    for snippet in (
+        "run_math_elementary_long_double_header_abi()",
+        "/workspace/compat/x86_64/run_math_elementary_long_double_header_abi.sh",
+        "math-elementary-long-double-header-abi)",
+        "run_libc_math_elementary_long_double_probe()",
+        "/workspace/compat/x86_64/run_libc_math_elementary_long_double.sh",
+        "libc-math-elementary-long-double)",
+    ):
+        require(snippet in dispatcher, f"x86 dispatcher omits {snippet}")
+
+
 def require_named_locale_multibyte_artifact(family: Mapping[str, Any]) -> None:
     """Keep the named-locale/text archive slice below locale-family completion.
 
@@ -20890,6 +21206,7 @@ def validate_ledger(
 
     require_math_x87_extended_artifact(by_id["libc.text-math-locale-stdio"])
     require_math_special_slice(by_id["libc.text-math-locale-stdio"])
+    require_math_elementary_long_double_slice(by_id["libc.text-math-locale-stdio"])
     require_named_locale_multibyte_artifact(by_id["libc.text-math-locale-stdio"])
     require_same_object_static_c_abi_artifact(by_id["compat.abi-differential"])
     require_posix_process_abi_admission_artifact(by_id["compat.posix-process"])

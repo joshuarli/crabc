@@ -126,6 +126,19 @@ not select numeric parsing, either remaining elementary capability, complex
 math, or a general libc/libm. The enclosing family, x86-64 promotion, full
 parity, and public support all remain planned.
 
+The separate `static-c-math-elementary-long-double` verified slice now
+completes the exact private 35-symbol `math.elementary-long-double`
+capability. It composes seventeen prior x87 binary80 entries with eighteen
+pinned-musl 1.2.6 source-faithful providers, keeping the trigonometric
+argument-reduction and binary64 support closure local. The project-header C++
+ABI gate ratchets every signature, unmangled linkage, 16-byte align-16
+binary80 storage, and GNU `sincosl` pointer boundary. Its freestanding static
+differential compares 2,764 exact 40-byte records with pinned musl across all
+four rounding modes, retaining only the ten defined binary80 bytes and the
+x87/MXCSR exception state. This selects neither fenv-sensitive scalar math,
+numeric parsing, complex/general libm, family completion, x86 promotion, nor
+public support.
+
 The x86 lane now has sixteen private static artifacts inside still-planned
 `libc.pthread-tls`. `./scripts/dev-x86_64.sh libc-static-tls-v1` passes a
 freestanding final-static-executable fixture's untouched Linux entry stack to

@@ -49,7 +49,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["status_counts"], {"foundation-verified": 8, "planned": 18})
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
-        self.assertEqual(report["verified_slice_count"], 32)
+        self.assertEqual(report["verified_slice_count"], 33)
         self.assertEqual(report["verified_artifact_count"], 122)
         self.assertEqual(report["header_layout_probe_count"], 46)
         self.assertEqual(report["public_header_inventory_count"], 183)
@@ -3279,6 +3279,91 @@ class X86ParityLedgerTests(unittest.TestCase):
             "./scripts/dev-x86_64.sh libc-math-complex"
         )
         with self.assertRaisesRegex(ledger.LedgerError, "closed libc-math-special command"):
+            ledger.validate_ledger(changed)
+
+    def test_math_elementary_long_double_is_one_complete_private_capability_slice(
+        self,
+    ) -> None:
+        data = self.data()
+        text_math = self.family(data, "libc.text-math-locale-stdio")
+        self.assertEqual(text_math["status"], "planned")
+        slices = text_math["verified_slice"]
+        assert isinstance(slices, list)
+        artifact = next(
+            entry
+            for entry in slices
+            if isinstance(entry, dict)
+            and entry["id"] == "static-c-math-elementary-long-double"
+        )
+        self.assertEqual(
+            artifact["capabilities"], ["math.elementary-long-double"]
+        )
+        self.assertEqual(
+            {evidence["command"] for evidence in artifact["native_evidence"]},
+            {"./scripts/dev-x86_64.sh libc-math-elementary-long-double"},
+        )
+        for owner in (
+            "libc/src/c_abi/x86_64/math_elementary_long_double.rs",
+            "libc/src/c_abi/x86_64/math_elementary_long_double_musl_x86_64.S",
+            "compat/x86_64/generate_libc_math_elementary_long_double.py",
+            "compat/x86_64/math_elementary_long_double_header_abi_probe.cpp",
+            "compat/x86_64/run_math_elementary_long_double_header_abi.sh",
+            "compat/x86_64/libc_math_elementary_long_double_probe.c",
+            "compat/x86_64/libc_math_elementary_long_double_start.S",
+            "compat/x86_64/run_libc_math_elementary_long_double.sh",
+        ):
+            self.assertIn(owner, artifact["source_owners"])
+        for phrase in (
+            "Complete private native x86 `math.elementary-long-double` capability",
+            "17 already-evidenced",
+            "18 new pinned-musl entries",
+            "16-byte binary80 ABI",
+            "fmal",
+            "does not select numeric parsing",
+            "family completion",
+            "promotion",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, artifact["description"])
+
+        changed = self.data()
+        changed_slices = self.family(changed, "libc.text-math-locale-stdio")[
+            "verified_slice"
+        ]
+        assert isinstance(changed_slices, list)
+        changed_artifact = next(
+            entry
+            for entry in changed_slices
+            if isinstance(entry, dict)
+            and entry["id"] == "static-c-math-elementary-long-double"
+        )
+        changed_artifact["description"] = changed_artifact["description"].replace(
+            "16-byte binary80 ABI", "ordinary long-double ABI"
+        )
+        with self.assertRaisesRegex(
+            ledger.LedgerError,
+            "static-c-math-elementary-long-double description omits 16-byte binary80 ABI",
+        ):
+            ledger.validate_ledger(changed)
+
+        changed = self.data()
+        changed_slices = self.family(changed, "libc.text-math-locale-stdio")[
+            "verified_slice"
+        ]
+        assert isinstance(changed_slices, list)
+        changed_artifact = next(
+            entry
+            for entry in changed_slices
+            if isinstance(entry, dict)
+            and entry["id"] == "static-c-math-elementary-long-double"
+        )
+        changed_artifact["native_evidence"][0]["command"] = (
+            "./scripts/dev-x86_64.sh libc-math-special"
+        )
+        with self.assertRaisesRegex(
+            ledger.LedgerError,
+            "closed libc-math-elementary-long-double command",
+        ):
             ledger.validate_ledger(changed)
 
     def test_named_locale_multibyte_remains_a_closed_non_capability_artifact(

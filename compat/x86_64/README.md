@@ -222,6 +222,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh installed-header-tree-closure
 ./scripts/dev-x86_64.sh header-abi-project
 ./scripts/dev-x86_64.sh math-complex-header-abi
+./scripts/dev-x86_64.sh math-elementary-long-double-header-abi
 ./scripts/dev-x86_64.sh sys-reg-header-abi
 ./scripts/dev-x86_64.sh machine-context-header-abi
 ./scripts/dev-x86_64.sh types-header-abi
@@ -449,6 +450,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-math-complex
 ./scripts/dev-x86_64.sh libc-elementary-sqrt-fenv
 ./scripts/dev-x86_64.sh libc-fenv-rounding
+./scripts/dev-x86_64.sh libc-math-elementary-long-double
 ./scripts/dev-x86_64.sh libc-locale-multibyte
 ./scripts/dev-x86_64.sh libc-locale-wide-iconv
 ./scripts/dev-x86_64.sh libc-wide-character
@@ -841,6 +843,14 @@ exact typed references for the selected 22-entry x87 long-double block, and
 unmangled C++ linkage for every named runtime symbol. Its C executables
 intentionally link pinned musl's math runtime, so it is header semantics
 only—not general math, `crabc-libc`, or public x86 support.
+
+`math-elementary-long-double-header-abi` is the declaration/linkage ratchet
+for the exact 35-symbol private `math.elementary-long-double` capability. Its
+project-first and pinned-musl C++17 probes take every typed address in default
+SSE and `-mfpmath=387` modes, require unmangled C references, and ratchet the
+SysV 16-byte align-16 binary80 storage plus GNU `sincosl` output-pointer
+signature. It is header evidence only; the separate static differential owns
+runtime behavior and does not make general `libm` or public x86 support.
 
 `math-special-header-abi` is the complete declaration/linkage ratchet for the
 separately selected `math.special` capability. A project-first and pinned-musl
@@ -3509,8 +3519,8 @@ all four rounding modes: the defined ten binary80 bytes, exception flags,
 integer conversions, and signed `remquol` quotient bits. The final ELF rejects
 TLS, ambient `libm`, and unowned runtime dependencies and structurally requires
 the selected x87 instruction families. This remains a non-capability artifact:
-it does not complete `math.elementary-long-double` or itself select the
-special-function surface,
+it does not itself select the completed `math.elementary-long-double` or
+special-function capability,
 promote `libc.text-math-locale-stdio`, or establish general libc/libm, CRT,
 loader, sysroot, full x86-64 parity, or public x86 support.
 
@@ -3540,6 +3550,29 @@ gamma, and Bessel cases. Every long-double boundary remains SysV x87 binary80
 without binary64 narrowing. The completed slice selects only `math.special`;
 the surrounding family, elementary/fenv-sensitive/complex/general math,
 promotion, full parity, and public x86 support remain planned or false.
+
+`libc-math-elementary-long-double` is the complete private
+`static-c-math-elementary-long-double` capability slice. It composes the
+seventeen already-evidenced x87 binary80 entries with eighteen checked
+source-faithful pinned-musl 1.2.6 providers: inverse/hyperbolic/circular
+functions, `cbrtl`, sign/extrema/norm, `fmal`, `powl`, rounding, and GNU
+`sincosl`. The generator verifies the normalized source-tree digest and GCC
+15.2.0 input, preserves source-specific notices, and keeps its
+`__cosl`/`__sinl`/`__tanl` argument-reduction closure and binary64
+`floor`/`scalbn` support local.
+
+The runner invokes the C++ header gate, ratchets all 35 selected exports and
+private-provider locality, and links a freestanding `-nostdlib -static
+--gc-sections` candidate. It rejects unresolved, dynamic, TLS, ambient libm,
+numeric parser, allocation, complex, and unowned dependencies, then compares
+2,764 exact 40-byte records with pinned musl across all four rounding modes.
+The records retain only the ten defined binary80 bytes plus x87/MXCSR flags and
+cover signed zeros, finite boundaries, infinities, NaNs, powers, hyperbolics,
+`fmal`, and both `sincosl` results. Every public long-double boundary retains
+the SysV binary80 ABI. This selects only `math.elementary-long-double`; fenv-
+sensitive scalar math, numeric parsing, complex/general math, family
+completion, promotion, full parity, and public x86 support remain unselected
+or false.
 
 `locale-multibyte-header-abi` and `libc-locale-multibyte` are one separate,
 non-promoting named-locale/text artifact. The strict C11/C++17 header matrix

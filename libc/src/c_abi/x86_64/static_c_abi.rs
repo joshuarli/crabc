@@ -190,6 +190,8 @@ mod elementary_sqrt;
 mod fenv_rounding;
 #[path = "math_x87_extended.rs"]
 mod math_x87_extended;
+#[path = "math_elementary_long_double.rs"]
+mod math_elementary_long_double;
 #[path = "math_special.rs"]
 mod math_special;
 #[path = "setjmp.rs"]
