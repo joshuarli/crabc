@@ -1371,7 +1371,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "timerfd-header-abi|signalfd-header-abi",
             "libc-timerfd|libc-signalfd|libc-sigpause|libc-sigisemptyset|libc-sigandset-sigorset|libc-sigpending|libc-sigrtmax|libc-sigrtmin|libc-sigaddset-sigdelset-sigfillset",
             "libc-sched-yield",
-            "ctermid-header-abi|gethostid-header-abi|isatty-header-abi|tcgetpgrp-header-abi|tcsetpgrp-header-abi|getpass-header-abi|libc-ctermid|libc-gethostid|libc-isatty|libc-tcgetpgrp|libc-tcsetpgrp|libc-getpass|mkfifo-header-abi|mkfifoat-header-abi|libc-mkfifo|libc-mkfifoat|mktemp-header-abi|libc-mktemp",
+            "ctermid-header-abi|gethostid-header-abi|getpagesize-header-abi|isatty-header-abi|tcgetpgrp-header-abi|tcsetpgrp-header-abi|getpass-header-abi|libc-ctermid|libc-gethostid|libc-getpagesize|libc-isatty|libc-tcgetpgrp|libc-tcsetpgrp|libc-getpass|mkfifo-header-abi|mkfifoat-header-abi|libc-mkfifo|libc-mkfifoat|mktemp-header-abi|libc-mktemp",
             "readlinkat-header-abi|libc-readlinkat",
             "stdio-permanent-line-io-header-abi|stdio-octal-hex-scan-header-abi",
             "math-complex-complete-header-abi|libc-math-complex-complete",
@@ -17285,6 +17285,129 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         )
         self.assertIn(
             '    libc-system-configuration)\n        [ "$#" -eq 0 ] || fail "libc-system-configuration takes no arguments"',
+            runner,
+        )
+
+    def test_libc_static_c_abi_getpagesize_artifact_stays_isolated(self) -> None:
+        """The inherited page-size constant must not promote configuration ABI."""
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        source_path = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "system_configuration.rs"
+        )
+        probe_path = ROOT / "compat" / "x86_64" / "libc_getpagesize_probe.c"
+        start_path = ROOT / "compat" / "x86_64" / "libc_getpagesize_start.S"
+        artifact_runner_path = ROOT / "compat" / "x86_64" / "run_libc_getpagesize.sh"
+        header_c_path = ROOT / "compat" / "x86_64" / "getpagesize_header_abi_probe.c"
+        header_cxx_path = (
+            ROOT / "compat" / "x86_64" / "getpagesize_header_abi_probe.cpp"
+        )
+        header_runner_path = (
+            ROOT / "compat" / "x86_64" / "run_getpagesize_header_abi.sh"
+        )
+        for path in (
+            source_path,
+            probe_path,
+            start_path,
+            artifact_runner_path,
+            header_c_path,
+            header_cxx_path,
+            header_runner_path,
+        ):
+            self.assertTrue(path.is_file(), f"missing getpagesize artifact input: {path}")
+
+        source = source_path.read_text(encoding="utf-8")
+        probe = probe_path.read_text(encoding="utf-8")
+        start = start_path.read_text(encoding="utf-8")
+        artifact_runner = artifact_runner_path.read_text(encoding="utf-8")
+        header_c = header_c_path.read_text(encoding="utf-8")
+        header_cxx = header_cxx_path.read_text(encoding="utf-8")
+        header_runner = header_runner_path.read_text(encoding="utf-8")
+        static_exports = (
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        ).read_text(encoding="utf-8")
+        static_export_names = {
+            line for line in static_exports.splitlines() if line and not line.startswith("#")
+        }
+        parity_ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        runner = RUNNER.read_text(encoding="utf-8")
+
+        self.assertIn('#[path = "system_configuration.rs"]', static_root)
+        for required in (
+            "src/legacy/getpagesize.c",
+            "X86_64_LINUX_PAGE_SIZE",
+            'pub extern "C" fn getpagesize() -> c_int',
+            "x86-64 Linux ABI has a 4096-byte base page size",
+        ):
+            self.assertIn(required, source)
+        getpagesize_body = source[
+            source.index("/// Return Linux/x86-64's fixed base page size.") : source.index(
+                "/// Return the calling process's soft descriptor limit"
+            )
+        ]
+        for forbidden in ("raw_syscall", "errno", "getauxval", "sysconf", "pathconf"):
+            self.assertNotIn(forbidden, getpagesize_body)
+        for required in (
+            "#include <unistd.h>",
+            "getpagesize_signature",
+            "_Static_assert",
+            "check_fixed_x86_page_size",
+            "indirect = getpagesize",
+            "CRABC_GETPAGESIZE_FREESTANDING",
+        ):
+            self.assertIn(required, probe)
+        for required in ("crabc_x86_64_getpagesize_probe", "mov $60, %eax"):
+            self.assertIn(required, start)
+        for header_probe in (header_c, header_cxx):
+            for required in (
+                "getpagesize_signature",
+                "CRABC_EXPECT_GETPAGESIZE",
+                "CRABC_REQUIRE_GETPAGESIZE_HIDDEN",
+            ):
+                self.assertIn(required, header_probe)
+        for required in (
+            "bsd_definitions=(-D_BSD_SOURCE -DCRABC_EXPECT_GETPAGESIZE)",
+            "gnu_definitions=(-D_GNU_SOURCE -DCRABC_EXPECT_GETPAGESIZE)",
+            "outside GNU/BSD C selectors",
+            "retained a mangled getpagesize reference",
+        ):
+            self.assertIn(required, header_runner)
+        for required in (
+            "run_musl_oracle.sh",
+            "run_getpagesize_header_abi.sh",
+            "getpagesize.lo",
+            "archive_member_for_symbol",
+            "-nostdlib -static",
+            "-Wl,--no-undefined",
+            "-Wl,--gc-sections",
+            "candidate retained broad system-configuration C ABI symbols",
+            "candidate getpagesize unexpectedly performs a call or syscall",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn("--whole-archive", artifact_runner)
+        self.assertIn("getpagesize", static_export_names)
+        self.assertIn('id = "static-c-getpagesize"', parity_ledger)
+        self.assertIn(
+            'command = "./scripts/dev-x86_64.sh libc-getpagesize"',
+            parity_ledger,
+        )
+        self.assertIn("run_getpagesize_header_abi()", runner)
+        self.assertIn("run_libc_getpagesize()", runner)
+        self.assertIn(
+            "/workspace/compat/x86_64/run_getpagesize_header_abi.sh", runner
+        )
+        self.assertIn(
+            "/workspace/compat/x86_64/run_libc_getpagesize.sh", runner
+        )
+        self.assertIn(
+            '    getpagesize-header-abi)\n        [ "$#" -eq 0 ] || fail "getpagesize-header-abi takes no arguments"',
+            runner,
+        )
+        self.assertIn(
+            '    libc-getpagesize)\n        [ "$#" -eq 0 ] || fail "libc-getpagesize takes no arguments"',
             runner,
         )
 

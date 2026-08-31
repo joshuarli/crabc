@@ -3836,6 +3836,140 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
                 f"is missing {required!r}"
             )
 
+    getpagesize_source = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "system_configuration.rs"
+    )
+    getpagesize_probe_source = ROOT / "compat" / "x86_64" / "libc_getpagesize_probe.c"
+    getpagesize_start_source = ROOT / "compat" / "x86_64" / "libc_getpagesize_start.S"
+    getpagesize_runner_source = ROOT / "compat" / "x86_64" / "run_libc_getpagesize.sh"
+    getpagesize_header_c_source = (
+        ROOT / "compat" / "x86_64" / "getpagesize_header_abi_probe.c"
+    )
+    getpagesize_header_cxx_source = (
+        ROOT / "compat" / "x86_64" / "getpagesize_header_abi_probe.cpp"
+    )
+    getpagesize_header_runner_source = (
+        ROOT / "compat" / "x86_64" / "run_getpagesize_header_abi.sh"
+    )
+    for path in (
+        getpagesize_source,
+        getpagesize_probe_source,
+        getpagesize_start_source,
+        getpagesize_runner_source,
+        getpagesize_header_c_source,
+        getpagesize_header_cxx_source,
+        getpagesize_header_runner_source,
+    ):
+        if not path.is_file():
+            errors.append(
+                "x86 static getpagesize artifact is missing "
+                f"{path.relative_to(ROOT)}"
+            )
+            return
+
+    getpagesize_text = getpagesize_source.read_text(errors="replace")
+    getpagesize_probe = getpagesize_probe_source.read_text(errors="replace")
+    getpagesize_start = getpagesize_start_source.read_text(errors="replace")
+    getpagesize_runner = getpagesize_runner_source.read_text(errors="replace")
+    getpagesize_header_c = getpagesize_header_c_source.read_text(errors="replace")
+    getpagesize_header_cxx = getpagesize_header_cxx_source.read_text(errors="replace")
+    getpagesize_header_runner = getpagesize_header_runner_source.read_text(
+        errors="replace"
+    )
+    for required in (
+        "src/legacy/getpagesize.c",
+        "X86_64_LINUX_PAGE_SIZE",
+        'pub extern "C" fn getpagesize() -> c_int',
+        "x86-64 Linux ABI has a 4096-byte base page size",
+    ):
+        if required not in getpagesize_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/system_configuration.rs: selected "
+                f"getpagesize source is missing {required!r}"
+            )
+    getpagesize_marker = "/// Return Linux/x86-64's fixed base page size."
+    getdtablesize_marker = "/// Return the calling process's soft descriptor limit"
+    if getpagesize_marker not in getpagesize_text or getdtablesize_marker not in getpagesize_text:
+        errors.append(
+            "libc/src/c_abi/x86_64/system_configuration.rs: selected "
+            "getpagesize source boundary is missing"
+        )
+    else:
+        getpagesize_body = getpagesize_text[
+            getpagesize_text.index(getpagesize_marker) : getpagesize_text.index(
+                getdtablesize_marker
+            )
+        ]
+        for forbidden in ("raw_syscall", "errno", "getauxval", "sysconf", "pathconf"):
+            if forbidden in getpagesize_body:
+                errors.append(
+                    "libc/src/c_abi/x86_64/system_configuration.rs: selected "
+                    f"getpagesize leaf must not select {forbidden!r}"
+                )
+    for required in (
+        "#include <unistd.h>",
+        "getpagesize_signature",
+        "check_fixed_x86_page_size",
+        "indirect = getpagesize",
+        "CRABC_GETPAGESIZE_FREESTANDING",
+    ):
+        if required not in getpagesize_probe:
+            errors.append(
+                "compat/x86_64/libc_getpagesize_probe.c: static getpagesize "
+                f"regression is missing {required!r}"
+            )
+    for required in ("crabc_x86_64_getpagesize_probe", "mov $60, %eax"):
+        if required not in getpagesize_start:
+            errors.append(
+                "compat/x86_64/libc_getpagesize_start.S: static getpagesize "
+                f"entry shim is missing {required!r}"
+            )
+    for required in (
+        "run_musl_oracle.sh",
+        "run_getpagesize_header_abi.sh",
+        "getpagesize.lo",
+        "archive_member_for_symbol",
+        "-nostdlib -static",
+        "--no-undefined",
+        "--gc-sections",
+        "candidate retained broad system-configuration C ABI symbols",
+        "candidate getpagesize unexpectedly performs a call or syscall",
+    ):
+        if required not in getpagesize_runner:
+            errors.append(
+                "compat/x86_64/run_libc_getpagesize.sh: static getpagesize "
+                f"evidence is missing {required!r}"
+            )
+    if "--whole-archive" in getpagesize_runner:
+        errors.append(
+            "compat/x86_64/run_libc_getpagesize.sh: static getpagesize "
+            "evidence must not force-link the archive"
+        )
+    for header_probe in (getpagesize_header_c, getpagesize_header_cxx):
+        for required in (
+            "getpagesize_signature",
+            "CRABC_EXPECT_GETPAGESIZE",
+            "CRABC_REQUIRE_GETPAGESIZE_HIDDEN",
+        ):
+            if required not in header_probe:
+                errors.append(
+                    "compat/x86_64 getpagesize header probe is missing "
+                    f"{required!r}"
+                )
+    for required in (
+        "getpagesize_header_abi_probe.c",
+        "getpagesize_header_abi_probe.cpp",
+        "bsd_definitions=(-D_BSD_SOURCE -DCRABC_EXPECT_GETPAGESIZE)",
+        "gnu_definitions=(-D_GNU_SOURCE -DCRABC_EXPECT_GETPAGESIZE)",
+        "outside GNU/BSD C selectors",
+        "retained a mangled getpagesize reference",
+    ):
+        if required not in getpagesize_header_runner:
+            errors.append(
+                "compat/x86_64/run_getpagesize_header_abi.sh: getpagesize "
+                f"declaration evidence is missing {required!r}"
+            )
+
     static_startup_source = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_startup.rs"
     static_startup_text = static_startup_source.read_text(errors="replace")
     for required in (
