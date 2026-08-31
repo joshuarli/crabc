@@ -13,12 +13,13 @@ fn current_page_size() -> usize {
 }
 
 /// A direct native pointer operation first derives its exact source facts
-/// from the PageMap. Usable-size returns those immutable facts directly, while
-/// only a source associated with the calling owner may use that owner's
-/// in-place realloc engine; a foreign live source is not a compatibility route
-/// or replacement request in this bounded seam.
+/// from the PageMap. Usable-size returns those immutable facts directly. A
+/// source associated with the caller may use that owner's in-place engine;
+/// a `LiveOwnerAssociated` source owned by another live thread instead follows
+/// pinned `mi_theap_realloc_zero_ex`'s replacement path through the caller's
+/// current owner.
 #[test]
-fn native_pointer_reallocate_keeps_current_owner_operations_local() {
+fn native_pointer_reallocate_replaces_live_foreign_sources_through_current_owner() {
     assert!(
         initialize_process(current_page_size()),
         "the isolated process initializes the native runtime"
@@ -104,14 +105,20 @@ fn native_pointer_reallocate_keeps_current_owner_operations_local() {
         NativePageAllocationResult::Unavailable
         | NativePageAllocationResult::AllocationFailed
         | NativePageAllocationResult::Retained => {
-            panic!("the initial owner keeps one exact client live for the worker refusal")
+            panic!("the initial owner keeps one exact client live for the worker replacement")
         }
     };
-    // SAFETY: this client stays live until the initial owner frees it after
-    // the worker has refused to enter its current-owner realloc engine.
+    let initial_foreign_usable = unsafe { native_usable_size(initial_foreign) }
+        .expect("the initial owner reads its foreign source's PageMap extent");
+    assert!(initial_foreign_usable >= 67);
+    // SAFETY: this client stays live through the worker's nonlocal source
+    // operation. Both bytes are inside its captured usable extent.
     unsafe {
         initial_foreign.as_ptr().write(0x6c);
-        initial_foreign.as_ptr().add(66).write(0x6d);
+        initial_foreign
+            .as_ptr()
+            .add(initial_foreign_usable - 1)
+            .write(0x6d);
     }
     let initial_foreign_address = initial_foreign.as_ptr().addr();
 
@@ -130,12 +137,16 @@ fn native_pointer_reallocate_keeps_current_owner_operations_local() {
                 panic!("the worker creates its current native client")
             }
         };
-        // SAFETY: `local` remains the worker's exact current client until
-        // the worker frees it after the initial thread's refusal below.
+        // SAFETY: `local` remains the worker's exact current client through
+        // its local reallocation below, then the initial thread consumes it
+        // through the nonlocal replacement path while the worker is paused.
         unsafe { local.as_ptr().write(0xa7) };
         let usable = unsafe { native_usable_size(local) }
             .expect("the worker reads its pointer-derived usable extent");
         assert!(usable >= 53);
+        // SAFETY: the full captured usable extent belongs to this live local
+        // client through its local reallocation below.
+        unsafe { local.as_ptr().add(usable - 1).write(0xa8) };
         let local_before_reuse = local;
         let local = match unsafe { native_reallocate(Some(local), usable) } {
             NativePageAllocationResult::Allocated(block) => block,
@@ -154,41 +165,63 @@ fn native_pointer_reallocate_keeps_current_owner_operations_local() {
             0xa7,
             "the worker's in-place reallocation preserves its source prefix"
         );
+        assert_eq!(
+            unsafe { local.as_ptr().add(usable - 1).read() },
+            0xa8,
+            "the worker's in-place reallocation preserves its source extent"
+        );
         // SAFETY: the initial owner retains this exact live client until the
-        // worker has recorded its foreign-pointer refusal below.
+        // worker completes its one nonlocal source operation below.
         let initial_foreign = unsafe {
             core::ptr::NonNull::new_unchecked(initial_foreign_address as *mut u8)
         };
-        assert!(
-            unsafe { native_usable_size(initial_foreign) }.is_some_and(|size| size >= 67),
+        assert_eq!(
+            unsafe { native_usable_size(initial_foreign) },
+            Some(initial_foreign_usable),
             "the worker reads the initial source's captured PageMap extent"
         );
-        assert!(matches!(
-            unsafe { native_reallocate(Some(initial_foreign), 4096) },
+        let initial_replacement =
+            match unsafe { native_reallocate(Some(initial_foreign), 4096) } {
+            NativePageAllocationResult::Allocated(block) => block,
             NativePageAllocationResult::Unavailable
-        ));
-        assert_eq!(
-            unsafe { initial_foreign.as_ptr().read() },
-            0x6c,
-            "the worker refusal preserves the initial source prefix"
+            | NativePageAllocationResult::AllocationFailed
+            | NativePageAllocationResult::Retained => {
+                panic!("the worker replaces the initial owner's live PageMap source")
+            }
+        };
+        assert!(
+            unsafe { native_usable_size(initial_replacement) }.is_some_and(|size| size >= 4096),
+            "the worker receives a replacement with its requested usable extent"
         );
         assert_eq!(
-            unsafe { initial_foreign.as_ptr().add(66).read() },
+            unsafe { initial_replacement.as_ptr().read() },
+            0x6c,
+            "the worker replacement preserves the bounded initial source prefix"
+        );
+        assert_eq!(
+            unsafe {
+                initial_replacement
+                    .as_ptr()
+                    .add(initial_foreign_usable - 1)
+                    .read()
+            },
             0x6d,
-            "the worker refusal preserves the initial source tail"
+            "the worker replacement preserves the bounded initial source extent"
+        );
+        assert_eq!(
+            unsafe { native_free(initial_replacement) },
+            NativePageFreeResult::Freed,
+            "the worker frees the returned replacement through its current owner"
         );
         owner_sender
             .send((local.as_ptr().addr(), usable))
-            .expect("the initial thread receives only the live foreign address");
+            .expect("the initial thread receives the worker's still-live foreign source");
         resume_receiver
             .recv()
-            .expect("the worker resumes after the foreign pointer is refused");
-        assert_eq!(
-            unsafe { local.as_ptr().read() },
-            0xa7,
-            "the foreign refusal leaves the worker allocation live and unchanged"
-        );
-        assert_eq!(unsafe { native_free(local) }, NativePageFreeResult::Freed);
+            .expect("the worker resumes after the initial owner replaces its foreign source");
+        // The initial owner consumed `local` through successful nonlocal
+        // reallocation, so the old worker pointer is intentionally not read
+        // or freed here.
         finish_current_thread_native_after_user_destructors()
     });
 
@@ -196,38 +229,48 @@ fn native_pointer_reallocate_keeps_current_owner_operations_local() {
         .recv()
         .expect("the worker publishes one still-live foreign source address");
     // SAFETY: the worker keeps this exact allocation live and does not access
-    // it concurrently while the initial thread performs pointer-only queries.
+    // it concurrently while the initial thread performs its nonlocal source
+    // operation.
     let foreign = unsafe { core::ptr::NonNull::new_unchecked(foreign_address as *mut u8) };
-    assert_eq!(
-        unsafe { initial_foreign.as_ptr().read() },
-        0x6c,
-        "the paused worker leaves the initial source live for its owner"
-    );
-    assert_eq!(
-        unsafe { initial_foreign.as_ptr().add(66).read() },
-        0x6d,
-        "the paused worker leaves the initial source tail unchanged"
-    );
-    assert_eq!(
-        unsafe { native_free(initial_foreign) },
-        NativePageFreeResult::Freed,
-        "the initial owner frees its unchanged source while the worker is paused"
-    );
     assert_eq!(
         unsafe { native_usable_size(foreign) },
         Some(foreign_usable),
         "usable-size returns the foreign source's captured PageMap extent"
     );
-    assert!(matches!(
-        unsafe { native_reallocate(Some(foreign), foreign_usable) },
+    let foreign_replacement = match unsafe { native_reallocate(Some(foreign), foreign_usable) } {
+        NativePageAllocationResult::Allocated(block) => block,
         NativePageAllocationResult::Unavailable
-    ));
+        | NativePageAllocationResult::AllocationFailed
+        | NativePageAllocationResult::Retained => {
+            panic!("the initial owner replaces the worker's live PageMap source")
+        }
+    };
+    assert!(
+        unsafe { native_usable_size(foreign_replacement) }
+            .is_some_and(|size| size >= foreign_usable),
+        "the initial owner receives a replacement with the source-sized usable extent"
+    );
+    assert_eq!(
+        unsafe { foreign_replacement.as_ptr().read() },
+        0xa7,
+        "the initial replacement preserves the worker source prefix"
+    );
+    assert_eq!(
+        unsafe { foreign_replacement.as_ptr().add(foreign_usable - 1).read() },
+        0xa8,
+        "the initial replacement preserves the worker's bounded source extent"
+    );
+    assert_eq!(
+        unsafe { native_free(foreign_replacement) },
+        NativePageFreeResult::Freed,
+        "the initial owner frees the returned replacement through pointer-first free"
+    );
     resume_sender
         .send(())
-        .expect("the worker resumes after the bounded foreign refusal");
+        .expect("the worker resumes after its old foreign source is consumed");
     assert_eq!(
-        owner.join().expect("the worker joins after its local free"),
+        owner.join().expect("the worker joins after its source is consumed"),
         ThreadFinishResult::Finished,
-        "the worker completes its all-local lifecycle"
+        "the worker completes after both owners free their returned replacements"
     );
 }
