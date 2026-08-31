@@ -63,8 +63,8 @@ class AArch64ParityInventoryTests(unittest.TestCase):
             row for row in report["families"]
             if row["id"] == "libc.text-math-locale-stdio"
         )
-        self.assertEqual(text_math["verified_slice_count"], 4)
-        self.assertEqual(text_math["verified_artifact_count"], 28)
+        self.assertEqual(text_math["verified_slice_count"], 5)
+        self.assertEqual(text_math["verified_artifact_count"], 31)
         self.assertEqual(
             {row["contract_state"] for row in report["capabilities"]},
             {"implemented-foundation", "selected-private", "missing"},
@@ -209,6 +209,26 @@ class AArch64ParityInventoryTests(unittest.TestCase):
 
         with self.assertRaisesRegex(
             inventory.InventoryError, "must be entirely verified"
+        ):
+            self.build_with_x86_ledger(data)
+
+    def test_inventory_rejects_a_selected_artifact_with_duplicate_evidence_command(self) -> None:
+        data = inventory.load_toml(inventory.X86_LEDGER_PATH)
+        family = self.family(data, "libc.c-abi-compat")
+        artifacts = family["verified_artifact"]
+        assert isinstance(artifacts, list)
+        selected = next(
+            entry for entry in artifacts if entry["id"] == "static-c-error-strings"
+        )
+        assert isinstance(selected, dict)
+        evidence = selected["native_evidence"]
+        assert isinstance(evidence, list) and evidence
+        record = evidence[0]
+        assert isinstance(record, dict)
+        evidence.append(copy.deepcopy(record))
+
+        with self.assertRaisesRegex(
+            inventory.InventoryError, "duplicates a native evidence command"
         ):
             self.build_with_x86_ledger(data)
 

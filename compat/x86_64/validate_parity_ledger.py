@@ -5436,13 +5436,18 @@ def require_inet_address_header_evidence(family: Mapping[str, Any]) -> None:
 
 
 def require_evidence_state(
-    value: Any, location: str, expected_state: str
+    value: Any,
+    location: str,
+    expected_state: str,
+    *,
+    unique_commands: bool = False,
 ) -> tuple[list[Mapping[str, Any]], set[str]]:
     """Require one evidence state without promoting its owning family."""
     require(expected_state in ALLOWED_EVIDENCE_STATES, f"{location} has invalid expected state")
     require(isinstance(value, list) and value, f"{location} must be a non-empty array")
     records: list[Mapping[str, Any]] = []
     states: set[str] = set()
+    commands: set[str] = set()
     for index, entry in enumerate(value):
         item_location = f"{location}[{index}]"
         require(isinstance(entry, Mapping), f"{item_location} must be a table")
@@ -5452,6 +5457,13 @@ def require_evidence_state(
         require(state in ALLOWED_EVIDENCE_STATES, f"{item_location}.state is invalid")
         require(isinstance(command, str) and command, f"{item_location}.command is empty")
         require(isinstance(scope, str) and scope, f"{item_location}.scope is empty")
+        if unique_commands:
+            assert isinstance(command, str)
+            require(
+                command not in commands,
+                f"{item_location}.command duplicates a native evidence command",
+            )
+            commands.add(command)
         states.add(state)
         records.append(entry)
     require(states == {expected_state}, f"{location} must be entirely {expected_state}")
@@ -5586,7 +5598,12 @@ def require_verified_artifacts(
             repository_path(path_text, f"{item_location}.source_owners[{owner_index}]")
         nonempty_strings(entry["x86_abi_prerequisites"], f"{item_location}.x86_abi_prerequisites")
         nonempty_strings(entry["x86_header_prerequisites"], f"{item_location}.x86_header_prerequisites")
-        require_evidence_state(entry["native_evidence"], f"{item_location}.native_evidence", "verified")
+        require_evidence_state(
+            entry["native_evidence"],
+            f"{item_location}.native_evidence",
+            "verified",
+            unique_commands=True,
+        )
         require_oracles(entry["oracle"], f"{item_location}.oracle")
         records.append(entry)
     return records

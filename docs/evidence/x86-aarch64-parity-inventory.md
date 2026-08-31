@@ -26,9 +26,11 @@ native evidence whose records are all `verified` and have a command and scope.
 Its command must be the canonical two-word invocation of a checked-in x86 or
 CRT dispatcher, and its final dispatch arm must invoke a `run_*` verifier.
 That excludes build-only commands such as `image`, stale subcommands, and
-arbitrary shell text. These checks keep a malformed ledger from turning an
-unrelated or unproven capability into `selected-private` when the inventory
-runs on its own; they do not make that state a completion or promotion decision.
+arbitrary shell text. A selected artifact cannot repeat the same canonical
+command: repetition is not independent native corroboration. These checks keep
+a malformed ledger from turning an unrelated or unproven capability into
+`selected-private` when the inventory runs on its own; they do not make that
+state a completion or promotion decision.
 
 The report also checks the 183 pinned public header paths against the AArch64
 musl header oracle and records the selected x86 static-export ratchet only as

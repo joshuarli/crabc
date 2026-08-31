@@ -17,7 +17,8 @@ entirely-verified native evidence with a command and scope, so its
 `selected-private` rows remain accounting rather than an inferred support
 claim. That command is a canonical checked-in x86/CRT dispatcher invocation
 whose final arm runs a verifier; image-building, stale, and arbitrary commands
-cannot stand in for native evidence.
+cannot stand in for native evidence. A selected artifact cannot repeat one
+command as though it were independent corroboration.
 
 This lane runs the fixed `crabc-core` lib suite and the separately admitted
 direct `crabc-rs` subset for the `x86_64-unknown-linux-musl` target, including

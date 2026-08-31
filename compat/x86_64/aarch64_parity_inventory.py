@@ -143,6 +143,8 @@ def require_verified_native_evidence(
     record: Mapping[str, Any],
     location: str,
     registered_commands: Mapping[str, set[str]],
+    *,
+    unique_commands: bool = False,
 ) -> None:
     """Prevent an unproven record from entering the selected-private inventory."""
     evidence = record.get("native_evidence")
@@ -150,6 +152,7 @@ def require_verified_native_evidence(
         isinstance(evidence, list) and evidence,
         f"{location}.native_evidence is missing",
     )
+    commands: set[str] = set()
     for index, entry in enumerate(evidence):
         evidence_location = f"{location}.native_evidence[{index}]"
         require(
@@ -178,6 +181,12 @@ def require_verified_native_evidence(
             and words[1] in registered_commands[words[0]],
             f"{evidence_location}.command is not a registered native evidence command",
         )
+        if unique_commands:
+            require(
+                command not in commands,
+                f"{evidence_location}.command duplicates a native evidence command",
+            )
+            commands.add(command)
         require(
             isinstance(entry.get("scope"), str) and entry["scope"],
             f"{evidence_location}.scope is empty",
@@ -288,7 +297,10 @@ def build_inventory() -> dict[str, Any]:
                 f"x86 verified artifact {record_id} must not carry capabilities",
             )
             require_verified_native_evidence(
-                record, f"x86 verified artifact {record_id}", registered_commands
+                record,
+                f"x86 verified artifact {record_id}",
+                registered_commands,
+                unique_commands=True,
             )
             selected_artifacts.append({"family": identifier, "id": record_id})
         family_rows.append(

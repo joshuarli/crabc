@@ -97,6 +97,26 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertFalse(report["promotion_ready"])
         self.assertFalse(report["public_support"])
 
+    def test_verified_artifact_rejects_duplicate_native_evidence_command(self) -> None:
+        data = self.data()
+        family = self.family(data, "libc.c-abi-compat")
+        artifacts = family["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry for entry in artifacts if entry["id"] == "static-c-error-strings"
+        )
+        assert isinstance(artifact, dict)
+        evidence = artifact["native_evidence"]
+        assert isinstance(evidence, list) and evidence
+        record = evidence[0]
+        assert isinstance(record, dict)
+        evidence.append(copy.deepcopy(record))
+
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "duplicates a native evidence command"
+        ):
+            ledger.validate_ledger(data)
+
     def test_bounded_regex_artifact_does_not_promote_pattern_regex(self) -> None:
         data = self.data()
         family = self.family(data, "libc.text-math-locale-stdio")
