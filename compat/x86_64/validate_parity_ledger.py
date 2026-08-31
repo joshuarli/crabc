@@ -13808,6 +13808,293 @@ def require_isatty_artifact(family: Mapping[str, Any]) -> None:
         require(snippet in dispatcher, f"x86 dispatcher omits {snippet}")
 
 
+def require_ttyname_r_artifact(family: Mapping[str, Any]) -> None:
+    """Keep one reentrant terminal-name observation below promotion."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.posix-runtime].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [entry for entry in artifacts if entry.get("id") == "static-c-ttyname-r"]
+    require(
+        len(matching) == 1,
+        "libc.posix-runtime must contain exactly one static-c-ttyname-r artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-ttyname-r must not promote libc.posix-runtime",
+    )
+    artifact = matching[0]
+    require(
+        "capabilities" not in artifact,
+        "static-c-ttyname-r must not promote a terminal/path capability",
+    )
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for phrase in (
+        "`ttyname_r` caller-buffered terminal-name boundary",
+        "still-planned `libc.posix-runtime`",
+        "exactly `int ttyname_r(int, char *, size_t)`",
+        "src/unistd/ttyname_r.c",
+        "`/proc/self/fd/<fd>`",
+        "zero-capacity dummy-byte compatibility path",
+        "`ERANGE`",
+        "`EFAULT`, `EBADF`, and `ENOTTY`",
+        "neither exports `ttyname`",
+        "generic `readlink`/`stat`/`fstat`",
+        "terminal/session policy",
+        "family completion",
+        "promotion",
+        "public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"static-c-ttyname-r description omits {phrase}",
+        )
+
+    owners = set(
+        nonempty_strings(
+            artifact["source_owners"], "static-c-ttyname-r.source_owners"
+        )
+    )
+    for owner in (
+        "compat/upstreams.toml",
+        "libc/Cargo.toml",
+        "libc/src/lib.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/errno.rs",
+        "libc/src/c_abi/x86_64/syscall.rs",
+        "libc/src/c_abi/x86_64/isatty.rs",
+        "libc/src/c_abi/x86_64/ttyname_r.rs",
+        "include/errno.h",
+        "include/fcntl.h",
+        "include/stdint.h",
+        "include/unistd.h",
+        "include/features.h",
+        "include/sys/types.h",
+        "include/sys/syscall.h",
+        "include/bits/syscall.h",
+        "compat/x86_64/ttyname_r_header_abi_probe.c",
+        "compat/x86_64/ttyname_r_header_abi_probe.cpp",
+        "compat/x86_64/run_ttyname_r_header_abi.sh",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/libc_ttyname_r_probe.c",
+        "compat/x86_64/libc_ttyname_r_start.S",
+        "compat/x86_64/run_libc_ttyname_r.sh",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/README.md",
+        "STATUS.md",
+        "x86-64.md",
+        "scripts/dev-x86_64.sh",
+        "scripts/check_structure.py",
+    ):
+        require(
+            owner in owners,
+            f"static-c-ttyname-r source owners omit {owner}",
+        )
+
+    prerequisites = nonempty_strings(
+        artifact["x86_abi_prerequisites"],
+        "static-c-ttyname-r.x86_abi_prerequisites",
+    )
+    require(
+        any(
+            "SysV AMD64 `int ttyname_r(int, char *, size_t)`" in item
+            and "readlink=89" in item
+            and "fstat=5" in item
+            and "newfstatat=262" in item
+            and "AT_FDCWD=-100" in item
+            for item in prerequisites
+        ),
+        "static-c-ttyname-r must retain its direct x86 call boundary",
+    )
+    require(
+        any(
+            "29-byte `/proc/self/fd/<fd>`" in item
+            and "144-byte align-8" in item
+            and "offsets 0/8" in item
+            for item in prerequisites
+        ),
+        "static-c-ttyname-r must retain its private procfd/stat identity boundary",
+    )
+    require(
+        any(
+            "src/unistd/ttyname_r.c" in item
+            and "zero-capacity private dummy readlink output" in item
+            and "ERANGE" in item
+            and "EFAULT/EBADF/ENOTTY" in item
+            for item in prerequisites
+        ),
+        "static-c-ttyname-r must retain its exact pinned-musl result branches",
+    )
+    require(
+        any("PT_TLS errno" in item and "__tls_get_addr" in item for item in prerequisites),
+        "static-c-ttyname-r must retain its static errno TLS boundary",
+    )
+    header_prerequisites = nonempty_strings(
+        artifact["x86_header_prerequisites"],
+        "static-c-ttyname-r.x86_header_prerequisites",
+    )
+    require(
+        any(
+            "strict, POSIX, X/Open, GNU, and BSD" in item
+            and "unconditional `int ttyname_r(int, char *, size_t)`" in item
+            and "C++ C linkage" in item
+            for item in header_prerequisites
+        ),
+        "static-c-ttyname-r must retain its unconditional C/C++ header ABI",
+    )
+
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-ttyname-r"},
+        "static-c-ttyname-r must use the closed libc-ttyname-r command",
+    )
+    scope = evidence[0].get("scope")
+    require(
+        isinstance(scope, str)
+        and all(
+            phrase in scope
+            for phrase in (
+                "devpts terminal name",
+                "stale-errno preservation",
+                "ERANGE",
+                "EFAULT",
+                "EBADF",
+                "ENOTTY",
+                "readlink=89/fstat=5/newfstatat=262",
+                "isatty ioctl=16/TIOCGWINSZ=0x5413",
+                "public readlink/stat/fstat/ttyname",
+                "generic filesystem/path completion",
+                "terminal/session policy",
+                "public x86 support",
+            )
+        ),
+        "static-c-ttyname-r evidence must retain its observable bounded contract",
+    )
+
+    exports = set(
+        static_c_abi_export_names(
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        )
+    )
+    require(
+        "ttyname_r" in exports,
+        "static C ABI export contract omits ttyname_r",
+    )
+
+    source = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "ttyname_r.rs"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "pinned musl 1.2.6 release commit",
+        "src/unistd/ttyname_r.c::ttyname_r",
+        "src/internal/procfdname.c::__procfdname",
+        "src/unistd/readlink.c::readlink",
+        "PROC_FD_NAME_CAPACITY",
+        "struct KernelStat",
+        "raw_syscall::SYS_READLINK",
+        "raw_syscall::SYS_FSTAT",
+        "raw_syscall::SYS_NEWFSTATAT",
+        "isatty::isatty",
+        "if length == capacity",
+        "return ERANGE",
+        "return ENODEV",
+        'pub unsafe extern "C" fn ttyname_r',
+        "neither exports `ttyname`",
+    ):
+        require(
+            snippet in source,
+            f"ttyname_r implementation omits {snippet}",
+        )
+    exported = set(re.findall(r'pub unsafe extern "C" fn ([A-Za-z0-9_]+)', source))
+    require(
+        exported == {"ttyname_r"},
+        "ttyname_r implementation must export only ttyname_r",
+    )
+    for forbidden in (
+        "termios_control::",
+        "raw_syscall::SYS_OPEN",
+        "raw_syscall::SYS_OPENAT",
+        "TIOCSPTLCK",
+        "stat_compat::",
+        "crabc_core",
+        "crabc_mimalloc",
+    ):
+        require(
+            forbidden not in source,
+            f"ttyname_r implementation selects {forbidden}",
+        )
+
+    runner = (
+        ROOT / "compat" / "x86_64" / "run_libc_ttyname_r.sh"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "run_musl_oracle.sh",
+        "run_ttyname_r_header_abi.sh",
+        "static_c_abi_exports.txt",
+        "-nostdlib -static",
+        "--no-undefined",
+        "for symbol in __errno_location isatty ttyname_r",
+        "--disassemble=ttyname_r",
+        "project-header ttyname_r fixture contract drifted",
+        "fixture did not use the project",
+        "readlink/fstat/newfstatat syscall",
+        "fixed /proc/self/fd path spelling",
+        "candidate selects an excluded public helper",
+        'timeout "$EXECUTION_TIMEOUT"',
+        "__tls_get_addr",
+    ):
+        require(snippet in runner, f"ttyname_r runner omits {snippet}")
+
+    probe = (
+        ROOT / "compat" / "x86_64" / "libc_ttyname_r_probe.c"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "FIXTURE_ERANGE",
+        "FIXTURE_EFAULT",
+        "FIXTURE_EBADF",
+        "FIXTURE_ENOTTY",
+        "SYS_readlink == 89",
+        "SYS_newfstatat == 262",
+        "open_pty_pair",
+        "expected_terminal_name",
+        "ttyname_r(pair.slave, (char *)0, 0)",
+        "ttyname_r(pair.slave, (char *)0, sizeof(name))",
+        "ttyname_r(-1, (char *)name, sizeof(name))",
+        "ttyname_r(null_fd, (char *)name, sizeof(name))",
+    ):
+        require(snippet in probe, f"ttyname_r probe omits {snippet}")
+    for forbidden in ("ttyname(", "tcgetattr(", "tcsetattr(", "getpass("):
+        require(
+            forbidden not in probe,
+            f"ttyname_r fixture selects {forbidden}",
+        )
+
+    header_c = (
+        ROOT / "compat" / "x86_64" / "ttyname_r_header_abi_probe.c"
+    ).read_text(encoding="utf-8")
+    header_cxx = (
+        ROOT / "compat" / "x86_64" / "ttyname_r_header_abi_probe.cpp"
+    ).read_text(encoding="utf-8")
+    for snippet in ("ttyname_r declaration", "ttyname_r_function = ttyname_r"):
+        require(snippet in header_c, f"ttyname_r C header probe omits {snippet}")
+        require(snippet in header_cxx, f"ttyname_r C++ header probe omits {snippet}")
+
+    dispatcher = (ROOT / "scripts" / "dev-x86_64.sh").read_text(encoding="utf-8")
+    for snippet in (
+        "ttyname-r-header-abi)",
+        "libc-ttyname-r)",
+        "run_ttyname_r_header_abi()",
+        "run_libc_ttyname_r_probe()",
+    ):
+        require(snippet in dispatcher, f"x86 dispatcher omits {snippet}")
+
+
 def require_tcgetpgrp_artifact(family: Mapping[str, Any]) -> None:
     """Keep foreground-group observation below terminal/session promotion."""
     artifacts = require_verified_artifacts(
@@ -42784,6 +43071,7 @@ def validate_ledger(
     require_static_login_name_artifact(by_id["libc.posix-runtime"])
     require_ctermid_artifact(by_id["libc.posix-runtime"])
     require_isatty_artifact(by_id["libc.posix-runtime"])
+    require_ttyname_r_artifact(by_id["libc.posix-runtime"])
     require_tcgetpgrp_artifact(by_id["libc.posix-runtime"])
     require_tcsetpgrp_artifact(by_id["libc.posix-runtime"])
     require_getpass_artifact(by_id["libc.posix-runtime"])

@@ -2493,6 +2493,52 @@ native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc
 oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source mapping: src/unistd/isatty.c supplies the fixed TIOCGWINSZ private-scratch and raw-status-plus-one behavior oracle." }, { kind = "kernel-abi", source = "Linux 5.10 x86-64 ABI", role = "ioctl=16 register words, TIOCGWINSZ=0x5413 private winsize output, EBADF/ENOTTY, and devpts fixture contract." }, { kind = "elf-abi", source = "System V AMD64 psABI", role = "int argument/result ABI and static initial-exec TLS Variant-II fixture contract." }]
 
 [[family.verified_artifact]]
+id = "static-c-ttyname-r"
+description = "Private native x86 selected-static-archive `ttyname_r` caller-buffered terminal-name boundary inside still-planned `libc.posix-runtime`. One dependency-free `crabc-libc` archive resolves exactly `int ttyname_r(int, char *, size_t)` into a freestanding C fixture after equivalent pinned-musl execution. Pinned musl `src/unistd/ttyname_r.c` first reuses the separately selected `isatty` observation, then forms the fixed private `/proc/self/fd/<fd>` spelling from `src/internal/procfdname.c`, performs musl `src/unistd/readlink.c`'s zero-capacity dummy-byte compatibility path, NUL-terminates only a fitting caller buffer, and compares private Linux x86 device/inode output from the named target and original descriptor. A terminal success preserves errno; capacity exhaustion returns direct `ERANGE` without changing errno; raw `EFAULT`, `EBADF`, and `ENOTTY` return their current errno values. It neither exports `ttyname` or a static buffer, opens a pathname, creates a PTY/session, changes terminal state, nor selects generic `readlink`/`stat`/`fstat`, filesystem traversal/path policy, generic ioctl, terminal/session policy, family completion, promotion, or public x86 support."
+source_owners = [
+  "compat/upstreams.toml",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/errno.rs",
+  "libc/src/c_abi/x86_64/syscall.rs",
+  "libc/src/c_abi/x86_64/isatty.rs",
+  "libc/src/c_abi/x86_64/ttyname_r.rs",
+  "include/errno.h",
+  "include/fcntl.h",
+  "include/stdint.h",
+  "include/unistd.h",
+  "include/features.h",
+  "include/sys/types.h",
+  "include/sys/syscall.h",
+  "include/bits/syscall.h",
+  "compat/x86_64/ttyname_r_header_abi_probe.c",
+  "compat/x86_64/ttyname_r_header_abi_probe.cpp",
+  "compat/x86_64/run_ttyname_r_header_abi.sh",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/libc_ttyname_r_probe.c",
+  "compat/x86_64/libc_ttyname_r_start.S",
+  "compat/x86_64/run_libc_ttyname_r.sh",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "compat/x86_64/README.md",
+  "STATUS.md",
+  "x86-64.md",
+  "scripts/dev-x86_64.sh",
+  "scripts/check_structure.py",
+]
+x86_abi_prerequisites = [
+  "The SysV AMD64 `int ttyname_r(int, char *, size_t)` ABI receives the signed four-byte descriptor in rdi, a caller-owned char pointer in rsi, and size_t in rdx, then returns the direct error number or zero in eax. The closed Linux x86 path composes selected isatty ioctl=16/TIOCGWINSZ=0x5413 with readlink=89 in rdi/rsi/rdx, fstat=5 in rdi/rsi, and newfstatat=262 in rdi/rsi/rdx/r10 using AT_FDCWD=-100 and flags zero",
+  "The private procfd pathname is the exact 29-byte `/proc/self/fd/<fd>` capacity from musl's prefix plus three int-width decimal groups and two spare bytes. Linux x86 `struct stat` output is private 144-byte align-8 storage; ttyname_r compares only the u64 st_dev/st_ino words at offsets 0/8 and exports no C stat record or filesystem API",
+  "Pinned musl 1.2.6 `src/unistd/ttyname_r.c`, `src/internal/procfdname.c`, and `src/unistd/readlink.c` require isatty first, zero-capacity private dummy readlink output, direct ERANGE when the resulting count equals caller capacity, a fitting terminator write, then stat/fstat identity equality. Successful terminal naming preserves errno; raw EFAULT/EBADF/ENOTTY return the current errno, while local ERANGE/ENODEV do not publish a replacement errno",
+  "The final static candidate has a PT_TLS errno datum with direct initial-exec TPOFF access and no TLSGD/TLSLD/TLSDESC/GOTTPOFF/DTPMOD/DTPOFF model form or __tls_get_addr; fixture-local startup writes one Variant-II thread-pointer self word at %fs:0 without claiming CRT or TLS lifecycle",
+]
+x86_header_prerequisites = ["The focused pinned-musl/project-header-first strict, POSIX, X/Open, GNU, and BSD C11/C++17 gate proves the unconditional `int ttyname_r(int, char *, size_t)` `unistd.h` declaration, exact C++ C linkage, and project `sys/types.h`/`features.h` provenance. It selects no terminal naming behavior, static archive linkage, installed-header completion, or public x86 support."]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-ttyname-r", scope = "Pinned-musl/project C/C++ header compilation plus equivalent pinned-musl C execution and a true dependency-free x86 crabc-libc archive with a `-nostdlib -static` candidate under a deterministic timeout. The fixture proves one devpts terminal name exactly agrees with a raw procfd readlink, success/stale-errno preservation, fitting NUL termination with an untouched caller tail, one-byte and zero-capacity ERANGE without errno replacement, nonzero-capacity null-buffer EFAULT, invalid-fd EBADF, and /dev/null ENOTTY. The gate audits exact crate-owned exports, initial-TLS errno, no interpreter/DT_NEEDED/unresolved symbol or dynamic-TLS resolver, the direct readlink=89/fstat=5/newfstatat=262 code and selected isatty ioctl=16/TIOCGWINSZ=0x5413 closure, fixed `/proc/self/fd/` spelling, and absence of public readlink/stat/fstat/ttyname or PTY/session/termios helpers. Fixture-local raw devpts setup is harness-only. It excludes generic filesystem/path completion, terminal/session policy, generic ioctl, ttyname static storage, family completion, promotion, and public x86 support." }]
+oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source mapping: src/unistd/ttyname_r.c, src/unistd/isatty.c, src/unistd/readlink.c, and src/internal/procfdname.c supply the reentrant terminal-name, zero-capacity, and errno behavior oracle." }, { kind = "kernel-abi", source = "Linux 5.10 x86-64 ABI", role = "ioctl=16/TIOCGWINSZ=0x5413, readlink=89, fstat=5, newfstatat=262, private stat identity, and devpts fixture contract." }, { kind = "elf-abi", source = "System V AMD64 psABI", role = "int/pointer/size_t argument/result ABI and static initial-exec TLS Variant-II fixture contract." }]
+
+[[family.verified_artifact]]
 id = "static-c-tcgetpgrp"
 description = "Private native x86 selected-static-archive `tcgetpgrp` foreground-group-observation boundary inside still-planned `libc.posix-runtime`. One dependency-free `crabc-libc` archive resolves exactly `pid_t tcgetpgrp(int)` into a freestanding C fixture after equivalent pinned-musl execution. Pinned musl `src/unistd/tcgetpgrp.c` maps fixed Linux `ioctl=16`/`TIOCGPGRP=0x540f` and a private four-byte int scratch to an output `pid_t`: a successful ioctl returns that foreground group and preserves errno, while raw `EBADF`/`ENOTTY` errors return `-1` and publish the raw errno. It reuses the existing exact raw ioctl/errno boundary without creating a generic ioctl owner. Fixture-local raw devpts setup plus one child-only fork/setsid/TIOCSCTTY transition merely establishes the kernel foreground-group precondition; neither the archive nor its C ABI exports session/process-control policy. The leaf neither creates a session nor chooses or changes a process group, opens or names a terminal, or selects terminal discovery, termios mutation/control, PTY/session policy, `tcsetpgrp`, `tcgetsid`, `ttyname`, `getpass`, generic ioctl, generic filesystem completion, temporary-file creation family, dynamic runtime, CRT, loader, sysroot, family completion, promotion, or public x86 support."
 source_owners = [

@@ -50,7 +50,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 41)
-        self.assertEqual(report["verified_artifact_count"], 204)
+        self.assertEqual(report["verified_artifact_count"], 205)
         self.assertEqual(report["header_layout_probe_count"], 47)
         self.assertEqual(report["public_header_inventory_count"], 183)
         self.assertEqual(report["header_foundation_header_count"], 191)
@@ -6968,6 +6968,56 @@ class X86ParityLedgerTests(unittest.TestCase):
             "getpass",
         ):
             self.assertIn(phrase, isatty_scope)
+        ttyname_r = artifacts_by_id["static-c-ttyname-r"]
+        assert isinstance(ttyname_r, dict)
+        self.assertNotIn("capabilities", ttyname_r)
+        for owner in (
+            "libc/src/c_abi/x86_64/ttyname_r.rs",
+            "compat/x86_64/ttyname_r_header_abi_probe.c",
+            "compat/x86_64/ttyname_r_header_abi_probe.cpp",
+            "compat/x86_64/run_ttyname_r_header_abi.sh",
+            "compat/x86_64/libc_ttyname_r_probe.c",
+            "compat/x86_64/libc_ttyname_r_start.S",
+            "compat/x86_64/run_libc_ttyname_r.sh",
+            "compat/x86_64/validate_parity_ledger.py",
+            "scripts/check_structure.py",
+        ):
+            self.assertIn(owner, ttyname_r["source_owners"])
+        self.assertEqual(
+            {evidence["command"] for evidence in ttyname_r["native_evidence"]},
+            {"./scripts/dev-x86_64.sh libc-ttyname-r"},
+        )
+        for phrase in (
+            "`ttyname_r` caller-buffered terminal-name boundary",
+            "exactly `int ttyname_r(int, char *, size_t)`",
+            "`/proc/self/fd/<fd>`",
+            "zero-capacity dummy-byte compatibility path",
+            "`ERANGE`",
+            "`EFAULT`, `EBADF`, and `ENOTTY`",
+            "neither exports `ttyname`",
+            "generic `readlink`/`stat`/`fstat`",
+            "terminal/session policy",
+            "family completion",
+            "promotion",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, ttyname_r["description"])
+        ttyname_r_scope = ttyname_r["native_evidence"][0]["scope"]
+        for phrase in (
+            "devpts terminal name",
+            "stale-errno preservation",
+            "ERANGE",
+            "EFAULT",
+            "EBADF",
+            "ENOTTY",
+            "readlink=89/fstat=5/newfstatat=262",
+            "isatty ioctl=16/TIOCGWINSZ=0x5413",
+            "public readlink/stat/fstat/ttyname",
+            "generic filesystem/path completion",
+            "terminal/session policy",
+            "ttyname static storage",
+        ):
+            self.assertIn(phrase, ttyname_r_scope)
         tcgetpgrp = artifacts_by_id["static-c-tcgetpgrp"]
         assert isinstance(tcgetpgrp, dict)
         self.assertNotIn("capabilities", tcgetpgrp)
@@ -13633,6 +13683,62 @@ class X86ParityLedgerTests(unittest.TestCase):
         evidence[0]["command"] = "./scripts/dev-x86_64.sh libc-termios-control"
         with self.assertRaisesRegex(
             ledger.LedgerError, "closed libc-isatty command"
+        ):
+            ledger.validate_ledger(data)
+
+    def test_static_ttyname_r_artifact_keeps_its_nonpromoting_contract(self) -> None:
+        data = self.data()
+        family = self.family(data, "libc.posix-runtime")
+        family["status"] = "foundation-verified"
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "static-c-ttyname-r must not promote"
+        ):
+            ledger.require_ttyname_r_artifact(family)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-ttyname-r"
+        )
+        artifact["description"] = artifact["description"].replace(
+            "zero-capacity dummy-byte compatibility path", "generic short buffer"
+        )
+        with self.assertRaisesRegex(
+            ledger.LedgerError,
+            "description omits zero-capacity dummy-byte compatibility path",
+        ):
+            ledger.validate_ledger(data)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-ttyname-r"
+        )
+        artifact["capabilities"] = ["terminal.tty-path"]
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "must not carry capabilities"
+        ):
+            ledger.validate_ledger(data)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-ttyname-r"
+        )
+        evidence = artifact["native_evidence"]
+        assert isinstance(evidence, list) and isinstance(evidence[0], dict)
+        evidence[0]["command"] = "./scripts/dev-x86_64.sh libc-isatty"
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "closed libc-ttyname-r command"
         ):
             ledger.validate_ledger(data)
 

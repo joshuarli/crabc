@@ -256,6 +256,7 @@ X86_RUNTIME_FOUNDATION_LIBC_SOURCES = {
     Path("libc/src/c_abi/x86_64/strsignal.rs"),
     Path("libc/src/c_abi/x86_64/termios_control.rs"),
     Path("libc/src/c_abi/x86_64/isatty.rs"),
+    Path("libc/src/c_abi/x86_64/ttyname_r.rs"),
     Path("libc/src/c_abi/x86_64/tcgetpgrp.rs"),
     Path("libc/src/c_abi/x86_64/tcsetpgrp.rs"),
     Path("libc/src/c_abi/x86_64/getpass.rs"),
@@ -3770,6 +3771,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         '#[path = "pthread_once.rs"]',
         '#[path = "termios_control.rs"]',
         '#[path = "isatty.rs"]',
+        '#[path = "ttyname_r.rs"]',
         '#[path = "tcgetpgrp.rs"]',
         '#[path = "tcsetpgrp.rs"]',
         '#[path = "getpass.rs"]',
@@ -6576,6 +6578,161 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         if required not in x86_runner:
             errors.append(
                 "scripts/dev-x86_64.sh: selected static isatty dispatcher is "
+                f"missing {required!r}"
+            )
+
+    ttyname_r_source = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "ttyname_r.rs"
+    )
+    ttyname_r_text = ttyname_r_source.read_text(errors="replace")
+    for required in (
+        "pinned musl 1.2.6 release commit",
+        "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+        "src/unistd/ttyname_r.c::ttyname_r",
+        "src/internal/procfdname.c::__procfdname",
+        "src/unistd/readlink.c::readlink",
+        "PROC_FD_NAME_CAPACITY",
+        "struct KernelStat",
+        "raw_syscall::SYS_READLINK",
+        "raw_syscall::SYS_FSTAT",
+        "raw_syscall::SYS_NEWFSTATAT",
+        "isatty::isatty",
+        "if length == capacity",
+        "return ERANGE",
+        "return ENODEV",
+        "neither exports `ttyname`",
+    ):
+        if required not in ttyname_r_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/ttyname_r.rs: selected static terminal "
+                f"name boundary is missing {required!r}"
+            )
+    ttyname_r_exports = set(
+        re.findall(
+            r'(?m)^pub\s+unsafe\s+extern\s+"C"\s+fn\s+(\w+)\s*\(',
+            ttyname_r_text,
+        )
+    )
+    if ttyname_r_exports != {"ttyname_r"}:
+        errors.append(
+            "libc/src/c_abi/x86_64/ttyname_r.rs: selected static terminal "
+            "name artifact must export only ttyname_r"
+        )
+    for forbidden in (
+        "termios_control::",
+        "raw_syscall::SYS_OPEN",
+        "raw_syscall::SYS_OPENAT",
+        "TIOCSPTLCK",
+        "stat_compat::",
+        "crabc_core",
+        "crabc_mimalloc",
+    ):
+        if forbidden in ttyname_r_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/ttyname_r.rs: selected static terminal "
+                f"name boundary must not select {forbidden!r}"
+            )
+
+    ttyname_r_runner = (
+        ROOT / "compat" / "x86_64" / "run_libc_ttyname_r.sh"
+    ).read_text(errors="replace")
+    ttyname_r_header_runner = (
+        ROOT / "compat" / "x86_64" / "run_ttyname_r_header_abi.sh"
+    ).read_text(errors="replace")
+    ttyname_r_header_c = (
+        ROOT / "compat" / "x86_64" / "ttyname_r_header_abi_probe.c"
+    ).read_text(errors="replace")
+    ttyname_r_header_cxx = (
+        ROOT / "compat" / "x86_64" / "ttyname_r_header_abi_probe.cpp"
+    ).read_text(errors="replace")
+    ttyname_r_probe = (
+        ROOT / "compat" / "x86_64" / "libc_ttyname_r_probe.c"
+    ).read_text(errors="replace")
+    ttyname_r_start = (
+        ROOT / "compat" / "x86_64" / "libc_ttyname_r_start.S"
+    ).read_text(errors="replace")
+    for required in (
+        "run_musl_oracle.sh",
+        "run_ttyname_r_header_abi.sh",
+        "static_c_abi_exports.txt",
+        "-nostdlib -static",
+        "--no-undefined",
+        "for symbol in __errno_location isatty ttyname_r",
+        "--disassemble=ttyname_r",
+        "project-header ttyname_r fixture contract drifted",
+        "readlink/fstat/newfstatat syscall",
+        "fixed /proc/self/fd path spelling",
+        "candidate selects an excluded public helper",
+        'timeout "$EXECUTION_TIMEOUT"',
+        "candidate retains a dynamic TLS model",
+    ):
+        if required not in ttyname_r_runner:
+            errors.append(
+                "compat/x86_64/run_libc_ttyname_r.sh: selected static terminal "
+                f"name evidence is missing {required!r}"
+            )
+    for required in (
+        "ttyname_r_header_abi_probe.c",
+        "ttyname_r_header_abi_probe.cpp",
+        "Pinned musl 1.2.6",
+        "unconditional <unistd.h> declaration",
+        "retained a mangled ttyname_r reference",
+    ):
+        if required not in ttyname_r_header_runner:
+            errors.append(
+                "compat/x86_64/run_ttyname_r_header_abi.sh: selected static "
+                f"terminal-name declaration evidence is missing {required!r}"
+            )
+    for required in ("ttyname_r declaration", "ttyname_r_function = ttyname_r"):
+        if required not in ttyname_r_header_c or required not in ttyname_r_header_cxx:
+            errors.append(
+                "compat/x86_64/ttyname_r_header_abi_probe: selected static "
+                f"terminal-name declaration evidence is missing {required!r}"
+            )
+    for required in (
+        "FIXTURE_ERANGE",
+        "FIXTURE_EFAULT",
+        "FIXTURE_EBADF",
+        "FIXTURE_ENOTTY",
+        "SYS_readlink == 89",
+        "SYS_newfstatat == 262",
+        "open_pty_pair",
+        "expected_terminal_name",
+        "ttyname_r(pair.slave, (char *)0, 0)",
+        "ttyname_r(pair.slave, (char *)0, sizeof(name))",
+        "ttyname_r(-1, (char *)name, sizeof(name))",
+        "ttyname_r(null_fd, (char *)name, sizeof(name))",
+    ):
+        if required not in ttyname_r_probe:
+            errors.append(
+                "compat/x86_64/libc_ttyname_r_probe.c: selected static terminal "
+                f"name regression is missing {required!r}"
+            )
+    for forbidden in ("ttyname(", "tcgetattr(", "tcsetattr(", "getpass("):
+        if forbidden in ttyname_r_probe:
+            errors.append(
+                "compat/x86_64/libc_ttyname_r_probe.c: selected static terminal "
+                f"name fixture must not select {forbidden!r}"
+            )
+    for required in (
+        "ARCH_SET_FS",
+        "mov %rsi, %fs:0",
+        "crabc_x86_64_ttyname_r_probe",
+    ):
+        if required not in ttyname_r_start:
+            errors.append(
+                "compat/x86_64/libc_ttyname_r_start.S: selected static terminal "
+                f"name TLS fixture is missing {required!r}"
+            )
+    for required in (
+        "ttyname-r-header-abi)",
+        "run_ttyname_r_header_abi",
+        "libc-ttyname-r)",
+        "run_libc_ttyname_r_probe",
+    ):
+        if required not in x86_runner:
+            errors.append(
+                "scripts/dev-x86_64.sh: selected static ttyname_r dispatcher is "
                 f"missing {required!r}"
             )
 
@@ -11033,6 +11190,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         gethostid_text,
         gettid_text,
         isatty_text,
+        ttyname_r_text,
         tcgetpgrp_text,
         tcsetpgrp_text,
         process_context_text,
@@ -11351,6 +11509,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         "gethostid",
         "gettid",
         "isatty",
+        "ttyname_r",
         "tcgetpgrp",
         "tcsetpgrp",
         "getpid",
@@ -11595,8 +11754,8 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         errors.append(
             "libc/src/c_abi/x86_64: selected static archive must export only its "
             "stat, credential, errno, bootstrap-memory/fenv/continuation, simple "
-            "signal-control, separate realtime-minimum/realtime-maximum bridges, one pure GNU signal-set predicate, paired GNU binary set-operation leaf, and a three-symbol POSIX signal-set mutation leaf, bounded process-signal execution, and one legacy single-signal pause wait, bounded pthread create/exit/join/detach initial-TLS worker, its private selected-main/worker pthread-key/C11-TSS lifecycle, private process-normal pthread mutexes and their musl private condition-variable handoff, the complete selected rwlock/attribute family with private-or-shared futex operation, plus the distinct C11 plain-sync adapter and normal-return pthread/C11 once state machine, its typed C11 create/exit/join/detach sibling, and pthread/C11 identity aliases, named termios-control, direct terminal-descriptor and foreground-group observations plus one named foreground-group assignment, historical ctermid pathname spelling, constant historical gethostid compatibility, direct GNU gettid observation, selected process-context, child-reaping, C11 immediate termination, callback algorithms, direct clock_gettime, binary64 difftime, caller-buffered fixed-UTC gmtime_r, fixed-UTC timegm, a GNU current-CPU raw-fallback observation leaf, a status-returning POSIX scheduler-yield leaf, caller-owned mapping-core, no-cancellation mapping synchronization, direct anonymous-memory descriptor creation, nanosleep, and clock_nanosleep, selected "
-            "signal-control, separate realtime-minimum/realtime-maximum bridges, one historical SIGALRM interval-timer adapter leaf, one pure GNU signal-set predicate, paired GNU binary set-operation leaf, and a three-symbol POSIX signal-set mutation leaf, bounded process-signal execution, and one legacy single-signal pause wait, bounded pthread create/exit/join/detach initial-TLS worker, its private selected-main/worker pthread-key/C11-TSS lifecycle, private process-normal pthread mutexes and their musl private condition-variable handoff, the complete selected rwlock/attribute family with private-or-shared futex operation, plus the distinct C11 plain-sync adapter and normal-return pthread/C11 once state machine, its typed C11 create/exit/join/detach sibling, and pthread/C11 identity aliases, named termios-control, direct terminal-descriptor and foreground-group observations plus one named foreground-group assignment, historical ctermid pathname spelling, constant historical gethostid compatibility, selected process-context, child-reaping, C11 immediate termination, callback algorithms, direct clock_gettime, binary64 difftime, caller-buffered fixed-UTC gmtime_r, fixed-UTC timegm, a status-returning POSIX scheduler-yield leaf, caller-owned mapping-core, no-cancellation mapping synchronization, direct anonymous-memory descriptor creation, nanosleep, and clock_nanosleep, selected "
+            "signal-control, separate realtime-minimum/realtime-maximum bridges, one pure GNU signal-set predicate, paired GNU binary set-operation leaf, and a three-symbol POSIX signal-set mutation leaf, bounded process-signal execution, and one legacy single-signal pause wait, bounded pthread create/exit/join/detach initial-TLS worker, its private selected-main/worker pthread-key/C11-TSS lifecycle, private process-normal pthread mutexes and their musl private condition-variable handoff, the complete selected rwlock/attribute family with private-or-shared futex operation, plus the distinct C11 plain-sync adapter and normal-return pthread/C11 once state machine, its typed C11 create/exit/join/detach sibling, and pthread/C11 identity aliases, named termios-control, direct terminal-descriptor and foreground-group observations plus one named foreground-group assignment, caller-buffered terminal naming, historical ctermid pathname spelling, constant historical gethostid compatibility, direct GNU gettid observation, selected process-context, child-reaping, C11 immediate termination, callback algorithms, direct clock_gettime, binary64 difftime, caller-buffered fixed-UTC gmtime_r, fixed-UTC timegm, a GNU current-CPU raw-fallback observation leaf, a status-returning POSIX scheduler-yield leaf, caller-owned mapping-core, no-cancellation mapping synchronization, direct anonymous-memory descriptor creation, nanosleep, and clock_nanosleep, selected "
+            "signal-control, separate realtime-minimum/realtime-maximum bridges, one historical SIGALRM interval-timer adapter leaf, one pure GNU signal-set predicate, paired GNU binary set-operation leaf, and a three-symbol POSIX signal-set mutation leaf, bounded process-signal execution, and one legacy single-signal pause wait, bounded pthread create/exit/join/detach initial-TLS worker, its private selected-main/worker pthread-key/C11-TSS lifecycle, private process-normal pthread mutexes and their musl private condition-variable handoff, the complete selected rwlock/attribute family with private-or-shared futex operation, plus the distinct C11 plain-sync adapter and normal-return pthread/C11 once state machine, its typed C11 create/exit/join/detach sibling, and pthread/C11 identity aliases, named termios-control, direct terminal-descriptor and foreground-group observations plus one named foreground-group assignment, caller-buffered terminal naming, historical ctermid pathname spelling, constant historical gethostid compatibility, selected process-context, child-reaping, C11 immediate termination, callback algorithms, direct clock_gettime, binary64 difftime, caller-buffered fixed-UTC gmtime_r, fixed-UTC timegm, a status-returning POSIX scheduler-yield leaf, caller-owned mapping-core, no-cancellation mapping synchronization, direct anonymous-memory descriptor creation, nanosleep, and clock_nanosleep, selected "
             "POSIX _exit forwarding, descriptor-entry, selected filesystem-access, bounded descriptor-control, timestamp updates, and descriptor-I/O, selected process-resources, selected readiness/signal-waits, "
             "selected socket transport and selected socket-message/options, selected system-observation, selected UTS-identity, "
             "selected numeric-address codecs, immutable IPv6 unspecified/loopback address data objects, and legacy classful IPv4 arithmetic, fixed-profile h_errno message text, byte-string, legacy-memory adapters, source-backed memccpy/mempcpy, caller-buffer strsep, random-entropy, memory-search, C-string-copy, immutable error-string, "
@@ -11652,6 +11811,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         ("ctermid.rs", ctermid_text),
         ("gettid.rs", gettid_text),
         ("isatty.rs", isatty_text),
+        ("ttyname_r.rs", ttyname_r_text),
         ("tcgetpgrp.rs", tcgetpgrp_text),
         ("tcsetpgrp.rs", tcsetpgrp_text),
         ("mktemp.rs", mktemp_text),

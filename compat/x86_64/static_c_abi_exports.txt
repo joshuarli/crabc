@@ -902,6 +902,7 @@ tss_create
 tss_delete
 tss_get
 tss_set
+ttyname_r
 twalk
 umask
 uname

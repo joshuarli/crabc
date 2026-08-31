@@ -1378,7 +1378,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "libc-timerfd|libc-signalfd|libc-sigpause|libc-sigisemptyset|libc-sigandset-sigorset|libc-sigpending|libc-sigrtmax|libc-sigrtmin|libc-sched-getscheduler|libc-alarm|libc-sigaddset-sigdelset-sigfillset",
             "libc-sched-getcpu|libc-sched-yield",
             "sched-getscheduler-header-abi",
-            "ctermid-header-abi|gethostid-header-abi|getpagesize-header-abi|gettid-header-abi|isatty-header-abi|tcgetpgrp-header-abi|tcsetpgrp-header-abi|getpass-header-abi|libc-ctermid|libc-gethostid|libc-getpagesize|libc-gettid|libc-isatty|libc-tcgetpgrp|libc-tcsetpgrp|libc-getpass|mkfifo-header-abi|mkfifoat-header-abi|libc-mkfifo|libc-mkfifoat|mktemp-header-abi|libc-mktemp",
+            "ctermid-header-abi|gethostid-header-abi|getpagesize-header-abi|gettid-header-abi|isatty-header-abi|ttyname-r-header-abi|tcgetpgrp-header-abi|tcsetpgrp-header-abi|getpass-header-abi|libc-ctermid|libc-gethostid|libc-getpagesize|libc-gettid|libc-isatty|libc-ttyname-r|libc-tcgetpgrp|libc-tcsetpgrp|libc-getpass|mkfifo-header-abi|mkfifoat-header-abi|libc-mkfifo|libc-mkfifoat|mktemp-header-abi|libc-mktemp",
             "readlinkat-header-abi|libc-readlinkat",
             "stdio-permanent-line-io-header-abi|stdio-octal-hex-scan-header-abi",
             "math-complex-complete-header-abi|libc-math-complex-complete",
@@ -2947,6 +2947,18 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         )
         self.assertIn(
             '    libc-isatty)\n        [ "$#" -eq 0 ] || fail "libc-isatty takes no arguments"',
+            source,
+        )
+        self.assertIn('run_ttyname_r_header_abi()', source)
+        self.assertIn(
+            '/workspace/compat/x86_64/run_ttyname_r_header_abi.sh', source
+        )
+        self.assertIn('run_libc_ttyname_r_probe()', source)
+        self.assertIn(
+            '/workspace/compat/x86_64/run_libc_ttyname_r.sh', source
+        )
+        self.assertIn(
+            '    libc-ttyname-r)\n        [ "$#" -eq 0 ] || fail "libc-ttyname-r takes no arguments"',
             source,
         )
         self.assertIn('run_tcgetpgrp_header_abi()', source)
@@ -10206,6 +10218,132 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             self.assertIn(required, header_cxx)
         self.assertIn("isatty-header-abi", runner)
         self.assertIn("libc-isatty", runner)
+
+    def test_libc_static_c_abi_ttyname_r_artifact_stays_narrow(self) -> None:
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        source = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "ttyname_r.rs"
+        ).read_text(encoding="utf-8")
+        probe = (
+            ROOT / "compat" / "x86_64" / "libc_ttyname_r_probe.c"
+        ).read_text(encoding="utf-8")
+        start = (
+            ROOT / "compat" / "x86_64" / "libc_ttyname_r_start.S"
+        ).read_text(encoding="utf-8")
+        artifact_runner = (
+            ROOT / "compat" / "x86_64" / "run_libc_ttyname_r.sh"
+        ).read_text(encoding="utf-8")
+        header_runner = (
+            ROOT / "compat" / "x86_64" / "run_ttyname_r_header_abi.sh"
+        ).read_text(encoding="utf-8")
+        header_c = (
+            ROOT / "compat" / "x86_64" / "ttyname_r_header_abi_probe.c"
+        ).read_text(encoding="utf-8")
+        header_cxx = (
+            ROOT / "compat" / "x86_64" / "ttyname_r_header_abi_probe.cpp"
+        ).read_text(encoding="utf-8")
+        static_exports = (
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        ).read_text(encoding="utf-8")
+        static_export_names = {
+            line
+            for line in static_exports.splitlines()
+            if line and not line.startswith("#")
+        }
+        runner = RUNNER.read_text(encoding="utf-8")
+
+        self.assertIn('#[path = "ttyname_r.rs"]', static_root)
+        self.assertIn("ttyname_r", static_export_names)
+        self.assertEqual(
+            set(
+                re.findall(
+                    r'(?m)^pub\s+unsafe\s+extern\s+"C"\s+fn\s+(\w+)\s*\(',
+                    source,
+                )
+            ),
+            {"ttyname_r"},
+        )
+        for required in (
+            "pinned musl 1.2.6 release commit",
+            "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+            "src/unistd/ttyname_r.c::ttyname_r",
+            "src/internal/procfdname.c::__procfdname",
+            "src/unistd/readlink.c::readlink",
+            "PROC_FD_NAME_CAPACITY",
+            "struct KernelStat",
+            "raw_syscall::SYS_READLINK",
+            "raw_syscall::SYS_FSTAT",
+            "raw_syscall::SYS_NEWFSTATAT",
+            "isatty::isatty",
+            "if length == capacity",
+            "return ERANGE",
+            "return ENODEV",
+            "neither exports `ttyname`",
+        ):
+            self.assertIn(required, source)
+        for forbidden in (
+            "termios_control::",
+            "raw_syscall::SYS_OPEN",
+            "raw_syscall::SYS_OPENAT",
+            "TIOCSPTLCK",
+            "stat_compat::",
+            "crabc_core",
+            "crabc_mimalloc",
+        ):
+            self.assertNotIn(forbidden, source)
+        for required in (
+            "FIXTURE_ERANGE",
+            "FIXTURE_EFAULT",
+            "FIXTURE_EBADF",
+            "FIXTURE_ENOTTY",
+            "SYS_readlink == 89",
+            "SYS_newfstatat == 262",
+            "open_pty_pair",
+            "expected_terminal_name",
+            "ttyname_r(pair.slave, (char *)0, 0)",
+            "ttyname_r(pair.slave, (char *)0, sizeof(name))",
+            "ttyname_r(-1, (char *)name, sizeof(name))",
+            "ttyname_r(null_fd, (char *)name, sizeof(name))",
+        ):
+            self.assertIn(required, probe)
+        for forbidden in ("ttyname(", "tcgetattr(", "tcsetattr(", "getpass("):
+            self.assertNotIn(forbidden, probe)
+        for required in (
+            "ARCH_SET_FS",
+            "mov %rsi, %fs:0",
+            "crabc_x86_64_ttyname_r_probe",
+        ):
+            self.assertIn(required, start)
+        for required in (
+            "run_musl_oracle.sh",
+            "run_ttyname_r_header_abi.sh",
+            "static_c_abi_exports.txt",
+            "-nostdlib -static",
+            "-Wl,--no-undefined",
+            "for symbol in __errno_location isatty ttyname_r",
+            "--disassemble=ttyname_r",
+            "project-header ttyname_r fixture contract drifted",
+            "readlink/fstat/newfstatat syscall",
+            "fixed /proc/self/fd path spelling",
+            "candidate selects an excluded public helper",
+            'timeout "$EXECUTION_TIMEOUT"',
+        ):
+            self.assertIn(required, artifact_runner)
+        for required in (
+            "ttyname_r_header_abi_probe.c",
+            "ttyname_r_header_abi_probe.cpp",
+            "Pinned musl 1.2.6",
+            "unconditional <unistd.h> declaration",
+            "retained a mangled ttyname_r reference",
+        ):
+            self.assertIn(required, header_runner)
+        for required in ("ttyname_r declaration", "ttyname_r_function = ttyname_r"):
+            self.assertIn(required, header_c)
+            self.assertIn(required, header_cxx)
+        self.assertIn("ttyname-r-header-abi", runner)
+        self.assertIn("libc-ttyname-r", runner)
 
     def test_libc_static_c_abi_tcgetpgrp_artifact_stays_narrow(self) -> None:
         static_root = (

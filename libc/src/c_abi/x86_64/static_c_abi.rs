@@ -350,6 +350,8 @@ mod gethostid;
 mod gettid;
 #[path = "isatty.rs"]
 mod isatty;
+#[path = "ttyname_r.rs"]
+mod ttyname_r;
 #[path = "tcgetpgrp.rs"]
 mod tcgetpgrp;
 #[path = "tcsetpgrp.rs"]

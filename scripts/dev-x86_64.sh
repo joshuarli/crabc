@@ -134,6 +134,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   gethostid-header-abi  compile the staged x86 C/C++ X/Open gethostid declaration
   gettid-header-abi  compile the staged x86 C/C++ GNU gettid declaration
   isatty-header-abi  compile the staged x86 C/C++ isatty declaration
+  ttyname-r-header-abi  compile the staged x86 C/C++ ttyname_r declaration
   tcgetpgrp-header-abi  compile the staged x86 C/C++ tcgetpgrp declaration
   tcsetpgrp-header-abi  compile the staged x86 C/C++ tcsetpgrp declaration
   getpass-header-abi  compile the staged x86 C/C++ getpass declaration
@@ -298,6 +299,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-gethostid  run the static x86 crabc-libc gethostid compatibility slice
   libc-gettid  run the static x86 crabc-libc gettid compatibility slice
   libc-isatty  run the static x86 crabc-libc descriptor-observation slice
+  libc-ttyname-r  run the static x86 crabc-libc terminal-name slice
   libc-tcgetpgrp  run the static x86 crabc-libc foreground-group observation slice
   libc-tcsetpgrp  run the static x86 crabc-libc foreground-group assignment slice
   libc-getpass  run the static x86 crabc-libc getpass terminal slice
@@ -2647,6 +2649,10 @@ run_isatty_header_abi() {
     run_in_container bash /workspace/compat/x86_64/run_isatty_header_abi.sh
 }
 
+run_ttyname_r_header_abi() {
+    run_in_container bash /workspace/compat/x86_64/run_ttyname_r_header_abi.sh
+}
+
 run_tcgetpgrp_header_abi() {
     run_in_container bash /workspace/compat/x86_64/run_tcgetpgrp_header_abi.sh
 }
@@ -3555,6 +3561,10 @@ run_libc_isatty_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_isatty.sh
 }
 
+run_libc_ttyname_r_probe() {
+    run_in_container bash /workspace/compat/x86_64/run_libc_ttyname_r.sh
+}
+
 run_libc_tcgetpgrp_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_tcgetpgrp.sh
 }
@@ -3852,7 +3862,7 @@ case "$command" in
     libc-timerfd|libc-signalfd|libc-sigpause|libc-sigisemptyset|libc-sigandset-sigorset|libc-sigpending|libc-sigrtmax|libc-sigrtmin|libc-sched-getscheduler|libc-alarm|libc-sigaddset-sigdelset-sigfillset) ;;
     libc-sched-getcpu|libc-sched-yield) ;;
     sched-getscheduler-header-abi) ;;
-    ctermid-header-abi|gethostid-header-abi|getpagesize-header-abi|gettid-header-abi|isatty-header-abi|tcgetpgrp-header-abi|tcsetpgrp-header-abi|getpass-header-abi|libc-ctermid|libc-gethostid|libc-getpagesize|libc-gettid|libc-isatty|libc-tcgetpgrp|libc-tcsetpgrp|libc-getpass|mkfifo-header-abi|mkfifoat-header-abi|libc-mkfifo|libc-mkfifoat|mktemp-header-abi|libc-mktemp) ;;
+    ctermid-header-abi|gethostid-header-abi|getpagesize-header-abi|gettid-header-abi|isatty-header-abi|ttyname-r-header-abi|tcgetpgrp-header-abi|tcsetpgrp-header-abi|getpass-header-abi|libc-ctermid|libc-gethostid|libc-getpagesize|libc-gettid|libc-isatty|libc-ttyname-r|libc-tcgetpgrp|libc-tcsetpgrp|libc-getpass|mkfifo-header-abi|mkfifoat-header-abi|libc-mkfifo|libc-mkfifoat|mktemp-header-abi|libc-mktemp) ;;
     readlinkat-header-abi|libc-readlinkat) ;;
     stdio-permanent-line-io-header-abi|stdio-octal-hex-scan-header-abi) ;;
     math-complex-complete-header-abi|libc-math-complex-complete) ;;
@@ -4416,6 +4426,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "isatty-header-abi takes no arguments"
         ensure_image
         run_isatty_header_abi
+        ;;
+    ttyname-r-header-abi)
+        [ "$#" -eq 0 ] || fail "ttyname-r-header-abi takes no arguments"
+        ensure_image
+        run_ttyname_r_header_abi
         ;;
     tcgetpgrp-header-abi)
         [ "$#" -eq 0 ] || fail "tcgetpgrp-header-abi takes no arguments"
@@ -5180,6 +5195,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "libc-isatty takes no arguments"
         ensure_image
         run_libc_isatty_probe
+        ;;
+    libc-ttyname-r)
+        [ "$#" -eq 0 ] || fail "libc-ttyname-r takes no arguments"
+        ensure_image
+        run_libc_ttyname_r_probe
         ;;
     libc-tcgetpgrp)
         [ "$#" -eq 0 ] || fail "libc-tcgetpgrp takes no arguments"

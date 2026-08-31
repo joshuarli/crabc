@@ -433,6 +433,8 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-gettid
 ./scripts/dev-x86_64.sh isatty-header-abi
 ./scripts/dev-x86_64.sh libc-isatty
+./scripts/dev-x86_64.sh ttyname-r-header-abi
+./scripts/dev-x86_64.sh libc-ttyname-r
 ./scripts/dev-x86_64.sh tcgetpgrp-header-abi
 ./scripts/dev-x86_64.sh libc-tcgetpgrp
 ./scripts/dev-x86_64.sh tcsetpgrp-header-abi
@@ -3516,6 +3518,24 @@ names a terminal and excludes terminal discovery, termios mutation/control,
 PTY/session policy, `ttyname`, `getpass`, generic ioctl, dynamic runtime,
 family completion, promotion, and public x86 support.
 
+`libc-ttyname-r` is a separately recorded static `static-c-ttyname-r`
+`verified_artifact` gate over that archive, not a terminal/path capability.
+Its strict/POSIX/X/Open/GNU/BSD C/C++ `unistd.h` declaration gate and one
+project-header C body first execute through pinned musl and then through a
+`-nostdlib -static` candidate. It selects only caller-buffered
+`int ttyname_r(int, char *, size_t)`: the already selected `isatty` check,
+musl's fixed private `/proc/self/fd/<fd>` spelling, its zero-capacity readlink
+dummy-byte compatibility result, one fitting NUL write, and private
+named-target/original-descriptor device-inode equality. The fixture proves a
+devpts name matching the raw procfd link, stale-errno-preserving success,
+one-byte/zero-capacity `ERANGE` without errno replacement, null-buffer
+`EFAULT`, invalid-fd `EBADF`, and `/dev/null` `ENOTTY`. Its direct closure
+audits `readlink=89`, `fstat=5`, `newfstatat=262`, and the selected `isatty`
+ioctl without public `readlink`/`stat`/`fstat`/`ttyname`, PTY/session, termios,
+or generic ioctl helpers. It does not select generic filesystem/path
+completion, terminal/session policy, static `ttyname` storage, dynamic runtime,
+family completion, promotion, or public x86 support.
+
 `libc-tcgetpgrp` is a separately recorded static `static-c-tcgetpgrp`
 `verified_artifact` gate over that archive, not terminal/session capability.
 Its strict/POSIX/X/Open/GNU/BSD C/C++ `unistd.h` declaration gate and one
@@ -5717,6 +5737,7 @@ Apart from the narrowly named `libc-stat-compat`, `libc-credentials`,
 `libc-gethostid`,
 `libc-gettid`,
 `libc-isatty`,
+`libc-ttyname-r`,
 `libc-tcgetpgrp`,
 `libc-tcsetpgrp`,
 `libc-bsearch`,

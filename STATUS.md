@@ -202,6 +202,18 @@ does not select terminal discovery, termios mutation/control, PTY/session
 policy, `ttyname`, `getpass`, generic ioctl, family completion, promotion, or
 public x86 support.
 
+`./scripts/dev-x86_64.sh libc-ttyname-r` is a separate private
+`static-c-ttyname-r` artifact inside still-planned `libc.posix-runtime`. Its
+strict/POSIX/X/Open/GNU/BSD C/C++ declaration gate and pinned-musl/static C
+fixture select only caller-buffered `int ttyname_r(int, char *, size_t)`:
+musl's existing `isatty` observation, fixed private `/proc/self/fd/<fd>`
+spelling, zero-capacity private readlink scratch, fitting NUL termination, and
+private `stat`/`fstat` device/inode equality. The fixture proves one devpts
+name, preserved errno on success and bounded `ERANGE`, plus direct `EFAULT`,
+`EBADF`, and `ENOTTY`. It does not select `ttyname` static storage, generic
+readlink/stat/fstat or filesystem-path behavior, terminal/session policy,
+generic ioctl, family completion, promotion, or public x86 support.
+
 `./scripts/dev-x86_64.sh libc-legacy-memory` is a separate private
 `static-c-legacy-memory` artifact inside still-planned `libc.posix-runtime`.
 Its pinned-musl/project-header C fixture selects only the historical
