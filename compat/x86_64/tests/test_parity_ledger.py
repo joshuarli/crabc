@@ -20667,6 +20667,97 @@ class X86ParityLedgerTests(unittest.TestCase):
         ):
             ledger.validate_ledger(data)
 
+    def test_ether_line_artifact_stays_private_and_non_promoting(self) -> None:
+        data = self.data()
+        family = self.family(data, "libc.c-abi-compat")
+        self.assertEqual(family["status"], "planned")
+        artifacts = family["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-ether-line"
+        )
+        self.assertNotIn("capabilities", artifact)
+        for phrase in (
+            "legacy Ethernet-line compatibility-failure artifact",
+            "`int ether_line(const char *, struct ether_addr *, char *)`",
+            "`src/network/ether.c::ether_line`",
+            "exactly `return -1;`",
+            "null pointer values",
+            "`/etc/ethers`",
+            "`ether_aton`",
+            "`ether_ntoa`",
+            "`ether_ntohost`",
+            "`ether_hostton`",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, artifact["description"])
+
+        owners = artifact["source_owners"]
+        assert isinstance(owners, list)
+        for owner in (
+            "libc/src/c_abi/x86_64/ether_line.rs",
+            "include/netinet/ether.h",
+            "include/netinet/if_ether.h",
+            "include/net/ethernet.h",
+            "compat/x86_64/ether_line_header_abi_probe.c",
+            "compat/x86_64/ether_line_header_abi_probe.cpp",
+            "compat/x86_64/run_ether_line_header_abi.sh",
+            "compat/x86_64/libc_ether_line_probe.c",
+            "compat/x86_64/libc_ether_line_start.S",
+            "compat/x86_64/run_libc_ether_line.sh",
+            "compat/x86_64/static_c_abi_exports.txt",
+        ):
+            self.assertIn(owner, owners)
+
+        prerequisites = artifact["x86_abi_prerequisites"]
+        assert isinstance(prerequisites, list)
+        self.assertTrue(
+            any(
+                "SysV AMD64" in item
+                and "int ether_line(const char *, struct ether_addr *, char *)" in item
+                and "rdi/rsi/rdx" in item
+                and "six-byte, align-one" in item
+                for item in prerequisites
+            )
+        )
+        self.assertTrue(
+            any(
+                "src/network/ether.c::ether_line" in item
+                and "return -1;" in item
+                and "ether_aton[_r]" in item
+                and "/etc/ethers" in item
+                for item in prerequisites
+            )
+        )
+
+        evidence = artifact["native_evidence"]
+        assert isinstance(evidence, list) and isinstance(evidence[0], dict)
+        self.assertEqual(
+            evidence[0]["command"],
+            "./scripts/dev-x86_64.sh libc-ether-line",
+        )
+        for phrase in (
+            "Pinned-musl/project C/C++ header",
+            "true dependency-free x86 crabc-libc `-nostdlib -static` candidate",
+            "direct and function-pointer fixed -1 returns",
+            "null pointers",
+            "ether.lo/AArch64 ownership",
+            "peer Ethernet-helper and resolver/socket extraction",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, evidence[0]["scope"])
+
+        prerequisites[1] = prerequisites[1].replace(
+            "return -1;", "parse /etc/ethers"
+        )
+        with self.assertRaisesRegex(
+            ledger.LedgerError,
+            "static-c-ether-line must retain its pinned-musl ether.c mapping",
+        ):
+            ledger.validate_ledger(data)
+
     def test_bsearch_artifact_stays_private_and_non_promoting(self) -> None:
         data = self.data()
         family = self.family(data, "libc.c-abi-compat")

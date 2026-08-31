@@ -1439,6 +1439,7 @@ GETHOSTID_SYMBOLS = ("gethostid",)
 GETTID_SYMBOLS = ("gettid",)
 POSIX_CLOSE_SYMBOLS = ("posix_close",)
 ENDHOSTENT_SYMBOLS = ("endhostent", "endnetent")
+ETHER_LINE_SYMBOLS = ("ether_line",)
 
 INET_CLASSFUL_SYMBOLS = ("inet_lnaof", "inet_makeaddr")
 
@@ -28441,6 +28442,305 @@ def require_endhostent_artifact(family: Mapping[str, Any]) -> None:
         require(snippet in dispatcher, f"endhostent dispatcher omits {snippet}")
 
 
+def require_ether_line_artifact(family: Mapping[str, Any]) -> None:
+    """Keep musl's fixed Ethernet-line failure out of networking state."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.c-abi-compat].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [entry for entry in artifacts if entry.get("id") == "static-c-ether-line"]
+    require(
+        len(matching) == 1,
+        "libc.c-abi-compat needs exactly one static-c-ether-line artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-ether-line must not promote libc.c-abi-compat",
+    )
+    artifact = matching[0]
+    require(
+        "capabilities" not in artifact,
+        "static-c-ether-line must not promote an Ethernet or network capability",
+    )
+
+    description = artifact.get("description")
+    require(isinstance(description, str), "static-c-ether-line needs a description")
+    for phrase in (
+        "legacy Ethernet-line compatibility-failure artifact",
+        "still-planned `libc.c-abi-compat`",
+        "`int ether_line(const char *, struct ether_addr *, char *)`",
+        "`src/network/ether.c::ether_line`",
+        "exactly `return -1;`",
+        "null pointer values",
+        "stale errno",
+        "mutable state, errno, TLS, allocation, syscall",
+        "`/etc/ethers`",
+        "`ether_aton`",
+        "`ether_ntoa`",
+        "`ether_ntohost`",
+        "`ether_hostton`",
+        "resolver",
+        "socket",
+        "family completion",
+        "promotion",
+        "public x86 support",
+    ):
+        require(phrase in description, f"static-c-ether-line description omits {phrase}")
+
+    owners = set(
+        nonempty_strings(
+            artifact.get("source_owners"), "static-c-ether-line.source_owners"
+        )
+    )
+    for owner in (
+        "compat/upstreams.toml",
+        "libc/Cargo.toml",
+        "libc/src/lib.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/ether_line.rs",
+        "include/bits/alltypes.h",
+        "include/net/ethernet.h",
+        "include/netinet/ether.h",
+        "include/netinet/if_ether.h",
+        "include/stdint.h",
+        "include/sys/types.h",
+        "compat/x86_64/ether_line_header_abi_probe.c",
+        "compat/x86_64/ether_line_header_abi_probe.cpp",
+        "compat/x86_64/run_ether_line_header_abi.sh",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/libc_ether_line_probe.c",
+        "compat/x86_64/libc_ether_line_start.S",
+        "compat/x86_64/run_libc_ether_line.sh",
+        "compat/x86_64/aarch64_parity_inventory.py",
+        "compat/x86_64/aarch64_parity_inventory.json",
+        "compat/x86_64/tests/test_aarch64_parity_inventory.py",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/README.md",
+        "STATUS.md",
+        "x86-64.md",
+        "scripts/dev-x86_64.sh",
+        "scripts/check_structure.py",
+    ):
+        require(owner in owners, f"static-c-ether-line source owners omit {owner}")
+
+    prerequisites = nonempty_strings(
+        artifact.get("x86_abi_prerequisites"),
+        "static-c-ether-line.x86_abi_prerequisites",
+    )
+    require(
+        any(
+            "SysV AMD64" in item
+            and "int ether_line(const char *, struct ether_addr *, char *)" in item
+            and "rdi/rsi/rdx" in item
+            and "eax" in item
+            and "six-byte, align-one" in item
+            and "does not dereference" in item
+            for item in prerequisites
+        ),
+        "static-c-ether-line must retain its exact three-pointer ABI",
+    )
+    require(
+        any(
+            "9fa28ece75d8a2191de7c5bb53bed224c5947417" in item
+            and "src/network/ether.c::ether_line" in item
+            and "return -1;" in item
+            and "ether_aton[_r]" in item
+            and "ether_ntoa[_r]" in item
+            and "ether_ntohost" in item
+            and "ether_hostton" in item
+            and "/etc/ethers" in item
+            for item in prerequisites
+        ),
+        "static-c-ether-line must retain its pinned-musl ether.c mapping",
+    )
+    require(
+        any(
+            "`-nostdlib -static`" in item
+            and "no interpreter" in item
+            and "PT_TLS" in item
+            and "dynamic-TLS model" in item
+            and "helper call" in item
+            and "peer Ethernet-helper plus resolver/socket exports" in item
+            for item in prerequisites
+        ),
+        "static-c-ether-line must retain its closed static boundary",
+    )
+
+    headers = nonempty_strings(
+        artifact.get("x86_header_prerequisites"),
+        "static-c-ether-line.x86_header_prerequisites",
+    )
+    require(
+        any(
+            "unconditional `int ether_line(const char *, struct ether_addr *, char *)`"
+            in item
+            and "strict, POSIX, X/Open, and GNU" in item
+            and "six-byte align-one `struct ether_addr` layout" in item
+            and "unmangled C++ linkage" in item
+            and '`extern "C"` guards' in item
+            for item in headers
+        ),
+        "static-c-ether-line must retain its unconditional C/C++ header ABI",
+    )
+
+    evidence = artifact.get("native_evidence")
+    require(isinstance(evidence, list), "static-c-ether-line needs evidence")
+    require(
+        {entry.get("command") for entry in evidence if isinstance(entry, Mapping)}
+        == {"./scripts/dev-x86_64.sh libc-ether-line"},
+        "static-c-ether-line must use the closed libc-ether-line command",
+    )
+    scope = evidence[0].get("scope")
+    require(
+        isinstance(scope, str)
+        and all(
+            phrase in scope
+            for phrase in (
+                "Pinned-musl/project C/C++ header",
+                "true dependency-free x86 crabc-libc `-nostdlib -static` candidate",
+                "direct and function-pointer fixed -1 returns",
+                "null pointers",
+                "unchanged valid address/hostname output",
+                "stale errno preservation",
+                "ether.lo/AArch64 ownership",
+                "no interpreter/DT_NEEDED/unresolved symbol/PT_TLS/errno/dynamic-TLS model/allocator/helper-call/syscall",
+                "peer Ethernet-helper and resolver/socket extraction",
+                "`/etc/ethers`",
+                "Ethernet conversion/mapping/configuration",
+                "family completion",
+                "promotion",
+                "public x86 support",
+            )
+        ),
+        "static-c-ether-line evidence must retain its bounded static closure",
+    )
+
+    exports = set(
+        static_c_abi_export_names(
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        )
+    )
+    require(
+        set(ETHER_LINE_SYMBOLS) <= exports,
+        "static-c-ether-line must retain its selected export",
+    )
+    require(
+        {symbol for symbol in exports if symbol.startswith("ether_")}
+        == set(ETHER_LINE_SYMBOLS),
+        "static-c-ether-line must expose only ether_line in the Ethernet namespace",
+    )
+
+    static_root = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+    ).read_text(encoding="utf-8")
+    require(
+        '#[path = "ether_line.rs"]\nmod ether_line;' in static_root,
+        "x86 static C ABI must compose the ether_line leaf",
+    )
+    source = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "ether_line.rs"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "Selected static Linux/x86-64 legacy Ethernet-line C ABI boundary",
+        "pinned musl 1.2.6 release commit",
+        "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+        "src/network/ether.c::ether_line",
+        "System V AMD64 ABI",
+        "struct CabiEtherAddr",
+        'pub extern "C" fn ether_line(',
+        "    -1",
+    ):
+        require(snippet in source, f"ether_line implementation omits {snippet}")
+    for forbidden in (
+        "raw_syscall::",
+        "errno::",
+        "static_tls::",
+        "crabc_core",
+        "crabc_mimalloc",
+    ):
+        require(forbidden not in source, f"ether_line leaf widens into {forbidden}")
+
+    runner = (
+        ROOT / "compat" / "x86_64" / "run_libc_ether_line.sh"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "run_musl_oracle.sh",
+        "run_ether_line_header_abi.sh",
+        "ether.lo",
+        "static_c_abi_exports.txt",
+        "-nostdlib -static",
+        "--no-undefined",
+        "archive does not define ether_line",
+        "candidate exports an unselected Ethernet helper or resolver/socket entry",
+        "ether_line unexpectedly performs a call or syscall",
+    ):
+        require(snippet in runner, f"ether_line runner omits {snippet}")
+
+    probe = (
+        ROOT / "compat" / "x86_64" / "libc_ether_line_probe.c"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "typedef int (*ether_line_signature)(const char *, struct ether_addr *, char *)",
+        "const ether_line_signature function = ether_line",
+        "errno = E2BIG",
+        "ether_line((const char *)0, (struct ether_addr *)0, (char *)0)",
+        "CRABC_ETHER_LINE_FREESTANDING",
+    ):
+        require(snippet in probe, f"ether_line probe omits {snippet}")
+
+    header_c = (
+        ROOT / "compat" / "x86_64" / "ether_line_header_abi_probe.c"
+    ).read_text(encoding="utf-8")
+    header_cxx = (
+        ROOT / "compat" / "x86_64" / "ether_line_header_abi_probe.cpp"
+    ).read_text(encoding="utf-8")
+    for snippet in ("ether_line declaration", "ETH_ALEN == 6", "ether_line_function"):
+        require(snippet in header_c, f"ether_line C header probe omits {snippet}")
+    for snippet in ("C++ ether_line declaration", "ETH_ALEN == 6", "ether_line_function"):
+        require(snippet in header_cxx, f"ether_line C++ header probe omits {snippet}")
+
+    header_runner = (
+        ROOT / "compat" / "x86_64" / "run_ether_line_header_abi.sh"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "ether_line_header_abi_probe.c",
+        "ether_line_header_abi_probe.cpp",
+        "Pinned musl 1.2.6",
+        "unconditional in musl's netinet/ether.h",
+        "net/ethernet.h",
+        "c11-strict",
+        "cxx17-gnu",
+        "retained a mangled ether_line reference",
+    ):
+        require(snippet in header_runner, f"ether_line header runner omits {snippet}")
+
+    ethernet_header = (ROOT / "include" / "net" / "ethernet.h").read_text(
+        encoding="utf-8"
+    )
+    ether_header = (ROOT / "include" / "netinet" / "ether.h").read_text(
+        encoding="utf-8"
+    )
+    require(
+        "struct ether_addr" in ethernet_header
+        and "int ether_line(const char *, struct ether_addr *, char *);" in ether_header
+        and '#ifdef __cplusplus\nextern "C" {' in ether_header
+        and '#ifdef __cplusplus\n}\n#endif' in ether_header,
+        "installed Ethernet headers must retain the selected C/C++ ABI",
+    )
+
+    dispatcher = (ROOT / "scripts" / "dev-x86_64.sh").read_text(encoding="utf-8")
+    for snippet in (
+        "ether-line-header-abi)",
+        "run_ether_line_header_abi",
+        "libc-ether-line)",
+        "run_libc_ether_line_probe",
+    ):
+        require(snippet in dispatcher, f"ether_line dispatcher omits {snippet}")
+
+
 def require_dn_skipname_artifact(family: Mapping[str, Any]) -> None:
     """Keep the dependency-free DNS wire-span codec out of resolver state."""
     artifacts = require_verified_artifacts(
@@ -43419,6 +43719,7 @@ def validate_ledger(
     require_gettid_artifact(by_id["libc.c-abi-compat"])
     require_posix_close_artifact(by_id["libc.c-abi-compat"])
     require_endhostent_artifact(by_id["libc.c-abi-compat"])
+    require_ether_line_artifact(by_id["libc.c-abi-compat"])
     require_qsort_artifact(by_id["libc.c-abi-compat"])
     require_bsearch_artifact(by_id["libc.c-abi-compat"])
     require_linear_search_artifact(by_id["libc.c-abi-compat"])

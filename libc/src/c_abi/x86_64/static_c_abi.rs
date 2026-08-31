@@ -62,6 +62,7 @@
 //! and loopback-address data objects, one caller-owned nameserver 16-bit
 //! wire-read codec, one caller-owned DNS wire-name span codec, one isolated
 //! shared static IPv4 presentation buffer with no resolver state, padded
+//! legacy Ethernet-line compatibility-failure leaf with no Ethernet state,
 //! socket messages/options,
 //! deterministic numeric `netdb.h` address/service translation and result
 //! ownership without resolver configuration, hosts, or DNS,
@@ -502,6 +503,8 @@ mod inet_classful;
 mod hstrerror;
 #[path = "endhostent.rs"]
 mod endhostent;
+#[path = "ether_line.rs"]
+mod ether_line;
 #[path = "numeric_netdb.rs"]
 mod numeric_netdb;
 #[path = "interface_discovery.rs"]

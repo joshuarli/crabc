@@ -237,6 +237,7 @@ erfcf
 erfcl
 erff
 erfl
+ether_line
 euidaccess
 eventfd
 eventfd_read

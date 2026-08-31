@@ -431,6 +431,8 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-gethostid
 ./scripts/dev-x86_64.sh endhostent-header-abi
 ./scripts/dev-x86_64.sh libc-endhostent
+./scripts/dev-x86_64.sh ether-line-header-abi
+./scripts/dev-x86_64.sh libc-ether-line
 ./scripts/dev-x86_64.sh gettid-header-abi
 ./scripts/dev-x86_64.sh libc-gettid
 ./scripts/dev-x86_64.sh posix-close-header-abi
@@ -3538,6 +3540,24 @@ does not select legacy database state, `/etc/hosts` or `/etc/networks`, NSS,
 resolver behavior, generic netdb APIs, libc.so, CRT, loader, sysroot, family
 completion, promotion, or public x86 support.
 
+`ether-line-header-abi` and `libc-ether-line` record a separate private
+`static-c-ether-line` artifact inside still-planned `libc.c-abi-compat`, not
+an Ethernet or network capability. The pinned-musl/project `<netinet/ether.h>`
+C/C++ matrix proves unconditional `int ether_line(const char *, struct
+ether_addr *, char *)` under strict, POSIX, X/Open, and GNU profiles, its exact
+three-pointer signature, six-byte align-one `struct ether_addr`, and unmangled
+C++ linkage through the header's C-linkage guards. The shared C body then
+executes through pinned musl and one true dependency-free `-nostdlib -static`
+candidate. Musl 1.2.6 `src/network/ether.c::ether_line` is exactly
+`return -1;`; the fixture proves direct/function-pointer fixed failure for
+valid and null pointer values, unchanged valid address/hostname output, and
+stale-errno preservation on the ordinary musl route. The candidate rejects
+peer Ethernet-helper plus resolver/socket extraction. It does not select
+`/etc/ethers`, Ethernet conversion/mapping/configuration, `ether_aton[_r]`,
+`ether_ntoa[_r]`, `ether_ntohost`, `ether_hostton`, generic networking,
+libc.so, CRT, loader, sysroot, family completion, promotion, or public x86
+support.
+
 `libc-isatty` is a separately recorded static `static-c-isatty`
 `verified_artifact` gate over that archive, not a terminal capability. Its
 strict/POSIX/X/Open/GNU/BSD C/C++ `unistd.h` declaration gate and one
@@ -5751,6 +5771,7 @@ Apart from the narrowly named `libc-stat-compat`, `libc-credentials`,
 `libc-ctermid`,
 `libc-gethostid`,
 `libc-endhostent`,
+`libc-ether-line`,
 `libc-gettid`,
 `libc-posix-close`,
 `libc-isatty`,

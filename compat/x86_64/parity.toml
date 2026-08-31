@@ -10340,6 +10340,51 @@ native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc
 oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source, declaration, static-member, and behavior oracle for src/network/ent.c::endhostent and weak_alias(endhostent, endnetent): both selected terminators are stateless no-op entries while enumeration and resolver-related names remain unselected." }, { kind = "elf-abi", source = "System V AMD64 psABI and pinned musl x86 static object", role = "No-argument void C ABI, C++ C linkage, weak same-address alias binding, and true-static ET_EXEC closure contract." }]
 
 [[family.verified_artifact]]
+id = "static-c-ether-line"
+description = "Private native x86 selected-static-archive legacy Ethernet-line compatibility-failure artifact inside still-planned `libc.c-abi-compat`. One dependency-free `crabc-libc` archive resolves exactly `int ether_line(const char *, struct ether_addr *, char *)` into a freestanding C fixture after equivalent pinned-musl execution. Pinned musl's complete `src/network/ether.c::ether_line` body is exactly `return -1;`: direct and function-pointer calls prove that fixed result for valid caller-owned line/address/hostname values and null pointer values, while leaving valid output storage unchanged and preserving stale errno on the ordinary musl route. This source-shaped leaf has no mutable state, errno, TLS, allocation, syscall, file, `/etc/ethers`, Ethernet conversion or mapping, resolver, socket, interface, or network-policy boundary. It does not select `ether_aton`, `ether_aton_r`, `ether_ntoa`, `ether_ntoa_r`, `ether_ntohost`, `ether_hostton`, legacy Ethernet configuration, generic networking, libc.so, CRT, loader, sysroot, family completion, promotion, or public x86 support."
+source_owners = [
+  "compat/upstreams.toml",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/ether_line.rs",
+  "include/bits/alltypes.h",
+  "include/net/ethernet.h",
+  "include/netinet/ether.h",
+  "include/netinet/if_ether.h",
+  "include/stdint.h",
+  "include/sys/types.h",
+  "compat/x86_64/ether_line_header_abi_probe.c",
+  "compat/x86_64/ether_line_header_abi_probe.cpp",
+  "compat/x86_64/run_ether_line_header_abi.sh",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/libc_ether_line_probe.c",
+  "compat/x86_64/libc_ether_line_start.S",
+  "compat/x86_64/run_libc_ether_line.sh",
+  "compat/x86_64/aarch64_parity_inventory.py",
+  "compat/x86_64/aarch64_parity_inventory.json",
+  "compat/x86_64/tests/test_aarch64_parity_inventory.py",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "compat/x86_64/README.md",
+  "STATUS.md",
+  "x86-64.md",
+  "scripts/dev-x86_64.sh",
+  "scripts/check_structure.py",
+]
+x86_abi_prerequisites = [
+  "The SysV AMD64 ABI passes `int ether_line(const char *, struct ether_addr *, char *)` pointer values in rdi/rsi/rdx and returns the signed int result in eax. The caller-owned `struct ether_addr` remains a six-byte, align-one object; the selected pinned-musl body does not dereference any of the three pointer values.",
+  "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417 maps `src/network/ether.c::ether_line` directly to exact `return -1;`. The source's `ether_aton[_r]`, `ether_ntoa[_r]`, `ether_ntohost`, and `ether_hostton` conversion/mapping siblings remain unselected, as do `/etc/ethers` and any Ethernet configuration policy.",
+  "The true `-nostdlib -static` candidate has no interpreter, DT_NEEDED, unresolved symbol, PT_TLS, errno path, dynamic-TLS model, allocator, helper call, syscall, or ambient runtime dependency. Its ether_line disassembly returns directly and rejects peer Ethernet-helper plus resolver/socket exports, so this fixed failure leaf cannot become a networking closure through archive extraction.",
+]
+x86_header_prerequisites = [
+  "The focused pinned-musl/project-first C11/C++17 `<netinet/ether.h>` matrix proves unconditional `int ether_line(const char *, struct ether_addr *, char *)` under strict, POSIX, X/Open, and GNU profiles, the exact pointer function type, `ETH_ALEN == 6`, six-byte align-one `struct ether_addr` layout, project-header provenance, and unmangled C++ linkage through the installed `extern \"C\"` guards. It selects no other Ethernet helper, header-family completion, archive linkage, or public x86 support.",
+]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-ether-line", scope = "Pinned-musl/project C/C++ header compilation plus equivalent pinned-musl C execution and one true dependency-free x86 crabc-libc `-nostdlib -static` candidate. The shared fixture proves direct and function-pointer fixed -1 returns for valid caller-owned values and null pointers, unchanged valid address/hostname output, and stale errno preservation on the ordinary musl route. It ratchets pinned-musl ether.lo/AArch64 ownership, exact crate-owned export closure, no interpreter/DT_NEEDED/unresolved symbol/PT_TLS/errno/dynamic-TLS model/allocator/helper-call/syscall or ambient runtime, and a direct no-call/no-syscall return disassembly while rejecting peer Ethernet-helper and resolver/socket extraction. It does not select `/etc/ethers`, Ethernet conversion/mapping/configuration, resolver/network policy, generic networking, libc.so, CRT, loader, sysroot, family completion, promotion, or public x86 support." }]
+oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source, unconditional netinet/ether.h declaration, static-member, and behavior oracle for src/network/ether.c::ether_line: the selected body returns -1 without reading or writing its three pointer values." }, { kind = "elf-abi", source = "System V AMD64 psABI and pinned musl x86 static object", role = "Three-pointer signed-int C ABI, six-octet ether_addr caller layout, C++ C linkage, and true-static ET_EXEC closure contract." }]
+
+[[family.verified_artifact]]
 id = "static-c-bsearch"
 description = "Private native x86 selected-static-archive `bsearch` compatibility artifact inside still-planned `libc.c-abi-compat`. One dependency-free `crabc-libc` archive resolves exactly `bsearch` into a freestanding C fixture after an equivalent pinned-musl execution. Musl's complete `src/stdlib/bsearch.c` leaf retains its midpoint and signed comparator branches for caller-owned valid contiguous records: direct and function-pointer calls cover first/last/miss, a duplicate-key midpoint return, a wide record, and zero elements without a callback. The checked multiplication guard applies only outside the valid C array domain, where musl's source pointer expression is already undefined. The final candidate rejects `qsort`, `qsort_r`, `__qsort_r`, search-container helpers, TLS/errno, allocation, locale, locks, syscalls, and runtime state. This capability-free ABI artifact does not change the existing qsort/qsort_r behavior or select general sorting/searching, callback ownership, C longjmp/C++ exception transport, libc.so, CRT, loader, sysroot, family completion, promotion, or public x86 support."
 source_owners = [

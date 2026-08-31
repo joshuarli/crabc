@@ -216,6 +216,20 @@ database state, `/etc/hosts` or `/etc/networks` files, NSS, resolver behavior,
 errno/TLS, allocation, syscall, family completion, promotion, or public x86
 support.
 
+`./scripts/dev-x86_64.sh libc-ether-line` is a separate private
+`static-c-ether-line` artifact inside still-planned `libc.c-abi-compat`. Its
+pinned-musl/project `<netinet/ether.h>` C/C++ matrix proves unconditional
+`int ether_line(const char *, struct ether_addr *, char *)`, the six-byte
+align-one `struct ether_addr` layout, and unmangled linkage under strict,
+POSIX, X/Open, and GNU profiles. Pinned musl 1.2.6
+`src/network/ether.c::ether_line` is exactly `return -1;`; the true-static
+fixture proves direct/function-pointer fixed failure for valid and null
+pointer values, unchanged valid output storage, and stale-errno preservation
+on the musl reference route. It selects no `/etc/ethers`, Ethernet conversion
+or mapping, `ether_aton[_r]`, `ether_ntoa[_r]`, `ether_ntohost`,
+`ether_hostton`, resolver, socket, interface, networking policy, family
+completion, promotion, or public x86 support.
+
 `./scripts/dev-x86_64.sh libc-isatty` is a separate private `static-c-isatty`
 artifact inside still-planned `libc.posix-runtime`. Its strict/POSIX/X/Open/GNU/
 BSD C/C++ declaration gate and pinned-musl/static C fixture select only
