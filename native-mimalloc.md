@@ -41,7 +41,7 @@ compatibility engineering, not allocator research.
    refactor: write or preserve a failing test, observe the expected failure,
    implement the smallest source-faithful change, then rerun the focused and
    relevant aggregate gates.
-5. Use all fifteen available Sol `xhigh` implementation subagents in
+5. Use all fifteen available Terra `max` implementation subagents in
    isolated git worktrees for every substantial implementation wave. The
    parallel-worktree protocol in this file is mandatory.
 6. Prefer deleting or bypassing temporary allocator-control scaffolding over
@@ -764,7 +764,7 @@ invalid-pointer or double-free behavior:
 
 ---
 
-# 6. Mandatory fifteen-worktree Sol xhigh execution
+# 6. Mandatory fifteen-worktree Terra max execution
 
 This project must use the available parallelism aggressively and safely.
 
@@ -772,7 +772,7 @@ This project must use the available parallelism aggressively and safely.
 
 For every substantial implementation wave, the primary/root agent must:
 
-- launch **15 Sol `xhigh` subagents**;
+- launch **15 Terra `max` subagents**;
 - give each subagent its own isolated git worktree and branch;
 - assign each subagent an implementation deliverable;
 - keep the root slot for architecture, integration, review, conflict
@@ -2276,7 +2276,7 @@ there: continue until the missing gate is actually closed.
 Execute these actions now, using the mandatory fifteen-worktree wave:
 
 1. commit this replacement execution contract by itself;
-2. create fifteen Sol `xhigh` implementation worktrees;
+2. create fifteen Terra `max` implementation worktrees;
 3. add and observe the initial-thread post-exit free regression;
 4. add the canonical unmodified upstream stress lane and preserve its first
    failure;
