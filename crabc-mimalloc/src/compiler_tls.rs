@@ -9,7 +9,11 @@
 // `src/prim/prim-tls.c:15-34,211-252`, and `src/threadlocal.c:23-214`.
 // This bounded slice supplies source-shaped compiler-TLS roots, the regular
 // dynamic flexible header, and allocation-free root access. `thread_local`
-// owns the current-thread regular backing allocation, growth, and teardown;
+// owns the current-thread regular backing allocation, growth, teardown, and
+// one Rust-only persistent-owner cell embedded beside the source pointer roots
+// in the runtime's compiler-TLS record.
+// That cell makes an exclusive in-place Rust borrow explicit; it neither
+// changes the source TLS layout nor introduces a scheduler or owner registry.
 // `main_theap` alone uses default/fast publication for ticket zero, while
 // `dynamic_theap` owns one canonical-empty cached-root store/refcount pair.
 // General cached switching, process initialization, libc/pthread hooks, and
@@ -184,6 +188,34 @@ static mut CACHED_THEAP_ROOT: *mut Theap = empty_default_theap_ptr();
 #[thread_local]
 static mut THREAD_ID_HELPER_ROOT: *mut () = core::ptr::null_mut();
 
+/// Rust-side state of one inline persistent allocator owner in compiler TLS.
+///
+/// Pinned mimalloc stores its source Theap roots directly in compiler TLS and
+/// relies on the source lifecycle to avoid overlapping local operations. The
+/// Rust owner cell in `thread_local` additionally records its temporary
+/// projection states: this prevents recursive entry from forming two mutable
+/// references to the same TLD/Theap. The payload itself remains inline in its
+/// runtime-owned compiler-TLS record; no state here is a pointer, scheduler,
+/// process registry, page owner, or per-allocation ledger.
+#[repr(u8)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum PersistentCompilerTlsOwnerState {
+    /// No owner payload has ever been installed in this native-thread cell.
+    Vacant,
+    /// The payload is pinned in place but its source roots are not published.
+    Initializing,
+    /// The complete payload is installed and available for local operations.
+    Active,
+    /// One synchronous local-operation closure owns the only mutable projection.
+    Borrowed,
+    /// Source-ordered consuming teardown owns the only mutable projection.
+    Exiting,
+    /// Initialization or teardown failed while the exact payload stayed pinned.
+    Retained,
+    /// Teardown succeeded, the payload was dropped in place, and reuse is forbidden.
+    TornDown,
+}
+
 /// Peeks at the regular dynamically allocated TLS image.
 ///
 /// A fresh thread sees the immutable count-zero image. Thread teardown sets
@@ -325,15 +357,19 @@ fn thread_id_helper_address() -> Option<LiveThreadId> {
     LiveThreadId::new(core::ptr::addr_of_mut!(THREAD_ID_HELPER_ROOT) as usize)
 }
 
-/// Resets all roots at the allocation-free thread-teardown boundary.
+/// Resets all source pointer roots at the allocation-free thread-teardown boundary.
 ///
 /// The dynamic backing becomes null only after its lifecycle owner has freed
 /// any nonempty image. The fast slot is cleared, while default and cached
 /// theaps return to the immutable empty image. This function performs no
 /// metadata reclamation, theap decref, page abandonment, or pthread work.
+/// It deliberately cannot reset a `thread_local::PersistentCompilerTlsOwnerCell`
+/// embedded in a runtime compiler-TLS record. The runtime must first complete
+/// that owner's explicit source teardown transition, so resetting source
+/// roots cannot make a live page-bearing owner look vacant.
 #[inline(always)]
 pub(crate) fn reset_for_thread_teardown() {
-    // SAFETY: each calling thread alone writes all five compiler-TLS roots,
+    // SAFETY: each calling thread alone writes all five source pointer roots,
     // including the otherwise-unused helper root. The immutable process image
     // remains live forever.
     unsafe {
