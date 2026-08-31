@@ -50,7 +50,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 41)
-        self.assertEqual(report["verified_artifact_count"], 204)
+        self.assertEqual(report["verified_artifact_count"], 205)
         self.assertEqual(report["header_layout_probe_count"], 46)
         self.assertEqual(report["public_header_inventory_count"], 183)
         self.assertEqual(report["header_foundation_header_count"], 191)
@@ -11073,7 +11073,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             "libc/src/c_abi/x86_64/pthread_atfork.rs", pthread_tls["source_owners"]
         )
         self.assertIn(
-            "Thirty-two separately verified static artifacts", pthread_tls["description"]
+            "Thirty-three separately verified static artifacts", pthread_tls["description"]
         )
         self.assertIn(
             "sole delivery point is explicit `pthread_testcancel`",
@@ -11096,7 +11096,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         pthread_tls = self.family(data, "libc.pthread-tls")
         self.assertEqual(pthread_tls["status"], "planned")
         artifacts = pthread_tls["verified_artifact"]
-        self.assertEqual(len(artifacts), 32)
+        self.assertEqual(len(artifacts), 33)
         by_id = {artifact["id"]: artifact for artifact in artifacts}
         self.assertEqual(
             set(by_id),
@@ -11129,6 +11129,7 @@ class X86ParityLedgerTests(unittest.TestCase):
                 "static-c-pthread-mutexattr-protocol-query",
                 "static-c-pthread-mutexattr-pshared-query",
                 "static-c-pthread-mutexattr-type-query",
+                "static-c-pthread-mutexattr-type-setter",
                 "static-c-pthread-mutex-prioceiling-query",
                 "static-c-pthread-setconcurrency",
                 "static-c-pthread-getconcurrency",
@@ -11167,6 +11168,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             "static-c-pthread-mutexattr-pshared-query"
         ]
         mutexattr_type_query = by_id["static-c-pthread-mutexattr-type-query"]
+        mutexattr_type_setter = by_id["static-c-pthread-mutexattr-type-setter"]
         mutex_prioceiling_query = by_id[
             "static-c-pthread-mutex-prioceiling-query"
         ]
@@ -11546,11 +11548,11 @@ class X86ParityLedgerTests(unittest.TestCase):
             "raw `3` remains an exact getter result rather than a valid constructed record",
             "without changing the raw word",
             "caller-owned raw record storage",
-            "`pthread_mutexattr_settype`, an attribute lifecycle function, or any mutex entry",
-            "no setter, record-construction, validation, or consumption contract",
+            "raw getter artifact by itself establishes no setter, record-construction, validation, or consumption contract",
+            "separately selected raw setter does not make the record lifecycle-managed or consumable",
             "normal-mutex artifact continues to reject every non-null attribute",
             "not recursive or error-checking mutex operation, a mutex state machine, or a mutex capability claim",
-            "the setter, init/destroy lifecycle, pshared/protocol/prioceiling/robust attributes",
+            "separate setter mutation path, init/destroy lifecycle, pshared/protocol/prioceiling/robust attributes",
             "mutex initialization/locking/destruction",
             "threads, TCB/TLS ownership, synchronization, cancellation",
             "general pthread/TLS behavior or x86-64 parity",
@@ -11571,6 +11573,48 @@ class X86ParityLedgerTests(unittest.TestCase):
             "family completion, promotion, and public x86 support",
         ):
             self.assertIn(phrase, mutexattr_type_query_scope)
+        self.assertEqual(
+            mutexattr_type_setter["native_evidence"][0]["command"],
+            "./scripts/dev-x86_64.sh libc-pthread-mutexattr-type-setter",
+        )
+        for phrase in (
+            "still-planned `libc.pthread-tls`",
+            "One dependency-free entry",
+            "only `pthread_mutexattr_settype`",
+            "four-byte, four-byte-aligned public `pthread_mutexattr_t` word",
+            "unsigned form exceeds `2`",
+            "direct `EINVAL` before it touches the record",
+            "normal/default `0`, recursive `1`, and errorcheck `2`",
+            "only raw bits 0 and 1",
+            "every higher caller-owned bit",
+            "caller-owned raw record storage and invalid null pointers",
+            "This raw setter establishes no initialized record, record-validation, lifecycle, or consumption contract",
+            "normal-mutex artifact continues to reject every non-null attribute",
+            "not recursive or error-checking mutex operation, a mutex state machine, or a mutex capability claim",
+            "the getter, init/destroy lifecycle, pshared/protocol/prioceiling/robust attributes",
+            "mutex initialization/locking/destruction",
+            "threads, TCB/TLS ownership, synchronization, cancellation",
+            "general pthread/TLS behavior or x86-64 parity",
+            "family completion, promotion, or public x86 support",
+        ):
+            self.assertIn(phrase, mutexattr_type_setter["description"])
+        mutexattr_type_setter_scope = mutexattr_type_setter["native_evidence"][0][
+            "scope"
+        ]
+        for phrase in (
+            "normal/default 0, recursive 1, and errorcheck 2 low-bit replacement",
+            "complete higher caller-word preservation",
+            "-1, 3, INT_MIN, and INT_MAX return EINVAL without mutating a valid record",
+            "invalid null pointers prove the input-first branch",
+            "pinned-musl reference preserves incoming errno",
+            "freestanding candidate deliberately has no errno/TLS owner",
+            "exactly pthread_mutexattr_settype",
+            "PT_TLS, errno/bootstrap, syscall, helper call",
+            "gettype, init/destroy lifecycle, every other mutex attribute",
+            "recursive/error-checking mutex operation",
+            "family completion, promotion, and public x86 support",
+        ):
+            self.assertIn(phrase, mutexattr_type_setter_scope)
         self.assertEqual(
             mutex_prioceiling_query["native_evidence"][0]["command"],
             "./scripts/dev-x86_64.sh libc-pthread-mutex-prioceiling-query",

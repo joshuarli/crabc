@@ -1451,6 +1451,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "libc-pthread-mutexattr-pshared-query",
             "libc-pthread-mutexattr-robust-query",
             "libc-pthread-mutexattr-type-query",
+            "libc-pthread-mutexattr-type-setter",
             "libc-pthread-mutex-prioceiling-query",
             "libc-pthread-getconcurrency",
             "libc-pthread-setconcurrency",
@@ -1527,6 +1528,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn("libc-pthread-mutexattr-pshared-query", source)
         self.assertIn("libc-pthread-mutexattr-robust-query", source)
         self.assertIn("libc-pthread-mutexattr-type-query", source)
+        self.assertIn("libc-pthread-mutexattr-type-setter", source)
         self.assertIn("libc-pthread-mutex-prioceiling-query", source)
         self.assertIn("libc-pthread-getconcurrency", source)
         self.assertIn("libc-pthread-setconcurrency", source)
@@ -8351,9 +8353,9 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             self.assertIn(required, artifact_runner)
         self.assertNotIn("--whole-archive", artifact_runner)
         self.assertIn("pthread_mutexattr_gettype", static_exports)
+        self.assertIn("pthread_mutexattr_settype", static_exports)
         self.assertTrue(
             {
-                "pthread_mutexattr_settype",
                 "pthread_mutexattr_init",
                 "pthread_mutexattr_destroy",
             }.isdisjoint(static_exports)
@@ -8385,6 +8387,171 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn("    libc-pthread-mutexattr-type-query) ;;", runner)
         self.assertIn(
             '    libc-pthread-mutexattr-type-query)\n        [ "$#" -eq 0 ] || fail "libc-pthread-mutexattr-type-query takes no arguments"',
+            runner,
+        )
+
+    def test_libc_static_c_abi_pthread_mutexattr_type_setter_stays_record_only(
+        self,
+    ) -> None:
+        """Keep musl's raw mutexattr setter apart from mutex operation."""
+
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        setter = (
+            ROOT
+            / "libc"
+            / "src"
+            / "c_abi"
+            / "x86_64"
+            / "pthread_mutexattr_type_setter.rs"
+        ).read_text(encoding="utf-8")
+        probe_path = (
+            ROOT
+            / "compat"
+            / "x86_64"
+            / "libc_pthread_mutexattr_type_setter_probe.c"
+        )
+        start_path = (
+            ROOT
+            / "compat"
+            / "x86_64"
+            / "libc_pthread_mutexattr_type_setter_start.S"
+        )
+        artifact_runner_path = (
+            ROOT
+            / "compat"
+            / "x86_64"
+            / "run_libc_pthread_mutexattr_type_setter.sh"
+        )
+        c_header_probe = (
+            ROOT / "compat" / "x86_64" / "pthread_c11_header_abi_probe.c"
+        ).read_text(encoding="utf-8")
+        cxx_header_probe = (
+            ROOT / "compat" / "x86_64" / "pthread_c11_header_abi_probe.cpp"
+        ).read_text(encoding="utf-8")
+        header_runner = (
+            ROOT / "compat" / "x86_64" / "run_pthread_c11_header_abi.sh"
+        ).read_text(encoding="utf-8")
+        static_exports = {
+            line
+            for line in (
+                ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+            ).read_text(encoding="utf-8").splitlines()
+            if line and not line.startswith("#")
+        }
+        parity_ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        runner = RUNNER.read_text(encoding="utf-8")
+
+        for path in (probe_path, start_path, artifact_runner_path):
+            self.assertTrue(path.is_file(), f"missing mutexattr type-setter input: {path}")
+        probe = probe_path.read_text(encoding="utf-8")
+        start = start_path.read_text(encoding="utf-8")
+        artifact_runner = artifact_runner_path.read_text(encoding="utf-8")
+
+        self.assertIn('#[path = "pthread_mutexattr_type_setter.rs"]', static_root)
+        for required in (
+            "src/thread/pthread_mutexattr_settype.c::pthread_mutexattr_settype",
+            "returns `EINVAL` unless `(unsigned)type <= 2`",
+            "four-byte",
+            "input-first `EINVAL` branch",
+            "does not establish mutex",
+        ):
+            self.assertIn(required, setter)
+        for forbidden in (
+            "use super",
+            "raw_syscall::",
+            "static_tls::",
+            "pthread_mutex::",
+            "atomic::",
+            "fn pthread_mutexattr_gettype",
+        ):
+            self.assertNotIn(forbidden, setter)
+        for required in (
+            "#include <errno.h>",
+            "#include <limits.h>",
+            "#include <pthread.h>",
+            "sizeof(pthread_mutexattr_t) == 4",
+            "PTHREAD_MUTEX_NORMAL == 0 && PTHREAD_MUTEX_DEFAULT == 0",
+            "PTHREAD_MUTEX_RECURSIVE == 1 && PTHREAD_MUTEX_ERRORCHECK == 2",
+            "EINVAL == 22",
+            "pthread_mutexattr_settype",
+            "CRABC_TYPE_HIGH_BITS 0xfffffffcU",
+            "CRABC_TYPE_PRESERVED_WORD 0x5a5a5a5aU",
+            "INT_MIN",
+            "INT_MAX",
+            "expect_invalid(0, -1, 0)",
+            "CRABC_PTHREAD_MUTEXATTR_TYPE_SETTER_FREESTANDING",
+        ):
+            self.assertIn(required, probe)
+        for unselected in (
+            "pthread_mutexattr_gettype(",
+            "pthread_mutexattr_init(",
+            "pthread_mutexattr_destroy(",
+            "pthread_mutex_init(",
+            "pthread_mutex_lock(",
+            "pthread_mutex_consistent(",
+        ):
+            self.assertNotIn(unselected, probe)
+        for required in (
+            "crabc_x86_64_pthread_mutexattr_type_setter_probe",
+            "mov $60, %eax",
+            "syscall",
+        ):
+            self.assertIn(required, start)
+        self.assertNotIn("__crabc_x86_static_tls_bootstrap", start)
+        self.assertNotIn("%fs", start)
+        for required in (
+            "static_c_abi_exports.txt",
+            "run_pthread_c11_header_abi.sh",
+            "-nostdlib -static",
+            "-Wl,-e,_start",
+            "-Wl,--no-undefined",
+            "assert_direct_record_path",
+            "must remain TLS-free",
+            "src/thread/pthread_mutexattr_settype.c",
+            "input-first `EINVAL` branch",
+            "pthread_mutexattr_gettype pthread_mutexattr_init",
+            "pthread_mutex_init pthread_mutex_destroy",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn("--whole-archive", artifact_runner)
+        self.assertIn("pthread_mutexattr_settype", static_exports)
+        self.assertTrue(
+            {
+                "pthread_mutexattr_init",
+                "pthread_mutexattr_destroy",
+            }.isdisjoint(static_exports)
+        )
+        for header_probe in (c_header_probe, cxx_header_probe):
+            for required in (
+                "crabc_pthread_mutexattr_settype_signature",
+                "pthread_mutexattr_settype signature",
+            ):
+                self.assertIn(required, header_probe)
+        self.assertIn("crabc_force_pthread_mutexattr_settype", cxx_header_probe)
+        self.assertIn("pthread_mutexattr_settype", header_runner)
+        self.assertIn(
+            "pthread_mutexattr_gettype|pthread_mutexattr_getprotocol|pthread_mutexattr_getpshared|pthread_mutexattr_getrobust|pthread_cond_init",
+            header_runner,
+        )
+        self.assertIn(
+            'id = "static-c-pthread-mutexattr-type-setter"', parity_ledger
+        )
+        self.assertIn(
+            'command = "./scripts/dev-x86_64.sh libc-pthread-mutexattr-type-setter"',
+            parity_ledger,
+        )
+        self.assertIn("run_libc_pthread_mutexattr_type_setter_probe()", runner)
+        self.assertIn(
+            "/workspace/compat/x86_64/run_libc_pthread_mutexattr_type_setter.sh",
+            runner,
+        )
+        self.assertIn("    libc-pthread-mutexattr-type-setter) ;;", runner)
+        self.assertIn(
+            '    libc-pthread-mutexattr-type-setter)\n        [ "$#" -eq 0 ] || fail "libc-pthread-mutexattr-type-setter takes no arguments"',
             runner,
         )
 

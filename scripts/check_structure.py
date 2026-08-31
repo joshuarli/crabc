@@ -130,8 +130,8 @@ X86_RUNTIME_FOUNDATION_LDSO_SOURCES = {
 # UTS-namespace identity, selected legacy bcopy/bzero adapters, selected
 # source-backed memccpy copy-until-target and mempcpy return-after-copy adapters,
 # one caller-buffer `strsep` token-mutation leaf, one caller-owned `rand_r`
-# PRNG-state transform, stateless `pthread_setconcurrency` and fixed
-# `pthread_getconcurrency` leaves, selected C-string
+# PRNG-state transform, stateless `pthread_setconcurrency`, fixed
+# `pthread_getconcurrency`, and raw-record `pthread_mutexattr_settype` leaves, selected C-string
 # copy/concatenation, fixed-C-
 # locale ctype and the separately bounded named-locale/multibyte conversion
 # artifact, scalar integer arithmetic, complete integer parsing, intmax
@@ -214,6 +214,7 @@ X86_RUNTIME_FOUNDATION_LIBC_SOURCES = {
     Path("libc/src/c_abi/x86_64/rand_r.rs"),
     Path("libc/src/c_abi/x86_64/pthread_getconcurrency.rs"),
     Path("libc/src/c_abi/x86_64/pthread_setconcurrency.rs"),
+    Path("libc/src/c_abi/x86_64/pthread_mutexattr_type_setter.rs"),
     Path("libc/src/c_abi/x86_64/legacy_memory.rs"),
     Path("libc/src/c_abi/x86_64/process_context.rs"),
     Path("libc/src/c_abi/x86_64/environment.rs"),
@@ -3763,6 +3764,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         '#[path = "pthread_create_join.rs"]',
         '#[path = "pthread_getconcurrency.rs"]',
         '#[path = "pthread_setconcurrency.rs"]',
+        '#[path = "pthread_mutexattr_type_setter.rs"]',
         '#[path = "pthread_tsd.rs"]',
         '#[path = "pthread_mutex.rs"]',
         '#[path = "pthread_cond.rs"]',
@@ -4736,6 +4738,86 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         errors.append(
             "compat/x86_64/run_libc_pthread_getconcurrency.sh: selected static "
             "evidence must not force-link the archive"
+        )
+
+    pthread_mutexattr_type_setter_source = (
+        ROOT
+        / "libc"
+        / "src"
+        / "c_abi"
+        / "x86_64"
+        / "pthread_mutexattr_type_setter.rs"
+    )
+    pthread_mutexattr_type_setter_text = pthread_mutexattr_type_setter_source.read_text(
+        errors="replace"
+    )
+    for required in (
+        "musl 1.2.6",
+        "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+        "src/thread/pthread_mutexattr_settype.c::pthread_mutexattr_settype",
+        "input-first `EINVAL` branch",
+        "TYPE_MASK: c_uint = 3",
+        'pub unsafe extern "C" fn pthread_mutexattr_settype',
+        "does not establish mutex",
+    ):
+        if required not in pthread_mutexattr_type_setter_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/pthread_mutexattr_type_setter.rs: selected "
+                f"static boundary is missing {required!r}"
+            )
+    pthread_mutexattr_type_setter_exports = set(
+        re.findall(
+            r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(',
+            pthread_mutexattr_type_setter_text,
+        )
+    )
+    if pthread_mutexattr_type_setter_exports != {"pthread_mutexattr_settype"}:
+        errors.append(
+            "libc/src/c_abi/x86_64/pthread_mutexattr_type_setter.rs: selected "
+            "artifact must export only pthread_mutexattr_settype"
+        )
+    for forbidden in (
+        "raw_syscall::",
+        "static_tls::",
+        "pthread_mutex::",
+        "atomic::",
+        "crabc_core",
+        "crabc_mimalloc",
+        "static mut",
+        "use super::",
+        "fn pthread_mutexattr_gettype",
+    ):
+        if forbidden in pthread_mutexattr_type_setter_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/pthread_mutexattr_type_setter.rs: selected "
+                f"static leaf must not select {forbidden!r}"
+            )
+    pthread_mutexattr_type_setter_runner = (
+        ROOT / "compat" / "x86_64" / "run_libc_pthread_mutexattr_type_setter.sh"
+    )
+    pthread_mutexattr_type_setter_runner_text = (
+        pthread_mutexattr_type_setter_runner.read_text(errors="replace")
+    )
+    for required in (
+        "run_musl_oracle.sh",
+        "run_pthread_c11_header_abi.sh",
+        "pthread_mutexattr_settype",
+        "pthread_mutexattr_gettype",
+        "assert_direct_record_path",
+        "input-first `EINVAL` branch",
+        "-nostdlib -static",
+        "--no-undefined",
+        "candidate must remain TLS-free",
+    ):
+        if required not in pthread_mutexattr_type_setter_runner_text:
+            errors.append(
+                "compat/x86_64/run_libc_pthread_mutexattr_type_setter.sh: selected "
+                f"static evidence is missing {required!r}"
+            )
+    if "--whole-archive" in pthread_mutexattr_type_setter_runner_text:
+        errors.append(
+            "compat/x86_64/run_libc_pthread_mutexattr_type_setter.sh: selected "
+            "static evidence must not force-link the archive"
         )
 
     fenv_source = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "fenv.rs"
@@ -10547,6 +10629,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         rand_r_text,
         pthread_getconcurrency_text,
         pthread_setconcurrency_text,
+        pthread_mutexattr_type_setter_text,
         random_entropy_text,
         memory_search_text,
         string_copy_text,
@@ -10693,6 +10776,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         "rand_r",
         "pthread_getconcurrency",
         "pthread_setconcurrency",
+        "pthread_mutexattr_settype",
         "memset",
         "memmove",
         "feclearexcept",
@@ -11062,7 +11146,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
             "signal-control, separate realtime-minimum/realtime-maximum bridges, one pure GNU signal-set predicate, paired GNU binary set-operation leaf, and a three-symbol POSIX signal-set mutation leaf, bounded process-signal execution, and one legacy single-signal pause wait, bounded pthread create/exit/join/detach initial-TLS worker, its private selected-main/worker pthread-key/C11-TSS lifecycle, private process-normal pthread mutexes and their musl private condition-variable handoff, the complete selected rwlock/attribute family with private-or-shared futex operation, plus the distinct C11 plain-sync adapter and normal-return pthread/C11 once state machine, its typed C11 create/exit/join/detach sibling, and pthread/C11 identity aliases, named termios-control, direct terminal-descriptor and foreground-group observations plus one named foreground-group assignment, historical ctermid pathname spelling, constant historical gethostid compatibility, selected process-context, child-reaping, C11 immediate termination, callback algorithms, direct clock_gettime, binary64 difftime, caller-buffered fixed-UTC gmtime_r, fixed-UTC timegm, caller-owned mapping-core, no-cancellation mapping synchronization, direct anonymous-memory descriptor creation, nanosleep, and clock_nanosleep, selected "
             "POSIX _exit forwarding, descriptor-entry, selected filesystem-access, bounded descriptor-control, timestamp updates, and descriptor-I/O, selected process-resources, selected readiness/signal-waits, "
             "selected socket transport and selected socket-message/options, selected system-observation, selected UTS-identity, "
-            "selected numeric-address codecs, immutable IPv6 unspecified/loopback address data objects, and legacy classful IPv4 arithmetic, fixed-profile h_errno message text, byte-string, legacy-memory adapters, source-backed memccpy/mempcpy, caller-buffer strsep, caller-state rand_r, fixed pthread_getconcurrency and stateless pthread_setconcurrency, random-entropy, memory-search, C-string-copy, immutable error-string, "
+            "selected numeric-address codecs, immutable IPv6 unspecified/loopback address data objects, and legacy classful IPv4 arithmetic, fixed-profile h_errno message text, byte-string, legacy-memory adapters, source-backed memccpy/mempcpy, caller-buffer strsep, caller-state rand_r, fixed pthread_getconcurrency, stateless pthread_setconcurrency, and raw pthread_mutexattr_settype, random-entropy, memory-search, C-string-copy, immutable error-string, "
             "fixed-C-locale ctype, integer-arithmetic, integer-parsing, intmax-arithmetic, credential-observation, and "
             "raw auxiliary-vector observation, startup-derived secure-environment, and environment-backed login-name observation, find-first-set, startup-published program names, short/GNU-long "
             "getopt state and aliases, standalone linear search, callback-tree/hash-table search, and the "
@@ -11090,6 +11174,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         ("rand_r.rs", rand_r_text),
         ("pthread_getconcurrency.rs", pthread_getconcurrency_text),
         ("pthread_setconcurrency.rs", pthread_setconcurrency_text),
+        ("pthread_mutexattr_type_setter.rs", pthread_mutexattr_type_setter_text),
         ("fenv.rs", fenv_text),
         ("setjmp.rs", setjmp_text),
         ("signal_foundation.rs", signal_foundation_text),
@@ -11154,6 +11239,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         ("rand_r.rs", rand_r_text),
         ("pthread_getconcurrency.rs", pthread_getconcurrency_text),
         ("pthread_setconcurrency.rs", pthread_setconcurrency_text),
+        ("pthread_mutexattr_type_setter.rs", pthread_mutexattr_type_setter_text),
         ("random_entropy.rs", random_entropy_text),
         ("memory_search.rs", memory_search_text),
         ("string_copy.rs", string_copy_text),

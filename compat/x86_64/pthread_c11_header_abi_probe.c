@@ -150,6 +150,8 @@ typedef int (*crabc_pthread_mutex_getprioceiling_signature)(
 	const pthread_mutex_t *, int *);
 typedef int (*crabc_pthread_mutexattr_gettype_signature)(
 	const pthread_mutexattr_t *, int *);
+typedef int (*crabc_pthread_mutexattr_settype_signature)(
+	pthread_mutexattr_t *, int);
 typedef int (*crabc_pthread_mutexattr_getprotocol_signature)(
 	const pthread_mutexattr_t *, int *);
 typedef int (*crabc_pthread_mutexattr_getpshared_signature)(
@@ -253,6 +255,8 @@ _Static_assert(CRABC_TYPE_IS(__typeof__(&pthread_mutex_getprioceiling),
 	crabc_pthread_mutex_getprioceiling_signature), "pthread_mutex_getprioceiling signature");
 _Static_assert(CRABC_TYPE_IS(__typeof__(&pthread_mutexattr_gettype),
 	crabc_pthread_mutexattr_gettype_signature), "pthread_mutexattr_gettype signature");
+_Static_assert(CRABC_TYPE_IS(__typeof__(&pthread_mutexattr_settype),
+	crabc_pthread_mutexattr_settype_signature), "pthread_mutexattr_settype signature");
 _Static_assert(CRABC_TYPE_IS(__typeof__(&pthread_mutexattr_getprotocol),
 	crabc_pthread_mutexattr_getprotocol_signature), "pthread_mutexattr_getprotocol signature");
 _Static_assert(CRABC_TYPE_IS(__typeof__(&pthread_mutexattr_getpshared),

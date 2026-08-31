@@ -1,0 +1,19 @@
+/* Direct Linux x86-64 entry for the bounded pthread mutexattr type setter.
+ *
+ * This owns no CRT, TLS, errno, thread, lifecycle, scheduler, mutex, or
+ * attribute-lifecycle setup. The selected record setter returns a direct
+ * status, then this shim exits through Linux x86-64 syscall 60.
+ */
+	.text
+	.globl _start
+	.type _start,@function
+_start:
+	xor %ebp, %ebp
+	and $-16, %rsp
+	call crabc_x86_64_pthread_mutexattr_type_setter_probe
+	mov %eax, %edi
+	mov $60, %eax
+	syscall
+	.size _start, .-_start
+
+	.section .note.GNU-stack,"",@progbits

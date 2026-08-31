@@ -132,7 +132,10 @@
 //! direct EINVAL/zero/EAGAIN results without retaining a setting or touching
 //! TLS, scheduler state, or a thread record. Its separate fixed query sibling
 //! returns zero without consuming a caller record or retained setting. Neither
-//! leaf selects pthread scheduling attributes or a general pthread runtime. The mutex
+//! leaf selects pthread scheduling attributes or a general pthread runtime.
+//! The adjacent raw mutex-attribute leaves only inspect or replace their named
+//! caller-owned record bits; they do not make an attribute lifecycle-managed or
+//! consumable by mutex operation. The mutex
 //! block is limited to all-zero/NULL-attribute process-private normal mutexes
 //! and private futex contention. Its condition sibling retains musl's private
 //! waiter-list/barrier/requeue protocol only for all-zero/NULL-attribute
@@ -338,6 +341,8 @@ mod pthread_mutexattr_pshared_query;
 mod pthread_mutexattr_robust_query;
 #[path = "pthread_mutexattr_type_query.rs"]
 mod pthread_mutexattr_type_query;
+#[path = "pthread_mutexattr_type_setter.rs"]
+mod pthread_mutexattr_type_setter;
 #[path = "pthread_mutex_prioceiling_query.rs"]
 mod pthread_mutex_prioceiling_query;
 #[path = "pthread_cond.rs"]

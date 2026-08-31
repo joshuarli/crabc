@@ -646,7 +646,7 @@ The direct `utime-header-abi` gate checks the x86 LP64 `struct utimbuf`,
 `threads.h`, and `sched.h` layouts, macros, type identities, include orders,
 GNU declarations, and unmangled C linkage. Its selected declarations include
 every `pthread_rwlock_*` and `pthread_rwlockattr_*` signature plus the exact
-`pthread_getconcurrency`, `pthread_setconcurrency`, `pthread_mutexattr_gettype`, `pthread_mutexattr_getprotocol`, `pthread_mutexattr_getpshared`, `pthread_mutexattr_getrobust`, `pthread_barrierattr_*pshared`, `pthread_condattr_*pshared`, and
+`pthread_getconcurrency`, `pthread_setconcurrency`, `pthread_mutexattr_gettype`, `pthread_mutexattr_settype`, `pthread_mutexattr_getprotocol`, `pthread_mutexattr_getpshared`, `pthread_mutexattr_getrobust`, `pthread_barrierattr_*pshared`, `pthread_condattr_*pshared`, and
 `pthread_condattr_*clock` pairs, and the C++ object probe requires their
 unmangled C linkage. Both are compile-only
 partial evidence: they do not select archive linkage, pthread behavior,
@@ -3224,6 +3224,21 @@ therefore does not establish recursive/error-checking mutex operation, mutex
 initialization/locking/destruction, threads, TLS, synchronization,
 cancellation, CRT, loader, sysroot, family completion, promotion, or public
 x86 support.
+
+`libc-pthread-mutexattr-type-setter` is a thirty-third separately recorded
+private static `verified_artifact` under the same still-planned
+`libc.pthread-tls` family. Its project-header C body first runs against pinned
+musl and then through a `-nostdlib -static` candidate. It selects only
+`pthread_mutexattr_settype`: valid normal/default `0`, recursive `1`, and
+errorcheck `2` replace just raw bits 0 and 1 of the caller-owned four-byte
+word, preserving every higher bit. Every other `int` returns `EINVAL` before
+reading or writing the record, including a null pointer. This record-only
+setter establishes no initialized or lifecycle-managed attribute and does not
+make the record consumable by mutex initialization or operation. It excludes
+the getter, every other mutex attribute, mutex initialization/locking/
+destruction, recursive/error-checking operation, threads, TLS,
+synchronization, cancellation, CRT, loader, sysroot, family completion,
+promotion, and public x86 support.
 
 `libc-pthread-mutex-prioceiling-query` is a thirtieth separately recorded
 private static `verified_artifact` under the same still-planned

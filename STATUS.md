@@ -821,6 +821,20 @@ destruction, threads, TLS, synchronization, cancellation, CRT, loader,
 sysroot, family completion, promotion, or public x86 support.
 
 The separate
+`./scripts/dev-x86_64.sh libc-pthread-mutexattr-type-setter` artifact is a
+thirty-third private static artifact in that same still-planned family. It
+selects only `pthread_mutexattr_settype` over the public four-byte attribute
+word. Valid normal/default `0`, recursive `1`, and errorcheck `2` replace only
+raw bits 0 and 1 while retaining every higher caller-owned bit. Musl returns
+`EINVAL` for any `int` whose unsigned form exceeds `2` before it reads or
+writes the record, including an invalid null pointer. The fixture neither gets
+the record type nor constructs, initializes, validates, or consumes an
+attribute. This does not select recursive/error-checking mutex operation,
+mutex initialization/locking/destruction, threads, TLS, synchronization,
+cancellation, CRT, loader, sysroot, family completion, promotion, or public
+x86 support.
+
+The separate
 `./scripts/dev-x86_64.sh libc-pthread-mutex-prioceiling-query` artifact is a
 thirtieth private static artifact in that same still-planned family. It
 selects only musl's unavailable `pthread_mutex_getprioceiling` direct status:

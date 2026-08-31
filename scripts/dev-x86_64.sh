@@ -286,6 +286,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-pthread-mutexattr-pshared-query  run the static x86 crabc-libc mutex-attribute pshared-bit query slice
   libc-pthread-mutexattr-robust-query  run the static x86 crabc-libc mutex-attribute robust-bit query slice
   libc-pthread-mutexattr-type-query  run the static x86 crabc-libc mutex-attribute type-bit query slice
+  libc-pthread-mutexattr-type-setter  run the static x86 crabc-libc mutex-attribute type-bit setter slice
   libc-pthread-mutex-prioceiling-query  run the static x86 crabc-libc direct mutex priority-ceiling query slice
   libc-pthread-getconcurrency  run the static x86 crabc-libc fixed pthread concurrency-query slice
   libc-pthread-setconcurrency  run the static x86 crabc-libc stateless pthread concurrency-status slice
@@ -693,6 +694,16 @@ attribute lifecycle function, or any mutex entry. It does not select
 setter/record-construction/validation behavior, recursive or error-checking
 mutex operation, threads, TLS, synchronization, cancellation, CRT, loader,
 sysroot, pthread-family completion, or public x86 support.
+`libc-pthread-mutexattr-type-setter` is a separate static project-header
+fixture that first runs through pinned musl, then links only the selected
+archive. It selects only `pthread_mutexattr_settype`'s input-first raw-record
+branch: `0`, `1`, and `2` replace the public four-byte
+`pthread_mutexattr_t` word's low two bits while retaining all higher
+caller-owned bits; every other `int` returns `EINVAL` without touching even a
+null record pointer. It does not select getter, record construction or
+lifecycle, mutex initialization/operation, recursive or error-checking mutex
+behavior, threads, TLS, synchronization, cancellation, CRT, loader, sysroot,
+pthread-family completion, or public x86 support.
 `libc-pthread-mutex-prioceiling-query` is a separate static project-header
 fixture that first runs through pinned musl, then links only the selected
 archive. It selects only musl's direct `pthread_mutex_getprioceiling` EINVAL
@@ -3504,6 +3515,10 @@ run_libc_pthread_mutexattr_type_query_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_pthread_mutexattr_type_query.sh
 }
 
+run_libc_pthread_mutexattr_type_setter_probe() {
+    run_in_container bash /workspace/compat/x86_64/run_libc_pthread_mutexattr_type_setter.sh
+}
+
 run_libc_pthread_mutex_prioceiling_query_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_pthread_mutex_prioceiling_query.sh
 }
@@ -3965,6 +3980,7 @@ case "$command" in
     libc-pthread-mutexattr-pshared-query) ;;
     libc-pthread-mutexattr-robust-query) ;;
     libc-pthread-mutexattr-type-query) ;;
+    libc-pthread-mutexattr-type-setter) ;;
     libc-pthread-mutex-prioceiling-query) ;;
     libc-pthread-getconcurrency) ;;
     libc-pthread-setconcurrency) ;;
@@ -5111,6 +5127,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "libc-pthread-mutexattr-type-query takes no arguments"
         ensure_image
         run_libc_pthread_mutexattr_type_query_probe
+        ;;
+    libc-pthread-mutexattr-type-setter)
+        [ "$#" -eq 0 ] || fail "libc-pthread-mutexattr-type-setter takes no arguments"
+        ensure_image
+        run_libc_pthread_mutexattr_type_setter_probe
         ;;
     libc-pthread-mutex-prioceiling-query)
         [ "$#" -eq 0 ] || fail "libc-pthread-mutex-prioceiling-query takes no arguments"

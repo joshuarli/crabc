@@ -10849,8 +10849,8 @@ def require_static_pthread_rwlock_artifact(family: Mapping[str, Any]) -> None:
         "libc.pthread-tls must contain exactly one static-c-pthread-rwlock artifact",
     )
     require(
-        len(artifacts) == 32,
-        "libc.pthread-tls must retain exactly thirty-two private verified artifacts",
+        len(artifacts) == 33,
+        "libc.pthread-tls must retain exactly thirty-three private verified artifacts",
     )
     require(
         family.get("status") == "planned",
@@ -10860,7 +10860,7 @@ def require_static_pthread_rwlock_artifact(family: Mapping[str, Any]) -> None:
     family_description = family["description"]
     assert isinstance(family_description, str)
     for phrase in (
-        "Thirty-two separately verified static artifacts",
+        "Thirty-three separately verified static artifacts",
         "complete private rwlock/rwlockattr block with private and process-shared futex waits",
         "not pthread/TLS parity",
     ):
@@ -11603,8 +11603,8 @@ def require_static_pthread_c11_once_artifact(family: Mapping[str, Any]) -> None:
         "libc.pthread-tls must contain exactly one static-c-pthread-c11-once artifact",
     )
     require(
-        len(artifacts) == 32,
-        "libc.pthread-tls must retain exactly thirty-two private verified artifacts",
+        len(artifacts) == 33,
+        "libc.pthread-tls must retain exactly thirty-three private verified artifacts",
     )
     require(
         family.get("status") == "planned",
@@ -11614,7 +11614,7 @@ def require_static_pthread_c11_once_artifact(family: Mapping[str, Any]) -> None:
     family_description = family["description"]
     assert isinstance(family_description, str)
     for phrase in (
-        "Thirty-two separately verified static artifacts",
+        "Thirty-three separately verified static artifacts",
         "private normal-return pthread/C11 once state machine",
         "not pthread/TLS parity",
     ):
@@ -11930,8 +11930,8 @@ def require_static_pthread_c11_tsd_artifact(family: Mapping[str, Any]) -> None:
         "libc.pthread-tls must contain exactly one static-c-pthread-c11-tsd artifact",
     )
     require(
-        len(artifacts) == 32,
-        "libc.pthread-tls must retain exactly thirty-two private verified artifacts",
+        len(artifacts) == 33,
+        "libc.pthread-tls must retain exactly thirty-three private verified artifacts",
     )
     require(
         family.get("status") == "planned",
@@ -11941,7 +11941,7 @@ def require_static_pthread_c11_tsd_artifact(family: Mapping[str, Any]) -> None:
     family_description = family["description"]
     assert isinstance(family_description, str)
     for phrase in (
-        "Thirty-two separately verified static artifacts",
+        "Thirty-three separately verified static artifacts",
         "bounded private pthread-key/C11-TSS lifecycle table",
         "not pthread/TLS parity",
     ):
@@ -12301,8 +12301,8 @@ def require_static_pthread_cancel_deferred_artifact(
         "libc.pthread-tls must contain exactly one static-c-pthread-cancel-deferred artifact",
     )
     require(
-        len(artifacts) == 32,
-        "libc.pthread-tls must retain exactly thirty-two private verified artifacts",
+        len(artifacts) == 33,
+        "libc.pthread-tls must retain exactly thirty-three private verified artifacts",
     )
     require(
         family.get("status") == "planned",
@@ -12312,7 +12312,7 @@ def require_static_pthread_cancel_deferred_artifact(
     family_description = family["description"]
     assert isinstance(family_description, str)
     for phrase in (
-        "Thirty-two separately verified static artifacts",
+        "Thirty-three separately verified static artifacts",
         "selected-worker deferred-cancellation route",
         "sole delivery point is explicit `pthread_testcancel`",
         "not pthread/TLS parity",
@@ -38866,8 +38866,8 @@ def require_static_pthread_atfork_artifact(family: Mapping[str, Any]) -> None:
         "libc.pthread-tls must contain exactly one static-c-pthread-atfork-fork artifact",
     )
     require(
-        len(artifacts) == 32,
-        "libc.pthread-tls must retain exactly thirty-two private verified artifacts",
+        len(artifacts) == 33,
+        "libc.pthread-tls must retain exactly thirty-three private verified artifacts",
     )
     require(
         family.get("status") == "planned",
@@ -38877,7 +38877,7 @@ def require_static_pthread_atfork_artifact(family: Mapping[str, Any]) -> None:
     family_description = family["description"]
     assert isinstance(family_description, str)
     for phrase in (
-        "Thirty-two separately verified static artifacts",
+        "Thirty-three separately verified static artifacts",
         "single-threaded fixed-capacity pthread_atfork/fork route",
         "child-only bounded ordinary-exit callback dispatch",
         "not pthread/TLS parity",
@@ -39113,8 +39113,8 @@ def require_static_pthread_affinity_artifact(
         "libc.pthread-tls must contain exactly one bounded pthread-affinity artifact",
     )
     require(
-        len(artifacts) == 32,
-        "libc.pthread-tls must retain exactly thirty-two private verified artifacts",
+        len(artifacts) == 33,
+        "libc.pthread-tls must retain exactly thirty-three private verified artifacts",
     )
     require(
         family.get("status") == "planned",
@@ -39124,7 +39124,7 @@ def require_static_pthread_affinity_artifact(
     family_description = family["description"]
     assert isinstance(family_description, str)
     for phrase in (
-        "Thirty-two separately verified static artifacts",
+        "Thirty-three separately verified static artifacts",
         "bounded direct GNU pthread-affinity route",
         "bootstrapped-main self handles",
         "executing selected-worker handles",
@@ -39305,8 +39305,8 @@ def require_static_pthread_cpuclock_artifact(
         "libc.pthread-tls must contain exactly one bounded pthread CPU-clock artifact",
     )
     require(
-        len(artifacts) == 32,
-        "libc.pthread-tls must retain exactly thirty-two private verified artifacts",
+        len(artifacts) == 33,
+        "libc.pthread-tls must retain exactly thirty-three private verified artifacts",
     )
     require(
         family.get("status") == "planned",
@@ -39316,7 +39316,7 @@ def require_static_pthread_cpuclock_artifact(
     family_description = family["description"]
     assert isinstance(family_description, str)
     for phrase in (
-        "Thirty-two separately verified static artifacts",
+        "Thirty-three separately verified static artifacts",
         "caller-self-only pthread CPU-clock-ID route over direct Linux gettid encoding",
         "not pthread/TLS parity",
     ):
@@ -39499,8 +39499,8 @@ def require_static_pthread_name_artifact(
         "libc.pthread-tls must contain exactly one bounded pthread task-name artifact",
     )
     require(
-        len(artifacts) == 32,
-        "libc.pthread-tls must retain exactly thirty-two private verified artifacts",
+        len(artifacts) == 33,
+        "libc.pthread-tls must retain exactly thirty-three private verified artifacts",
     )
     require(
         family.get("status") == "planned",
@@ -39510,7 +39510,7 @@ def require_static_pthread_name_artifact(
     family_description = family["description"]
     assert isinstance(family_description, str)
     for phrase in (
-        "Thirty-two separately verified static artifacts",
+        "Thirty-three separately verified static artifacts",
         "bootstrapped-main GNU pthread task-name pair over direct Linux prctl",
         "not pthread/TLS parity",
     ):
@@ -39704,8 +39704,8 @@ def require_static_pthread_barrierattr_pshared_artifact(
         "libc.pthread-tls must contain exactly one barrierattr pshared artifact",
     )
     require(
-        len(artifacts) == 32,
-        "libc.pthread-tls must retain exactly thirty-two private verified artifacts",
+        len(artifacts) == 33,
+        "libc.pthread-tls must retain exactly thirty-three private verified artifacts",
     )
     require(
         family.get("status") == "planned",
@@ -39715,7 +39715,7 @@ def require_static_pthread_barrierattr_pshared_artifact(
     family_description = family["description"]
     assert isinstance(family_description, str)
     for phrase in (
-        "Thirty-two separately verified static artifacts",
+        "Thirty-three separately verified static artifacts",
         "raw barrier-attribute pshared record pair deliberately unconsumed by barrier initialization",
         "not pthread/TLS parity",
     ):
@@ -39904,8 +39904,8 @@ def require_static_pthread_condattr_pshared_artifact(
         "libc.pthread-tls must contain exactly one condattr pshared artifact",
     )
     require(
-        len(artifacts) == 32,
-        "libc.pthread-tls must retain exactly thirty-two private verified artifacts",
+        len(artifacts) == 33,
+        "libc.pthread-tls must retain exactly thirty-three private verified artifacts",
     )
     require(
         family.get("status") == "planned",
@@ -39915,7 +39915,7 @@ def require_static_pthread_condattr_pshared_artifact(
     family_description = family["description"]
     assert isinstance(family_description, str)
     for phrase in (
-        "Thirty-two separately verified static artifacts",
+        "Thirty-three separately verified static artifacts",
         "raw condition-attribute pshared bit-record pair deliberately unconsumed by condition initialization",
         "not pthread/TLS parity",
     ):
@@ -40118,8 +40118,8 @@ def require_static_pthread_condattr_clock_artifact(
         "libc.pthread-tls must contain exactly one condattr clock artifact",
     )
     require(
-        len(artifacts) == 32,
-        "libc.pthread-tls must retain exactly thirty-two private verified artifacts",
+        len(artifacts) == 33,
+        "libc.pthread-tls must retain exactly thirty-three private verified artifacts",
     )
     require(
         family.get("status") == "planned",
@@ -40129,7 +40129,7 @@ def require_static_pthread_condattr_clock_artifact(
     family_description = family["description"]
     assert isinstance(family_description, str)
     for phrase in (
-        "Thirty-two separately verified static artifacts",
+        "Thirty-three separately verified static artifacts",
         "raw condition-attribute clock-record pair deliberately unconsumed by condition initialization",
         "not pthread/TLS parity",
     ):
@@ -40335,8 +40335,8 @@ def require_static_pthread_mutexattr_robust_query_artifact(
         "libc.pthread-tls must contain exactly one mutexattr robust-query artifact",
     )
     require(
-        len(artifacts) == 32,
-        "libc.pthread-tls must retain exactly thirty-two private verified artifacts",
+        len(artifacts) == 33,
+        "libc.pthread-tls must retain exactly thirty-three private verified artifacts",
     )
     require(
         family.get("status") == "planned",
@@ -40346,7 +40346,7 @@ def require_static_pthread_mutexattr_robust_query_artifact(
     family_description = family["description"]
     assert isinstance(family_description, str)
     for phrase in (
-        "Thirty-two separately verified static artifacts",
+        "Thirty-three separately verified static artifacts",
         "raw mutex-attribute robust-bit getter deliberately unconsumed by mutex initialization",
         "not pthread/TLS parity",
     ):
@@ -40534,8 +40534,8 @@ def require_static_pthread_mutexattr_protocol_query_artifact(
         "libc.pthread-tls must contain exactly one mutexattr protocol-query artifact",
     )
     require(
-        len(artifacts) == 32,
-        "libc.pthread-tls must retain exactly thirty-two private verified artifacts",
+        len(artifacts) == 33,
+        "libc.pthread-tls must retain exactly thirty-three private verified artifacts",
     )
     require(
         family.get("status") == "planned",
@@ -40545,7 +40545,7 @@ def require_static_pthread_mutexattr_protocol_query_artifact(
     family_description = family["description"]
     assert isinstance(family_description, str)
     for phrase in (
-        "Thirty-two separately verified static artifacts",
+        "Thirty-three separately verified static artifacts",
         "raw mutex-attribute protocol-bit getter deliberately unconsumed by mutex initialization",
         "not pthread/TLS parity",
     ):
@@ -40733,8 +40733,8 @@ def require_static_pthread_mutexattr_pshared_query_artifact(
         "libc.pthread-tls must contain exactly one mutexattr pshared-query artifact",
     )
     require(
-        len(artifacts) == 32,
-        "libc.pthread-tls must retain exactly thirty-two private verified artifacts",
+        len(artifacts) == 33,
+        "libc.pthread-tls must retain exactly thirty-three private verified artifacts",
     )
     require(
         family.get("status") == "planned",
@@ -40744,7 +40744,7 @@ def require_static_pthread_mutexattr_pshared_query_artifact(
     family_description = family["description"]
     assert isinstance(family_description, str)
     for phrase in (
-        "Thirty-two separately verified static artifacts",
+        "Thirty-three separately verified static artifacts",
         "raw mutex-attribute pshared-bit getter deliberately unconsumed by mutex initialization",
         "not pthread/TLS parity",
     ):
@@ -40930,8 +40930,8 @@ def require_static_pthread_mutexattr_type_query_artifact(
         "libc.pthread-tls must contain exactly one mutexattr type-query artifact",
     )
     require(
-        len(artifacts) == 32,
-        "libc.pthread-tls must retain exactly thirty-two private verified artifacts",
+        len(artifacts) == 33,
+        "libc.pthread-tls must retain exactly thirty-three private verified artifacts",
     )
     require(
         family.get("status") == "planned",
@@ -40941,7 +40941,7 @@ def require_static_pthread_mutexattr_type_query_artifact(
     family_description = family["description"]
     assert isinstance(family_description, str)
     for phrase in (
-        "Thirty-two separately verified static artifacts",
+        "Thirty-three separately verified static artifacts",
         "raw mutex-attribute type-bit getter deliberately unconsumed by mutex initialization",
         "not pthread/TLS parity",
     ):
@@ -40964,11 +40964,11 @@ def require_static_pthread_mutexattr_type_query_artifact(
         "raw `3` remains an exact getter result rather than a valid constructed record",
         "without changing the raw word",
         "caller-owned raw record storage",
-        "`pthread_mutexattr_settype`, an attribute lifecycle function, or any mutex entry",
-        "no setter, record-construction, validation, or consumption contract",
+        "raw getter artifact by itself establishes no setter, record-construction, validation, or consumption contract",
+        "separately selected raw setter does not make the record lifecycle-managed or consumable",
         "normal-mutex artifact continues to reject every non-null attribute",
         "not recursive or error-checking mutex operation, a mutex state machine, or a mutex capability claim",
-        "the setter, init/destroy lifecycle, pshared/protocol/prioceiling/robust attributes",
+        "separate setter mutation path, init/destroy lifecycle, pshared/protocol/prioceiling/robust attributes",
         "mutex initialization/locking/destruction",
         "threads, TCB/TLS ownership, synchronization, cancellation",
         "general pthread/TLS behavior or x86-64 parity",
@@ -41088,7 +41088,6 @@ def require_static_pthread_mutexattr_type_query_artifact(
         "pthread mutexattr type-query static export contract is incomplete",
     )
     for unselected in (
-        "pthread_mutexattr_settype",
         "pthread_mutexattr_init",
         "pthread_mutexattr_destroy",
     ):
@@ -41105,6 +41104,211 @@ def require_static_pthread_mutexattr_type_query_artifact(
         require(
             snippet in dispatcher,
             f"pthread mutexattr type-query dispatcher omits {snippet}",
+        )
+
+
+def require_static_pthread_mutexattr_type_setter_artifact(
+    family: Mapping[str, Any],
+) -> None:
+    """Ratchet musl's raw mutexattr type setter without mutex promotion."""
+
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.pthread-tls].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [
+        entry
+        for entry in artifacts
+        if entry.get("id") == "static-c-pthread-mutexattr-type-setter"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.pthread-tls must contain exactly one mutexattr type-setter artifact",
+    )
+    require(
+        len(artifacts) == 33,
+        "libc.pthread-tls must retain exactly thirty-three private verified artifacts",
+    )
+    require(
+        family.get("status") == "planned",
+        "pthread mutexattr type setter must not promote libc.pthread-tls",
+    )
+
+    family_description = family["description"]
+    assert isinstance(family_description, str)
+    for phrase in (
+        "Thirty-three separately verified static artifacts",
+        "raw mutex-attribute type-bit getter deliberately unconsumed by mutex initialization",
+        "raw mutex-attribute type-bit setter deliberately unconsumed by mutex initialization",
+        "not pthread/TLS parity",
+    ):
+        require(
+            phrase in family_description,
+            f"libc.pthread-tls description omits {phrase} after mutexattr type setter",
+        )
+
+    artifact = matching[0]
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for phrase in (
+        "still-planned `libc.pthread-tls`",
+        "One dependency-free entry",
+        "only `pthread_mutexattr_settype`",
+        "four-byte, four-byte-aligned public `pthread_mutexattr_t` word",
+        "unsigned form exceeds `2`",
+        "direct `EINVAL` before it touches the record",
+        "normal/default `0`, recursive `1`, and errorcheck `2`",
+        "only raw bits 0 and 1",
+        "every higher caller-owned bit",
+        "caller-owned raw record storage and invalid null pointers",
+        "no initialized record, record-validation, lifecycle, or consumption contract",
+        "normal-mutex artifact continues to reject every non-null attribute",
+        "not recursive or error-checking mutex operation, a mutex state machine, or a mutex capability claim",
+        "the getter, init/destroy lifecycle, pshared/protocol/prioceiling/robust attributes",
+        "mutex initialization/locking/destruction",
+        "threads, TCB/TLS ownership, synchronization, cancellation",
+        "general pthread/TLS behavior or x86-64 parity",
+        "family completion, promotion, or public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"pthread mutexattr type-setter description omits {phrase}",
+        )
+
+    expected_sources = {
+        "compat/upstreams.toml",
+        "libc/Cargo.toml",
+        "libc/src/lib.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/pthread_mutexattr_type_setter.rs",
+        "include/bits/alltypes.h",
+        "include/errno.h",
+        "include/features.h",
+        "include/limits.h",
+        "include/pthread.h",
+        "compat/x86_64/pthread_c11_header_abi_probe.c",
+        "compat/x86_64/pthread_c11_header_abi_probe.cpp",
+        "compat/x86_64/run_pthread_c11_header_abi.sh",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/libc_pthread_mutexattr_type_setter_probe.c",
+        "compat/x86_64/libc_pthread_mutexattr_type_setter_start.S",
+        "compat/x86_64/run_libc_pthread_mutexattr_type_setter.sh",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/README.md",
+        "STATUS.md",
+        "x86-64.md",
+        "scripts/dev-x86_64.sh",
+    }
+    require(
+        set(
+            string_list(
+                artifact["source_owners"], "pthread mutexattr type-setter source owners"
+            )
+        )
+        == expected_sources,
+        "pthread mutexattr type-setter source owners drifted",
+    )
+
+    prerequisite_text = " ".join(artifact["x86_abi_prerequisites"])
+    for phrase in (
+        "src/thread/pthread_mutexattr_settype.c::pthread_mutexattr_settype",
+        "`EINVAL` when `(unsigned)type > 2`",
+        "`a->__attr = (a->__attr & ~3) | type`",
+        "mutable `pthread_mutexattr_t *` in rdi",
+        "`int` type in esi",
+        "four-byte, four-byte-aligned unsigned word at offset zero",
+        "Valid type values 0/1/2 require writable aligned caller storage",
+        "invalid type returns EINVAL before a record read or write, including a null pointer",
+        "direct `_start`",
+        "exit=60",
+        "no PT_TLS segment",
+        "no syscall, helper call",
+        "only settype, not gettype, lifecycle, another mutex attribute",
+        "mutex initialization, locking, destruction, recursive mutex operation, or error-checking mutex operation",
+    ):
+        require(
+            phrase in prerequisite_text,
+            f"pthread mutexattr type-setter ABI prerequisites omit {phrase}",
+        )
+    header_text = " ".join(artifact["x86_header_prerequisites"])
+    for phrase in (
+        "pthread.h",
+        "bits/alltypes.h",
+        "features.h",
+        "errno.h",
+        "limits.h",
+        "four-byte align-four",
+        "PTHREAD_MUTEX_NORMAL=0/PTHREAD_MUTEX_DEFAULT=0/PTHREAD_MUTEX_RECURSIVE=1/PTHREAD_MUTEX_ERRORCHECK=2",
+        "EINVAL=22",
+        "int (*)(pthread_mutexattr_t *, int)",
+        "28-context C/C++ pthread/C11",
+        "unmangled C++ reference",
+    ):
+        require(
+            phrase in header_text,
+            f"pthread mutexattr type-setter header prerequisites omit {phrase}",
+        )
+
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-pthread-mutexattr-type-setter"},
+        "pthread mutexattr type-setter must use its closed native command",
+    )
+    scope = evidence[0]["scope"]
+    assert isinstance(scope, str)
+    for phrase in (
+        "Pinned-musl 1.2.6 project-header C reference",
+        "`-nostdlib -static` candidate",
+        "normal/default 0, recursive 1, and errorcheck 2 low-bit replacement",
+        "complete higher caller-word preservation",
+        "-1, 3, INT_MIN, and INT_MAX return EINVAL without mutating a valid record",
+        "invalid null pointers prove the input-first branch",
+        "pinned-musl reference preserves incoming errno",
+        "freestanding candidate deliberately has no errno/TLS owner",
+        "exactly pthread_mutexattr_settype",
+        "no interpreter/DT_NEEDED/unresolved symbol",
+        "PT_TLS, errno/bootstrap, syscall, helper call",
+        "gettype, init/destroy lifecycle, every other mutex attribute",
+        "mutex initialization/lock/unlock/destroy",
+        "recursive/error-checking mutex operation",
+        "family completion, promotion, and public x86 support",
+    ):
+        require(
+            phrase in scope,
+            f"pthread mutexattr type-setter evidence scope omits {phrase}",
+        )
+
+    static_exports = set(
+        static_c_abi_export_names(
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        )
+    )
+    require(
+        "pthread_mutexattr_settype" in static_exports,
+        "pthread mutexattr type-setter static export contract is incomplete",
+    )
+    for unselected in (
+        "pthread_mutexattr_init",
+        "pthread_mutexattr_destroy",
+    ):
+        require(
+            unselected not in static_exports,
+            f"pthread mutexattr type-setter must not expose unselected {unselected}",
+        )
+    dispatcher = (ROOT / "scripts" / "dev-x86_64.sh").read_text(encoding="utf-8")
+    for snippet in (
+        "run_libc_pthread_mutexattr_type_setter_probe()",
+        "run_libc_pthread_mutexattr_type_setter.sh",
+        "libc-pthread-mutexattr-type-setter)",
+    ):
+        require(
+            snippet in dispatcher,
+            f"pthread mutexattr type-setter dispatcher omits {snippet}",
         )
 
 
@@ -41128,8 +41332,8 @@ def require_static_pthread_mutex_prioceiling_query_artifact(
         "libc.pthread-tls must contain exactly one mutex priority-ceiling query artifact",
     )
     require(
-        len(artifacts) == 32,
-        "libc.pthread-tls must retain exactly thirty-two private verified artifacts",
+        len(artifacts) == 33,
+        "libc.pthread-tls must retain exactly thirty-three private verified artifacts",
     )
     require(
         family.get("status") == "planned",
@@ -41139,7 +41343,7 @@ def require_static_pthread_mutex_prioceiling_query_artifact(
     family_description = family["description"]
     assert isinstance(family_description, str)
     for phrase in (
-        "Thirty-two separately verified static artifacts",
+        "Thirty-three separately verified static artifacts",
         "direct mutex priority-ceiling unavailable query deliberately unconsumed by mutex operation",
         "not pthread/TLS parity",
     ):
@@ -41323,8 +41527,8 @@ def require_static_pthread_setconcurrency_artifact(
         "libc.pthread-tls must contain exactly one pthread_setconcurrency artifact",
     )
     require(
-        len(artifacts) == 32,
-        "libc.pthread-tls must retain exactly thirty-two private verified artifacts",
+        len(artifacts) == 33,
+        "libc.pthread-tls must retain exactly thirty-three private verified artifacts",
     )
     require(
         family.get("status") == "planned",
@@ -41334,7 +41538,7 @@ def require_static_pthread_setconcurrency_artifact(
     family_description = family["description"]
     assert isinstance(family_description, str)
     for phrase in (
-        "Thirty-two separately verified static artifacts",
+        "Thirty-three separately verified static artifacts",
         "one stateless `pthread_setconcurrency` status entry",
         "one fixed `pthread_getconcurrency` zero query",
         "not pthread/TLS parity",
@@ -41520,8 +41724,8 @@ def require_static_pthread_getconcurrency_artifact(
         "libc.pthread-tls must contain exactly one pthread_getconcurrency artifact",
     )
     require(
-        len(artifacts) == 32,
-        "libc.pthread-tls must retain exactly thirty-two private verified artifacts",
+        len(artifacts) == 33,
+        "libc.pthread-tls must retain exactly thirty-three private verified artifacts",
     )
     require(
         family.get("status") == "planned",
@@ -41531,7 +41735,7 @@ def require_static_pthread_getconcurrency_artifact(
     family_description = family["description"]
     assert isinstance(family_description, str)
     for phrase in (
-        "Thirty-two separately verified static artifacts",
+        "Thirty-three separately verified static artifacts",
         "one stateless `pthread_setconcurrency` status entry",
         "one fixed `pthread_getconcurrency` zero query",
         "not pthread/TLS parity",
@@ -41781,8 +41985,8 @@ def require_static_thrd_yield_artifact(family: Mapping[str, Any]) -> None:
         "libc.pthread-tls must contain exactly one direct C11 thrd_yield artifact",
     )
     require(
-        len(artifacts) == 32,
-        "libc.pthread-tls must retain exactly thirty-two private verified artifacts",
+        len(artifacts) == 33,
+        "libc.pthread-tls must retain exactly thirty-three private verified artifacts",
     )
     require(
         family.get("status") == "planned",
@@ -41792,7 +41996,7 @@ def require_static_thrd_yield_artifact(family: Mapping[str, Any]) -> None:
     family_description = family["description"]
     assert isinstance(family_description, str)
     for phrase in (
-        "Thirty-two separately verified static artifacts",
+        "Thirty-three separately verified static artifacts",
         "void-returning direct C11 `thrd_yield` raw syscall leaf",
         "not pthread/TLS parity",
     ):
@@ -42175,6 +42379,7 @@ def validate_ledger(
     require_static_pthread_mutexattr_protocol_query_artifact(by_id["libc.pthread-tls"])
     require_static_pthread_mutexattr_pshared_query_artifact(by_id["libc.pthread-tls"])
     require_static_pthread_mutexattr_type_query_artifact(by_id["libc.pthread-tls"])
+    require_static_pthread_mutexattr_type_setter_artifact(by_id["libc.pthread-tls"])
     require_static_pthread_mutex_prioceiling_query_artifact(by_id["libc.pthread-tls"])
     require_static_pthread_setconcurrency_artifact(by_id["libc.pthread-tls"])
     require_static_pthread_getconcurrency_artifact(by_id["libc.pthread-tls"])
