@@ -421,6 +421,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-socket-transport
 ./scripts/dev-x86_64.sh libc-socket-messages
 ./scripts/dev-x86_64.sh libc-byte-strings
+./scripts/dev-x86_64.sh libc-process-globals-getopt
 ./scripts/dev-x86_64.sh libc-inet-address
 ./scripts/dev-x86_64.sh libc-numeric-netdb
 ./scripts/dev-x86_64.sh libc-random-entropy
@@ -3330,6 +3331,28 @@ pattern bytes are rejected instead of approximated. `wordexp`, glob/fnmatch C
 ABIs, locale-aware or multibyte regex, a Rust regex ecosystem, libc.so, CRT,
 loader, sysroot, family completion, promotion, and public x86 support remain
 unselected.
+
+`libc-process-globals-getopt` is a separate private
+`static-c-process-globals-getopt` artifact inside still-planned
+`libc.c-abi-compat`. The same project-header C fixture first runs through a
+non-PIE pinned-musl 1.2.6 static executable, then through a true
+`-nostdlib -static` x86 candidate. The candidate's evidence-only entry first
+installs the existing Static Initial TLS v1 image and then enters the bounded
+static `__libc_start_main`, which publishes the validated empty-or-`argv[0]`
+full name and last-slash short name before its init callback and `main`. The
+runner proves musl's weak same-address `optreset`/`__optreset`,
+`program_invocation_name`/`__progname_full`,
+`program_invocation_short_name`/`__progname`, and
+`__posix_getopt`/`getopt` identities in the pinned reference, selected archive,
+and final candidate, including observable writes through the data aliases.
+It also covers short clusters and arguments, all three restart routes,
+UTF-8 option code points under `C.UTF-8`, quiet unknown/missing results, and
+GNU long required/optional/flag/ambiguous/permuted/long-only behavior. The
+x86 leaf reuses the established AArch64 musl-derived parser body with only
+target-local errno, multibyte, string, and permanent-stream adapters. It owns
+no environment object or mutation API, auxv/secure state, loader startup,
+allocator, general locale/stdio, `libc.so`, CRT family, sysroot, C ABI closure,
+family promotion, or public x86 support.
 
 `libc-memory` compiles only `libc/src/c_abi/x86_64/memory.rs`, then runs one C
 fixture against pinned musl and the isolated x86 object with project

@@ -904,7 +904,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "libc-memfd-create",
             "libc-static-c-abi-differential",
             "libc-static-c-abi-same-object-differential|qualification-posix-abi-admission",
-            "libc-readiness-waits|libc-system-observation|libc-system-information|libc-fcntl-record-locks|libc-flock|libc-sendfile|libc-posix-fallocate|libc-descriptor-advice|libc-filesystem-capacity|libc-uts-identity|libc-ctype|libc-locale-multibyte|libc-regex|libc-integer-arithmetic|libc-integer-parse|libc-float-parse|libc-intmax-arithmetic|libc-credential-observation|libc-child-reaping|libc-immediate-termination|libc-callback-algorithms|libc-access|libc-clock-gettime|libc-time-observation|libc-system-configuration|libc-mapping-core|libc-header-layouts-baseline|libc-nanosleep|libc-clock-nanosleep|libc-descriptor-entry|libc-fcntl-status-control|libc-ioctl|libc-ffs|libc-byte-strings|libc-inet-address|libc-numeric-netdb|libc-random-entropy|libc-memory-search|libc-string-copy|libc-descriptor-pipeline",
+            "libc-readiness-waits|libc-system-observation|libc-system-information|libc-fcntl-record-locks|libc-flock|libc-sendfile|libc-posix-fallocate|libc-descriptor-advice|libc-filesystem-capacity|libc-uts-identity|libc-ctype|libc-locale-multibyte|libc-regex|libc-integer-arithmetic|libc-integer-parse|libc-float-parse|libc-intmax-arithmetic|libc-credential-observation|libc-child-reaping|libc-immediate-termination|libc-callback-algorithms|libc-access|libc-clock-gettime|libc-time-observation|libc-system-configuration|libc-mapping-core|libc-header-layouts-baseline|libc-nanosleep|libc-clock-nanosleep|libc-descriptor-entry|libc-fcntl-status-control|libc-ioctl|libc-ffs|libc-byte-strings|libc-process-globals-getopt|libc-inet-address|libc-numeric-netdb|libc-random-entropy|libc-memory-search|libc-string-copy|libc-descriptor-pipeline",
             "libc-vector-io|libc-uio-cxx-linkage",
             "libc-sysv-semaphore",
             "libc-sysv-message-shared-memory",
@@ -15166,6 +15166,68 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             self.assertIn(required, graph)
         self.assertIn('tls_model("initial-exec")', leaf)
         self.assertIn("run_ldso_initial_exec_tls.sh", dispatcher)
+
+    def test_process_globals_getopt_runner_keeps_the_private_native_boundary(self) -> None:
+        runner = (
+            ROOT / "compat" / "x86_64" / "run_libc_process_globals_getopt.sh"
+        ).read_text(encoding="utf-8")
+        fixture = (
+            ROOT / "compat" / "x86_64" / "libc_process_globals_getopt_probe.c"
+        ).read_text(encoding="utf-8")
+        startup = (
+            ROOT / "compat" / "x86_64" / "libc_process_globals_getopt_start.S"
+        ).read_text(encoding="utf-8")
+        leaf = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "process_globals.rs"
+        ).read_text(encoding="utf-8")
+        dispatcher = RUNNER.read_text(encoding="utf-8")
+
+        for required in (
+            "run_musl_oracle.sh",
+            "assert_selected_c_abi_surface",
+            "assert_process_global_aliases",
+            "pinned-musl static reference",
+            "-nostdlib -static",
+            "--no-undefined",
+            "R_X86_64_TPOFF",
+            "__errno_location",
+            "dynamic TLS",
+            "public x86 support",
+        ):
+            self.assertIn(required, runner)
+        for required in (
+            "crabc_x86_64_process_globals_getopt_init",
+            "&program_invocation_name != &__progname_full",
+            "&optreset != &__optreset",
+            "__posix_getopt != getopt",
+            "program_invocation_short_name = replacement",
+            "__optreset = 1",
+            "optreset = 1",
+            "C.UTF-8",
+            "getopt_long_only",
+        ):
+            self.assertIn(required, fixture)
+        self.assertIn("call __crabc_x86_static_tls_bootstrap", startup)
+        self.assertIn("call __libc_start_main", startup)
+        for required in (
+            '".set optreset, __optreset"',
+            '".set program_invocation_name, __progname_full"',
+            '".set program_invocation_short_name, __progname"',
+            '".set __posix_getopt, getopt"',
+            'include!("../../getopt_exports.rs");',
+        ):
+            self.assertIn(required, leaf)
+        for forbidden in (
+            "__environ",
+            "getenv(",
+            "setenv(",
+            "unsetenv(",
+            "putenv(",
+            "clearenv(",
+        ):
+            self.assertNotIn(forbidden, leaf)
+        self.assertIn("libc-process-globals-getopt)", dispatcher)
+        self.assertIn("run_libc_process_globals_getopt.sh", dispatcher)
 
     def test_facade_keeps_native_pattern_archives_checked(self) -> None:
         source = RUNNER.read_text(encoding="utf-8")

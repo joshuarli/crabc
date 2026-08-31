@@ -1359,6 +1359,24 @@ INET_ADDRESS_UNSELECTED_SYMBOLS = (
     "realloc",
 )
 
+PROCESS_GLOBALS_GETOPT_SYMBOLS = (
+    "__optpos",
+    "__optreset",
+    "__posix_getopt",
+    "__progname",
+    "__progname_full",
+    "getopt",
+    "getopt_long",
+    "getopt_long_only",
+    "optarg",
+    "opterr",
+    "optind",
+    "optopt",
+    "optreset",
+    "program_invocation_name",
+    "program_invocation_short_name",
+)
+
 MATH_COMPLEX_FOUNDATION_SYMBOLS = (
     "__fpclassify",
     "__fpclassifyf",
@@ -14898,6 +14916,270 @@ def require_numeric_netdb_artifact(family: Mapping[str, Any]) -> None:
     )
 
 
+
+def require_process_globals_getopt_artifact(family: Mapping[str, Any]) -> None:
+    """Keep program-name/getopt compatibility real, disjoint, and private."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.c-abi-compat].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [
+        entry
+        for entry in artifacts
+        if entry.get("id") == "static-c-process-globals-getopt"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.c-abi-compat must contain exactly one static-c-process-globals-getopt artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-process-globals-getopt must not promote libc.c-abi-compat",
+    )
+    artifact = matching[0]
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for symbol in PROCESS_GLOBALS_GETOPT_SYMBOLS:
+        require(
+            f"`{symbol}`" in description,
+            f"static-c-process-globals-getopt description omits {symbol}",
+        )
+    for phrase in (
+        "still-planned `libc.c-abi-compat`",
+        "dependency-free",
+        "bounded static `__libc_start_main`",
+        "established AArch64 musl translation",
+        "same-address",
+        "Environment storage and mutation",
+        "loader/dynamic startup",
+        "C ABI closure",
+        "family promotion",
+        "public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"static-c-process-globals-getopt description omits {phrase}",
+        )
+
+    owners = set(
+        nonempty_strings(
+            artifact["source_owners"],
+            "static-c-process-globals-getopt.source_owners",
+        )
+    )
+    for owner in (
+        "compat/upstreams.toml",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/static_startup.rs",
+        "libc/src/c_abi/x86_64/process_globals.rs",
+        "libc/src/getopt_exports.rs",
+        "include/getopt.h",
+        "include/locale.h",
+        "include/string.h",
+        "include/unistd.h",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/libc_process_globals_getopt_probe.c",
+        "compat/x86_64/libc_process_globals_getopt_start.S",
+        "compat/x86_64/run_libc_process_globals_getopt.sh",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/README.md",
+        "STATUS.md",
+        "x86-64.md",
+        "scripts/dev-x86_64.sh",
+        "scripts/check_structure.py",
+    ):
+        require(
+            owner in owners,
+            f"static-c-process-globals-getopt source owners omit {owner}",
+        )
+
+    prerequisites = nonempty_strings(
+        artifact["x86_abi_prerequisites"],
+        "static-c-process-globals-getopt.x86_abi_prerequisites",
+    )
+    require(
+        any(
+            "struct option" in item
+            and "32-byte align-8" in item
+            and "0/8/16/24" in item
+            and "optional_argument=2" in item
+            for item in prerequisites
+        ),
+        "static-c-process-globals-getopt must record its x86 option ABI",
+    )
+    require(
+        any(
+            "9fa28ece75d8a2191de7c5bb53bed224c5947417" in item
+            and "src/env/__libc_start_main.c" in item
+            and "src/env/__init_libc.c" in item
+            and "src/misc/getopt.c" in item
+            and "src/misc/getopt_long.c" in item
+            and "established AArch64 translation" in item
+            for item in prerequisites
+        ),
+        "static-c-process-globals-getopt must retain its pinned-musl source mapping",
+    )
+    require(
+        any(
+            all(name in item for name in (
+                "optreset",
+                "__optreset",
+                "program_invocation_name",
+                "__progname_full",
+                "program_invocation_short_name",
+                "__progname",
+                "__posix_getopt",
+                "getopt",
+            ))
+            and "weak" in item
+            and "same address" in item
+            for item in prerequisites
+        ),
+        "static-c-process-globals-getopt must record every weak alias identity",
+    )
+    require(
+        any(
+            "does not publish or mutate an `environ` object" in item
+            and "auxv object" in item
+            and "loader-owned state" in item
+            for item in prerequisites
+        ),
+        "static-c-process-globals-getopt must remain disjoint from environment ownership",
+    )
+
+    exports = static_c_abi_export_names(
+        ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+    )
+    for symbol in PROCESS_GLOBALS_GETOPT_SYMBOLS:
+        require(
+            symbol in exports,
+            f"static C ABI export contract omits {symbol}",
+        )
+
+    static_root = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+    ).read_text(encoding="utf-8")
+    require(
+        '#[path = "process_globals.rs"]\nmod process_globals;' in static_root,
+        "x86 static C ABI must compose the process_globals leaf",
+    )
+    startup = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_startup.rs"
+    ).read_text(encoding="utf-8")
+    install_call = "unsafe { process_globals::install(argc, argv) };"
+    init_call = "if let Some(init) = init {"
+    require(
+        install_call in startup
+        and init_call in startup
+        and startup.index(install_call) < startup.index(init_call),
+        "x86 static startup must publish program names before its init callback",
+    )
+    leaf = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "process_globals.rs"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        '".set optreset, __optreset"',
+        '".set program_invocation_name, __progname_full"',
+        '".set program_invocation_short_name, __progname"',
+        '".set __posix_getopt, getopt"',
+        'include!("../../getopt_exports.rs");',
+        "EMPTY_PROGRAM_NAME",
+    ):
+        require(snippet in leaf, f"process_globals leaf omits {snippet}")
+    for overlap in (
+        "__environ",
+        "___environ",
+        "_environ",
+        "getenv(",
+        "setenv(",
+        "unsetenv(",
+        "putenv(",
+        "clearenv(",
+    ):
+        require(
+            overlap not in leaf,
+            f"process_globals leaf overlaps environment owner through {overlap}",
+        )
+    shared = (ROOT / "libc" / "src" / "getopt_exports.rs").read_text(
+        encoding="utf-8"
+    )
+    for snippet in (
+        'target_arch = "aarch64"',
+        'target_arch = "x86_64"',
+        "unsafe fn cabi_getopt_set_errno",
+        "unsafe fn cabi_getopt_apply_reset",
+        "pub unsafe extern \"C\" fn getopt(",
+        "pub unsafe extern \"C\" fn getopt_long(",
+        "pub unsafe extern \"C\" fn getopt_long_only(",
+        "pub unsafe fn cabi_set_program_names",
+    ):
+        require(snippet in shared, f"shared getopt implementation omits {snippet}")
+
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-process-globals-getopt"},
+        "static-c-process-globals-getopt must use its closed native command",
+    )
+    scope = evidence[0]["scope"]
+    assert isinstance(scope, str)
+    for phrase in (
+        "Pinned-musl static project-header C reference",
+        "`-nostdlib -static` candidate",
+        "constructor-before-main",
+        "weak same-address",
+        "UTF-8 C.UTF-8 options",
+        "environment storage/mutation",
+        "dynamic resolver",
+        "C ABI closure",
+        "family promotion",
+        "public x86 support",
+    ):
+        require(
+            phrase in scope,
+            f"static-c-process-globals-getopt evidence scope omits {phrase}",
+        )
+
+    runner = (
+        ROOT / "compat" / "x86_64" / "run_libc_process_globals_getopt.sh"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "run_musl_oracle.sh",
+        "assert_process_global_aliases",
+        "pinned-musl static reference",
+        "-nostdlib -static",
+        "--no-undefined",
+        "R_X86_64_TPOFF",
+        "__errno_location",
+        "dynamic TLS",
+    ):
+        require(snippet in runner, f"process-globals/getopt runner omits {snippet}")
+    fixture = (
+        ROOT / "compat" / "x86_64" / "libc_process_globals_getopt_probe.c"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "crabc_x86_64_process_globals_getopt_init",
+        "&program_invocation_name != &__progname_full",
+        "program_invocation_short_name = replacement",
+        "__optreset = 1",
+        "optreset = 1",
+        "C.UTF-8",
+        "getopt_long_only",
+    ):
+        require(snippet in fixture, f"process-globals/getopt fixture omits {snippet}")
+    dispatcher = (ROOT / "scripts" / "dev-x86_64.sh").read_text(
+        encoding="utf-8"
+    )
+    require(
+        "run_libc_process_globals_getopt.sh" in dispatcher,
+        "process-globals/getopt dispatcher binding is missing",
+    )
+
+
 def require_descriptor_lifecycle_artifact(family: Mapping[str, Any]) -> None:
     """Keep the composed descriptor proof private and tied to its boundaries."""
     artifacts = require_verified_artifacts(
@@ -17459,6 +17741,7 @@ def validate_ledger(
     require_extended_attributes_artifact(by_id["libc.posix-runtime"])
     require_inet_address_artifact(by_id["libc.resolver"])
     require_numeric_netdb_artifact(by_id["libc.resolver"])
+    require_process_globals_getopt_artifact(by_id["libc.c-abi-compat"])
     require_descriptor_lifecycle_artifact(by_id["libc.posix-runtime"])
     require_descriptor_pipeline_artifact(by_id["libc.posix-runtime"])
     require_timestamp_updates_artifact(by_id["libc.posix-runtime"])

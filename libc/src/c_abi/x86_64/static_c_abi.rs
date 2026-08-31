@@ -39,7 +39,8 @@
 //! C-locale binary32/binary64/x87-binary80 floating parsing, bounded permanent
 //! stdin/stdout/stderr byte/block I/O with explicit flushing, intmax-arithmetic,
 //! find-first-set, C11 immediate-termination, a bounded private static
-//! startup/ordinary-exit lifecycle, callback-algorithms, POSIX `nanosleep`
+//! startup/ordinary-exit lifecycle, startup-published program-name globals
+//! and option parsing, callback-algorithms, POSIX `nanosleep`
 //! and `clock_nanosleep`, and direct clock-observation artifacts, plus one
 //! bounded System V
 //! message-queue/shared-memory artifact and one bounded event-descriptor
@@ -187,6 +188,8 @@ mod child_reaping;
 mod immediate_termination;
 #[path = "static_startup.rs"]
 mod static_startup;
+#[path = "process_globals.rs"]
+mod process_globals;
 #[path = "stdio_standard.rs"]
 mod stdio_standard;
 #[path = "callback_algorithms.rs"]

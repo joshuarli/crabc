@@ -1481,9 +1481,9 @@
         "compat"
       ],
       "capability_count": 11,
-      "contract_state": "missing",
+      "contract_state": "selected-private",
       "id": "libc.c-abi-compat",
-      "verified_artifact_count": 0,
+      "verified_artifact_count": 1,
       "verified_slice_count": 0
     },
     {
@@ -1652,8 +1652,8 @@
   ],
   "family_state_counts": {
     "implemented-foundation": 8,
-    "missing": 6,
-    "selected-private": 12
+    "missing": 5,
+    "selected-private": 13
   },
   "purpose": "Derived AArch64-to-x86 runtime contract inventory; evidence accounting only, never a promotion decision.",
   "schema": "crabc.x86_64-aarch64-parity-inventory/v1",
@@ -1717,6 +1717,10 @@
     {
       "family": "ldso.dynamic-runtime",
       "id": "ldso-target-root-admission"
+    },
+    {
+      "family": "libc.c-abi-compat",
+      "id": "static-c-process-globals-getopt"
     },
     {
       "family": "libc.headers-layouts",
@@ -2091,9 +2095,9 @@
     "aarch64_abi_manifest": "33dd504470f467caac7b149e747ee2b7ff8714c4fb23dfe5ad46e7f58bfe610c",
     "aarch64_capability_ledger": "128458dde00073bc0320b94972d864e66fa10d5f54e92b1b1c83081e2b4955e0",
     "aarch64_headers": "a0d35f0950abb3c060b978dfb5257cf50f70bed46ce91d371f43d65db7626b68",
-    "x86_parity_ledger": "df4c24c5e0e75eed89ce8f05e59bf4e354d21cb912586deafa556bed2b250a74",
+    "x86_parity_ledger": "0e6454bd0d4219d3c24e961a24045998ecf7b03a1e2eebb820e9de31c25b2abe",
     "x86_public_headers": "2cdcd860a423d99afef8360b6376447cf17ae926f1cd47416be817d421fca80f",
-    "x86_static_c_exports": "20b93c4777375024b93f334a68046ac67342d1796dd392202d1ff0766244019a"
+    "x86_static_c_exports": "2481311ff4332ddd488b74204a32d7187586680d73f0621d81251ebee418e007"
   },
   "unsupported_contracts": [
     {
@@ -2105,7 +2109,7 @@
     "promotion_family_count": 26,
     "promotion_ready": false,
     "public_support": false,
-    "selected_static_export_count": 496,
-    "selected_static_exports_in_aarch64_dynamic_candidate_set": 484
+    "selected_static_export_count": 511,
+    "selected_static_exports_in_aarch64_dynamic_candidate_set": 499
   }
 }

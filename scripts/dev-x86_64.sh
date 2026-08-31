@@ -16,7 +16,8 @@
 # and signal waits, system observation, UTS identity, base socket transport,
 # padded socket messages/options,
 # SysV semaphore operations,
-# byte strings, random entropy, memory search, C-string copy, fixed-C-locale
+# byte strings, startup-published program names and option parsing, random
+# entropy, memory search, C-string copy, fixed-C-locale
 # ctype, named C/POSIX/C.UTF-8 locale/multibyte conversion, integer arithmetic, integer parsing, source-faithful C-locale binary32/binary64/x87 floating parsing, intmax arithmetic, credential
 # observation, find-first-set, and the x87 long-double/complex foundation);
 # it does not select a general libc, ldso artifact, CRT, sysroot, or allocator
@@ -279,6 +280,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-credential-observation  run the static x86 crabc-libc credential-observation slice
   libc-ffs  run the static x86 crabc-libc find-first-set slice
   libc-byte-strings  run the static x86 crabc-libc byte-string slice
+  libc-process-globals-getopt  run the static x86 crabc-libc program-name/getopt slice
   libc-inet-address  run the static x86 crabc-libc numeric Internet-address codec slice
   libc-numeric-netdb  run the static x86 crabc-libc deterministic numeric netdb slice
   libc-random-entropy  run the static x86 crabc-libc random-entropy slice
@@ -2944,7 +2946,7 @@ case "$command" in
     libc-memfd-create) ;;
     libc-static-c-abi-differential) ;;
     libc-static-c-abi-same-object-differential|qualification-posix-abi-admission) ;;
-    libc-readiness-waits|libc-system-observation|libc-system-information|libc-fcntl-record-locks|libc-flock|libc-sendfile|libc-posix-fallocate|libc-descriptor-advice|libc-filesystem-capacity|libc-uts-identity|libc-ctype|libc-locale-multibyte|libc-regex|libc-integer-arithmetic|libc-integer-parse|libc-float-parse|libc-intmax-arithmetic|libc-credential-observation|libc-child-reaping|libc-immediate-termination|libc-callback-algorithms|libc-access|libc-clock-gettime|libc-time-observation|libc-system-configuration|libc-mapping-core|libc-header-layouts-baseline|libc-nanosleep|libc-clock-nanosleep|libc-descriptor-entry|libc-fcntl-status-control|libc-ioctl|libc-ffs|libc-byte-strings|libc-inet-address|libc-numeric-netdb|libc-random-entropy|libc-memory-search|libc-string-copy|libc-descriptor-pipeline) ;;
+    libc-readiness-waits|libc-system-observation|libc-system-information|libc-fcntl-record-locks|libc-flock|libc-sendfile|libc-posix-fallocate|libc-descriptor-advice|libc-filesystem-capacity|libc-uts-identity|libc-ctype|libc-locale-multibyte|libc-regex|libc-integer-arithmetic|libc-integer-parse|libc-float-parse|libc-intmax-arithmetic|libc-credential-observation|libc-child-reaping|libc-immediate-termination|libc-callback-algorithms|libc-access|libc-clock-gettime|libc-time-observation|libc-system-configuration|libc-mapping-core|libc-header-layouts-baseline|libc-nanosleep|libc-clock-nanosleep|libc-descriptor-entry|libc-fcntl-status-control|libc-ioctl|libc-ffs|libc-byte-strings|libc-process-globals-getopt|libc-inet-address|libc-numeric-netdb|libc-random-entropy|libc-memory-search|libc-string-copy|libc-descriptor-pipeline) ;;
     libc-vector-io|libc-uio-cxx-linkage) ;;
     libc-sysv-semaphore) ;;
     libc-sysv-message-shared-memory) ;;
@@ -4209,6 +4211,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "libc-byte-strings takes no arguments"
         ensure_image
         run_in_container bash /workspace/compat/x86_64/run_libc_byte_strings.sh
+        ;;
+    libc-process-globals-getopt)
+        [ "$#" -eq 0 ] || fail "libc-process-globals-getopt takes no arguments"
+        ensure_image
+        run_in_container bash /workspace/compat/x86_64/run_libc_process_globals_getopt.sh
         ;;
     libc-inet-address)
         [ "$#" -eq 0 ] || fail "libc-inet-address takes no arguments"

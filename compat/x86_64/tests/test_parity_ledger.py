@@ -50,7 +50,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 30)
-        self.assertEqual(report["verified_artifact_count"], 107)
+        self.assertEqual(report["verified_artifact_count"], 108)
         self.assertEqual(report["header_layout_probe_count"], 45)
         self.assertEqual(report["public_header_inventory_count"], 183)
         self.assertEqual(report["header_foundation_header_count"], 191)
@@ -11149,6 +11149,54 @@ class X86ParityLedgerTests(unittest.TestCase):
         )
         with self.assertRaisesRegex(
             ledger.LedgerError, "exact static directory runtime regression"
+        ):
+            ledger.validate_ledger(data)
+
+    def test_process_globals_getopt_artifact_stays_disjoint_and_non_promoting(self) -> None:
+        data = self.data()
+        family = self.family(data, "libc.c-abi-compat")
+        self.assertEqual(family["status"], "planned")
+        artifacts = family["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict)
+            and entry["id"] == "static-c-process-globals-getopt"
+        )
+        for symbol in ledger.PROCESS_GLOBALS_GETOPT_SYMBOLS:
+            self.assertIn(f"`{symbol}`", artifact["description"])
+        owners = artifact["source_owners"]
+        assert isinstance(owners, list)
+        for owner in (
+            "libc/src/c_abi/x86_64/process_globals.rs",
+            "libc/src/getopt_exports.rs",
+            "compat/x86_64/libc_process_globals_getopt_probe.c",
+            "compat/x86_64/libc_process_globals_getopt_start.S",
+            "compat/x86_64/run_libc_process_globals_getopt.sh",
+        ):
+            self.assertIn(owner, owners)
+        evidence = artifact["native_evidence"]
+        assert isinstance(evidence, list) and isinstance(evidence[0], dict)
+        self.assertEqual(
+            evidence[0]["command"],
+            "./scripts/dev-x86_64.sh libc-process-globals-getopt",
+        )
+        for phrase in (
+            "environment storage/mutation",
+            "C ABI closure",
+            "family promotion",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, evidence[0]["scope"])
+
+        evidence[0]["scope"] = evidence[0]["scope"].replace(
+            "environment storage/mutation",
+            "environment support",
+        )
+        with self.assertRaisesRegex(
+            ledger.LedgerError,
+            "evidence scope omits environment storage/mutation",
         ):
             ledger.validate_ledger(data)
 

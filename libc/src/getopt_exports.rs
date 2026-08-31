@@ -18,6 +18,7 @@ pub static mut optopt: c_int = 0;
 pub static mut __optpos: c_int = 0;
 #[no_mangle]
 pub static mut __optreset: c_int = 0;
+#[cfg(all(target_os = "linux", target_arch = "aarch64", target_endian = "little"))]
 #[no_mangle]
 #[linkage = "weak"]
 pub static mut optreset: c_int = 0;
@@ -26,12 +27,49 @@ pub static mut optreset: c_int = 0;
 pub static mut __progname: *mut c_char = core::ptr::null_mut();
 #[no_mangle]
 pub static mut __progname_full: *mut c_char = core::ptr::null_mut();
+#[cfg(all(target_os = "linux", target_arch = "aarch64", target_endian = "little"))]
 #[no_mangle]
 #[linkage = "weak"]
 pub static mut program_invocation_name: *mut c_char = core::ptr::null_mut();
+#[cfg(all(target_os = "linux", target_arch = "aarch64", target_endian = "little"))]
 #[no_mangle]
 #[linkage = "weak"]
 pub static mut program_invocation_short_name: *mut c_char = core::ptr::null_mut();
+
+#[inline]
+unsafe fn cabi_getopt_set_errno(value: c_int) {
+    #[cfg(all(target_os = "linux", target_arch = "aarch64", target_endian = "little"))]
+    {
+        ERRNO = value;
+    }
+    #[cfg(all(target_os = "linux", target_arch = "x86_64", target_endian = "little"))]
+    {
+        errno::set_errno(value);
+    }
+}
+
+/// Apply either standardized reset spelling before parsing another option.
+///
+/// Musl's x86 ABI makes weak `optreset` a same-address alias of
+/// `__optreset`, while the established AArch64 runtime still publishes two
+/// synchronized data objects. Keep that target distinction at this shared
+/// lexical boundary rather than weakening the x86 ELF alias contract.
+#[inline]
+unsafe fn cabi_getopt_apply_reset() {
+    #[cfg(all(target_os = "linux", target_arch = "aarch64", target_endian = "little"))]
+    let reset = optind == 0 || __optreset != 0 || optreset != 0;
+    #[cfg(all(target_os = "linux", target_arch = "x86_64", target_endian = "little"))]
+    let reset = optind == 0 || __optreset != 0;
+    if reset {
+        __optreset = 0;
+        #[cfg(all(target_os = "linux", target_arch = "aarch64", target_endian = "little"))]
+        {
+            optreset = 0;
+        }
+        __optpos = 0;
+        optind = 1;
+    }
+}
 
 unsafe fn cabi_getopt_message(argv0: *const c_char, prefix: *const u8, option: *const c_char, len: usize) {
     if argv0.is_null() || stderr.is_null() {
@@ -63,16 +101,11 @@ pub unsafe extern "C" fn getopt(
     optstring: *const c_char,
 ) -> c_int {
     if argv.is_null() || optstring.is_null() {
-        ERRNO = EINVAL;
+        cabi_getopt_set_errno(EINVAL);
         return -1;
     }
 
-    if optind == 0 || __optreset != 0 || optreset != 0 {
-        __optreset = 0;
-        optreset = 0;
-        __optpos = 0;
-        optind = 1;
-    }
+    cabi_getopt_apply_reset();
     if optind >= argc || (*argv.add(optind as usize)).is_null() {
         return -1;
     }
@@ -378,15 +411,10 @@ unsafe fn cabi_getopt_long_impl(
     longonly: bool,
 ) -> c_int {
     if argv.is_null() || optstring.is_null() {
-        ERRNO = EINVAL;
+        cabi_getopt_set_errno(EINVAL);
         return -1;
     }
-    if optind == 0 || __optreset != 0 || optreset != 0 {
-        __optreset = 0;
-        optreset = 0;
-        __optpos = 0;
-        optind = 1;
-    }
+    cabi_getopt_apply_reset();
     if optind >= argc || (*argv.add(optind as usize)).is_null() {
         return -1;
     }
@@ -442,6 +470,7 @@ pub unsafe extern "C" fn getopt_long_only(
     cabi_getopt_long_impl(argc, argv, optstring, longopts, idx, true)
 }
 
+#[cfg(all(target_os = "linux", target_arch = "aarch64", target_endian = "little"))]
 #[no_mangle]
 #[linkage = "weak"]
 pub unsafe extern "C" fn __posix_getopt(
@@ -466,6 +495,9 @@ pub unsafe fn cabi_set_program_names(argv0: *const c_char) {
     }
     __progname_full = argv0 as *mut c_char;
     __progname = short as *mut c_char;
-    program_invocation_name = argv0 as *mut c_char;
-    program_invocation_short_name = short as *mut c_char;
+    #[cfg(all(target_os = "linux", target_arch = "aarch64", target_endian = "little"))]
+    {
+        program_invocation_name = argv0 as *mut c_char;
+        program_invocation_short_name = short as *mut c_char;
+    }
 }

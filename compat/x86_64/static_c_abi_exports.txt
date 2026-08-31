@@ -29,6 +29,11 @@ __libc_current_sigrtmax
 __libc_start_main
 __lxstat
 __memcpy_fwd
+__optpos
+__optreset
+__posix_getopt
+__progname
+__progname_full
 __pthread_rwlock_rdlock
 __pthread_rwlock_timedrdlock
 __pthread_rwlock_timedwrlock
@@ -180,6 +185,9 @@ getgid
 getgroups
 gethostname
 getnameinfo
+getopt
+getopt_long
+getopt_long_only
 getpagesize
 getpeername
 getpgid
@@ -281,6 +289,11 @@ nice
 open
 openat
 opendir
+optarg
+opterr
+optind
+optopt
+optreset
 pathconf
 pause
 pipe
@@ -294,6 +307,8 @@ ppoll
 pread
 preadv
 prlimit
+program_invocation_name
+program_invocation_short_name
 pselect
 pthread_atfork
 pthread_cancel

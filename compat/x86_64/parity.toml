@@ -6081,6 +6081,48 @@ capabilities = [
 ]
 status = "planned"
 
+[[family.verified_artifact]]
+id = "static-c-process-globals-getopt"
+description = "Private native x86 selected-static-archive program-name/getopt artifact inside still-planned `libc.c-abi-compat`. One dependency-free `crabc-libc` archive publishes `__progname`, `__progname_full`, weak same-address `program_invocation_short_name`/`program_invocation_name`, `optarg`, `optind`, `opterr`, `optopt`, `__optpos`, `__optreset`, weak same-address `optreset`, `getopt`, `getopt_long`, `getopt_long_only`, and weak same-address `__posix_getopt`. Its bounded static `__libc_start_main` validates argc/argv/envp/auxv delimiters and publishes the empty-or-argv[0] program-name view before its init callback and main. The parser preserves the established AArch64 musl translation for short clusters, attached and separate arguments, both reset spellings, UTF-8 option code points under C.UTF-8, quiet unknown/missing-option results, GNU long required/optional/flag arguments, ambiguity, permutation, and long-only short-option precedence. The x86 leaf adds only target-local errno/stream adapters and exact musl ELF aliases. Environment storage and mutation, auxv publication, secure-execution policy, loader/dynamic startup, arbitrary locale selection, general stdio, libc.so, CRT family completion, sysroot, C ABI closure, family promotion, and public x86 support remain outside this artifact."
+source_owners = [
+  "compat/upstreams.toml",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/static_startup.rs",
+  "libc/src/c_abi/x86_64/process_globals.rs",
+  "libc/src/getopt_exports.rs",
+  "include/getopt.h",
+  "include/locale.h",
+  "include/string.h",
+  "include/unistd.h",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/libc_process_globals_getopt_probe.c",
+  "compat/x86_64/libc_process_globals_getopt_start.S",
+  "compat/x86_64/run_libc_process_globals_getopt.sh",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "compat/x86_64/README.md",
+  "STATUS.md",
+  "x86-64.md",
+  "scripts/dev-x86_64.sh",
+  "scripts/check_structure.py",
+]
+x86_abi_prerequisites = [
+  "The selected SysV AMD64 C boundary uses four-byte `int` parser state and return words plus eight-byte pointers. `struct option` is 32-byte align-8 with `name`/`has_arg`/`flag`/`val` at offsets 0/8/16/24 and no_argument=0, required_argument=1, optional_argument=2.",
+  "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417 maps `src/env/__libc_start_main.c`, `src/env/__init_libc.c`, `src/misc/getopt.c`, and `src/misc/getopt_long.c` to this leaf. The Rust parser body remains the established AArch64 translation in `libc/src/getopt_exports.rs`; x86 supplies only target-local errno, fixed-locale multibyte, byte-string, and permanent-standard-stream composition.",
+  "After bounded startup-vector validation and the existing Static Initial TLS v1 handoff, x86 `__libc_start_main` publishes `__progname_full=argv[0]` (or a private empty name for argc zero) and the last-slash `__progname` view before the init callback and main. It does not publish or mutate an `environ` object, auxv object, or loader-owned state.",
+  "Musl's x86 ELF compatibility identities are weak `optreset` at `__optreset`, weak `program_invocation_name` at `__progname_full`, weak `program_invocation_short_name` at `__progname`, and weak `__posix_getopt` at `getopt`. Both pinned-musl and crabc static final executables prove matching symbol type, weak binding, same address, and observable writes through the data aliases.",
+  "The freestanding candidate uses the existing hidden x86 Static Initial TLS v1 bootstrap before the bounded static startup call. Getopt invalid-input errno and diagnostics compose the selected initial-exec errno and permanent standard streams with no dynamic TLS resolver, allocator, environment owner, or ambient libc dependency.",
+]
+x86_header_prerequisites = [
+  "The one C11 fixture preprocesses project `getopt.h`, `locale.h`, `stddef.h`, `string.h`, and `unistd.h`, proves the x86 GNU option record and selected signatures, and executes only the named program-name/getopt surface. This is artifact-local header use, not installed-header closure, arbitrary locale support, environment mutation, or C ABI completion.",
+]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-process-globals-getopt", scope = "Pinned-musl static project-header C reference plus a true x86 `-nostdlib -static` candidate linked through the selected crabc archive. The gate ratchets the aggregate static C exports; proves constructor-before-main program-name publication; weak same-address data/function aliases in pinned musl, the archive, and the final candidate; mutable alias writes; short clusters and attached arguments; `optind`/`__optreset`/`optreset` restart; UTF-8 C.UTF-8 options; quiet unknown/missing results; GNU long required/optional/flag/ambiguous/permuted/long-only behavior; and initial-TLS errno without a dynamic resolver. It rejects an interpreter, DT_NEEDED, unresolved symbols, dynamic relocations, and unowned dependencies. It does not select environment storage/mutation, auxv publication, secure mode, dynamic loader startup, general stdio/locale, libc.so, CRT family completion, sysroot, C ABI closure, family promotion, or public x86 support." }]
+oracle = [
+  { kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source mapping and executable behavior oracle for src/env/__libc_start_main.c, src/env/__init_libc.c, src/misc/getopt.c, and src/misc/getopt_long.c; environment ownership, auxv/secure state, and dynamic-loader startup remain unselected." },
+  { kind = "elf-abi", source = "System V AMD64 psABI", role = "LP64 struct option layout, C register/pointer convention, static initial-exec TLS, and weak same-address function/data alias contract in the selected archive and final ET_EXEC candidate." },
+]
+
 [[family]]
 id = "ldso.relative-relocation"
 order = 120

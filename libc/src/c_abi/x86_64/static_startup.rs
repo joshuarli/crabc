@@ -6,10 +6,12 @@
 //! Its ordinary-exit hooks are deliberately a fixed,
 //! process-local block: this is enough to own the CRT-to-libc handoff and the
 //! executable's `fini` callback without selecting allocation, stdio,
-//! C++-runtime teardown, dynamic-loader finalizers, a general environment or
-//! program-name owner, or a general threaded exit protocol. Its one selected
-//! environment responsibility is to hand the already-validated initial
-//! `envp` pointer to [`super::environment`] before application callbacks.
+//! C++-runtime teardown, dynamic-loader finalizers, environment mutation, or
+//! a general threaded exit protocol. The sibling `process_globals` leaf owns
+//! only publication of the validated program name and option-parser state.
+//! Its other selected environment responsibility is to hand the already-
+//! validated initial `envp` pointer to [`super::environment`] before
+//! application callbacks.
 //!
 //! Translation provenance is musl 1.2.6 release commit
 //! `9fa28ece75d8a2191de7c5bb53bed224c5947417`, under musl's MIT license:
@@ -33,7 +35,7 @@ compile_error!("x86 static startup requires little-endian Linux/x86-64");
 
 use core::ffi::{c_char, c_int, c_void};
 
-use super::{environment, immediate_termination, static_tls};
+use super::{environment, immediate_termination, process_globals, static_tls};
 
 const MAX_STARTUP_POINTERS: usize = 1 << 20;
 const ATEXIT_CAPACITY: usize = 32;
@@ -228,6 +230,11 @@ pub unsafe extern "C" fn __libc_start_main(
     // its bounded later mutation state; it does not widen static startup into
     // a general dynamic loader or process-environment lifecycle.
     unsafe { environment::install_initial(vectors.envp) };
+
+    // All delimiter validation completed above. Publish the process-global
+    // aliases before constructors, matching musl's startup ordering without
+    // selecting an environment owner or dynamic-loader bridge.
+    unsafe { process_globals::install(argc, argv) };
 
     if fini.is_some() && unsafe { atexit(fini) } != 0 {
         startup_reject();

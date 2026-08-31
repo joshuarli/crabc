@@ -141,6 +141,7 @@ X86_RUNTIME_FOUNDATION_LDSO_SOURCES = {
 # exception.
 X86_RUNTIME_FOUNDATION_LIBC_SOURCES = {
     Path("libc/src/lib.rs"),
+    Path("libc/src/getopt_exports.rs"),
     Path("libc/src/c_abi/x86_64/atomic.rs"),
     Path("libc/src/c_abi/x86_64/clone.rs"),
     Path("libc/src/c_abi/x86_64/credentials.rs"),
@@ -172,6 +173,7 @@ X86_RUNTIME_FOUNDATION_LIBC_SOURCES = {
     Path("libc/src/c_abi/x86_64/memory.rs"),
     Path("libc/src/c_abi/x86_64/process_context.rs"),
     Path("libc/src/c_abi/x86_64/environment.rs"),
+    Path("libc/src/c_abi/x86_64/process_globals.rs"),
     Path("libc/src/c_abi/x86_64/process_resources.rs"),
     Path("libc/src/c_abi/x86_64/c11_thread_lifecycle.rs"),
     Path("libc/src/c_abi/x86_64/c11_sync.rs"),
@@ -3665,6 +3667,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         '#[path = "syscall.rs"]',
         '#[path = "static_tls.rs"]',
         '#[path = "static_startup.rs"]',
+        '#[path = "process_globals.rs"]',
         '#[path = "stat_compat.rs"]',
         '#[path = "timestamp_updates.rs"]',
         '#[path = "credentials.rs"]',
@@ -3770,6 +3773,69 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         errors.append(
             "libc/src/c_abi/x86_64/static_startup.rs: selected static startup "
             "artifact must export only its bounded lifecycle symbols"
+        )
+
+    process_globals_source = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "process_globals.rs"
+    )
+    process_globals_text = process_globals_source.read_text(errors="replace")
+    shared_getopt_source = ROOT / "libc" / "src" / "getopt_exports.rs"
+    shared_getopt_text = shared_getopt_source.read_text(errors="replace")
+    for required in (
+        '".set optreset, __optreset"',
+        '".set program_invocation_name, __progname_full"',
+        '".set program_invocation_short_name, __progname"',
+        '".set __posix_getopt, getopt"',
+        'include!("../../getopt_exports.rs");',
+        "EMPTY_PROGRAM_NAME",
+        "pub(super) unsafe fn install(",
+    ):
+        if required not in process_globals_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/process_globals.rs: selected program-name/"
+                f"getopt boundary is missing {required!r}"
+            )
+    for overlap in (
+        "__environ",
+        "___environ",
+        "_environ",
+        "getenv(",
+        "setenv(",
+        "unsetenv(",
+        "putenv(",
+        "clearenv(",
+    ):
+        if overlap in process_globals_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/process_globals.rs: selected program-name/"
+                f"getopt boundary overlaps environment ownership through {overlap!r}"
+            )
+    for required in (
+        'target_arch = "aarch64"',
+        'target_arch = "x86_64"',
+        "unsafe fn cabi_getopt_set_errno",
+        "unsafe fn cabi_getopt_apply_reset",
+        "pub unsafe extern \"C\" fn getopt(",
+        "pub unsafe extern \"C\" fn getopt_long(",
+        "pub unsafe extern \"C\" fn getopt_long_only(",
+        "pub unsafe fn cabi_set_program_names",
+    ):
+        if required not in shared_getopt_text:
+            errors.append(
+                "libc/src/getopt_exports.rs: shared AArch64/x86 getopt boundary "
+                f"is missing {required!r}"
+            )
+    install_call = "unsafe { process_globals::install(argc, argv) };"
+    init_call = "if let Some(init) = init {"
+    if (
+        install_call not in static_startup_text
+        or init_call not in static_startup_text
+        or static_startup_text.index(install_call)
+        >= static_startup_text.index(init_call)
+    ):
+        errors.append(
+            "libc/src/c_abi/x86_64/static_startup.rs: program names must be "
+            "published before the bounded init callback"
         )
 
     stat_source = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "stat_compat.rs"
@@ -7066,6 +7132,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         errno_text,
         static_tls_text,
         static_startup_text,
+        shared_getopt_text,
         fenv_text,
         signal_control_text,
         signal_execution_text,
@@ -7142,6 +7209,30 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
             "must retain futimesat as the musl same-address assembler alias"
         )
     pthread_rwlock_public_aliases = {public for public, _hidden in pthread_rwlock_aliases}
+    process_global_data_exports = set(
+        re.findall(
+            r"(?m)^pub\s+static\s+mut\s+(\w+)\s*:",
+            shared_getopt_text,
+        )
+    )
+    expected_process_global_data_exports = {
+        "optarg",
+        "optind",
+        "opterr",
+        "optopt",
+        "__optpos",
+        "__optreset",
+        "optreset",
+        "__progname",
+        "__progname_full",
+        "program_invocation_name",
+        "program_invocation_short_name",
+    }
+    if process_global_data_exports != expected_process_global_data_exports:
+        errors.append(
+            "libc/src/getopt_exports.rs: selected program-name/getopt data "
+            "exports drifted"
+        )
     exports = (
         rust_exports
         | assembly_exports
@@ -7151,6 +7242,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         | timestamp_aliases
         | pthread_rwlock_public_aliases
         | pthread_identity_exports
+        | process_global_data_exports
     )
     expected_exports = {
         "__errno_location",
@@ -7471,6 +7563,21 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         "_exit",
         "exit",
         "__libc_start_main",
+        "__optpos",
+        "__optreset",
+        "__posix_getopt",
+        "__progname",
+        "__progname_full",
+        "getopt",
+        "getopt_long",
+        "getopt_long_only",
+        "optarg",
+        "opterr",
+        "optind",
+        "optopt",
+        "optreset",
+        "program_invocation_name",
+        "program_invocation_short_name",
         "bsearch",
         "__qsort_r",
         "qsort",
@@ -7486,7 +7593,8 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
             "selected socket transport and selected socket-message/options, selected system-observation, selected UTS-identity, "
             "selected byte-string, random-entropy, memory-search, C-string-copy, "
             "fixed-C-locale ctype, integer-arithmetic, integer-parsing, intmax-arithmetic, credential-observation, and "
-            "find-first-set, "
+            "find-first-set, startup-published program names, short/GNU-long "
+            "getopt state and aliases, "
             "and abort-personality surfaces"
         )
     for source_name, source_text in (
@@ -7496,6 +7604,8 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         ("credential_observation.rs", credential_observation_text),
         ("errno.rs", errno_text),
         ("static_startup.rs", static_startup_text),
+        ("process_globals.rs", process_globals_text),
+        ("getopt_exports.rs", shared_getopt_text),
         ("memory.rs", memory_text),
         ("fenv.rs", fenv_text),
         ("setjmp.rs", setjmp_text),

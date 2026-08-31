@@ -323,6 +323,20 @@ helper. This does not establish stock Rust `std`, an owned sysroot, libc or
 loader integration, source build, family completion, promotion, or public x86
 support.
 
+The static archive also has one private C ABI compatibility artifact,
+`./scripts/dev-x86_64.sh libc-process-globals-getopt`, inside still-planned
+`libc.c-abi-compat`. Its bounded startup publishes validated `argv[0]`-derived
+full and short program names before the init callback and main. A common
+project-header body runs through pinned static musl and a true freestanding
+x86 candidate, proving the four weak same-address program-name/getopt aliases,
+mutable alias writes, short and GNU-long parsing, all reset routes, UTF-8
+options under `C.UTF-8`, permutation, ambiguity, optional/required arguments,
+and long-only precedence. The x86 leaf composes the established AArch64
+musl-derived parser through target-local errno/multibyte/string/permanent-stream
+adapters only. It deliberately owns no environment object or mutation API,
+auxv/secure state, loader startup, general locale/stdio, allocator, libc.so,
+CRT family, sysroot, C ABI closure, promotion, or public x86 support.
+
 The x86 direct Rust facade also has verified allocation-free
 `pattern::{fnmatch, FnmatchFlags}` and alloc-gated explicit-root
 `pattern::{GlobPath, glob, glob_at}` slices. Their x86 no-std archive proofs
