@@ -1409,7 +1409,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "ldso-public-dlfcn|ldso-dladdr-symbol-bounds",
             "ldso-bounded-dlopen",
             "math-special-header-abi|libc-math-special",
-            "math-exp2-header-abi|math-expm1-header-abi|math-log10-header-abi|libc-math-exp2|libc-math-expm1|libc-math-log10",
+            "math-exp2-header-abi|math-expm1-header-abi|math-log10-header-abi|libc-math-exp2|libc-math-expm1|libc-math-log10|math-exp10-header-abi|math-log-header-abi|math-sin-header-abi|math-tan-header-abi|math-tanh-header-abi|math-atanh-header-abi|math-acosh-header-abi|math-sincos-header-abi|math-pow-header-abi|libc-math-exp10|libc-math-log|libc-math-sin|libc-math-tan|libc-math-tanh|libc-math-atanh|libc-math-acosh|libc-math-sincos|libc-math-pow",
             "inet-address-header-abi|nameser-header-abi|endservent-header-abi",
             "libc-network-byte-order|libc-dn-skipname|libc-dn-expand|libc-ns-flagdata|libc-ns-get16|libc-ns-get32|libc-ns-put16",
             "ldso-target-root",

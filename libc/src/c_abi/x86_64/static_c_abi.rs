@@ -680,6 +680,24 @@ mod math_asinh;
 mod math_exp10f;
 #[path = "math_sinh.rs"]
 mod math_sinh;
+#[path = "math_exp10.rs"]
+mod math_exp10;
+#[path = "math_log.rs"]
+mod math_log;
+#[path = "math_sin.rs"]
+mod math_sin;
+#[path = "math_tan.rs"]
+mod math_tan;
+#[path = "math_tanh.rs"]
+mod math_tanh;
+#[path = "math_atanh.rs"]
+mod math_atanh;
+#[path = "math_acosh.rs"]
+mod math_acosh;
+#[path = "math_sincos.rs"]
+mod math_sincos;
+#[path = "math_pow.rs"]
+mod math_pow;
 
 // The sole AArch64 allocator-observability capability is a separate strong
 // C entry, not part of the weak allocation family. Its private witness keeps

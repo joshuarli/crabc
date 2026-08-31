@@ -90,6 +90,8 @@ abs
 accept
 accept4
 access
+acosh
+acoshf
 acoshl
 acosl
 alarm
@@ -99,6 +101,8 @@ asinhf
 asinhl
 asinl
 atan2l
+atanh
+atanhf
 atanhl
 atanl
 atexit
@@ -274,6 +278,7 @@ eventfd_read
 eventfd_write
 exit
 exp
+exp10
 exp10f
 exp2
 exp2f
@@ -549,6 +554,7 @@ llround
 llroundf
 llroundl
 localeconv
+log
 log10
 log10f
 log10l
@@ -559,6 +565,7 @@ log2l
 logb
 logbf
 logbl
+logf
 logl
 longjmp
 lremovexattr
@@ -664,7 +671,10 @@ posix_spawnattr_destroy
 posix_spawnattr_getflags
 posix_spawnattr_setpgroup
 posix_spawnattr_setschedpolicy
+pow
+pow10
 pow10f
+powf
 powl
 ppoll
 pread
@@ -851,7 +861,11 @@ sigsuspend
 sigtimedwait
 sigwait
 sigwaitinfo
+sin
+sincos
+sincosf
 sincosl
+sinf
 sinh
 sinhf
 sinhl
@@ -923,6 +937,10 @@ sync_file_range
 syncfs
 sysconf
 sysinfo
+tan
+tanf
+tanh
+tanhf
 tanhl
 tanl
 tcflow

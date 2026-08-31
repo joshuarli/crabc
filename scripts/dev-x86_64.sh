@@ -2106,6 +2106,12 @@ general facade admission, or C ABI support claim.
   libc-math-sinh  run the static x86 sinh/sinhf scalar slice
   libc-pthread-spin-init  run the static x86 crabc-libc bounded pthread spin-init record slice
   pthread-spin-init-header-abi  verify x86 pthread_spin_init C/C++ ABI/linkage
+  libc-math-log  run the static x86 log/logf scalar natural-logarithm slice
+  libc-math-sin  run the static x86 sin/sinf scalar trigonometric slice
+  libc-math-tan  run the static x86 tan/tanf scalar trigonometric slice
+  math-log-header-abi  verify x86 log/logf C++ ABI/linkage
+  math-sin-header-abi  verify x86 sin/sinf C++ ABI/linkage
+  math-tan-header-abi  verify x86 tan/tanf C++ ABI/linkage
 EOF
 }
 
@@ -4204,7 +4210,7 @@ case "$command" in
     ldso-public-dlfcn|ldso-dladdr-symbol-bounds) ;;
     ldso-bounded-dlopen) ;;
     math-special-header-abi|libc-math-special) ;;
-    math-exp2-header-abi|math-expm1-header-abi|math-log10-header-abi|libc-math-exp2|libc-math-expm1|libc-math-log10) ;;
+    math-exp2-header-abi|math-expm1-header-abi|math-log10-header-abi|libc-math-exp2|libc-math-expm1|libc-math-log10|math-exp10-header-abi|math-log-header-abi|math-sin-header-abi|math-tan-header-abi|math-tanh-header-abi|math-atanh-header-abi|math-acosh-header-abi|math-sincos-header-abi|math-pow-header-abi|libc-math-exp10|libc-math-log|libc-math-sin|libc-math-tan|libc-math-tanh|libc-math-atanh|libc-math-acosh|libc-math-sincos|libc-math-pow) ;;
     inet-address-header-abi|nameser-header-abi|endservent-header-abi) ;;
     libc-network-byte-order|libc-dn-skipname|libc-dn-expand|libc-ns-flagdata|libc-ns-get16|libc-ns-get32|libc-ns-put16) ;;
     ldso-target-root) ;;
@@ -7035,5 +7041,95 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "pthread-spin-init-header-abi takes no arguments"
         ensure_image
         run_in_container bash /workspace/compat/x86_64/run_pthread_spin_init_header_abi.sh
+        ;;
+    libc-math-acosh)
+        [ "$#" -eq 0 ] || fail "libc-math-acosh takes no arguments"
+        ensure_image
+        run_in_container bash /workspace/compat/x86_64/run_libc_math_acosh.sh
+        ;;
+    libc-math-atanh)
+        [ "$#" -eq 0 ] || fail "libc-math-atanh takes no arguments"
+        ensure_image
+        run_in_container bash /workspace/compat/x86_64/run_libc_math_atanh.sh
+        ;;
+    libc-math-exp10)
+        [ "$#" -eq 0 ] || fail "libc-math-exp10 takes no arguments"
+        ensure_image
+        run_in_container bash /workspace/compat/x86_64/run_libc_math_exp10.sh
+        ;;
+    libc-math-log)
+        [ "$#" -eq 0 ] || fail "libc-math-log takes no arguments"
+        ensure_image
+        run_in_container bash /workspace/compat/x86_64/run_libc_math_log.sh
+        ;;
+    libc-math-pow)
+        [ "$#" -eq 0 ] || fail "libc-math-pow takes no arguments"
+        ensure_image
+        run_in_container bash /workspace/compat/x86_64/run_libc_math_pow.sh
+        ;;
+    libc-math-sin)
+        [ "$#" -eq 0 ] || fail "libc-math-sin takes no arguments"
+        ensure_image
+        run_in_container bash /workspace/compat/x86_64/run_libc_math_sin.sh
+        ;;
+    libc-math-sincos)
+        [ "$#" -eq 0 ] || fail "libc-math-sincos takes no arguments"
+        ensure_image
+        run_in_container bash /workspace/compat/x86_64/run_libc_math_sincos.sh
+        ;;
+    libc-math-tan)
+        [ "$#" -eq 0 ] || fail "libc-math-tan takes no arguments"
+        ensure_image
+        run_in_container bash /workspace/compat/x86_64/run_libc_math_tan.sh
+        ;;
+    libc-math-tanh)
+        [ "$#" -eq 0 ] || fail "libc-math-tanh takes no arguments"
+        ensure_image
+        run_in_container bash /workspace/compat/x86_64/run_libc_math_tanh.sh
+        ;;
+    math-acosh-header-abi)
+        [ "$#" -eq 0 ] || fail "math-acosh-header-abi takes no arguments"
+        ensure_image
+        run_in_container bash /workspace/compat/x86_64/run_math_acosh_header_abi.sh
+        ;;
+    math-atanh-header-abi)
+        [ "$#" -eq 0 ] || fail "math-atanh-header-abi takes no arguments"
+        ensure_image
+        run_in_container bash /workspace/compat/x86_64/run_math_atanh_header_abi.sh
+        ;;
+    math-exp10-header-abi)
+        [ "$#" -eq 0 ] || fail "math-exp10-header-abi takes no arguments"
+        ensure_image
+        run_in_container bash /workspace/compat/x86_64/run_math_exp10_header_abi.sh
+        ;;
+    math-log-header-abi)
+        [ "$#" -eq 0 ] || fail "math-log-header-abi takes no arguments"
+        ensure_image
+        run_in_container bash /workspace/compat/x86_64/run_math_log_header_abi.sh
+        ;;
+    math-pow-header-abi)
+        [ "$#" -eq 0 ] || fail "math-pow-header-abi takes no arguments"
+        ensure_image
+        run_in_container bash /workspace/compat/x86_64/run_math_pow_header_abi.sh
+        ;;
+    math-sin-header-abi)
+        [ "$#" -eq 0 ] || fail "math-sin-header-abi takes no arguments"
+        ensure_image
+        run_in_container bash /workspace/compat/x86_64/run_math_sin_header_abi.sh
+        ;;
+    math-sincos-header-abi)
+        [ "$#" -eq 0 ] || fail "math-sincos-header-abi takes no arguments"
+        ensure_image
+        run_in_container bash /workspace/compat/x86_64/run_math_sincos_header_abi.sh
+        ;;
+    math-tan-header-abi)
+        [ "$#" -eq 0 ] || fail "math-tan-header-abi takes no arguments"
+        ensure_image
+        run_in_container bash /workspace/compat/x86_64/run_math_tan_header_abi.sh
+        ;;
+    math-tanh-header-abi)
+        [ "$#" -eq 0 ] || fail "math-tanh-header-abi takes no arguments"
+        ensure_image
+        run_in_container bash /workspace/compat/x86_64/run_math_tanh_header_abi.sh
         ;;
 esac
