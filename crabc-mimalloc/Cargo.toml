@@ -85,6 +85,13 @@ path = "tests/native_concurrent_post_exit_page_release.rs"
 # frees together. The direct witness proves structural lifecycle contention
 # serializes valid source clients without selecting libc shadow ABI machinery.
 
+[[test]]
+name = "native_persistent_worker_fastpath"
+path = "tests/native_persistent_worker_fastpath.rs"
+# This direct Phase-B witness exercises one, two, four, and eight independent
+# persistent local owners under the scalar lifecycle audit only.
+required-features = ["native-runtime-test-audit"]
+
 [features]
 default = []
 # Private, allocation-backed process context used only by the standalone

@@ -528,6 +528,7 @@ case "$command" in
             --test native_terminal_completion_live_remote_free \
             --test native_concurrent_post_exit_os_singletons \
             --test native_concurrent_mixed_post_exit_completions \
+            --test native_persistent_worker_fastpath \
             -- --test-threads=1
         # The next-`munmap` injection is a separately gated direct witness:
         # a failed OS terminal release must retain its PageMap source without
