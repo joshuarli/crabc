@@ -205,9 +205,6 @@ use crate::single_thread::{
     ThreadExitMappedRegularPagesPostExitParts,
     ThreadExitMappedRegularPagesPostExitRemoteFreeProducerPair,
     ThreadExitMappedRegularPagesPostExitTeardownTerminal,
-    ThreadExitMappedOneBlockAbandonError, ThreadExitMappedOneBlockAbandonFailure,
-    ThreadExitMappedOneBlockHandoff, ThreadExitMappedOneBlockRemoteFreeError,
-    ThreadExitMappedOneBlockRemoteFreeFailure,
     ThreadExitSingletonAbandonError, ThreadExitSingletonAbandonFailure,
     ThreadExitSingletonHandoff, ThreadExitSingletonRemoteFreeError,
     ThreadExitSingletonRemoteFreeFailure,
@@ -470,20 +467,6 @@ pub(crate) struct MainHeapThreadProcessPageExitDrain<'attachment, 'main> {
 #[must_use = "a later-main singleton handoff must release or retain its page explicitly"]
 pub(crate) struct MainHeapThreadProcessPageExitSingletonHandoff<'attachment, 'main> {
     handoff: ThreadExitSingletonHandoff<
-        'static,
-        'static,
-        MainHeapThreadPageDrainSession<'attachment, 'main>,
-    >,
-    page_map_lifecycle: ProcessPageMapMutationLease,
-}
-
-/// One sole medium arena page detached as mapped-abandoned by the later-main
-/// post-fast-slot owner-exit drain. It retains the same exclusive process
-/// PageMap lifecycle lease until its exact final client free empties and
-/// releases the registered span or the source state is terminally retained.
-#[must_use = "a later-main mapped one-block handoff must release or retain its page explicitly"]
-pub(crate) struct MainHeapThreadProcessPageExitMappedOneBlockHandoff<'attachment, 'main> {
-    handoff: ThreadExitMappedOneBlockHandoff<
         'static,
         'static,
         MainHeapThreadPageDrainSession<'attachment, 'main>,
@@ -1032,52 +1015,6 @@ pub(crate) enum MainHeapThreadProcessPageExitSingletonRemoteFreeFailure<'attachm
     Terminal {
         handoff: MainHeapThreadProcessPageExitSingletonHandoff<'attachment, 'main>,
         error: MainHeapThreadProcessPageExitSingletonRemoteFreeError,
-    },
-}
-
-/// The source-state reason one later-main sole medium page could not cross
-/// from its post-fast-slot drain into the mapped one-block final-free handoff.
-pub(crate) type MainHeapThreadProcessPageExitMappedOneBlockAbandonError =
-    ThreadExitMappedOneBlockAbandonError;
-
-/// The retained later-main owner after a mapped-one-block handoff attempt.
-#[must_use = "a failed later-main mapped one-block abandonment retains its source owner"]
-pub(crate) enum MainHeapThreadProcessPageExitMappedOneBlockAbandonFailure<'attachment, 'main> {
-    /// No queue or page identity changed, so the drain stays available for an
-    /// explicit later source decision.
-    Rejected {
-        drain: MainHeapThreadProcessPageExitDrain<'attachment, 'main>,
-        error: MainHeapThreadProcessPageExitMappedOneBlockAbandonError,
-    },
-    /// Force or false collection may have detached source free state. The
-    /// drain remains the only valid owner and cannot re-enter normal allocation.
-    RetainedDrain {
-        drain: MainHeapThreadProcessPageExitDrain<'attachment, 'main>,
-        error: MainHeapThreadProcessPageExitMappedOneBlockAbandonError,
-    },
-    /// Queue/page ownership crossed into the handoff before the later source
-    /// condition became terminal.
-    Terminal {
-        handoff: MainHeapThreadProcessPageExitMappedOneBlockHandoff<'attachment, 'main>,
-        error: MainHeapThreadProcessPageExitMappedOneBlockAbandonError,
-    },
-}
-
-/// The source-state reason the mapped one-block handoff's final free could
-/// not complete its source empty-page release.
-pub(crate) type MainHeapThreadProcessPageExitMappedOneBlockRemoteFreeError =
-    ThreadExitMappedOneBlockRemoteFreeError;
-
-/// The retained later-main mapped one-block handoff after its final-free attempt.
-#[must_use = "a failed later-main mapped one-block free retains its handoff"]
-pub(crate) enum MainHeapThreadProcessPageExitMappedOneBlockRemoteFreeFailure<'attachment, 'main> {
-    Rejected {
-        handoff: MainHeapThreadProcessPageExitMappedOneBlockHandoff<'attachment, 'main>,
-        error: MainHeapThreadProcessPageExitMappedOneBlockRemoteFreeError,
-    },
-    Terminal {
-        handoff: MainHeapThreadProcessPageExitMappedOneBlockHandoff<'attachment, 'main>,
-        error: MainHeapThreadProcessPageExitMappedOneBlockRemoteFreeError,
     },
 }
 
@@ -3112,63 +3049,6 @@ impl<'attachment, 'main> MainHeapThreadProcessPageExitDrain<'attachment, 'main> 
         }
     }
 
-    /// Detaches the one source mapped regular-page owner-exit case after the
-    /// fixed main fast slot is clear: a sole medium arena page with exactly one
-    /// live client block. The returned handoff retains the exact process PageMap
-    /// mutation lease while source `pages_abandoned[bin]` remains published.
-    ///
-    /// # Safety
-    ///
-    /// `block` must be the sole current allocation in one sole medium arena
-    /// page owned by this exact post-fast-slot drain. No scoped producer may
-    /// remain, and all client aliases must remain live only until the handoff's
-    /// exact final-free operation or terminal retention.
-    pub(crate) unsafe fn abandon_mapped_one_block(
-        self,
-        block: NonNull<u8>,
-    ) -> Result<
-        MainHeapThreadProcessPageExitMappedOneBlockHandoff<'attachment, 'main>,
-        MainHeapThreadProcessPageExitMappedOneBlockAbandonFailure<'attachment, 'main>,
-    > {
-        let Self {
-            engine,
-            page_map_lifecycle,
-        } = self;
-        // SAFETY: the post-fast-slot `MainHeapThreadPageDrainSession` retains
-        // the source root transition, exact TLD/Theap/Heap relation, matching
-        // process map/arena lifetime, and final-free authority through result.
-        match unsafe { engine.abandon_mapped_one_block_after_thread_exit(block) } {
-            Ok(handoff) => Ok(MainHeapThreadProcessPageExitMappedOneBlockHandoff {
-                handoff,
-                page_map_lifecycle,
-            }),
-            Err(ThreadExitMappedOneBlockAbandonFailure::Rejected { engine, error }) => {
-                Err(MainHeapThreadProcessPageExitMappedOneBlockAbandonFailure::Rejected {
-                    drain: Self {
-                        engine,
-                        page_map_lifecycle,
-                    },
-                    error,
-                })
-            }
-            Err(ThreadExitMappedOneBlockAbandonFailure::RetainedEngine { engine, error }) => {
-                Err(MainHeapThreadProcessPageExitMappedOneBlockAbandonFailure::RetainedDrain {
-                    drain: Self::retain_after_post_exit_route_failure(engine, page_map_lifecycle),
-                    error,
-                })
-            }
-            Err(ThreadExitMappedOneBlockAbandonFailure::Terminal { handoff, error }) => {
-                Err(MainHeapThreadProcessPageExitMappedOneBlockAbandonFailure::Terminal {
-                    handoff: MainHeapThreadProcessPageExitMappedOneBlockHandoff {
-                        handoff,
-                        page_map_lifecycle,
-                    },
-                    error,
-                })
-            }
-        }
-    }
-
     /// Transfers one sole nonfull small-or-medium page into the
     /// first true process post-exit route. On success the old later Theap/TLD
     /// has already been detached and freed; later client frees use only short
@@ -5140,61 +5020,6 @@ impl<'attachment, 'main> MainHeapThreadProcessPageExitSingletonHandoff<'attachme
             }
             Err(ThreadExitSingletonRemoteFreeFailure::Terminal { handoff, error }) => {
                 Err(MainHeapThreadProcessPageExitSingletonRemoteFreeFailure::Terminal {
-                    handoff: Self {
-                        handoff,
-                        page_map_lifecycle,
-                    },
-                    error,
-                })
-            }
-        }
-    }
-}
-
-impl<'attachment, 'main>
-    MainHeapThreadProcessPageExitMappedOneBlockHandoff<'attachment, 'main>
-{
-    /// Performs the handoff's one final client free. Source mapped-page free
-    /// checks for empty after collection before it considers reclamation; this
-    /// handoff admits only that all-free result and then releases its exact
-    /// PageMap/main-arena/metadata/slice ownership.
-    ///
-    /// # Safety
-    ///
-    /// `block` must be the exact once-live allocation transferred by
-    /// [`MainHeapThreadProcessPageExitDrain::abandon_mapped_one_block`]. It
-    /// must not have been freed, republished, or accessed through any alias
-    /// after this call.
-    pub(crate) unsafe fn remote_free_to_empty(
-        self,
-        block: NonNull<u8>,
-    ) -> Result<
-        MainHeapThreadProcessPageExitDrain<'attachment, 'main>,
-        MainHeapThreadProcessPageExitMappedOneBlockRemoteFreeFailure<'attachment, 'main>,
-    > {
-        let Self {
-            handoff,
-            page_map_lifecycle,
-        } = self;
-        // SAFETY: the linear handoff owns the sole PageMap registration, main
-        // abandoned bitmap capability, and client block lifetime through the
-        // source empty-before-reclaim tail.
-        match unsafe { handoff.remote_free_to_empty(block) } {
-            Ok(engine) => Ok(MainHeapThreadProcessPageExitDrain {
-                engine,
-                page_map_lifecycle,
-            }),
-            Err(ThreadExitMappedOneBlockRemoteFreeFailure::Rejected { handoff, error }) => {
-                Err(MainHeapThreadProcessPageExitMappedOneBlockRemoteFreeFailure::Rejected {
-                    handoff: Self {
-                        handoff,
-                        page_map_lifecycle,
-                    },
-                    error,
-                })
-            }
-            Err(ThreadExitMappedOneBlockRemoteFreeFailure::Terminal { handoff, error }) => {
-                Err(MainHeapThreadProcessPageExitMappedOneBlockRemoteFreeFailure::Terminal {
                     handoff: Self {
                         handoff,
                         page_map_lifecycle,
@@ -11759,7 +11584,7 @@ mod tests {
     }
 
     #[test]
-    fn later_thread_exit_mapped_one_block_handoff_releases_after_its_final_free() {
+    fn later_thread_exit_generic_source_selected_medium_releases_after_its_final_free() {
         thread::spawn(|| {
             let config = memory_config();
             let storage = MainStaticAttachmentStorage::test_static_owner();
@@ -11792,11 +11617,34 @@ mod tests {
                     };
                     let mut allocator = MainHeapThreadProcessPageAllocator::begin(&mut owner, pair)
                         .expect("the matched process pair admits one later page engine");
+                    let retired = allocator
+                        .allocate(MEDIUM_MAX_OBJ_SIZE + 1, false)
+                        .expect("the later thread allocates one retired regular large-page block");
+                    let retired_page = NonNull::new(unsafe { allocator.test_page_for_block(retired) })
+                        .expect("the retired large page stays PageMap-published before thread exit");
                     let block = allocator
                         .allocate(SMALL_MAX_OBJ_SIZE + 1, false)
                         .expect("the later thread allocates one regular medium-page block");
                     let page = NonNull::new(unsafe { allocator.test_page_for_block(block) })
                         .expect("the regular page stays PageMap-published before thread exit");
+                    let spare = allocator
+                        .allocate(SMALL_MAX_OBJ_SIZE + 1, false)
+                        .expect("the same medium page supplies one local-free source witness");
+                    assert_eq!(
+                        unsafe { allocator.test_page_for_block(spare) },
+                        page.as_ptr(),
+                        "the returned source spare stays in the live medium page"
+                    );
+                    // SAFETY: `spare` is still local to A while `block`
+                    // remains the sole live client. The ordinary collection
+                    // below folds it into the source medium's immediate head.
+                    unsafe { allocator.free(spare) }
+                        .expect("the source medium spare returns before owner exit");
+                    // SAFETY: the distinct large page has one live local
+                    // client. Its ordinary retirement must run before the
+                    // generic queue traversal selects the medium survivor.
+                    unsafe { allocator.free(retired) }
+                        .expect("the source large page retires before owner exit");
                     let page_ref = unsafe { page.as_ref() };
                     let memory = page_ref.memid();
                     let slice = memory
@@ -11807,6 +11655,12 @@ mod tests {
                         .expect("the regular page has one source bin");
                     assert!(page_ref.reserved() > 1);
                     assert_eq!(page_ref.used(), 1);
+                    assert_eq!(unsafe { retired_page.as_ref().used() }, 0);
+                    assert_ne!(
+                        unsafe { retired_page.as_ref().retire_expire() },
+                        0,
+                        "the source large page remains retired until the owner-exit prepass"
+                    );
                     assert!(bin < crate::config::ARENA_BIN_COUNT);
 
                     let drain = match allocator.begin_thread_exit_drain() {
@@ -11824,34 +11678,46 @@ mod tests {
                         "the source fast root clears before mapped abandonment"
                     );
 
-                    // SAFETY: `block` is the sole current allocation in the
-                    // sole medium regular arena page retained by this
-                    // post-fast-slot process-map lifecycle.
-                    let handoff = match unsafe { drain.abandon_mapped_one_block(block) } {
-                        Ok(handoff) => handoff,
-                        Err(MainHeapThreadProcessPageExitMappedOneBlockAbandonFailure::Rejected {
-                            drain,
-                            error,
-                        })
-                        | Err(MainHeapThreadProcessPageExitMappedOneBlockAbandonFailure::RetainedDrain {
-                            drain,
-                            error,
-                        }) => {
-                            core::mem::forget(drain);
-                            panic!("the medium page enters the mapped owner-exit handoff: {error:?}");
+                    // SAFETY: source queue ownership, rather than a
+                    // caller-provided block geometry, selects this sole live
+                    // medium after the ordinary owner-exit prepasses.
+                    let route = match unsafe {
+                        drain.abandon_mapped_regular_pages_to_process_route()
+                    } {
+                        Ok(MainHeapThreadProcessPageExitMappedRegularPagesRouteBegin::SoleImmediateMedium(
+                            route,
+                        )) => route,
+                        Ok(MainHeapThreadProcessPageExitMappedRegularPagesRouteBegin::Route(route)) => {
+                            core::mem::forget(route);
+                            panic!("the source-selected sole medium must not broaden into an aggregate route");
                         }
-                        Err(MainHeapThreadProcessPageExitMappedOneBlockAbandonFailure::Terminal {
-                            handoff,
-                            error,
-                        }) => {
-                            core::mem::forget(handoff);
-                            panic!("mapped abandonment does not retain a terminal owner: {error:?}");
+                        Ok(MainHeapThreadProcessPageExitMappedRegularPagesRouteBegin::Drained(drain)) => {
+                            core::mem::forget(drain);
+                            panic!("the live medium cannot become an all-free drain");
+                        }
+                        Err(failure) => {
+                            core::mem::forget(failure);
+                            panic!("the generic owner-exit traversal selects the live medium");
                         }
                     };
+                    assert_eq!(
+                        owner.finish_after_page_drain(),
+                        Err(MainHeapThreadAttachmentError::TornDown),
+                        "the generic traversal tears down the old Theap/TLD before the client free"
+                    );
                     assert_eq!(
                         unsafe { page_map.page_map().unwrap().checked_lookup(block.as_ptr()) },
                         page.as_ptr(),
                         "the mapped-abandoned page remains registered until its final client free"
+                    );
+                    assert!(
+                        unsafe { page_map.page_map().unwrap().checked_lookup(retired.as_ptr()) }
+                            .is_null(),
+                        "the generic retired-page prepass releases before it publishes the live medium route"
+                    );
+                    assert!(
+                        !page_ref.free_list_head().is_null(),
+                        "source collection leaves the selected medium's immediate local head"
                     );
                     assert!(
                         arena
@@ -11878,24 +11744,18 @@ mod tests {
                         "main-heap mapped publication increments its paired source abandoned counter"
                     );
 
-                    // SAFETY: this is the handoff's exact once-live client
-                    // allocation. With one live block, source abandoned-free
-                    // collection must become empty before any reclaim branch.
-                    let drain = match unsafe { handoff.remote_free_to_empty(block) } {
-                        Ok(drain) => drain,
-                        Err(MainHeapThreadProcessPageExitMappedOneBlockRemoteFreeFailure::Rejected {
-                            handoff,
-                            error,
-                        })
-                        | Err(MainHeapThreadProcessPageExitMappedOneBlockRemoteFreeFailure::Terminal {
-                            handoff,
-                            error,
-                        }) => {
-                            core::mem::forget(handoff);
-                            panic!("the mapped one-block final free releases its sole page: {error:?}");
+                    // SAFETY: this exact once-live client is the source
+                    // traversal's only selected medium member. Its normal
+                    // PageMap route must release the page rather than select
+                    // a caller-provided final-free handoff.
+                    match unsafe { route.remote_free_after_thread_exit(block) } {
+                        Ok(MainHeapThreadProcessPageExitMappedRegularFreeResult::Released) => {}
+                        Ok(MainHeapThreadProcessPageExitMappedRegularFreeResult::StillLive(route)) => {
+                            core::mem::forget(route);
+                            panic!("the sole source-selected medium releases after its final client free");
                         }
-                    };
-                    assert!(matches!(drain.finish(), Ok(())));
+                        Err(_) => panic!("the generic medium route releases its sole page"),
+                    }
                     assert!(
                         unsafe { page_map.page_map().unwrap().checked_lookup(block.as_ptr()) }.is_null(),
                         "the final free unregisters the mapped page span before map release"
@@ -11929,22 +11789,21 @@ mod tests {
                         0,
                         "mapped final release consumes its paired main-heap abandoned counter"
                     );
-                    owner
-                        .finish_after_page_drain()
-                        .expect("the mapped handoff returns to source root/list/TLD teardown");
                 });
-                worker.join().expect("later mapped handoff remains current-thread local");
+                worker
+                    .join()
+                    .expect("later source-selected medium route remains current-thread local");
             });
 
             main.teardown()
-                .expect("the static main owner retires after the mapped handoff");
+                .expect("the static main owner retires after the source-selected medium route");
         })
         .join()
-        .expect("later mapped handoff fixture remains current-thread local");
+        .expect("source-selected medium fixture remains current-thread local");
     }
 
     #[test]
-    fn later_thread_exit_mapped_one_block_handoff_rejects_then_general_route_releases_live_pages() {
+    fn later_thread_exit_generic_route_releases_mixed_live_medium_and_singleton() {
         thread::spawn(|| {
             let config = memory_config();
             let storage = MainStaticAttachmentStorage::test_static_owner();
@@ -11979,7 +11838,7 @@ mod tests {
                         .expect("the matched process pair admits the owner-exit boundary");
                     let regular = allocator
                         .allocate(SMALL_MAX_OBJ_SIZE + 1, false)
-                        .expect("the fixture creates the medium one-block page");
+                        .expect("the fixture creates the live medium page");
                     let regular_page = NonNull::new(unsafe { allocator.test_page_for_block(regular) })
                         .expect("the medium remains PageMap-published before exit");
                     let other = allocator
@@ -12035,49 +11894,9 @@ mod tests {
                             panic!("thread exit clears the main fast slot before page collection: {error:?}");
                         }
                     };
-                    let drain = match unsafe { drain.abandon_mapped_one_block(regular) } {
-                        Err(MainHeapThreadProcessPageExitMappedOneBlockAbandonFailure::Rejected {
-                            drain,
-                            error,
-                        }) => {
-                            assert_eq!(
-                                error,
-                                MainHeapThreadProcessPageExitMappedOneBlockAbandonError::NotOnlyPage,
-                                "the bounded handoff refuses to skip source queue traversal"
-                            );
-                            drain
-                        }
-                        Err(MainHeapThreadProcessPageExitMappedOneBlockAbandonFailure::RetainedDrain {
-                            drain,
-                            error,
-                        }) => {
-                            core::mem::forget(drain);
-                            panic!("the sole-page check is pre-collection: {error:?}");
-                        }
-                        Err(MainHeapThreadProcessPageExitMappedOneBlockAbandonFailure::Terminal {
-                            handoff,
-                            error,
-                        }) => {
-                            core::mem::forget(handoff);
-                            panic!("the sole-page check is pre-detach: {error:?}");
-                        }
-                        Ok(handoff) => {
-                            core::mem::forget(handoff);
-                            panic!("a second live page must block the mapped handoff");
-                        }
-                    };
-                    assert_eq!(
-                        unsafe { page_map.page_map().unwrap().checked_lookup(regular.as_ptr()) },
-                        regular_page.as_ptr(),
-                        "the regular page remains registered after the pre-detach refusal"
-                    );
-                    assert_eq!(
-                        unsafe { page_map.page_map().unwrap().checked_lookup(other.as_ptr()) },
-                        other_page.as_ptr(),
-                        "the other page remains registered after the pre-detach refusal"
-                    );
-                    assert_eq!(regular_ref.used(), 1);
-
+                    // SAFETY: the generic source traversal owns every queue
+                    // member and selects both surviving page classes in their
+                    // source bin order. No caller chooses a page geometry.
                     let mut route = match unsafe {
                         drain.abandon_mapped_regular_pages_to_process_route()
                     } {
@@ -12090,9 +11909,7 @@ mod tests {
                             core::mem::forget(drain);
                             panic!("the two live source members cannot become an empty drain")
                         }
-                        Err(_) => panic!(
-                            "the general owner-exit traversal follows the bounded handoff refusal"
-                        ),
+                        Err(_) => panic!("the generic owner-exit traversal accepts both live source members"),
                     };
                     assert_eq!(
                         owner.finish_after_page_drain(),
