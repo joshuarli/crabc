@@ -849,6 +849,8 @@ sysconf
 sysinfo
 tan
 tanf
+tanh
+tanhf
 tanhl
 tanl
 tcflow

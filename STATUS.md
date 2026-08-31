@@ -1238,6 +1238,23 @@ sin/cos/hyperbolic/inverse-trig/log/exp/pow functions, fenv API/policy,
 special/complex/binary80 math, family completion, promotion, and public x86
 support.
 
+The separate private `static-c-math-tanh` artifact records only binary64
+`tanh` and binary32 `tanhf`: `./scripts/dev-x86_64.sh libc-math-tanh` runs
+project-header C and default-SSE/`-mfpmath=387` C++ function-pointer fixtures
+through pinned musl and one freestanding static candidate. Its checked GCC
+15.2.0 translation of musl 1.2.6 `tanh.c`/`tanhf.c` plus private local
+`expm1.c`/`expm1f.c` providers is the complete direct source closure: it
+retains source threshold selection, subnormal force-evaluation, saturation,
+and signed reconstruction without a public `expm1` dependency or ambient
+libm. The 256-record differential preserves raw result bits, flags, and all
+four requested-and-observed MXCSR directions over signed zero, tiny/subnormal,
+threshold and saturation neighborhoods, finite extremes, infinities,
+quiet-NaN, and signaling-NaN inputs. Strong target-owned definitions and
+final ELF checks reject weak compiler-builtins fallback, `tanhl`, adjacent
+tan/sin/cos/hyperbolic/inverse-trig/log/exp/pow functions, fenv API/policy,
+special/complex/binary80 math, family completion, promotion, and public x86
+support.
+
 The separate private `static-c-math-ceil` artifact records only binary64
 `ceil` and binary32 `ceilf`: `./scripts/dev-x86_64.sh libc-math-ceil` runs
 project-header C and default-SSE/`-mfpmath=387` C++ function-pointer fixtures
