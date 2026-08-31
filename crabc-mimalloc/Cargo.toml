@@ -99,6 +99,13 @@ path = "tests/native_pointer_first_current_owner_reallocate.rs"
 # behind the scalar audit surface rather than the production allocator ABI.
 required-features = ["native-runtime-test-audit"]
 
+[[test]]
+name = "native_pointer_first_usable_size"
+path = "tests/native_pointer_first_usable_size.rs"
+# This direct Phase-C witness keeps exact-client usable-size observation
+# behind the scalar audit surface rather than the production allocator ABI.
+required-features = ["native-runtime-test-audit"]
+
 [features]
 default = []
 # Private, allocation-backed process context used only by the standalone
