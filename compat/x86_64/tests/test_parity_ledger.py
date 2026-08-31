@@ -49,7 +49,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["status_counts"], {"foundation-verified": 8, "planned": 18})
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
-        self.assertEqual(report["verified_slice_count"], 34)
+        self.assertEqual(report["verified_slice_count"], 35)
         self.assertEqual(report["verified_artifact_count"], 126)
         self.assertEqual(report["header_layout_probe_count"], 46)
         self.assertEqual(report["public_header_inventory_count"], 183)
@@ -12861,6 +12861,54 @@ class X86ParityLedgerTests(unittest.TestCase):
         with self.assertRaisesRegex(
             ledger.LedgerError,
             "evidence scope omits environment storage/mutation",
+        ):
+            ledger.validate_ledger(data)
+
+    def test_numeric_qsort_helper_slice_is_selected_private_and_non_promoting(self) -> None:
+        data = self.data()
+        family = self.family(data, "libc.c-abi-compat")
+        self.assertEqual(family["status"], "planned")
+        slices = family["verified_slice"]
+        assert isinstance(slices, list)
+        selected = next(
+            entry
+            for entry in slices
+            if isinstance(entry, dict) and entry["id"] == "numeric.qsort-helper"
+        )
+        self.assertEqual(selected["capabilities"], ["numeric.qsort-helper"])
+        self.assertIn("`__qsort_r`", selected["description"])
+        self.assertIn("weak same-address `qsort_r`", selected["description"])
+        self.assertIn("still-planned `libc.c-abi-compat`", selected["description"])
+        self.assertIn("public x86 support", selected["description"])
+        owners = selected["source_owners"]
+        assert isinstance(owners, list)
+        for owner in (
+            "libc/src/c_abi/x86_64/callback_algorithms.rs",
+            "include/stdlib.h",
+            "compat/x86_64/libc_callback_algorithms_probe.c",
+            "compat/x86_64/run_libc_callback_algorithms.sh",
+            "compat/x86_64/aarch64_parity_inventory.json",
+        ):
+            self.assertIn(owner, owners)
+        evidence = selected["native_evidence"]
+        assert isinstance(evidence, list) and isinstance(evidence[0], dict)
+        self.assertEqual(
+            evidence[0]["command"],
+            "./scripts/dev-x86_64.sh libc-callback-algorithms",
+        )
+        for phrase in (
+            "pinned-musl",
+            "hidden __qsort_r helper",
+            "weak same-address alias",
+            "caller strong override",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, evidence[0]["scope"])
+
+        selected["capabilities"] = ["search.hash-table"]
+        with self.assertRaisesRegex(
+            ledger.LedgerError,
+            "qsort helper slice must select exactly numeric.qsort-helper",
         ):
             ledger.validate_ledger(data)
 

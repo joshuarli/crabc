@@ -2758,6 +2758,14 @@ It is private native x86 evidence only: it excludes generic C sorting/search,
 callback registries, C longjmp/C++ exception transport, dynamic runtime, and
 public x86 support.
 
+The same callback proof now additionally selects only the ABI-only
+`numeric.qsort-helper` capability: strong, uninstalled `__qsort_r` and its
+weak same-address `qsort_r` alias. The direct candidate proves helper sorting
+and a strong caller override, while the public qsort/qsort_r surface remains
+under `numeric.scalar-legacy-callback`. This does not promote the planned
+`libc.c-abi-compat` family or select general sorting, runtime ownership, or
+public x86 support.
+
 `libc-search-tree-intrusive` is a private selected
 `search.tree-intrusive` slice inside still-planned `libc.c-abi-compat`. Its
 six-profile pinned-musl/project C/C++ header matrix and static runtime

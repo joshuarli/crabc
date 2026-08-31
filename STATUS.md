@@ -424,6 +424,15 @@ adapters only. It deliberately owns no environment object or mutation API,
 auxv/secure state, loader startup, general locale/stdio, allocator, libc.so,
 CRT family, sysroot, C ABI closure, promotion, or public x86 support.
 
+The same still-planned C ABI family also now selects only the private
+`numeric.qsort-helper` ABI leaf. It accounts for musl's strong, uninstalled
+`__qsort_r` smoothsort helper and weak same-address `qsort_r` alias through
+the existing callback-algorithms static candidate, including direct helper
+sorting and a caller strong-alias override. Public `qsort`/`qsort_r` behavior
+remains under `numeric.scalar-legacy-callback`; this adds no general sorting,
+allocator/runtime, C longjmp/C++ exception, libc.so, CRT, loader, sysroot,
+promotion, or public-x86 claim.
+
 The same still-planned C ABI family now has a private selected
 `search.tree-intrusive` slice. `./scripts/dev-x86_64.sh
 libc-search-tree-intrusive` compares pinned musl's AVL callbacks with a true

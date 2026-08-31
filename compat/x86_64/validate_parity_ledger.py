@@ -1426,6 +1426,8 @@ SEARCH_TREE_INTRUSIVE_SYMBOLS = (
     "twalk",
 )
 
+QSORT_HELPER_SYMBOLS = ("__qsort_r",)
+
 MATH_COMPLEX_FOUNDATION_SYMBOLS = (
     "__fpclassify",
     "__fpclassifyf",
@@ -16338,6 +16340,174 @@ def require_search_tree_intrusive_slice(family: Mapping[str, Any]) -> None:
     )
 
 
+def require_numeric_qsort_helper_slice(family: Mapping[str, Any]) -> None:
+    """Keep musl's private qsort helper selected without promoting sorting."""
+    slices = require_verified_slices(
+        family.get("verified_slice"),
+        "family[libc.c-abi-compat].verified_slice",
+        family.get("status", ""),
+        list(family.get("capabilities", [])),
+    )
+    matching = [entry for entry in slices if entry.get("id") == "numeric.qsort-helper"]
+    require(
+        len(matching) == 1,
+        "libc.c-abi-compat needs one numeric.qsort-helper slice",
+    )
+    require(
+        family.get("status") == "planned",
+        "qsort helper selection must not promote libc.c-abi-compat",
+    )
+    selected = matching[0]
+    require(
+        selected["capabilities"] == ["numeric.qsort-helper"],
+        "qsort helper slice must select exactly numeric.qsort-helper",
+    )
+    description = selected["description"]
+    assert isinstance(description, str)
+    for phrase in (
+        "still-planned `libc.c-abi-compat`",
+        "uninstalled `__qsort_r` helper",
+        "weak same-address `qsort_r` alias",
+        "O(1) cycling buffer",
+        "numeric.scalar-legacy-callback",
+        "`search.hash-table` remains missing",
+        "promotion/public_support=false",
+        "public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"numeric.qsort-helper description omits {phrase}",
+        )
+
+    owners = set(
+        nonempty_strings(
+            selected["source_owners"], "numeric.qsort-helper.source_owners"
+        )
+    )
+    for owner in (
+        "libc/src/c_abi/x86_64/callback_algorithms.rs",
+        "include/stdlib.h",
+        "compat/x86_64/callback_algorithms_header_abi_probe.c",
+        "compat/x86_64/callback_algorithms_header_abi_probe.cpp",
+        "compat/x86_64/libc_callback_algorithms_probe.c",
+        "compat/x86_64/libc_callback_algorithms_start.S",
+        "compat/x86_64/run_callback_algorithms_header_abi.sh",
+        "compat/x86_64/run_libc_callback_algorithms.sh",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/aarch64_parity_inventory.json",
+        "scripts/dev-x86_64.sh",
+    ):
+        require(
+            owner in owners,
+            f"numeric.qsort-helper source owners omit {owner}",
+        )
+
+    prerequisites = nonempty_strings(
+        selected["x86_abi_prerequisites"], "numeric.qsort-helper.x86_abi_prerequisites"
+    )
+    for phrase in (
+        "SysV AMD64 LP64",
+        "rdi/rsi/rdx/rcx/r8",
+        "weak `qsort_r`",
+        "14 * sizeof(size_t) + 1",
+        "C longjmp and C++ exceptions",
+    ):
+        require(
+            any(phrase in item for item in prerequisites),
+            f"numeric.qsort-helper ABI prerequisites omit {phrase}",
+        )
+    headers = nonempty_strings(
+        selected["x86_header_prerequisites"], "numeric.qsort-helper.x86_header_prerequisites"
+    )
+    require(
+        any(
+            "__qsort_r" in item and "uninstalled" in item and "C++17" in item
+            for item in headers
+        ),
+        "numeric.qsort-helper must preserve private-helper header visibility",
+    )
+
+    exports = static_c_abi_export_names(
+        ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+    )
+    for symbol in (*QSORT_HELPER_SYMBOLS, "qsort_r"):
+        require(symbol in exports, f"static C ABI export contract omits {symbol}")
+    for symbol in ("malloc", "calloc", "realloc", "free"):
+        require(
+            symbol not in exports,
+            f"numeric.qsort-helper selects allocator export {symbol}",
+        )
+
+    source = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "callback_algorithms.rs"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "src/stdlib/qsort.c",
+        ".weak qsort_r",
+        ".set qsort_r, __qsort_r",
+        "pub unsafe extern \"C\" fn __qsort_r",
+        "14 * core::mem::size_of::<usize>() + 1",
+        "12 * core::mem::size_of::<usize>()",
+    ):
+        require(
+            snippet in source,
+            f"numeric.qsort-helper source omits {snippet}",
+        )
+
+    evidence = selected["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-callback-algorithms"},
+        "numeric.qsort-helper must use the closed libc-callback-algorithms command",
+    )
+    scope = evidence[0]["scope"]
+    assert isinstance(scope, str)
+    for phrase in (
+        "pinned-musl",
+        "hidden __qsort_r helper",
+        "weak same-address alias",
+        "caller strong override",
+        "public x86 support",
+    ):
+        require(
+            phrase in scope,
+            f"numeric.qsort-helper evidence omits {phrase}",
+        )
+    runner = (
+        ROOT / "compat" / "x86_64" / "run_libc_callback_algorithms.sh"
+    ).read_text(encoding="utf-8")
+    fixture = (
+        ROOT / "compat" / "x86_64" / "libc_callback_algorithms_probe.c"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "assert_musl_weak_alias",
+        "__qsort_r",
+        "qsort_r",
+        "CRABC_CALLBACK_ALGORITHMS_OVERRIDE_QSORT_R",
+        "-nostdlib -static",
+    ):
+        require(
+            snippet in runner,
+            f"numeric.qsort-helper runner omits {snippet}",
+        )
+    for snippet in (
+        "__qsort_r",
+        "check_context_sort",
+        "qsort_r_override_called",
+        "CRABC_CALLBACK_ALGORITHMS_OVERRIDE_QSORT_R",
+    ):
+        require(
+            snippet in fixture,
+            f"numeric.qsort-helper fixture omits {snippet}",
+        )
+    dispatcher = (ROOT / "scripts" / "dev-x86_64.sh").read_text(encoding="utf-8")
+    require(
+        "run_libc_callback_algorithms.sh" in dispatcher,
+        "numeric.qsort-helper dispatcher binding is missing",
+    )
+
+
 def require_descriptor_lifecycle_artifact(family: Mapping[str, Any]) -> None:
     """Keep the composed descriptor proof private and tied to its boundaries."""
     artifacts = require_verified_artifacts(
@@ -22068,6 +22238,7 @@ def validate_ledger(
     require_numeric_netdb_artifact(by_id["libc.resolver"])
     require_process_globals_getopt_artifact(by_id["libc.c-abi-compat"])
     require_search_tree_intrusive_slice(by_id["libc.c-abi-compat"])
+    require_numeric_qsort_helper_slice(by_id["libc.c-abi-compat"])
     require_descriptor_lifecycle_artifact(by_id["libc.posix-runtime"])
     require_descriptor_pipeline_artifact(by_id["libc.posix-runtime"])
     require_timestamp_updates_artifact(by_id["libc.posix-runtime"])

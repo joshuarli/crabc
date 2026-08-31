@@ -7080,6 +7080,54 @@ oracle = [
 ]
 capabilities = ["search.tree-intrusive"]
 
+[[family.verified_slice]]
+id = "numeric.qsort-helper"
+description = "Private native x86 selected-static-archive completion of the AArch64 `numeric.qsort-helper` capability inside still-planned `libc.c-abi-compat`. It selects exactly musl's uninstalled `__qsort_r` helper: one strong global smoothsort implementation paired with the weak same-address `qsort_r` alias that is public. The independently recorded callback-algorithms artifact retains `bsearch`, `qsort`, and public `qsort_r` behavior; this ABI-only slice accounts only for the private helper without changing the existing native `numeric.scalar-legacy-callback` classification. Pinned musl's static-archive symbol record and the true freestanding candidate establish the direct helper path, while public qsort/qsort_r behavior is compared through the pinned musl dynamic reference. The fixed smoothsort preserves its O(1) cycling buffer, final-context comparator ABI, and strong-caller alias override. It owns no errno, TLS, allocator, syscall, locale, callback registry, or mutable process state. `libc.c-abi-compat` remains planned, `search.hash-table` remains missing, promotion/public_support=false is unchanged, and general C sorting/searching, C longjmp/C++ exception transport, libc.so, CRT, loader, sysroot, and public x86 support remain outside this capability."
+source_owners = [
+  "compat/upstreams.toml",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/callback_algorithms.rs",
+  "compat/abi/musl-1.2.6/aarch64/libc.a.static.tsv",
+  "include/features.h",
+  "include/bits/alltypes.h",
+  "include/stddef.h",
+  "include/stdint.h",
+  "include/stdlib.h",
+  "compat/x86_64/callback_algorithms_header_abi_probe.c",
+  "compat/x86_64/callback_algorithms_header_abi_probe.cpp",
+  "compat/x86_64/run_callback_algorithms_header_abi.sh",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/libc_callback_algorithms_probe.c",
+  "compat/x86_64/libc_callback_algorithms_start.S",
+  "compat/x86_64/run_libc_callback_algorithms.sh",
+  "compat/x86_64/aarch64_parity_inventory.py",
+  "compat/x86_64/aarch64_parity_inventory.json",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "compat/x86_64/README.md",
+  "STATUS.md",
+  "x86-64.md",
+  "scripts/dev-x86_64.sh",
+  "scripts/check_structure.py",
+]
+x86_abi_prerequisites = [
+  "The SysV AMD64 LP64 boundary passes __qsort_r/qsort_r(base, nel, width, compare, argument) in rdi/rsi/rdx/rcx/r8. The context comparator receives a/b/argument in rdi/rsi/rdx and returns its signed four-byte ordering word in eax; callers own valid writable records, a non-null comparator, and normal C returns.",
+  "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417 maps src/stdlib/qsort.c's smoothsort body and `weak_alias(__qsort_r, qsort_r)` to this slice. The selected x86 global-assembly alias is weak `qsort_r` at the exact strong `__qsort_r` address, so a caller's strong qsort_r correctly overrides it without a Rust forwarding wrapper.",
+  "The fixed source algorithm retains its 14 * sizeof(size_t) + 1 cycling-pointer work array and 12 * sizeof(size_t) Leonardo stack, O(1) temporary byte cycling, and unstable equal-key ordering. Its state is entirely caller array/callback state: it does not read or write errno, TLS, allocator, syscall, locale, lock, registry, or process-global state; C longjmp and C++ exceptions must not cross Rust frames.",
+]
+x86_header_prerequisites = [
+  "Pinned-musl/project C11 and C++17 stdlib profile evidence keeps `__qsort_r` uninstalled and unavailable in every public selection, while bsearch/qsort remain unconditional and GNU/BSD qsort_r retains the final-context comparator signature and C++ C linkage. The direct candidate declares only the intentionally private helper for its static archive proof; this is not general stdlib or sorting-header completion.",
+]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-callback-algorithms", scope = "The pinned-musl public C reference establishes qsort/qsort_r companion behavior, while a true dependency-free x86 crabc-libc static archive and freestanding candidate prove the hidden __qsort_r helper. The gate checks exact crate-owned exports, the weak same-address alias, direct helper sorting with context identity, and a caller strong override while rejecting interpreter/DT_NEEDED, unresolved C symbols, TLS, panic machinery, syscalls, allocator, and mutable runtime dependencies. The public reference remains dynamic because the static compiler emits a non-runnable static PIE in the evidence container. It does not select general C sorting/searching, C longjmp/C++ exception transport, libc.so, CRT, loader, sysroot, family promotion, or public x86 support." }]
+oracle = [
+  { kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source, static-archive symbol, weak-alias, declaration-visibility, and executable behavior oracle for src/stdlib/qsort.c and its public qsort_r/qsort_nr companions." },
+  { kind = "elf-abi", source = "System V AMD64 psABI", role = "LP64 function/callback registers, signed comparator result, strong helper plus weak same-address alias, and static ET_EXEC closure." },
+]
+capabilities = ["numeric.qsort-helper"]
+
 [[family]]
 id = "ldso.relative-relocation"
 order = 120
