@@ -212,6 +212,7 @@ X86_RUNTIME_FOUNDATION_LIBC_SOURCES = {
     Path("libc/src/c_abi/x86_64/string_copy.rs"),
     Path("libc/src/c_abi/x86_64/error_strings.rs"),
     Path("libc/src/c_abi/x86_64/termios_control.rs"),
+    Path("libc/src/c_abi/x86_64/getpass.rs"),
     Path("libc/src/c_abi/x86_64/thread_pointer.rs"),
     Path("libc/src/c_abi/x86_64/uts_identity.rs"),
 }
@@ -3705,6 +3706,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         '#[path = "c11_sync.rs"]',
         '#[path = "pthread_once.rs"]',
         '#[path = "termios_control.rs"]',
+        '#[path = "getpass.rs"]',
         '#[path = "process_context.rs"]',
         '#[path = "login_name.rs"]',
         '#[path = "child_reaping.rs"]',
@@ -5509,6 +5511,173 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
             "libc/src/c_abi/x86_64/termios_control.rs: selected static termios "
             "artifact must export only its named baud/raw/control symbols"
         )
+
+    getpass_source = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "getpass.rs"
+    getpass_text = getpass_source.read_text(errors="replace")
+    for required in (
+        "pinned musl 1.2.6 release commit",
+        "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+        "src/legacy/getpass.c",
+        "Source-function mapping: musl `getpass` -> `getpass.rs::getpass`",
+        "struct PublicTermios",
+        "PASSWORD_CAPACITY: usize = 128",
+        "O_RDWR",
+        "O_NOCTTY",
+        "O_CLOEXEC",
+        "TCSAFLUSH",
+        "TCSBRK",
+        "drain_terminal_output",
+        "termios_control::tcgetattr",
+        "termios_control::tcsetattr",
+        "raw_syscall::SYS_OPEN",
+        "raw_syscall::SYS_READ",
+        "raw_syscall::SYS_WRITE",
+        "raw_syscall::SYS_CLOSE",
+        "create a Rust secret type",
+        "secret-memory ownership",
+        "initial `tcgetattr` failure returns null",
+        "a null prompt writes no bytes",
+        "cleanup preserves a raw read error",
+    ):
+        if required not in getpass_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/getpass.rs: selected static historical "
+                f"getpass boundary is missing {required!r}"
+            )
+    getpass_exports = set(
+        re.findall(
+            r'(?m)^pub\s+unsafe\s+extern\s+"C"\s+fn\s+(\w+)\s*\(',
+            getpass_text,
+        )
+    )
+    if getpass_exports != {"getpass"}:
+        errors.append(
+            "libc/src/c_abi/x86_64/getpass.rs: selected static historical "
+            "getpass artifact must export only getpass"
+        )
+    for forbidden in (
+        'pub unsafe extern "C" fn getlogin',
+        'pub unsafe extern "C" fn cuserid',
+        'pub unsafe extern "C" fn tcdrain',
+        "fn ioctl(",
+        "forkpty(",
+        "openpty(",
+        "login_tty(",
+        "vhangup(",
+        "crabc_core",
+        "crabc_mimalloc",
+    ):
+        if forbidden in getpass_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/getpass.rs: selected static historical "
+                f"getpass boundary must not select {forbidden!r}"
+            )
+
+    getpass_runner = (
+        ROOT / "compat" / "x86_64" / "run_libc_getpass.sh"
+    ).read_text(errors="replace")
+    getpass_header_runner = (
+        ROOT / "compat" / "x86_64" / "run_getpass_header_abi.sh"
+    ).read_text(errors="replace")
+    getpass_header_c = (
+        ROOT / "compat" / "x86_64" / "getpass_header_abi_probe.c"
+    ).read_text(errors="replace")
+    getpass_header_cxx = (
+        ROOT / "compat" / "x86_64" / "getpass_header_abi_probe.cpp"
+    ).read_text(errors="replace")
+    getpass_probe = (
+        ROOT / "compat" / "x86_64" / "libc_getpass_probe.c"
+    ).read_text(errors="replace")
+    getpass_start = (
+        ROOT / "compat" / "x86_64" / "libc_getpass_start.S"
+    ).read_text(errors="replace")
+    x86_runner = (ROOT / "scripts" / "dev-x86_64.sh").read_text(errors="replace")
+    for required in (
+        "run_musl_oracle.sh",
+        "run_getpass_header_abi.sh",
+        "static_c_abi_exports.txt",
+        "-nostdlib -static",
+        "--no-undefined",
+        "for symbol in __errno_location getpass",
+        "for unselected in cuserid getusershell",
+        "--disassemble=getpass",
+        "Linux x86-64 open syscall 2",
+        "fixed private TCSBRK drain request",
+        "candidate selects an account or login helper",
+        "forkpty|openpty|login_tty|vhangup|TIOCGPTPEER",
+        'timeout "$EXECUTION_TIMEOUT"',
+        "candidate retains a dynamic TLS model",
+    ):
+        if required not in getpass_runner:
+            errors.append(
+                "compat/x86_64/run_libc_getpass.sh: selected static historical "
+                f"getpass evidence is missing {required!r}"
+            )
+    for required in (
+        "getpass_header_abi_probe.c",
+        "getpass_header_abi_probe.cpp",
+        "Pinned musl 1.2.6",
+        "getpass outside GNU/BSD selection",
+        "retained a mangled getpass reference",
+    ):
+        if required not in getpass_header_runner:
+            errors.append(
+                "compat/x86_64/run_getpass_header_abi.sh: selected historical "
+                f"getpass declaration evidence is missing {required!r}"
+            )
+    for required in ("getpass declaration", "getpass_must_be_hidden"):
+        if required not in getpass_header_c or required not in getpass_header_cxx:
+            errors.append(
+                "compat/x86_64/getpass_header_abi_probe: selected historical "
+                f"getpass declaration evidence is missing {required!r}"
+            )
+    for required in (
+        "check_no_controlling_tty",
+        "FIXTURE_ENXIO",
+        "check_interactive_tty",
+        "FIXTURE_TIOCSCTTY",
+        "FIXTURE_TIOCGPTPEER",
+        "c_string_equals",
+        "FIXTURE_PASSWORD_BYTES",
+        "bytes_contain",
+        "raw_syscall4(SYS_openat",
+        "getpass(NULL) != NULL || errno != FIXTURE_ENXIO",
+        "second != first",
+        "FIXTURE_PASSWORD_BYTES - 1",
+        "!bytes_equal(&before, &after, sizeof(before))",
+    ):
+        if required not in getpass_probe:
+            errors.append(
+                "compat/x86_64/libc_getpass_probe.c: selected historical "
+                f"getpass regression is missing {required!r}"
+            )
+    for forbidden in ("openpty(", "forkpty(", "login_tty(", "vhangup("):
+        if forbidden in getpass_probe:
+            errors.append(
+                "compat/x86_64/libc_getpass_probe.c: selected historical "
+                f"getpass fixture must not select {forbidden!r}"
+            )
+    for required in (
+        "ARCH_SET_FS",
+        "mov %rsi, %fs:0",
+        "crabc_x86_64_getpass_probe",
+    ):
+        if required not in getpass_start:
+            errors.append(
+                "compat/x86_64/libc_getpass_start.S: selected historical "
+                f"getpass TLS fixture is missing {required!r}"
+            )
+    for required in (
+        "getpass-header-abi)",
+        "run_getpass_header_abi",
+        "libc-getpass)",
+        "run_libc_getpass_probe",
+    ):
+        if required not in x86_runner:
+            errors.append(
+                "scripts/dev-x86_64.sh: selected historical getpass dispatcher is "
+                f"missing {required!r}"
+            )
 
     process_context_source = (
         ROOT / "libc" / "src" / "c_abi" / "x86_64" / "process_context.rs"

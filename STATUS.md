@@ -21,6 +21,17 @@ secure-execution policy. Caller-coordinated environment writers, direct
 does not select process creation, exec/spawn inheritance, supervision,
 family completion, promotion, or public x86 support.
 
+`./scripts/dev-x86_64.sh libc-getpass` is a separate private
+`static-c-getpass` artifact inside still-planned `libc.posix-runtime`. Its
+pinned-musl and freestanding-static routes select only the historical C
+`getpass` `/dev/tty` input sequence: GNU/BSD declaration visibility, direct
+no-controlling-terminal `ENXIO`, canonical no-echo/no-signal `TCSAFLUSH`
+input, private fixed drain, prompt/newline output, one 128-byte static result
+buffer with 127-byte truncation, and terminal restoration. The devpts setup is
+fixture-only; this does not select a C PTY/session API, generic ioctl,
+account/session identity, Rust password API, cancellation, secret-memory
+erasure, terminal policy, family completion, promotion, or public x86 support.
+
 The x86 qualification lane has one bounded same-object static
 `memfd_create`/errno differential and one consumed five-transaction POSIX/ABI
 admission inventory covering the selected process-context, process-signal,

@@ -388,6 +388,8 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-pthread-affinity
 ./scripts/dev-x86_64.sh termios-header-abi
 ./scripts/dev-x86_64.sh libc-termios-control
+./scripts/dev-x86_64.sh getpass-header-abi
+./scripts/dev-x86_64.sh libc-getpass
 ./scripts/dev-x86_64.sh libc-process-context
 ./scripts/dev-x86_64.sh libc-environment
 ./scripts/dev-x86_64.sh libc-login-name
@@ -2680,6 +2682,19 @@ the action/request words and third ioctl argument for named calls. It excludes
 generic ioctl, `tcdrain`/cancellation, C terminal/session/PTY policy, dynamic
 runtime, and public x86 support.
 
+`libc-getpass` is a separately recorded static `verified_artifact` gate over
+that archive, not a terminal or password capability. Its GNU/BSD C/C++ header
+gate and one project-header C body first execute through pinned musl and then
+through a `-nostdlib -static` candidate. It selects only historical C
+`getpass`: opening `/dev/tty` with `O_RDWR|O_NOCTTY|O_CLOEXEC`, direct absent
+controlling-terminal `ENXIO`, temporary canonical no-echo/no-signal
+`TCSAFLUSH` input, the private fixed `TCSBRK` drain request, optional prompt
+and newline output, one shared 128-byte static result buffer with 127-byte
+truncation, and exact terminal restoration. Raw devpts/session operations are
+fixture plumbing only. It excludes C PTY/session helpers, generic ioctl,
+account data, a Rust secret API, cancellation, secret-memory erasure, terminal
+policy, dynamic runtime, family completion, promotion, and public x86 support.
+
 `libc-process-context` is a separately recorded static
 `verified_artifact` gate over that archive, not the `process.control`
 capability. Its project-header C body first executes through pinned musl and
@@ -4284,6 +4299,7 @@ Apart from the narrowly named `libc-stat-compat`, `libc-credentials`,
 `libc-pthread-rwlock`, `libc-pthread-cond-private`, `libc-c11-plain-sync`, `libc-pthread-c11-once`,
 `libc-pthread-c11-tsd`,
 `libc-termios-control`,
+`libc-getpass`,
 `libc-process-context`, `libc-environment`, `libc-login-name`, `libc-child-reaping`, and
 `libc-immediate-termination`, `libc-callback-algorithms`,
 `libc-search-hash-table`,

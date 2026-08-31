@@ -25,7 +25,8 @@
 //! `pthread_equal` and `thrd_current`/`thrd_equal` identity aliases,
 //! one single-threaded fixed-capacity `pthread_atfork`/`fork` transition that
 //! can compose the existing bounded ordinary-exit callback block in its child,
-//! termios-control, selected process-context, bounded process-environment,
+//! termios-control, one historical `/dev/tty` password-input compatibility
+//! leaf, selected process-context, bounded process-environment,
 //! environment-backed login-name observation, child-reaping, selected
 //! descriptor-entry, selected filesystem-access, fixed Linux `lchmod`
 //! unsupported compatibility, bounded fcntl status-control
@@ -246,6 +247,8 @@ mod c11_sync;
 mod pthread_once;
 #[path = "termios_control.rs"]
 mod termios_control;
+#[path = "getpass.rs"]
+mod getpass;
 #[path = "process_context.rs"]
 mod process_context;
 #[path = "environment.rs"]

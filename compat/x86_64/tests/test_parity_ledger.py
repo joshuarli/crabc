@@ -4274,7 +4274,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             "does not select libc.so", credentials["native_evidence"][0]["scope"]
         )
         posix_artifacts = posix_runtime["verified_artifact"]
-        assert isinstance(posix_artifacts, list) and len(posix_artifacts) == 58
+        assert isinstance(posix_artifacts, list) and len(posix_artifacts) == 59
         artifacts_by_id = {
             artifact["id"]: artifact
             for artifact in posix_artifacts
@@ -4398,6 +4398,58 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertIn("byte-preserved public tails", termios_control["native_evidence"][0]["scope"])
         self.assertIn(
             "libc/src/c_abi/x86_64/termios_control.rs",
+            posix_runtime["source_owners"],
+        )
+        getpass = artifacts_by_id["static-c-getpass"]
+        assert isinstance(getpass, dict)
+        self.assertNotIn("capabilities", getpass)
+        for owner in (
+            "libc/src/c_abi/x86_64/getpass.rs",
+            "libc/src/c_abi/x86_64/termios_control.rs",
+            "compat/x86_64/getpass_header_abi_probe.c",
+            "compat/x86_64/getpass_header_abi_probe.cpp",
+            "compat/x86_64/run_getpass_header_abi.sh",
+            "compat/x86_64/libc_getpass_probe.c",
+            "compat/x86_64/libc_getpass_start.S",
+            "compat/x86_64/run_libc_getpass.sh",
+            "compat/x86_64/validate_parity_ledger.py",
+            "scripts/check_structure.py",
+        ):
+            self.assertIn(owner, getpass["source_owners"])
+        self.assertEqual(
+            {evidence["command"] for evidence in getpass["native_evidence"]},
+            {"./scripts/dev-x86_64.sh libc-getpass"},
+        )
+        for phrase in (
+            "historical `getpass` terminal-input boundary",
+            "128-byte C static result buffer",
+            "`O_RDWR|O_NOCTTY|O_CLOEXEC`",
+            "`TCSAFLUSH`",
+            "private fixed `TCSBRK` drain request",
+            "no-controlling-terminal `ENXIO`",
+            "Rust secret type",
+            "account database",
+            "generic ioctl",
+            "C PTY allocator",
+            "secret-memory erasure",
+            "family completion",
+            "promotion",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, getpass["description"])
+        getpass_scope = getpass["native_evidence"][0]["scope"]
+        for phrase in (
+            "no echo",
+            "127-byte truncation",
+            "36-byte terminal-record restoration",
+            "open=2/O_CLOEXEC",
+            "private TCSBRK drain composition",
+            "forkpty/openpty/login_tty/vhangup/TIOCGPTPEER",
+            "Rust secret APIs",
+        ):
+            self.assertIn(phrase, getpass_scope)
+        self.assertIn(
+            "libc/src/c_abi/x86_64/getpass.rs",
             posix_runtime["source_owners"],
         )
         process_context = artifacts_by_id["static-c-process-context"]
@@ -10078,6 +10130,49 @@ class X86ParityLedgerTests(unittest.TestCase):
         evidence[0]["command"] = "./scripts/dev-x86_64.sh libc-foundation"
         with self.assertRaisesRegex(
             ledger.LedgerError, "closed libc-environment command"
+        ):
+            ledger.validate_ledger(data)
+
+    def test_static_getpass_artifact_keeps_its_historical_nonpromoting_contract(
+        self,
+    ) -> None:
+        data = self.data()
+        family = self.family(data, "libc.posix-runtime")
+        family["status"] = "foundation-verified"
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "static-c-getpass must not promote"
+        ):
+            ledger.require_getpass_artifact(family)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-getpass"
+        )
+        artifact["description"] = artifact["description"].replace(
+            "128-byte C static result buffer", "owned result buffer"
+        )
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "description omits 128-byte C static result buffer"
+        ):
+            ledger.validate_ledger(data)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-getpass"
+        )
+        evidence = artifact["native_evidence"]
+        assert isinstance(evidence, list) and isinstance(evidence[0], dict)
+        evidence[0]["command"] = "./scripts/dev-x86_64.sh libc-termios-control"
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "closed libc-getpass command"
         ):
             ledger.validate_ledger(data)
 

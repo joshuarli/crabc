@@ -11098,6 +11098,270 @@ def require_credential_observation_artifact(family: Mapping[str, Any]) -> None:
     )
 
 
+def require_getpass_artifact(family: Mapping[str, Any]) -> None:
+    """Keep historical terminal password input below family promotion."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.posix-runtime].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [entry for entry in artifacts if entry.get("id") == "static-c-getpass"]
+    require(
+        len(matching) == 1,
+        "libc.posix-runtime must contain exactly one static-c-getpass artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-getpass must not promote libc.posix-runtime",
+    )
+    artifact = matching[0]
+    require(
+        "capabilities" not in artifact,
+        "static-c-getpass must not promote an existing capability",
+    )
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for phrase in (
+        "historical `getpass` terminal-input boundary",
+        "still-planned `libc.posix-runtime`",
+        "128-byte C static result buffer",
+        "`/dev/tty`",
+        "`O_RDWR|O_NOCTTY|O_CLOEXEC`",
+        "`TCSAFLUSH`",
+        "private fixed `TCSBRK` drain request",
+        "no-controlling-terminal `ENXIO`",
+        "no Rust secret type",
+        "account database",
+        "generic ioctl",
+        "C PTY allocator",
+        "process/session helper",
+        "cancellation protocol",
+        "secret-memory erasure",
+        "family completion",
+        "promotion",
+        "public x86 support",
+        "`getlogin`/`getlogin_r` archive siblings",
+    ):
+        require(phrase in description, f"static-c-getpass description omits {phrase}")
+
+    owners = set(
+        nonempty_strings(artifact["source_owners"], "static-c-getpass.source_owners")
+    )
+    for owner in (
+        "compat/upstreams.toml",
+        "libc/Cargo.toml",
+        "libc/src/lib.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/errno.rs",
+        "libc/src/c_abi/x86_64/syscall.rs",
+        "libc/src/c_abi/x86_64/termios_control.rs",
+        "libc/src/c_abi/x86_64/getpass.rs",
+        "include/errno.h",
+        "include/fcntl.h",
+        "include/termios.h",
+        "include/unistd.h",
+        "compat/x86_64/getpass_header_abi_probe.c",
+        "compat/x86_64/getpass_header_abi_probe.cpp",
+        "compat/x86_64/run_getpass_header_abi.sh",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/libc_getpass_probe.c",
+        "compat/x86_64/libc_getpass_start.S",
+        "compat/x86_64/run_libc_getpass.sh",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/README.md",
+        "STATUS.md",
+        "x86-64.md",
+        "scripts/dev-x86_64.sh",
+        "scripts/check_structure.py",
+    ):
+        require(owner in owners, f"static-c-getpass source owners omit {owner}")
+
+    prerequisites = nonempty_strings(
+        artifact["x86_abi_prerequisites"], "static-c-getpass.x86_abi_prerequisites"
+    )
+    require(
+        any(
+            "60-byte" in item and "36-byte" in item and "TCGETS/TCSETSF" in item
+            for item in prerequisites
+        ),
+        "static-c-getpass must retain its public/kernel termios distinction",
+    )
+    require(
+        any(
+            "open=2" in item
+            and "O_NOCTTY=0x100" in item
+            and "O_CLOEXEC=0x80000" in item
+            and "TCSBRK=0x5409" in item
+            and "ENXIO=6" in item
+            for item in prerequisites
+        ),
+        "static-c-getpass must retain its syscall and no-controlling-tty contract",
+    )
+    require(
+        any(
+            "128-byte" in item and "terminator" in item and "secret-memory wiping" in item
+            for item in prerequisites
+        ),
+        "static-c-getpass must retain its static-buffer boundary",
+    )
+    header_prerequisites = nonempty_strings(
+        artifact["x86_header_prerequisites"],
+        "static-c-getpass.x86_header_prerequisites",
+    )
+    require(
+        any(
+            "GNU/BSD-selected char *getpass(const char *)" in item
+            and "unmangled C++" in item
+            and "strict POSIX" in item
+            and "X/Open" in item
+            for item in header_prerequisites
+        ),
+        "static-c-getpass must retain its focused historical header ABI",
+    )
+
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-getpass"},
+        "static-c-getpass must use the closed libc-getpass command",
+    )
+    scope = evidence[0].get("scope")
+    require(
+        isinstance(scope, str)
+        and all(
+            phrase in scope
+            for phrase in (
+                "ENXIO",
+                "no echo",
+                "128-byte static result buffer",
+                "127-byte truncation",
+                "36-byte terminal-record restoration",
+                "open=2/O_CLOEXEC",
+                "private TCSBRK drain composition",
+                "forkpty/openpty/login_tty/vhangup/TIOCGPTPEER",
+                "Rust secret APIs",
+                "public x86 support",
+            )
+        ),
+        "static-c-getpass evidence must retain its observable bounded contract",
+    )
+
+    exports = set(
+        static_c_abi_export_names(
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        )
+    )
+    require("getpass" in exports, "static C ABI export contract omits getpass")
+
+    source = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "getpass.rs"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "pinned musl 1.2.6 release commit",
+        "src/legacy/getpass.c",
+        "Source-function mapping: musl `getpass` -> `getpass.rs::getpass`",
+        "struct PublicTermios",
+        "PASSWORD_CAPACITY: usize = 128",
+        "O_RDWR",
+        "O_NOCTTY",
+        "O_CLOEXEC",
+        "TCSAFLUSH",
+        "TCSBRK",
+        "drain_terminal_output",
+        "termios_control::tcgetattr",
+        "termios_control::tcsetattr",
+        "raw_syscall::SYS_OPEN",
+        "raw_syscall::SYS_READ",
+        "raw_syscall::SYS_WRITE",
+        "raw_syscall::SYS_CLOSE",
+        'pub unsafe extern "C" fn getpass',
+        "create a Rust secret type",
+        "secret-memory ownership",
+        "initial `tcgetattr` failure returns null",
+        "a null prompt writes no bytes",
+        "cleanup preserves a raw read error",
+    ):
+        require(snippet in source, f"getpass implementation omits {snippet}")
+    for forbidden in (
+        'pub unsafe extern "C" fn getlogin',
+        'pub unsafe extern "C" fn cuserid',
+        'pub unsafe extern "C" fn tcdrain',
+        "fn ioctl(",
+        "forkpty(",
+        "openpty(",
+        "login_tty(",
+        "vhangup(",
+        "crabc_core",
+        "crabc_mimalloc",
+    ):
+        require(forbidden not in source, f"getpass implementation selects {forbidden}")
+
+    runner = (ROOT / "compat" / "x86_64" / "run_libc_getpass.sh").read_text(
+        encoding="utf-8"
+    )
+    for snippet in (
+        "run_musl_oracle.sh",
+        "run_getpass_header_abi.sh",
+        "static_c_abi_exports.txt",
+        "-nostdlib -static",
+        "--no-undefined",
+        "for symbol in __errno_location getpass",
+        "for unselected in cuserid getusershell",
+        "--disassemble=getpass",
+        "Linux x86-64 open syscall 2",
+        "fixed private TCSBRK drain request",
+        "candidate selects an account or login helper",
+        "forkpty|openpty|login_tty|vhangup|TIOCGPTPEER",
+        'timeout "$EXECUTION_TIMEOUT"',
+        "__tls_get_addr",
+    ):
+        require(snippet in runner, f"getpass runner omits {snippet}")
+
+    probe = (ROOT / "compat" / "x86_64" / "libc_getpass_probe.c").read_text(
+        encoding="utf-8"
+    )
+    for snippet in (
+        "check_no_controlling_tty",
+        "FIXTURE_ENXIO",
+        "check_interactive_tty",
+        "FIXTURE_TIOCSCTTY",
+        "FIXTURE_TIOCGPTPEER",
+        "c_string_equals",
+        "FIXTURE_PASSWORD_BYTES",
+        "bytes_contain",
+        "raw_syscall4(SYS_openat",
+        "getpass(NULL) != NULL || errno != FIXTURE_ENXIO",
+        "second != first",
+        "FIXTURE_PASSWORD_BYTES - 1",
+        "!bytes_equal(&before, &after, sizeof(before))",
+    ):
+        require(snippet in probe, f"getpass probe omits {snippet}")
+    for forbidden in ("openpty(", "forkpty(", "login_tty(", "vhangup("):
+        require(forbidden not in probe, f"getpass fixture selects {forbidden}")
+
+    header_c = (
+        ROOT / "compat" / "x86_64" / "getpass_header_abi_probe.c"
+    ).read_text(encoding="utf-8")
+    header_cxx = (
+        ROOT / "compat" / "x86_64" / "getpass_header_abi_probe.cpp"
+    ).read_text(encoding="utf-8")
+    for snippet in ("getpass declaration", "getpass_must_be_hidden"):
+        require(snippet in header_c, f"getpass C header probe omits {snippet}")
+        require(snippet in header_cxx, f"getpass C++ header probe omits {snippet}")
+
+    dispatcher = (ROOT / "scripts" / "dev-x86_64.sh").read_text(encoding="utf-8")
+    for snippet in (
+        "getpass-header-abi)",
+        "libc-getpass)",
+        "run_getpass_header_abi()",
+        "run_libc_getpass_probe()",
+    ):
+        require(snippet in dispatcher, f"x86 dispatcher omits {snippet}")
+
+
 def require_static_environment_artifact(family: Mapping[str, Any]) -> None:
     """Keep the bounded static C process-environment artifact non-promoting."""
     artifacts = require_verified_artifacts(
@@ -23021,6 +23285,7 @@ def validate_ledger(
     require_credential_observation_artifact(by_id["libc.posix-runtime"])
     require_static_environment_artifact(by_id["libc.posix-runtime"])
     require_static_login_name_artifact(by_id["libc.posix-runtime"])
+    require_getpass_artifact(by_id["libc.posix-runtime"])
     require_child_reaping_artifact(by_id["libc.posix-runtime"])
     require_immediate_termination_artifact(by_id["libc.posix-runtime"])
     require_callback_algorithms_artifact(by_id["libc.posix-runtime"])
