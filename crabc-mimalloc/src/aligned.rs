@@ -22,8 +22,9 @@ use crate::config::{
     SMALL_SIZE_MAX,
 };
 use crate::alloc::{
-    AllocationPointerFacts, PointerReallocationDecision, PointerReplacement,
-    PointerReplacementWork, pointer_replacement_decision,
+    AllocationPointerFacts, OrdinaryReallocationSource, PointerReallocationDecision,
+    PointerReplacement, PointerReplacementWork, ordinary_reallocation_decision,
+    pointer_replacement_decision,
 };
 use crate::size_class;
 
@@ -168,16 +169,15 @@ pub(crate) const fn replacement_zero_range(
 }
 
 /// Selects the pinned aligned-realloc reuse or replacement path from one
-/// pointer-facts observation.
+/// pointer-facts and target-Heap classification.
 ///
-/// Unlike ordinary `mi_theap_realloc_zero_ex`, pinned
-/// `mi_theap_realloc_zero_aligned_at` does not compare the allocation page's
-/// Heap with the target Theap's Heap before returning an in-place result. The
-/// source's exact usable-size, ceil-half, and pointer-plus-offset alignment
-/// checks remain the complete in-place predicate.
+/// Pinned `mi_theap_realloc_zero_aligned_at` delegates natural alignment to
+/// ordinary realloc, including its exact source-page/target-Heap reuse proof.
+/// Only the over-aligned path omits that Heap comparison and uses the source's
+/// exact usable-size, ceil-half, and pointer-plus-offset alignment predicate.
 #[inline]
 pub(crate) fn aligned_reallocation_decision<P: AllocationPointerFacts>(
-    source: Option<P>,
+    source: OrdinaryReallocationSource<P>,
     new_size: usize,
     alignment: usize,
     offset: usize,
@@ -186,6 +186,10 @@ pub(crate) fn aligned_reallocation_decision<P: AllocationPointerFacts>(
     if !size_class::alignment_is_valid(alignment) {
         return None;
     }
+    if alignment <= size_of::<usize>() && offset == 0 {
+        return Some(ordinary_reallocation_decision(source, new_size, zero));
+    }
+    let source = source.into_overaligned_pointer();
     let source = match source {
         Some(pointer) => {
             if realloc_can_reuse(
@@ -221,9 +225,9 @@ pub(crate) fn aligned_reallocation_decision<P: AllocationPointerFacts>(
 /// Computes aligned replacement initialization from the replacement pointer's
 /// usable extent.
 ///
-/// The encoded plan already carries aligned realloc's unrounded zero start and
-/// deliberately omits ordinary realloc's zero-size first-byte compatibility
-/// clear.
+/// The encoded plan carries the selected branch's initialization policy:
+/// natural alignment retains ordinary realloc's zero-size compatibility
+/// clear, while the over-aligned branch uses its unrounded zero start.
 #[inline]
 pub(crate) fn aligned_replacement_work<P: AllocationPointerFacts>(
     replacement: &P,
@@ -369,17 +373,101 @@ mod tests {
             .expect("the adjusted client is live");
 
         assert_eq!(
-            aligned_reallocation_decision(Some(old), 36, 64, 7, false),
+            aligned_reallocation_decision(
+                crate::alloc::OrdinaryReallocationSource::replacement_required(old),
+                36,
+                64,
+                7,
+                false,
+            ),
             Some(crate::alloc::PointerReallocationDecision::Reuse(old)),
             "aligned realloc accepts exactly ceil(usable / 2) without an owner route"
         );
 
-        let replacement = aligned_reallocation_decision(Some(old), 35, 64, 7, false)
-            .expect("a valid alignment still selects replacement when too much would be wasted");
+        let replacement = aligned_reallocation_decision(
+            crate::alloc::OrdinaryReallocationSource::replacement_required(old),
+            35,
+            64,
+            7,
+            false,
+        )
+        .expect("a valid alignment still selects replacement when too much would be wasted");
         assert!(matches!(
             replacement,
             crate::alloc::PointerReallocationDecision::Replace(_)
         ));
-        assert_eq!(aligned_reallocation_decision(Some(old), 36, 24, 7, false), None);
+        assert_eq!(
+            aligned_reallocation_decision(
+                crate::alloc::OrdinaryReallocationSource::replacement_required(old),
+                36,
+                24,
+                7,
+                false,
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn natural_aligned_reallocation_requires_the_exact_target_heap_proof() {
+        let old = crate::alloc::TestAllocationPointer::exact(0x2000, 128).unwrap();
+
+        assert!(matches!(
+            aligned_reallocation_decision(
+                crate::alloc::OrdinaryReallocationSource::replacement_required(old),
+                64,
+                8,
+                0,
+                false,
+            ),
+            Some(crate::alloc::PointerReallocationDecision::Replace(_))
+        ));
+        assert_eq!(
+            aligned_reallocation_decision(
+                crate::alloc::OrdinaryReallocationSource::current_target_for_test(old),
+                64,
+                8,
+                0,
+                false,
+            ),
+            Some(crate::alloc::PointerReallocationDecision::Reuse(old))
+        );
+    }
+
+    #[test]
+    fn natural_aligned_reallocation_preserves_ordinary_null_and_zero_size_branches() {
+        let null = aligned_reallocation_decision::<crate::alloc::TestAllocationPointer>(
+            crate::alloc::OrdinaryReallocationSource::null(),
+            64,
+            8,
+            0,
+            false,
+        )
+        .expect("natural alignment is valid");
+        let crate::alloc::PointerReallocationDecision::Replace(null) = null else {
+            panic!("a null source must allocate a replacement");
+        };
+        assert_eq!(null.source(), None);
+        assert_eq!(null.request_size(), 64);
+
+        let old = crate::alloc::TestAllocationPointer::exact(0x2000, 128).unwrap();
+        let zero = aligned_reallocation_decision(
+            crate::alloc::OrdinaryReallocationSource::current_target_for_test(old),
+            0,
+            8,
+            0,
+            false,
+        )
+        .expect("natural alignment is valid");
+        let crate::alloc::PointerReallocationDecision::Replace(zero) = zero else {
+            panic!("ordinary zero-size realloc must replace its source");
+        };
+        assert_eq!(zero.source(), Some(&old));
+        assert_eq!(zero.copy_size(), 0);
+
+        let replacement = crate::alloc::TestAllocationPointer::exact(0x4000, 8).unwrap();
+        let work = aligned_replacement_work(&replacement, &zero);
+        assert_eq!(work.zero_range(), None);
+        assert!(work.zeros_first_byte());
     }
 }

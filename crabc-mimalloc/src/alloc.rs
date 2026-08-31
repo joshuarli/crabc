@@ -186,6 +186,14 @@ impl<P: AllocationPointerFacts> OrdinaryReallocationSource<P> {
         Self(OrdinaryReallocationSourceState::ReplacementRequired(pointer))
     }
 
+    #[cfg(test)]
+    #[inline]
+    pub(crate) const fn current_target_for_test(pointer: P) -> Self {
+        Self(OrdinaryReallocationSourceState::CurrentTargetHeap(
+            CurrentTargetHeapAllocation { pointer },
+        ))
+    }
+
     #[inline]
     fn pointer(&self) -> Option<&P> {
         match &self.0 {
@@ -204,6 +212,13 @@ impl<P: AllocationPointerFacts> OrdinaryReallocationSource<P> {
             }
             OrdinaryReallocationSourceState::ReplacementRequired(pointer) => Some(pointer),
         }
+    }
+
+    /// Erases the ordinary target-Heap distinction after aligned realloc has
+    /// selected its pinned over-aligned branch.
+    #[inline]
+    pub(crate) fn into_overaligned_pointer(self) -> Option<P> {
+        self.into_pointer()
     }
 }
 
