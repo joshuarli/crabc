@@ -4,7 +4,8 @@
 //! independently evidenced metadata and credential verticals alongside the x86
 //! bulk-memory, floating-environment, continuation, binary32/binary64/x87
 //! classification/sign, complex accessor/conjugation/projection, hardware
-//! square root, binary32/binary64 extrema, selected fenv-sensitive rounding,
+//! square root, binary32/binary64 bit-sign masks, binary32/binary64 extrema,
+//! selected fenv-sensitive rounding,
 //! and one selected x87 binary80 extended-math block as real C bootstrap
 //! leaves, plus the complete private
 //! `math.special` error/Bessel/gamma/decomposition/stepping/scaling/conversion
@@ -212,6 +213,8 @@ mod complex_projection;
 mod elementary_sqrt;
 #[path = "fenv_rounding.rs"]
 mod fenv_rounding;
+#[path = "math_bit_sign.rs"]
+mod math_bit_sign;
 #[path = "math_minmax.rs"]
 mod math_minmax;
 #[path = "math_x87_extended.rs"]

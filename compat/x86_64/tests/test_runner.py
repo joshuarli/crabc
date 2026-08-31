@@ -1251,6 +1251,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn("    libc-elementary-sqrt-fenv)", source)
         self.assertIn("    libc-fenv-rounding) ;;", source)
         self.assertIn("    libc-math-minmax) ;;", source)
+        self.assertIn("    libc-math-bit-sign) ;;", source)
         self.assertIn("    libc-math-x87-extended)", source)
         self.assertIn("    libc-math-special)", source)
         self.assertIn("    libc-fdim) ;;", source)
@@ -1277,6 +1278,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "ldso-target-root",
             "libc-fenv-rounding",
             "libc-math-minmax",
+            "libc-math-bit-sign",
             "libc-fdim",
             "machine-context-header-abi",
             "memory-sync-header-abi",
@@ -18006,6 +18008,70 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "ucomiss",
             "FE_INVALID",
             "fmaxl`/`fminl",
+        ):
+            self.assertIn(required, leaf)
+
+    def test_math_bit_sign_runner_keeps_the_binary32_binary64_static_boundary(self) -> None:
+        dispatcher = RUNNER.read_text(encoding="utf-8")
+        runner = (ROOT / "compat" / "x86_64" / "run_libc_math_bit_sign.sh").read_text(
+            encoding="utf-8"
+        )
+        probe = (ROOT / "compat" / "x86_64" / "libc_math_bit_sign_probe.c").read_text(
+            encoding="utf-8"
+        )
+        header = (
+            ROOT / "compat" / "x86_64" / "math_bit_sign_header_abi_probe.cpp"
+        ).read_text(encoding="utf-8")
+        leaf = (ROOT / "libc" / "src" / "c_abi" / "x86_64" / "math_bit_sign.rs").read_text(
+            encoding="utf-8"
+        )
+
+        for required in (
+            "libc-math-bit-sign)",
+            "run_libc_math_bit_sign_probe()",
+            "/workspace/compat/x86_64/run_libc_math_bit_sign.sh",
+        ):
+            self.assertIn(required, dispatcher)
+        for required in (
+            "-nostdlib -static",
+            "--no-undefined",
+            "--gc-sections",
+            "math_bit_sign_header_abi_probe.cpp",
+            "strong crabc-owned",
+            "weak compiler-builtins",
+            "candidate retains TLS",
+            "andpd andps orpd orps",
+        ):
+            self.assertIn(required, runner)
+        for required in (
+            "direct_fabs",
+            "direct_fabsf",
+            "direct_copysign",
+            "direct_copysignf",
+            "signaling_nan",
+            "FE_INVALID",
+            "check_fenv_preservation",
+            "FE_DIVBYZERO",
+        ):
+            self.assertIn(required, probe)
+        for required in (
+            "double_unary_signature",
+            "float_unary_signature",
+            "double_binary_signature",
+            "float_binary_signature",
+            "direct_fabs",
+            "direct_copysignf",
+        ):
+            self.assertIn(required, header)
+        for required in (
+            ".global fabs",
+            ".global fabsf",
+            ".global copysign",
+            ".global copysignf",
+            "andpd xmm0",
+            "andps xmm0",
+            "orpd xmm0, xmm1",
+            "orps xmm0, xmm1",
         ):
             self.assertIn(required, leaf)
 

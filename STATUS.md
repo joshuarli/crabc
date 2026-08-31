@@ -710,6 +710,19 @@ retains preexisting exception flags. It is mapped to the AArch64
 instruction order target-private. `exp10*`/`pow10*`, `fdim*`, integer-result
 rounding, category/family completion, promotion, and public x86 support remain
 unselected.
+
+The separate private `static-c-math-bit-sign` artifact records only binary64/
+binary32 `fabs`/`fabsf` and `copysign`/`copysignf`:
+`./scripts/dev-x86_64.sh libc-math-bit-sign` runs project-header C and
+default-SSE/`-mfpmath=387` C++ function-pointer fixtures through pinned musl
+and one freestanding static candidate. It proves ordinary values, signed zero,
+infinity, raw quiet/signaling-NaN payload and sign propagation, no new
+`FE_INVALID`, and all-four-mode/preexisting-`FE_DIVBYZERO` preservation. The
+target leaf uses SSE logical masks only, while final ELF evidence requires
+strong crabc-owned definitions and rejects weak compiler-builtins fallback,
+binary80 siblings, fdim, fmax/fmin, rounding, special math, family completion,
+promotion, and public x86 support.
+
 The x86 static archive now also has one private allocation-free wide-character
 core: `./scripts/dev-x86_64.sh libc-wide-character` runs an exact
 `_XOPEN_SOURCE=700` C/C++ ABI gate and one shared pinned-musl/freestanding

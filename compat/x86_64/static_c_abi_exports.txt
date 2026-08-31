@@ -125,6 +125,8 @@ conj
 conjf
 conjl
 connect
+copysign
+copysignf
 copysignl
 coshl
 cosl
@@ -177,6 +179,8 @@ exit
 exp2l
 expl
 expm1l
+fabs
+fabsf
 fabsl
 faccessat
 fchmod

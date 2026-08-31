@@ -343,6 +343,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-elementary-sqrt-fenv  run the static x86 sqrt/sqrtf/sqrtl fenv-sensitive slice
   libc-fenv-rounding  run the static x86 rint/nearbyint fenv-sensitive slice
   libc-math-minmax  run the static x86 fmax/fmin minmax slice
+  libc-math-bit-sign  run the static x86 fabs/copysign bit-sign slice
   libc-math-elementary-long-double  run the complete static x86 math.elementary-long-double capability
   libc-math-x87-extended  run the static x86 x87 long-double math/remainder block
   libc-math-special  run the complete static x86 math.special capability
@@ -1507,6 +1508,15 @@ NaN selection without `FE_INVALID`, all four MXCSR modes, and preservation of
 preexisting `FE_DIVBYZERO` in one freestanding static candidate. It excludes
 `fmaxl`/`fminl`, `fdim*`, bit-sign, fenv-rounding, binary80/x87, special and
 complex math, family completion, promotion, and public x86 support.
+`libc-math-bit-sign` is the separate selected binary32/binary64 sign-mask
+slice for `fabs`, `fabsf`, `copysign`, and `copysignf`. It compares
+parenthesized C calls and default-SSE/`-mfpmath=387` C++ declarations with
+pinned musl, then proves ordinary/infinite values, signed zero, raw
+quiet/signaling-NaN payload and sign preservation without `FE_INVALID`, all
+four MXCSR modes, and preservation of preexisting `FE_DIVBYZERO` in one
+freestanding static candidate. It excludes `fabsl`/`copysignl`, `fdim*`,
+fmax/fmin, fenv-rounding, binary80/x87, special and complex math, family
+completion, promotion, and public x86 support.
 `libc-math-elementary-long-double` proves the exact 35-symbol
 `math.elementary-long-double` capability through project headers, a closed
 static archive, and 2,764 exact pinned-musl binary80/fenv records across all
@@ -3138,6 +3148,10 @@ run_libc_math_minmax_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_math_minmax.sh
 }
 
+run_libc_math_bit_sign_probe() {
+    run_in_container bash /workspace/compat/x86_64/run_libc_math_bit_sign.sh
+}
+
 run_libc_math_elementary_long_double_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_math_elementary_long_double.sh
 }
@@ -3250,6 +3264,7 @@ case "$command" in
     ldso-target-root) ;;
     libc-fenv-rounding) ;;
     libc-math-minmax) ;;
+    libc-math-bit-sign) ;;
     libc-fdim) ;;
     machine-context-header-abi) ;;
     memory-sync-header-abi) ;;
@@ -4854,6 +4869,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "libc-math-minmax takes no arguments"
         ensure_image
         run_libc_math_minmax_probe
+        ;;
+    libc-math-bit-sign)
+        [ "$#" -eq 0 ] || fail "libc-math-bit-sign takes no arguments"
+        ensure_image
+        run_libc_math_bit_sign_probe
         ;;
     libc-math-elementary-long-double)
         [ "$#" -eq 0 ] || fail "libc-math-elementary-long-double takes no arguments"

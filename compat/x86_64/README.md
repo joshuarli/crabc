@@ -472,6 +472,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-elementary-sqrt-fenv
 ./scripts/dev-x86_64.sh libc-fenv-rounding
 ./scripts/dev-x86_64.sh libc-math-minmax
+./scripts/dev-x86_64.sh libc-math-bit-sign
 ./scripts/dev-x86_64.sh libc-math-elementary-long-double
 ./scripts/dev-x86_64.sh libc-fdim
 ./scripts/dev-x86_64.sh libc-locale-multibyte
@@ -3847,6 +3848,18 @@ requires strong crabc-owned definitions rather than compiler-builtins weak
 fallbacks. `fmaxl`/`fminl`, `fdim*`, bit-sign functions, fenv rounding,
 special/complex and binary80/x87 math, family completion, promotion, full
 x86-64 parity, and public x86 support remain unselected.
+`libc-math-bit-sign` is the separate non-promoting `static-c-math-bit-sign`
+artifact for binary64/binary32 `fabs`/`fabsf` and `copysign`/`copysignf`. Its
+project-header C fixture and default-SSE/`-mfpmath=387` C++ signature probes
+run first through pinned musl and then through one garbage-collected
+`-nostdlib -static` candidate. They prove ordinary and infinite values,
+signed zero, raw quiet/signaling-NaN payload/sign preservation without
+`FE_INVALID`, all four MXCSR modes, and preservation of preexisting
+`FE_DIVBYZERO`. The target leaf uses only SSE logical sign masks, and the
+final-link proof requires strong crabc-owned definitions rather than
+compiler-builtins weak fallbacks. `fabsl`/`copysignl`, `fdim*`, fmax/fmin,
+fenv rounding, special/complex and binary80/x87 math, family completion,
+promotion, full x86-64 parity, and public x86 support remain unselected.
 `libc-fdim` is a separate non-promoting `static-c-fdim` artifact for the
 binary64/binary32 positive-difference pair. Its project-header C fixture and
 default-SSE/`-mfpmath=387` C++ signature probes run first through pinned musl
