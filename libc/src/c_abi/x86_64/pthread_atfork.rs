@@ -135,6 +135,24 @@ pub unsafe extern "C" fn __fork_handler(who: c_int) {
     unlock_registry();
 }
 
+/// Static-archive fallback for musl's private loader-atfork hook.
+///
+/// Musl 1.2.6 `src/process/fork.c` publishes its inert `dummy(int)` through
+/// `weak_alias(dummy, __ldso_atfork)`.  A dynamically linked musl process
+/// instead gets the loader-owned locking body from `ldso/dynlink.c`, so a
+/// static archive consumer must retain this default-visible weak spelling for
+/// a stronger loader or application definition to replace.
+///
+/// This selected static runtime has no mutable loader lock graph.  Keep the
+/// fallback inert and do not route `fork` through it: doing so would falsely
+/// claim musl's dynamic-loader fork coordination.  The symbol is only the
+/// exact static archive-binding boundary, not loader admission, mapping,
+/// finalization, or a general atfork protocol.
+#[inline(never)]
+#[no_mangle]
+#[linkage = "weak"]
+pub unsafe extern "C" fn __ldso_atfork(_who: c_int) {}
+
 /// Register one fixed-capacity atfork callback triple.
 ///
 /// Registration is private to this static process image.  Each optional

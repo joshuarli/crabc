@@ -9475,6 +9475,8 @@ class X86ParityLedgerTests(unittest.TestCase):
             "still-planned `libc.pthread-tls`",
             "pthread_atfork",
             "__fork_handler",
+            "private weak `__ldso_atfork` fallback",
+            "selected fork path deliberately does not invoke this fallback",
             "child-only bounded ordinary-exit callback",
             "EAGAIN before any hook runs",
             "successful join reopens admission",
@@ -9491,9 +9493,36 @@ class X86ParityLedgerTests(unittest.TestCase):
             "parent route before errno publication",
             "successful fork after joining that worker",
             "child atexit/exit callback dispatch after atfork hooks",
+            "default-visible STB_WEAK `__ldso_atfork`",
+            "caller STB_GLOBAL private override after `fork` extracts the member",
+            "selected fork path does not dispatch through it",
+            "loader lock/reset/mapping/finalization",
             "family completion, promotion, and public x86 support",
         ):
             self.assertIn(phrase, atfork_scope)
+        atfork_oracles = atfork["oracle"]
+        self.assertTrue(
+            any(
+                entry["kind"] == "c-posix"
+                and "weak_alias(dummy, __ldso_atfork)" in entry["role"]
+                for entry in atfork_oracles
+            )
+        )
+        self.assertTrue(
+            any(
+                entry["kind"] == "aarch64-contract"
+                and entry["source"] == "compat/abi/musl-1.2.6/aarch64/libc.a.static.tsv"
+                and "__ldso_atfork fork.lo W WEAK" in entry["role"]
+                and "not loader hook execution" in entry["role"]
+                for entry in atfork_oracles
+            )
+        )
+        self.assertIn(
+            "__ldso_atfork",
+            (ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt")
+            .read_text(encoding="utf-8")
+            .splitlines(),
+        )
         self.assertEqual(
             affinity["native_evidence"][0]["command"],
             "./scripts/dev-x86_64.sh libc-pthread-affinity",

@@ -54,6 +54,7 @@ trap 'rm -rf -- "$work_dir"' EXIT
 cargo_target="$work_dir/cargo-target"
 reference="$work_dir/musl-pthread-atfork-reference"
 candidate="$work_dir/crabc-static-pthread-atfork-candidate"
+candidate_loader_hook="$work_dir/crabc-static-pthread-atfork-loader-hook-candidate"
 archive="$cargo_target/x86_64-unknown-linux-musl/debug/libc.a"
 header_trace="$work_dir/header-trace"
 archive_symbols="$work_dir/archive-symbols"
@@ -86,7 +87,6 @@ else
     reference_status=$?
     fail "pinned-musl reference exited ${reference_status}"
 fi
-
 CARGO_TARGET_DIR="$cargo_target" cargo rustc --locked -p crabc-libc --lib \
     --target x86_64-unknown-linux-musl -- \
     -C relocation-model=static -C code-model=small -C panic=abort
@@ -99,6 +99,8 @@ for symbol in __errno_location __crabc_x86_static_tls_bootstrap __fork_handler \
     grep -Eq "[[:space:]][TW][[:space:]]${symbol}$" "$archive_symbols" ||
         fail "archive does not define ${symbol}"
 done
+grep -Eq 'FUNC +WEAK +DEFAULT +.*__ldso_atfork$' "$archive_elf_symbols" ||
+    fail 'archive lost musl weak __ldso_atfork binding'
 for unselected in _Fork vfork clone execve posix_spawn wait3 malloc free calloc realloc; do
     ! grep -Eq "[[:space:]][TW][[:space:]]${unselected}$" "$archive_symbols" ||
         fail "archive exports unselected ${unselected}"
@@ -119,6 +121,12 @@ fi
     -fno-builtin -fno-stack-protector -Wl,-e,_start -Wl,--no-undefined \
     compat/x86_64/libc_pthread_atfork_probe.c \
     compat/x86_64/libc_pthread_atfork_start.S "$archive" -o "$candidate"
+"$ORACLE_CC" -std=c11 -D_GNU_SOURCE -DCRABC_ATFORK_FREESTANDING \
+    -DCRABC_ATFORK_LOADER_HOOK_OVERRIDE -I"$ROOT_DIR/include" \
+    -nostdlib -static -fno-pie -no-pie -ffreestanding -fno-builtin \
+    -fno-stack-protector -Wl,-e,_start -Wl,--no-undefined \
+    compat/x86_64/libc_pthread_atfork_probe.c \
+    compat/x86_64/libc_pthread_atfork_start.S "$archive" -o "$candidate_loader_hook"
 readelf --symbols --wide "$candidate" >"$candidate_symbols"
 readelf --program-headers --wide "$candidate" >"$candidate_program_headers"
 readelf --dynamic --wide "$candidate" >"$candidate_dynamic" || true
@@ -130,6 +138,17 @@ for symbol in __errno_location __crabc_x86_static_tls_bootstrap __fork_handler \
     grep -Eq "[[:space:]]${symbol}$" "$candidate_symbols" ||
         fail "candidate does not define ${symbol}"
 done
+grep -Eq 'FUNC +WEAK +DEFAULT +.*__ldso_atfork$' "$candidate_symbols" ||
+    fail 'candidate lost musl weak __ldso_atfork binding'
+readelf --symbols --wide "$candidate_loader_hook" >"$work_dir/candidate-loader-hook-symbols"
+awk '$4 == "FUNC" && $5 == "GLOBAL" && $6 == "DEFAULT" && $7 != "UND" && $8 == "fork" { found=1 } END { exit found ? 0 : 1 }' \
+    "$work_dir/candidate-loader-hook-symbols" ||
+    fail 'caller override did not extract the archive fork member'
+grep -Eq 'FUNC +GLOBAL +DEFAULT +.*__ldso_atfork$' "$work_dir/candidate-loader-hook-symbols" ||
+    fail 'caller strong __ldso_atfork did not override the archive weak binding'
+if grep -Eq 'FUNC +WEAK +DEFAULT +.*__ldso_atfork$' "$work_dir/candidate-loader-hook-symbols"; then
+    fail 'caller override retained the archive weak __ldso_atfork binding'
+fi
 unresolved_symbols="$(awk '$7 == "UND" && NF >= 8 { print }' "$candidate_symbols")"
 [ -z "$unresolved_symbols" ] || { printf '%s\n' "$unresolved_symbols" >&2; fail "candidate retains unresolved symbol"; }
 ! grep -Eq 'Requesting program interpreter|INTERP' "$candidate_program_headers" ||
@@ -169,5 +188,11 @@ if timeout "$EXECUTION_TIMEOUT" "$candidate"; then
 else
     candidate_status=$?
     fail "static candidate exited ${candidate_status}"
+fi
+if timeout "$EXECUTION_TIMEOUT" "$candidate_loader_hook"; then
+    :
+else
+    candidate_status=$?
+    fail "static loader-hook override candidate exited ${candidate_status}"
 fi
 printf 'x86 static crabc-libc pthread_atfork/fork/exit hooks: PASS\n'

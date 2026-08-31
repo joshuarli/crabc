@@ -624,6 +624,16 @@ masks/safety; allocator, TSD, cancellation, synchronization, or loader reset;
 dynamic TLS; CRT/sysroot integration; general fork/atfork/process-exit/pthread
 behavior; family completion; promotion; and public x86 support remain excluded.
 
+The same static archive now also retains musl 1.2.6
+`src/process/fork.c`'s private `weak_alias(dummy, __ldso_atfork)` fallback:
+the pinned AArch64 static manifest records `__ldso_atfork` in `fork.lo` as
+weak. The staged archive and normal freestanding candidate preserve that
+default-visible weak definition, while a caller-owned strong private spelling
+wins after a `fork` reference extracts the archive member. This is archive
+binding evidence only. The fallback is inert and the selected `fork` route
+does not invoke it, so it adds no loader-lock, loader-reset, mapping,
+finalization, or general atfork claim.
+
 `./scripts/dev-x86_64.sh libc-pthread-affinity` is a nineteenth private static
 artifact in that same still-planned family. It selects only GNU
 `pthread_getaffinity_np`/`pthread_setaffinity_np` over the musl-shaped

@@ -27540,6 +27540,8 @@ def require_static_pthread_atfork_artifact(family: Mapping[str, Any]) -> None:
     for phrase in (
         "still-planned `libc.pthread-tls`",
         "pthread_atfork`/`fork`",
+        "weak `__ldso_atfork` fallback",
+        "without routing the selected fork path through it",
         "child ordinary-exit callback dispatch",
         "successful join reopens the route",
         "concurrent selected-worker lifecycle calls remain excluded",
@@ -27557,6 +27559,11 @@ def require_static_pthread_atfork_artifact(family: Mapping[str, Any]) -> None:
         "still-planned `libc.pthread-tls`",
         "pthread_atfork",
         "__fork_handler",
+        "private weak `__ldso_atfork` fallback",
+        "weak_alias",
+        "STB_WEAK",
+        "selected fork path deliberately does not invoke this fallback",
+        "loader lock/reset, mapping, finalization",
         "atexit`/`exit`/`__funcs_on_exit",
         "32 no-allocation hook triples",
         "reverse registration order",
@@ -27607,6 +27614,11 @@ def require_static_pthread_atfork_artifact(family: Mapping[str, Any]) -> None:
     for phrase in (
         "pthread_atfork.c::{__fork_handler,pthread_atfork}",
         "src/process/fork.c::fork",
+        "weak_alias(dummy, __ldso_atfork)",
+        "__ldso_atfork fork.lo W WEAK",
+        "caller STB_GLOBAL private definition overrides it",
+        "bounded Rust fork path deliberately does not invoke it",
+        "loader lock/reset, mapping, finalization",
         "32 optional SysV AMD64 no-argument callback triples",
         "raw fork=57",
         "ENOMEM without changing C errno",
@@ -27668,6 +27680,9 @@ def require_static_pthread_atfork_artifact(family: Mapping[str, Any]) -> None:
         "32 private hook records then ENOMEM",
         "live selected worker with EAGAIN before any callback",
         "successful fork after joining that worker",
+        "default-visible STB_WEAK `__ldso_atfork`",
+        "caller STB_GLOBAL private override after `fork` extracts the member",
+        "selected fork path does not dispatch through it",
         "pthread_atfork, fork, __fork_handler",
         "raw fork=57",
         "direct errno TPOFF",
@@ -27703,6 +27718,24 @@ def require_static_pthread_atfork_artifact(family: Mapping[str, Any]) -> None:
         and "src/process/fork.c" in role,
         "static-c-pthread-atfork-fork musl source mapping omits atfork/fork provenance",
     )
+    require(
+        isinstance(role, str) and "weak_alias(dummy, __ldso_atfork)" in role,
+        "static-c-pthread-atfork-fork musl source mapping omits the weak loader-atfork fallback",
+    )
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "aarch64-contract"
+            and entry.get("source")
+            == "compat/abi/musl-1.2.6/aarch64/libc.a.static.tsv"
+            and isinstance(entry.get("role"), str)
+            and "__ldso_atfork fork.lo W WEAK" in entry["role"]
+            and "private static archive-binding evidence only" in entry["role"]
+            and "not loader hook execution" in entry["role"]
+            for entry in oracle_entries
+        ),
+        "static-c-pthread-atfork-fork must retain its pinned weak loader-atfork static-manifest oracle",
+    )
 
     static_exports = set(
         static_c_abi_export_names(
@@ -27710,7 +27743,7 @@ def require_static_pthread_atfork_artifact(family: Mapping[str, Any]) -> None:
         )
     )
     require(
-        {"pthread_atfork", "fork", "__fork_handler"} <= static_exports,
+        {"pthread_atfork", "fork", "__fork_handler", "__ldso_atfork"} <= static_exports,
         "static-c-pthread-atfork-fork must expose its selected atfork/fork surface",
     )
     for unselected in ("_Fork", "vfork", "clone", "execve", "posix_spawn"):
@@ -27725,6 +27758,20 @@ def require_static_pthread_atfork_artifact(family: Mapping[str, Any]) -> None:
         "run_libc_pthread_atfork.sh" in dispatcher_source,
         "static-c-pthread-atfork-fork dispatcher binding is missing",
     )
+    runner_source = (ROOT / "compat" / "x86_64" / "run_libc_pthread_atfork.sh").read_text(
+        encoding="utf-8"
+    )
+    for phrase in (
+        "__ldso_atfork",
+        "CRABC_ATFORK_LOADER_HOOK_OVERRIDE",
+        "archive lost musl weak __ldso_atfork binding",
+        "caller override did not extract the archive fork member",
+        "caller strong __ldso_atfork did not override the archive weak binding",
+    ):
+        require(
+            phrase in runner_source,
+            f"static-c-pthread-atfork-fork runner omits {phrase}",
+        )
 
 
 def require_static_pthread_affinity_artifact(

@@ -2934,6 +2934,15 @@ allocator, TSD, cancellation, synchronization, or loader reset; dynamic TLS;
 CRT/sysroot integration; general fork, atfork, process-exit, or pthread
 behavior; full pthread/TLS or x86-64 parity; promotion; and public x86 support.
 
+The same static archive-binding check retains pinned musl 1.2.6
+`src/process/fork.c`'s private `weak_alias(dummy, __ldso_atfork)` fallback.
+The AArch64 static manifest records weak `__ldso_atfork` in `fork.lo`; both
+the staged archive and ordinary freestanding candidate retain that binding,
+and a caller-owned strong private definition wins after `fork` extracts the
+archive member. This is not a loader hook implementation: the fallback is
+inert, the bounded `fork` route does not dispatch through it, and no loader
+lock/reset, mapping, finalization, or general atfork capability is selected.
+
 `libc-pthread-affinity` is a nineteenth private static `verified_artifact`
 under that same still-planned family. Its project-header C fixture first runs
 against pinned musl, then against the dependency-free `-nostdlib -static`
