@@ -1308,9 +1308,24 @@ returns one iff the first eight-byte public `sigset_t` word is zero and ignores
 the remaining fifteen words. The fixture proves tail-only nonzero storage,
 first-word nonzero storage, no caller writes, and stale-`errno` preservation;
 the shared header gate proves GNU visibility and strict-POSIX hiding. It does
-not select `sigandset`/`sigorset`, handlers/actions, mask or process signaling,
-waits, queues, descriptors, timers, pthread policy, libc.so, CRT, loader,
-sysroot, family/platform parity, promotion, or public x86 support.
+not itself select the separately bounded `sigandset`/`sigorset` leaf,
+handlers/actions, mask or process signaling, waits, queues, descriptors,
+timers, pthread policy, libc.so, CRT, loader, sysroot, family/platform parity,
+promotion, or public x86 support.
+
+`./scripts/dev-x86_64.sh libc-sigandset-sigorset` is a separate private
+`static-c-sigandset-sigorset` artifact inside planned `libc.posix-runtime`.
+Its two-symbol pinned-musl/freestanding-static C proof follows musl 1.2.6's
+GNU `sigandset` and `sigorset`: x86 `_NSIG=65` makes `SST_SIZE` one, so each
+helper reads the left and right first eight-byte public `sigset_t` words and
+writes only the destination first word with AND or OR. The shared C header
+gate and paired C++17 declaration/linkage probe keep both signatures GNU-only;
+the fixture proves ordinary operations, tail preservation, destination-equals-
+left AND, destination-equals-right OR, zero returns, stale `errno`, and no
+syscall. It does not select the `sigisemptyset` predicate, handlers/actions,
+mask or process signaling, waits, queues, descriptors, timers, pthread policy,
+libc.so, CRT, loader, sysroot, family/platform parity, promotion, or public x86
+support.
 
 `./scripts/dev-x86_64.sh libc-ioctl` is a private
 `static-c-generic-ioctl` artifact inside planned `libc.posix-runtime`. It

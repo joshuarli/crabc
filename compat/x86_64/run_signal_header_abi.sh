@@ -48,9 +48,9 @@ grep -Fq "$ROOT_DIR/include/signal.h" "$header_trace" || {
 }
 "$ORACLE_CC" -std=c11 -I "$ROOT_DIR/include" -fsyntax-only "$posix_probe"
 
-# Pinned musl exposes sigisemptyset only in its GNU block. Keep the same
-# strict-POSIX negative witness for the project header; C++ is intentionally
-# excluded because its default GNU surface is different.
+# Pinned musl exposes sigisemptyset, sigandset, and sigorset only in its GNU
+# block. Keep the same strict-POSIX C negative witnesses for the project
+# header; the paired binary artifact owns its separate C++ declaration proof.
 if "$ORACLE_CC" -std=c11 -Werror=implicit-function-declaration \
     -DCRABC_REQUIRE_SIGISEMPTYSET_HIDDEN -fsyntax-only "$posix_probe" \
     >"$work_dir/oracle-sigisemptyset-hidden.out" 2>&1; then
@@ -61,6 +61,17 @@ if "$ORACLE_CC" -std=c11 -Werror=implicit-function-declaration \
     -fsyntax-only "$posix_probe" >"$work_dir/project-sigisemptyset-hidden.out" \
     2>&1; then
     fail "project signal.h exposes sigisemptyset outside _GNU_SOURCE"
+fi
+if "$ORACLE_CC" -std=c11 -Werror=implicit-function-declaration \
+    -DCRABC_REQUIRE_GNU_SIGNAL_SET_BINARY_HIDDEN -fsyntax-only "$posix_probe" \
+    >"$work_dir/oracle-sigset-binary-hidden.out" 2>&1; then
+    fail "pinned musl exposes sigandset/sigorset outside _GNU_SOURCE"
+fi
+if "$ORACLE_CC" -std=c11 -Werror=implicit-function-declaration \
+    -I "$ROOT_DIR/include" -DCRABC_REQUIRE_GNU_SIGNAL_SET_BINARY_HIDDEN \
+    -fsyntax-only "$posix_probe" >"$work_dir/project-sigset-binary-hidden.out" \
+    2>&1; then
+    fail "project signal.h exposes sigandset/sigorset outside _GNU_SOURCE"
 fi
 
 printf 'x86 pinned-musl GNU/POSIX signal header ABI: PASS\n'

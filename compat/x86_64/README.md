@@ -383,6 +383,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-signalfd
 ./scripts/dev-x86_64.sh libc-sigpause
 ./scripts/dev-x86_64.sh libc-sigisemptyset
+./scripts/dev-x86_64.sh libc-sigandset-sigorset
 ./scripts/dev-x86_64.sh libc-static-tls-v1
 ./scripts/dev-x86_64.sh libc-crt-static-tls
 ./scripts/dev-x86_64.sh libc-crt1-static-tls
@@ -2655,7 +2656,23 @@ the predicate reads only the first eight-byte public `sigset_t` word, returns
 one iff that word is zero, ignores the fifteen-word tail, writes no caller
 storage, preserves stale `errno`, and makes no syscall. The shared signal-header
 gate proves the GNU pointer declaration and strict-POSIX hiding. It does not
-select `sigandset`/`sigorset`, handlers/actions, mask or process signaling,
+itself select the separately bounded `sigandset`/`sigorset` leaf,
+handlers/actions, mask or process signaling, waits, queues, descriptors,
+timers, pthread policy, signal-family completion, AArch64 parity, promotion,
+or public x86 support.
+
+`libc-sigandset-sigorset` is a separate `static-c-sigandset-sigorset`
+`verified_artifact` within planned `libc.posix-runtime`. Its project-header C
+body first runs through pinned musl 1.2.6 and then through a true
+`-nostdlib -static` candidate. It selects exactly the GNU `sigandset` and
+`sigorset` helpers: x86 musl's `_NSIG=65` makes both `SST_SIZE` one, so each
+reads the left and right first eight-byte public `sigset_t` words before
+writing only the destination first word with AND or OR, returns zero, preserves
+stale `errno`, and leaves every tail word untouched. The common C signal-header
+gate and a paired C++17 probe prove GNU-only signatures, strict-POSIX hiding,
+and unmangled C linkage. Ordinary results, both destination alias directions,
+and tail sentinels run through pinned musl and the freestanding candidate. It
+does not select `sigisemptyset`, handlers/actions, mask or process signaling,
 waits, queues, descriptors, timers, pthread policy, signal-family completion,
 AArch64 parity, promotion, or public x86 support.
 
@@ -4913,8 +4930,8 @@ startup, loader TLS, sysroot, nor public x86 support.
 
 Apart from the narrowly named `libc-stat-compat`, `libc-credentials`,
 `libc-bootstrap-primitives`, `libc-signal-control`, `libc-signal-execution`,
-`libc-signal-altstack`, `libc-timerfd`, `libc-signalfd`, `libc-sigpause`, and
-`libc-sigisemptyset`,
+`libc-signal-altstack`, `libc-timerfd`, `libc-signalfd`, `libc-sigpause`,
+`libc-sigisemptyset`, and `libc-sigandset-sigorset`,
 `libc-static-tls-v1`, `libc-crt-static-tls`,
 `libc-pthread-create-join-tls`, `libc-pthread-identity`, `libc-c11-lifecycle`,
 `libc-pthread-detach`, `libc-thrd-sleep`, `libc-thrd-yield`, `libc-pthread-cpuclock`, `libc-pthread-name`, `libc-pthread-mutex-normal`,

@@ -49,3 +49,12 @@ int crabc_signal_header_sigisemptyset_must_be_hidden(const sigset_t *set)
     return sigisemptyset(set);
 }
 #endif
+
+/* Compiled only by the expected-failure GNU binary-helper visibility check. */
+#if defined(CRABC_REQUIRE_GNU_SIGNAL_SET_BINARY_HIDDEN)
+int crabc_signal_header_sigset_binary_must_be_hidden(
+    sigset_t *dest, const sigset_t *left, const sigset_t *right)
+{
+    return sigandset(dest, left, right) + sigorset(dest, left, right);
+}
+#endif

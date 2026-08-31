@@ -14566,10 +14566,6 @@ def require_sigisemptyset_artifact(family: Mapping[str, Any]) -> None:
         "sigisemptyset" in static_exports,
         "static-c-sigisemptyset must expose the public sigisemptyset spelling",
     )
-    require(
-        "sigandset" not in static_exports and "sigorset" not in static_exports,
-        "static-c-sigisemptyset must not claim adjacent GNU set helpers",
-    )
     oracle = artifact["oracle"]
     assert isinstance(oracle, list)
     require(
@@ -14611,6 +14607,200 @@ def require_sigisemptyset_artifact(family: Mapping[str, Any]) -> None:
             )
         ),
         "static-c-sigisemptyset evidence must retain its exact pure-predicate regression",
+    )
+
+
+def require_sigandset_sigorset_artifact(family: Mapping[str, Any]) -> None:
+    """Keep paired GNU one-word set operations below signal-runtime promotion."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.posix-runtime].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [
+        entry for entry in artifacts if entry.get("id") == "static-c-sigandset-sigorset"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.posix-runtime must contain exactly one static-c-sigandset-sigorset artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-sigandset-sigorset must not promote libc.posix-runtime",
+    )
+    artifact = matching[0]
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for phrase in (
+        "two-symbol GNU signal-set binary-operation artifact",
+        "planned `libc.posix-runtime`",
+        "`sigandset` and `sigorset`",
+        "first eight-byte public `sigset_t` words",
+        "public tail word",
+        "destination-equals-left AND",
+        "destination-equals-right OR",
+        "stale errno",
+        "C and C++ GNU/POSIX signal-header proofs",
+        "`sigisemptyset` predicate",
+        "handlers/actions",
+        "signal masks",
+        "process signaling",
+        "waits, queues, descriptors, timers",
+        "pthread policy",
+        "family completion, promotion, and public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"static-c-sigandset-sigorset description omits {phrase}",
+        )
+    owners = set(
+        nonempty_strings(
+            artifact["source_owners"], "static-c-sigandset-sigorset.source_owners"
+        )
+    )
+    for owner in (
+        "compat/upstreams.toml",
+        "libc/Cargo.toml",
+        "libc/src/lib.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/signal_set_binary.rs",
+        "libc/src/c_abi/x86_64/errno.rs",
+        "libc/src/c_abi/x86_64/static_tls.rs",
+        "include/errno.h",
+        "include/signal.h",
+        "include/bits/alltypes.h",
+        "compat/x86_64/signal_header_abi_probe.c",
+        "compat/x86_64/signal_header_posix_abi_probe.c",
+        "compat/x86_64/run_signal_header_abi.sh",
+        "compat/x86_64/signal_set_binary_header_abi_probe.cpp",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/libc_sigandset_sigorset_probe.c",
+        "compat/x86_64/libc_sigandset_sigorset_start.S",
+        "compat/x86_64/run_libc_sigandset_sigorset.sh",
+        "compat/x86_64/aarch64_parity_inventory.py",
+        "compat/x86_64/aarch64_parity_inventory.json",
+        "compat/x86_64/tests/test_aarch64_parity_inventory.py",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/README.md",
+        "STATUS.md",
+        "x86-64.md",
+        "scripts/dev-x86_64.sh",
+        "scripts/check_structure.py",
+    ):
+        require(
+            owner in owners,
+            f"static-c-sigandset-sigorset source owners omit {owner}",
+        )
+    prerequisites = nonempty_strings(
+        artifact["x86_abi_prerequisites"],
+        "static-c-sigandset-sigorset.x86_abi_prerequisites",
+    )
+    require(
+        any(
+            "sigset_t is 128-byte align-8" in item
+            and "_NSIG=65" in item
+            and "SST_SIZE=1" in item
+            and "left and right first unsigned-long words" in item
+            and "neither reads nor writes tail words" in item
+            for item in prerequisites
+        ),
+        "static-c-sigandset-sigorset must retain its exact one-word x86 ABI",
+    )
+    require(
+        any(
+            "src/signal/sigandset.c" in item
+            and "src/signal/sigorset.c" in item
+            and "_GNU_SOURCE" in item
+            and "d[i] = l[i] & r[i]" in item
+            and "d[i] = l[i] | r[i]" in item
+            and "destination/operand aliasing" in item
+            for item in prerequisites
+        ),
+        "static-c-sigandset-sigorset must retain pinned-musl source ordering",
+    )
+    require(
+        any(
+            "ordinary AND/OR" in item
+            and "destination tail sentinel" in item
+            and "destination-equals-left AND" in item
+            and "destination-equals-right OR" in item
+            and "ERANGE" in item
+            and "Static Initial TLS v1" in item
+            and "does not claim CRT" in item
+            for item in prerequisites
+        ),
+        "static-c-sigandset-sigorset must retain its static differential and TLS boundary",
+    )
+    headers = nonempty_strings(
+        artifact["x86_header_prerequisites"],
+        "static-c-sigandset-sigorset.x86_header_prerequisites",
+    )
+    require(
+        any(
+            "project-first/pinned-musl GNU/POSIX signal-header gate" in item
+            and "GNU sigandset/sigorset pointer signatures" in item
+            and "strict POSIX C" in item
+            and "C++17" in item
+            and "unmangled C references" in item
+            and "strict-POSIX C++ hiding" in item
+            for item in headers
+        ),
+        "static-c-sigandset-sigorset must retain its GNU-visible/strict-hidden header proof",
+    )
+    static_exports = set(
+        static_c_abi_export_names(
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        )
+    )
+    require(
+        {"sigandset", "sigorset"} <= static_exports,
+        "static-c-sigandset-sigorset must expose both public GNU helper spellings",
+    )
+    oracle = artifact["oracle"]
+    assert isinstance(oracle, list)
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "c-posix"
+            and isinstance(entry.get("role"), str)
+            and "src/signal/sigandset.c" in entry["role"]
+            and "src/signal/sigorset.c" in entry["role"]
+            and "SST_SIZE=1" in entry["role"]
+            and "returns zero" in entry["role"]
+            for entry in oracle
+        ),
+        "static-c-sigandset-sigorset must retain its pinned-musl operation oracle",
+    )
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-sigandset-sigorset"},
+        "static-c-sigandset-sigorset must use the closed libc-sigandset-sigorset command",
+    )
+    scope = evidence[0].get("scope")
+    require(
+        isinstance(scope, str)
+        and all(
+            phrase in scope
+            for phrase in (
+                "Pinned-musl 1.2.6",
+                "C++ GNU-visible/strict-POSIX-hidden",
+                "`-nostdlib -static` candidate",
+                "handlers/actions",
+                "signal masks",
+                "process signaling",
+                "no call or syscall",
+                "tail sentinel",
+                "destination aliasing",
+                "stale-errno",
+                "separate sigisemptyset predicate",
+                "promotion, or public x86 support",
+            )
+        ),
+        "static-c-sigandset-sigorset evidence must retain its exact pure-operation regression",
     )
 
 
@@ -30902,6 +31092,7 @@ def validate_ledger(
     require_signalfd_artifact(by_id["libc.posix-runtime"])
     require_sigpause_artifact(by_id["libc.posix-runtime"])
     require_sigisemptyset_artifact(by_id["libc.posix-runtime"])
+    require_sigandset_sigorset_artifact(by_id["libc.posix-runtime"])
     require_clock_nanosleep_artifact(by_id["libc.posix-runtime"])
     require_nanosleep_artifact(by_id["libc.posix-runtime"])
     require_descriptor_entry_artifact(by_id["libc.posix-runtime"])

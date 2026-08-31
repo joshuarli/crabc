@@ -413,6 +413,8 @@ int sigdelset(sigset_t *, int);
 int sigismember(const sigset_t *, int);
 #if defined(_GNU_SOURCE)
 int sigisemptyset(const sigset_t *);
+int sigorset(sigset_t *, const sigset_t *, const sigset_t *);
+int sigandset(sigset_t *, const sigset_t *, const sigset_t *);
 #endif
 int sigprocmask(int, const sigset_t *, sigset_t *);
 int sigpending(sigset_t *);

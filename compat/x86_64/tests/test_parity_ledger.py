@@ -50,7 +50,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 41)
-        self.assertEqual(report["verified_artifact_count"], 160)
+        self.assertEqual(report["verified_artifact_count"], 161)
         self.assertEqual(report["header_layout_probe_count"], 46)
         self.assertEqual(report["public_header_inventory_count"], 183)
         self.assertEqual(report["header_foundation_header_count"], 191)
@@ -12748,6 +12748,109 @@ class X86ParityLedgerTests(unittest.TestCase):
         evidence[0]["command"] = "./scripts/dev-x86_64.sh signal-reference"
         with self.assertRaisesRegex(
             ledger.LedgerError, "closed libc-sigisemptyset command"
+        ):
+            ledger.validate_ledger(data)
+
+    def test_sigandset_sigorset_artifact_keeps_its_closed_static_contract(
+        self,
+    ) -> None:
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict)
+            and entry["id"] == "static-c-sigandset-sigorset"
+        )
+        self.assertNotIn("capabilities", artifact)
+        for owner in (
+            "libc/src/c_abi/x86_64/signal_set_binary.rs",
+            "compat/x86_64/signal_header_abi_probe.c",
+            "compat/x86_64/signal_header_posix_abi_probe.c",
+            "compat/x86_64/run_signal_header_abi.sh",
+            "compat/x86_64/signal_set_binary_header_abi_probe.cpp",
+            "compat/x86_64/libc_sigandset_sigorset_probe.c",
+            "compat/x86_64/libc_sigandset_sigorset_start.S",
+            "compat/x86_64/run_libc_sigandset_sigorset.sh",
+        ):
+            self.assertIn(owner, artifact["source_owners"])
+        self.assertEqual(
+            {evidence["command"] for evidence in artifact["native_evidence"]},
+            {"./scripts/dev-x86_64.sh libc-sigandset-sigorset"},
+        )
+        for phrase in (
+            "two-symbol GNU signal-set binary-operation artifact",
+            "planned `libc.posix-runtime`",
+            "`sigandset` and `sigorset`",
+            "first eight-byte public `sigset_t` words",
+            "destination-equals-left AND",
+            "destination-equals-right OR",
+            "C and C++ GNU/POSIX signal-header proofs",
+            "`sigisemptyset` predicate",
+            "handlers/actions",
+            "signal masks",
+            "process signaling",
+            "family completion, promotion, and public x86 support",
+        ):
+            self.assertIn(phrase, artifact["description"])
+        prerequisites = artifact["x86_abi_prerequisites"]
+        self.assertTrue(
+            any(
+                "_NSIG=65" in prerequisite
+                and "SST_SIZE=1" in prerequisite
+                and "left and right first unsigned-long words" in prerequisite
+                for prerequisite in prerequisites
+            )
+        )
+        self.assertTrue(
+            any(
+                "src/signal/sigandset.c" in prerequisite
+                and "src/signal/sigorset.c" in prerequisite
+                and "d[i] = l[i] & r[i]" in prerequisite
+                and "d[i] = l[i] | r[i]" in prerequisite
+                for prerequisite in prerequisites
+            )
+        )
+        self.assertTrue(
+            any(
+                "destination tail sentinel" in prerequisite
+                and "destination-equals-left AND" in prerequisite
+                and "destination-equals-right OR" in prerequisite
+                and "ERANGE" in prerequisite
+                for prerequisite in prerequisites
+            )
+        )
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict)
+            and entry["id"] == "static-c-sigandset-sigorset"
+        )
+        artifact["description"] = "private binary helper"
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "static-c-sigandset-sigorset description omits"
+        ):
+            ledger.validate_ledger(data)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict)
+            and entry["id"] == "static-c-sigandset-sigorset"
+        )
+        evidence = artifact["native_evidence"]
+        assert isinstance(evidence, list) and isinstance(evidence[0], dict)
+        evidence[0]["command"] = "./scripts/dev-x86_64.sh signal-reference"
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "closed libc-sigandset-sigorset command"
         ):
             ledger.validate_ledger(data)
 

@@ -1365,7 +1365,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         )
         expected_groups = (
             "timerfd-header-abi|signalfd-header-abi",
-            "libc-timerfd|libc-signalfd|libc-sigpause|libc-sigisemptyset",
+            "libc-timerfd|libc-signalfd|libc-sigpause|libc-sigisemptyset|libc-sigandset-sigorset",
             "ctermid-header-abi|gethostid-header-abi|getpass-header-abi|libc-ctermid|libc-gethostid|libc-getpass|mkfifo-header-abi|libc-mkfifo|mktemp-header-abi|libc-mktemp",
             "stdio-permanent-line-io-header-abi|stdio-octal-hex-scan-header-abi",
             "math-complex-complete-header-abi|libc-math-complex-complete",
@@ -4910,6 +4910,130 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         )
         self.assertIn("run_libc_sigisemptyset_probe()", dispatcher)
         self.assertIn("libc-sigisemptyset)", dispatcher)
+
+    def test_libc_static_c_abi_sigandset_sigorset_artifact_stays_bounded(
+        self,
+    ) -> None:
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        source_path = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "signal_set_binary.rs"
+        )
+        probe_path = (
+            ROOT / "compat" / "x86_64" / "libc_sigandset_sigorset_probe.c"
+        )
+        start_path = (
+            ROOT / "compat" / "x86_64" / "libc_sigandset_sigorset_start.S"
+        )
+        cxx_header_path = (
+            ROOT / "compat" / "x86_64" / "signal_set_binary_header_abi_probe.cpp"
+        )
+        artifact_runner_path = (
+            ROOT / "compat" / "x86_64" / "run_libc_sigandset_sigorset.sh"
+        )
+        for path in (
+            source_path,
+            probe_path,
+            start_path,
+            cxx_header_path,
+            artifact_runner_path,
+        ):
+            self.assertTrue(path.is_file(), f"missing signal-set binary input: {path}")
+        self.assertTrue(artifact_runner_path.stat().st_mode & 0o111)
+
+        source = source_path.read_text(encoding="utf-8")
+        probe = probe_path.read_text(encoding="utf-8")
+        start = start_path.read_text(encoding="utf-8")
+        cxx_header = cxx_header_path.read_text(encoding="utf-8")
+        artifact_runner = artifact_runner_path.read_text(encoding="utf-8")
+        static_exports = {
+            line
+            for line in (
+                ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+            ).read_text(encoding="utf-8").splitlines()
+            if line and not line.startswith("#")
+        }
+        signal_header_probe = (
+            ROOT / "compat" / "x86_64" / "signal_header_abi_probe.c"
+        ).read_text(encoding="utf-8")
+        parity_ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        dispatcher = RUNNER.read_text(encoding="utf-8")
+
+        self.assertIn('#[path = "signal_set_binary.rs"]', static_root)
+        for required in (
+            "Selected static Linux/x86-64 GNU `sigandset`/`sigorset` C boundary",
+            "src/signal/sigandset.c",
+            "src/signal/sigorset.c",
+            "SST_SIZE",
+            'pub unsafe extern "C" fn sigandset',
+            'pub unsafe extern "C" fn sigorset',
+            "read_unaligned",
+            "write_unaligned",
+        ):
+            self.assertIn(required, source)
+        for forbidden in (
+            "raw_syscall",
+            "errno",
+            "sigaction",
+            "sigprocmask",
+            "pthread_",
+            "signalfd",
+            "timerfd",
+        ):
+            self.assertNotIn(forbidden, source)
+
+        for required in (
+            "sigandset(&and_dest",
+            "sigorset(&or_dest",
+            "sigandset(&and_left_alias",
+            "sigorset(&or_right_alias",
+            "tail sentinel",
+            "errno = ERANGE",
+            "CRABC_SIGANDSET_SIGORSET_FREESTANDING",
+        ):
+            self.assertIn(required, probe)
+        for required in (
+            "call __crabc_x86_static_tls_bootstrap",
+            "crabc_x86_64_sigandset_sigorset_probe",
+            "exit_group",
+        ):
+            self.assertIn(required, start)
+        self.assertNotIn("arch_prctl", start)
+        for required in (
+            "decltype(&sigandset)",
+            "decltype(&sigorset)",
+            "CRABC_REQUIRE_GNU_SIGNAL_SET_BINARY_HIDDEN",
+        ):
+            self.assertIn(required, cxx_header)
+        for required in (
+            "run_musl_oracle.sh",
+            "run_signal_header_abi.sh",
+            "C++",
+            "static_c_abi_exports.txt",
+            "-nostdlib -static",
+            "-Wl,-e,_start",
+            "-Wl,--no-undefined",
+            "R_X86_64_TPOFF",
+            "--disassemble=sigandset",
+            "--disassemble=sigorset",
+            "candidate unexpectedly pulls",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn("--whole-archive", artifact_runner)
+        self.assertIn("sigandset", static_exports)
+        self.assertIn("sigorset", static_exports)
+        self.assertIn("__typeof__(&sigandset)", signal_header_probe)
+        self.assertIn("__typeof__(&sigorset)", signal_header_probe)
+        self.assertIn('id = "static-c-sigandset-sigorset"', parity_ledger)
+        self.assertIn(
+            'command = "./scripts/dev-x86_64.sh libc-sigandset-sigorset"',
+            parity_ledger,
+        )
+        self.assertIn("run_libc_sigandset_sigorset_probe()", dispatcher)
+        self.assertIn("libc-sigandset-sigorset)", dispatcher)
 
     def test_libc_static_c_abi_pthread_create_exit_join_tls_artifact_stays_bounded(
         self,
