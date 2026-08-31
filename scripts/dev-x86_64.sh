@@ -61,6 +61,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   math-complex-complete-header-abi  verify complete x86 math.complex C++ ABI/linkage
   math-elementary-long-double-header-abi  verify complete x86 math.elementary-long-double C++ ABI/linkage
   math-special-header-abi  verify complete x86 math.special C++ ABI/linkage
+  math-exp2-header-abi  verify x86 exp2/exp2f C++ ABI/linkage
   sys-reg-header-abi  compile the staged crabc x86 ptrace-register header slice
   machine-context-header-abi  verify staged x86 machine/context C/C++ header ABI profiles
   types-header-abi  compile the staged crabc x86 C/C++ type-layout header slice
@@ -439,6 +440,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-math-trunc  run the static x86 trunc/truncf scalar slice
   libc-math-fmod  run the static x86 fmod/fmodf scalar remainder slice
   libc-math-cbrt  run the static x86 cbrt/cbrtf scalar cube-root slice
+  libc-math-exp2  run the static x86 exp2/exp2f scalar base-two exponential slice
   libc-math-ceil  run the static x86 ceil/ceilf fixed-direction slice
   libc-math-floor  run the static x86 floor/floorf fixed-direction slice
   libc-math-round  run the static x86 round/roundf half-away slice
@@ -1791,6 +1793,18 @@ observed direction in all four MXCSR modes. It excludes `cbrtl`, fma,
 fmod/remainder/modf, rounding/truncation, bit-sign/minmax/fdim,
 special/complex/binary80 math, family completion, promotion, and public x86
 support.
+`libc-math-exp2` is the separate selected binary32/binary64 base-two
+exponential slice for `exp2` and `exp2f`. It compares parenthesized C calls
+and default-SSE/`-mfpmath=387` C++ declarations with pinned musl, then runs
+one freestanding static candidate. The checked GCC 15.2.0 translation of musl
+1.2.6 `exp2.c`/`exp2f.c` carries private binary64/binary32 tables and local
+overflow/underflow helpers rather than sharing `math.special` state. Its 232
+raw 32-byte records cover signed zero, tiny and subnormal boundaries,
+overflow/underflow thresholds, ordinary reduction points, infinities,
+quiet/signaling NaNs, IEEE flags, and requested versus observed direction in
+all four MXCSR modes. It excludes `exp2l`, adjacent exp/log/pow functions,
+fenv API/policy, special/complex/binary80 math, family completion, promotion,
+and public x86 support.
 `libc-math-ceil` is the separate selected binary32/binary64 fixed-direction
 ceiling slice for `ceil` and `ceilf`. It compares parenthesized C calls and
 default-SSE/`-mfpmath=387` C++ declarations with pinned musl, then runs one
@@ -2180,6 +2194,10 @@ run_math_elementary_long_double_header_abi() {
 
 run_math_special_header_abi() {
     run_in_container bash /workspace/compat/x86_64/run_math_special_header_abi.sh
+}
+
+run_math_exp2_header_abi() {
+    run_in_container bash /workspace/compat/x86_64/run_math_exp2_header_abi.sh
 }
 
 run_sys_reg_header_abi() {
@@ -3779,6 +3797,10 @@ run_libc_math_cbrt_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_math_cbrt.sh
 }
 
+run_libc_math_exp2_probe() {
+    run_in_container bash /workspace/compat/x86_64/run_libc_math_exp2.sh
+}
+
 run_libc_math_ceil_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_math_ceil.sh
 }
@@ -3915,6 +3937,7 @@ case "$command" in
     ldso-public-dlfcn|ldso-dladdr-symbol-bounds) ;;
     ldso-bounded-dlopen) ;;
     math-special-header-abi|libc-math-special) ;;
+    math-exp2-header-abi|libc-math-exp2) ;;
     inet-address-header-abi|nameser-header-abi) ;;
     libc-network-byte-order|libc-dn-skipname|libc-ns-get16|libc-ns-get32|libc-ns-put16) ;;
     ldso-target-root) ;;
@@ -4114,6 +4137,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "math-special-header-abi takes no arguments"
         ensure_image
         run_math_special_header_abi
+        ;;
+    math-exp2-header-abi)
+        [ "$#" -eq 0 ] || fail "math-exp2-header-abi takes no arguments"
+        ensure_image
+        run_math_exp2_header_abi
         ;;
     sys-reg-header-abi)
         [ "$#" -eq 0 ] || fail "sys-reg-header-abi takes no arguments"
@@ -6059,6 +6087,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "libc-math-cbrt takes no arguments"
         ensure_image
         run_libc_math_cbrt_probe
+        ;;
+    libc-math-exp2)
+        [ "$#" -eq 0 ] || fail "libc-math-exp2 takes no arguments"
+        ensure_image
+        run_libc_math_exp2_probe
         ;;
     libc-math-ceil)
         [ "$#" -eq 0 ] || fail "libc-math-ceil takes no arguments"

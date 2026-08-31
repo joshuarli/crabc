@@ -554,6 +554,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-math-bit-sign
 ./scripts/dev-x86_64.sh libc-math-trunc
 ./scripts/dev-x86_64.sh libc-math-fmod
+./scripts/dev-x86_64.sh libc-math-exp2
 ./scripts/dev-x86_64.sh libc-math-elementary-long-double
 ./scripts/dev-x86_64.sh libc-fdim
 ./scripts/dev-x86_64.sh libc-locale-profile
@@ -4951,6 +4952,22 @@ crabc-owned definitions and `divsd`/`mulsd`/`cvtsd2ss`, while rejecting weak
 compiler-builtins fallback, `cbrtl`, fma, fmod/remainder/modf,
 rounding/truncation, bit-sign/minmax/fdim, special/complex, and binary80/x87
 math. Family completion, promotion, full x86-64 parity, and public x86 support
+remain unselected.
+`libc-math-exp2` is the separate non-promoting `static-c-math-exp2` artifact
+for binary64/binary32 `exp2`/`exp2f`. Its project-header C fixture and
+default-SSE/`-mfpmath=387` C++ signature probes run first through pinned musl
+and then through one garbage-collected `-nostdlib -static` candidate. The
+checked GCC 15.2.0 translation of musl 1.2.6 `exp2.c`/`exp2f.c` incorporates
+private binary64/binary32 tables and local overflow/underflow range helpers;
+it neither pulls `math.special` nor calls ambient libm. The 232-record raw
+differential covers signed zero, tiny/subnormal and overflow/underflow bounds,
+ordinary reduction points, finite extremes, infinities, quiet/signaling NaNs,
+raw results, flags, and requested versus observed MXCSR direction in all four
+modes. Final-link proof requires strong crabc-owned definitions and scalar
+`addsd`/`addss`/`subsd`/`mulsd`/`mulss` conversion paths, while rejecting weak
+compiler-builtins fallback, `exp2l`, adjacent exp/log/pow functions, fenv
+API/policy, special/complex/binary80 math, dynamic linkage, TLS, and ambient
+libm. Family completion, promotion, full x86-64 parity, and public x86 support
 remain unselected.
 `libc-math-ceil` is the separate non-promoting `static-c-math-ceil` artifact
 for binary64/binary32 `ceil`/`ceilf`. Its project-header C fixture and
