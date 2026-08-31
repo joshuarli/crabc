@@ -559,14 +559,6 @@ pub unsafe extern "C" fn valloc(size: usize) -> *mut c_void {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn malloc_usable_size(ptr: *mut c_void) -> usize {
-    if ptr.is_null() {
-        return 0;
-    }
-    libmimalloc_sys::mi_usable_size(ptr)
-}
-
-#[no_mangle]
 pub unsafe extern "C" fn swab(src: *const c_void, dst: *mut c_void, n: isize) {
     let mut remaining = n;
     let mut source = src as *const u8;

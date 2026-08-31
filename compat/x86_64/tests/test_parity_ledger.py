@@ -49,7 +49,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["status_counts"], {"foundation-verified": 8, "planned": 18})
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
-        self.assertEqual(report["verified_slice_count"], 37)
+        self.assertEqual(report["verified_slice_count"], 38)
         self.assertEqual(report["verified_artifact_count"], 141)
         self.assertEqual(report["header_layout_probe_count"], 46)
         self.assertEqual(report["public_header_inventory_count"], 183)
@@ -303,6 +303,43 @@ class X86ParityLedgerTests(unittest.TestCase):
         )
         with self.assertRaisesRegex(
             ledger.LedgerError, "closed libc-allocator-runtime command"
+        ):
+            ledger.validate_ledger(changed)
+
+    def test_allocator_observability_is_exact_and_non_promoting(self) -> None:
+        data = self.data()
+        family = self.family(data, "libc.c-abi-compat")
+        self.assertEqual(family["status"], "planned")
+        slices = family["verified_slice"]
+        assert isinstance(slices, list)
+        slice_entry = next(
+            entry for entry in slices if entry["id"] == "allocator-observability"
+        )
+        assert isinstance(slice_entry, dict)
+        self.assertEqual(
+            slice_entry["capabilities"], ["memory.allocator-observability"]
+        )
+        self.assertIn("strong `malloc_usable_size`", slice_entry["description"])
+        self.assertIn("`memory.allocator-basic`", slice_entry["description"])
+        self.assertIn("public x86 support", slice_entry["description"])
+        self.assertEqual(
+            {entry["command"] for entry in slice_entry["native_evidence"]},
+            {"./scripts/dev-x86_64.sh libc-allocator-observability"},
+        )
+
+        changed = self.data()
+        changed_slices = self.family(changed, "libc.c-abi-compat")[
+            "verified_slice"
+        ]
+        assert isinstance(changed_slices, list)
+        changed_slice = next(
+            entry for entry in changed_slices if entry["id"] == "allocator-observability"
+        )
+        changed_slice["native_evidence"][0]["command"] = (
+            "./scripts/dev-x86_64.sh libc-allocator-observability-broad"
+        )
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "closed libc-allocator-observability command"
         ):
             ledger.validate_ledger(changed)
 

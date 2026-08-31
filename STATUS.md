@@ -103,6 +103,24 @@ process primitives, and the backend retains private `mi_*` globals, so this is
 not an owned x86 runtime, fixed-v3.5.0 Rust-port promotion, allocator-family
 closure, or public x86 support.
 
+The separate `memory.allocator-observability` capability is now a complete
+private x86 slice over the exact AArch64 one-symbol surface. A strong
+`malloc_usable_size` owner reuses the active backend's direct `mi_usable_size`
+semantics and is exercised with real crabc `crt1.o`/`crti.o`/`crtn.o`, static
+startup, Initial TLS v1, bounded environment/program-name/auxv publication,
+errno, allocator entries, pthread lifecycle, mapping, clock, and child-reaping
+owners. Pinned-musl and active-AArch64 executions cover
+null, live, zero-size, aligned, reallocated, remote-thread, and inherited-child
+pointers plus repeated observation and errno preservation. The current crabc
+startup now supplies `__environ`/`getenv`; a candidate-local pinned `libc.lo`
+copy weakens only its duplicate `__progname` globals while retaining its
+required `__libc`/`__hwcap` support. The unchanged bundled backend therefore
+pulls an exact fourteen-object pinned-musl support tail; the gate rejects its
+allocator, observer, startup/TLS, pthread, mapping, clock, and wait owners.
+`memory.allocator-basic`, public fork/atfork, full runtime
+closure, fixed-mimalloc-port promotion, and public x86 support remain
+unselected.
+
 The x86 lane has five private ET_DYN interpreter artifacts inside still-planned
 `ldso.dynamic-runtime`. `ldso-initial-graph` is limited to
 one main PIE -> mid.so -> leaf.so graph, RELATIVE/GLOB_DAT/JUMP_SLOT ELF64

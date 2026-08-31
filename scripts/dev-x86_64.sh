@@ -269,6 +269,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-memory-locking  run the static x86 crabc-libc per-range memory-locking slice
   libc-memfd-create  run the static x86 crabc-libc memfd_create slice
   libc-allocator-runtime  run the opt-in mixed-runtime crabc-libc allocator wrapper slice
+  libc-allocator-observability  run the complete x86 malloc_usable_size capability slice
   libc-static-c-abi-differential  run the private static-C ABI musl differential bootstrap
   libc-static-c-abi-same-object-differential  run the private same-object static-C ABI differential
   qualification-posix-abi-admission  run the closed non-promoting POSIX/ABI artifact admission inventory
@@ -1985,6 +1986,10 @@ run_libc_allocator_runtime() {
     run_in_container bash /workspace/compat/x86_64/run_libc_allocator_runtime.sh
 }
 
+run_libc_allocator_observability() {
+    run_in_container bash /workspace/compat/x86_64/run_libc_allocator_observability.sh
+}
+
 run_libc_static_c_abi_differential() {
     run_in_container bash /workspace/compat/x86_64/run_libc_static_c_abi_differential.sh
 }
@@ -3282,6 +3287,7 @@ case "$command" in
     libc-memory-locking) ;;
     libc-memfd-create) ;;
     libc-allocator-runtime) ;;
+    libc-allocator-observability) ;;
     libc-static-c-abi-differential) ;;
     libc-static-c-abi-same-object-differential|qualification-posix-abi-admission) ;;
     libc-interface-discovery) ;;
@@ -4630,6 +4636,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "libc-allocator-runtime takes no arguments"
         ensure_image
         run_libc_allocator_runtime
+        ;;
+    libc-allocator-observability)
+        [ "$#" -eq 0 ] || fail "libc-allocator-observability takes no arguments"
+        ensure_image
+        run_libc_allocator_observability
         ;;
     libc-static-c-abi-differential)
         [ "$#" -eq 0 ] || fail "libc-static-c-abi-differential takes no arguments"

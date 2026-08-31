@@ -19129,6 +19129,72 @@ def require_allocator_wrapper_artifact(family: Mapping[str, Any]) -> None:
     )
 
 
+def require_allocator_observability_slice(family: Mapping[str, Any]) -> None:
+    """Keep the exact AArch64 observer complete, private, and non-promoting."""
+    family_capabilities = string_list(
+        family.get("capabilities"),
+        "family[libc.c-abi-compat].capabilities",
+        allow_empty=True,
+    )
+    slices = require_verified_slices(
+        family.get("verified_slice"),
+        "family[libc.c-abi-compat].verified_slice",
+        str(family.get("status", "")),
+        family_capabilities,
+    )
+    matching = [entry for entry in slices if entry.get("id") == "allocator-observability"]
+    require(
+        len(matching) == 1,
+        "libc.c-abi-compat must contain exactly one allocator-observability slice",
+    )
+    slice_entry = matching[0]
+    require(
+        slice_entry["capabilities"] == ["memory.allocator-observability"],
+        "allocator-observability must select exactly memory.allocator-observability",
+    )
+    description = slice_entry["description"]
+    assert isinstance(description, str)
+    for phrase in (
+        "exact one-symbol AArch64 public C surface",
+        "strong `malloc_usable_size`",
+        "real crabc `crt1.o`/`crti.o`/`crtn.o`",
+        "raw single-threaded x86 fork",
+        "exact fourteen-object pinned-musl support tail",
+        "candidate-local pinned `libc.lo` copy",
+        "`memory.allocator-basic`",
+        "promotion",
+        "public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"allocator-observability description omits {phrase}",
+        )
+    evidence = slice_entry["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-allocator-observability"},
+        "allocator-observability must use the closed libc-allocator-observability command",
+    )
+    scope = evidence[0].get("scope")
+    require(
+        isinstance(scope, str)
+        and all(
+            phrase in scope
+            for phrase in (
+                "owned-CRT/static-startup/Initial-TLS crabc candidate",
+                "active AArch64 crabc test",
+                "exact fourteen-member residual pinned-musl backend-support boundary",
+                "candidate-local pinned libc.lo clone",
+                "selects only memory.allocator-observability",
+                "not memory.allocator-basic",
+                "public x86 support",
+            )
+        ),
+        "allocator-observability evidence must retain its exact private runtime boundary",
+    )
+
+
 def require_float_parse_artifact(family: Mapping[str, Any]) -> None:
     """Keep the source-faithful x87 parser below text/math family completion.
 
@@ -25558,6 +25624,7 @@ def validate_ledger(
     require_timestamp_updates_artifact(by_id["libc.posix-runtime"])
     require_ffs_artifact(by_id["libc.posix-runtime"])
     require_allocator_wrapper_artifact(by_id["libc.posix-runtime"])
+    require_allocator_observability_slice(by_id["libc.c-abi-compat"])
     require_float_parse_artifact(by_id["libc.text-math-locale-stdio"])
     require_float_parse_locale_slice(by_id["libc.text-math-locale-stdio"])
     require_stdio_standard_streams_artifact(by_id["libc.text-math-locale-stdio"])

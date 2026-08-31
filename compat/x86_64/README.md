@@ -409,6 +409,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-memory-locking
 ./scripts/dev-x86_64.sh libc-memfd-create
 ./scripts/dev-x86_64.sh libc-allocator-runtime
+./scripts/dev-x86_64.sh libc-allocator-observability
 ./scripts/dev-x86_64.sh libc-static-c-abi-same-object-differential
 ./scripts/dev-x86_64.sh qualification-posix-abi-admission
 ./scripts/dev-x86_64.sh libc-header-layouts-baseline
@@ -2304,6 +2305,41 @@ wrapper integration but not a standalone runtime, dynamic interposition,
 general thread/fork/exit lifecycle, an owned CRT/sysroot, the separately paused
 fixed mimalloc v3.5.0 Rust port, allocator-family closure, promotion, or public
 x86 support.
+
+`libc-allocator-observability` completes the distinct one-symbol AArch64
+`memory.allocator-observability` contract without widening the earlier weak
+allocator-wrapper object. The shared
+`libc/src/allocator_observability_mimalloc.rs` owner exports strong
+`malloc_usable_size`: null yields zero and every live pointer is observed by a
+direct `mi_usable_size` call over the unchanged active backend. The project
+`malloc.h` gate admits exactly that observer and rejects unselected
+`mallinfo`, `mallinfo2`, `malloc_info`, `malloc_stats`, and `mallopt` surfaces.
+
+The pinned-musl reference, active AArch64 crabc test, and x86 candidate share
+one C fixture covering zero-size, small/large, calloc, aligned, reallocated,
+two post-join remote-thread, and contained inherited-child pointers. Repeated
+observations must be stable and successful observation preserves stale errno.
+The candidate links real crabc `crt1.o`/`crti.o`/`crtn.o`; crabc owns static
+startup and Initial TLS v1, errno, allocation, pthread create/join/TSD/mutex,
+mapping, clock, `waitpid`, and child `_exit`; its current static-startup path
+also publishes the already-selected bounded environment, program-name, and
+auxiliary-vector leaves. The fixture's raw single-threaded x86 fork is
+containment plumbing only, not a selected public fork/atfork API.
+
+The unchanged bundled mimalloc v3.3.2 object now requires exactly these
+fourteen pinned-musl support members: `__lock.lo`, `__stack_chk_fail.lo`,
+`abort.lo`, `abort_lock.lo`, `block.lo`, `fputs.lo`, `libc.lo`, `prctl.lo`,
+`realpath.lo`, `sleep.lo`, `strchrnul.lo`, `strdup.lo`, `syscall.lo`, and
+`syscall_ret.lo`. Current crabc startup supplies `__environ`/`getenv`; the
+candidate-local clone of pinned `libc.lo` weakens only its duplicate
+`__progname`/`__progname_full` definitions while preserving its required
+`__libc`/`__hwcap` data. The final link-map ratchet rejects every musl
+allocator/observer, startup/TLS, pthread, mapping, clock, and wait owner,
+along with glibc, dynamic TLS, an interpreter, dynamic dependencies, and
+unresolved symbols. This selects only
+`memory.allocator-observability`; `memory.allocator-basic`, general fork/
+atfork, full libc/pthread/runtime closure, the fixed mimalloc v3.5.0 Rust port,
+promotion, and public x86 support remain unselected.
 
 `libc-stat-compat` and `libc-credentials` are two private static
 `crabc-libc` semantic-vertical gates over one dependency-free `libc.a`. The

@@ -20,6 +20,10 @@ default = []
 # dependency-free selected-static artifacts from silently acquiring bundled C
 # allocator objects before the wider x86 runtime composition is ready.
 x86-allocator-runtime = ["dep:libmimalloc-sys"]
+# Complete the distinct strong AArch64 allocator-observation entry only for
+# its closed capability gate. This implies the private allocation backend but
+# does not widen the earlier basic-wrapper artifact's exact object surface.
+x86-allocator-observability = ["x86-allocator-runtime"]
 
 [target.'cfg(all(target_os = "linux", target_arch = "aarch64", target_endian = "little"))'.dependencies]
 crabc-core = { path = "../crabc-core" }
@@ -68,6 +72,11 @@ path = "../tests/advanced_io_exports.rs"
 [[test]]
 name = "allocator"
 path = "../tests/allocator.rs"
+
+
+[[test]]
+name = "allocator_observability"
+path = "../tests/allocator_observability.rs"
 
 
 [[test]]

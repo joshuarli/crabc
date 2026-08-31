@@ -419,6 +419,21 @@ mod allocator {
     }
 }
 
+// The sole AArch64 allocator-observability capability is a separate strong
+// C entry, not part of the weak allocation family. Its private witness keeps
+// archive ownership independently auditable in the feature-built x86 image.
+#[cfg(feature = "x86-allocator-observability")]
+mod allocator_observability {
+    use core::ffi::c_void;
+
+    include!("../../allocator_observability_mimalloc.rs");
+
+    #[no_mangle]
+    pub extern "C" fn __crabc_x86_allocator_observability_v1() -> usize {
+        1
+    }
+}
+
 use core::ffi::{c_int, c_void};
 
 const LINUX_ERRNO_MAX: i64 = 4_095;

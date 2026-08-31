@@ -13866,6 +13866,11 @@ pub unsafe extern "C" fn rename(old: *const c_char, new_: *const c_char) -> c_in
 // below owns only the public musl-compatible C allocation contract.
 include!("allocator_mimalloc.rs");
 
+// Allocator layout observation is a distinct public capability with strong
+// ELF binding. Keep it in its own source/object owner rather than folding it
+// into the weak allocation-entry block or general program utilities.
+include!("allocator_observability_mimalloc.rs");
+
 // ============================================================
 // Process: exit / _exit / _Exit
 // ============================================================
