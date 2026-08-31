@@ -1272,6 +1272,22 @@ reject weak compiler-builtins fallback, public source helpers, `expl`,
 exp2/expm1 and log families, fenv API/policy, special/complex/binary80 math,
 family completion, promotion, and public x86 support.
 
+The separate private `static-c-math-cos` artifact records only binary64 `cos`
+and binary32 `cosf`: `./scripts/dev-x86_64.sh libc-math-cos` runs
+project-header C and default-SSE/`-mfpmath=387` C++ function-pointer fixtures
+through pinned musl and one freestanding static candidate. Its checked GCC
+15.2.0 translation of musl 1.2.6 `cos.c`/`cosf.c` uses an exact eleven-source
+local kernel/reduction closure: sine/cosine kernels, moderate and large
+argument reducers with the fixed multiword `2/pi` data, and only local
+`floor`/`scalbn` providers. The 256-record differential covers signed zero,
+tiny/normal/subnormal and quadrant boundaries, moderate and huge reductions,
+finite extrema, infinities, quiet/signaling NaNs, all four
+requested-and-observed rounding directions, and exception flags. Strong
+target-owned definitions and final ELF checks reject weak compiler-builtins
+fallback, public closure helpers, `cosl`, public sin/tan surface, fenv
+API/policy, special/complex/binary80 math, family completion, promotion, and
+public x86 support.
+
 The x86 static archive now also has one private allocation-free wide-character
 core: `./scripts/dev-x86_64.sh libc-wide-character` runs an exact
 `_XOPEN_SOURCE=700` C/C++ ABI gate and one shared pinned-musl/freestanding

@@ -4936,6 +4936,25 @@ fallback, `expl`, exp2/expm1 and log families, fenv API/policy,
 special/complex/binary80 math, dynamic linkage, TLS, and ambient-libm surface.
 Family completion, promotion, full x86-64 parity, and public x86 support
 remain unselected.
+`libc-math-cos` is the separate non-promoting `static-c-math-cos` artifact
+for binary64/binary32 `cos`/`cosf`. Its project-header C fixture and
+default-SSE/`-mfpmath=387` C++ signature probes run first through pinned musl
+and then through one garbage-collected `-nostdlib -static` candidate. The
+checked GCC 15.2.0 assembly translation of musl 1.2.6 `cos.c`/`cosf.c`
+preserves tiny-input behavior, quadrant selection, generic sine/cosine
+polynomial kernels, and moderate/large argument reduction through its exact
+local eleven-source closure. That closure retains fixed multiword `2/pi` data
+and only local floor/scalbn providers; it exports neither internal sine
+helpers nor a public sin/tan surface. The 256-record raw differential compares
+signed zero, tiny/normal/subnormal and quadrant boundaries, moderate and huge
+reductions, finite extrema, infinities, quiet/signaling NaNs, exception flags,
+and requested versus observed MXCSR direction in all four modes. Final-link
+proof requires strong crabc-owned definitions, local closure providers, and
+scalar `addsd`/`addss`/`subsd`/`subss`/`mulsd`/`cvtss2sd`/`cvtsd2ss`, while
+rejecting weak compiler-builtins fallback, `cosl`, public sin/tan surface,
+fenv API/policy, special/complex/binary80 math, dynamic linkage, TLS, and
+ambient-libm surface. Family completion, promotion, full x86-64 parity, and
+public x86 support remain unselected.
 `libc-fdim` is a separate non-promoting `static-c-fdim` artifact for the
 binary64/binary32 positive-difference pair. Its project-header C fixture and
 default-SSE/`-mfpmath=387` C++ signature probes run first through pinned musl

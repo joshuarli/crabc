@@ -270,6 +270,8 @@ mod math_round;
 mod math_log2;
 #[path = "math_exp.rs"]
 mod math_exp;
+#[path = "math_cos.rs"]
+mod math_cos;
 #[path = "math_minmax.rs"]
 mod math_minmax;
 #[path = "math_x87_extended.rs"]

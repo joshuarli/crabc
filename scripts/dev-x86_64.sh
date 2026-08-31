@@ -434,6 +434,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-math-round  run the static x86 round/roundf half-away slice
   libc-math-log2  run the static x86 log2/log2f scalar slice
   libc-math-exp  run the static x86 exp/expf scalar slice
+  libc-math-cos  run the static x86 cos/cosf scalar slice
   libc-math-elementary-long-double  run the complete static x86 math.elementary-long-double capability
   libc-math-x87-extended  run the static x86 x87 long-double math/remainder block
   libc-math-special  run the complete static x86 math.special capability
@@ -1828,6 +1829,18 @@ large finite values, infinities, quiet/signaling NaNs, exception flags, and
 requested versus observed direction in all four MXCSR modes. It excludes
 `expl`, exp2/expm1 and log families, fenv API/policy, special/complex and
 binary80 math, family completion, promotion, and public x86 support.
+`libc-math-cos` is the separate selected binary32/binary64 scalar slice for
+`cos` and `cosf`. It compares parenthesized C calls and default-SSE/
+`-mfpmath=387` C++ declarations with pinned musl, then runs one freestanding
+static candidate. The checked GCC 15.2.0 translation of musl 1.2.6
+`cos.c`/`cosf.c` with its exact local kernel and argument-reduction closure
+retains tiny-input behavior, quadrant selection, generic polynomial kernels,
+and moderate/large `2/pi` reduction. Its raw records cover signed zero,
+finite normal/subnormal and reduction boundaries, large finite values,
+infinities, quiet/signaling NaNs, exception flags, and requested versus
+observed direction in all four MXCSR modes. It excludes `cosl`, public
+sin/tan surface, fenv API/policy, special/complex and binary80 math, family
+completion, promotion, and public x86 support.
 `libc-math-elementary-long-double` proves the exact 35-symbol
 `math.elementary-long-double` capability through project headers, a closed
 static archive, and 2,764 exact pinned-musl binary80/fenv records across all
@@ -3778,6 +3791,10 @@ run_libc_math_exp_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_math_exp.sh
 }
 
+run_libc_math_cos_probe() {
+    run_in_container bash /workspace/compat/x86_64/run_libc_math_cos.sh
+}
+
 run_libc_math_elementary_long_double_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_math_elementary_long_double.sh
 }
@@ -3913,6 +3930,7 @@ case "$command" in
     libc-math-round) ;;
     libc-math-log2) ;;
     libc-math-exp) ;;
+    libc-math-cos) ;;
     libc-fdim) ;;
     machine-context-header-abi) ;;
     memory-sync-header-abi) ;;
@@ -6020,6 +6038,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "libc-math-exp takes no arguments"
         ensure_image
         run_libc_math_exp_probe
+        ;;
+    libc-math-cos)
+        [ "$#" -eq 0 ] || fail "libc-math-cos takes no arguments"
+        ensure_image
+        run_libc_math_cos_probe
         ;;
     libc-math-elementary-long-double)
         [ "$#" -eq 0 ] || fail "libc-math-elementary-long-double takes no arguments"

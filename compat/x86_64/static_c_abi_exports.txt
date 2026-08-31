@@ -172,6 +172,8 @@ connect
 copysign
 copysignf
 copysignl
+cos
+cosf
 coshl
 cosl
 cpow
