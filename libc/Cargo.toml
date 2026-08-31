@@ -144,6 +144,10 @@ name = "native_mimalloc_parallel_local_workers"
 path = "../tests/native_mimalloc_parallel_local_workers.rs"
 
 [[test]]
+name = "native_mimalloc_cabi_local_worker_scaling"
+path = "../tests/native_mimalloc_cabi_local_worker_scaling.rs"
+
+[[test]]
 name = "native_mimalloc_concurrent_session_start"
 path = "../tests/native_mimalloc_concurrent_session_start.rs"
 

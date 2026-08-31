@@ -568,6 +568,7 @@ case "$command" in
             --test native_mimalloc_initial_post_exit_free \
             --test native_mimalloc_initial_remote_free \
             --test native_mimalloc_parallel_local_workers \
+            --test native_mimalloc_cabi_local_worker_scaling \
             --test native_mimalloc_concurrent_session_start \
             --test native_mimalloc_many_local_allocations \
             --test native_mimalloc_initial_live_local_worker \
