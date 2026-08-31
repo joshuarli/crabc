@@ -3558,6 +3558,21 @@ peer Ethernet-helper plus resolver/socket extraction. It does not select
 libc.so, CRT, loader, sysroot, family completion, promotion, or public x86
 support.
 
+`res-init-header-abi` and `libc-res-init` record a separate private
+`static-c-res-init` artifact inside still-planned `libc.c-abi-compat`, not a
+resolver or network capability. The pinned-musl/project `<resolv.h>` C/C++
+matrix proves unconditional `int res_init(void)` under strict, POSIX, X/Open,
+and GNU profiles, its exact no-argument function-pointer type, and unmangled
+C++ linkage through the header's C-linkage guards. The shared C body then
+executes through pinned musl and one true dependency-free `-nostdlib -static`
+candidate. Musl 1.2.6 `src/network/res_init.c::res_init` is exactly
+`return 0;`; the fixture proves direct/function-pointer successful returns and
+stale-errno preservation on the ordinary musl route. The candidate rejects
+peer resolver and netdb extraction. It neither accesses `__res_state` or
+`_res` nor selects `/etc/resolv.conf`, resolver configuration, DNS, sockets,
+generic resolver behavior, libc.so, CRT, loader, sysroot, family completion,
+promotion, or public x86 support.
+
 `libc-isatty` is a separately recorded static `static-c-isatty`
 `verified_artifact` gate over that archive, not a terminal capability. Its
 strict/POSIX/X/Open/GNU/BSD C/C++ `unistd.h` declaration gate and one

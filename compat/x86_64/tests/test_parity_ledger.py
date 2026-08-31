@@ -19413,7 +19413,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         )
         self.assertIn("dn_skipname", exports)
         self.assertFalse(
-            exports & {"dn_expand", "ns_skiprr", "ns_name_uncompress", "res_init"}
+            exports & {"dn_expand", "ns_skiprr", "ns_name_uncompress"}
         )
 
         prerequisites = artifact["x86_abi_prerequisites"]
@@ -20755,6 +20755,98 @@ class X86ParityLedgerTests(unittest.TestCase):
         with self.assertRaisesRegex(
             ledger.LedgerError,
             "static-c-ether-line must retain its pinned-musl ether.c mapping",
+        ):
+            ledger.validate_ledger(data)
+
+    def test_res_init_artifact_stays_private_and_non_promoting(self) -> None:
+        data = self.data()
+        family = self.family(data, "libc.c-abi-compat")
+        self.assertEqual(family["status"], "planned")
+        artifacts = family["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-res-init"
+        )
+        self.assertNotIn("capabilities", artifact)
+        for phrase in (
+            "legacy resolver-initializer compatibility no-op artifact",
+            "`int res_init(void)`",
+            "`src/network/res_init.c::res_init`",
+            "exactly `return 0;`",
+            "`__res_state`",
+            "`_res`",
+            "`/etc/resolv.conf`",
+            "`res_query`",
+            "`res_send`",
+            "DNS",
+            "netdb",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, artifact["description"])
+
+        owners = artifact["source_owners"]
+        assert isinstance(owners, list)
+        for owner in (
+            "libc/src/c_abi/x86_64/res_init.rs",
+            "include/resolv.h",
+            "include/arpa/nameser.h",
+            "include/netinet/in.h",
+            "compat/x86_64/res_init_header_abi_probe.c",
+            "compat/x86_64/res_init_header_abi_probe.cpp",
+            "compat/x86_64/run_res_init_header_abi.sh",
+            "compat/x86_64/libc_res_init_probe.c",
+            "compat/x86_64/libc_res_init_start.S",
+            "compat/x86_64/run_libc_res_init.sh",
+            "compat/x86_64/static_c_abi_exports.txt",
+        ):
+            self.assertIn(owner, owners)
+
+        prerequisites = artifact["x86_abi_prerequisites"]
+        assert isinstance(prerequisites, list)
+        self.assertTrue(
+            any(
+                "SysV AMD64" in item
+                and "int res_init(void)" in item
+                and "no arguments" in item
+                and "eax" in item
+                for item in prerequisites
+            )
+        )
+        self.assertTrue(
+            any(
+                "src/network/res_init.c::res_init" in item
+                and "return 0;" in item
+                and "__res_state" in item
+                and "/etc/resolv.conf" in item
+                for item in prerequisites
+            )
+        )
+
+        evidence = artifact["native_evidence"]
+        assert isinstance(evidence, list) and isinstance(evidence[0], dict)
+        self.assertEqual(
+            evidence[0]["command"],
+            "./scripts/dev-x86_64.sh libc-res-init",
+        )
+        for phrase in (
+            "Pinned-musl/project C/C++ header",
+            "true dependency-free x86 crabc-libc `-nostdlib -static` candidate",
+            "direct and function-pointer fixed zero returns",
+            "stale errno preservation",
+            "res_init.lo/AArch64 ownership",
+            "peer resolver and netdb extraction",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, evidence[0]["scope"])
+
+        prerequisites[1] = prerequisites[1].replace(
+            "return 0;", "initialize /etc/resolv.conf"
+        )
+        with self.assertRaisesRegex(
+            ledger.LedgerError,
+            "static-c-res-init must retain its pinned-musl res_init.c mapping",
         ):
             ledger.validate_ledger(data)
 

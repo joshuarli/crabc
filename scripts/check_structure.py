@@ -6562,6 +6562,47 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
                 f"Ethernet-line boundary must not select {forbidden!r}"
             )
 
+    res_init_source = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "res_init.rs"
+    )
+    res_init_text = res_init_source.read_text(errors="replace")
+    for required in (
+        "pinned musl 1.2.6 release commit",
+        "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+        "src/network/res_init.c::res_init",
+        "return 0;",
+        "System V AMD64 ABI",
+        'pub extern "C" fn res_init()',
+    ):
+        if required not in res_init_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/res_init.rs: selected static legacy "
+                f"resolver-initializer boundary is missing {required!r}"
+            )
+    res_init_exports = set(
+        re.findall(
+            r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(',
+            res_init_text,
+        )
+    )
+    if res_init_exports != {"res_init"}:
+        errors.append(
+            "libc/src/c_abi/x86_64/res_init.rs: selected static legacy "
+            "resolver-initializer artifact must export only res_init"
+        )
+    for forbidden in (
+        "raw_syscall::",
+        "errno::",
+        "static_tls::",
+        "crabc_core",
+        "crabc_mimalloc",
+    ):
+        if forbidden in res_init_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/res_init.rs: selected static legacy "
+                f"resolver-initializer boundary must not select {forbidden!r}"
+            )
+
     isatty_source = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "isatty.rs"
     isatty_text = isatty_source.read_text(errors="replace")
     for required in (
@@ -11164,6 +11205,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         posix_close_text,
         endhostent_text,
         ether_line_text,
+        res_init_text,
         isatty_text,
         tcgetpgrp_text,
         tcsetpgrp_text,
@@ -11498,6 +11540,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         "endhostent",
         "endnetent",
         "ether_line",
+        "res_init",
         "isatty",
         "tcgetpgrp",
         "tcsetpgrp",
@@ -11802,6 +11845,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         ("posix_close.rs", posix_close_text),
         ("endhostent.rs", endhostent_text),
         ("ether_line.rs", ether_line_text),
+        ("res_init.rs", res_init_text),
         ("isatty.rs", isatty_text),
         ("tcgetpgrp.rs", tcgetpgrp_text),
         ("tcsetpgrp.rs", tcsetpgrp_text),

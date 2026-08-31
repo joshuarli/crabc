@@ -694,6 +694,7 @@ remquo
 remquof
 remquol
 rename
+res_init
 rewind
 rewinddir
 rindex

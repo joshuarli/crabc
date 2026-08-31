@@ -505,6 +505,8 @@ mod hstrerror;
 mod endhostent;
 #[path = "ether_line.rs"]
 mod ether_line;
+#[path = "res_init.rs"]
+mod res_init;
 #[path = "numeric_netdb.rs"]
 mod numeric_netdb;
 #[path = "interface_discovery.rs"]

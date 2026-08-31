@@ -10385,6 +10385,52 @@ native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc
 oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source, unconditional netinet/ether.h declaration, static-member, and behavior oracle for src/network/ether.c::ether_line: the selected body returns -1 without reading or writing its three pointer values." }, { kind = "elf-abi", source = "System V AMD64 psABI and pinned musl x86 static object", role = "Three-pointer signed-int C ABI, six-octet ether_addr caller layout, C++ C linkage, and true-static ET_EXEC closure contract." }]
 
 [[family.verified_artifact]]
+id = "static-c-res-init"
+description = "Private native x86 selected-static-archive legacy resolver-initializer compatibility no-op artifact inside still-planned `libc.c-abi-compat`. One dependency-free `crabc-libc` archive resolves exactly `int res_init(void)` into a freestanding C fixture after equivalent pinned-musl execution. Pinned musl's complete `src/network/res_init.c::res_init` body is exactly `return 0;`: direct and function-pointer calls prove that successful result and stale-errno preservation on the ordinary musl route. This source-shaped leaf has no mutable state, errno, TLS, allocation, syscall, file, `__res_state`, `_res`, `/etc/resolv.conf`, resolver configuration, DNS, socket, netdb, or network-policy boundary. It does not select `res_query`, `res_querydomain`, `res_search`, `res_mkquery`, `res_send`, `dn_comp`, DNS transport, generic resolver behavior, libc.so, CRT, loader, sysroot, family completion, promotion, or public x86 support."
+source_owners = [
+  "compat/upstreams.toml",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/res_init.rs",
+  "include/bits/alltypes.h",
+  "include/stdint.h",
+  "include/sys/types.h",
+  "include/sys/socket.h",
+  "include/netinet/in.h",
+  "include/arpa/nameser.h",
+  "include/resolv.h",
+  "compat/x86_64/res_init_header_abi_probe.c",
+  "compat/x86_64/res_init_header_abi_probe.cpp",
+  "compat/x86_64/run_res_init_header_abi.sh",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/libc_res_init_probe.c",
+  "compat/x86_64/libc_res_init_start.S",
+  "compat/x86_64/run_libc_res_init.sh",
+  "compat/x86_64/aarch64_parity_inventory.py",
+  "compat/x86_64/aarch64_parity_inventory.json",
+  "compat/x86_64/tests/test_aarch64_parity_inventory.py",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "compat/x86_64/README.md",
+  "STATUS.md",
+  "x86-64.md",
+  "scripts/dev-x86_64.sh",
+  "scripts/check_structure.py",
+]
+x86_abi_prerequisites = [
+  "The SysV AMD64 ABI passes no arguments to `int res_init(void)` and returns its signed int result in eax. The selected body reads no pointer, caller storage, resolver state, errno, or TLS object.",
+  "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417 maps `src/network/res_init.c::res_init` directly to exact `return 0;`. It neither accesses `__res_state` nor `_res`; `res_query`, `res_querydomain`, `res_search`, `res_mkquery`, `res_send`, `dn_comp`, `/etc/resolv.conf`, DNS transport, and resolver configuration remain unselected.",
+  "The true `-nostdlib -static` candidate has no interpreter, DT_NEEDED, unresolved symbol, PT_TLS, errno path, dynamic-TLS model, allocator, helper call, syscall, or ambient runtime dependency. Its res_init disassembly returns directly and rejects peer resolver and netdb exports, so this fixed success leaf cannot become a resolver closure through archive extraction.",
+]
+x86_header_prerequisites = [
+  "The focused pinned-musl/project-first C11/C++17 `<resolv.h>` matrix proves unconditional `int res_init(void)` under strict, POSIX, X/Open, and GNU profiles, its exact no-argument function-pointer type, project-header provenance, and unmangled C++ linkage through the installed `extern \"C\"` guards. It selects no `__res_state`/`_res` use, other resolver declaration, header-family completion, archive linkage, or public x86 support.",
+]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-res-init", scope = "Pinned-musl/project C/C++ header compilation plus equivalent pinned-musl C execution and one true dependency-free x86 crabc-libc `-nostdlib -static` candidate. The shared fixture proves direct and function-pointer fixed zero returns and stale errno preservation on the ordinary musl route. It ratchets pinned-musl res_init.lo/AArch64 ownership, exact crate-owned export closure, no interpreter/DT_NEEDED/unresolved symbol/PT_TLS/errno/dynamic-TLS model/allocator/helper-call/syscall or ambient runtime, and a direct no-call/no-syscall return disassembly while rejecting peer resolver and netdb extraction. It does not select `__res_state`/`_res`, `/etc/resolv.conf`, resolver configuration, DNS, sockets, generic resolver behavior, libc.so, CRT, loader, sysroot, family completion, promotion, or public x86 support." }]
+oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source, unconditional resolv.h declaration, static-member, and behavior oracle for src/network/res_init.c::res_init: the selected body returns zero without accessing resolver state or configuration." }, { kind = "elf-abi", source = "System V AMD64 psABI and pinned musl x86 static object", role = "No-argument signed-int C ABI, C++ C linkage, and true-static ET_EXEC closure contract." }]
+
+[[family.verified_artifact]]
 id = "static-c-bsearch"
 description = "Private native x86 selected-static-archive `bsearch` compatibility artifact inside still-planned `libc.c-abi-compat`. One dependency-free `crabc-libc` archive resolves exactly `bsearch` into a freestanding C fixture after an equivalent pinned-musl execution. Musl's complete `src/stdlib/bsearch.c` leaf retains its midpoint and signed comparator branches for caller-owned valid contiguous records: direct and function-pointer calls cover first/last/miss, a duplicate-key midpoint return, a wide record, and zero elements without a callback. The checked multiplication guard applies only outside the valid C array domain, where musl's source pointer expression is already undefined. The final candidate rejects `qsort`, `qsort_r`, `__qsort_r`, search-container helpers, TLS/errno, allocation, locale, locks, syscalls, and runtime state. This capability-free ABI artifact does not change the existing qsort/qsort_r behavior or select general sorting/searching, callback ownership, C longjmp/C++ exception transport, libc.so, CRT, loader, sysroot, family completion, promotion, or public x86 support."
 source_owners = [

@@ -1440,6 +1440,7 @@ GETTID_SYMBOLS = ("gettid",)
 POSIX_CLOSE_SYMBOLS = ("posix_close",)
 ENDHOSTENT_SYMBOLS = ("endhostent", "endnetent")
 ETHER_LINE_SYMBOLS = ("ether_line",)
+RES_INIT_SYMBOLS = ("res_init",)
 
 INET_CLASSFUL_SYMBOLS = ("inet_lnaof", "inet_makeaddr")
 
@@ -28741,6 +28742,298 @@ def require_ether_line_artifact(family: Mapping[str, Any]) -> None:
         require(snippet in dispatcher, f"ether_line dispatcher omits {snippet}")
 
 
+def require_res_init_artifact(family: Mapping[str, Any]) -> None:
+    """Keep musl's legacy resolver-initializer no-op out of resolver state."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.c-abi-compat].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [entry for entry in artifacts if entry.get("id") == "static-c-res-init"]
+    require(
+        len(matching) == 1,
+        "libc.c-abi-compat needs exactly one static-c-res-init artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-res-init must not promote libc.c-abi-compat",
+    )
+    artifact = matching[0]
+    require(
+        "capabilities" not in artifact,
+        "static-c-res-init must not promote a resolver or network capability",
+    )
+
+    description = artifact.get("description")
+    require(isinstance(description, str), "static-c-res-init needs a description")
+    for phrase in (
+        "legacy resolver-initializer compatibility no-op artifact",
+        "still-planned `libc.c-abi-compat`",
+        "`int res_init(void)`",
+        "`src/network/res_init.c::res_init`",
+        "exactly `return 0;`",
+        "stale-errno preservation",
+        "mutable state, errno, TLS, allocation, syscall",
+        "`__res_state`",
+        "`_res`",
+        "`/etc/resolv.conf`",
+        "`res_query`",
+        "`res_send`",
+        "DNS",
+        "socket",
+        "netdb",
+        "family completion",
+        "promotion",
+        "public x86 support",
+    ):
+        require(phrase in description, f"static-c-res-init description omits {phrase}")
+
+    owners = set(
+        nonempty_strings(artifact.get("source_owners"), "static-c-res-init.source_owners")
+    )
+    for owner in (
+        "compat/upstreams.toml",
+        "libc/Cargo.toml",
+        "libc/src/lib.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/res_init.rs",
+        "include/bits/alltypes.h",
+        "include/stdint.h",
+        "include/sys/types.h",
+        "include/sys/socket.h",
+        "include/netinet/in.h",
+        "include/arpa/nameser.h",
+        "include/resolv.h",
+        "compat/x86_64/res_init_header_abi_probe.c",
+        "compat/x86_64/res_init_header_abi_probe.cpp",
+        "compat/x86_64/run_res_init_header_abi.sh",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/libc_res_init_probe.c",
+        "compat/x86_64/libc_res_init_start.S",
+        "compat/x86_64/run_libc_res_init.sh",
+        "compat/x86_64/aarch64_parity_inventory.py",
+        "compat/x86_64/aarch64_parity_inventory.json",
+        "compat/x86_64/tests/test_aarch64_parity_inventory.py",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/README.md",
+        "STATUS.md",
+        "x86-64.md",
+        "scripts/dev-x86_64.sh",
+        "scripts/check_structure.py",
+    ):
+        require(owner in owners, f"static-c-res-init source owners omit {owner}")
+
+    prerequisites = nonempty_strings(
+        artifact.get("x86_abi_prerequisites"),
+        "static-c-res-init.x86_abi_prerequisites",
+    )
+    require(
+        any(
+            "SysV AMD64" in item
+            and "int res_init(void)" in item
+            and "no arguments" in item
+            and "eax" in item
+            and "errno" in item
+            and "TLS" in item
+            for item in prerequisites
+        ),
+        "static-c-res-init must retain its no-argument signed-int ABI",
+    )
+    require(
+        any(
+            "9fa28ece75d8a2191de7c5bb53bed224c5947417" in item
+            and "src/network/res_init.c::res_init" in item
+            and "return 0;" in item
+            and "__res_state" in item
+            and "_res" in item
+            and "res_query" in item
+            and "res_send" in item
+            and "/etc/resolv.conf" in item
+            for item in prerequisites
+        ),
+        "static-c-res-init must retain its pinned-musl res_init.c mapping",
+    )
+    require(
+        any(
+            "`-nostdlib -static`" in item
+            and "no interpreter" in item
+            and "PT_TLS" in item
+            and "dynamic-TLS model" in item
+            and "helper call" in item
+            and "peer resolver and netdb exports" in item
+            for item in prerequisites
+        ),
+        "static-c-res-init must retain its closed static boundary",
+    )
+
+    headers = nonempty_strings(
+        artifact.get("x86_header_prerequisites"),
+        "static-c-res-init.x86_header_prerequisites",
+    )
+    require(
+        any(
+            "unconditional `int res_init(void)`" in item
+            and "strict, POSIX, X/Open, and GNU" in item
+            and "no-argument function-pointer type" in item
+            and "unmangled C++ linkage" in item
+            and '`extern "C"` guards' in item
+            for item in headers
+        ),
+        "static-c-res-init must retain its unconditional C/C++ header ABI",
+    )
+
+    evidence = artifact.get("native_evidence")
+    require(isinstance(evidence, list), "static-c-res-init needs evidence")
+    require(
+        {entry.get("command") for entry in evidence if isinstance(entry, Mapping)}
+        == {"./scripts/dev-x86_64.sh libc-res-init"},
+        "static-c-res-init must use the closed libc-res-init command",
+    )
+    scope = evidence[0].get("scope")
+    require(
+        isinstance(scope, str)
+        and all(
+            phrase in scope
+            for phrase in (
+                "Pinned-musl/project C/C++ header",
+                "true dependency-free x86 crabc-libc `-nostdlib -static` candidate",
+                "direct and function-pointer fixed zero returns",
+                "stale errno preservation",
+                "res_init.lo/AArch64 ownership",
+                "no interpreter/DT_NEEDED/unresolved symbol/PT_TLS/errno/dynamic-TLS model/allocator/helper-call/syscall",
+                "peer resolver and netdb extraction",
+                "`__res_state`/`_res`",
+                "`/etc/resolv.conf`",
+                "DNS",
+                "sockets",
+                "family completion",
+                "promotion",
+                "public x86 support",
+            )
+        ),
+        "static-c-res-init evidence must retain its bounded static closure",
+    )
+
+    exports = set(
+        static_c_abi_export_names(
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        )
+    )
+    require(
+        set(RES_INIT_SYMBOLS) <= exports,
+        "static-c-res-init must retain its selected export",
+    )
+    require(
+        {symbol for symbol in exports if symbol.startswith("res_")}
+        == set(RES_INIT_SYMBOLS),
+        "static-c-res-init must expose only res_init in the resolver namespace",
+    )
+
+    static_root = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+    ).read_text(encoding="utf-8")
+    require(
+        '#[path = "res_init.rs"]\nmod res_init;' in static_root,
+        "x86 static C ABI must compose the res_init leaf",
+    )
+    source = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "res_init.rs"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "Selected static Linux/x86-64 legacy resolver-initializer C ABI boundary",
+        "pinned musl 1.2.6 release commit",
+        "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+        "src/network/res_init.c::res_init",
+        "return 0;",
+        "System V AMD64 ABI",
+        'pub extern "C" fn res_init()',
+        "    0",
+    ):
+        require(snippet in source, f"res_init implementation omits {snippet}")
+    for forbidden in (
+        "raw_syscall::",
+        "errno::",
+        "static_tls::",
+        "crabc_core",
+        "crabc_mimalloc",
+    ):
+        require(forbidden not in source, f"res_init leaf widens into {forbidden}")
+
+    runner = (
+        ROOT / "compat" / "x86_64" / "run_libc_res_init.sh"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "run_musl_oracle.sh",
+        "run_res_init_header_abi.sh",
+        "res_init.lo",
+        "static_c_abi_exports.txt",
+        "-nostdlib -static",
+        "--no-undefined",
+        "archive does not define res_init",
+        "candidate exports an unselected resolver or netdb entry",
+        "res_init unexpectedly performs a call or syscall",
+    ):
+        require(snippet in runner, f"res_init runner omits {snippet}")
+
+    probe = (
+        ROOT / "compat" / "x86_64" / "libc_res_init_probe.c"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "#include <resolv.h>",
+        "typedef int (*res_init_signature)(void)",
+        "const res_init_signature function = res_init",
+        "errno = E2BIG",
+        "CRABC_RES_INIT_FREESTANDING",
+    ):
+        require(snippet in probe, f"res_init probe omits {snippet}")
+
+    header_c = (
+        ROOT / "compat" / "x86_64" / "res_init_header_abi_probe.c"
+    ).read_text(encoding="utf-8")
+    header_cxx = (
+        ROOT / "compat" / "x86_64" / "res_init_header_abi_probe.cpp"
+    ).read_text(encoding="utf-8")
+    for snippet in ("res_init declaration", "res_init_signature", "res_init_function"):
+        require(snippet in header_c, f"res_init C header probe omits {snippet}")
+    for snippet in ("C++ res_init declaration", "res_init_signature", "res_init_function"):
+        require(snippet in header_cxx, f"res_init C++ header probe omits {snippet}")
+
+    header_runner = (
+        ROOT / "compat" / "x86_64" / "run_res_init_header_abi.sh"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "res_init_header_abi_probe.c",
+        "res_init_header_abi_probe.cpp",
+        "Pinned musl 1.2.6",
+        "unconditional declaration",
+        "arpa/nameser.h",
+        "netinet/in.h",
+        "c11-strict",
+        "cxx17-gnu",
+        "retained a mangled res_init reference",
+    ):
+        require(snippet in header_runner, f"res_init header runner omits {snippet}")
+
+    resolv_header = (ROOT / "include" / "resolv.h").read_text(encoding="utf-8")
+    require(
+        "int res_init(void);" in resolv_header
+        and '#ifdef __cplusplus\nextern "C" {' in resolv_header
+        and '#ifdef __cplusplus\n}\n#endif' in resolv_header,
+        "installed resolv.h must retain the selected C/C++ ABI",
+    )
+
+    dispatcher = (ROOT / "scripts" / "dev-x86_64.sh").read_text(encoding="utf-8")
+    for snippet in (
+        "res-init-header-abi)",
+        "run_res_init_header_abi",
+        "libc-res-init)",
+        "run_libc_res_init_probe",
+    ):
+        require(snippet in dispatcher, f"res_init dispatcher omits {snippet}")
+
+
 def require_dn_skipname_artifact(family: Mapping[str, Any]) -> None:
     """Keep the dependency-free DNS wire-span codec out of resolver state."""
     artifacts = require_verified_artifacts(
@@ -28888,8 +29181,8 @@ def require_dn_skipname_artifact(family: Mapping[str, Any]) -> None:
         "static-c-dn-skipname must retain its selected export",
     )
     require(
-        not (exports & {"dn_expand", "ns_skiprr", "ns_name_uncompress", "res_init"}),
-        "static-c-dn-skipname must not add broader nameserver exports",
+        not (exports & {"dn_expand", "ns_skiprr", "ns_name_uncompress"}),
+        "static-c-dn-skipname must not add broader unselected nameserver exports",
     )
 
     static_root = (
@@ -29242,10 +29535,9 @@ def require_ns_get16_artifact(family: Mapping[str, Any]) -> None:
                 "ns_put32",
                 "ns_skiprr",
                 "ns_name_uncompress",
-                "res_init",
             }
         ),
-        "static-c-ns-get16 must not add broader nameserver exports",
+        "static-c-ns-get16 must not add broader unselected nameserver exports",
     )
 
     static_root = (
@@ -29601,10 +29893,9 @@ def require_ns_put16_artifact(family: Mapping[str, Any]) -> None:
                 "ns_put32",
                 "ns_skiprr",
                 "ns_name_uncompress",
-                "res_init",
             }
         ),
-        "static-c-ns-put16 must not add broader nameserver exports",
+        "static-c-ns-put16 must not add broader unselected nameserver exports",
     )
 
     static_root = (
@@ -43720,6 +44011,7 @@ def validate_ledger(
     require_posix_close_artifact(by_id["libc.c-abi-compat"])
     require_endhostent_artifact(by_id["libc.c-abi-compat"])
     require_ether_line_artifact(by_id["libc.c-abi-compat"])
+    require_res_init_artifact(by_id["libc.c-abi-compat"])
     require_qsort_artifact(by_id["libc.c-abi-compat"])
     require_bsearch_artifact(by_id["libc.c-abi-compat"])
     require_linear_search_artifact(by_id["libc.c-abi-compat"])
