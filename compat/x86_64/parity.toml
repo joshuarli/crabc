@@ -3058,6 +3058,64 @@ oracle = [
 ]
 
 [[family.verified_artifact]]
+id = "static-c-signalfd"
+description = "Private native x86 selected-static-archive signal-descriptor artifact inside planned `libc.posix-runtime`. One dependency-free `crabc-libc` archive exposes exactly `signalfd`; its freestanding project-header C fixture first runs through pinned musl 1.2.6 and then through the static candidate. The separate 16-row project-first/pinned-musl C/C++ header matrix proves the unconditional `sys/signalfd.h` declaration, unmangled C++ linkage, 128-byte align-8 `sigset_t`, and 128-byte align-8 `signalfd_siginfo` record. The static fixture proves the eight-byte kernel signal-set, direct Linux invalid-flag/null-mask errors, SFD_NONBLOCK/SFD_CLOEXEC creation, stale errno, empty nonblocking read, queued SIGUSR1/SIGUSR2 records, and flag acceptance ignored on descriptor update. It does not select signal-mask or disposition policy, generic process signaling, timer/readiness policy, a generic event loop, pthread cancellation, libc.so, CRT, dynamic TLS, loader, sysroot, family completion, promotion, or public x86 support."
+source_owners = [
+  "compat/upstreams.toml",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/signal_fd.rs",
+  "libc/src/c_abi/x86_64/errno.rs",
+  "libc/src/c_abi/x86_64/syscall.rs",
+  "libc/src/c_abi/x86_64/static_tls.rs",
+  "libc/src/c_abi/x86_64/signal_control.rs",
+  "libc/src/c_abi/x86_64/descriptor_control.rs",
+  "libc/src/c_abi/x86_64/descriptor_io.rs",
+  "include/features.h",
+  "include/errno.h",
+  "include/fcntl.h",
+  "include/signal.h",
+  "include/stddef.h",
+  "include/stdint.h",
+  "include/sys/signalfd.h",
+  "include/sys/syscall.h",
+  "include/sys/types.h",
+  "include/unistd.h",
+  "include/bits/alltypes.h",
+  "include/bits/syscall.h",
+  "compat/x86_64/signalfd_header_abi_probe.c",
+  "compat/x86_64/signalfd_header_abi_probe.cpp",
+  "compat/x86_64/run_signalfd_header_abi.sh",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/libc_signalfd_probe.c",
+  "compat/x86_64/libc_signalfd_start.S",
+  "compat/x86_64/run_libc_signalfd.sh",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "compat/x86_64/README.md",
+  "STATUS.md",
+  "x86-64.md",
+  "scripts/dev-x86_64.sh",
+  "scripts/check_structure.py",
+]
+x86_abi_prerequisites = [
+  "Linux/x86-64 signalfd4=289 takes descriptor, mask pointer, kernel mask size, and flags in rdi/rsi/rdx/r10. Raw -4095 through -1 alone becomes C -1 plus the calling initial-TLS errno.",
+  "The public x86 sigset_t is a 128-byte align-8 record and signalfd_siginfo is a 128-byte align-8 record with key offsets 0/48/72/88/96. The wrapper lends the mask pointer directly to Linux with its fixed eight-byte kernel input size, including null pointers, so kernel validation retains ordinary EFAULT behavior without copying or signal-mask policy.",
+  "Pinned musl 1.2.6 src/linux/signalfd.c maps the public wrapper to signalfd4 on x86-64. Its legacy signalfd fallback and post-create fcntl work are deliberately absent because Linux 5.10 supplies signalfd4.",
+  "Linux owns descriptor creation/update, validation, queueing, and reads. The fixture proves SFD_NONBLOCK/SFD_CLOEXEC, invalid creation flags, null-mask EFAULT, empty EAGAIN, queued SIGUSR1/SIGUSR2 records, and that flags are ignored on descriptor update without selecting signal-mask or disposition policy, generic process signaling, timer/readiness policy, or a generic event loop.",
+  "The final static candidate has a PT_TLS errno datum with direct initial-exec TPOFF access and no TLSGD/TLSLD/TLSDESC/GOTTPOFF/DTPMOD/DTPOFF model form or __tls_get_addr. Archive-owned Static Initial TLS v1 setup is fixture glue only and does not claim a CRT or general TLS lifecycle.",
+]
+x86_header_prerequisites = ["The project-first/pinned-musl eight-profile C11/C++17 sys/signalfd.h matrix proves SFD_NONBLOCK/SFD_CLOEXEC, exact signalfd declaration, 128-byte align-8 sigset_t and signalfd_siginfo layouts with key offsets, and unmangled C++ linkage across 16 tree/profile rows. The static fixture separately preprocesses project errno.h, fcntl.h, signal.h, stddef.h, stdint.h, sys/signalfd.h, sys/syscall.h, unistd.h, bits/alltypes.h, and bits/syscall.h. This is selected header/layout plus static linkage, not installed-header, signal/runtime family, or public-support completion."]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-signalfd", scope = "Pinned-musl 1.2.6 project-header C reference plus a true dependency-free x86 crabc-libc archive and `-nostdlib -static` candidate. The gate runs the 16-row signalfd header matrix; checks project-header provenance and exact crate-owned export closure separately from compiler-builtins; rejects interpreter/DT_NEEDED/unresolved symbols/dynamic TLS/unowned runtime, timer/readiness, pthread, allocator, auxv, and sysconf paths; proves direct initial-TLS errno plus emitted signalfd4=289 with r10 and the eight-byte kernel signal-set; and executes invalid creation flag/null-mask errors, SFD_NONBLOCK/SFD_CLOEXEC, stale-errno creation/update, empty EAGAIN, SIGUSR1/SIGUSR2 queue reads, and ignored update flags. It adds no signal-mask/disposition policy, generic process signaling, timer/readiness policy, generic event loop, dynamic libc, CRT, loader, sysroot, family completion, promotion, or public x86 support." }]
+oracle = [
+  { kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source mapping, declarations, and behavior oracle for src/linux/signalfd.c; its legacy fallback and post-create fcntl work remain unselected on the Linux 5.10 x86-64 boundary." },
+  { kind = "kernel-abi", source = "Linux 5.10 x86-64 ABI", role = "signalfd4=289 register placement, one-word kernel mask size, descriptor flags/update, queue-record, and raw errno contract." },
+  { kind = "elf-abi", source = "System V AMD64 psABI", role = "LP64 pointer calling ABI, r10 fourth-syscall-argument adaptation, and static initial-exec TLS fixture contract." },
+]
+
+[[family.verified_artifact]]
 id = "static-c-process-signal-execution"
 description = "Private native x86 selected-static-archive process-signal execution block. One dependency-free `crabc-libc` archive composes the existing simple action/set/mask/sigsuspend boundary with exactly `kill`, `killpg`, `raise`, `sigqueue`, `sigtimedwait`, `sigwaitinfo`, and `sigwait` into a freestanding C fixture after an equivalent pinned-musl execution. It preserves musl's one-word application-signal block/restore transaction around `raise` and `sigqueue`, exact queued `siginfo_t` sender/value initialization, stale errno on successful delivery/waits, `sigtimedwait` EINTR retry, and musl's `sigwait` `-1`/errno failure convention. A fixture-only raw clone/pipe/wait/exit route makes an interrupted wait followed by a queued wake deterministic; it is not a lifecycle API. The corrected baseline now uses this same pinned-musl sigwait result convention across the target contract. This artifact excludes `tgkill`, sigaltstack, signalfd, legacy signal APIs, pthread signal/cancellation policy, generic process lifecycle, allocator, libc.so, CRT, loader, sysroot, and public x86 support. It is one verified artifact within planned `libc.posix-runtime`, not process.signal, signal/header family, C-runtime, or platform completion."
 source_owners = [
@@ -4423,7 +4481,7 @@ oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ec
 
 [[family.verified_artifact]]
 id = "static-c-event-descriptors"
-description = "Private native x86 selected-static-archive event-descriptor block. Its dependency-free `crabc-libc` fixture resolves exactly `epoll_create`, `epoll_create1`, `epoll_ctl`, `epoll_wait`, `epoll_pwait`, `eventfd`, `eventfd_read`, `eventfd_write`, `inotify_init`, `inotify_init1`, `inotify_add_watch`, and `inotify_rm_watch` after an equivalent pinned-musl execution. The bounded lifecycle proves x86 packed epoll tokens and add/modify/delete readiness, eventfd ordinary/semaphore/nonblocking behavior, and an inotify create/remove/ignored sequence. It is not a general event or watcher policy: it does not select epoll_pwait2, timerfd, signalfd, fanotify, AIO, recursive/background watcher policy, pthread cancellation, libc.so, CRT, dynamic TLS, loader, sysroot, allocator, family completion, promotion, or public x86 support."
+description = "Private native x86 selected-static-archive event-descriptor block. Its dependency-free `crabc-libc` fixture resolves exactly `epoll_create`, `epoll_create1`, `epoll_ctl`, `epoll_wait`, `epoll_pwait`, `eventfd`, `eventfd_read`, `eventfd_write`, `inotify_init`, `inotify_init1`, `inotify_add_watch`, and `inotify_rm_watch` after an equivalent pinned-musl execution. The bounded lifecycle proves x86 packed epoll tokens and add/modify/delete readiness, eventfd ordinary/semaphore/nonblocking behavior, and an inotify create/remove/ignored sequence. It is not a general event or watcher policy: it does not select epoll_pwait2, fanotify, AIO, recursive/background watcher policy, pthread cancellation, libc.so, CRT, dynamic TLS, loader, sysroot, allocator, family completion, promotion, or public x86 support; timerfd and signalfd remain separate static archive artifacts."
 source_owners = [
   "compat/upstreams.toml",
   "libc/Cargo.toml",

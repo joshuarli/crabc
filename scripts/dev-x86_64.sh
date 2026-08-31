@@ -93,6 +93,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   random-entropy-header-abi  compile the staged x86 C/C++ random-source declarations
   time-header-abi  compile the staged x86 C/C++ time header layouts
   timerfd-header-abi  verify the selected x86 sys/timerfd.h C/C++ ABI profiles
+  signalfd-header-abi  verify the selected x86 sys/signalfd.h C/C++ ABI profiles
   poll-header-abi  compile the staged x86 C/C++ poll header layouts
   select-header-abi  compile the staged x86 C/C++ sys/select header layouts
   fcntl-header-abi compile the staged x86 C/C++ fcntl header layouts
@@ -121,6 +122,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   sysv-message-shared-memory-header-abi  verify staged x86 SysV message/shared-memory C/C++ declarations/layouts
   libc-event-descriptors  run the static x86 crabc-libc epoll/eventfd/inotify slice
   libc-timerfd  run the static x86 crabc-libc timer-descriptor slice
+  libc-signalfd  run the static x86 crabc-libc signal-descriptor slice
   libc-extended-attributes  run the static x86 crabc-libc extended-attribute slice
   libc-pathname-lifecycle  run the static x86 crabc-libc pathname-lifecycle slice
   libc-directory-streams  run the static x86 crabc-libc directory-stream slice
@@ -389,6 +391,11 @@ periodic/disarm behavior, and the eight-byte expiration read through a bounded
 descriptor fixture. It is not a POSIX process timer, signal delivery policy,
 callback/registry runtime, generic event loop, dynamic libc, or application
 startup.
+`libc-signalfd` is a separate one-entry signal-descriptor boundary. It proves
+direct Linux `signalfd4` creation/update, the one-word kernel signal-set size,
+nonblocking/close-on-exec flags, and bounded queued-signal reads. It does not
+select signal-mask/disposition policy, process signaling, timer/readiness
+policy, a generic event loop, dynamic libc, or application startup.
 `libc-static-tls-v1` passes a real
 final static executable's untouched entry stack to a hidden libc owner, which
 validates and retains its one PT_TLS template, installs the main Variant-II
@@ -2010,6 +2017,10 @@ run_libc_timerfd_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_timerfd.sh
 }
 
+run_libc_signalfd_probe() {
+    run_in_container bash /workspace/compat/x86_64/run_libc_signalfd.sh
+}
+
 run_libc_extended_attributes() {
     run_in_container bash /workspace/compat/x86_64/run_libc_extended_attributes.sh
 }
@@ -2060,6 +2071,10 @@ run_time_header_abi() {
 
 run_timerfd_header_abi() {
     run_in_container bash /workspace/compat/x86_64/run_timerfd_header_abi.sh
+}
+
+run_signalfd_header_abi() {
+    run_in_container bash /workspace/compat/x86_64/run_signalfd_header_abi.sh
 }
 
 run_poll_header_abi() {
@@ -3181,8 +3196,8 @@ command="$1"
 shift
 
 case "$command" in
-    timerfd-header-abi) ;;
-    libc-timerfd) ;;
+    timerfd-header-abi|signalfd-header-abi) ;;
+    libc-timerfd|libc-signalfd) ;;
     getpass-header-abi|libc-getpass) ;;
     image|musl-oracle|header-abi-reference|public-header-surface|header-abi-project|math-complex-header-abi|sys-reg-header-abi|types-header-abi|stat-header-abi|utime-header-abi|pthread-c11-header-abi|pthread-cancellation-header-abi|stdlib-header-abi|stdio-standard-header-abi|time-header-abi|poll-header-abi|select-header-abi|fcntl-header-abi|descriptor-advice-header-abi|filesystem-capacity-header-abi|flock-header-abi|sendfile-header-abi|ioctl-header-abi|unistd-header-abi|system-header-abi|syscall-header-abi|signal-header-abi|termios-header-abi|mman-header-abi|resource-header-abi|socket-header-abi|socket-messages-header-abi|random-entropy-header-abi|mm-abi-reference|mapping-reference|memory-vm-reference|pty-basic-reference|terminal-reference|mlock-reference|msync-reference|mincore-reference|fs-advice-reference|memfd-reference|ftruncate-reference|statfs-reference|timestamp-reference|path-lifecycle-reference|namespace-reference|path-core-reference|xattr-reference|directory-reference|temporary-object-reference|statx-reference|cwd-canonicalize-reference|root-change-reference|mount-reference|thread-kill-reference|ipc-reference|shm-reference|inotify-reference|socket-transport-reference|interface-device-reference|resolver-transport-reference|resolver-facade-reference|netdb-reference|users-databases-reference|posix-fallocate-reference|fallocate-reference|file-position-reference|sync-reference|syncfs-reference|sync-file-range-reference|rand-reference|time-abi-reference|time-observation-reference|calendar-time-reference|advanced-time-reference|relative-sleep-reference|clock-nanosleep-reference|getitimer-reference|setitimer-reference|timerfd-reference|pselect-reference|poll-reference|ppoll-reference|epoll-reference|process-identity-reference|child-ownership-reference|getgroups-reference|process-session-reference|pidfd-open-reference|fcntl-getlk-reference|fcntl-status-reference|flock-reference|sendfile-reference|copy-file-range-reference|scheduler-priority-bounds-reference|rr-interval-reference|sched-affinity-reference|sched-affinity-set-reference|priority-reference|setpriority-reference|rlimit-reference|rlimit-targeted-reference|setrlimit-reference|umask-reference|rusage-reference|times-reference|fstat-reference|statat-reference|getcwd-reference|readlinkat-reference|access-reference|system-reference|thread-reference|thread-credentials-reference|fs-credentials-reference|core|facade|facade-record-owning|libc-syscall|libc-errno-tls|libc-stat-compat|libc-credentials|libc-bootstrap-primitives|libc-signal-control|libc-signal-execution|libc-static-tls-v1|libc-crt-static-tls|libc-pthread-create-join-tls|libc-c11-lifecycle|libc-c11-plain-sync|libc-pthread-c11-once|libc-pthread-c11-tsd|libc-pthread-tls-aggregate|libc-pthread-cancel-deferred|libc-pthread-atfork|libc-thrd-sleep|libc-pthread-mutex-normal|libc-pthread-rwlock|libc-pthread-cond-private|libc-termios-control|libc-process-context|libc-environment|libc-descriptor-io|libc-descriptor-lifecycle|libc-timestamp-updates|libc-process-resources|libc-socket-transport|libc-socket-messages|libc-thread-pointer|libc-foundation|libc-fenv|libc-math-complex|libc-elementary-sqrt-fenv|libc-math-x87-extended|libc-memory|libc-setjmp|libc-atomic|libc-clone-raw|libc-signal-altstack|libc-signal-foundation|ldso-relocation|ldso-image|ldso-initial-graph|ldso-initial-tls|ldso-initial-exec-tls|ldso-owned-crt-handoff|ldso-fixed-graph-introspection|ldso-dynamic-admission) ;;
     math-elementary-long-double-header-abi|libc-math-elementary-long-double) ;;
@@ -3530,6 +3545,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "timerfd-header-abi takes no arguments"
         ensure_image
         run_timerfd_header_abi
+        ;;
+    signalfd-header-abi)
+        [ "$#" -eq 0 ] || fail "signalfd-header-abi takes no arguments"
+        ensure_image
+        run_signalfd_header_abi
         ;;
     poll-header-abi)
         [ "$#" -eq 0 ] || fail "poll-header-abi takes no arguments"
@@ -4649,6 +4669,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "libc-timerfd takes no arguments"
         ensure_image
         run_libc_timerfd_probe
+        ;;
+    libc-signalfd)
+        [ "$#" -eq 0 ] || fail "libc-signalfd takes no arguments"
+        ensure_image
+        run_libc_signalfd_probe
         ;;
     libc-extended-attributes)
         [ "$#" -eq 0 ] || fail "libc-extended-attributes takes no arguments"

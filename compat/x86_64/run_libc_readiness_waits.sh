@@ -133,7 +133,7 @@ for symbol in __errno_location close read write pipe sigaction sigemptyset \
 done
 for unselected in splice vmsplice tee copy_file_range _Fork \
     vfork clone execve tgkill alarm sleep usleep \
-    pthread_sigmask signalfd syscall malloc free calloc realloc; do
+    pthread_sigmask syscall malloc free calloc realloc; do
     if grep -Eq "[[:space:]][TW][[:space:]]${unselected}$" "$archive_symbols"; then
         fail "archive accidentally exports unselected ${unselected}"
     fi
@@ -163,6 +163,9 @@ for symbol in __errno_location close read write pipe sigaction sigemptyset \
     grep -Eq "[[:space:]]${symbol}$" "$candidate_symbols" \
         || fail "candidate does not define ${symbol}"
 done
+if grep -Eq '[[:space:]]signalfd$' "$candidate_symbols"; then
+    fail "readiness/signal-waits candidate unexpectedly pulls separately selected signalfd"
+fi
 unresolved_symbols="$(awk '$7 == "UND" && NF >= 8 { print }' "$candidate_symbols")"
 if [ -n "$unresolved_symbols" ]; then
     printf '%s\n' "$unresolved_symbols" >&2

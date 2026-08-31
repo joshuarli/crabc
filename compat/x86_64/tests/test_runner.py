@@ -4392,6 +4392,140 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn("timerfd-header-abi)", dispatcher)
         self.assertIn("libc-timerfd)", dispatcher)
 
+    def test_libc_static_c_abi_signalfd_artifact_stays_bounded(self) -> None:
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        signalfd = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "signal_fd.rs"
+        ).read_text(encoding="utf-8")
+        header_c_path = ROOT / "compat" / "x86_64" / "signalfd_header_abi_probe.c"
+        header_cxx_path = (
+            ROOT / "compat" / "x86_64" / "signalfd_header_abi_probe.cpp"
+        )
+        header_runner_path = (
+            ROOT / "compat" / "x86_64" / "run_signalfd_header_abi.sh"
+        )
+        probe_path = ROOT / "compat" / "x86_64" / "libc_signalfd_probe.c"
+        start_path = ROOT / "compat" / "x86_64" / "libc_signalfd_start.S"
+        artifact_runner_path = ROOT / "compat" / "x86_64" / "run_libc_signalfd.sh"
+        for path in (
+            header_c_path,
+            header_cxx_path,
+            header_runner_path,
+            probe_path,
+            start_path,
+            artifact_runner_path,
+        ):
+            self.assertTrue(path.is_file(), f"missing signalfd input: {path}")
+        self.assertTrue(header_runner_path.stat().st_mode & 0o111)
+        self.assertTrue(artifact_runner_path.stat().st_mode & 0o111)
+
+        header_c = header_c_path.read_text(encoding="utf-8")
+        header_cxx = header_cxx_path.read_text(encoding="utf-8")
+        header_runner = header_runner_path.read_text(encoding="utf-8")
+        probe = probe_path.read_text(encoding="utf-8")
+        start = start_path.read_text(encoding="utf-8")
+        artifact_runner = artifact_runner_path.read_text(encoding="utf-8")
+        signalfd_header = (ROOT / "include" / "sys" / "signalfd.h").read_text(
+            encoding="utf-8"
+        )
+        static_exports = {
+            line
+            for line in (
+                ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+            ).read_text(encoding="utf-8").splitlines()
+            if line and not line.startswith("#")
+        }
+        parity_ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        dispatcher = RUNNER.read_text(encoding="utf-8")
+
+        self.assertIn('#[path = "signal_fd.rs"]', static_root)
+        for required in (
+            "Selected static Linux/x86-64 signalfd C boundary",
+            "src/linux/signalfd.c",
+            "KERNEL_SIGSET_SIZE",
+            "raw_syscall::SYS_SIGNALFD4",
+            "raw_syscall::syscall4(",
+            'pub unsafe extern "C" fn signalfd',
+            "c_status",
+        ):
+            self.assertIn(required, signalfd)
+        for forbidden in (
+            "sigprocmask(",
+            "sigaction(",
+            "timerfd_",
+            "epoll_",
+            "eventfd",
+            "pthread_",
+        ):
+            self.assertNotIn(forbidden, signalfd)
+
+        for header_source in (header_c, header_cxx):
+            for required in (
+                "sys/signalfd.h",
+                "SFD_NONBLOCK",
+                "SFD_CLOEXEC",
+                "signalfd_siginfo",
+                "signalfd",
+                "ssi_signo",
+                "ssi_arch",
+            ):
+                self.assertIn(required, header_source)
+        for required in ("SFD_CLOEXEC", "SFD_NONBLOCK", "signalfd", "ssi_arch"):
+            self.assertIn(required, signalfd_header)
+        for required in (
+            "c11-strict",
+            "c11-posix-2008",
+            "cxx17-strict",
+            '"$rows" -eq 16',
+            "-nostdinc",
+            "-nostdinc++",
+            "unmangled ${symbol}",
+        ):
+            self.assertIn(required, header_runner)
+
+        for required in (
+            "sizeof(struct signalfd_siginfo) == 128",
+            "SYS_signalfd4 == 289",
+            "test_create_read_and_update",
+            "SFD_NONBLOCK | SFD_CLOEXEC",
+            "CRABC_SIGNALFD_FREESTANDING",
+        ):
+            self.assertIn(required, probe)
+        for required in (
+            "call __crabc_x86_static_tls_bootstrap",
+            "crabc_x86_64_signalfd_probe",
+            "exit_group",
+        ):
+            self.assertIn(required, start)
+        self.assertNotIn("arch_prctl", start)
+        for required in (
+            "run_musl_oracle.sh",
+            "run_signalfd_header_abi.sh",
+            "static_c_abi_exports.txt",
+            "-nostdlib -static",
+            "-Wl,-e,_start",
+            "R_X86_64_TPOFF",
+            "assert_named_syscall signalfd 121",
+            "signalfd lacks fourth-argument r10 path",
+            "candidate unexpectedly pulls",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn("--whole-archive", artifact_runner)
+        self.assertIn("signalfd", static_exports)
+        self.assertNotIn("signalfd4", static_exports)
+        self.assertIn('id = "static-c-signalfd"', parity_ledger)
+        self.assertIn(
+            'command = "./scripts/dev-x86_64.sh libc-signalfd"', parity_ledger
+        )
+        self.assertIn("run_signalfd_header_abi()", dispatcher)
+        self.assertIn("run_libc_signalfd_probe()", dispatcher)
+        self.assertIn("signalfd-header-abi)", dispatcher)
+        self.assertIn("libc-signalfd)", dispatcher)
+
     def test_libc_static_c_abi_pthread_create_exit_join_tls_artifact_stays_bounded(
         self,
     ) -> None:
@@ -14777,7 +14911,6 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             static_export_names
             & {
                 "epoll_pwait2",
-                "signalfd",
                 "signalfd4",
                 "fanotify_init",
                 "fanotify_mark",

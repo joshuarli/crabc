@@ -11,7 +11,7 @@
 //! block with binary80 preserved end to end, plus deliberately narrow simple
 //! signal action/mask, bounded process-signal execution, and fixed-minimum
 //! alternate signal-stack behavior, plus direct timer-descriptor
-//! creation/query/control, one default-attribute
+//! creation/query/control and direct signal-descriptor creation/update, one default-attribute
 //! create/explicit-exit/join/detach worker and its typed C11
 //! `thrd_create`/`thrd_exit`/`thrd_join`/`thrd_detach`/`thrd_sleep` sibling, a
 //! direct C11 `thrd_yield` leaf, a
@@ -341,6 +341,8 @@ mod readiness_waits;
 mod event_descriptors;
 #[path = "timer_fd.rs"]
 mod timer_fd;
+#[path = "signal_fd.rs"]
+mod signal_fd;
 #[path = "pathname_lifecycle.rs"]
 mod pathname_lifecycle;
 #[path = "directory_streams.rs"]

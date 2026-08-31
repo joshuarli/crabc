@@ -1283,7 +1283,6 @@ EVENT_DESCRIPTOR_UNSELECTED_SYMBOLS = (
     "fanotify_init",
     "fanotify_mark",
     "lio_listio",
-    "signalfd",
     "signalfd4",
 )
 
@@ -13006,6 +13005,199 @@ def require_timerfd_artifact(family: Mapping[str, Any]) -> None:
         {entry["command"] for entry in evidence}
         == {"./scripts/dev-x86_64.sh libc-timerfd"},
         "static-c-timerfd must use the closed libc-timerfd command",
+    )
+
+
+def require_signalfd_artifact(family: Mapping[str, Any]) -> None:
+    """Keep one direct signal descriptor separate from signal/runtime policy."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.posix-runtime].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [entry for entry in artifacts if entry.get("id") == "static-c-signalfd"]
+    require(
+        len(matching) == 1,
+        "libc.posix-runtime must contain exactly one static-c-signalfd artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-signalfd must not promote libc.posix-runtime",
+    )
+    artifact = matching[0]
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for phrase in (
+        "signal-descriptor artifact",
+        "planned `libc.posix-runtime`",
+        "`signalfd`",
+        "16-row project-first/pinned-musl C/C++ header matrix",
+        "128-byte align-8 `signalfd_siginfo`",
+        "eight-byte kernel signal-set",
+        "SFD_NONBLOCK/SFD_CLOEXEC",
+        "signal-mask or disposition policy",
+        "timer/readiness policy",
+        "family completion, promotion, or public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"static-c-signalfd description omits {phrase}",
+        )
+    owners = set(
+        nonempty_strings(
+            artifact["source_owners"], "static-c-signalfd.source_owners"
+        )
+    )
+    for owner in (
+        "compat/upstreams.toml",
+        "libc/Cargo.toml",
+        "libc/src/lib.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/signal_fd.rs",
+        "libc/src/c_abi/x86_64/errno.rs",
+        "libc/src/c_abi/x86_64/syscall.rs",
+        "libc/src/c_abi/x86_64/static_tls.rs",
+        "libc/src/c_abi/x86_64/signal_control.rs",
+        "libc/src/c_abi/x86_64/descriptor_control.rs",
+        "libc/src/c_abi/x86_64/descriptor_io.rs",
+        "include/errno.h",
+        "include/fcntl.h",
+        "include/signal.h",
+        "include/stddef.h",
+        "include/stdint.h",
+        "include/sys/signalfd.h",
+        "include/sys/syscall.h",
+        "include/unistd.h",
+        "include/bits/alltypes.h",
+        "include/bits/syscall.h",
+        "compat/x86_64/signalfd_header_abi_probe.c",
+        "compat/x86_64/signalfd_header_abi_probe.cpp",
+        "compat/x86_64/run_signalfd_header_abi.sh",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/libc_signalfd_probe.c",
+        "compat/x86_64/libc_signalfd_start.S",
+        "compat/x86_64/run_libc_signalfd.sh",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "scripts/dev-x86_64.sh",
+        "scripts/check_structure.py",
+    ):
+        require(owner in owners, f"static-c-signalfd source owners omit {owner}")
+    prerequisites = nonempty_strings(
+        artifact["x86_abi_prerequisites"],
+        "static-c-signalfd.x86_abi_prerequisites",
+    )
+    require(
+        any(
+            "signalfd4=289" in item
+            and "rdi/rsi/rdx/r10" in item
+            and "-4095 through -1" in item
+            for item in prerequisites
+        ),
+        "static-c-signalfd must record its x86 syscall ABI",
+    )
+    require(
+        any(
+            "sigset_t" in item
+            and "128-byte align-8" in item
+            and "signalfd_siginfo" in item
+            and "offsets 0/48/72/88/96" in item
+            and "ordinary EFAULT" in item
+            for item in prerequisites
+        ),
+        "static-c-signalfd must record its public signal-set and info ABI",
+    )
+    require(
+        any(
+            "src/linux/signalfd.c" in item
+            and "Linux 5.10" in item
+            and "legacy signalfd fallback" in item
+            for item in prerequisites
+        ),
+        "static-c-signalfd must retain its pinned-musl and Linux-floor boundary",
+    )
+    require(
+        any(
+            "SFD_NONBLOCK/SFD_CLOEXEC" in item
+            and "ignored on descriptor update" in item
+            and "SIGUSR1/SIGUSR2" in item
+            and "signal-mask or disposition policy" in item
+            for item in prerequisites
+        ),
+        "static-c-signalfd must keep its descriptor-only behavior boundary",
+    )
+    require(
+        any(
+            "PT_TLS errno datum" in item
+            and "initial-exec TPOFF" in item
+            and "__tls_get_addr" in item
+            for item in prerequisites
+        ),
+        "static-c-signalfd must record its static TLS boundary",
+    )
+    headers = nonempty_strings(
+        artifact["x86_header_prerequisites"],
+        "static-c-signalfd.x86_header_prerequisites",
+    )
+    require(
+        any(
+            "eight-profile C11/C++17" in item
+            and "16 tree/profile rows" in item
+            and "sys/signalfd.h" in item
+            and "unmangled C++ linkage" in item
+            for item in headers
+        ),
+        "static-c-signalfd must retain its strict C/C++ header matrix",
+    )
+    static_exports = set(
+        static_c_abi_export_names(
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        )
+    )
+    require(
+        "signalfd" in static_exports and "signalfd4" not in static_exports,
+        "static-c-signalfd must expose only the public signalfd spelling",
+    )
+    oracle = artifact["oracle"]
+    assert isinstance(oracle, list)
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "c-posix"
+            and isinstance(entry.get("role"), str)
+            and "src/linux/signalfd.c" in entry["role"]
+            and "legacy fallback" in entry["role"]
+            for entry in oracle
+        ),
+        "static-c-signalfd must retain its pinned-musl signalfd source mapping",
+    )
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-signalfd"},
+        "static-c-signalfd must use the closed libc-signalfd command",
+    )
+    scope = evidence[0].get("scope")
+    require(
+        isinstance(scope, str)
+        and all(
+            phrase in scope
+            for phrase in (
+                "16-row signalfd header matrix",
+                "signalfd4=289",
+                "r10",
+                "eight-byte kernel signal-set",
+                "SFD_NONBLOCK/SFD_CLOEXEC",
+                "SIGUSR1/SIGUSR2",
+                "ignored update flags",
+                "signal-mask/disposition policy",
+                "timer/readiness policy",
+                "public x86 support",
+            )
+        ),
+        "static-c-signalfd evidence must retain its exact static signal-descriptor regression",
     )
 
 
@@ -25088,6 +25280,7 @@ def validate_ledger(
     require_signal_altstack_artifact(by_id["libc.posix-runtime"])
     require_signal_execution_artifact(by_id["libc.posix-runtime"])
     require_timerfd_artifact(by_id["libc.posix-runtime"])
+    require_signalfd_artifact(by_id["libc.posix-runtime"])
     require_clock_nanosleep_artifact(by_id["libc.posix-runtime"])
     require_nanosleep_artifact(by_id["libc.posix-runtime"])
     require_descriptor_entry_artifact(by_id["libc.posix-runtime"])

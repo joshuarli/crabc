@@ -123,8 +123,7 @@ fi
 # the named delivery, stack, and wait exports in this shared archive; the
 # remaining signal APIs stay unselected here.
 for unselected in syscall malloc free calloc realloc tgkill \
-    pthread_sigmask \
-    signalfd; do
+    pthread_sigmask; do
     if grep -Eq "[[:space:]][TW][[:space:]]${unselected}$" "$archive_symbols"; then
         fail "archive accidentally exports unselected ${unselected}"
     fi
@@ -176,6 +175,9 @@ grep -Eq 'GLOBAL +HIDDEN +.*crabc_x86_64_signal_restorer$' "$candidate_symbols" 
     || fail "candidate restorer is not hidden from a public dynamic surface"
 if grep -Eq '[[:space:]]crabc_x86_64_signal_action_pack$' "$candidate_symbols"; then
     fail "candidate retains the source-only signal packing bridge"
+fi
+if grep -Eq '[[:space:]]signalfd$' "$candidate_symbols"; then
+    fail "signal-control candidate unexpectedly pulls separately selected signalfd"
 fi
 unresolved_symbols="$(awk '$7 == "UND" && NF >= 8 { print }' "$candidate_symbols")"
 if [ -n "$unresolved_symbols" ]; then

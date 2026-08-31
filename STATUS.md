@@ -995,6 +995,20 @@ POSIX process timers, signal policy, callbacks/timer registry, a generic event
 loop/readiness policy, pthread cancellation, libc.so, CRT, loader, sysroot,
 family/platform parity, promotion, or public x86 support.
 
+`./scripts/dev-x86_64.sh libc-signalfd` is a separate private
+`static-c-signalfd` artifact inside planned `libc.posix-runtime`. Its 16-row
+pinned-musl/project `<sys/signalfd.h>` C/C++ matrix proves the public
+declaration, unmangled C++ spelling, 128-byte align-8 `sigset_t`, and 128-byte
+align-8 `signalfd_siginfo` layout. Its pinned-musl/freestanding-static C proof
+exposes exactly `signalfd`; proves Linux `signalfd4=289`, the eight-byte kernel
+signal-set argument in `rdx`, initial-TLS errno, invalid creation-flag/null-mask
+errors, `SFD_NONBLOCK`/`SFD_CLOEXEC`, stale errno, empty `EAGAIN`, queued
+`SIGUSR1`/`SIGUSR2` records, and flags ignored while updating an existing
+descriptor. It does not select signal-mask/disposition policy, generic process
+signaling, timer/readiness policy, a general event loop, pthread cancellation,
+libc.so, CRT, loader, sysroot, family/platform parity, promotion, or public x86
+support.
+
 `./scripts/dev-x86_64.sh libc-ioctl` is a private
 `static-c-generic-ioctl` artifact inside planned `libc.posix-runtime`. It
 proves the direct signed `int ioctl(int, int, ...)` C boundary through pinned
@@ -1069,9 +1083,10 @@ epoll record, the `epoll_ctl` fourth argument in `r10`, and the `epoll_pwait`
 kernel sigset size, plus bounded eventfd/inotify lifecycles. This direct static
 leaf intentionally omits pthread cancellation and musl's pre-Linux-5.10
 `ENOSYS` fallbacks. It is a private non-promoting artifact, not
-event-descriptor-family closure: `epoll_pwait2`, timerfd, signalfd, fanotify,
-AIO, watcher policy, libc.so, startup, allocator, loader, sysroot, family or
-platform parity, and public x86 support remain unselected.
+event-descriptor-family closure: `epoll_pwait2`, fanotify, AIO, watcher policy,
+libc.so, startup, allocator, loader, sysroot, family or platform parity, and
+public x86 support remain unselected. The separately selected timerfd and
+signalfd archive leaves are not part of this event-descriptor candidate.
 
 `./scripts/dev-x86_64.sh pathname-lifecycle-header-abi` adds an artifact-local
 eight-profile C11/C++17 project-header/pinned-musl matrix for `fcntl.h`,

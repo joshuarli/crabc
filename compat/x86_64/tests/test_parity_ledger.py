@@ -50,7 +50,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 37)
-        self.assertEqual(report["verified_artifact_count"], 138)
+        self.assertEqual(report["verified_artifact_count"], 139)
         self.assertEqual(report["header_layout_probe_count"], 46)
         self.assertEqual(report["public_header_inventory_count"], 183)
         self.assertEqual(report["header_foundation_header_count"], 191)
@@ -4595,7 +4595,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             "does not select libc.so", credentials["native_evidence"][0]["scope"]
         )
         posix_artifacts = posix_runtime["verified_artifact"]
-        assert isinstance(posix_artifacts, list) and len(posix_artifacts) == 61
+        assert isinstance(posix_artifacts, list) and len(posix_artifacts) == 62
         artifacts_by_id = {
             artifact["id"]: artifact
             for artifact in posix_artifacts
@@ -11166,6 +11166,85 @@ class X86ParityLedgerTests(unittest.TestCase):
         with self.assertRaisesRegex(ledger.LedgerError, "closed libc-timerfd command"):
             ledger.validate_ledger(data)
 
+    def test_signalfd_artifact_keeps_its_closed_static_contract(self) -> None:
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-signalfd"
+        )
+        self.assertNotIn("capabilities", artifact)
+        for owner in (
+            "libc/src/c_abi/x86_64/signal_fd.rs",
+            "include/sys/signalfd.h",
+            "compat/x86_64/signalfd_header_abi_probe.c",
+            "compat/x86_64/signalfd_header_abi_probe.cpp",
+            "compat/x86_64/run_signalfd_header_abi.sh",
+            "compat/x86_64/libc_signalfd_probe.c",
+            "compat/x86_64/libc_signalfd_start.S",
+            "compat/x86_64/run_libc_signalfd.sh",
+        ):
+            self.assertIn(owner, artifact["source_owners"])
+        self.assertEqual(
+            {evidence["command"] for evidence in artifact["native_evidence"]},
+            {"./scripts/dev-x86_64.sh libc-signalfd"},
+        )
+        for phrase in (
+            "signal-descriptor artifact",
+            "planned `libc.posix-runtime`",
+            "`signalfd`",
+            "128-byte align-8 `signalfd_siginfo`",
+            "SFD_NONBLOCK/SFD_CLOEXEC",
+            "signal-mask or disposition policy",
+            "timer/readiness policy",
+            "family completion, promotion, or public x86 support",
+        ):
+            self.assertIn(phrase, artifact["description"])
+        prerequisites = artifact["x86_abi_prerequisites"]
+        self.assertTrue(
+            any(
+                "signalfd4=289" in prerequisite
+                and "rdi/rsi/rdx/r10" in prerequisite
+                for prerequisite in prerequisites
+            )
+        )
+        self.assertTrue(
+            any(
+                "src/linux/signalfd.c" in prerequisite and "Linux 5.10" in prerequisite
+                for prerequisite in prerequisites
+            )
+        )
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-signalfd"
+        )
+        prerequisites = artifact["x86_abi_prerequisites"]
+        assert isinstance(prerequisites, list) and isinstance(prerequisites[0], str)
+        prerequisites[0] = prerequisites[0].replace("signalfd4=289", "signalfd4=288")
+        with self.assertRaisesRegex(ledger.LedgerError, "x86 syscall ABI"):
+            ledger.validate_ledger(data)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-signalfd"
+        )
+        evidence = artifact["native_evidence"]
+        assert isinstance(evidence, list) and isinstance(evidence[0], dict)
+        evidence[0]["command"] = "./scripts/dev-x86_64.sh signal-reference"
+        with self.assertRaisesRegex(ledger.LedgerError, "closed libc-signalfd command"):
+            ledger.validate_ledger(data)
+
     def test_signal_execution_artifact_keeps_its_closed_static_contract(self) -> None:
         data = self.data()
         artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
@@ -12762,7 +12841,6 @@ class X86ParityLedgerTests(unittest.TestCase):
             self.assertIn(symbol, static_exports)
         for symbol in (
             "epoll_pwait2",
-            "signalfd",
             "signalfd4",
             "fanotify_init",
             "fanotify_mark",

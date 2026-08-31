@@ -410,6 +410,7 @@ pub(crate) const SYS_TIMERFD_CREATE: i64 = 283;
 pub(crate) const SYS_TIMERFD_SETTIME: i64 = 286;
 pub(crate) const SYS_TIMERFD_GETTIME: i64 = 287;
 pub(crate) const SYS_ACCEPT4: i64 = 288;
+pub(crate) const SYS_SIGNALFD4: i64 = 289;
 pub(crate) const SYS_EVENTFD2: i64 = 290;
 pub(crate) const SYS_EPOLL_CREATE1: i64 = 291;
 pub(crate) const SYS_OPENAT: i64 = 257;

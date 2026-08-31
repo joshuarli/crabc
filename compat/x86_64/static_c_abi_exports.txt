@@ -653,6 +653,7 @@ sigfillset
 sigismember
 siglongjmp
 signal
+signalfd
 signgam
 significand
 significandf

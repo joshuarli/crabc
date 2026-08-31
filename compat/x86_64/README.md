@@ -252,6 +252,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh random-entropy-header-abi
 ./scripts/dev-x86_64.sh time-header-abi
 ./scripts/dev-x86_64.sh timerfd-header-abi
+./scripts/dev-x86_64.sh signalfd-header-abi
 ./scripts/dev-x86_64.sh poll-header-abi
 ./scripts/dev-x86_64.sh select-header-abi
 ./scripts/dev-x86_64.sh fcntl-header-abi
@@ -367,6 +368,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-signal-execution
 ./scripts/dev-x86_64.sh libc-signal-altstack
 ./scripts/dev-x86_64.sh libc-timerfd
+./scripts/dev-x86_64.sh libc-signalfd
 ./scripts/dev-x86_64.sh libc-static-tls-v1
 ./scripts/dev-x86_64.sh libc-crt-static-tls
 ./scripts/dev-x86_64.sh libc-crt1-static-tls
@@ -1072,6 +1074,14 @@ declarations and flag values, preserves strict C/C++'s forward-declared
 and its interval/value offsets, and retains unmangled C++ linkage across 16
 tree/profile rows. It is timerfd-artifact header evidence, not installed-header,
 time/signal family, runtime, promotion, or public-support completion.
+
+`signalfd-header-abi` is the paired eight-profile C11/C++17 matrix over project
+and pinned-musl `<sys/signalfd.h>`. It proves the unconditional `signalfd`
+declaration, `SFD_NONBLOCK`/`SFD_CLOEXEC`, 128-byte align-8 `sigset_t`, the
+128-byte align-8 `signalfd_siginfo` record and key offsets, and unmangled C++
+linkage across 16 tree/profile rows. It is signalfd-artifact header evidence,
+not installed-header, signal/runtime family, promotion, or public-support
+completion.
 
 `poll-header-abi` compiles project and pinned-musl C/C++ `<poll.h>`
 declarations, including `nfds_t`, `pollfd`, and the x86 extension values. It
@@ -2344,6 +2354,19 @@ event-loop, pthread, allocator, and dynamic-runtime paths. This is not C
 time/signal/event family completion, AArch64 parity, promotion, or public x86
 support.
 
+`libc-signalfd` is a separate `static-c-signalfd` `verified_artifact` within
+planned `libc.posix-runtime`. Its project-header C body runs first through
+pinned musl 1.2.6 and then through a true `-nostdlib -static` candidate. It
+selects exactly `signalfd`, maps directly to Linux `signalfd4=289`, supplies
+the fixed eight-byte kernel signal-set size, and leaves the public 128-byte
+`sigset_t` pointer borrowed. It proves invalid creation flags and null-mask
+`EFAULT`, nonblocking/close-on-exec creation, stale errno, empty-read `EAGAIN`,
+queued `SIGUSR1`/`SIGUSR2` records, and Linux's ignored flags on descriptor
+update. The runner rejects timer/readiness, pthread, allocator, and dynamic
+runtime paths. This is not signal-mask/disposition policy, generic process
+signaling, a generic event loop, C signal/event family completion, AArch64
+parity, promotion, or public x86 support.
+
 `libc-static-tls-v1` is a separately recorded private static
 `verified_artifact` inside still-planned `libc.pthread-tls`. Its freestanding
 candidate start shim passes the untouched Linux entry stack to the hidden
@@ -3404,10 +3427,10 @@ candidate. It selects only `epoll_create`, `epoll_create1`, `epoll_ctl`,
 with BPF-verified temporary-mask pointer and eight-byte kernel sigset size,
 plus bounded eventfd and inotify lifecycles. The direct leaf deliberately
 omits pthread cancellation and pre-Linux-5.10 `ENOSYS` fallbacks. It excludes
-`epoll_pwait2`, timerfd, signalfd, fanotify, AIO, watcher policy, dynamic
-runtime, header/runtime family completion, promotion, full x86-64 parity, and
-public x86 support. The separately selected timerfd archive leaf remains
-outside this event-descriptor candidate.
+`epoll_pwait2`, fanotify, AIO, watcher policy, dynamic runtime, header/runtime
+family completion, promotion, full x86-64 parity, and public x86 support. The
+separately selected timerfd and signalfd archive leaves remain outside this
+event-descriptor candidate.
 
 `pathname-lifecycle-header-abi` is a separate eight-profile C11/C++17
 project-header/pinned-musl matrix for the selected `fcntl.h`, `stdio.h`,

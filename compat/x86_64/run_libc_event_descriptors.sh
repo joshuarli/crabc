@@ -164,9 +164,10 @@ for symbol in __errno_location __crabc_x86_static_tls_bootstrap epoll_create \
 done
 grep -Eq 'GLOBAL +HIDDEN +.*__crabc_x86_static_tls_bootstrap$' "$archive_elf_symbols" ||
     fail "archive Static Initial TLS v1 bootstrap is not hidden"
-# timerfd is a separately selected archive leaf. Its wrappers may be present
-# here, but must not be pulled into this event-descriptor candidate below.
-for unselected in epoll_pwait2 signalfd signalfd4 fanotify_init fanotify_mark aio_read aio_write \
+# timerfd and signalfd are separately selected archive leaves. Their wrappers
+# may be present here, but must not be pulled into this event-descriptor
+# candidate below.
+for unselected in epoll_pwait2 signalfd4 fanotify_init fanotify_mark aio_read aio_write \
     io_setup io_submit mq_open sem_open malloc free calloc realloc __tls_get_addr; do
     if grep -Eq "[[:space:]][TW][[:space:]]${unselected}$" "$archive_symbols"; then
         fail "archive accidentally exports unselected $unselected"
@@ -198,7 +199,7 @@ for symbol in __errno_location __crabc_x86_static_tls_bootstrap epoll_create \
     grep -Eq "[[:space:]]${symbol}$" "$candidate_symbols" ||
         fail "candidate does not define $symbol"
 done
-for unselected in timerfd_create timerfd_gettime timerfd_settime; do
+for unselected in timerfd_create timerfd_gettime timerfd_settime signalfd signalfd4; do
     if grep -Eq "[[:space:]]${unselected}$" "$candidate_symbols"; then
         fail "event-descriptor candidate unexpectedly pulls ${unselected}"
     fi
