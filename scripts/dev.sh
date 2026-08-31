@@ -519,6 +519,7 @@ case "$command" in
             --test native_two_live_remote_owners \
             --test native_live_remote_owner_registry_reuse \
             --test native_page_local_live_remote_protocol \
+            --test native_post_exit_claimed_remote_producers \
             --test native_pointer_first_initial_foreign_free \
             -- --test-threads=1
         # These direct tests compile scalar-only lifecycle and admission audits
