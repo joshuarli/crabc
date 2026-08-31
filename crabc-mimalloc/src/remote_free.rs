@@ -211,6 +211,41 @@ pub(crate) enum LiveRemoteFreePublish {
     ClaimedAbandonedPage(ClaimedAbandonedRemoteFree),
 }
 
+/// Publishes the canonical block from one already-classified source
+/// observation.
+///
+/// Every pointer-facing `allow_collect=true` entry point reaches this one
+/// helper after checking its captured state.  Keeping claim construction here
+/// binds the post-owner-exit tail to the exact canonical block written by the
+/// successful CAS, rather than a client pointer or a later head observation.
+///
+/// # Safety
+///
+/// `page`, `producer`, and `canonical_block` must come from one coherent
+/// current allocation and satisfy `push_source_block_mt`'s source lifetime
+/// contract. The caller must have selected a source state that permits the
+/// `allow_collect=true` publication. On success, `canonical_block` is
+/// consumed exactly once; a claimed result owns the low bit established by
+/// that same CAS.
+#[inline]
+unsafe fn publish_canonical_source_block(
+    page: NonNull<Page>,
+    producer: PageRemoteFreeProducerState,
+    canonical_block: NonNull<u8>,
+) -> Result<LiveRemoteFreePublish, RemoteFreeError> {
+    // SAFETY: the caller supplies the coherent current allocation and source
+    // state. The helper performs the one source `allow_collect=true` CAS.
+    let was_owned = unsafe { push_source_block_mt(producer, canonical_block, true) }?;
+    Ok(if was_owned {
+        LiveRemoteFreePublish::PublishedToOwner
+    } else {
+        LiveRemoteFreePublish::ClaimedAbandonedPage(ClaimedAbandonedRemoteFree {
+            page,
+            published_block: canonical_block,
+        })
+    })
+}
+
 /// Publishes one pointer-dispatched remote free with pinned source atomics.
 ///
 /// This is the production-facing `mi_free_block_mt(..., allow_collect=true)`
@@ -241,18 +276,9 @@ where
         return Err(RemoteFreeError::NotOwnerAssociated);
     }
     // SAFETY: the coherent live-allocation projection pins this exact page and
-    // canonical block. The source helper touches only `block->next` and the
-    // page's atomic `xthread_free`; `allow_collect=true` also closes the race
-    // where owner exit clears the low owner bit after pointer dispatch.
-    let was_owned = unsafe { push_source_block_mt(producer, block, true) }?;
-    Ok(if was_owned {
-        LiveRemoteFreePublish::PublishedToOwner
-    } else {
-        LiveRemoteFreePublish::ClaimedAbandonedPage(ClaimedAbandonedRemoteFree {
-            page,
-            published_block: block,
-        })
-    })
+    // canonical block. The source CAS also closes the race where owner exit
+    // clears the low owner bit after pointer dispatch.
+    unsafe { publish_canonical_source_block(page, producer, block) }
 }
 
 /// Publishes a PageMap observation that was already classified as abandoned.
@@ -292,15 +318,7 @@ pub(crate) unsafe fn push_abandoned_live_allocation(
     // SAFETY: `allocation` is the one coherent PageMap observation. The
     // source CAS decides against its current head; do not re-read identity
     // after the snapshot because a reclaimed live owner is a legal winner.
-    let was_owned = unsafe { push_source_block_mt(producer, block, true) }?;
-    Ok(if was_owned {
-        LiveRemoteFreePublish::PublishedToOwner
-    } else {
-        LiveRemoteFreePublish::ClaimedAbandonedPage(ClaimedAbandonedRemoteFree {
-            page,
-            published_block: block,
-        })
-    })
+    unsafe { publish_canonical_source_block(page, producer, block) }
 }
 
 /// Selects the exact state-qualified pointer publication for a post-owner-exit
@@ -331,6 +349,11 @@ pub(crate) unsafe fn push_post_owner_exit_live_allocation(
             // source publication; it deliberately tolerates a reclaim race.
             unsafe { push_abandoned_live_allocation(allocation) }
         }
+        // A detached `xthread_id` is not an abandoned source identity. If its
+        // head were unowned, pinned `mi_free_block_mt` would claim it and then
+        // `mi_free_try_collect_mt` would require a detached-specific owner
+        // continuation rather than this abandoned-page claim token. No such
+        // continuation exists at this seam, so refuse before the CAS.
         LiveAllocationPageState::Detached => Err(RemoteFreeError::NotOwnerAssociated),
     }
 }
@@ -2163,7 +2186,6 @@ mod tests {
     /// Construction stays inside each producer after it has taken exclusive
     /// ownership of one block, so the test cannot accidentally pass a page
     /// and canonical block as independent production arguments.
-    #[derive(Clone, Copy)]
     struct TestLiveRemoteFreeAllocation<'page> {
         page: &'page AtomicPtr<Page>,
         producer: PageRemoteFreeProducerState,
@@ -2205,6 +2227,28 @@ mod tests {
                 self.page_state,
             )
         }
+    }
+
+    /// The replacement-facing consumer must remain a move boundary for the
+    /// production PageMap observation. A second `Copy` or `Clone` impl would
+    /// let one old client reach two source CASes and can create a self-linked
+    /// remote list, which the pinned release profile does not diagnose.
+    #[test]
+    fn live_allocation_pointer_stays_linear_for_nonlocal_consumption() {
+        trait AmbiguousIfCopy<Marker> {
+            fn assertion() {}
+        }
+        impl<T: ?Sized> AmbiguousIfCopy<()> for T {}
+        impl<T: ?Sized + Copy> AmbiguousIfCopy<u8> for T {}
+
+        trait AmbiguousIfClone<Marker> {
+            fn assertion() {}
+        }
+        impl<T: ?Sized> AmbiguousIfClone<()> for T {}
+        impl<T: ?Sized + Clone> AmbiguousIfClone<u8> for T {}
+
+        let _ = <LiveAllocationPointer as AmbiguousIfCopy<_>>::assertion;
+        let _ = <LiveAllocationPointer as AmbiguousIfClone<_>>::assertion;
     }
 
     #[test]
@@ -2320,6 +2364,95 @@ mod tests {
         assert_eq!(unsafe { test_page_snapshot(page) }.remote_free_test_head(), 1);
         assert_eq!(unsafe { test_page_snapshot(page) }.remote_free_test_used(), 1);
         // SAFETY: no publication occurred and no projection remains live.
+        unsafe { drop_boxed_test_page(page) };
+    }
+
+    #[test]
+    fn nonlocal_replacement_claim_tail_keeps_the_canonical_old_block_through_unown_race() {
+        // The small-page tail preserves the claiming block as its expected
+        // head. A newer producer can legitimately publish above it before
+        // the tail reaches `mi_abandoned_page_unown_from_free`; that failed
+        // expected-head CAS must retain ownership for one complete collector,
+        // not republish the old block or lose either block.
+        let page = boxed_test_page(16, 2);
+        let published_page = published_test_page(page);
+        let mut old = TestBlock([0; 16]);
+        let mut newer = TestBlock([0; 16]);
+        let old = old.pointer();
+        let newer = newer.pointer();
+        let old_allocation = TestLiveRemoteFreeAllocation::new(&published_page, old);
+        let newer_allocation = TestLiveRemoteFreeAllocation::new(&published_page, newer);
+
+        // The replacement has copied the old client while its stale lookup
+        // still says live. Owner exit then makes its `allow_collect=true` CAS
+        // the source claim of an unowned abandoned head.
+        mark_abandoned_unowned_after_lookup(page);
+        let claim = match unsafe { push_live_allocation(old_allocation) } {
+            Ok(LiveRemoteFreePublish::ClaimedAbandonedPage(claim)) => claim,
+            Ok(_) => {
+                panic!("the old replacement block must claim the unowned source head")
+            }
+            Err(error) => {
+                panic!("the stale live replacement block must publish: {error:?}")
+            }
+        };
+        assert_eq!(claim.page(), page);
+        assert_eq!(claim.published_block(), old);
+        assert_eq!(unsafe { test_page_snapshot(page) }.remote_free_test_head(), old.as_ptr().addr() | 1);
+
+        // A different current client publishes before the claimed tail runs.
+        // It becomes the atomic head, while `old` remains its exact canonical
+        // predecessor and the only valid expected-head argument for the
+        // source partial collection/unown fast path.
+        assert!(matches!(
+            unsafe { push_live_allocation(newer_allocation) },
+            Ok(LiveRemoteFreePublish::PublishedToOwner)
+        ));
+        assert_eq!(unsafe { test_page_snapshot(page) }.remote_free_test_head(), newer.as_ptr().addr() | 1);
+        assert_eq!(
+            unsafe { block_next(newer.cast()) }.cast::<u8>(),
+            old.as_ptr(),
+            "the newer source publication keeps the claimed old block reachable"
+        );
+
+        // `old` is no longer the atomic head, so the pinned small-page tail
+        // cannot detach it or clear ownership with its expected-head CAS.
+        // The next full source collector owns both blocks exactly once.
+        assert_eq!(unsafe { collect_abandoned_partly(page, old) }, Ok(0));
+        let producer = unsafe { Page::remote_free_producer_state_at(page) };
+        let mut no_hook = None::<fn()>;
+        assert_eq!(
+            try_unown_abandoned_expected_head(
+                unsafe { producer.xthread_free.as_ref() },
+                old.as_ptr().addr(),
+                &mut no_hook,
+            ),
+            Ok(AbandonedExpectedHeadTransition::RemotePublished)
+        );
+        assert_eq!(unsafe { collect_abandoned(page) }, Ok(2));
+        assert_eq!(unsafe { test_page_snapshot(page) }.remote_free_test_head(), 1);
+        assert_eq!(unsafe { test_page_snapshot(page) }.remote_free_test_used(), 0);
+        assert_eq!(unsafe { test_page_snapshot(page) }.remote_free_test_local_chain_len(3), 2);
+        assert_eq!(
+            unsafe { test_page_snapshot(page) }.remote_free_test_local_free(),
+            newer.cast::<Block>().as_ptr(),
+            "the later publication stays first in the collected source LIFO list"
+        );
+        assert_eq!(
+            unsafe { block_next(newer.cast()) }.cast::<u8>(),
+            old.as_ptr(),
+            "collection preserves each distinct consumed block once"
+        );
+
+        let mut no_hook = None::<fn()>;
+        assert_eq!(
+            try_unown_abandoned_head(unsafe { producer.xthread_free.as_ref() }, &mut no_hook),
+            AbandonedOwnerHeadTransition::Released
+        );
+        drop(claim);
+        assert_eq!(unsafe { test_page_snapshot(page) }.remote_free_test_head(), 0);
+        // SAFETY: the claimed tail has collected and unowned the exact source
+        // head; both consuming observations are gone.
         unsafe { drop_boxed_test_page(page) };
     }
 
