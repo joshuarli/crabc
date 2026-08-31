@@ -1351,6 +1351,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn("    libc-math-minmax) ;;", source)
         self.assertIn("    libc-math-bit-sign) ;;", source)
         self.assertIn("    libc-math-trunc) ;;", source)
+        self.assertIn("    libc-math-fmod) ;;", source)
         self.assertIn("    libc-math-x87-extended)", source)
         self.assertIn("    libc-math-special)", source)
         self.assertIn("    libc-fdim) ;;", source)
@@ -1382,6 +1383,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "libc-math-minmax",
             "libc-math-bit-sign",
             "libc-math-trunc",
+            "libc-math-fmod",
             "libc-fdim",
             "machine-context-header-abi",
             "memory-sync-header-abi",
@@ -19434,6 +19436,73 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "write_volatile",
             "u64::MAX",
             "u32::MAX",
+        ):
+            self.assertIn(required, leaf)
+
+    def test_math_fmod_runner_keeps_the_binary32_binary64_static_boundary(self) -> None:
+        dispatcher = RUNNER.read_text(encoding="utf-8")
+        runner = (ROOT / "compat" / "x86_64" / "run_libc_math_fmod.sh").read_text(
+            encoding="utf-8"
+        )
+        probe = (ROOT / "compat" / "x86_64" / "libc_math_fmod_probe.c").read_text(
+            encoding="utf-8"
+        )
+        header = (
+            ROOT / "compat" / "x86_64" / "math_fmod_header_abi_probe.cpp"
+        ).read_text(encoding="utf-8")
+        leaf = (ROOT / "libc" / "src" / "c_abi" / "x86_64" / "math_fmod.rs").read_text(
+            encoding="utf-8"
+        )
+
+        for required in (
+            "libc-math-fmod)",
+            "run_libc_math_fmod_probe()",
+            "/workspace/compat/x86_64/run_libc_math_fmod.sh",
+        ):
+            self.assertIn(required, dispatcher)
+        for required in (
+            "-nostdlib -static",
+            "--no-undefined",
+            "--gc-sections",
+            "math_fmod_header_abi_probe.cpp",
+            "strong crabc-owned",
+            "weak compiler-builtins",
+            "candidate accidentally retains unselected",
+            "candidate retains TLS",
+            "divsd divss",
+            "fmodl remainder",
+        ):
+            self.assertIn(required, runner)
+        for required in (
+            "direct_fmod",
+            "direct_fmodf",
+            "check_binary64_values",
+            "check_binary32_values",
+            "signaling_nan",
+            "FE_INVALID",
+            "check_fenv_boundary",
+            "FE_DIVBYZERO",
+            "check_invalid_domain",
+        ):
+            self.assertIn(required, probe)
+        for required in (
+            "double_binary_signature",
+            "float_binary_signature",
+            "direct_fmod",
+            "direct_fmodf",
+        ):
+            self.assertIn(required, header)
+        for required in (
+            "src/math/fmod.c",
+            "src/math/fmodf.c",
+            'pub extern "C" fn fmod',
+            'pub extern "C" fn fmodf',
+            "is_nan_f64",
+            "is_nan_f32",
+            "(x * y) / (x * y)",
+            "u64::MAX",
+            "u32::MAX",
+            "fmodl",
         ):
             self.assertIn(required, leaf)
 

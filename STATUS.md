@@ -870,6 +870,19 @@ and volatile force-evaluation addition; it does not select `truncl`, fenv
 rounding, special/complex/binary80 math, family completion, promotion, or
 public x86 support.
 
+The separate private `static-c-math-fmod` artifact records only binary64
+`fmod` and binary32 `fmodf`: `./scripts/dev-x86_64.sh libc-math-fmod` runs
+project-header C and default-SSE/`-mfpmath=387` C++ function-pointer fixtures
+through pinned musl and one freestanding static candidate. Its direct musl
+1.2.6 `fmod.c`/`fmodf.c` mapping normalizes and repeatedly subtracts raw IEEE
+significands, preserving x's sign, signed zero, and subnormal remainders. It
+also pins the deliberate `(x*y)/(x*y)` invalid-domain path for zero divisors,
+infinite x, and signaling NaNs, plus all four MXCSR modes and preexisting
+`FE_DIVBYZERO`. Strong target-owned definitions and final ELF checks reject
+weak compiler-builtins fallback, `fmodl`, remainder/remquo/modf, static
+rounding/truncation, special/complex/binary80 math, family completion,
+promotion, and public x86 support.
+
 The x86 static archive now also has one private allocation-free wide-character
 core: `./scripts/dev-x86_64.sh libc-wide-character` runs an exact
 `_XOPEN_SOURCE=700` C/C++ ABI gate and one shared pinned-musl/freestanding

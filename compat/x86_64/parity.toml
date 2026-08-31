@@ -6784,6 +6784,51 @@ x86_header_prerequisites = [
 native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-math-trunc", scope = "Pinned-musl/project-header C and C++ ABI execution plus one dependency-free `-nostdlib -static --no-undefined --gc-sections` candidate. Function pointers prove binary32/binary64 ordinary/integral values, signed zero, infinities, raw quiet/signaling-NaN payloads, ordinary and raw-subnormal fractional truncation, the musl FE_INEXACT/no-FE_INVALID boundary, all-four-MXCSR-mode preservation, and retention of preexisting FE_DIVBYZERO. ELF proof requires strong global target-owned trunc/truncf definitions, exact archive surface, and volatile addsd/addss force evaluation; it rejects weak compiler-builtins fallback, truncl, round*, rint*/nearbyint*, bit-sign, fdim*, fmax/fmin, sqrt*, unresolved symbols, dynamic linkage, TLS, ambient libm, and unowned runtime dependencies. It excludes category/family completion, promotion, full x86-64 parity, and public x86 support." }]
 oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source, IEEE bit-level, C/fenv, and public ABI oracle for exactly src/math/trunc.c and truncf.c." }, { kind = "aarch64-contract", source = "libc/src/math_bitmanip.rs", role = "Existing AArch64 source-level trunc/truncf mapping; its target code and binary128 long-double sibling remain distinct." }, { kind = "elf-abi", source = "System V AMD64 psABI", role = "xmm0 binary32/binary64 argument/return ABI plus MXCSR SSE arithmetic boundary for the selected static C entries." }]
 
+[[family.verified_artifact]]
+id = "static-c-math-fmod"
+description = "Private native x86 selected-static binary32/binary64 remainder artifact inside still-planned `libc.text-math-locale-stdio`. One dependency-free `crabc-libc` archive resolves exactly `fmod` and `fmodf` into a freestanding project-header C fixture after equivalent pinned-musl execution. The direct musl mapping normalizes raw IEEE exponent/significand fields, repeatedly subtracts unsigned significands, then rescales the remainder; it preserves the sign of x, signed zero, and binary32/binary64 subnormal results. Raw quiet/signaling-NaN inputs and zero-divisor or infinite-x domains retain musl's `(x*y)/(x*y)` `FE_INVALID` path; ordinary reduction preserves all four MXCSR rounding modes and preexisting `FE_DIVBYZERO` without a rounding-conversion claim. Strong target-owned definitions reject a weak compiler-builtins fallback. This artifact excludes `fmodl`, `remainder*`/`remquo*`/`modf*`, fenv rounding/truncation, bit-sign/minmax/fdim, special and complex functions, binary80/x87 math, errno policy, general libm, libc.so, CRT/TLS lifecycle, loader, sysroot, `math.elementary` family completion, promotion, full x86-64 parity, and public x86 support."
+source_owners = [
+  "compat/upstreams.toml",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "libc/src/math_sqrtfmod.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/fenv.rs",
+  "libc/src/c_abi/x86_64/math_fmod.rs",
+  "include/fenv.h",
+  "include/float.h",
+  "include/math.h",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/math_fmod_header_abi_probe.cpp",
+  "compat/x86_64/libc_math_fmod_probe.c",
+  "compat/x86_64/libc_math_fmod_start.S",
+  "compat/x86_64/run_libc_math_fmod.sh",
+  "compat/x86_64/aarch64_parity_inventory.py",
+  "compat/x86_64/aarch64_parity_inventory.json",
+  "compat/x86_64/tests/test_aarch64_parity_inventory.py",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "compat/x86_64/README.md",
+  "SCOPE.md",
+  "COMPATIBILITY-PROFILE.md",
+  "STATUS.md",
+  "x86-64.md",
+  "scripts/dev-x86_64.sh",
+  "scripts/check_structure.py",
+]
+x86_abi_prerequisites = [
+  "Pinned musl 1.2.6 src/math/fmod.c and src/math/fmodf.c reduce normalized raw significands with the `for (; ex > ey; ex--)` subtraction/left-shift loop, then reconstruct binary32/binary64 normal or subnormal bits. Their domain branch is exactly `(x*y)/(x*y)` when y is zero, y is NaN, or x has exponent all ones; raw exponent/fraction classification leaves quiet/signaling-NaN handling to that arithmetic and its `FE_INVALID` result.",
+  "System V AMD64 with FLT_EVAL_METHOD=0 passes binary64/binary32 x in xmm0 and y in xmm1, and returns in xmm0. The selected ordinary reduction is integer-only; only musl's domain expression emits SSE division under the caller's MXCSR exception state. Binary80 `fmodl` is representation- and ABI-distinct and remains excluded.",
+  "AArch64 retains the same public binary32/binary64 source-level mapping in libc/src/math_sqrtfmod.rs, but its target code and binary128 long-double sibling are not imported into the x86 archive.",
+]
+x86_header_prerequisites = [
+  "The focused C fixture preprocesses project fenv.h, float.h, math.h, stdint.h, features.h, and bits/alltypes.h, then takes parenthesized `fmod`/`fmodf` function addresses so compiler builtins cannot replace the C ABI calls.",
+  "Dedicated C++17 objects compiled with the default SSE mode and `-mfpmath=387` pin exact binary64/binary32 function-pointer signatures and unmangled C references from the project header against pinned musl.",
+]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-math-fmod", scope = "Pinned-musl/project-header C and C++ ABI execution plus one dependency-free `-nostdlib -static --no-undefined --gc-sections` candidate. Function pointers prove binary32/binary64 ordinary, signed-zero, raw-subnormal, high-exponent reduction, quiet/signaling-NaN, all-four-MXCSR-mode, preexisting-FE_DIVBYZERO, zero-divisor, and infinite-x behavior. ELF proof requires strong global target-owned fmod/fmodf definitions, exact archive surface, and divsd/divss domain arithmetic; it rejects weak compiler-builtins fallback, fmodl, remainder/remquo/modf, rounding/truncation, special/complex, unresolved symbols, dynamic linkage, TLS, ambient libm, and unowned runtime dependencies. It excludes category/family completion, promotion, full x86-64 parity, and public x86 support." }]
+oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source, IEEE bit-level, C/fenv, and public ABI oracle for exactly src/math/fmod.c and src/math/fmodf.c." }, { kind = "aarch64-contract", source = "libc/src/math_sqrtfmod.rs", role = "Existing AArch64 source-level fmod/fmodf mapping; its target code and binary128 long-double sibling remain distinct." }, { kind = "elf-abi", source = "System V AMD64 psABI", role = "xmm0/xmm1 binary32/binary64 argument and xmm0 return ABI for the selected static C entries." }]
+
 [[family.verified_slice]]
 id = "numeric.parse-float-locale"
 description = "Private native x86 completion of the AArch64 `numeric.parse-float-locale` capability. The selected static archive owns all twenty-three ledger symbols: narrow `atof`/`strto*`, ignored-locale public and weak-internal `_l` wrappers, arbitrary-length wide floating and integer conversions, musl-compatible static-buffer `ecvt`/`fcvt`, caller-buffered `gcvt`, and in-place `getsubopt`. C/POSIX/C.UTF-8 share the fixed decimal grammar; no arbitrary locale map, locale-dependent radix, public FILE, general printf, allocator, libc.so, CRT, loader, or sysroot is selected. The family stays planned and the repository retains promotion_ready=false and public_support=false."

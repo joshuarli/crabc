@@ -490,6 +490,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-math-minmax
 ./scripts/dev-x86_64.sh libc-math-bit-sign
 ./scripts/dev-x86_64.sh libc-math-trunc
+./scripts/dev-x86_64.sh libc-math-fmod
 ./scripts/dev-x86_64.sh libc-math-elementary-long-double
 ./scripts/dev-x86_64.sh libc-fdim
 ./scripts/dev-x86_64.sh libc-locale-profile
@@ -4109,6 +4110,19 @@ requires strong crabc-owned definitions rather than compiler-builtins weak
 fallbacks. `truncl`, `round*`, `rint*`/`nearbyint*`, bit-sign, `fdim*`,
 fmax/fmin, special/complex and binary80/x87 math, family completion,
 promotion, full x86-64 parity, and public x86 support remain unselected.
+`libc-math-fmod` is the separate non-promoting `static-c-math-fmod` artifact
+for binary64/binary32 `fmod`/`fmodf`. Its project-header C fixture and
+default-SSE/`-mfpmath=387` C++ signature probes run first through pinned musl
+and then through one garbage-collected `-nostdlib -static` candidate. The
+direct musl 1.2.6 `fmod.c`/`fmodf.c` mapping normalizes raw IEEE significands,
+uses the source subtraction loop, and rescales x-signed normal or subnormal
+remainders. It also proves quiet/signaling-NaN and zero-divisor/infinite-x
+domain behavior through musl's `(x*y)/(x*y)` `FE_INVALID` path, all four MXCSR
+modes, and preexisting `FE_DIVBYZERO`. Final-link proof requires strong
+crabc-owned definitions rather than compiler-builtins weak fallbacks and
+rejects `fmodl`, remainder/remquo/modf, rounding/truncation, special/complex,
+and binary80/x87 math. Family completion, promotion, full x86-64 parity, and
+public x86 support remain unselected.
 `libc-fdim` is a separate non-promoting `static-c-fdim` artifact for the
 binary64/binary32 positive-difference pair. Its project-header C fixture and
 default-SSE/`-mfpmath=387` C++ signature probes run first through pinned musl

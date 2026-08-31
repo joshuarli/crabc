@@ -1605,6 +1605,8 @@ MATH_BIT_SIGN_SYMBOLS = ("fabs", "fabsf", "copysign", "copysignf")
 
 MATH_TRUNC_SYMBOLS = ("trunc", "truncf")
 
+MATH_FMOD_SYMBOLS = ("fmod", "fmodf")
+
 NAMED_LOCALE_MULTIBYTE_SYMBOLS = (
     "__ctype_get_mb_cur_max",
     "btowc",
@@ -22345,8 +22347,8 @@ def require_stdio_integer_scan_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 28,
-        "libc.text-math-locale-stdio must retain exactly twenty-eight private verified artifacts",
+        len(artifacts) == 29,
+        "libc.text-math-locale-stdio must retain exactly twenty-nine private verified artifacts",
     )
     matching = [
         entry for entry in artifacts if entry.get("id") == "static-c-stdio-integer-scan"
@@ -22628,8 +22630,8 @@ def require_stdio_octal_hex_scan_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 28,
-        "libc.text-math-locale-stdio must retain exactly twenty-eight private verified artifacts",
+        len(artifacts) == 29,
+        "libc.text-math-locale-stdio must retain exactly twenty-nine private verified artifacts",
     )
     matching = [
         entry
@@ -23154,8 +23156,8 @@ def require_stdio_errno_output_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 28,
-        "libc.text-math-locale-stdio must retain exactly twenty-eight private verified artifacts",
+        len(artifacts) == 29,
+        "libc.text-math-locale-stdio must retain exactly twenty-nine private verified artifacts",
     )
     matching = [
         entry for entry in artifacts if entry.get("id") == "static-c-stdio-errno-output"
@@ -23675,8 +23677,8 @@ def require_stdio_permanent_byte_io_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 28,
-        "libc.text-math-locale-stdio must retain exactly twenty-eight private verified artifacts",
+        len(artifacts) == 29,
+        "libc.text-math-locale-stdio must retain exactly twenty-nine private verified artifacts",
     )
     matching = [
         entry
@@ -26786,6 +26788,202 @@ def require_math_trunc_artifact(family: Mapping[str, Any]) -> None:
         require(snippet in dispatcher, f"x86 dispatcher omits {snippet}")
 
 
+def require_math_fmod_artifact(family: Mapping[str, Any]) -> None:
+    """Keep the selected binary32/binary64 remainder leaf below math parity."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.text-math-locale-stdio].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [entry for entry in artifacts if entry.get("id") == "static-c-math-fmod"]
+    require(
+        len(matching) == 1,
+        "libc.text-math-locale-stdio must contain exactly one static-c-math-fmod artifact",
+    )
+    artifact = matching[0]
+    require(
+        "capabilities" not in artifact,
+        "static-c-math-fmod must remain a non-capability artifact",
+    )
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for symbol in MATH_FMOD_SYMBOLS:
+        require(
+            f"`{symbol}`" in description,
+            f"static-c-math-fmod description omits {symbol}",
+        )
+    for phrase in (
+        "binary32/binary64 remainder artifact",
+        "raw IEEE exponent/significand",
+        "signed zero",
+        "subnormal",
+        "quiet/signaling-NaN",
+        "`FE_INVALID`",
+        "all four MXCSR rounding modes",
+        "preexisting `FE_DIVBYZERO`",
+        "compiler-builtins",
+        "`fmodl`",
+        "`remainder*`/`remquo*`/`modf*`",
+        "fenv rounding/truncation",
+        "special and complex functions",
+        "binary80/x87 math",
+        "family completion",
+        "promotion",
+        "public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"static-c-math-fmod description omits {phrase}",
+        )
+
+    owners = nonempty_strings(
+        artifact["source_owners"], "static-c-math-fmod.source_owners"
+    )
+    for owner in (
+        "compat/upstreams.toml",
+        "libc/src/lib.rs",
+        "libc/src/math_sqrtfmod.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/fenv.rs",
+        "libc/src/c_abi/x86_64/math_fmod.rs",
+        "include/fenv.h",
+        "include/float.h",
+        "include/math.h",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/math_fmod_header_abi_probe.cpp",
+        "compat/x86_64/libc_math_fmod_probe.c",
+        "compat/x86_64/libc_math_fmod_start.S",
+        "compat/x86_64/run_libc_math_fmod.sh",
+        "compat/x86_64/aarch64_parity_inventory.py",
+        "compat/x86_64/aarch64_parity_inventory.json",
+        "compat/x86_64/tests/test_aarch64_parity_inventory.py",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/README.md",
+        "STATUS.md",
+        "x86-64.md",
+        "scripts/check_structure.py",
+        "scripts/dev-x86_64.sh",
+    ):
+        require(owner in owners, f"static-c-math-fmod omits {owner}")
+
+    prerequisites = " ".join(
+        nonempty_strings(
+            artifact["x86_abi_prerequisites"],
+            "static-c-math-fmod.x86_abi_prerequisites",
+        )
+    )
+    for phrase in (
+        "src/math/fmod.c",
+        "fmodf.c",
+        "for (; ex > ey; ex--)",
+        "(x*y)/(x*y)",
+        "quiet/signaling-NaN",
+        "FE_INVALID",
+        "FLT_EVAL_METHOD=0",
+        "xmm0",
+        "xmm1",
+        "MXCSR",
+        "`fmodl`",
+        "math_sqrtfmod.rs",
+    ):
+        require(
+            phrase in prerequisites,
+            f"static-c-math-fmod prerequisites omit {phrase}",
+        )
+    header_prerequisites = " ".join(
+        nonempty_strings(
+            artifact["x86_header_prerequisites"],
+            "static-c-math-fmod.x86_header_prerequisites",
+        )
+    )
+    for phrase in ("parenthesized", "C++17", "-mfpmath=387", "unmangled C"):
+        require(
+            phrase in header_prerequisites,
+            f"static-c-math-fmod header prerequisites omit {phrase}",
+        )
+
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-math-fmod"},
+        "static-c-math-fmod must use the closed libc-math-fmod command",
+    )
+    scope = evidence[0]["scope"]
+    assert isinstance(scope, str)
+    for phrase in (
+        "raw-subnormal",
+        "quiet/signaling-NaN",
+        "preexisting-FE_DIVBYZERO",
+        "divsd/divss",
+        "compiler-builtins",
+        "public x86 support",
+    ):
+        require(phrase in scope, f"static-c-math-fmod evidence omits {phrase}")
+
+    static_root = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+    ).read_text(encoding="utf-8")
+    require(
+        '#[path = "math_fmod.rs"]\nmod math_fmod;' in static_root,
+        "x86 static C ABI must compose the math_fmod leaf",
+    )
+    implementation = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "math_fmod.rs"
+    ).read_text(encoding="utf-8")
+    for symbol in MATH_FMOD_SYMBOLS:
+        require(
+            f'pub extern "C" fn {symbol}' in implementation,
+            f"math_fmod leaf omits {symbol}",
+        )
+    for snippet in (
+        "musl 1.2.6",
+        "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+        "src/math/fmod.c",
+        "src/math/fmodf.c",
+        "is_nan_f64",
+        "is_nan_f32",
+        "(x * y) / (x * y)",
+        "u64::MAX",
+        "u32::MAX",
+        "public x86 support",
+    ):
+        require(snippet in implementation, f"math_fmod leaf omits {snippet}")
+
+    exports = static_c_abi_export_names(
+        ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+    )
+    require(exports == sorted(exports), "static C ABI export contract must remain ASCII-sorted")
+    for symbol in MATH_FMOD_SYMBOLS:
+        require(symbol in exports, f"static C ABI export contract omits {symbol}")
+
+    runner = (ROOT / "compat" / "x86_64" / "run_libc_math_fmod.sh").read_text(
+        encoding="utf-8"
+    )
+    for snippet in (
+        "-nostdlib -static",
+        "--no-undefined",
+        "--gc-sections",
+        "math_fmod_header_abi_probe.cpp",
+        "strong crabc-owned",
+        "weak compiler-builtins",
+        "candidate accidentally retains unselected",
+        "candidate retains TLS",
+        "divsd divss",
+        "fmodl remainder",
+    ):
+        require(snippet in runner, f"libc-math-fmod runner omits {snippet}")
+    dispatcher = (ROOT / "scripts" / "dev-x86_64.sh").read_text(encoding="utf-8")
+    for snippet in (
+        "libc-math-fmod)",
+        "run_libc_math_fmod_probe()",
+        "/workspace/compat/x86_64/run_libc_math_fmod.sh",
+    ):
+        require(snippet in dispatcher, f"x86 dispatcher omits {snippet}")
+
+
 def require_named_locale_multibyte_artifact(family: Mapping[str, Any]) -> None:
     """Keep the named-locale/text archive slice below locale-family completion.
 
@@ -27519,8 +27717,8 @@ def require_locale_wide_iconv_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 28,
-        "libc.text-math-locale-stdio must retain exactly twenty-eight private verified artifacts",
+        len(artifacts) == 29,
+        "libc.text-math-locale-stdio must retain exactly twenty-nine private verified artifacts",
     )
     matching = [
         entry for entry in artifacts if entry.get("id") == "static-c-locale-wide-iconv"
@@ -28345,8 +28543,8 @@ def require_locale_error_strings_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 28,
-        "libc.text-math-locale-stdio must retain exactly twenty-eight private verified artifacts",
+        len(artifacts) == 29,
+        "libc.text-math-locale-stdio must retain exactly twenty-nine private verified artifacts",
     )
     matching = [
         entry for entry in artifacts if entry.get("id") == "static-c-locale-error-strings"
@@ -30029,6 +30227,7 @@ def validate_ledger(
     require_math_minmax_artifact(by_id["libc.text-math-locale-stdio"])
     require_math_bit_sign_artifact(by_id["libc.text-math-locale-stdio"])
     require_math_trunc_artifact(by_id["libc.text-math-locale-stdio"])
+    require_math_fmod_artifact(by_id["libc.text-math-locale-stdio"])
     require_math_x87_extended_artifact(by_id["libc.text-math-locale-stdio"])
     require_math_special_slice(by_id["libc.text-math-locale-stdio"])
     require_math_complex_complete_slice(by_id["libc.text-math-locale-stdio"])

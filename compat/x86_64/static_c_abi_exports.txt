@@ -280,6 +280,8 @@ fmaxl
 fmin
 fminf
 fminl
+fmod
+fmodf
 fmodl
 fopen
 fork

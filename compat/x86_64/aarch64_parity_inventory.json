@@ -1460,7 +1460,7 @@
       "capability_count": 16,
       "contract_state": "selected-private",
       "id": "libc.text-math-locale-stdio",
-      "verified_artifact_count": 28,
+      "verified_artifact_count": 29,
       "verified_slice_count": 5
     },
     {
@@ -2212,6 +2212,10 @@
     },
     {
       "family": "libc.text-math-locale-stdio",
+      "id": "static-c-math-fmod"
+    },
+    {
+      "family": "libc.text-math-locale-stdio",
       "id": "static-c-math-minmax"
     },
     {
@@ -2287,9 +2291,9 @@
     "aarch64_abi_manifest": "33dd504470f467caac7b149e747ee2b7ff8714c4fb23dfe5ad46e7f58bfe610c",
     "aarch64_capability_ledger": "128458dde00073bc0320b94972d864e66fa10d5f54e92b1b1c83081e2b4955e0",
     "aarch64_headers": "a0d35f0950abb3c060b978dfb5257cf50f70bed46ce91d371f43d65db7626b68",
-    "x86_parity_ledger": "603a692b8ecb3b5fe31660bef96a47d2642601f853f471b2b30d035b35b37699",
+    "x86_parity_ledger": "050a42b91d9cd5d3cf9316d3a866fdb7291ca4f4faeba155cfa7f28e76457689",
     "x86_public_headers": "2cdcd860a423d99afef8360b6376447cf17ae926f1cd47416be817d421fca80f",
-    "x86_static_c_exports": "e32389458ac457c2dd3bb8f8fe7e084f57904c69f382e70827b8cf070031b511"
+    "x86_static_c_exports": "f888ecb8672eb57d4a6b63061910717a9dff38b72fb5b15659bb5e8498760dda"
   },
   "unsupported_contracts": [
     {
@@ -2301,7 +2305,7 @@
     "promotion_family_count": 26,
     "promotion_ready": false,
     "public_support": false,
-    "selected_static_export_count": 925,
-    "selected_static_exports_in_aarch64_dynamic_candidate_set": 911
+    "selected_static_export_count": 927,
+    "selected_static_exports_in_aarch64_dynamic_candidate_set": 913
   }
 }

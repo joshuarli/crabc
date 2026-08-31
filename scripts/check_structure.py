@@ -182,6 +182,7 @@ X86_RUNTIME_FOUNDATION_LIBC_SOURCES = {
     Path("libc/src/c_abi/x86_64/fenv_rounding.rs"),
     Path("libc/src/c_abi/x86_64/math_bit_sign.rs"),
     Path("libc/src/c_abi/x86_64/math_trunc.rs"),
+    Path("libc/src/c_abi/x86_64/math_fmod.rs"),
     Path("libc/src/c_abi/x86_64/math_minmax.rs"),
     Path("libc/src/c_abi/x86_64/math_special.rs"),
     Path("libc/src/c_abi/x86_64/math_x87_extended.rs"),

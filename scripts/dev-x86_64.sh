@@ -366,6 +366,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-math-minmax  run the static x86 fmax/fmin minmax slice
   libc-math-bit-sign  run the static x86 fabs/copysign bit-sign slice
   libc-math-trunc  run the static x86 trunc/truncf scalar slice
+  libc-math-fmod  run the static x86 fmod/fmodf scalar remainder slice
   libc-math-elementary-long-double  run the complete static x86 math.elementary-long-double capability
   libc-math-x87-extended  run the static x86 x87 long-double math/remainder block
   libc-math-special  run the complete static x86 math.special capability
@@ -3276,6 +3277,10 @@ run_libc_math_trunc_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_math_trunc.sh
 }
 
+run_libc_math_fmod_probe() {
+    run_in_container bash /workspace/compat/x86_64/run_libc_math_fmod.sh
+}
+
 run_libc_math_elementary_long_double_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_math_elementary_long_double.sh
 }
@@ -3393,6 +3398,7 @@ case "$command" in
     libc-math-minmax) ;;
     libc-math-bit-sign) ;;
     libc-math-trunc) ;;
+    libc-math-fmod) ;;
     libc-fdim) ;;
     machine-context-header-abi) ;;
     memory-sync-header-abi) ;;
@@ -5125,6 +5131,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "libc-math-trunc takes no arguments"
         ensure_image
         run_libc_math_trunc_probe
+        ;;
+    libc-math-fmod)
+        [ "$#" -eq 0 ] || fail "libc-math-fmod takes no arguments"
+        ensure_image
+        run_libc_math_fmod_probe
         ;;
     libc-math-elementary-long-double)
         [ "$#" -eq 0 ] || fail "libc-math-elementary-long-double takes no arguments"
