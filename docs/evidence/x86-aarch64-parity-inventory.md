@@ -17,6 +17,14 @@ promotion family:
 - `unsupported_contracts` lists only x86 ledger surfaces explicitly excluded
   from the promotion program; it is not inferred from absent symbols.
 
+The derivation validates its own selected-record boundary before it reports a
+state: every `verified_slice` must name non-duplicate capabilities owned by
+that same family, no capability may be selected by two slices, verified record
+IDs are unique across slices and artifacts, and an artifact cannot carry a
+capability claim. These checks keep a malformed ledger from turning an
+unrelated capability into `selected-private` when the inventory runs on its
+own; they do not make that state a completion or promotion decision.
+
 The report also checks the 183 pinned public header paths against the AArch64
 musl header oracle and records the selected x86 static-export ratchet only as
 boundary evidence. Neither measure establishes C ABI or runtime parity.

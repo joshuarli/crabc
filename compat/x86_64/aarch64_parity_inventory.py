@@ -121,6 +121,7 @@ def build_inventory() -> dict[str, Any]:
 
     owners: dict[str, Mapping[str, Any]] = {}
     selected_capabilities: set[str] = set()
+    verified_record_ids: set[str] = set()
     family_rows: list[dict[str, Any]] = []
     selected_artifacts: list[dict[str, str]] = []
     for family in families:
@@ -134,15 +135,59 @@ def build_inventory() -> dict[str, Any]:
             require(capability in baseline_capabilities, f"x86 family {identifier} references unknown AArch64 capability {capability}")
             require(capability not in owners, f"AArch64 capability {capability} is mapped by two x86 families")
             owners[capability] = family
+        family_capability_set = set(capability_ids)
         for record in family.get("verified_slice", []) or []:
             require(isinstance(record, Mapping), f"x86 family {identifier} has invalid verified slice")
+            record_id = record.get("id")
+            require(
+                isinstance(record_id, str) and record_id,
+                f"x86 family {identifier} has a verified slice with an invalid id",
+            )
+            require(
+                record_id not in verified_record_ids,
+                f"duplicate verified record id: {record_id}",
+            )
+            verified_record_ids.add(record_id)
             values = record.get("capabilities")
-            require(isinstance(values, list), f"x86 verified slice {record.get('id')} lacks capabilities")
+            require(
+                isinstance(values, list) and values,
+                f"x86 verified slice {record_id} lacks capabilities",
+            )
+            require(
+                all(isinstance(capability, str) and capability for capability in values),
+                f"x86 verified slice {record_id} has an invalid capability",
+            )
+            require(
+                len(values) == len(set(values)),
+                f"x86 verified slice {record_id} duplicates a capability",
+            )
+            outside_family = sorted(set(values) - family_capability_set)
+            require(
+                not outside_family,
+                "x86 verified slice "
+                f"{record_id} selects a capability that escapes its owning family: "
+                f"{', '.join(outside_family)}",
+            )
+            duplicate_selection = sorted(set(values) & selected_capabilities)
+            require(
+                not duplicate_selection,
+                "x86 capability is selected by more than one verified slice: "
+                f"{', '.join(duplicate_selection)}",
+            )
             selected_capabilities.update(values)
         for record in family.get("verified_artifact", []) or []:
             require(isinstance(record, Mapping), f"x86 family {identifier} has invalid verified artifact")
             record_id = record.get("id")
             require(isinstance(record_id, str) and record_id, f"x86 family {identifier} verified artifact id is invalid")
+            require(
+                record_id not in verified_record_ids,
+                f"duplicate verified record id: {record_id}",
+            )
+            verified_record_ids.add(record_id)
+            require(
+                "capabilities" not in record,
+                f"x86 verified artifact {record_id} must not carry capabilities",
+            )
             selected_artifacts.append({"family": identifier, "id": record_id})
         family_rows.append(
             {

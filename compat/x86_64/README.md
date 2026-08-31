@@ -10,6 +10,10 @@ currently implemented foundation, selected private, and still-missing contract
 states without treating any count as a parity or support claim. Run
 `python3 compat/x86_64/aarch64_parity_inventory.py`; it requires
 `promotion_ready=false` and `public_support=false`.
+The generator also independently rejects a verified slice that escapes its
+owning family, duplicate selected capabilities or record IDs, and any
+capability-bearing artifact, so its `selected-private` rows remain accounting
+rather than an inferred support claim.
 
 This lane runs the fixed `crabc-core` lib suite and the separately admitted
 direct `crabc-rs` subset for the `x86_64-unknown-linux-musl` target, including
