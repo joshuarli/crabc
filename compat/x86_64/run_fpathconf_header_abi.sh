@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Native Linux/x86-64 C/C++ <search.h> insque/remque declaration gate.
+# Native Linux/x86-64 C/C++ <unistd.h> fpathconf declaration gate.
 #
 # Pinned musl 1.2.6 is the declaration and C-linkage oracle. The raw project
-# pass uses project headers plus only raw compiler builtin headers, preventing
-# host-libc leakage. Both void-returning queue helpers are unconditional in
-# search.h under strict, POSIX, X/Open, GNU, and BSD profiles.
+# pass uses only project headers plus raw compiler builtin headers, preventing
+# host-libc leakage. `fpathconf` is unconditional in musl's Linux <unistd.h>;
+# strict, POSIX, X/Open, GNU, and BSD profiles must all retain its exact ABI.
 set -euo pipefail
 export LC_ALL=C
 
@@ -12,11 +12,11 @@ readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
 readonly CANDIDATE_CC=/usr/bin/gcc
 readonly PROJECT_INCLUDE="$ROOT_DIR/include"
-readonly C_PROBE="$ROOT_DIR/compat/x86_64/intrusive_queue_header_abi_probe.c"
-readonly CXX_PROBE="$ROOT_DIR/compat/x86_64/intrusive_queue_header_abi_probe.cpp"
+readonly C_PROBE="$ROOT_DIR/compat/x86_64/fpathconf_header_abi_probe.c"
+readonly CXX_PROBE="$ROOT_DIR/compat/x86_64/fpathconf_header_abi_probe.cpp"
 
 fail() {
-    printf 'ERROR: x86 search.h intrusive queue ABI: %s\n' "$*" >&2
+    printf 'ERROR: x86 unistd.h fpathconf ABI: %s\n' "$*" >&2
     exit 1
 }
 
@@ -61,7 +61,7 @@ candidate_compiler_builtin_include="$(realpath "$candidate_compiler_builtin_incl
 [ -d "$candidate_compiler_builtin_include" ] ||
     fail "missing raw candidate compiler builtin include directory"
 
-work_dir="$(mktemp -d /tmp/crabc-x86-64-intrusive-queue-header.XXXXXX)"
+work_dir="$(mktemp -d /tmp/crabc-x86-64-fpathconf-header.XXXXXX)"
 trap 'rm -rf -- "$work_dir"' EXIT
 
 set_profile_args() {
@@ -97,18 +97,16 @@ compile_profile() {
                     -Werror=implicit-function-declaration "${include_args[@]}" \
                     -fsyntax-only "$C_PROBE"
             else
-                object="$work_dir/${variant}-${label}-intrusive-queue.o"
+                object="$work_dir/${variant}-${label}-fpathconf.o"
                 run_compiler "$compiler" -std=c++17 -x c++ -U_GNU_SOURCE \
                     -U_BSD_SOURCE -U_XOPEN_SOURCE -U_POSIX_C_SOURCE \
                     -U_DEFAULT_SOURCE "$@" -nostdinc++ "${include_args[@]}" \
                     -c "$CXX_PROBE" -o "$object"
                 undefined="$(nm --undefined-only "$object")"
-                for symbol in insque remque; do
-                    printf '%s\n' "$undefined" | grep -Eq "[[:space:]]${symbol}$" ||
-                        fail "C++ probe does not retain C linkage for ${symbol} (${variant}, ${label})"
-                done
-                if printf '%s\n' "$undefined" | grep -Eq '_Z[0-9].*(insque|remque)'; then
-                    fail "C++ probe retained a mangled intrusive-queue reference (${variant}, ${label})"
+                printf '%s\n' "$undefined" | grep -Eq '[[:space:]]fpathconf$' ||
+                    fail "C++ probe does not retain C linkage for fpathconf (${variant}, ${label})"
+                if printf '%s\n' "$undefined" | grep -Eq '_Z[0-9].*fpathconf'; then
+                    fail "C++ probe retained a mangled fpathconf reference (${variant}, ${label})"
                 fi
             fi
         done
@@ -132,9 +130,9 @@ while IFS= read -r path; do
         *) fail "project strict header trace escaped its declared roots: $path" ;;
     esac
 done < <(trace_paths "$header_trace")
-for header in search.h features.h bits/alltypes.h; do
+for header in unistd.h features.h sys/types.h; do
     grep -Fq "$PROJECT_INCLUDE/$header" "$header_trace" ||
         fail "strict C probe did not use the project <$header>"
 done
 
-printf 'x86 pinned-musl/project C/C++ <search.h> intrusive queue ABI: PASS\n'
+printf 'x86 pinned-musl/project C/C++ <unistd.h> fpathconf ABI: PASS\n'

@@ -484,6 +484,10 @@ mod ioctl;
 mod descriptor_io;
 #[path = "posix_close.rs"]
 mod posix_close;
+#[path = "syncfs.rs"]
+mod syncfs;
+#[path = "membarrier.rs"]
+mod membarrier;
 #[path = "vector_io.rs"]
 mod vector_io;
 #[path = "process_resources.rs"]

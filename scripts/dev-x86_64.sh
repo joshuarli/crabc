@@ -4176,6 +4176,7 @@ case "$command" in
     access-header-abi) ;;
     xattr-header-abi) ;;
     madvise-reference) ;;
+    umask-header-abi|intrusive-queue-header-abi|getdtablesize-header-abi|membarrier-header-abi|syncfs-header-abi|confstr-header-abi|fpathconf-header-abi|pathconf-header-abi|sysconf-header-abi|libc-umask|libc-intrusive-queue|libc-getdtablesize|libc-membarrier|libc-syncfs|libc-confstr|libc-fpathconf|libc-pathconf|libc-sysconf) ;;
     ctype-header-abi|locale-profile-header-abi|locale-multibyte-header-abi|iconv-header-abi|wide-character-header-abi|wcswcs-header-abi|locale-object-wide-header-abi|locale-narrow-header-abi) ;;
     integer-arithmetic-header-abi|integer-parse-header-abi|float-parse-header-abi|getsubopt-header-abi|l64a-header-abi|intmax-arithmetic-header-abi|credential-observation-header-abi|login-name-header-abi|child-reaping-header-abi|immediate-termination-header-abi|sched-getcpu-header-abi|sched-yield-header-abi|bsearch-header-abi|linear-search-header-abi|intrusive-queue-header-abi|qsort-header-abi|callback-algorithms-header-abi) ;;
     posix-exit-header-abi) ;;
@@ -6646,5 +6647,95 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "ldso-dynamic-admission takes no arguments"
         ensure_image
         run_ldso_dynamic_admission_tests
+        ;;
+    umask-header-abi)
+        [ "$#" -eq 0 ] || fail "umask-header-abi takes no arguments"
+        ensure_image
+        run_in_container bash /workspace/compat/x86_64/run_umask_header_abi.sh
+        ;;
+    intrusive-queue-header-abi)
+        [ "$#" -eq 0 ] || fail "intrusive-queue-header-abi takes no arguments"
+        ensure_image
+        run_in_container bash /workspace/compat/x86_64/run_intrusive_queue_header_abi.sh
+        ;;
+    getdtablesize-header-abi)
+        [ "$#" -eq 0 ] || fail "getdtablesize-header-abi takes no arguments"
+        ensure_image
+        run_in_container bash /workspace/compat/x86_64/run_getdtablesize_header_abi.sh
+        ;;
+    membarrier-header-abi)
+        [ "$#" -eq 0 ] || fail "membarrier-header-abi takes no arguments"
+        ensure_image
+        run_in_container bash /workspace/compat/x86_64/run_membarrier_header_abi.sh
+        ;;
+    syncfs-header-abi)
+        [ "$#" -eq 0 ] || fail "syncfs-header-abi takes no arguments"
+        ensure_image
+        run_in_container bash /workspace/compat/x86_64/run_syncfs_header_abi.sh
+        ;;
+    confstr-header-abi)
+        [ "$#" -eq 0 ] || fail "confstr-header-abi takes no arguments"
+        ensure_image
+        run_in_container bash /workspace/compat/x86_64/run_confstr_header_abi.sh
+        ;;
+    fpathconf-header-abi)
+        [ "$#" -eq 0 ] || fail "fpathconf-header-abi takes no arguments"
+        ensure_image
+        run_in_container bash /workspace/compat/x86_64/run_fpathconf_header_abi.sh
+        ;;
+    pathconf-header-abi)
+        [ "$#" -eq 0 ] || fail "pathconf-header-abi takes no arguments"
+        ensure_image
+        run_in_container bash /workspace/compat/x86_64/run_pathconf_header_abi.sh
+        ;;
+    sysconf-header-abi)
+        [ "$#" -eq 0 ] || fail "sysconf-header-abi takes no arguments"
+        ensure_image
+        run_in_container bash /workspace/compat/x86_64/run_sysconf_header_abi.sh
+        ;;
+    libc-umask)
+        [ "$#" -eq 0 ] || fail "libc-umask takes no arguments"
+        ensure_image
+        run_in_container bash /workspace/compat/x86_64/run_libc_umask.sh
+        ;;
+    libc-intrusive-queue)
+        [ "$#" -eq 0 ] || fail "libc-intrusive-queue takes no arguments"
+        ensure_image
+        run_in_container bash /workspace/compat/x86_64/run_libc_intrusive_queue.sh
+        ;;
+    libc-getdtablesize)
+        [ "$#" -eq 0 ] || fail "libc-getdtablesize takes no arguments"
+        ensure_image
+        run_in_container bash /workspace/compat/x86_64/run_libc_getdtablesize.sh
+        ;;
+    libc-membarrier)
+        [ "$#" -eq 0 ] || fail "libc-membarrier takes no arguments"
+        ensure_image
+        run_in_container bash /workspace/compat/x86_64/run_libc_membarrier.sh
+        ;;
+    libc-syncfs)
+        [ "$#" -eq 0 ] || fail "libc-syncfs takes no arguments"
+        ensure_image
+        run_in_container bash /workspace/compat/x86_64/run_libc_syncfs.sh
+        ;;
+    libc-confstr)
+        [ "$#" -eq 0 ] || fail "libc-confstr takes no arguments"
+        ensure_image
+        run_in_container bash /workspace/compat/x86_64/run_libc_confstr.sh
+        ;;
+    libc-fpathconf)
+        [ "$#" -eq 0 ] || fail "libc-fpathconf takes no arguments"
+        ensure_image
+        run_in_container bash /workspace/compat/x86_64/run_libc_fpathconf.sh
+        ;;
+    libc-pathconf)
+        [ "$#" -eq 0 ] || fail "libc-pathconf takes no arguments"
+        ensure_image
+        run_in_container bash /workspace/compat/x86_64/run_libc_pathconf.sh
+        ;;
+    libc-sysconf)
+        [ "$#" -eq 0 ] || fail "libc-sysconf takes no arguments"
+        ensure_image
+        run_in_container bash /workspace/compat/x86_64/run_libc_sysconf.sh
         ;;
 esac

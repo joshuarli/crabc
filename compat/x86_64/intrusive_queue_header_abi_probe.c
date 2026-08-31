@@ -1,4 +1,4 @@
-/* Source-only Linux/x86-64 search.h insque/remque declaration probe. */
+/* Pinned-musl/project Linux/x86-64 intrusive-queue declaration gate. */
 
 #if !defined(__linux__) || !defined(__x86_64__) || !defined(__LP64__) || \
     !defined(__BYTE_ORDER__) || !defined(__ORDER_LITTLE_ENDIAN__) || \
@@ -22,5 +22,5 @@ static remque_signature remque_function __attribute__((used)) = remque;
 int crabc_x86_64_intrusive_queue_header_abi_probe(void)
 {
     return insque_function != (insque_signature)0 &&
-            remque_function != (remque_signature)0 ? 0 : 1;
+        remque_function != (remque_signature)0 ? 0 : 1;
 }

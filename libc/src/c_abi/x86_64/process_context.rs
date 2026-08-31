@@ -20,7 +20,10 @@
 //!   `src/unistd/getpgrp.c`, `src/unistd/setpgid.c`,
 //!   `src/unistd/setpgrp.c`, and `src/unistd/setsid.c` map to the
 //!   process-group/session wrappers.
-//! - `src/stat/umask.c` maps to [`umask`].
+//! - `src/stat/umask.c` maps to [`umask`]'s direct `SYS_UMASK=95` exchange.
+//!   Musl routes that raw result through its generic `syscall` return helper,
+//!   but Linux's `umask(2)` always returns the prior mask, so this selected
+//!   normal path neither needs nor reaches an errno/TLS translation seam.
 //!
 //! Musl's `__syscall` leaves remain raw scalar returns, while its `syscall`
 //! leaves publish Linux's `-4095..=-1` errors through C `errno`. The latter
@@ -102,8 +105,9 @@ pub extern "C" fn getegid() -> c_uint {
 /// provide a scoped mask guard, path-creation APIs, or pthread coordination.
 #[no_mangle]
 pub extern "C" fn umask(mask: c_uint) -> c_uint {
-    // SAFETY: `SYS_UMASK` takes one scalar Linux mode word and returns the
-    // prior mask. No C errno translation is involved in musl's wrapper.
+    // SAFETY: Linux `SYS_UMASK` takes one scalar mode word and always returns
+    // the prior mask. Musl's generic `syscall` macro has an error translator,
+    // but the kernel supplies no error encoding for this operation.
     unsafe { raw_syscall::syscall1(raw_syscall::SYS_UMASK, i64::from(mask)) as c_uint }
 }
 

@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
-# Native Linux/x86-64 selected static crabc-libc insque/remque evidence.
+# Native Linux/x86-64 selected static crabc-libc pathconf evidence.
 #
-# The shared selected archive source is section-collected into one true-static
-# candidate. It must retain only musl's caller-owned intrusive queue rewiring
-# pair, without selecting a search container, allocator, TLS, or runtime.
+# The existing musl-mapped system-configuration source owner is linked only
+# with `--gc-sections`. The final true-static candidate retains `pathconf`
+# and its initial-TLS errno seam, but not neighboring configuration entry
+# points or a filesystem/runtime closure.
 set -euo pipefail
 export LC_ALL=C
 
@@ -13,7 +14,7 @@ readonly STATIC_C_ABI_EXPORTS="$ROOT_DIR/compat/x86_64/static_c_abi_exports.txt"
 readonly AARCH64_STATIC_ABI="$ROOT_DIR/compat/abi/musl-1.2.6/aarch64/libc.a.static.tsv"
 
 fail() {
-    printf 'ERROR: x86 static libc intrusive queue: %s\n' "$*" >&2
+    printf 'ERROR: x86 static libc pathconf: %s\n' "$*" >&2
     exit 1
 }
 
@@ -66,53 +67,49 @@ case "$(uname -m)" in
     x86_64|amd64) ;;
     *) fail "requires native x86-64" ;;
 esac
-for tool in ar awk cargo cmp diff grep mkdir mktemp nm objdump readelf rustup sort; do
+for tool in ar awk cargo cmp diff grep mkdir mktemp nm objdump readelf rustup sed sort; do
     require_tool "$tool"
 done
 [ -x "$ORACLE_CC" ] || fail "missing pinned musl oracle compiler"
 [ -f "$AARCH64_STATIC_ABI" ] || fail "missing AArch64 musl static ABI oracle"
 
 bash "$ROOT_DIR/compat/x86_64/run_musl_oracle.sh" >/dev/null
-bash "$ROOT_DIR/compat/x86_64/run_intrusive_queue_header_abi.sh" >/dev/null
+bash "$ROOT_DIR/compat/x86_64/run_pathconf_header_abi.sh" >/dev/null
 
-grep -Fqx $'insque\tinsque.lo\tT\tGLOBAL\t0\t28' "$AARCH64_STATIC_ABI" ||
-    fail "AArch64 musl ABI oracle lost insque ownership"
-grep -Fqx $'remque\tinsque.lo\tT\tGLOBAL\t0\t24' "$AARCH64_STATIC_ABI" ||
-    fail "AArch64 musl ABI oracle lost remque ownership"
+grep -Fqx $'pathconf\tpathconf.lo\tT\tGLOBAL\t0\t8' "$AARCH64_STATIC_ABI" ||
+    fail "AArch64 musl ABI oracle lost pathconf ownership"
 
-work_dir="$(mktemp -d /tmp/crabc-x86-64-libc-intrusive-queue.XXXXXX)"
+work_dir="$(mktemp -d /tmp/crabc-x86-64-libc-pathconf.XXXXXX)"
 trap 'rm -rf -- "$work_dir"' EXIT
 target_dir="$work_dir/cargo-target"
 archive="$target_dir/x86_64-unknown-linux-musl/debug/libc.a"
-reference="$work_dir/musl-intrusive-queue-reference"
-candidate="$work_dir/crabc-static-intrusive-queue-candidate"
+reference="$work_dir/musl-pathconf-reference"
+candidate="$work_dir/crabc-static-pathconf-candidate"
 header_trace="$work_dir/header-trace"
 archive_symbols="$work_dir/archive-symbols"
 selected_symbols="$work_dir/selected-c-abi-symbols"
 expected_symbols="$work_dir/expected-c-abi-symbols"
-owner_symbols="$work_dir/intrusive-queue-owner-symbols"
-owner_insque_disassembly="$work_dir/owner-insque-disassembly"
-owner_remque_disassembly="$work_dir/owner-remque-disassembly"
+owner_symbols="$work_dir/pathconf-owner-symbols"
+owner_disassembly="$work_dir/pathconf-owner-disassembly"
 candidate_symbols="$work_dir/candidate-symbols"
 candidate_headers="$work_dir/candidate-program-headers"
 candidate_sections="$work_dir/candidate-sections"
 candidate_dynamic="$work_dir/candidate-dynamic"
 candidate_relocations="$work_dir/candidate-relocations"
 candidate_disassembly="$work_dir/candidate-disassembly"
-insque_disassembly="$work_dir/insque-disassembly"
-remque_disassembly="$work_dir/remque-disassembly"
+pathconf_disassembly="$work_dir/pathconf-disassembly"
+errno_disassembly="$work_dir/errno-location-disassembly"
 
 cd "$ROOT_DIR"
-"$ORACLE_CC" -std=c11 -I"$ROOT_DIR/include" -E -H \
-    compat/x86_64/libc_intrusive_queue_probe.c >/dev/null 2>"$header_trace"
-for header in stddef.h search.h features.h bits/alltypes.h; do
+"$ORACLE_CC" -std=c11 -D_GNU_SOURCE -I"$ROOT_DIR/include" -E -H \
+    compat/x86_64/libc_pathconf_probe.c >/dev/null 2>"$header_trace"
+for header in errno.h limits.h unistd.h features.h sys/types.h; do
     grep -Fq "$ROOT_DIR/include/$header" "$header_trace" ||
         fail "fixture did not use project $header"
 done
-"$ORACLE_CC" -std=c11 -fno-builtin -fno-stack-protector \
-    -I"$ROOT_DIR/include" compat/x86_64/libc_intrusive_queue_probe.c \
-    -o "$reference"
-"$reference" || fail "pinned-musl intrusive-queue fixture failed"
+"$ORACLE_CC" -std=c11 -D_GNU_SOURCE -fno-builtin -fno-stack-protector \
+    -I"$ROOT_DIR/include" compat/x86_64/libc_pathconf_probe.c -o "$reference"
+"$reference" || fail "pinned-musl pathconf fixture failed"
 
 CARGO_TARGET_DIR="$target_dir" cargo rustc --locked -p crabc-libc --lib \
     --target x86_64-unknown-linux-musl -- \
@@ -121,42 +118,31 @@ CARGO_TARGET_DIR="$target_dir" cargo rustc --locked -p crabc-libc --lib \
 
 nm -A --defined-only "$archive" >"$archive_symbols"
 assert_selected_c_abi_surface "$archive" "$selected_symbols" "$expected_symbols"
-for symbol in insque remque; do
-    grep -Eq "[[:space:]]T[[:space:]]${symbol}$" "$archive_symbols" ||
-        fail "archive does not define strong ${symbol}"
-done
+grep -Eq '[[:space:]]T[[:space:]]pathconf$' "$archive_symbols" ||
+    fail "archive does not define strong pathconf"
 
-mapfile -t insque_members < <(archive_member_for_symbol "$archive" insque)
-mapfile -t remque_members < <(archive_member_for_symbol "$archive" remque)
-[ "${#insque_members[@]}" -eq 1 ] ||
-    fail "insque must have exactly one existing archive source owner"
-[ "${#remque_members[@]}" -eq 1 ] ||
-    fail "remque must have exactly one existing archive source owner"
-[ "${insque_members[0]}" = "${remque_members[0]}" ] ||
-    fail "insque/remque must share one selected archive source owner"
+mapfile -t members < <(archive_member_for_symbol "$archive" pathconf)
+[ "${#members[@]}" -eq 1 ] ||
+    fail "pathconf must have exactly one existing archive source owner"
 mkdir "$work_dir/owner"
 (
     cd "$work_dir/owner"
-    ar x "$archive" "${insque_members[0]}"
+    ar x "$archive" "${members[0]}"
 )
-owner="$work_dir/owner/${insque_members[0]}"
+owner="$work_dir/owner/${members[0]}"
 nm -g --defined-only --format=posix "$owner" >"$owner_symbols"
-for symbol in insque remque; do
-    grep -Eq "^${symbol}[[:space:]]+T[[:space:]]" "$owner_symbols" ||
-        fail "existing source owner does not define ${symbol}"
-done
-objdump -d --disassemble=insque "$owner" >"$owner_insque_disassembly"
-objdump -d --disassemble=remque "$owner" >"$owner_remque_disassembly"
-if grep -Eq '[[:space:]](call|syscall)([[:space:]]|$)' \
-    "$owner_insque_disassembly" "$owner_remque_disassembly"; then
-    fail "existing queue source unexpectedly delegates outside pointer rewiring"
+grep -Eq '^pathconf[[:space:]]+T[[:space:]]' "$owner_symbols" ||
+    fail "existing source owner does not define pathconf"
+objdump -d --disassemble=pathconf "$owner" >"$owner_disassembly"
+if grep -Eq '[[:space:]]syscall([[:space:]]|$)' "$owner_disassembly"; then
+    fail "existing source pathconf unexpectedly performs a syscall"
 fi
 
-"$ORACLE_CC" -std=c11 -DCRABC_INTRUSIVE_QUEUE_FREESTANDING -O2 \
-    -I"$ROOT_DIR/include" -nostdlib -static -fno-pie -no-pie -ffreestanding \
+"$ORACLE_CC" -std=c11 -D_GNU_SOURCE -DCRABC_PATHCONF_FREESTANDING \
+    -O2 -I"$ROOT_DIR/include" -nostdlib -static -fno-pie -no-pie -ffreestanding \
     -fno-builtin -fno-stack-protector -Wl,-e,_start -Wl,--no-undefined \
-    -Wl,--gc-sections compat/x86_64/libc_intrusive_queue_probe.c \
-    compat/x86_64/libc_intrusive_queue_start.S "$archive" -o "$candidate"
+    -Wl,--gc-sections compat/x86_64/libc_pathconf_probe.c \
+    compat/x86_64/libc_pathconf_start.S "$archive" -o "$candidate"
 
 readelf --symbols --wide "$candidate" >"$candidate_symbols"
 readelf --program-headers --wide "$candidate" >"$candidate_headers"
@@ -164,12 +150,12 @@ readelf --sections --wide "$candidate" >"$candidate_sections"
 readelf --dynamic --wide "$candidate" >"$candidate_dynamic" || true
 readelf --relocs --wide "$candidate" >"$candidate_relocations"
 objdump -d "$candidate" >"$candidate_disassembly"
-objdump -d --disassemble=insque "$candidate" >"$insque_disassembly"
-objdump -d --disassemble=remque "$candidate" >"$remque_disassembly"
+objdump -d --disassemble=pathconf "$candidate" >"$pathconf_disassembly"
+objdump -d --disassemble=__errno_location "$candidate" >"$errno_disassembly"
 
-for symbol in insque remque; do
+for symbol in pathconf __errno_location; do
     grep -Eq "[[:space:]]${symbol}$" "$candidate_symbols" ||
-        fail "candidate lacks ${symbol}"
+        fail "candidate lacks $symbol"
 done
 if awk '$7 == "UND" && NF >= 8 { print }' "$candidate_symbols" | grep -q .; then
     fail "candidate retains an unresolved symbol"
@@ -178,9 +164,8 @@ if grep -Eq 'Requesting program interpreter|INTERP|NEEDED' \
     "$candidate_headers" "$candidate_dynamic"; then
     fail "candidate selects a dynamic dependency"
 fi
-if grep -Eq '[[:space:]]TLS[[:space:]]' "$candidate_headers"; then
-    fail "candidate unexpectedly selects TLS"
-fi
+grep -Eq '[[:space:]]TLS[[:space:]]' "$candidate_headers" ||
+    fail "candidate lacks the required initial-TLS errno segment"
 if grep -Eq 'TLSGD|TLSLD|TLSDESC|GOTTPOFF|DTPMOD(64)?|DTPOFF(32|64)?|__tls_get_addr' \
     "$candidate_relocations" "$candidate_symbols" "$candidate_disassembly"; then
     fail "candidate retains a dynamic TLS model"
@@ -192,27 +177,30 @@ if grep -Eq '(/opt/musl-|libc\.a\(|glibc|ld-linux|libc\.so\.6)' \
     "$candidate_headers" "$candidate_dynamic"; then
     fail "candidate selected an ambient libc runtime"
 fi
-# Reject sibling lookup/sorting and tree/hash container APIs by exact symbol.
-if grep -Eq '[[:space:]](__errno_location|bsearch|lfind|lsearch|qsort|qsort_r|__qsort_r|tdelete|tdestroy|tfind|tsearch|twalk|__tsearch_balance|hcreate|hcreate_r|hdestroy|hdestroy_r|hsearch|hsearch_r)$' \
+if grep -Eq '[[:space:]](sysconf|confstr|fpathconf|getpagesize|getdtablesize|getauxval|getrlimit|setrlimit|prlimit|getrusage|getpriority|setpriority|nice)$' \
     "$candidate_symbols"; then
-    fail "candidate retained a sibling search or errno API"
+    fail "candidate retained neighboring system-configuration or resource C ABI symbols"
 fi
-if grep -Eq '[[:space:]](malloc|calloc|realloc|free|memcpy|memmove|memset|strcpy|strlen)$' \
+if grep -Eq '[[:space:]](snprintf|memcpy|memmove|memset|strcpy|strncpy|strlen|malloc|calloc|realloc|free|aligned_alloc|memalign|valloc)$' \
     "$candidate_symbols"; then
-    fail "candidate retained an allocator or text helper"
+    fail "candidate retained an unselected text or allocator dependency"
 fi
-if grep -Eq 'crabc_core|mimalloc|sha_crypt|alloc::|__rust_|panic_(bounds_check|nounwind)|rust_begin_unwind' \
+if grep -Eq 'crabc_core|mimalloc|sha_crypt|alloc::|__rust_' \
     "$candidate_symbols" "$candidate_disassembly"; then
-    fail "candidate selects an unowned runtime dependency"
+    fail "candidate selects an allocator or unowned runtime dependency"
 fi
-if grep -Eq '[[:space:]](call|syscall)([[:space:]]|$)' \
-    "$insque_disassembly" "$remque_disassembly"; then
-    fail "candidate queue implementation unexpectedly delegates outside pointer rewiring"
+if grep -Eq '[[:space:]]syscall([[:space:]]|$)' "$pathconf_disassembly"; then
+    fail "candidate pathconf unexpectedly performs a syscall"
 fi
-syscall_count="$(grep -Ec '[[:space:]]syscall([[:space:]]|$)' "$candidate_disassembly" || true)"
-[ "$syscall_count" -eq 1 ] ||
-    fail "intrusive-queue candidate contains a syscall outside the test entry shim"
+if awk '/[[:space:]]call/ && $0 !~ /<__errno_location>/ { exit 1 }' \
+    "$pathconf_disassembly"; then
+    :
+else
+    fail "candidate pathconf calls outside its explicit errno seam"
+fi
+grep -Eq '%fs:' "$errno_disassembly" ||
+    fail "candidate errno accessor does not use direct initial-TLS FS access"
 
-"$candidate" || fail "freestanding intrusive-queue fixture failed"
+"$candidate" || fail "freestanding pathconf fixture failed"
 
-printf 'x86 static libc intrusive queue: PASS\n'
+printf 'x86 static libc pathconf: PASS\n'

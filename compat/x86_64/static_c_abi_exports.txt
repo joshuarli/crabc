@@ -558,6 +558,7 @@ mbsinit
 mbsrtowcs
 mbstowcs
 mbtowc
+membarrier
 memccpy
 memchr
 memcmp
@@ -881,6 +882,7 @@ strverscmp
 strxfrm
 strxfrm_l
 symlink
+syncfs
 sysconf
 sysinfo
 tanhl

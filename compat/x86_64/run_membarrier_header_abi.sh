@@ -1,10 +1,13 @@
 #!/usr/bin/env bash
-# Native Linux/x86-64 C/C++ <search.h> insque/remque declaration gate.
+# Native Linux/x86-64 <sys/membarrier.h> C/C++ declaration gate.
 #
-# Pinned musl 1.2.6 is the declaration and C-linkage oracle. The raw project
-# pass uses project headers plus only raw compiler builtin headers, preventing
-# host-libc leakage. Both void-returning queue helpers are unconditional in
-# search.h under strict, POSIX, X/Open, GNU, and BSD profiles.
+# Pinned musl 1.2.6 exposes this Linux extension unconditionally. This gate
+# proves only the two-int declaration and three selected command words. Musl's
+# small header lacks an `extern "C"` block, so its C++ object intentionally
+# retains `_Z10membarrierii`; the existing project header deliberately supplies
+# the unmangled C bridge that its static archive defines. That documented
+# header-only difference selects no barrier command, registration, runtime
+# policy, archive, or general C++ runtime.
 set -euo pipefail
 export LC_ALL=C
 
@@ -12,11 +15,11 @@ readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
 readonly CANDIDATE_CC=/usr/bin/gcc
 readonly PROJECT_INCLUDE="$ROOT_DIR/include"
-readonly C_PROBE="$ROOT_DIR/compat/x86_64/intrusive_queue_header_abi_probe.c"
-readonly CXX_PROBE="$ROOT_DIR/compat/x86_64/intrusive_queue_header_abi_probe.cpp"
+readonly C_PROBE="$ROOT_DIR/compat/x86_64/membarrier_header_abi_probe.c"
+readonly CXX_PROBE="$ROOT_DIR/compat/x86_64/membarrier_header_abi_probe.cpp"
 
 fail() {
-    printf 'ERROR: x86 search.h intrusive queue ABI: %s\n' "$*" >&2
+    printf 'ERROR: x86 sys/membarrier.h ABI: %s\n' "$*" >&2
     exit 1
 }
 
@@ -61,7 +64,7 @@ candidate_compiler_builtin_include="$(realpath "$candidate_compiler_builtin_incl
 [ -d "$candidate_compiler_builtin_include" ] ||
     fail "missing raw candidate compiler builtin include directory"
 
-work_dir="$(mktemp -d /tmp/crabc-x86-64-intrusive-queue-header.XXXXXX)"
+work_dir="$(mktemp -d /tmp/crabc-x86-64-membarrier-header.XXXXXX)"
 trap 'rm -rf -- "$work_dir"' EXIT
 
 set_profile_args() {
@@ -97,24 +100,31 @@ compile_profile() {
                     -Werror=implicit-function-declaration "${include_args[@]}" \
                     -fsyntax-only "$C_PROBE"
             else
-                object="$work_dir/${variant}-${label}-intrusive-queue.o"
+                object="$work_dir/${variant}-${label}-membarrier.o"
                 run_compiler "$compiler" -std=c++17 -x c++ -U_GNU_SOURCE \
                     -U_BSD_SOURCE -U_XOPEN_SOURCE -U_POSIX_C_SOURCE \
                     -U_DEFAULT_SOURCE "$@" -nostdinc++ "${include_args[@]}" \
                     -c "$CXX_PROBE" -o "$object"
                 undefined="$(nm --undefined-only "$object")"
-                for symbol in insque remque; do
-                    printf '%s\n' "$undefined" | grep -Eq "[[:space:]]${symbol}$" ||
-                        fail "C++ probe does not retain C linkage for ${symbol} (${variant}, ${label})"
-                done
-                if printf '%s\n' "$undefined" | grep -Eq '_Z[0-9].*(insque|remque)'; then
-                    fail "C++ probe retained a mangled intrusive-queue reference (${variant}, ${label})"
+                if [ "$variant" = oracle ]; then
+                    printf '%s\n' "$undefined" | grep -Eq '[[:space:]]_Z10membarrierii$' ||
+                        fail "pinned musl C++ header lost its documented membarrier spelling (${label})"
+                    if printf '%s\n' "$undefined" | grep -Eq '[[:space:]]membarrier$'; then
+                        fail "pinned musl C++ header unexpectedly gained C linkage (${label})"
+                    fi
+                else
+                    printf '%s\n' "$undefined" | grep -Eq '[[:space:]]membarrier$' ||
+                        fail "project C++ header does not retain C linkage for membarrier (${label})"
+                    if printf '%s\n' "$undefined" | grep -Eq '_Z10membarrierii$'; then
+                        fail "project C++ header retained the musl-only mangled membarrier reference (${label})"
+                    fi
                 fi
             fi
         done
     done
 }
 
+compile_profile default
 compile_profile strict -D__STRICT_ANSI__
 compile_profile posix -D_POSIX_C_SOURCE=200809L
 compile_profile xopen -D_XOPEN_SOURCE=700
@@ -122,19 +132,18 @@ compile_profile gnu -D_GNU_SOURCE
 compile_profile bsd -D_BSD_SOURCE
 
 set_profile_args project
-header_trace="$work_dir/project-strict-header-trace"
+header_trace="$work_dir/project-header-trace"
 run_compiler "$compiler" -std=c11 -U_GNU_SOURCE -U_BSD_SOURCE \
-    -U_XOPEN_SOURCE -U_POSIX_C_SOURCE -U_DEFAULT_SOURCE -D__STRICT_ANSI__ \
-    "${include_args[@]}" -H -fsyntax-only "$C_PROBE" >/dev/null 2>"$header_trace"
+    -U_XOPEN_SOURCE -U_POSIX_C_SOURCE -U_DEFAULT_SOURCE \
+    -D__STRICT_ANSI__ "${include_args[@]}" -H -fsyntax-only "$C_PROBE" \
+    >/dev/null 2>"$header_trace"
 while IFS= read -r path; do
     case "$path" in
         "$PROJECT_INCLUDE"/*|"$candidate_compiler_builtin_include"/*) ;;
-        *) fail "project strict header trace escaped its declared roots: $path" ;;
+        *) fail "project header trace escaped its declared roots: $path" ;;
     esac
 done < <(trace_paths "$header_trace")
-for header in search.h features.h bits/alltypes.h; do
-    grep -Fq "$PROJECT_INCLUDE/$header" "$header_trace" ||
-        fail "strict C probe did not use the project <$header>"
-done
+grep -Fq "$PROJECT_INCLUDE/sys/membarrier.h" "$header_trace" ||
+    fail "strict C probe did not use the project <sys/membarrier.h>"
 
-printf 'x86 pinned-musl/project C/C++ <search.h> intrusive queue ABI: PASS\n'
+printf 'x86 pinned-musl/project C/C++ <sys/membarrier.h> ABI: PASS\n'

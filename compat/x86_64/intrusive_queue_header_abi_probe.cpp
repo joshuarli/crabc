@@ -1,4 +1,4 @@
-/* C++17 companion for the Linux/x86-64 search.h insque/remque declaration probe. */
+/* C++17 companion for the Linux/x86-64 intrusive-queue declaration gate. */
 
 #if !defined(__linux__) || !defined(__x86_64__) || !defined(__LP64__) || \
     !defined(__BYTE_ORDER__) || !defined(__ORDER_LITTLE_ENDIAN__) || \
@@ -12,9 +12,9 @@ using insque_signature = void (*)(void *, void *);
 using remque_signature = void (*)(void *);
 
 static_assert(__is_same(decltype(&insque), insque_signature),
-    "C++ insque declaration");
+              "insque declaration");
 static_assert(__is_same(decltype(&remque), remque_signature),
-    "C++ remque declaration");
+              "remque declaration");
 
 static insque_signature insque_function __attribute__((used)) = insque;
 static remque_signature remque_function __attribute__((used)) = remque;

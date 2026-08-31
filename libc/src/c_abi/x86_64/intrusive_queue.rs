@@ -1,123 +1,110 @@
-//! Selected static Linux/x86-64 C intrusive-queue ABI boundary.
+//! Selected static Linux/x86-64 intrusive queue C ABI boundary.
 //!
-//! This leaf owns exactly `insque` and `remque`: the two-link mutation of a
-//! caller-owned intrusive queue node. It owns neither node allocation,
-//! lifetime, search/tree/hash algorithms, a container type, iteration,
-//! callbacks, synchronization, errno, TLS, locale, libc.so, a CRT, a loader,
-//! a sysroot, or public x86 support.
+//! This leaf owns exactly musl's paired `insque` and `remque` entries: they
+//! rewire only the caller-owned first two pointer words of one intrusive
+//! doubly linked node. `insque(element, predecessor)` clears both links when
+//! its predecessor is null; otherwise it inserts `element` directly after the
+//! predecessor. `remque(element)` reconnects non-null neighbors but leaves
+//! the removed element's own link words unchanged, exactly as musl does.
+//!
+//! The functions do not allocate or free nodes, search a container, retain a
+//! head/tail/global queue, validate pointers, call callbacks, synchronize, or
+//! touch errno, TLS, locale, syscalls, process state, or runtime state. The
+//! caller owns node representation, reachability, lifetime, and exclusion of
+//! concurrent mutation. Null or invalid `element` pointers and nodes whose
+//! first two words are not writable link pointers are outside the C-defined
+//! contract; this leaf does not invent validation behavior for them.
 //!
 //! Translation provenance is pinned musl 1.2.6 release commit
-//! 9fa28ece75d8a2191de7c5bb53bed224c5947417, under musl's MIT license:
-//! `src/search/insque.c::{insque,remque}` maps directly to the assignments
-//! below. Musl treats the first two fields of each valid caller node as
-//! `next` and `prev` pointers. A null predecessor resets only the inserted
-//! node's two links; a non-null predecessor splices after it; and `remque`
-//! repairs neighboring links without clearing the removed node's own links.
-//! Null element pointers and invalid/non-writable caller links remain outside
-//! the C-defined caller contract rather than receiving a Rust fallback.
+//! `9fa28ece75d8a2191de7c5bb53bed224c5947417`, under musl's MIT license:
+//! `src/search/insque.c` defines both public entries in the one `insque.lo`
+//! object. Its private two-pointer `struct node` maps directly to
+//! [`QueueNode`]'s private prefix below. The AArch64 static ABI inventory
+//! records strong `insque` and `remque` in that same `insque.lo` owner.
 //!
-//! No path reads or writes TLS, errno, allocation, locks, locale, callback
-//! registries, process state, or a syscall boundary.
+//! This capability-free leaf is not `lfind`/`lsearch`, bsearch, qsort,
+//! search-tree/hash state, a queue container, allocator, filesystem/process
+//! behavior, libc.so, CRT, loader, sysroot, family completion, promotion, or
+//! public x86 support.
 
 use core::{
     ffi::c_void,
-    mem::{align_of, offset_of, size_of},
-    ptr::null_mut,
+    ptr::{self, null_mut},
 };
 
+/// Private prefix of the caller-owned intrusive node representation.
+///
+/// Musl exposes only `void *` spellings. The caller supplies storage whose
+/// first two pointer-sized fields have this exact next/previous layout.
 #[repr(C)]
-struct Node {
-    next: *mut Node,
-    prev: *mut Node,
+struct QueueNode {
+    next: *mut QueueNode,
+    previous: *mut QueueNode,
 }
 
-const _: () = {
-    assert!(size_of::<Node>() == 16);
-    assert!(align_of::<Node>() == 8);
-    assert!(offset_of!(Node, next) == 0);
-    assert!(offset_of!(Node, prev) == 8);
-};
-
-const NEXT_OFFSET: usize = offset_of!(Node, next);
-const PREV_OFFSET: usize = offset_of!(Node, prev);
-
-#[inline]
-unsafe fn link_slot(node: *mut Node, offset: usize) -> *mut *mut Node {
-    node.cast::<u8>().wrapping_add(offset).cast::<*mut Node>()
-}
-
-#[inline]
-unsafe fn next(node: *mut Node) -> *mut Node {
-    unsafe { core::ptr::read_unaligned(link_slot(node, NEXT_OFFSET)) }
-}
-
-#[inline]
-unsafe fn prev(node: *mut Node) -> *mut Node {
-    unsafe { core::ptr::read_unaligned(link_slot(node, PREV_OFFSET)) }
-}
-
-#[inline]
-unsafe fn set_next(node: *mut Node, value: *mut Node) {
-    unsafe { core::ptr::write_unaligned(link_slot(node, NEXT_OFFSET), value) };
-}
-
-#[inline]
-unsafe fn set_prev(node: *mut Node, value: *mut Node) {
-    unsafe { core::ptr::write_unaligned(link_slot(node, PREV_OFFSET), value) };
-}
-
-/// Insert element immediately after predecessor, or initialize it when pred is null.
+/// Insert one caller-owned element immediately after its optional predecessor.
 ///
 /// # Safety
 ///
-/// element must be non-null, writable, and begin with two pointer-sized,
-/// suitably aligned link fields in `next`, then `prev` order. If pred is
-/// non-null it must denote another valid writable node in the same
-/// caller-owned intrusive queue, and any non-null neighbor links reached by
-/// the operation must likewise be writable valid nodes.
+/// `element` must address writable storage whose first two pointer words are
+/// a `QueueNode` prefix. If `predecessor` is non-null, it must address a live
+/// writable node with the same prefix; its current successor, if non-null,
+/// must also be writable. Every node must remain valid for the call, and the
+/// caller must exclude concurrent mutation of the affected links.
 #[no_mangle]
-pub unsafe extern "C" fn insque(element: *mut c_void, pred: *mut c_void) {
-    let element = element.cast::<Node>();
-    let pred = pred.cast::<Node>();
+pub unsafe extern "C" fn insque(element: *mut c_void, predecessor: *mut c_void) {
+    let element = element.cast::<QueueNode>();
+    let predecessor = predecessor.cast::<QueueNode>();
 
-    if pred.is_null() {
+    if predecessor.is_null() {
+        // SAFETY: the caller supplies one writable intrusive-node prefix.
         unsafe {
-            set_next(element, null_mut());
-            set_prev(element, null_mut());
+            // `ptr::{read,write}` carries the caller's alignment and validity
+            // preconditions without adding a Rust debug panic path to musl's
+            // valid C node domain.
+            ptr::write(ptr::addr_of_mut!((*element).next), null_mut());
+            ptr::write(ptr::addr_of_mut!((*element).previous), null_mut());
         }
         return;
     }
 
-    // Preserve musl's field-write order, including the final read through the
-    // element after predecessor publication for all caller-valid aliasing.
+    // SAFETY: the caller supplies writable compatible prefixes for element,
+    // predecessor, and any existing successor. This preserves musl's exact
+    // insertion order: save successor, publish both element links, then
+    // reconnect predecessor and successor.
     unsafe {
-        set_next(element, next(pred));
-        set_prev(element, pred);
-        set_next(pred, element);
-        if !next(element).is_null() {
-            set_prev(next(element), element);
+        let successor = ptr::read(ptr::addr_of!((*predecessor).next));
+        ptr::write(ptr::addr_of_mut!((*element).next), successor);
+        ptr::write(ptr::addr_of_mut!((*element).previous), predecessor);
+        ptr::write(ptr::addr_of_mut!((*predecessor).next), element);
+        if !successor.is_null() {
+            ptr::write(ptr::addr_of_mut!((*successor).previous), element);
         }
     }
 }
 
-/// Unlink element from its neighbors without clearing element's two links.
+/// Remove one caller-owned element from its current neighbor links.
 ///
 /// # Safety
 ///
-/// element must be non-null and begin with the valid two-link caller layout.
-/// Any non-null next or previous link must denote a writable valid node whose
-/// opposite link can be updated. The caller retains node lifetime and all
-/// higher-level queue invariants.
+/// `element` must address a live writable `QueueNode` prefix. Each non-null
+/// neighbor stored in that prefix must address a live writable compatible
+/// prefix. The caller owns node lifetime and concurrent-mutation exclusion.
+/// This function deliberately does not clear the removed element's own links.
 #[no_mangle]
 pub unsafe extern "C" fn remque(element: *mut c_void) {
-    let element = element.cast::<Node>();
+    let element = element.cast::<QueueNode>();
 
+    // SAFETY: the caller supplies the writable node prefix and any non-null
+    // writable neighbor prefixes. The source reconnects neighbors only.
     unsafe {
-        if !next(element).is_null() {
-            set_prev(next(element), prev(element));
+        let successor = ptr::read(ptr::addr_of!((*element).next));
+        let predecessor = ptr::read(ptr::addr_of!((*element).previous));
+        if !successor.is_null() {
+            ptr::write(ptr::addr_of_mut!((*successor).previous), predecessor);
         }
-        if !prev(element).is_null() {
-            set_next(prev(element), next(element));
+        if !predecessor.is_null() {
+            ptr::write(ptr::addr_of_mut!((*predecessor).next), successor);
         }
     }
 }

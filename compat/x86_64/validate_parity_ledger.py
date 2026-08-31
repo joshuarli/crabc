@@ -30204,7 +30204,7 @@ def require_linear_search_artifact(family: Mapping[str, Any]) -> None:
 
 
 def require_intrusive_queue_artifact(family: Mapping[str, Any]) -> None:
-    """Keep musl's paired intrusive-link leaf capability-free and closed."""
+    """Keep musl's paired caller-owned queue rewiring below promotion."""
 
     artifacts = require_verified_artifacts(
         family.get("verified_artifact"),
@@ -30227,6 +30227,7 @@ def require_intrusive_queue_artifact(family: Mapping[str, Any]) -> None:
         "capabilities" not in artifact,
         "static-c-intrusive-queue must remain capability-free",
     )
+
     description = artifact.get("description")
     require(
         isinstance(description, str), "static-c-intrusive-queue needs a description"
@@ -30235,15 +30236,16 @@ def require_intrusive_queue_artifact(family: Mapping[str, Any]) -> None:
         "`insque`/`remque` compatibility artifact",
         "still-planned `libc.c-abi-compat`",
         "`src/search/insque.c`",
-        "first two pointer fields",
-        "null-predecessor reset",
-        "without clearing the removed node's own links",
-        "rejects `bsearch`, `lfind`, `lsearch`, `qsort`, `qsort_r`, `__qsort_r`",
+        "first two pointer words",
+        "clears both links",
+        "directly after a non-null predecessor",
+        "leaves the removed element's link words stale",
+        "rejects bsearch/lfind/lsearch/qsort",
         "tree/hash helpers",
-        "byte-copy helpers",
         "capability-free ABI artifact",
-        "does not select general searching, trees, lists, containers",
-        "search.tree-intrusive` capability accounting",
+        "queue container",
+        "queue/search lifecycle",
+        "allocator/runtime behavior",
         "family completion",
         "promotion",
         "public x86 support",
@@ -30255,11 +30257,13 @@ def require_intrusive_queue_artifact(family: Mapping[str, Any]) -> None:
 
     owners = set(
         nonempty_strings(
-            artifact.get("source_owners"), "static-c-intrusive-queue.source_owners"
+            artifact.get("source_owners"),
+            "static-c-intrusive-queue.source_owners",
         )
     )
     for owner in (
         "compat/upstreams.toml",
+        "compat/abi/musl-1.2.6/aarch64/libc.a.static.tsv",
         "libc/Cargo.toml",
         "libc/src/lib.rs",
         "libc/src/c_abi/x86_64/static_c_abi.rs",
@@ -30275,12 +30279,11 @@ def require_intrusive_queue_artifact(family: Mapping[str, Any]) -> None:
         "compat/x86_64/libc_intrusive_queue_probe.c",
         "compat/x86_64/libc_intrusive_queue_start.S",
         "compat/x86_64/run_libc_intrusive_queue.sh",
-        "compat/x86_64/aarch64_parity_inventory.py",
-        "compat/x86_64/aarch64_parity_inventory.json",
-        "compat/x86_64/tests/test_aarch64_parity_inventory.py",
         "compat/x86_64/tests/test_parity_ledger.py",
         "compat/x86_64/tests/test_runner.py",
         "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/aarch64_parity_inventory.py",
+        "compat/x86_64/aarch64_parity_inventory.json",
         "compat/x86_64/README.md",
         "STATUS.md",
         "x86-64.md",
@@ -30299,20 +30302,20 @@ def require_intrusive_queue_artifact(family: Mapping[str, Any]) -> None:
     require(
         any(
             "SysV AMD64" in item
-            and "insque(void *element, void *pred)" in item
             and "rdi/rsi" in item
-            and "remque(void *element)" in item
-            and "offsets 0/8" in item
+            and "remque" in item
+            and "returns no value" in item
+            and "offsets 0 and 8" in item
             for item in prerequisites
         ),
-        "static-c-intrusive-queue must retain its LP64 two-link ABI",
+        "static-c-intrusive-queue must retain its LP64 void-function ABI",
     )
     require(
         any(
             "9fa28ece75d8a2191de7c5bb53bed224c5947417" in item
             and "src/search/insque.c::{insque,remque}" in item
-            and "null pred resets only element's two links" in item
-            and "without clearing element's own links" in item
+            and "insque.lo" in item
+            and "without clearing its element links" in item
             for item in prerequisites
         ),
         "static-c-intrusive-queue must retain its bounded musl source closure",
@@ -30321,8 +30324,8 @@ def require_intrusive_queue_artifact(family: Mapping[str, Any]) -> None:
         any(
             "no interpreter" in item
             and "PT_TLS" in item
-            and "lfind/lsearch" in item
-            and "tree/hash" in item
+            and "bsearch" in item
+            and "tree/hash helpers" in item
             and "one exit syscall" in item
             for item in prerequisites
         ),
@@ -30364,10 +30367,12 @@ def require_intrusive_queue_artifact(family: Mapping[str, Any]) -> None:
             for phrase in (
                 "Pinned-musl/project C11/C++ header",
                 "`-nostdlib -static` candidate",
-                "null-predecessor reset",
-                "insertion before a successor",
-                "remque retaining the removed node links",
+                "null-predecessor link clearing",
+                "intentionally stale removed-node links",
+                "paired one-member archive owner",
                 "bsearch/lfind/lsearch/qsort",
+                "queue container",
+                "allocator/runtime behavior",
                 "family promotion",
                 "public x86 support",
             )
@@ -30401,21 +30406,20 @@ def require_intrusive_queue_artifact(family: Mapping[str, Any]) -> None:
         ROOT / "libc" / "src" / "c_abi" / "x86_64" / "intrusive_queue.rs"
     ).read_text(encoding="utf-8")
     for snippet in (
-        "Selected static Linux/x86-64 C intrusive-queue ABI boundary",
         "pinned musl 1.2.6 release commit",
         "9fa28ece75d8a2191de7c5bb53bed224c5947417",
-        "src/search/insque.c::{insque,remque}",
-        "without clearing the removed node's own links",
-        "read_unaligned",
-        "write_unaligned",
+        "src/search/insque.c",
+        "null; otherwise it inserts",
+        "own link words unchanged",
+        "ptr::read",
+        "ptr::write",
         'pub unsafe extern "C" fn insque',
         'pub unsafe extern "C" fn remque',
     ):
         require(snippet in source, f"intrusive-queue implementation omits {snippet}")
     exports_in_source = set(
         re.findall(
-            r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(',
-            source,
+            r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(', source
         )
     )
     require(
@@ -30428,7 +30432,6 @@ def require_intrusive_queue_artifact(family: Mapping[str, Any]) -> None:
         "crabc_core",
         "crabc_mimalloc",
         "global_asm!",
-        "panic_",
     ):
         require(
             forbidden not in source,
@@ -30444,15 +30447,14 @@ def require_intrusive_queue_artifact(family: Mapping[str, Any]) -> None:
         "static_c_abi_exports.txt",
         "-nostdlib -static",
         "--no-undefined",
-        "archive does not define ${symbol}",
+        "insque\\tinsque.lo",
+        "remque\\tinsque.lo",
         "--disassemble=insque",
         "--disassemble=remque",
-        "intrusive-queue candidate unexpectedly retains TLS",
-        "intrusive queue unexpectedly performs a syscall",
+        "candidate queue implementation unexpectedly delegates",
         "outside the test entry shim",
-        "bsearch lfind lsearch __qsort_r qsort qsort_r",
-        "candidate accidentally selects ${symbol}",
-        "timeout",
+        "bsearch|lfind|lsearch|qsort",
+        "tree/hash",
     ):
         require(snippet in runner, f"intrusive-queue runner omits {snippet}")
     require(
@@ -30466,12 +30468,10 @@ def require_intrusive_queue_artifact(family: Mapping[str, Any]) -> None:
     for snippet in (
         "insque_signature",
         "remque_signature",
-        "const insque_signature insert = insque",
-        "const remque_signature remove = remque",
-        "check_null_predecessor_reset",
-        "check_splice_and_unlink",
-        "element.next != &successor",
-        "remque retaining",
+        "check_null_predecessor",
+        "check_middle_splice_and_remove",
+        "check_tail_and_head_edges",
+        "stale links",
         "CRABC_INTRUSIVE_QUEUE_FREESTANDING",
     ):
         require(snippet in probe, f"intrusive-queue probe omits {snippet}")
