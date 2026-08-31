@@ -9455,6 +9455,48 @@ class X86ParityLedgerTests(unittest.TestCase):
         thrd_yield = by_id["static-c-thrd-yield"]
         for artifact in artifacts:
             self.assertNotIn("capabilities", artifact)
+        for phrase in (
+            "private weak `__init_ssp` fallback",
+            "default-visible `STB_WEAK` binding",
+            "caller `STB_GLOBAL` private override",
+            "does not initialize a canary",
+            "stack-protector startup",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, crt_handoff["description"])
+        crt_handoff_scope = crt_handoff["native_evidence"][0]["scope"]
+        for phrase in (
+            "default-visible STB_WEAK `__init_ssp`",
+            "caller STB_GLOBAL private override runs after real CRT extracts the archive static-startup owner",
+            "does not initialize a canary",
+            "stack-protector or loader behavior",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, crt_handoff_scope)
+        crt_handoff_oracles = crt_handoff["oracle"]
+        self.assertTrue(
+            any(
+                entry["kind"] == "c-posix"
+                and "weak_alias(dummy1, __init_ssp)" in entry["role"]
+                and "src/env/__stack_chk_fail.c" in entry["role"]
+                for entry in crt_handoff_oracles
+            )
+        )
+        self.assertTrue(
+            any(
+                entry["kind"] == "aarch64-contract"
+                and entry["source"] == "compat/abi/musl-1.2.6/aarch64/libc.a.static.tsv"
+                and "__init_ssp __libc_start_main.lo W WEAK" in entry["role"]
+                and "not canary initialization" in entry["role"]
+                for entry in crt_handoff_oracles
+            )
+        )
+        self.assertIn(
+            "__init_ssp",
+            (ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt")
+            .read_text(encoding="utf-8")
+            .splitlines(),
+        )
         self.assertEqual(
             aggregate["native_evidence"][0]["command"],
             "./scripts/dev-x86_64.sh libc-pthread-tls-aggregate",

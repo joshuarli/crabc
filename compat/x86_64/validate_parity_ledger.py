@@ -7940,6 +7940,10 @@ def require_static_crt_initial_tls_handoff_artifact(family: Mapping[str, Any]) -
         "preinit, init, main",
         "32-registration",
         "atexit",
+        "private weak `__init_ssp` fallback",
+        "default-visible `STB_WEAK` binding",
+        "caller `STB_GLOBAL` private override",
+        "does not initialize a canary",
         "PT_TLS.p_filesz",
         "general CRT/startup",
         "public x86 support",
@@ -7983,6 +7987,10 @@ def require_static_crt_initial_tls_handoff_artifact(family: Mapping[str, Any]) -
         "GOTTPOFF/DTPOFF",
         "__tls_get_addr",
         "__libc_start_main",
+        "weak_alias(dummy1, __init_ssp)",
+        "__init_ssp __libc_start_main.lo W WEAK",
+        "caller STB_GLOBAL private definition overrides it",
+        "does not initialize a canary",
         "32-registration",
         "__cxa_finalize",
         "fresh Static Initial TLS v1 image",
@@ -8008,6 +8016,9 @@ def require_static_crt_initial_tls_handoff_artifact(family: Mapping[str, Any]) -
         "archive-owned startup",
         "32-registration",
         "PIMBCAF",
+        "default-visible STB_WEAK `__init_ssp`",
+        "caller STB_GLOBAL private override runs after real CRT extracts the archive static-startup owner",
+        "does not initialize a canary",
         "PT_TLS p_filesz mutation",
         "exit 127",
         "general CRT",
@@ -8016,6 +8027,59 @@ def require_static_crt_initial_tls_handoff_artifact(family: Mapping[str, Any]) -
         require(
             phrase in scope,
             f"static-c-crt-initial-tls-handoff evidence scope omits {phrase}",
+        )
+    oracle_entries = artifact["oracle"]
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "c-posix"
+            and entry.get("source")
+            == "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417"
+            and isinstance(entry.get("role"), str)
+            and "weak_alias(dummy1, __init_ssp)" in entry["role"]
+            and "src/env/__stack_chk_fail.c" in entry["role"]
+            and "not stack-protector initialization" in entry["role"]
+            for entry in oracle_entries
+        ),
+        "static-c-crt-initial-tls-handoff must retain its pinned weak __init_ssp source oracle",
+    )
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "aarch64-contract"
+            and entry.get("source")
+            == "compat/abi/musl-1.2.6/aarch64/libc.a.static.tsv"
+            and isinstance(entry.get("role"), str)
+            and "__init_ssp __libc_start_main.lo W WEAK" in entry["role"]
+            and "private static archive-binding evidence only" in entry["role"]
+            and "not canary initialization" in entry["role"]
+            for entry in oracle_entries
+        ),
+        "static-c-crt-initial-tls-handoff must retain its pinned weak __init_ssp static-manifest oracle",
+    )
+    static_exports = set(
+        static_c_abi_export_names(
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        )
+    )
+    require(
+        "__init_ssp" in static_exports,
+        "static-c-crt-initial-tls-handoff must expose the selected weak __init_ssp fallback",
+    )
+    runner_source = (ROOT / "compat" / "x86_64" / "run_libc_crt_static_tls.sh").read_text(
+        encoding="utf-8"
+    )
+    for phrase in (
+        "__init_ssp",
+        "CRABC_STATIC_SSP_OVERRIDE",
+        "archive lost musl weak __init_ssp binding",
+        "archive static-startup member lost musl weak __init_ssp binding",
+        "caller override did not extract the archive static-startup member",
+        "caller strong __init_ssp did not override the archive weak binding",
+    ):
+        require(
+            phrase in runner_source,
+            f"static-c-crt-initial-tls-handoff runner omits {phrase}",
         )
 
 

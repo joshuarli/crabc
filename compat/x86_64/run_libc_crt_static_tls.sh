@@ -56,6 +56,33 @@ assert_selected_c_abi_surface() {
     fi
 }
 
+assert_static_startup_weak_ssp_owner() {
+    local archive_path="$1"
+    local members_path="$work_dir/static-startup-fallback-members"
+    local startup_member
+    local -a members startup_members
+
+    mapfile -t members < <(ar t "$archive_path" | grep -E '^c\..+\.rcgu\.o$')
+    [ "${#members[@]}" -gt 0 ] || fail "archive has no crabc-libc object members"
+    mkdir "$members_path"
+    (
+        cd "$members_path"
+        ar x "$archive_path" "${members[@]}"
+    )
+    mapfile -t startup_members < <(
+        (
+            cd "$members_path"
+            nm -A -g --defined-only --format=posix "${members[@]}"
+        ) | awk '$2 == "__libc_start_main" && $3 ~ /^[TW]$/ { name = $1; sub(/:$/, "", name); print name }' | sort -u
+    )
+    [ "${#startup_members[@]}" = 1 ] ||
+        fail "archive does not retain one static-startup owner for __libc_start_main: ${startup_members[*]:-(none)}"
+    startup_member="${startup_members[0]}"
+    nm -g --defined-only --format=posix "$members_path/$startup_member" |
+        awk '$1 == "__init_ssp" && $2 == "W" { found=1 } END { exit found ? 0 : 1 }' ||
+        fail "archive static-startup member lost musl weak __init_ssp binding"
+}
+
 assert_final_static_pie() {
     local tls_count tls_filesz tls_memsz tls_alignment
 
@@ -124,9 +151,11 @@ cargo_target="$work_dir/cargo-target"
 archive="$cargo_target/x86_64-unknown-linux-musl/debug/libc.a"
 reference="$work_dir/musl-crt-static-tls-reference"
 candidate="$work_dir/crabc-crt-static-tls-candidate"
+candidate_ssp_override="$work_dir/crabc-crt-static-tls-ssp-override-candidate"
 candidate_without_archive="$work_dir/crabc-crt-static-tls-without-archive"
 without_archive_log="$work_dir/without-archive-link.log"
 probe_object="$work_dir/probe.o"
+ssp_override_probe_object="$work_dir/ssp-override-probe.o"
 peer_object="$work_dir/peer.o"
 header_trace="$work_dir/header-trace"
 rcrt_symbols="$work_dir/rcrt-symbols"
@@ -138,6 +167,7 @@ expected_c_abi_symbols="$work_dir/expected-c-abi-symbols"
 archive_relocations="$work_dir/archive-relocations"
 archive_disassembly="$work_dir/archive-disassembly"
 candidate_symbols="$work_dir/candidate-symbols"
+candidate_ssp_override_symbols="$work_dir/candidate-ssp-override-symbols"
 candidate_file_header="$work_dir/candidate-file-header"
 candidate_program_headers="$work_dir/candidate-program-headers"
 candidate_dynamic="$work_dir/candidate-dynamic"
@@ -201,11 +231,14 @@ CARGO_TARGET_DIR="$cargo_target" cargo rustc --locked -p crabc-libc --lib \
 nm -A --defined-only "$archive" >"$archive_symbols"
 readelf --symbols --wide "$archive" >"$archive_elf_symbols"
 assert_selected_c_abi_surface "$archive" "$selected_c_abi_symbols" "$expected_c_abi_symbols"
+assert_static_startup_weak_ssp_owner "$archive"
 for symbol in __errno_location __crabc_x86_static_tls_bootstrap __libc_start_main \
     _exit exit atexit __cxa_atexit __cxa_finalize __funcs_on_exit pthread_create pthread_join; do
     grep -Eq "[[:space:]][TW][[:space:]]${symbol}$" "$archive_symbols" ||
         fail "archive does not define ${symbol}"
 done
+grep -Eq 'FUNC +WEAK +DEFAULT +.*__init_ssp$' "$archive_elf_symbols" ||
+    fail 'archive lost musl weak __init_ssp binding'
 grep -Eq 'GLOBAL +HIDDEN +.*__crabc_x86_static_tls_bootstrap$' "$archive_elf_symbols" ||
     fail "libc TLS bootstrap is not hidden"
 readelf --relocs --wide "$archive" >"$archive_relocations"
@@ -225,6 +258,10 @@ fi
     -fPIE -ffreestanding -fno-builtin -fno-stack-protector \
     -ftls-model=local-exec -I"$ROOT_DIR/include" \
     -c compat/x86_64/libc_crt_static_tls_probe.c -o "$probe_object"
+"$ORACLE_CC" -std=c11 -D_GNU_SOURCE -DCRABC_CRT_STATIC_TLS_CANDIDATE \
+    -DCRABC_STATIC_SSP_OVERRIDE -fPIE -ffreestanding -fno-builtin \
+    -fno-stack-protector -ftls-model=local-exec -I"$ROOT_DIR/include" \
+    -c compat/x86_64/libc_crt_static_tls_probe.c -o "$ssp_override_probe_object"
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -fPIE -ffreestanding -fno-builtin \
     -fno-stack-protector -ftls-model=local-exec -I"$ROOT_DIR/include" \
     -c compat/x86_64/libc_crt_static_tls_peer.c -o "$peer_object"
@@ -242,8 +279,12 @@ grep -Fq '__libc_start_main' "$without_archive_log" ||
 "$link_editor" -pie -static --no-dynamic-linker --no-undefined -z relro -z now -e _start \
     "$crt_dir/rcrt1.o" "$crt_dir/crti.o" "$probe_object" "$peer_object" \
     "$archive" "$crt_dir/crtn.o" -o "$candidate"
+"$link_editor" -pie -static --no-dynamic-linker --no-undefined -z relro -z now -e _start \
+    "$crt_dir/rcrt1.o" "$crt_dir/crti.o" "$ssp_override_probe_object" "$peer_object" \
+    "$archive" "$crt_dir/crtn.o" -o "$candidate_ssp_override"
 
 readelf --symbols --wide "$candidate" >"$candidate_symbols"
+readelf --symbols --wide "$candidate_ssp_override" >"$candidate_ssp_override_symbols"
 readelf --file-header --wide "$candidate" >"$candidate_file_header"
 readelf --program-headers --wide "$candidate" >"$candidate_program_headers"
 readelf --dynamic --wide "$candidate" >"$candidate_dynamic" || true
@@ -292,6 +333,16 @@ for symbol in __crabc_x86_static_tls_bootstrap __crabc_x86_64_static_pie_start \
     grep -Eq "[[:space:]]${symbol}$" "$candidate_symbols" ||
         fail "candidate does not define ${symbol}"
 done
+grep -Eq 'FUNC +WEAK +DEFAULT +.*__init_ssp$' "$candidate_symbols" ||
+    fail 'candidate lost musl weak __init_ssp binding'
+awk '$4 == "FUNC" && $5 == "GLOBAL" && $6 == "DEFAULT" && $7 != "UND" && $8 == "__libc_start_main" { found=1 } END { exit found ? 0 : 1 }' \
+    "$candidate_ssp_override_symbols" ||
+    fail 'caller override did not extract the archive static-startup member'
+grep -Eq 'FUNC +GLOBAL +DEFAULT +.*__init_ssp$' "$candidate_ssp_override_symbols" ||
+    fail 'caller strong __init_ssp did not override the archive weak binding'
+if grep -Eq 'FUNC +WEAK +DEFAULT +.*__init_ssp$' "$candidate_ssp_override_symbols"; then
+    fail 'caller override retained the archive weak __init_ssp binding'
+fi
 if grep -Eq 'GLOBAL +DEFAULT +.*__crabc_x86_static_tls_bootstrap$' "$candidate_symbols"; then
     fail "candidate exposes a preemptible TLS-bootstrap boundary"
 fi
@@ -326,6 +377,14 @@ else
 fi
 [ "$candidate_output" = PIMBCAF ] ||
     fail "candidate lifecycle output is ${candidate_output@Q}, not PIMBCAF"
+if candidate_ssp_override_output="$($candidate_ssp_override)"; then
+    :
+else
+    candidate_status=$?
+    fail "static SSP-override candidate execution exited ${candidate_status}"
+fi
+[ "$candidate_ssp_override_output" = PIMBCAF ] ||
+    fail "static SSP-override candidate lifecycle output is ${candidate_ssp_override_output@Q}, not PIMBCAF"
 
 candidate_phoff="$(od -An -tu8 -j "$ELF64_PROGRAM_HEADER_OFFSET" -N 8 "$candidate" | tr -d '[:space:]')"
 candidate_phnum="$(od -An -tu2 -j "$ELF64_PROGRAM_HEADER_COUNT_OFFSET" -N 2 "$candidate" | tr -d '[:space:]')"

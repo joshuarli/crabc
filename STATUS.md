@@ -663,6 +663,17 @@ general pthread/TLS parity, dynamic or loader TLS, a general CRT/libc startup
 ABI, broader C11 lifecycle or synchronization, stdio/C++/DSO or concurrent-exit
 lifecycle, sysroot support, or public x86 support.
 
+The same static-startup archive owner also retains musl 1.2.6
+`src/env/__libc_start_main.c`'s private `weak_alias(dummy1, __init_ssp)`
+fallback. The pinned AArch64 static manifest records it as weak in
+`__libc_start_main.lo`; the staged archive and normal static-PIE candidate
+retain that default-visible binding, while a caller-owned strong private
+definition wins after real CRT startup extracts the archive member. This is
+archive-binding evidence only: the fallback ignores its entropy pointer and
+the selected startup never dispatches it, so it does not initialize a canary,
+consume `AT_RANDOM`, select stack-protector startup, or add loader/process
+state.
+
 `./scripts/dev-x86_64.sh libc-crt1-static-tls` is the companion private
 ordinary-static composition artifact. It links real Rust
 `crt1.o`/`crti.o`/`crtn.o` into an `ET_EXEC` final executable, proves the

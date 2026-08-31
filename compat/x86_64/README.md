@@ -2601,6 +2601,17 @@ explicitly adapts that lifecycle. This does not select a general CRT/startup
 or libc entry ABI, stdio/C++/DSO or concurrent-exit lifecycle, pthread/TLS
 parity, loader TLS, sysroot, or public x86 support.
 
+The same static-startup archive owner retains pinned musl 1.2.6
+`src/env/__libc_start_main.c`'s private `weak_alias(dummy1, __init_ssp)`
+fallback. The AArch64 static manifest records weak `__init_ssp` in
+`__libc_start_main.lo`; the staged archive and ordinary static-PIE candidate
+retain that default-visible weak binding, and a caller-owned strong private
+definition wins after real CRT startup extracts the owner. This is only a
+static archive-binding boundary: the fallback ignores its entropy pointer and
+the selected startup never invokes it, so it does not initialize a canary,
+consume `AT_RANDOM`, select stack-protector startup, loader state, or a
+general process startup policy.
+
 `libc-crt1-static-tls` is the parallel private static `verified_artifact`
 under the same still-planned `libc.pthread-tls` family. It links real Rust
 `crt1.o`/`crti.o`/`crtn.o` through an ordinary final static `ET_EXEC` link,

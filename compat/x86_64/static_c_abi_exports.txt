@@ -30,6 +30,7 @@ __fxstat
 __fxstatat
 __getauxval
 __inet_aton
+__init_ssp
 __ldso_atfork
 __lgammal_r
 __libc_current_sigrtmax
