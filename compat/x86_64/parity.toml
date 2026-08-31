@@ -7765,6 +7765,233 @@ oracle = [
   { kind = "elf-abi", source = "System V AMD64 psABI and pinned musl x86 headers", role = "int/int C calling convention, x86 public action layout, C++ C-linkage check, hidden rt_sigreturn restorer reference, and static initial-exec TLS fixture contract." },
 ]
 
+[[family.verified_artifact]]
+id = "static-c-unlinkat"
+description = "Private native x86 selected-static-archive `unlinkat` leaf within still-planned `libc.posix-runtime`. One project-header C body runs first through pinned musl 1.2.6 and then through a true `-nostdlib -static` crabc-libc candidate. It resolves only `unlinkat(int, const char *, int)`: musl's complete `src/unistd/unlinkat.c` body returns `syscall(SYS_unlinkat, fd, path, flag)`, passing the caller-supplied directory descriptor, pathname, and flags unchanged to Linux x86-64 `unlinkat=263`. The raw-owned fixture creates one descriptor-opened fixture directory, checks candidate file removal and candidate `AT_REMOVEDIR` directory removal, then compares one raw file removal. The candidate proves stale errno on success, missing `ENOENT`, invalid flag `EINVAL`, bad dirfd `EBADF`, and null path `EFAULT`. It does not select `unlink`, `rmdir`, `link`/`linkat`, `symlink`/`symlinkat`, `readlink`/`readlinkat`, `rename`/`renameat`, `mkdir`/`mkdirat`, another *at entry, `AT_FDCWD` selection, a pathname lifecycle family, CWD or namespace policy, directory streams, allocation, cancellation, a Rust facade, libc.so, CRT, loader, sysroot, filesystem capability completion, promotion, or public x86 support."
+source_owners = [
+  "COMPATIBILITY-PROFILE.md",
+  "compat/upstreams.toml",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/unlinkat.rs",
+  "libc/src/c_abi/x86_64/errno.rs",
+  "libc/src/c_abi/x86_64/syscall.rs",
+  "libc/src/c_abi/x86_64/static_tls.rs",
+  "include/errno.h",
+  "include/fcntl.h",
+  "include/stdint.h",
+  "include/sys/stat.h",
+  "include/sys/syscall.h",
+  "include/sys/types.h",
+  "include/unistd.h",
+  "include/bits/alltypes.h",
+  "include/bits/fcntl.h",
+  "include/bits/stat.h",
+  "include/bits/syscall.h",
+  "compat/abi/musl-1.2.6/aarch64/libc.a.static.tsv",
+  "compat/x86_64/unlinkat_header_abi_probe.c",
+  "compat/x86_64/unlinkat_header_abi_probe.cpp",
+  "compat/x86_64/run_unlinkat_header_abi.sh",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/libc_unlinkat_probe.c",
+  "compat/x86_64/libc_unlinkat_start.S",
+  "compat/x86_64/run_libc_unlinkat.sh",
+  "compat/x86_64/run_libc_pathname_lifecycle.sh",
+  "compat/x86_64/aarch64_parity_inventory.py",
+  "compat/x86_64/aarch64_parity_inventory.json",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "compat/x86_64/README.md",
+  "STATUS.md",
+  "x86-64.md",
+  "scripts/dev-x86_64.sh",
+  "scripts/check_structure.py",
+]
+x86_abi_prerequisites = [
+  "The SysV AMD64 C ABI passes unlinkat's signed four-byte directory descriptor in rdi, pathname in rsi, and signed four-byte flags in rdx; it returns signed int in eax. The private Linux x86-64 unlinkat=263 request receives exactly those words in rdi/rsi/rdx; only raw -4095 through -1 results publish selected initial-TLS errno.",
+  "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417 maps src/unistd/unlinkat.c exactly: `int unlinkat(int fd, const char *path, int flag) { return syscall(SYS_unlinkat, fd, path, flag); }`. Linux 5.10 supplies that direct request, so the static leaf adds no cancellation wrapper, fallback, pathname copy, allocation, retry, AT_FDCWD selection, or policy layer.",
+  "The native runner raw-creates and opens one fixture directory, then checks candidate file removal and candidate AT_REMOVEDIR directory removal, compares one raw unlinkat file removal, and proves stale errno success, missing ENOENT, invalid AT_SYMLINK_NOFOLLOW EINVAL, invalid relative dirfd EBADF, and null pathname EFAULT. Fixture-only raw mkdirat/openat/newfstatat/unlinkat/close is setup, observation, comparison, and cleanup: the candidate does not choose AT_FDCWD, unlink/rmdir, another *at entry, or a pathname/CWD/namespace policy.",
+  "The final static candidate has a PT_TLS errno datum with direct initial-exec TPOFF access and no TLSGD/TLSLD/TLSDESC/GOTTPOFF/DTPMOD/DTPOFF model form or __tls_get_addr; fixture-local startup delegates to the archive Static Initial TLS v1 bootstrap without claiming CRT or TLS lifecycle.",
+]
+x86_header_prerequisites = ["The eight-profile C11/C++17 project-first/pinned-musl fcntl.h/sys/syscall.h/unistd.h matrix proves unconditional `unlinkat(int, const char *, int)`, AT_FDCWD=-100, AT_REMOVEDIR=0x200, AT_SYMLINK_NOFOLLOW=0x100, x86 `SYS_unlinkat=263`, four-byte int spelling, and unmangled C++ linkage. All eight default/GNU/strict/POSIX/X/Open/BSD C/C++ profiles expose it; none hides it. This is declaration evidence for one descriptor-relative removal C leaf, not unlink/rmdir, an *at family, pathname policy, installed-header completion, or public x86 support claim."]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-unlinkat", scope = "Pinned-musl project-header C reference plus a true dependency-free x86 `-nostdlib -static` crabc-libc candidate. The gate runs the eight-profile unlinkat C/C++ header matrix with all eight visible and none hidden; ratchets the exact crate-owned archive export; rejects interpreter/DT_NEEDED, unresolved symbols, dynamic TLS, and unowned runtime dependencies; proves direct initial-TLS errno; disassembles direct unlinkat=263 with rdi/rsi/rdx; and checks caller-supplied dirfd file removal, AT_REMOVEDIR directory removal, a raw unlinkat comparator, stale-errno success, ENOENT, EINVAL, EBADF, and EFAULT. It does not select unlink/rmdir, other *at entries, AT_FDCWD selection, a pathname lifecycle family, CWD/namespace policy, directory streams, allocation, cancellation, a Rust facade, libc.so, CRT, loader, sysroot, filesystem capability completion, promotion, or public x86 support." }]
+oracle = [
+  { kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source and POSIX declaration oracle for include/fcntl.h, include/sys/syscall.h, include/unistd.h, and src/unistd/unlinkat.c. Its complete body is `return syscall(SYS_unlinkat, fd, path, flag);`; the direct Linux closure is an intentional private implementation boundary, not unlink/rmdir, another *at entry, or pathname-family completion." },
+  { kind = "kernel-abi", source = "Linux 5.10 x86-64 ABI", role = "unlinkat=263 rdi/rsi/rdx request words, descriptor-relative file removal, AT_REMOVEDIR directory removal, raw errno, and raw mkdirat/openat/newfstatat/unlinkat/close fixture setup, observation, comparison, and cleanup." },
+  { kind = "elf-abi", source = "System V AMD64 psABI", role = "LP64 pointer/int C calling convention, unmangled C++ linkage, and static initial-exec TLS fixture contract." },
+]
+
+[[family.verified_artifact]]
+id = "static-c-chown"
+description = "Private native x86 selected-static-archive `chown` leaf within still-planned `libc.posix-runtime`. One project-header C body runs first through pinned musl 1.2.6 and then through a true `-nostdlib -static` crabc-libc candidate. It resolves only `chown(const char *, uid_t, gid_t)`: musl's direct `syscall(SYS_chown, path, uid, gid)` branch passes caller-supplied pathname plus unsigned owner/group words unchanged to Linux x86-64 `chown=92`, whose final component follows a symlink. The raw-owned fixture creates and checks one dangling symlink, then passes all-ones `uid_t`/`gid_t` no-change words: candidate stale-errno success plus one raw chown request on the fixture directory, and candidate/raw `ENOENT` on the dangling path, prove final-symlink following without `CAP_CHOWN`. It also proves missing/empty `ENOENT` and null `EFAULT`. It does not select `lchown`, `fchown`, `fchownat`, musl's non-x86 fallback, credential or ownership policy, another pathname entry, a pathname lifecycle family, CWD or namespace policy, directory streams, allocation, cancellation, a Rust facade, libc.so, CRT, loader, sysroot, filesystem capability completion, promotion, or public x86 support."
+source_owners = [
+  "COMPATIBILITY-PROFILE.md",
+  "compat/upstreams.toml",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/chown.rs",
+  "libc/src/c_abi/x86_64/errno.rs",
+  "libc/src/c_abi/x86_64/syscall.rs",
+  "libc/src/c_abi/x86_64/static_tls.rs",
+  "include/errno.h",
+  "include/fcntl.h",
+  "include/stdint.h",
+  "include/sys/stat.h",
+  "include/sys/syscall.h",
+  "include/sys/types.h",
+  "include/unistd.h",
+  "include/bits/alltypes.h",
+  "include/bits/fcntl.h",
+  "include/bits/stat.h",
+  "include/bits/syscall.h",
+  "compat/abi/musl-1.2.6/aarch64/libc.a.static.tsv",
+  "compat/x86_64/chown_header_abi_probe.c",
+  "compat/x86_64/chown_header_abi_probe.cpp",
+  "compat/x86_64/run_chown_header_abi.sh",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/libc_chown_probe.c",
+  "compat/x86_64/libc_chown_start.S",
+  "compat/x86_64/run_libc_chown.sh",
+  "compat/x86_64/run_libc_access.sh",
+  "compat/x86_64/aarch64_parity_inventory.py",
+  "compat/x86_64/aarch64_parity_inventory.json",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "compat/x86_64/README.md",
+  "STATUS.md",
+  "x86-64.md",
+  "scripts/dev-x86_64.sh",
+  "scripts/check_structure.py",
+]
+x86_abi_prerequisites = [
+  "The SysV AMD64 C ABI passes chown's pathname in rdi and four-byte unsigned uid_t/gid_t owner/group words in rsi/rdx; it returns signed int in eax. The private Linux x86-64 chown=92 request receives exactly those words in rdi/rsi/rdx; only raw -4095 through -1 results publish selected initial-TLS errno.",
+  "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417 maps src/unistd/chown.c exactly through `#ifdef SYS_chown`: `return syscall(SYS_chown, path, uid, gid);`. Linux 5.10 supplies that direct request, so this x86 slice deliberately excludes musl's `SYS_fchownat`/`AT_FDCWD`/zero-flags fallback, cancellation wrapper, pathname copy, allocation, retry, or policy layer.",
+  "The native runner raw-creates one fixture directory and dangling symlink, observes that final component with `AT_SYMLINK_NOFOLLOW`, then passes `UINT32_MAX` no-change owner/group words to the candidate and raw chown request. Candidate stale errno success on the directory plus candidate and raw ENOENT on the dangling symlink prove final-component following without CAP_CHOWN; it also proves missing/empty ENOENT and null EFAULT. Fixture-only raw mkdirat/symlinkat/newfstatat/chown/unlinkat is setup, observation, comparison, and cleanup: the candidate does not choose AT_FDCWD, another pathname entry, or a pathname/CWD/namespace policy.",
+  "The final static candidate has a PT_TLS errno datum with direct initial-exec TPOFF access and no TLSGD/TLSLD/TLSDESC/GOTTPOFF/DTPMOD/DTPOFF model form or __tls_get_addr; fixture-local startup delegates to the archive Static Initial TLS v1 bootstrap without claiming CRT or TLS lifecycle.",
+]
+x86_header_prerequisites = ["The eight-profile C11/C++17 project-first/pinned-musl unistd.h matrix proves unconditional `chown(const char *, uid_t, gid_t)`, x86 four-byte unsigned uid_t/gid_t spelling, and unmangled C++ linkage. All eight default/GNU/strict/POSIX/X/Open/BSD C/C++ profiles expose it; none hides it. This is declaration evidence for one following pathname-ownership C leaf, not lchown/fchown/fchownat, an ownership family, pathname policy, installed-header completion, or public x86 support claim."]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-chown", scope = "Pinned-musl project-header C reference plus a true dependency-free x86 `-nostdlib -static` crabc-libc candidate. The gate runs the eight-profile chown C/C++ header matrix with all eight visible and none hidden; ratchets the exact crate-owned archive export; rejects interpreter/DT_NEEDED, unresolved symbols, dynamic TLS, and unowned runtime dependencies; proves direct initial-TLS errno; disassembles direct chown=92 with rdi/rsi/rdx owner/group words; and raw-creates a dangling symlink whose `UINT32_MAX` no-change request proves final-component following through candidate/raw ENOENT without CAP_CHOWN, alongside stale-errno success on the fixture directory and missing/empty ENOENT and EFAULT. It does not select lchown, fchown, fchownat, an ownership family, another pathname entry, pathname/CWD/namespace policy, directory streams, allocation, cancellation, a Rust facade, libc.so, CRT, loader, sysroot, filesystem capability completion, promotion, or public x86 support." }]
+oracle = [
+  { kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source and POSIX declaration oracle for include/unistd.h plus src/unistd/chown.c. Its direct `#ifdef SYS_chown` body is `return syscall(SYS_chown, path, uid, gid);`; only the non-x86 `SYS_fchownat` fallback uses AT_FDCWD with zero flags, which this x86 leaf deliberately excludes." },
+  { kind = "kernel-abi", source = "Linux 5.10 x86-64 ABI", role = "chown=92 rdi/rsi/rdx request words, final-component symbolic-link following behavior, UINT32_MAX no-change uid/gid values, raw errno, and raw mkdirat/symlinkat/newfstatat/chown/unlinkat fixture setup, observation, comparison, and cleanup." },
+  { kind = "elf-abi", source = "System V AMD64 psABI", role = "LP64 pointer/unsigned-int C calling convention, unmangled C++ linkage, and static initial-exec TLS fixture contract." },
+]
+
+[[family.verified_artifact]]
+id = "static-c-sync"
+description = "Private native x86 selected-static-archive `sync` leaf within still-planned `libc.posix-runtime`. One project-header C body runs first through pinned musl 1.2.6 and then through a true one-member `-nostdlib -static` crabc-libc candidate. It resolves only X/Open/GNU/BSD `void sync(void)`: musl's complete `src/unistd/sync.c::sync` body issues `__syscall(SYS_sync)` and discards the raw result, while Linux x86-64 `sync=162` takes no arguments. The direct/function-pointer fixture proves normal return and raw unit success; the separate pinned-musl raw reference retains a disposable dirty regular-file witness. The candidate has no errno, TLS, allocation, descriptor, pathname, locale, cancellation, or filesystem-policy state. It does not select `syncfs`, `fsync`, `fdatasync`, `sync_file_range`, general filesystem policy, writeback timing, storage-cache or power-loss durability, libc.so, CRT, loader, sysroot, filesystem capability completion, promotion, or public x86 support."
+source_owners = [
+  "COMPATIBILITY-PROFILE.md",
+  "compat/upstreams.toml",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/syscall.rs",
+  "libc/src/c_abi/x86_64/sync.rs",
+  "include/features.h",
+  "include/stdint.h",
+  "include/unistd.h",
+  "include/sys/syscall.h",
+  "include/bits/syscall.h",
+  "compat/abi/musl-1.2.6/aarch64/headers.tsv",
+  "compat/abi/musl-1.2.6/aarch64/libc.a.static.tsv",
+  "compat/x86_64/sync_header_abi_probe.c",
+  "compat/x86_64/sync_header_abi_probe.cpp",
+  "compat/x86_64/run_sync_header_abi.sh",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/x86_sync_reference_probe.c",
+  "compat/x86_64/run_x86_sync_reference.sh",
+  "compat/x86_64/libc_sync_probe.c",
+  "compat/x86_64/libc_sync_start.S",
+  "compat/x86_64/run_libc_sync.sh",
+  "compat/x86_64/aarch64_parity_inventory.py",
+  "compat/x86_64/aarch64_parity_inventory.json",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "compat/x86_64/README.md",
+  "STATUS.md",
+  "x86-64.md",
+  "scripts/dev-x86_64.sh",
+  "scripts/check_structure.py",
+]
+x86_abi_prerequisites = [
+  "The SysV AMD64 C ABI gives `void sync(void)` no argument words and no result to consume. Linux x86-64 receives `sync=162` in rax with `syscall` clobbering rcx/r11; musl deliberately discards the raw result. The selected leaf has no pointer, descriptor, errno, TLS, locale, allocation, or mutable process-state ABI.",
+  "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417 maps include/unistd.h plus src/unistd/sync.c::sync exactly: `void sync(void) { __syscall(SYS_sync); }`. This direct source has no syscall_cp/cancellation path, errno bridge, retry, fallback, or filesystem-policy layer.",
+  "The eight-profile C11/C++17 project-first/pinned-musl unistd.h matrix proves `void sync(void)` and unmangled C++ linkage: five visible default/GNU C/C++/X/Open 700/BSD profiles expose it through musl's default feature selection or explicit _GNU_SOURCE/_XOPEN_SOURCE/_BSD_SOURCE, while three hidden strict C11/POSIX.1-2008/strict C++ profiles do not. The matrix is declaration evidence only, not installed-header or public support completion.",
+  "The dedicated runner first executes the existing pinned-musl/raw sync reference with a disposable dirty regular-file witness, then runs direct and function-pointer `sync` calls plus raw sync=162 unit-success observation through the same project-header C body. It does not create a pathname, select descriptor synchronization, measure writeback timing, or claim persistence/durability.",
+  "The final candidate links only the archive member defining sync and has no PT_TLS segment, interpreter, DT_NEEDED, unresolved symbol, dynamic TLS form, errno/h_errno reference, call instruction, or unowned runtime dependency. Its selected disassembly contains direct Linux sync=162; the test-only entry shim is not CRT or a filesystem policy/runtime.",
+]
+x86_header_prerequisites = ["The eight-profile C11/C++17 project-first/pinned-musl unistd.h matrix proves the exact `void sync(void)` spelling and unmangled C++ linkage, with five visible (default/GNU C/C++/XOPEN/BSD) and three hidden (strict C11/POSIX.1-2008/strict C++) profiles. It limits scope to one feature-gated declaration, not a general unistd header, filesystem API, policy, or public x86 support claim."]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-sync", scope = "Pinned-musl project-header C reference plus a true one-member x86 `-nostdlib -static` crabc-libc candidate. The gate runs the eight-profile sync C/C++ header matrix with five visible and three hidden profiles; runs the separate dirty-regular-file pinned-musl/raw reference; ratchets the exact crate-owned archive export; rejects interpreter/DT_NEEDED, unresolved symbols, PT_TLS/dynamic TLS, errno/h_errno, calls, and unowned runtime dependencies; disassembles direct sync=162; and proves direct/function-pointer normal return plus raw unit success. It does not select syncfs/fsync/fdatasync/sync_file_range, descriptor or pathname behavior, general filesystem policy, writeback timing, storage-cache or power-loss durability, libc.so, CRT, loader, sysroot, filesystem capability completion, promotion, or public x86 support." }]
+oracle = [
+  { kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT declaration and source oracle for include/unistd.h's X/Open/GNU/BSD `void sync(void)` feature gate and src/unistd/sync.c::sync's complete `__syscall(SYS_sync);` body with discarded raw result." },
+  { kind = "kernel-abi", source = "Linux 5.10 x86-64 ABI", role = "sync=162 zero-argument syscall register contract and the raw unit-success boundary; writeback timing and all durability policy remain unproved." },
+  { kind = "elf-abi", source = "System V AMD64 psABI", role = "No-argument void C calling convention, unmangled C++ linkage, and true one-member static no-TLS candidate contract." },
+]
+
+[[family.verified_artifact]]
+id = "static-c-sync-file-range"
+description = "Private native x86 selected-static-archive GNU `sync_file_range` leaf within still-planned `libc.posix-runtime`. One GNU project-header C fixture first runs through pinned musl 1.2.6 and then through a true `-nostdlib -static` crabc-libc candidate. It resolves only `sync_file_range(int, off_t, off_t, unsigned)`: musl's `src/linux/sync_file_range.c::sync_file_range` direct x86 `SYS_sync_file_range` branch submits descriptor, signed position/length, and flags to Linux x86-64 `sync_file_range=277`. The fixture proves a regular-file zero-length-through-EOF request with preserved position and stale-errno success or the direct filesystem `EOPNOTSUPP` variation, then direct invalid-flag `EINVAL`, pipe `ESPIPE`, and invalid-descriptor `EBADF` results. The candidate uses only initial-TLS errno translation; it makes no writeback timing, storage-cache, or power-loss durability claim. It does not select `sync`, `syncfs`, `fsync`, `fdatasync`, `copy_file_range`, open/read/write/seek or descriptor lifecycle, cancellation, range/flag policy, filesystem capability completion, libc.so, CRT, loader, sysroot, Rust facade, promotion, or public x86 support."
+source_owners = [
+  "COMPATIBILITY-PROFILE.md",
+  "compat/upstreams.toml",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/errno.rs",
+  "libc/src/c_abi/x86_64/static_tls.rs",
+  "libc/src/c_abi/x86_64/syscall.rs",
+  "libc/src/c_abi/x86_64/sync_file_range.rs",
+  "include/errno.h",
+  "include/fcntl.h",
+  "include/features.h",
+  "include/stdint.h",
+  "include/sys/syscall.h",
+  "include/sys/types.h",
+  "include/unistd.h",
+  "include/bits/alltypes.h",
+  "include/bits/fcntl.h",
+  "include/bits/syscall.h",
+  "compat/abi/musl-1.2.6/aarch64/headers.tsv",
+  "compat/abi/musl-1.2.6/aarch64/libc.a.static.tsv",
+  "compat/x86_64/sync_file_range_header_abi_probe.c",
+  "compat/x86_64/sync_file_range_header_abi_probe.cpp",
+  "compat/x86_64/run_sync_file_range_header_abi.sh",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/libc_sync_file_range_probe.c",
+  "compat/x86_64/libc_sync_file_range_start.S",
+  "compat/x86_64/run_libc_sync_file_range.sh",
+  "compat/x86_64/aarch64_parity_inventory.py",
+  "compat/x86_64/aarch64_parity_inventory.json",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "compat/x86_64/README.md",
+  "STATUS.md",
+  "x86-64.md",
+  "scripts/dev-x86_64.sh",
+  "scripts/check_structure.py",
+]
+x86_abi_prerequisites = [
+  "The SysV AMD64 C entry receives `int fd`, signed 64-bit `off_t offset`, signed 64-bit `off_t nbytes`, and `unsigned flags` in rdi/rsi/rdx/rcx. Linux x86-64 `sync_file_range=277` receives the same scalar request in rdi/rsi/rdx/r10; the leaf forwards raw `-4095..=-1` results only through the selected initial-TLS errno translator. It owns neither descriptor lifetime nor range/flag validation.",
+  "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417 maps include/fcntl.h's GNU declaration plus src/linux/sync_file_range.c::sync_file_range exactly: Linux/x86 chooses `syscall(SYS_sync_file_range, fd, __SYSCALL_LL_O(pos), __SYSCALL_LL_E(len), flags)`. The 32-bit `SYS_sync_file_range2` argument rearrangement and the absent-syscall `__syscall_ret(-ENOSYS)` fallback are deliberately excluded under Linux 5.10 x86-64.",
+  "The five-profile C11/C++17 project-first/pinned-musl fcntl.h matrix exposes the exact unmangled `sync_file_range(int, off_t, off_t, unsigned)` declaration and `SYNC_FILE_RANGE_WAIT_BEFORE`/`WRITE`/`WAIT_AFTER` values 1/2/4 only for GNU C and GNU C++; strict, POSIX.1-2008, X/Open 700, and BSD C/C++ profiles hide it. The matrix fixes x86 LP64 signed eight-byte `off_t` and is declaration evidence only.",
+  "A raw-owned regular-file/pipe fixture compares the GNU C entry with the direct Linux request: zero length reaches EOF without changing file position and permits stale-errno success or filesystem `EOPNOTSUPP`; invalid flag bits yield EINVAL, a pipe yields ESPIPE, and -1 yields EBADF. Raw setup/cleanup is fixture-only and does not select opening, I/O, seek, descriptor lifecycle, or durability policy for the candidate.",
+  "The final full-archive candidate selects the `sync_file_range` entry and selected initial-TLS errno boundary only. It rejects interpreter/DT_NEEDED, unresolved symbols, dynamic TLS, `__tls_get_addr`, unowned runtime dependencies, and calls to sync/syncfs/fsync/fdatasync/copy_file_range/open/read/write/lseek/close/cancellation boundaries; selected disassembly contains direct Linux sync_file_range=277. Its test-only entry shim is not CRT or a filesystem runtime.",
+]
+x86_header_prerequisites = ["The five-profile C11/C++17 project-first/pinned-musl `<fcntl.h>` matrix proves GNU-only `sync_file_range(int, off_t, off_t, unsigned)`, signed eight-byte LP64 `off_t`, the three 1/2/4 flag constants, and unmangled C++ linkage. GNU C/C++ are the one visible feature profile while strict/POSIX.1-2008/X/Open 700/BSD C/C++ are four hidden profiles; this does not claim a general fcntl header, descriptor, filesystem, or public x86 support contract."]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-sync-file-range", scope = "Pinned-musl GNU project-header C reference plus a true full-archive x86 `-nostdlib -static` crabc-libc candidate. The gate runs the five-profile sync_file_range C/C++ header matrix with GNU visible and strict/POSIX/X/Open/BSD hidden; ratchets the exact crate-owned archive export; verifies the musl AArch64 static member; rejects interpreter/DT_NEEDED, unresolved symbols, dynamic TLS, `__tls_get_addr`, and unowned runtime dependencies; disassembles direct sync_file_range=277; and compares regular zero-length-through-EOF, invalid-flag EINVAL, pipe ESPIPE, and invalid-descriptor EBADF behavior. It does not select sync/syncfs/fsync/fdatasync/copy_file_range, descriptor lifecycle or I/O, writeback timing, storage-cache or power-loss durability, filesystem capability completion, promotion, or public x86 support." }]
+oracle = [
+  { kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT declaration and source oracle for GNU include/fcntl.h `sync_file_range(int, off_t, off_t, unsigned)` and src/linux/sync_file_range.c::sync_file_range: x86 takes the direct SYS_sync_file_range branch, while the 32-bit sync_file_range2 and ENOSYS alternatives remain excluded." },
+  { kind = "kernel-abi", source = "Linux 5.10 x86-64 ABI", role = "sync_file_range=277 receives fd/offset/nbytes/flags in rdi/rsi/rdx/r10 and returns raw Linux status; zero-length-through-EOF request, EINVAL, ESPIPE, and EBADF fixture observations establish no durability or writeback-scheduling policy." },
+  { kind = "elf-abi", source = "System V AMD64 psABI", role = "LP64 int/off_t/off_t/unsigned C calling convention, unmangled GNU C++ linkage, initial-TLS errno bridge, and true static no-dynamic-TLS candidate contract." },
+]
+
 [[family]]
 id = "libc.pthread-tls"
 order = 80
@@ -11471,6 +11698,57 @@ x86_header_prerequisites = [
 ]
 native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-text-math-locale-stdio-composition", scope = "Pinned-musl project-header C reference plus one dependency-free x86 crabc-libc archive and true `-nostdlib -static` candidate executes the selected C.UTF-8 -> strtod -> __fpclassify -> stdout composition. It requires all four existing C/C++ header profile matrices, complete archive export ratchet, no interpreter/DT_NEEDED/unresolved or dynamic-TLS dependency, direct initial-exec errno TLS, and archive-owned Static Initial TLS v1 bootstrap. The archive's separately verified locale-object, iconv, and wide-character leaves are neither invoked nor established. The pipe regression proves valid UTF-8 stale errno, EILSEQ propagation through successful parsing and explicit stdout flush, and binary64 classification. It is one verified artifact inside still-planned libc.text-math-locale-stdio, not general text/math/locale/stdio, family completion, promotion, or public x86 support." }]
 oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "C/POSIX behavior oracle for the exact selected composition of src/stdlib/strtod.c/internal floatscan, src/math/__fpclassify.c, src/locale setlocale/locale_map/localeconv, selected multibyte state, and src/stdio fputc/fflush leaves." }, { kind = "elf-abi", source = "System V AMD64 psABI", role = "LP64 pointer ABI, xmm0 binary64 strtod return/classifier argument, and the existing x86 initial-exec TLS fixture boundary." }]
+
+[[family.verified_artifact]]
+id = "static-c-c32rtomb"
+description = "Private native x86 selected-static-archive C11 `c32rtomb` adapter inside still-planned `libc.text-math-locale-stdio`. One one-symbol assembly member maps pinned musl 1.2.6 `src/multibyte/c32rtomb.c` exactly: it tail-jumps to the already selected fixed-profile `wcrtomb` owner because x86-64 passes `char *`, the bit-preserving 32-bit `char32_t`/`wchar_t`, and `mbstate_t *` in the same rdi/esi/rdx registers. The dedicated project/pinned-musl C11/C++17 `<uchar.h>` matrix proves the unconditional unmangled `size_t (char *, char32_t, mbstate_t *)` declaration and x86 4-byte `char32_t`/8-byte `mbstate_t` layout across strict, POSIX, X/Open, GNU, and BSD selectors. Its differential fixes the admitted global named C/POSIX/C.UTF-8 profile: ASCII and C/POSIX private code units, C.UTF-8 two/four-byte scalars, stale errno on success, EILSEQ for invalid scalar/surrogate input, untouched caller state, and the null-output query. The adapter itself owns only its one direct `wcrtomb` relocation; the existing locale core continues to own CTYPE selection, locale-object override plumbing, and initial-TLS errno rather than duplicating any of it here. It excludes `c16rtomb`, mbrtoc16/mbrtoc32, decoding, UTF-16 surrogate state, locale-object API selection, environment lookup, locale/encoding databases, collation, iconv, wide streams/stdio, allocation, libc.so, CRT, loader, sysroot, family completion, promotion, and public x86 support."
+source_owners = [
+  "compat/upstreams.toml",
+  "compat/abi/musl-1.2.6/aarch64/libc.a.static.tsv",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "libc/src/c_abi.rs",
+  "libc/src/unicode_encoders_exports.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/c32rtomb.rs",
+  "libc/src/c_abi/x86_64/locale_multibyte.rs",
+  "libc/src/c_abi/x86_64/locale_objects.rs",
+  "libc/src/c_abi/x86_64/errno.rs",
+  "include/errno.h",
+  "include/features.h",
+  "include/locale.h",
+  "include/uchar.h",
+  "include/bits/alltypes.h",
+  "compat/x86_64/c32rtomb_header_abi_probe.c",
+  "compat/x86_64/c32rtomb_header_abi_probe.cpp",
+  "compat/x86_64/run_c32rtomb_header_abi.sh",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/libc_c32rtomb_probe.c",
+  "compat/x86_64/libc_c32rtomb_start.S",
+  "compat/x86_64/run_libc_c32rtomb.sh",
+  "compat/x86_64/aarch64_parity_inventory.py",
+  "compat/x86_64/aarch64_parity_inventory.json",
+  "compat/x86_64/tests/test_aarch64_parity_inventory.py",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "compat/x86_64/README.md",
+  "STATUS.md",
+  "x86-64.md",
+  "scripts/check_structure.py",
+  "scripts/dev-x86_64.sh",
+]
+x86_abi_prerequisites = [
+  "System V AMD64 passes `c32rtomb(char *, char32_t, mbstate_t *)` as destination rdi, the low 32-bit code point in esi, and caller state rdx, returning size_t in rax. x86 `char32_t` and the selected signed 32-bit wchar_t occupy the same esi ABI lane, so the tail jump preserves every u32 bit pattern, including values above INT_MAX.",
+  "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417 maps `src/multibyte/c32rtomb.c::c32rtomb` and the AArch64 `c32rtomb\tc32rtomb.lo\tT\tGLOBAL\t0\t4` row directly to the one-export x86 adapter. Its complete source body forwards `s`, `c32`, and `ps` to wcrtomb; the existing AArch64 `libc/src/unicode_encoders_exports.rs::c32rtomb` records the same bit-preserving 32-bit forwarding seam. The x86 object therefore has exactly the one `wcrtomb` relocation and no copied encoder algorithm.",
+  "The selected final candidate reconstructs only the linker-discovered existing closure for that direct wcrtomb call, named CTYPE selection, and the direct initial-exec errno datum. The adapter owns no state or syscall and has no undefined symbol beyond wcrtomb; it neither invokes nor selects locale-object APIs, UTF-16/decoder siblings, allocator, iconv, wide streams, or ambient runtime support.",
+]
+x86_header_prerequisites = [
+  "The dedicated pinned-musl/project-first C11/C++17 `<uchar.h>` matrix proves strict, POSIX.1-2008, X/Open 700, GNU, and BSD profiles all expose the same `size_t c32rtomb(char *, char32_t, mbstate_t *)` declaration, x86 4-byte char32_t and 8-byte mbstate_t, and unmangled C++ `c32rtomb` reference. The raw project pass uses -nostdinc/-nostdinc++ plus compiler builtins only.",
+  "The project-header runtime fixture uses errno.h, locale.h, uchar.h, features.h, and bits/alltypes.h before both pinned-musl and true-static links. It calls only c32rtomb plus the already selected setlocale profile seam and C errno accessor; its manual byte checks introduce no byte-string, conversion, or ambient-libc helper.",
+]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-c32rtomb", scope = "Pinned-musl project-header C differential and dedicated C11/C++ `<uchar.h>` declaration matrix precede a true `-nostdlib -static` candidate. The runner ratchets the AArch64 c32rtomb static-ABI row and complete selected x86 export list; it extracts exactly one adapter object exporting only c32rtomb, requires its sole undefined/relocation to be wcrtomb and its direct tail jump, then reconstructs the final linker-discovered existing wcrtomb/setlocale/errno closure rather than linking libc.a. The differential covers C/POSIX private code units, C.UTF-8 two/four-byte scalars, invalid surrogates/out-of-range EILSEQ, stale errno success, untouched caller mbstate_t, and null-output query. The final ELF rejects unresolved symbols, interpreter/DT_NEEDED, dynamic TLS, PLT, allocator, iconv, wide streams, ambient libc, and unowned runtime dependencies while retaining direct fs initial-TLS errno. The established wcrtomb closure may materialize its fixed CTYPE override helper, but the runner rejects every public locale-object API call and this adapter neither invokes nor establishes those APIs. It does not select c16rtomb, mbrtoc16/mbrtoc32, decoding, locale-object APIs, environment or general locale databases, family completion, promotion, or public x86 support." }]
+oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT `src/multibyte/c32rtomb.c` source and executable C behavior oracle: direct wcrtomb forwarding, active CTYPE encoding, invalid-scalar errno behavior, null-output query, and caller mbstate_t forwarding. Its c16rtomb and decoder siblings remain unselected." }, { kind = "elf-abi", source = "System V AMD64 psABI and pinned musl uchar.h/static manifests", role = "rdi/esi/rdx to rax C ABI, 32-bit char32_t/wchar_t register equivalence, 8-byte mbstate_t pointer ABI, unconditional C/C++ declaration/linkage, direct static relocation, and initial-exec errno fixture contract." }]
 
 [[family]]
 id = "libc.resolver"

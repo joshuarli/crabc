@@ -230,6 +230,8 @@ mod ctype;
 mod locale_ctype;
 #[path = "locale_multibyte.rs"]
 mod locale_multibyte;
+#[path = "c32rtomb.rs"]
+mod c32rtomb_adapter;
 #[path = "locale_objects.rs"]
 mod locale_objects;
 #[path = "locale_narrow.rs"]
@@ -490,6 +492,10 @@ mod descriptor_advice;
 mod ioctl;
 #[path = "descriptor_io.rs"]
 mod descriptor_io;
+#[path = "sync.rs"]
+mod sync;
+#[path = "sync_file_range.rs"]
+mod sync_file_range;
 #[path = "posix_close.rs"]
 mod posix_close;
 #[path = "syncfs.rs"]
@@ -528,6 +534,10 @@ mod pathname_lifecycle;
 mod readlinkat;
 #[path = "linkat.rs"]
 mod linkat;
+#[path = "unlinkat.rs"]
+mod unlinkat;
+#[path = "chown.rs"]
+mod chown;
 #[path = "lchown.rs"]
 mod lchown;
 #[path = "hasmntopt.rs"]

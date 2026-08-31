@@ -2079,6 +2079,16 @@ general facade admission, or C ABI support claim.
   posix-spawnattr-setpgroup-header-abi  compile the staged x86 C/C++ POSIX spawn-attribute setpgroup declaration
   posix-spawnattr-setschedpolicy-header-abi  compile the staged x86 C/C++ POSIX spawn-attribute setschedpolicy declaration
   res-init-header-abi  compile the staged x86 C/C++ legacy resolver-initializer declaration
+  c32rtomb-header-abi  verify x86 C11 UTF-32 encoder C/C++ declarations and linkage
+  chown-header-abi  verify selected x86 POSIX chown C/C++ declarations
+  libc-c32rtomb  run the static x86 crabc-libc C11 UTF-32 encoder adapter
+  libc-chown  run the static x86 crabc-libc chown leaf
+  libc-sync  run the static x86 crabc-libc void sync leaf
+  libc-sync-file-range  run the static x86 crabc-libc GNU sync_file_range leaf
+  libc-unlinkat  run the static x86 crabc-libc unlinkat leaf
+  sync-file-range-header-abi  verify selected x86 GNU sync_file_range C/C++ declarations
+  sync-header-abi  verify selected x86 X/Open/GNU/BSD sync C/C++ declarations
+  unlinkat-header-abi  verify selected x86 POSIX unlinkat C/C++ declarations
 EOF
 }
 
@@ -4143,7 +4153,7 @@ case "$command" in
     libc-sched-cpucount|libc-sched-getcpu|libc-sched-priority-bounds|libc-sched-yield) ;;
     sched-cpucount-header-abi|sched-getscheduler-header-abi|sched-priority-bounds-header-abi) ;;
     ctermid-header-abi|gethostid-header-abi|endhostent-header-abi|ether-line-header-abi|res-init-header-abi|posix-spawnattr-destroy-header-abi|posix-spawnattr-getflags-header-abi|posix-spawnattr-setpgroup-header-abi|posix-spawnattr-setschedpolicy-header-abi|posix-spawn-file-actions-init-header-abi|getpagesize-header-abi|gettid-header-abi|posix-close-header-abi|isatty-header-abi|ttyname-r-header-abi|tcgetpgrp-header-abi|tcsetpgrp-header-abi|getpass-header-abi|libc-ctermid|libc-gethostid|libc-endhostent|libc-ether-line|libc-res-init|libc-posix-spawnattr-destroy|libc-posix-spawnattr-getflags|libc-posix-spawnattr-setpgroup|libc-posix-spawnattr-setschedpolicy|libc-posix-spawn-file-actions-init|libc-getpagesize|libc-gettid|libc-posix-close|libc-isatty|libc-ttyname-r|libc-tcgetpgrp|libc-tcsetpgrp|libc-getpass|mkfifo-header-abi|mkfifoat-header-abi|libc-mkfifo|libc-mkfifoat|mktemp-header-abi|libc-mktemp) ;;
-    readlinkat-header-abi|libc-readlinkat|linkat-header-abi|libc-linkat|lchown-header-abi|libc-lchown|hasmntopt-header-abi|libc-hasmntopt) ;;
+    readlinkat-header-abi|libc-readlinkat|linkat-header-abi|libc-linkat|lchown-header-abi|libc-lchown|hasmntopt-header-abi|libc-hasmntopt|unlinkat-header-abi|libc-unlinkat|chown-header-abi|libc-chown|sync-header-abi|libc-sync|sync-file-range-header-abi|libc-sync-file-range) ;;
     stdio-permanent-line-io-header-abi|stdio-octal-hex-scan-header-abi) ;;
     math-complex-complete-header-abi|libc-math-complex-complete) ;;
     stdio-permanent-byte-io-header-abi) ;;
@@ -4204,7 +4214,7 @@ case "$command" in
     madvise-reference) ;;
     basename-header-abi|siginterrupt-header-abi|mlockall-header-abi|munlockall-header-abi|ftime-header-abi|clock-getcpuclockid-header-abi|libc-basename|libc-siginterrupt|libc-mlockall|libc-munlockall|libc-ftime|libc-clock-getcpuclockid) ;;
     umask-header-abi|intrusive-queue-header-abi|getdtablesize-header-abi|membarrier-header-abi|syncfs-header-abi|confstr-header-abi|fpathconf-header-abi|pathconf-header-abi|sysconf-header-abi|libc-umask|libc-intrusive-queue|libc-getdtablesize|libc-membarrier|libc-syncfs|libc-confstr|libc-fpathconf|libc-pathconf|libc-sysconf) ;;
-    ctype-header-abi|locale-profile-header-abi|locale-multibyte-header-abi|iconv-header-abi|wide-character-header-abi|wcswcs-header-abi|locale-object-wide-header-abi|locale-narrow-header-abi) ;;
+    ctype-header-abi|locale-profile-header-abi|locale-multibyte-header-abi|iconv-header-abi|wide-character-header-abi|wcswcs-header-abi|locale-object-wide-header-abi|locale-narrow-header-abi|c32rtomb-header-abi) ;;
     integer-arithmetic-header-abi|integer-parse-header-abi|float-parse-header-abi|getsubopt-header-abi|l64a-header-abi|intmax-arithmetic-header-abi|credential-observation-header-abi|login-name-header-abi|child-reaping-header-abi|immediate-termination-header-abi|sched-getcpu-header-abi|sched-yield-header-abi|bsearch-header-abi|linear-search-header-abi|intrusive-queue-header-abi|qsort-header-abi|callback-algorithms-header-abi) ;;
     posix-exit-header-abi) ;;
     ffs-header-abi) ;;
@@ -4248,7 +4258,7 @@ case "$command" in
     libc-static-c-abi-same-object-differential|qualification-posix-abi-admission) ;;
     libc-interface-discovery) ;;
     libc-posix-exit) ;;
-    libc-readiness-waits|libc-system-observation|libc-system-information|libc-fcntl-record-locks|libc-flock|libc-sendfile|libc-posix-fallocate|libc-descriptor-advice|libc-filesystem-capacity|libc-uts-identity|libc-ctype|libc-locale-profile|libc-locale-multibyte|libc-locale-wide-iconv|libc-wide-character|libc-wcswcs|libc-locale-object-wide|libc-locale-narrow|libc-locale-ctype-locators|libc-locale-error-strings|libc-regex|libc-integer-arithmetic|libc-integer-parse|libc-float-parse|libc-getsubopt|libc-l64a|libc-intmax-arithmetic|libc-credential-observation|libc-secure-environment|libc-login-name|libc-child-reaping|libc-immediate-termination|libc-bsearch|libc-linear-search|libc-intrusive-queue|libc-qsort|libc-callback-algorithms|libc-search-tree-intrusive|libc-search-hash-table|libc-gettext-catalog|libc-access|libc-clock-gettime|libc-time-observation|libc-difftime|libc-timegm|libc-gmtime-r|libc-system-configuration|libc-mapping-core|libc-header-layouts-baseline|libc-nanosleep|libc-clock-nanosleep|libc-descriptor-entry|libc-fcntl-status-control|libc-ioctl|libc-ffs|libc-byte-strings|libc-in6addr-any|libc-in6addr-loopback|libc-process-globals-getopt|libc-auxv-observation|libc-inet-address|libc-inet-ntoa|libc-inet-classful|libc-hstrerror|libc-endservent|libc-numeric-netdb|libc-random-entropy|libc-memory-search|libc-string-copy|libc-error-strings|libc-strsignal|libc-descriptor-pipeline) ;;
+    libc-readiness-waits|libc-system-observation|libc-system-information|libc-fcntl-record-locks|libc-flock|libc-sendfile|libc-posix-fallocate|libc-descriptor-advice|libc-filesystem-capacity|libc-uts-identity|libc-ctype|libc-locale-profile|libc-locale-multibyte|libc-locale-wide-iconv|libc-wide-character|libc-wcswcs|libc-locale-object-wide|libc-locale-narrow|libc-locale-ctype-locators|libc-locale-error-strings|libc-regex|libc-integer-arithmetic|libc-integer-parse|libc-float-parse|libc-getsubopt|libc-l64a|libc-intmax-arithmetic|libc-credential-observation|libc-secure-environment|libc-login-name|libc-child-reaping|libc-immediate-termination|libc-bsearch|libc-linear-search|libc-intrusive-queue|libc-qsort|libc-callback-algorithms|libc-search-tree-intrusive|libc-search-hash-table|libc-gettext-catalog|libc-access|libc-clock-gettime|libc-time-observation|libc-difftime|libc-timegm|libc-gmtime-r|libc-system-configuration|libc-mapping-core|libc-header-layouts-baseline|libc-nanosleep|libc-clock-nanosleep|libc-descriptor-entry|libc-fcntl-status-control|libc-ioctl|libc-ffs|libc-byte-strings|libc-in6addr-any|libc-in6addr-loopback|libc-process-globals-getopt|libc-auxv-observation|libc-inet-address|libc-inet-ntoa|libc-inet-classful|libc-hstrerror|libc-endservent|libc-numeric-netdb|libc-random-entropy|libc-memory-search|libc-string-copy|libc-error-strings|libc-strsignal|libc-descriptor-pipeline|libc-c32rtomb) ;;
     libc-vector-io|libc-uio-cxx-linkage) ;;
     libc-sysv-semaphore|libc-posix-semaphore) ;;
     libc-sysv-message-shared-memory) ;;
@@ -6894,5 +6904,55 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "res-init-header-abi takes no arguments"
         ensure_image
         run_in_container bash /workspace/compat/x86_64/run_res_init_header_abi.sh
+        ;;
+    c32rtomb-header-abi)
+        [ "$#" -eq 0 ] || fail "c32rtomb-header-abi takes no arguments"
+        ensure_image
+        run_in_container bash /workspace/compat/x86_64/run_c32rtomb_header_abi.sh
+        ;;
+    chown-header-abi)
+        [ "$#" -eq 0 ] || fail "chown-header-abi takes no arguments"
+        ensure_image
+        run_in_container bash /workspace/compat/x86_64/run_chown_header_abi.sh
+        ;;
+    libc-c32rtomb)
+        [ "$#" -eq 0 ] || fail "libc-c32rtomb takes no arguments"
+        ensure_image
+        run_in_container bash /workspace/compat/x86_64/run_libc_c32rtomb.sh
+        ;;
+    libc-chown)
+        [ "$#" -eq 0 ] || fail "libc-chown takes no arguments"
+        ensure_image
+        run_in_container bash /workspace/compat/x86_64/run_libc_chown.sh
+        ;;
+    libc-sync)
+        [ "$#" -eq 0 ] || fail "libc-sync takes no arguments"
+        ensure_image
+        run_in_container bash /workspace/compat/x86_64/run_libc_sync.sh
+        ;;
+    libc-sync-file-range)
+        [ "$#" -eq 0 ] || fail "libc-sync-file-range takes no arguments"
+        ensure_image
+        run_in_container bash /workspace/compat/x86_64/run_libc_sync_file_range.sh
+        ;;
+    libc-unlinkat)
+        [ "$#" -eq 0 ] || fail "libc-unlinkat takes no arguments"
+        ensure_image
+        run_in_container bash /workspace/compat/x86_64/run_libc_unlinkat.sh
+        ;;
+    sync-file-range-header-abi)
+        [ "$#" -eq 0 ] || fail "sync-file-range-header-abi takes no arguments"
+        ensure_image
+        run_in_container bash /workspace/compat/x86_64/run_sync_file_range_header_abi.sh
+        ;;
+    sync-header-abi)
+        [ "$#" -eq 0 ] || fail "sync-header-abi takes no arguments"
+        ensure_image
+        run_in_container bash /workspace/compat/x86_64/run_sync_header_abi.sh
+        ;;
+    unlinkat-header-abi)
+        [ "$#" -eq 0 ] || fail "unlinkat-header-abi takes no arguments"
+        ensure_image
+        run_in_container bash /workspace/compat/x86_64/run_unlinkat_header_abi.sh
         ;;
 esac
