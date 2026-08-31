@@ -7942,21 +7942,22 @@ pub fn native_test_prepare_source_published_live_owner_exit(
     NativePageAllocationResult::Allocated(live)
 }
 
-/// Looks up one exact native client before a direct caller-local pointer
-/// operation.
+/// Looks up one exact native client before a pointer-first reallocation.
 ///
-/// Pinned `mi_usable_size` and `mi_theap_realloc_zero_ex` derive the page and
-/// allocation geometry from the supplied client before consulting the current
-/// Heap. This bounded boundary keeps that order: PageMap facts first, then a
-/// caller-identity comparison. It deliberately has no route, registry,
-/// scheduler, or replacement continuation for a nonlocal source.
+/// Once the caller's persistent target owner is established, pinned
+/// `mi_usable_size` and `mi_theap_realloc_zero_ex` derive the page and
+/// allocation geometry from the supplied client before consulting the target
+/// Heap. This boundary keeps that source order: PageMap facts first, then the
+/// caller compares the captured source owner with its own identity. The
+/// observation gives no owner, route, registry, scheduler, or
+/// lifetime-widening capability.
 ///
 /// # Safety
 ///
 /// `block` must be an exact live native-shadow allocation and remain live
 /// through the caller's complete source operation. Its lifetime keeps the
 /// selected PageMap slice and page metadata stable for this lookup.
-unsafe fn native_current_live_allocation_for_direct_pointer_operation(
+unsafe fn native_live_allocation_for_pointer_reallocation(
     block: core::ptr::NonNull<u8>,
 ) -> Result<LiveAllocationPointer, NativePageAllocationResult> {
     let Some(page_map) = RUNTIME_PROCESS.page_map_for_live_native_allocation() else {
@@ -7974,18 +7975,34 @@ unsafe fn native_current_live_allocation_for_direct_pointer_operation(
             return Err(NativePageAllocationResult::Retained);
         }
     };
-    let Some(current) = current_thread_identity() else {
-        drop(allocation);
-        RUNTIME_PROCESS.retain_page_owner();
-        return Err(NativePageAllocationResult::Retained);
-    };
-    if !allocation.is_associated_with(current) {
-        // A foreign live page has supplied only immutable source facts. It
-        // does not make the caller's current owner a replacement target.
-        drop(allocation);
-        return Err(NativePageAllocationResult::Unavailable);
-    }
     Ok(allocation)
+}
+
+/// Establishes the noninitial caller's persistent target owner before its
+/// non-null pointer reallocation selects source facts.
+///
+/// A public `mi_realloc` reaches its current default Theap before the pinned
+/// `mi_theap_realloc_zero_ex` source operation. The native equivalent is the
+/// caller's continuously stored persistent owner. Establishing it here gives
+/// a first allocation-family operation on B the same target-owner basis as a
+/// later B operation, without allocating a client, borrowing A, opening a
+/// session, or creating a route. The subsequent PageMap lookup remains the
+/// first operation on the supplied source pointer.
+fn native_reallocate_prepare_caller_persistent_owner() -> Result<(), NativePageAllocationResult> {
+    if RUNTIME_PROCESS.is_on_initial_thread() {
+        return Ok(());
+    }
+
+    match with_current_thread_native_persistent_allocator(true, |_| ()) {
+        Ok(()) => Ok(()),
+        Err(NativePersistentThreadOwnerAccessError::Retained) => {
+            Err(NativePageAllocationResult::Retained)
+        }
+        Err(
+            NativePersistentThreadOwnerAccessError::NotInstalled
+            | NativePersistentThreadOwnerAccessError::Unavailable,
+        ) => Err(NativePageAllocationResult::Unavailable),
+    }
 }
 
 /// Reallocates one PageMap-proven current native client through its existing
@@ -8031,15 +8048,125 @@ fn native_reallocate_pointer_first_local(
     }
 }
 
-/// Reallocates one current C-facing native-shadow block on its owning thread.
+/// Releases a replacement that this caller just allocated for a nonlocal
+/// reallocation which could not consume its old source.
+///
+/// The source `mi_theap_realloc_zero_ex` path treats successful allocation as
+/// the point after which copy and old-pointer free cannot fail. Rust retains a
+/// typed failure result from the generic nonlocal tail instead. This helper
+/// attempts to release the known current replacement directly through the
+/// caller's persistent owner without looking up its PageMap state again. It
+/// is used only before that replacement has escaped, so its exact
+/// current-owner proof is stronger than the public pointer boundary.
+///
+/// A failed direct release leaves that owner terminally retained with an
+/// unreachable replacement. The caller must consequently fail closed; it
+/// must not describe this fallback as a successful cleanup or return the
+/// replacement while the old source remains live.
+fn native_reallocate_release_unpublished_replacement(replacement: core::ptr::NonNull<u8>) {
+    if RUNTIME_PROCESS.is_on_initial_thread() {
+        let _ = native_initial_thread_free_pointer_first(replacement);
+        return;
+    }
+
+    match with_current_thread_native_persistent_allocator(false, |allocator| {
+        // SAFETY: `replacement` is the exact just-allocated result of this
+        // caller's persistent native owner. It has not escaped, been
+        // published, or been offered to any other pointer operation.
+        unsafe { allocator.free(replacement) }
+    }) {
+        Ok(Ok(())) => {}
+        Ok(Err(_)) | Err(_) => {
+            retain_current_thread_native_persistent_owner_for_teardown();
+        }
+    }
+}
+
+/// Reallocates a PageMap-proven noncurrent source through the caller's own
+/// persistent native owner.
+///
+/// Pinned `mi_theap_realloc_zero_ex` can reuse in place only when the source
+/// page belongs to the target Theap. A noncurrent source therefore enters the
+/// replacement transaction: allocate from the caller, copy the bounded prefix,
+/// then offer the old source to the generic pointer-first nonlocal free tail.
+/// The replacement becomes visible only when that tail reports `Freed`.
+///
+/// The generic tail currently has source-consuming transitions for the states
+/// supplied by W03. A PageMap-proven state without such a transition (notably
+/// detached until its own producer/continuation lands) rolls the unpublished
+/// replacement back and fails closed. No former owner, route, client ledger,
+/// scheduler, or synthetic target owner participates.
+fn native_reallocate_pointer_first_nonlocal(
+    allocation: LiveAllocationPointer,
+    new_size: usize,
+) -> NativePageAllocationResult {
+    let source = allocation.into_reallocation_copy_source(new_size);
+    let replacement = match native_allocate_aligned(new_size, NATIVE_C_MALLOC_ALIGNMENT, false) {
+        NativePageAllocationResult::Allocated(replacement) => replacement,
+        result @ (NativePageAllocationResult::Unavailable
+        | NativePageAllocationResult::AllocationFailed
+        | NativePageAllocationResult::Retained) => {
+            // The old allocation has not entered a consuming source path.
+            // Recovering then dropping its immutable PageMap facts preserves
+            // the exact old client for the caller, including allocation
+            // failure.
+            drop(source.into_live_allocation());
+            return result;
+        }
+    };
+
+    // SAFETY: `source` freezes the exact live client plus its client-relative
+    // readable prefix before replacement allocation. `replacement` is a
+    // distinct still-live allocation from the caller's persistent owner and
+    // covers `new_size`. A live allocator allocation cannot overlap another
+    // live allocation, so the source-shaped memcpy has nonoverlapping ranges.
+    unsafe {
+        core::ptr::copy_nonoverlapping(
+            source.copy_client().as_ptr(),
+            replacement.as_ptr(),
+            source.copy_prefix_len(),
+        );
+    }
+    if new_size == 0 {
+        // Pinned `mi_theap_realloc_zero_ex` initializes the first byte of a
+        // successful zero-size replacement for callers that observe it before
+        // free. The native zero-size allocation is likewise non-null here.
+        unsafe { replacement.as_ptr().write(0) };
+    }
+
+    match native_free_pointer_first_nonlocal(source.into_live_allocation()) {
+        NativePageFreeResult::Freed => NativePageAllocationResult::Allocated(replacement),
+        NativePageFreeResult::Unavailable
+        | NativePageFreeResult::InvalidPointer
+        | NativePageFreeResult::Retained => {
+            // The replacement is not published until the old source is
+            // consumed. Return it to the caller's direct owner first. If that
+            // direct free cannot be proved, its persistent owner remains
+            // terminally retained with this unreachable replacement; never
+            // claim that it was released or expose it beside the still-live
+            // old source.
+            native_reallocate_release_unpublished_replacement(replacement);
+            RUNTIME_PROCESS.retain_page_owner();
+            NativePageAllocationResult::Retained
+        }
+    }
+}
+
+/// Reallocates one C-facing native-shadow block through pointer-derived source
+/// facts and the calling thread's persistent native owner.
 ///
 /// # Safety
 ///
-/// When present, `block` must be a live result from this same native-shadow
-/// owner and must not be concurrently accessed, remotely published, or
-/// already freed. A pointer whose PageMap source identity belongs to another
-/// owner is unavailable in this direct seam; it is not routed, replaced, or
-/// retried through a scheduler compatibility path.
+/// When present, `block` must be a live result from this native-shadow
+/// allocator and must not be concurrently accessed, remotely published, or
+/// already freed. The caller must not access `block` after an `Allocated`
+/// result: a current source may have been reallocated in place or replaced,
+/// while a noncurrent source has been copied then consumed through generic
+/// pointer-first free. An `AllocationFailed` result leaves the old allocation
+/// live and unchanged. `Retained` is terminal fail-closed: neither the old
+/// input nor an unpublished replacement is returned for caller access. This
+/// boundary never borrows a former owner or widens a source allocation
+/// lifetime.
 #[doc(hidden)]
 pub unsafe fn native_reallocate(
     block: Option<core::ptr::NonNull<u8>>,
@@ -8051,16 +8178,28 @@ pub unsafe fn native_reallocate(
     let Some(block) = block else {
         return native_allocate_aligned(new_size, NATIVE_C_MALLOC_ALIGNMENT, false);
     };
+    if let Err(result) = native_reallocate_prepare_caller_persistent_owner() {
+        // The old source has not entered a lookup, copy, or consuming free
+        // path. A target-owner setup failure leaves it exactly live.
+        return result;
+    }
     // SAFETY: forwarded from this boundary's exact-live native-client
-    // contract. The returned observation remains live through the one local
-    // source reallocation below.
-    let allocation = match unsafe {
-        native_current_live_allocation_for_direct_pointer_operation(block)
-    } {
+    // contract. The returned observation remains live through one local or
+    // nonlocal source operation below.
+    let allocation = match unsafe { native_live_allocation_for_pointer_reallocation(block) } {
         Ok(allocation) => allocation,
         Err(result) => return result,
     };
-    native_reallocate_pointer_first_local(allocation, new_size)
+    let Some(current) = current_thread_identity() else {
+        drop(allocation);
+        RUNTIME_PROCESS.retain_page_owner();
+        return NativePageAllocationResult::Retained;
+    };
+    if allocation.is_associated_with(current) {
+        native_reallocate_pointer_first_local(allocation, new_size)
+    } else {
+        native_reallocate_pointer_first_nonlocal(allocation, new_size)
+    }
 }
 
 /// Applies the Phase-A pointer-only detached-owner free bridge to one route.
