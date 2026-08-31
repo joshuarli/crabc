@@ -161,6 +161,7 @@ X86_RUNTIME_FOUNDATION_LIBC_SOURCES = {
     Path("libc/src/c_abi/x86_64/callback_algorithms.rs"),
     Path("libc/src/c_abi/x86_64/search_tree_intrusive.rs"),
     Path("libc/src/c_abi/x86_64/search_hash_table.rs"),
+    Path("libc/src/c_abi/x86_64/gettext_catalog.rs"),
     Path("libc/src/c_abi/x86_64/ctype.rs"),
     Path("libc/src/c_abi/x86_64/locale_ctype.rs"),
     Path("libc/src/c_abi/x86_64/locale_multibyte.rs"),
@@ -3717,6 +3718,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         '#[path = "callback_algorithms.rs"]',
         '#[path = "search_tree_intrusive.rs"]',
         '#[path = "search_hash_table.rs"]',
+        '#[path = "gettext_catalog.rs"]',
         '#[path = "clock_gettime.rs"]',
         '#[path = "clock_nanosleep.rs"]',
         '#[path = "nanosleep.rs"]',
@@ -6011,6 +6013,66 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
                 f"hash-table boundary selects forbidden allocator seam {forbidden!r}"
             )
 
+    gettext_catalog_source = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "gettext_catalog.rs"
+    )
+    gettext_catalog_text = gettext_catalog_source.read_text(errors="replace")
+    for required in (
+        "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+        "src/locale/dcngettext.c",
+        "src/locale/textdomain.c",
+        "src/locale/bind_textdomain_codeset.c",
+        "src/locale/{catopen,catgets,catclose}.c",
+        "BINDING_CAPACITY: usize = 4",
+        "MAX_DIRECTORY_LENGTH",
+        "no-catalog",
+        "catopen` always reports `ENOENT`",
+        "catalog-file/NLSPATH/LANG lookup",
+        "ENOMEM",
+    ):
+        if required not in gettext_catalog_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/gettext_catalog.rs: selected static "
+                f"gettext/catalog boundary is missing {required!r}"
+            )
+    gettext_catalog_exports = set(
+        re.findall(
+            r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(',
+            gettext_catalog_text,
+        )
+    )
+    if gettext_catalog_exports != {
+        "bind_textdomain_codeset",
+        "bindtextdomain",
+        "catclose",
+        "catgets",
+        "catopen",
+        "dcgettext",
+        "dcngettext",
+        "dgettext",
+        "dngettext",
+        "gettext",
+        "ngettext",
+        "textdomain",
+    }:
+        errors.append(
+            "libc/src/c_abi/x86_64/gettext_catalog.rs: selected static "
+            "artifact must export only the twelve named gettext/catalog symbols"
+        )
+    for forbidden in (
+        "crabc_core",
+        "crabc_mimalloc",
+        "libmimalloc",
+        "sha_crypt",
+        "base64ct",
+        "alloc::",
+    ):
+        if forbidden in gettext_catalog_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/gettext_catalog.rs: selected static "
+                f"gettext/catalog boundary selects forbidden runtime seam {forbidden!r}"
+            )
+
     search_header_text = (ROOT / "include" / "search.h").read_text(errors="replace")
     if "#ifdef _GNU_SOURCE\nstruct qelem" not in search_header_text:
         errors.append("include/search.h: tdestroy/qelem must retain exact GNU-only visibility")
@@ -7680,6 +7742,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         callback_algorithms_text,
         search_tree_text,
         search_hash_table_text,
+        gettext_catalog_text,
         clock_gettime_text,
         clock_nanosleep_text,
         memory_mapping_text,
@@ -8131,6 +8194,18 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         "hdestroy_r",
         "hsearch",
         "hsearch_r",
+        "bind_textdomain_codeset",
+        "bindtextdomain",
+        "catclose",
+        "catgets",
+        "catopen",
+        "dcgettext",
+        "dcngettext",
+        "dgettext",
+        "dngettext",
+        "gettext",
+        "ngettext",
+        "textdomain",
         "rust_eh_personality",
     }
     if exports != expected_exports:
@@ -8143,7 +8218,8 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
             "selected byte-string, random-entropy, memory-search, C-string-copy, immutable error-string, "
             "fixed-C-locale ctype, integer-arithmetic, integer-parsing, intmax-arithmetic, credential-observation, and "
             "environment-backed login-name observation, find-first-set, startup-published program names, short/GNU-long "
-            "getopt state and aliases, callback-tree and hash-table search, "
+            "getopt state and aliases, callback-tree/hash-table search, and the "
+            "bounded no-catalog gettext/message-catalog ABI, "
             "and abort-personality surfaces"
         )
     for source_name, source_text in (
@@ -8179,6 +8255,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         ("callback_algorithms.rs", callback_algorithms_text),
         ("search_tree_intrusive.rs", search_tree_text),
         ("search_hash_table.rs", search_hash_table_text),
+        ("gettext_catalog.rs", gettext_catalog_text),
         ("clock_gettime.rs", clock_gettime_text),
         ("clock_nanosleep.rs", clock_nanosleep_text),
         ("memory_mapping.rs", memory_mapping_text),

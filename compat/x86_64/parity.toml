@@ -7450,6 +7450,55 @@ oracle = [
 capabilities = ["search.hash-table"]
 
 [[family.verified_slice]]
+id = "catalog.gettext"
+description = "Private native x86 selected-static-archive completion of the bounded AArch64 `catalog.gettext` capability inside still-planned `libc.c-abi-compat`. The twelve installed C entries are strong `gettext`, `dgettext`, `dcgettext`, `ngettext`, `dngettext`, `dcngettext`, `textdomain`, `bindtextdomain`, `bind_textdomain_codeset`, `catopen`, `catgets`, and `catclose`. It retains musl's deterministic no-catalog identity/plural fallback and errno preservation, default `messages` domain, NAME_MAX domain validation, UTF-8-only codeset rule, and failed direct catalog-open `ENOENT`. The selected static profile has one fixed 256-byte domain buffer and four permanent bounded bindings; a fifth distinct binding fails with ENOMEM before state mutation. It deliberately loads no catalog: `catopen` returns `(nl_catd)-1`/ENOENT, `catgets` returns its caller default, and `catclose` is a no-op. Thus no `.mo`/message-catalog parsing, file/NLSPATH/LANG lookup, locale database, plural expression evaluator, mmap, allocator, general gettext framework, or catalog translation is claimed. `libc.c-abi-compat` remains planned, `search.hash-table` remains selected-private, promotion/public_support=false is unchanged, and libc.so, CRT, loader, sysroot, general locale/environment state, family completion, and public x86 support remain outside this slice."
+source_owners = [
+  "compat/upstreams.toml",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/gettext_catalog.rs",
+  "libc/src/c_abi/x86_64/errno.rs",
+  "libc/src/c_abi/x86_64/static_tls.rs",
+  "include/errno.h",
+  "include/libintl.h",
+  "include/nl_types.h",
+  "compat/abi/musl-1.2.6/aarch64/libc.a.static.tsv",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/gettext_catalog_header_abi_probe.c",
+  "compat/x86_64/gettext_catalog_header_abi_probe.cpp",
+  "compat/x86_64/run_gettext_catalog_header_abi.sh",
+  "compat/x86_64/libc_gettext_catalog_probe.c",
+  "compat/x86_64/libc_gettext_catalog_start.S",
+  "compat/x86_64/run_libc_gettext_catalog.sh",
+  "compat/x86_64/aarch64_parity_inventory.py",
+  "compat/x86_64/aarch64_parity_inventory.json",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "compat/x86_64/README.md",
+  "STATUS.md",
+  "x86-64.md",
+  "scripts/dev-x86_64.sh",
+  "scripts/check_structure.py",
+]
+x86_abi_prerequisites = [
+  "The SysV AMD64 C ABI passes and returns eight-byte char/catalog pointers, `unsigned long` plural counts, and signed four-byte category/status/set/message words. `<nl_types.h>` preserves `nl_catd` as an eight-byte align-8 opaque void pointer and `nl_item` as a four-byte align-4 int; NL_SETD=1 and NL_CAT_LOCALE=1. All twelve C and C++ references retain unmangled C linkage.",
+  "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417 maps `src/locale/dcngettext.c`, `textdomain.c`, `bind_textdomain_codeset.c`, `catopen.c`, `catgets.c`, and `catclose.c` to this selected shape. The common reference/candidate fixture proves identity singular/plural fallbacks, preserved errno, default/current/empty/overlong domains, binding query/rebinding/overlong directory failure, UTF-8 codeset validation, and direct missing-catalog ENOENT.",
+  "Musl allocates unbounded domain/binding/catalog state and may map file-backed `.mo`/message catalogs. The static x86 profile instead retains one 256-byte domain buffer (domain length <=255) and four permanent bindings (directory length <=4095); records are never reused, rebinds deactivate prior same-domain records, and capacity exhaustion returns ENOMEM without mutation. The local spin lock serializes calls only; callers must externally synchronize direct use of returned mutable pointers, fork, and async-signal contexts.",
+  "There is deliberately no catalog lookup: no NLSPATH/LANG/environment or locale-map input, file open/mmap, plural parser, allocator, or translation result exists. `catopen` always returns the `(nl_catd)-1` sentinel with ENOENT, `catgets` returns its supplied default, and `catclose` returns zero. The freestanding candidate uses only the already-selected initial-exec errno TLS and hidden Static Initial TLS v1 bootstrap, with no dynamic TLS resolver.",
+]
+x86_header_prerequisites = [
+  "Default, strict, POSIX.1-2008, XOPEN-700, BSD, and GNU pinned-musl/project C11/C++17 probes retain all nine `<libintl.h>` and three `<nl_types.h>` declarations unconditionally, exact pointer/scalar signatures, nl_catd/nl_item layouts, NL_SETD/NL_CAT_LOCALE values, and unmangled C++ linkage. This is selected declaration evidence, not installed-header closure or public x86 support.",
+]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-gettext-catalog", scope = "Runs a six-profile pinned-musl/project C/C++ `<libintl.h>`/`<nl_types.h>` declaration matrix and a project-header pinned-musl static no-catalog reference before a true x86 `-nostdlib -static` selected-archive candidate. The common body proves identity/plural fallback, errno preservation, domain/binding/codeset limits, and direct missing-catalog ENOENT; the candidate-only tail proves its documented four permanent binding records plus catgets default/catclose no-op. It ratchets all twelve strong ABI functions and rejects unresolved symbols, interpreter/DT_NEEDED, dynamic TLS, allocator, mmap/catalog-file, environment/NLSPATH, locale database, plural parser, and unowned dependencies. It deliberately does not compare or claim musl's file-backed catalog mapping/translation, general gettext framework, family promotion, hash-table capability promotion, or public x86 support." }]
+oracle = [
+  { kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT header/signature and no-catalog fallback oracle for include/libintl.h, include/nl_types.h, and src/locale/{dcngettext,textdomain,bind_textdomain_codeset,catopen,catgets,catclose}.c. Its allocator-backed locale/catalog-file implementation is intentionally documented as outside this bounded x86 profile." },
+  { kind = "elf-abi", source = "System V AMD64 psABI", role = "LP64 pointer/scalar calling convention, initial-exec errno TLS, C++ unmangled linkage, strong selected functions, and static ET_EXEC closure." },
+]
+capabilities = ["catalog.gettext"]
+
+[[family.verified_slice]]
 id = "numeric.qsort-helper"
 description = "Private native x86 selected-static-archive completion of the AArch64 `numeric.qsort-helper` capability inside still-planned `libc.c-abi-compat`. It selects exactly musl's uninstalled `__qsort_r` helper: one strong global smoothsort implementation paired with the weak same-address `qsort_r` alias that is public. The independently recorded callback-algorithms artifact retains `bsearch`, `qsort`, and public `qsort_r` behavior; this ABI-only slice accounts only for the private helper without changing the existing native `numeric.scalar-legacy-callback` classification. Pinned musl's static-archive symbol record and the true freestanding candidate establish the direct helper path, while public qsort/qsort_r behavior is compared through the pinned musl dynamic reference. The fixed smoothsort preserves its O(1) cycling buffer, final-context comparator ABI, and strong-caller alias override. It owns no errno, TLS, allocator, syscall, locale, callback registry, or mutable process state. `libc.c-abi-compat` remains planned, the separate `search.hash-table` selection remains private, promotion/public_support=false is unchanged, and general C sorting/searching, C longjmp/C++ exception transport, libc.so, CRT, loader, sysroot, and public x86 support remain outside this capability."
 source_owners = [

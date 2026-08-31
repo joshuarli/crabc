@@ -1208,7 +1208,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "byte-strings-header-abi",
             "memory-search-header-abi",
             "string-copy-header-abi",
-            "error-strings-header-abi",
+            "error-strings-header-abi|gettext-catalog-header-abi",
             "random-entropy-header-abi",
             "sysv-semaphore-header-abi|posix-semaphore-header-abi",
             "sysv-message-shared-memory-header-abi",
@@ -1227,7 +1227,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "libc-memfd-create",
             "libc-static-c-abi-differential",
             "libc-static-c-abi-same-object-differential|qualification-posix-abi-admission",
-            "libc-readiness-waits|libc-system-observation|libc-system-information|libc-fcntl-record-locks|libc-flock|libc-sendfile|libc-posix-fallocate|libc-descriptor-advice|libc-filesystem-capacity|libc-uts-identity|libc-ctype|libc-locale-multibyte|libc-locale-wide-iconv|libc-wide-character|libc-locale-object-wide|libc-locale-narrow|libc-locale-ctype-locators|libc-regex|libc-integer-arithmetic|libc-integer-parse|libc-float-parse|libc-intmax-arithmetic|libc-credential-observation|libc-login-name|libc-child-reaping|libc-immediate-termination|libc-callback-algorithms|libc-search-tree-intrusive|libc-search-hash-table|libc-access|libc-clock-gettime|libc-time-observation|libc-system-configuration|libc-mapping-core|libc-header-layouts-baseline|libc-nanosleep|libc-clock-nanosleep|libc-descriptor-entry|libc-fcntl-status-control|libc-ioctl|libc-ffs|libc-byte-strings|libc-process-globals-getopt|libc-auxv-observation|libc-inet-address|libc-numeric-netdb|libc-random-entropy|libc-memory-search|libc-string-copy|libc-error-strings|libc-descriptor-pipeline",
+            "libc-readiness-waits|libc-system-observation|libc-system-information|libc-fcntl-record-locks|libc-flock|libc-sendfile|libc-posix-fallocate|libc-descriptor-advice|libc-filesystem-capacity|libc-uts-identity|libc-ctype|libc-locale-multibyte|libc-locale-wide-iconv|libc-wide-character|libc-locale-object-wide|libc-locale-narrow|libc-locale-ctype-locators|libc-regex|libc-integer-arithmetic|libc-integer-parse|libc-float-parse|libc-intmax-arithmetic|libc-credential-observation|libc-login-name|libc-child-reaping|libc-immediate-termination|libc-callback-algorithms|libc-search-tree-intrusive|libc-search-hash-table|libc-gettext-catalog|libc-access|libc-clock-gettime|libc-time-observation|libc-system-configuration|libc-mapping-core|libc-header-layouts-baseline|libc-nanosleep|libc-clock-nanosleep|libc-descriptor-entry|libc-fcntl-status-control|libc-ioctl|libc-ffs|libc-byte-strings|libc-process-globals-getopt|libc-auxv-observation|libc-inet-address|libc-numeric-netdb|libc-random-entropy|libc-memory-search|libc-string-copy|libc-error-strings|libc-descriptor-pipeline",
             "libc-vector-io|libc-uio-cxx-linkage",
             "libc-sysv-semaphore|libc-posix-semaphore",
             "libc-sysv-message-shared-memory",
@@ -11626,6 +11626,80 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn('id = "search.hash-table"', parity)
         self.assertIn("libc-search-hash-table)", dispatcher)
         self.assertIn("run_libc_search_hash_table.sh", dispatcher)
+
+    def test_libc_static_c_abi_gettext_catalog_slice_stays_bounded(self) -> None:
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        source = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "gettext_catalog.rs"
+        ).read_text(encoding="utf-8")
+        probe = (
+            ROOT / "compat" / "x86_64" / "libc_gettext_catalog_probe.c"
+        ).read_text(encoding="utf-8")
+        artifact_runner = (
+            ROOT / "compat" / "x86_64" / "run_libc_gettext_catalog.sh"
+        ).read_text(encoding="utf-8")
+        header_runner = (
+            ROOT / "compat" / "x86_64" / "run_gettext_catalog_header_abi.sh"
+        ).read_text(encoding="utf-8")
+        header_cpp = (
+            ROOT / "compat" / "x86_64" / "gettext_catalog_header_abi_probe.cpp"
+        ).read_text(encoding="utf-8")
+        nl_types = (ROOT / "include" / "nl_types.h").read_text(encoding="utf-8")
+        static_exports = {
+            line
+            for line in (
+                ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+            ).read_text(encoding="utf-8").splitlines()
+            if line and not line.startswith("#")
+        }
+        parity = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        dispatcher = RUNNER.read_text(encoding="utf-8")
+        symbols = (
+            "bind_textdomain_codeset", "bindtextdomain", "catclose", "catgets",
+            "catopen", "dcgettext", "dcngettext", "dgettext", "dngettext",
+            "gettext", "ngettext", "textdomain",
+        )
+
+        self.assertIn('#[path = "gettext_catalog.rs"]', static_root)
+        for symbol in symbols:
+            self.assertIn(f"fn {symbol}(", source)
+            self.assertIn(symbol, static_exports)
+        for required in (
+            "src/locale/dcngettext.c", "src/locale/textdomain.c",
+            "src/locale/bind_textdomain_codeset.c",
+            "src/locale/{catopen,catgets,catclose}.c",
+            "BINDING_CAPACITY: usize = 4", "MAX_DIRECTORY_LENGTH",
+            "catalog-file/NLSPATH/LANG lookup", "catopen` always reports `ENOENT`",
+        ):
+            self.assertIn(required, source)
+        for forbidden in ("crabc_core", "crabc_mimalloc", "libmimalloc", "alloc::"):
+            self.assertNotIn(forbidden, source)
+        for required in (
+            "assert_selected_c_abi_surface", "assert_strong_function",
+            "run_gettext_catalog_header_abi.sh", "-nostdlib -static",
+            "candidate selects allocator, catalog-file, environment, locale",
+        ):
+            self.assertIn(required, artifact_runner)
+        for required in (
+            "check_identity_fallback", "check_domain_and_binding_state",
+            "check_codeset_and_missing_catalog", "check_fixed_binding_capacity",
+            "CRABC_GETTEXT_CATALOG_FREESTANDING",
+        ):
+            self.assertIn(required, probe)
+        for required in ("-std=c++17", "nm --undefined-only", "libintl.h", "nl_types.h"):
+            self.assertIn(required, header_runner)
+        self.assertIn('extern "C" {', nl_types)
+        self.assertIn("catgets_signature", header_cpp)
+        self.assertIn('id = "catalog.gettext"', parity)
+        self.assertIn(
+            'command = "./scripts/dev-x86_64.sh libc-gettext-catalog"', parity
+        )
+        self.assertIn("gettext-catalog-header-abi)", dispatcher)
+        self.assertIn("libc-gettext-catalog)", dispatcher)
 
     def test_libc_static_c_abi_clock_gettime_artifact_stays_narrow(self) -> None:
         static_root = (

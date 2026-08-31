@@ -1442,6 +1442,21 @@ SEARCH_HASH_TABLE_SYMBOLS = (
     "hsearch_r",
 )
 
+GETTEXT_CATALOG_SYMBOLS = (
+    "bind_textdomain_codeset",
+    "bindtextdomain",
+    "catclose",
+    "catgets",
+    "catopen",
+    "dcgettext",
+    "dcngettext",
+    "dgettext",
+    "dngettext",
+    "gettext",
+    "ngettext",
+    "textdomain",
+)
+
 QSORT_HELPER_SYMBOLS = ("__qsort_r",)
 
 AUXV_OBSERVATION_SYMBOLS = ("__getauxval", "getauxval")
@@ -17786,6 +17801,187 @@ def require_search_hash_table_slice(family: Mapping[str, Any]) -> None:
     )
 
 
+def require_catalog_gettext_slice(family: Mapping[str, Any]) -> None:
+    """Keep the no-catalog gettext selection private and explicit."""
+    slices = require_verified_slices(
+        family.get("verified_slice"),
+        "family[libc.c-abi-compat].verified_slice",
+        family.get("status", ""),
+        list(family.get("capabilities", [])),
+    )
+    matching = [entry for entry in slices if entry.get("id") == "catalog.gettext"]
+    require(len(matching) == 1, "libc.c-abi-compat needs one catalog.gettext slice")
+    require(
+        family.get("status") == "planned",
+        "gettext selection must not promote libc.c-abi-compat",
+    )
+    selected = matching[0]
+    require(
+        selected["capabilities"] == ["catalog.gettext"],
+        "gettext slice must select exactly catalog.gettext",
+    )
+    description = selected["description"]
+    assert isinstance(description, str)
+    for phrase in (
+        "still-planned `libc.c-abi-compat`",
+        "strong `gettext`, `dgettext`, `dcgettext`, `ngettext`, `dngettext`, `dcngettext`, `textdomain`, `bindtextdomain`, `bind_textdomain_codeset`, `catopen`, `catgets`, and `catclose`",
+        "no-catalog identity/plural fallback",
+        "four permanent bounded bindings",
+        "`.mo`/message-catalog parsing",
+        "promotion/public_support=false",
+        "public x86 support",
+    ):
+        require(phrase in description, f"catalog.gettext description omits {phrase}")
+    for symbol in GETTEXT_CATALOG_SYMBOLS:
+        require(
+            f"`{symbol}`" in description,
+            f"catalog.gettext description omits {symbol}",
+        )
+
+    owners = set(
+        nonempty_strings(selected["source_owners"], "catalog.gettext.source_owners")
+    )
+    for owner in (
+        "libc/src/lib.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/gettext_catalog.rs",
+        "include/libintl.h",
+        "include/nl_types.h",
+        "compat/abi/musl-1.2.6/aarch64/libc.a.static.tsv",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/gettext_catalog_header_abi_probe.c",
+        "compat/x86_64/gettext_catalog_header_abi_probe.cpp",
+        "compat/x86_64/run_gettext_catalog_header_abi.sh",
+        "compat/x86_64/libc_gettext_catalog_probe.c",
+        "compat/x86_64/libc_gettext_catalog_start.S",
+        "compat/x86_64/run_libc_gettext_catalog.sh",
+        "compat/x86_64/aarch64_parity_inventory.json",
+        "scripts/dev-x86_64.sh",
+        "scripts/check_structure.py",
+    ):
+        require(owner in owners, f"catalog.gettext source owners omit {owner}")
+
+    prerequisites = nonempty_strings(
+        selected["x86_abi_prerequisites"], "catalog.gettext.x86_abi_prerequisites"
+    )
+    for phrase in (
+        "eight-byte char/catalog pointers",
+        "`unsigned long` plural counts",
+        "nl_catd` as an eight-byte align-8 opaque void pointer",
+        "four permanent bindings",
+        "directory length <=4095",
+        "catopen` always returns the `(nl_catd)-1` sentinel with ENOENT",
+        "no NLSPATH/LANG/environment",
+        "hidden Static Initial TLS v1 bootstrap",
+    ):
+        require(
+            any(phrase in item for item in prerequisites),
+            f"catalog.gettext ABI prerequisites omit {phrase}",
+        )
+    headers = nonempty_strings(
+        selected["x86_header_prerequisites"], "catalog.gettext.x86_header_prerequisites"
+    )
+    require(
+        any(
+            "Default, strict, POSIX.1-2008, XOPEN-700, BSD, and GNU" in item
+            and "all nine `<libintl.h>` and three `<nl_types.h>` declarations" in item
+            and "unmangled C++ linkage" in item
+            for item in headers
+        ),
+        "catalog.gettext must pin the selected C/C++ header contract",
+    )
+
+    exports = static_c_abi_export_names(
+        ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+    )
+    for symbol in GETTEXT_CATALOG_SYMBOLS:
+        require(symbol in exports, f"static C ABI export contract omits {symbol}")
+    for symbol in ("malloc", "calloc", "realloc", "free"):
+        require(
+            symbol not in exports,
+            f"catalog.gettext selects allocator export {symbol}",
+        )
+
+    static_root = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+    ).read_text(encoding="utf-8")
+    require(
+        '#[path = "gettext_catalog.rs"]\nmod gettext_catalog;' in static_root,
+        "x86 static C ABI must compose the bounded gettext/catalog leaf",
+    )
+    source = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "gettext_catalog.rs"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "src/locale/dcngettext.c",
+        "src/locale/textdomain.c",
+        "src/locale/bind_textdomain_codeset.c",
+        "src/locale/{catopen,catgets,catclose}.c",
+        "BINDING_CAPACITY: usize = 4",
+        "MAX_DIRECTORY_LENGTH",
+        "catopen` always reports `ENOENT`",
+        "catalog-file/NLSPATH/LANG lookup",
+    ):
+        require(snippet in source, f"catalog.gettext source omits {snippet}")
+    headers_source = (ROOT / "include" / "nl_types.h").read_text(encoding="utf-8")
+    require(
+        "#ifdef __cplusplus\nextern \"C\" {" in headers_source,
+        "nl_types.h must preserve C++ C linkage for selected catalog calls",
+    )
+
+    evidence = selected["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-gettext-catalog"},
+        "catalog.gettext must use its closed native command",
+    )
+    scope = evidence[0]["scope"]
+    assert isinstance(scope, str)
+    for phrase in (
+        "six-profile",
+        "four permanent binding records",
+        "catgets default/catclose no-op",
+        "file-backed catalog mapping/translation",
+        "family promotion",
+        "hash-table capability promotion",
+        "public x86 support",
+    ):
+        require(phrase in scope, f"catalog.gettext evidence omits {phrase}")
+    runner = (
+        ROOT / "compat" / "x86_64" / "run_libc_gettext_catalog.sh"
+    ).read_text(encoding="utf-8")
+    fixture = (
+        ROOT / "compat" / "x86_64" / "libc_gettext_catalog_probe.c"
+    ).read_text(encoding="utf-8")
+    header_runner = (
+        ROOT / "compat" / "x86_64" / "run_gettext_catalog_header_abi.sh"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "assert_selected_c_abi_surface",
+        "assert_strong_function",
+        "run_gettext_catalog_header_abi.sh",
+        "-nostdlib -static",
+        "catalog-file, environment, locale",
+    ):
+        require(snippet in runner, f"catalog.gettext runner omits {snippet}")
+    for snippet in (
+        "check_identity_fallback",
+        "check_domain_and_binding_state",
+        "check_codeset_and_missing_catalog",
+        "check_fixed_binding_capacity",
+        "CRABC_GETTEXT_CATALOG_FREESTANDING",
+    ):
+        require(snippet in fixture, f"catalog.gettext fixture omits {snippet}")
+    for snippet in ("-std=c++17", "nm --undefined-only", "libintl.h", "nl_types.h"):
+        require(snippet in header_runner, f"catalog.gettext header runner omits {snippet}")
+    dispatcher = (ROOT / "scripts" / "dev-x86_64.sh").read_text(encoding="utf-8")
+    require(
+        "run_libc_gettext_catalog.sh" in dispatcher,
+        "catalog.gettext dispatcher binding is missing",
+    )
+
+
 def require_numeric_qsort_helper_slice(family: Mapping[str, Any]) -> None:
     """Keep musl's private qsort helper selected without promoting sorting."""
     slices = require_verified_slices(
@@ -24471,6 +24667,7 @@ def validate_ledger(
     require_process_globals_getopt_artifact(by_id["libc.c-abi-compat"])
     require_search_tree_intrusive_slice(by_id["libc.c-abi-compat"])
     require_search_hash_table_slice(by_id["libc.c-abi-compat"])
+    require_catalog_gettext_slice(by_id["libc.c-abi-compat"])
     require_numeric_qsort_helper_slice(by_id["libc.c-abi-compat"])
     require_descriptor_lifecycle_artifact(by_id["libc.posix-runtime"])
     require_descriptor_pipeline_artifact(by_id["libc.posix-runtime"])

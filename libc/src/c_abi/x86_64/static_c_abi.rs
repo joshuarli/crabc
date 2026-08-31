@@ -63,7 +63,8 @@
 //! startup/ordinary-exit lifecycle, startup-published program-name globals,
 //! raw initial auxiliary-vector observation, and option parsing,
 //! callback-algorithms, allocator-export-free AVL callback-tree search, and
-//! allocator-export-free hash-table search, POSIX `nanosleep`
+//! allocator-export-free hash-table search, a bounded no-catalog
+//! gettext/message-catalog ABI profile, and POSIX `nanosleep`
 //! and `clock_nanosleep`, and direct clock-observation artifacts, plus one
 //! bounded System V message-queue/shared-memory artifact, one bounded
 //! unnamed POSIX semaphore artifact, and one bounded event-descriptor
@@ -278,6 +279,8 @@ mod callback_algorithms;
 mod search_tree_intrusive;
 #[path = "search_hash_table.rs"]
 mod search_hash_table;
+#[path = "gettext_catalog.rs"]
+mod gettext_catalog;
 #[path = "clock_nanosleep.rs"]
 mod clock_nanosleep;
 #[path = "clock_gettime.rs"]

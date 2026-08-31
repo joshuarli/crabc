@@ -89,6 +89,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   memory-search-header-abi  compile the staged x86 C/C++ memory-search declarations
   string-copy-header-abi  compile the staged x86 C/C++ C-string-copy declarations
   error-strings-header-abi  compile the staged x86 C/C++ error-string declarations
+  gettext-catalog-header-abi  verify staged x86 libintl/nl_types C/C++ declarations and linkage
   random-entropy-header-abi  compile the staged x86 C/C++ random-source declarations
   time-header-abi  compile the staged x86 C/C++ time header layouts
   timerfd-header-abi  verify the selected x86 sys/timerfd.h C/C++ ABI profiles
@@ -255,6 +256,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-callback-algorithms  run the static x86 crabc-libc callback-algorithms slice
   libc-search-tree-intrusive  run the static x86 crabc-libc search.h callback-tree slice
   libc-search-hash-table  run the static x86 crabc-libc search.h hash-table slice
+  libc-gettext-catalog  run the static x86 crabc-libc no-catalog gettext/catalog slice
   libc-access  run the static x86 crabc-libc access/faccessat slice
   libc-clock-gettime  run the static x86 crabc-libc clock_gettime slice
   libc-time-observation  run the static x86 crabc-libc clock-observation slice
@@ -1904,6 +1906,10 @@ run_libc_search_hash_table() {
     run_in_container bash /workspace/compat/x86_64/run_libc_search_hash_table.sh
 }
 
+run_libc_gettext_catalog() {
+    run_in_container bash /workspace/compat/x86_64/run_libc_gettext_catalog.sh
+}
+
 run_libc_access() {
     run_in_container bash /workspace/compat/x86_64/run_libc_access.sh
 }
@@ -2026,6 +2032,10 @@ run_string_copy_header_abi() {
 
 run_error_strings_header_abi() {
     run_in_container bash /workspace/compat/x86_64/run_error_strings_header_abi.sh
+}
+
+run_gettext_catalog_header_abi() {
+    run_in_container bash /workspace/compat/x86_64/run_gettext_catalog_header_abi.sh
 }
 
 run_random_entropy_header_abi() {
@@ -3198,7 +3208,7 @@ case "$command" in
     byte-strings-header-abi) ;;
     memory-search-header-abi) ;;
     string-copy-header-abi) ;;
-    error-strings-header-abi) ;;
+    error-strings-header-abi|gettext-catalog-header-abi) ;;
     random-entropy-header-abi) ;;
     sysv-semaphore-header-abi|posix-semaphore-header-abi) ;;
     sysv-message-shared-memory-header-abi) ;;
@@ -3217,7 +3227,7 @@ case "$command" in
     libc-memfd-create) ;;
     libc-static-c-abi-differential) ;;
     libc-static-c-abi-same-object-differential|qualification-posix-abi-admission) ;;
-    libc-readiness-waits|libc-system-observation|libc-system-information|libc-fcntl-record-locks|libc-flock|libc-sendfile|libc-posix-fallocate|libc-descriptor-advice|libc-filesystem-capacity|libc-uts-identity|libc-ctype|libc-locale-multibyte|libc-locale-wide-iconv|libc-wide-character|libc-locale-object-wide|libc-locale-narrow|libc-locale-ctype-locators|libc-regex|libc-integer-arithmetic|libc-integer-parse|libc-float-parse|libc-intmax-arithmetic|libc-credential-observation|libc-login-name|libc-child-reaping|libc-immediate-termination|libc-callback-algorithms|libc-search-tree-intrusive|libc-search-hash-table|libc-access|libc-clock-gettime|libc-time-observation|libc-system-configuration|libc-mapping-core|libc-header-layouts-baseline|libc-nanosleep|libc-clock-nanosleep|libc-descriptor-entry|libc-fcntl-status-control|libc-ioctl|libc-ffs|libc-byte-strings|libc-process-globals-getopt|libc-auxv-observation|libc-inet-address|libc-numeric-netdb|libc-random-entropy|libc-memory-search|libc-string-copy|libc-error-strings|libc-descriptor-pipeline) ;;
+    libc-readiness-waits|libc-system-observation|libc-system-information|libc-fcntl-record-locks|libc-flock|libc-sendfile|libc-posix-fallocate|libc-descriptor-advice|libc-filesystem-capacity|libc-uts-identity|libc-ctype|libc-locale-multibyte|libc-locale-wide-iconv|libc-wide-character|libc-locale-object-wide|libc-locale-narrow|libc-locale-ctype-locators|libc-regex|libc-integer-arithmetic|libc-integer-parse|libc-float-parse|libc-intmax-arithmetic|libc-credential-observation|libc-login-name|libc-child-reaping|libc-immediate-termination|libc-callback-algorithms|libc-search-tree-intrusive|libc-search-hash-table|libc-gettext-catalog|libc-access|libc-clock-gettime|libc-time-observation|libc-system-configuration|libc-mapping-core|libc-header-layouts-baseline|libc-nanosleep|libc-clock-nanosleep|libc-descriptor-entry|libc-fcntl-status-control|libc-ioctl|libc-ffs|libc-byte-strings|libc-process-globals-getopt|libc-auxv-observation|libc-inet-address|libc-numeric-netdb|libc-random-entropy|libc-memory-search|libc-string-copy|libc-error-strings|libc-descriptor-pipeline) ;;
     libc-vector-io|libc-uio-cxx-linkage) ;;
     libc-sysv-semaphore|libc-posix-semaphore) ;;
     libc-sysv-message-shared-memory) ;;
@@ -3483,6 +3493,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "error-strings-header-abi takes no arguments"
         ensure_image
         run_error_strings_header_abi
+        ;;
+    gettext-catalog-header-abi)
+        [ "$#" -eq 0 ] || fail "gettext-catalog-header-abi takes no arguments"
+        ensure_image
+        run_gettext_catalog_header_abi
         ;;
     random-entropy-header-abi)
         [ "$#" -eq 0 ] || fail "random-entropy-header-abi takes no arguments"
@@ -4492,6 +4507,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "libc-search-hash-table takes no arguments"
         ensure_image
         run_libc_search_hash_table
+        ;;
+    libc-gettext-catalog)
+        [ "$#" -eq 0 ] || fail "libc-gettext-catalog takes no arguments"
+        ensure_image
+        run_libc_gettext_catalog
         ;;
     libc-access)
         [ "$#" -eq 0 ] || fail "libc-access takes no arguments"

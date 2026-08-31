@@ -2855,6 +2855,20 @@ export. It does not select callback trees, iteration, general allocation or
 containers, process/environment mutation, libc.so, CRT, loader, sysroot,
 family promotion, or public x86 support.
 
+`libc-gettext-catalog` is the separate private `catalog.gettext` slice inside
+still-planned `libc.c-abi-compat`. Its default/strict/POSIX/XOPEN/BSD/GNU
+pinned-musl/project C/C++ matrix ratchets all nine `<libintl.h>` and three
+`<nl_types.h>` declarations, including unmangled catalog linkage. The common
+static-musl/freestanding candidate body proves no-catalog identity/plural
+fallbacks, errno preservation, default/current/overlong domain behavior,
+binding query/rebind rules, UTF-8-only codesets, and direct missing-catalog
+`ENOENT`. The candidate then proves its explicit fixed profile: one 256-byte
+domain buffer, four permanent bindings, `catgets` caller-default, and no-op
+`catclose`. It deliberately does not parse/load `.mo` or message-catalog
+files, consult NLSPATH/LANG or locale maps, evaluate plural rules, use mmap or
+an allocator, or claim general gettext/catalog translation, family promotion,
+or public x86 support.
+
 `libc-clock-gettime` is a separately recorded
 `static-c-clock-gettime` `verified_artifact` gate over that archive, not a C
 time or runtime capability. Its project-header C body first executes through
@@ -4379,6 +4393,7 @@ Apart from the narrowly named `libc-stat-compat`, `libc-credentials`,
 `libc-process-context`, `libc-environment`, `libc-login-name`, `libc-child-reaping`, and
 `libc-immediate-termination`, `libc-callback-algorithms`,
 `libc-search-hash-table`,
+`libc-gettext-catalog`,
 `libc-clock-gettime`,
 `libc-time-observation`,
 `libc-system-configuration`,

@@ -566,6 +566,18 @@ C allocator export and does not select callback trees, general containers,
 process/environment state, libc.so, CRT, loader, sysroot, family promotion, or
 public x86 support.
 
+The same still-planned C ABI family now also selects the bounded private
+`catalog.gettext` slice. `./scripts/dev-x86_64.sh libc-gettext-catalog` runs
+the six-profile pinned-musl/project C/C++ `<libintl.h>`/`<nl_types.h>` matrix
+and a static no-catalog reference beside a freestanding x86 candidate. It
+proves identity/plural fallback, errno preservation, default/current/validated
+domain and binding state, UTF-8-only codesets, and direct missing-catalog
+`ENOENT`. The candidate's four permanent bindings, caller-default `catgets`,
+and no-op `catclose` are explicit bounded behavior. It does not load or parse
+catalog files, read NLSPATH/LANG or locale maps, evaluate plural rules, use
+mmap/allocator state, or claim general gettext/catalog translation, family
+completion, promotion, or public x86 support.
+
 `./scripts/dev-x86_64.sh consumer-native-facade-lto` is the second private
 artifact in that family. It compiles an AArch64-native-facade-shaped no-std
 x86 workload—getpid, `/dev/null`, pipe, eventfd, descriptor flags, read/write,

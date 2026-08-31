@@ -49,7 +49,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["status_counts"], {"foundation-verified": 8, "planned": 18})
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
-        self.assertEqual(report["verified_slice_count"], 36)
+        self.assertEqual(report["verified_slice_count"], 37)
         self.assertEqual(report["verified_artifact_count"], 136)
         self.assertEqual(report["header_layout_probe_count"], 46)
         self.assertEqual(report["public_header_inventory_count"], 183)
@@ -13801,6 +13801,63 @@ class X86ParityLedgerTests(unittest.TestCase):
         )
         with self.assertRaisesRegex(
             ledger.LedgerError, "weak same-address `getauxval`"
+        ):
+            ledger.validate_ledger(data)
+
+    def test_catalog_gettext_slice_is_selected_private_and_non_promoting(self) -> None:
+        data = self.data()
+        family = self.family(data, "libc.c-abi-compat")
+        self.assertEqual(family["status"], "planned")
+        slices = family["verified_slice"]
+        assert isinstance(slices, list)
+        selected = next(
+            entry
+            for entry in slices
+            if isinstance(entry, dict) and entry["id"] == "catalog.gettext"
+        )
+        self.assertEqual(selected["capabilities"], ["catalog.gettext"])
+        for symbol in ledger.GETTEXT_CATALOG_SYMBOLS:
+            self.assertIn(f"`{symbol}`", selected["description"])
+        for phrase in (
+            "no-catalog identity/plural fallback",
+            "four permanent bounded bindings",
+            "`.mo`/message-catalog parsing",
+            "promotion/public_support=false",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, selected["description"])
+        owners = selected["source_owners"]
+        assert isinstance(owners, list)
+        for owner in (
+            "libc/src/c_abi/x86_64/gettext_catalog.rs",
+            "include/libintl.h",
+            "include/nl_types.h",
+            "compat/x86_64/gettext_catalog_header_abi_probe.cpp",
+            "compat/x86_64/libc_gettext_catalog_probe.c",
+            "compat/x86_64/run_libc_gettext_catalog.sh",
+            "compat/x86_64/aarch64_parity_inventory.json",
+        ):
+            self.assertIn(owner, owners)
+        evidence = selected["native_evidence"]
+        assert isinstance(evidence, list) and isinstance(evidence[0], dict)
+        self.assertEqual(
+            evidence[0]["command"],
+            "./scripts/dev-x86_64.sh libc-gettext-catalog",
+        )
+        for phrase in (
+            "six-profile",
+            "four permanent binding records",
+            "catgets default/catclose no-op",
+            "file-backed catalog mapping/translation",
+            "hash-table capability promotion",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, evidence[0]["scope"])
+
+        selected["capabilities"] = ["legacy.misc"]
+        with self.assertRaisesRegex(
+            ledger.LedgerError,
+            "gettext slice must select exactly catalog.gettext",
         ):
             ledger.validate_ledger(data)
 
