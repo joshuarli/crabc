@@ -411,6 +411,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-math-cbrt  run the static x86 cbrt/cbrtf scalar cube-root slice
   libc-math-ceil  run the static x86 ceil/ceilf fixed-direction slice
   libc-math-floor  run the static x86 floor/floorf fixed-direction slice
+  libc-math-round  run the static x86 round/roundf half-away slice
   libc-math-elementary-long-double  run the complete static x86 math.elementary-long-double capability
   libc-math-x87-extended  run the static x86 x87 long-double math/remainder block
   libc-math-special  run the complete static x86 math.special capability
@@ -1725,6 +1726,18 @@ boundaries, large finite values, infinities, quiet/signaling NaNs, exception
 flags, and requested versus observed direction in all four MXCSR modes. It
 excludes `floorl`, ceiling, fma, fmod, cbrt, fenv API/policy, special/complex
 and binary80 math, family completion, promotion, and public x86 support.
+`libc-math-round` is the separate selected binary32/binary64 half-away slice
+for `round` and `roundf`. It compares parenthesized C calls and default-SSE/
+`-mfpmath=387` C++ declarations with pinned musl, then runs one freestanding
+static candidate. The checked GCC 15.2.0 translation of musl 1.2.6
+`round.c`/`roundf.c` retains sign normalization, the `toint` add/subtract
+sequence, and the half-away correction. Its raw records cover signed zero,
+finite normal/subnormal and integral-neighbor boundaries, halfway values,
+large finite values, infinities, quiet/signaling NaNs, exception flags, and
+requested versus observed direction in all four MXCSR modes. It excludes
+`roundl`, fenv API/policy, directed ceiling/floor, fma, fmod, cbrt,
+special/complex and binary80 math, family completion, promotion, and public
+x86 support.
 `libc-math-elementary-long-double` proves the exact 35-symbol
 `math.elementary-long-double` capability through project headers, a closed
 static archive, and 2,764 exact pinned-musl binary80/fenv records across all
@@ -3577,6 +3590,10 @@ run_libc_math_floor_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_math_floor.sh
 }
 
+run_libc_math_round_probe() {
+    run_in_container bash /workspace/compat/x86_64/run_libc_math_round.sh
+}
+
 run_libc_math_elementary_long_double_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_math_elementary_long_double.sh
 }
@@ -3706,6 +3723,7 @@ case "$command" in
     libc-math-cbrt) ;;
     libc-math-ceil) ;;
     libc-math-floor) ;;
+    libc-math-round) ;;
     libc-fdim) ;;
     machine-context-header-abi) ;;
     memory-sync-header-abi) ;;
@@ -5692,6 +5710,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "libc-math-floor takes no arguments"
         ensure_image
         run_libc_math_floor_probe
+        ;;
+    libc-math-round)
+        [ "$#" -eq 0 ] || fail "libc-math-round takes no arguments"
+        ensure_image
+        run_libc_math_round_probe
         ;;
     libc-math-elementary-long-double)
         [ "$#" -eq 0 ] || fail "libc-math-elementary-long-double takes no arguments"

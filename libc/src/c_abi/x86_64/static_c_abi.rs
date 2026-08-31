@@ -7,7 +7,8 @@
 //! `math.complex` magnitude/phase/projection/power/root/transcendental block,
 //! hardware
 //! square root, binary32/binary64 bit-sign masks, binary32/binary64 extrema,
-//! binary32/binary64 fixed-direction ceiling/floor, truncation, remainder,
+//! binary32/binary64 fixed-direction ceiling/floor, half-away rounding,
+//! truncation, remainder,
 //! and cube root, selected
 //! fenv-sensitive rounding,
 //! and one selected x87 binary80 extended-math block as real C bootstrap
@@ -254,6 +255,8 @@ mod math_cbrt;
 mod math_ceil;
 #[path = "math_floor.rs"]
 mod math_floor;
+#[path = "math_round.rs"]
+mod math_round;
 #[path = "math_minmax.rs"]
 mod math_minmax;
 #[path = "math_x87_extended.rs"]

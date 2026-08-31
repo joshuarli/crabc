@@ -7792,6 +7792,53 @@ x86_header_prerequisites = [
 native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-math-floor", scope = "Pinned-musl/project-header C and C++ ABI execution plus one dependency-free `-nostdlib -static --no-undefined --gc-sections` candidate. The C fixture compares 216 exact 32-byte records across all four rounding directions: binary32/binary64 signed zero, raw subnormal/normal bounds, positive/negative neighbors around integral values, high finite boundaries, infinities, quiet/signaling NaNs, raw results, requested/observed MXCSR direction, and exception flags. ELF proof requires strong global target-owned floor/floorf definitions, exact archive surface, and addsd/subsd/addss source arithmetic; it rejects weak compiler-builtins fallback, floorl, ceiling, fmod, cbrt, fma, rounding/truncation, bit-sign/minmax/fdim, sqrt, complex, unresolved symbols, dynamic linkage, TLS, ambient libm, and unowned runtime dependencies. It excludes category/family completion, promotion, full x86-64 parity, and public x86 support." }]
 oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source, IEEE bit-level/fenv behavior, and public C ABI oracle for exactly src/math/floor.c and src/math/floorf.c." }, { kind = "aarch64-contract", source = "libc/src/math_bitmanip.rs", role = "Existing AArch64 source-level floor/floorf mapping with matching raw-bit and force-evaluation structure; its target code and binary128 long-double sibling are not imported into the x86 archive." }, { kind = "elf-abi", source = "System V AMD64 psABI", role = "xmm0 binary32/binary64 unary argument and return ABI plus caller-visible MXCSR directed-SSE arithmetic boundary for the selected static C entries." }]
 
+[[family.verified_artifact]]
+id = "static-c-math-round"
+description = "Private native x86 selected-static binary32/binary64 half-away rounding artifact inside still-planned `libc.text-math-locale-stdio`. One dependency-free `crabc-libc` archive resolves exactly `round` and `roundf` into a freestanding project-header C fixture after equivalent pinned-musl execution. A checked GCC 15.2.0 assembly translation of musl's `round.c`/`roundf.c` retains sign normalization, binary64/binary32 `toint` add/subtract operation order, and the half-away correction rather than a target-intrinsic rewrite. The record stream covers signed zero, finite normal/subnormal boundaries, integral-neighbor and exact-halfway values, large finite values, infinities, quiet/signaling NaNs, all four requested/observed rounding directions, and exception flags; nonzero magnitudes below one half preserve musl's `FE_INEXACT` behavior. Strong target-owned definitions reject a weak compiler-builtins fallback. This artifact excludes binary80 `roundl`, fenv API/policy, `rint*`/`nearbyint*`, truncation, directed ceiling/floor, fma, fmod, cbrt, bit-sign/minmax/fdim, special and complex functions, binary80/x87 math, errno policy, general libm, libc.so, CRT/TLS lifecycle, loader, sysroot, `math.elementary` family completion, promotion, full x86-64 parity, and public x86 support."
+source_owners = [
+  "compat/upstreams.toml",
+  "docker/Dockerfile.x86_64",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/fenv.rs",
+  "libc/src/c_abi/x86_64/math_round.rs",
+  "libc/src/c_abi/x86_64/math_round_musl_x86_64.S",
+  "include/fenv.h",
+  "include/float.h",
+  "include/math.h",
+  "compat/x86_64/generate_libc_math_round.py",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/math_round_header_abi_probe.cpp",
+  "compat/x86_64/libc_math_round_probe.c",
+  "compat/x86_64/libc_math_round_start.S",
+  "compat/x86_64/run_libc_math_round.sh",
+  "compat/x86_64/aarch64_parity_inventory.py",
+  "compat/x86_64/aarch64_parity_inventory.json",
+  "compat/x86_64/tests/test_aarch64_parity_inventory.py",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "compat/x86_64/README.md",
+  "SCOPE.md",
+  "COMPATIBILITY-PROFILE.md",
+  "STATUS.md",
+  "x86-64.md",
+  "scripts/check_structure.py",
+  "scripts/dev-x86_64.sh",
+]
+x86_abi_prerequisites = [
+  "Pinned musl 1.2.6 src/math/round.c and roundf.c are the exact MIT source closure: their normalized 1.2.6 source-tree digest, GCC 15.2.0 input, and `-frounding-math` assembly translation retain sign normalization, `toint` add/subtract operation order, and half-away correction instead of an ambient libm call.",
+  "System V AMD64 with FLT_EVAL_METHOD=0 passes and returns binary64/binary32 in xmm0. The binary64 SSE addsd/subsd path and binary32 SSE addss/subss path retain musl's half-away result across all caller directions. Binary80 `roundl` is representation- and ABI-distinct and remains excluded.",
+  "The fixture composes only existing selected static fegetenv/fesetenv/fesetround/fegetround/feclearexcept/fetestexcept entries to reset and observe MXCSR. That harness dependency proves caller-visible direction and flags, including the tiny nonzero `FE_INEXACT` path, without selecting fenv API or policy as part of this artifact.",
+]
+x86_header_prerequisites = [
+  "The focused C fixture preprocesses project fenv.h, float.h, math.h, stdint.h, features.h, and bits/alltypes.h, then calls parenthesized round/roundf function pointers so compiler builtins cannot substitute for the named C ABI.",
+  "Dedicated C++17 objects compiled with default SSE and -mfpmath=387 pin exact binary64/binary32 unary function-pointer signatures, ties-away values, and unmangled C references from the project header against pinned musl.",
+]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-math-round", scope = "Pinned-musl/project-header C and C++ ABI execution plus one dependency-free `-nostdlib -static --no-undefined --gc-sections` candidate. The C fixture compares 216 exact 32-byte records across all four rounding directions: binary32/binary64 signed zero, raw subnormal/normal bounds, positive/negative integral neighbors and exact halfway values, high finite boundaries, infinities, quiet/signaling NaNs, raw results, requested/observed MXCSR direction, and exception flags. ELF proof requires strong global target-owned round/roundf definitions, exact archive surface, addsd/subsd/addss/subss source arithmetic, and the half-away correction; it rejects weak compiler-builtins fallback, roundl, fenv API/policy, rint/nearbyint, truncation, directed ceiling/floor, fmod, cbrt, fma, bit-sign/minmax/fdim, sqrt, complex, unresolved symbols, dynamic linkage, TLS, ambient libm, and unowned runtime dependencies. It excludes category/family completion, promotion, full x86-64 parity, and public x86 support." }]
+oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source, IEEE bit-level/fenv behavior, and public C ABI oracle for exactly src/math/round.c and src/math/roundf.c." }, { kind = "aarch64-contract", source = "libc/src/math_bitmanip.rs", role = "Existing AArch64 source-level round/roundf mapping with matching sign-normalization and half-away source semantics; its target code and binary128 long-double sibling are not imported into the x86 archive." }, { kind = "elf-abi", source = "System V AMD64 psABI", role = "xmm0 binary32/binary64 unary argument and return ABI plus caller-visible MXCSR directed-SSE arithmetic boundary for the selected static C entries." }]
+
 [[family.verified_slice]]
 id = "numeric.parse-float-locale"
 description = "Private native x86 completion of the AArch64 `numeric.parse-float-locale` capability. The selected static archive owns all twenty-three ledger symbols: narrow `atof`/`strto*`, ignored-locale public and weak-internal `_l` wrappers, arbitrary-length wide floating and integer conversions, musl-compatible static-buffer `ecvt`/`fcvt`, caller-buffered `gcvt`, and in-place `getsubopt`. C/POSIX/C.UTF-8 share the fixed decimal grammar; no arbitrary locale map, locale-dependent radix, public FILE, general printf, allocator, libc.so, CRT, loader, or sysroot is selected. The family stays planned and the repository retains promotion_ready=false and public_support=false."

@@ -4635,6 +4635,22 @@ compiler-builtins fallback, `floorl`, ceiling, fma, fmod, cbrt, static
 rounding/fenv policy, special/complex/binary80 math, dynamic linkage, TLS,
 and ambient-libm surface. Family completion, promotion, full x86-64 parity,
 and public x86 support remain unselected.
+`libc-math-round` is the separate non-promoting `static-c-math-round` artifact
+for binary64/binary32 `round`/`roundf`. Its project-header C fixture and
+default-SSE/`-mfpmath=387` C++ signature probes run first through pinned musl
+and then through one garbage-collected `-nostdlib -static` candidate. The
+checked GCC 15.2.0 assembly translation of musl 1.2.6 `round.c`/`roundf.c`
+preserves sign normalization, `toint` add/subtract order, and the half-away
+correction. The 216-record raw differential compares signed zero,
+normal/subnormal and integral-neighbor boundaries, exact halfway values,
+large finite values, infinities, quiet/signaling NaNs, exception flags, and
+requested versus observed MXCSR direction in all four modes. Final-link proof
+requires strong crabc-owned definitions and `addsd`/`subsd`/`addss`/`subss`,
+while rejecting weak compiler-builtins fallback, `roundl`, fenv API/policy,
+`rint`/`nearbyint`, truncation, directed ceiling/floor, fma, fmod, cbrt,
+special/complex/binary80 math, dynamic linkage, TLS, and ambient-libm surface.
+Family completion, promotion, full x86-64 parity, and public x86 support
+remain unselected.
 `libc-fdim` is a separate non-promoting `static-c-fdim` artifact for the
 binary64/binary32 positive-difference pair. Its project-header C fixture and
 default-SSE/`-mfpmath=387` C++ signature probes run first through pinned musl

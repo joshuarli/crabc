@@ -686,6 +686,8 @@ rint
 rintf
 rintl
 rmdir
+round
+roundf
 roundl
 rust_eh_personality
 scalb

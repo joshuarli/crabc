@@ -140,8 +140,8 @@ X86_RUNTIME_FOUNDATION_LDSO_SOURCES = {
 # status control, bounded generic ioctl, and the basic x87 classification/sign,
 # complex accessor/conjugation plus the complete private math.complex
 # capability, hardware square root, binary32/binary64 extrema, fixed-direction
-# ceiling/floor, truncation, remainder, and cube root, selected fenv-sensitive
-# rounding, and binary80
+# ceiling/floor, half-away rounding, truncation, remainder, and cube root,
+# selected fenv-sensitive rounding, and binary80
 # elementary/remainder/conversion foundations.
 # The older leaves remain source-only. Keeping exact file boundaries makes
 # every later C-runtime admission deliberate rather than a directory-wide x86
@@ -196,6 +196,7 @@ X86_RUNTIME_FOUNDATION_LIBC_SOURCES = {
     Path("libc/src/c_abi/x86_64/math_cbrt.rs"),
     Path("libc/src/c_abi/x86_64/math_ceil.rs"),
     Path("libc/src/c_abi/x86_64/math_floor.rs"),
+    Path("libc/src/c_abi/x86_64/math_round.rs"),
     Path("libc/src/c_abi/x86_64/math_minmax.rs"),
     Path("libc/src/c_abi/x86_64/math_special.rs"),
     Path("libc/src/c_abi/x86_64/math_x87_extended.rs"),

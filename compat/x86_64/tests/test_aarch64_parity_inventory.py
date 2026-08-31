@@ -64,7 +64,7 @@ class AArch64ParityInventoryTests(unittest.TestCase):
             if row["id"] == "libc.text-math-locale-stdio"
         )
         self.assertEqual(text_math["verified_slice_count"], 5)
-        self.assertEqual(text_math["verified_artifact_count"], 37)
+        self.assertEqual(text_math["verified_artifact_count"], 38)
         self.assertEqual(
             {row["contract_state"] for row in report["capabilities"]},
             {"implemented-foundation", "selected-private", "missing"},

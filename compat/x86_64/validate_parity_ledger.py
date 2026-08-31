@@ -1638,6 +1638,8 @@ MATH_CEIL_SYMBOLS = ("ceil", "ceilf")
 
 MATH_FLOOR_SYMBOLS = ("floor", "floorf")
 
+MATH_ROUND_SYMBOLS = ("round", "roundf")
+
 NAMED_LOCALE_MULTIBYTE_SYMBOLS = (
     "__ctype_get_mb_cur_max",
     "btowc",
@@ -26969,8 +26971,8 @@ def require_getsubopt_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 37,
-        "libc.text-math-locale-stdio must retain exactly thirty-seven private verified artifacts",
+        len(artifacts) == 38,
+        "libc.text-math-locale-stdio must retain exactly thirty-eight private verified artifacts",
     )
     matching = [
         entry for entry in artifacts if entry.get("id") == "static-c-getsubopt"
@@ -28426,8 +28428,8 @@ def require_stdio_integer_scan_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 37,
-        "libc.text-math-locale-stdio must retain exactly thirty-seven private verified artifacts",
+        len(artifacts) == 38,
+        "libc.text-math-locale-stdio must retain exactly thirty-eight private verified artifacts",
     )
     matching = [
         entry for entry in artifacts if entry.get("id") == "static-c-stdio-integer-scan"
@@ -28709,8 +28711,8 @@ def require_stdio_octal_hex_scan_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 37,
-        "libc.text-math-locale-stdio must retain exactly thirty-seven private verified artifacts",
+        len(artifacts) == 38,
+        "libc.text-math-locale-stdio must retain exactly thirty-eight private verified artifacts",
     )
     matching = [
         entry
@@ -29235,8 +29237,8 @@ def require_stdio_errno_output_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 37,
-        "libc.text-math-locale-stdio must retain exactly thirty-seven private verified artifacts",
+        len(artifacts) == 38,
+        "libc.text-math-locale-stdio must retain exactly thirty-eight private verified artifacts",
     )
     matching = [
         entry for entry in artifacts if entry.get("id") == "static-c-stdio-errno-output"
@@ -29756,8 +29758,8 @@ def require_stdio_permanent_byte_io_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 37,
-        "libc.text-math-locale-stdio must retain exactly thirty-seven private verified artifacts",
+        len(artifacts) == 38,
+        "libc.text-math-locale-stdio must retain exactly thirty-eight private verified artifacts",
     )
     matching = [
         entry
@@ -30083,8 +30085,8 @@ def require_stdio_permanent_status_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 37,
-        "libc.text-math-locale-stdio must retain exactly thirty-seven private verified artifacts",
+        len(artifacts) == 38,
+        "libc.text-math-locale-stdio must retain exactly thirty-eight private verified artifacts",
     )
     matching = [
         entry
@@ -30411,8 +30413,8 @@ def require_stdio_permanent_feof_unlocked_artifact(
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 37,
-        "libc.text-math-locale-stdio must retain exactly thirty-seven private verified artifacts",
+        len(artifacts) == 38,
+        "libc.text-math-locale-stdio must retain exactly thirty-eight private verified artifacts",
     )
     matching = [
         entry
@@ -30779,8 +30781,8 @@ def require_stdio_permanent_fileno_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 37,
-        "libc.text-math-locale-stdio must retain exactly thirty-seven private verified artifacts",
+        len(artifacts) == 38,
+        "libc.text-math-locale-stdio must retain exactly thirty-eight private verified artifacts",
     )
     matching = [
         entry
@@ -31084,8 +31086,8 @@ def require_stdio_permanent_fileno_unlocked_artifact(
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 37,
-        "libc.text-math-locale-stdio must retain exactly thirty-seven private verified artifacts",
+        len(artifacts) == 38,
+        "libc.text-math-locale-stdio must retain exactly thirty-eight private verified artifacts",
     )
     matching = [
         entry
@@ -34621,8 +34623,8 @@ def require_math_ceil_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 37,
-        "libc.text-math-locale-stdio must retain exactly thirty-seven private verified artifacts",
+        len(artifacts) == 38,
+        "libc.text-math-locale-stdio must retain exactly thirty-eight private verified artifacts",
     )
     matching = [entry for entry in artifacts if entry.get("id") == "static-c-math-ceil"]
     require(
@@ -34838,7 +34840,6 @@ def require_math_ceil_artifact(family: Mapping[str, Any]) -> None:
     ):
         require(snippet in dispatcher, f"x86 dispatcher omits {snippet}")
 
-
 def require_math_floor_artifact(family: Mapping[str, Any]) -> None:
     """Keep the selected binary32/binary64 floor leaf below math parity."""
     artifacts = require_verified_artifacts(
@@ -34847,8 +34848,8 @@ def require_math_floor_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 37,
-        "libc.text-math-locale-stdio must retain exactly thirty-seven private verified artifacts",
+        len(artifacts) == 38,
+        "libc.text-math-locale-stdio must retain exactly thirty-eight private verified artifacts",
     )
     matching = [entry for entry in artifacts if entry.get("id") == "static-c-math-floor"]
     require(
@@ -35064,6 +35065,234 @@ def require_math_floor_artifact(family: Mapping[str, Any]) -> None:
     ):
         require(snippet in dispatcher, f"x86 dispatcher omits {snippet}")
 
+
+def require_math_round_artifact(family: Mapping[str, Any]) -> None:
+    """Keep the selected binary32/binary64 round leaf below math parity."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.text-math-locale-stdio].verified_artifact",
+        family.get("status", ""),
+    )
+    require(
+        len(artifacts) == 38,
+        "libc.text-math-locale-stdio must retain exactly thirty-eight private verified artifacts",
+    )
+    matching = [entry for entry in artifacts if entry.get("id") == "static-c-math-round"]
+    require(
+        len(matching) == 1,
+        "libc.text-math-locale-stdio must contain exactly one static-c-math-round artifact",
+    )
+    artifact = matching[0]
+    require(
+        "capabilities" not in artifact,
+        "static-c-math-round must remain a non-capability artifact",
+    )
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for symbol in MATH_ROUND_SYMBOLS:
+        require(
+            f"`{symbol}`" in description,
+            f"static-c-math-round description omits {symbol}",
+        )
+    for phrase in (
+        "binary32/binary64 half-away rounding artifact",
+        "GCC 15.2.0 assembly translation",
+        "sign normalization",
+        "`toint` add/subtract operation order",
+        "half-away correction",
+        "requested/observed rounding directions",
+        "`FE_INEXACT`",
+        "compiler-builtins",
+        "binary80 `roundl`",
+        "fenv API/policy",
+        "`rint*`/`nearbyint*`",
+        "directed ceiling/floor",
+        "special and complex functions",
+        "binary80/x87 math",
+        "family completion",
+        "promotion",
+        "public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"static-c-math-round description omits {phrase}",
+        )
+
+    owners = nonempty_strings(
+        artifact["source_owners"], "static-c-math-round.source_owners"
+    )
+    for owner in (
+        "compat/upstreams.toml",
+        "docker/Dockerfile.x86_64",
+        "libc/src/lib.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/fenv.rs",
+        "libc/src/c_abi/x86_64/math_round.rs",
+        "libc/src/c_abi/x86_64/math_round_musl_x86_64.S",
+        "compat/x86_64/generate_libc_math_round.py",
+        "include/fenv.h",
+        "include/float.h",
+        "include/math.h",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/math_round_header_abi_probe.cpp",
+        "compat/x86_64/libc_math_round_probe.c",
+        "compat/x86_64/libc_math_round_start.S",
+        "compat/x86_64/run_libc_math_round.sh",
+        "compat/x86_64/aarch64_parity_inventory.py",
+        "compat/x86_64/aarch64_parity_inventory.json",
+        "compat/x86_64/tests/test_aarch64_parity_inventory.py",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/README.md",
+        "STATUS.md",
+        "x86-64.md",
+        "scripts/check_structure.py",
+        "scripts/dev-x86_64.sh",
+    ):
+        require(owner in owners, f"static-c-math-round omits {owner}")
+
+    prerequisites = " ".join(
+        nonempty_strings(
+            artifact["x86_abi_prerequisites"],
+            "static-c-math-round.x86_abi_prerequisites",
+        )
+    )
+    for phrase in (
+        "src/math/round.c",
+        "roundf.c",
+        "normalized 1.2.6 source-tree digest",
+        "GCC 15.2.0",
+        "MIT source closure",
+        "-frounding-math",
+        "FLT_EVAL_METHOD=0",
+        "xmm0",
+        "`toint` add/subtract",
+        "addsd/subsd",
+        "addss",
+        "subss",
+        "half-away correction",
+        "`roundl`",
+        "existing selected static fegetenv",
+        "without selecting fenv API or policy",
+    ):
+        require(
+            phrase in prerequisites,
+            f"static-c-math-round prerequisites omit {phrase}",
+        )
+    header_prerequisites = " ".join(
+        nonempty_strings(
+            artifact["x86_header_prerequisites"],
+            "static-c-math-round.x86_header_prerequisites",
+        )
+    )
+    for phrase in ("parenthesized", "C++17", "-mfpmath=387", "unmangled C"):
+        require(
+            phrase in header_prerequisites,
+            f"static-c-math-round header prerequisites omit {phrase}",
+        )
+
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-math-round"},
+        "static-c-math-round must use the closed libc-math-round command",
+    )
+    scope = evidence[0]["scope"]
+    assert isinstance(scope, str)
+    for phrase in (
+        "216 exact 32-byte records",
+        "requested/observed MXCSR direction",
+        "addsd/subsd/addss/subss",
+        "half-away correction",
+        "compiler-builtins",
+        "public x86 support",
+    ):
+        require(phrase in scope, f"static-c-math-round evidence omits {phrase}")
+
+    static_root = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+    ).read_text(encoding="utf-8")
+    require(
+        '#[path = "math_round.rs"]\nmod math_round;' in static_root,
+        "x86 static C ABI must compose the math_round leaf",
+    )
+    leaf = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "math_round.rs"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "Selected static Linux/x86-64 `round`/`roundf` C ABI leaf",
+        "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+        "d585fd3b613c66151fc3249e8ed44f77020cb5e6c1e635a616d3f9f82460512a",
+        "-frounding-math",
+        "`toint` add/subtract sequence",
+        "`FE_INEXACT`",
+        'include_str!("math_round_musl_x86_64.S")',
+        "public x86 support",
+    ):
+        require(snippet in leaf, f"math_round leaf omits {snippet}")
+
+    generator = (
+        ROOT / "compat" / "x86_64" / "generate_libc_math_round.py"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "2ebc86943f5cdac77729695b304a08f6308e7a218f9d484cec5675006b207d88",
+        '"src/math/round.c"',
+        '"src/math/roundf.c"',
+        '"15.2.0"',
+        '"-frounding-math"',
+        "musl's MIT license",
+    ):
+        require(snippet in generator, f"math-round generator omits {snippet}")
+    assembly = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "math_round_musl_x86_64.S"
+    ).read_text(encoding="utf-8")
+    require(
+        "musl's MIT license" in assembly,
+        "generated math-round assembly omits musl license provenance",
+    )
+    for symbol in MATH_ROUND_SYMBOLS:
+        require(
+            f"\t.globl\t{symbol}\n" in assembly,
+            f"generated math-round assembly omits {symbol}",
+        )
+    for instruction in ("addsd", "subsd", "addss", "subss"):
+        require(
+            instruction in assembly,
+            f"generated math-round assembly omits {instruction}",
+        )
+
+    exports = static_c_abi_export_names(
+        ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+    )
+    require(exports == sorted(exports), "static C ABI export contract must remain ASCII-sorted")
+    for symbol in MATH_ROUND_SYMBOLS:
+        require(symbol in exports, f"static C ABI export contract omits {symbol}")
+
+    runner = (ROOT / "compat" / "x86_64" / "run_libc_math_round.sh").read_text(
+        encoding="utf-8"
+    )
+    for snippet in (
+        "-nostdlib -static",
+        "--no-undefined",
+        "--gc-sections",
+        "math_round_header_abi_probe.cpp",
+        "strong crabc-owned",
+        "weak compiler-builtins",
+        "candidate accidentally retains unselected",
+        "candidate retains TLS",
+        "addsd subsd addss subss",
+        "roundl ceil",
+    ):
+        require(snippet in runner, f"libc-math-round runner omits {snippet}")
+    dispatcher = (ROOT / "scripts" / "dev-x86_64.sh").read_text(encoding="utf-8")
+    for snippet in (
+        "libc-math-round)",
+        "run_libc_math_round_probe()",
+        "/workspace/compat/x86_64/run_libc_math_round.sh",
+    ):
+        require(snippet in dispatcher, f"x86 dispatcher omits {snippet}")
 
 def require_named_locale_multibyte_artifact(family: Mapping[str, Any]) -> None:
     """Keep the named-locale/text archive slice below locale-family completion.
@@ -35798,8 +36027,8 @@ def require_locale_wide_iconv_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 37,
-        "libc.text-math-locale-stdio must retain exactly thirty-seven private verified artifacts",
+        len(artifacts) == 38,
+        "libc.text-math-locale-stdio must retain exactly thirty-eight private verified artifacts",
     )
     matching = [
         entry for entry in artifacts if entry.get("id") == "static-c-locale-wide-iconv"
@@ -36624,8 +36853,8 @@ def require_locale_error_strings_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 37,
-        "libc.text-math-locale-stdio must retain exactly thirty-seven private verified artifacts",
+        len(artifacts) == 38,
+        "libc.text-math-locale-stdio must retain exactly thirty-eight private verified artifacts",
     )
     matching = [
         entry for entry in artifacts if entry.get("id") == "static-c-locale-error-strings"
@@ -38344,6 +38573,7 @@ def validate_ledger(
     require_math_cbrt_artifact(by_id["libc.text-math-locale-stdio"])
     require_math_ceil_artifact(by_id["libc.text-math-locale-stdio"])
     require_math_floor_artifact(by_id["libc.text-math-locale-stdio"])
+    require_math_round_artifact(by_id["libc.text-math-locale-stdio"])
     require_math_x87_extended_artifact(by_id["libc.text-math-locale-stdio"])
     require_math_special_slice(by_id["libc.text-math-locale-stdio"])
     require_math_complex_complete_slice(by_id["libc.text-math-locale-stdio"])

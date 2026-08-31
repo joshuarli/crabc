@@ -22731,6 +22731,106 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         ):
             self.assertIn(required, assembly)
 
+    def test_math_round_runner_keeps_the_binary32_binary64_static_boundary(self) -> None:
+        dispatcher = RUNNER.read_text(encoding="utf-8")
+        runner = (ROOT / "compat" / "x86_64" / "run_libc_math_round.sh").read_text(
+            encoding="utf-8"
+        )
+        probe = (ROOT / "compat" / "x86_64" / "libc_math_round_probe.c").read_text(
+            encoding="utf-8"
+        )
+        header = (
+            ROOT / "compat" / "x86_64" / "math_round_header_abi_probe.cpp"
+        ).read_text(encoding="utf-8")
+        leaf = (ROOT / "libc" / "src" / "c_abi" / "x86_64" / "math_round.rs").read_text(
+            encoding="utf-8"
+        )
+        assembly = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "math_round_musl_x86_64.S"
+        ).read_text(encoding="utf-8")
+        generator = (
+            ROOT / "compat" / "x86_64" / "generate_libc_math_round.py"
+        ).read_text(encoding="utf-8")
+
+        for required in (
+            "libc-math-round)",
+            "run_libc_math_round_probe()",
+            "/workspace/compat/x86_64/run_libc_math_round.sh",
+        ):
+            self.assertIn(required, dispatcher)
+        for required in (
+            "-nostdlib -static",
+            "--no-undefined",
+            "--gc-sections",
+            "math_round_header_abi_probe.cpp",
+            "strong crabc-owned",
+            "weak compiler-builtins",
+            "candidate accidentally retains unselected",
+            "candidate retains TLS",
+            "addsd subsd addss subss",
+            "roundl ceil",
+        ):
+            self.assertIn(required, runner)
+        for required in (
+            "direct_round",
+            "direct_roundf",
+            "ROUND_RECORD_WORDS 4",
+            "binary64_inputs",
+            "binary32_inputs",
+            "FE_TONEAREST",
+            "FE_DOWNWARD",
+            "FE_UPWARD",
+            "FE_TOWARDZERO",
+            "fegetround",
+            "fetestexcept",
+            "0x7ff0000000000042",
+            "0x7f800042",
+            "0x3fe0000000000000",
+            "0xbfe0000000000000",
+        ):
+            self.assertIn(required, probe)
+        for required in (
+            "double_unary_signature",
+            "float_unary_signature",
+            "direct_round",
+            "direct_roundf",
+            "direct_round(-1.5)",
+            "direct_roundf(-1.5f)",
+        ):
+            self.assertIn(required, header)
+        for required in (
+            "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+            "d585fd3b613c66151fc3249e8ed44f77020cb5e6c1e635a616d3f9f82460512a",
+            "src/math/round.c",
+            "src/math/roundf.c",
+            "-frounding-math",
+            "`toint` add/subtract sequence",
+            "half-away correction",
+            "`FE_INEXACT`",
+            'include_str!("math_round_musl_x86_64.S")',
+            "public x86 support",
+        ):
+            self.assertIn(required, leaf)
+        for required in (
+            "2ebc86943f5cdac77729695b304a08f6308e7a218f9d484cec5675006b207d88",
+            '"src/math/round.c"',
+            '"src/math/roundf.c"',
+            '"15.2.0"',
+            '"-frounding-math"',
+            "musl's MIT license",
+        ):
+            self.assertIn(required, generator)
+        for required in (
+            "musl's MIT license",
+            "\t.globl\tround\n",
+            "\t.globl\troundf\n",
+            "addsd",
+            "subsd",
+            "addss",
+            "subss",
+        ):
+            self.assertIn(required, assembly)
+
     def test_facade_keeps_native_pattern_archives_checked(self) -> None:
         source = RUNNER.read_text(encoding="utf-8")
         fnmatch_verifier = (

@@ -1117,6 +1117,21 @@ checks reject weak compiler-builtins fallback, `floorl`, ceiling, fma, fmod,
 cbrt, fenv policy, special/complex/binary80 math, family completion,
 promotion, and public x86 support.
 
+The separate private `static-c-math-round` artifact records only binary64
+`round` and binary32 `roundf`: `./scripts/dev-x86_64.sh libc-math-round` runs
+project-header C and default-SSE/`-mfpmath=387` C++ function-pointer fixtures
+through pinned musl and one freestanding static candidate. Its checked GCC
+15.2.0 translation of musl 1.2.6 `round.c`/`roundf.c` retains sign
+normalization, `toint` add/subtract order, and ties-away correction. The
+216-record differential covers signed zero, normal and subnormal bounds,
+integral neighbors and exact halfway values, large finite values, infinities,
+quiet/signaling NaNs, all four requested-and-observed rounding directions,
+and exception flags, including musl's tiny-nonzero `FE_INEXACT` path. Strong
+target-owned definitions and final ELF checks reject weak compiler-builtins
+fallback, `roundl`, fenv API/policy, `rint`/`nearbyint`, truncation, directed
+ceiling/floor, fma, fmod, cbrt, special/complex/binary80 math, family
+completion, promotion, and public x86 support.
+
 The x86 static archive now also has one private allocation-free wide-character
 core: `./scripts/dev-x86_64.sh libc-wide-character` runs an exact
 `_XOPEN_SOURCE=700` C/C++ ABI gate and one shared pinned-musl/freestanding
