@@ -25435,6 +25435,132 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         ):
             self.assertIn(required, assembly)
 
+    def test_math_exp10f_runner_keeps_the_binary32_alias_static_boundary(self) -> None:
+        """Reserve a source-closed GNU binary32 decimal-exponential leaf."""
+
+        dispatcher = RUNNER.read_text(encoding="utf-8")
+        runner = (ROOT / "compat" / "x86_64" / "run_libc_math_exp10f.sh").read_text(
+            encoding="utf-8"
+        )
+        probe = (ROOT / "compat" / "x86_64" / "libc_math_exp10f_probe.c").read_text(
+            encoding="utf-8"
+        )
+        header = (
+            ROOT / "compat" / "x86_64" / "math_exp10f_header_abi_probe.cpp"
+        ).read_text(encoding="utf-8")
+        leaf = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "math_exp10f.rs"
+        ).read_text(encoding="utf-8")
+        assembly = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "math_exp10f_musl_x86_64.S"
+        ).read_text(encoding="utf-8")
+        generator = (
+            ROOT / "compat" / "x86_64" / "generate_libc_math_exp10f.py"
+        ).read_text(encoding="utf-8")
+
+        for required in (
+            "libc-math-exp10f)",
+            "run_libc_math_exp10f_probe()",
+            "/workspace/compat/x86_64/run_libc_math_exp10f.sh",
+        ):
+            self.assertIn(required, dispatcher)
+        for required in (
+            "SELECTED_SYMBOLS=(exp10f pow10f)",
+            "-nostdlib -static",
+            "--no-undefined",
+            "--gc-sections",
+            "math_exp10f_header_abi_probe.cpp",
+            "strong crabc-owned exp10f",
+            "weak pow10f alias",
+            "weak same-address exp10f/pow10f alias",
+            "candidate accidentally retains unselected",
+            "candidate retains TLS",
+            "crabc_x86_math_exp10f_provider_modff",
+            "crabc_x86_math_exp10f_provider_exp2",
+            "crabc_x86_math_exp10f_data_exp",
+            "exp10 exp10l pow10 pow10l",
+        ):
+            self.assertIn(required, runner)
+        for required in (
+            "direct_exp10f",
+            "direct_pow10f",
+            "EXP10F_RECORD_WORDS 4",
+            "EXP10F_ALIASES 2",
+            "binary32_inputs",
+            "FE_TONEAREST",
+            "FE_DOWNWARD",
+            "FE_UPWARD",
+            "FE_TOWARDZERO",
+            "fegetround",
+            "fetestexcept",
+            "0x40e00000",
+            "0x41000000",
+            "0x421c0000",
+            "0xc2340000",
+            "0x7f800042",
+        ):
+            self.assertIn(required, probe)
+        for required in (
+            "float_unary_signature",
+            "direct_exp10f",
+            "direct_pow10f",
+            "direct_exp10f(0.0f)",
+            "direct_pow10f(0.0f)",
+        ):
+            self.assertIn(required, header)
+        for required in (
+            "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+            "d585fd3b613c66151fc3249e8ed44f77020cb5e6c1e635a616d3f9f82460512a",
+            "src/math/exp10f.c",
+            "src/math/modff.c",
+            "src/math/exp2.c",
+            "src/math/exp2f.c",
+            "src/math/exp_data.c",
+            "src/math/exp2f_data.c",
+            "src/math/__math_xflowf.c",
+            "weak same-address `pow10f`",
+            "localized",
+            "-frounding-math",
+            'include_str!("math_exp10f_musl_x86_64.S")',
+            "public x86 support",
+        ):
+            self.assertIn(required, leaf)
+        for required in (
+            "2ebc86943f5cdac77729695b304a08f6308e7a218f9d484cec5675006b207d88",
+            '"src/math/exp10f.c"',
+            '"src/math/modff.c"',
+            '"src/math/exp2.c"',
+            '"src/math/exp2f.c"',
+            '"src/math/exp_data.c"',
+            '"src/math/exp2f_data.c"',
+            '"src/math/__math_xflowf.c"',
+            '"15.2.0"',
+            '"-frounding-math"',
+            "PRIVATE_RENAMES",
+            "musl's MIT license",
+        ):
+            self.assertIn(required, generator)
+        for required in (
+            "musl's MIT license",
+            "Arm Limited",
+            "\t.globl\texp10f\n",
+            "\t.weak\tpow10f\n",
+            "\t.set\tpow10f,exp10f",
+            "crabc_x86_math_exp10f_provider_modff",
+            "crabc_x86_math_exp10f_provider_exp2",
+            "crabc_x86_math_exp10f_provider_exp2f",
+            "crabc_x86_math_exp10f_data_exp",
+            "crabc_x86_math_exp10f_data_exp2f",
+            "crabc_x86_math_exp10f_helper_xflow",
+            "addsd",
+            "addss",
+            "subsd",
+            "subss",
+            "mulsd",
+            "mulss",
+        ):
+            self.assertIn(required, assembly)
+
     def test_facade_keeps_native_pattern_archives_checked(self) -> None:
         source = RUNNER.read_text(encoding="utf-8")
         fnmatch_verifier = (

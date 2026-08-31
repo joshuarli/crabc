@@ -8626,6 +8626,54 @@ native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc
 oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "FreeBSD/Sun msun and Arm MIT source, preserved permissive notices, exact IEEE payload/exception/directed-rounding behavior, and public C ABI oracle for exactly src/math/asinh.c, asinhf.c, log.c, logf.c, log_data.c, logf_data.c, log1p.c, log1pf.c, sqrt.c, sqrtf.c, sqrt_data.c, __math_invalid{,f}.c, and __math_divzero{,f}.c." }, { kind = "aarch64-contract", source = "SCOPE.md, COMPATIBILITY-PROFILE.md, and libc/src/math_hyperbolic.rs", role = "The active AArch64 product contract supplies no selected public asinh/asinhf mapping; this x86-only evidence remains selected-private and does not import, imply, or promote an AArch64 capability." }, { kind = "elf-abi", source = "System V AMD64 psABI", role = "xmm0 binary32/binary64 unary argument and return ABI plus caller-visible MXCSR scalar-SSE arithmetic boundary for the selected static C entries." }]
 
 [[family.verified_artifact]]
+id = "static-c-math-exp10f"
+description = "Private native x86 selected-static GNU binary32 decimal-exponential artifact inside still-planned `libc.text-math-locale-stdio`. One dependency-free `crabc-libc` archive resolves strong `exp10f` and musl's weak same-address `pow10f` alias into a freestanding project-header C fixture after equivalent pinned-musl execution. A checked GCC 15.2.0 assembly translation of musl's `exp10f.c` plus the exact twelve-source closure retains raw integral/fractional splitting, the exact `[-7, 7]` decimal table, binary32 fractional exp2 reconstruction, binary64 large-magnitude fallback, and explicit overflow/underflow expressions without ambient libm or selected `math.special` state. The localized closure includes private modff/exp2/exp2f providers, exp tables, and IEEE error-expression providers, has no undefined callable symbols, and exports neither an implementation helper nor public modf/exp2 spellings. The record stream calls both aliases for signed zero, tiny/subnormal and normal bounds, table and fallback thresholds, overflow/underflow, infinities, quiet/signaling NaNs, raw results, requested/observed rounding directions, and exception flags. Strong target-owned `exp10f` and the required weak alias reject compiler-builtins fallback. Existing fenv entries only reset and observe MXCSR; this artifact does not select fenv API/policy. It excludes binary64 `exp10`/`pow10`, binary80 `exp10l`/`pow10l`, public modf/exp2/exp/pow functions, other elementary math, special and complex functions, binary80/x87 math, errno policy, general libm, libc.so, CRT/TLS lifecycle, loader, sysroot, `math.elementary` family completion, promotion, full x86-64 parity, and public x86 support. The localized exp data tables are implementation details, not selection of public exp/exp2 entries."
+source_owners = [
+  "compat/upstreams.toml",
+  "docker/Dockerfile.x86_64",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/fenv.rs",
+  "libc/src/c_abi/x86_64/math_exp10f.rs",
+  "libc/src/c_abi/x86_64/math_exp10f_musl_x86_64.S",
+  "include/fenv.h",
+  "include/float.h",
+  "include/math.h",
+  "compat/x86_64/generate_libc_math_exp10f.py",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/math_exp10f_header_abi_probe.cpp",
+  "compat/x86_64/libc_math_exp10f_probe.c",
+  "compat/x86_64/libc_math_exp10f_start.S",
+  "compat/x86_64/run_libc_math_exp10f.sh",
+  "compat/x86_64/aarch64_parity_inventory.py",
+  "compat/x86_64/aarch64_parity_inventory.json",
+  "compat/x86_64/tests/test_aarch64_parity_inventory.py",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "compat/x86_64/README.md",
+  "SCOPE.md",
+  "COMPATIBILITY-PROFILE.md",
+  "STATUS.md",
+  "x86-64.md",
+  "scripts/check_structure.py",
+  "scripts/dev-x86_64.sh",
+]
+x86_abi_prerequisites = [
+  "Pinned musl 1.2.6 src/math/exp10f.c plus modff.c, exp2.c, exp2f.c, exp_data.c, exp2f_data.c, __math_oflow{,f}.c, __math_uflow{,f}.c, and __math_xflow{,f}.c are the exact twelve-source closure: their normalized 1.2.6 source-tree digest, GCC 15.2.0 input, retained Arm notices, musl's MIT license, `-frounding-math`, `-ffp-contract=off`, and `-fexcess-precision=standard` translation preserve raw integral/fractional classification, the `[−7, 7]` table, binary32 fractional reconstruction, binary64 large-magnitude fallback, and IEEE overflow/underflow expressions without an ambient libm call.",
+  "The bounded twelve-source closure links with no undefined callable symbols. Its modff/exp2/exp2f providers, exp tables, and error helpers are renamed and localized to local `crabc_x86_math_exp10f_*` assembly symbols, so only strong `exp10f` and musl's weak same-address `pow10f` C aliases remain global rather than exporting a source-closure implementation detail or public modf/exp2 ABI.",
+  "System V AMD64 with FLT_EVAL_METHOD=0 passes and returns binary32 in xmm0. Scalar SSE addsd/addss/subsd/subss/mulsd/mulss paths preserve the source reduction and reconstruction arithmetic; cvtss2sd/cvtsd2ss remain only at musl's binary64 fallback boundary. Binary64 `exp10`/`pow10` and binary80 `exp10l`/`pow10l` are ABI-distinct and remain excluded.",
+  "The fixture composes only existing selected static fegetenv/fesetenv/fesetround/fegetround/feclearexcept/fetestexcept entries to reset and observe MXCSR, including tiny-input, threshold, overflow/underflow, and invalid behavior across all caller directions, without selecting fenv API or policy as part of this artifact.",
+]
+x86_header_prerequisites = [
+  "The focused GNU C fixture preprocesses project fenv.h, float.h, math.h, stddef.h, stdint.h, features.h, and bits/alltypes.h, then calls parenthesized exp10f/pow10f function pointers so compiler builtins cannot substitute for the named C ABI.",
+  "Dedicated C++17 GNU objects compiled with default SSE and -mfpmath=387 pin exact binary32 unary function-pointer signatures and unmangled C references for both the strong entry and weak alias from the project header against pinned musl.",
+]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-math-exp10f", scope = "Pinned-musl/project-header GNU C and C++ ABI execution plus one dependency-free `-nostdlib -static --no-undefined --gc-sections` candidate. The C fixture compares 256 exact 32-byte records across all four rounding directions and both aliases: binary32 signed zero, raw tiny/subnormal and normal bounds, table and fallback thresholds, overflow/underflow, infinities, quiet/signaling NaNs, raw results, requested/observed MXCSR direction, and exception flags. ELF proof requires strong global target-owned exp10f plus a weak same-address pow10f alias, exact archive surface, a twelve-source localized modff/exp2 closure with no public modff, exp2, table, or error helper, and addsd/addss/subsd/subss/mulsd/mulss/cvtss2sd/cvtsd2ss scalar source arithmetic; it rejects compiler-builtins fallback, binary64 exp10/pow10, binary80 variants, public modf/exp2/exp/pow functions, other elementary math, fenv API/policy, special and complex math, unresolved symbols, dynamic linkage, TLS, ambient libm, packed-SIMD/FMA ISA, and unowned runtime dependencies. It excludes category/family completion, promotion, full x86-64 parity, and public x86 support." }]
+oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT declaration/source/behavior oracle and Arm MIT scalar math source for exactly src/math/exp10f.c, modff.c, exp2.c, exp2f.c, exp_data.c, exp2f_data.c, __math_oflow{,f}.c, __math_uflow{,f}.c, and __math_xflow{,f}.c, including the public GNU weak_alias(exp10f, pow10f) ABI and exact IEEE payload/exception/directed-rounding behavior." }, { kind = "aarch64-contract", source = "SCOPE.md, COMPATIBILITY-PROFILE.md, and libc/src/math_compat.rs", role = "The active AArch64 product contract supplies no selected public exp10f/pow10f mapping; this x86-only evidence remains selected-private and does not import, imply, or promote an AArch64 capability." }, { kind = "elf-abi", source = "System V AMD64 psABI", role = "xmm0 binary32 unary argument/return ABI, strong/weak ELF binding, same-address alias identity, and caller-visible MXCSR scalar-SSE arithmetic boundary for the selected static C entries." }]
+
+[[family.verified_artifact]]
 id = "static-c-math-sinh"
 description = "Private native x86 selected-static binary32/binary64 hyperbolic-sine artifact inside still-planned `libc.text-math-locale-stdio`. One dependency-free `crabc-libc` archive resolves exactly `sinh` and `sinhf` into a freestanding project-header C fixture after equivalent pinned-musl execution. A checked GCC 15.2.0 assembly translation of musl's `sinh.c`/`sinhf.c` plus the exact sixteen-source closure retains raw sign/magnitude classification, signed tiny-input behavior, stable expm1 reconstruction, the fixed expm1 polynomial/reduction, and overflow-safe exponential scaling without ambient libm or selected `math.special` state. The localized exponent closure includes private exp/expm1, `__expo2`, tables, and error-expression providers, has no undefined callable symbols, and exports neither implementation helpers nor public exp/expm1 spellings. The record stream covers signed zero, tiny/subnormal and normal bounds, expm1/reconstruction and overflow thresholds, high finite values, infinities, quiet/signaling NaNs, raw results, requested/observed rounding directions, and exception flags. Strong target-owned definitions reject weak compiler-builtins fallback. Existing fenv entries only reset and observe MXCSR; this artifact does not select fenv API/policy. It excludes binary80 `sinhl`, public cosh/tanh and direct/inverse trigonometry, public exp/expm1/log/pow functions, fmod/remainder/modf, special and complex functions, binary80/x87 math, errno policy, general libm, libc.so, CRT/TLS lifecycle, loader, sysroot, `math.elementary` family completion, promotion, full x86-64 parity, and public x86 support. The localized `exp_data.c` and `exp2f_data.c` tables are implementation details, not selection of public exp/exp2 entries."
 source_owners = [

@@ -437,6 +437,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-math-cos  run the static x86 cos/cosf scalar slice
   libc-math-cosh  run the static x86 cosh/coshf scalar slice
   libc-math-asinh  run the static x86 asinh/asinhf scalar slice
+  libc-math-exp10f  run the static x86 GNU exp10f/pow10f scalar slice
   libc-math-sinh  run the static x86 sinh/sinhf scalar slice
   libc-math-elementary-long-double  run the complete static x86 math.elementary-long-double capability
   libc-math-x87-extended  run the static x86 x87 long-double math/remainder block
@@ -1869,6 +1870,20 @@ quiet/signaling NaNs, exception flags, and requested versus observed direction
 in all four MXCSR modes. It excludes `asinhl`, other hyperbolic surface,
 public log/log1p/square-root ABI, fenv API/policy, special/complex and binary80
 math, family completion, promotion, and public x86 support.
+`libc-math-exp10f` is the separate selected GNU binary32 scalar slice for
+strong `exp10f` and musl's weak same-address `pow10f` alias. It compares
+parenthesized C calls and default-SSE/`-mfpmath=387` C++ declarations with
+pinned musl, then runs one freestanding static candidate. The checked GCC
+15.2.0 translation of musl 1.2.6 `exp10f.c` with its exact local
+modff/exp2/exp2f/table/overflow-underflow closure retains the integer-table
+path, fractional binary32 exp2 reconstruction, binary64 large-magnitude
+fallback, and weak alias identity. Its raw records call both aliases over
+signed zero, finite normal/subnormal and integer/fallback thresholds,
+overflow/underflow, infinities, quiet/signaling NaNs, exception flags, and
+requested versus observed direction in all four MXCSR modes. It excludes
+binary64 `exp10`/`pow10`, binary80 variants, public modf/exp2 ABI, fenv
+API/policy, special/complex and binary80 math, family completion, promotion,
+and public x86 support.
 `libc-math-sinh` is the separate selected binary32/binary64 scalar slice for
 `sinh` and `sinhf`. It compares parenthesized C calls and default-SSE/
 `-mfpmath=387` C++ declarations with pinned musl, then runs one freestanding
@@ -3843,6 +3858,10 @@ run_libc_math_asinh_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_math_asinh.sh
 }
 
+run_libc_math_exp10f_probe() {
+    run_in_container bash /workspace/compat/x86_64/run_libc_math_exp10f.sh
+}
+
 run_libc_math_sinh_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_math_sinh.sh
 }
@@ -3985,6 +4004,7 @@ case "$command" in
     libc-math-cos) ;;
     libc-math-cosh) ;;
     libc-math-asinh) ;;
+    libc-math-exp10f) ;;
     libc-math-sinh) ;;
     libc-fdim) ;;
     machine-context-header-abi) ;;
@@ -6108,6 +6128,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "libc-math-asinh takes no arguments"
         ensure_image
         run_libc_math_asinh_probe
+        ;;
+    libc-math-exp10f)
+        [ "$#" -eq 0 ] || fail "libc-math-exp10f takes no arguments"
+        ensure_image
+        run_libc_math_exp10f_probe
         ;;
     libc-math-sinh)
         [ "$#" -eq 0 ] || fail "libc-math-sinh takes no arguments"

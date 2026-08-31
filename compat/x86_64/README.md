@@ -4998,6 +4998,26 @@ fallback, `asinhl`, other public hyperbolic surface, public log/log1p/square-
 root ABI, fenv API/policy, special/complex/binary80 math, dynamic linkage,
 TLS, and ambient-libm surface. Family completion, promotion, full x86-64
 parity, and public x86 support remain unselected.
+`libc-math-exp10f` is the separate non-promoting `static-c-math-exp10f`
+artifact for GNU binary32 strong `exp10f` and musl's weak same-address
+`pow10f` alias. Its project-header GNU C fixture and default-SSE/
+`-mfpmath=387` C++ signature probes run first through pinned musl and then
+through one garbage-collected `-nostdlib -static` candidate. The checked GCC
+15.2.0 assembly translation of musl 1.2.6 `exp10f.c` preserves its integral/
+fractional split, exact decimal table, binary32 exp2 reconstruction, and
+binary64 fallback through an exact twelve-source local modff/exp2 closure.
+That closure retains local modff/exp2/exp2f providers, exp tables, and six
+overflow/underflow helpers, but exports neither public provider ABI nor an
+implementation helper. The 256-record raw differential calls both aliases
+across all four rounding modes for signed zero, tiny/normal/subnormal and
+table/fallback thresholds, overflow/underflow, infinities, and quiet/signaling
+NaNs. Final-link proof requires strong `exp10f`, weak same-address `pow10f`,
+local closure providers, and scalar
+`addsd`/`addss`/`subsd`/`subss`/`mulsd`/`mulss`/`cvtss2sd`/`cvtsd2ss`, while
+rejecting compiler-builtins fallback, binary64/long-double `exp10`/`pow10`,
+public modf/exp2 ABI, fenv API/policy, special/complex/binary80 math, dynamic
+linkage, TLS, and ambient-libm surface. Family completion, promotion, full
+x86-64 parity, and public x86 support remain unselected.
 `libc-math-sinh` is the separate non-promoting `static-c-math-sinh` artifact
 for binary64/binary32 `sinh`/`sinhf`. Its project-header C fixture and
 default-SSE/`-mfpmath=387` C++ signature probes run first through pinned musl
