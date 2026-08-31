@@ -51,7 +51,7 @@
 //! | `src/stdio/vsnprintf.c`, `vsprintf.c`, `sprintf.c`, `snprintf.c` | byte-buffer count/truncation wrappers and C varargs entry boundary |
 //! | `src/stdio/vfprintf.c` (`printf_core`, `fmt_fp`) | selected integer/byte-string parser plus bare `%m` no-argument errno-message behavior and binary64 `%a`/`%A` spelling, flag, width, precision, and count-store behavior |
 //! | `src/errno/__strerror.h`; `src/errno/strerror.c` | selected immutable fixed-C-locale `%m` message lookup, shared directly with the existing `strerror` leaf |
-//! | `src/stdio/sscanf.c`, `vsscanf.c`, `vfscanf.c`; `src/internal/intscan.c` | NUL-terminated byte scanner, assignment/count discipline, prefix admission, selected integer/string conversions, and sealed `vfscanf` format-NUL, raw-literal, `%%`, and format-whitespace states: after the string entry boundary establishes input, format-NUL returns the existing assignment count without entering a scanner state or accessing varargs; the raw literal matches one non-`%`, non-whitespace format byte without assignment; `%%` skips C-locale input whitespace before one literal percent; and format whitespace coalesces its run while consuming zero or more input-space bytes without assignment |
+//! | `src/stdio/sscanf.c`, `vsscanf.c`, `vfscanf.c`; `src/internal/intscan.c` | NUL-terminated byte scanner, assignment/count discipline, prefix admission, selected integer/string conversions, and sealed `vfscanf` format-NUL, raw-literal, `%%`, format-whitespace, and assignment-suppressed raw-character states: after the string entry boundary establishes input, format-NUL returns the existing assignment count without entering a scanner state or accessing varargs; the raw literal matches one non-`%`, non-whitespace format byte without assignment; `%%` skips C-locale input whitespace before one literal percent; format whitespace coalesces its run while consuming zero or more input-space bytes without assignment; and fixed non-wide `%*3c` consumes three raw bytes without a destination, va_list access, or assignment |
 //!
 //! The full musl formatter/scanner also owns decimal and long-double
 //! conversion, locale, wide input, scansets, positional arguments, stream
@@ -1168,6 +1168,12 @@ unsafe fn scan_from_string(
         } else {
             false
         };
+        // musl vfscanf's `*` field records a null destination before it
+        // parses the width and conversion, so the selected non-wide `%*3c`
+        // path neither reads va_list nor increments matches. The private
+        // static-c-stdio-fixed-suppressed-character-scan artifact records
+        // only that three-byte raw-character suppression state; it does not
+        // promote general suppression or conversion scanning.
         let parsed_width = unsafe { parse_decimal(&mut directive) };
         let length = unsafe { parse_length(&mut directive) };
         let specifier = unsafe { read_byte(directive) };
@@ -1213,6 +1219,10 @@ unsafe fn scan_from_string(
             }
             b'c' if length == Length::None => {
                 let width = if parsed_width == 0 { 1 } else { parsed_width };
+                // With the sealed `%*3c` profile's suppress flag, destination
+                // is null: this raw loop still consumes its fixed byte width,
+                // including C-locale whitespace, but performs no store or
+                // assignment.
                 let mut copied = 0usize;
                 let destination = if suppress {
                     core::ptr::null_mut()

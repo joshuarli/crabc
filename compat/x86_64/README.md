@@ -965,6 +965,27 @@ character/string/scanset/pointer/integer/floating/wide forms, conversions,
 external FILE input, byte formatting, locale objects, a general scanner or
 stdio boundary, parity, promotion, and public x86 support remain outside it.
 
+The distinct `libc-stdio-fixed-suppressed-character-scan` gate
+(`./scripts/dev-x86_64.sh libc-stdio-fixed-suppressed-character-scan`) records
+one private `static-c-stdio-fixed-suppressed-character-scan` artifact without
+adding an export or capability. Its independent C11/C++17 header gate proves
+only the existing `sscanf`/`vsscanf` signatures and unmangled C++ C spellings.
+The fixed project-header fixture compares pinned musl 1.2.6 with a true
+`-nostdlib -static` candidate for only the literal non-wide `%*3c` state:
+musl assignment suppression supplies no destination, performs no `va_list`
+advance or assignment, and consumes exactly three raw bytes including leading
+or interior C-locale whitespace. Direct and `vsscanf` witnesses retain a
+fixture-only trailing sentinel and stale errno while distinguishing a
+nonempty-short matching failure from initial EOF and retaining one raw high
+byte. A following literal merely witnesses consumption; raw literal matching
+remains owned by the sibling fixed-literal profile. This is pinned-musl
+assignment-suppression evidence, not a general scanf-suppression claim.
+Unsuppressed `%c`, all other widths or suppressed forms, literal-percent `%%`,
+C-locale format whitespace, `%n`/`%hhn`, string/scanset/pointer/integer/
+floating/wide forms, external FILE input, byte formatting, locale objects, a
+general scanner or stdio boundary, parity, promotion, and public x86 support
+remain outside it.
+
 The separate `libc-stdio-float-hex-output` gate
 (`./scripts/dev-x86_64.sh libc-stdio-float-hex-output`) records one private
 `static-c-stdio-float-hex-output` artifact without adding an export or
