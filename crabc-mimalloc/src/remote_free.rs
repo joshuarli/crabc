@@ -44,14 +44,12 @@ use crate::types::{
 const THREAD_FREE_OWNED: ThreadFree = 1;
 const THREAD_FREE_BLOCK_MASK: ThreadFree = !THREAD_FREE_OWNED;
 
-/// One coherent pointer-dispatch observation accepted by live remote free.
+/// Test-only stand-in for one coherent pointer-dispatch observation.
 ///
-/// The general source path must not accept an independently supplied page and
-/// block: both facts come from one valid-live-client PageMap lookup and its
-/// canonical block recovery. Keeping this as a narrow unsafe projection lets
-/// the remote-free tests exercise the source atomics without constructing a
-/// process PageMap, while production implements it only for
-/// [`LiveAllocationPointer`].
+/// Production accepts [`LiveAllocationPointer`] directly, so its only entry
+/// reaches this module through the checked PageMap lookup and canonical-block
+/// recovery. The test adapter exists solely to exercise the source atomics
+/// against raw page fixtures without constructing a process PageMap.
 ///
 /// # Safety
 ///
@@ -62,6 +60,7 @@ const THREAD_FREE_BLOCK_MASK: ThreadFree = !THREAD_FREE_OWNED;
 /// whole-page reference may coexist with use of the producer projection.
 /// `canonical_block` must be the source block base recovered from the exact
 /// client pointer, and the caller must still own that allocation exclusively.
+#[cfg(test)]
 pub(crate) unsafe trait LiveRemoteFreeAllocation {
     /// Returns the copied source facts from one valid-live-client lookup.
     fn live_remote_free_allocation(
@@ -74,10 +73,10 @@ pub(crate) unsafe trait LiveRemoteFreeAllocation {
     );
 }
 
-// SAFETY: `LiveAllocationPointer` is constructed only by the checked process
-// PageMap lookup from one exact live native allocation. Its page, canonical
-// block, and decoded owner state are copied from that single observation, and
-// its caller contract retains the allocation through the consuming operation.
+// SAFETY: unit tests exercise the same concrete PageMap observation through
+// the fixture adapter so test-only generic source fixtures and production use
+// one atomic publication implementation.
+#[cfg(test)]
 unsafe impl LiveRemoteFreeAllocation for LiveAllocationPointer {
     #[inline]
     fn live_remote_free_allocation(
@@ -246,32 +245,53 @@ unsafe fn publish_canonical_source_block(
     })
 }
 
-/// Publishes one pointer-dispatched remote free with pinned source atomics.
-///
-/// This is the production-facing `mi_free_block_mt(..., allow_collect=true)`
-/// seam. Pointer dispatch has already selected one registered page and its
-/// canonical block under the valid-live-allocation precondition. The block
-/// keeps the page registered, its uncollected contribution to `used` prevents
-/// source release, and the successful `xthread_free` CAS completes the
-/// lifetime handoff to either the live owner or the abandoned-page collector.
-/// No owner/TLD registry, allocation ledger, generation word, or structural
-/// PageMap mutation lease participates in this operation.
+/// Projects the atomic source fields from one concrete PageMap observation.
 ///
 /// # Safety
 ///
-/// `allocation` must satisfy [`LiveRemoteFreeAllocation`]'s coherent lookup
-/// contract and name an exact current allocation owned by a foreign thread.
-/// The caller must not access the canonical block after success. If this
-/// returns [`LiveRemoteFreePublish::ClaimedAbandonedPage`], the caller owns the
-/// page's source low bit and must immediately finish the abandoned collection,
-/// release, reclaim, reabandon, or unown protocol before returning.
-pub(crate) unsafe fn push_live_allocation<A>(
-    allocation: A,
-) -> Result<LiveRemoteFreePublish, RemoteFreeError>
-where
-    A: LiveRemoteFreeAllocation,
-{
-    let (page, producer, block, page_state) = allocation.live_remote_free_allocation();
+/// `allocation` must retain the valid-live-client proof documented by
+/// [`LiveAllocationPointer`]. Its PageMap registration and page metadata must
+/// remain live until the caller completes the resulting source CAS.
+#[inline]
+unsafe fn page_map_live_allocation_parts(
+    allocation: &LiveAllocationPointer,
+) -> (
+    NonNull<Page>,
+    PageRemoteFreeProducerState,
+    NonNull<u8>,
+    LiveAllocationPageState,
+) {
+    let page = allocation.page();
+    // SAFETY: the checked PageMap observation's current client keeps this
+    // exact page initialized and address-stable through the consuming CAS.
+    let producer = unsafe { Page::remote_free_producer_state_at(page) };
+    (
+        page,
+        producer,
+        allocation.canonical_block(),
+        allocation.page_state(),
+    )
+}
+
+/// Publishes the copied source facts from one exact current allocation.
+///
+/// Keeping the state check adjacent to the source CAS makes both normal and
+/// test-only entry points obey the same live-owner boundary. The caller has
+/// already recovered `block` from the exact PageMap client, so this helper
+/// never accepts an independently selected page/block pair.
+///
+/// # Safety
+///
+/// Every argument must describe the same currently live source allocation.
+/// Its block must keep the PageMap entry and page metadata alive through this
+/// one CAS, and a claimed result must continue through the source owner tail.
+#[inline]
+unsafe fn push_live_allocation_parts(
+    page: NonNull<Page>,
+    producer: PageRemoteFreeProducerState,
+    block: NonNull<u8>,
+    page_state: LiveAllocationPageState,
+) -> Result<LiveRemoteFreePublish, RemoteFreeError> {
     if page_state != LiveAllocationPageState::LiveOwnerAssociated {
         return Err(RemoteFreeError::NotOwnerAssociated);
     }
@@ -279,6 +299,52 @@ where
     // canonical block. The source CAS also closes the race where owner exit
     // clears the low owner bit after pointer dispatch.
     unsafe { publish_canonical_source_block(page, producer, block) }
+}
+
+/// Publishes one pointer-dispatched remote free with pinned source atomics.
+///
+/// This is the production-facing `mi_free_block_mt(..., allow_collect=true)`
+/// seam. Its concrete [`LiveAllocationPointer`] input can only be formed by
+/// the checked process PageMap lookup, which binds the exact client, canonical
+/// free-list block, source page, and copied ownership state together. The
+/// still-counted source block keeps the page registered through this CAS; no
+/// owner/TLD registry, allocation ledger, generation word, or structural
+/// PageMap mutation lease participates.
+///
+/// # Safety
+///
+/// `allocation` must name an exact current allocation owned by a foreign
+/// thread. The caller must not access its canonical block after success. A
+/// claimed result owns the source low bit and must immediately continue with
+/// abandoned collection, release, reclaim, reabandon, or unown.
+#[cfg(not(test))]
+pub(crate) unsafe fn push_live_allocation(
+    allocation: LiveAllocationPointer,
+) -> Result<LiveRemoteFreePublish, RemoteFreeError> {
+    // SAFETY: the concrete PageMap observation binds these four facts to one
+    // current client; the helper projects only source atomics before the one
+    // allow-collect CAS.
+    let (page, producer, block, page_state) =
+        unsafe { page_map_live_allocation_parts(&allocation) };
+    unsafe { push_live_allocation_parts(page, producer, block, page_state) }
+}
+
+/// Test-only source publication adapter for raw fixture observations.
+///
+/// Normal builds deliberately expose only the concrete
+/// [`LiveAllocationPointer`] entry above. This generic form stays confined to
+/// crate unit tests that model raw page fields without a full PageMap.
+#[cfg(test)]
+pub(crate) unsafe fn push_live_allocation<A>(
+    allocation: A,
+) -> Result<LiveRemoteFreePublish, RemoteFreeError>
+where
+    A: LiveRemoteFreeAllocation,
+{
+    let (page, producer, block, page_state) = allocation.live_remote_free_allocation();
+    // SAFETY: the test adapter's unsafe contract binds the copied fixture
+    // facts to one current source allocation.
+    unsafe { push_live_allocation_parts(page, producer, block, page_state) }
 }
 
 /// Publishes a PageMap observation that was already classified as abandoned.
@@ -308,7 +374,10 @@ where
 pub(crate) unsafe fn push_abandoned_live_allocation(
     allocation: LiveAllocationPointer,
 ) -> Result<LiveRemoteFreePublish, RemoteFreeError> {
-    let (page, producer, block, page_state) = allocation.live_remote_free_allocation();
+    // SAFETY: the checked PageMap observation keeps its exact source page and
+    // canonical block alive through the state-qualified source CAS below.
+    let (page, producer, block, page_state) =
+        unsafe { page_map_live_allocation_parts(&allocation) };
     if !matches!(
         page_state,
         LiveAllocationPageState::Abandoned | LiveAllocationPageState::AbandonedMapped

@@ -113,9 +113,12 @@ const fn source_page_state(xthread_id: ThreadId) -> LiveAllocationPageState {
 /// block remains live while this value is valid; pinned `free.c` relies on
 /// that block to keep the PageMap registration and page metadata alive through
 /// canonical-block recovery and local or atomic remote-free publication.
-/// Carrying this value does not permit ordinary page mutation, PageMap
-/// registration, or final release, and it must not be retained after the
-/// consuming source operation makes the client no longer live.
+/// Normal-build [`crate::remote_free::push_live_allocation`] accepts this
+/// concrete token rather than an independently supplied page/block pair, so
+/// the checked lookup is the only production route into live remote
+/// publication. Carrying this value does not permit ordinary page mutation,
+/// PageMap registration, or final release, and it must not be retained after
+/// the consuming source operation makes the client no longer live.
 #[must_use = "live allocation facts must be consumed by one source operation"]
 #[derive(Debug, Eq, PartialEq)]
 pub(crate) struct LiveAllocationPointer {
