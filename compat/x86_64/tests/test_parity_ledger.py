@@ -50,7 +50,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 41)
-        self.assertEqual(report["verified_artifact_count"], 182)
+        self.assertEqual(report["verified_artifact_count"], 183)
         self.assertEqual(report["header_layout_probe_count"], 46)
         self.assertEqual(report["public_header_inventory_count"], 183)
         self.assertEqual(report["header_foundation_header_count"], 191)
@@ -7522,6 +7522,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         for owner in (
             "compat/upstreams.toml",
             "libc/src/c_abi/x86_64/static_c_abi.rs",
+            "libc/src/c_abi/x86_64/bsearch.rs",
             "libc/src/c_abi/x86_64/callback_algorithms.rs",
             "include/stdlib.h",
             "compat/x86_64/callback_algorithms_header_abi_probe.c",
@@ -18195,6 +18196,84 @@ class X86ParityLedgerTests(unittest.TestCase):
         with self.assertRaisesRegex(
             ledger.LedgerError,
             "static-c-gethostid evidence must retain its constant static closure",
+        ):
+            ledger.validate_ledger(data)
+
+    def test_bsearch_artifact_stays_private_and_non_promoting(self) -> None:
+        data = self.data()
+        family = self.family(data, "libc.c-abi-compat")
+        self.assertEqual(family["status"], "planned")
+        artifacts = family["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-bsearch"
+        )
+        self.assertNotIn("capabilities", artifact)
+        self.assertIn("`bsearch`", artifact["description"])
+        self.assertIn("does not change the existing qsort/qsort_r behavior", artifact["description"])
+        self.assertIn("public x86 support", artifact["description"])
+
+        owners = artifact["source_owners"]
+        assert isinstance(owners, list)
+        for owner in (
+            "libc/src/c_abi/x86_64/bsearch.rs",
+            "include/stdlib.h",
+            "compat/x86_64/bsearch_header_abi_probe.c",
+            "compat/x86_64/bsearch_header_abi_probe.cpp",
+            "compat/x86_64/run_bsearch_header_abi.sh",
+            "compat/x86_64/libc_bsearch_probe.c",
+            "compat/x86_64/libc_bsearch_start.S",
+            "compat/x86_64/run_libc_bsearch.sh",
+            "compat/x86_64/static_c_abi_exports.txt",
+        ):
+            self.assertIn(owner, owners)
+
+        prerequisites = artifact["x86_abi_prerequisites"]
+        assert isinstance(prerequisites, list)
+        self.assertTrue(
+            any(
+                "SysV AMD64" in item
+                and "rdi/rsi/rdx/rcx/r8" in item
+                and "rax" in item
+                and "eax" in item
+                for item in prerequisites
+            )
+        )
+        self.assertTrue(
+            any(
+                "src/stdlib/bsearch.c::bsearch" in item
+                and "checked-multiply return" in item
+                and "C-defined domain" in item
+                for item in prerequisites
+            )
+        )
+
+        evidence = artifact["native_evidence"]
+        assert isinstance(evidence, list) and isinstance(evidence[0], dict)
+        self.assertEqual(
+            evidence[0]["command"],
+            "./scripts/dev-x86_64.sh libc-bsearch",
+        )
+        for phrase in (
+            "Pinned-musl/project C11/C++ header",
+            "`-nostdlib -static` candidate",
+            "duplicate midpoint pointer",
+            "zero-count callback suppression",
+            "qsort/qsort_r/__qsort_r",
+            "does not change qsort/qsort_r behavior",
+            "family promotion",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, evidence[0]["scope"])
+
+        evidence[0]["scope"] = evidence[0]["scope"].replace(
+            "zero-count callback suppression", "callback behavior"
+        )
+        with self.assertRaisesRegex(
+            ledger.LedgerError,
+            "static-c-bsearch evidence must retain its standalone static closure",
         ):
             ledger.validate_ledger(data)
 

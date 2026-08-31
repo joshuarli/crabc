@@ -349,6 +349,8 @@ mod process_globals;
 mod stdio_standard;
 #[path = "stdio_format_scan.rs"]
 mod stdio_format_scan;
+#[path = "bsearch.rs"]
+mod bsearch;
 #[path = "callback_algorithms.rs"]
 mod callback_algorithms;
 #[path = "search_tree_intrusive.rs"]

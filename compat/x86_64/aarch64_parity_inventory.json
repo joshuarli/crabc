@@ -1483,7 +1483,7 @@
       "capability_count": 11,
       "contract_state": "selected-private",
       "id": "libc.c-abi-compat",
-      "verified_artifact_count": 5,
+      "verified_artifact_count": 6,
       "verified_slice_count": 6
     },
     {
@@ -1745,6 +1745,10 @@
     {
       "family": "libc.c-abi-compat",
       "id": "static-c-auxv-observation"
+    },
+    {
+      "family": "libc.c-abi-compat",
+      "id": "static-c-bsearch"
     },
     {
       "family": "libc.c-abi-compat",
@@ -2391,7 +2395,7 @@
     "aarch64_abi_manifest": "33dd504470f467caac7b149e747ee2b7ff8714c4fb23dfe5ad46e7f58bfe610c",
     "aarch64_capability_ledger": "128458dde00073bc0320b94972d864e66fa10d5f54e92b1b1c83081e2b4955e0",
     "aarch64_headers": "a0d35f0950abb3c060b978dfb5257cf50f70bed46ce91d371f43d65db7626b68",
-    "x86_parity_ledger": "6e51b6a8862b68712a05237ffc854b372b9dcc0b77f45450754fb4fd7f9b2b6e",
+    "x86_parity_ledger": "87549c87795198a6f6dd1afb223c12f47e9c657d101e36716c174993f42fcc69",
     "x86_public_headers": "2cdcd860a423d99afef8360b6376447cf17ae926f1cd47416be817d421fca80f",
     "x86_static_c_exports": "157a69f791e7448810fe2159235e75921397bbd34f86587d786467c1d5ecb1cb"
   },

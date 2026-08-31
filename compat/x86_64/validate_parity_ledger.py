@@ -1421,6 +1421,7 @@ GETHOSTID_SYMBOLS = ("gethostid",)
 INET_CLASSFUL_SYMBOLS = ("inet_lnaof", "inet_makeaddr")
 
 GETSUBOPT_SYMBOLS = ("getsubopt",)
+BSEARCH_SYMBOLS = ("bsearch",)
 
 INET_ADDRESS_UNSELECTED_SYMBOLS = (
     "calloc",
@@ -23689,6 +23690,268 @@ def require_hstrerror_artifact(family: Mapping[str, Any]) -> None:
 
 
 
+def require_bsearch_artifact(family: Mapping[str, Any]) -> None:
+    """Keep the standalone musl binary-search artifact capability-free."""
+
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.c-abi-compat].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [entry for entry in artifacts if entry.get("id") == "static-c-bsearch"]
+    require(
+        len(matching) == 1,
+        "libc.c-abi-compat must contain exactly one static-c-bsearch artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-bsearch must not promote libc.c-abi-compat",
+    )
+    artifact = matching[0]
+    require(
+        "capabilities" not in artifact,
+        "static-c-bsearch must remain capability-free",
+    )
+    description = artifact.get("description")
+    require(isinstance(description, str), "static-c-bsearch needs a description")
+    for phrase in (
+        "`bsearch` compatibility artifact",
+        "still-planned `libc.c-abi-compat`",
+        "`src/stdlib/bsearch.c`",
+        "midpoint",
+        "duplicate-key midpoint return",
+        "zero elements without a callback",
+        "checked multiplication guard",
+        "rejects `qsort`, `qsort_r`, `__qsort_r`",
+        "capability-free ABI artifact",
+        "does not change the existing qsort/qsort_r behavior",
+        "family completion",
+        "promotion",
+        "public x86 support",
+    ):
+        require(phrase in description, f"static-c-bsearch description omits {phrase}")
+
+    owners = set(
+        nonempty_strings(artifact.get("source_owners"), "static-c-bsearch.source_owners")
+    )
+    for owner in (
+        "compat/upstreams.toml",
+        "libc/Cargo.toml",
+        "libc/src/lib.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/bsearch.rs",
+        "include/features.h",
+        "include/bits/alltypes.h",
+        "include/stddef.h",
+        "include/stdlib.h",
+        "compat/x86_64/bsearch_header_abi_probe.c",
+        "compat/x86_64/bsearch_header_abi_probe.cpp",
+        "compat/x86_64/run_bsearch_header_abi.sh",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/libc_bsearch_probe.c",
+        "compat/x86_64/libc_bsearch_start.S",
+        "compat/x86_64/run_libc_bsearch.sh",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/README.md",
+        "STATUS.md",
+        "x86-64.md",
+        "scripts/dev-x86_64.sh",
+        "scripts/check_structure.py",
+    ):
+        require(owner in owners, f"static-c-bsearch source owners omit {owner}")
+
+    prerequisites = nonempty_strings(
+        artifact.get("x86_abi_prerequisites"),
+        "static-c-bsearch.x86_abi_prerequisites",
+    )
+    require(
+        any(
+            "SysV AMD64" in item
+            and "rdi/rsi/rdx/rcx/r8" in item
+            and "rax" in item
+            and "eax" in item
+            for item in prerequisites
+        ),
+        "static-c-bsearch must retain its LP64 function and callback ABI",
+    )
+    require(
+        any(
+            "9fa28ece75d8a2191de7c5bb53bed224c5947417" in item
+            and "src/stdlib/bsearch.c::bsearch" in item
+            and "checked-multiply return" in item
+            and "C-defined domain" in item
+            for item in prerequisites
+        ),
+        "static-c-bsearch must retain its bounded musl source closure",
+    )
+    require(
+        any(
+            "no interpreter" in item
+            and "PT_TLS" in item
+            and "qsort_r" in item
+            and "search-container" in item
+            for item in prerequisites
+        ),
+        "static-c-bsearch must retain its standalone static closure",
+    )
+
+    headers = nonempty_strings(
+        artifact.get("x86_header_prerequisites"),
+        "static-c-bsearch.x86_header_prerequisites",
+    )
+    require(
+        any(
+            "void *bsearch(" in item
+            and "strict" in item
+            and "POSIX" in item
+            and "X/Open" in item
+            and "GNU" in item
+            and "BSD" in item
+            and "unmangled C++ linkage" in item
+            for item in headers
+        ),
+        "static-c-bsearch must retain its unconditional C/C++ header ABI",
+    )
+
+    evidence = artifact.get("native_evidence")
+    require(isinstance(evidence, list), "static-c-bsearch needs evidence")
+    require(
+        {entry.get("command") for entry in evidence if isinstance(entry, Mapping)}
+        == {"./scripts/dev-x86_64.sh libc-bsearch"},
+        "static-c-bsearch must use the closed libc-bsearch command",
+    )
+    scope = evidence[0].get("scope")
+    require(
+        isinstance(scope, str)
+        and all(
+            phrase in scope
+            for phrase in (
+                "Pinned-musl/project C11/C++ header",
+                "`-nostdlib -static` candidate",
+                "duplicate midpoint pointer",
+                "zero-count callback suppression",
+                "qsort/qsort_r/__qsort_r",
+                "does not change qsort/qsort_r behavior",
+                "family promotion",
+                "public x86 support",
+            )
+        ),
+        "static-c-bsearch evidence must retain its standalone static closure",
+    )
+
+    exports = set(
+        static_c_abi_export_names(
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        )
+    )
+    require(
+        set(BSEARCH_SYMBOLS) <= exports,
+        "static-c-bsearch must retain its selected export",
+    )
+
+    static_root = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+    ).read_text(encoding="utf-8")
+    require(
+        '#[path = "bsearch.rs"]\nmod bsearch;' in static_root,
+        "x86 static C ABI must compose the standalone bsearch leaf",
+    )
+    source = (ROOT / "libc" / "src" / "c_abi" / "x86_64" / "bsearch.rs").read_text(
+        encoding="utf-8"
+    )
+    for snippet in (
+        "pinned musl 1.2.6 release commit",
+        "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+        "src/stdlib/bsearch.c::bsearch",
+        "checked multiplication return",
+        "midpoint and comparator-branch sequence",
+        'pub unsafe extern \"C\" fn bsearch',
+    ):
+        require(snippet in source, f"bsearch implementation omits {snippet}")
+    for forbidden in (
+        "__qsort_r",
+        "qsort_r",
+        "qsort",
+        "raw_syscall::",
+        "errno::",
+        "crabc_core",
+        "crabc_mimalloc",
+    ):
+        require(forbidden not in source, f"bsearch leaf widens into {forbidden}")
+
+    runner = (ROOT / "compat" / "x86_64" / "run_libc_bsearch.sh").read_text(
+        encoding="utf-8"
+    )
+    for snippet in (
+        "run_musl_oracle.sh",
+        "run_bsearch_header_abi.sh",
+        "static_c_abi_exports.txt",
+        "-nostdlib -static",
+        "--no-undefined",
+        "archive does not define bsearch",
+        "--disassemble=bsearch",
+        "bsearch candidate unexpectedly retains TLS",
+        "bsearch unexpectedly performs a syscall",
+        "candidate accidentally selects ${symbol}",
+        "__qsort_r qsort qsort_r",
+    ):
+        require(snippet in runner, f"bsearch runner omits {snippet}")
+    require(
+        "--whole-archive" not in runner,
+        "bsearch runner must preserve archive-member extraction",
+    )
+
+    probe = (ROOT / "compat" / "x86_64" / "libc_bsearch_probe.c").read_text(
+        encoding="utf-8"
+    )
+    for snippet in (
+        "bsearch_signature",
+        "const bsearch_signature function = bsearch",
+        "duplicates + 2",
+        "compare_record",
+        "zero_count_calls == 0",
+        "CRABC_BSEARCH_FREESTANDING",
+    ):
+        require(snippet in probe, f"bsearch probe omits {snippet}")
+
+    header_c = (
+        ROOT / "compat" / "x86_64" / "bsearch_header_abi_probe.c"
+    ).read_text(encoding="utf-8")
+    header_cxx = (
+        ROOT / "compat" / "x86_64" / "bsearch_header_abi_probe.cpp"
+    ).read_text(encoding="utf-8")
+    for snippet in ("bsearch declaration", "bsearch_signature", "bsearch_function"):
+        require(snippet in header_c, f"bsearch C header probe omits {snippet}")
+        require(snippet in header_cxx, f"bsearch C++ header probe omits {snippet}")
+
+    header_runner = (
+        ROOT / "compat" / "x86_64" / "run_bsearch_header_abi.sh"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "bsearch_header_abi_probe.c",
+        "bsearch_header_abi_probe.cpp",
+        "Pinned musl 1.2.6",
+        "-D__STRICT_ANSI__",
+        "-D_POSIX_C_SOURCE=200809L",
+        "-D_XOPEN_SOURCE=700",
+        "-D_GNU_SOURCE",
+        "-D_BSD_SOURCE",
+        "retained a mangled bsearch reference",
+    ):
+        require(snippet in header_runner, f"bsearch header runner omits {snippet}")
+
+    dispatcher = (ROOT / "scripts" / "dev-x86_64.sh").read_text(encoding="utf-8")
+    for snippet in (
+        "bsearch-header-abi)",
+        "run_bsearch_header_abi",
+        "libc-bsearch)",
+        "run_libc_bsearch",
+    ):
+        require(snippet in dispatcher, f"bsearch dispatcher omits {snippet}")
+
+
 def require_gethostid_artifact(family: Mapping[str, Any]) -> None:
     """Keep musl's constant historical host-ID spelling below promotion."""
 
@@ -36573,6 +36836,7 @@ def validate_ledger(
     require_numeric_netdb_artifact(by_id["libc.resolver"])
     require_hstrerror_artifact(by_id["libc.resolver"])
     require_gethostid_artifact(by_id["libc.c-abi-compat"])
+    require_bsearch_artifact(by_id["libc.c-abi-compat"])
     require_auxv_observation_artifact(by_id["libc.c-abi-compat"])
     require_process_globals_getopt_artifact(by_id["libc.c-abi-compat"])
     require_search_tree_intrusive_slice(by_id["libc.c-abi-compat"])

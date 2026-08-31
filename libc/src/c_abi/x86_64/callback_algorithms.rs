@@ -1,17 +1,18 @@
-//! Selected static Linux/x86-64 C callback-algorithms boundary.
+//! Selected static Linux/x86-64 C sorting-callback boundary.
 //!
-//! This leaf owns exactly bsearch, qsort, GNU/BSD qsort_r, and musl's
-//! __qsort_r helper. It is a stateless allocation-free generic byte-array
-//! algorithm block. Caller-owned arrays and comparison callbacks supply all
-//! observable state. It is not lfind/lsearch, search.h trees or hashes,
-//! locale-aware ordering, C++ exception or longjmp transport across Rust,
-//! libc.so, a CRT, a loader, a sysroot, or public x86 support.
+//! This leaf owns exactly qsort, GNU/BSD qsort_r, and musl's __qsort_r helper.
+//! It is a stateless allocation-free generic byte-array sorting block.
+//! Caller-owned arrays and comparison callbacks supply all observable state.
+//! `bsearch` is isolated in the separate bsearch.rs static artifact so its
+//! true-static closure cannot pull this smoothsort implementation. This leaf
+//! is not lfind/lsearch, search.h trees or hashes, locale-aware ordering, C++
+//! exception or longjmp transport across Rust, libc.so, a CRT, a loader, a
+//! sysroot, or public x86 support.
 //!
 //! Translation provenance is pinned musl 1.2.6 release commit
 //! 9fa28ece75d8a2191de7c5bb53bed224c5947417, under musl's MIT license:
-//! src/stdlib/bsearch.c maps to bsearch; src/stdlib/qsort.c maps its
-//! smoothsort state, O(1) cycling buffer, __qsort_r helper, and weak qsort_r
-//! alias;
+//! src/stdlib/qsort.c maps its smoothsort state, O(1) cycling buffer,
+//! __qsort_r helper, and weak qsort_r alias;
 //! src/stdlib/qsort_nr.c maps qsort's two-argument comparator adapter.
 //! Musl internal a_ctz_l maps to the fixed-width trailing-zero operation on
 //! one nonzero Rust usize state word.
@@ -25,10 +26,7 @@
 //! slice bounds paths keeps this stateless leaf from selecting panic support
 //! or the separate errno/TLS owner.
 
-use core::{
-    ffi::{c_int, c_void},
-    ptr::null_mut,
-};
+use core::ffi::{c_int, c_void};
 
 type CmpFn = unsafe extern "C" fn(*const c_void, *const c_void) -> c_int;
 type CmpRFn = unsafe extern "C" fn(*const c_void, *const c_void, *mut c_void) -> c_int;
@@ -43,42 +41,6 @@ core::arch::global_asm!(
     ".weak qsort_r",
     ".set qsort_r, __qsort_r",
 );
-
-/// Search a sorted caller-owned record array.
-///
-/// # Safety
-///
-/// For nonzero nel, base must address nel times width readable bytes and key
-/// must be readable by cmp. The multiplication must not overflow. cmp must be
-/// a non-null C-ABI callback that returns normally and establishes a
-/// consistent ordering over valid record pointers.
-#[no_mangle]
-pub unsafe extern "C" fn bsearch(
-    key: *const c_void,
-    base: *const c_void,
-    nel: usize,
-    width: usize,
-    cmp: CmpFn,
-) -> *mut c_void {
-    let mut base = base.cast::<u8>();
-    let mut nel = nel;
-    while nel > 0 {
-        let Some(offset) = width.checked_mul(nel / 2) else {
-            return null_mut();
-        };
-        let trial = unsafe { base.add(offset) };
-        let sign = unsafe { cmp(key, trial.cast::<c_void>()) };
-        if sign < 0 {
-            nel /= 2;
-        } else if sign > 0 {
-            base = unsafe { trial.add(width) };
-            nel -= nel / 2 + 1;
-        } else {
-            return trial.cast_mut().cast::<c_void>();
-        }
-    }
-    null_mut()
-}
 
 #[derive(Clone, Copy)]
 struct QsortP {

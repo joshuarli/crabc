@@ -167,6 +167,7 @@ X86_RUNTIME_FOUNDATION_LIBC_SOURCES = {
     Path("libc/src/c_abi/x86_64/ioctl.rs"),
     Path("libc/src/c_abi/x86_64/immediate_termination.rs"),
     Path("libc/src/c_abi/x86_64/posix_exit.rs"),
+    Path("libc/src/c_abi/x86_64/bsearch.rs"),
     Path("libc/src/c_abi/x86_64/callback_algorithms.rs"),
     Path("libc/src/c_abi/x86_64/search_tree_intrusive.rs"),
     Path("libc/src/c_abi/x86_64/search_hash_table.rs"),
@@ -3761,6 +3762,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         '#[path = "child_reaping.rs"]',
         '#[path = "immediate_termination.rs"]',
         '#[path = "posix_exit.rs"]',
+        '#[path = "bsearch.rs"]',
         '#[path = "callback_algorithms.rs"]',
         '#[path = "search_tree_intrusive.rs"]',
         '#[path = "search_hash_table.rs"]',
@@ -7155,6 +7157,37 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
             errors.append(
                 "libc/src/c_abi/x86_64/posix_exit.rs: selected static POSIX "
                 f"_exit boundary must not select {forbidden!r}"
+    bsearch_source = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "bsearch.rs"
+    bsearch_text = bsearch_source.read_text(errors="replace")
+    for required in (
+        "pinned musl 1.2.6 release commit",
+        "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+        "src/stdlib/bsearch.c::bsearch",
+        "checked multiplication return",
+        "caller-owned C array domain",
+        "pub unsafe extern \"C\" fn bsearch",
+    ):
+        if required not in bsearch_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/bsearch.rs: selected static bsearch "
+                f"boundary is missing {required!r}"
+            )
+    bsearch_exports = set(
+        re.findall(
+            r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(',
+            bsearch_text,
+        )
+    )
+    if bsearch_exports != {"bsearch"}:
+        errors.append(
+            "libc/src/c_abi/x86_64/bsearch.rs: selected static artifact must "
+            "export bsearch only as a Rust entry"
+        )
+    for forbidden in ("__qsort_r", "qsort_r", "qsort", "raw_syscall::", "errno::"):
+        if forbidden in bsearch_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/bsearch.rs: selected static bsearch "
+                f"boundary widens into {forbidden!r}"
             )
 
     callback_algorithms_source = (
@@ -7163,7 +7196,6 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
     callback_algorithms_text = callback_algorithms_source.read_text(errors="replace")
     for required in (
         "musl 1.2.6 release commit",
-        "src/stdlib/bsearch.c",
         "src/stdlib/qsort.c",
         "src/stdlib/qsort_nr.c",
         "smoothsort",
@@ -7185,10 +7217,10 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
             callback_algorithms_text,
         )
     )
-    if callback_algorithms_exports != {"bsearch", "__qsort_r", "qsort"}:
+    if callback_algorithms_exports != {"__qsort_r", "qsort"}:
         errors.append(
             "libc/src/c_abi/x86_64/callback_algorithms.rs: selected static "
-            "artifact must export bsearch, __qsort_r, and qsort only as Rust entries"
+            "artifact must export __qsort_r and qsort only as Rust entries"
         )
     callback_algorithms_aliases = set(
         re.findall(
@@ -9788,6 +9820,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         child_reaping_text,
         immediate_termination_text,
         posix_exit_text,
+        bsearch_text,
         callback_algorithms_text,
         search_tree_text,
         search_hash_table_text,
@@ -10378,6 +10411,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         ("child_reaping.rs", child_reaping_text),
         ("immediate_termination.rs", immediate_termination_text),
         ("posix_exit.rs", posix_exit_text),
+        ("bsearch.rs", bsearch_text),
         ("callback_algorithms.rs", callback_algorithms_text),
         ("search_tree_intrusive.rs", search_tree_text),
         ("search_hash_table.rs", search_hash_table_text),

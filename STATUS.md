@@ -201,6 +201,17 @@ sysroot path. It does not promote Rust-subsumed `memory.bytes-basic`, general
 string/tokenization, `strtok`/`strtok_r`, memory-search, `mempcpy`, getsubopt,
 allocator lifecycle/interposition, family completion, promotion, or public x86
 support.
+`./scripts/dev-x86_64.sh libc-bsearch` is a separate private `static-c-bsearch`
+artifact inside still-planned `libc.c-abi-compat`. Its pinned-musl/project
+C/C++ `<stdlib.h>` matrix proves the unconditional five-argument declaration
+from strict through BSD selection and unmangled C++ linkage. Equivalent
+pinned-musl and freestanding-static routes then prove direct/function-pointer
+calls, first/last/miss results, musl's duplicate midpoint pointer, a wide
+record, and zero-count callback suppression. The selected candidate contains
+`bsearch` without qsort/qsort_r/__qsort_r, TLS/errno, allocation, locale,
+syscall, or mutable runtime state. It does not change qsort/qsort_r behavior,
+select general sorting/searching or callback ownership, family completion,
+promotion, or public x86 support.
 
 `./scripts/dev-x86_64.sh libc-getpass` is a separate private
 `static-c-getpass` artifact inside still-planned `libc.posix-runtime`. Its

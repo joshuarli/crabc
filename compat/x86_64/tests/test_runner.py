@@ -1414,7 +1414,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "xattr-header-abi",
             "madvise-reference",
             "ctype-header-abi|locale-profile-header-abi|locale-multibyte-header-abi|iconv-header-abi|wide-character-header-abi|locale-object-wide-header-abi|locale-narrow-header-abi",
-            "integer-arithmetic-header-abi|integer-parse-header-abi|float-parse-header-abi|getsubopt-header-abi|intmax-arithmetic-header-abi|credential-observation-header-abi|login-name-header-abi|child-reaping-header-abi|immediate-termination-header-abi|callback-algorithms-header-abi",
+            "integer-arithmetic-header-abi|integer-parse-header-abi|float-parse-header-abi|getsubopt-header-abi|intmax-arithmetic-header-abi|credential-observation-header-abi|login-name-header-abi|child-reaping-header-abi|immediate-termination-header-abi|bsearch-header-abi|callback-algorithms-header-abi",
             "posix-exit-header-abi",
             "ffs-header-abi",
             "byte-strings-header-abi",
@@ -1455,7 +1455,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "libc-static-c-abi-same-object-differential|qualification-posix-abi-admission",
             "libc-interface-discovery",
             "libc-posix-exit",
-            "libc-readiness-waits|libc-system-observation|libc-system-information|libc-fcntl-record-locks|libc-flock|libc-sendfile|libc-posix-fallocate|libc-descriptor-advice|libc-filesystem-capacity|libc-uts-identity|libc-ctype|libc-locale-profile|libc-locale-multibyte|libc-locale-wide-iconv|libc-wide-character|libc-locale-object-wide|libc-locale-narrow|libc-locale-ctype-locators|libc-locale-error-strings|libc-regex|libc-integer-arithmetic|libc-integer-parse|libc-float-parse|libc-getsubopt|libc-intmax-arithmetic|libc-credential-observation|libc-secure-environment|libc-login-name|libc-child-reaping|libc-immediate-termination|libc-callback-algorithms|libc-search-tree-intrusive|libc-search-hash-table|libc-gettext-catalog|libc-access|libc-clock-gettime|libc-time-observation|libc-difftime|libc-timegm|libc-gmtime-r|libc-system-configuration|libc-mapping-core|libc-header-layouts-baseline|libc-nanosleep|libc-clock-nanosleep|libc-descriptor-entry|libc-fcntl-status-control|libc-ioctl|libc-ffs|libc-byte-strings|libc-process-globals-getopt|libc-auxv-observation|libc-inet-address|libc-inet-ntoa|libc-inet-classful|libc-hstrerror|libc-numeric-netdb|libc-random-entropy|libc-memory-search|libc-string-copy|libc-error-strings|libc-strsignal|libc-descriptor-pipeline",
+            "libc-readiness-waits|libc-system-observation|libc-system-information|libc-fcntl-record-locks|libc-flock|libc-sendfile|libc-posix-fallocate|libc-descriptor-advice|libc-filesystem-capacity|libc-uts-identity|libc-ctype|libc-locale-profile|libc-locale-multibyte|libc-locale-wide-iconv|libc-wide-character|libc-locale-object-wide|libc-locale-narrow|libc-locale-ctype-locators|libc-locale-error-strings|libc-regex|libc-integer-arithmetic|libc-integer-parse|libc-float-parse|libc-getsubopt|libc-intmax-arithmetic|libc-credential-observation|libc-secure-environment|libc-login-name|libc-child-reaping|libc-immediate-termination|libc-bsearch|libc-callback-algorithms|libc-search-tree-intrusive|libc-search-hash-table|libc-gettext-catalog|libc-access|libc-clock-gettime|libc-time-observation|libc-difftime|libc-timegm|libc-gmtime-r|libc-system-configuration|libc-mapping-core|libc-header-layouts-baseline|libc-nanosleep|libc-clock-nanosleep|libc-descriptor-entry|libc-fcntl-status-control|libc-ioctl|libc-ffs|libc-byte-strings|libc-process-globals-getopt|libc-auxv-observation|libc-inet-address|libc-inet-ntoa|libc-inet-classful|libc-hstrerror|libc-numeric-netdb|libc-random-entropy|libc-memory-search|libc-string-copy|libc-error-strings|libc-strsignal|libc-descriptor-pipeline",
             "libc-vector-io|libc-uio-cxx-linkage",
             "libc-sysv-semaphore|libc-posix-semaphore",
             "libc-sysv-message-shared-memory",
@@ -15125,10 +15125,136 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         )
         self.assertIn("posix-exit-header-abi", runner)
         self.assertIn("libc-posix-exit", runner)
+    def test_libc_static_c_abi_bsearch_artifact_stays_standalone(self) -> None:
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        implementation = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "bsearch.rs"
+        ).read_text(encoding="utf-8")
+        probe = (
+            ROOT / "compat" / "x86_64" / "libc_bsearch_probe.c"
+        ).read_text(encoding="utf-8")
+        start = (
+            ROOT / "compat" / "x86_64" / "libc_bsearch_start.S"
+        ).read_text(encoding="utf-8")
+        artifact_runner = (
+            ROOT / "compat" / "x86_64" / "run_libc_bsearch.sh"
+        ).read_text(encoding="utf-8")
+        header_runner = (
+            ROOT / "compat" / "x86_64" / "run_bsearch_header_abi.sh"
+        ).read_text(encoding="utf-8")
+        header_c = (
+            ROOT / "compat" / "x86_64" / "bsearch_header_abi_probe.c"
+        ).read_text(encoding="utf-8")
+        header_cxx = (
+            ROOT / "compat" / "x86_64" / "bsearch_header_abi_probe.cpp"
+        ).read_text(encoding="utf-8")
+        static_exports = {
+            line
+            for line in (
+                ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+            ).read_text(encoding="utf-8").splitlines()
+            if line and not line.startswith("#")
+        }
+        parity_ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        runner = RUNNER.read_text(encoding="utf-8")
+
+        self.assertIn('#[path = "bsearch.rs"]', static_root)
+        for required in (
+            "Selected static Linux/x86-64 C `bsearch` ABI boundary",
+            "musl 1.2.6 release commit",
+            "src/stdlib/bsearch.c::bsearch",
+            "checked multiplication return",
+            "midpoint and comparator-branch sequence",
+            'pub unsafe extern "C" fn bsearch',
+        ):
+            self.assertIn(required, implementation)
+        for forbidden in (
+            "__qsort_r",
+            "qsort_r",
+            "qsort",
+            "raw_syscall::",
+            "errno::",
+            "crabc_core",
+            "crabc_mimalloc",
+        ):
+            self.assertNotIn(forbidden, implementation)
+        self.assertIn("bsearch", static_exports)
+
+        for required in (
+            "bsearch_signature",
+            "const bsearch_signature function = bsearch",
+            "duplicates + 2",
+            "compare_record",
+            "zero_count_calls == 0",
+            "CRABC_BSEARCH_FREESTANDING",
+        ):
+            self.assertIn(required, probe)
+        for required in (
+            "crabc_x86_64_bsearch_probe",
+            "mov $60, %eax",
+        ):
+            self.assertIn(required, start)
+        for header in (header_c, header_cxx):
+            for required in ("bsearch declaration", "bsearch_signature", "bsearch_function"):
+                self.assertIn(required, header)
+        for required in (
+            "bsearch_header_abi_probe.c",
+            "bsearch_header_abi_probe.cpp",
+            "-D__STRICT_ANSI__",
+            "-D_POSIX_C_SOURCE=200809L",
+            "-D_XOPEN_SOURCE=700",
+            "-D_GNU_SOURCE",
+            "-D_BSD_SOURCE",
+            "nm --undefined-only",
+            "retained a mangled bsearch reference",
+        ):
+            self.assertIn(required, header_runner)
+        for required in (
+            "run_bsearch_header_abi.sh",
+            "static_c_abi_exports.txt",
+            "-nostdlib -static",
+            "-Wl,-e,_start",
+            "-Wl,--no-undefined",
+            "--disassemble=bsearch",
+            "bsearch candidate unexpectedly retains TLS",
+            "bsearch unexpectedly performs a syscall",
+            "__qsort_r qsort qsort_r",
+            "candidate accidentally selects ${symbol}",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn("--whole-archive", artifact_runner)
+        self.assertIn('id = "static-c-bsearch"', parity_ledger)
+        self.assertIn(
+            'command = "./scripts/dev-x86_64.sh libc-bsearch"',
+            parity_ledger,
+        )
+        self.assertIn("run_bsearch_header_abi()", runner)
+        self.assertIn(
+            "/workspace/compat/x86_64/run_bsearch_header_abi.sh", runner
+        )
+        self.assertIn("run_libc_bsearch()", runner)
+        self.assertIn(
+            "/workspace/compat/x86_64/run_libc_bsearch.sh", runner
+        )
+        self.assertIn(
+            '    bsearch-header-abi)\n        [ "$#" -eq 0 ] || fail "bsearch-header-abi takes no arguments"',
+            runner,
+        )
+        self.assertIn(
+            '    libc-bsearch)\n        [ "$#" -eq 0 ] || fail "libc-bsearch takes no arguments"',
+            runner,
+        )
 
     def test_libc_static_c_abi_callback_algorithms_artifact_stays_narrow(self) -> None:
         static_root = (
             ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        bsearch = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "bsearch.rs"
         ).read_text(encoding="utf-8")
         callback_algorithms = (
             ROOT / "libc" / "src" / "c_abi" / "x86_64" /
@@ -15165,13 +15291,23 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         )
         runner = RUNNER.read_text(encoding="utf-8")
 
+        self.assertIn('#[path = "bsearch.rs"]', static_root)
         self.assertIn('#[path = "callback_algorithms.rs"]', static_root)
-        for symbol in ("bsearch", "__qsort_r", "qsort", "qsort_r"):
+        self.assertIn("bsearch", bsearch)
+        self.assertIn("bsearch", static_export_names)
+        for symbol in ("__qsort_r", "qsort", "qsort_r"):
             self.assertIn(symbol, callback_algorithms)
             self.assertIn(symbol, static_export_names)
         for required in (
             "musl 1.2.6 release commit",
-            "src/stdlib/bsearch.c",
+            "src/stdlib/bsearch.c::bsearch",
+            "checked multiplication return",
+            "midpoint and comparator-branch sequence",
+            'pub unsafe extern "C" fn bsearch',
+        ):
+            self.assertIn(required, bsearch)
+        for required in (
+            "musl 1.2.6 release commit",
             "src/stdlib/qsort.c",
             "src/stdlib/qsort_nr.c",
             "smoothsort",
@@ -15192,6 +15328,8 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "alloc::",
         ):
             self.assertNotIn(forbidden, callback_algorithms)
+        for forbidden in ("__qsort_r", "qsort_r", "qsort", "raw_syscall", "errno::"):
+            self.assertNotIn(forbidden, bsearch)
         for required in (
             "bsearch",
             "qsort",

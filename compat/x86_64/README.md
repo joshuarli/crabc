@@ -426,6 +426,8 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-tcgetpgrp
 ./scripts/dev-x86_64.sh tcsetpgrp-header-abi
 ./scripts/dev-x86_64.sh libc-tcsetpgrp
+./scripts/dev-x86_64.sh bsearch-header-abi
+./scripts/dev-x86_64.sh libc-bsearch
 ./scripts/dev-x86_64.sh getpass-header-abi
 ./scripts/dev-x86_64.sh libc-getpass
 ./scripts/dev-x86_64.sh mktemp-header-abi
@@ -3452,6 +3454,19 @@ raw syscall, errno, initial-TLS, callback, lock, allocator, or mutable
 lifecycle state. It excludes ordinary `exit`/`abort`/`atexit`,
 `at_quick_exit`/`quick_exit` hooks, stdio flushing/fini/destructors, fork
 coordination, pthread lifecycle, dynamic runtime, and public x86 support.
+`libc-bsearch` is a separate capability-free `static-c-bsearch`
+`verified_artifact` inside still-planned `libc.c-abi-compat`. Its strict,
+POSIX, X/Open, GNU, and BSD C/C++ `<stdlib.h>` matrix proves the unconditional
+five-argument `bsearch` declaration and unmangled C++ linkage. One
+project-header C fixture then executes through pinned musl and a
+`-nostdlib -static` candidate. It pins musl's direct/function-pointer
+callback ABI, first/last/miss behavior, duplicate midpoint pointer, wide
+record stride, and zero-count callback suppression. The candidate contains
+only `bsearch` from this boundary and rejects qsort/qsort_r/__qsort_r,
+search-container helpers, TLS/errno, allocation, locale, syscall, and runtime
+state. It neither changes qsort/qsort_r behavior nor selects general
+sorting/searching, callback ownership, libc.so, CRT, loader, sysroot, family
+completion, promotion, or public x86 support.
 
 `libc-callback-algorithms` is a separately recorded
 `static-c-callback-algorithms` `verified_artifact` gate over that archive, not
@@ -5304,6 +5319,7 @@ Apart from the narrowly named `libc-stat-compat`, `libc-credentials`,
 `libc-isatty`,
 `libc-tcgetpgrp`,
 `libc-tcsetpgrp`,
+`libc-bsearch`,
 `libc-getpass`,
 `libc-mktemp`,
 `libc-process-context`, `libc-environment`, `libc-secure-environment`, `libc-login-name`, `libc-child-reaping`, and
