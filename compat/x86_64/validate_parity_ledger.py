@@ -15103,6 +15103,231 @@ def require_lchmod_unsupported_slice(family: Mapping[str, Any]) -> None:
         )
 
 
+def require_mkfifo_artifact(family: Mapping[str, Any]) -> None:
+    """Keep the one direct FIFO entry out of the wider special-node family."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.posix-runtime].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [entry for entry in artifacts if entry.get("id") == "static-c-mkfifo"]
+    require(
+        len(matching) == 1,
+        "libc.posix-runtime must contain exactly one static-c-mkfifo artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-mkfifo must not promote libc.posix-runtime",
+    )
+    artifact = matching[0]
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for phrase in (
+        "selected-static-archive `mkfifo`",
+        "pinned musl 1.2.6",
+        "`-nostdlib -static`",
+        "mknodat=259",
+        "AT_FDCWD=-100",
+        "child-local shell umask 000",
+        "stale errno",
+        "EEXIST",
+        "EFAULT",
+        "filesystem.special-nodes",
+        "mkfifoat",
+        "mknod",
+        "mknodat",
+        "device-node",
+        "C umask",
+        "public x86 support",
+    ):
+        require(phrase in description, f"static-c-mkfifo description omits {phrase}")
+
+    owners = set(
+        nonempty_strings(artifact["source_owners"], "static-c-mkfifo.source_owners")
+    )
+    for owner in (
+        "compat/upstreams.toml",
+        "libc/Cargo.toml",
+        "libc/src/lib.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/mkfifo.rs",
+        "libc/src/c_abi/x86_64/errno.rs",
+        "libc/src/c_abi/x86_64/syscall.rs",
+        "libc/src/c_abi/x86_64/static_tls.rs",
+        "include/errno.h",
+        "include/stdint.h",
+        "include/sys/stat.h",
+        "include/sys/syscall.h",
+        "include/sys/types.h",
+        "compat/x86_64/mkfifo_header_abi_probe.c",
+        "compat/x86_64/mkfifo_header_abi_probe.cpp",
+        "compat/x86_64/run_mkfifo_header_abi.sh",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/libc_mkfifo_probe.c",
+        "compat/x86_64/libc_mkfifo_start.S",
+        "compat/x86_64/run_libc_mkfifo.sh",
+        "compat/x86_64/aarch64_parity_inventory.py",
+        "compat/x86_64/aarch64_parity_inventory.json",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/README.md",
+        "STATUS.md",
+        "x86-64.md",
+        "scripts/dev-x86_64.sh",
+    ):
+        require(owner in owners, f"static-c-mkfifo source owners omit {owner}")
+
+    prerequisites = nonempty_strings(
+        artifact["x86_abi_prerequisites"], "static-c-mkfifo.x86_abi_prerequisites"
+    )
+    require(
+        any(
+            "mknodat=259" in item
+            and "AT_FDCWD=-100" in item
+            and "rdi/rsi/rdx/r10" in item
+            and "mode_t" in item
+            and "-4095" in item
+            for item in prerequisites
+        ),
+        "static-c-mkfifo must record its Linux syscall register ABI",
+    )
+    require(
+        any(
+            "src/stat/mkfifo.c" in item
+            and "mknod(path, mode | S_IFIFO, 0)" in item
+            and "Linux 5.10" in item
+            for item in prerequisites
+        ),
+        "static-c-mkfifo must record its pinned-musl direct mapping",
+    )
+    require(
+        any(
+            "S_IFIFO=0010000" in item
+            and "umask" in item
+            and "newfstatat" in item
+            and "C umask" in item
+            for item in prerequisites
+        ),
+        "static-c-mkfifo must record its FIFO mode and isolated umask proof",
+    )
+    require(
+        any(
+            "PT_TLS errno datum" in item
+            and "initial-exec TPOFF" in item
+            and "__tls_get_addr" in item
+            for item in prerequisites
+        ),
+        "static-c-mkfifo must record its static TLS boundary",
+    )
+
+    headers = nonempty_strings(
+        artifact["x86_header_prerequisites"], "static-c-mkfifo.x86_header_prerequisites"
+    )
+    require(
+        any(
+            "eight-profile" in item
+            and "sys/stat.h" in item
+            and "sys/types.h" in item
+            and "mkfifo(const char *, mode_t)" in item
+            and "S_IFIFO" in item
+            and "unmangled C++" in item
+            for item in headers
+        ),
+        "static-c-mkfifo must retain its exact project-header ABI boundary",
+    )
+
+    static_exports = set(
+        static_c_abi_export_names(ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt")
+    )
+    require("mkfifo" in static_exports, "static-c-mkfifo must export mkfifo")
+    require(
+        not (static_exports & {"mkfifoat", "mknod", "mknodat"}),
+        "static-c-mkfifo must not add wider special-node exports",
+    )
+    static_root = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+    ).read_text(encoding="utf-8")
+    require(
+        '#[path = "mkfifo.rs"]\nmod mkfifo;' in static_root,
+        "x86 static C ABI must compose the mkfifo leaf",
+    )
+    implementation = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "mkfifo.rs"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "src/stat/mkfifo.c",
+        "fn mkfifo",
+        "S_IFIFO",
+        "AT_FDCWD",
+        "raw_syscall::SYS_MKNODAT",
+        "raw_syscall::syscall4(",
+        "c_status(result)",
+        "mknodat=259",
+    ):
+        require(snippet in implementation, f"mkfifo leaf omits {snippet}")
+    for forbidden in ("fn mkfifoat(", "fn mknod(", "fn mknodat(", "crabc_core", "mimalloc"):
+        require(forbidden not in implementation, f"mkfifo leaf unexpectedly contains {forbidden}")
+    syscall_source = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "syscall.rs"
+    ).read_text(encoding="utf-8")
+    require(
+        "pub(crate) const SYS_MKNODAT: i64 = 259;" in syscall_source,
+        "x86 syscall table must retain mknodat=259",
+    )
+
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence} == {"./scripts/dev-x86_64.sh libc-mkfifo"},
+        "static-c-mkfifo must use the dedicated native command",
+    )
+    scope = evidence[0].get("scope")
+    require(
+        isinstance(scope, str)
+        and all(
+            phrase in scope
+            for phrase in (
+                "`-nostdlib -static`",
+                "mknodat=259",
+                "rdi/rsi/rdx/r10",
+                "stale-errno success",
+                "EEXIST",
+                "EFAULT",
+                "shell umask 000",
+                "mkfifoat/mknod/mknodat",
+                "public x86 support",
+            )
+        ),
+        "static-c-mkfifo evidence must retain its exact static FIFO regression",
+    )
+    header_runner = (
+        ROOT / "compat" / "x86_64" / "run_mkfifo_header_abi.sh"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "MUSL_ROOT=/opt/musl-1.2.6",
+        "EXPECTED_PROFILE_COUNT=8",
+        "sys/stat.h",
+        "sys/types.h",
+        "mkfifo",
+        "unmangled",
+    ):
+        require(snippet in header_runner, f"mkfifo header runner omits {snippet}")
+    runner = (ROOT / "compat" / "x86_64" / "run_libc_mkfifo.sh").read_text(encoding="utf-8")
+    for snippet in (
+        "run_musl_oracle.sh",
+        "run_mkfifo_header_abi.sh",
+        "-nostdlib -static",
+        "--no-undefined",
+        "assert_selected_c_abi_surface",
+        "mknodat=259",
+        "umask 000",
+        "CRABC_MKFIFO_FREESTANDING",
+        "mkfifo candidate exports an unselected special-node entry",
+    ):
+        require(snippet in runner, f"mkfifo runner omits {snippet}")
+
+
 def require_fcntl_status_control_artifact(family: Mapping[str, Any]) -> None:
     """Keep the bounded variadic C fcntl artifact honest and non-promoting."""
     artifacts = require_verified_artifacts(
@@ -30681,6 +30906,7 @@ def validate_ledger(
     require_nanosleep_artifact(by_id["libc.posix-runtime"])
     require_descriptor_entry_artifact(by_id["libc.posix-runtime"])
     require_lchmod_unsupported_slice(by_id["libc.posix-runtime"])
+    require_mkfifo_artifact(by_id["libc.posix-runtime"])
     require_filesystem_access_artifact(by_id["libc.posix-runtime"])
     require_fcntl_status_control_artifact(by_id["libc.posix-runtime"])
     require_fcntl_record_locks_artifact(by_id["libc.posix-runtime"])

@@ -518,6 +518,7 @@ memrchr
 memset
 mincore
 mkdir
+mkfifo
 mktemp
 mlock
 mlock2

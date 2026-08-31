@@ -10,6 +10,8 @@
 //! `fcntl` request; the selected descriptor-I/O leaf uses its named transfer,
 //! lifecycle, and pipe syscalls; the selected vector-I/O leaf uses readv,
 //! writev, and positioned split-offset vector transfer syscalls;
+//! the selected one-entry FIFO leaf uses `mknodat` with fixed current-directory
+//! and zero-device arguments;
 //! the selected filesystem-access leaf uses direct `access`, legacy
 //! `faccessat`, and flags-bearing `faccessat2` requests; and the selected
 //! extended-attribute leaf uses the complete path, no-follow-path, and
@@ -398,6 +400,7 @@ pub(crate) const SYS_WAITID: i64 = 247;
 pub(crate) const SYS_INOTIFY_ADD_WATCH: i64 = 254;
 pub(crate) const SYS_INOTIFY_RM_WATCH: i64 = 255;
 pub(crate) const SYS_MKDIRAT: i64 = 258;
+pub(crate) const SYS_MKNODAT: i64 = 259;
 pub(crate) const SYS_NEWFSTATAT: i64 = 262;
 pub(crate) const SYS_UNLINKAT: i64 = 263;
 pub(crate) const SYS_LINKAT: i64 = 265;

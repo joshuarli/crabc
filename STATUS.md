@@ -1203,6 +1203,20 @@ proves that fixed pre-resolution boundary. It does not select `fchmodat`, path o
 permission policy, directory/extensions behavior, allocation, cancellation,
 family completion, promotion, or public x86 support.
 
+`./scripts/dev-x86_64.sh mkfifo-header-abi` is a separate eight-profile
+C11/C++17 project-header/pinned-musl declaration gate for unconditional
+`mkfifo(const char *, mode_t)`, x86 LP64 `mode_t`, FIFO mode constants, and
+unmangled C++ linkage. Its paired private `./scripts/dev-x86_64.sh libc-mkfifo`
+artifact runs one project-header C fixture through pinned musl 1.2.6 and a
+true `-nostdlib -static` archive candidate. It implements only musl's
+`mode | S_IFIFO` `mkfifo` behavior through direct Linux x86-64 `mknodat=259`
+at `AT_FDCWD=-100` with dev 0; child-local shell `umask 000` makes FIFO type
+and requested mode observable while stale-errno success, duplicate `EEXIST`,
+and null-path `EFAULT` are checked. It does not select the broader
+`filesystem.special-nodes` capability, `mkfifoat`, `mknod`, `mknodat`,
+device-node or C-umask policy, pathname/CWD policy, locale/process state,
+filesystem-family completion, promotion, or public x86 support.
+
 `./scripts/dev-x86_64.sh libc-descriptor-lifecycle` is a separate private
 `static-c-descriptor-lifecycle` composition artifact inside that same planned
 family. It runs one project-header C body through pinned musl and then a

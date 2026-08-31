@@ -287,6 +287,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh sysv-message-shared-memory-header-abi
 ./scripts/dev-x86_64.sh xattr-header-abi
 ./scripts/dev-x86_64.sh pathname-lifecycle-header-abi
+./scripts/dev-x86_64.sh mkfifo-header-abi
 ./scripts/dev-x86_64.sh mm-abi-reference
 ./scripts/dev-x86_64.sh mlock-reference
 ./scripts/dev-x86_64.sh msync-reference
@@ -451,6 +452,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh event-descriptors-header-abi
 ./scripts/dev-x86_64.sh libc-event-descriptors
 ./scripts/dev-x86_64.sh libc-pathname-lifecycle
+./scripts/dev-x86_64.sh libc-mkfifo
 ./scripts/dev-x86_64.sh libc-extended-attributes
 ./scripts/dev-x86_64.sh libc-descriptor-io
 ./scripts/dev-x86_64.sh libc-descriptor-lifecycle
@@ -904,6 +906,20 @@ resolution or a Linux syscall; its candidate-only null-path check demonstrates
 that fixed pre-resolution boundary. It excludes `fchmodat`, path/permission policy,
 directory or filesystem-extension behavior, allocation, cancellation, family
 completion, promotion, and public x86 support.
+
+`mkfifo-header-abi` is an eight-profile C11/C++17 project-header/pinned-musl
+matrix for unconditional `mkfifo(const char *, mode_t)`, x86 LP64 `mode_t`,
+`S_IFMT`/`S_IFIFO` and selected permission constants, and unmangled C++
+linkage. Its paired `libc-mkfifo` private `static-c-mkfifo` artifact runs one
+project-header C fixture first through pinned musl 1.2.6 and then through a
+`-nostdlib -static` candidate. It selects only `mkfifo`: musl's `mode |
+S_IFIFO` reaches direct Linux x86-64 `mknodat=259` at `AT_FDCWD=-100` with
+dev 0. A child-local shell `umask 000` makes FIFO type/requested mode
+observable, while stale errno on success, duplicate `EEXIST`, and null-path
+`EFAULT` remain checked. It does not select `filesystem.special-nodes`,
+`mkfifoat`, `mknod`, `mknodat`, device-node/C-umask/pathname/CWD policy,
+allocation, locale/terminal/environment/process state, family promotion, or
+public x86 support.
 
 `libc-extended-attributes` is the separate private static C runtime artifact
 paired with that header gate. Its project-header fixture first runs through
@@ -4937,6 +4953,7 @@ Apart from the narrowly named `libc-stat-compat`, `libc-credentials`,
 `libc-sysv-message-shared-memory`,
 `libc-event-descriptors`,
 `libc-pathname-lifecycle`,
+`libc-mkfifo`,
 `libc-descriptor-io`,
 `libc-descriptor-lifecycle`,
 `libc-descriptor-pipeline`,
