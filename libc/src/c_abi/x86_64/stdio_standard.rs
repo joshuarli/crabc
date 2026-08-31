@@ -1,15 +1,21 @@
-//! Bounded permanent-standard-stream C stdio core for Linux/x86-64.
+//! Bounded standard and pathname-stream C stdio core for Linux/x86-64.
 //!
-//! This target-local leaf owns only the three process-lifetime stream objects
-//! exported as `stdin`, `stdout`, and `stderr`, plus their selected byte and
-//! block operations: `fgetc`/`getc`/`getchar`, `ungetc`, `fread`,
+//! This target-local leaf owns the three process-lifetime stream objects
+//! exported as `stdin`, `stdout`, and `stderr`, plus one separately selected
+//! fixed pathname-stream slot. The permanent streams expose their selected
+//! byte/block operations: `fgetc`/`getc`/`getchar`, `ungetc`, `fread`,
 //! `fputc`/`putc`/`putchar`, `fwrite`, `fflush`, `feof`, `ferror`,
-//! `clearerr`, and `fileno`. The only valid non-null `FILE *` arguments are
-//! those three exported pointers. It is a deliberately lock-free,
+//! `clearerr`, and `fileno`. The only valid non-null `FILE *` arguments for
+//! that permanent-standard-stream block are those three exported pointers.
+//! The sibling pathname block admits only one active `fopen("r")` or
+//! `fopen("w+")` stream at a time, its exact `fclose`, pre-I/O caller-buffered
+//! `_IOFBF` configuration, and its selected `fseek`/`fseeko`/`ftell`/`ftello`/
+//! `rewind`/`fgetpos`/`fsetpos` routes. It is a deliberately lock-free,
 //! externally-serialized state machine: it does not select concurrent stream
-//! access, `flockfile`, unlocked entry points, path streams, stream
-//! allocation, formatters/scanners, seeking, buffer reconfiguration, wide
-//! streams, callbacks, or an open-file registry.
+//! access, `flockfile`, unlocked entry points, `fdopen`, `freopen`, append
+//! modes, dynamic stream allocation, a general stream registry,
+//! formatters/scanners, line or unbuffered configuration, wide streams,
+//! callbacks, or an open-file registry.
 //!
 //! ## Fixed source and license provenance
 //!
@@ -28,6 +34,7 @@
 //! | `src/stdio/{__stdio_write,__overflow,__towrite}.c` | buffered/direct output and musl-shaped error/discard state |
 //! | `src/stdio/{fread,fwrite,fgetc,getc,getchar,fputc,putc,putchar,ungetc}.c` | selected public byte/block entries |
 //! | `src/stdio/{fflush,feof,ferror,clearerr,fileno}.c` | selected flush, status, and descriptor entries |
+//! | `src/stdio/{fopen,fclose,setvbuf,fseek,ftell,fgetpos,fsetpos,rewind}.c` | one fixed pathname-stream lifecycle, caller-buffered full buffering, and logical-position routes |
 //!
 //! The intentional boundaries are explicit. Musl's private x86 `FILE` record
 //! is a 232-byte internal layout tied to its full stream list, lock state,
@@ -35,8 +42,11 @@
 //! target-private typed state record for each permanently allocated stream;
 //! public `FILE` remains opaque. It retains the observable `UNGET` headroom,
 //! input lookahead, musl-shaped buffered-output discard-on-error behavior,
-//! error/EOF state, and selected
-//! C entry contracts without importing those unselected owners. `stdout`
+//! error/EOF state, and selected C entry contracts without importing those
+//! unselected owners. The pathname sibling deliberately reuses one static
+//! state record and one static `BUFSIZ + UNGET` backing object rather than
+//! importing musl's allocation-backed open-file list. It is therefore one
+//! regular-file pathname stream, not a generic `FILE` implementation. `stdout`
 //! is exercised only through explicit `fflush`; terminal-sensitive automatic
 //! newline flushing is not selected. The existing static `exit` lifecycle
 //! deliberately does not call this module, so ordinary-exit flushing is also
@@ -55,7 +65,7 @@ use core::{
     ptr,
 };
 
-use super::{c_ssize_status, errno, raw_syscall};
+use super::{c_off_status, c_ssize_status, c_status, errno, raw_syscall};
 
 const BUFSIZ: usize = 1024;
 const UNGET: usize = 8;
@@ -63,6 +73,8 @@ const STREAM_STORAGE: usize = BUFSIZ + UNGET;
 const EOF: c_int = -1;
 const EIO: c_int = 5;
 const EOVERFLOW: c_int = 75;
+const EINVAL: c_int = 22;
+const EMFILE: c_int = 24;
 
 // These are the selected musl stdio flags. Keeping their source values makes
 // the public nonzero `feof`/`ferror` results and internal direction checks
@@ -72,6 +84,21 @@ const F_NORD: u32 = 4;
 const F_NOWR: u32 = 8;
 const F_EOF: u32 = 16;
 const F_ERR: u32 = 32;
+const F_PATH: u32 = 64;
+const F_ACTIVE: u32 = 128;
+const F_EXTERNAL_BUFFER: u32 = 256;
+const F_IO_STARTED: u32 = 512;
+
+const O_RDONLY: c_int = 0;
+const O_RDWR: c_int = 2;
+const O_CREAT: c_int = 0o100;
+const O_TRUNC: c_int = 0o1000;
+const O_LARGEFILE: c_int = 0o100000;
+
+const SEEK_SET: c_int = 0;
+const SEEK_CUR: c_int = 1;
+const SEEK_END: c_int = 2;
+const _IOFBF: c_int = 0;
 
 #[repr(C)]
 struct IoVec {
@@ -82,7 +109,7 @@ struct IoVec {
 const _: [(); 16] = [(); core::mem::size_of::<IoVec>()];
 const _: [(); 8] = [(); core::mem::align_of::<IoVec>()];
 
-/// Private state of one permanent standard stream.
+/// Private state of one owned permanent or fixed pathname stream.
 ///
 /// The public C `FILE` spelling is intentionally opaque. This representation
 /// is therefore target-local implementation state, not an installed layout or
@@ -117,10 +144,15 @@ static mut STDOUT_STORAGE: [u8; STREAM_STORAGE] = [0; STREAM_STORAGE];
 // Musl's permanent stderr record is unbuffered, but it still reserves the
 // eight-byte pushback prefix in its static data shape.
 static mut STDERR_STORAGE: [u8; UNGET] = [0; UNGET];
+// The pathname vertical deliberately has exactly one owned stream record and
+// one static backing object. This is a fixed lifecycle slot, not a general
+// stream allocator or registry.
+static mut PATH_STREAM_STORAGE: [u8; STREAM_STORAGE] = [0; STREAM_STORAGE];
 
 static mut STDIN_STREAM: StandardStream = StandardStream::new(0, F_PERM | F_NOWR);
 static mut STDOUT_STREAM: StandardStream = StandardStream::new(1, F_PERM | F_NORD);
 static mut STDERR_STREAM: StandardStream = StandardStream::new(2, F_PERM | F_NORD);
+static mut PATH_STREAM: StandardStream = StandardStream::new(-1, F_PATH);
 static mut STANDARD_STREAMS_READY: bool = false;
 
 /// C's permanent input stream data symbol.
@@ -171,33 +203,210 @@ unsafe fn ensure_standard_streams() {
 }
 
 #[inline]
+fn is_permanent_stream(stream: *const StandardStream) -> bool {
+    stream == ptr::addr_of!(STDIN_STREAM)
+        || stream == ptr::addr_of!(STDOUT_STREAM)
+        || stream == ptr::addr_of!(STDERR_STREAM)
+}
+
+#[inline]
+unsafe fn is_active_path_stream(stream: *const StandardStream) -> bool {
+    stream == ptr::addr_of!(PATH_STREAM)
+        // SAFETY: pointer equality above proves the record is the one static
+        // pathname slot before its flags are inspected.
+        && unsafe { (*stream).flags & (F_PATH | F_ACTIVE) == F_PATH | F_ACTIVE }
+}
+
+#[inline]
+unsafe fn is_selected_stream(stream: *const StandardStream) -> bool {
+    is_permanent_stream(stream)
+        // SAFETY: the path helper dereferences only the exact private slot.
+        || unsafe { is_active_path_stream(stream) }
+}
+
+#[inline]
+unsafe fn is_path_stream(stream: *const StandardStream) -> bool {
+    // SAFETY: this is the exact private pathname slot predicate.
+    unsafe { is_active_path_stream(stream) }
+}
+
+/// Publish a selected-stream argument failure without dereferencing an
+/// arbitrary `FILE *`. The permanent block's public contract still requires
+/// its three exported objects; the path block uses this for its closed slot.
+#[inline]
+unsafe fn reject_stream() {
+    // SAFETY: the x86 static C ABI owns this calling thread's errno slot.
+    unsafe { errno::set_errno(EINVAL) };
+}
+
+/// Install the one private pathname slot after `open(2)` succeeds.
+///
+/// The caller has already established that the slot is inactive. The backing
+/// object has process lifetime and supplies eight bytes of pushback headroom,
+/// exactly like the permanent input buffer. It is never exposed as a public
+/// `FILE` layout or reused as a general allocator.
+unsafe fn initialize_path_stream(file_descriptor: c_int, flags: u32) -> *mut StandardStream {
+    // SAFETY: the single private slot and its static backing object are owned
+    // by this externally serialized pathname-stream lifecycle.
+    unsafe {
+        let buffer = ptr::addr_of_mut!(PATH_STREAM_STORAGE).cast::<u8>().add(UNGET);
+        PATH_STREAM.flags = F_PATH | F_ACTIVE | flags;
+        PATH_STREAM.file_descriptor = file_descriptor;
+        PATH_STREAM.buffer = buffer;
+        PATH_STREAM.capacity = BUFSIZ;
+        PATH_STREAM.read_position = buffer;
+        PATH_STREAM.read_end = buffer;
+        PATH_STREAM.write_position = buffer;
+        ptr::addr_of_mut!(PATH_STREAM)
+    }
+}
+
+/// Forget a closed pathname stream after its descriptor lifecycle ends.
+///
+/// No caller-held pointer remains a valid selected stream after this reset.
+/// The static backing bytes remain process-owned and are reinitialized by the
+/// next successful `fopen` before any read or write consumes them.
+unsafe fn reset_path_stream() {
+    // SAFETY: only `fclose` reaches this after it has claimed the exact slot.
+    unsafe {
+        PATH_STREAM = StandardStream::new(-1, F_PATH);
+    }
+}
+
+#[derive(Clone, Copy)]
+enum PathOpenMode {
+    Read,
+    WriteUpdate,
+}
+
+impl PathOpenMode {
+    const fn open_flags(self) -> c_int {
+        match self {
+            Self::Read => O_RDONLY | O_LARGEFILE,
+            Self::WriteUpdate => O_RDWR | O_CREAT | O_TRUNC | O_LARGEFILE,
+        }
+    }
+
+    const fn stream_flags(self) -> u32 {
+        match self {
+            Self::Read => F_NOWR,
+            Self::WriteUpdate => 0,
+        }
+    }
+}
+
+/// Parse the exact two pathname-stream mode spellings selected by this leaf.
+///
+/// The bounded vertical intentionally does not accept append, exclusive,
+/// close-on-exec, binary-extension, or broad mode-parser behavior. Those need
+/// their own source-mapped lifecycle evidence before they can join this slot.
+unsafe fn parse_path_open_mode(mode: *const core::ffi::c_char) -> Option<PathOpenMode> {
+    if mode.is_null() {
+        return None;
+    }
+    // SAFETY: C's `fopen` contract supplies a readable NUL-terminated mode
+    // string. Inspect each prefix byte only after the preceding byte selects a
+    // spelling that requires it: an empty object need contain only `\0`, and
+    // the exact `"r"` object need contain only `r\0`. All other strings fail
+    // as EINVAL without an unbounded scan.
+    unsafe {
+        match *mode as u8 {
+            b'r' if *mode.add(1) == 0 => Some(PathOpenMode::Read),
+            b'w' if *mode.add(1) as u8 == b'+' && *mode.add(2) == 0 => {
+                Some(PathOpenMode::WriteUpdate)
+            }
+            _ => None,
+        }
+    }
+}
+
+/// Synchronize a selected pathname stream before input after buffered output.
+///
+/// This intentionally covers only the one regular-file `w+` route. The
+/// permanent streams are direction-fixed, so they never acquire this path.
+unsafe fn prepare_path_read(stream: *mut StandardStream) -> bool {
+    // SAFETY: path predicate dereferences only the exact private slot.
+    if !unsafe { is_path_stream(stream) } || !unsafe { is_writable(stream) } {
+        return true;
+    }
+    // SAFETY: the selected pathname slot is initialized and externally
+    // serialized; flush_output owns the pending static/caller buffer range.
+    unsafe { flush_output(stream) != EOF }
+}
+
+/// Discard prefetched input before a pathname-stream output operation.
+///
+/// The kernel position follows the buffered refill, while C's logical stream
+/// position remains at `read_position`; `lseek(-unread, SEEK_CUR)` restores
+/// the selected regular-file descriptor to that logical position.
+unsafe fn prepare_path_write(stream: *mut StandardStream) -> bool {
+    // SAFETY: path predicate dereferences only the exact private slot.
+    if !unsafe { is_path_stream(stream) } {
+        return true;
+    }
+    let unread = unsafe { (*stream).read_end.offset_from((*stream).read_position) };
+    if unread == 0 {
+        return true;
+    }
+    let result = unsafe {
+        raw_syscall::syscall3(
+            raw_syscall::SYS_LSEEK,
+            i64::from((*stream).file_descriptor),
+            -(unread as i64),
+            i64::from(SEEK_CUR),
+        )
+    };
+    if c_off_status(result) < 0 {
+        // SAFETY: the selected path slot owns this stream-local error marker.
+        unsafe { mark_error(stream) };
+        return false;
+    }
+    // SAFETY: the seek has synchronized the descriptor to the logical cursor;
+    // reset only the private initialized buffer range.
+    unsafe {
+        (*stream).read_position = (*stream).buffer;
+        (*stream).read_end = (*stream).buffer;
+    }
+    true
+}
+
+#[inline]
+unsafe fn mark_path_io_started(stream: *mut StandardStream) {
+    // SAFETY: path predicate dereferences only the exact private slot.
+    if unsafe { is_path_stream(stream) } {
+        // SAFETY: caller owns the selected pathname stream state transition.
+        unsafe { (*stream).flags |= F_IO_STARTED };
+    }
+}
+
+#[inline]
 unsafe fn mark_error(stream: *mut StandardStream) {
-    // SAFETY: caller owns one selected permanent stream state record.
+    // SAFETY: caller owns one selected stream state record.
     unsafe { (*stream).flags |= F_ERR };
 }
 
 #[inline]
 unsafe fn is_readable(stream: *const StandardStream) -> bool {
-    // SAFETY: caller owns one selected permanent stream state record.
+    // SAFETY: caller owns one selected stream state record.
     unsafe { (*stream).flags & F_NORD == 0 }
 }
 
 #[inline]
 unsafe fn is_writable(stream: *const StandardStream) -> bool {
-    // SAFETY: caller owns one selected permanent stream state record.
+    // SAFETY: caller owns one selected stream state record.
     unsafe { (*stream).flags & F_NOWR == 0 }
 }
 
-/// Refill a readable permanent stream using musl's caller-plus-lookahead
+/// Refill a readable selected stream using musl's caller-plus-lookahead
 /// shape. When more than one byte is requested, Linux reads all but the final
 /// requested byte directly into the caller and retains trailing input in the
-/// permanent stream buffer. This preserves byte/block operation ordering
+/// owned stream buffer. This preserves byte/block operation ordering
 /// without reducing fgetc to an unbuffered one-byte syscall loop.
 ///
 /// # Safety
 ///
 /// `destination` must designate `length` writable bytes when `length` is
-/// nonzero. `stream` must be one selected permanent standard-stream record.
+/// nonzero. `stream` must be one selected owned stream record.
 unsafe fn refill_into(
     stream: *mut StandardStream,
     destination: *mut u8,
@@ -224,7 +433,7 @@ unsafe fn refill_into(
         )
     };
     if capacity == 0 {
-        // SAFETY: a readable permanent stream always has static storage. This
+        // SAFETY: every readable selected stream has owned or caller storage. This
         // branch remains defensive if a malformed internal record reaches it.
         unsafe {
             errno::set_errno(EIO);
@@ -302,21 +511,34 @@ unsafe fn refill_into(
     }
 }
 
-/// Read one byte from the selected permanent input stream.
+/// Read one byte from a selected input stream.
 ///
 /// # Safety
 ///
-/// `stream` must be one of the three exported permanent stream pointers and
-/// external callers must serialize all access to that stream.
+/// `stream` must be one exported permanent pointer or the still-active pointer
+/// returned by this module's `fopen`; callers must serialize its access.
 unsafe fn read_byte(stream: *mut StandardStream) -> c_int {
     // SAFETY: this initializes only permanent private state before dereference.
     unsafe { ensure_standard_streams() };
+    // SAFETY: this predicate dereferences only the exact static pathname slot.
+    if !unsafe { is_selected_stream(stream) } {
+        // SAFETY: no caller stream was dereferenced on this closed boundary.
+        unsafe { reject_stream() };
+        return EOF;
+    }
     if !unsafe { is_readable(stream) } {
         // Wrong-direction I/O is outside the selected stream contract, but a
         // local error marker prevents it from looking like ordinary EOF.
         unsafe { mark_error(stream) };
         return EOF;
     }
+    // SAFETY: output pending in the one `w+` path slot must reach the
+    // descriptor before a selected input route observes it.
+    if !unsafe { prepare_path_read(stream) } {
+        return EOF;
+    }
+    // SAFETY: only the fixed pathname slot records this local transition.
+    unsafe { mark_path_io_started(stream) };
     // SAFETY: selected stream state is initialized; the buffered range was
     // produced by a prior successful readv/read or a successful ungetc.
     unsafe {
@@ -328,7 +550,7 @@ unsafe fn read_byte(stream: *mut StandardStream) -> c_int {
     }
 
     let mut byte = 0u8;
-    // SAFETY: one local writable byte and a selected permanent stream satisfy
+    // SAFETY: one local writable byte and a selected stream satisfy
     // refill_into's complete raw-I/O contract.
     if unsafe { refill_into(stream, ptr::addr_of_mut!(byte), 1) } == 0 {
         EOF
@@ -337,18 +559,18 @@ unsafe fn read_byte(stream: *mut StandardStream) -> c_int {
     }
 }
 
-/// Flush the currently buffered output of one selected permanent stream.
+/// Flush the currently buffered output of one selected stream.
 ///
 /// # Safety
 ///
-/// `stream` must be one selected permanent standard-stream record. Its state
-/// is externally serialized for this lock-free first artifact.
+/// `stream` must be one selected owned stream record. Its state is externally
+/// serialized for this lock-free artifact.
 unsafe fn flush_output(stream: *mut StandardStream) -> c_int {
-    // SAFETY: the caller supplies one initialized permanent stream record.
+    // SAFETY: the caller supplies one initialized selected stream record.
     if !unsafe { is_writable(stream) } {
         return 0;
     }
-    // SAFETY: permanent stream output storage and pointer positions were
+    // SAFETY: selected stream output storage and pointer positions were
     // initialized together; their difference is the currently pending prefix.
     let pending = unsafe {
         (*stream)
@@ -397,19 +619,32 @@ unsafe fn flush_output(stream: *mut StandardStream) -> c_int {
     0
 }
 
-/// Buffer or directly write one byte to one selected permanent output stream.
+/// Buffer or directly write one byte to one selected output stream.
 ///
 /// # Safety
 ///
-/// `stream` must be one of the permanent exported stream pointers and callers
-/// must externally serialize stream access.
+/// `stream` must be one exported permanent pointer or the still-active pointer
+/// returned by this module's `fopen`; callers must serialize its access.
 unsafe fn write_byte(stream: *mut StandardStream, byte: u8) -> c_int {
     // SAFETY: this initializes permanent private state before dereference.
     unsafe { ensure_standard_streams() };
+    // SAFETY: this predicate dereferences only the exact static pathname slot.
+    if !unsafe { is_selected_stream(stream) } {
+        // SAFETY: no caller stream was dereferenced on this closed boundary.
+        unsafe { reject_stream() };
+        return EOF;
+    }
     if !unsafe { is_writable(stream) } {
         unsafe { mark_error(stream) };
         return EOF;
     }
+    // SAFETY: only the selected pathname `w+` slot can retain input ahead of
+    // its logical cursor; its helper seeks that descriptor back before write.
+    if !unsafe { prepare_path_write(stream) } {
+        return EOF;
+    }
+    // SAFETY: only the fixed pathname slot records this local transition.
+    unsafe { mark_path_io_started(stream) };
     // SAFETY: state is initialized and capacity belongs to static backing.
     let capacity = unsafe { (*stream).capacity };
     if capacity == 0 {
@@ -442,69 +677,90 @@ unsafe fn write_byte(stream: *mut StandardStream, byte: u8) -> c_int {
     c_int::from(byte)
 }
 
-/// Return the descriptor owned by one selected permanent stream.
+/// Return the descriptor owned by one selected stream.
 ///
 /// # Safety
 ///
-/// `stream` must be one of `stdin`, `stdout`, or `stderr`.
+/// `stream` must be one of `stdin`, `stdout`, or `stderr`, or the still-active
+/// pointer returned by this module's `fopen`.
 #[no_mangle]
 pub unsafe extern "C" fn fileno(stream: *mut StandardStream) -> c_int {
     // SAFETY: first-use initialization cannot move permanent stream objects.
     unsafe { ensure_standard_streams() };
+    // SAFETY: this predicate dereferences only the exact static pathname slot.
+    if !unsafe { is_selected_stream(stream) } {
+        // SAFETY: no caller stream was dereferenced on this closed boundary.
+        unsafe { reject_stream() };
+        return -1;
+    }
     // SAFETY: the selected public contract admits only the permanent pointers.
     unsafe { (*stream).file_descriptor }
 }
 
-/// Flush one permanent output stream, or every owned output stream for NULL.
+/// Flush one selected output stream, or every owned output stream for NULL.
 ///
 /// Input-stream flushing, dynamic stream lists, terminal line-buffer policy,
 /// and ordinary-exit flushing are outside this explicit-flush-only artifact.
 ///
 /// # Safety
 ///
-/// A non-null `stream` must be one of `stdin`, `stdout`, or `stderr`; callers
-/// must externally serialize access to every selected stream being flushed.
+/// A non-null `stream` must be one permanent exported pointer or the
+/// still-active pointer returned by this module's `fopen`; callers must
+/// externally serialize every selected stream affected by the call.
 #[no_mangle]
 pub unsafe extern "C" fn fflush(stream: *mut StandardStream) -> c_int {
     // SAFETY: permanent static state does not require a CRT initializer.
     unsafe { ensure_standard_streams() };
     if stream.is_null() {
-        // SAFETY: these are the only output streams owned by this first
-        // artifact. Preserve both flush attempts like musl's global walk.
+        // SAFETY: these are the only output streams this module owns. Preserve
+        // every flush attempt like musl's global walk, including the separately
+        // selected path slot when its externally serialized lifecycle is live.
         let stdout_status = unsafe { flush_output(ptr::addr_of_mut!(STDOUT_STREAM)) };
         let stderr_status = unsafe { flush_output(ptr::addr_of_mut!(STDERR_STREAM)) };
-        if stdout_status == EOF || stderr_status == EOF {
+        let path_status = if unsafe { is_active_path_stream(ptr::addr_of!(PATH_STREAM)) } {
+            unsafe { flush_output(ptr::addr_of_mut!(PATH_STREAM)) }
+        } else {
+            0
+        };
+        if stdout_status == EOF || stderr_status == EOF || path_status == EOF {
             EOF
         } else {
             0
         }
     } else {
-        // SAFETY: caller supplies one selected permanent stream pointer.
+        // SAFETY: this predicate dereferences only the exact static pathname
+        // slot; permanent pointers are compared without dereference.
+        if !unsafe { is_selected_stream(stream) } {
+            // SAFETY: no caller stream was dereferenced on this closed boundary.
+            unsafe { reject_stream() };
+            return EOF;
+        }
+        // SAFETY: caller supplies one selected stream pointer.
         unsafe { flush_output(stream) }
     }
 }
 
-/// Read one byte from a selected permanent stream.
+/// Read one byte from a selected stream.
 ///
 /// # Safety
 ///
-/// `stream` must be one exported permanent stream pointer and its access must
-/// be externally serialized.
+/// `stream` must be one permanent exported pointer or the still-active pointer
+/// returned by this module's `fopen`; its access must be externally serialized.
 #[no_mangle]
 pub unsafe extern "C" fn fgetc(stream: *mut StandardStream) -> c_int {
-    // SAFETY: caller supplies the selected permanent stream state contract.
+    // SAFETY: caller supplies the selected stream state contract.
     unsafe { read_byte(stream) }
 }
 
-/// C's `getc` function entry for one selected permanent stream.
+/// C's `getc` function entry for one selected stream.
 ///
 /// # Safety
 ///
-/// `stream` must be one exported permanent stream pointer and its access must
-/// be externally serialized.
+/// `stream` must be one permanent exported pointer or the still-active pointer
+/// returned by this module's `fopen`; its access must be externally serialized.
 #[no_mangle]
 pub unsafe extern "C" fn getc(stream: *mut StandardStream) -> c_int {
-    // SAFETY: preserves the fgetc selected permanent-stream contract.
+    // SAFETY: preserves the fgetc selected-stream contract.
     unsafe { fgetc(stream) }
 }
 
@@ -527,6 +783,12 @@ pub unsafe extern "C" fn ungetc(character: c_int, stream: *mut StandardStream) -
     // SAFETY: permanent state must exist before reading the static buffer
     // cursor and UNGET prefix.
     unsafe { ensure_standard_streams() };
+    // SAFETY: this predicate dereferences only the exact static pathname slot.
+    if !unsafe { is_selected_stream(stream) } {
+        // SAFETY: no caller stream was dereferenced on this closed boundary.
+        unsafe { reject_stream() };
+        return EOF;
+    }
     if character == EOF {
         return EOF;
     }
@@ -534,6 +796,15 @@ pub unsafe extern "C" fn ungetc(character: c_int, stream: *mut StandardStream) -
         // Musl enters read mode before it decides whether pushback storage is
         // available. A permanent output stream therefore records F_ERR rather
         // than appearing indistinguishable from an input pushback-limit miss.
+        unsafe { mark_error(stream) };
+        return EOF;
+    }
+    // The pathname sibling intentionally selects ordinary byte/block transfer
+    // and logical positions, not its own pushback semantics. In particular a
+    // caller buffer has no private headroom, so reject all path-slot ungetc
+    // calls rather than manufacture a second state model or an out-of-bounds
+    // prefix.
+    if unsafe { is_path_stream(stream) } {
         unsafe { mark_error(stream) };
         return EOF;
     }
@@ -548,16 +819,18 @@ pub unsafe extern "C" fn ungetc(character: c_int, stream: *mut StandardStream) -
         (*stream).read_position.write(character as u8);
         (*stream).flags &= !F_EOF;
     }
+    // SAFETY: only the fixed pathname slot records this local transition.
+    unsafe { mark_path_io_started(stream) };
     c_int::from(character as u8)
 }
 
-/// Read complete elements from one selected permanent input stream.
+/// Read complete elements from one selected input stream.
 ///
 /// # Safety
 ///
 /// `destination` must designate `size * count` writable bytes when both are
-/// nonzero. `stream` must be one selected permanent stream pointer and its
-/// access must be externally serialized.
+/// nonzero. `stream` must be one permanent exported pointer or the still-active
+/// pointer returned by this module's `fopen`; its access must be serialized.
 #[no_mangle]
 pub unsafe extern "C" fn fread(
     destination: *mut c_void,
@@ -578,13 +851,26 @@ pub unsafe extern "C" fn fread(
         }
         return 0;
     };
-    // SAFETY: selected permanent state exists before its direction and buffer
+    // SAFETY: selected stream state exists before its direction and buffer
     // fields are observed.
     unsafe { ensure_standard_streams() };
+    // SAFETY: this predicate dereferences only the exact static pathname slot.
+    if !unsafe { is_selected_stream(stream) } {
+        // SAFETY: no caller stream was dereferenced on this closed boundary.
+        unsafe { reject_stream() };
+        return 0;
+    }
     if !unsafe { is_readable(stream) } {
         unsafe { mark_error(stream) };
         return 0;
     }
+    // SAFETY: pending output in the selected `w+` pathname slot is flushed
+    // before its read boundary consumes descriptor bytes.
+    if !unsafe { prepare_path_read(stream) } {
+        return 0;
+    }
+    // SAFETY: only the fixed pathname slot records this local transition.
+    unsafe { mark_path_io_started(stream) };
 
     let mut received = 0usize;
     let destination = destination.cast::<u8>();
@@ -619,27 +905,27 @@ pub unsafe extern "C" fn fread(
     received / size
 }
 
-/// Write one byte to a selected permanent output stream.
+/// Write one byte to a selected output stream.
 ///
 /// # Safety
 ///
-/// `stream` must be one exported permanent stream pointer and its access must
-/// be externally serialized.
+/// `stream` must be one permanent exported pointer or the still-active pointer
+/// returned by this module's `fopen`; its access must be externally serialized.
 #[no_mangle]
 pub unsafe extern "C" fn fputc(character: c_int, stream: *mut StandardStream) -> c_int {
-    // SAFETY: preserves the selected permanent-output-stream contract.
+    // SAFETY: preserves the selected output-stream contract.
     unsafe { write_byte(stream, character as u8) }
 }
 
-/// C's `putc` function entry for a selected permanent output stream.
+/// C's `putc` function entry for a selected output stream.
 ///
 /// # Safety
 ///
-/// `stream` must be one exported permanent stream pointer and its access must
-/// be externally serialized.
+/// `stream` must be one permanent exported pointer or the still-active pointer
+/// returned by this module's `fopen`; its access must be externally serialized.
 #[no_mangle]
 pub unsafe extern "C" fn putc(character: c_int, stream: *mut StandardStream) -> c_int {
-    // SAFETY: preserves the fputc selected permanent-stream contract.
+    // SAFETY: preserves the fputc selected-stream contract.
     unsafe { fputc(character, stream) }
 }
 
@@ -651,13 +937,13 @@ pub unsafe extern "C" fn putchar(character: c_int) -> c_int {
     unsafe { fputc(character, ptr::addr_of_mut!(STDOUT_STREAM)) }
 }
 
-/// Write complete elements to one selected permanent output stream.
+/// Write complete elements to one selected output stream.
 ///
 /// # Safety
 ///
 /// `source` must designate `size * count` readable bytes when both are
-/// nonzero. `stream` must be one selected permanent stream pointer and its
-/// access must be externally serialized.
+/// nonzero. `stream` must be one permanent exported pointer or the still-active
+/// pointer returned by this module's `fopen`; its access must be serialized.
 #[no_mangle]
 pub unsafe extern "C" fn fwrite(
     source: *const c_void,
@@ -677,12 +963,25 @@ pub unsafe extern "C" fn fwrite(
         }
         return 0;
     };
-    // SAFETY: permanent stream state must exist before its direction is read.
+    // SAFETY: selected stream state must exist before its direction is read.
     unsafe { ensure_standard_streams() };
+    // SAFETY: this predicate dereferences only the exact static pathname slot.
+    if !unsafe { is_selected_stream(stream) } {
+        // SAFETY: no caller stream was dereferenced on this closed boundary.
+        unsafe { reject_stream() };
+        return 0;
+    }
     if !unsafe { is_writable(stream) } {
         unsafe { mark_error(stream) };
         return 0;
     }
+    // SAFETY: selected pathname input lookahead must be rewound before an
+    // update-stream write reaches the descriptor.
+    if !unsafe { prepare_path_write(stream) } {
+        return 0;
+    }
+    // SAFETY: only the fixed pathname slot records this local transition.
+    unsafe { mark_path_io_started(stream) };
 
     let source = source.cast::<u8>();
     let mut written = 0usize;
@@ -698,42 +997,433 @@ pub unsafe extern "C" fn fwrite(
     written / size
 }
 
-/// Return the selected EOF-state marker for one permanent stream.
+/// Return the selected EOF-state marker for one selected stream.
 ///
 /// # Safety
 ///
-/// `stream` must be one exported permanent stream pointer.
+/// `stream` must be one permanent exported pointer or the still-active pointer
+/// returned by this module's `fopen`.
 #[no_mangle]
 pub unsafe extern "C" fn feof(stream: *mut StandardStream) -> c_int {
     // SAFETY: permanent state must exist before the selected flag is read.
     unsafe { ensure_standard_streams() };
-    // SAFETY: caller supplies one selected permanent stream pointer.
+    // SAFETY: this predicate dereferences only the exact static pathname slot.
+    if !unsafe { is_selected_stream(stream) } {
+        // SAFETY: no caller stream was dereferenced on this closed boundary.
+        unsafe { reject_stream() };
+        return 0;
+    }
+    // SAFETY: caller supplies one selected stream pointer.
     unsafe { ((*stream).flags & F_EOF) as c_int }
 }
 
-/// Return the selected error-state marker for one permanent stream.
+/// Return the selected error-state marker for one selected stream.
 ///
 /// # Safety
 ///
-/// `stream` must be one exported permanent stream pointer.
+/// `stream` must be one permanent exported pointer or the still-active pointer
+/// returned by this module's `fopen`.
 #[no_mangle]
 pub unsafe extern "C" fn ferror(stream: *mut StandardStream) -> c_int {
     // SAFETY: permanent state must exist before the selected flag is read.
     unsafe { ensure_standard_streams() };
-    // SAFETY: caller supplies one selected permanent stream pointer.
+    // SAFETY: this predicate dereferences only the exact static pathname slot.
+    if !unsafe { is_selected_stream(stream) } {
+        // SAFETY: no caller stream was dereferenced on this closed boundary.
+        unsafe { reject_stream() };
+        return 0;
+    }
+    // SAFETY: caller supplies one selected stream pointer.
     unsafe { ((*stream).flags & F_ERR) as c_int }
 }
 
-/// Clear EOF and error markers on one permanent stream.
+/// Clear EOF and error markers on one selected stream.
 ///
 /// # Safety
 ///
-/// `stream` must be one exported permanent stream pointer and its access must
-/// be externally serialized.
+/// `stream` must be one permanent exported pointer or the still-active pointer
+/// returned by this module's `fopen`; its access must be externally serialized.
 #[no_mangle]
 pub unsafe extern "C" fn clearerr(stream: *mut StandardStream) {
     // SAFETY: permanent state must exist before its selected flags are reset.
     unsafe { ensure_standard_streams() };
-    // SAFETY: caller supplies one selected permanent stream pointer.
+    // SAFETY: this predicate dereferences only the exact static pathname slot.
+    if !unsafe { is_selected_stream(stream) } {
+        // SAFETY: no caller stream was dereferenced on this closed boundary.
+        unsafe { reject_stream() };
+        return;
+    }
+    // SAFETY: caller supplies one selected stream pointer.
     unsafe { (*stream).flags &= !(F_EOF | F_ERR) };
+}
+
+// -------------------------------------------------------------------------
+// One fixed pathname-stream / logical-position sibling
+// -------------------------------------------------------------------------
+
+/// Open the one selected pathname stream.
+///
+/// Only an externally serialized regular-file `"r"` or `"w+"` route is
+/// selected. `"w+"` maps directly to Linux `open` with
+/// `O_RDWR|O_CREAT|O_TRUNC|O_LARGEFILE` and mode `0666`; `"r"` maps to
+/// `O_RDONLY|O_LARGEFILE`. The one static slot is intentionally not a stream
+/// allocator: a second live path stream fails with `EMFILE`. Pathname lifetime,
+/// resolution races, umask, and special-file behavior remain Linux-owned.
+///
+/// # Safety
+///
+/// `path` and `mode` must point to readable NUL-terminated C strings for this
+/// call. The caller must serialize the entire selected pathname-stream
+/// lifecycle and close a successful result through this module's `fclose`.
+#[no_mangle]
+pub unsafe extern "C" fn fopen(
+    path: *const core::ffi::c_char,
+    mode: *const core::ffi::c_char,
+) -> *mut StandardStream {
+    if path.is_null() {
+        // SAFETY: the x86 static C ABI owns this calling thread's errno slot.
+        unsafe { errno::set_errno(EINVAL) };
+        return ptr::null_mut();
+    }
+    let Some(open_mode) = (unsafe { parse_path_open_mode(mode) }) else {
+        // SAFETY: the x86 static C ABI owns this calling thread's errno slot.
+        unsafe { errno::set_errno(EINVAL) };
+        return ptr::null_mut();
+    };
+    // SAFETY: this predicate dereferences only the exact private pathname slot.
+    if unsafe { is_active_path_stream(ptr::addr_of!(PATH_STREAM)) } {
+        // SAFETY: one fixed active slot is the selected capacity boundary.
+        unsafe { errno::set_errno(EMFILE) };
+        return ptr::null_mut();
+    }
+
+    // SAFETY: C's fopen path contract supplies a valid NUL-terminated pathname
+    // for Linux's raw `open` syscall. The selected write route owns the fixed
+    // `0666` creation mode and leaves umask policy to the kernel.
+    let descriptor = unsafe {
+        raw_syscall::syscall3(
+            raw_syscall::SYS_OPEN,
+            path as usize as i64,
+            i64::from(open_mode.open_flags()),
+            0o666,
+        )
+    };
+    if descriptor < 0 {
+        let _ = c_status(descriptor);
+        return ptr::null_mut();
+    }
+
+    // Linux x86 file descriptors fit in `int`; retain a checked narrowing so
+    // a malformed future raw boundary cannot silently create an invalid FILE.
+    if descriptor > i64::from(c_int::MAX) {
+        let _ = unsafe { raw_syscall::syscall1(raw_syscall::SYS_CLOSE, descriptor) };
+        // SAFETY: this impossible selected descriptor value maps to overflow.
+        unsafe { errno::set_errno(EOVERFLOW) };
+        return ptr::null_mut();
+    }
+    // SAFETY: the inactive one-slot predicate above and externally serialized
+    // lifecycle grant this call ownership of the private record and storage.
+    unsafe { initialize_path_stream(descriptor as c_int, open_mode.stream_flags()) }
+}
+
+/// Close the one selected pathname stream.
+///
+/// Pending selected output is flushed first. The static slot is retired even
+/// when flushing or closing reports an error, matching the lifecycle boundary
+/// that no caller can keep using the returned opaque `FILE *` afterward.
+///
+/// # Safety
+///
+/// `stream` must be the still-active pointer returned by this module's
+/// selected `fopen`, and no other caller may access it during this transition.
+#[no_mangle]
+pub unsafe extern "C" fn fclose(stream: *mut StandardStream) -> c_int {
+    // SAFETY: this predicate dereferences only the exact private pathname slot.
+    if !unsafe { is_path_stream(stream) } {
+        // SAFETY: no caller stream was dereferenced on this closed boundary.
+        unsafe { reject_stream() };
+        return EOF;
+    }
+    // SAFETY: this selected path stream owns its pending output state.
+    let flush_status = unsafe { flush_output(stream) };
+    let flush_errno = if flush_status == EOF {
+        // SAFETY: flush_output has already published this thread's error.
+        unsafe { errno::get_errno() }
+    } else {
+        0
+    };
+    // SAFETY: the selected path stream owns exactly this live descriptor.
+    let close_status = c_status(unsafe {
+        raw_syscall::syscall1(
+            raw_syscall::SYS_CLOSE,
+            i64::from((*stream).file_descriptor),
+        )
+    });
+    // SAFETY: no future call may treat this pointer as an active selected slot.
+    unsafe { reset_path_stream() };
+    if close_status < 0 {
+        return EOF;
+    }
+    if flush_status == EOF {
+        // SAFETY: a successful close must not hide the earlier flush errno.
+        unsafe { errno::set_errno(flush_errno) };
+        return EOF;
+    }
+    0
+}
+
+/// Install one caller-owned full buffer before pathname-stream byte I/O.
+///
+/// This is intentionally narrower than ISO/POSIX `setvbuf`: it admits only
+/// `_IOFBF` with a non-null, nonempty caller buffer before the first selected
+/// byte/block/pushback operation. `_IONBF`, `_IOLBF`, automatic allocation,
+/// reconfiguration after I/O, and `setbuf`/`setbuffer`/`setlinebuf` remain
+/// unselected. The caller must retain the buffer until `fclose`.
+///
+/// # Safety
+///
+/// `stream` must be the active selected pathname stream. `buffer` must point
+/// to `size` writable bytes that remain valid and non-overlapping with the
+/// stream state through `fclose`.
+#[no_mangle]
+pub unsafe extern "C" fn setvbuf(
+    stream: *mut StandardStream,
+    buffer: *mut core::ffi::c_char,
+    mode: c_int,
+    size: usize,
+) -> c_int {
+    // SAFETY: this predicate dereferences only the exact private pathname slot.
+    if !unsafe { is_path_stream(stream) }
+        || mode != _IOFBF
+        || buffer.is_null()
+        || size == 0
+        // SAFETY: the exact active slot was proved above.
+        || unsafe { (*stream).flags & F_IO_STARTED != 0 }
+    {
+        // SAFETY: the x86 static C ABI owns this calling thread's errno slot.
+        unsafe { errno::set_errno(EINVAL) };
+        return EOF;
+    }
+    // SAFETY: pre-I/O state has no initialized buffered input/output bytes;
+    // caller owns the declared buffer lifetime and capacity.
+    unsafe {
+        (*stream).buffer = buffer.cast::<u8>();
+        (*stream).capacity = size;
+        (*stream).read_position = (*stream).buffer;
+        (*stream).read_end = (*stream).buffer;
+        (*stream).write_position = (*stream).buffer;
+        (*stream).flags |= F_EXTERNAL_BUFFER;
+    }
+    0
+}
+
+/// Seek a selected pathname stream at its logical, not merely kernel-buffered,
+/// position.
+///
+/// `SEEK_CUR` subtracts any unread refill suffix before raw `lseek=8`; pending
+/// output is flushed first. A successful seek discards selected read lookahead
+/// and clears EOF, but leaves an existing error indication unchanged. A failed
+/// positioning operation reports errno without manufacturing an I/O-error
+/// indication, matching pinned musl's separation of those states.
+///
+/// # Safety
+///
+/// `stream` must be the active selected pathname stream and callers must
+/// serialize access. The path slot is intended for the evidenced regular-file
+/// routes; nonseekable descriptors expose their direct Linux error.
+#[no_mangle]
+pub unsafe extern "C" fn fseeko(
+    stream: *mut StandardStream,
+    offset: i64,
+    whence: c_int,
+) -> c_int {
+    // SAFETY: this predicate dereferences only the exact private pathname slot.
+    if !unsafe { is_path_stream(stream) }
+        || (whence != SEEK_SET && whence != SEEK_CUR && whence != SEEK_END)
+    {
+        // SAFETY: the x86 static C ABI owns this calling thread's errno slot.
+        unsafe { errno::set_errno(EINVAL) };
+        return EOF;
+    }
+
+    let unread = unsafe { (*stream).read_end.offset_from((*stream).read_position) };
+    let adjusted_offset = if whence == SEEK_CUR {
+        let unread = unread as i64;
+        let Some(value) = offset.checked_sub(unread) else {
+            // SAFETY: logical-position arithmetic overflow has no kernel call.
+            unsafe { errno::set_errno(EOVERFLOW) };
+            return EOF;
+        };
+        value
+    } else {
+        offset
+    };
+    // SAFETY: selected path output buffer belongs to this external lifecycle.
+    if unsafe { flush_output(stream) } == EOF {
+        return EOF;
+    }
+    let result = unsafe {
+        raw_syscall::syscall3(
+            raw_syscall::SYS_LSEEK,
+            i64::from((*stream).file_descriptor),
+            adjusted_offset,
+            i64::from(whence),
+        )
+    };
+    if c_off_status(result) < 0 {
+        // Like pinned musl, a positioning failure reports errno without
+        // changing the stream's separate I/O error indicator.
+        return EOF;
+    }
+    // SAFETY: raw lseek established the new logical position; all old
+    // prefetch and EOF state is now invalid, while the backing buffer survives.
+    unsafe {
+        (*stream).read_position = (*stream).buffer;
+        (*stream).read_end = (*stream).buffer;
+        (*stream).write_position = (*stream).buffer;
+        (*stream).flags &= !F_EOF;
+    }
+    0
+}
+
+/// Return the selected pathname stream's logical file position.
+///
+/// # Safety
+///
+/// `stream` must be the active selected pathname stream and callers must
+/// serialize access.
+#[no_mangle]
+pub unsafe extern "C" fn ftello(stream: *mut StandardStream) -> i64 {
+    // SAFETY: this predicate dereferences only the exact private pathname slot.
+    if !unsafe { is_path_stream(stream) } {
+        // SAFETY: no caller stream was dereferenced on this closed boundary.
+        unsafe { reject_stream() };
+        return -1;
+    }
+    let raw_position = unsafe {
+        raw_syscall::syscall3(
+            raw_syscall::SYS_LSEEK,
+            i64::from((*stream).file_descriptor),
+            0,
+            i64::from(SEEK_CUR),
+        )
+    };
+    let kernel_position = c_off_status(raw_position);
+    if kernel_position < 0 {
+        // Like pinned musl, a position query failure is not a stream-I/O error.
+        return -1;
+    }
+    let unread = unsafe { (*stream).read_end.offset_from((*stream).read_position) } as i64;
+    let pending = if unsafe { is_writable(stream) } {
+        (unsafe { (*stream).write_position.offset_from((*stream).buffer) }) as i64
+    } else {
+        0
+    };
+    let Some(logical_position) = kernel_position
+        .checked_sub(unread)
+        .and_then(|position| position.checked_add(pending))
+    else {
+        // SAFETY: logical-position arithmetic overflow has no kernel retry.
+        unsafe { errno::set_errno(EOVERFLOW) };
+        return -1;
+    };
+    logical_position
+}
+
+/// C `long` position wrapper for the selected pathname stream.
+///
+/// # Safety
+///
+/// `stream` must be the active selected pathname stream and callers must
+/// serialize access.
+#[no_mangle]
+pub unsafe extern "C" fn ftell(stream: *mut StandardStream) -> core::ffi::c_long {
+    // SAFETY: the x86 LP64 ABI gives c_long the same range as off_t here.
+    unsafe { ftello(stream) as core::ffi::c_long }
+}
+
+/// C `long` seek wrapper for the selected pathname stream.
+///
+/// # Safety
+///
+/// `stream` must be the active selected pathname stream and callers must
+/// serialize access.
+#[no_mangle]
+pub unsafe extern "C" fn fseek(
+    stream: *mut StandardStream,
+    offset: core::ffi::c_long,
+    whence: c_int,
+) -> c_int {
+    // SAFETY: x86 LP64 passes the selected long offset unchanged as off_t.
+    unsafe { fseeko(stream, offset as i64, whence) }
+}
+
+/// Rewind the selected pathname stream and clear its EOF/error indicators.
+///
+/// # Safety
+///
+/// `stream` must be the active selected pathname stream and callers must
+/// serialize access.
+#[no_mangle]
+pub unsafe extern "C" fn rewind(stream: *mut StandardStream) {
+    // SAFETY: fseeko validates the selected stream before touching its state.
+    let _ = unsafe { fseeko(stream, 0, SEEK_SET) };
+    // SAFETY: this predicate dereferences only the exact private pathname slot.
+    if unsafe { is_path_stream(stream) } {
+        // SAFETY: rewind owns the selected stream's status transition.
+        unsafe { (*stream).flags &= !(F_EOF | F_ERR) };
+    }
+}
+
+/// Store the selected pathname stream's logical offset in the first eight
+/// bytes of the public opaque 16-byte `fpos_t` representation.
+///
+/// # Safety
+///
+/// `stream` must be the active selected pathname stream. `position` must
+/// designate a writable 16-byte `fpos_t` object for this call.
+#[no_mangle]
+pub unsafe extern "C" fn fgetpos(
+    stream: *mut StandardStream,
+    position: *mut c_void,
+) -> c_int {
+    if position.is_null() {
+        // SAFETY: the x86 static C ABI owns this calling thread's errno slot.
+        unsafe { errno::set_errno(EINVAL) };
+        return EOF;
+    }
+    // SAFETY: ftello validates the selected stream and preserves buffer state.
+    let offset = unsafe { ftello(stream) };
+    if offset < 0 {
+        return EOF;
+    }
+    // SAFETY: pinned musl stores only the logical offset prefix and preserves
+    // the remaining opaque bytes. Use an unaligned store because the public
+    // object is not a Rust-aligned i64 record.
+    unsafe { ptr::write_unaligned(position.cast::<i64>(), offset) };
+    0
+}
+
+/// Restore a selected pathname stream from the first eight bytes of the
+/// public opaque `fpos_t` representation.
+///
+/// # Safety
+///
+/// `stream` must be the active selected pathname stream. `position` must
+/// designate a readable 16-byte `fpos_t` object for this call.
+#[no_mangle]
+pub unsafe extern "C" fn fsetpos(
+    stream: *mut StandardStream,
+    position: *const c_void,
+) -> c_int {
+    if position.is_null() {
+        // SAFETY: the x86 static C ABI owns this calling thread's errno slot.
+        unsafe { errno::set_errno(EINVAL) };
+        return EOF;
+    }
+    // SAFETY: caller supplies an initialized opaque fpos_t object; this
+    // selected representation stores its logical byte offset first.
+    let offset = unsafe { ptr::read_unaligned(position.cast::<i64>()) };
+    // SAFETY: fseeko validates and performs the selected logical seek route.
+    unsafe { fseeko(stream, offset, SEEK_SET) }
 }

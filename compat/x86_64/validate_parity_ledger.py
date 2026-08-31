@@ -16396,7 +16396,7 @@ def require_stdio_standard_streams_artifact(family: Mapping[str, Any]) -> None:
         "__errno_location",
         "__crabc_x86_static_tls_bootstrap",
         "TLSGD|TLSLD|TLSDESC|GOTTPOFF|DTPMOD",
-        "fopen fdopen freopen fclose",
+        "fdopen freopen",
         "ordinary-exit",
     ):
         require(
@@ -16645,6 +16645,299 @@ def require_stdio_format_scan_artifact(family: Mapping[str, Any]) -> None:
         "libc-stdio-format-scan)" in dispatcher
         and "run_libc_stdio_format_scan.sh" in dispatcher,
         "stdio format/scan dispatcher binding is missing",
+    )
+
+
+
+def require_stdio_path_stream_artifact(family: Mapping[str, Any]) -> None:
+    """Keep one static pathname-stream slot below general stdio completion.
+
+    The artifact intentionally maps a source-faithful regular-file lifecycle
+    into one external-serialization slot rather than presenting the archive's
+    opaque FILE pointer as an allocation-backed or general stream facility.
+    """
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.text-math-locale-stdio].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [
+        entry for entry in artifacts if entry.get("id") == "static-c-stdio-path-stream"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.text-math-locale-stdio must contain exactly one static-c-stdio-path-stream artifact",
+    )
+    artifact = matching[0]
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for symbol in (
+        "fopen",
+        "fclose",
+        "setvbuf",
+        "fseek",
+        "fseeko",
+        "ftell",
+        "ftello",
+        "rewind",
+        "fgetpos",
+        "fsetpos",
+    ):
+        require(
+            f"`{symbol}`" in description,
+            f"static-c-stdio-path-stream description omits {symbol}",
+        )
+    for phrase in (
+        "fixed pathname-stream",
+        "still-planned `libc.text-math-locale-stdio`",
+        "exactly one externally serialized active path `FILE` slot",
+        "`\"r\"`",
+        "`\"w+\"`",
+        "`BUFSIZ=1024`",
+        "eight-byte pushback headroom",
+        "caller-buffered",
+        "all-owned-output `fflush(NULL)`",
+        "failed positioning preserves the I/O-error indicator",
+        "opaque tail bytes",
+        "16-byte `fgetpos`/`fsetpos`",
+        "read-ahead-adjusted `SEEK_CUR`",
+        "fdopen",
+        "freopen",
+        "append/exclusive/close-on-exec/general mode parsing",
+        "more than one active path stream",
+        "stream allocation or a general registry",
+        "_IONBF",
+        "_IOLBF",
+        "general stdio",
+        "family completion",
+        "promotion",
+        "public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"static-c-stdio-path-stream description omits {phrase}",
+        )
+
+    owners = nonempty_strings(
+        artifact["source_owners"], "static-c-stdio-path-stream.source_owners"
+    )
+    for owner in (
+        "compat/upstreams.toml",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/stdio_standard.rs",
+        "libc/src/c_abi/x86_64/errno.rs",
+        "libc/src/c_abi/x86_64/static_tls.rs",
+        "libc/src/c_abi/x86_64/syscall.rs",
+        "include/stdio.h",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/libc_stdio_path_stream_probe.c",
+        "compat/x86_64/libc_stdio_path_stream_start.S",
+        "compat/x86_64/run_libc_stdio_path_stream.sh",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/README.md",
+        "x86-64.md",
+        "scripts/dev-x86_64.sh",
+    ):
+        require(
+            owner in owners,
+            f"static-c-stdio-path-stream omits {owner}",
+        )
+
+    exports = static_c_abi_export_names(
+        ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+    )
+    for symbol in (
+        "fopen",
+        "fclose",
+        "setvbuf",
+        "fseek",
+        "fseeko",
+        "ftell",
+        "ftello",
+        "rewind",
+        "fgetpos",
+        "fsetpos",
+    ):
+        require(
+            symbol in exports,
+            f"static C ABI export contract omits pathname-stream {symbol}",
+        )
+
+    implementation = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "stdio_standard.rs"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "static mut PATH_STREAM:",
+        "static mut PATH_STREAM_STORAGE:",
+        "enum PathOpenMode",
+        "parse_path_open_mode",
+        "match *mode as u8",
+        "initialize_path_stream",
+        "prepare_path_read",
+        "prepare_path_write",
+        "raw_syscall::SYS_OPEN",
+        "raw_syscall::SYS_CLOSE",
+        "raw_syscall::SYS_LSEEK",
+        "F_EXTERNAL_BUFFER",
+        "F_IO_STARTED",
+    ):
+        require(
+            snippet in implementation,
+            f"pathname stream implementation omits {snippet}",
+        )
+    for symbol in (
+        "fopen",
+        "fclose",
+        "setvbuf",
+        "fseek",
+        "fseeko",
+        "ftell",
+        "ftello",
+        "rewind",
+        "fgetpos",
+        "fsetpos",
+    ):
+        require(
+            f'pub unsafe extern "C" fn {symbol}' in implementation,
+            f"pathname stream implementation omits selected {symbol}",
+        )
+
+    fixture = (
+        ROOT / "compat" / "x86_64" / "libc_stdio_path_stream_probe.c"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        'fopen_entry(path, "w+")',
+        'fopen_entry(path, "a")',
+        "errno != EMFILE",
+        "_IONBF",
+        "setvbuf_entry(stream, caller_buffer, _IOFBF",
+        "fflush_entry(NULL)",
+        "lseek_entry(fileno_entry(stream), 0, SEEK_CUR)",
+        "fseeko_entry(stream, -1, SEEK_SET)",
+        "ferror(stream) != 0",
+        "saved_bytes[index] != 0xa5U",
+        "read-ahead-adjusted",
+        "fseeko_entry(stream, 1, SEEK_CUR)",
+        "fgetpos_entry",
+        "fsetpos_entry",
+        "rewind_entry",
+        'fopen_entry(path, "r")',
+    ):
+        require(
+            snippet in fixture,
+            f"libc-stdio-path-stream fixture omits {snippet}",
+        )
+
+    runner = (
+        ROOT / "compat" / "x86_64" / "run_libc_stdio_path_stream.sh"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "run_musl_oracle.sh",
+        "run_stdio_standard_header_abi.sh",
+        "-nostdlib -static",
+        "--no-undefined",
+        "STATIC_C_ABI_EXPORTS",
+        "fclose fopen",
+        "fdopen freopen",
+        "fflush fileno lseek",
+        "SYS_OPEN SYS_CLOSE SYS_LSEEK",
+        "__crabc_x86_static_tls_bootstrap",
+        "initial-TLS",
+    ):
+        require(
+            snippet in runner,
+            f"libc-stdio-path-stream runner omits {snippet}",
+        )
+
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-stdio-path-stream"},
+        "static-c-stdio-path-stream must use the closed libc-stdio-path-stream command",
+    )
+    scope = evidence[0].get("scope")
+    require(
+        isinstance(scope, str)
+        and all(
+            phrase in scope
+            for phrase in (
+                "Pinned-musl project-header C reference",
+                "dependency-free x86 crabc-libc archive",
+                "`-nostdlib -static` candidate",
+                "direct initial-exec errno TLS",
+                "Static Initial TLS v1 bootstrap",
+                "caller-buffered writes",
+                "all-owned-output fflush(NULL)",
+                "failed-position errno without ferror",
+                "opaque fpos tail preservation",
+                "candidate-only one-slot/mode/buffering rejections",
+                "read-ahead SEEK_CUR adjustment",
+                "fpos",
+                "slot reuse",
+                "general stdio",
+                "stream allocator/registry",
+                "family completion",
+                "promotion",
+                "public x86 support",
+            )
+        ),
+        "static-c-stdio-path-stream evidence must retain its closed native boundary",
+    )
+
+    oracle = artifact["oracle"]
+    assert isinstance(oracle, list)
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "c-posix"
+            and isinstance(entry.get("role"), str)
+            and all(
+                source in entry["role"]
+                for source in (
+                    "stdio_impl.h",
+                    "fopen",
+                    "fclose",
+                    "setvbuf",
+                    "fseek",
+                    "fgetpos",
+                    "fsetpos",
+                    "rewind",
+                )
+            )
+            for entry in oracle
+        ),
+        "static-c-stdio-path-stream must retain its pinned-musl source oracle",
+    )
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "kernel-abi"
+            and isinstance(entry.get("role"), str)
+            and all(number in entry["role"] for number in ("open=2", "close=3", "lseek=8"))
+            for entry in oracle
+        ),
+        "static-c-stdio-path-stream must retain its raw pathname/position ABI oracle",
+    )
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "elf-abi"
+            and isinstance(entry.get("role"), str)
+            and "opaque 16-byte fpos_t" in entry["role"]
+            and "Variant-II initial-exec errno TLS" in entry["role"]
+            for entry in oracle
+        ),
+        "static-c-stdio-path-stream must retain its FILE/fpos/TLS ABI oracle",
+    )
+
+    dispatcher = (ROOT / "scripts" / "dev-x86_64.sh").read_text(encoding="utf-8")
+    require(
+        "libc-stdio-path-stream)" in dispatcher
+        and "run_libc_stdio_path_stream.sh" in dispatcher,
+        "x86 dispatcher omits libc-stdio-path-stream",
     )
 
 
@@ -17275,8 +17568,8 @@ def require_locale_wide_iconv_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 8,
-        "libc.text-math-locale-stdio must retain exactly eight private verified artifacts",
+        len(artifacts) == 9,
+        "libc.text-math-locale-stdio must retain exactly nine private verified artifacts",
     )
     matching = [
         entry for entry in artifacts if entry.get("id") == "static-c-locale-wide-iconv"
@@ -18120,6 +18413,7 @@ def validate_ledger(
     require_float_parse_artifact(by_id["libc.text-math-locale-stdio"])
     require_stdio_standard_streams_artifact(by_id["libc.text-math-locale-stdio"])
     require_stdio_format_scan_artifact(by_id["libc.text-math-locale-stdio"])
+    require_stdio_path_stream_artifact(by_id["libc.text-math-locale-stdio"])
     require_math_complex_foundation_artifact(by_id["libc.text-math-locale-stdio"])
     require_named_locale_multibyte_artifact(by_id["libc.text-math-locale-stdio"])
     require_same_object_static_c_abi_artifact(by_id["compat.abi-differential"])

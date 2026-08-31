@@ -1,19 +1,22 @@
 #!/usr/bin/env bash
-# Native Linux/x86-64 selected static text/math/locale/stdio composition.
+# Native Linux/x86-64 fixed pathname-stream static evidence.
 #
-# One project-header fixture executes through pinned musl, then a closed
-# `-nostdlib -static` crabc-libc archive. It composes only the already
-# selected float parser, classifier, named C.UTF-8 multibyte, errno, and
-# permanent stdout seams; it is not general text/math/locale/stdio evidence.
+# One project-header fixture first runs against pinned musl 1.2.6, then links
+# as a true `-nostdlib -static` candidate through the selected crabc archive.
+# It proves one regular-file `r`/`w+` pathname slot, caller-buffered full I/O,
+# logical positioning, fpos_t, rewind, close, and slot reuse. It is not
+# fdopen/freopen, append/general mode parsing, stream allocation/registry,
+# line/unbuffered buffering, general stdio, dynamic runtime, or public x86.
 set -euo pipefail
 
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
 readonly STATIC_C_ABI_EXPORTS="$ROOT_DIR/compat/x86_64/static_c_abi_exports.txt"
+readonly EXECUTION_TIMEOUT=20s
 readonly INITIAL_TLS_BYTES=4096
 readonly INITIAL_TLS_ALIGNMENT=64
 
-fail() { printf 'ERROR: x86 static text/math/locale/stdio composition: %s\n' "$*" >&2; exit 1; }
+fail() { printf 'ERROR: x86 static libc pathname stream: %s\n' "$*" >&2; exit 1; }
 require_tool() { command -v "$1" >/dev/null 2>&1 || fail "requires $1"; }
 
 assert_selected_c_abi_surface() {
@@ -36,7 +39,7 @@ assert_selected_c_abi_surface() {
 assert_fixture_tls_capacity() {
     local tls_filesz tls_memsz tls_alignment
     read -r tls_filesz tls_memsz tls_alignment < <(
-        awk '$1 == "TLS" { print $5, $6, $NF; exit }' "$headers"
+        awk '$1 == "TLS" { print $5, $6, $NF; exit }' "$candidate_program_headers"
     )
     [ -n "${tls_filesz:-}" ] || fail "candidate lacks a parsable PT_TLS segment"
     (( tls_filesz == 0 )) || fail "fixture TLS scratch cannot initialize PT_TLS data"
@@ -49,44 +52,40 @@ assert_fixture_tls_capacity() {
 
 [ "$(uname -s)" = Linux ] || fail "requires native Linux"
 case "$(uname -m)" in x86_64|amd64) ;; *) fail "requires native x86-64" ;; esac
-for tool in ar awk cargo cmp diff grep mkdir nm objdump readelf rustup sort; do require_tool "$tool"; done
+for tool in ar awk cargo cmp diff grep mkdir nm objdump readelf rustup sort timeout; do require_tool "$tool"; done
 [ -x "$ORACLE_CC" ] || fail "missing pinned musl oracle compiler"
 
 bash "$ROOT_DIR/compat/x86_64/run_musl_oracle.sh" >/dev/null
-for header_gate in run_math_complex_header_abi.sh run_float_parse_header_abi.sh \
-    run_locale_multibyte_header_abi.sh run_stdio_standard_header_abi.sh; do
-    bash "$ROOT_DIR/compat/x86_64/$header_gate" >/dev/null
-done
+bash "$ROOT_DIR/compat/x86_64/run_stdio_standard_header_abi.sh" >/dev/null
 
-work_dir="$(mktemp -d /tmp/crabc-x86-64-text-math-locale-stdio.XXXXXX)"
+work_dir="$(mktemp -d /tmp/crabc-x86-64-libc-stdio-path-stream.XXXXXX)"
 trap 'rm -rf -- "$work_dir"' EXIT
 target_dir="$work_dir/cargo-target"
 archive="$target_dir/x86_64-unknown-linux-musl/debug/libc.a"
-reference="$work_dir/musl-composition-reference"
-candidate="$work_dir/crabc-static-composition-candidate"
+reference="$work_dir/musl-path-stream-reference"
+candidate="$work_dir/crabc-static-path-stream-candidate"
 trace="$work_dir/header-trace"
 archive_symbols="$work_dir/archive-symbols"
 selected_symbols="$work_dir/selected-c-abi-symbols"
 expected_symbols="$work_dir/expected-c-abi-symbols"
-symbols="$work_dir/candidate-symbols"
-headers="$work_dir/candidate-program-headers"
-dynamic="$work_dir/candidate-dynamic"
-relocs="$work_dir/candidate-relocations"
-disassembly="$work_dir/candidate-disassembly"
+candidate_symbols="$work_dir/candidate-symbols"
+candidate_program_headers="$work_dir/candidate-program-headers"
+candidate_dynamic="$work_dir/candidate-dynamic"
+candidate_relocations="$work_dir/candidate-relocations"
+candidate_disassembly="$work_dir/candidate-disassembly"
 errno_disassembly="$work_dir/errno-disassembly"
 
 cd "$ROOT_DIR"
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -I"$ROOT_DIR/include" -E -H \
-    compat/x86_64/libc_text_math_locale_stdio_composition_probe.c >/dev/null 2>"$trace"
-for header in errno.h float.h limits.h locale.h math.h stdio.h stdlib.h unistd.h wchar.h \
-    features.h bits/alltypes.h; do
+    compat/x86_64/libc_stdio_path_stream_probe.c >/dev/null 2>"$trace"
+for header in errno.h stdio.h unistd.h features.h bits/alltypes.h; do
     grep -Fq "$ROOT_DIR/include/$header" "$trace" ||
         fail "fixture did not use the project $header header"
 done
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -fno-builtin -fno-stack-protector \
-    -I"$ROOT_DIR/include" compat/x86_64/libc_text_math_locale_stdio_composition_probe.c \
+    -I"$ROOT_DIR/include" compat/x86_64/libc_stdio_path_stream_probe.c \
     -o "$reference"
-"$reference" || fail "pinned-musl composition fixture failed"
+timeout "$EXECUTION_TIMEOUT" "$reference" || fail "pinned-musl pathname-stream fixture failed"
 
 CARGO_TARGET_DIR="$target_dir" cargo rustc --locked -p crabc-libc --lib \
     --target x86_64-unknown-linux-musl -- \
@@ -94,69 +93,62 @@ CARGO_TARGET_DIR="$target_dir" cargo rustc --locked -p crabc-libc --lib \
 [ -f "$archive" ] || fail "cargo did not emit the x86 static libc archive"
 nm -A --defined-only "$archive" >"$archive_symbols"
 assert_selected_c_abi_surface "$archive" "$selected_symbols" "$expected_symbols"
-for symbol in __crabc_x86_static_tls_bootstrap __errno_location __fpclassify \
-    fflush fputc localeconv mbrtowc setlocale strtod; do
+for symbol in __errno_location __crabc_x86_static_tls_bootstrap fclose fopen \
+    fgetpos fseek fseeko fsetpos ftell ftello rewind setvbuf; do
     grep -Eq "[[:space:]][TW][[:space:]]${symbol}$" "$archive_symbols" ||
         fail "archive does not define ${symbol}"
 done
-# The archive-wide export contract deliberately contains other independently
-# selected leaves. The final linked fixture below, rather than this aggregate
-# archive listing, proves this composition did not pull formatter/wide I/O,
-# locale-object, `_l`, scalar-libm, or allocation dependencies. A separate
-# iconv artifact may share the archive but is neither invoked nor established
-# by this composition. The
-# permanent `fflush` owner now also owns the separately evidenced fixed path
-# slot, so its target leaf may materialize path symbols even though this fixture
-# neither references nor exercises that pathname lifecycle.
+for unselected in fdopen freopen setbuf setbuffer setlinebuf tmpfile fmemopen \
+    open_memstream fopencookie popen pclose flockfile ftrylockfile funlockfile; do
+    if grep -Eq "[[:space:]][TW][[:space:]]${unselected}$" "$archive_symbols"; then
+        fail "archive accidentally exports unselected ${unselected}"
+    fi
+done
 readelf --relocs --wide "$archive" >"$work_dir/archive-relocations"
 grep -Eq 'R_X86_64_TPOFF(32|64)?' "$work_dir/archive-relocations" ||
     fail "archive errno lacks an initial-TLS TPOFF relocation"
-if grep -Eq 'TLSGD|TLSLD|TLSDESC|GOTTPOFF|DTPMOD(64)?|__tls_get_addr|crabc_core|mimalloc|sha_crypt' \
-    "$work_dir/archive-relocations"; then
-    fail "archive selects dynamic TLS or an unowned runtime dependency"
-fi
 
-"$ORACLE_CC" -std=c11 -D_GNU_SOURCE \
-    -DCRABC_TEXT_MATH_LOCALE_STDIO_COMPOSITION_FREESTANDING \
+"$ORACLE_CC" -std=c11 -D_GNU_SOURCE -DCRABC_STDIO_PATH_STREAM_FREESTANDING \
     -I"$ROOT_DIR/include" -nostdlib -static -fno-pie -no-pie -ffreestanding \
     -fno-builtin -fno-stack-protector -Wl,-e,_start -Wl,--no-undefined \
-    compat/x86_64/libc_text_math_locale_stdio_composition_probe.c \
-    compat/x86_64/libc_text_math_locale_stdio_composition_start.S "$archive" \
-    -o "$candidate"
-readelf --symbols --wide "$candidate" >"$symbols"
-readelf --program-headers --wide "$candidate" >"$headers"
-readelf --dynamic --wide "$candidate" >"$dynamic" || true
-readelf --relocs --wide "$candidate" >"$relocs"
-objdump -d "$candidate" >"$disassembly"
-for symbol in __errno_location __fpclassify fflush fputc localeconv mbrtowc setlocale strtod; do
-    grep -Eq "[[:space:]]${symbol}$" "$symbols" || fail "candidate lacks ${symbol}"
+    compat/x86_64/libc_stdio_path_stream_probe.c \
+    compat/x86_64/libc_stdio_path_stream_start.S "$archive" -o "$candidate"
+readelf --symbols --wide "$candidate" >"$candidate_symbols"
+readelf --program-headers --wide "$candidate" >"$candidate_program_headers"
+readelf --dynamic --wide "$candidate" >"$candidate_dynamic" || true
+readelf --relocs --wide "$candidate" >"$candidate_relocations"
+objdump -d "$candidate" >"$candidate_disassembly"
+for symbol in fclose fopen fgetpos fseek fseeko fsetpos ftell ftello rewind setvbuf \
+    fread fwrite fgetc fputc fflush fileno lseek; do
+    grep -Eq "[[:space:]]${symbol}$" "$candidate_symbols" ||
+        fail "candidate lacks ${symbol}"
 done
-if awk '$7 == "UND" && NF >= 8 { print }' "$symbols" | grep -q .; then
-    fail "candidate has unresolved symbols"
+if awk '$7 == "UND" && NF >= 8 { print }' "$candidate_symbols" | grep -q .; then
+    fail "candidate retains an unresolved symbol"
 fi
-if grep -Eq 'Requesting program interpreter|INTERP|NEEDED' "$headers" "$dynamic"; then
-    fail "candidate is dynamic"
+if grep -Eq 'Requesting program interpreter|INTERP|NEEDED' "$candidate_program_headers" "$candidate_dynamic"; then
+    fail "candidate selected a dynamic runtime"
 fi
-grep -Eq '[[:space:]]TLS[[:space:]]' "$headers" || fail "candidate lacks errno TLS"
+grep -Eq '[[:space:]]TLS[[:space:]]' "$candidate_program_headers" ||
+    fail "candidate lacks the selected errno TLS segment"
 assert_fixture_tls_capacity
 if grep -Eq 'TLSGD|TLSLD|TLSDESC|GOTTPOFF|DTPMOD(64)?|DTPOFF(32|64)?|__tls_get_addr' \
-    "$relocs" "$symbols" "$disassembly"; then
+    "$candidate_relocations" "$candidate_symbols" "$candidate_disassembly"; then
     fail "candidate retains a dynamic TLS model"
 fi
 objdump -d --disassemble=__errno_location "$candidate" >"$errno_disassembly"
 grep -Eq '%fs:0x0|%fs:-' "$errno_disassembly" ||
     fail "candidate errno does not use direct fs initial TLS"
-if grep -Eq 'crabc_core|mimalloc|sha_crypt|printf|newlocale|strtod_l' \
-    "$symbols" "$disassembly"; then
-    fail "candidate selects an unowned or unselected runtime dependency"
-fi
 grep -Eq 'call.*__crabc_x86_static_tls_bootstrap' \
-    compat/x86_64/libc_text_math_locale_stdio_composition_start.S ||
-    fail "fixture start does not delegate initial TLS to libc"
-if "$candidate"; then
-    :
-else
-    status=$?
-    fail "freestanding composition fixture failed with status ${status}"
-fi
-printf 'x86 static libc text/math/locale/stdio composition: PASS\n'
+    compat/x86_64/libc_stdio_path_stream_start.S ||
+    fail "fixture start does not delegate first-thread TLS to libc"
+grep -Eq '[[:space:]]syscall$' "$candidate_disassembly" ||
+    fail "candidate lacks a direct Linux syscall instruction"
+for syscall_name in SYS_OPEN SYS_CLOSE SYS_LSEEK; do
+    grep -Fq "raw_syscall::$syscall_name" \
+        "$ROOT_DIR/libc/src/c_abi/x86_64/stdio_standard.rs" ||
+        fail "pathname stream implementation omits raw ${syscall_name} ownership"
+done
+timeout "$EXECUTION_TIMEOUT" "$candidate" || fail "freestanding pathname-stream fixture failed"
+
+printf 'x86 static crabc-libc fixed pathname stream: PASS\n'

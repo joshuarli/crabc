@@ -50,7 +50,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 30)
-        self.assertEqual(report["verified_artifact_count"], 110)
+        self.assertEqual(report["verified_artifact_count"], 111)
         self.assertEqual(report["header_layout_probe_count"], 45)
         self.assertEqual(report["public_header_inventory_count"], 183)
         self.assertEqual(report["header_foundation_header_count"], 191)
@@ -2264,7 +2264,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         text_math = self.family(data, "libc.text-math-locale-stdio")
         self.assertEqual(text_math["status"], "planned")
         artifacts = text_math["verified_artifact"]
-        assert isinstance(artifacts, list) and len(artifacts) == 8
+        assert isinstance(artifacts, list) and len(artifacts) == 9
         artifact = next(
             entry
             for entry in artifacts
@@ -2347,7 +2347,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         text_math = self.family(data, "libc.text-math-locale-stdio")
         self.assertEqual(text_math["status"], "planned")
         artifacts = text_math["verified_artifact"]
-        assert isinstance(artifacts, list) and len(artifacts) == 8
+        assert isinstance(artifacts, list) and len(artifacts) == 9
         artifact = next(
             entry
             for entry in artifacts
@@ -2541,12 +2541,74 @@ class X86ParityLedgerTests(unittest.TestCase):
         ):
             ledger.validate_ledger(data)
 
+    def test_stdio_path_stream_remains_a_closed_one_slot_artifact(self) -> None:
+        data = self.data()
+        family = self.family(data, "libc.text-math-locale-stdio")
+        self.assertEqual(family["status"], "planned")
+        artifacts = family["verified_artifact"]
+        assert isinstance(artifacts, list) and len(artifacts) == 6
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-stdio-path-stream"
+        )
+        self.assertNotIn("capabilities", artifact)
+        for owner in (
+            "libc/src/c_abi/x86_64/stdio_standard.rs",
+            "compat/x86_64/libc_stdio_path_stream_probe.c",
+            "compat/x86_64/libc_stdio_path_stream_start.S",
+            "compat/x86_64/run_libc_stdio_path_stream.sh",
+            "compat/x86_64/static_c_abi_exports.txt",
+            "scripts/dev-x86_64.sh",
+        ):
+            self.assertIn(owner, artifact["source_owners"])
+        self.assertEqual(
+            {evidence["command"] for evidence in artifact["native_evidence"]},
+            {"./scripts/dev-x86_64.sh libc-stdio-path-stream"},
+        )
+        for phrase in (
+            "exactly one externally serialized active path `FILE` slot",
+            "`\"r\"`",
+            "`\"w+\"`",
+            "caller-buffered",
+            "all-owned-output `fflush(NULL)`",
+            "failed positioning preserves the I/O-error indicator",
+            "opaque tail bytes",
+            "read-ahead-adjusted `SEEK_CUR`",
+            "fpos save/restore",
+            "fdopen",
+            "freopen",
+            "general stdio",
+            "family completion",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, artifact["description"])
+
+        changed = self.data()
+        artifacts = self.family(changed, "libc.text-math-locale-stdio")[
+            "verified_artifact"
+        ]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-stdio-path-stream"
+        )
+        artifact["description"] = artifact["description"].replace(
+            "more than one active path stream", "many active path streams"
+        )
+        with self.assertRaisesRegex(
+            ledger.LedgerError,
+            "static-c-stdio-path-stream description omits more than one active path stream",
+        ):
+            ledger.validate_ledger(changed)
+
     def test_math_complex_foundation_remains_a_closed_non_capability_artifact(self) -> None:
         data = self.data()
         text_math = self.family(data, "libc.text-math-locale-stdio")
         self.assertEqual(text_math["status"], "planned")
         artifacts = text_math["verified_artifact"]
-        assert isinstance(artifacts, list) and len(artifacts) == 8
+        assert isinstance(artifacts, list) and len(artifacts) == 9
         artifacts_by_id = {
             entry["id"]: entry for entry in artifacts if isinstance(entry, dict)
         }
@@ -2624,7 +2686,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         text_math = self.family(data, "libc.text-math-locale-stdio")
         self.assertEqual(text_math["status"], "planned")
         artifacts = text_math["verified_artifact"]
-        assert isinstance(artifacts, list) and len(artifacts) == 8
+        assert isinstance(artifacts, list) and len(artifacts) == 9
         artifact = next(
             entry
             for entry in artifacts
@@ -2728,7 +2790,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         data = self.data()
         text_math = self.family(data, "libc.text-math-locale-stdio")
         artifacts = text_math["verified_artifact"]
-        assert isinstance(artifacts, list) and len(artifacts) == 8
+        assert isinstance(artifacts, list) and len(artifacts) == 9
         artifact = next(
             entry
             for entry in artifacts

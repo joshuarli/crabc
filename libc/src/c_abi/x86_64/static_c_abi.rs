@@ -40,7 +40,8 @@
 //! C/POSIX/C.UTF-8 multibyte state and fixed UTF/ASCII `iconv` conversion,
 //! bounded permanent stdin/stdout/stderr byte/block I/O with explicit flushing, selected
 //! allocation-free byte-buffer formatting and NUL-string scanning,
-//! intmax-arithmetic,
+//! plus one fixed
+//! regular-file pathname stream/position-buffering slot, intmax-arithmetic,
 //! find-first-set, C11 immediate-termination, a bounded private static
 //! startup/ordinary-exit lifecycle, startup-published program-name globals
 //! and option parsing, callback-algorithms, POSIX `nanosleep`
@@ -61,7 +62,10 @@
 //! only bounded no-allocation `atexit` callbacks. Its permanent-standard-stream
 //! leaf owns explicit `fflush` only; neither that leaf nor this lifecycle owns
 //! input flushing, ordinary-exit stdio flushing, C++/DSO destruction, or a
-//! concurrent process-exit protocol. The pthread artifacts are
+//! concurrent process-exit protocol. Its pathname sibling owns only one
+//! externally serialized `fopen("r")`/`fopen("w+")` slot with caller-buffered
+//! full buffering and logical positions; it is not stream allocation or
+//! general stdio. The pthread artifacts are
 //! intentionally bounded to null-attribute workers that return normally or
 //! use their selected explicit-exit path, plus prompt detach with later
 //! clear-child-tid reaping and opaque current/equality identity. The mutex

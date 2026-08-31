@@ -635,7 +635,8 @@ permanent `stdin`, `stdout`, and `stderr` streams. The header gate covers
 selected declarations, data, macros, and C/C++ ABI; the static fixture covers
 selected byte/block/status APIs, explicit `fflush`, sticky EOF/`ungetc`
 transitions, and musl-shaped discard-on-output-error behavior. It excludes
-path or dynamically owned streams and ordinary-exit flushing, and does not
+path or dynamically owned streams as a claim of that artifact and
+ordinary-exit flushing, and does not
 constitute general stdio, x86 support, parity, promotion, or public support.
 Run `./scripts/dev-x86_64.sh stdio-standard-header-abi` for the declaration
 matrix and `./scripts/dev-x86_64.sh libc-stdio-standard` for the static
@@ -661,6 +662,23 @@ It excludes `FILE` streams, `printf`/`fprintf`/`scanf`/`fscanf`, floating,
 wide, scanset, grouping/positional, and pointer-valued `%p` conversion,
 allocation, locale objects, integer scanner overflow, general stdio, parity,
 promotion, and public x86 support.
+
+The separate `libc-stdio-path-stream` gate records one fixed private static
+path-stream slot inside still-planned `libc.text-math-locale-stdio`: exactly
+one externally serialized regular-file `fopen("r")`/`fopen("w+")` lifecycle
+with selected byte/block I/O, explicit output flush, pre-I/O caller-buffered
+`_IOFBF`, logical `fseek`/`fseeko`/`ftell`/`ftello`, opaque 16-byte
+`fgetpos`/`fsetpos`, `rewind`, `fclose`, and slot reuse. The project-header
+fixture executes first against pinned musl 1.2.6 and then a closed static
+candidate, proving buffered-write positions, the active slot's participation
+in all-owned-output `fflush(NULL)`, failed-seek errno without a new `ferror`,
+read-ahead-adjusted `SEEK_CUR`, offset-prefix `fpos_t` restoration with opaque
+tail preservation, EOF/rewind, and close/reopen behavior. Candidate-only checks
+ratchet the one-slot, mode, and buffer-reconfiguration limits. It excludes
+`fdopen`, `freopen`, append/exclusive/close-on-exec/general mode parsing,
+multiple live streams, allocation/registries, input `fflush`, `_IONBF`/`_IOLBF`/
+post-I/O buffer reconfiguration, and general stdio; it does not establish x86
+support, parity, promotion, or public support.
 
 The separate `libc-text-math-locale-stdio-composition` gate is one private
 cross-surface static artifact, not another implementation wrapper or a family

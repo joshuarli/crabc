@@ -899,7 +899,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "libc-pathname-lifecycle",
             "libc-directory-streams",
             "libc-lchmod-unsupported",
-            "libc-stdio-standard|libc-stdio-format-scan|libc-text-math-locale-stdio-composition",
+            "libc-stdio-standard|libc-stdio-format-scan|libc-stdio-path-stream|libc-text-math-locale-stdio-composition",
             "libc-pthread-identity",
             "libc-pthread-detach",
             "libc-memory-sync",
@@ -9220,7 +9220,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "R_X86_64_TPOFF",
             "__errno_location",
             "__crabc_x86_static_tls_bootstrap",
-            "fopen fdopen freopen fclose",
+            "fdopen freopen",
             "ordinary-exit",
         ):
             self.assertIn(required, artifact_runner)
@@ -9328,6 +9328,106 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         )
         self.assertIn("libc-stdio-format-scan", dispatcher)
         self.assertIn("run_libc_stdio_format_scan.sh", dispatcher)
+
+    def test_libc_static_c_abi_stdio_path_stream_stays_one_slot(self) -> None:
+        """The pathname stream is a fixed static lifecycle, not general stdio."""
+        implementation = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "stdio_standard.rs"
+        ).read_text(encoding="utf-8")
+        fixture = (
+            ROOT / "compat" / "x86_64" / "libc_stdio_path_stream_probe.c"
+        ).read_text(encoding="utf-8")
+        start = (
+            ROOT / "compat" / "x86_64" / "libc_stdio_path_stream_start.S"
+        ).read_text(encoding="utf-8")
+        runner = (
+            ROOT / "compat" / "x86_64" / "run_libc_stdio_path_stream.sh"
+        ).read_text(encoding="utf-8")
+        exports = {
+            line
+            for line in (
+                ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+            ).read_text(encoding="utf-8").splitlines()
+            if line and not line.startswith("#")
+        }
+        ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        dispatcher = RUNNER.read_text(encoding="utf-8")
+
+        symbols = (
+            "fopen",
+            "fclose",
+            "setvbuf",
+            "fseek",
+            "fseeko",
+            "ftell",
+            "ftello",
+            "rewind",
+            "fgetpos",
+            "fsetpos",
+        )
+        for symbol in symbols:
+            self.assertIn(f'pub unsafe extern "C" fn {symbol}', implementation)
+            self.assertIn(symbol, exports)
+        for required in (
+            "static mut PATH_STREAM:",
+            "static mut PATH_STREAM_STORAGE:",
+            "enum PathOpenMode",
+            "parse_path_open_mode",
+            "match *mode as u8",
+            "prepare_path_read",
+            "prepare_path_write",
+            "F_EXTERNAL_BUFFER",
+            "F_IO_STARTED",
+            "raw_syscall::SYS_OPEN",
+            "raw_syscall::SYS_CLOSE",
+            "raw_syscall::SYS_LSEEK",
+        ):
+            self.assertIn(required, implementation)
+        for required in (
+            'fopen_entry(path, "w+")',
+            'fopen_entry(path, "a")',
+            "errno != EMFILE",
+            "_IONBF",
+            "setvbuf_entry(stream, caller_buffer, _IOFBF",
+            "fflush_entry(NULL)",
+            "lseek_entry(fileno_entry(stream), 0, SEEK_CUR)",
+            "fseeko_entry(stream, -1, SEEK_SET)",
+            "ferror(stream) != 0",
+            "saved_bytes[index] != 0xa5U",
+            "read-ahead-adjusted",
+            "fseeko_entry(stream, 1, SEEK_CUR)",
+            "fgetpos_entry",
+            "fsetpos_entry",
+            "rewind_entry",
+            'fopen_entry(path, "r")',
+        ):
+            self.assertIn(required, fixture)
+        for required in (
+            "untouched Linux entry stack",
+            "__crabc_x86_static_tls_bootstrap",
+            "exit_group",
+        ):
+            self.assertIn(required, start)
+        for required in (
+            "run_musl_oracle.sh",
+            "run_stdio_standard_header_abi.sh",
+            "-nostdlib -static",
+            "--no-undefined",
+            "fdopen freopen",
+            "fflush fileno lseek",
+            "SYS_OPEN SYS_CLOSE SYS_LSEEK",
+            "initial-TLS",
+        ):
+            self.assertIn(required, runner)
+        self.assertNotIn("--whole-archive", runner)
+        self.assertIn('id = "static-c-stdio-path-stream"', ledger)
+        self.assertIn(
+            'command = "./scripts/dev-x86_64.sh libc-stdio-path-stream"', ledger
+        )
+        self.assertIn("libc-stdio-path-stream", dispatcher)
+        self.assertIn("run_libc_stdio_path_stream.sh", dispatcher)
 
     def test_libc_static_c_abi_text_math_locale_stdio_composition_stays_cross_surface(
         self,
