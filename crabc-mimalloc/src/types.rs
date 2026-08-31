@@ -1786,10 +1786,18 @@ pub(super) struct PageFreeListState<'a> {
 /// [`crate::remote_free::push_abandoned`] path may claim it. In either case,
 /// the surrounding caller retains the stable live page lifetime; only the
 /// abandoned path may use its acquired bit to enter owner-only collection.
+#[derive(Clone, Copy)]
 pub(super) struct PageRemoteFreeProducerState {
     pub(super) xthread_id: NonNull<AtomicUsize>,
     pub(super) xthread_free: NonNull<AtomicUsize>,
 }
+
+// SAFETY: this projection grants access only to two initialized atomic
+// subobjects of one stable live `Page`. Constructing it is unsafe and carries
+// the page-lifetime obligation documented by
+// `Page::remote_free_producer_state_at`; moving a copy to a producer thread
+// grants no access to any owner-only ordinary field.
+unsafe impl Send for PageRemoteFreeProducerState {}
 
 /// Narrow owner-only projection for remote-list collection.
 ///
@@ -4276,9 +4284,15 @@ mod tests {
         assert_eq!(align_of::<Page>(), 8);
         assert_eq!(offset_of!(Page, self_), 0);
         assert_eq!(offset_of!(Page, xthread_id), 8);
+        assert_eq!(offset_of!(Page, free), 16);
+        assert_eq!(offset_of!(Page, used), 24);
+        assert_eq!(offset_of!(Page, local_free), 32);
         assert_eq!(offset_of!(Page, block_size), 40);
         assert_eq!(offset_of!(Page, page_offset), 48);
+        assert_eq!(offset_of!(Page, capacity), 56);
+        assert_eq!(offset_of!(Page, free_is_zero), 63);
         assert_eq!(offset_of!(Page, xthread_free), 64);
+        assert_eq!(offset_of!(Page, theap), 72);
         assert_eq!(offset_of!(Page, memid), 104);
     }
 

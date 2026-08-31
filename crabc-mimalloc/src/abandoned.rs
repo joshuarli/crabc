@@ -557,7 +557,11 @@ pub(crate) unsafe fn free_mapped_and_reclaim<M: MappedAbandonedPages + ?Sized>(
     unabandon_mapped(&state, Some(map))?;
     unsafe { ptr::write(state.theap.as_ptr(), target_theap.as_ptr()) };
     set_thread_identity(&state, target_thread.get());
-    let collected_after_reassociation = unsafe { remote_free::collect(page) }
+    // SAFETY: reassociation installed a live owner and this caller retains
+    // sole ordinary-field authority.
+    let owner = unsafe { Page::remote_free_owner_state_at(page) }
+        .ok_or(AbandonError::NotAbandoned)?;
+    let collected_after_reassociation = unsafe { remote_free::collect(owner) }
         .map_err(AbandonError::RemoteFree)?;
     Ok(MappedAbandonedFreeResult::Reclaimed {
         collected_remote_blocks: collected_remote_blocks + collected_after_reassociation,
@@ -2303,7 +2307,9 @@ pub(crate) unsafe fn abandon<M: MappedAbandonedPages + ?Sized>(
     // SAFETY: caller supplies the owner/lifetime proof for the pre-abandon
     // collection. It validates the live associated identity before ordinary
     // local state is touched.
-    unsafe { remote_free::collect(page) }.map_err(AbandonError::RemoteFree)?;
+    let owner = unsafe { Page::remote_free_owner_state_at(page) }
+        .ok_or(AbandonError::NotAbandoned)?;
+    unsafe { remote_free::collect(owner) }.map_err(AbandonError::RemoteFree)?;
     // SAFETY: caller retains the page lifecycle proof and has collected the
     // pre-abandon remote list. This projects raw fields only.
     unsafe { abandon_after_collect(page, map) }
@@ -2515,7 +2521,9 @@ where
     // second collection; caller's consuming handoff keeps both owners live.
     unsafe { ptr::write(state.theap.as_ptr(), target_theap.as_ptr()) };
     set_thread_identity(&state, target_thread.get());
-    let collected = match unsafe { remote_free::collect(page) } {
+    let owner = unsafe { Page::remote_free_owner_state_at(page) }
+        .ok_or_else(|| fail(AbandonError::NotAbandoned))?;
+    let collected = match unsafe { remote_free::collect(owner) } {
         Ok(collected) => collected,
         Err(error) => return Err(fail(AbandonError::RemoteFree(error))),
     };
@@ -2615,7 +2623,9 @@ where
     set_thread_identity(&state, target_thread.get());
     // SAFETY: reassociation installs a live owner identity and the caller's
     // page lifetime proof still covers every published remote block.
-    let collected = unsafe { remote_free::collect(page) }.map_err(AbandonError::RemoteFree)?;
+    let owner = unsafe { Page::remote_free_owner_state_at(page) }
+        .ok_or(AbandonError::NotAbandoned)?;
+    let collected = unsafe { remote_free::collect(owner) }.map_err(AbandonError::RemoteFree)?;
     Ok(Some(AdoptedPage {
         page,
         collected_remote_blocks: abandoned_collected + collected,

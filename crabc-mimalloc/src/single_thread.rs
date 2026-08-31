@@ -172,7 +172,7 @@ use crate::size_class;
 use crate::subproc::MainSubprocess;
 use crate::types::{
     EMPTY_PAGE, HeapOsAbandonedPageListError, LiveThreadId, MemoryId, MemoryKind, Page,
-    PageKind, Theap,
+    PageKind, PageRemoteFreeProducerState, Theap,
 };
 use crate::types::page_queue::{
     page_is_in_full, page_queue_enqueue_from_full_metadata,
@@ -441,8 +441,8 @@ pub(crate) enum RemoteFreePreparationError {
 /// One linear, caller-scoped remote-free transfer from a live regular or full
 /// page.
 ///
-/// The type stores only page and client/block raw addresses; its owner borrow
-/// is zero-sized. That borrow prevents safe allocation, local free,
+/// The type stores only the page's atomic producer projection and client/block
+/// raw addresses; its owner borrow is zero-sized. That borrow prevents safe allocation, local free,
 /// collection, retirement, page-map teardown, or allocator teardown until
 /// this capability is published or cancelled. It is `!Sync` by the explicit
 /// marker, and `Send` only so a scoped worker can publish the one transferred
@@ -451,7 +451,7 @@ pub(crate) enum RemoteFreePreparationError {
 /// [`Self::cancel`].
 #[must_use = "a remote-free producer must be published or cancelled before the owner can resume"]
 pub(crate) struct RemoteFreeProducer<'owner> {
-    page: NonNull<Page>,
+    producer: PageRemoteFreeProducerState,
     canonical_block: NonNull<u8>,
     client_block: NonNull<u8>,
     _owner: PhantomData<&'owner mut ()>,
@@ -462,8 +462,9 @@ pub(crate) struct RemoteFreeProducer<'owner> {
 
 // SAFETY: `begin_remote_free` grants this capability only after it has pinned
 // the exact live regular-or-full page and canonical current block under the
-// allocator's exclusive borrow. The token carries no runtime allocator
-// reference; moving it to one scoped worker permits only `remote_free::push`.
+// allocator's exclusive borrow. The token carries no page or runtime allocator
+// reference; moving it to one scoped worker permits only `remote_free::push`
+// through the two atomic source fields.
 // Its erased exclusive-owner phantom borrow prevents safe engine/session/page-map
 // mutation until the worker has consumed or cancelled the token.
 unsafe impl Send for RemoteFreeProducer<'_> {}
@@ -479,7 +480,7 @@ impl<'owner> RemoteFreeProducer<'owner> {
     pub(crate) fn publish(self) -> Result<(), (Self, RemoteFreeError)> {
         // SAFETY: construction proved the exact page/block and retained the
         // owner borrow for the source producer lifetime.
-        match unsafe { remote_free::push(self.page, self.canonical_block) } {
+        match unsafe { remote_free::push(self.producer, self.canonical_block) } {
             Ok(()) => Ok(()),
             Err(error) => Err((self, error)),
         }
@@ -34020,7 +34021,10 @@ impl<'arena, 'map, Session: TheapPageSession> PageAllocatorEngine<'arena, 'map, 
         // SAFETY: the same parked-owner proof keeps the page and exact client
         // live through the atomic source producer. `push` accesses only its
         // `xthread_id` and `xthread_free` atomics after this preflight.
-        unsafe { remote_free::push(page, canonical_block) }.map_err(|error| match error {
+        // SAFETY: the parked-owner preflight above ended every temporary Page
+        // reference and keeps this metadata stable through publication.
+        let producer = unsafe { Page::remote_free_producer_state_at(page) };
+        unsafe { remote_free::push(producer, canonical_block) }.map_err(|error| match error {
             RemoteFreeError::NotOwnerAssociated
             | RemoteFreeError::TooManyRemoteBlocks
             | RemoteFreeError::UsedCountUnderflow
@@ -34079,7 +34083,9 @@ impl<'arena, 'map, Session: TheapPageSession> PageAllocatorEngine<'arena, 'map, 
             return Err(RemoteFreePreparationError::PageNotInCollectibleQueue);
         }
         Ok(RemoteFreeProducer {
-            page: page_pointer,
+            // SAFETY: the exclusive preflight proved stable initialized live
+            // metadata; the returned token retains only these atomic fields.
+            producer: unsafe { Page::remote_free_producer_state_at(page_pointer) },
             canonical_block,
             client_block: block,
             _owner: PhantomData,
@@ -34325,7 +34331,12 @@ impl<'arena, 'map, Session: TheapPageSession> PageAllocatorEngine<'arena, 'map, 
             // lifetime and exclusive ordinary fields. A remote producer may
             // retain only its disjoint atomic state; the caller proves it
             // joined before the later queue transition or potential release.
-            unsafe { remote_free::collect(page) }.map_err(PageCollectError::Remote)?;
+            // SAFETY: the active source owner keeps this page live and owns
+            // every ordinary field; producers retain only the disjoint
+            // atomic projection.
+            let owner = unsafe { Page::remote_free_owner_state_at(page) }
+                .ok_or(PageCollectError::InvalidOwnerState)?;
+            unsafe { remote_free::collect(owner) }.map_err(PageCollectError::Remote)?;
         }
         // SAFETY: a live owner completed remote detach. A detached session
         // instead has `THREAD_ID_DETACHED` and its explicit externally
@@ -34366,7 +34377,11 @@ impl<'arena, 'map, Session: TheapPageSession> PageAllocatorEngine<'arena, 'map, 
             // SAFETY: the source drain still owns the live Theap/page while
             // every scoped producer has joined. Remote state is the only
             // concurrently published component and is detached first.
-            unsafe { remote_free::collect(page) }.map_err(PageCollectError::Remote)?;
+            // SAFETY: the joined source owner keeps the page stable and owns
+            // every ordinary collection field.
+            let owner = unsafe { Page::remote_free_owner_state_at(page) }
+                .ok_or(PageCollectError::InvalidOwnerState)?;
+            unsafe { remote_free::collect(owner) }.map_err(PageCollectError::Remote)?;
         }
         // SAFETY: remote state is detached above for live owners; detached
         // sessions retain their explicit no-producer proof. This obtains only

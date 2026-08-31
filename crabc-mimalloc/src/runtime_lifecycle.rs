@@ -11201,7 +11201,10 @@ unsafe fn native_ticket_zero_live_remote_free(
     // exact current source block. `remote_free::push` reads only the atomic
     // producer state and publishes the block before the initial owner can
     // collect or retire that page.
-    match unsafe { remote_free::push(page, canonical_block) } {
+    // SAFETY: the exact live client pins initialized page metadata through
+    // this publication. Only the two atomic producer fields are retained.
+    let producer = unsafe { Page::remote_free_producer_state_at(page) };
+    match unsafe { remote_free::push(producer, canonical_block) } {
         Ok(()) => NativeTicketZeroRemoteFreeResult::Freed,
         Err(crate::remote_free::RemoteFreeError::UnalignedBlock) => {
             NativeTicketZeroRemoteFreeResult::NotOwned
