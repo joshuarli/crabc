@@ -868,7 +868,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "libc-crt1-static-tls",
             "owned-static-sysroot",
             "crt-object-bundle",
-            "crt-dynamic-startup|crt-dynamic-link-contract",
+            "crt-dynamic-startup|crt-dynamic-link-contract|consumer-static-pie-lto",
             "linux-5-10-uapi",
             "candidate-header-closure",
             "installed-header-tree-closure",

@@ -3657,6 +3657,26 @@ materialization. It rejects malformed non-relative RELA data closed. This is
 not a libc, pthread, dynamic-TLS, dynamic-loader, sysroot, or public
 x86-support claim.
 
+`./scripts/dev-x86_64.sh consumer-static-pie-lto` is the first private native
+consumer artifact recorded under the still-planned `consumer.rust-std-lto`
+family. It compiles the same no-std `crabc-rs` application plus four dependency
+crates as a native O3 control and as linker-plugin LLVM bitcode for full LLD
+`--lto-O3`. Both links use an ordered closed list: deterministic Rust-produced
+`rcrt1.o`/`crti.o`/`crtn.o`, those Rust inputs, the exact pinned target
+`libcore` rlib, a twice-reproduced object containing only the already-selected
+x86 bulk-memory leaf, and the deterministic one-member
+`libcrabc-builtins.a`. The gate records hashes for every input, requires
+`__udivti3` trace attribution to that archive, rejects foreign runtime markers,
+and inspects both outputs for x86-64 static ET_DYN closure and direct syscall
+code before executing each twice with identical raw output. The O3 image keeps
+the helper symbol while full LTO internalizes it. Its ignored JSON evidence is
+written to `compat/reports/x86_64/consumer-static-pie-lto/latest.json`.
+
+This executable is deliberately the largest consumer the currently owned
+static artifacts admit. It is not stock Rust `std`, an owned sysroot, libc or
+loader integration, a source build, completion or promotion of
+`consumer.rust-std-lto`, or public x86 support.
+
 `./scripts/dev-x86_64.sh libc-crt-static-tls` is the separate composed proof:
 real Rust CRT objects require the hidden libc bootstrap archive boundary, then
 run a high-alignment initialized/TBSS `PT_TLS` image through archive-owned

@@ -310,6 +310,19 @@ headers, CRT, target libc, compiler runtime, and loader paths. The final
 dynamic modes, complete archive closure, distribution/extracted-smoke proof,
 family completion, promotion, or public x86 support is selected.
 
+`./scripts/dev-x86_64.sh consumer-static-pie-lto` is a private native
+compiler/link/runtime consumer artifact inside still-planned
+`consumer.rust-std-lto`. The same no-std `crabc-rs` application plus four
+dependency crates are linked as an O3 control and through full LLD
+linker-plugin LTO using only deterministic Rust CRT objects, exact pinned
+target `libcore`, selected x86
+bulk-memory leaf, locked Rust inputs, and owned one-member
+`libcrabc-builtins.a`. Both static PIEs execute twice with fixed output;
+symbol evidence shows only the full-LTO route internalizes the cross-crate
+helper. This does not establish stock Rust `std`, an owned sysroot, libc or
+loader integration, source build, family completion, promotion, or public x86
+support.
+
 The x86 direct Rust facade also has verified allocation-free
 `pattern::{fnmatch, FnmatchFlags}` and alloc-gated explicit-root
 `pattern::{GlobPath, glob, glob_at}` slices. Their x86 no-std archive proofs

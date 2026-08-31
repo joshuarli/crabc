@@ -211,6 +211,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   crt-object-bundle  stage and audit the private five-object x86 Rust CRT bundle
   crt-dynamic-startup  run the private x86 Scrt1.o dynamic-PIE startup artifact
   crt-dynamic-link-contract  audit the closed x86 Rust CRT dynamic-PIE link boundary
+  consumer-static-pie-lto  run the private no-std crabc-rs O3/full-LTO owned-runtime consumer
   libc-pthread-create-join-tls  run the static x86 crabc-libc private create/exit/join TLS slice
   libc-pthread-identity  run the static x86 crabc-libc pthread/C11 identity alias slice
   libc-c11-lifecycle  run the static x86 crabc-libc bounded C11 lifecycle slice
@@ -2714,6 +2715,10 @@ run_crt_dynamic_link_contract_probe() {
         python3 /workspace/crt/tests/test_x86_64_dynamic_link_contract.py
 }
 
+run_consumer_static_pie_lto_probe() {
+    run_in_container python3 /workspace/compat/x86_64/consumer_static_pie_lto.py
+}
+
 run_libc_termios_control_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_termios_control.sh
 }
@@ -2903,7 +2908,7 @@ case "$command" in
     libc-crt1-static-tls) ;;
     owned-static-sysroot) ;;
     crt-object-bundle) ;;
-    crt-dynamic-startup|crt-dynamic-link-contract) ;;
+    crt-dynamic-startup|crt-dynamic-link-contract|consumer-static-pie-lto) ;;
     linux-5-10-uapi) ;;
     candidate-header-closure) ;;
     installed-header-tree-closure) ;;
@@ -3884,6 +3889,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "crt-dynamic-link-contract takes no arguments"
         ensure_image
         run_crt_dynamic_link_contract_probe
+        ;;
+    consumer-static-pie-lto)
+        [ "$#" -eq 0 ] || fail "consumer-static-pie-lto takes no arguments"
+        ensure_image
+        run_consumer_static_pie_lto_probe
         ;;
     libc-termios-control)
         [ "$#" -eq 0 ] || fail "libc-termios-control takes no arguments"

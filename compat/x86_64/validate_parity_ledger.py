@@ -7100,6 +7100,135 @@ def require_static_pie_rust_builtins_bundle_artifact(family: Mapping[str, Any]) 
     )
 
 
+def require_no_std_static_pie_full_lto_consumer_artifact(
+    family: Mapping[str, Any],
+) -> None:
+    """Ratchet one real private LTO consumer without implying Rust-std closure."""
+
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[consumer.rust-std-lto].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [
+        entry for entry in artifacts if entry.get("id") == "no-std-static-pie-full-lto-consumer"
+    ]
+    require(
+        len(matching) == 1,
+        "consumer.rust-std-lto must contain exactly one no-std-static-pie-full-lto-consumer artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "no-std-static-pie-full-lto-consumer must not promote consumer.rust-std-lto",
+    )
+    artifact = matching[0]
+    description = artifact.get("description")
+    require(
+        isinstance(description, str),
+        "no-std-static-pie-full-lto-consumer needs a description",
+    )
+    for phrase in (
+        "still-planned `consumer.rust-std-lto`",
+        "no-std `crabc-rs`",
+        "O3 control",
+        "full LLD `--lto-O3`",
+        "pinned target `libcore`",
+        "x86 C bulk-memory leaf",
+        "`rcrt1.o`/`crti.o`/`crtn.o`",
+        "`libcrabc-builtins.a`",
+        "`__udivti3`",
+        "no interpreter",
+        "stock Rust `std`",
+        "owned sysroot",
+        "promotion",
+        "public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"no-std-static-pie-full-lto-consumer description omits {phrase}",
+        )
+    owners = set(
+        nonempty_strings(
+            artifact["source_owners"],
+            "no-std-static-pie-full-lto-consumer.source_owners",
+        )
+    )
+    for owner in (
+        "Cargo.lock",
+        "rust-toolchain.toml",
+        "crabc-core/src/process.rs",
+        "crabc-core/src/io.rs",
+        "crabc-core/src/syscall_x86_64.rs",
+        "crabc-core/src/error.rs",
+        "crabc-rs/src/process_x86_64.rs",
+        "crabc-rs/src/io.rs",
+        "crabc-rs/src/fd.rs",
+        "libc/src/c_abi/x86_64/memory.rs",
+        "builtins/build_x86_64.py",
+        "crt/build_x86_64.py",
+        "compat/x86_64/libc_memory_probe.rs",
+        "compat/x86_64/consumer_static_pie_lto.py",
+        "compat/x86_64/consumer_static_pie_lto_fixture.rs",
+        "compat/x86_64/consumer_static_pie_lto_helper.rs",
+        "compat/x86_64/tests/test_consumer_static_pie_lto.py",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "scripts/dev-x86_64.sh",
+    ):
+        require(
+            owner in owners,
+            f"no-std-static-pie-full-lto-consumer source owners omit {owner}",
+        )
+    prerequisites = " ".join(
+        nonempty_strings(
+            artifact["x86_abi_prerequisites"],
+            "no-std-static-pie-full-lto-consumer.x86_abi_prerequisites",
+        )
+    )
+    for phrase in (
+        "SHA-256",
+        "Rust ABI panic-abort",
+        "embedded LLVM bitcode",
+        "linker-plugin LLVM bitcode",
+        "`--lto-O3`",
+        "helper boundary",
+        "x86-64 ET_DYN",
+        "__memcpy_fwd/bcmp/memcmp/memcpy/memmove/memset",
+        "`__udivti3`",
+        "direct `syscall`",
+        "forbidden runtime marker",
+    ):
+        require(
+            phrase in prerequisites,
+            f"no-std-static-pie-full-lto-consumer ABI prerequisites omit {phrase}",
+        )
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh consumer-static-pie-lto"},
+        "no-std-static-pie-full-lto-consumer must use its closed native command",
+    )
+    scope = evidence[0].get("scope")
+    require(isinstance(scope, str), "no-std-static-pie-full-lto-consumer needs evidence scope")
+    for phrase in (
+        "Two clean CRT builds",
+        "two clean selected bulk-memory builds",
+        "exact target libcore",
+        "SHA-256 provenance",
+        "execute twice",
+        "raw status/stdout/stderr equality",
+        "`__udivti3` attribution",
+        "cross-crate helper internalization",
+        "family remains planned",
+        "not stock Rust std",
+        "public x86 support",
+    ):
+        require(
+            phrase in scope,
+            f"no-std-static-pie-full-lto-consumer evidence scope omits {phrase}",
+        )
+
+
 def require_static_pthread_identity_artifact(family: Mapping[str, Any]) -> None:
     """Ratchet static pthread/C11 identity without promoting pthread parity."""
     artifacts = require_verified_artifacts(
@@ -17264,6 +17393,9 @@ def validate_ledger(
     require_dynamic_pie_scrt1_artifact(by_id["crt.dynamic-startup"])
     require_static_pie_rust_builtins_bundle_artifact(by_id["crt.static-pie"])
     require_dynamic_pie_link_contract_artifact(by_id["crt.dynamic-startup"])
+    require_no_std_static_pie_full_lto_consumer_artifact(
+        by_id["consumer.rust-std-lto"]
+    )
     require_static_initial_tls_v1_artifact(by_id["libc.pthread-tls"])
     require_static_crt_initial_tls_handoff_artifact(by_id["libc.pthread-tls"])
     require_static_crt1_initial_tls_handoff_artifact(by_id["libc.pthread-tls"])
