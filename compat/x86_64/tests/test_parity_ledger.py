@@ -50,7 +50,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 40)
-        self.assertEqual(report["verified_artifact_count"], 161)
+        self.assertEqual(report["verified_artifact_count"], 162)
         self.assertEqual(report["header_layout_probe_count"], 47)
         self.assertEqual(report["public_header_inventory_count"], 183)
         self.assertEqual(report["header_foundation_header_count"], 191)
@@ -15346,7 +15346,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertIn("ns_get16", exports)
         self.assertFalse(
             exports
-            & {"dn_expand", "ns_put32", "ns_skiprr"}
+            & {"dn_expand", "ns_skiprr"}
         )
 
         prerequisites = artifact["x86_abi_prerequisites"]
@@ -15368,7 +15368,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             "9fa28ece75d8a2191de7c5bb53bed224c5947417",
             "11-byte `.text.ns_get16` section",
             "no relocation, call, or syscall",
-            "ns_get32 and ns_put16 are separately selected artifacts",
+            "ns_get32, ns_put16, and ns_put32 are separately selected artifacts",
         ):
             self.assertIn(phrase, source_mapping)
 
@@ -15460,7 +15460,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             .splitlines()
         )
         self.assertIn("ns_get32", exports)
-        self.assertFalse(exports & {"dn_expand", "ns_put32", "ns_skiprr"})
+        self.assertFalse(exports & {"dn_expand", "ns_skiprr"})
 
         prerequisites = artifact["x86_abi_prerequisites"]
         assert isinstance(prerequisites, list)
@@ -15481,7 +15481,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             "9fa28ece75d8a2191de7c5bb53bed224c5947417",
             "7-byte `.text.ns_get32` section",
             "no relocation, call, or syscall",
-            "ns_get16 and ns_put16 are separately selected artifacts",
+            "ns_get16, ns_put16, and ns_put32 are separately selected artifacts",
         ):
             self.assertIn(phrase, source_mapping)
 
@@ -15573,7 +15573,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         )
         self.assertIn("ns_put16", exports)
         self.assertFalse(
-            exports & {"dn_expand", "ns_put32", "ns_skiprr"}
+            exports & {"dn_expand", "ns_skiprr"}
         )
 
         prerequisites = artifact["x86_abi_prerequisites"]
@@ -15597,7 +15597,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             "9fa28ece75d8a2191de7c5bb53bed224c5947417",
             "10-byte `.text.ns_put16` section",
             "no relocation, call, or syscall",
-            "ns_get16 and ns_get32 are separately selected artifacts",
+            "ns_get16, ns_get32, and ns_put32 are separately selected artifacts",
         ):
             self.assertIn(phrase, source_mapping)
 
@@ -15626,6 +15626,122 @@ class X86ParityLedgerTests(unittest.TestCase):
         evidence = artifact["native_evidence"]
         assert isinstance(evidence, list) and isinstance(evidence[0], dict)
         evidence[0]["scope"] = "static nameserver word helper"
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "Pinned-musl project-header C execution"
+        ):
+            ledger.validate_ledger(data)
+
+    def test_ns_put32_artifact_keeps_its_private_codec_boundary(self) -> None:
+        data = self.data()
+        family = self.family(data, "libc.resolver")
+        self.assertEqual(family["status"], "planned")
+        self.assertIn("libc/src/c_abi/x86_64/ns_put32.rs", family["source_owners"])
+        artifacts = family["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-ns-put32"
+        )
+        self.assertNotIn("capabilities", artifact)
+        for owner in (
+            "libc/src/c_abi/x86_64/ns_put32.rs",
+            "include/resolv.h",
+            "include/arpa/nameser.h",
+            "compat/x86_64/nameser_header_abi_probe.c",
+            "compat/x86_64/nameser_header_abi_probe.cpp",
+            "compat/x86_64/run_nameser_header_abi.sh",
+            "compat/x86_64/static_c_abi_exports.txt",
+            "compat/x86_64/libc_ns_put32_probe.c",
+            "compat/x86_64/libc_ns_put32_start.S",
+            "compat/x86_64/run_libc_ns_put32.sh",
+            "compat/x86_64/validate_parity_ledger.py",
+            "scripts/dev-x86_64.sh",
+            "scripts/check_structure.py",
+        ):
+            self.assertIn(owner, artifact["source_owners"])
+        self.assertEqual(
+            {entry["command"] for entry in artifact["native_evidence"]},
+            {"./scripts/dev-x86_64.sh libc-ns-put32"},
+        )
+        for phrase in (
+            "Private native x86 static `ns_put32` caller-owned 32-bit nameserver wire-write C ABI artifact",
+            "still-planned `libc.resolver`",
+            "archive-free true `-nostdlib -static` candidate",
+            "exactly one extracted crabc object",
+            "never `libc.a`",
+            "C `unsigned long`'s low 32 bits",
+            "NS_PUT32",
+            "`/etc/hosts`",
+            "`/etc/resolv.conf`",
+            "DNS packet I/O",
+            "netdb/database",
+            "byte-order helper",
+            "Ethernet",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, artifact["description"])
+
+        exports = set(
+            (ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt")
+            .read_text(encoding="utf-8")
+            .splitlines()
+        )
+        self.assertIn("ns_put32", exports)
+        self.assertFalse(
+            exports & {"dn_expand", "ns_skiprr", "ns_name_uncompress", "res_init"}
+        )
+
+        prerequisites = artifact["x86_abi_prerequisites"]
+        assert isinstance(prerequisites, list)
+        c_abi = next(item for item in prerequisites if "SysV AMD64 LP64" in item)
+        assert isinstance(c_abi, str)
+        for phrase in (
+            "rdi",
+            "rsi",
+            "returns void",
+            "at least four writable bytes in one allocation",
+            "no alignment",
+            "without reading memory",
+        ):
+            self.assertIn(phrase, c_abi)
+        source_mapping = next(
+            item for item in prerequisites if "src/network/ns_parse.c" in item
+        )
+        assert isinstance(source_mapping, str)
+        for phrase in (
+            "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+            "5-byte `.text.ns_put32` section",
+            "no relocation, call, or syscall",
+            "ns_get16, ns_get32, and ns_put16 are separately selected artifacts",
+        ):
+            self.assertIn(phrase, source_mapping)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.resolver")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-ns-put32"
+        )
+        artifact["description"] = artifact["description"].replace(
+            "byte-order helper", "integer conversion"
+        )
+        with self.assertRaisesRegex(ledger.LedgerError, "omits byte-order helper"):
+            ledger.validate_ledger(data)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.resolver")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-ns-put32"
+        )
+        evidence = artifact["native_evidence"]
+        assert isinstance(evidence, list) and isinstance(evidence[0], dict)
+        evidence[0]["scope"] = "static nameserver dword helper"
         with self.assertRaisesRegex(
             ledger.LedgerError, "Pinned-musl project-header C execution"
         ):

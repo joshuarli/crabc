@@ -397,6 +397,8 @@ mod ns_get16;
 mod ns_get32;
 #[path = "ns_put16.rs"]
 mod ns_put16;
+#[path = "ns_put32.rs"]
+mod ns_put32;
 #[path = "inet_address.rs"]
 mod inet_address;
 #[path = "inet_ntoa.rs"]

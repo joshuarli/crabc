@@ -1283,11 +1283,12 @@ address-conversion or socket behavior, `crabc-libc`, or public x86 support.
 `<resolv.h>` consumers for exactly
 `dn_skipname(const unsigned char *, const unsigned char *)` and
 `ns_get16(const unsigned char *)`, `ns_get32(const unsigned char *)`, and
-`ns_put16(unsigned, unsigned char *)`. It ratchets `NS_CMPRSFLGS=0xc0`,
+`ns_put16(unsigned, unsigned char *)`, plus
+`ns_put32(unsigned long, unsigned char *)`. It ratchets `NS_CMPRSFLGS=0xc0`,
 `NS_MAXLABEL=63`, `NS_MAXCDNAME=255`, and `NS_MAXDNAME=1025`, then checks the
-C++ object retains all four unmangled C symbols. It is declaration-only
+C++ object retains all five unmangled C symbols. It is declaration-only
 evidence for one caller-owned DNS wire-name span, caller-owned 16-bit and
-32-bit wire reads, and one caller-owned 16-bit wire write; it does not
+32-bit wire reads, and caller-owned 16-bit and 32-bit wire writes; it does not
 establish archive linkage, resolver state, `/etc/resolv.conf` parsing, DNS
 packet I/O, sockets, netdb, installed-header completion, family promotion, or
 public x86 support.
@@ -1450,6 +1451,23 @@ neighboring bytes, and `NS_PUT16`'s cursor advance. It has no resolver state,
 I/O, socket, netdb/database, parser sibling, address codec, integer byte-order
 helper, interface, Ethernet, allocation, syscall, libc.so, CRT, loader,
 sysroot, family promotion, or public x86 support.
+
+`libc-ns-put32` (`./scripts/dev-x86_64.sh libc-ns-put32`) is a distinct
+private static caller-owned nameserver 32-bit wire-write C ABI artifact inside
+still-planned `libc.resolver`, not resolver-network behavior or a promotion.
+Its project-header C fixture runs first through pinned musl 1.2.6 and then
+through an archive-free true `-nostdlib -static` candidate linked from exactly
+one extracted `ns_put32` object, never `libc.a`; the aggregate archive ratchet
+separately proves the export. Pinned musl places the five-byte call-free
+`ns_put32` text section in `src/network/ns_parse.c` alongside parser siblings,
+which remain out of the candidate. The differential covers unaligned
+network-order four-byte writes, LP64 `unsigned long` high-bit truncation to
+the low 32 bits, unchanged neighboring bytes, and `NS_PUT32`'s cursor advance.
+It has no resolver state, `h_errno`/`errno`/TLS, `/etc/hosts` or
+`/etc/resolv.conf` access, DNS packet I/O, socket, netdb/database, parser
+sibling, address codec, integer byte-order helper, interface, Ethernet,
+allocation, syscall, libc.so, CRT, loader, sysroot, family promotion, or
+public x86 support.
 
 `libc-numeric-netdb` is a separate private static C `netdb.h` result-record
 artifact under still-planned `libc.resolver`. Its project-header C body first

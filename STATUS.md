@@ -115,7 +115,8 @@ sockets, complete the resolver family, promote x86, or claim public support.
 companion `./scripts/dev-x86_64.sh nameser-header-abi` gate proves the exact
 C/C++ `dn_skipname(const unsigned char *, const unsigned char *)` and
 `ns_get16(const unsigned char *)`, `ns_get32(const unsigned char *)`, and
-`ns_put16(unsigned, unsigned char *)` declarations, the
+`ns_put16(unsigned, unsigned char *)`, and
+`ns_put32(unsigned long, unsigned char *)` declarations, the
 `NS_CMPRSFLGS`/name-size constants, and unmangled C++ linkage. The static
 fixture then runs through pinned musl 1.2.6 and an archive-free
 `-nostdlib -static` candidate linked from exactly one extracted object, never
@@ -132,7 +133,7 @@ x86 support.
 artifact inside still-planned `libc.resolver`. The shared
 `./scripts/dev-x86_64.sh nameser-header-abi` gate proves the exact C/C++
 `ns_get16(const unsigned char *)` declaration and unmangled C++ linkage beside
-`dn_skipname`, `ns_get32`, and `ns_put16`. Its static fixture then runs through
+`dn_skipname`, `ns_get32`, `ns_put16`, and `ns_put32`. Its static fixture then runs through
 pinned musl 1.2.6 and an archive-free `-nostdlib -static` candidate linked from
 exactly one extracted object, never `libc.a`. It selects only the 11-byte
 call-free `ns_get16` text section in musl `src/network/ns_parse.c`: two
@@ -147,7 +148,7 @@ completion, promotion, or public x86 support.
 artifact inside still-planned `libc.resolver`. The shared
 `./scripts/dev-x86_64.sh nameser-header-abi` gate proves the exact C/C++
 `ns_get32(const unsigned char *)` declaration and unmangled C++ linkage beside
-`dn_skipname`, `ns_get16`, and `ns_put16`. Its static fixture then runs through
+`dn_skipname`, `ns_get16`, `ns_put16`, and `ns_put32`. Its static fixture then runs through
 pinned musl 1.2.6 and an archive-free `-nostdlib -static` candidate linked from
 exactly one extracted object, never `libc.a`. It selects only the seven-byte
 call-free `ns_get32` text section in musl `src/network/ns_parse.c`: four
@@ -163,7 +164,7 @@ support.
 artifact inside still-planned `libc.resolver`. The shared
 `./scripts/dev-x86_64.sh nameser-header-abi` gate proves the exact C/C++
 `ns_put16(unsigned, unsigned char *)` declaration and unmangled C++ linkage
-beside `dn_skipname`, `ns_get16`, and `ns_get32`. Its static fixture then runs
+beside `dn_skipname`, `ns_get16`, `ns_get32`, and `ns_put32`. Its static fixture then runs
 through pinned musl 1.2.6 and an archive-free `-nostdlib -static` candidate
 linked from exactly one extracted object, never `libc.a`. It selects only the
 10-byte call-free `ns_put16` text section in musl `src/network/ns_parse.c`: C
@@ -173,6 +174,22 @@ state, `h_errno`, `errno`, TLS, `/etc/hosts` or `/etc/resolv.conf` access, DNS
 packet I/O, socket, netdb/database, parser sibling, integer byte-order helper,
 allocation, syscall, interface, or Ethernet dependency; it is not resolver
 completion, promotion, or public x86 support.
+
+`./scripts/dev-x86_64.sh libc-ns-put32` is a private `static-c-ns-put32`
+artifact inside still-planned `libc.resolver`. The shared
+`./scripts/dev-x86_64.sh nameser-header-abi` gate proves the exact C/C++
+`ns_put32(unsigned long, unsigned char *)` declaration and unmangled C++
+linkage beside `dn_skipname`, `ns_get16`, `ns_get32`, and `ns_put16`. Its static
+fixture then runs through pinned musl 1.2.6 and an archive-free
+`-nostdlib -static` candidate linked from exactly one extracted object, never
+`libc.a`. It selects only the five-byte call-free `ns_put32` text section in
+musl `src/network/ns_parse.c`: C `unsigned long`'s low 32 bits become four
+unaligned caller-owned network-order bytes, while `NS_PUT32` advances its
+caller-owned cursor by four. It has no resolver state, `h_errno`, `errno`,
+TLS, `/etc/hosts` or `/etc/resolv.conf` access, DNS packet I/O, socket,
+netdb/database, parser sibling, integer byte-order helper, allocation,
+syscall, interface, or Ethernet dependency; it is not resolver completion,
+promotion, or public x86 support.
 
 `./scripts/dev-x86_64.sh libc-login-name` is a private
 `static-c-login-name` artifact inside planned `libc.posix-runtime`. Its

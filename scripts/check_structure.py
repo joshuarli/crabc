@@ -3750,6 +3750,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         '#[path = "ns_get16.rs"]',
         '#[path = "ns_get32.rs"]',
         '#[path = "ns_put16.rs"]',
+        '#[path = "ns_put32.rs"]',
         '#[path = "inet_address.rs"]',
         '#[path = "inet_ntoa.rs"]',
         '#[path = "inet_classful.rs"]',
@@ -8375,6 +8376,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
             "ns_get16_signature",
             "ns_get32_signature",
             "ns_put16_signature",
+            "ns_put32_signature",
             "NS_CMPRSFLGS == 0xc0",
             "NS_MAXLABEL == 63",
             "NS_MAXCDNAME == 255",
@@ -8392,6 +8394,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         "_Z.*ns_get16",
         "_Z.*ns_get32",
         "_Z.*ns_put16",
+        "_Z.*ns_put32",
         "resolv.h arpa/nameser.h netinet/in.h",
         "DNS packet I/O",
         "netdb",
@@ -8797,6 +8800,122 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
     if '"$archive" -o "$candidate"' in ns_put16_runner:
         errors.append(
             "compat/x86_64/run_libc_ns_put16.sh: final wire-write candidate "
+            "must not link libc.a"
+        )
+
+    ns_put32_probe_source = ROOT / "compat" / "x86_64" / "libc_ns_put32_probe.c"
+    ns_put32_start_source = ROOT / "compat" / "x86_64" / "libc_ns_put32_start.S"
+    ns_put32_runner_source = ROOT / "compat" / "x86_64" / "run_libc_ns_put32.sh"
+    for path in (ns_put32_probe_source, ns_put32_start_source, ns_put32_runner_source):
+        if not path.is_file():
+            errors.append(
+                f"x86 static ns_put32 artifact is missing {path.relative_to(ROOT)}"
+            )
+            return
+
+    ns_put32_source = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "ns_put32.rs"
+    ns_put32_text = ns_put32_source.read_text(errors="replace")
+    ns_put32_probe = ns_put32_probe_source.read_text(errors="replace")
+    ns_put32_start = ns_put32_start_source.read_text(errors="replace")
+    ns_put32_runner = ns_put32_runner_source.read_text(errors="replace")
+    for required in (
+        "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+        "src/network/ns_parse.c",
+        "core::ptr::write",
+        "value >> 24",
+        "bytes.add(3)",
+        'pub unsafe extern "C" fn ns_put32',
+        "at least four writable bytes",
+        "truncates `value` to its low 32",
+    ):
+        if required not in ns_put32_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/ns_put32.rs: selected static "
+                f"wire-write boundary is missing {required!r}"
+            )
+    for forbidden in (
+        "static mut",
+        "raw_syscall",
+        "__errno_location",
+        "__h_errno_location",
+        "getaddrinfo",
+        "gethostby",
+        "socket(",
+        "std::",
+        "alloc::",
+        "crabc_core",
+        "crabc_mimalloc",
+        "fn ns_get16",
+        "fn ns_get32",
+        "fn ns_put16",
+    ):
+        if forbidden in ns_put32_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/ns_put32.rs: selected static "
+                f"wire-write boundary must not select {forbidden!r}"
+            )
+    ns_put32_exports = set(
+        re.findall(
+            r'(?m)^pub\s+unsafe\s+extern\s+"C"\s+fn\s+(\w+)\s*\(',
+            ns_put32_text,
+        )
+    )
+    if ns_put32_exports != {"ns_put32"}:
+        errors.append(
+            "libc/src/c_abi/x86_64/ns_put32.rs: selected static artifact "
+            "must export only ns_put32"
+        )
+    for required in (
+        "#include <resolv.h>",
+        "ns_put32_signature",
+        "NS_INT32SZ == 4",
+        "unsigned char direct",
+        "0x1122334455667788UL",
+        "NS_PUT32(0xabcdffeeUL, cursor)",
+        "CRABC_NS_PUT32_FREESTANDING",
+    ):
+        if required not in ns_put32_probe:
+            errors.append(
+                "compat/x86_64/libc_ns_put32_probe.c: static wire-write "
+                f"regression is missing {required!r}"
+            )
+    for required in ("crabc_x86_64_ns_put32_probe", "mov $60, %eax"):
+        if required not in ns_put32_start:
+            errors.append(
+                "compat/x86_64/libc_ns_put32_start.S: static wire-write "
+                f"entry is missing {required!r}"
+            )
+    if "ARCH_SET_FS" in ns_put32_start:
+        errors.append(
+            "compat/x86_64/libc_ns_put32_start.S: wire-write entry must not "
+            "bootstrap TLS"
+        )
+    for required in (
+        "ns_parse.lo",
+        "ns_parse.c",
+        "5",
+        "assert_selected_c_abi_surface",
+        "extract_selected_member",
+        "ns_put32 archive member also defines a nameserver sibling",
+        "-nostdlib -static",
+        '\"$selected_member\" -o \"$candidate\"',
+        "candidate unexpectedly selects TLS",
+        "__h_errno_location",
+        "dn_expand dn_skipname ns_get16 ns_get32 ns_put16",
+        "res_query res_querydomain res_search",
+        "htonl htons ntohl ntohs",
+        "getaddrinfo freeaddrinfo",
+        "socket bind connect send recv",
+        "call|syscall",
+    ):
+        if required not in ns_put32_runner:
+            errors.append(
+                "compat/x86_64/run_libc_ns_put32.sh: archive-free static "
+                f"wire-write evidence is missing {required!r}"
+            )
+    if '"$archive" -o "$candidate"' in ns_put32_runner:
+        errors.append(
+            "compat/x86_64/run_libc_ns_put32.sh: final wire-write candidate "
             "must not link libc.a"
         )
 
@@ -9539,6 +9658,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         ns_get16_text,
         ns_get32_text,
         ns_put16_text,
+        ns_put32_text,
         byte_strings_text,
         random_entropy_text,
         memory_search_text,
@@ -9880,6 +10000,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         "ns_get16",
         "ns_get32",
         "ns_put16",
+        "ns_put32",
         "uname",
         "sysinfo",
         "gethostname",
@@ -10088,6 +10209,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         ("ns_get16.rs", ns_get16_text),
         ("ns_get32.rs", ns_get32_text),
         ("ns_put16.rs", ns_put16_text),
+        ("ns_put32.rs", ns_put32_text),
         ("random_entropy.rs", random_entropy_text),
         ("memory_search.rs", memory_search_text),
         ("string_copy.rs", string_copy_text),

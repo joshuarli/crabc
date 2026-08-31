@@ -120,7 +120,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   memfd-create-header-abi  verify selected x86 GNU memfd_create C/C++ declarations
   resource-header-abi  compile the staged x86 C/C++ resource-header layouts
   socket-header-abi  verify staged x86 base socket C/C++ declarations/layouts and IPv6 macros
-  nameser-header-abi  verify staged x86 resolv.h C/C++ dn_skipname/ns_get16/ns_get32/ns_put16 declarations
+  nameser-header-abi  verify staged x86 resolv.h C/C++ dn_skipname/ns_get16/ns_get32/ns_put16/ns_put32 declarations
   inet-address-header-abi  verify selected x86 arpa/inet C/C++ numeric-address declarations
   socket-messages-header-abi  verify staged x86 socket-message/options C/C++ declarations/layouts
   sysv-semaphore-header-abi  verify staged x86 SysV semaphore C/C++ declarations/layouts
@@ -341,6 +341,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-ns-get16  run the archive-free static x86 crabc-libc DNS 16-bit wire-read slice
   libc-ns-get32  run the archive-free static x86 crabc-libc DNS 32-bit wire-read slice
   libc-ns-put16  run the archive-free static x86 crabc-libc DNS 16-bit wire-write slice
+  libc-ns-put32  run the archive-free static x86 crabc-libc DNS 32-bit wire-write slice
   libc-process-globals-getopt  run the static x86 crabc-libc program-name/getopt slice
   libc-auxv-observation  run the static x86 crabc-libc initial aux-vector lookup slice
   libc-inet-address  run the static x86 crabc-libc numeric Internet-address codec slice
@@ -3350,7 +3351,7 @@ case "$command" in
     ldso-bounded-dlopen) ;;
     math-special-header-abi|libc-math-special) ;;
     inet-address-header-abi|nameser-header-abi) ;;
-    libc-network-byte-order|libc-dn-skipname|libc-ns-get16|libc-ns-get32|libc-ns-put16) ;;
+    libc-network-byte-order|libc-dn-skipname|libc-ns-get16|libc-ns-get32|libc-ns-put16|libc-ns-put32) ;;
     ldso-target-root) ;;
     libc-fenv-rounding) ;;
     libc-math-minmax) ;;
@@ -4967,6 +4968,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "libc-ns-put16 takes no arguments"
         ensure_image
         run_in_container bash /workspace/compat/x86_64/run_libc_ns_put16.sh
+        ;;
+    libc-ns-put32)
+        [ "$#" -eq 0 ] || fail "libc-ns-put32 takes no arguments"
+        ensure_image
+        run_in_container bash /workspace/compat/x86_64/run_libc_ns_put32.sh
         ;;
     libc-process-globals-getopt)
         [ "$#" -eq 0 ] || fail "libc-process-globals-getopt takes no arguments"
