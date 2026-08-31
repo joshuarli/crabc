@@ -73,13 +73,52 @@ fn split_releasers_free_mixed_post_exit_clients_through_page_state() {
         initialize_process(current_page_size()),
         "the native runtime initializes before the split post-exit free regression"
     );
+    // Prepare the initial owner first: this is the state in which the
+    // independent ticket-zero operation later runs beside A's source pages.
     assert!(
         prepare_native_later_thread_arena(),
-        "the initial persistent owner prepares the later-worker source arena"
+        "the initial persistent owner prepares the calibration arena"
+    );
+    // Calibrate that owner's retained local page before lending the pair to
+    // A. The second explicit handoff below drains this first sample; the
+    // matching mid-test ticket-zero free must leave exactly the same persistent
+    // initial PageMap footprint after every A client is gone.
+    let initial_local_calibration = match ticket_zero_allocate(73, false) {
+        TicketZeroPageAllocationResult::Allocated(block) => block,
+        _ => panic!("ticket zero creates its initial local calibration client"),
+    };
+    assert_eq!(
+        unsafe { ticket_zero_free(initial_local_calibration) },
+        TicketZeroPageFreeResult::Freed,
+        "the initial local calibration returns through its retained page engine"
+    );
+    #[cfg(feature = "native-runtime-test-audit")]
+    let retained_initial_page_map_entries = native_runtime_lifecycle_test_audit()
+        .expect("the retained initial calibration exposes a scalar PageMap audit")
+        .page_map_registered_entry_count;
+    #[cfg(feature = "native-runtime-test-audit")]
+    assert!(
+        retained_initial_page_map_entries > 0,
+        "the initial local calibration keeps its all-free page registered until the handoff"
+    );
+    assert!(
+        prepare_native_later_thread_arena(),
+        "the second explicit initial handoff drains the calibration before A enters"
     );
     #[cfg(feature = "native-runtime-test-audit")]
     let baseline = native_runtime_lifecycle_test_audit()
         .expect("the initialized process exposes a quiescent source-state baseline");
+    #[cfg(feature = "native-runtime-test-audit")]
+    assert_eq!(
+        baseline.page_map_registered_entry_count,
+        0,
+        "the second explicit handoff drains the retained initial calibration before A enters"
+    );
+    #[cfg(feature = "native-runtime-test-audit")]
+    let expected_final_page_map_entries = baseline
+        .page_map_registered_entry_count
+        .checked_add(retained_initial_page_map_entries)
+        .expect("the retained initial PageMap footprint fits the scalar audit");
 
     let (owner_sender, owner_receiver) = mpsc::sync_channel(0);
     let owner = std::thread::spawn(move || {
@@ -131,7 +170,9 @@ fn split_releasers_free_mixed_post_exit_clients_through_page_state() {
 
     // Three A clients remain PageMap-owned after B exits. Ticket zero's
     // independent initial persistent owner may still complete its own local
-    // operation without changing those post-exit page states.
+    // operation, but pinned `mi_free` keeps that all-free local page in its
+    // retained initial Theap until a later explicit handoff. Its calibrated
+    // PageMap footprint is separate from the three A source pages C consumes.
     let bookkeeping = match ticket_zero_allocate(73, false) {
         TicketZeroPageAllocationResult::Allocated(block) => block,
         _ => panic!("ticket zero remains independently usable beside A's post-exit pages"),
@@ -139,7 +180,16 @@ fn split_releasers_free_mixed_post_exit_clients_through_page_state() {
     assert_eq!(
         unsafe { ticket_zero_free(bookkeeping) },
         TicketZeroPageFreeResult::Freed,
-        "ticket zero returns its private client without changing A's post-exit pages"
+        "ticket zero returns its private client through its retained local page engine"
+    );
+    #[cfg(feature = "native-runtime-test-audit")]
+    let after_initial_local_bookkeeping = native_runtime_lifecycle_test_audit()
+        .expect("ticket zero leaves a readable retained-initial-page audit");
+    #[cfg(feature = "native-runtime-test-audit")]
+    assert!(
+        after_initial_local_bookkeeping.page_map_registered_entry_count
+            > expected_final_page_map_entries,
+        "the three remaining A clients stay registered beside ticket zero's retained local page"
     );
 
     let second_releaser = std::thread::spawn(move || {
@@ -190,8 +240,8 @@ fn split_releasers_free_mixed_post_exit_clients_through_page_state() {
             .expect("every releaser joined before the final source-state audit");
         assert_eq!(
             after.page_map_registered_entry_count,
-            baseline.page_map_registered_entry_count,
-            "all split post-exit clients release their PageMap registrations"
+            expected_final_page_map_entries,
+            "all split post-exit clients release their PageMap registrations without draining ticket zero's retained local page"
         );
         assert_eq!(
             after.main_heap_abandoned_page_count,
