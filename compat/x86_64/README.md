@@ -2290,12 +2290,18 @@ x86 initial-TLS errno owner, and the bundled mimalloc v3.3.2 object. The same
 project-header probe first runs against pinned musl and then through that
 crabc wrapper. The candidate is statically linked, and its link map must reject
 musl's `malloc`, `calloc`, `realloc`, `free`, `aligned_alloc`, and
-`posix_memalign` objects, so every observed allocation call belongs to crabc.
+`posix_memalign`, `memalign`, `reallocarray`, and `valloc` objects, so every
+observed allocation call belongs to crabc. The exact ten-export wrapper object
+contains its private witness plus all nine `memory.allocator-basic` C symbols;
+the overall capability remains unselected until its runtime-family closure is
+owned.
 The transaction covers distinct aligned zero-size allocation, natural
 alignment through large requests, grow/shrink/failure-preserving reallocation,
 zeroed and overflow-checked counted allocation, stale-errno `free`, accepted
 non-multiple aligned sizes, invalid-alignment errno, POSIX output preservation,
-and reallocation to zero.
+and reallocation to zero. The extension adds checked `reallocarray` growth and
+overflow preservation of its live input, historical zero-alignment `memalign`,
+and a 4096-byte-aligned `valloc` result.
 
 Pinned musl still supplies the candidate's static startup, pthread-key,
 mapping, time, environment, and diagnostic primitives because their x86 crabc

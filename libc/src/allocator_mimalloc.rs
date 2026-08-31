@@ -65,6 +65,24 @@ pub unsafe extern "C" fn realloc(ptr: *mut c_void, new_size: SizeT) -> *mut c_vo
 }
 
 #[no_mangle]
+pub unsafe extern "C" fn reallocarray(
+    ptr: *mut c_void,
+    count: SizeT,
+    size: SizeT,
+) -> *mut c_void {
+    // Keep musl's checked multiplication outside realloc: on overflow the
+    // input allocation stays live and observable, while errno becomes ENOMEM.
+    let total = match count.checked_mul(size) {
+        Some(value) => value,
+        None => {
+            cabi_set_allocator_errno(ENOMEM);
+            return null_mut();
+        }
+    };
+    realloc(ptr, total)
+}
+
+#[no_mangle]
 pub unsafe extern "C" fn aligned_alloc(alignment: SizeT, size: SizeT) -> *mut c_void {
     // musl accepts a non-multiple size for aligned_alloc, as does its current
     // mallocng implementation.  Validate only the required power-of-two
@@ -101,4 +119,24 @@ pub unsafe extern "C" fn posix_memalign(
     }
     result.write(allocation);
     0
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn memalign(alignment: SizeT, size: SizeT) -> *mut c_void {
+    // Musl keeps this historical entry as a thin adapter. Its zero-alignment
+    // case retains the allocator's ordinary natural-alignment behavior rather
+    // than forwarding an invalid alignment to aligned_alloc.
+    if alignment == 0 {
+        malloc(size)
+    } else {
+        aligned_alloc(alignment, size)
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn valloc(size: SizeT) -> *mut c_void {
+    // The active Linux/AArch64 runtime and staged Linux/x86-64 runtime both
+    // select a 4 KiB base page. This legacy adapter changes only allocation
+    // alignment; it does not expose page allocation policy.
+    memalign(4096, size)
 }

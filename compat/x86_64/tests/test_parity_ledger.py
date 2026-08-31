@@ -280,6 +280,10 @@ class X86ParityLedgerTests(unittest.TestCase):
             "paused fixed-v3.5.0 Rust-port evidence",
             "not an owned runtime",
             "private `mi_*` globals",
+            "all nine observed allocation calls",
+            "reallocarray",
+            "zero-alignment memalign",
+            "4-KiB valloc",
             "public x86 support",
         ):
             self.assertIn(phrase, artifact["description"])

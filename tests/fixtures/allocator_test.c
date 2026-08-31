@@ -1,3 +1,5 @@
+#define _GNU_SOURCE 1
+
 #include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -17,6 +19,7 @@ int main(void)
     void *zero_a = malloc(0);
     void *zero_b = malloc(0);
     void *aligned = (void *)1;
+    void *page_aligned;
     const size_t natural_alignment_sizes[] = {1, 15, 16, 17, 4096, 262144};
     size_t i;
 
@@ -51,6 +54,29 @@ int main(void)
     if (realloc(shrunk, (size_t)-1) != NULL || errno != ENOMEM || shrunk[0] != 1)
         return fail("realloc-overflow");
     free(shrunk);
+
+    small = reallocarray(NULL, 4, sizeof *small);
+    if (small == NULL)
+        return fail("reallocarray");
+    small[0] = 1;
+    small[3] = 4;
+    errno = 0;
+    grown = reallocarray(small, (size_t)-1, 2);
+    if (grown != NULL || errno != ENOMEM || small[0] != 1 || small[3] != 4)
+        return fail("reallocarray-overflow");
+    free(small);
+
+    aligned = memalign(64, 19);
+    if (aligned == NULL || (unsigned long)aligned % 64 != 0)
+        return fail("memalign");
+    free(aligned);
+    errno = 0;
+    if (memalign(24, 19) != NULL || errno != EINVAL)
+        return fail("memalign-invalid");
+    page_aligned = valloc(7);
+    if (page_aligned == NULL || (unsigned long)page_aligned % 4096 != 0)
+        return fail("valloc");
+    free(page_aligned);
 
     small = malloc(4);
     if (small == NULL)

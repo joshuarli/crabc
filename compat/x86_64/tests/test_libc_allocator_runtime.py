@@ -22,6 +22,12 @@ class X86LibcAllocatorRuntimeTests(unittest.TestCase):
         wrapper = (ROOT / "libc" / "src" / "allocator_mimalloc.rs").read_text(
             encoding="utf-8"
         )
+        string_exports = (ROOT / "libc" / "src" / "string_exports.rs").read_text(
+            encoding="utf-8"
+        )
+        program_utils = (
+            ROOT / "libc" / "src" / "program_utils_exports.rs"
+        ).read_text(encoding="utf-8")
 
         self.assertIn("default = []", manifest)
         self.assertIn(
@@ -35,6 +41,12 @@ class X86LibcAllocatorRuntimeTests(unittest.TestCase):
         self.assertIn('include!("../../allocator_mimalloc.rs");', target_root)
         self.assertIn("__crabc_x86_allocator_runtime_v1", target_root)
         self.assertIn("cabi_set_allocator_errno(EINVAL);", wrapper)
+        self.assertIn("pub unsafe extern \"C\" fn reallocarray", wrapper)
+        self.assertIn("pub unsafe extern \"C\" fn memalign", wrapper)
+        self.assertIn("pub unsafe extern \"C\" fn valloc", wrapper)
+        self.assertNotIn("pub unsafe extern \"C\" fn reallocarray", string_exports)
+        self.assertNotIn("pub unsafe extern \"C\" fn memalign", program_utils)
+        self.assertNotIn("pub unsafe extern \"C\" fn valloc", program_utils)
         self.assertNotIn("ERRNO = ENOMEM", wrapper)
 
     def test_probe_and_runner_keep_the_mixed_boundary_closed(self) -> None:
@@ -50,10 +62,15 @@ class X86LibcAllocatorRuntimeTests(unittest.TestCase):
             "calloc((size_t)-1, 2)",
             "realloc(block, (size_t)-1)",
             "realloc(block, 0)",
+            "reallocarray(NULL, 4, sizeof(*block))",
+            "reallocarray(resized, (size_t)-1, 2)",
             "aligned_alloc(64, 65)",
             "aligned_alloc(3, 64)",
             "posix_memalign(&aligned, 24, 64)",
             "posix_memalign(&aligned, 64, 1)",
+            "memalign(64, 19)",
+            "memalign(0, 7)",
+            "valloc(7)",
             "errno != EINVAL",
             "errno != EDOM",
         ):
@@ -68,7 +85,7 @@ class X86LibcAllocatorRuntimeTests(unittest.TestCase):
             "mi_zalloc",
             "mi_realloc",
             "mi_free",
-            "libc\\.a\\((aligned_alloc|calloc|free|malloc|posix_memalign|realloc)\\.lo\\)",
+            "libc\\.a\\((aligned_alloc|calloc|free|malloc|memalign|posix_memalign|realloc|reallocarray|valloc)\\.lo\\)",
             "TLSGD|TLSLD|TLSDESC",
             "glibc|ld-linux|libc\\.so\\.6",
             "env -i LC_ALL=C TZ=UTC",

@@ -97,8 +97,10 @@ The x86 C runtime also has one opt-in mixed-runtime allocator-wrapper
 artifact. It reuses the exact `allocator_mimalloc.rs` wrapper and
 `libmimalloc-sys` 0.1.49 backend used by AArch64, extracts only that wrapper,
 the x86 initial-TLS errno owner, and the bundled backend object, and proves all
-six allocation entries against pinned musl while rejecting musl's allocator
-objects from the candidate link. Pinned musl still supplies startup and
+nine `memory.allocator-basic` entries (`malloc`, `calloc`, `realloc`,
+`reallocarray`, `free`, `aligned_alloc`, `posix_memalign`, `memalign`, and
+`valloc`) against pinned musl while rejecting musl's allocator objects from
+the candidate link. Pinned musl still supplies startup and
 process primitives, and the backend retains private `mi_*` globals, so this is
 not an owned x86 runtime, fixed-v3.5.0 Rust-port promotion, allocator-family
 closure, or public x86 support.

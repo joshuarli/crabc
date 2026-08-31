@@ -1,7 +1,7 @@
 // program and utility interfaces.
 //
 // This slice follows musl's implementations for path/environment helpers,
-// temporary files, historical allocation entry points, and word/byte I/O.
+// temporary files, and word/byte I/O.
 // The functions use the existing libc allocator and raw Linux syscall layer;
 // no success path is manufactured when the kernel or allocator reports an
 // error.
@@ -537,25 +537,6 @@ pub unsafe extern "C" fn tempnam(dir: *const c_char, pfx: *const c_char) -> *mut
         return core::ptr::null_mut();
     }
     result
-}
-
-#[no_mangle]
-pub unsafe extern "C" fn memalign(alignment: usize, size: usize) -> *mut c_void {
-    // musl treats the historical zero alignment as the allocator's natural
-    // alignment; nonzero values use aligned_alloc's power-of-two checks.
-    if alignment == 0 {
-        malloc(size)
-    } else {
-        aligned_alloc(alignment, size)
-    }
-}
-
-#[no_mangle]
-pub unsafe extern "C" fn valloc(size: usize) -> *mut c_void {
-    // Linux AArch64's base page is 4 KiB. This legacy interface is only an
-    // alignment wrapper around the selected allocator, not an allocator
-    // implementation detail.
-    memalign(4096, size)
 }
 
 #[no_mangle]

@@ -19085,7 +19085,17 @@ def require_allocator_wrapper_artifact(family: Mapping[str, Any]) -> None:
     artifact = matching[0]
     description = artifact["description"]
     assert isinstance(description, str)
-    for symbol in ("malloc", "calloc", "realloc", "free", "aligned_alloc", "posix_memalign"):
+    for symbol in (
+        "malloc",
+        "calloc",
+        "realloc",
+        "reallocarray",
+        "free",
+        "aligned_alloc",
+        "posix_memalign",
+        "memalign",
+        "valloc",
+    ):
         require(
             symbol in description,
             f"static-c-allocator-wrapper description omits {symbol}",
@@ -19099,6 +19109,9 @@ def require_allocator_wrapper_artifact(family: Mapping[str, Any]) -> None:
         "paused fixed-v3.5.0 Rust-port evidence",
         "not an owned runtime",
         "private `mi_*` globals",
+        "all nine observed allocation calls",
+        "zero-alignment memalign",
+        "4-KiB valloc",
         "public x86 support",
     ):
         require(

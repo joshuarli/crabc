@@ -120,8 +120,11 @@ expected_wrapper_symbols=(
     calloc
     free
     malloc
+    memalign
     posix_memalign
     realloc
+    reallocarray
+    valloc
 )
 if [ "${wrapper_symbols[*]}" != "${expected_wrapper_symbols[*]}" ]; then
     printf 'expected: %s\nactual:   %s\n' "${expected_wrapper_symbols[*]}" \
@@ -152,11 +155,11 @@ readelf --relocs --wide "$candidate" >"$candidate_relocations"
 objdump -d "$candidate" >"$candidate_disassembly"
 
 for symbol in __crabc_x86_allocator_runtime_v1 aligned_alloc calloc free malloc \
-    posix_memalign realloc; do
+    memalign posix_memalign realloc reallocarray valloc; do
     grep -Eq "[[:space:]]${symbol}$" "$candidate_symbols" \
         || fail "candidate lacks crabc allocator symbol $symbol"
 done
-if grep -Eq 'libc\.a\((aligned_alloc|calloc|free|malloc|posix_memalign|realloc)\.lo\)' \
+if grep -Eq 'libc\.a\((aligned_alloc|calloc|free|malloc|memalign|posix_memalign|realloc|reallocarray|valloc)\.lo\)' \
     "$link_map"; then
     fail "candidate selected a pinned-musl allocator implementation"
 fi

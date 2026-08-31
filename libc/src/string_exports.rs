@@ -173,12 +173,3 @@ pub unsafe extern "C" fn strtok_r(
     *saveptr = cursor;
     token
 }
-
-#[no_mangle]
-pub unsafe extern "C" fn reallocarray(ptr: *mut c_void, nmemb: usize, size: usize) -> *mut c_void {
-    let Some(total) = nmemb.checked_mul(size) else {
-        ERRNO = ENOMEM;
-        return core::ptr::null_mut();
-    };
-    realloc(ptr, total)
-}

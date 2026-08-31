@@ -41,7 +41,9 @@ int crabc_x86_64_allocator_runtime_probe(void)
     unsigned char *zero_a;
     unsigned char *zero_b;
     unsigned char *block;
+    unsigned char *resized;
     void *aligned;
+    void *page_aligned;
     size_t index;
 
 #ifdef CRABC_ALLOCATOR_RUNTIME_CANDIDATE
@@ -132,6 +134,41 @@ int crabc_x86_64_allocator_runtime_probe(void)
     if (block == NULL)
         return 18;
     free(block);
+
+    block = reallocarray(NULL, 4, sizeof(*block));
+    if (block == NULL)
+        return 19;
+    for (index = 0; index < 4; ++index)
+        block[index] = (unsigned char)(index + 31);
+    errno = EDOM;
+    resized = reallocarray(block, 2048, sizeof(*block));
+    if (resized == NULL || resized[0] != 31 || resized[3] != 34 || errno != EDOM)
+        return 20;
+    errno = 0;
+    if (reallocarray(resized, (size_t)-1, 2) != NULL || errno != ENOMEM ||
+        resized[0] != 31 || resized[3] != 34)
+        return 21;
+    free(resized);
+
+    errno = ECHILD;
+    aligned = memalign(64, 19);
+    if (aligned == NULL || (uintptr_t)aligned % 64 != 0 || errno != ECHILD)
+        return 22;
+    free(aligned);
+    errno = 0;
+    if (memalign(24, 19) != NULL || errno != EINVAL)
+        return 23;
+    errno = ENOTTY;
+    aligned = memalign(0, 7);
+    if (aligned == NULL || (uintptr_t)aligned % 16 != 0 || errno != ENOTTY)
+        return 24;
+    free(aligned);
+
+    errno = EBUSY;
+    page_aligned = valloc(7);
+    if (page_aligned == NULL || (uintptr_t)page_aligned % 4096 != 0 || errno != EBUSY)
+        return 25;
+    free(page_aligned);
 
     return 0;
 }
