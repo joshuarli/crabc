@@ -300,6 +300,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh mkfifoat-header-abi
 ./scripts/dev-x86_64.sh readlinkat-header-abi
 ./scripts/dev-x86_64.sh linkat-header-abi
+./scripts/dev-x86_64.sh unlinkat-header-abi
 ./scripts/dev-x86_64.sh lchown-header-abi
 ./scripts/dev-x86_64.sh hasmntopt-header-abi
 ./scripts/dev-x86_64.sh sync-header-abi
@@ -498,6 +499,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-mkfifoat
 ./scripts/dev-x86_64.sh libc-readlinkat
 ./scripts/dev-x86_64.sh libc-linkat
+./scripts/dev-x86_64.sh libc-unlinkat
 ./scripts/dev-x86_64.sh libc-lchown
 ./scripts/dev-x86_64.sh libc-hasmntopt
 ./scripts/dev-x86_64.sh libc-sync
@@ -1094,6 +1096,20 @@ and invalid flags `EINVAL`. It excludes ordinary `link`, every other *at entry,
 pathname/CWD/namespace policy, directory streams, allocation, cancellation, a
 Rust facade, filesystem capability completion, family promotion, and public x86
 support.
+
+`unlinkat-header-abi` is a separate eight-profile C11/C++17 project-header/
+pinned-musl matrix for unconditional `unlinkat(int, const char *, int)`,
+`AT_FDCWD=-100`, `AT_REMOVEDIR=0x200`, `AT_SYMLINK_NOFOLLOW=0x100`, Linux x86
+`SYS_unlinkat=263`, and unmangled C++ linkage. Its paired private
+`libc-unlinkat` static artifact selects only musl 1.2.6
+`src/unistd/unlinkat.c`, the complete direct
+`syscall(SYS_unlinkat, fd, path, flag)` body. A raw-owned fixture opens one
+directory descriptor and proves candidate file removal, candidate
+`AT_REMOVEDIR` directory removal, and a raw comparator, with stale `errno`
+success and `ENOENT`/`EINVAL`/`EBADF`/`EFAULT` paths. It excludes `unlink`,
+`rmdir`, other *at entries, `AT_FDCWD` selection, pathname/CWD/namespace
+policy, directory streams, allocation, cancellation, a Rust facade, family
+completion, promotion, and public x86 support.
 
 `lchown-header-abi` is a separate eight-profile C11/C++17 project-header/
 pinned-musl matrix for unconditional `lchown(const char *, uid_t, gid_t)`,
@@ -5796,6 +5812,7 @@ Apart from the narrowly named `libc-stat-compat`, `libc-credentials`,
 `libc-mkfifoat`,
 `libc-readlinkat`,
 `libc-linkat`,
+`libc-unlinkat`,
 `libc-lchown`,
 `libc-hasmntopt`,
 `libc-sync`,

@@ -1374,7 +1374,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "libc-sched-getcpu|libc-sched-yield",
             "sched-getscheduler-header-abi",
             "ctermid-header-abi|gethostid-header-abi|getpagesize-header-abi|gettid-header-abi|isatty-header-abi|tcgetpgrp-header-abi|tcsetpgrp-header-abi|getpass-header-abi|libc-ctermid|libc-gethostid|libc-getpagesize|libc-gettid|libc-isatty|libc-tcgetpgrp|libc-tcsetpgrp|libc-getpass|mkfifo-header-abi|mkfifoat-header-abi|libc-mkfifo|libc-mkfifoat|mktemp-header-abi|libc-mktemp",
-            "readlinkat-header-abi|libc-readlinkat|linkat-header-abi|libc-linkat|lchown-header-abi|libc-lchown|hasmntopt-header-abi|libc-hasmntopt|sync-header-abi|libc-sync",
+            "readlinkat-header-abi|libc-readlinkat|linkat-header-abi|libc-linkat|unlinkat-header-abi|libc-unlinkat|lchown-header-abi|libc-lchown|hasmntopt-header-abi|libc-hasmntopt|sync-header-abi|libc-sync",
             "stdio-permanent-line-io-header-abi|stdio-octal-hex-scan-header-abi",
             "math-complex-complete-header-abi|libc-math-complex-complete",
             "stdio-permanent-byte-io-header-abi",
@@ -20778,7 +20778,6 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             & {
                 "fchdir",
                 "symlinkat",
-                "unlinkat",
                 "renameat",
                 "renameat2",
                 "open_by_handle_at",
@@ -20942,7 +20941,6 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertFalse(
             static_export_names
             & {
-                "unlinkat",
                 "renameat",
                 "renameat2",
                 "fchmodat",
@@ -20971,6 +20969,166 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         )
         self.assertIn(
             '    libc-linkat)\n        [ "$#" -eq 0 ] || fail "libc-linkat takes no arguments"',
+            runner,
+        )
+
+    def test_libc_static_c_abi_unlinkat_artifact_stays_bounded(self) -> None:
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        implementation = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "unlinkat.rs"
+        ).read_text(encoding="utf-8")
+        header_c_probe = (
+            ROOT / "compat" / "x86_64" / "unlinkat_header_abi_probe.c"
+        ).read_text(encoding="utf-8")
+        header_cxx_probe = (
+            ROOT / "compat" / "x86_64" / "unlinkat_header_abi_probe.cpp"
+        ).read_text(encoding="utf-8")
+        header_runner = (
+            ROOT / "compat" / "x86_64" / "run_unlinkat_header_abi.sh"
+        ).read_text(encoding="utf-8")
+        probe = (ROOT / "compat" / "x86_64" / "libc_unlinkat_probe.c").read_text(
+            encoding="utf-8"
+        )
+        start = (ROOT / "compat" / "x86_64" / "libc_unlinkat_start.S").read_text(
+            encoding="utf-8"
+        )
+        artifact_runner = (
+            ROOT / "compat" / "x86_64" / "run_libc_unlinkat.sh"
+        ).read_text(encoding="utf-8")
+        static_export_names = {
+            line
+            for line in (
+                ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+            ).read_text(encoding="utf-8").splitlines()
+            if line and not line.startswith("#")
+        }
+        parity_ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        runner = RUNNER.read_text(encoding="utf-8")
+
+        self.assertIn('#[path = "unlinkat.rs"]', static_root)
+        for required in (
+            "Selected static Linux/x86-64 `unlinkat` C ABI leaf",
+            "musl 1.2.6",
+            "src/unistd/unlinkat.c",
+            "syscall(SYS_unlinkat, fd, path, flag)",
+            "Linux 5.10",
+            "unlinkat=263",
+            "raw_syscall::SYS_UNLINKAT",
+            "raw_syscall::syscall3(",
+            "i64::from(directory_descriptor)",
+            "i64::from(flags)",
+            "c_status(result)",
+        ):
+            self.assertIn(required, implementation)
+        for forbidden in (
+            "const AT_FDCWD",
+            "fn unlink(",
+            "fn rmdir(",
+            "fn linkat(",
+            "fn symlinkat(",
+            "fn readlinkat(",
+            "fn renameat(",
+            "fn mkdirat(",
+            "crabc_core",
+            "mimalloc",
+            "alloc::",
+            "__tls_get_addr",
+        ):
+            self.assertNotIn(forbidden, implementation)
+
+        for header_probe in (header_c_probe, header_cxx_probe):
+            for required in (
+                "fcntl.h",
+                "sys/syscall.h",
+                "unistd.h",
+                "unlinkat",
+                "AT_FDCWD == -100",
+                "AT_REMOVEDIR == 0x200",
+                "SYS_unlinkat == 263",
+            ):
+                self.assertIn(required, header_probe)
+        for required in (
+            "EXPECTED_PROFILE_COUNT=8",
+            "EXPECTED_VISIBLE_PROFILE_COUNT=8",
+            "EXPECTED_HIDDEN_PROFILE_COUNT=0",
+            "c-default c11-gnu cxx17-gnu",
+            "-nostdinc",
+            "-nostdinc++",
+            "run_musl_oracle.sh",
+            "compile-only",
+            "unmangled",
+        ):
+            self.assertIn(required, header_runner)
+
+        for required in (
+            "#include <errno.h>",
+            "#include <fcntl.h>",
+            "#include <sys/stat.h>",
+            "#include <sys/syscall.h>",
+            "#include <unistd.h>",
+            "SYS_unlinkat == 263",
+            "AT_REMOVEDIR",
+            "AT_SYMLINK_NOFOLLOW",
+            "stale errno",
+            "ENOENT",
+            "EINVAL",
+            "EBADF",
+            "EFAULT",
+            "CRABC_UNLINKAT_FREESTANDING",
+        ):
+            self.assertIn(required, probe)
+        for required in (
+            "call __crabc_x86_static_tls_bootstrap",
+            "crabc_x86_64_unlinkat_probe",
+            "exit_group",
+        ):
+            self.assertIn(required, start)
+        self.assertNotIn("arch_prctl", start)
+
+        for required in (
+            "static_c_abi_exports.txt",
+            "run_unlinkat_header_abi.sh",
+            "-nostdlib -static",
+            "-Wl,-e,_start",
+            "assert_selected_c_abi_surface",
+            "unlinkat=263",
+            "for symbol in __errno_location __crabc_x86_static_tls_bootstrap unlinkat",
+            "unlink|rmdir|link|linkat|symlink|symlinkat|readlink|readlinkat|rename|renameat|renameat2|mkdir|mkdirat",
+            "unowned runtime dependency",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn("--whole-archive", artifact_runner)
+
+        self.assertIn("unlinkat", static_export_names)
+        self.assertFalse(
+            static_export_names
+            & {"renameat", "renameat2", "fchmodat", "mkdirat", "symlinkat"}
+        )
+        self.assertIn('id = "static-c-unlinkat"', parity_ledger)
+        self.assertIn(
+            'command = "./scripts/dev-x86_64.sh libc-unlinkat"',
+            parity_ledger,
+        )
+        self.assertIn("run_unlinkat_header_abi()", runner)
+        self.assertIn(
+            "/workspace/compat/x86_64/run_unlinkat_header_abi.sh",
+            runner,
+        )
+        self.assertIn("run_libc_unlinkat_probe()", runner)
+        self.assertIn(
+            "/workspace/compat/x86_64/run_libc_unlinkat.sh",
+            runner,
+        )
+        self.assertIn(
+            '    unlinkat-header-abi)\n        [ "$#" -eq 0 ] || fail "unlinkat-header-abi takes no arguments"',
+            runner,
+        )
+        self.assertIn(
+            '    libc-unlinkat)\n        [ "$#" -eq 0 ] || fail "libc-unlinkat takes no arguments"',
             runner,
         )
 
@@ -21653,7 +21811,6 @@ class X86_64CoreRunnerTests(unittest.TestCase):
                 "realpath",
                 "renameat",
                 "renameat2",
-                "unlinkat",
                 "symlinkat",
                 "mkdirat",
                 "fchmodat",

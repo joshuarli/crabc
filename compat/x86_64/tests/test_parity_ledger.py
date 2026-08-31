@@ -50,7 +50,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 41)
-        self.assertEqual(report["verified_artifact_count"], 206)
+        self.assertEqual(report["verified_artifact_count"], 207)
         self.assertEqual(report["header_layout_probe_count"], 47)
         self.assertEqual(report["public_header_inventory_count"], 183)
         self.assertEqual(report["header_foundation_header_count"], 191)
@@ -16969,7 +16969,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             .splitlines()
         )
         self.assertIn("linkat", exports)
-        for forbidden in ("unlinkat", "renameat", "renameat2", "fchmodat"):
+        for forbidden in ("renameat", "renameat2", "fchmodat"):
             self.assertNotIn(forbidden, exports)
 
         implementation = (
@@ -17062,6 +17062,215 @@ class X86ParityLedgerTests(unittest.TestCase):
         assert isinstance(prerequisites, list)
         index = next(index for index, item in enumerate(prerequisites) if "linkat=265" in item)
         prerequisites[index] = prerequisites[index].replace("linkat=265", "linkat=999")
+        with self.assertRaisesRegex(ledger.LedgerError, "Linux syscall register ABI"):
+            ledger.validate_ledger(data)
+
+    def test_unlinkat_artifact_keeps_its_direct_removal_boundary(self) -> None:
+        data = self.data()
+        family = self.family(data, "libc.posix-runtime")
+        self.assertEqual(family["status"], "planned")
+        artifacts = family["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-unlinkat"
+        )
+        self.assertNotIn("capabilities", artifact)
+        for owner in (
+            "COMPATIBILITY-PROFILE.md",
+            "compat/upstreams.toml",
+            "libc/src/c_abi/x86_64/static_c_abi.rs",
+            "libc/src/c_abi/x86_64/unlinkat.rs",
+            "libc/src/c_abi/x86_64/errno.rs",
+            "libc/src/c_abi/x86_64/syscall.rs",
+            "libc/src/c_abi/x86_64/static_tls.rs",
+            "include/errno.h",
+            "include/fcntl.h",
+            "include/sys/stat.h",
+            "include/sys/syscall.h",
+            "include/sys/types.h",
+            "include/unistd.h",
+            "compat/x86_64/unlinkat_header_abi_probe.c",
+            "compat/x86_64/unlinkat_header_abi_probe.cpp",
+            "compat/x86_64/run_unlinkat_header_abi.sh",
+            "compat/x86_64/static_c_abi_exports.txt",
+            "compat/x86_64/libc_unlinkat_probe.c",
+            "compat/x86_64/libc_unlinkat_start.S",
+            "compat/x86_64/run_libc_unlinkat.sh",
+            "compat/x86_64/aarch64_parity_inventory.json",
+            "compat/x86_64/validate_parity_ledger.py",
+            "scripts/dev-x86_64.sh",
+        ):
+            self.assertIn(owner, artifact["source_owners"])
+        for phrase in (
+            "selected-static-archive `unlinkat`",
+            "still-planned `libc.posix-runtime`",
+            "pinned musl 1.2.6",
+            "`-nostdlib -static`",
+            "unlinkat=263",
+            "AT_REMOVEDIR",
+            "stale errno",
+            "`ENOENT`",
+            "`EINVAL`",
+            "`EBADF`",
+            "`EFAULT`",
+            "`unlink`",
+            "`rmdir`",
+            "`AT_FDCWD`",
+            "pathname lifecycle family",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, artifact["description"])
+        self.assertEqual(
+            {entry["command"] for entry in artifact["native_evidence"]},
+            {"./scripts/dev-x86_64.sh libc-unlinkat"},
+        )
+
+        prerequisites = artifact["x86_abi_prerequisites"]
+        assert isinstance(prerequisites, list)
+        syscall_abi = next(item for item in prerequisites if "unlinkat=263" in item)
+        assert isinstance(syscall_abi, str)
+        for phrase in ("rdi", "rsi", "rdx", "-4095", "initial-TLS errno"):
+            self.assertIn(phrase, syscall_abi)
+        source_mapping = next(item for item in prerequisites if "src/unistd/unlinkat.c" in item)
+        assert isinstance(source_mapping, str)
+        for phrase in (
+            "syscall(SYS_unlinkat, fd, path, flag)",
+            "Linux 5.10",
+            "AT_FDCWD selection",
+        ):
+            self.assertIn(phrase, source_mapping)
+        request_proof = next(item for item in prerequisites if "raw-creates" in item)
+        assert isinstance(request_proof, str)
+        for phrase in (
+            "AT_REMOVEDIR",
+            "raw unlinkat file removal",
+            "stale errno",
+            "ENOENT",
+            "EINVAL",
+            "EBADF",
+            "EFAULT",
+            "AT_FDCWD",
+            "pathname/CWD/namespace policy",
+        ):
+            self.assertIn(phrase, request_proof)
+
+        headers = artifact["x86_header_prerequisites"]
+        assert isinstance(headers, list) and isinstance(headers[0], str)
+        for phrase in (
+            "eight-profile",
+            "fcntl.h/sys/syscall.h/unistd.h",
+            "unlinkat(int, const char *, int)",
+            "AT_FDCWD=-100",
+            "AT_REMOVEDIR=0x200",
+            "SYS_unlinkat=263",
+            "All eight",
+            "none hides it",
+            "unmangled C++",
+        ):
+            self.assertIn(phrase, headers[0])
+
+        exports = set(
+            (ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt")
+            .read_text(encoding="utf-8")
+            .splitlines()
+        )
+        self.assertIn("unlinkat", exports)
+        for forbidden in ("renameat", "renameat2", "fchmodat", "symlinkat"):
+            self.assertNotIn(forbidden, exports)
+
+        implementation = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "unlinkat.rs"
+        ).read_text(encoding="utf-8")
+        for snippet in (
+            "src/unistd/unlinkat.c",
+            "syscall(SYS_unlinkat, fd, path, flag)",
+            "fn unlinkat",
+            "raw_syscall::SYS_UNLINKAT",
+            "raw_syscall::syscall3(",
+            "i64::from(directory_descriptor)",
+            "i64::from(flags)",
+            "c_status(result)",
+            "unlinkat=263",
+        ):
+            self.assertIn(snippet, implementation)
+        for forbidden in (
+            "const AT_FDCWD",
+            "fn unlink(",
+            "fn rmdir(",
+            "fn linkat(",
+            "fn symlinkat(",
+            "fn readlinkat(",
+            "fn renameat(",
+            "fn mkdirat(",
+            "crabc_core",
+            "mimalloc",
+            "alloc::",
+        ):
+            self.assertNotIn(forbidden, implementation)
+
+        header_runner = (
+            ROOT / "compat" / "x86_64" / "run_unlinkat_header_abi.sh"
+        ).read_text(encoding="utf-8")
+        for snippet in (
+            "MUSL_ROOT=/opt/musl-1.2.6",
+            "EXPECTED_PROFILE_COUNT=8",
+            "EXPECTED_VISIBLE_PROFILE_COUNT=8",
+            "EXPECTED_HIDDEN_PROFILE_COUNT=0",
+            "fcntl.h",
+            "sys/syscall.h",
+            "unistd.h",
+            "unlinkat",
+            "unmangled",
+        ):
+            self.assertIn(snippet, header_runner)
+        probe = (ROOT / "compat" / "x86_64" / "libc_unlinkat_probe.c").read_text(
+            encoding="utf-8"
+        )
+        for snippet in (
+            "SYS_unlinkat == 263",
+            "AT_REMOVEDIR",
+            "AT_SYMLINK_NOFOLLOW",
+            "stale errno",
+            "ENOENT",
+            "EINVAL",
+            "EBADF",
+            "EFAULT",
+            "CRABC_UNLINKAT_FREESTANDING",
+        ):
+            self.assertIn(snippet, probe)
+        start = (ROOT / "compat" / "x86_64" / "libc_unlinkat_start.S").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("CRABC_UNLINKAT_FREESTANDING", start)
+        runner = (ROOT / "compat" / "x86_64" / "run_libc_unlinkat.sh").read_text(
+            encoding="utf-8"
+        )
+        for snippet in (
+            "run_musl_oracle.sh",
+            "run_unlinkat_header_abi.sh",
+            "-nostdlib -static",
+            "--no-undefined",
+            "assert_selected_c_abi_surface",
+            "unlinkat=263",
+            "CRABC_UNLINKAT_FREESTANDING",
+            "unlinkat candidate exports an unselected pathname entry",
+        ):
+            self.assertIn(snippet, runner)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-unlinkat"
+        )
+        prerequisites = artifact["x86_abi_prerequisites"]
+        assert isinstance(prerequisites, list)
+        index = next(index for index, item in enumerate(prerequisites) if "unlinkat=263" in item)
+        prerequisites[index] = prerequisites[index].replace("unlinkat=263", "unlinkat=999")
         with self.assertRaisesRegex(ledger.LedgerError, "Linux syscall register ABI"):
             ledger.validate_ledger(data)
 
@@ -18984,7 +19193,6 @@ class X86ParityLedgerTests(unittest.TestCase):
             "renameat2",
             "scandir",
             "symlinkat",
-            "unlinkat",
         ):
             self.assertNotIn(symbol, static_exports)
 

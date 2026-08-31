@@ -909,6 +909,7 @@ umask
 uname
 ungetc
 unlink
+unlinkat
 unsetenv
 uselocale
 utime

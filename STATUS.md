@@ -1652,6 +1652,21 @@ flags `EINVAL`. It excludes ordinary `link`, every other *at entry, pathname/
 CWD/namespace policy, directory streams, allocation, cancellation, a Rust
 facade, filesystem capability completion, promotion, and public x86 support.
 
+`./scripts/dev-x86_64.sh unlinkat-header-abi` is a separate eight-profile
+C11/C++17 project-header/pinned-musl declaration gate for unconditional
+`unlinkat(int, const char *, int)`, `AT_FDCWD=-100`, `AT_REMOVEDIR=0x200`,
+`AT_SYMLINK_NOFOLLOW=0x100`, Linux x86 `SYS_unlinkat=263`, and unmangled C++
+linkage. Its paired private `./scripts/dev-x86_64.sh libc-unlinkat` artifact
+maps only musl 1.2.6 `src/unistd/unlinkat.c`, whose complete body directly
+calls `syscall(SYS_unlinkat, fd, path, flag)`. A raw-owned fixture opens one
+caller-supplied directory descriptor and proves selected file removal,
+selected `AT_REMOVEDIR` directory removal, and one raw comparator, with stale
+`errno` success plus `ENOENT`, `EINVAL`, `EBADF`, and `EFAULT` regressions.
+It neither chooses `AT_FDCWD` nor selects `unlink`, `rmdir`, other *at
+entries, a pathname/CWD/namespace policy, directory streams, allocation,
+cancellation, a Rust facade, filesystem capability completion, promotion, or
+public x86 support.
+
 `./scripts/dev-x86_64.sh lchown-header-abi` is a separate eight-profile
 C11/C++17 project-header/pinned-musl declaration gate for unconditional
 `lchown(const char *, uid_t, gid_t)`, x86 four-byte unsigned `uid_t`/`gid_t`

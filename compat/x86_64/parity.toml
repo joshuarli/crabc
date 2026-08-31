@@ -5125,6 +5125,64 @@ oracle = [
 ]
 
 [[family.verified_artifact]]
+id = "static-c-unlinkat"
+description = "Private native x86 selected-static-archive `unlinkat` leaf within still-planned `libc.posix-runtime`. One project-header C body runs first through pinned musl 1.2.6 and then through a true `-nostdlib -static` crabc-libc candidate. It resolves only `unlinkat(int, const char *, int)`: musl's complete `src/unistd/unlinkat.c` body returns `syscall(SYS_unlinkat, fd, path, flag)`, passing the caller-supplied directory descriptor, pathname, and flags unchanged to Linux x86-64 `unlinkat=263`. The raw-owned fixture creates one descriptor-opened fixture directory, checks candidate file removal and candidate `AT_REMOVEDIR` directory removal, then compares one raw file removal. The candidate proves stale errno on success, missing `ENOENT`, invalid flag `EINVAL`, bad dirfd `EBADF`, and null path `EFAULT`. It does not select `unlink`, `rmdir`, `link`/`linkat`, `symlink`/`symlinkat`, `readlink`/`readlinkat`, `rename`/`renameat`, `mkdir`/`mkdirat`, another *at entry, `AT_FDCWD` selection, a pathname lifecycle family, CWD or namespace policy, directory streams, allocation, cancellation, a Rust facade, libc.so, CRT, loader, sysroot, filesystem capability completion, promotion, or public x86 support."
+source_owners = [
+  "COMPATIBILITY-PROFILE.md",
+  "compat/upstreams.toml",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/unlinkat.rs",
+  "libc/src/c_abi/x86_64/errno.rs",
+  "libc/src/c_abi/x86_64/syscall.rs",
+  "libc/src/c_abi/x86_64/static_tls.rs",
+  "include/errno.h",
+  "include/fcntl.h",
+  "include/stdint.h",
+  "include/sys/stat.h",
+  "include/sys/syscall.h",
+  "include/sys/types.h",
+  "include/unistd.h",
+  "include/bits/alltypes.h",
+  "include/bits/fcntl.h",
+  "include/bits/stat.h",
+  "include/bits/syscall.h",
+  "compat/abi/musl-1.2.6/aarch64/libc.a.static.tsv",
+  "compat/x86_64/unlinkat_header_abi_probe.c",
+  "compat/x86_64/unlinkat_header_abi_probe.cpp",
+  "compat/x86_64/run_unlinkat_header_abi.sh",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/libc_unlinkat_probe.c",
+  "compat/x86_64/libc_unlinkat_start.S",
+  "compat/x86_64/run_libc_unlinkat.sh",
+  "compat/x86_64/run_libc_pathname_lifecycle.sh",
+  "compat/x86_64/aarch64_parity_inventory.py",
+  "compat/x86_64/aarch64_parity_inventory.json",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "compat/x86_64/README.md",
+  "STATUS.md",
+  "x86-64.md",
+  "scripts/dev-x86_64.sh",
+  "scripts/check_structure.py",
+]
+x86_abi_prerequisites = [
+  "The SysV AMD64 C ABI passes unlinkat's signed four-byte directory descriptor in rdi, pathname in rsi, and signed four-byte flags in rdx; it returns signed int in eax. The private Linux x86-64 unlinkat=263 request receives exactly those words in rdi/rsi/rdx; only raw -4095 through -1 results publish selected initial-TLS errno.",
+  "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417 maps src/unistd/unlinkat.c exactly: `int unlinkat(int fd, const char *path, int flag) { return syscall(SYS_unlinkat, fd, path, flag); }`. Linux 5.10 supplies that direct request, so the static leaf adds no cancellation wrapper, fallback, pathname copy, allocation, retry, AT_FDCWD selection, or policy layer.",
+  "The native runner raw-creates and opens one fixture directory, then checks candidate file removal and candidate AT_REMOVEDIR directory removal, compares one raw unlinkat file removal, and proves stale errno success, missing ENOENT, invalid AT_SYMLINK_NOFOLLOW EINVAL, invalid relative dirfd EBADF, and null pathname EFAULT. Fixture-only raw mkdirat/openat/newfstatat/unlinkat/close is setup, observation, comparison, and cleanup: the candidate does not choose AT_FDCWD, unlink/rmdir, another *at entry, or a pathname/CWD/namespace policy.",
+  "The final static candidate has a PT_TLS errno datum with direct initial-exec TPOFF access and no TLSGD/TLSLD/TLSDESC/GOTTPOFF/DTPMOD/DTPOFF model form or __tls_get_addr; fixture-local startup delegates to the archive Static Initial TLS v1 bootstrap without claiming CRT or TLS lifecycle.",
+]
+x86_header_prerequisites = ["The eight-profile C11/C++17 project-first/pinned-musl fcntl.h/sys/syscall.h/unistd.h matrix proves unconditional `unlinkat(int, const char *, int)`, AT_FDCWD=-100, AT_REMOVEDIR=0x200, AT_SYMLINK_NOFOLLOW=0x100, x86 `SYS_unlinkat=263`, four-byte int spelling, and unmangled C++ linkage. All eight default/GNU/strict/POSIX/X/Open/BSD C/C++ profiles expose it; none hides it. This is declaration evidence for one descriptor-relative removal C leaf, not unlink/rmdir, an *at family, pathname policy, installed-header completion, or public x86 support claim."]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-unlinkat", scope = "Pinned-musl project-header C reference plus a true dependency-free x86 `-nostdlib -static` crabc-libc candidate. The gate runs the eight-profile unlinkat C/C++ header matrix with all eight visible and none hidden; ratchets the exact crate-owned archive export; rejects interpreter/DT_NEEDED, unresolved symbols, dynamic TLS, and unowned runtime dependencies; proves direct initial-TLS errno; disassembles direct unlinkat=263 with rdi/rsi/rdx; and checks caller-supplied dirfd file removal, AT_REMOVEDIR directory removal, a raw unlinkat comparator, stale-errno success, ENOENT, EINVAL, EBADF, and EFAULT. It does not select unlink/rmdir, other *at entries, AT_FDCWD selection, a pathname lifecycle family, CWD/namespace policy, directory streams, allocation, cancellation, a Rust facade, libc.so, CRT, loader, sysroot, filesystem capability completion, promotion, or public x86 support." }]
+oracle = [
+  { kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source and POSIX declaration oracle for include/fcntl.h, include/sys/syscall.h, include/unistd.h, and src/unistd/unlinkat.c. Its complete body is `return syscall(SYS_unlinkat, fd, path, flag);`; the direct Linux closure is an intentional private implementation boundary, not unlink/rmdir, another *at entry, or pathname-family completion." },
+  { kind = "kernel-abi", source = "Linux 5.10 x86-64 ABI", role = "unlinkat=263 rdi/rsi/rdx request words, descriptor-relative file removal, AT_REMOVEDIR directory removal, raw errno, and raw mkdirat/openat/newfstatat/unlinkat/close fixture setup, observation, comparison, and cleanup." },
+  { kind = "elf-abi", source = "System V AMD64 psABI", role = "LP64 pointer/int C calling convention, unmangled C++ linkage, and static initial-exec TLS fixture contract." },
+]
+
+[[family.verified_artifact]]
 id = "static-c-lchown"
 description = "Private native x86 selected-static-archive `lchown` leaf within still-planned `libc.posix-runtime`. One project-header C body runs first through pinned musl 1.2.6 and then through a true `-nostdlib -static` crabc-libc candidate. It resolves only `lchown(const char *, uid_t, gid_t)`: musl's direct `syscall(SYS_lchown, path, uid, gid)` branch passes caller-supplied pathname plus unsigned owner/group words unchanged to Linux x86-64 `lchown=94`, whose final component does not follow a symlink. The raw-owned fixture creates one dangling symlink, checks its no-follow shape, then calls the candidate with all-ones `uid_t`/`gid_t` no-change words: stale errno success and one raw lchown request prove the selected final-symlink no-follow behavior without `CAP_CHOWN`. It also proves missing/empty `ENOENT` and null `EFAULT`. It does not select `chown`, `fchown`, `fchownat`, musl's non-x86 fallback, credential or ownership policy, another pathname entry, a pathname lifecycle family, CWD or namespace policy, directory streams, allocation, cancellation, a Rust facade, libc.so, CRT, loader, sysroot, filesystem capability completion, promotion, or public x86 support."
 source_owners = [

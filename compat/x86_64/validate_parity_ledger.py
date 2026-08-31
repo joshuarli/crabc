@@ -1342,7 +1342,6 @@ PATHNAME_LIFECYCLE_UNSELECTED_SYMBOLS = (
     "renameat2",
     "scandir",
     "symlinkat",
-    "unlinkat",
 )
 
 DIRECTORY_STREAM_SYMBOLS = (
@@ -15849,7 +15848,7 @@ def require_linkat_artifact(family: Mapping[str, Any]) -> None:
         static_c_abi_export_names(ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt")
     )
     require("linkat" in static_exports, "static-c-linkat must export linkat")
-    for forbidden in ("unlinkat", "renameat", "renameat2", "fchmodat"):
+    for forbidden in ("renameat", "renameat2", "fchmodat"):
         require(
             forbidden not in static_exports,
             f"static-c-linkat must not add {forbidden}",
@@ -15976,6 +15975,304 @@ def require_linkat_artifact(family: Mapping[str, Any]) -> None:
         "linkat candidate exports an unselected pathname entry",
     ):
         require(snippet in runner, f"linkat runner omits {snippet}")
+
+
+def require_unlinkat_artifact(family: Mapping[str, Any]) -> None:
+    """Keep musl's direct descriptor-relative removal leaf self-contained."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.posix-runtime].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [entry for entry in artifacts if entry.get("id") == "static-c-unlinkat"]
+    require(
+        len(matching) == 1,
+        "libc.posix-runtime must contain exactly one static-c-unlinkat artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-unlinkat must not promote libc.posix-runtime",
+    )
+    artifact = matching[0]
+    require(
+        "capabilities" not in artifact,
+        "static-c-unlinkat must remain a private artifact rather than a capability",
+    )
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for phrase in (
+        "selected-static-archive `unlinkat`",
+        "still-planned `libc.posix-runtime`",
+        "pinned musl 1.2.6",
+        "`-nostdlib -static`",
+        "src/unistd/unlinkat.c",
+        "unlinkat=263",
+        "AT_REMOVEDIR",
+        "stale errno",
+        "`ENOENT`",
+        "`EINVAL`",
+        "`EBADF`",
+        "`EFAULT`",
+        "`unlink`",
+        "`rmdir`",
+        "`AT_FDCWD`",
+        "pathname lifecycle family",
+        "public x86 support",
+    ):
+        require(phrase in description, f"static-c-unlinkat description omits {phrase}")
+
+    owners = set(
+        nonempty_strings(artifact["source_owners"], "static-c-unlinkat.source_owners")
+    )
+    for owner in (
+        "COMPATIBILITY-PROFILE.md",
+        "compat/upstreams.toml",
+        "libc/Cargo.toml",
+        "libc/src/lib.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/unlinkat.rs",
+        "libc/src/c_abi/x86_64/errno.rs",
+        "libc/src/c_abi/x86_64/syscall.rs",
+        "libc/src/c_abi/x86_64/static_tls.rs",
+        "include/errno.h",
+        "include/fcntl.h",
+        "include/stdint.h",
+        "include/sys/stat.h",
+        "include/sys/syscall.h",
+        "include/sys/types.h",
+        "include/unistd.h",
+        "include/bits/alltypes.h",
+        "include/bits/fcntl.h",
+        "include/bits/stat.h",
+        "include/bits/syscall.h",
+        "compat/abi/musl-1.2.6/aarch64/libc.a.static.tsv",
+        "compat/x86_64/unlinkat_header_abi_probe.c",
+        "compat/x86_64/unlinkat_header_abi_probe.cpp",
+        "compat/x86_64/run_unlinkat_header_abi.sh",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/libc_unlinkat_probe.c",
+        "compat/x86_64/libc_unlinkat_start.S",
+        "compat/x86_64/run_libc_unlinkat.sh",
+        "compat/x86_64/run_libc_pathname_lifecycle.sh",
+        "compat/x86_64/aarch64_parity_inventory.py",
+        "compat/x86_64/aarch64_parity_inventory.json",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/README.md",
+        "STATUS.md",
+        "x86-64.md",
+        "scripts/dev-x86_64.sh",
+        "scripts/check_structure.py",
+    ):
+        require(owner in owners, f"static-c-unlinkat source owners omit {owner}")
+
+    prerequisites = nonempty_strings(
+        artifact["x86_abi_prerequisites"], "static-c-unlinkat.x86_abi_prerequisites"
+    )
+    require(
+        any(
+            "unlinkat=263" in item
+            and "rdi" in item
+            and "rsi" in item
+            and "rdx" in item
+            and "-4095" in item
+            and "initial-TLS errno" in item
+            for item in prerequisites
+        ),
+        "static-c-unlinkat must record its Linux syscall register ABI",
+    )
+    require(
+        any(
+            "src/unistd/unlinkat.c" in item
+            and "syscall(SYS_unlinkat, fd, path, flag)" in item
+            and "Linux 5.10" in item
+            and "AT_FDCWD selection" in item
+            for item in prerequisites
+        ),
+        "static-c-unlinkat must record its direct pinned-musl mapping",
+    )
+    require(
+        any(
+            "AT_REMOVEDIR" in item
+            and "raw unlinkat file removal" in item
+            and "stale errno" in item
+            and "ENOENT" in item
+            and "EINVAL" in item
+            and "EBADF" in item
+            and "EFAULT" in item
+            and "pathname/CWD/namespace policy" in item
+            for item in prerequisites
+        ),
+        "static-c-unlinkat must retain its bounded descriptor-relative fixture",
+    )
+    require(
+        any(
+            "PT_TLS errno datum" in item
+            and "initial-exec TPOFF" in item
+            and "__tls_get_addr" in item
+            for item in prerequisites
+        ),
+        "static-c-unlinkat must record its static TLS boundary",
+    )
+
+    headers = nonempty_strings(
+        artifact["x86_header_prerequisites"], "static-c-unlinkat.x86_header_prerequisites"
+    )
+    require(
+        any(
+            "eight-profile" in item
+            and "fcntl.h/sys/syscall.h/unistd.h" in item
+            and "unlinkat(int, const char *, int)" in item
+            and "AT_FDCWD=-100" in item
+            and "AT_REMOVEDIR=0x200" in item
+            and "SYS_unlinkat=263" in item
+            and "All eight" in item
+            and "none hides it" in item
+            and "unmangled C++" in item
+            for item in headers
+        ),
+        "static-c-unlinkat must retain its unconditional project-header ABI boundary",
+    )
+
+    static_exports = set(
+        static_c_abi_export_names(ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt")
+    )
+    require("unlinkat" in static_exports, "static-c-unlinkat must export unlinkat")
+    static_root = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+    ).read_text(encoding="utf-8")
+    require(
+        '#[path = "unlinkat.rs"]\nmod unlinkat;' in static_root,
+        "x86 static C ABI must compose the unlinkat leaf",
+    )
+    implementation = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "unlinkat.rs"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "Selected static Linux/x86-64 `unlinkat` C ABI leaf",
+        "src/unistd/unlinkat.c",
+        "syscall(SYS_unlinkat, fd, path, flag)",
+        "fn unlinkat",
+        "raw_syscall::SYS_UNLINKAT",
+        "raw_syscall::syscall3(",
+        "i64::from(directory_descriptor)",
+        "i64::from(flags)",
+        "c_status(result)",
+        "unlinkat=263",
+    ):
+        require(snippet in implementation, f"unlinkat leaf omits {snippet}")
+    implementation_exports = set(
+        re.findall(
+            r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(', implementation
+        )
+    )
+    require(
+        implementation_exports == {"unlinkat"},
+        "unlinkat implementation must expose only unlinkat as a Rust C entry",
+    )
+    for forbidden in (
+        "const AT_FDCWD",
+        "fn unlink(",
+        "fn rmdir(",
+        "fn linkat(",
+        "fn symlinkat(",
+        "fn readlinkat(",
+        "fn renameat(",
+        "fn mkdirat(",
+        "crabc_core",
+        "mimalloc",
+        "alloc::",
+        "Vec<",
+    ):
+        require(
+            forbidden not in implementation,
+            f"unlinkat leaf unexpectedly contains {forbidden}",
+        )
+    syscall_source = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "syscall.rs"
+    ).read_text(encoding="utf-8")
+    require(
+        "pub(crate) const SYS_UNLINKAT: i64 = 263;" in syscall_source,
+        "x86 syscall table must retain unlinkat=263",
+    )
+
+    oracle = artifact["oracle"]
+    assert isinstance(oracle, list)
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "c-posix"
+            and isinstance(entry.get("role"), str)
+            and "include/fcntl.h" in entry["role"]
+            and "include/sys/syscall.h" in entry["role"]
+            and "include/unistd.h" in entry["role"]
+            and "src/unistd/unlinkat.c" in entry["role"]
+            and "return syscall(SYS_unlinkat, fd, path, flag);" in entry["role"]
+            for entry in oracle
+        ),
+        "static-c-unlinkat must retain its pinned-musl unlinkat source mapping",
+    )
+
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-unlinkat"},
+        "static-c-unlinkat must use the dedicated native command",
+    )
+    scope = evidence[0].get("scope")
+    require(
+        isinstance(scope, str)
+        and all(
+            phrase in scope
+            for phrase in (
+                "`-nostdlib -static`",
+                "all eight visible and none hidden",
+                "unlinkat=263",
+                "rdi/rsi/rdx",
+                "AT_REMOVEDIR",
+                "raw unlinkat comparator",
+                "stale-errno success",
+                "ENOENT",
+                "EINVAL",
+                "EBADF",
+                "EFAULT",
+                "AT_FDCWD selection",
+                "public x86 support",
+            )
+        ),
+        "static-c-unlinkat evidence must retain its exact static removal regression",
+    )
+    header_runner = (
+        ROOT / "compat" / "x86_64" / "run_unlinkat_header_abi.sh"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "MUSL_ROOT=/opt/musl-1.2.6",
+        "EXPECTED_PROFILE_COUNT=8",
+        "EXPECTED_VISIBLE_PROFILE_COUNT=8",
+        "EXPECTED_HIDDEN_PROFILE_COUNT=0",
+        "fcntl.h",
+        "sys/syscall.h",
+        "unistd.h",
+        "unlinkat",
+        "unmangled",
+    ):
+        require(snippet in header_runner, f"unlinkat header runner omits {snippet}")
+    runner = (ROOT / "compat" / "x86_64" / "run_libc_unlinkat.sh").read_text(
+        encoding="utf-8"
+    )
+    for snippet in (
+        "run_musl_oracle.sh",
+        "run_unlinkat_header_abi.sh",
+        "-nostdlib -static",
+        "--no-undefined",
+        "assert_selected_c_abi_surface",
+        "unlinkat=263",
+        "CRABC_UNLINKAT_FREESTANDING",
+        "unlinkat candidate exports an unselected pathname entry",
+    ):
+        require(snippet in runner, f"unlinkat runner omits {snippet}")
 
 
 def require_lchown_artifact(family: Mapping[str, Any]) -> None:
@@ -43238,6 +43535,7 @@ def validate_ledger(
     require_static_sched_getcpu_artifact(by_id["libc.posix-runtime"])
     require_readlinkat_artifact(by_id["libc.posix-runtime"])
     require_linkat_artifact(by_id["libc.posix-runtime"])
+    require_unlinkat_artifact(by_id["libc.posix-runtime"])
     require_lchown_artifact(by_id["libc.posix-runtime"])
     require_hasmntopt_artifact(by_id["libc.posix-runtime"])
     require_static_sync_artifact(by_id["libc.posix-runtime"])
