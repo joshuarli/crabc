@@ -120,7 +120,7 @@ X86_RUNTIME_FOUNDATION_LDSO_SOURCES = {
 # sibling,
 # named termios control, selected
 # process context, bounded process environment, child reaping, C11 immediate
-# termination, bounded static
+# termination, POSIX _exit forwarding, bounded static
 # startup/ordinary exit, callback algorithms,
 # selected descriptor entry, fcntl status control, bounded generic ioctl, and
 # selected timestamp updates,
@@ -163,6 +163,7 @@ X86_RUNTIME_FOUNDATION_LIBC_SOURCES = {
     Path("libc/src/c_abi/x86_64/descriptor_control.rs"),
     Path("libc/src/c_abi/x86_64/ioctl.rs"),
     Path("libc/src/c_abi/x86_64/immediate_termination.rs"),
+    Path("libc/src/c_abi/x86_64/posix_exit.rs"),
     Path("libc/src/c_abi/x86_64/callback_algorithms.rs"),
     Path("libc/src/c_abi/x86_64/search_tree_intrusive.rs"),
     Path("libc/src/c_abi/x86_64/search_hash_table.rs"),
@@ -3748,6 +3749,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         '#[path = "login_name.rs"]',
         '#[path = "child_reaping.rs"]',
         '#[path = "immediate_termination.rs"]',
+        '#[path = "posix_exit.rs"]',
         '#[path = "callback_algorithms.rs"]',
         '#[path = "search_tree_intrusive.rs"]',
         '#[path = "search_hash_table.rs"]',
@@ -3813,7 +3815,6 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         "pub unsafe extern \"C\" fn atexit(",
         "pub unsafe extern \"C\" fn __funcs_on_exit()",
         "pub unsafe extern \"C\" fn __cxa_finalize(",
-        "pub unsafe extern \"C\" fn _exit(",
         "pub unsafe extern \"C\" fn exit(",
         "pub unsafe extern \"C\" fn __libc_start_main(",
         "if rtld_fini.is_some() || !static_tls::is_ready()",
@@ -3821,6 +3822,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         "auxv_observation::install_initial(vectors.auxv)",
         "startup_security::install_initial(vectors.auxv)",
         "if fini.is_some() && unsafe { atexit(fini) } != 0",
+        "posix_exit::_exit(status)",
         "immediate_termination::_Exit(127)",
     ):
         if required not in static_startup_text:
@@ -3839,7 +3841,6 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         "atexit",
         "__funcs_on_exit",
         "__cxa_finalize",
-        "_exit",
         "exit",
         "__libc_start_main",
     }
@@ -6884,6 +6885,47 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
             "artifact must export only _Exit"
         )
 
+    posix_exit_source = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "posix_exit.rs"
+    posix_exit_text = posix_exit_source.read_text(errors="replace")
+    for required in (
+        "musl 1.2.6 release commit",
+        "src/unistd/_exit.c",
+        "directly to `_Exit(status)`",
+        "immediate_termination::_Exit(status)",
+        "no raw syscall",
+        "no errno",
+        "ordinary `exit`",
+    ):
+        if required not in posix_exit_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/posix_exit.rs: selected static "
+                f"POSIX _exit boundary is missing {required!r}"
+            )
+    posix_exit_exports = set(
+        re.findall(
+            r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(',
+            posix_exit_text,
+        )
+    )
+    if posix_exit_exports != {"_exit"}:
+        errors.append(
+            "libc/src/c_abi/x86_64/posix_exit.rs: selected static artifact "
+            "must export only POSIX _exit"
+        )
+    for forbidden in (
+        "raw_syscall::",
+        "errno::",
+        "fn exit(",
+        "fn atexit(",
+        "fn abort(",
+        "fn quick_exit(",
+    ):
+        if forbidden in posix_exit_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/posix_exit.rs: selected static POSIX "
+                f"_exit boundary must not select {forbidden!r}"
+            )
+
     callback_algorithms_source = (
         ROOT / "libc" / "src" / "c_abi" / "x86_64" / "callback_algorithms.rs"
     )
@@ -9471,6 +9513,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         login_name_text,
         child_reaping_text,
         immediate_termination_text,
+        posix_exit_text,
         callback_algorithms_text,
         search_tree_text,
         search_hash_table_text,
@@ -9998,7 +10041,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
             "libc/src/c_abi/x86_64: selected static archive must export only its "
             "stat, credential, errno, bootstrap-memory/fenv/continuation, simple "
             "signal-control, one pure GNU signal-set predicate and paired GNU binary set-operation leaf, bounded process-signal execution, and one legacy single-signal pause wait, bounded pthread create/exit/join/detach initial-TLS worker, its private selected-main/worker pthread-key/C11-TSS lifecycle, private process-normal pthread mutexes and their musl private condition-variable handoff, the complete selected rwlock/attribute family with private-or-shared futex operation, plus the distinct C11 plain-sync adapter and normal-return pthread/C11 once state machine, its typed C11 create/exit/join/detach sibling, and pthread/C11 identity aliases, named termios-control, direct terminal-descriptor and foreground-group observations plus one named foreground-group assignment, historical ctermid pathname spelling, constant historical gethostid compatibility, selected process-context, child-reaping, C11 immediate termination, callback algorithms, direct clock_gettime, caller-buffered fixed-UTC gmtime_r, fixed-UTC timegm, caller-owned mapping-core, no-cancellation mapping synchronization, direct anonymous-memory descriptor creation, nanosleep, and clock_nanosleep, selected "
-            "descriptor-entry, selected filesystem-access, bounded descriptor-control, timestamp updates, and descriptor-I/O, selected process-resources, selected readiness/signal-waits, "
+            "POSIX _exit forwarding, descriptor-entry, selected filesystem-access, bounded descriptor-control, timestamp updates, and descriptor-I/O, selected process-resources, selected readiness/signal-waits, "
             "selected socket transport and selected socket-message/options, selected system-observation, selected UTS-identity, "
             "selected numeric-address codecs and legacy classful IPv4 arithmetic, fixed-profile h_errno message text, byte-string, legacy-memory adapters, source-backed memccpy, random-entropy, memory-search, C-string-copy, immutable error-string, "
             "fixed-C-locale ctype, integer-arithmetic, integer-parsing, intmax-arithmetic, credential-observation, and "
@@ -10050,6 +10093,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         ("process_context.rs", process_context_text),
         ("child_reaping.rs", child_reaping_text),
         ("immediate_termination.rs", immediate_termination_text),
+        ("posix_exit.rs", posix_exit_text),
         ("callback_algorithms.rs", callback_algorithms_text),
         ("search_tree_intrusive.rs", search_tree_text),
         ("search_hash_table.rs", search_hash_table_text),

@@ -1415,6 +1415,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "madvise-reference",
             "ctype-header-abi|locale-profile-header-abi|locale-multibyte-header-abi|iconv-header-abi|wide-character-header-abi|locale-object-wide-header-abi|locale-narrow-header-abi",
             "integer-arithmetic-header-abi|integer-parse-header-abi|float-parse-header-abi|getsubopt-header-abi|intmax-arithmetic-header-abi|credential-observation-header-abi|login-name-header-abi|child-reaping-header-abi|immediate-termination-header-abi|callback-algorithms-header-abi",
+            "posix-exit-header-abi",
             "ffs-header-abi",
             "byte-strings-header-abi",
             "memory-search-header-abi",
@@ -1449,6 +1450,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "libc-static-c-abi-differential",
             "libc-static-c-abi-same-object-differential|qualification-posix-abi-admission",
             "libc-interface-discovery",
+            "libc-posix-exit",
             "libc-readiness-waits|libc-system-observation|libc-system-information|libc-fcntl-record-locks|libc-flock|libc-sendfile|libc-posix-fallocate|libc-descriptor-advice|libc-filesystem-capacity|libc-uts-identity|libc-ctype|libc-locale-profile|libc-locale-multibyte|libc-locale-wide-iconv|libc-wide-character|libc-locale-object-wide|libc-locale-narrow|libc-locale-ctype-locators|libc-locale-error-strings|libc-regex|libc-integer-arithmetic|libc-integer-parse|libc-float-parse|libc-getsubopt|libc-intmax-arithmetic|libc-credential-observation|libc-secure-environment|libc-login-name|libc-child-reaping|libc-immediate-termination|libc-callback-algorithms|libc-search-tree-intrusive|libc-search-hash-table|libc-gettext-catalog|libc-access|libc-clock-gettime|libc-time-observation|libc-timegm|libc-gmtime-r|libc-system-configuration|libc-mapping-core|libc-header-layouts-baseline|libc-nanosleep|libc-clock-nanosleep|libc-descriptor-entry|libc-fcntl-status-control|libc-ioctl|libc-ffs|libc-byte-strings|libc-process-globals-getopt|libc-auxv-observation|libc-inet-address|libc-inet-ntoa|libc-inet-classful|libc-hstrerror|libc-numeric-netdb|libc-random-entropy|libc-memory-search|libc-string-copy|libc-error-strings|libc-strsignal|libc-descriptor-pipeline",
             "libc-vector-io|libc-uio-cxx-linkage",
             "libc-sysv-semaphore|libc-posix-semaphore",
@@ -14534,6 +14536,103 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         )
         self.assertIn("immediate-termination-header-abi", runner)
         self.assertIn("libc-immediate-termination", runner)
+
+    def test_libc_static_c_abi_posix_exit_artifact_stays_narrow(self) -> None:
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        static_startup = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_startup.rs"
+        ).read_text(encoding="utf-8")
+        posix_exit = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "posix_exit.rs"
+        ).read_text(encoding="utf-8")
+        probe = (
+            ROOT / "compat" / "x86_64" / "libc_posix_exit_probe.c"
+        ).read_text(encoding="utf-8")
+        artifact_runner = (
+            ROOT / "compat" / "x86_64" / "run_libc_posix_exit.sh"
+        ).read_text(encoding="utf-8")
+        header_runner = (
+            ROOT / "compat" / "x86_64" / "run_posix_exit_header_abi.sh"
+        ).read_text(encoding="utf-8")
+        header_c_probe = (
+            ROOT / "compat" / "x86_64" / "posix_exit_header_abi_probe.c"
+        ).read_text(encoding="utf-8")
+        header_cxx_probe = (
+            ROOT / "compat" / "x86_64" / "posix_exit_header_abi_probe.cpp"
+        ).read_text(encoding="utf-8")
+        static_exports = (
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        ).read_text(encoding="utf-8")
+        parity_ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        runner = RUNNER.read_text(encoding="utf-8")
+
+        self.assertIn('#[path = "posix_exit.rs"]', static_root)
+        self.assertIn("fn _exit(", posix_exit)
+        self.assertIn("posix_exit::_exit(status)", static_startup)
+        self.assertNotIn("fn _exit(", static_startup)
+        self.assertIn("_exit", static_exports)
+        for required in (
+            "musl 1.2.6 release commit",
+            "src/unistd/_exit.c",
+            "immediate_termination::_Exit(status)",
+            "no raw syscall",
+            "no errno",
+            "ordinary `exit`",
+        ):
+            self.assertIn(required, posix_exit)
+        for forbidden in (
+            "raw_syscall::",
+            "errno::",
+            "fn exit(",
+            "fn atexit(",
+            "fn abort(",
+            "fn quick_exit(",
+        ):
+            self.assertNotIn(forbidden, posix_exit)
+        for required in (
+            "raw_clone_sigchld",
+            "returns_twice",
+            "SYS_exit_group",
+            "CRABC_POSIX_EXIT_FREESTANDING",
+            "_exit(41)",
+            "wait_for_child",
+        ):
+            self.assertIn(required, probe)
+        for required in (
+            "static_c_abi_exports.txt",
+            "-nostdlib -static",
+            "-Wl,-e,_start",
+            "-Wl,--no-undefined",
+            "candidate retains a dynamic TLS model",
+            "_exit",
+            "_Exit",
+            "assert_posix_exit_forwarding",
+            "assert_named_syscall e7",
+            "assert_named_syscall 3c",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn("--whole-archive", artifact_runner)
+        for required in (
+            "-std=c++17",
+            "nm --undefined-only",
+            "unistd.h",
+            "_exit",
+        ):
+            self.assertIn(required, header_runner)
+        for header_probe in (header_c_probe, header_cxx_probe):
+            self.assertIn("posix_exit_signature", header_probe)
+            self.assertIn("_exit", header_probe)
+        self.assertIn('id = "static-c-posix-exit"', parity_ledger)
+        self.assertIn(
+            'command = "./scripts/dev-x86_64.sh libc-posix-exit"',
+            parity_ledger,
+        )
+        self.assertIn("posix-exit-header-abi", runner)
+        self.assertIn("libc-posix-exit", runner)
 
     def test_libc_static_c_abi_callback_algorithms_artifact_stays_narrow(self) -> None:
         static_root = (

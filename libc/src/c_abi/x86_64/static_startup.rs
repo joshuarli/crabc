@@ -40,8 +40,8 @@ compile_error!("x86 static startup requires little-endian Linux/x86-64");
 use core::ffi::{c_char, c_int, c_void};
 
 use super::{
-    auxv_observation, environment, immediate_termination, process_globals, startup_security,
-    static_tls,
+    auxv_observation, environment, immediate_termination, posix_exit, process_globals,
+    startup_security, static_tls,
 };
 
 const MAX_STARTUP_POINTERS: usize = 1 << 20;
@@ -200,17 +200,11 @@ pub unsafe extern "C" fn __funcs_on_exit() {
 #[no_mangle]
 pub unsafe extern "C" fn __cxa_finalize(_dso: *mut c_void) {}
 
-/// Terminate this process immediately without ordinary-exit callbacks.
-#[no_mangle]
-pub unsafe extern "C" fn _exit(status: c_int) -> ! {
-    immediate_termination::_Exit(status)
-}
-
 /// Run the fixed ordinary-exit dispatch and terminate the whole process.
 #[no_mangle]
 pub unsafe extern "C" fn exit(status: c_int) -> ! {
     unsafe { __funcs_on_exit() };
-    unsafe { _exit(status) }
+    posix_exit::_exit(status)
 }
 
 #[cold]

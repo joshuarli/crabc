@@ -5,7 +5,7 @@
 # native core, direct-facade, raw-C-syscall, source-only relocation, and a closed
 # set of static C ABI archive boundaries (stat, credentials, bootstrap primitives,
 # simple signal control, bounded process-signal execution, bounded pthread create/exit/join initial TLS, normal private pthread mutexes and their private condition-variable handoff, named termios control, selected process context, child reaping,
-# C11 immediate termination, callback algorithms, direct clock_gettime,
+# C11 immediate termination, POSIX _exit forwarding, callback algorithms, direct clock_gettime,
 # system configuration, caller-owned mapping synchronization, per-range memory
 # locking, and anonymous-memory descriptor creation,
 # nanosleep, and clock_nanosleep,
@@ -91,6 +91,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   login-name-header-abi  compile the staged x86 C/C++ unistd login-name declarations
   child-reaping-header-abi  compile the staged x86 C/C++ sys/wait child-reaping declarations
   immediate-termination-header-abi  compile the staged x86 C/C++ stdlib immediate-termination declaration
+  posix-exit-header-abi  compile the staged x86 C/C++ unistd POSIX _exit declaration
   callback-algorithms-header-abi  compile the staged x86 C/C++ stdlib callback-algorithm declarations
   ffs-header-abi  compile the staged x86 C/C++ strings.h find-first-set declarations
   byte-strings-header-abi  compile the staged x86 C/C++ string.h byte-string declarations
@@ -288,6 +289,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-login-name  run the static x86 crabc-libc environment-backed login-name slice
   libc-child-reaping  run the static x86 crabc-libc child-reaping slice
   libc-immediate-termination  run the static x86 crabc-libc C11 immediate-termination slice
+  libc-posix-exit  run the static x86 crabc-libc POSIX _exit forwarding slice
   libc-callback-algorithms  run the static x86 crabc-libc callback-algorithms slice
   libc-search-tree-intrusive  run the static x86 crabc-libc search.h callback-tree slice
   libc-search-hash-table  run the static x86 crabc-libc search.h hash-table slice
@@ -623,6 +625,13 @@ selects only C11 `_Exit`: fixture-local raw clone/wait observes the exact child
 status, while no ordinary exit, quick-exit hooks, stdio/fini processing, fork
 coordination, or pthread lifecycle is selected. It has no errno result,
 dynamic libc, or application-startup claim.
+`libc-posix-exit` is a separate freestanding project-header C fixture after an
+equivalent pinned-musl run. It selects only POSIX `_exit`: musl's complete
+source is one no-return forward to the separately selected `_Exit` sibling;
+fixture-local raw clone/wait observes child status 41 and emitted `_exit` has
+no raw syscall. Ordinary exit, hooks, stdio/fini processing, fork
+coordination, pthread lifecycle, dynamic libc, and application startup remain
+outside this forwarding artifact.
 `libc-descriptor-io`
 exercises the same archive through a freestanding project-header C fixture
 after an equivalent pinned-musl run. It selects only direct descriptor
@@ -1318,6 +1327,13 @@ libc, CRT/TLS lifecycle, loader, sysroot, and public x86 support.
 project-header C fixture after an equivalent pinned-musl run. It selects only
 C11 `_Exit`: fixture-local raw clone/wait observes its exact child status,
 without ordinary exit, quick-exit hooks, stdio/fini processing, fork
+coordination, pthread lifecycle, dynamic libc, CRT/TLS lifecycle, loader,
+sysroot, or public x86 support.
+`libc-posix-exit` separately links that archive into a freestanding
+project-header C fixture after an equivalent pinned-musl run. It selects only
+POSIX `_exit`: the complete musl source forwards once to the separately
+selected C11 `_Exit` sibling, while fixture-local raw clone/wait observes child
+status 41. It does not select ordinary exit/hook/stdio/fini state, fork
 coordination, pthread lifecycle, dynamic libc, CRT/TLS lifecycle, loader,
 sysroot, or public x86 support.
 `libc-clock-gettime` links that archive into a separate freestanding
@@ -2088,6 +2104,10 @@ run_immediate_termination_header_abi() {
     run_in_container bash /workspace/compat/x86_64/run_immediate_termination_header_abi.sh
 }
 
+run_posix_exit_header_abi() {
+    run_in_container bash /workspace/compat/x86_64/run_posix_exit_header_abi.sh
+}
+
 run_callback_algorithms_header_abi() {
     run_in_container bash /workspace/compat/x86_64/run_callback_algorithms_header_abi.sh
 }
@@ -2102,6 +2122,10 @@ run_libc_child_reaping() {
 
 run_libc_immediate_termination() {
     run_in_container bash /workspace/compat/x86_64/run_libc_immediate_termination.sh
+}
+
+run_libc_posix_exit() {
+    run_in_container bash /workspace/compat/x86_64/run_libc_posix_exit.sh
 }
 
 run_libc_callback_algorithms() {
@@ -3588,6 +3612,7 @@ case "$command" in
     madvise-reference) ;;
     ctype-header-abi|locale-profile-header-abi|locale-multibyte-header-abi|iconv-header-abi|wide-character-header-abi|locale-object-wide-header-abi|locale-narrow-header-abi) ;;
     integer-arithmetic-header-abi|integer-parse-header-abi|float-parse-header-abi|getsubopt-header-abi|intmax-arithmetic-header-abi|credential-observation-header-abi|login-name-header-abi|child-reaping-header-abi|immediate-termination-header-abi|callback-algorithms-header-abi) ;;
+    posix-exit-header-abi) ;;
     ffs-header-abi) ;;
     byte-strings-header-abi) ;;
     memory-search-header-abi) ;;
@@ -3622,6 +3647,7 @@ case "$command" in
     libc-static-c-abi-differential) ;;
     libc-static-c-abi-same-object-differential|qualification-posix-abi-admission) ;;
     libc-interface-discovery) ;;
+    libc-posix-exit) ;;
     libc-readiness-waits|libc-system-observation|libc-system-information|libc-fcntl-record-locks|libc-flock|libc-sendfile|libc-posix-fallocate|libc-descriptor-advice|libc-filesystem-capacity|libc-uts-identity|libc-ctype|libc-locale-profile|libc-locale-multibyte|libc-locale-wide-iconv|libc-wide-character|libc-locale-object-wide|libc-locale-narrow|libc-locale-ctype-locators|libc-locale-error-strings|libc-regex|libc-integer-arithmetic|libc-integer-parse|libc-float-parse|libc-getsubopt|libc-intmax-arithmetic|libc-credential-observation|libc-secure-environment|libc-login-name|libc-child-reaping|libc-immediate-termination|libc-callback-algorithms|libc-search-tree-intrusive|libc-search-hash-table|libc-gettext-catalog|libc-access|libc-clock-gettime|libc-time-observation|libc-timegm|libc-gmtime-r|libc-system-configuration|libc-mapping-core|libc-header-layouts-baseline|libc-nanosleep|libc-clock-nanosleep|libc-descriptor-entry|libc-fcntl-status-control|libc-ioctl|libc-ffs|libc-byte-strings|libc-process-globals-getopt|libc-auxv-observation|libc-inet-address|libc-inet-ntoa|libc-inet-classful|libc-hstrerror|libc-numeric-netdb|libc-random-entropy|libc-memory-search|libc-string-copy|libc-error-strings|libc-strsignal|libc-descriptor-pipeline) ;;
     libc-vector-io|libc-uio-cxx-linkage) ;;
     libc-sysv-semaphore|libc-posix-semaphore) ;;
@@ -3903,6 +3929,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "immediate-termination-header-abi takes no arguments"
         ensure_image
         run_immediate_termination_header_abi
+        ;;
+    posix-exit-header-abi)
+        [ "$#" -eq 0 ] || fail "posix-exit-header-abi takes no arguments"
+        ensure_image
+        run_posix_exit_header_abi
         ;;
     callback-algorithms-header-abi)
         [ "$#" -eq 0 ] || fail "callback-algorithms-header-abi takes no arguments"
@@ -5093,6 +5124,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "libc-immediate-termination takes no arguments"
         ensure_image
         run_libc_immediate_termination
+        ;;
+    libc-posix-exit)
+        [ "$#" -eq 0 ] || fail "libc-posix-exit takes no arguments"
+        ensure_image
+        run_libc_posix_exit
         ;;
     libc-callback-algorithms)
         [ "$#" -eq 0 ] || fail "libc-callback-algorithms takes no arguments"

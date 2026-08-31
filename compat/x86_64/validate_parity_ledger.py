@@ -1172,6 +1172,7 @@ SECURE_ENVIRONMENT_SYMBOLS = ("secure_getenv",)
 CHILD_REAPING_SYMBOLS = ("wait", "waitpid", "waitid")
 
 IMMEDIATE_TERMINATION_SYMBOLS = ("_Exit",)
+POSIX_EXIT_SYMBOLS = ("_exit",)
 
 CALLBACK_ALGORITHM_SYMBOLS = ("bsearch", "__qsort_r", "qsort", "qsort_r")
 
@@ -14360,6 +14361,145 @@ def require_immediate_termination_artifact(family: Mapping[str, Any]) -> None:
         == {"./scripts/dev-x86_64.sh libc-immediate-termination"},
         "static-c-immediate-termination must use the closed libc-immediate-termination command",
     )
+
+
+def require_static_posix_exit_artifact(family: Mapping[str, Any]) -> None:
+    """Keep musl's one-call POSIX `_exit` forwarding closure durable."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.posix-runtime].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [
+        entry for entry in artifacts if entry.get("id") == "static-c-posix-exit"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.posix-runtime must contain exactly one static-c-posix-exit artifact",
+    )
+    artifact = matching[0]
+    require(
+        "capabilities" not in artifact,
+        "static-c-posix-exit must not carry capabilities",
+    )
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for symbol in POSIX_EXIT_SYMBOLS:
+        require(
+            f"`{symbol}`" in description,
+            f"static-c-posix-exit description omits {symbol}",
+        )
+    for phrase in (
+        "POSIX",
+        "forwarding artifact",
+        "src/unistd/_exit.c",
+        "`_Exit`",
+        "exit_group=231",
+        "exit=60",
+        "no raw syscall",
+        "no errno",
+        "ordinary `exit`",
+        "initial-TLS",
+    ):
+        require(
+            phrase in description,
+            f"static-c-posix-exit description omits {phrase}",
+        )
+    source_owners = artifact["source_owners"]
+    assert isinstance(source_owners, list)
+    for owner in (
+        "libc/src/c_abi/x86_64/posix_exit.rs",
+        "libc/src/c_abi/x86_64/immediate_termination.rs",
+        "include/unistd.h",
+        "compat/x86_64/posix_exit_header_abi_probe.c",
+        "compat/x86_64/posix_exit_header_abi_probe.cpp",
+        "compat/x86_64/run_posix_exit_header_abi.sh",
+        "compat/x86_64/libc_posix_exit_probe.c",
+        "compat/x86_64/libc_posix_exit_start.S",
+        "compat/x86_64/run_libc_posix_exit.sh",
+    ):
+        require(
+            owner in source_owners,
+            f"static-c-posix-exit source ownership omits {owner}",
+        )
+    prerequisites = artifact["x86_abi_prerequisites"]
+    assert isinstance(prerequisites, list)
+    prerequisite_text = " ".join(
+        entry for entry in prerequisites if isinstance(entry, str)
+    )
+    for phrase in (
+        "POSIX _exit",
+        "direct no-return",
+        "_Exit",
+        "no raw syscall",
+        "clone=56",
+        "wait4=61",
+        "exit_group=231",
+    ):
+        require(
+            phrase in prerequisite_text,
+            f"static-c-posix-exit ABI prerequisites omit {phrase}",
+        )
+    headers = artifact["x86_header_prerequisites"]
+    assert isinstance(headers, list)
+    header_text = " ".join(entry for entry in headers if isinstance(entry, str))
+    for phrase in ("C11/C++", "unistd", "_exit(int)", "unmangled"):
+        require(
+            phrase in header_text,
+            f"static-c-posix-exit header prerequisites omit {phrase}",
+        )
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-posix-exit"},
+        "static-c-posix-exit must use the closed libc-posix-exit command",
+    )
+    scope = evidence[0].get("scope")
+    require(
+        isinstance(scope, str)
+        and all(
+            phrase in scope
+            for phrase in (
+                "Pinned-musl C reference",
+                "`-nostdlib -static`",
+                "direct _exit(41) child status",
+                "_exit-to-_Exit forwarding",
+                "no raw syscall",
+                "exit_group=231",
+                "ordinary exit",
+                "promotion",
+                "public x86 support",
+            )
+        ),
+        "static-c-posix-exit evidence must retain its observable bounded contract",
+    )
+    oracle = artifact["oracle"]
+    assert isinstance(oracle, list)
+    oracle_text = " ".join(
+        str(entry.get("role", "")) for entry in oracle if isinstance(entry, Mapping)
+    )
+    require(
+        "src/unistd/_exit.c" in oracle_text and "forwards directly to `_Exit`" in oracle_text,
+        "static-c-posix-exit must retain the exact musl source mapping",
+    )
+    exports = set(
+        static_c_abi_export_names(
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        )
+    )
+    require(
+        set(POSIX_EXIT_SYMBOLS) <= exports,
+        "static-c-posix-exit must retain its exact selected export set",
+    )
+    dispatcher = (ROOT / "scripts" / "dev-x86_64.sh").read_text(encoding="utf-8")
+    for snippet in (
+        "run_posix_exit_header_abi()",
+        "run_libc_posix_exit()",
+        "posix-exit-header-abi)",
+        "libc-posix-exit)",
+    ):
+        require(snippet in dispatcher, f"static-c-posix-exit dispatcher omits {snippet}")
 
 
 def require_callback_algorithms_artifact(family: Mapping[str, Any]) -> None:
@@ -35213,6 +35353,7 @@ def validate_ledger(
     require_mktemp_artifact(by_id["libc.posix-runtime"])
     require_child_reaping_artifact(by_id["libc.posix-runtime"])
     require_immediate_termination_artifact(by_id["libc.posix-runtime"])
+    require_static_posix_exit_artifact(by_id["libc.posix-runtime"])
     require_callback_algorithms_artifact(by_id["libc.posix-runtime"])
     require_clock_gettime_artifact(by_id["libc.posix-runtime"])
     require_time_observation_artifact(by_id["libc.posix-runtime"])

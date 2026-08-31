@@ -255,6 +255,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh login-name-header-abi
 ./scripts/dev-x86_64.sh child-reaping-header-abi
 ./scripts/dev-x86_64.sh immediate-termination-header-abi
+./scripts/dev-x86_64.sh posix-exit-header-abi
 ./scripts/dev-x86_64.sh callback-algorithms-header-abi
 ./scripts/dev-x86_64.sh ffs-header-abi
 ./scripts/dev-x86_64.sh byte-strings-header-abi
@@ -431,6 +432,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-login-name
 ./scripts/dev-x86_64.sh libc-child-reaping
 ./scripts/dev-x86_64.sh libc-immediate-termination
+./scripts/dev-x86_64.sh libc-posix-exit
 ./scripts/dev-x86_64.sh libc-callback-algorithms
 ./scripts/dev-x86_64.sh libc-search-tree-intrusive
 ./scripts/dev-x86_64.sh libc-search-hash-table
@@ -1223,6 +1225,12 @@ unconditional declaration and unmangled C++ linkage while selecting no
 ordinary-exit, quick-exit hook, CRT, or lifecycle-state contract. This is
 compile-only evidence for the bounded immediate-termination artifact, not a
 general C runtime ABI.
+
+`posix-exit-header-abi` compiles project-first and pinned-musl C11/C++
+`<unistd.h>` declarations for `_exit(int)`. It proves the unconditional
+declaration and unmangled C++ linkage while selecting no C11 implementation,
+ordinary-exit, CRT, or lifecycle-state contract. This is compile-only evidence
+for the bounded POSIX forwarding artifact, not a general C runtime ABI.
 
 `callback-algorithms-header-abi` compiles project-first and pinned-musl C/C++
 `<stdlib.h>` declarations for `bsearch`, `qsort`, and GNU/BSD `qsort_r`.
@@ -3384,6 +3392,19 @@ state. It excludes POSIX `_exit`, ordinary `exit`/`abort`/`atexit`,
 `at_quick_exit`/`quick_exit` hooks, stdio flushing/fini/destructors, fork
 coordination, pthread lifecycle, dynamic runtime, and public x86 support.
 
+`libc-posix-exit` is a separately recorded `static-c-posix-exit`
+`verified_artifact` gate over that archive, not a process-lifecycle capability.
+Its project-header C body first executes through pinned musl and then through a
+`-nostdlib -static` candidate. It selects exactly POSIX `_exit`: musl's
+complete `src/unistd/_exit.c` source makes one no-return forward to the
+separately selected C11 `_Exit` sibling. Fixture-local raw clone/wait observes
+child status 41; emitted `_exit` only calls `_Exit`, and only that sibling
+contains `exit_group=231` plus musl's defensive `exit=60` loop. `_exit` has no
+raw syscall, errno, initial-TLS, callback, lock, allocator, or mutable
+lifecycle state. It excludes ordinary `exit`/`abort`/`atexit`,
+`at_quick_exit`/`quick_exit` hooks, stdio flushing/fini/destructors, fork
+coordination, pthread lifecycle, dynamic runtime, and public x86 support.
+
 `libc-callback-algorithms` is a separately recorded
 `static-c-callback-algorithms` `verified_artifact` gate over that archive, not
 a general sorting/searching capability. Its project-header C body first
@@ -4244,7 +4265,7 @@ atomics, dynamic runtime, allocator, loader, sysroot, and public x86 support.
 
 Earlier errno-observing candidates use fixture-local startup that reserves the
 initial-TLS errno datum and installs the x86 Variant-II `%fs:0` self pointer;
-the byte-string, immediate-termination, and callback-algorithms candidates
+the byte-string, immediate-termination, POSIX-exit, and callback-algorithms candidates
 deliberately do neither because their selected functions do not observe errno.
 That older fixture setup does not describe `libc-static-tls-v1`,
 `libc-pthread-create-join-tls`, `libc-pthread-identity`, `libc-c11-lifecycle`,
@@ -5197,7 +5218,7 @@ Apart from the narrowly named `libc-stat-compat`, `libc-credentials`,
 `libc-getpass`,
 `libc-mktemp`,
 `libc-process-context`, `libc-environment`, `libc-secure-environment`, `libc-login-name`, `libc-child-reaping`, and
-`libc-immediate-termination`, `libc-callback-algorithms`,
+`libc-immediate-termination`, `libc-posix-exit`, `libc-callback-algorithms`,
 `libc-search-hash-table`,
 `libc-gettext-catalog`,
 `libc-clock-gettime`,

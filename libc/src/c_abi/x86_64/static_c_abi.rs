@@ -74,7 +74,7 @@
 //! classification/case/collation wrappers,
 //! find-first-set, immutable C-locale error strings and their fixed-profile
 //! locale-message aliases, bounded fixed-profile signal descriptions, C11
-//! immediate-termination,
+//! immediate-termination and POSIX `_exit` forwarding,
 //! a bounded private static
 //! startup/ordinary-exit lifecycle, startup-published program-name globals,
 //! raw initial auxiliary-vector observation, and option parsing,
@@ -330,6 +330,8 @@ mod secure_environment;
 mod child_reaping;
 #[path = "immediate_termination.rs"]
 mod immediate_termination;
+#[path = "posix_exit.rs"]
+mod posix_exit;
 #[path = "static_startup.rs"]
 mod static_startup;
 #[path = "process_globals.rs"]

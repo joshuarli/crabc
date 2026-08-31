@@ -50,7 +50,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 41)
-        self.assertEqual(report["verified_artifact_count"], 176)
+        self.assertEqual(report["verified_artifact_count"], 177)
         self.assertEqual(report["header_layout_probe_count"], 46)
         self.assertEqual(report["public_header_inventory_count"], 183)
         self.assertEqual(report["header_foundation_header_count"], 191)
@@ -7384,6 +7384,37 @@ class X86ParityLedgerTests(unittest.TestCase):
             "libc/src/c_abi/x86_64/immediate_termination.rs",
             posix_runtime["source_owners"],
         )
+        posix_exit = artifacts_by_id["static-c-posix-exit"]
+        assert isinstance(posix_exit, dict)
+        self.assertNotIn("capabilities", posix_exit)
+        for owner in (
+            "compat/upstreams.toml",
+            "libc/src/c_abi/x86_64/static_c_abi.rs",
+            "libc/src/c_abi/x86_64/posix_exit.rs",
+            "libc/src/c_abi/x86_64/immediate_termination.rs",
+            "include/unistd.h",
+            "compat/x86_64/posix_exit_header_abi_probe.c",
+            "compat/x86_64/posix_exit_header_abi_probe.cpp",
+            "compat/x86_64/run_posix_exit_header_abi.sh",
+            "compat/x86_64/static_c_abi_exports.txt",
+            "compat/x86_64/libc_posix_exit_probe.c",
+            "compat/x86_64/libc_posix_exit_start.S",
+            "compat/x86_64/run_libc_posix_exit.sh",
+        ):
+            self.assertIn(owner, posix_exit["source_owners"])
+        self.assertEqual(
+            {evidence["command"] for evidence in posix_exit["native_evidence"]},
+            {"./scripts/dev-x86_64.sh libc-posix-exit"},
+        )
+        self.assertIn("POSIX `_exit` forwarding artifact", posix_exit["description"])
+        self.assertIn("src/unistd/_exit.c", posix_exit["description"])
+        self.assertIn("_Exit", posix_exit["description"])
+        self.assertIn("no raw syscall", posix_exit["description"])
+        self.assertIn("clone=56", posix_exit["x86_abi_prerequisites"][1])
+        self.assertIn(
+            "libc/src/c_abi/x86_64/posix_exit.rs",
+            posix_runtime["source_owners"],
+        )
         callback_algorithms = artifacts_by_id["static-c-callback-algorithms"]
         assert isinstance(callback_algorithms, dict)
         self.assertNotIn("capabilities", callback_algorithms)
@@ -13068,6 +13099,37 @@ class X86ParityLedgerTests(unittest.TestCase):
         evidence[0]["command"] = "./scripts/dev-x86_64.sh libc-child-reaping"
         with self.assertRaisesRegex(
             ledger.LedgerError, "closed libc-immediate-termination command"
+        ):
+            ledger.validate_ledger(data)
+
+    def test_posix_exit_artifact_keeps_its_closed_mapping_contract(self) -> None:
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-posix-exit"
+        )
+        artifact["description"] = artifact["description"].replace(
+            "src/unistd/_exit.c", "src/unistd/not-exit.c"
+        )
+        with self.assertRaisesRegex(ledger.LedgerError, "src/unistd/_exit.c"):
+            ledger.validate_ledger(data)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-posix-exit"
+        )
+        evidence = artifact["native_evidence"]
+        assert isinstance(evidence, list) and isinstance(evidence[0], dict)
+        evidence[0]["command"] = "./scripts/dev-x86_64.sh libc-immediate-termination"
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "closed libc-posix-exit command"
         ):
             ledger.validate_ledger(data)
 
