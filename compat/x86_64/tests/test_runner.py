@@ -1384,7 +1384,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "libc-sched-cpucount|libc-sched-getcpu|libc-sched-priority-bounds|libc-sched-yield",
             "sched-cpucount-header-abi|sched-getscheduler-header-abi|sched-priority-bounds-header-abi",
             "ctermid-header-abi|gethostid-header-abi|endhostent-header-abi|getpagesize-header-abi|gettid-header-abi|posix-close-header-abi|isatty-header-abi|ttyname-r-header-abi|tcgetpgrp-header-abi|tcsetpgrp-header-abi|getpass-header-abi|libc-ctermid|libc-gethostid|libc-endhostent|libc-getpagesize|libc-gettid|libc-posix-close|libc-isatty|libc-ttyname-r|libc-tcgetpgrp|libc-tcsetpgrp|libc-getpass|mkfifo-header-abi|mkfifoat-header-abi|libc-mkfifo|libc-mkfifoat|mktemp-header-abi|libc-mktemp",
-            "readlinkat-header-abi|libc-readlinkat",
+            "readlinkat-header-abi|libc-readlinkat|linkat-header-abi|libc-linkat",
             "stdio-permanent-line-io-header-abi|stdio-octal-hex-scan-header-abi",
             "math-complex-complete-header-abi|libc-math-complex-complete",
             "stdio-permanent-byte-io-header-abi",
@@ -1559,6 +1559,8 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn("libc-sched-yield", source)
         self.assertIn("readlinkat-header-abi", source)
         self.assertIn("libc-readlinkat", source)
+        self.assertIn("linkat-header-abi", source)
+        self.assertIn("libc-linkat", source)
         self.assertIn("libc-readiness-waits", source)
         self.assertIn("libc-socket-transport", source)
         self.assertIn("libc-system-observation", source)
@@ -22826,7 +22828,6 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             static_export_names
             & {
                 "fchdir",
-                "linkat",
                 "symlinkat",
                 "unlinkat",
                 "renameat",
@@ -22855,6 +22856,172 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         )
         self.assertIn(
             '    libc-readlinkat)\n        [ "$#" -eq 0 ] || fail "libc-readlinkat takes no arguments"',
+            runner,
+        )
+
+    def test_libc_static_c_abi_linkat_artifact_stays_bounded(self) -> None:
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        implementation = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "linkat.rs"
+        ).read_text(encoding="utf-8")
+        header_c_probe = (
+            ROOT / "compat" / "x86_64" / "linkat_header_abi_probe.c"
+        ).read_text(encoding="utf-8")
+        header_cxx_probe = (
+            ROOT / "compat" / "x86_64" / "linkat_header_abi_probe.cpp"
+        ).read_text(encoding="utf-8")
+        header_runner = (
+            ROOT / "compat" / "x86_64" / "run_linkat_header_abi.sh"
+        ).read_text(encoding="utf-8")
+        probe = (ROOT / "compat" / "x86_64" / "libc_linkat_probe.c").read_text(
+            encoding="utf-8"
+        )
+        start = (ROOT / "compat" / "x86_64" / "libc_linkat_start.S").read_text(
+            encoding="utf-8"
+        )
+        artifact_runner = (
+            ROOT / "compat" / "x86_64" / "run_libc_linkat.sh"
+        ).read_text(encoding="utf-8")
+        static_export_names = {
+            line
+            for line in (
+                ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+            ).read_text(encoding="utf-8").splitlines()
+            if line and not line.startswith("#")
+        }
+        parity_ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        runner = RUNNER.read_text(encoding="utf-8")
+
+        self.assertIn('#[path = "linkat.rs"]', static_root)
+        for required in (
+            "Selected static Linux/x86-64 `linkat` C ABI leaf",
+            "musl 1.2.6",
+            "src/unistd/linkat.c",
+            "syscall(SYS_linkat, fd1, existing, fd2, new, flag)",
+            "Linux 5.10",
+            "linkat=265",
+            "raw_syscall::SYS_LINKAT",
+            "raw_syscall::syscall5(",
+            "i64::from(existing_directory_descriptor)",
+            "i64::from(new_directory_descriptor)",
+            "i64::from(flags)",
+            "c_status(result)",
+        ):
+            self.assertIn(required, implementation)
+        for forbidden in (
+            "const AT_FDCWD",
+            "fn link(",
+            "fn symlinkat(",
+            "fn readlinkat(",
+            "fn unlinkat(",
+            "fn renameat(",
+            "crabc_core",
+            "mimalloc",
+            "alloc::",
+            "__tls_get_addr",
+        ):
+            self.assertNotIn(forbidden, implementation)
+
+        for header_probe in (header_c_probe, header_cxx_probe):
+            for required in (
+                "unistd.h",
+                "linkat",
+                "sizeof(int) == 4",
+                "sizeof(char *) == 8",
+            ):
+                self.assertIn(required, header_probe)
+        for required in (
+            "EXPECTED_PROFILE_COUNT=8",
+            "EXPECTED_VISIBLE_PROFILE_COUNT=8",
+            "EXPECTED_HIDDEN_PROFILE_COUNT=0",
+            "c-default c11-gnu cxx17-gnu",
+            "-nostdinc",
+            "-nostdinc++",
+            "run_musl_oracle.sh",
+            "compile-only",
+            "unmangled",
+        ):
+            self.assertIn(required, header_runner)
+
+        for required in (
+            "#include <errno.h>",
+            "#include <fcntl.h>",
+            "#include <sys/stat.h>",
+            "#include <sys/syscall.h>",
+            "#include <unistd.h>",
+            "SYS_linkat == 265",
+            "same-inode links",
+            "AT_SYMLINK_FOLLOW",
+            "raw_syscall5",
+            "EEXIST",
+            "EBADF",
+            "EFAULT",
+            "ENOENT",
+            "EINVAL",
+            "CRABC_LINKAT_FREESTANDING",
+        ):
+            self.assertIn(required, probe)
+        for required in (
+            "call __crabc_x86_static_tls_bootstrap",
+            "crabc_x86_64_linkat_probe",
+            "exit_group",
+        ):
+            self.assertIn(required, start)
+        self.assertNotIn("arch_prctl", start)
+
+        for required in (
+            "static_c_abi_exports.txt",
+            "run_linkat_header_abi.sh",
+            "-nostdlib -static",
+            "-Wl,-e,_start",
+            "assert_selected_c_abi_surface",
+            "linkat=265",
+            "%r10",
+            "%r8",
+            "for symbol in __errno_location __crabc_x86_static_tls_bootstrap linkat",
+            "link|symlink|symlinkat|readlink|readlinkat|unlink|unlinkat|rename|renameat|renameat2|mkdir|mkdirat",
+            "unowned runtime dependency",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn("--whole-archive", artifact_runner)
+
+        self.assertIn("linkat", static_export_names)
+        self.assertFalse(
+            static_export_names
+            & {
+                "unlinkat",
+                "renameat",
+                "renameat2",
+                "fchmodat",
+                "mkdirat",
+                "symlinkat",
+            }
+        )
+        self.assertIn('id = "static-c-linkat"', parity_ledger)
+        self.assertIn(
+            'command = "./scripts/dev-x86_64.sh libc-linkat"',
+            parity_ledger,
+        )
+        self.assertIn("run_linkat_header_abi()", runner)
+        self.assertIn(
+            "/workspace/compat/x86_64/run_linkat_header_abi.sh",
+            runner,
+        )
+        self.assertIn("run_libc_linkat_probe()", runner)
+        self.assertIn(
+            "/workspace/compat/x86_64/run_libc_linkat.sh",
+            runner,
+        )
+        self.assertIn(
+            '    linkat-header-abi)\n        [ "$#" -eq 0 ] || fail "linkat-header-abi takes no arguments"',
+            runner,
+        )
+        self.assertIn(
+            '    libc-linkat)\n        [ "$#" -eq 0 ] || fail "libc-linkat takes no arguments"',
             runner,
         )
 
@@ -23091,7 +23258,6 @@ class X86_64CoreRunnerTests(unittest.TestCase):
                 "renameat",
                 "renameat2",
                 "unlinkat",
-                "linkat",
                 "symlinkat",
                 "mkdirat",
                 "fchmodat",
