@@ -7568,10 +7568,10 @@ def main() -> int:
         with mimalloc_manifest_path.open("rb") as stream:
             mimalloc_manifest = tomllib.load(stream)
         dependencies = mimalloc_manifest.get("dependencies", {})
-        if set(dependencies) != {"chacha20", "crabc-core", "zeroize"}:
+        if set(dependencies) != {"chacha20", "crabc-core", "loom", "zeroize"}:
             errors.append(
-                "crabc-mimalloc/Cargo.toml: normal dependencies must be exactly "
-                "chacha20, crabc-core, and zeroize"
+                "crabc-mimalloc/Cargo.toml: dependencies must be exactly "
+                "chacha20, crabc-core, optional loom, and zeroize"
             )
         chacha = dependencies.get("chacha20", {})
         if not isinstance(chacha, dict) or chacha.get("version") != "=0.10.1":
@@ -7597,21 +7597,26 @@ def main() -> int:
                 "crabc-mimalloc/Cargo.toml: zeroize must remain pinned to =1.9.0 "
                 "with defaults disabled and no features"
             )
-        dev_dependencies = mimalloc_manifest.get("dev-dependencies", {})
-        if set(dev_dependencies) != {"loom"}:
-            errors.append(
-                "crabc-mimalloc/Cargo.toml: test-only dependencies must be exactly loom"
-            )
-        loom = dev_dependencies.get("loom", {})
+        loom = dependencies.get("loom", {})
         if (
             not isinstance(loom, dict)
             or loom.get("version") != "=0.7.2"
             or loom.get("default-features") is not False
             or loom.get("features", [])
+            or loom.get("optional") is not True
         ):
             errors.append(
-                "crabc-mimalloc/Cargo.toml: loom must remain test-only, pinned to =0.7.2, "
+                "crabc-mimalloc/Cargo.toml: loom must remain optional, pinned to =0.7.2, "
                 "with defaults disabled and no features"
+            )
+        if mimalloc_manifest.get("dev-dependencies", {}):
+            errors.append(
+                "crabc-mimalloc/Cargo.toml: Loom must not be an unconditional dev-dependency"
+            )
+        features = mimalloc_manifest.get("features", {})
+        if features.get("loom") != ["dep:loom"]:
+            errors.append(
+                "crabc-mimalloc/Cargo.toml: the loom feature must activate only dep:loom"
             )
         package = mimalloc_manifest.get("package", {})
         if package.get("license") != "MIT":

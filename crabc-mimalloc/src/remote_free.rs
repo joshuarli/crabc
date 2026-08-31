@@ -3164,6 +3164,9 @@ mod tests {
     }
 }
 
+// The optional Loom scheduler is selected only for this lib-test target. Its
+// manifest feature keeps ordinary native integration targets out of the Loom
+// and generator dependency graph.
 #[cfg(all(test, feature = "loom"))]
 #[path = "remote_free_loom.rs"]
 mod loom_tests;

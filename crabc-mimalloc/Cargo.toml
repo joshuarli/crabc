@@ -98,9 +98,10 @@ default = []
 # prefixed C adapter's tests. Production builds retain the allocation-free engine.
 test-adapter = []
 # Enables the private Loom model for the bounded live and abandoned remote-head protocols.
-# This is meaningful only for this crate's unit-test build, where `loom` is a
-# dev-dependency; it never selects a production atomic backend.
-loom = []
+# This activates the optional test-model dependency, while the model source
+# remains restricted to this crate's `cfg(test)` library target. It never
+# selects a production atomic backend.
+loom = ["dep:loom"]
 # Retains named, test-only witnesses for the allocator's private compiler-TLS
 # roots so the pinned target-specific ELF harness can inspect their exact access model.
 # Normal allocator builds expose neither these witnesses nor a TLS ABI.
@@ -118,10 +119,8 @@ native-runtime-test-fault = []
 [dependencies]
 chacha20 = { version = "=0.10.1", default-features = false, features = ["legacy", "zeroize"] }
 crabc-core = { path = "../crabc-core", features = ["allocator-x86-evidence"] }
+# Cargo builds every dev-dependency for an ordinary selected test target, even
+# when that target cannot reach the Loom-gated source. Keep the model optional
+# so only `--features loom` resolves its std-only scheduler graph.
+loom = { version = "=0.7.2", default-features = false, optional = true }
 zeroize = { version = "=1.9.0", default-features = false }
-
-[dev-dependencies]
-# Test-only finite scheduler for the exact live and abandoned remote-head transitions.
-# See `src/remote_free_loom.rs`; this is deliberately absent from normal
-# Linux/AArch64 and Linux/x86-64 allocator builds.
-loom = { version = "=0.7.2", default-features = false }

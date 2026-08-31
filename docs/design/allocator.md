@@ -2503,14 +2503,17 @@ unqualified until measured.
 
 ### Concurrency-test dependency boundary
 
-`loom = "=0.7.2"`, with defaults disabled, is the sole allocator
-`dev-dependency`. It is enabled only by the empty `loom` test feature and
-models the exact `mi_thread_free_t` publication, owner-detach, abandoned
-ownership-claim, and abandoned-unown transitions shared with production. The
-model substitutes only the atomic head, address-free block links, and a boolean
-for bitmap restoration responsibility; the bitmap field algorithm has its own
-native quiescence regression. Raw-pointer lifetime, owner-local page mutation,
-page identity, TLS, and page release remain outside that proof.
+`loom = "=0.7.2"`, with defaults disabled, is an optional test-model
+dependency selected only by the `loom = ["dep:loom"]` feature. Its source
+remains gated to the crate's `cfg(all(test, feature = "loom"))` lib-test
+target, so ordinary selected native integration tests do not resolve Loom or
+its scheduler graph. It models the exact `mi_thread_free_t` publication,
+owner-detach, abandoned ownership-claim, and abandoned-unown transitions
+shared with production. The model substitutes only the atomic head,
+address-free block links, and a boolean for bitmap restoration responsibility;
+the bitmap field algorithm has its own native quiescence regression.
+Raw-pointer lifetime, owner-local page mutation, page identity, TLS, and page
+release remain outside that proof.
 
 Loom's normal test graph includes its `generator`, `scoped-tls`, `tracing`, and
 `tracing-subscriber` support stack. That graph uses `std`, allocation, global

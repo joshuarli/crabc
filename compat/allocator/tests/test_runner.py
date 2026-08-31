@@ -10,6 +10,7 @@ import os
 import sys
 import tarfile
 import tempfile
+import tomllib
 import unittest
 from unittest import mock
 from pathlib import Path
@@ -1354,7 +1355,7 @@ note: native-static-libs: -lgcc_s -lc
 
 
 class ContractTests(unittest.TestCase):
-    def test_loom_model_clears_production_rustflags(self) -> None:
+    def test_loom_model_is_explicitly_feature_targeted_and_clears_production_rustflags(self) -> None:
         record = {
             "status": 0,
             "stderr": "",
@@ -1363,8 +1364,61 @@ class ContractTests(unittest.TestCase):
         with mock.patch.object(RUNNER, "command_record", return_value=record) as command_record:
             report = RUNNER.loom_remote_free_model()
 
+        self.assertEqual(
+            command_record.call_args.args[0],
+            [
+                "cargo",
+                "test",
+                "-p",
+                "crabc-mimalloc",
+                "--lib",
+                "--features",
+                "loom",
+                "--locked",
+                "remote_free::loom_tests",
+                "--",
+                "--test-threads=1",
+            ],
+        )
         self.assertEqual(command_record.call_args.kwargs["env"]["CARGO_ENCODED_RUSTFLAGS"], "")
         self.assertEqual(report["cargo_encoded_rustflags"], [])
+
+    def test_loom_dependency_and_model_sources_remain_feature_target_gated(self) -> None:
+        manifest_path = RUNNER.ROOT / "crabc-mimalloc/Cargo.toml"
+        with manifest_path.open("rb") as stream:
+            manifest = tomllib.load(stream)
+
+        dependencies = manifest["dependencies"]
+        self.assertEqual(
+            set(dependencies),
+            {"chacha20", "crabc-core", "loom", "zeroize"},
+        )
+        self.assertEqual(
+            dependencies["loom"],
+            {
+                "version": "=0.7.2",
+                "default-features": False,
+                "optional": True,
+            },
+        )
+        self.assertFalse(manifest.get("dev-dependencies", {}))
+        self.assertEqual(manifest["features"]["loom"], ["dep:loom"])
+
+        remote_free = (RUNNER.ROOT / "crabc-mimalloc/src/remote_free.rs").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn(
+            "#[cfg(all(test, feature = \"loom\"))]\n"
+            "#[path = \"remote_free_loom.rs\"]\n"
+            "mod loom_tests;",
+            remote_free,
+        )
+        self.assertIn(
+            "#[cfg(all(test, feature = \"loom\"))]\n"
+            "#[path = \"remote_free_owner_unown_loom.rs\"]\n"
+            "mod owner_unown_loom_tests;",
+            remote_free,
+        )
 
     def test_pin_is_complete_and_names_the_exact_archive(self) -> None:
         pin = RUNNER.load_pin()

@@ -1050,12 +1050,15 @@ PageMap handle, or post-exit finalizer; abandoning either retains the process
 owner. This is not a public worker API, a general concurrent allocator, or
 libc allocation routing.
 
-Loom 0.7.2 is an exact, defaults-disabled dev-dependency: its allocation-backed
-`std` scheduler, `generator` build script, and tracing support stack exist only
-in tests. The generator's external assembly path is not selected on AArch64,
-and Cargo's production-graph judge excludes the entire Loom graph. Both
-performance modes likewise remain explicitly unavailable; these status-3
-results are not skips and must not become successful placeholders.
+Loom 0.7.2 is an exact, defaults-disabled optional test-model dependency. The
+`loom = ["dep:loom"]` feature selects its allocation-backed `std` scheduler,
+`generator` build script, and tracing support stack only for the
+`cfg(all(test, feature = "loom"))` library model; ordinary selected native
+integration tests do not resolve that graph. The generator's external assembly
+path is not selected on AArch64, and Cargo's production-graph judge excludes
+the entire Loom graph. Both performance modes likewise remain explicitly
+unavailable; these status-3 results are not skips and must not become
+successful placeholders.
 
 The native x86-64 quick lane is separate from the AArch64 allocator gate.
 Run it only through the architecture-aware native dispatcher:
