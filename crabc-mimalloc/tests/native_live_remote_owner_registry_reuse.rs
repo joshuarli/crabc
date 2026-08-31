@@ -4,11 +4,10 @@ use crabc_mimalloc::__crabc_runtime::{
     NativePageAllocationResult, NativePageFreeResult, ThreadAttachResult, ThreadFinishResult,
     TicketZeroPageAllocationResult, TicketZeroPageFreeResult, attach_current_thread,
     finish_current_thread_native_after_user_destructors, initialize_process,
-    native_allocate_aligned, native_free, native_live_remote_owner_registry_test_audit,
-    native_usable_size, prepare_native_later_thread_arena, ticket_zero_allocate, ticket_zero_free,
+    native_allocate_aligned, native_free, native_usable_size, prepare_native_later_thread_arena,
+    ticket_zero_allocate, ticket_zero_free,
 };
 
-const LIVE_OWNER_COUNT: usize = 2;
 const EPOCH_COUNT: usize = 4;
 
 fn current_page_size() -> usize {
@@ -16,7 +15,7 @@ fn current_page_size() -> usize {
         .expect("the native Linux test process exposes AT_PAGESZ")
 }
 
-fn spawn_parked_owner(
+fn spawn_live_persistent_owner(
     remote_request: usize,
     local_request: usize,
     ready: mpsc::SyncSender<usize>,
@@ -26,11 +25,11 @@ fn spawn_parked_owner(
         assert_eq!(attach_current_thread(), ThreadAttachResult::Attached);
         let remote = match native_allocate_aligned(remote_request, 16, false) {
             NativePageAllocationResult::Allocated(block) => block,
-            _ => panic!("A creates its exact live registry client"),
+            _ => panic!("A creates its exact live remote client"),
         };
         let local = match native_allocate_aligned(local_request, 16, false) {
             NativePageAllocationResult::Allocated(block) => block,
-            _ => panic!("A retains one private local client while B publishes"),
+            _ => panic!("A retains one private local client while B frees remotely"),
         };
         ready
             .send(remote.as_ptr().addr())
@@ -40,14 +39,14 @@ fn spawn_parked_owner(
             .expect("A resumes only after its matching B free completes");
 
         // A's next ordinary operation collects its source remote head before
-        // its local all-free drain. The local allocation ensures this stays a
-        // normal parked-session lifecycle rather than a C-specific shortcut.
+        // its local all-free drain. The local allocation keeps this a normal
+        // persistent-owner lifecycle rather than an all-free shortcut.
         let probe = match native_allocate_aligned(remote_request, 16, false) {
             NativePageAllocationResult::Allocated(block) => block,
-            _ => panic!("A resumes after B restored its registry entry"),
+            _ => panic!("A resumes after B completes its PageMap-derived remote free"),
         };
         // SAFETY: A owns its probe and local client; B has already published
-        // only the distinct exact remote client through the source route.
+        // only the distinct exact remote client to A's source remote head.
         unsafe {
             assert_eq!(native_free(probe), NativePageFreeResult::Freed);
             assert_eq!(native_free(local), NativePageFreeResult::Freed);
@@ -55,7 +54,7 @@ fn spawn_parked_owner(
         assert_eq!(
             finish_current_thread_native_after_user_destructors(),
             ThreadFinishResult::Finished,
-            "A removes its live registry entry only through normal native finish"
+            "A completes its persistent owner only through normal native finish"
         );
     })
 }
@@ -63,8 +62,8 @@ fn spawn_parked_owner(
 fn release_exact_live_client(address: usize, request: usize) {
     std::thread::spawn(move || {
         assert_eq!(attach_current_thread(), ThreadAttachResult::Attached);
-        // SAFETY: the paired A remains parked with this exact client live
-        // until this source-shaped B operation finishes.
+        // SAFETY: the paired A keeps this exact client live in its persistent
+        // owner until B's PageMap-derived operation finishes.
         let block = unsafe { core::ptr::NonNull::new_unchecked(address as *mut u8) };
         assert!(
             unsafe { native_usable_size(block) }.is_some_and(|size| size >= request),
@@ -73,47 +72,39 @@ fn release_exact_live_client(address: usize, request: usize) {
         assert_eq!(
             unsafe { native_free(block) },
             NativePageFreeResult::Freed,
-            "B publishes only its exact A client through the matched entry"
+            "B frees only its exact A client through the foreign PageMap path"
         );
         assert_eq!(
             finish_current_thread_native_after_user_destructors(),
             ThreadFinishResult::Finished,
-            "B settles its own no-page lifecycle after the source publication"
+            "B settles its own no-page attachment after the foreign publication"
         );
     })
     .join()
     .expect("the exact live-owner B finishes normally")
 }
 
-/// Stable metadata nodes must follow concurrent live-owner high-water, not
-/// the number of sequential worker lifecycles. Every epoch first parks A1,
-/// then A2, so the source scheduler admits one setup transition at a time;
-/// both registry entries are nevertheless simultaneously active before any B
-/// receives an address.
+/// Each epoch holds two independent persistent owners live before either B
+/// receives an address. The repeated sequence proves that exact foreign
+/// PageMap queries and frees remain valid across completed owner lifecycles.
 #[test]
-fn native_live_owner_registry_reuses_its_warm_two_owner_high_water() {
+fn native_live_remote_frees_repeat_across_persistent_owner_epochs() {
     assert!(
         initialize_process(current_page_size()),
-        "the native runtime initializes before the live-owner registry witness"
+        "the native runtime initializes before the repeated live-remote witness"
     );
     assert!(
         prepare_native_later_thread_arena(),
-        "ticket zero parks the first arena before live owners begin"
-    );
-    assert_eq!(
-        native_live_remote_owner_registry_test_audit().published_entry_count,
-        0,
-        "this isolated test process begins without a live-owner registry entry"
+        "the persistent initial owner readies the first arena before workers begin"
     );
 
-    let mut warm_entry_count = None;
     for epoch in 0..EPOCH_COUNT {
         let (ready_sender, ready_receiver) = mpsc::sync_channel(0);
         let first_ready_sender = ready_sender.clone();
         let (first_resume_sender, first_resume_receiver) = mpsc::sync_channel(0);
         let (second_resume_sender, second_resume_receiver) = mpsc::sync_channel(0);
 
-        let first_owner = spawn_parked_owner(
+        let first_owner = spawn_live_persistent_owner(
             37 + epoch,
             73 + epoch,
             first_ready_sender,
@@ -121,8 +112,8 @@ fn native_live_owner_registry_reuses_its_warm_two_owner_high_water() {
         );
         let first_address = ready_receiver
             .recv()
-            .expect("A1 parks before A2 enters its setup transition");
-        let second_owner = spawn_parked_owner(
+            .expect("A1 keeps its persistent owner live before A2 begins");
+        let second_owner = spawn_live_persistent_owner(
             53 + epoch,
             89 + epoch,
             ready_sender,
@@ -130,30 +121,7 @@ fn native_live_owner_registry_reuses_its_warm_two_owner_high_water() {
         );
         let second_address = ready_receiver
             .recv()
-            .expect("A2 parks before either B receives an address");
-
-        let live = native_live_remote_owner_registry_test_audit();
-        assert_eq!(
-            live.live_entry_count, LIVE_OWNER_COUNT,
-            "epoch {epoch} has one active entry for each parked A"
-        );
-        assert_eq!(
-            live.retained_entry_count, 0,
-            "epoch {epoch} has no terminal live-owner entry"
-        );
-        match warm_entry_count {
-            Some(warm) => assert_eq!(
-                live.published_entry_count, warm,
-                "epoch {epoch} reuses the warm live-owner metadata high-water"
-            ),
-            None => {
-                assert_eq!(
-                    live.published_entry_count, LIVE_OWNER_COUNT,
-                    "the first epoch creates exactly one stable node per parked A"
-                );
-                warm_entry_count = Some(live.published_entry_count);
-            }
-        }
+            .expect("A2 keeps its persistent owner live before either B receives an address");
 
         release_exact_live_client(first_address, 37 + epoch);
         release_exact_live_client(second_address, 53 + epoch);
@@ -163,32 +131,17 @@ fn native_live_owner_registry_reuses_its_warm_two_owner_high_water() {
             .expect("A1 resumes after B1 completed its exact publication");
         first_owner
             .join()
-            .expect("A1 removes its entry through normal finish");
+            .expect("A1 completes its persistent owner through normal finish");
         second_resume_sender
             .send(())
             .expect("A2 resumes after B2 completed its exact publication");
         second_owner
             .join()
-            .expect("A2 removes its entry through normal finish");
-
-        let quiescent = native_live_remote_owner_registry_test_audit();
-        assert_eq!(
-            quiescent.published_entry_count,
-            warm_entry_count.expect("the first epoch records the warm high-water"),
-            "epoch {epoch} keeps the stable metadata nodes for reuse"
-        );
-        assert_eq!(
-            quiescent.live_entry_count, 0,
-            "epoch {epoch} returns every live-owner entry to empty"
-        );
-        assert_eq!(
-            quiescent.retained_entry_count, 0,
-            "epoch {epoch} leaves no hidden terminal entry"
-        );
+            .expect("A2 completes its persistent owner through normal finish");
 
         let resumed = match ticket_zero_allocate(113 + epoch, false) {
             TicketZeroPageAllocationResult::Allocated(block) => block,
-            _ => panic!("ticket zero reactivates after each complete live-owner epoch"),
+            _ => panic!("the persistent initial owner remains usable after each live-owner epoch"),
         };
         assert_eq!(
             unsafe { ticket_zero_free(resumed) },
