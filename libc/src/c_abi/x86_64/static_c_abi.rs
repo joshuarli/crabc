@@ -509,6 +509,8 @@ mod ether_line;
 mod res_init;
 #[path = "posix_spawnattr_destroy.rs"]
 mod posix_spawnattr_destroy;
+#[path = "posix_spawnattr_getflags.rs"]
+mod posix_spawnattr_getflags;
 #[path = "numeric_netdb.rs"]
 mod numeric_netdb;
 #[path = "interface_discovery.rs"]

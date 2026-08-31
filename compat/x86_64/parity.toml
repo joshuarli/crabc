@@ -10474,6 +10474,49 @@ native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc
 oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source, unconditional spawn.h declaration, static-member, and behavior oracle for src/process/posix_spawnattr_destroy.c::posix_spawnattr_destroy: the selected body returns zero without reading, writing, freeing, or retaining the supplied pointer." }, { kind = "elf-abi", source = "System V AMD64 psABI and pinned musl x86 static object", role = "One opaque-pointer signed-int C ABI, C++ C linkage, and true-static ET_EXEC closure contract." }]
 
 [[family.verified_artifact]]
+id = "static-c-posix-spawnattr-getflags"
+description = "Private native x86 selected-static-archive POSIX spawn-attribute flag-readback C ABI artifact inside still-planned `libc.c-abi-compat`. One dependency-free `crabc-libc` archive resolves exactly `int posix_spawnattr_getflags(const posix_spawnattr_t *restrict, short *restrict)` into a freestanding C fixture after equivalent pinned-musl execution. Pinned musl's complete `src/process/posix_spawnattr_getflags.c::posix_spawnattr_getflags` body is exactly `*flags = attr->__flags; return 0;`: direct and function-pointer calls prove two supported flag combinations copied into a distinct caller-owned short slot, unchanged byte-filled caller attribute storage, intact adjacent output sentinels, and stale errno preservation on the ordinary musl route. Both source pointers must name valid, non-null, non-overlapping caller storage; null, invalid, and aliasing cases remain outside the selected C source domain. This leaf reads and writes only caller storage, with no global mutable state, errno/TLS, allocation, syscall, process, child, signal, scheduler, file-action, or spawn-execution boundary. It does not select `posix_spawn`, `posix_spawnp`, `posix_spawnattr_init`, attribute mutation or any other query, file actions, child lifecycle, generic process control, libc.so, CRT, loader, sysroot, family completion, promotion, or public x86 support."
+source_owners = [
+  "compat/upstreams.toml",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/posix_spawnattr_getflags.rs",
+  "include/features.h",
+  "include/bits/alltypes.h",
+  "include/sys/types.h",
+  "include/spawn.h",
+  "compat/x86_64/posix_spawnattr_getflags_header_abi_probe.c",
+  "compat/x86_64/posix_spawnattr_getflags_header_abi_probe.cpp",
+  "compat/x86_64/run_posix_spawnattr_getflags_header_abi.sh",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/libc_posix_spawnattr_getflags_probe.c",
+  "compat/x86_64/libc_posix_spawnattr_getflags_start.S",
+  "compat/x86_64/run_libc_posix_spawnattr_getflags.sh",
+  "compat/x86_64/aarch64_parity_inventory.py",
+  "compat/x86_64/aarch64_parity_inventory.json",
+  "compat/x86_64/tests/test_aarch64_parity_inventory.py",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "compat/x86_64/README.md",
+  "STATUS.md",
+  "x86-64.md",
+  "scripts/dev-x86_64.sh",
+  "scripts/check_structure.py",
+]
+x86_abi_prerequisites = [
+  "The SysV AMD64 ABI passes `int posix_spawnattr_getflags(const posix_spawnattr_t *restrict, short *restrict)`'s read-only attribute and writable short pointers in rdi/rsi and returns its signed int result in eax. The musl header's offset-zero signed int `__flags` prefix is read, its low signed short result is stored through the independent output pointer, and valid non-null non-overlapping caller objects are a source precondition.",
+  "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417 maps `src/process/posix_spawnattr_getflags.c::posix_spawnattr_getflags` directly to exact `*flags = attr->__flags; return 0;`. `posix_spawn`, `posix_spawnp`, `posix_spawnattr_init`, mutation and every other attribute query, file actions, child lifecycle, signals, and scheduler behavior remain unselected.",
+  "The true `-nostdlib -static --gc-sections` candidate discards unrelated selected-archive sections and has no interpreter, DT_NEEDED, unresolved symbol, PT_TLS, errno path, dynamic-TLS model, allocator, helper call, syscall, or ambient runtime dependency. Its posix_spawnattr_getflags disassembly is one caller-storage copy and direct return, while the candidate rejects peer spawn exports, so this local readback cannot become a process-spawn closure through archive extraction.",
+]
+x86_header_prerequisites = [
+  "The focused pinned-musl/project-first C11/C++17 `<spawn.h>` matrix proves unconditional `int posix_spawnattr_getflags(const posix_spawnattr_t *restrict, short *restrict)` under strict, POSIX, X/Open, and GNU profiles, its exact input/output pointer function-pointer type, project-header provenance, and unmangled C++ linkage through the installed `extern \"C\"` guards. It selects no spawn execution, file-action, attribute mutation/query breadth, child-lifecycle, or public x86 support.",
+]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-posix-spawnattr-getflags", scope = "Pinned-musl/project C/C++ header compilation plus equivalent pinned-musl C execution and one true dependency-free x86 crabc-libc `-nostdlib -static --gc-sections` candidate. The shared fixture proves direct and function-pointer fixed zero returns for two supported flags combinations, byte-filled caller-owned posix_spawnattr_t storage unchanged, a distinct short output slot with intact adjacent sentinels, and stale errno preservation on the ordinary musl route. It ratchets pinned-musl posix_spawnattr_getflags.lo/AArch64 ownership, exact crate-owned export closure, no interpreter/DT_NEEDED/unresolved symbol/PT_TLS/errno/dynamic-TLS model/allocator/helper-call/syscall or ambient runtime, and a direct no-call/no-syscall copy-return disassembly while rejecting peer spawn extraction. It does not select spawn execution, file actions, attribute initialization/mutation or other queries, child lifecycle, signal or scheduler behavior, generic process control, libc.so, CRT, loader, sysroot, family completion, promotion, or public x86 support." }]
+oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source, unconditional spawn.h declaration, static-member, and behavior oracle for src/process/posix_spawnattr_getflags.c::posix_spawnattr_getflags: valid caller-owned storage copies the int __flags member into the short result, then returns zero." }, { kind = "elf-abi", source = "System V AMD64 psABI and pinned musl x86 static object", role = "Two-pointer signed-int C ABI, C++ C linkage, caller-storage copy, and true-static ET_EXEC closure contract." }]
+
+[[family.verified_artifact]]
 id = "static-c-bsearch"
 description = "Private native x86 selected-static-archive `bsearch` compatibility artifact inside still-planned `libc.c-abi-compat`. One dependency-free `crabc-libc` archive resolves exactly `bsearch` into a freestanding C fixture after an equivalent pinned-musl execution. Musl's complete `src/stdlib/bsearch.c` leaf retains its midpoint and signed comparator branches for caller-owned valid contiguous records: direct and function-pointer calls cover first/last/miss, a duplicate-key midpoint return, a wide record, and zero elements without a callback. The checked multiplication guard applies only outside the valid C array domain, where musl's source pointer expression is already undefined. The final candidate rejects `qsort`, `qsort_r`, `__qsort_r`, search-container helpers, TLS/errno, allocation, locale, locks, syscalls, and runtime state. This capability-free ABI artifact does not change the existing qsort/qsort_r behavior or select general sorting/searching, callback ownership, C longjmp/C++ exception transport, libc.so, CRT, loader, sysroot, family completion, promotion, or public x86 support."
 source_owners = [

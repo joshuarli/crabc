@@ -1378,7 +1378,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "libc-timerfd|libc-signalfd|libc-sigpause|libc-sigisemptyset|libc-sigandset-sigorset|libc-sigpending|libc-sigrtmax|libc-sigrtmin|libc-sched-getscheduler|libc-alarm|libc-sigaddset-sigdelset-sigfillset",
             "libc-sched-getcpu|libc-sched-yield",
             "sched-getscheduler-header-abi",
-            "ctermid-header-abi|gethostid-header-abi|endhostent-header-abi|ether-line-header-abi|res-init-header-abi|posix-spawnattr-destroy-header-abi|getpagesize-header-abi|gettid-header-abi|posix-close-header-abi|isatty-header-abi|tcgetpgrp-header-abi|tcsetpgrp-header-abi|getpass-header-abi|libc-ctermid|libc-gethostid|libc-endhostent|libc-ether-line|libc-res-init|libc-posix-spawnattr-destroy|libc-getpagesize|libc-gettid|libc-posix-close|libc-isatty|libc-tcgetpgrp|libc-tcsetpgrp|libc-getpass|mkfifo-header-abi|mkfifoat-header-abi|libc-mkfifo|libc-mkfifoat|mktemp-header-abi|libc-mktemp",
+            "ctermid-header-abi|gethostid-header-abi|endhostent-header-abi|ether-line-header-abi|res-init-header-abi|posix-spawnattr-destroy-header-abi|posix-spawnattr-getflags-header-abi|getpagesize-header-abi|gettid-header-abi|posix-close-header-abi|isatty-header-abi|tcgetpgrp-header-abi|tcsetpgrp-header-abi|getpass-header-abi|libc-ctermid|libc-gethostid|libc-endhostent|libc-ether-line|libc-res-init|libc-posix-spawnattr-destroy|libc-posix-spawnattr-getflags|libc-getpagesize|libc-gettid|libc-posix-close|libc-isatty|libc-tcgetpgrp|libc-tcsetpgrp|libc-getpass|mkfifo-header-abi|mkfifoat-header-abi|libc-mkfifo|libc-mkfifoat|mktemp-header-abi|libc-mktemp",
             "readlinkat-header-abi|libc-readlinkat",
             "stdio-permanent-line-io-header-abi|stdio-octal-hex-scan-header-abi",
             "math-complex-complete-header-abi|libc-math-complex-complete",
@@ -22601,7 +22601,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn("posix_spawnattr_destroy", static_exports)
         self.assertEqual(
             {symbol for symbol in static_exports if symbol.startswith("posix_spawn")},
-            {"posix_spawnattr_destroy"},
+            {"posix_spawnattr_destroy", "posix_spawnattr_getflags"},
         )
 
         for required in (
@@ -22681,6 +22681,170 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         )
         self.assertIn(
             '    libc-posix-spawnattr-destroy)\n        [ "$#" -eq 0 ] || fail "libc-posix-spawnattr-destroy takes no arguments"',
+            runner,
+        )
+
+    def test_libc_static_c_abi_posix_spawnattr_getflags_artifact_stays_narrow(
+        self,
+    ) -> None:
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        implementation = (
+            ROOT
+            / "libc"
+            / "src"
+            / "c_abi"
+            / "x86_64"
+            / "posix_spawnattr_getflags.rs"
+        ).read_text(encoding="utf-8")
+        probe = (
+            ROOT / "compat" / "x86_64" / "libc_posix_spawnattr_getflags_probe.c"
+        ).read_text(encoding="utf-8")
+        start = (
+            ROOT / "compat" / "x86_64" / "libc_posix_spawnattr_getflags_start.S"
+        ).read_text(encoding="utf-8")
+        artifact_runner = (
+            ROOT / "compat" / "x86_64" / "run_libc_posix_spawnattr_getflags.sh"
+        ).read_text(encoding="utf-8")
+        header_runner = (
+            ROOT
+            / "compat"
+            / "x86_64"
+            / "run_posix_spawnattr_getflags_header_abi.sh"
+        ).read_text(encoding="utf-8")
+        header_c = (
+            ROOT
+            / "compat"
+            / "x86_64"
+            / "posix_spawnattr_getflags_header_abi_probe.c"
+        ).read_text(encoding="utf-8")
+        header_cxx = (
+            ROOT
+            / "compat"
+            / "x86_64"
+            / "posix_spawnattr_getflags_header_abi_probe.cpp"
+        ).read_text(encoding="utf-8")
+        spawn_header = (ROOT / "include" / "spawn.h").read_text(encoding="utf-8")
+        static_exports = {
+            line
+            for line in (
+                ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+            ).read_text(encoding="utf-8").splitlines()
+            if line and not line.startswith("#")
+        }
+        parity_ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        runner = RUNNER.read_text(encoding="utf-8")
+
+        self.assertIn('#[path = "posix_spawnattr_getflags.rs"]', static_root)
+        for required in (
+            "Selected static Linux/x86-64 POSIX spawn-attribute flag-readback C ABI",
+            "musl 1.2.6 release commit",
+            "src/process/posix_spawnattr_getflags.c::posix_spawnattr_getflags",
+            "*flags = attr->__flags; return 0;",
+            "System V AMD64 ABI",
+            'pub unsafe extern "C" fn posix_spawnattr_getflags(',
+            "read_unaligned",
+            "write_unaligned",
+            "valid, distinct caller-owned attribute and output storage",
+        ):
+            self.assertIn(required, implementation)
+        for forbidden in (
+            "raw_syscall::",
+            "errno::",
+            "static_tls::",
+            "crabc_core",
+            "crabc_mimalloc",
+        ):
+            self.assertNotIn(forbidden, implementation)
+        self.assertIn("posix_spawnattr_getflags", static_exports)
+        self.assertEqual(
+            {symbol for symbol in static_exports if symbol.startswith("posix_spawn")},
+            {"posix_spawnattr_destroy", "posix_spawnattr_getflags"},
+        )
+
+        for required in (
+            "#include <spawn.h>",
+            "typedef int (*posix_spawnattr_getflags_signature)(const posix_spawnattr_t *,",
+            "const posix_spawnattr_getflags_signature function = posix_spawnattr_getflags",
+            "POSIX_SPAWN_RESETIDS",
+            "POSIX_SPAWN_SETSIGMASK",
+            "slot_matches",
+            "bytes_match",
+            "errno = E2BIG",
+            "CRABC_POSIX_SPAWNATTR_GETFLAGS_FREESTANDING",
+        ):
+            self.assertIn(required, probe)
+        for required in (
+            "crabc_x86_64_posix_spawnattr_getflags_probe",
+            "mov $60, %eax",
+        ):
+            self.assertIn(required, start)
+
+        for header in (header_c, header_cxx):
+            for required in (
+                "posix_spawnattr_getflags_signature",
+                "posix_spawnattr_getflags_function",
+            ):
+                self.assertIn(required, header)
+        self.assertIn(
+            "int posix_spawnattr_getflags(const posix_spawnattr_t *__restrict, short *__restrict);",
+            spawn_header,
+        )
+        self.assertIn('#ifdef __cplusplus\nextern "C" {', spawn_header)
+        self.assertIn('#ifdef __cplusplus\n}\n#endif', spawn_header)
+        for required in (
+            "posix_spawnattr_getflags_header_abi_probe.c",
+            "posix_spawnattr_getflags_header_abi_probe.cpp",
+            "unconditional declaration",
+            "features.h",
+            "bits/alltypes.h",
+            "c11-strict",
+            "c11-posix-2008",
+            "c11-xopen-700",
+            "c11-gnu",
+            "cxx17-strict",
+            "cxx17-gnu",
+            "retained a mangled posix_spawnattr_getflags reference",
+        ):
+            self.assertIn(required, header_runner)
+
+        for required in (
+            "run_posix_spawnattr_getflags_header_abi.sh",
+            "posix_spawnattr_getflags.lo",
+            "static_c_abi_exports.txt",
+            "-nostdlib -static",
+            "--gc-sections",
+            "-Wl,--no-undefined",
+            "archive does not define posix_spawnattr_getflags",
+            "candidate exports an unselected spawn entry",
+            "posix_spawnattr_getflags unexpectedly performs a call or syscall",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn("--whole-archive", artifact_runner)
+        self.assertIn('id = "static-c-posix-spawnattr-getflags"', parity_ledger)
+        self.assertIn(
+            'command = "./scripts/dev-x86_64.sh libc-posix-spawnattr-getflags"',
+            parity_ledger,
+        )
+        self.assertIn("run_posix_spawnattr_getflags_header_abi()", runner)
+        self.assertIn(
+            "/workspace/compat/x86_64/run_posix_spawnattr_getflags_header_abi.sh",
+            runner,
+        )
+        self.assertIn("run_libc_posix_spawnattr_getflags_probe()", runner)
+        self.assertIn(
+            "/workspace/compat/x86_64/run_libc_posix_spawnattr_getflags.sh",
+            runner,
+        )
+        self.assertIn(
+            '    posix-spawnattr-getflags-header-abi)\n        [ "$#" -eq 0 ] || fail "posix-spawnattr-getflags-header-abi takes no arguments"',
+            runner,
+        )
+        self.assertIn(
+            '    libc-posix-spawnattr-getflags)\n        [ "$#" -eq 0 ] || fail "libc-posix-spawnattr-getflags takes no arguments"',
             runner,
         )
 
