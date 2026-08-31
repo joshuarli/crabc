@@ -468,6 +468,25 @@ character/string/pointer/integer/floating/wide forms, external FILE input,
 byte-formatting, locale objects, a general scanner or stdio boundary, parity,
 promotion, and public x86 support remain excluded.
 
+The separate private ./scripts/dev-x86_64.sh
+libc-stdio-fixed-suppressed-count-scan artifact adds no export or capability.
+It narrows a pinned-musl 1.2.6 versus true -nostdlib -static differential to
+literal non-wide %*n through the existing NUL-string sscanf/vsscanf boundary:
+the star field supplies no destination, and musl's selected count state reads
+no source byte, advances no fixture-only trailing va_list sentinel, performs no
+count store, and makes no assignment. Fixed direct and vsscanf witnesses cover
+empty-input zero-assignment success, a later-literal zero-assignment mismatch,
+no-input consumption exposed by following raw literals, and stale errno. The
+following literals only observe the count-state boundary; raw literal matching
+remains owned by the fixed-literal profile. Its independent C11/C++17 header
+gate proves only the existing declarations and unmangled C++ C spellings. This
+is a pinned-musl count-state profile, not a portable ISO C %*n, general
+scanf-suppression, or count-conversion claim. Unsuppressed %n/%hhn storage,
+other count lengths or widths, character/string/scanset/pointer/integer/
+floating/wide forms, literal-percent, format whitespace, external FILE input,
+byte formatting, locale objects, a general scanner or stdio boundary, parity,
+promotion, and public x86 support remain excluded.
+
 The separate private `./scripts/dev-x86_64.sh libc-stdio-float-hex-output`
 artifact adds no export and selects only allocation-free C-locale binary64
 `%a`/`%A` byte-buffer output. It preserves musl's no-op `l` modifier,

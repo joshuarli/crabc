@@ -1032,6 +1032,27 @@ character/string/pointer/integer/floating/wide forms, external FILE input,
 byte formatting, locale objects, a general scanner or stdio boundary, parity,
 promotion, and public x86 support remain outside it.
 
+The distinct libc-stdio-fixed-suppressed-count-scan gate
+(./scripts/dev-x86_64.sh libc-stdio-fixed-suppressed-count-scan) records one
+private static-c-stdio-fixed-suppressed-count-scan artifact without adding an
+export or capability. Its independent C11/C++17 header gate proves only the
+existing sscanf/vsscanf signatures and unmangled C++ C spellings. The fixed
+project-header fixture compares pinned musl 1.2.6 with a true
+-nostdlib -static candidate for only literal non-wide %*n: the star field has
+no destination, while musl's count state reads no source byte, does not
+advance the fixture-only trailing va_list sentinel, performs no count store,
+and makes no assignment. Direct and vsscanf witnesses retain stale errno while
+proving empty-input zero-assignment success, a later-literal zero-assignment
+mismatch, and no source consumption seen through following raw literals. Those
+literals merely witness the selected count-state boundary; raw literal
+matching remains owned by the sibling fixed-literal profile. This is
+pinned-musl evidence, not a portable ISO C %*n, general scanf-suppression, or
+count-conversion claim. Unsuppressed %n/%hhn storage, other count lengths or
+widths, character/string/scanset/pointer/integer/floating/wide forms,
+literal-percent, format whitespace, external FILE input, byte formatting,
+locale objects, a general scanner or stdio boundary, parity, promotion, and
+public x86 support remain outside it.
+
 The separate `libc-stdio-float-hex-output` gate
 (`./scripts/dev-x86_64.sh libc-stdio-float-hex-output`) records one private
 `static-c-stdio-float-hex-output` artifact without adding an export or

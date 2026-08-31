@@ -53,7 +53,7 @@
 //! | `src/stdio/vsnprintf.c`, `vsprintf.c`, `sprintf.c`, `snprintf.c` | byte-buffer count/truncation wrappers and C varargs entry boundary |
 //! | `src/stdio/vfprintf.c` (`printf_core`, `fmt_fp`) | selected integer/byte-string parser plus bare `%m` no-argument errno-message behavior and binary64 `%a`/`%A` spelling, flag, width, precision, and count-store behavior |
 //! | `src/errno/__strerror.h`; `src/errno/strerror.c` | selected immutable fixed-C-locale `%m` message lookup, shared directly with the existing `strerror` leaf |
-//! | `src/stdio/sscanf.c`, `vsscanf.c`, `vfscanf.c`; `src/internal/intscan.c` | NUL-terminated byte scanner, assignment/count discipline, prefix admission, selected integer/string conversions, and sealed `vfscanf` format-NUL, raw-literal, `%%`, format-whitespace, assignment-suppressed raw-character, assignment-suppressed token-string, and assignment-suppressed scanset states: after the string entry boundary establishes input, format-NUL returns the existing assignment count without entering a scanner state or accessing varargs; the raw literal matches one non-`%`, non-whitespace format byte without assignment; `%%` skips C-locale input whitespace before one literal percent; format whitespace coalesces its run while consuming zero or more input-space bytes without assignment; fixed non-wide `%*3c` consumes three raw bytes without a destination, va_list access, or assignment; fixed non-wide `%*3s` skips C-locale input whitespace before consuming its bounded token without a destination, va_list access, terminator, or assignment; and fixed literal non-wide `%*3[abc]` consumes at most three raw `a`/`b`/`c` bytes without input-whitespace skipping, a destination, va_list access, a terminator, or an assignment |
+//! | `src/stdio/sscanf.c`, `vsscanf.c`, `vfscanf.c`; `src/internal/intscan.c` | NUL-terminated byte scanner, assignment/count discipline, prefix admission, selected integer/string conversions, and sealed `vfscanf` format-NUL, raw-literal, `%%`, format-whitespace, assignment-suppressed raw-character, assignment-suppressed token-string, assignment-suppressed scanset, and assignment-suppressed count states: after the string entry boundary establishes input, format-NUL returns the existing assignment count without entering a scanner state or accessing varargs; the raw literal matches one non-`%`, non-whitespace format byte without assignment; `%%` skips C-locale input whitespace before one literal percent; format whitespace coalesces its run while consuming zero or more input-space bytes without assignment; fixed non-wide `%*3c` consumes three raw bytes without a destination, va_list access, or assignment; fixed non-wide `%*3s` skips C-locale input whitespace before consuming its bounded token without a destination, va_list access, terminator, or assignment; fixed literal non-wide `%*3[abc]` consumes at most three raw `a`/`b`/`c` bytes without input-whitespace skipping, a destination, va_list access, a terminator, or an assignment; and literal non-wide `%*n` reads no source byte and performs no va_list access, count store, or assignment |
 //!
 //! The full musl formatter/scanner also owns decimal and long-double
 //! conversion, locale, wide input, scansets outside the sealed literal
@@ -1179,7 +1179,9 @@ unsafe fn scan_from_string(
         // sibling static-c-stdio-fixed-suppressed-string-scan artifact
         // separately records only its fixed token state, while
         // static-c-stdio-fixed-suppressed-scanset-scan records only literal
-        // `%*3[abc]`; none promotes general suppression or conversion scanning.
+        // `%*3[abc]`, while static-c-stdio-fixed-suppressed-count-scan
+        // records only literal `%*n`; none promotes general suppression or
+        // conversion scanning.
         let width_start = directive;
         let parsed_width = unsafe { parse_decimal(&mut directive) };
         let length = unsafe { parse_length(&mut directive) };
@@ -1340,6 +1342,14 @@ unsafe fn scan_from_string(
                 }
             }
             b'n' => {
+                // With the sealed `%*n` profile's suppress flag, musl's
+                // count state sees no destination: it reads no source byte,
+                // reaches neither VaList::next_arg nor assign_count, and does
+                // not increment assignments. The private
+                // static-c-stdio-fixed-suppressed-count-scan artifact records
+                // only that literal non-wide state; unsuppressed count stores,
+                // length/width variants, and general count scanning remain
+                // outside this profile.
                 if !suppress {
                     let count = unsafe { cursor.offset_from(start) as usize };
                     unsafe { assign_count(args, length, count) };

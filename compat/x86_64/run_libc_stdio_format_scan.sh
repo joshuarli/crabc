@@ -19,6 +19,8 @@
 # token-string conversion state after its own C-locale input-whitespace skip.
 # `fixed-suppressed-scanset-scan` owns only the no-destination non-wide
 # literal `%*3[abc]` raw-member state, without input-whitespace skipping.
+# `fixed-suppressed-count-scan` owns only the no-destination non-wide literal
+# `%*n` count state, which reads no input and performs no count store.
 # The sibling `float-hex-output` profile selects only binary64 `%a`/`%A`
 # output, while the closed `errno-output` profile adds only bare GNU/musl `%m` C-locale
 # errno-message output through that same formatter. None selects a general
@@ -106,6 +108,13 @@ fixed-suppressed-scanset-scan)
     readonly START_SOURCE=compat/x86_64/libc_stdio_fixed_suppressed_scanset_scan_start.S
     readonly FREESTANDING_DEFINE=CRABC_STDIO_FIXED_SUPPRESSED_SCANSET_SCAN_FREESTANDING
     readonly EVIDENCE_LABEL="sealed stdio suppressed-scanset scan"
+    readonly -a REQUIRED_C_ABI_SYMBOLS=(sscanf vsscanf)
+    ;;
+fixed-suppressed-count-scan)
+    readonly FIXTURE_SOURCE=compat/x86_64/libc_stdio_fixed_suppressed_count_scan_probe.c
+    readonly START_SOURCE=compat/x86_64/libc_stdio_fixed_suppressed_count_scan_start.S
+    readonly FREESTANDING_DEFINE=CRABC_STDIO_FIXED_SUPPRESSED_COUNT_SCAN_FREESTANDING
+    readonly EVIDENCE_LABEL="sealed stdio suppressed-count scan"
     readonly -a REQUIRED_C_ABI_SYMBOLS=(sscanf vsscanf)
     ;;
 float-hex-output)
@@ -387,6 +396,22 @@ if [ "$EVIDENCE_PROFILE" = fixed-suppressed-scanset-scan ]; then
     grep -Fq 'raw narrow bytes' \
         "$ROOT_DIR/compat/x86_64/libc_stdio_fixed_suppressed_scanset_scan_probe.c" ||
         fail "suppressed-scanset fixture no longer records its raw-byte boundary"
+fi
+if [ "$EVIDENCE_PROFILE" = fixed-suppressed-count-scan ]; then
+    grep -Fq 'static-c-stdio-fixed-suppressed-count-scan artifact' \
+        "$ROOT_DIR/libc/src/c_abi/x86_64/stdio_format_scan.rs" ||
+        fail "suppressed-count scanner state is no longer selected"
+    grep -Fq "b'n' =>" \
+        "$ROOT_DIR/libc/src/c_abi/x86_64/stdio_format_scan.rs" ||
+        fail "suppressed-count scanner no longer owns the selected count directive"
+    grep -Fq 'With the sealed `%*n` profile' \
+        "$ROOT_DIR/libc/src/c_abi/x86_64/stdio_format_scan.rs" ||
+        fail "suppressed-count scanner no longer seals its null destination"
+    grep -Fq 'if !suppress' \
+        "$ROOT_DIR/libc/src/c_abi/x86_64/stdio_format_scan.rs" ||
+        fail "suppressed-count scanner no longer avoids count storage"
+    grep -Fq 'zero-assignment suppressed count' "$ROOT_DIR/$FIXTURE_SOURCE" ||
+        fail "suppressed-count fixture no longer records its assignment boundary"
 fi
 if timeout --foreground "$EXECUTION_TIMEOUT" "$candidate"; then
     :
