@@ -247,10 +247,11 @@ const OWNER_EXIT_LIVE_LARGE_CLIENT_SLOTS: usize = 2;
 // source owner exit must retain its PageMap-only terminal tail until B frees
 // its one opaque client, unlike the force-empty large member above.
 const OWNER_EXIT_ARENA_SINGLETON_REQUEST: usize = LARGE_MAX_OBJ_SIZE + 1;
-// This stays inside the source's OS-aligned singleton profile: the block is
-// small, while its 128 KiB alignment exceeds the in-arena path and remains
-// below the 256 MiB metadata-alignment ceiling.
-const OWNER_EXIT_OS_SINGLETON_REQUEST: usize = 7;
+// This stays inside the source's OS-aligned singleton profile while crossing
+// the `MI_SMALL_MAX_OBJ_SIZE` boundary that moves a full singleton from
+// `BIN_HUGE` to `BIN_FULL`. Its 128 KiB alignment exceeds the in-arena path
+// and remains below the 256 MiB metadata-alignment ceiling.
+const OWNER_EXIT_OS_SINGLETON_REQUEST: usize = SMALL_MAX_OBJ_SIZE + 1;
 const OWNER_EXIT_OS_SINGLETON_ALIGNMENT: usize = 128 * 1024;
 // This has the same source-rounded medium geometry as the mixed owner-exit
 // witness, but it returns one local free after two live clients. The source

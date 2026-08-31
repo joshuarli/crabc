@@ -9687,7 +9687,7 @@ mod tests {
                         .expect("the medium remains PageMap-published before exit");
                     let os_singleton = allocator
                         .engine
-                        .allocate_aligned(7, 128 * 1024)
+                        .allocate_aligned(SMALL_MAX_OBJ_SIZE + 1, 128 * 1024)
                         .expect("the fixture creates its one live OS-aligned singleton");
                     let os_singleton_page = NonNull::new(unsafe {
                         allocator.test_page_for_block(os_singleton)
@@ -16292,9 +16292,26 @@ mod tests {
                         crate::page::regular_page_slice_count(crate::types::PageKind::Large).unwrap(),
                         "the full large retains its complete regular arena span"
                     );
-                    let trailing_slice = arena
+                    let slice_start = arena
+                        .slice_start(slice)
+                        .expect("the large span begins in the paired arena");
+                    let page_start_offset = unsafe { page_ref.start() }
+                        .addr()
+                        .checked_sub(slice_start.addr())
+                        .expect("the large page area starts within its arena span");
+                    let page_map_slice_count = crate::page::page_map_slice_count(
+                        page_ref.block_size(),
+                        page_ref.reserved(),
+                        page_start_offset,
+                    )
+                    .expect("the large page has source PageMap geometry");
+                    assert_eq!(page_map_slice_count, 63);
+                    let trailing_mapped_slice = arena
+                        .slice_start(slice + page_map_slice_count - 1)
+                        .expect("the final source-registered slice remains in the paired arena");
+                    let trailing_arena_slice = arena
                         .slice_start(slice + slice_count - 1)
-                        .expect("the final large span slice remains in the paired arena");
+                        .expect("the final large arena slice remains in the paired arena");
                     let bin = crate::size_class::bin(page_ref.block_size())
                         .expect("the full large has one ordinary static-main bin");
 
@@ -16327,9 +16344,24 @@ mod tests {
                     assert_eq!(route.test_remaining_pages(), 1);
                     assert_eq!(route.test_abandoned_count_for_bin(bin), Some(0));
                     assert_eq!(
-                        unsafe { page_map.page_map().unwrap().checked_lookup(trailing_slice) },
+                        unsafe {
+                            page_map
+                                .page_map()
+                                .unwrap()
+                                .checked_lookup(trailing_mapped_slice)
+                        },
                         page.as_ptr(),
-                        "the source-unmapped large retains every PageMap slice after old-owner teardown"
+                        "the source-unmapped large retains its final source-registered PageMap slice after old-owner teardown"
+                    );
+                    assert!(
+                        unsafe {
+                            page_map
+                                .page_map()
+                                .unwrap()
+                                .checked_lookup(trailing_arena_slice)
+                        }
+                        .is_null(),
+                        "the final arena slice remains source-owned slack outside the PageMap area"
                     );
 
                     let unmapped_frees = capacity / 8;
@@ -16395,8 +16427,14 @@ mod tests {
                         Err(_) => panic!("the final full-large client terminally releases its aggregate member"),
                     }
                     assert!(
-                        unsafe { page_map.page_map().unwrap().checked_lookup(trailing_slice) }.is_null(),
-                        "the terminal client unregisters the trailing full-large PageMap slice"
+                        unsafe {
+                            page_map
+                                .page_map()
+                                .unwrap()
+                                .checked_lookup(trailing_mapped_slice)
+                        }
+                        .is_null(),
+                        "the terminal client unregisters the trailing source-registered full-large PageMap slice"
                     );
                     assert_eq!(
                         unsafe { arena.slices_free() }
@@ -25621,6 +25659,17 @@ mod tests {
                     let large_slice_start = arena
                         .slice_start(large_slice)
                         .expect("the source large span remains addressable");
+                    let large_page_start_offset = unsafe { large_page_ref.start() }
+                        .addr()
+                        .checked_sub(large_slice_start.addr())
+                        .expect("the large page area starts within its arena span");
+                    let large_page_map_slice_count = crate::page::page_map_slice_count(
+                        large_page_ref.block_size(),
+                        large_page_ref.reserved(),
+                        large_page_start_offset,
+                    )
+                    .expect("the large page has source PageMap geometry");
+                    assert_eq!(large_page_map_slice_count, 63);
 
                     // A's source image deliberately mixes a regular nonfull
                     // direct-small page with a full large page. B's joined
@@ -25726,16 +25775,28 @@ mod tests {
                         small_page.as_ptr(),
                         "the nonfull source page remains registered after old-owner teardown"
                     );
-                    for offset in 0..large_slice_count {
+                    for offset in 0..large_page_map_slice_count {
                         let address = unsafe {
                             large_slice_start.add(offset * crate::config::ARENA_SLICE_SIZE)
                         };
                         assert_eq!(
                             unsafe { page_map.page_map().unwrap().checked_lookup(address) },
                             large_page.as_ptr(),
-                            "the force-collected full large page retains every PageMap slice after old-owner teardown"
+                            "the force-collected full large page retains every source-registered PageMap slice after old-owner teardown"
                         );
                     }
+                    assert!(
+                        unsafe {
+                            page_map.page_map().unwrap().checked_lookup(
+                                large_slice_start.add(
+                                    large_page_map_slice_count
+                                        * crate::config::ARENA_SLICE_SIZE,
+                                ),
+                            )
+                        }
+                        .is_null(),
+                        "the final arena slice remains source-owned slack outside the PageMap area"
+                    );
 
                     let mut clients = std::vec::Vec::with_capacity(large_capacity + 1);
                     clients.push(small_first);
@@ -26219,7 +26280,7 @@ mod tests {
 
                     let os_singleton = allocator
                         .engine
-                        .allocate_aligned(7, 128 * 1024)
+                        .allocate_aligned(SMALL_MAX_OBJ_SIZE + 1, 128 * 1024)
                         .expect("the fixture creates one full OS-aligned singleton");
                     let os_singleton_page = NonNull::new(unsafe {
                         allocator.test_page_for_block(os_singleton)
@@ -26446,7 +26507,7 @@ mod tests {
                         .expect("the matched process pair admits the force-empty OS fixture");
                     let block = allocator
                         .engine
-                        .allocate_aligned(7, 128 * 1024)
+                        .allocate_aligned(SMALL_MAX_OBJ_SIZE + 1, 128 * 1024)
                         .expect("the fixture creates one full OS singleton");
                     let page = NonNull::new(unsafe { allocator.test_page_for_block(block) })
                         .expect("the OS singleton is PageMap-published");
