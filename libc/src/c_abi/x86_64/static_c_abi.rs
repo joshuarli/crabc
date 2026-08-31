@@ -507,6 +507,8 @@ mod endhostent;
 mod ether_line;
 #[path = "res_init.rs"]
 mod res_init;
+#[path = "posix_spawnattr_destroy.rs"]
+mod posix_spawnattr_destroy;
 #[path = "numeric_netdb.rs"]
 mod numeric_netdb;
 #[path = "interface_discovery.rs"]

@@ -607,6 +607,7 @@ posix_fadvise
 posix_fallocate
 posix_getdents
 posix_madvise
+posix_spawnattr_destroy
 powl
 ppoll
 pread

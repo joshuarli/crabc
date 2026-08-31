@@ -135,6 +135,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   endhostent-header-abi  compile the staged x86 C/C++ legacy netdb terminator declarations
   ether-line-header-abi  compile the staged x86 C/C++ legacy Ethernet-line declaration
   res-init-header-abi  compile the staged x86 C/C++ legacy resolver-initializer declaration
+  posix-spawnattr-destroy-header-abi  compile the staged x86 C/C++ POSIX spawn-attribute destroy declaration
   gettid-header-abi  compile the staged x86 C/C++ GNU gettid declaration
   posix-close-header-abi  compile the staged x86 C/C++ POSIX posix_close declaration
   isatty-header-abi  compile the staged x86 C/C++ isatty declaration
@@ -303,6 +304,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-endhostent  run the static x86 crabc-libc legacy netdb terminator slice
   libc-ether-line  run the static x86 crabc-libc legacy Ethernet-line slice
   libc-res-init  run the static x86 crabc-libc legacy resolver-initializer slice
+  libc-posix-spawnattr-destroy  run the static x86 crabc-libc POSIX spawn-attribute destroy slice
   libc-gettid  run the static x86 crabc-libc gettid compatibility slice
   libc-posix-close  run the static x86 crabc-libc posix_close compatibility slice
   libc-isatty  run the static x86 crabc-libc descriptor-observation slice
@@ -2659,6 +2661,10 @@ run_res_init_header_abi() {
     run_in_container bash /workspace/compat/x86_64/run_res_init_header_abi.sh
 }
 
+run_posix_spawnattr_destroy_header_abi() {
+    run_in_container bash /workspace/compat/x86_64/run_posix_spawnattr_destroy_header_abi.sh
+}
+
 run_gettid_header_abi() {
     run_in_container bash /workspace/compat/x86_64/run_gettid_header_abi.sh
 }
@@ -3583,6 +3589,10 @@ run_libc_res_init_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_res_init.sh
 }
 
+run_libc_posix_spawnattr_destroy_probe() {
+    run_in_container bash /workspace/compat/x86_64/run_libc_posix_spawnattr_destroy.sh
+}
+
 run_libc_gettid_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_gettid.sh
 }
@@ -3892,7 +3902,7 @@ case "$command" in
     libc-timerfd|libc-signalfd|libc-sigpause|libc-sigisemptyset|libc-sigandset-sigorset|libc-sigpending|libc-sigrtmax|libc-sigrtmin|libc-sched-getscheduler|libc-alarm|libc-sigaddset-sigdelset-sigfillset) ;;
     libc-sched-getcpu|libc-sched-yield) ;;
     sched-getscheduler-header-abi) ;;
-    ctermid-header-abi|gethostid-header-abi|endhostent-header-abi|ether-line-header-abi|res-init-header-abi|getpagesize-header-abi|gettid-header-abi|posix-close-header-abi|isatty-header-abi|tcgetpgrp-header-abi|tcsetpgrp-header-abi|getpass-header-abi|libc-ctermid|libc-gethostid|libc-endhostent|libc-ether-line|libc-res-init|libc-getpagesize|libc-gettid|libc-posix-close|libc-isatty|libc-tcgetpgrp|libc-tcsetpgrp|libc-getpass|mkfifo-header-abi|mkfifoat-header-abi|libc-mkfifo|libc-mkfifoat|mktemp-header-abi|libc-mktemp) ;;
+    ctermid-header-abi|gethostid-header-abi|endhostent-header-abi|ether-line-header-abi|res-init-header-abi|posix-spawnattr-destroy-header-abi|getpagesize-header-abi|gettid-header-abi|posix-close-header-abi|isatty-header-abi|tcgetpgrp-header-abi|tcsetpgrp-header-abi|getpass-header-abi|libc-ctermid|libc-gethostid|libc-endhostent|libc-ether-line|libc-res-init|libc-posix-spawnattr-destroy|libc-getpagesize|libc-gettid|libc-posix-close|libc-isatty|libc-tcgetpgrp|libc-tcsetpgrp|libc-getpass|mkfifo-header-abi|mkfifoat-header-abi|libc-mkfifo|libc-mkfifoat|mktemp-header-abi|libc-mktemp) ;;
     readlinkat-header-abi|libc-readlinkat) ;;
     stdio-permanent-line-io-header-abi|stdio-octal-hex-scan-header-abi) ;;
     math-complex-complete-header-abi|libc-math-complex-complete) ;;
@@ -4461,6 +4471,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "res-init-header-abi takes no arguments"
         ensure_image
         run_res_init_header_abi
+        ;;
+    posix-spawnattr-destroy-header-abi)
+        [ "$#" -eq 0 ] || fail "posix-spawnattr-destroy-header-abi takes no arguments"
+        ensure_image
+        run_posix_spawnattr_destroy_header_abi
         ;;
     gettid-header-abi)
         [ "$#" -eq 0 ] || fail "gettid-header-abi takes no arguments"
@@ -5245,6 +5260,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "libc-res-init takes no arguments"
         ensure_image
         run_libc_res_init_probe
+        ;;
+    libc-posix-spawnattr-destroy)
+        [ "$#" -eq 0 ] || fail "libc-posix-spawnattr-destroy takes no arguments"
+        ensure_image
+        run_libc_posix_spawnattr_destroy_probe
         ;;
     libc-gettid)
         [ "$#" -eq 0 ] || fail "libc-gettid takes no arguments"

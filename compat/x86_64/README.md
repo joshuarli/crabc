@@ -3573,6 +3573,23 @@ peer resolver and netdb extraction. It neither accesses `__res_state` or
 generic resolver behavior, libc.so, CRT, loader, sysroot, family completion,
 promotion, or public x86 support.
 
+`posix-spawnattr-destroy-header-abi` and `libc-posix-spawnattr-destroy` record
+a separate private `static-c-posix-spawnattr-destroy` artifact inside
+still-planned `libc.c-abi-compat`, not a spawn or process capability. The
+pinned-musl/project `<spawn.h>` C/C++ matrix proves unconditional
+`int posix_spawnattr_destroy(posix_spawnattr_t *)` under strict, POSIX, X/Open,
+and GNU profiles, its exact opaque-pointer function-pointer type, and unmangled
+C++ linkage through the header's C-linkage guards. The shared C body then
+executes through pinned musl and one true dependency-free `-nostdlib -static`
+candidate. Musl 1.2.6 `src/process/posix_spawnattr_destroy.c::posix_spawnattr_destroy`
+is exactly `return 0;`; the fixture proves direct/function-pointer successful
+returns for byte-filled caller storage and null pointers, unchanged caller
+bytes, and stale-errno preservation on the ordinary musl route. The candidate
+rejects peer spawn extraction. It does not select spawn execution, file
+actions, attribute state/mutation, child lifecycle, signal or scheduler
+behavior, generic process control, libc.so, CRT, loader, sysroot, family
+completion, promotion, or public x86 support.
+
 `libc-isatty` is a separately recorded static `static-c-isatty`
 `verified_artifact` gate over that archive, not a terminal capability. Its
 strict/POSIX/X/Open/GNU/BSD C/C++ `unistd.h` declaration gate and one

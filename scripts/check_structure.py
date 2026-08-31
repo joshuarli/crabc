@@ -6603,6 +6603,54 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
                 f"resolver-initializer boundary must not select {forbidden!r}"
             )
 
+    posix_spawnattr_destroy_source = (
+        ROOT
+        / "libc"
+        / "src"
+        / "c_abi"
+        / "x86_64"
+        / "posix_spawnattr_destroy.rs"
+    )
+    posix_spawnattr_destroy_text = posix_spawnattr_destroy_source.read_text(
+        errors="replace"
+    )
+    for required in (
+        "pinned musl 1.2.6 release commit",
+        "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+        "src/process/posix_spawnattr_destroy.c::posix_spawnattr_destroy",
+        "return 0;",
+        "System V AMD64 ABI",
+        'pub extern "C" fn posix_spawnattr_destroy(',
+    ):
+        if required not in posix_spawnattr_destroy_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/posix_spawnattr_destroy.rs: selected "
+                f"static spawn-attribute destruction boundary is missing {required!r}"
+            )
+    posix_spawnattr_destroy_exports = set(
+        re.findall(
+            r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(',
+            posix_spawnattr_destroy_text,
+        )
+    )
+    if posix_spawnattr_destroy_exports != {"posix_spawnattr_destroy"}:
+        errors.append(
+            "libc/src/c_abi/x86_64/posix_spawnattr_destroy.rs: selected "
+            "static artifact must export only posix_spawnattr_destroy"
+        )
+    for forbidden in (
+        "raw_syscall::",
+        "errno::",
+        "static_tls::",
+        "crabc_core",
+        "crabc_mimalloc",
+    ):
+        if forbidden in posix_spawnattr_destroy_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/posix_spawnattr_destroy.rs: selected "
+                f"static spawn-attribute destruction boundary must not select {forbidden!r}"
+            )
+
     isatty_source = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "isatty.rs"
     isatty_text = isatty_source.read_text(errors="replace")
     for required in (
@@ -11206,6 +11254,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         endhostent_text,
         ether_line_text,
         res_init_text,
+        posix_spawnattr_destroy_text,
         isatty_text,
         tcgetpgrp_text,
         tcsetpgrp_text,
@@ -11541,6 +11590,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         "endnetent",
         "ether_line",
         "res_init",
+        "posix_spawnattr_destroy",
         "isatty",
         "tcgetpgrp",
         "tcsetpgrp",
@@ -11846,6 +11896,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         ("endhostent.rs", endhostent_text),
         ("ether_line.rs", ether_line_text),
         ("res_init.rs", res_init_text),
+        ("posix_spawnattr_destroy.rs", posix_spawnattr_destroy_text),
         ("isatty.rs", isatty_text),
         ("tcgetpgrp.rs", tcgetpgrp_text),
         ("tcsetpgrp.rs", tcsetpgrp_text),

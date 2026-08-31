@@ -242,6 +242,20 @@ or `_res` nor selects `/etc/resolv.conf`, resolver configuration, DNS,
 sockets, netdb, generic resolver behavior, family completion, promotion, or
 public x86 support.
 
+`./scripts/dev-x86_64.sh libc-posix-spawnattr-destroy` is a separate private
+`static-c-posix-spawnattr-destroy` artifact inside still-planned
+`libc.c-abi-compat`. Its pinned-musl/project `<spawn.h>` C/C++ matrix proves
+unconditional `int posix_spawnattr_destroy(posix_spawnattr_t *)`, its exact
+opaque-pointer type, and unmangled linkage under strict, POSIX, X/Open, and
+GNU profiles. Pinned musl 1.2.6
+`src/process/posix_spawnattr_destroy.c::posix_spawnattr_destroy` is exactly
+`return 0;`; the true-static fixture proves direct/function-pointer success
+for byte-filled caller storage and null pointers, unchanged caller bytes, and
+stale-errno preservation on the musl reference route. It does not select spawn
+execution, file actions, attribute mutation/state, child lifecycle, signal or
+scheduler behavior, generic process control, family completion, promotion, or
+public x86 support.
+
 `./scripts/dev-x86_64.sh libc-isatty` is a separate private `static-c-isatty`
 artifact inside still-planned `libc.posix-runtime`. Its strict/POSIX/X/Open/GNU/
 BSD C/C++ declaration gate and pinned-musl/static C fixture select only
