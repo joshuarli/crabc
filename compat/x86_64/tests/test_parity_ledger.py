@@ -50,7 +50,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 36)
-        self.assertEqual(report["verified_artifact_count"], 129)
+        self.assertEqual(report["verified_artifact_count"], 130)
         self.assertEqual(report["header_layout_probe_count"], 46)
         self.assertEqual(report["public_header_inventory_count"], 183)
         self.assertEqual(report["header_foundation_header_count"], 191)
@@ -8011,7 +8011,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             "libc/src/c_abi/x86_64/pthread_atfork.rs", pthread_tls["source_owners"]
         )
         self.assertIn(
-            "Nineteen separately verified static artifacts", pthread_tls["description"]
+            "Twenty separately verified static artifacts", pthread_tls["description"]
         )
         self.assertIn(
             "sole delivery point is explicit `pthread_testcancel`",
@@ -8034,7 +8034,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         pthread_tls = self.family(data, "libc.pthread-tls")
         self.assertEqual(pthread_tls["status"], "planned")
         artifacts = pthread_tls["verified_artifact"]
-        self.assertEqual(len(artifacts), 19)
+        self.assertEqual(len(artifacts), 20)
         by_id = {artifact["id"]: artifact for artifact in artifacts}
         self.assertEqual(
             set(by_id),
@@ -8058,6 +8058,7 @@ class X86ParityLedgerTests(unittest.TestCase):
                 "static-c-pthread-tls-aggregate",
                 "static-c-pthread-atfork-fork",
                 "static-c-pthread-affinity",
+                "static-c-thrd-yield",
             },
         )
         static_tls = by_id["static-c-initial-tls-v1"]
@@ -8079,6 +8080,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         aggregate = by_id["static-c-pthread-tls-aggregate"]
         atfork = by_id["static-c-pthread-atfork-fork"]
         affinity = by_id["static-c-pthread-affinity"]
+        thrd_yield = by_id["static-c-thrd-yield"]
         for artifact in artifacts:
             self.assertNotIn("capabilities", artifact)
         self.assertEqual(
@@ -8139,6 +8141,33 @@ class X86ParityLedgerTests(unittest.TestCase):
             "public x86 support",
         ):
             self.assertIn(phrase, affinity["description"])
+        self.assertEqual(
+            thrd_yield["native_evidence"][0]["command"],
+            "./scripts/dev-x86_64.sh libc-thrd-yield",
+        )
+        for phrase in (
+            "still-planned `libc.pthread-tls`",
+            "void-returning direct Linux `sched_yield=24` syscall",
+            "seccomp-forced raw `EPERM`",
+            "without changing C `errno`",
+            "scheduler handoff, fairness, or peer-progress guarantee",
+            "POSIX `sched_yield` C API",
+            "pthread scheduling attributes",
+            "C11 lifecycle/synchronization/TSS/cancellation",
+            "general pthread/C11 behavior",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, thrd_yield["description"])
+        thrd_yield_scope = thrd_yield["native_evidence"][0]["scope"]
+        for phrase in (
+            "normal thrd_yield",
+            "seccomp-forced raw EPERM",
+            "preserve errno",
+            "exclude the POSIX sched_yield C API",
+            "no errno TLS publication",
+            "family completion, promotion, and public x86 support",
+        ):
+            self.assertIn(phrase, thrd_yield_scope)
         self.assertEqual(
             crt1_handoff["native_evidence"][0]["command"],
             "./scripts/dev-x86_64.sh libc-crt1-static-tls",

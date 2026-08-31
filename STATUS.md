@@ -227,6 +227,16 @@ candidate-only diagnostics, not pthread/C11 parity. The separate
 SIGALRM interruption with a positive remaining interval. It does not select
 `thrd_yield`, cancellation cleanup, C11 lifecycle/synchronization/TSS,
 dynamic/loader TLS, CRT, sysroot, or public x86 support. The separate
+`./scripts/dev-x86_64.sh libc-thrd-yield` artifact is a twentieth private
+static artifact in the same still-planned family. It selects only C11
+`thrd_yield`'s no-argument Linux `sched_yield=24` syscall: normal invocation
+and a fixture-local seccomp-forced `EPERM` both discard their raw result and
+preserve C `errno`, as musl's void entry does. It guarantees no scheduler
+handoff, fairness, or peer progress. The POSIX `sched_yield` C API, scheduler
+policy/parameters, affinity and pthread scheduling attributes, C11
+lifecycle/synchronization/TSS/cancellation, dynamic/loader TLS, CRT, sysroot,
+family completion, promotion, and public x86 support remain excluded.
+
 `./scripts/dev-x86_64.sh libc-pthread-mutex-normal` artifact is a tenth private static
 `verified_artifact` in the same still-planned `libc.pthread-tls` family. It admits only an all-zero or
 `pthread_mutex_init(..., NULL)` process-private `PTHREAD_MUTEX_NORMAL` record

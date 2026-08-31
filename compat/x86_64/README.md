@@ -376,6 +376,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-c11-lifecycle
 ./scripts/dev-x86_64.sh libc-pthread-detach
 ./scripts/dev-x86_64.sh libc-thrd-sleep
+./scripts/dev-x86_64.sh libc-thrd-yield
 ./scripts/dev-x86_64.sh libc-pthread-mutex-normal
 ./scripts/dev-x86_64.sh libc-pthread-rwlock
 ./scripts/dev-x86_64.sh libc-pthread-cond-private
@@ -2465,6 +2466,19 @@ interval. It does not select `thrd_yield`, cancellation cleanup, C11
 lifecycle/synchronization/TSS, dynamic/loader TLS, CRT, sysroot, or public x86
 support.
 
+`libc-thrd-yield` is a twentieth separately recorded private static
+`verified_artifact` under the same still-planned `libc.pthread-tls` family.
+Its project-header C body first runs against pinned musl and then through a
+`-nostdlib -static` candidate. It selects only C11 `thrd_yield`'s
+no-argument Linux `sched_yield=24` syscall. Normal invocation and a
+fixture-local seccomp-forced raw `EPERM` both discard their raw result and
+preserve C `errno`, matching musl's void entry; the artifact makes no
+scheduler handoff, fairness, or peer-progress guarantee. It excludes the
+POSIX `sched_yield` C API, scheduler policy/parameters, affinity and pthread
+scheduling attributes, C11 lifecycle/synchronization/TSS/cancellation,
+dynamic/loader TLS, CRT, sysroot, full pthread/C11 or x86-64 parity,
+promotion, and public x86 support.
+
 `libc-pthread-mutex-normal` is a tenth separately recorded private static
 `verified_artifact` under the same still-planned `libc.pthread-tls` family.
 Its project-header C body first runs against pinned musl and then through a
@@ -3498,7 +3512,10 @@ delegate the untouched entry stack to the hidden libc Static Initial TLS v1
 owner instead of writing an FS base themselves. `libc-thrd-sleep` deliberately
 retains the fixture-local errno/TLS setup because it proves that its adapter
 preserves `errno`; that start shim is test-only and not a CRT or TLS ownership
-claim. All candidates have no
+claim. `libc-thrd-yield` likewise retains fixture-local errno/TLS setup solely
+to prove that its void raw-syscall leaf does not publish either a normal or
+forced-error result through `errno`; its start shim is also test-only and not
+a CRT or TLS ownership claim. All candidates have no
 interpreter, `DT_NEEDED`, unresolved symbols, dynamic TLS resolver, allocator,
 or ambient C runtime. Apart from the bounded child mapping established by
 `libc-pthread-create-join-tls` and its separately recorded detach sibling,
@@ -4260,7 +4277,7 @@ Apart from the narrowly named `libc-stat-compat`, `libc-credentials`,
 `libc-signal-altstack`, `libc-timerfd`, and
 `libc-static-tls-v1`, `libc-crt-static-tls`,
 `libc-pthread-create-join-tls`, `libc-pthread-identity`, `libc-c11-lifecycle`,
-`libc-pthread-detach`, `libc-thrd-sleep`, `libc-pthread-mutex-normal`,
+`libc-pthread-detach`, `libc-thrd-sleep`, `libc-thrd-yield`, `libc-pthread-mutex-normal`,
 `libc-pthread-rwlock`, `libc-pthread-cond-private`, `libc-c11-plain-sync`, `libc-pthread-c11-once`,
 `libc-pthread-c11-tsd`,
 `libc-termios-control`,

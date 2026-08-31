@@ -162,6 +162,7 @@ using crabc_thrd_detach_signature = int (*)(thrd_t);
 using crabc_thrd_join_signature = int (*)(thrd_t, int *);
 using crabc_thrd_exit_signature = void (*)(int);
 using crabc_thrd_sleep_signature = int (*)(const timespec *, timespec *);
+using crabc_thrd_yield_signature = void (*)();
 using crabc_thrd_current_signature = thrd_t (*)();
 using crabc_thrd_equal_signature = int (*)(thrd_t, thrd_t);
 using crabc_call_once_signature = void (*)(once_flag *, crabc_once_init_signature);
@@ -262,6 +263,8 @@ static_assert(__is_same(decltype(&thrd_exit), crabc_thrd_exit_signature),
 	"thrd_exit noreturn signature");
 static_assert(__is_same(decltype(&thrd_sleep), crabc_thrd_sleep_signature),
 	"thrd_sleep signature");
+static_assert(__is_same(decltype(&thrd_yield), crabc_thrd_yield_signature),
+	"thrd_yield signature");
 static_assert(__is_same(decltype(&thrd_current), crabc_thrd_current_signature),
 	"thrd_current signature");
 static_assert(__is_same(decltype(&thrd_equal), crabc_thrd_equal_signature),
@@ -382,6 +385,8 @@ static crabc_thrd_exit_signature const crabc_force_thrd_exit
 	__attribute__((used)) = &thrd_exit;
 static crabc_thrd_sleep_signature const crabc_force_thrd_sleep
 	__attribute__((used)) = &thrd_sleep;
+static crabc_thrd_yield_signature const crabc_force_thrd_yield
+	__attribute__((used)) = &thrd_yield;
 static crabc_thrd_current_signature const crabc_force_thrd_current
 	__attribute__((used)) = &thrd_current;
 static crabc_thrd_equal_signature const crabc_force_thrd_equal

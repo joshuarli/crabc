@@ -239,6 +239,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-pthread-affinity  run the static x86 crabc-libc bounded pthread-affinity slice
   libc-pthread-detach  run the static x86 crabc-libc bounded pthread/C11 detach slice
   libc-thrd-sleep  run the static x86 crabc-libc bounded C11 thrd_sleep slice
+  libc-thrd-yield  run the static x86 crabc-libc bounded C11 thrd_yield slice
   libc-pthread-mutex-normal  run the static x86 crabc-libc normal pthread-mutex slice
   libc-pthread-rwlock  run the static x86 crabc-libc pthread read/write-lock slice
   libc-pthread-cond-private  run the static x86 crabc-libc private pthread-condition slice
@@ -409,7 +410,7 @@ typed `thrd_create`/`thrd_join`/`thrd_exit` callback/result transport over the
 same TP-handle and Static Initial TLS v1 worker seam, including normal and
 explicit signed-int return paths, a null join result, two live workers, and a
 candidate-only 64-worker admission/reuse check. It does not select the
-separately recorded C11 sleep artifact, `thrd_yield`, synchronization, TSS, cancellation, dynamic TLS, CRT,
+separately recorded C11 sleep or direct `thrd_yield` artifacts, synchronization, TSS, cancellation, dynamic TLS, CRT,
 loader, sysroot, C11-family completion, or public x86 support.
 `libc-pthread-detach` is a separate static project-header fixture that first
 runs comparable pthread/C11 detach routes through pinned musl, then links only
@@ -429,8 +430,17 @@ direct non-cancellation C11 `thrd_sleep` adapter over
 returns `-1`, and invalid-nanosecond or null-duration failures return `-2`
 without changing errno. Its reference/candidate route proves zero, invalid,
 null, and SIGALRM-interrupted requests with a positive remaining interval. It
-does not select `thrd_yield`, cancellation cleanup, C11
+does not select the separately recorded `thrd_yield` leaf, cancellation cleanup, C11
 lifecycle/synchronization/TSS, dynamic TLS, CRT, loader, sysroot,
+C11-family completion, or public x86 support.
+`libc-thrd-yield` is a separate static project-header fixture that first runs
+through pinned musl, then links only the selected archive. It selects only the
+void C11 `thrd_yield` raw Linux `sched_yield=24` call: normal and
+fixture-local seccomp-forced `EPERM` invocations discard their raw result and
+preserve errno exactly as musl does. It makes no scheduler handoff, fairness,
+or peer-progress guarantee, and does not select the POSIX sched_yield C API,
+scheduler policy/parameters, affinity or pthread scheduling attributes, C11
+lifecycle/synchronization/TSS/cancellation, dynamic TLS, CRT, loader, sysroot,
 C11-family completion, or public x86 support.
 `libc-pthread-mutex-normal` is a separate static project-header fixture that
 first runs through pinned musl, then links only the selected archive. It
@@ -2834,6 +2844,10 @@ run_libc_thrd_sleep_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_thrd_sleep.sh
 }
 
+run_libc_thrd_yield_probe() {
+    run_in_container bash /workspace/compat/x86_64/run_libc_thrd_yield.sh
+}
+
 run_libc_pthread_mutex_normal_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_pthread_mutex_normal.sh
 }
@@ -3161,6 +3175,7 @@ case "$command" in
     libc-pthread-identity) ;;
     libc-pthread-affinity) ;;
     libc-pthread-detach) ;;
+    libc-thrd-yield) ;;
     libc-memory-sync) ;;
     libc-memory-locking) ;;
     libc-memfd-create) ;;
@@ -4111,6 +4126,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "libc-thrd-sleep takes no arguments"
         ensure_image
         run_libc_thrd_sleep_probe
+        ;;
+    libc-thrd-yield)
+        [ "$#" -eq 0 ] || fail "libc-thrd-yield takes no arguments"
+        ensure_image
+        run_libc_thrd_yield_probe
         ;;
     libc-pthread-mutex-normal)
         [ "$#" -eq 0 ] || fail "libc-pthread-mutex-normal takes no arguments"

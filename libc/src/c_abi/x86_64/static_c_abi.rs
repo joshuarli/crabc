@@ -13,6 +13,7 @@
 //! creation/query/control, one default-attribute
 //! create/explicit-exit/join/detach worker and its typed C11
 //! `thrd_create`/`thrd_exit`/`thrd_join`/`thrd_detach`/`thrd_sleep` sibling, a
+//! direct C11 `thrd_yield` leaf, a
 //! process-private normal `pthread_mutex_*` block and its paired private
 //! process-private condition-variable handoff, a complete selected
 //! `pthread_rwlock_*`/`pthread_rwlockattr_*` block with private and
@@ -110,9 +111,10 @@
 //! cleanup handlers. It excludes main process exit, foreign callers, fork, dynamic/loader
 //! TLS, and general TCB/thread-list semantics. Its once sibling maps only
 //! four-byte zero-initialized controls through a private 0/1/2/3 futex state
-//! machine; the C11 lifecycle/sleep siblings likewise
-//! remain static-only typed-worker and direct non-cancellation realtime-sleep
-//! slices. None is a claim for broader pthread/C11 header support.
+//! machine; the C11 lifecycle/sleep/yield siblings likewise remain static-only
+//! typed-worker, direct non-cancellation realtime-sleep, and direct
+//! void-returning scheduler-syscall slices. None is a claim for broader
+//! pthread/C11 header support.
 //! The atfork leaf is narrower still: it owns no all-thread quiescence,
 //! signal masking, allocator/loader/TSD reset, or general process lifecycle;
 //! it admits only a caller with no live selected worker and no other concurrent
@@ -236,6 +238,8 @@ mod pthread_cond;
 mod pthread_rwlock;
 #[path = "c11_thread_lifecycle.rs"]
 mod c11_thread_lifecycle;
+#[path = "thrd_yield.rs"]
+mod thrd_yield;
 #[path = "c11_sync.rs"]
 mod c11_sync;
 #[path = "pthread_once.rs"]

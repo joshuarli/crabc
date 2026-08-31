@@ -181,6 +181,7 @@ typedef int (*crabc_thrd_join_signature)(thrd_t, int *);
 typedef void (*crabc_thrd_exit_signature)(int) __attribute__((noreturn));
 typedef int (*crabc_thrd_sleep_signature)(const struct timespec *,
 	struct timespec *);
+typedef void (*crabc_thrd_yield_signature)(void);
 typedef thrd_t (*crabc_thrd_current_signature)(void);
 typedef int (*crabc_thrd_equal_signature)(thrd_t, thrd_t);
 typedef void (*crabc_call_once_signature)(once_flag *, crabc_once_init_signature);
@@ -280,6 +281,8 @@ _Static_assert(CRABC_TYPE_IS(__typeof__(&thrd_exit), crabc_thrd_exit_signature),
 	"thrd_exit noreturn signature");
 _Static_assert(CRABC_TYPE_IS(__typeof__(&thrd_sleep), crabc_thrd_sleep_signature),
 	"thrd_sleep signature");
+_Static_assert(CRABC_TYPE_IS(__typeof__(&thrd_yield), crabc_thrd_yield_signature),
+	"thrd_yield signature");
 _Static_assert(CRABC_TYPE_IS(__typeof__(&thrd_current), crabc_thrd_current_signature),
 	"thrd_current signature");
 _Static_assert(CRABC_TYPE_IS(__typeof__(&thrd_equal), crabc_thrd_equal_signature),

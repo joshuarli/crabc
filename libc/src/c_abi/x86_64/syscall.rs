@@ -28,7 +28,8 @@
 //! The separately selected bounded
 //! pthread create/explicit-exit/join leaf, private normal-mutex sibling, and
 //! private condition-variable handoff use mmap, munmap, futex, gettid
-//! identity validation, and the selected raw thread exit here. Static Initial
+//! identity validation, the selected raw thread exit, and the direct C11
+//! `thrd_yield` sched_yield=24 boundary here. Static Initial
 //! TLS v1 additionally uses arch_prctl(ARCH_SET_FS) while it validates and
 //! installs one final-executable TLS image before C TLS exists; its distinct
 //! private musl-shaped assembly boundary owns clone and normal-return child
@@ -289,6 +290,7 @@ pub(crate) const SYS_IOCTL: i64 = 16;
 pub(crate) const SYS_ACCESS: i64 = 21;
 pub(crate) const SYS_PIPE: i64 = 22;
 pub(crate) const SYS_SELECT: i64 = 23;
+pub(crate) const SYS_SCHED_YIELD: i64 = 24;
 pub(crate) const SYS_MINCORE: i64 = 27;
 pub(crate) const SYS_MADVISE: i64 = 28;
 pub(crate) const SYS_SHMGET: i64 = 29;

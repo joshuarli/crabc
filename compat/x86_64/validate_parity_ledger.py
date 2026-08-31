@@ -8863,8 +8863,8 @@ def require_static_pthread_rwlock_artifact(family: Mapping[str, Any]) -> None:
         "libc.pthread-tls must contain exactly one static-c-pthread-rwlock artifact",
     )
     require(
-        len(artifacts) == 19,
-        "libc.pthread-tls must retain exactly nineteen private verified artifacts",
+        len(artifacts) == 20,
+        "libc.pthread-tls must retain exactly twenty private verified artifacts",
     )
     require(
         family.get("status") == "planned",
@@ -8874,7 +8874,7 @@ def require_static_pthread_rwlock_artifact(family: Mapping[str, Any]) -> None:
     family_description = family["description"]
     assert isinstance(family_description, str)
     for phrase in (
-        "Nineteen separately verified static artifacts",
+        "Twenty separately verified static artifacts",
         "complete private rwlock/rwlockattr block with private and process-shared futex waits",
         "not pthread/TLS parity",
     ):
@@ -9607,8 +9607,8 @@ def require_static_pthread_c11_once_artifact(family: Mapping[str, Any]) -> None:
         "libc.pthread-tls must contain exactly one static-c-pthread-c11-once artifact",
     )
     require(
-        len(artifacts) == 19,
-        "libc.pthread-tls must retain exactly nineteen private verified artifacts",
+        len(artifacts) == 20,
+        "libc.pthread-tls must retain exactly twenty private verified artifacts",
     )
     require(
         family.get("status") == "planned",
@@ -9618,7 +9618,7 @@ def require_static_pthread_c11_once_artifact(family: Mapping[str, Any]) -> None:
     family_description = family["description"]
     assert isinstance(family_description, str)
     for phrase in (
-        "Nineteen separately verified static artifacts",
+        "Twenty separately verified static artifacts",
         "private normal-return pthread/C11 once state machine",
         "not pthread/TLS parity",
     ):
@@ -9934,8 +9934,8 @@ def require_static_pthread_c11_tsd_artifact(family: Mapping[str, Any]) -> None:
         "libc.pthread-tls must contain exactly one static-c-pthread-c11-tsd artifact",
     )
     require(
-        len(artifacts) == 19,
-        "libc.pthread-tls must retain exactly nineteen private verified artifacts",
+        len(artifacts) == 20,
+        "libc.pthread-tls must retain exactly twenty private verified artifacts",
     )
     require(
         family.get("status") == "planned",
@@ -9945,7 +9945,7 @@ def require_static_pthread_c11_tsd_artifact(family: Mapping[str, Any]) -> None:
     family_description = family["description"]
     assert isinstance(family_description, str)
     for phrase in (
-        "Nineteen separately verified static artifacts",
+        "Twenty separately verified static artifacts",
         "bounded private pthread-key/C11-TSS lifecycle table",
         "not pthread/TLS parity",
     ):
@@ -10305,8 +10305,8 @@ def require_static_pthread_cancel_deferred_artifact(
         "libc.pthread-tls must contain exactly one static-c-pthread-cancel-deferred artifact",
     )
     require(
-        len(artifacts) == 19,
-        "libc.pthread-tls must retain exactly nineteen private verified artifacts",
+        len(artifacts) == 20,
+        "libc.pthread-tls must retain exactly twenty private verified artifacts",
     )
     require(
         family.get("status") == "planned",
@@ -10316,7 +10316,7 @@ def require_static_pthread_cancel_deferred_artifact(
     family_description = family["description"]
     assert isinstance(family_description, str)
     for phrase in (
-        "Nineteen separately verified static artifacts",
+        "Twenty separately verified static artifacts",
         "selected-worker deferred-cancellation route",
         "sole delivery point is explicit `pthread_testcancel`",
         "not pthread/TLS parity",
@@ -22173,8 +22173,8 @@ def require_static_pthread_atfork_artifact(family: Mapping[str, Any]) -> None:
         "libc.pthread-tls must contain exactly one static-c-pthread-atfork-fork artifact",
     )
     require(
-        len(artifacts) == 19,
-        "libc.pthread-tls must retain exactly nineteen private verified artifacts",
+        len(artifacts) == 20,
+        "libc.pthread-tls must retain exactly twenty private verified artifacts",
     )
     require(
         family.get("status") == "planned",
@@ -22184,7 +22184,7 @@ def require_static_pthread_atfork_artifact(family: Mapping[str, Any]) -> None:
     family_description = family["description"]
     assert isinstance(family_description, str)
     for phrase in (
-        "Nineteen separately verified static artifacts",
+        "Twenty separately verified static artifacts",
         "single-threaded fixed-capacity pthread_atfork/fork route",
         "child-only bounded ordinary-exit callback dispatch",
         "not pthread/TLS parity",
@@ -22420,8 +22420,8 @@ def require_static_pthread_affinity_artifact(
         "libc.pthread-tls must contain exactly one bounded pthread-affinity artifact",
     )
     require(
-        len(artifacts) == 19,
-        "libc.pthread-tls must retain exactly nineteen private verified artifacts",
+        len(artifacts) == 20,
+        "libc.pthread-tls must retain exactly twenty private verified artifacts",
     )
     require(
         family.get("status") == "planned",
@@ -22431,7 +22431,7 @@ def require_static_pthread_affinity_artifact(
     family_description = family["description"]
     assert isinstance(family_description, str)
     for phrase in (
-        "Nineteen separately verified static artifacts",
+        "Twenty separately verified static artifacts",
         "bounded direct GNU pthread-affinity route",
         "bootstrapped-main self handles",
         "executing selected-worker handles",
@@ -22592,6 +22592,184 @@ def require_static_pthread_affinity_artifact(
         "libc-pthread-affinity)",
     ):
         require(snippet in dispatcher, f"pthread-affinity dispatcher omits {snippet}")
+
+
+def require_static_thrd_yield_artifact(family: Mapping[str, Any]) -> None:
+    """Ratchet one direct C11 yield syscall leaf without pthread promotion."""
+
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.pthread-tls].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [
+        entry for entry in artifacts if entry.get("id") == "static-c-thrd-yield"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.pthread-tls must contain exactly one direct C11 thrd_yield artifact",
+    )
+    require(
+        len(artifacts) == 20,
+        "libc.pthread-tls must retain exactly twenty private verified artifacts",
+    )
+    require(
+        family.get("status") == "planned",
+        "thrd_yield must not promote libc.pthread-tls",
+    )
+
+    family_description = family["description"]
+    assert isinstance(family_description, str)
+    for phrase in (
+        "Twenty separately verified static artifacts",
+        "void-returning direct C11 `thrd_yield` raw syscall leaf",
+        "not pthread/TLS parity",
+    ):
+        require(
+            phrase in family_description,
+            f"libc.pthread-tls description omits {phrase} after thrd_yield",
+        )
+
+    artifact = matching[0]
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for phrase in (
+        "still-planned `libc.pthread-tls`",
+        "void-returning direct Linux `sched_yield=24` syscall",
+        "fixture-local seccomp-forced raw `EPERM`",
+        "without changing C `errno`",
+        "scheduler handoff, fairness, or peer-progress guarantee",
+        "POSIX `sched_yield` C API",
+        "scheduler policy or parameter APIs",
+        "affinity and affinity attributes",
+        "pthread scheduling attributes",
+        "C11 lifecycle/synchronization/TSS/cancellation",
+        "general pthread/C11 behavior",
+        "x86-64 parity",
+        "promotion",
+        "public x86 support",
+    ):
+        require(phrase in description, f"thrd_yield description omits {phrase}")
+
+    expected_sources = {
+        "compat/upstreams.toml",
+        "libc/Cargo.toml",
+        "libc/src/lib.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/thrd_yield.rs",
+        "libc/src/c_abi/x86_64/errno.rs",
+        "libc/src/c_abi/x86_64/syscall.rs",
+        "include/bits/alltypes.h",
+        "include/bits/syscall.h",
+        "include/errno.h",
+        "include/features.h",
+        "include/stdint.h",
+        "include/sys/prctl.h",
+        "include/sys/syscall.h",
+        "include/threads.h",
+        "compat/x86_64/pthread_c11_header_abi_probe.c",
+        "compat/x86_64/pthread_c11_header_abi_probe.cpp",
+        "compat/x86_64/run_pthread_c11_header_abi.sh",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/libc_thrd_yield_probe.c",
+        "compat/x86_64/libc_thrd_yield_start.S",
+        "compat/x86_64/run_libc_thrd_yield.sh",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/README.md",
+        "STATUS.md",
+        "x86-64.md",
+        "scripts/dev-x86_64.sh",
+    }
+    require(
+        set(string_list(artifact["source_owners"], "thrd_yield source owners"))
+        == expected_sources,
+        "thrd_yield source owners drifted",
+    )
+
+    prerequisite_text = " ".join(artifact["x86_abi_prerequisites"])
+    for phrase in (
+        "src/thread/thrd_yield.c::thrd_yield",
+        "SYS_sched_yield",
+        "result is ignored",
+        "POSIX sched_yield wrapper",
+        "sched_yield=24",
+        "rax",
+        "`%fs` errno access",
+        "seccomp=317",
+        "PR_SET_NO_NEW_PRIVS=38",
+        "EPERM",
+        "Variant-II `%fs:0`",
+        "does not create a C11 thread",
+    ):
+        require(
+            phrase in prerequisite_text,
+            f"thrd_yield ABI prerequisites omit {phrase}",
+        )
+    header_text = " ".join(artifact["x86_header_prerequisites"])
+    for phrase in (
+        "threads.h",
+        "errno.h",
+        "stdint.h",
+        "sys/prctl.h",
+        "sys/syscall.h",
+        "void (*)(void)",
+        "28-context C/C++",
+        "unmangled C-linkage reference",
+        "not a broad header or pthread/C11 implementation claim",
+    ):
+        require(
+            phrase in header_text,
+            f"thrd_yield header prerequisites omit {phrase}",
+        )
+
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-thrd-yield"},
+        "thrd_yield must use its closed native command",
+    )
+    scope = evidence[0]["scope"]
+    assert isinstance(scope, str)
+    for phrase in (
+        "Pinned-musl 1.2.6 project-header C reference",
+        "`-nostdlib -static` candidate",
+        "normal thrd_yield",
+        "seccomp-forced raw EPERM",
+        "preserve errno",
+        "POSIX sched_yield C API",
+        "sched_yield=24",
+        "no errno TLS publication",
+        "reject an interpreter/DT_NEEDED/unresolved symbol",
+        "scheduler policy/parameters/fairness",
+        "affinity/attributes",
+        "C11 lifecycle/synchronization/TSS/cancellation",
+        "family completion, promotion, and public x86 support",
+    ):
+        require(phrase in scope, f"thrd_yield evidence scope omits {phrase}")
+
+    static_exports = set(
+        static_c_abi_export_names(
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        )
+    )
+    require(
+        "thrd_yield" in static_exports,
+        "thrd_yield static export contract is incomplete",
+    )
+    require(
+        "sched_yield" not in static_exports,
+        "thrd_yield must not expose the separate POSIX sched_yield C API",
+    )
+    dispatcher = (ROOT / "scripts" / "dev-x86_64.sh").read_text(encoding="utf-8")
+    for snippet in (
+        "run_libc_thrd_yield_probe()",
+        "run_libc_thrd_yield.sh",
+        "libc-thrd-yield)",
+    ):
+        require(snippet in dispatcher, f"thrd_yield dispatcher omits {snippet}")
 
 
 def validate_ledger(
@@ -22816,6 +22994,7 @@ def validate_ledger(
     require_static_pthread_tls_aggregate_artifact(by_id["libc.pthread-tls"])
     require_static_pthread_atfork_artifact(by_id["libc.pthread-tls"])
     require_static_pthread_affinity_artifact(by_id["libc.pthread-tls"])
+    require_static_thrd_yield_artifact(by_id["libc.pthread-tls"])
     require_byte_string_artifact(by_id["libc.posix-runtime"])
     require_random_entropy_artifact(by_id["libc.posix-runtime"])
     require_memory_search_artifact(by_id["libc.posix-runtime"])

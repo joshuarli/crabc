@@ -726,6 +726,7 @@ thrd_equal
 thrd_exit
 thrd_join
 thrd_sleep
+thrd_yield
 time
 timerfd_create
 timerfd_gettime

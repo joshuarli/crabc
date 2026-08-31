@@ -5249,8 +5249,8 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             self.assertIn(required, c_header_probe)
             self.assertIn(required, cxx_header_probe)
         for required in (
-            "thrd_create thrd_detach thrd_join thrd_exit thrd_sleep thrd_current thrd_equal",
-            "thrd_create|thrd_detach|thrd_join|thrd_exit|thrd_sleep|thrd_current|thrd_equal",
+            "thrd_create thrd_detach thrd_join thrd_exit thrd_sleep thrd_yield thrd_current thrd_equal",
+            "thrd_create|thrd_detach|thrd_join|thrd_exit|thrd_sleep|thrd_yield|thrd_current|thrd_equal",
         ):
             self.assertIn(required, header_runner)
 
@@ -5276,7 +5276,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             {"thrd_create", "thrd_detach", "thrd_join", "thrd_exit", "thrd_sleep"}
             <= static_exports
         )
-        self.assertTrue({"thrd_yield"}.isdisjoint(static_exports))
+        self.assertIn("thrd_yield", static_exports)
         self.assertIn("run_libc_c11_lifecycle_probe()", runner)
         self.assertIn(
             "/workspace/compat/x86_64/run_libc_c11_lifecycle.sh", runner
@@ -5412,6 +5412,134 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         )
         self.assertIn(
             '    libc-thrd-sleep)\n        [ "$#" -eq 0 ] || fail "libc-thrd-sleep takes no arguments"',
+            runner,
+        )
+
+    def test_libc_static_c_abi_thrd_yield_artifact_stays_direct_and_errno_neutral(
+        self,
+    ) -> None:
+        """Keep C11 thrd_yield as one raw, statusless scheduler boundary."""
+
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        thrd_yield = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "thrd_yield.rs"
+        ).read_text(encoding="utf-8")
+        probe_path = ROOT / "compat" / "x86_64" / "libc_thrd_yield_probe.c"
+        start_path = ROOT / "compat" / "x86_64" / "libc_thrd_yield_start.S"
+        artifact_runner_path = (
+            ROOT / "compat" / "x86_64" / "run_libc_thrd_yield.sh"
+        )
+        c_header_probe = (
+            ROOT / "compat" / "x86_64" / "pthread_c11_header_abi_probe.c"
+        ).read_text(encoding="utf-8")
+        cxx_header_probe = (
+            ROOT / "compat" / "x86_64" / "pthread_c11_header_abi_probe.cpp"
+        ).read_text(encoding="utf-8")
+        header_runner = (
+            ROOT / "compat" / "x86_64" / "run_pthread_c11_header_abi.sh"
+        ).read_text(encoding="utf-8")
+        static_exports = {
+            line
+            for line in (
+                ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+            ).read_text(encoding="utf-8").splitlines()
+            if line and not line.startswith("#")
+        }
+        parity_ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        runner = RUNNER.read_text(encoding="utf-8")
+
+        for path in (probe_path, start_path, artifact_runner_path):
+            self.assertTrue(path.is_file(), f"missing thrd_yield artifact input: {path}")
+        probe = probe_path.read_text(encoding="utf-8")
+        start = start_path.read_text(encoding="utf-8")
+        artifact_runner = artifact_runner_path.read_text(encoding="utf-8")
+
+        self.assertIn('#[path = "thrd_yield.rs"]', static_root)
+        for required in (
+            "src/thread/thrd_yield.c::thrd_yield",
+            "SYS_sched_yield",
+            "sched_yield=24",
+            "pub extern \"C\" fn thrd_yield()",
+            "raw_syscall::syscall0(raw_syscall::SYS_SCHED_YIELD)",
+            "does not publish a raw failure through errno",
+            "POSIX `sched_yield` C API",
+            "scheduler policy or parameter APIs",
+            "affinity",
+            "lifecycle/synchronization/TSS/cancellation",
+            "public x86 support",
+        ):
+            self.assertIn(required, thrd_yield)
+        for forbidden in (
+            "set_errno",
+            "c_status",
+            "crabc_core",
+            "crabc_mimalloc",
+            "pub extern \"C\" fn sched_yield",
+        ):
+            self.assertNotIn(forbidden, thrd_yield)
+
+        for required in (
+            "#include <errno.h>",
+            "#include <sys/prctl.h>",
+            "#include <sys/syscall.h>",
+            "#include <threads.h>",
+            "SYS_sched_yield == 24",
+            "CRABC_SECCOMP_RET_ERRNO | EPERM",
+            "install_yield_error_filter",
+            "check_normal_yield_preserves_errno",
+            "check_forced_error_preserves_errno",
+            "errno == preserved_errno",
+            "CRABC_THRD_YIELD_FREESTANDING",
+        ):
+            self.assertIn(required, probe)
+        for required in (
+            "ARCH_SET_FS",
+            "mov %rsi, %fs:0",
+            "crabc_x86_64_thrd_yield_probe",
+        ):
+            self.assertIn(required, start)
+        for required in (
+            "static_c_abi_exports.txt",
+            "run_pthread_c11_header_abi.sh",
+            "-nostdlib -static",
+            "-Wl,-e,_start",
+            "-Wl,--no-undefined",
+            "assert_thrd_yield_syscall",
+            "sched_yield syscall 24",
+            "must not publish a raw failure through errno TLS",
+            "archive accidentally exposes the unselected sched_yield C API",
+            "src/thread/thrd_yield.c",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn("--whole-archive", artifact_runner)
+        self.assertIn("thrd_yield", static_exports)
+        self.assertNotIn("sched_yield", static_exports)
+        for header_probe in (c_header_probe, cxx_header_probe):
+            self.assertIn("crabc_thrd_yield_signature", header_probe)
+            self.assertIn("thrd_yield signature", header_probe)
+        self.assertIn(
+            "thrd_create thrd_detach thrd_join thrd_exit thrd_sleep thrd_yield thrd_current thrd_equal",
+            header_runner,
+        )
+        self.assertIn(
+            "thrd_create|thrd_detach|thrd_join|thrd_exit|thrd_sleep|thrd_yield|thrd_current|thrd_equal",
+            header_runner,
+        )
+        self.assertIn('id = "static-c-thrd-yield"', parity_ledger)
+        self.assertIn(
+            'command = "./scripts/dev-x86_64.sh libc-thrd-yield"',
+            parity_ledger,
+        )
+        self.assertIn("run_libc_thrd_yield_probe()", runner)
+        self.assertIn(
+            "/workspace/compat/x86_64/run_libc_thrd_yield.sh", runner
+        )
+        self.assertIn(
+            '    libc-thrd-yield)\n        [ "$#" -eq 0 ] || fail "libc-thrd-yield takes no arguments"',
             runner,
         )
 
@@ -6529,7 +6657,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn("crabc_force_call_once", cxx_header_probe)
         for required in (
             "pthread_cond_signal pthread_cond_broadcast\n        pthread_rwlock_init pthread_rwlock_destroy pthread_rwlock_rdlock",
-            "thrd_create thrd_detach thrd_join thrd_exit thrd_sleep thrd_current thrd_equal",
+            "thrd_create thrd_detach thrd_join thrd_exit thrd_sleep thrd_yield thrd_current thrd_equal",
             "call_once",
             "pthread_rwlockattr_getpshared|pthread_once",
             "thrd_equal|call_once|tss_create|tss_delete|tss_get|tss_set|mtx_init",
@@ -6957,7 +7085,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             {"pthread_detach", "thrd_detach", "pthread_create", "thrd_create"}
             <= static_exports
         )
-        self.assertNotIn("thrd_yield", static_exports)
+        self.assertIn("thrd_yield", static_exports)
         self.assertIn("run_libc_pthread_detach_probe()", runner)
         self.assertIn(
             "/workspace/compat/x86_64/run_libc_pthread_detach.sh", runner

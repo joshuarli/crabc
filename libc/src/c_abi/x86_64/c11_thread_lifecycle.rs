@@ -39,7 +39,8 @@
 //! `%fs:0` identity, and never changes the creator's `errno`: C11's selected
 //! errors use only `thrd_*` statuses.
 //!
-//! This leaf intentionally excludes `thrd_yield`, `call_once`, mutexes,
+//! The separate direct `thrd_yield` leaf owns only its raw scheduler syscall.
+//! This lifecycle leaf intentionally excludes `thrd_yield`, `call_once`, mutexes,
 //! conditions, TSS keys/destructors, cancellation, attributes and
 //! detached-at-create lifecycle, dynamic/loader TLS, a full TCB, CRT/sysroot
 //! integration, a crabc-rs surface, C11-family completion, and public x86 support.
