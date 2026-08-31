@@ -207,6 +207,7 @@ X86_RUNTIME_FOUNDATION_LIBC_SOURCES = {
     Path("libc/src/c_abi/x86_64/setjmp.rs"),
     Path("libc/src/c_abi/x86_64/signal_control.rs"),
     Path("libc/src/c_abi/x86_64/signal_execution.rs"),
+    Path("libc/src/c_abi/x86_64/signal_pause.rs"),
     Path("libc/src/c_abi/x86_64/signal_foundation.rs"),
     Path("libc/src/c_abi/x86_64/static_c_abi.rs"),
     Path("libc/src/c_abi/x86_64/static_startup.rs"),
@@ -3703,6 +3704,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         '#[path = "signal_foundation.rs"]',
         '#[path = "signal_control.rs"]',
         '#[path = "signal_execution.rs"]',
+        '#[path = "signal_pause.rs"]',
         '#[path = "signal_fd.rs"]',
         '#[path = "timer_fd.rs"]',
         '#[path = "pthread_identity.rs"]',
@@ -6561,6 +6563,53 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
             "libc/src/c_abi/x86_64/signal_execution.rs: selected static "
             "artifact must export only the named process-signal symbols"
         )
+
+    signal_pause_source = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "signal_pause.rs"
+    )
+    signal_pause_text = signal_pause_source.read_text(errors="replace")
+    for required in (
+        "Selected static Linux/x86-64 sigpause C boundary",
+        "src/signal/sigpause.c",
+        "KERNEL_SIGSET_SIZE",
+        "SYS_RT_SIGPROCMASK",
+        "SYS_RT_SIGSUSPEND",
+        "raw_syscall::syscall4(",
+        "raw_syscall::syscall2(",
+        "errno::set_errno(EINVAL)",
+        "c_status(result)",
+    ):
+        if required not in signal_pause_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/signal_pause.rs: selected static "
+                f"single-signal wait boundary is missing {required!r}"
+            )
+    signal_pause_exports = set(
+        re.findall(
+            r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(',
+            signal_pause_text,
+        )
+    )
+    if signal_pause_exports != {"sigpause"}:
+        errors.append(
+            "libc/src/c_abi/x86_64/signal_pause.rs: selected static artifact "
+            "must export only sigpause"
+        )
+    for forbidden in (
+        "sigprocmask(",
+        "sigdelset(",
+        "sigsuspend(",
+        "sigtimedwait(",
+        "signalfd",
+        "timerfd",
+        "pthread_",
+        "process_context",
+    ):
+        if forbidden in signal_pause_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/signal_pause.rs: selected static "
+                f"single-signal wait boundary must not select {forbidden!r}"
+            )
     for required in (
         "pub(crate) const SYS_KILL: i64 = 62;",
         "pub(crate) const SYS_RT_SIGPROCMASK: i64 = 14;",
@@ -7966,6 +8015,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         fenv_text,
         signal_control_text,
         signal_execution_text,
+        signal_pause_text,
         pthread_identity_text,
         pthread_create_join_text,
         pthread_mutex_text,
@@ -8159,6 +8209,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         "sigtimedwait",
         "sigwaitinfo",
         "sigwait",
+        "sigpause",
         "pthread_create",
         "pthread_detach",
         "pthread_exit",
@@ -8461,7 +8512,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         errors.append(
             "libc/src/c_abi/x86_64: selected static archive must export only its "
             "stat, credential, errno, bootstrap-memory/fenv/continuation, simple "
-            "signal-control and bounded process-signal execution, bounded pthread create/exit/join/detach initial-TLS worker, its private selected-main/worker pthread-key/C11-TSS lifecycle, private process-normal pthread mutexes and their musl private condition-variable handoff, the complete selected rwlock/attribute family with private-or-shared futex operation, plus the distinct C11 plain-sync adapter and normal-return pthread/C11 once state machine, its typed C11 create/exit/join/detach sibling, and pthread/C11 identity aliases, named termios-control, selected process-context, child-reaping, C11 immediate termination, callback algorithms, direct clock_gettime, caller-owned mapping-core, no-cancellation mapping synchronization, direct anonymous-memory descriptor creation, nanosleep, and clock_nanosleep, selected "
+            "signal-control, bounded process-signal execution, and one legacy single-signal pause wait, bounded pthread create/exit/join/detach initial-TLS worker, its private selected-main/worker pthread-key/C11-TSS lifecycle, private process-normal pthread mutexes and their musl private condition-variable handoff, the complete selected rwlock/attribute family with private-or-shared futex operation, plus the distinct C11 plain-sync adapter and normal-return pthread/C11 once state machine, its typed C11 create/exit/join/detach sibling, and pthread/C11 identity aliases, named termios-control, selected process-context, child-reaping, C11 immediate termination, callback algorithms, direct clock_gettime, caller-owned mapping-core, no-cancellation mapping synchronization, direct anonymous-memory descriptor creation, nanosleep, and clock_nanosleep, selected "
             "descriptor-entry, selected filesystem-access, bounded descriptor-control, timestamp updates, and descriptor-I/O, selected process-resources, selected readiness/signal-waits, "
             "selected socket transport and selected socket-message/options, selected system-observation, selected UTS-identity, "
             "selected byte-string, random-entropy, memory-search, C-string-copy, immutable error-string, "
@@ -8487,6 +8538,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         ("signal_foundation.rs", signal_foundation_text),
         ("signal_control.rs", signal_control_text),
         ("signal_execution.rs", signal_execution_text),
+        ("signal_pause.rs", signal_pause_text),
         ("atomic.rs", atomic_text),
         ("pthread_identity.rs", pthread_identity_text),
         ("pthread_create_join.rs", pthread_create_join_text),

@@ -673,6 +673,7 @@ signalfd
 signgam
 significand
 significandf
+sigpause
 sigpending
 sigprocmask
 sigqueue

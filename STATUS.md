@@ -1143,6 +1143,17 @@ signaling, timer/readiness policy, a general event loop, pthread cancellation,
 libc.so, CRT, loader, sysroot, family/platform parity, promotion, or public x86
 support.
 
+`./scripts/dev-x86_64.sh libc-sigpause` is a separate private
+`static-c-sigpause` artifact inside planned `libc.posix-runtime`. Its one-symbol
+pinned-musl/freestanding-static C proof follows musl 1.2.6's current-mask query,
+removal of exactly one valid application signal from a private eight-byte kernel
+word, and `rt_sigsuspend=130` wait. A runner-owned FIFO queues blocked
+`SIGUSR1`; it proves `sigpause(0)` `EINVAL`, valid `-1`/`EINTR` handler return,
+and restoration of the original `SIGUSR1`/`SIGUSR2` mask. It does not select a
+public signal mask/action interface, generic delivery or process control,
+queues/signalfd, timers/readiness policy, pthread cancellation, libc.so, CRT,
+loader, sysroot, family/platform parity, promotion, or public x86 support.
+
 `./scripts/dev-x86_64.sh libc-ioctl` is a private
 `static-c-generic-ioctl` artifact inside planned `libc.posix-runtime`. It
 proves the direct signed `int ioctl(int, int, ...)` C boundary through pinned

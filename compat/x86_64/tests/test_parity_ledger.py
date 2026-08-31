@@ -50,7 +50,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 40)
-        self.assertEqual(report["verified_artifact_count"], 147)
+        self.assertEqual(report["verified_artifact_count"], 148)
         self.assertEqual(report["header_layout_probe_count"], 46)
         self.assertEqual(report["public_header_inventory_count"], 183)
         self.assertEqual(report["header_foundation_header_count"], 191)
@@ -5141,7 +5141,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             "does not select libc.so", credentials["native_evidence"][0]["scope"]
         )
         posix_artifacts = posix_runtime["verified_artifact"]
-        assert isinstance(posix_artifacts, list) and len(posix_artifacts) == 65
+        assert isinstance(posix_artifacts, list) and len(posix_artifacts) == 67
         artifacts_by_id = {
             artifact["id"]: artifact
             for artifact in posix_artifacts
@@ -11937,6 +11937,93 @@ class X86ParityLedgerTests(unittest.TestCase):
         assert isinstance(evidence, list) and isinstance(evidence[0], dict)
         evidence[0]["command"] = "./scripts/dev-x86_64.sh signal-reference"
         with self.assertRaisesRegex(ledger.LedgerError, "closed libc-signalfd command"):
+            ledger.validate_ledger(data)
+
+    def test_sigpause_artifact_keeps_its_closed_static_contract(self) -> None:
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-sigpause"
+        )
+        self.assertNotIn("capabilities", artifact)
+        for owner in (
+            "libc/src/c_abi/x86_64/signal_pause.rs",
+            "compat/x86_64/signal_header_abi_probe.c",
+            "compat/x86_64/run_signal_header_abi.sh",
+            "compat/x86_64/libc_sigpause_probe.c",
+            "compat/x86_64/libc_sigpause_start.S",
+            "compat/x86_64/run_libc_sigpause.sh",
+        ):
+            self.assertIn(owner, artifact["source_owners"])
+        self.assertEqual(
+            {evidence["command"] for evidence in artifact["native_evidence"]},
+            {"./scripts/dev-x86_64.sh libc-sigpause"},
+        )
+        for phrase in (
+            "single-signal legacy/XSI wait artifact",
+            "planned `libc.posix-runtime`",
+            "`sigpause`",
+            "eight-byte kernel signal-set",
+            "SIGUSR1/SIGUSR2",
+            "reserved `sigpause(32)`",
+            "`-1/EINTR`",
+            "signal mask/action public API",
+            "generic delivery or process control",
+            "family completion, promotion, or public x86 support",
+        ):
+            self.assertIn(phrase, artifact["description"])
+        prerequisites = artifact["x86_abi_prerequisites"]
+        self.assertTrue(
+            any(
+                "rt_sigprocmask=14" in prerequisite
+                and "rt_sigsuspend=130" in prerequisite
+                and "rdi/rsi/rdx/r10" in prerequisite
+                for prerequisite in prerequisites
+            )
+        )
+        self.assertTrue(
+            any(
+                "src/signal/sigpause.c" in prerequisite
+                and "sigprocmask(0, 0, &mask)" in prerequisite
+                and "sigdelset" in prerequisite
+                for prerequisite in prerequisites
+            )
+        )
+        self.assertTrue(
+            any("sigpause(32) EINVAL" in prerequisite for prerequisite in prerequisites)
+        )
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-sigpause"
+        )
+        prerequisites = artifact["x86_abi_prerequisites"]
+        assert isinstance(prerequisites, list) and isinstance(prerequisites[0], str)
+        prerequisites[0] = prerequisites[0].replace(
+            "rt_sigsuspend=130", "rt_sigsuspend=129"
+        )
+        with self.assertRaisesRegex(ledger.LedgerError, "x86 syscall ABI"):
+            ledger.validate_ledger(data)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-sigpause"
+        )
+        evidence = artifact["native_evidence"]
+        assert isinstance(evidence, list) and isinstance(evidence[0], dict)
+        evidence[0]["command"] = "./scripts/dev-x86_64.sh signal-reference"
+        with self.assertRaisesRegex(ledger.LedgerError, "closed libc-sigpause command"):
             ledger.validate_ledger(data)
 
     def test_signal_execution_artifact_keeps_its_closed_static_contract(self) -> None:

@@ -10,8 +10,9 @@
 //! leaves, plus the complete private
 //! `math.special` error/Bessel/gamma/decomposition/stepping/scaling/conversion
 //! block with binary80 preserved end to end, plus deliberately narrow simple
-//! signal action/mask, bounded process-signal execution, and fixed-minimum
-//! alternate signal-stack behavior, plus direct timer-descriptor
+//! signal action/mask, bounded process-signal execution, a direct legacy
+//! single-signal pause wait, and fixed-minimum alternate signal-stack behavior,
+//! plus direct timer-descriptor
 //! creation/query/control and direct signal-descriptor creation/update, one default-attribute
 //! create/explicit-exit/join/detach worker and its typed C11
 //! `thrd_create`/`thrd_exit`/`thrd_join`/`thrd_detach`/`thrd_sleep` sibling, a
@@ -239,6 +240,8 @@ mod signal_foundation;
 mod signal_control;
 #[path = "signal_execution.rs"]
 mod signal_execution;
+#[path = "signal_pause.rs"]
+mod signal_pause;
 #[path = "signal_altstack.rs"]
 mod signal_altstack;
 #[path = "pthread_identity.rs"]

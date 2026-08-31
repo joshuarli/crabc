@@ -3166,6 +3166,54 @@ oracle = [
 ]
 
 [[family.verified_artifact]]
+id = "static-c-sigpause"
+description = "Private native x86 selected-static-archive single-signal legacy/XSI wait artifact inside planned `libc.posix-runtime`. One dependency-free `crabc-libc` archive exposes exactly `sigpause`; its freestanding project-header C fixture first runs through pinned musl 1.2.6 and then through a true `-nostdlib -static` candidate. It follows musl's current-mask query, exact one-signal removal, and atomic wait: invalid or musl-reserved input reports `EINVAL`, a private eight-byte kernel signal-set removes only the requested valid application signal, `rt_sigsuspend=130` waits, and Linux restores the entry mask. A runner-owned FIFO handshake queues SIGUSR1 while SIGUSR1/SIGUSR2 are blocked, then proves invalid `sigpause(0)`, reserved `sigpause(32)`, valid `-1/EINTR` handler delivery, and mask restoration. The existing GNU signal-header gate proves the selected declaration. It does not select signal mask/action public API, generic delivery or process control, queues, signalfd, timers, readiness policy, pthread/cancellation behavior, libc.so, CRT, dynamic TLS lifecycle, loader, sysroot, family completion, promotion, or public x86 support."
+source_owners = [
+  "compat/upstreams.toml",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/signal_pause.rs",
+  "libc/src/c_abi/x86_64/errno.rs",
+  "libc/src/c_abi/x86_64/syscall.rs",
+  "libc/src/c_abi/x86_64/static_tls.rs",
+  "include/errno.h",
+  "include/signal.h",
+  "include/stddef.h",
+  "include/stdint.h",
+  "include/sys/syscall.h",
+  "include/bits/alltypes.h",
+  "include/bits/syscall.h",
+  "compat/x86_64/signal_header_abi_probe.c",
+  "compat/x86_64/run_signal_header_abi.sh",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/libc_sigpause_probe.c",
+  "compat/x86_64/libc_sigpause_start.S",
+  "compat/x86_64/run_libc_sigpause.sh",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "compat/x86_64/README.md",
+  "STATUS.md",
+  "x86-64.md",
+  "scripts/dev-x86_64.sh",
+  "scripts/check_structure.py",
+]
+x86_abi_prerequisites = [
+  "Linux/x86-64 sigpause takes its scalar signal word in rdi. It queries rt_sigprocmask=14 with how/set/old-set/kernel-mask-size in rdi/rsi/rdx/r10 into a private eight-byte kernel signal-set, removes one bit, then calls rt_sigsuspend=130 with the derived pointer and eight-byte size in rdi/rsi. Raw -4095 through -1 becomes C -1 plus the calling initial-TLS errno.",
+  "Pinned musl 1.2.6 src/signal/sigpause.c calls sigprocmask(0, 0, &mask), sigdelset, then sigsuspend. Musl's sigdelset admits application signals 1 through 64 except its reserved 32 through 34; invalid signal 0 returns EINVAL before a wait. The selected direct leaf preserves only that sequence and omits cancellation machinery.",
+  "The runner-owned FIFO coordinator queues SIGUSR1 only after the raw fixture blocks SIGUSR1/SIGUSR2. The common pinned-musl/candidate body proves sigpause(0) EINVAL, reserved sigpause(32) EINVAL, handler-observed EINTR for sigpause(SIGUSR1), and entry-mask restoration. Its raw action/restorer, mask, read, and write operations are fixture containment-only; no C action/mask/process-control surface is linked.",
+  "The final static candidate has a PT_TLS errno datum with direct initial-exec TPOFF access and no TLSGD/TLSLD/TLSDESC/GOTTPOFF/DTPMOD/DTPOFF model form or __tls_get_addr. Archive-owned Static Initial TLS v1 setup is fixture glue only and does not claim CRT or general TLS lifecycle.",
+]
+x86_header_prerequisites = ["The existing project-first/pinned-musl GNU/POSIX signal-header gate proves the GNU sigpause declaration alongside the already selected signal records. The static fixture separately preprocesses project errno.h, signal.h, stddef.h, stdint.h, sys/syscall.h, bits/alltypes.h, and bits/syscall.h. This is a bounded declaration plus static linkage proof, not installed-header, signal-family, or public-support completion."]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-sigpause", scope = "Pinned-musl 1.2.6 project-header C reference plus a true dependency-free x86 crabc-libc archive and `-nostdlib -static` candidate. The gate runs the existing GNU signal-header declaration proof; ratchets exact crate-owned C-object exports separately from compiler-builtins; rejects interpreter/DT_NEEDED/unresolved symbols/dynamic TLS/unowned runtime, signal mask/action public API, process control, queues/signalfd, timers/readiness, pthread/cancellation, allocator, auxv, and sysconf paths; proves direct initial-TLS errno plus emitted rt_sigprocmask=14 with r10 and rt_sigsuspend=130; and runs a FIFO-contained SIGUSR1/SIGUSR2 setup that proves sigpause(0) EINVAL, reserved sigpause(32) EINVAL, valid handler-driven EINTR, and mask restoration. It adds no general signal framework, dynamic libc, CRT, loader, sysroot, family completion, promotion, or public x86 support." }]
+oracle = [
+  { kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source mapping and behavior oracle for src/signal/sigpause.c and its sigprocmask/sigdelset/sigsuspend sequence, including invalid-signal EINVAL before wait." },
+  { kind = "kernel-abi", source = "Linux 5.10 x86-64 ABI", role = "rt_sigprocmask=14 and rt_sigsuspend=130 register placement, one-word kernel signal-set, temporary wait mask restoration, EINTR, and raw errno contract." },
+  { kind = "elf-abi", source = "System V AMD64 psABI", role = "Scalar C calling convention, r10 fourth-syscall-argument adaptation, and static initial-exec TLS fixture contract." },
+]
+
+[[family.verified_artifact]]
 id = "static-c-process-signal-execution"
 description = "Private native x86 selected-static-archive process-signal execution block. One dependency-free `crabc-libc` archive composes the existing simple action/set/mask/sigsuspend boundary with exactly `kill`, `killpg`, `raise`, `sigqueue`, `sigtimedwait`, `sigwaitinfo`, and `sigwait` into a freestanding C fixture after an equivalent pinned-musl execution. It preserves musl's one-word application-signal block/restore transaction around `raise` and `sigqueue`, exact queued `siginfo_t` sender/value initialization, stale errno on successful delivery/waits, `sigtimedwait` EINTR retry, and musl's `sigwait` `-1`/errno failure convention. A fixture-only raw clone/pipe/wait/exit route makes an interrupted wait followed by a queued wake deterministic; it is not a lifecycle API. The corrected baseline now uses this same pinned-musl sigwait result convention across the target contract. This artifact excludes `tgkill`, sigaltstack, signalfd, legacy signal APIs, pthread signal/cancellation policy, generic process lifecycle, allocator, libc.so, CRT, loader, sysroot, and public x86 support. It is one verified artifact within planned `libc.posix-runtime`, not process.signal, signal/header family, C-runtime, or platform completion."
 source_owners = [

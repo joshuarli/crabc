@@ -13720,6 +13720,195 @@ def require_signalfd_artifact(family: Mapping[str, Any]) -> None:
     )
 
 
+def require_sigpause_artifact(family: Mapping[str, Any]) -> None:
+    """Keep one legacy/XSI pause wait below signal-runtime promotion."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.posix-runtime].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [entry for entry in artifacts if entry.get("id") == "static-c-sigpause"]
+    require(
+        len(matching) == 1,
+        "libc.posix-runtime must contain exactly one static-c-sigpause artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-sigpause must not promote libc.posix-runtime",
+    )
+    artifact = matching[0]
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for phrase in (
+        "single-signal legacy/XSI wait artifact",
+        "planned `libc.posix-runtime`",
+        "`sigpause`",
+        "true `-nostdlib -static` candidate",
+        "`EINVAL`",
+        "eight-byte kernel signal-set",
+        "`rt_sigsuspend=130`",
+        "SIGUSR1/SIGUSR2",
+        "`-1/EINTR`",
+        "mask restoration",
+        "signal mask/action public API",
+        "generic delivery or process control",
+        "signalfd",
+        "timers, readiness policy",
+        "pthread/cancellation behavior",
+        "family completion, promotion, or public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"static-c-sigpause description omits {phrase}",
+        )
+    owners = set(
+        nonempty_strings(
+            artifact["source_owners"], "static-c-sigpause.source_owners"
+        )
+    )
+    for owner in (
+        "compat/upstreams.toml",
+        "libc/Cargo.toml",
+        "libc/src/lib.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/signal_pause.rs",
+        "libc/src/c_abi/x86_64/errno.rs",
+        "libc/src/c_abi/x86_64/syscall.rs",
+        "libc/src/c_abi/x86_64/static_tls.rs",
+        "include/errno.h",
+        "include/signal.h",
+        "include/stddef.h",
+        "include/stdint.h",
+        "include/sys/syscall.h",
+        "include/bits/alltypes.h",
+        "include/bits/syscall.h",
+        "compat/x86_64/signal_header_abi_probe.c",
+        "compat/x86_64/run_signal_header_abi.sh",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/libc_sigpause_probe.c",
+        "compat/x86_64/libc_sigpause_start.S",
+        "compat/x86_64/run_libc_sigpause.sh",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/README.md",
+        "STATUS.md",
+        "x86-64.md",
+        "scripts/dev-x86_64.sh",
+        "scripts/check_structure.py",
+    ):
+        require(owner in owners, f"static-c-sigpause source owners omit {owner}")
+    prerequisites = nonempty_strings(
+        artifact["x86_abi_prerequisites"],
+        "static-c-sigpause.x86_abi_prerequisites",
+    )
+    require(
+        any(
+            "rt_sigprocmask=14" in item
+            and "rt_sigsuspend=130" in item
+            and "rdi/rsi/rdx/r10" in item
+            and "eight-byte kernel signal-set" in item
+            and "-4095 through -1" in item
+            for item in prerequisites
+        ),
+        "static-c-sigpause must record its x86 syscall ABI",
+    )
+    require(
+        any(
+            "src/signal/sigpause.c" in item
+            and "sigprocmask(0, 0, &mask)" in item
+            and "sigdelset" in item
+            and "32 through 34" in item
+            and "EINVAL" in item
+            for item in prerequisites
+        ),
+        "static-c-sigpause must retain its pinned-musl signal sequence",
+    )
+    require(
+        any(
+            "FIFO" in item
+            and "SIGUSR1/SIGUSR2" in item
+            and "EINTR" in item
+            and "mask restoration" in item
+            and "containment-only" in item
+            for item in prerequisites
+        ),
+        "static-c-sigpause must retain fixture-only interrupted-wait containment",
+    )
+    require(
+        any(
+            "PT_TLS errno datum" in item
+            and "initial-exec TPOFF" in item
+            and "__tls_get_addr" in item
+            for item in prerequisites
+        ),
+        "static-c-sigpause must record its static TLS boundary",
+    )
+    headers = nonempty_strings(
+        artifact["x86_header_prerequisites"],
+        "static-c-sigpause.x86_header_prerequisites",
+    )
+    require(
+        any(
+            "project-first/pinned-musl" in item
+            and "GNU sigpause declaration" in item
+            and "static linkage" in item
+            for item in headers
+        ),
+        "static-c-sigpause must retain its selected declaration boundary",
+    )
+    static_exports = set(
+        static_c_abi_export_names(
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        )
+    )
+    require(
+        "sigpause" in static_exports,
+        "static-c-sigpause must expose the public sigpause spelling",
+    )
+    oracle = artifact["oracle"]
+    assert isinstance(oracle, list)
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "c-posix"
+            and isinstance(entry.get("role"), str)
+            and "src/signal/sigpause.c" in entry["role"]
+            and "sigprocmask/sigdelset/sigsuspend" in entry["role"]
+            for entry in oracle
+        ),
+        "static-c-sigpause must retain its pinned-musl source mapping",
+    )
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-sigpause"},
+        "static-c-sigpause must use the closed libc-sigpause command",
+    )
+    scope = evidence[0].get("scope")
+    require(
+        isinstance(scope, str)
+        and all(
+            phrase in scope
+            for phrase in (
+                "Pinned-musl 1.2.6",
+                "`-nostdlib -static` candidate",
+                "rt_sigprocmask=14",
+                "rt_sigsuspend=130",
+                "SIGUSR1/SIGUSR2",
+                "EINVAL",
+                "EINTR",
+                "mask restoration",
+                "signal mask/action public API",
+                "process control",
+                "public x86 support",
+            )
+        ),
+        "static-c-sigpause evidence must retain its exact static signal-wait regression",
+    )
+
+
 def require_signal_execution_artifact(family: Mapping[str, Any]) -> None:
     """Keep the coherent C process-signal artifact bounded and evidence-led."""
     artifacts = require_verified_artifacts(
@@ -27464,6 +27653,7 @@ def validate_ledger(
     require_signal_execution_artifact(by_id["libc.posix-runtime"])
     require_timerfd_artifact(by_id["libc.posix-runtime"])
     require_signalfd_artifact(by_id["libc.posix-runtime"])
+    require_sigpause_artifact(by_id["libc.posix-runtime"])
     require_clock_nanosleep_artifact(by_id["libc.posix-runtime"])
     require_nanosleep_artifact(by_id["libc.posix-runtime"])
     require_descriptor_entry_artifact(by_id["libc.posix-runtime"])

@@ -93,3 +93,5 @@ _Static_assert(__builtin_types_compatible_p(__typeof__(&sigwaitinfo),
     int (*)(const sigset_t *, siginfo_t *)), "GNU sigwaitinfo declaration");
 _Static_assert(__builtin_types_compatible_p(__typeof__(&sigwait),
     int (*)(const sigset_t *, int *)), "GNU sigwait declaration");
+_Static_assert(__builtin_types_compatible_p(__typeof__(&sigpause),
+    int (*)(int)), "GNU sigpause declaration");

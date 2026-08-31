@@ -128,6 +128,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-event-descriptors  run the static x86 crabc-libc epoll/eventfd/inotify slice
   libc-timerfd  run the static x86 crabc-libc timer-descriptor slice
   libc-signalfd  run the static x86 crabc-libc signal-descriptor slice
+  libc-sigpause  run the static x86 crabc-libc one-signal pause slice
   libc-extended-attributes  run the static x86 crabc-libc extended-attribute slice
   libc-pathname-lifecycle  run the static x86 crabc-libc pathname-lifecycle slice
   libc-directory-streams  run the static x86 crabc-libc directory-stream slice
@@ -412,6 +413,12 @@ direct Linux `signalfd4` creation/update, the one-word kernel signal-set size,
 nonblocking/close-on-exec flags, and bounded queued-signal reads. It does not
 select signal-mask/disposition policy, process signaling, timer/readiness
 policy, a generic event loop, dynamic libc, or application startup.
+`libc-sigpause` is a separate one-entry legacy/XSI signal-wait boundary. It
+derives one temporary mask from the calling mask, removes only the requested
+application signal, and proves Linux restores the original mask after the
+interrupted wait. It does not select a public mask/action API, process control,
+signal queues/descriptors, timers, pthread behavior, dynamic libc, or
+application startup.
 `libc-static-tls-v1` passes a real
 final static executable's untouched entry stack to a hidden libc owner, which
 validates and retains its one PT_TLS template, installs the main Variant-II
@@ -2093,6 +2100,10 @@ run_libc_signalfd_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_signalfd.sh
 }
 
+run_libc_sigpause_probe() {
+    run_in_container bash /workspace/compat/x86_64/run_libc_sigpause.sh
+}
+
 run_libc_extended_attributes() {
     run_in_container bash /workspace/compat/x86_64/run_libc_extended_attributes.sh
 }
@@ -3293,7 +3304,7 @@ shift
 
 case "$command" in
     timerfd-header-abi|signalfd-header-abi) ;;
-    libc-timerfd|libc-signalfd) ;;
+    libc-timerfd|libc-signalfd|libc-sigpause) ;;
     getpass-header-abi|libc-getpass|mktemp-header-abi|libc-mktemp) ;;
     stdio-permanent-line-io-header-abi) ;;
     image|musl-oracle|header-abi-reference|public-header-surface|header-abi-project|math-complex-header-abi|sys-reg-header-abi|types-header-abi|stat-header-abi|utime-header-abi|pthread-c11-header-abi|pthread-cancellation-header-abi|stdlib-header-abi|stdio-standard-header-abi|time-header-abi|poll-header-abi|select-header-abi|fcntl-header-abi|descriptor-advice-header-abi|filesystem-capacity-header-abi|flock-header-abi|sendfile-header-abi|ioctl-header-abi|unistd-header-abi|system-header-abi|syscall-header-abi|signal-header-abi|termios-header-abi|mman-header-abi|resource-header-abi|socket-header-abi|socket-messages-header-abi|random-entropy-header-abi|mm-abi-reference|mapping-reference|memory-vm-reference|pty-basic-reference|terminal-reference|mlock-reference|msync-reference|mincore-reference|fs-advice-reference|memfd-reference|ftruncate-reference|statfs-reference|timestamp-reference|path-lifecycle-reference|namespace-reference|path-core-reference|xattr-reference|directory-reference|temporary-object-reference|statx-reference|cwd-canonicalize-reference|root-change-reference|mount-reference|thread-kill-reference|ipc-reference|shm-reference|inotify-reference|socket-transport-reference|interface-device-reference|resolver-transport-reference|resolver-facade-reference|netdb-reference|users-databases-reference|posix-fallocate-reference|fallocate-reference|file-position-reference|sync-reference|syncfs-reference|sync-file-range-reference|rand-reference|time-abi-reference|time-observation-reference|calendar-time-reference|advanced-time-reference|relative-sleep-reference|clock-nanosleep-reference|getitimer-reference|setitimer-reference|timerfd-reference|pselect-reference|poll-reference|ppoll-reference|epoll-reference|process-identity-reference|child-ownership-reference|getgroups-reference|process-session-reference|pidfd-open-reference|fcntl-getlk-reference|fcntl-status-reference|flock-reference|sendfile-reference|copy-file-range-reference|scheduler-priority-bounds-reference|rr-interval-reference|sched-affinity-reference|sched-affinity-set-reference|priority-reference|setpriority-reference|rlimit-reference|rlimit-targeted-reference|setrlimit-reference|umask-reference|rusage-reference|times-reference|fstat-reference|statat-reference|getcwd-reference|readlinkat-reference|access-reference|system-reference|thread-reference|thread-credentials-reference|fs-credentials-reference|core|facade|facade-record-owning|libc-syscall|libc-errno-tls|libc-stat-compat|libc-credentials|libc-bootstrap-primitives|libc-signal-control|libc-signal-execution|libc-static-tls-v1|libc-crt-static-tls|libc-pthread-create-join-tls|libc-c11-lifecycle|libc-c11-plain-sync|libc-pthread-c11-once|libc-pthread-c11-tsd|libc-pthread-tls-aggregate|libc-pthread-cancel-deferred|libc-pthread-atfork|libc-thrd-sleep|libc-pthread-mutex-normal|libc-pthread-rwlock|libc-pthread-cond-private|libc-termios-control|libc-process-context|libc-environment|libc-descriptor-io|libc-descriptor-lifecycle|libc-timestamp-updates|libc-process-resources|libc-socket-transport|libc-socket-messages|libc-thread-pointer|libc-foundation|libc-fenv|libc-math-complex|libc-elementary-sqrt-fenv|libc-math-x87-extended|libc-memory|libc-setjmp|libc-atomic|libc-clone-raw|libc-signal-altstack|libc-signal-foundation|ldso-relocation|ldso-image|ldso-initial-graph|ldso-initial-tls|ldso-initial-exec-tls|ldso-owned-crt-handoff|ldso-fixed-graph-introspection|ldso-dynamic-admission) ;;
@@ -4838,6 +4849,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "libc-signalfd takes no arguments"
         ensure_image
         run_libc_signalfd_probe
+        ;;
+    libc-sigpause)
+        [ "$#" -eq 0 ] || fail "libc-sigpause takes no arguments"
+        ensure_image
+        run_libc_sigpause_probe
         ;;
     libc-extended-attributes)
         [ "$#" -eq 0 ] || fail "libc-extended-attributes takes no arguments"
