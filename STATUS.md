@@ -471,6 +471,21 @@ encodings, bounded multibyte extensions, narrow `_l` APIs, locale-specific
 numeric parsing, wide stdio/format/time conversion, family completion,
 promotion, and public x86 support remain excluded.
 
+The companion private x86 fixed-locale narrow-text artifact is verified by
+`./scripts/dev-x86_64.sh libc-locale-narrow`. Its exact C/C++ ABI and shared
+pinned-musl/static fixture cover all 14 narrow ctype/case `_l` entries,
+`strcasecmp{,_l}`/`strncasecmp{,_l}`, and unsigned-byte
+`strcoll{,_l}`/`strxfrm{,_l}` across `C`, `POSIX`, and `C.UTF-8` tokens.
+The exhaustive EOF-plus-256-byte fingerprint and all-or-no-write `strxfrm`
+capacity checks compose with the existing calling-thread Static Initial TLS
+v1 locale override without adding TLS or locale data. The x86 implementation
+follows musl's no-short-write `strxfrm` contract rather than the current
+AArch64 helper's truncated-prefix behavior. Arbitrary locale names/maps,
+general locale or legacy-encoding databases, Unicode narrow classification,
+normalization, allocation, gettext, localized numeric parsing, wide
+stdio/format/time conversion, family completion, promotion, and public x86
+support remain excluded.
+
 The x86 static C archive also has one private caller-owned mapping-core
 artifact: `./scripts/dev-x86_64.sh libc-mapping-core` runs the project-header
 C/C++ `sys/mman.h` gate and then one pinned-musl/freestanding-static proof for

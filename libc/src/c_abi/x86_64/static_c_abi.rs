@@ -49,8 +49,9 @@
 //! allocation-free byte-buffer formatting and NUL-string scanning,
 //! plus one fixed
 //! regular-file pathname stream/position-buffering slot, intmax-arithmetic,
-//! immutable built-in locale objects, fixed langinfo, selected-thread locale
-//! overrides, and localized wide classification/case/collation wrappers,
+//! fixed-locale narrow ctype/case/collation, immutable built-in locale objects,
+//! fixed langinfo, selected-thread locale overrides, and localized wide
+//! classification/case/collation wrappers,
 //! find-first-set, immutable C-locale error strings, C11 immediate-termination,
 //! a bounded private static
 //! startup/ordinary-exit lifecycle, startup-published program-name globals
@@ -147,6 +148,8 @@ mod ctype;
 mod locale_multibyte;
 #[path = "locale_objects.rs"]
 mod locale_objects;
+#[path = "locale_narrow.rs"]
+mod locale_narrow;
 #[path = "wide_character_tables.rs"]
 mod wide_character_tables;
 #[path = "wide_character.rs"]

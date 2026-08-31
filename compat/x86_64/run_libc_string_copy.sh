@@ -112,6 +112,8 @@ for unselected in __stpcpy __stpncpy memccpy mempcpy strtok strtok_r strcoll \
         fail "archive accidentally exports unselected ${unselected}"
     fi
 done
+# Fixed-locale collation/transformation is a separately evidenced aggregate
+# sibling and is not selected by this copy fixture.
 
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -DCRABC_STRING_COPY_FREESTANDING \
     -I"$ROOT_DIR/include" -nostdlib -static -fno-pie -no-pie \

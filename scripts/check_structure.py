@@ -162,6 +162,7 @@ X86_RUNTIME_FOUNDATION_LIBC_SOURCES = {
     Path("libc/src/c_abi/x86_64/ctype.rs"),
     Path("libc/src/c_abi/x86_64/locale_multibyte.rs"),
     Path("libc/src/c_abi/x86_64/locale_objects.rs"),
+    Path("libc/src/c_abi/x86_64/locale_narrow.rs"),
     Path("libc/src/c_abi/x86_64/descriptor_io.rs"),
     Path("libc/src/c_abi/x86_64/ffs.rs"),
     Path("libc/src/c_abi/x86_64/integer_arithmetic.rs"),

@@ -1534,6 +1534,13 @@ LOCALE_OBJECT_WIDE_SYMBOLS = (
     "towupper_l", "towctrans_l", "wctrans_l", "wcscasecmp_l",
     "wcsncasecmp_l", "wcscoll_l", "wcsxfrm_l",
 )
+LOCALE_NARROW_SYMBOLS = (
+    "isalnum_l", "isalpha_l", "isblank_l", "iscntrl_l", "isdigit_l",
+    "isgraph_l", "islower_l", "isprint_l", "ispunct_l", "isspace_l",
+    "isupper_l", "isxdigit_l", "tolower_l", "toupper_l", "strcasecmp",
+    "strcasecmp_l", "strncasecmp", "strncasecmp_l", "strcoll",
+    "strcoll_l", "strxfrm", "strxfrm_l",
+)
 
 
 class LedgerError(ValueError):
@@ -18972,8 +18979,8 @@ def require_locale_wide_iconv_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 14,
-        "libc.text-math-locale-stdio must retain exactly fourteen private verified artifacts",
+        len(artifacts) == 15,
+        "libc.text-math-locale-stdio must retain exactly fifteen private verified artifacts",
     )
     matching = [
         entry for entry in artifacts if entry.get("id") == "static-c-locale-wide-iconv"
@@ -19498,6 +19505,141 @@ def require_locale_object_wide_artifact(family: Mapping[str, Any]) -> None:
         "locale-object-wide-header-abi)",
         "libc-locale-object-wide)",
         "run_locale_object_wide_header_abi()",
+    ):
+        require(snippet in dispatcher, f"x86 dispatcher omits {snippet}")
+
+
+def require_locale_narrow_artifact(family: Mapping[str, Any]) -> None:
+    """Keep fixed-locale narrow text exact and below family promotion."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.text-math-locale-stdio].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [
+        entry for entry in artifacts
+        if entry.get("id") == "static-c-locale-narrow-collation"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.text-math-locale-stdio must contain exactly one static-c-locale-narrow-collation artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-locale-narrow-collation must not promote its family",
+    )
+    artifact = matching[0]
+    require("capabilities" not in artifact, "locale-narrow artifact must not promote capabilities")
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for symbol in LOCALE_NARROW_SYMBOLS:
+        require(symbol in description, f"locale-narrow artifact description omits {symbol}")
+    for phrase in (
+        "fixed-locale narrow ctype, case-comparison, and collation artifact",
+        "bounded `C`, `POSIX`, and `C.UTF-8` profiles",
+        "EOF plus all 256 byte values",
+        "no destination write when capacity is at most the source length",
+        "Static Initial TLS v1",
+        "this leaf adds no TLS datum",
+        "general locale or legacy-encoding databases",
+        "localized numeric parsing",
+        "wide stdio/format/time conversion",
+        "family completion, promotion, and public x86 support",
+    ):
+        require(phrase in description, f"locale-narrow artifact omits {phrase}")
+    owners = nonempty_strings(
+        artifact["source_owners"],
+        "static-c-locale-narrow-collation.source_owners",
+    )
+    for owner in (
+        "libc/src/c_abi.rs",
+        "libc/src/locale_exports.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/static_tls.rs",
+        "libc/src/c_abi/x86_64/ctype.rs",
+        "libc/src/c_abi/x86_64/byte_strings.rs",
+        "libc/src/c_abi/x86_64/string_copy.rs",
+        "libc/src/c_abi/x86_64/locale_objects.rs",
+        "libc/src/c_abi/x86_64/locale_narrow.rs",
+        "include/ctype.h",
+        "include/locale.h",
+        "include/string.h",
+        "include/strings.h",
+        "compat/x86_64/locale_narrow_header_abi_probe.c",
+        "compat/x86_64/locale_narrow_header_abi_probe.cpp",
+        "compat/x86_64/run_locale_narrow_header_abi.sh",
+        "compat/x86_64/libc_locale_narrow_probe.c",
+        "compat/x86_64/libc_locale_narrow_start.S",
+        "compat/x86_64/run_libc_locale_narrow.sh",
+        "scripts/check_structure.py",
+        "scripts/dev-x86_64.sh",
+    ):
+        require(owner in owners, f"locale-narrow artifact omits {owner}")
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-locale-narrow"},
+        "locale-narrow artifact must use the closed libc-locale-narrow command",
+    )
+    oracles = artifact["oracle"]
+    assert isinstance(oracles, list)
+    require(
+        any(
+            entry.get("kind") == "project-contract"
+            and "AArch64" in str(entry.get("source"))
+            and "no-write strxfrm boundary" in str(entry.get("role"))
+            for entry in oracles
+        ),
+        "locale-narrow artifact must record its exact AArch64 delta",
+    )
+    static_root = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+    ).read_text(encoding="utf-8")
+    require(
+        '#[path = "locale_narrow.rs"]\nmod locale_narrow;' in static_root,
+        "x86 static C ABI must compose locale_narrow",
+    )
+    implementation = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "locale_narrow.rs"
+    ).read_text(encoding="utf-8")
+    exports = static_c_abi_export_names(
+        ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+    )
+    for symbol in LOCALE_NARROW_SYMBOLS:
+        require(
+            f"fn {symbol}(" in implementation
+            or f"localized_classifier!({symbol}," in implementation,
+            f"locale_narrow leaf omits {symbol}",
+        )
+        require(symbol in exports, f"static C ABI export contract omits {symbol}")
+    for snippet in (
+        "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+        "copy the source including its NUL",
+        "no locale database, environment lookup",
+    ):
+        require(snippet in implementation, f"locale_narrow leaf omits {snippet}")
+    fixture = (
+        ROOT / "compat" / "x86_64" / "libc_locale_narrow_probe.c"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "C.UTF-8", "uselocale(NULL)", "character = -1",
+        "strxfrm_l", "fingerprint",
+    ):
+        require(snippet in fixture, f"locale-narrow fixture omits {snippet}")
+    runner = (
+        ROOT / "compat" / "x86_64" / "run_libc_locale_narrow.sh"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "run_locale_narrow_header_abi.sh", "-nostdlib -static",
+        "--no-undefined", "R_X86_64_TPOFF", "reference-fingerprint",
+        "candidate-fingerprint", "strtof_l strtod_l strtold_l",
+    ):
+        require(snippet in runner, f"locale-narrow runner omits {snippet}")
+    dispatcher = (ROOT / "scripts" / "dev-x86_64.sh").read_text(encoding="utf-8")
+    for snippet in (
+        "locale-narrow-header-abi)", "libc-locale-narrow)",
+        "run_locale_narrow_header_abi()",
     ):
         require(snippet in dispatcher, f"x86 dispatcher omits {snippet}")
 
@@ -20144,6 +20286,7 @@ def validate_ledger(
     require_locale_wide_iconv_artifact(by_id["libc.text-math-locale-stdio"])
     require_wide_character_artifact(by_id["libc.text-math-locale-stdio"])
     require_locale_object_wide_artifact(by_id["libc.text-math-locale-stdio"])
+    require_locale_narrow_artifact(by_id["libc.text-math-locale-stdio"])
 
     musl_oracle = by_id["oracle.musl-toolchain"]
     require(musl_oracle["status"] == "foundation-verified", "musl oracle must remain foundation-verified")

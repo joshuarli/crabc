@@ -6326,6 +6326,56 @@ native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc
 oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT C/POSIX lifecycle, per-thread selection, fixed langinfo, localized-wide wrapper, and worker-initialization behavior oracle within C/POSIX/C.UTF-8." }, { kind = "project-contract", source = "AArch64 crabc-libc locale object/langinfo/wide `_l` implementation in libc/src/c_abi.rs plus checked AArch64 ABI/export inventory", role = "Existing project symbol ownership and header surface oracle. The x86 leaf strengthens the AArch64 process-global approximation to selected-thread TLS and admits C.UTF-8 objects without general locale data." }, { kind = "elf-abi", source = "System V AMD64 psABI and pinned musl x86 headers", role = "locale_t pointer sentinel, nl_item/int constants, wide scalar/descriptor ABI, unmangled C linkage, and local-exec x86 TLS composition." }]
 
 [[family.verified_artifact]]
+id = "static-c-locale-narrow-collation"
+description = "Private native x86 fixed-locale narrow ctype, case-comparison, and collation artifact inside still-planned `libc.text-math-locale-stdio`. It adds exactly `isalnum_l`, `isalpha_l`, `isblank_l`, `iscntrl_l`, `isdigit_l`, `isgraph_l`, `islower_l`, `isprint_l`, `ispunct_l`, `isspace_l`, `isupper_l`, `isxdigit_l`, `tolower_l`, `toupper_l`; `strcasecmp`, `strcasecmp_l`, `strncasecmp`, `strncasecmp_l`; and `strcoll`, `strcoll_l`, `strxfrm`, `strxfrm_l`. For the bounded `C`, `POSIX`, and `C.UTF-8` profiles all localized narrow classification/case behavior remains ASCII and collation remains unsigned-byte order. One shared project-header fixture runs through pinned musl 1.2.6 and a dependency-free `-nostdlib -static` candidate, exhaustively fingerprints EOF plus all 256 byte values through all localized ctype/case entries, checks ASCII and high-byte string comparisons/collation, and proves musl's exact strxfrm boundary: no destination write when capacity is at most the source length and a complete NUL-terminated copy only when capacity is greater. Existing immutable locale-object tokens and calling-thread Static Initial TLS v1 `uselocale` state are composed and remain unchanged by the calls; this leaf adds no TLS datum. Arbitrary locale names, locale/environment maps, general locale or legacy-encoding databases, Unicode narrow classification, normalization, allocation/refcounts, gettext, localized numeric parsing, wide stdio/format/time conversion, libc.so, CRT, loader, sysroot, family completion, promotion, and public x86 support remain excluded."
+source_owners = [
+  "compat/upstreams.toml",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "libc/src/c_abi.rs",
+  "libc/src/locale_exports.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/static_tls.rs",
+  "libc/src/c_abi/x86_64/ctype.rs",
+  "libc/src/c_abi/x86_64/byte_strings.rs",
+  "libc/src/c_abi/x86_64/string_copy.rs",
+  "libc/src/c_abi/x86_64/locale_objects.rs",
+  "libc/src/c_abi/x86_64/locale_narrow.rs",
+  "include/bits/alltypes.h",
+  "include/ctype.h",
+  "include/locale.h",
+  "include/string.h",
+  "include/strings.h",
+  "compat/x86_64/locale_narrow_header_abi_probe.c",
+  "compat/x86_64/locale_narrow_header_abi_probe.cpp",
+  "compat/x86_64/run_locale_narrow_header_abi.sh",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/libc_locale_narrow_probe.c",
+  "compat/x86_64/libc_locale_narrow_start.S",
+  "compat/x86_64/run_libc_locale_narrow.sh",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "compat/x86_64/README.md",
+  "docs/evidence/x86-aarch64-parity-inventory.md",
+  "STATUS.md",
+  "x86-64.md",
+  "scripts/check_structure.py",
+  "scripts/dev-x86_64.sh",
+]
+x86_abi_prerequisites = [
+  "System V AMD64 uses pointer-shaped locale_t, signed 32-bit int arguments/results, LP64 size_t, and ordinary pointer/integer register conventions for all 22 entries. Narrow C string elements are bytes; comparison results subtract promoted unsigned-byte values after fixed ASCII folding or directly for collation.",
+  "Pinned musl 1.2.6 src/ctype localized wrappers, src/string/{strcasecmp,strncasecmp}.c, and src/locale/{strcoll,strxfrm}.c are the MIT source/behavior oracle. The explicit locale argument is deliberately not dereferenced because C/POSIX/C.UTF-8 share these narrow rules. Musl strxfrm copies only when n is greater than strlen(src), not a truncated prefix when capacity is smaller.",
+  "The fixture selects existing opaque C/POSIX/C.UTF-8 locale objects through the calling thread's one-byte zero-initialized Static Initial TLS v1 mode and verifies every narrow operation leaves that token unchanged. The leaf itself owns no TLS, allocation, errno, syscall, cancellation, mutable global, locale registry, or ambient runtime state.",
+]
+x86_header_prerequisites = [
+  "The dedicated `_XOPEN_SOURCE=700` project/pinned-musl C11 and C++17 gate proves pointer-shaped locale_t, LC_GLOBAL_LOCALE and selected category masks, exact function-pointer declarations for all 22 entries through ctype.h, locale.h, string.h, and strings.h, plus unmangled C++ C linkage.",
+  "The runtime fixture preprocesses project headers before both links, ratchets the complete aggregate static export set, requires direct local-exec locale TLS and PT_TLS, and rejects allocation, dynamic TLS, localized numeric conversion, wide stdio/time conversion, and dynamic dependencies.",
+]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-locale-narrow", scope = "Pinned-musl project-header reference plus one dependency-free x86 archive and true `-nostdlib -static` candidate. The gate requires exact C11/C++17 declarations and unmangled linkage, all 22 aggregate exports, interpreter/DT_NEEDED/unresolved rejection, PT_TLS plus R_X86_64_TPOFF local-exec composition and no dynamic TLS or allocator. The shared fixture passes C, POSIX, and C.UTF-8 tokens through every localized operation, proves calling-thread selection is unchanged, fingerprints EOF and all byte values for all 14 localized ctype/case entries, exercises ASCII/high-byte full and bounded case comparison and unsigned-byte collation, and locks musl's exact all-or-no-write strxfrm capacity boundary. It is a private artifact in a planned family, not general locale/text completion, promotion, or public x86 support." }]
+oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT declaration and exact fixed-locale behavior oracle for the selected src/ctype localized wrappers, src/string case comparisons, and src/locale byte collation/transformation leaves." }, { kind = "project-contract", source = "AArch64 crabc-libc narrow locale implementation in libc/src/locale_exports.rs plus checked AArch64 ABI/export inventory", role = "Existing project ownership and 22-symbol/header availability oracle. The x86 implementation follows pinned musl's no-write strxfrm boundary where the current AArch64 helper instead emits a truncated NUL-terminated prefix." }, { kind = "elf-abi", source = "System V AMD64 psABI and pinned musl x86 headers", role = "locale_t pointer, int/size_t/pointer calling conventions, unmangled C linkage, and local-exec TLS composition." }]
+
+[[family.verified_artifact]]
 id = "static-c-text-math-locale-stdio-composition"
 description = "Private native x86 selected-static C composition artifact inside still-planned `libc.text-math-locale-stdio`. One project-header fixture first executes through pinned musl 1.2.6 and then a dependency-free `-nostdlib -static` crabc-libc archive. It crosses only existing `setlocale`/`localeconv`/`mbrtowc` named C.UTF-8 state, `strtod` C-locale parsing, `__fpclassify` binary64 classification, direct initial-exec errno TLS, and permanent `stdout` `fputc`/`fflush` behavior: valid UTF-8 leaves stale errno, an invalid lead sets EILSEQ, a successful parse preserves that errno, and a pipe-observed explicit stream flush preserves it again. The runner requires all four existing math/complex, float-parse, locale/multibyte, and permanent-standard-stream C/C++ header matrices; ratchets the complete selected archive export list; rejects interpreter/DT_NEEDED/unresolved symbols, dynamic TLS, formatter/wide streams, scalar libm, allocation, and ambient runtime dependencies; and reaches archive-owned Static Initial TLS v1 from the untouched entry stack. The archive may contain the separate locale-object, iconv, and wide-character leaves, which this composition neither invokes nor establishes. It does not exercise the independently selected `_l` parser wrappers. The fixture does not reference or exercise the separately owned byte-format/scanner or pathname lifecycle, although the shared permanent-`fflush` target leaf may materialize selected path symbols. It is a cross-surface regression only, not another C wrapper or a claim of general text, math, locale, stdio, CRT, loader, sysroot, family completion, promotion, or public x86 support."
 source_owners = [

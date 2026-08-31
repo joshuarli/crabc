@@ -233,6 +233,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh iconv-header-abi
 ./scripts/dev-x86_64.sh wide-character-header-abi
 ./scripts/dev-x86_64.sh locale-object-wide-header-abi
+./scripts/dev-x86_64.sh locale-narrow-header-abi
 ./scripts/dev-x86_64.sh integer-arithmetic-header-abi
 ./scripts/dev-x86_64.sh integer-parse-header-abi
 ./scripts/dev-x86_64.sh float-parse-header-abi
@@ -449,6 +450,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-locale-wide-iconv
 ./scripts/dev-x86_64.sh libc-wide-character
 ./scripts/dev-x86_64.sh libc-locale-object-wide
+./scripts/dev-x86_64.sh libc-locale-narrow
 ./scripts/dev-x86_64.sh libc-memory
 ./scripts/dev-x86_64.sh libc-setjmp
 ./scripts/dev-x86_64.sh libc-atomic
@@ -3589,6 +3591,26 @@ legacy encodings, bounded multibyte extensions, narrow `_l` strings/ctype,
 locale-specific numeric parsing, wide stdio/format/time conversion, general
 locale/text completion, `libc.so`, CRT, loader, sysroot, promotion, and public
 x86 support remain unselected.
+
+`locale-narrow-header-abi` and `libc-locale-narrow` record the separate
+private `static-c-locale-narrow-collation` artifact. Its `_XOPEN_SOURCE=700`
+C11/C++17 matrix proves pointer-shaped `locale_t`, exact declarations for all
+14 narrow ctype/case `_l` entries plus ordinary/localized case comparison and
+byte collation/transformation, and unmangled C linkage through `ctype.h`,
+`locale.h`, `string.h`, and `strings.h`. The shared pinned-musl/static fixture
+passes `C`, `POSIX`, and `C.UTF-8` tokens through every localized entry,
+fingerprints EOF plus all 256 byte values, checks ASCII/high-byte full and
+bounded comparisons, and locks musl's exact all-or-no-write `strxfrm`
+capacity boundary. It composes with the existing calling-thread Static
+Initial TLS v1 `uselocale` state and proves the selected token is unchanged;
+the leaf adds no TLS or locale data. The project AArch64 contract owns the
+same 22 symbols, but its current transformation helper writes a short
+NUL-terminated prefix, so the x86 evidence explicitly follows pinned musl's
+no-short-write rule. Arbitrary locale names/maps, general locale or legacy
+encoding databases, Unicode narrow classification, normalization,
+allocation/refcounts, gettext, localized numeric parsing, wide
+stdio/format/time conversion, general text/locale completion, `libc.so`, CRT,
+loader, sysroot, promotion, and public x86 support remain unselected.
 
 `libc-memory` compiles only `libc/src/c_abi/x86_64/memory.rs`, then runs one C
 fixture against pinned musl and the isolated x86 object with project

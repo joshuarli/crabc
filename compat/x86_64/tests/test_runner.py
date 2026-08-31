@@ -959,6 +959,83 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn("locale-object-wide-header-abi)", dispatcher)
         self.assertIn("libc-locale-object-wide)", dispatcher)
 
+    def test_locale_narrow_artifact_stays_exact_and_non_promoting(self) -> None:
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        implementation = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "locale_narrow.rs"
+        ).read_text(encoding="utf-8")
+        probe = (
+            ROOT / "compat" / "x86_64" / "libc_locale_narrow_probe.c"
+        ).read_text(encoding="utf-8")
+        header_runner = (
+            ROOT / "compat" / "x86_64" / "run_locale_narrow_header_abi.sh"
+        ).read_text(encoding="utf-8")
+        header_probes = (
+            (
+                ROOT / "compat" / "x86_64" / "locale_narrow_header_abi_probe.c"
+            ).read_text(encoding="utf-8"),
+            (
+                ROOT / "compat" / "x86_64" / "locale_narrow_header_abi_probe.cpp"
+            ).read_text(encoding="utf-8"),
+        )
+        artifact_runner = (
+            ROOT / "compat" / "x86_64" / "run_libc_locale_narrow.sh"
+        ).read_text(encoding="utf-8")
+        static_exports = {
+            line
+            for line in (
+                ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+            ).read_text(encoding="utf-8").splitlines()
+            if line and not line.startswith("#")
+        }
+        parity = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        dispatcher = RUNNER.read_text(encoding="utf-8")
+        symbols = (
+            "isalnum_l", "isalpha_l", "isblank_l", "iscntrl_l",
+            "isdigit_l", "isgraph_l", "islower_l", "isprint_l",
+            "ispunct_l", "isspace_l", "isupper_l", "isxdigit_l",
+            "tolower_l", "toupper_l", "strcasecmp", "strcasecmp_l",
+            "strncasecmp", "strncasecmp_l", "strcoll", "strcoll_l",
+            "strxfrm", "strxfrm_l",
+        )
+        self.assertIn('#[path = "locale_narrow.rs"]', static_root)
+        for symbol in symbols:
+            self.assertTrue(
+                f"fn {symbol}(" in implementation
+                or f"localized_classifier!({symbol}," in implementation
+            )
+            self.assertIn(symbol, static_exports)
+        for required in (
+            "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+            "copy the source including its NUL", "no locale database",
+        ):
+            self.assertIn(required, implementation)
+        for required in (
+            "C.UTF-8", "uselocale(NULL)", "strxfrm_l", "fingerprint",
+        ):
+            self.assertIn(required, probe)
+        for required in ("C11/C++17", "unmangled"):
+            self.assertIn(required, header_runner)
+        for header_probe in header_probes:
+            for required in ("ctype.h", "strings.h"):
+                self.assertIn(required, header_probe)
+        for required in (
+            "static_c_abi_exports.txt", "-nostdlib -static", "--no-undefined",
+            "reference-fingerprint", "candidate-fingerprint", "R_X86_64_TPOFF",
+            "strtod_l", "malloc",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertIn('id = "static-c-locale-narrow-collation"', parity)
+        self.assertIn(
+            'command = "./scripts/dev-x86_64.sh libc-locale-narrow"', parity
+        )
+        self.assertIn("locale-narrow-header-abi)", dispatcher)
+        self.assertIn("libc-locale-narrow)", dispatcher)
+
     def test_script_is_valid_and_has_a_closed_command_set(self) -> None:
         syntax = subprocess.run(
             ["bash", "-n", str(RUNNER)],
@@ -974,7 +1051,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn('readonly PLATFORM="linux/amd64"', source)
         self.assertIn("    madvise-reference) ;;", source)
         self.assertIn(
-            "    ctype-header-abi|locale-multibyte-header-abi|iconv-header-abi|wide-character-header-abi|locale-object-wide-header-abi) ;;",
+            "    ctype-header-abi|locale-multibyte-header-abi|iconv-header-abi|wide-character-header-abi|locale-object-wide-header-abi|locale-narrow-header-abi) ;;",
             source,
         )
         self.assertIn("    ffs-header-abi) ;;", source)
@@ -1030,7 +1107,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "access-header-abi",
             "xattr-header-abi",
             "madvise-reference",
-            "ctype-header-abi|locale-multibyte-header-abi|iconv-header-abi|wide-character-header-abi|locale-object-wide-header-abi",
+            "ctype-header-abi|locale-multibyte-header-abi|iconv-header-abi|wide-character-header-abi|locale-object-wide-header-abi|locale-narrow-header-abi",
             "integer-arithmetic-header-abi|integer-parse-header-abi|float-parse-header-abi|intmax-arithmetic-header-abi|credential-observation-header-abi|child-reaping-header-abi|immediate-termination-header-abi|callback-algorithms-header-abi",
             "ffs-header-abi",
             "byte-strings-header-abi",
@@ -1053,7 +1130,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "libc-memfd-create",
             "libc-static-c-abi-differential",
             "libc-static-c-abi-same-object-differential|qualification-posix-abi-admission",
-            "libc-readiness-waits|libc-system-observation|libc-system-information|libc-fcntl-record-locks|libc-flock|libc-sendfile|libc-posix-fallocate|libc-descriptor-advice|libc-filesystem-capacity|libc-uts-identity|libc-ctype|libc-locale-multibyte|libc-locale-wide-iconv|libc-wide-character|libc-locale-object-wide|libc-regex|libc-integer-arithmetic|libc-integer-parse|libc-float-parse|libc-intmax-arithmetic|libc-credential-observation|libc-child-reaping|libc-immediate-termination|libc-callback-algorithms|libc-access|libc-clock-gettime|libc-time-observation|libc-system-configuration|libc-mapping-core|libc-header-layouts-baseline|libc-nanosleep|libc-clock-nanosleep|libc-descriptor-entry|libc-fcntl-status-control|libc-ioctl|libc-ffs|libc-byte-strings|libc-process-globals-getopt|libc-inet-address|libc-numeric-netdb|libc-random-entropy|libc-memory-search|libc-string-copy|libc-error-strings|libc-descriptor-pipeline",
+            "libc-readiness-waits|libc-system-observation|libc-system-information|libc-fcntl-record-locks|libc-flock|libc-sendfile|libc-posix-fallocate|libc-descriptor-advice|libc-filesystem-capacity|libc-uts-identity|libc-ctype|libc-locale-multibyte|libc-locale-wide-iconv|libc-wide-character|libc-locale-object-wide|libc-locale-narrow|libc-regex|libc-integer-arithmetic|libc-integer-parse|libc-float-parse|libc-intmax-arithmetic|libc-credential-observation|libc-child-reaping|libc-immediate-termination|libc-callback-algorithms|libc-access|libc-clock-gettime|libc-time-observation|libc-system-configuration|libc-mapping-core|libc-header-layouts-baseline|libc-nanosleep|libc-clock-nanosleep|libc-descriptor-entry|libc-fcntl-status-control|libc-ioctl|libc-ffs|libc-byte-strings|libc-process-globals-getopt|libc-inet-address|libc-numeric-netdb|libc-random-entropy|libc-memory-search|libc-string-copy|libc-error-strings|libc-descriptor-pipeline",
             "libc-vector-io|libc-uio-cxx-linkage",
             "libc-sysv-semaphore",
             "libc-sysv-message-shared-memory",
@@ -13656,7 +13733,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "-Wl,-e,_start",
             "-Wl,--no-undefined",
             "candidate retains TLS",
-            "strncasecmp",
+            "fixed-locale case comparison",
             "strings.h",
         ):
             self.assertIn(required, artifact_runner)

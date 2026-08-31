@@ -105,12 +105,14 @@ for symbol in memchr memrchr memmem; do
 done
 # The shared archive deliberately exports the bulk-memory and separately
 # evidenced C-string-copy symbols; they are therefore not exclusions here.
-for unselected in __memrchr __memchr strtok strtok_r strcoll strxfrm malloc \
+for unselected in __memrchr __memchr strtok strtok_r malloc \
     free calloc realloc; do
     if grep -Eq "[[:space:]][TW][[:space:]]${unselected}$" "$archive_symbols"; then
         fail "archive accidentally exports unselected ${unselected}"
     fi
 done
+# Fixed-locale collation/transformation is independently evidenced and is not
+# selected by this memory-search fixture.
 
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -DCRABC_MEMORY_SEARCH_FREESTANDING \
     -I"$ROOT_DIR/include" -nostdlib -static -fno-pie -no-pie \

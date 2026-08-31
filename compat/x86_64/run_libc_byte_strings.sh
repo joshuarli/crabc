@@ -126,6 +126,8 @@ for unselected in __memrchr __strchrnul strtok strtok_r strcoll strxfrm \
         fail "archive accidentally exports unselected ${unselected}"
     fi
 done
+# Fixed-locale case comparison and collation are separately evidenced
+# aggregate siblings and are not selected by this byte-string fixture.
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -DCRABC_BYTE_STRINGS_FREESTANDING \
     -I"$ROOT_DIR/include" -nostdlib -static -fno-pie -no-pie \
     -ffreestanding -fno-builtin -fno-stack-protector -Wl,-e,_start \

@@ -76,14 +76,14 @@ for symbol in isalnum isalpha isblank iscntrl isdigit isgraph islower isprint \
     grep -Eq "[[:space:]][TW][[:space:]]${symbol}$" "$archive_symbols" ||
         fail "archive does not define $symbol"
 done
-for unselected in isalnum_l isalpha_l isblank_l iscntrl_l isdigit_l isgraph_l \
-    islower_l isprint_l ispunct_l isspace_l isupper_l isxdigit_l tolower_l \
-    toupper_l strcasecmp strncasecmp \
-    strcoll strxfrm malloc free calloc realloc; do
+for unselected in malloc free calloc realloc; do
     if grep -Eq "[[:space:]][TW][[:space:]]${unselected}$" "$archive_symbols"; then
         fail "archive accidentally exports unselected $unselected"
     fi
 done
+# The separately evidenced narrow-locale leaf shares the aggregate `_l`,
+# case-insensitive-string, and collation exports; this fixture does not call or
+# establish them.
 # A separately evidenced wide-character leaf shares the aggregate archive;
 # the final ctype fixture below neither calls nor establishes that surface.
 
