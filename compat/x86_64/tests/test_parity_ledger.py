@@ -950,6 +950,9 @@ class X86ParityLedgerTests(unittest.TestCase):
             "`dlclose` returns exactly one",
             "exact `Invalid library handle 0`",
             "The bridge admits only this null close diagnostic",
+            "exact one-shot `Symbol not found: `",
+            "loader failure reports `loader symbol name is invalid`",
+            "non-empty missing names, null symbol pointers, and invalid handles retain their existing loader paths",
             "`RTLD_NEXT`",
             "`RTLD_GLOBAL`",
             "neither `loader.dlfcn-basic` nor `loader.dlfcn-introspection` is selected",
@@ -962,7 +965,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         )
         prerequisites = " ".join(artifact["x86_abi_prerequisites"])
         for phrase in (
-            "AArch64 libc.so and libc.a ABI manifests retain dlclose, dlinfo, and dlerror exports",
+            "AArch64 libc.so and libc.a ABI manifests retain dlclose, dlinfo, dlerror, and dlsym exports",
             "src/ldso/dlinfo.c:dlinfo",
             "Unsupported request %d",
             "does not consume that pending state",
@@ -970,6 +973,11 @@ class X86ParityLedgerTests(unittest.TestCase):
             "ldso/dynlink.c:__dl_invalid_handle",
             "Invalid library handle 0",
             "non-null forged/stale close handling remains loader-owned",
+            "src/ldso/dlsym.c:dlsym",
+            "ldso/dynlink.c:do_dlsym",
+            "Symbol not found: ",
+            "loader symbol name is invalid",
+            "non-empty missing names, null symbol pointers, and invalid handles retain their existing loader paths",
         ):
             self.assertIn(phrase, prerequisites)
         scope = artifact["native_evidence"][0]["scope"]
@@ -981,13 +989,16 @@ class X86ParityLedgerTests(unittest.TestCase):
             "dlclose(NULL) returns exactly one",
             "exact `Invalid library handle 0`",
             "non-null forged/stale close handling remains loader-owned",
+            "empty-name dlsym branch",
+            "exact `Symbol not found: `",
+            "loader-confirmed `loader symbol name is invalid` failure",
         ):
             self.assertIn(phrase, scope)
         self.assertTrue(
             any(
                 entry["kind"] == "aarch64-contract"
                 and "aarch64/libc.so.dynamic.tsv" in entry["source"]
-                and "dlclose, dlinfo, and dlerror exports" in entry["role"]
+                and "dlclose, dlinfo, dlerror, and dlsym exports" in entry["role"]
                 and "not a behavioral fallback" in entry["role"]
                 for entry in artifact["oracle"]
             )

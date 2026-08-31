@@ -183,6 +183,12 @@ int main(void) {
         || typed_dlerror() != NULL) return 64;
 
     typed_dlerror();
+    if (typed_dlsym(mid_one, "") != NULL) return 65;
+    char *empty_symbol = typed_dlerror();
+    if (!text_equal(empty_symbol, "Symbol not found: ")
+        || typed_dlerror() != NULL) return 66;
+
+    typed_dlerror();
     void *mid_symbol = typed_dlsym(mid_one, "mid_value");
     if (mid_symbol != (void *)&mid_value || ((int (*)(void))mid_symbol)() != 42
         || typed_dlerror() != NULL || typed_dlsym(RTLD_DEFAULT, "mid_value") != mid_symbol) {

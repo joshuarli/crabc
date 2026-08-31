@@ -1803,7 +1803,10 @@ proves public C/C++ ABI layouts, per-thread one-shot errors, the pinned-musl
 live-handle-within-the-32-slot-bound `dlinfo(-7)` output-preserving exact
 `Unsupported request -7` diagnostic that survives one valid `RTLD_DI_LINKMAP`
 call, the pinned-musl `dlclose(NULL) == 1` exact `Invalid library handle 0`
-diagnostic, stale handles, malformed and absent records, and copied
+diagnostic, and a live retained-handle empty-name `dlsym` null result with exact
+`Symbol not found: ` only after the bounded loader confirms `loader symbol name
+is invalid`; non-empty missing names, null symbol pointers, and invalid handles
+retain existing loader paths. The gate also proves stale handles, malformed and absent records, and copied
 introspection, while continuing to exclude search, mutation, global promotion,
 RTLD_NEXT, finalization, and unload.
 It remains a staged fixed-graph artifact, not capability or platform promotion.

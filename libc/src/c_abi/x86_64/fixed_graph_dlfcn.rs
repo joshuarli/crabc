@@ -43,6 +43,8 @@ const UNAVAILABLE: &[u8] = b"crabc fixed-graph loader runtime unavailable";
 const NEXT_UNSUPPORTED: &[u8] = b"crabc fixed graph does not support RTLD_NEXT";
 const DLINFO_UNSUPPORTED_REQUEST: &[u8] = b"Unsupported request ";
 const DLCLOSE_NULL_HANDLE: &[u8] = b"Invalid library handle 0";
+const DLSYM_EMPTY_SYMBOL: &[u8] = b"Symbol not found: ";
+const LOADER_SYMBOL_NAME_INVALID: &[u8] = b"loader symbol name is invalid";
 static EXHAUSTED: &[u8] = b"crabc dlfcn diagnostic slots exhausted\0";
 
 #[repr(C)]
@@ -360,6 +362,18 @@ unsafe fn set_dlinfo_unsupported_request(slot: usize, request: c_int) {
     set_error_bytes(slot, &message[..length]);
 }
 
+fn text_matches(message: &TextV1, expected: &[u8]) -> bool {
+    if message.len as usize != expected.len() {
+        return false;
+    }
+    for (index, byte) in expected.iter().enumerate() {
+        if message.bytes[index] != *byte {
+            return false;
+        }
+    }
+    true
+}
+
 unsafe fn open_fn(record: &RuntimeRecordV1) -> OpenFn {
     mem::transmute(record.open)
 }
@@ -415,7 +429,13 @@ pub unsafe extern "C" fn dlopen(filename: *const c_char, flags: c_int) -> *mut c
 /// # Safety
 ///
 /// `symbol` must point to a readable NUL-terminated C string, and non-special
-/// handles must have been returned by this bridge and remain open.
+/// handles must have been returned by this bridge and remain open. For that
+/// admitted live-handle boundary, an empty string is a bounded musl-shaped
+/// failed lookup: pinned musl 1.2.6 commit
+/// 9fa28ece75d8a2191de7c5bb53bed224c5947417 `src/ldso/dlsym.c:dlsym` reaches
+/// `ldso/dynlink.c:do_dlsym` and records `Symbol not found: `. This bridge
+/// replaces only its loader-confirmed empty-name diagnostic; null pointers,
+/// non-empty missing names, and invalid handles retain their existing paths.
 #[no_mangle]
 pub unsafe extern "C" fn dlsym(
     mut handle: *mut c_void,
@@ -439,9 +459,14 @@ pub unsafe extern "C" fn dlsym(
             return ptr::null_mut();
         }
     }
+    let empty_symbol = !symbol.is_null() && *symbol == 0;
     let mut address = ptr::null_mut();
     if symbol_fn(record)(handle, symbol.cast(), &mut address, &mut error) != 0 {
-        set_error_text(slot, &error);
+        if empty_symbol && text_matches(&error, LOADER_SYMBOL_NAME_INVALID) {
+            set_error_bytes(slot, DLSYM_EMPTY_SYMBOL);
+        } else {
+            set_error_text(slot, &error);
+        }
         ptr::null_mut()
     } else {
         address
