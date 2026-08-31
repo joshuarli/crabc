@@ -188,6 +188,20 @@ int main(void) {
     if (!text_equal(empty_symbol, "Symbol not found: ")
         || typed_dlerror() != NULL) return 66;
 
+    Dl_info null_address = {
+        (const char *)(uintptr_t)1,
+        (void *)(uintptr_t)2,
+        (const char *)(uintptr_t)3,
+        (void *)(uintptr_t)4,
+    };
+    typed_dlerror();
+    if (typed_dladdr(NULL, &null_address) != 0
+        || null_address.dli_fname != (const char *)(uintptr_t)1
+        || null_address.dli_fbase != (void *)(uintptr_t)2
+        || null_address.dli_sname != (const char *)(uintptr_t)3
+        || null_address.dli_saddr != (void *)(uintptr_t)4) return 67;
+    if (typed_dlerror() != NULL) return 68;
+
     typed_dlerror();
     void *mid_symbol = typed_dlsym(mid_one, "mid_value");
     if (mid_symbol != (void *)&mid_value || ((int (*)(void))mid_symbol)() != 42
