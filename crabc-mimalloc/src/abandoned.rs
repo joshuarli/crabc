@@ -998,9 +998,17 @@ pub(crate) unsafe fn free_unmapped_after_failed_reclaim<M: MappedAbandonedPages 
 ) -> Result<UnmappedAbandonedFreeResult, AbandonError> {
     let mut before_expected_cas: Option<fn()> = None;
     // SAFETY: this public boundary supplies the caller's complete abandoned
-    // page/block/map lifetime proof to the source-shaped inner protocol.
+    // page/block/map lifetime proof to the source-shaped inner protocol. This
+    // older raw boundary has no owner-local collection capability; the
+    // claim-bearing continuation below supplies the source false phase.
     unsafe {
-        free_unmapped_after_failed_reclaim_inner(page, block, map, &mut before_expected_cas)
+        free_unmapped_after_failed_reclaim_inner(
+            page,
+            block,
+            map,
+            &mut before_expected_cas,
+            |_page| Ok(()),
+        )
     }
 }
 
@@ -1107,12 +1115,15 @@ where
 /// # Safety
 ///
 /// This has the same stable page/block/bitmap requirements as
-/// [`free_regular_after_failed_reclaim_select_map`]. After the source remote
-/// collection succeeds, `collect_owner_deferred_frees` must perform only the
-/// false-force owner-local collection for this exact page while the caller
-/// holds its low owner bit. It must not release, unown, reabandon, or retain
-/// aliases to the page. An error leaves that low bit with the caller as the
-/// one terminal owner and prevents every later state transition in this tail.
+/// [`free_regular_after_failed_reclaim_select_map`]. After *each* source
+/// remote-list collection, `collect_owner_deferred_frees` must perform only
+/// the false-force owner-local collection for this exact page while the caller
+/// holds its low owner bit. The expected-head unown loop can observe a later
+/// remote publication and collect again, so the callback must remain valid for
+/// every such source collection. It must not release, unown, reabandon, or
+/// retain aliases to the page. An error leaves that low bit with the caller as
+/// the one terminal owner and prevents every later state transition in this
+/// tail.
 unsafe fn free_regular_after_failed_reclaim_select_map_with_after_claim_and_owner_deferred_collection<
     M,
     F,
@@ -1129,7 +1140,7 @@ where
     M: MappedAbandonedPages,
     F: FnOnce(MemoryId, usize) -> Result<M, AbandonError>,
     H: FnOnce() -> bool,
-    C: FnOnce(NonNull<Page>) -> Result<(), AbandonError>,
+    C: FnMut(NonNull<Page>) -> Result<(), AbandonError>,
 {
     // SAFETY: the route holds the stable abandoned-page/client allocation
     // proof through this source `allow_collect=true` publication.
@@ -1177,12 +1188,12 @@ unsafe fn finish_regular_after_remote_claim<M, F, C>(
     page: NonNull<Page>,
     block: NonNull<u8>,
     select_map: F,
-    collect_owner_deferred_frees: C,
+    mut collect_owner_deferred_frees: C,
 ) -> Result<RegularAbandonedFreeAfterFailedReclaimResult, AbandonError>
 where
     M: MappedAbandonedPages,
     F: FnOnce(MemoryId, usize) -> Result<M, AbandonError>,
-    C: FnOnce(NonNull<Page>) -> Result<(), AbandonError>,
+    C: FnMut(NonNull<Page>) -> Result<(), AbandonError>,
 {
     // A successful low-bit claim is the first legal point to inspect ordinary
     // page fields. Source collection must finish before this tail acquires a
@@ -1274,12 +1285,13 @@ where
             });
         }
         let mut no_test_hook: Option<fn()> = None;
-        return match unown_unmapped_from_free(
+        return match unown_unmapped_from_free_with_owner_deferred_collection(
             page,
             &state,
             &map,
             expected_head,
             &mut no_test_hook,
+            &mut collect_owner_deferred_frees,
         )? {
             UnmappedAbandonedFreeResult::PublishedToExistingOwner => Ok(
                 RegularAbandonedFreeAfterFailedReclaimResult::PublishedToExistingOwner,
@@ -1294,7 +1306,13 @@ where
         };
     }
 
-    match unown_mapped_from_free(page, &state, &map, expected_head)? {
+    match unown_mapped_from_free_with_owner_deferred_collection(
+        page,
+        &state,
+        &map,
+        expected_head,
+        &mut collect_owner_deferred_frees,
+    )? {
         MappedAbandonedFreeAfterFailedReclaimResult::PublishedToExistingOwner => Ok(
             RegularAbandonedFreeAfterFailedReclaimResult::PublishedToExistingOwner,
         ),
@@ -1371,8 +1389,8 @@ pub(crate) unsafe fn collect_post_owner_exit_local_free_false(
 /// through the atomic publication and source collection. `select_map` must
 /// return the exact mapped-abandoned bitmap/count capability for the selected
 /// page identity, only for the duration of this call.
-/// `collect_owner_deferred_frees` must perform exactly the source false-force
-/// owner-local `local_free` collection after the remote list is detached and
+/// `collect_owner_deferred_frees` must perform the source false-force
+/// owner-local `local_free` collection after every remote-list detach and
 /// before any empty/reabandon/unown decision; it has no PageMap or terminal
 /// release authority. An error retains the claimed low owner bit and prevents
 /// the terminal callback. `terminal_release` runs only with that bit retained
@@ -1389,7 +1407,7 @@ pub(crate) unsafe fn free_post_owner_exit_regular_page<M, F, C, R>(
 where
     M: MappedAbandonedPages,
     F: FnOnce(MemoryId, usize) -> Result<M, AbandonError>,
-    C: FnOnce(NonNull<Page>) -> Result<(), AbandonError>,
+    C: FnMut(NonNull<Page>) -> Result<(), AbandonError>,
     R: FnOnce(NonNull<Page>) -> PostOwnerExitTerminalRelease,
 {
     // SAFETY: the caller supplies the stable pointer-to-page, canonical-block,
@@ -1456,7 +1474,7 @@ pub(crate) unsafe fn continue_post_owner_exit_remote_claim<M, F, C, R>(
 where
     M: MappedAbandonedPages,
     F: FnOnce(MemoryId, usize) -> Result<M, AbandonError>,
-    C: FnOnce(NonNull<Page>) -> Result<(), AbandonError>,
+    C: FnMut(NonNull<Page>) -> Result<(), AbandonError>,
     R: FnOnce(NonNull<Page>) -> PostOwnerExitTerminalRelease,
 {
     let page = claim.page();
@@ -1664,9 +1682,12 @@ where
 /// is governed by its current claimed state rather than by stale geometry.
 ///
 /// A live-owner or detached observation is deliberately rejected before any
-/// publication. Its caller must use the corresponding live-owner or detached
-/// source path; this boundary never searches an owner registry or exact-client
-/// ledger and never guesses a former Theap from `page`.
+/// publication. This mirrors `free.c:mi_free_block_mt`'s
+/// `mi_page_is_abandoned` guard: its source identity range ends at
+/// `THREAD_ID_ABANDONED_MAPPED`, so `THREAD_ID_DETACHED` is not a legal
+/// abandoned-claim input. Its caller must use the corresponding live-owner or
+/// detached source path; this boundary never searches an owner registry or
+/// exact-client ledger and never guesses a former Theap from `page`.
 ///
 /// # Safety
 ///
@@ -1688,7 +1709,7 @@ pub(crate) unsafe fn free_post_owner_exit_from_page_state<M, F, C, R>(
 where
     M: MappedAbandonedPages,
     F: FnOnce(MemoryId, usize) -> Result<M, AbandonError>,
-    C: FnOnce(NonNull<Page>) -> Result<(), AbandonError>,
+    C: FnMut(NonNull<Page>) -> Result<(), AbandonError>,
     R: FnOnce(NonNull<Page>) -> PostOwnerExitTerminalRelease,
 {
     if !matches!(
@@ -2625,31 +2646,43 @@ pub(crate) unsafe fn free_unmappable_after_failed_reclaim(
 /// head is captured and before the AcqRel unown CAS. Production supplies no
 /// hook; this exists only to prove the failed-CAS collection tail.
 #[cfg(test)]
-unsafe fn free_unmapped_after_failed_reclaim_with<M, F>(
+unsafe fn free_unmapped_after_failed_reclaim_with<M, F, C>(
     page: NonNull<Page>,
     block: NonNull<u8>,
     map: &M,
     before_expected_cas: F,
+    collect_owner_deferred_frees: C,
 ) -> Result<UnmappedAbandonedFreeResult, AbandonError>
 where
     M: MappedAbandonedPages + ?Sized,
     F: FnOnce(),
+    C: FnMut(NonNull<Page>) -> Result<(), AbandonError>,
 {
     let mut before_expected_cas = Some(before_expected_cas);
     // SAFETY: the test fixture provides the same stable page/block/map proof
     // as the production entry and publishes only at this exact atomic point.
-    unsafe { free_unmapped_after_failed_reclaim_inner(page, block, map, &mut before_expected_cas) }
+    unsafe {
+        free_unmapped_after_failed_reclaim_inner(
+            page,
+            block,
+            map,
+            &mut before_expected_cas,
+            collect_owner_deferred_frees,
+        )
+    }
 }
 
-unsafe fn free_unmapped_after_failed_reclaim_inner<M, F>(
+unsafe fn free_unmapped_after_failed_reclaim_inner<M, F, C>(
     page: NonNull<Page>,
     block: NonNull<u8>,
     map: &M,
     before_expected_cas: &mut Option<F>,
+    collect_owner_deferred_frees: C,
 ) -> Result<UnmappedAbandonedFreeResult, AbandonError>
 where
     M: MappedAbandonedPages + ?Sized,
     F: FnOnce(),
+    C: FnMut(NonNull<Page>) -> Result<(), AbandonError>,
 {
     // SAFETY: the caller retains the initialized abandoned page and exact
     // client block through the source atomic publication.
@@ -2669,10 +2702,7 @@ where
             block,
             map,
             before_expected_cas,
-            // This legacy raw helper preserves its bounded existing
-            // semantics. The exact claim-bearing singleton continuation
-            // above supplies the source false-force local phase.
-            |_page| Ok(()),
+            collect_owner_deferred_frees,
         )
     }
 }
@@ -2696,12 +2726,12 @@ unsafe fn finish_unmapped_after_remote_claim<M, F, C>(
     block: NonNull<u8>,
     map: &M,
     before_expected_cas: &mut Option<F>,
-    collect_owner_deferred_frees: C,
+    mut collect_owner_deferred_frees: C,
 ) -> Result<UnmappedAbandonedFreeResult, AbandonError>
 where
     M: MappedAbandonedPages + ?Sized,
     F: FnOnce(),
-    C: FnOnce(NonNull<Page>) -> Result<(), AbandonError>,
+    C: FnMut(NonNull<Page>) -> Result<(), AbandonError>,
 {
 
     // A successful `allow_collect` publication owns the low bit. Validate the
@@ -2745,7 +2775,14 @@ where
     if let Some(result) = terminal_or_reabandon_unmapped(page, &state, map)? {
         return Ok(result);
     }
-    unown_unmapped_from_free(page, &state, map, expected_head, before_expected_cas)
+    unown_unmapped_from_free_with_owner_deferred_collection(
+        page,
+        &state,
+        map,
+        expected_head,
+        before_expected_cas,
+        &mut collect_owner_deferred_frees,
+    )
 }
 
 /// Ports `page.c:_mi_page_abandon` and the mapped/unmapped publication half
@@ -3270,8 +3307,40 @@ fn unown_mapped_from_free<M: MappedAbandonedPages + ?Sized>(
     page: NonNull<Page>,
     state: &PageAbandonmentState,
     map: &M,
-    mut expected_head: usize,
+    expected_head: usize,
 ) -> Result<MappedAbandonedFreeAfterFailedReclaimResult, AbandonError> {
+    // Older raw failed-reclaim helpers preserve their existing bounded
+    // collection contract. The claim-bearing pointer continuation below
+    // supplies the source false-force owner-local phase after every remote
+    // detach.
+    let mut no_owner_deferred_collection = |_page| Ok(());
+    unown_mapped_from_free_with_owner_deferred_collection(
+        page,
+        state,
+        map,
+        expected_head,
+        &mut no_owner_deferred_collection,
+    )
+}
+
+/// The mapped `mi_abandoned_page_unown_from_free` loop for a continuation
+/// that owns the false-force local collection capability.
+///
+/// A failed expected-head CAS can reveal another producer's remote list. The
+/// source calls `_mi_page_free_collect(page, false)` after *each* such
+/// observation, so this helper makes the local half explicit before it may
+/// test all-free or transfer the mapped abandoned owner bit again.
+fn unown_mapped_from_free_with_owner_deferred_collection<M, C>(
+    page: NonNull<Page>,
+    state: &PageAbandonmentState,
+    map: &M,
+    mut expected_head: usize,
+    collect_owner_deferred_frees: &mut C,
+) -> Result<MappedAbandonedFreeAfterFailedReclaimResult, AbandonError>
+where
+    M: MappedAbandonedPages + ?Sized,
+    C: FnMut(NonNull<Page>) -> Result<(), AbandonError>,
+{
     let xthread_free = unsafe { state.xthread_free.as_ref() };
     let mut no_test_hook: Option<fn()> = None;
     loop {
@@ -3297,6 +3366,11 @@ fn unown_mapped_from_free<M: MappedAbandonedPages + ?Sized>(
                 // its producer list is the only permitted concurrent input.
                 unsafe { remote_free::collect_abandoned(page) }
                     .map_err(AbandonError::RemoteFree)?;
+                // `mi_abandoned_page_unown_from_free` returns through
+                // `_mi_page_free_collect(page, false)`, not through a remote
+                // detach alone. Keep the source local phase before the
+                // all-free decision so a later publication cannot bypass it.
+                collect_owner_deferred_frees(page)?;
                 if page_is_empty(state) {
                     unabandon_mapped(state, Some(map))?;
                     return Ok(MappedAbandonedFreeAfterFailedReclaimResult::Empty);
@@ -3319,12 +3393,41 @@ fn unown_unmapped_from_free<M, F>(
     page: NonNull<Page>,
     state: &PageAbandonmentState,
     map: &M,
-    mut expected_head: usize,
+    expected_head: usize,
     before_expected_cas: &mut Option<F>,
 ) -> Result<UnmappedAbandonedFreeResult, AbandonError>
 where
     M: MappedAbandonedPages + ?Sized,
     F: FnOnce(),
+{
+    // Keep older raw helpers source-compatible without widening their caller
+    // contracts. Claim-bearing pointer continuations use the sibling below,
+    // which cannot omit the false-force local phase after a raced detach.
+    let mut no_owner_deferred_collection = |_page| Ok(());
+    unown_unmapped_from_free_with_owner_deferred_collection(
+        page,
+        state,
+        map,
+        expected_head,
+        before_expected_cas,
+        &mut no_owner_deferred_collection,
+    )
+}
+
+/// The source-unmapped expected-head unown loop with its reusable
+/// false-force owner-local collection capability.
+fn unown_unmapped_from_free_with_owner_deferred_collection<M, F, C>(
+    page: NonNull<Page>,
+    state: &PageAbandonmentState,
+    map: &M,
+    mut expected_head: usize,
+    before_expected_cas: &mut Option<F>,
+    collect_owner_deferred_frees: &mut C,
+) -> Result<UnmappedAbandonedFreeResult, AbandonError>
+where
+    M: MappedAbandonedPages + ?Sized,
+    F: FnOnce(),
+    C: FnMut(NonNull<Page>) -> Result<(), AbandonError>,
 {
     let xthread_free = unsafe { state.xthread_free.as_ref() };
     loop {
@@ -3350,6 +3453,10 @@ where
                 // bit through the next decision below.
                 unsafe { remote_free::collect_abandoned(page) }
                     .map_err(AbandonError::RemoteFree)?;
+                // Source `_mi_page_free_collect(page, false)` repeats its
+                // local half after every raced remote detach before it can
+                // free, reabandon, or retry unownership.
+                collect_owner_deferred_frees(page)?;
                 if let Some(result) = terminal_or_reabandon_unmapped(page, state, map)? {
                     return Ok(result);
                 }
@@ -4643,7 +4750,7 @@ mod tests {
     }
 
     #[test]
-    fn post_owner_exit_page_state_dispatch_collects_two_simultaneous_clients_once() {
+    fn post_owner_exit_page_state_dispatch_runs_false_collection_after_each_remote_detach() {
         let block_size = crate::config::SMALL_SIZE_MAX + core::mem::size_of::<Block>();
         let bin = size_class::bin(block_size).expect("the medium size has an arena bin");
         assert!(bin < ARENA_BIN_COUNT);
@@ -4666,6 +4773,7 @@ mod tests {
         let mut first = TestBlock([0; 16]);
         let first = first.pointer();
         let mut second = TestBlock([0; 16]);
+        let second_pointer = second.pointer();
         let owner_collected_remote = Arc::new(Barrier::new(2));
         let publisher_finished = Arc::new(Barrier::new(2));
         let owner_local_false_force_calls = AtomicUsize::new(0);
@@ -4711,26 +4819,46 @@ mod tests {
                             Ok(&map)
                         },
                         |collected_page| {
-                            // The winning source owner has detached the first
-                            // client before this false-force local transfer.
+                            // The winning source owner must complete the
+                            // false-force local phase after both the initial
+                            // detach and the raced expected-head detach.
                             let collected_page = &mut *collected_page.as_ptr();
-                            assert_eq!(collected_page.remote_free_test_used(), 1);
-                            assert_eq!(
-                                collected_page.remote_free_test_local_free(),
-                                first.cast::<Block>().as_ptr()
-                            );
-                            assert!(collected_page.remote_free_test_free().is_null());
-                            collected_page.set_exclusive_free_list_head(
-                                collected_page.remote_free_test_local_free(),
-                            );
-                            collected_page.remote_free_test_set_local_free(core::ptr::null_mut());
-                            owner_local_false_force_calls.fetch_add(1, Ordering::AcqRel);
-                            owner_collected_remote.wait();
-                            publisher_finished.wait();
+                            match owner_local_false_force_calls.fetch_add(1, Ordering::AcqRel) {
+                                0 => {
+                                    assert_eq!(collected_page.remote_free_test_used(), 1);
+                                    assert_eq!(
+                                        collected_page.remote_free_test_local_free(),
+                                        first.cast::<Block>().as_ptr()
+                                    );
+                                    assert!(collected_page.remote_free_test_free().is_null());
+                                    collected_page.set_exclusive_free_list_head(
+                                        collected_page.remote_free_test_local_free(),
+                                    );
+                                    collected_page
+                                        .remote_free_test_set_local_free(core::ptr::null_mut());
+                                    owner_collected_remote.wait();
+                                    publisher_finished.wait();
+                                }
+                                1 => {
+                                    assert_eq!(collected_page.remote_free_test_used(), 0);
+                                    assert_eq!(
+                                        collected_page.remote_free_test_local_free(),
+                                        second_pointer.cast::<Block>().as_ptr(),
+                                    );
+                                    assert_eq!(
+                                        collected_page.remote_free_test_free(),
+                                        first.cast::<Block>().as_ptr(),
+                                    );
+                                    // `force == false` leaves a newly
+                                    // detached local list in place when the
+                                    // ordinary free list is already nonempty.
+                                }
+                                _ => panic!("the source tail has exactly two remote detaches"),
+                            }
                             Ok(())
                         },
                         |_page| {
-                            assert_eq!(owner_local_false_force_calls.load(Ordering::Acquire), 1);
+                            assert_eq!(owner_local_false_force_calls.load(Ordering::Acquire), 2);
                             assert!(
                                 !map.is_published(17),
                                 "the second remote client is collected before mapped terminal release"
@@ -4745,7 +4873,7 @@ mod tests {
         });
 
         assert!(!producer_selected_map.load(Ordering::Acquire));
-        assert_eq!(owner_local_false_force_calls.load(Ordering::Acquire), 1);
+        assert_eq!(owner_local_false_force_calls.load(Ordering::Acquire), 2);
         assert_eq!(terminal_calls.load(Ordering::Acquire), 1);
         assert!(!map.is_published(17));
         assert_eq!(page.0.abandoned_test_thread_id(), THREAD_ID_ABANDONED);
@@ -5350,6 +5478,7 @@ mod tests {
         let page_raw = abandon_full_unmapped(&mut page);
         let mut first = TestBlock([0; 16]);
         let mut second = TestBlock([0; 16]);
+        let mut owner_local_collections = 0;
 
         assert_eq!(
             unsafe {
@@ -5363,15 +5492,70 @@ mod tests {
                             Ok(remote_free::AbandonedRemotePush::PublishedToExistingOwner)
                         );
                     },
+                    |_page| {
+                        owner_local_collections += 1;
+                        Ok(())
+                    },
                 )
             },
             Ok(UnmappedAbandonedFreeResult::UnownedUnmapped)
+        );
+        assert_eq!(
+            owner_local_collections, 2,
+            "each remote-list collection must complete free.c's false local phase before the next unown decision"
         );
         assert!(!map.is_published(17));
         assert_eq!(page.abandoned_test_thread_id(), THREAD_ID_ABANDONED);
         assert_eq!(page.remote_free_test_head(), 0);
         assert_eq!(page.remote_free_test_used(), 14);
         assert_eq!(page.remote_free_test_local_chain_len(3), 2);
+    }
+
+    #[test]
+    fn mapped_expected_head_unown_recollects_the_owner_local_phase_before_release() {
+        let block_size = crate::config::SMALL_SIZE_MAX + core::mem::size_of::<Block>();
+        let bin = size_class::bin(block_size).expect("the medium size has an arena bin");
+        assert!(bin < ARENA_BIN_COUNT);
+        let mut storage = BitmapStorage::uninit();
+        let mut arena = map_fixture_for_bin(&mut storage, bin);
+        let view = unsafe { ArenaView::from_ptr(&mut arena).unwrap() };
+        let map = view.abandoned_pages(bin).unwrap();
+        let mut page = Page::remote_free_test_page(16, 2);
+        page.set_block_size(block_size);
+        assert!(unsafe { page.abandoned_test_set_arena_memory(&mut arena, 17, 1) });
+        let page_raw = NonNull::from(&mut page);
+        assert_eq!(unsafe { abandon(page_raw, Some(&map)) }, Ok(AbandonResult::UnownedMapped));
+
+        let mut raced_block = TestBlock([0; 16]);
+        assert_eq!(
+            unsafe { remote_free::push_abandoned(page_raw, raced_block.pointer()) },
+            Ok(remote_free::AbandonedRemotePush::ClaimedUnownedPage)
+        );
+        let state = unsafe { Page::abandonment_state_at(page_raw) };
+        let mut owner_local_collections = 0;
+        let mut collect_owner_deferred_frees = |_page| {
+            owner_local_collections += 1;
+            Ok(())
+        };
+
+        assert_eq!(
+            unown_mapped_from_free_with_owner_deferred_collection(
+                page_raw,
+                &state,
+                &map,
+                0,
+                &mut collect_owner_deferred_frees,
+            ),
+            Ok(MappedAbandonedFreeAfterFailedReclaimResult::UnownedMapped)
+        );
+        assert_eq!(
+            owner_local_collections, 1,
+            "a raced mapped publication must run free.c's false local phase before its owner bit is released"
+        );
+        assert!(map.is_published(17));
+        assert_eq!(page.abandoned_test_thread_id(), THREAD_ID_ABANDONED_MAPPED);
+        assert_eq!(page.remote_free_test_head(), 0);
+        assert_eq!(page.remote_free_test_used(), 1);
     }
 
     #[test]

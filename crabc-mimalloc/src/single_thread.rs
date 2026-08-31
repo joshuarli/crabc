@@ -869,7 +869,8 @@ enum ProcessPostOwnerExitRemoteClaimError {
 /// The W08 owner-exit coordinator force-collects then false-collects the
 /// departing Theap before it publishes an abandoned identity. A pointer may
 /// also arrive from a different valid abandoned source state, so the W07
-/// continuation repeats its narrow post-CAS false-force local-list phase.
+/// continuation repeats its narrow post-CAS false-force local-list phase
+/// after the initial remote detach and after every raced expected-head detach.
 /// That phase is a no-op for coordinator-drained pages and never consults the
 /// departed Theap for a direct abandoned lookup.
 ///
