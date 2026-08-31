@@ -50,7 +50,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 41)
-        self.assertEqual(report["verified_artifact_count"], 242)
+        self.assertEqual(report["verified_artifact_count"], 248)
         self.assertEqual(report["header_layout_probe_count"], 47)
         self.assertEqual(report["public_header_inventory_count"], 183)
         self.assertEqual(report["header_foundation_header_count"], 191)
@@ -12585,7 +12585,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             "candidate-only `ESRCH`",
             "output and errno unchanged",
             "worker, foreign, completed, or general handles",
-            "`clock_getcpuclockid` and general C clocks",
+            "separately selected `clock_getcpuclockid` and general C clocks",
             "scheduler or affinity attributes",
             "general pthread/TLS or x86-64 parity",
             "public x86 support",

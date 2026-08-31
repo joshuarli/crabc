@@ -310,6 +310,8 @@ mod setjmp;
 mod signal_foundation;
 #[path = "signal_control.rs"]
 mod signal_control;
+#[path = "siginterrupt.rs"]
+mod siginterrupt;
 #[path = "signal_realtime_max.rs"]
 mod signal_realtime_max;
 #[path = "signal_realtime_min.rs"]
@@ -420,6 +422,8 @@ mod stdio_standard;
 mod stdio_format_scan;
 #[path = "bsearch.rs"]
 mod bsearch;
+#[path = "basename.rs"]
+mod basename;
 #[path = "linear_search.rs"]
 mod linear_search;
 #[path = "intrusive_queue.rs"]
@@ -438,8 +442,12 @@ mod gettext_catalog;
 mod clock_nanosleep;
 #[path = "clock_gettime.rs"]
 mod clock_gettime;
+#[path = "clock_getcpuclockid.rs"]
+mod clock_getcpuclockid;
 #[path = "difftime.rs"]
 mod difftime;
+#[path = "ftime.rs"]
+mod ftime;
 #[path = "gmtime_r.rs"]
 mod gmtime_r;
 #[path = "timegm.rs"]
@@ -498,6 +506,10 @@ mod system_configuration;
 mod memory_mapping;
 #[path = "memory_locking.rs"]
 mod memory_locking;
+#[path = "mlockall.rs"]
+mod mlockall;
+#[path = "munlockall.rs"]
+mod munlockall;
 #[path = "memory_sync.rs"]
 mod memory_sync;
 #[path = "memfd_create.rs"]

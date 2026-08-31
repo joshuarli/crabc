@@ -1435,7 +1435,7 @@
       "capability_count": 9,
       "contract_state": "selected-private",
       "id": "libc.posix-runtime",
-      "verified_artifact_count": 113,
+      "verified_artifact_count": 118,
       "verified_slice_count": 3
     },
     {
@@ -1483,7 +1483,7 @@
       "capability_count": 11,
       "contract_state": "selected-private",
       "id": "libc.c-abi-compat",
-      "verified_artifact_count": 14,
+      "verified_artifact_count": 15,
       "verified_slice_count": 6
     },
     {
@@ -1748,6 +1748,10 @@
     },
     {
       "family": "libc.c-abi-compat",
+      "id": "static-c-basename"
+    },
+    {
+      "family": "libc.c-abi-compat",
       "id": "static-c-bsearch"
     },
     {
@@ -1852,6 +1856,10 @@
     },
     {
       "family": "libc.posix-runtime",
+      "id": "static-c-clock-getcpuclockid"
+    },
+    {
+      "family": "libc.posix-runtime",
       "id": "static-c-clock-gettime"
     },
     {
@@ -1941,6 +1949,10 @@
     {
       "family": "libc.posix-runtime",
       "id": "static-c-fpathconf"
+    },
+    {
+      "family": "libc.posix-runtime",
+      "id": "static-c-ftime"
     },
     {
       "family": "libc.posix-runtime",
@@ -2060,7 +2072,15 @@
     },
     {
       "family": "libc.posix-runtime",
+      "id": "static-c-mlockall"
+    },
+    {
+      "family": "libc.posix-runtime",
       "id": "static-c-mman-mapping-core"
+    },
+    {
+      "family": "libc.posix-runtime",
+      "id": "static-c-munlockall"
     },
     {
       "family": "libc.posix-runtime",
@@ -2145,6 +2165,10 @@
     {
       "family": "libc.posix-runtime",
       "id": "static-c-sigandset-sigorset"
+    },
+    {
+      "family": "libc.posix-runtime",
+      "id": "static-c-siginterrupt"
     },
     {
       "family": "libc.posix-runtime",
@@ -2631,9 +2655,9 @@
     "aarch64_abi_manifest": "33dd504470f467caac7b149e747ee2b7ff8714c4fb23dfe5ad46e7f58bfe610c",
     "aarch64_capability_ledger": "128458dde00073bc0320b94972d864e66fa10d5f54e92b1b1c83081e2b4955e0",
     "aarch64_headers": "a0d35f0950abb3c060b978dfb5257cf50f70bed46ce91d371f43d65db7626b68",
-    "x86_parity_ledger": "896376cb6fa7a3d2ed7d6120fd4f6349ea0e27b0f3441be5476322454eddbd2c",
+    "x86_parity_ledger": "f1246ca26b327f12b777c213513948b44223299c9399d270a35da2b717c98292",
     "x86_public_headers": "2cdcd860a423d99afef8360b6376447cf17ae926f1cd47416be817d421fca80f",
-    "x86_static_c_exports": "e6a19775a4c7d6f365ab5b1852c13a122f6281535ad1648bc3d6f04407ec8042"
+    "x86_static_c_exports": "596648c3b67b6fe6b539da1eb4ab9a10345890a56949e63b0f44cdf0b6d4aa06"
   },
   "unsupported_contracts": [
     {
@@ -2645,7 +2669,7 @@
     "promotion_family_count": 26,
     "promotion_ready": false,
     "public_support": false,
-    "selected_static_export_count": 1011,
-    "selected_static_exports_in_aarch64_dynamic_candidate_set": 996
+    "selected_static_export_count": 1018,
+    "selected_static_exports_in_aarch64_dynamic_candidate_set": 1003
   }
 }

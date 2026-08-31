@@ -69,6 +69,7 @@ __strtod_l
 __strtof_l
 __strtold_l
 __tsearch_balance
+__xpg_basename
 __xpg_strerror_r
 __xstat
 _environ
@@ -96,6 +97,7 @@ atof
 atoi
 atol
 atoll
+basename
 bcmp
 bcopy
 bind
@@ -161,6 +163,7 @@ cimagl
 clearenv
 clearerr
 clock
+clock_getcpuclockid
 clock_getres
 clock_gettime
 clock_nanosleep
@@ -338,6 +341,7 @@ fstatvfs
 fsync
 ftell
 ftello
+ftime
 ftok
 ftruncate
 futimens
@@ -576,6 +580,7 @@ mkfifoat
 mktemp
 mlock
 mlock2
+mlockall
 mmap
 modf
 modff
@@ -592,6 +597,7 @@ mtx_lock
 mtx_trylock
 mtx_unlock
 munlock
+munlockall
 munmap
 nan
 nanf
@@ -799,6 +805,7 @@ sigandset
 sigdelset
 sigemptyset
 sigfillset
+siginterrupt
 sigisemptyset
 sigismember
 siglongjmp

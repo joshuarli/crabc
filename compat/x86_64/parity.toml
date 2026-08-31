@@ -7507,6 +7507,264 @@ x86_header_prerequisites = ["The dedicated C/C++ string-duplication header gate 
 native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-allocator-string-duplication", scope = "Native x86 pinned-musl/crabc mixed-runtime client differential. It verifies project-header provenance and feature-gated source ownership; exact one-object strong strdup/strndup plus private witness surface; separate weak allocator-wrapper, errno, and bundled-backend owners; absence of every pinned-musl duplication and allocator object; static ELF/TLS and no-glibc purity; then executes owned high-byte copies, bounded and zero-limit strndup, stale errno/free, and guarded full/bounded page-edge reads under an empty fixed environment. Pinned musl still supplies startup/process prerequisites, and this does not select allocator lifecycle, allocator-family/string-family closure, dynamic interposition, failure injection, owned CRT/sysroot, promotion, or public x86 support." }]
 oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source/declaration/behavior oracle for src/string/strdup.c and src/string/strndup.c, their malloc-owned returned storage, POSIX feature visibility, exact bounded read behavior, and static startup/process provider boundary; musl duplicate and allocator objects are forbidden from the candidate link." }, { kind = "project-contract", source = "Existing active crabc allocator_mimalloc.rs wrapper", role = "The selected existing weak malloc/free C ABI and libmimalloc-sys 0.1.49 bundled mimalloc v3.3.2 backend are the only allocation route for this client; that does not promote allocator ownership." }, { kind = "elf-abi", source = "System V AMD64 psABI", role = "LP64 pointer/size_t argument and return ABI, strong client versus weak allocation binding, static TLS, archive ownership, and link-map purity contract." }]
 
+[[family.verified_artifact]]
+id = "static-c-ftime"
+description = "Private native x86 selected-static-archive one-symbol legacy realtime snapshot adapter artifact inside planned `libc.posix-runtime`. One dependency-free `crabc-libc` archive exposes exactly `ftime`; its freestanding project-header C fixture first runs through pinned musl 1.2.6 and then through a true `-nostdlib -static` candidate. Pinned musl's `src/time/ftime.c` calls `clock_gettime(CLOCK_REALTIME, &ts)`, ignores that status, and writes whole seconds plus `tv_nsec / 1000000` milliseconds and zero `timezone`/`dstflag` into one caller-owned `struct timeb`. The selected x86 LP64 translation uses fixed `CLOCK_REALTIME=0` through the separately selected static `clock_gettime` boundary; final codegen may retain that call or inline its exact `clock_gettime=228` body. The dedicated project-first/pinned-musl C11/C++17 matrix proves the unconditional `int ftime(struct timeb *)` declaration, unmangled C++ linkage, and the 16-byte align-eight `struct timeb` layout with `time`/`millitm`/`timezone`/`dstflag` offsets 0/8/10/12. The shared fixture proves a valid caller record lies within a realtime before/after millisecond window, retains zero `timezone`/`dstflag`, returns zero, and preserves stale errno. A null/invalid caller record and an otherwise unobservable failed realtime query are outside this source-faithful boundary; Rust initializes its local record only to make that unselected failed-query path defined. It does not select `time`, `clock`, `gettimeofday`, calendar/timezone conversion, clock mutation, `sleep`/`usleep`, alarms, interval/POSIX timers, handlers/actions, signal masks, signal delivery, pthread policy, signal-family/timer-family completion, promotion, or public x86 support."
+source_owners = [
+  "compat/upstreams.toml",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/ftime.rs",
+  "libc/src/c_abi/x86_64/clock_gettime.rs",
+  "libc/src/c_abi/x86_64/errno.rs",
+  "libc/src/c_abi/x86_64/static_tls.rs",
+  "libc/src/c_abi/x86_64/syscall.rs",
+  "include/errno.h",
+  "include/features.h",
+  "include/stddef.h",
+  "include/stdint.h",
+  "include/sys/timeb.h",
+  "include/sys/types.h",
+  "include/time.h",
+  "compat/x86_64/ftime_header_abi_probe.c",
+  "compat/x86_64/ftime_header_abi_probe.cpp",
+  "compat/x86_64/run_ftime_header_abi.sh",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/libc_ftime_probe.c",
+  "compat/x86_64/libc_ftime_start.S",
+  "compat/x86_64/run_libc_ftime.sh",
+  "compat/x86_64/aarch64_parity_inventory.py",
+  "compat/x86_64/aarch64_parity_inventory.json",
+  "compat/x86_64/tests/test_aarch64_parity_inventory.py",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "compat/x86_64/README.md",
+  "STATUS.md",
+  "x86-64.md",
+  "scripts/dev-x86_64.sh",
+  "scripts/check_structure.py",
+]
+x86_abi_prerequisites = [
+  "System V AMD64 passes `int ftime(struct timeb *)`'s one caller-owned pointer in rdi and returns signed int status in eax. The public x86 LP64 `struct timeb` is 16-byte align-eight storage: signed-long `time` at 0, unsigned-short `millitm` at 8, signed-short `timezone` at 10, and signed-short `dstflag` at 12; `time_t` is an eight-byte long.",
+  "Pinned musl 1.2.6 `src/time/ftime.c` is the complete source closure: `clock_gettime(CLOCK_REALTIME, &ts)`, ignored status, `ts.tv_nsec/1000000`, and fixed legacy zero fields. The Rust adapter calls the separately selected static `clock_gettime` boundary instead of owning a raw ftime syscall, errno convention, vDSO resolver, or clock policy; optimized final code may inline the selected `clock_gettime=228` rdi/rsi path.",
+  "The pinned-musl and true-static candidate body uses only a valid caller record, a realtime before/after millisecond window, zero timezone/dstflag, zero return, and stale ERANGE preservation. Static Initial TLS v1 exists only for the selected clock_gettime errno boundary; the fixture start asks libc to bootstrap it and does not claim CRT or TLS lifecycle. Invalid output and failed realtime-query behavior are deliberately unselected.",
+]
+x86_header_prerequisites = ["The dedicated project-first/pinned-musl C11/C++17 ftime matrix compiles default, strict, POSIX.1-2008, XOPEN=700, and GNU profiles. It proves unconditional `int ftime(struct timeb *)`, the exact LP64 timeb field layout and widths, and unmangled C++ linkage with `-U_GNU_SOURCE`; project provenance is only sys/timeb.h and its sys/types.h type owner. This is header ABI evidence only, not C time/runtime completion."]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-ftime", scope = "Pinned-musl 1.2.6 project-header C reference plus a C/C++ ftime feature/header matrix and a true dependency-free x86 crabc-libc archive with a `-nostdlib -static` candidate. The gate checks closed crate-owned C-object export accounting; rejects an interpreter, DT_NEEDED, unresolved symbols, dynamic TLS, unowned runtime, `time`/`clock`/calendar/conversion/clock-mutation paths, sleep/usleep, alarms, interval/POSIX timers, handlers/actions, signal masks, signal delivery, pthreads, allocator, auxv, and sysconf paths; proves direct initial-TLS errno and either the selected clock_gettime call or its exact inlined clock_gettime=228 codegen; then executes a valid-record realtime millisecond window, fixed timezone/dst fields, zero return, and stale errno. It does not select invalid-pointer/failed-clock behavior, C time policy, signal-family/timer-family completion, promotion, or public x86 support." }]
+oracle = [
+  { kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source, unconditional sys/timeb.h declaration, and behavior oracle for src/time/ftime.c: clock_gettime(CLOCK_REALTIME, &ts), millisecond truncation, and fixed zero legacy fields." },
+  { kind = "kernel-abi", source = "Linux 5.10 x86-64 ABI", role = "CLOCK_REALTIME=0 and the selected clock_gettime=228 rdi/rsi realtime-record query used beneath the otherwise source-level ftime adapter." },
+  { kind = "elf-abi", source = "System V AMD64 psABI and pinned musl x86 headers", role = "LP64 pointer/int calling convention, exact timeb layout, static initial-TLS errno boundary, and freestanding final-ELF proof." },
+]
+
+[[family.verified_artifact]]
+id = "static-c-clock-getcpuclockid"
+description = "Private native x86 selected-static-archive one-symbol process CPU-clock-ID compatibility artifact inside planned `libc.posix-runtime`. One dependency-free `crabc-libc` archive exposes exactly `clock_getcpuclockid`; its freestanding project-header C fixture first runs through pinned musl 1.2.6 and then through a true `-nostdlib -static` candidate. Pinned musl's `src/time/clock_getcpuclockid.c` computes `(-pid-1)*8U + 2`, asks raw Linux `clock_getres=229` whether that encoded clock exists, maps raw `EINVAL=22` to positive `ESRCH=3`, returns any other raw error as a positive status, and writes the caller's `clockid_t` only after success. The public C11/C++17 `<time.h>` feature matrix proves exact `int clock_getcpuclockid(pid_t, clockid_t *)`, four-byte `pid_t`/`clockid_t`, 16-byte align-eight `timespec`, `CLOCK_PROCESS_CPUTIME_ID=2`, strict/default hiding, POSIX.1-2008/XOPEN=700/GNU visibility, and unmangled C++ linkage. The shared fixture proves pid zero's `-6`, self encoding and valid resolution, source-defined `INT_MAX` wrap to `CLOCK_PROCESS_CPUTIME_ID`, and missing `INT_MAX-1` as `ESRCH` without overwriting its output. Musl's source has signed overflow before its unsigned multiplication for `INT_MIN`; that input and a success-path invalid output pointer remain outside this source-faithful private boundary. It does not select `clock`, `clock_gettime`, C `clock_getres`, clock mutation, calendar/timezone state, sleep or timers, scheduler policy, `pthread_getcpuclockid`, handlers/actions, signal masks, signal delivery, process lifecycle, signal-family/timer-family completion, promotion, or public x86 support."
+source_owners = [
+  "compat/upstreams.toml",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/clock_getcpuclockid.rs",
+  "libc/src/c_abi/x86_64/syscall.rs",
+  "include/features.h",
+  "include/limits.h",
+  "include/stdint.h",
+  "include/time.h",
+  "include/sys/syscall.h",
+  "include/bits/alltypes.h",
+  "include/bits/syscall.h",
+  "compat/x86_64/clock_getcpuclockid_header_abi_probe.c",
+  "compat/x86_64/clock_getcpuclockid_header_abi_probe.cpp",
+  "compat/x86_64/run_clock_getcpuclockid_header_abi.sh",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/libc_clock_getcpuclockid_probe.c",
+  "compat/x86_64/libc_clock_getcpuclockid_start.S",
+  "compat/x86_64/run_libc_clock_getcpuclockid.sh",
+  "compat/x86_64/aarch64_parity_inventory.py",
+  "compat/x86_64/aarch64_parity_inventory.json",
+  "compat/x86_64/tests/test_aarch64_parity_inventory.py",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "compat/x86_64/README.md",
+  "STATUS.md",
+  "x86-64.md",
+  "scripts/dev-x86_64.sh",
+  "scripts/check_structure.py",
+]
+x86_abi_prerequisites = [
+  "System V AMD64 passes int clock_getcpuclockid(pid_t, clockid_t *) with signed four-byte pid_t in edi and the caller-owned four-byte clockid_t pointer in rsi, returning its signed four-byte status in eax. The private raw validation record is one 16-byte align-eight LP64 timespec, and CLOCK_PROCESS_CPUTIME_ID is 2.",
+  "Pinned musl 1.2.6 `src/time/clock_getcpuclockid.c` is the complete MIT source closure: `clockid_t id = (-pid-1)*8U + 2`, local `struct timespec ts`, `__syscall(SYS_clock_getres, id, &ts)`, `-EINVAL` to `-ESRCH`, positive-status return, then output write after success. The direct Linux x86 `clock_getres=229` rdi/rsi probe deliberately does not call a separately selected C clock_getres boundary or use errno/TLS; musl's C source excludes INT_MIN before unsigned arithmetic.",
+  "The common pinned-musl/true-static candidate body uses fixture-private raw getpid=39 only to obtain self, then proves pid 0 gives -6, self's encoded process CPU clock has a normalized raw resolution, source-defined INT_MAX wraps to 2, and missing INT_MAX-1 maps raw -EINVAL to positive ESRCH without changing its output sentinel. The final `-nostdlib -static` candidate has no PT_TLS, C errno, C getpid, C clock_getres, or CRT bootstrap; its start only calls the probe and exit_group. A success-path invalid output pointer is deliberately unselected because musl writes it only after the kernel probe succeeds.",
+]
+x86_header_prerequisites = ["The dedicated project-first/pinned-musl C11/C++17 `<time.h>` matrix proves exact `int clock_getcpuclockid(pid_t, clockid_t *)`, four-byte pid_t/clockid_t, 16-byte align-eight timespec, and CLOCK_PROCESS_CPUTIME_ID=2. Default and strict profiles reject the declaration; POSIX.1-2008, XOPEN=700, and GNU select it. The C++ passes use `-U_GNU_SOURCE` and retain an unmangled C reference; the project trace proves time.h, features.h, and bits/alltypes.h provenance. This is a narrow header/static-linkage proof, not time-header, clock-family, or public-support completion."]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-clock-getcpuclockid", scope = "Pinned-musl 1.2.6 project-header C reference plus the C/C++ clock_getcpuclockid feature/header matrix and a true dependency-free x86 crabc-libc archive with a `-nostdlib -static` candidate. The gate checks project-header provenance and exact crate-owned C-object export closure separately from compiler-builtins; rejects interpreter, DT_NEEDED, unresolved symbols, PT_TLS/dynamic TLS, errno, C getpid, C clock_getres, C clock_gettime, clock mutation, calendar/timezone, sleep/timers, scheduler, pthread_getcpuclockid, handlers/actions, signal masks, signal delivery, process lifecycle, allocator, auxv, and sysconf paths; proves direct clock_getres=229 codegen; then executes zero/self/INT_MAX encoding, raw-resolution acceptance, and missing-process ESRCH-without-write observations. The raw getpid syscall is fixture-only containment. It does not select invalid-success-output behavior, C clock policy, signal-family/timer-family completion, promotion, or public x86 support." }]
+oracle = [
+  { kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source, time.h declaration, and behavior oracle for src/time/clock_getcpuclockid.c: encoded process CPU clock, clock_getres validation, EINVAL-to-ESRCH mapping, positive status, and post-success output write." },
+  { kind = "kernel-abi", source = "Linux 5.10 x86-64 ABI", role = "clock_getres=229 rdi/rsi contract, encoded process CPU-clock acceptance, and raw negative EINVAL result used by the bounded direct probe." },
+  { kind = "elf-abi", source = "System V AMD64 psABI and pinned musl x86 headers", role = "pid_t/clockid_t/int/pointer register ABI, C++ unmangled linkage, LP64 timespec layout, and TLS-free freestanding final-ELF proof." },
+]
+
+[[family.verified_artifact]]
+id = "static-c-mlockall"
+description = "Private native x86 selected-static-archive one-symbol whole-process lock-request artifact inside planned `libc.posix-runtime`. One dependency-free `crabc-libc` archive resolves exactly `mlockall(int)` into a freestanding C fixture after equivalent pinned-musl execution. Pinned musl 1.2.6 `src/mman/mlockall.c` forwards the signed C flag word unchanged to Linux/x86 `mlockall=151`; `MCL_CURRENT=1` success preserves stale errno, Linux's environment-dependent `EPERM`/`EAGAIN`/`ENOMEM` resource outcome stays direct, and zero/unknown composite flags return `EINVAL`. Any success is contained in a disposable fixture process and a fixture-private raw `munlockall=152` cleanup request; that cleanup is not this lock-request artifact's C export, and the separately recorded `static-c-munlockall` artifact owns the public spelling. The C/C++ header matrix covers the unconditional `int mlockall(int)` plus `MCL_CURRENT/MCL_FUTURE=1/2`, deliberately not `MCL_ONFAULT` header availability. It excludes the separate `munlockall` implementation, per-range `mlock`/`munlock`/`mlock2`, mapping/allocator policy, process lifecycle, pthread cancellation, signals, libc.so, CRT, dynamic TLS lifecycle, loader, sysroot, family completion, promotion, and public x86 support. This is one verified artifact within planned `libc.posix-runtime`, not C-runtime, header, or platform completion."
+source_owners = [
+  "compat/upstreams.toml",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/mlockall.rs",
+  "libc/src/c_abi/x86_64/errno.rs",
+  "libc/src/c_abi/x86_64/static_tls.rs",
+  "libc/src/c_abi/x86_64/syscall.rs",
+  "include/errno.h",
+  "include/features.h",
+  "include/sys/mman.h",
+  "include/bits/mman.h",
+  "include/sys/types.h",
+  "include/sys/syscall.h",
+  "include/bits/syscall.h",
+  "compat/x86_64/mlockall_header_abi_probe.c",
+  "compat/x86_64/mlockall_header_abi_probe.cpp",
+  "compat/x86_64/run_mlockall_header_abi.sh",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/libc_mlockall_probe.c",
+  "compat/x86_64/libc_mlockall_start.S",
+  "compat/x86_64/run_libc_mlockall.sh",
+  "compat/x86_64/aarch64_parity_inventory.py",
+  "compat/x86_64/aarch64_parity_inventory.json",
+  "compat/x86_64/tests/test_aarch64_parity_inventory.py",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "compat/x86_64/README.md",
+  "STATUS.md",
+  "x86-64.md",
+  "scripts/dev-x86_64.sh",
+  "scripts/check_structure.py",
+]
+x86_abi_prerequisites = [
+  "On Linux/x86-64, `int mlockall(int)` arrives with its signed C `int` in edi, sign-extended into the syscall rdi word; `mlockall=151` returns the normal Linux -4095 through -1 error range through the selected initial-TLS errno slot. The fixture-private raw cleanup uses `munlockall=152` only after candidate success and does not create a C ABI export.",
+  "Pinned musl 1.2.6 `src/mman/mlockall.c` is exactly `syscall(SYS_mlockall, flags)`: it does no local validation or cancellation-point route. Linux owns `MCL_CURRENT=1`, `MCL_FUTURE=2`, optional kernel flag handling, capability, RLIMIT_MEMLOCK, and all whole-process lock policy; this selected wrapper forwards the caller flag word unchanged.",
+  "The pinned-musl and true-static fixture both accept a successful `MCL_CURRENT=1` request with stale `EDOM` preserved or direct environment-dependent `EPERM`/`EAGAIN`/`ENOMEM`. It proves flags=0 and an unknown `MCL_CURRENT|MCL_FUTURE|(1<<30)` composite return `EINVAL`; any success is cleaned with the fixture-private raw `munlockall=152` request before the disposable process exits.",
+  "The final static candidate has a PT_TLS errno datum with direct initial-exec TPOFF access and no TLSGD/TLSLD/TLSDESC/GOTTPOFF/DTPMOD/DTPOFF model form or `__tls_get_addr`; fixture-local `_start` calls the archive first-thread TLS bootstrap without claiming CRT or dynamic TLS lifecycle.",
+]
+x86_header_prerequisites = ["The project-first/pinned-musl six-profile C11/C++17 `<sys/mman.h>` matrix proves unconditional `int mlockall(int)`, `MCL_CURRENT=1`, `MCL_FUTURE=2`, and an unmangled C++ reference across strict, POSIX.1-2008, XOPEN=700, GNU, BSD, and default-source profiles. It deliberately does not select `MCL_ONFAULT` header availability, the separate `munlockall` artifact, full sys/mman.h coverage, installed-header completion, or C ABI completion. The static fixture additionally preprocesses project errno.h, sys/mman.h, sys/types.h, bits/mman.h, sys/syscall.h, and bits/syscall.h."]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-mlockall", scope = "Pinned-musl 1.2.6 C reference plus a true dependency-free x86 crabc-libc `-nostdlib -static` candidate. The gate runs the six-profile C/C++ mlockall feature/header matrix, checks exact crate-owned C object-member export closure separately from compiler-builtins, rejects dynamic interpreter/DT_NEEDED/unresolved symbols/dynamic TLS/unowned runtime dependencies, proves direct initial-TLS errno access, disassembles `mlockall=151`, and executes MCL_CURRENT stale-errno success or Linux EPERM/EAGAIN/ENOMEM resource results plus zero/unknown-flag EINVAL behavior. A raw fixture-private munlockall=152 cleanup contains only a success; it does not link the separately recorded `static-c-munlockall` artifact, per-range locking, mapping/allocator policy, process lifecycle, pthread cancellation, signals, libc.so, CRT, loader, sysroot, family completion, promotion, or public x86 support." }]
+oracle = [
+  { kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source mapping, declaration, and behavior oracle for src/mman/mlockall.c, the direct whole-process lock request; the separately recorded munlockall and per-range locking remain outside this source closure." },
+  { kind = "kernel-abi", source = "Linux 5.10 x86-64 ABI", role = "mlockall=151 one signed flag word in rdi, raw errno, MCL_CURRENT/MCL_FUTURE, memlock capability/resource policy, and fixture-private munlockall=152 cleanup contract." },
+  { kind = "elf-abi", source = "System V AMD64 psABI", role = "LP64 int calling convention and static initial-TLS fixture contract." },
+]
+
+[[family.verified_artifact]]
+id = "static-c-munlockall"
+description = "Private native x86 selected-static-archive one-symbol whole-process unlock-request artifact inside planned `libc.posix-runtime`. One dependency-free `crabc-libc` archive resolves exactly `munlockall(void)` into a freestanding C fixture after equivalent pinned-musl execution. Pinned musl 1.2.6 `src/mman/munlockall.c` forwards its zero-argument C spelling directly to Linux/x86 `munlockall=152`; two idempotent releases preserve stale `EDOM` and `ERANGE`, while Linux retains all calling-process lock-state and policy authority. The C/C++ header matrix covers the unconditional `int munlockall(void)` declaration and unmangled C++ linkage. It excludes `mlockall`, per-range `mlock`/`munlock`/`mlock2`, mapping/allocator policy, process lifecycle, pthread cancellation, signals, libc.so, CRT, dynamic TLS lifecycle, loader, sysroot, family completion, promotion, and public x86 support. This is one verified artifact within planned `libc.posix-runtime`, not C-runtime, header, or platform completion."
+source_owners = [
+  "compat/upstreams.toml",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/munlockall.rs",
+  "libc/src/c_abi/x86_64/errno.rs",
+  "libc/src/c_abi/x86_64/static_tls.rs",
+  "libc/src/c_abi/x86_64/syscall.rs",
+  "include/errno.h",
+  "include/features.h",
+  "include/sys/mman.h",
+  "include/bits/mman.h",
+  "include/sys/types.h",
+  "include/sys/syscall.h",
+  "include/bits/syscall.h",
+  "compat/x86_64/munlockall_header_abi_probe.c",
+  "compat/x86_64/munlockall_header_abi_probe.cpp",
+  "compat/x86_64/run_munlockall_header_abi.sh",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/libc_munlockall_probe.c",
+  "compat/x86_64/libc_munlockall_start.S",
+  "compat/x86_64/run_libc_munlockall.sh",
+  "compat/x86_64/aarch64_parity_inventory.py",
+  "compat/x86_64/aarch64_parity_inventory.json",
+  "compat/x86_64/tests/test_aarch64_parity_inventory.py",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "compat/x86_64/README.md",
+  "STATUS.md",
+  "x86-64.md",
+  "scripts/dev-x86_64.sh",
+  "scripts/check_structure.py",
+]
+x86_abi_prerequisites = [
+  "On Linux/x86-64, `int munlockall(void)` has no C argument registers and enters `munlockall=152` with only the syscall number in rax; the normal Linux -4095 through -1 error range maps through the selected initial-TLS errno slot. This one-symbol boundary does not make a local lock-state model or select the separate mlockall=151 request.",
+  "Pinned musl 1.2.6 `src/mman/munlockall.c` is exactly `syscall(SYS_munlockall)`: it has no flag, pointer, validation, cancellation-point route, or state bookkeeping. Linux owns the calling process's whole-process lock state and release effect; mlockall and per-range locking remain outside this source closure.",
+  "The pinned-musl and true-static fixture run in a disposable process and prove two idempotent successful munlockall=152 requests preserve stale `EDOM` then `ERANGE`. This is a direct release observation only, not evidence for acquiring locks, lock-limit behavior, MCL flags, or general memory-policy behavior.",
+  "The final static candidate has a PT_TLS errno datum with direct initial-exec TPOFF access and no TLSGD/TLSLD/TLSDESC/GOTTPOFF/DTPMOD/DTPOFF model form or `__tls_get_addr`; fixture-local `_start` calls the archive first-thread TLS bootstrap without claiming CRT or dynamic TLS lifecycle.",
+]
+x86_header_prerequisites = ["The project-first/pinned-musl six-profile C11/C++17 `<sys/mman.h>` matrix proves unconditional `int munlockall(void)` and an unmangled C++ reference across strict, POSIX.1-2008, XOPEN=700, GNU, BSD, and default-source profiles. It deliberately does not select `mlockall`, MCL flag vocabulary, full sys/mman.h coverage, installed-header completion, or C ABI completion. The static fixture additionally preprocesses project errno.h, sys/mman.h, sys/types.h, bits/mman.h, sys/syscall.h, and bits/syscall.h."]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-munlockall", scope = "Pinned-musl 1.2.6 C reference plus a true dependency-free x86 crabc-libc `-nostdlib -static` candidate. The gate runs the six-profile C/C++ munlockall feature/header matrix, checks exact crate-owned C object-member export closure separately from compiler-builtins, rejects dynamic interpreter/DT_NEEDED/unresolved symbols/dynamic TLS/unowned runtime dependencies, proves direct initial-TLS errno access, disassembles `munlockall=152`, and executes two idempotent stale-errno releases. It does not select mlockall, per-range locking, lock acquisition/limits/MCL flags, mapping/allocator policy, process lifecycle, pthread cancellation, signals, libc.so, CRT, loader, sysroot, family completion, promotion, or public x86 support." }]
+oracle = [
+  { kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source mapping, declaration, and behavior oracle for src/mman/munlockall.c, the direct whole-process release request; mlockall and per-range locking remain unselected." },
+  { kind = "kernel-abi", source = "Linux 5.10 x86-64 ABI", role = "munlockall=152 zero-argument syscall, raw errno, and calling-process whole-process lock-release effect." },
+  { kind = "elf-abi", source = "System V AMD64 psABI", role = "LP64 no-argument int return convention and static initial-TLS fixture contract." },
+]
+
+[[family.verified_artifact]]
+id = "static-c-siginterrupt"
+description = "Private native x86 selected-static-archive one-symbol legacy/XSI action-flag adapter artifact inside planned `libc.posix-runtime`. One dependency-free `crabc-libc` archive exposes exactly `siginterrupt`; its freestanding project-header C fixture first runs through pinned musl 1.2.6 and then through a true `-nostdlib -static` candidate. It translates only musl 1.2.6 `src/signal/siginterrupt.c`: direct `rt_sigaction=13` query of one existing action, nonzero `flag` clears exactly `SA_RESTART=0x10000000`, zero sets it, then a replacement action call preserves the first kernel-visible mask word and other action flags. The shared raw fixture stages a disposable SIGUSR1 handler and proves nonzero -7 clears, zero restores, `SA_NODEFER` survives, stale `E2BIG` survives success, and SIGKILL reaches Linux `EINVAL` on replacement. The dedicated project/pinned-musl C11/C++17 `<signal.h>` matrix proves exact `int siginterrupt(int, int)`, `SA_RESTART`, and unmangled C++ linkage across strict/POSIX hidden and XOPEN=700/GNU/BSD/default-source visible profiles. It also records the existing header-policy divergence: musl 1.2.6 exposes this legacy name at XOPEN=800, while the project header deliberately hides it there under its post-POSIX.1-2024 XSI rule; this leaf does not alter that global feature policy. Musl ignores a failed first query then reads uninitialized local storage, so the selected sound boundary returns that query error before replacement; it also retains the existing selected signal-action substrate's exclusion of handler-set bookkeeping, internal-signal unmasking, EINTR-validity state, and SIGABRT locking. It does not select handler installation/lifetime, general signal actions, signal masks or signal-set helpers, delivery, waits, queues, descriptors, timers, pthread policy, process control, libc.so, CRT, dynamic runtime/loader/sysroot state, signal-family completion, promotion, or public x86 support."
+source_owners = [
+  "compat/upstreams.toml",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/siginterrupt.rs",
+  "libc/src/c_abi/x86_64/signal_foundation.rs",
+  "libc/src/c_abi/x86_64/errno.rs",
+  "libc/src/c_abi/x86_64/syscall.rs",
+  "libc/src/c_abi/x86_64/static_tls.rs",
+  "include/errno.h",
+  "include/features.h",
+  "include/signal.h",
+  "include/stddef.h",
+  "include/stdint.h",
+  "include/sys/syscall.h",
+  "include/bits/alltypes.h",
+  "include/bits/syscall.h",
+  "compat/x86_64/siginterrupt_header_abi_probe.c",
+  "compat/x86_64/siginterrupt_header_abi_probe.cpp",
+  "compat/x86_64/run_siginterrupt_header_abi.sh",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/libc_siginterrupt_probe.c",
+  "compat/x86_64/libc_siginterrupt_start.S",
+  "compat/x86_64/run_libc_siginterrupt.sh",
+  "compat/x86_64/aarch64_parity_inventory.py",
+  "compat/x86_64/aarch64_parity_inventory.json",
+  "compat/x86_64/tests/test_aarch64_parity_inventory.py",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "compat/x86_64/README.md",
+  "STATUS.md",
+  "x86-64.md",
+  "scripts/dev-x86_64.sh",
+  "scripts/check_structure.py",
+]
+x86_abi_prerequisites = [
+  "System V AMD64 passes `int siginterrupt(int, int)` as signed four-byte signal and flag words in edi/esi and returns its signed four-byte status in eax. Linux/x86-64 `rt_sigaction=13` receives signal/new-action/old-action/kernel-mask-size in rdi/rsi/rdx/r10. Its compact action record is 32-byte align-eight handler/flags/restorer/mask storage; the private public x86 action record is 152-byte align-eight storage with `sa_flags` at byte 136 and a sixteen-word public mask.",
+  "Pinned musl 1.2.6 `src/signal/siginterrupt.c` is the selected MIT source mapping: `sigaction(sig, 0, &sa)`, nonzero flag `sa.sa_flags &= ~SA_RESTART`, zero flag `|= SA_RESTART`, then `sigaction(sig, &sa, 0)`. The leaf performs that two-call direct `SYS_rt_sigaction` sequence through the existing private public/kernel conversion and hidden x86 restorer, without calling or exporting C sigaction. Musl's ignored-first-query uninitialized-local path is deliberately made safe by returning the raw query error; the existing bounded action substrate's handler bookkeeping/unmask/EINTR/SIGABRT policy remains excluded.",
+  "The common pinned-musl/true-static C body uses a fixture-private raw action only to stage/query/restore disposable SIGUSR1 metadata. It proves a nonzero -7 flag clears SA_RESTART, zero sets it, SA_NODEFER and the handler persist, stale E2BIG survives success, and SIGKILL's query-then-replace returns EINVAL. The final `-nostdlib -static` candidate has a PT_TLS errno datum with direct initial-exec TPOFF access; archive-owned Static Initial TLS v1 bootstrap is fixture glue only and does not claim CRT or general TLS lifecycle.",
+]
+x86_header_prerequisites = ["The dedicated project-first/pinned-musl C11/C++17 `<signal.h>` matrix proves exact `int siginterrupt(int, int)`, SA_RESTART=0x10000000, and an unmangled C++ reference. Strict and POSIX.1-2008 profiles hide it; XOPEN=700, GNU, BSD, and default-source profiles expose it. The matrix separately ratchets the pre-existing XOPEN=800 divergence: musl 1.2.6 exposes the legacy helper, while the project header intentionally hides it under its post-POSIX.1-2024 rule. Project trace provenance is signal.h, features.h, and bits/alltypes.h. This is bounded header/static-linkage evidence, not signal-header, signal-action-family, or public-support completion."]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-siginterrupt", scope = "Pinned-musl 1.2.6 project-header C reference plus the C/C++ siginterrupt feature/header matrix and a true dependency-free x86 crabc-libc archive with a `-nostdlib -static` candidate. The gate checks project-header provenance and exact crate-owned C-object export closure separately from compiler-builtins; rejects interpreter, DT_NEEDED, unresolved symbols, dynamic TLS/unowned runtime, public sigaction/signal APIs, signal-set/mask/wait/queue/descriptor, timer, pthread, process-control, allocator, auxv, and sysconf paths; proves direct initial-TLS errno and emitted rt_sigaction=13 plus the SA_RESTART set/clear path; then executes nonzero-clear/zero-set metadata transitions, preserved SA_NODEFER/stale errno, and SIGKILL EINVAL. Fixture-private raw action staging is containment only. It does not select handler lifecycle, general action or signal runtime policy, family completion, promotion, or public x86 support." }]
+oracle = [
+  { kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source and legacy signal.h declaration oracle for src/signal/siginterrupt.c: query existing action, nonzero clear/zero set of SA_RESTART, and replacement action. The evidence records the project's deliberate XOPEN=800 post-POSIX.1-2024 header-policy divergence instead of changing it." },
+  { kind = "kernel-abi", source = "Linux 5.10 x86-64 ABI", role = "rt_sigaction=13 register placement, compact action-record layout, SA_RESTART/SA_NODEFER flags, SIGKILL replacement EINVAL, and raw errno result contract." },
+  { kind = "elf-abi", source = "System V AMD64 psABI and pinned musl x86 headers", role = "int/int C calling convention, x86 public action layout, C++ C-linkage check, hidden rt_sigreturn restorer reference, and static initial-exec TLS fixture contract." },
+]
+
 [[family]]
 id = "libc.pthread-tls"
 order = 80
@@ -8539,7 +8797,7 @@ oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ec
 
 [[family.verified_artifact]]
 id = "static-c-pthread-cpuclock"
-description = "Private native x86 static pthread CPU-clock artifact inside still-planned `libc.pthread-tls`. One dependency-free `crabc-libc` archive exposes only `pthread_getcpuclockid` for the calling bootstrapped process-main task's own `pthread_self()` handle. Musl's source reads a valid target TID from its full pthread TCB and encodes `(~tid << 3) | 6`; Static Initial TLS v1 owns no dereferenceable TCB, so this leaf first admits only its existing `%fs:0` plus Linux-TID process-main discriminator, then reads direct Linux `gettid=186` and performs the same 32-bit encoding without dereferencing any public handle. The shared fixture proves the exact returned ID and that the separately selected `clock_gettime` can read it while preserving caller errno. Null or non-self handles are candidate-only `ESRCH` diagnostics which leave the output and errno unchanged. It excludes worker, foreign, completed, or general handles; `clock_getcpuclockid` and general C clocks; scheduler or affinity attributes; lifecycle, cancellation, synchronization, TSS, a TCB/thread list, dynamic/loader TLS, CRT, sysroot, general pthread/TLS or x86-64 parity, promotion, and public x86 support."
+description = "Private native x86 static pthread CPU-clock artifact inside still-planned `libc.pthread-tls`. One dependency-free `crabc-libc` archive exposes only `pthread_getcpuclockid` for the calling bootstrapped process-main task's own `pthread_self()` handle. Musl's source reads a valid target TID from its full pthread TCB and encodes `(~tid << 3) | 6`; Static Initial TLS v1 owns no dereferenceable TCB, so this leaf first admits only its existing `%fs:0` plus Linux-TID process-main discriminator, then reads direct Linux `gettid=186` and performs the same 32-bit encoding without dereferencing any public handle. The shared fixture proves the exact returned ID and that the separately selected `clock_gettime` can read it while preserving caller errno. Null or non-self handles are candidate-only `ESRCH` diagnostics which leave the output and errno unchanged. It excludes worker, foreign, completed, or general handles; separately selected `clock_getcpuclockid` and general C clocks; scheduler or affinity attributes; lifecycle, cancellation, synchronization, TSS, a TCB/thread list, dynamic/loader TLS, CRT, sysroot, general pthread/TLS or x86-64 parity, promotion, and public x86 support."
 source_owners = [
   "compat/upstreams.toml",
   "libc/Cargo.toml",
@@ -8584,7 +8842,7 @@ x86_header_prerequisites = [
   "The fixture preprocesses project errno.h, pthread.h, stdint.h, sys/syscall.h, time.h, bits/alltypes.h, bits/syscall.h, and features.h. It proves x86 `clockid_t` is four-byte int, `pthread_getcpuclockid` has exact `int (*)(pthread_t, clockid_t *)` C linkage, Linux `SYS_gettid=186`, and `CLOCK_THREAD_CPUTIME_ID=3` without selecting general C time.",
   "The separate 28-context C/C++ pthread/C11 include-order/profile matrix ratchets the exact pthread_getcpuclockid signature and an unmangled C++ reference. It is declaration evidence only and does not select worker/foreign pthread CPU clocks, a C clock API family, or broader pthread behavior.",
 ]
-native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-pthread-cpuclock", scope = "Pinned-musl 1.2.6 project-header C reference plus a true dependency-free x86 crabc-libc archive and `-nostdlib -static` candidate. The same fixture proves bootstrapped-main pthread_self getcpuclockid success, exact gettid-derived Linux clock-ID encoding, clock_gettime acceptance, normalized observations, and preserved errno. Candidate-only null-handle ESRCH leaves its output sentinel and errno unchanged; this avoids treating musl's valid-TCB-only dereference precondition as a general invalid-handle result. Header/source/archive/final-ELF/disassembly checks require pthread_getcpuclockid, caller-self admission, direct gettid=186, the exact closed export surface, and no pthread errno publication, interpreter/DT_NEEDED/unresolved symbol, dynamic TLS resolver, allocator, or ambient runtime. It excludes worker/foreign/completed/general handles, clock_getcpuclockid/general C clocks, scheduler and affinity attributes, lifecycle/cancellation/synchronization/TSS, a TCB/thread list, dynamic/loader TLS, CRT, sysroot, family completion, promotion, and public x86 support." }]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-pthread-cpuclock", scope = "Pinned-musl 1.2.6 project-header C reference plus a true dependency-free x86 crabc-libc archive and `-nostdlib -static` candidate. The same fixture proves bootstrapped-main pthread_self getcpuclockid success, exact gettid-derived Linux clock-ID encoding, clock_gettime acceptance, normalized observations, and preserved errno. Candidate-only null-handle ESRCH leaves its output sentinel and errno unchanged; this avoids treating musl's valid-TCB-only dereference precondition as a general invalid-handle result. Header/source/archive/final-ELF/disassembly checks require pthread_getcpuclockid, caller-self admission, direct gettid=186, the exact closed export surface, and no pthread errno publication, interpreter/DT_NEEDED/unresolved symbol, dynamic TLS resolver, allocator, or ambient runtime. It excludes worker/foreign/completed/general handles, separately selected clock_getcpuclockid/general C clocks, scheduler and affinity attributes, lifecycle/cancellation/synchronization/TSS, a TCB/thread list, dynamic/loader TLS, CRT, sysroot, family completion, promotion, and public x86 support." }]
 oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source and behavior oracle for src/thread/pthread_getcpuclockid.c: a valid pthread TCB's tid field is converted to Linux's thread CPU-clock ID. The candidate records its selected self-only no-TCB boundary separately." }, { kind = "kernel-abi", source = "Linux 5.10 x86-64 ABI", role = "gettid=186 plus clock_gettime=228 acceptance of the encoded per-thread CPU-clock ID for the current task." }, { kind = "elf-abi", source = "System V AMD64 psABI and pinned musl x86 headers", role = "LP64 pointer-shaped pthread_t, int clockid_t/function-pointer ABI, and Variant-II static initial-TLS caller-self identity used by the freestanding candidate." }]
 
 [[family.verified_artifact]]
@@ -12648,6 +12906,51 @@ x86_header_prerequisites = ["The shared fixture preprocesses project malloc.h, e
 native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-allocator-observability", scope = "Pinned-musl x86 execution plus an owned-CRT/static-startup/Initial-TLS crabc candidate over the same project-header C fixture, paired with the active AArch64 crabc test `cargo test -p crabc-libc --test allocator_observability`. The x86 gate proves one strong malloc_usable_size owner over mi_usable_size; separate weak allocator ownership; exact AArch64 source/header/ELF provenance; current bounded environment/program-name/auxv startup composition; null/live/zero/small/large/calloc/aligned/realloc observations; repeated-size and errno preservation; two crabc pthread producers with post-join remote observation; one contained single-threaded raw-fork inherited/new-allocation child; static ELF/TLS and no-glibc purity; and the exact fourteen-member residual pinned-musl backend-support boundary, including a candidate-local pinned libc.lo clone that weakens only its duplicate program-name globals while retaining __libc/__hwcap. It selects only memory.allocator-observability, not memory.allocator-basic, public fork/atfork, full pthread/libc runtime closure, the fixed Rust port, promotion, or public x86 support." }]
 oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Project-header malloc_usable_size null/live/thread/fork/errno behavior oracle and the explicitly bounded residual static backend-support provider. The candidate-local clone weakens only libc.lo's duplicate __progname/__progname_full definitions while retaining __libc/__hwcap; its allocator, observer, CRT/startup/TLS, pthread, mapping, clock, and wait objects are forbidden." }, { kind = "project-contract", source = "Active Linux/AArch64 crabc-libc allocator-observability boundary", role = "The exact shared allocator_observability_mimalloc.rs source and active AArch64 runtime execution define cross-architecture public semantics and strong binding over the approved backend." }, { kind = "kernel-abi", source = "Linux 5.10 x86-64 ABI", role = "Static process entry, Variant-II FS-base TLS, selected clone/futex worker lifecycle, contained fork=57, and wait/exit behavior." }, { kind = "elf-abi", source = "System V AMD64 psABI", role = "Strong observer versus weak allocator bindings, LP64 pointer/size_t call ABI, archive ownership, static TLS, and ET_EXEC link purity." }]
 capabilities = ["memory.allocator-observability"]
+
+[[family.verified_artifact]]
+id = "static-c-basename"
+description = "Private native x86 selected-static-archive `basename` artifact inside still-planned `libc.c-abi-compat`. One direct Rust archive member first runs one unconditional project-header C body through pinned musl 1.2.6 and then through a true one-member `-nostdlib -static` candidate. It selects only musl's caller-owned mutable path scan plus weak same-address `__xpg_basename`: null or empty input returns immutable `.`, nonempty input returns one pointer into caller storage, and every trailing slash after byte zero becomes NUL before the final component offset is found. Pinned `src/misc/basename.c` invokes `strlen` from `basename.lo`; the target-local scan retains a local `black_box` byte walk so its one archive member imports no separately owned byte-string helper. `<libgen.h>` exposes exact unmangled `char *(char *)` under strict, POSIX.1-2008, X/Open 700, GNU, and BSD C/C++ profiles. This direct leaf owns no errno, TLS, locale, allocator, syscall, path lookup, normalization, static mutable buffer, filesystem, process, or runtime state. It deliberately excludes sibling `dirname`, general path behavior, libc.so, CRT, loader, sysroot, family completion, promotion, or public x86 support."
+source_owners = [
+  "compat/upstreams.toml",
+  "compat/crabc-rs/coverage.toml",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/basename.rs",
+  "include/libgen.h",
+  "compat/abi/musl-1.2.6/aarch64/libc.a.static.tsv",
+  "compat/x86_64/basename_header_abi_probe.c",
+  "compat/x86_64/basename_header_abi_probe.cpp",
+  "compat/x86_64/run_basename_header_abi.sh",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/libc_basename_probe.c",
+  "compat/x86_64/libc_basename_start.S",
+  "compat/x86_64/run_libc_basename.sh",
+  "compat/x86_64/aarch64_parity_inventory.py",
+  "compat/x86_64/aarch64_parity_inventory.json",
+  "compat/x86_64/tests/test_aarch64_parity_inventory.py",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "compat/x86_64/README.md",
+  "STATUS.md",
+  "x86-64.md",
+  "scripts/dev-x86_64.sh",
+  "scripts/check_structure.py",
+]
+x86_abi_prerequisites = [
+  "The selected SysV AMD64 LP64 C boundary passes one eight-byte mutable `char *` in rdi and returns one `char *` in rax. A non-null input must remain a writable NUL-terminated byte string through musl's backward scan and trailing-slash writes; the result aliases that input, while null and empty inputs return immutable process-static `.` storage.",
+  "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417 maps `src/misc/basename.c::basename` and `basename.lo` directly to `libc/src/c_abi/x86_64/basename.rs::basename`. Its `strlen` result starts the backward loops; the target-local `black_box` byte walk preserves that source mapping without importing a separately selected string helper, and `path.add(index).write(0)` is musl's exact `s[i] = 0` trailing-slash mutation. Musl's `weak_alias(basename, __xpg_basename)` remains one same-address weak ELF alias.",
+  "The leaf has no errno/TLS/locale/environment/process state and owns no allocator, stdio, syscall, or runtime edge. Invalid non-null pointers remain outside musl's direct-dereference contract; `dirname`, pathname lookup, normalization, path allocation, and any static mutable result buffer are deliberately unselected.",
+]
+x86_header_prerequisites = [
+  "The pinned-musl/project `<libgen.h>` C11/C++17 matrix proves strict, POSIX.1-2008, X/Open 700, GNU, and BSD profiles all retain exact `char *(char *)` with unmangled C++ linkage. The raw project pass uses `-nostdinc`/`-nostdinc++`, compiler builtin headers, and a project `libgen.h` trace; it is declaration evidence, not installed-header closure or general pathname support.",
+]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-basename", scope = "Pinned-musl project-header C execution precedes a true x86 one-member `-nostdlib -static` candidate. The C/C++ header gate ratchets unconditional x86 LP64 declaration visibility and unmangled linkage. The common fixture differentials null/empty, root, repeated and trailing slash mutation, returned final-component offsets, and weak same-address __xpg_basename behavior. Archive and final-ELF evidence require basename.lo`/`strlen` provenance, one direct owner, local `black_box` byte walk, and no interpreter/DT_NEEDED/unresolved symbol/PLT/PT_TLS/errno, calls/syscalls, byte-string helper, allocator, or ambient runtime. It rejects dirname and path lookup, normalization, filesystem, or general pathname behavior, and does not select libc.so, CRT, loader, sysroot, family completion, promotion, or public x86 support." }]
+oracle = [
+  { kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source, installed `<libgen.h>` declaration, basename.lo provenance, and C behavior oracle for src/misc/basename.c::basename: strlen-backed backward scan, null/empty dot fallback, trailing slash mutation, final-component pointer, and weak same-address __xpg_basename alias. The separately mapped dirname source remains unselected." },
+  { kind = "elf-abi", source = "System V AMD64 psABI and pinned musl libgen.h", role = "LP64 rdi mutable-char-pointer argument, rax char-pointer return, unmangled C++ linkage, weak same-address alias binding, and closed static ET_EXEC candidate contract." },
+]
 
 [[family]]
 id = "ldso.relative-relocation"

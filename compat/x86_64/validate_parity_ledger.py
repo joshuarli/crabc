@@ -50774,7 +50774,7 @@ def require_static_pthread_cpuclock_artifact(
         "candidate-only `ESRCH`",
         "output and errno unchanged",
         "worker, foreign, completed, or general handles",
-        "`clock_getcpuclockid` and general C clocks",
+        "separately selected `clock_getcpuclockid` and general C clocks",
         "scheduler or affinity attributes",
         "lifecycle, cancellation, synchronization, TSS",
         "a TCB/thread list",
@@ -50882,7 +50882,7 @@ def require_static_pthread_cpuclock_artifact(
         "no pthread errno publication",
         "interpreter/DT_NEEDED/unresolved symbol",
         "worker/foreign/completed/general handles",
-        "clock_getcpuclockid/general C clocks",
+        "separately selected clock_getcpuclockid/general C clocks",
         "scheduler and affinity attributes",
         "family completion, promotion, and public x86 support",
     ):
@@ -50898,7 +50898,6 @@ def require_static_pthread_cpuclock_artifact(
         "pthread CPU-clock static export contract is incomplete",
     )
     for unselected in (
-        "clock_getcpuclockid",
         "pthread_getschedparam",
         "pthread_setschedparam",
         "pthread_setschedprio",

@@ -191,6 +191,18 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-alarm  run the static x86 crabc-libc historical SIGALRM timer slice
   usleep-header-abi  run the x86 musl/project usleep C/C++ declaration matrix
   libc-usleep  run the static x86 crabc-libc usleep nanosleep-adapter slice
+  basename-header-abi  run the x86 musl/project basename C/C++ declaration matrix
+  siginterrupt-header-abi  run the x86 musl/project siginterrupt C/C++ declaration matrix
+  mlockall-header-abi  run the x86 musl/project mlockall C/C++ declaration matrix
+  munlockall-header-abi  run the x86 musl/project munlockall C/C++ declaration matrix
+  ftime-header-abi  run the x86 musl/project ftime C/C++ declaration matrix
+  clock-getcpuclockid-header-abi  run the x86 musl/project clock_getcpuclockid C/C++ declaration matrix
+  libc-basename  run the static x86 crabc-libc basename slice
+  libc-siginterrupt  run the static x86 crabc-libc siginterrupt slice
+  libc-mlockall  run the static x86 crabc-libc mlockall slice
+  libc-munlockall  run the static x86 crabc-libc munlockall slice
+  libc-ftime  run the static x86 crabc-libc ftime slice
+  libc-clock-getcpuclockid  run the static x86 crabc-libc clock_getcpuclockid slice
   libc-sigaddset-sigdelset-sigfillset  run the static x86 crabc-libc POSIX signal-set mutation slice
   libc-extended-attributes  run the static x86 crabc-libc extended-attribute slice
   libc-pathname-lifecycle  run the static x86 crabc-libc pathname-lifecycle slice
@@ -4176,6 +4188,7 @@ case "$command" in
     access-header-abi) ;;
     xattr-header-abi) ;;
     madvise-reference) ;;
+    basename-header-abi|siginterrupt-header-abi|mlockall-header-abi|munlockall-header-abi|ftime-header-abi|clock-getcpuclockid-header-abi|libc-basename|libc-siginterrupt|libc-mlockall|libc-munlockall|libc-ftime|libc-clock-getcpuclockid) ;;
     umask-header-abi|intrusive-queue-header-abi|getdtablesize-header-abi|membarrier-header-abi|syncfs-header-abi|confstr-header-abi|fpathconf-header-abi|pathconf-header-abi|sysconf-header-abi|libc-umask|libc-intrusive-queue|libc-getdtablesize|libc-membarrier|libc-syncfs|libc-confstr|libc-fpathconf|libc-pathconf|libc-sysconf) ;;
     ctype-header-abi|locale-profile-header-abi|locale-multibyte-header-abi|iconv-header-abi|wide-character-header-abi|wcswcs-header-abi|locale-object-wide-header-abi|locale-narrow-header-abi) ;;
     integer-arithmetic-header-abi|integer-parse-header-abi|float-parse-header-abi|getsubopt-header-abi|l64a-header-abi|intmax-arithmetic-header-abi|credential-observation-header-abi|login-name-header-abi|child-reaping-header-abi|immediate-termination-header-abi|sched-getcpu-header-abi|sched-yield-header-abi|bsearch-header-abi|linear-search-header-abi|intrusive-queue-header-abi|qsort-header-abi|callback-algorithms-header-abi) ;;
@@ -6267,6 +6280,66 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "libc-usleep takes no arguments"
         ensure_image
         run_libc_usleep_probe
+        ;;
+    basename-header-abi)
+        [ "$#" -eq 0 ] || fail "basename-header-abi takes no arguments"
+        ensure_image
+        run_in_container bash /workspace/compat/x86_64/run_basename_header_abi.sh
+        ;;
+    siginterrupt-header-abi)
+        [ "$#" -eq 0 ] || fail "siginterrupt-header-abi takes no arguments"
+        ensure_image
+        run_in_container bash /workspace/compat/x86_64/run_siginterrupt_header_abi.sh
+        ;;
+    mlockall-header-abi)
+        [ "$#" -eq 0 ] || fail "mlockall-header-abi takes no arguments"
+        ensure_image
+        run_in_container bash /workspace/compat/x86_64/run_mlockall_header_abi.sh
+        ;;
+    munlockall-header-abi)
+        [ "$#" -eq 0 ] || fail "munlockall-header-abi takes no arguments"
+        ensure_image
+        run_in_container bash /workspace/compat/x86_64/run_munlockall_header_abi.sh
+        ;;
+    ftime-header-abi)
+        [ "$#" -eq 0 ] || fail "ftime-header-abi takes no arguments"
+        ensure_image
+        run_in_container bash /workspace/compat/x86_64/run_ftime_header_abi.sh
+        ;;
+    clock-getcpuclockid-header-abi)
+        [ "$#" -eq 0 ] || fail "clock-getcpuclockid-header-abi takes no arguments"
+        ensure_image
+        run_in_container bash /workspace/compat/x86_64/run_clock_getcpuclockid_header_abi.sh
+        ;;
+    libc-basename)
+        [ "$#" -eq 0 ] || fail "libc-basename takes no arguments"
+        ensure_image
+        run_in_container bash /workspace/compat/x86_64/run_libc_basename.sh
+        ;;
+    libc-siginterrupt)
+        [ "$#" -eq 0 ] || fail "libc-siginterrupt takes no arguments"
+        ensure_image
+        run_in_container bash /workspace/compat/x86_64/run_libc_siginterrupt.sh
+        ;;
+    libc-mlockall)
+        [ "$#" -eq 0 ] || fail "libc-mlockall takes no arguments"
+        ensure_image
+        run_in_container bash /workspace/compat/x86_64/run_libc_mlockall.sh
+        ;;
+    libc-munlockall)
+        [ "$#" -eq 0 ] || fail "libc-munlockall takes no arguments"
+        ensure_image
+        run_in_container bash /workspace/compat/x86_64/run_libc_munlockall.sh
+        ;;
+    libc-ftime)
+        [ "$#" -eq 0 ] || fail "libc-ftime takes no arguments"
+        ensure_image
+        run_in_container bash /workspace/compat/x86_64/run_libc_ftime.sh
+        ;;
+    libc-clock-getcpuclockid)
+        [ "$#" -eq 0 ] || fail "libc-clock-getcpuclockid takes no arguments"
+        ensure_image
+        run_in_container bash /workspace/compat/x86_64/run_libc_clock_getcpuclockid.sh
         ;;
     libc-sigaddset-sigdelset-sigfillset)
         [ "$#" -eq 0 ] || fail "libc-sigaddset-sigdelset-sigfillset takes no arguments"
