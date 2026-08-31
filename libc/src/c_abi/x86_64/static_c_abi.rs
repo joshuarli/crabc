@@ -98,7 +98,8 @@
 //! artifact, one bounded pathname-mutation/lifecycle artifact, one distinct
 //! caller-buffered descriptor-relative readlinkat leaf, one distinct
 //! caller-supplied-directory hard-link linkat leaf, and one bounded
-//! directory-stream/raw-directory artifact.
+//! no-follow pathname-ownership lchown leaf, and one bounded directory-stream/
+//! raw-directory artifact.
 //! The fixed-graph dlfcn bridge is a separate public-C spelling over the
 //! loader-owned immutable RuntimeV1-prefix record. It owns only bounded
 //! per-thread diagnostics and borrowed C views of copied loader metadata; it
@@ -467,6 +468,8 @@ mod pathname_lifecycle;
 mod readlinkat;
 #[path = "linkat.rs"]
 mod linkat;
+#[path = "lchown.rs"]
+mod lchown;
 #[path = "directory_streams.rs"]
 mod directory_streams;
 #[path = "system_observation.rs"]

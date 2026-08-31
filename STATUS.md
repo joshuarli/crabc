@@ -1652,6 +1652,20 @@ flags `EINVAL`. It excludes ordinary `link`, every other *at entry, pathname/
 CWD/namespace policy, directory streams, allocation, cancellation, a Rust
 facade, filesystem capability completion, promotion, and public x86 support.
 
+`./scripts/dev-x86_64.sh lchown-header-abi` is a separate eight-profile
+C11/C++17 project-header/pinned-musl declaration gate for unconditional
+`lchown(const char *, uid_t, gid_t)`, x86 four-byte unsigned `uid_t`/`gid_t`
+spelling, and unmangled C++ linkage. Its paired private
+`./scripts/dev-x86_64.sh libc-lchown` artifact selects only musl 1.2.6's
+direct Linux x86-64 `lchown=94` branch. A raw-owned fixture creates and
+observes a dangling symlink, then uses all-ones no-change owner/group words:
+candidate stale-errno success and one raw request establish final-component
+no-follow behavior without requiring `CAP_CHOWN`; missing/empty `ENOENT` and
+null `EFAULT` are pinned too. It excludes `chown`, `fchown`, `fchownat`,
+musl's non-x86 fallback, credential/ownership policy, another pathname entry,
+pathname/CWD/namespace policy, allocation, a Rust facade, filesystem
+capability completion, promotion, and public x86 support.
+
 `./scripts/dev-x86_64.sh libc-descriptor-lifecycle` is a separate private
 `static-c-descriptor-lifecycle` composition artifact inside that same planned
 family. It runs one project-header C body through pinned musl and then a

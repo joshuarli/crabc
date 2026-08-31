@@ -15978,6 +15978,298 @@ def require_linkat_artifact(family: Mapping[str, Any]) -> None:
         require(snippet in runner, f"linkat runner omits {snippet}")
 
 
+def require_lchown_artifact(family: Mapping[str, Any]) -> None:
+    """Keep musl's direct no-follow pathname-ownership leaf self-contained."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.posix-runtime].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [entry for entry in artifacts if entry.get("id") == "static-c-lchown"]
+    require(
+        len(matching) == 1,
+        "libc.posix-runtime must contain exactly one static-c-lchown artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-lchown must not promote libc.posix-runtime",
+    )
+    artifact = matching[0]
+    require(
+        "capabilities" not in artifact,
+        "static-c-lchown must remain a private artifact rather than a capability",
+    )
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for phrase in (
+        "selected-static-archive `lchown`",
+        "still-planned `libc.posix-runtime`",
+        "pinned musl 1.2.6",
+        "`-nostdlib -static`",
+        "lchown=94",
+        "final component does not follow a symlink",
+        "dangling symlink",
+        "all-ones `uid_t`/`gid_t` no-change words",
+        "stale errno",
+        "CAP_CHOWN",
+        "ENOENT",
+        "EFAULT",
+        "`chown`",
+        "`fchown`",
+        "`fchownat`",
+        "musl's non-x86 fallback",
+        "another pathname entry",
+        "pathname lifecycle family",
+        "public x86 support",
+    ):
+        require(phrase in description, f"static-c-lchown description omits {phrase}")
+
+    owners = set(nonempty_strings(artifact["source_owners"], "static-c-lchown.source_owners"))
+    for owner in (
+        "COMPATIBILITY-PROFILE.md",
+        "compat/upstreams.toml",
+        "libc/Cargo.toml",
+        "libc/src/lib.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/lchown.rs",
+        "libc/src/c_abi/x86_64/errno.rs",
+        "libc/src/c_abi/x86_64/syscall.rs",
+        "libc/src/c_abi/x86_64/static_tls.rs",
+        "include/errno.h",
+        "include/fcntl.h",
+        "include/stdint.h",
+        "include/sys/stat.h",
+        "include/sys/syscall.h",
+        "include/sys/types.h",
+        "include/unistd.h",
+        "include/bits/alltypes.h",
+        "include/bits/fcntl.h",
+        "include/bits/stat.h",
+        "include/bits/syscall.h",
+        "compat/abi/musl-1.2.6/aarch64/libc.a.static.tsv",
+        "compat/x86_64/lchown_header_abi_probe.c",
+        "compat/x86_64/lchown_header_abi_probe.cpp",
+        "compat/x86_64/run_lchown_header_abi.sh",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/libc_lchown_probe.c",
+        "compat/x86_64/libc_lchown_start.S",
+        "compat/x86_64/run_libc_lchown.sh",
+        "compat/x86_64/aarch64_parity_inventory.py",
+        "compat/x86_64/aarch64_parity_inventory.json",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/README.md",
+        "STATUS.md",
+        "x86-64.md",
+        "scripts/dev-x86_64.sh",
+        "scripts/check_structure.py",
+    ):
+        require(owner in owners, f"static-c-lchown source owners omit {owner}")
+
+    prerequisites = nonempty_strings(
+        artifact["x86_abi_prerequisites"], "static-c-lchown.x86_abi_prerequisites"
+    )
+    require(
+        any(
+            "lchown=94" in item
+            and "rdi" in item
+            and "rsi" in item
+            and "rdx" in item
+            and "-4095" in item
+            and "initial-TLS errno" in item
+            for item in prerequisites
+        ),
+        "static-c-lchown must record its Linux syscall register ABI",
+    )
+    require(
+        any(
+            "src/unistd/lchown.c" in item
+            and "#ifdef SYS_lchown" in item
+            and "syscall(SYS_lchown, path, uid, gid)" in item
+            and "SYS_fchownat" in item
+            and "AT_FDCWD" in item
+            and "AT_SYMLINK_NOFOLLOW" in item
+            and "Linux 5.10" in item
+            for item in prerequisites
+        ),
+        "static-c-lchown must record its direct pinned-musl mapping and excluded fallback",
+    )
+    require(
+        any(
+            "raw-creates" in item
+            and "dangling symlink" in item
+            and "UINT32_MAX" in item
+            and "no-change" in item
+            and "stale errno" in item
+            and "CAP_CHOWN" in item
+            and "ENOENT" in item
+            and "EFAULT" in item
+            and "AT_FDCWD" in item
+            and "another pathname entry" in item
+            for item in prerequisites
+        ),
+        "static-c-lchown must retain its bounded no-follow ownership proof",
+    )
+    require(
+        any(
+            "PT_TLS errno datum" in item
+            and "initial-exec TPOFF" in item
+            and "__tls_get_addr" in item
+            for item in prerequisites
+        ),
+        "static-c-lchown must record its static TLS boundary",
+    )
+
+    headers = nonempty_strings(
+        artifact["x86_header_prerequisites"], "static-c-lchown.x86_header_prerequisites"
+    )
+    require(
+        any(
+            "eight-profile" in item
+            and "unistd.h" in item
+            and "lchown(const char *, uid_t, gid_t)" in item
+            and "four-byte unsigned uid_t/gid_t" in item
+            and "All eight" in item
+            and "none hides it" in item
+            and "unmangled C++" in item
+            for item in headers
+        ),
+        "static-c-lchown must retain its unconditional project-header ABI boundary",
+    )
+
+    static_exports = set(
+        static_c_abi_export_names(ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt")
+    )
+    require("lchown" in static_exports, "static-c-lchown must export lchown")
+    for forbidden in ("chown", "fchown", "fchownat"):
+        require(
+            forbidden not in static_exports,
+            f"static-c-lchown must not add {forbidden}",
+        )
+    static_root = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+    ).read_text(encoding="utf-8")
+    require(
+        '#[path = "lchown.rs"]\nmod lchown;' in static_root,
+        "x86 static C ABI must compose the lchown leaf",
+    )
+    implementation = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "lchown.rs"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "src/unistd/lchown.c",
+        "syscall(SYS_lchown, path, uid, gid)",
+        "fn lchown",
+        "raw_syscall::SYS_LCHOWN",
+        "raw_syscall::syscall3(",
+        "i64::from(owner)",
+        "i64::from(group)",
+        "c_status(result)",
+        "lchown=94",
+    ):
+        require(snippet in implementation, f"lchown leaf omits {snippet}")
+    for forbidden in (
+        "raw_syscall::SYS_FCHOWNAT",
+        "const AT_FDCWD",
+        "const AT_SYMLINK_NOFOLLOW",
+        "fn chown(",
+        "fn fchown(",
+        "fn fchownat(",
+        "crabc_core",
+        "mimalloc",
+        "alloc::",
+        "Vec<",
+    ):
+        require(
+            forbidden not in implementation,
+            f"lchown leaf unexpectedly contains {forbidden}",
+        )
+    syscall_source = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "syscall.rs"
+    ).read_text(encoding="utf-8")
+    require(
+        "pub(crate) const SYS_LCHOWN: i64 = 94;" in syscall_source,
+        "x86 syscall table must retain lchown=94",
+    )
+
+    oracle = artifact["oracle"]
+    assert isinstance(oracle, list)
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "c-posix"
+            and isinstance(entry.get("role"), str)
+            and "include/unistd.h" in entry["role"]
+            and "src/unistd/lchown.c" in entry["role"]
+            and "#ifdef SYS_lchown" in entry["role"]
+            and "return syscall(SYS_lchown, path, uid, gid);" in entry["role"]
+            and "SYS_fchownat" in entry["role"]
+            for entry in oracle
+        ),
+        "static-c-lchown must retain its pinned-musl lchown source mapping",
+    )
+
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence} == {"./scripts/dev-x86_64.sh libc-lchown"},
+        "static-c-lchown must use the dedicated native command",
+    )
+    scope = evidence[0].get("scope")
+    require(
+        isinstance(scope, str)
+        and all(
+            phrase in scope
+            for phrase in (
+                "`-nostdlib -static`",
+                "all eight visible and none hidden",
+                "lchown=94",
+                "rdi/rsi/rdx",
+                "dangling symlink",
+                "UINT32_MAX",
+                "no-change",
+                "CAP_CHOWN",
+                "stale-errno success",
+                "ENOENT",
+                "EFAULT",
+                "chown",
+                "fchown",
+                "fchownat",
+                "public x86 support",
+            )
+        ),
+        "static-c-lchown evidence must retain its exact static no-follow regression",
+    )
+    header_runner = (
+        ROOT / "compat" / "x86_64" / "run_lchown_header_abi.sh"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "MUSL_ROOT=/opt/musl-1.2.6",
+        "EXPECTED_PROFILE_COUNT=8",
+        "EXPECTED_VISIBLE_PROFILE_COUNT=8",
+        "EXPECTED_HIDDEN_PROFILE_COUNT=0",
+        "unistd.h",
+        "lchown",
+        "unmangled",
+    ):
+        require(snippet in header_runner, f"lchown header runner omits {snippet}")
+    runner = (ROOT / "compat" / "x86_64" / "run_libc_lchown.sh").read_text(
+        encoding="utf-8"
+    )
+    for snippet in (
+        "run_musl_oracle.sh",
+        "run_lchown_header_abi.sh",
+        "-nostdlib -static",
+        "--no-undefined",
+        "assert_selected_c_abi_surface",
+        "lchown=94",
+        "CRABC_LCHOWN_FREESTANDING",
+        "lchown candidate exports an unselected ownership or pathname entry",
+    ):
+        require(snippet in runner, f"lchown runner omits {snippet}")
+
+
 def require_static_sched_yield_artifact(family: Mapping[str, Any]) -> None:
     """Keep musl's status-returning POSIX scheduler-yield closure bounded."""
 
@@ -42355,6 +42647,7 @@ def validate_ledger(
     require_static_sched_getcpu_artifact(by_id["libc.posix-runtime"])
     require_readlinkat_artifact(by_id["libc.posix-runtime"])
     require_linkat_artifact(by_id["libc.posix-runtime"])
+    require_lchown_artifact(by_id["libc.posix-runtime"])
     require_callback_algorithms_artifact(by_id["libc.posix-runtime"])
     require_clock_gettime_artifact(by_id["libc.posix-runtime"])
     require_time_observation_artifact(by_id["libc.posix-runtime"])
