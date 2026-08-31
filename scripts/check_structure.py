@@ -231,6 +231,7 @@ X86_RUNTIME_FOUNDATION_LIBC_SOURCES = {
     Path("libc/src/c_abi/x86_64/readiness_waits.rs"),
     Path("libc/src/c_abi/x86_64/setjmp.rs"),
     Path("libc/src/c_abi/x86_64/signal_control.rs"),
+    Path("libc/src/c_abi/x86_64/signal_realtime_max.rs"),
     Path("libc/src/c_abi/x86_64/signal_pending.rs"),
     Path("libc/src/c_abi/x86_64/signal_set_mutation.rs"),
     Path("libc/src/c_abi/x86_64/signal_execution.rs"),
@@ -3741,6 +3742,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         '#[path = "setjmp.rs"]',
         '#[path = "signal_foundation.rs"]',
         '#[path = "signal_control.rs"]',
+        '#[path = "signal_realtime_max.rs"]',
         '#[path = "signal_pending.rs"]',
         '#[path = "signal_set_mutation.rs"]',
         '#[path = "signal_execution.rs"]',
@@ -4664,7 +4666,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         "RESERVED_SIGNAL_MASK",
         "pack_public_action",
         "unpack_kernel_action",
-        "SIGRTMAX: c_int = 64",
+        "APPLICATION_SIGNAL_MAX: c_int = 64",
     ):
         if required not in signal_control_text:
             errors.append(
@@ -4683,13 +4685,56 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         "sigemptyset",
         "sigismember",
         "sigprocmask",
-        "__libc_current_sigrtmax",
     }
     if signal_exports != expected_signal_exports:
         errors.append(
             "libc/src/c_abi/x86_64/signal_control.rs: selected static signal "
             "artifact must export only simple action/set/mask symbols"
         )
+
+    signal_realtime_max_source = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "signal_realtime_max.rs"
+    )
+    signal_realtime_max_text = signal_realtime_max_source.read_text(errors="replace")
+    for required in (
+        "Selected static Linux/x86-64 realtime signal maximum C ABI boundary",
+        "src/signal/sigrtmax.c",
+        "_NSIG-1",
+        "X86_NSIG: c_int = 65",
+        "X86_SIGRTMAX: c_int = X86_NSIG - 1",
+    ):
+        if required not in signal_realtime_max_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/signal_realtime_max.rs: selected static "
+                f"realtime-maximum bridge is missing {required!r}"
+            )
+    signal_realtime_max_exports = set(
+        re.findall(
+            r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(',
+            signal_realtime_max_text,
+        )
+    )
+    if signal_realtime_max_exports != {"__libc_current_sigrtmax"}:
+        errors.append(
+            "libc/src/c_abi/x86_64/signal_realtime_max.rs: selected static "
+            "artifact must export only __libc_current_sigrtmax"
+        )
+    for forbidden in (
+        "raw_syscall",
+        "errno",
+        "sigaction",
+        "sigprocmask",
+        "sigpending",
+        "sigwait",
+        "signalfd",
+        "timerfd",
+        "pthread_",
+    ):
+        if forbidden in signal_realtime_max_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/signal_realtime_max.rs: selected static "
+                f"realtime-maximum bridge must not select {forbidden!r}"
+            )
 
     signal_pending_source = (
         ROOT / "libc" / "src" / "c_abi" / "x86_64" / "signal_pending.rs"
@@ -10172,6 +10217,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         shared_getopt_text,
         fenv_text,
         signal_control_text,
+        signal_realtime_max_text,
         signal_pending_text,
         signal_set_mutation_text,
         signal_execution_text,
@@ -10771,6 +10817,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         ("setjmp.rs", setjmp_text),
         ("signal_foundation.rs", signal_foundation_text),
         ("signal_control.rs", signal_control_text),
+        ("signal_realtime_max.rs", signal_realtime_max_text),
         ("signal_pending.rs", signal_pending_text),
         ("signal_set_mutation.rs", signal_set_mutation_text),
         ("signal_execution.rs", signal_execution_text),

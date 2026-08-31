@@ -16,8 +16,9 @@
 //! `math.special` error/Bessel/gamma/decomposition/stepping/scaling/conversion
 //! block with binary80 preserved end to end, plus deliberately narrow simple
 //! signal action/mask and one direct pending-state observation, one three-symbol
-//! POSIX signal-set mutation leaf, one pure GNU signal-set predicate, one paired GNU
-//! signal-set binary-operation leaf, bounded process-signal execution, a direct
+//! POSIX signal-set mutation leaf, one pure GNU signal-set predicate, one
+//! paired GNU signal-set binary-operation leaf, one fixed realtime-maximum
+//! macro bridge, bounded process-signal execution, a direct
 //! legacy single-signal pause wait, and fixed-minimum
 //! alternate signal-stack behavior,
 //! plus direct timer-descriptor
@@ -274,6 +275,8 @@ mod setjmp;
 mod signal_foundation;
 #[path = "signal_control.rs"]
 mod signal_control;
+#[path = "signal_realtime_max.rs"]
+mod signal_realtime_max;
 #[path = "signal_pending.rs"]
 mod signal_pending;
 #[path = "signal_set_mutation.rs"]

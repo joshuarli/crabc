@@ -153,6 +153,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-sigisemptyset  run the static x86 crabc-libc GNU signal-set predicate slice
   libc-sigandset-sigorset  run the static x86 crabc-libc GNU signal-set binary slice
   libc-sigpending  run the static x86 crabc-libc POSIX pending-signal slice
+  libc-sigrtmax  run the static x86 crabc-libc realtime-maximum ABI bridge slice
   libc-sigaddset-sigdelset-sigfillset  run the static x86 crabc-libc POSIX signal-set mutation slice
   libc-extended-attributes  run the static x86 crabc-libc extended-attribute slice
   libc-pathname-lifecycle  run the static x86 crabc-libc pathname-lifecycle slice
@@ -497,6 +498,12 @@ eight-byte kernel word, preserves the fifteen-word public tail, and maps raw
 errors through initial-TLS errno. Fixture-only raw block/delivery setup creates
 one pending `SIGUSR1`; it does not select a C mask/action/delivery/wait API,
 descriptors, timers, pthread behavior, dynamic libc, or application startup.
+`libc-sigrtmax` is a separate one-entry realtime-maximum ABI bridge. It is
+the exact musl x86 `_NSIG - 1` return: `_NSIG=65` makes direct
+`__libc_current_sigrtmax()` and the public `SIGRTMAX` macro return 64 without
+storage, errno writes, calls, or syscalls. It does not select realtime-signal
+minimum semantics, delivery, actions, masks, waits, descriptors, timers,
+pthread behavior, dynamic libc, or application startup.
 `libc-sigaddset-sigdelset-sigfillset` is a separate three-entry POSIX
 signal-set mutation boundary. It follows musl's one-word x86 helpers: fill
 writes `0xfffffffc7fffffff`, while add/delete reject 0, 32--34, and 65 with
@@ -2406,6 +2413,10 @@ run_libc_sigpending_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_sigpending.sh
 }
 
+run_libc_sigrtmax_probe() {
+    run_in_container bash /workspace/compat/x86_64/run_libc_sigrtmax.sh
+}
+
 run_libc_sigset_mutation_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_sigaddset_sigdelset_sigfillset.sh
 }
@@ -3714,7 +3725,7 @@ shift
 
 case "$command" in
     timerfd-header-abi|signalfd-header-abi) ;;
-    libc-timerfd|libc-signalfd|libc-sigpause|libc-sigisemptyset|libc-sigandset-sigorset|libc-sigpending|libc-sigaddset-sigdelset-sigfillset) ;;
+    libc-timerfd|libc-signalfd|libc-sigpause|libc-sigisemptyset|libc-sigandset-sigorset|libc-sigpending|libc-sigrtmax|libc-sigaddset-sigdelset-sigfillset) ;;
     ctermid-header-abi|gethostid-header-abi|isatty-header-abi|tcgetpgrp-header-abi|tcsetpgrp-header-abi|getpass-header-abi|libc-ctermid|libc-gethostid|libc-isatty|libc-tcgetpgrp|libc-tcsetpgrp|libc-getpass|mkfifo-header-abi|mkfifoat-header-abi|libc-mkfifo|libc-mkfifoat|mktemp-header-abi|libc-mktemp) ;;
     stdio-permanent-line-io-header-abi|stdio-octal-hex-scan-header-abi) ;;
     math-complex-complete-header-abi|libc-math-complex-complete) ;;
@@ -5527,6 +5538,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "libc-sigpending takes no arguments"
         ensure_image
         run_libc_sigpending_probe
+        ;;
+    libc-sigrtmax)
+        [ "$#" -eq 0 ] || fail "libc-sigrtmax takes no arguments"
+        ensure_image
+        run_libc_sigrtmax_probe
         ;;
     libc-sigaddset-sigdelset-sigfillset)
         [ "$#" -eq 0 ] || fail "libc-sigaddset-sigdelset-sigfillset takes no arguments"

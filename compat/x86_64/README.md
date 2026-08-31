@@ -392,6 +392,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-sigisemptyset
 ./scripts/dev-x86_64.sh libc-sigandset-sigorset
 ./scripts/dev-x86_64.sh libc-sigpending
+./scripts/dev-x86_64.sh libc-sigrtmax
 ./scripts/dev-x86_64.sh libc-sigaddset-sigdelset-sigfillset
 ./scripts/dev-x86_64.sh libc-static-tls-v1
 ./scripts/dev-x86_64.sh libc-crt-static-tls
@@ -2863,6 +2864,18 @@ keep the POSIX declaration and unmangled linkage. It does not select
 handlers/actions, signal masks, process signaling, waits, queues, descriptors,
 timers, pthread policy, signal-family completion, AArch64 parity, promotion,
 or public x86 support.
+
+`libc-sigrtmax` is a separate `static-c-sigrtmax` `verified_artifact` within
+planned `libc.posix-runtime`. Its one-symbol C body first runs through pinned
+musl 1.2.6 and then through a true `-nostdlib -static` candidate. It maps only
+musl's `src/signal/sigrtmax.c`: x86 `_NSIG=65` makes
+`__libc_current_sigrtmax()` and the public `SIGRTMAX` macro return 64. The
+fixture proves direct/macro results, a repeated equality, stale `errno`, and
+no call or syscall; the common C signal-header gate and a C++17 POSIX/GNU
+matrix retain the POSIX-family C signature and unmangled
+references. It does not select `SIGRTMIN`, delivery, actions, masks, process
+signaling, waits, queues, descriptors, timers, pthread policy, signal-family
+completion, AArch64 parity, promotion, or public x86 support.
 
 `libc-sigaddset-sigdelset-sigfillset` is a separate
 `static-c-sigset-mutation` `verified_artifact` within planned

@@ -49,6 +49,8 @@ _Static_assert(__builtin_types_compatible_p(__typeof__(&sigfillset),
     int (*)(sigset_t *)), "POSIX sigfillset declaration");
 _Static_assert(__builtin_types_compatible_p(__typeof__(&sigpending),
     int (*)(sigset_t *)), "POSIX sigpending declaration");
+_Static_assert(__builtin_types_compatible_p(__typeof__(&__libc_current_sigrtmax),
+    int (*)(void)), "POSIX realtime-maximum bridge declaration");
 
 /* Compiled only by the expected-failure GNU-extension visibility check. */
 #if defined(CRABC_REQUIRE_SIGISEMPTYSET_HIDDEN)

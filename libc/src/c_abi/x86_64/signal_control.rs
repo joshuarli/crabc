@@ -4,7 +4,7 @@
 //! revision `9fa28ece75d8a2191de7c5bb53bed224c5947417` under musl's MIT
 //! license. Its source mapping is `src/signal/sigaction.c` (validation,
 //! action conversion, and partial old-action writes), `signal.c`,
-//! `sigemptyset.c`, `sigismember.c`, and `sigrtmax.c`;
+//! `sigemptyset.c`, and `sigismember.c`;
 //! `sigprocmask.c` supplies its public errno convention while
 //! `src/thread/pthread_sigmask.c` supplies the one-word syscall and returned
 //! reserved-bit filtering. It reuses the x86 `SA_RESTORER`/`rt_sigreturn`
@@ -35,7 +35,7 @@ use super::{
 
 const EINVAL: c_int = 22;
 const SIG_ERR: usize = usize::MAX;
-const SIGRTMAX: c_int = 64;
+const APPLICATION_SIGNAL_MAX: c_int = 64;
 const SA_RESTART: i32 = 0x1000_0000;
 const RESERVED_SIGNAL_MASK: u64 = (1_u64 << 31) | (1_u64 << 32) | (1_u64 << 33);
 
@@ -48,7 +48,7 @@ fn invalid_argument() -> c_int {
 
 #[inline]
 fn is_application_signal(signal: c_int) -> bool {
-    signal > 0 && signal <= SIGRTMAX && !(32..=34).contains(&signal)
+    signal > 0 && signal <= APPLICATION_SIGNAL_MAX && !(32..=34).contains(&signal)
 }
 
 /// Install or query one application signal disposition through Linux.
@@ -181,7 +181,7 @@ pub unsafe extern "C" fn sigemptyset(set: *mut c_void) -> c_int {
 /// `set` must point to readable storage for one x86 public `sigset_t`.
 #[no_mangle]
 pub unsafe extern "C" fn sigismember(set: *const c_void, signal: c_int) -> c_int {
-    if signal <= 0 || signal > SIGRTMAX {
+    if signal <= 0 || signal > APPLICATION_SIGNAL_MAX {
         return 0;
     }
     // SAFETY: the C caller owns the readable public-set storage.
@@ -234,10 +234,4 @@ pub unsafe extern "C" fn sigprocmask(
         };
     }
     0
-}
-
-/// Return musl's fixed x86 application realtime upper bound.
-#[no_mangle]
-pub extern "C" fn __libc_current_sigrtmax() -> c_int {
-    SIGRTMAX
 }

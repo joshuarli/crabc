@@ -1662,6 +1662,18 @@ It does not select handlers/actions, signal masks, process signaling, waits,
 queues, descriptors, timers, pthread policy, libc.so, CRT, loader, sysroot,
 family/platform parity, promotion, or public x86 support.
 
+`./scripts/dev-x86_64.sh libc-sigrtmax` is a separate private
+`static-c-sigrtmax` artifact inside planned `libc.posix-runtime`. Its
+one-symbol pinned-musl/freestanding-static C proof follows
+`src/signal/sigrtmax.c`: x86 `_NSIG=65` makes the POSIX-family
+`__libc_current_sigrtmax(void)` bridge and the public `SIGRTMAX` macro return
+64. It proves direct/macro equality, a repeated result, stale `errno`, and no
+call or syscall; the shared C signal gate plus C++17 POSIX/GNU matrix retain
+the exact unmangled declaration. It does not select `SIGRTMIN`,
+handlers/actions, masks, process signaling, waits, queues, descriptors,
+timers, pthread policy, libc.so, CRT, loader, sysroot, family/platform parity,
+promotion, or public x86 support.
+
 `./scripts/dev-x86_64.sh libc-sigaddset-sigdelset-sigfillset` is a separate
 private `static-c-sigset-mutation` artifact inside planned
 `libc.posix-runtime`. Its three-symbol pinned-musl/freestanding-static C proof

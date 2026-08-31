@@ -18159,6 +18159,188 @@ def require_sigpending_artifact(family: Mapping[str, Any]) -> None:
     )
 
 
+def require_sigrtmax_artifact(family: Mapping[str, Any]) -> None:
+    """Keep the internal realtime-maximum bridge below signal promotion."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.posix-runtime].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [entry for entry in artifacts if entry.get("id") == "static-c-sigrtmax"]
+    require(
+        len(matching) == 1,
+        "libc.posix-runtime must contain exactly one static-c-sigrtmax artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-sigrtmax must not promote libc.posix-runtime",
+    )
+    artifact = matching[0]
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for phrase in (
+        "one-symbol realtime signal maximum macro-bridge artifact",
+        "planned `libc.posix-runtime`",
+        "exactly `__libc_current_sigrtmax`",
+        "`src/signal/sigrtmax.c`",
+        "`_NSIG-1`",
+        "`_NSIG=65`",
+        "`SIGRTMAX` macro",
+        "stale errno",
+        "C GNU/POSIX gate and paired C++17 POSIX/GNU feature matrix",
+        "no caller storage, syscall, or call path",
+        "`SIGRTMIN`/`__libc_current_sigrtmin`",
+        "handlers/actions",
+        "signal masks",
+        "process signaling",
+        "waits, queues, descriptors, timers",
+        "pthread policy",
+        "signal-family completion, promotion, or public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"static-c-sigrtmax description omits {phrase}",
+        )
+    owners = set(
+        nonempty_strings(artifact["source_owners"], "static-c-sigrtmax.source_owners")
+    )
+    for owner in (
+        "compat/upstreams.toml",
+        "libc/Cargo.toml",
+        "libc/src/lib.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/signal_realtime_max.rs",
+        "libc/src/c_abi/x86_64/signal_control.rs",
+        "libc/src/c_abi/x86_64/errno.rs",
+        "libc/src/c_abi/x86_64/static_tls.rs",
+        "include/errno.h",
+        "include/signal.h",
+        "include/bits/alltypes.h",
+        "compat/x86_64/signal_header_abi_probe.c",
+        "compat/x86_64/signal_header_posix_abi_probe.c",
+        "compat/x86_64/run_signal_header_abi.sh",
+        "compat/x86_64/sigrtmax_header_abi_probe.cpp",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/libc_sigrtmax_probe.c",
+        "compat/x86_64/libc_sigrtmax_start.S",
+        "compat/x86_64/run_libc_sigrtmax.sh",
+        "compat/x86_64/aarch64_parity_inventory.py",
+        "compat/x86_64/aarch64_parity_inventory.json",
+        "compat/x86_64/tests/test_aarch64_parity_inventory.py",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/README.md",
+        "STATUS.md",
+        "x86-64.md",
+        "scripts/dev-x86_64.sh",
+        "scripts/check_structure.py",
+    ):
+        require(owner in owners, f"static-c-sigrtmax source owners omit {owner}")
+    prerequisites = nonempty_strings(
+        artifact["x86_abi_prerequisites"],
+        "static-c-sigrtmax.x86_abi_prerequisites",
+    )
+    require(
+        any(
+            "int __libc_current_sigrtmax(void)" in item
+            and "eax" in item
+            and "`_NSIG=65`" in item
+            and "no pointer, storage, syscall, or error-state ABI" in item
+            for item in prerequisites
+        ),
+        "static-c-sigrtmax must retain its exact x86 no-argument ABI",
+    )
+    require(
+        any(
+            "src/signal/sigrtmax.c" in item
+            and "returns `_NSIG-1`" in item
+            and "signal.h declaration is POSIX-family-visible" in item
+            and "sigrtmin.c" in item
+            for item in prerequisites
+        ),
+        "static-c-sigrtmax must retain its pinned-musl source closure",
+    )
+    require(
+        any(
+            "direct 64" in item
+            and "macro-mediated 64" in item
+            and "stale ERANGE" in item
+            and "Static Initial TLS v1" in item
+            and "does not claim CRT" in item
+            for item in prerequisites
+        ),
+        "static-c-sigrtmax must retain its isolated static differential",
+    )
+    headers = nonempty_strings(
+        artifact["x86_header_prerequisites"],
+        "static-c-sigrtmax.x86_header_prerequisites",
+    )
+    require(
+        any(
+            "project-first/pinned-musl GNU/POSIX C signal-header gate" in item
+            and "int __libc_current_sigrtmax(void)" in item
+            and "C++17 POSIX/GNU feature matrix" in item
+            and "SIGRTMAX macro call" in item
+            and "unmangled C references" in item
+            for item in headers
+        ),
+        "static-c-sigrtmax must retain its C/C++ feature/header matrix",
+    )
+    static_exports = set(
+        static_c_abi_export_names(
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        )
+    )
+    require(
+        "__libc_current_sigrtmax" in static_exports,
+        "static-c-sigrtmax must expose the exact realtime-maximum bridge",
+    )
+    oracle = artifact["oracle"]
+    assert isinstance(oracle, list)
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "c-posix"
+            and isinstance(entry.get("role"), str)
+            and "src/signal/sigrtmax.c" in entry["role"]
+            and "`_NSIG-1`" in entry["role"]
+            and "exactly 64" in entry["role"]
+            for entry in oracle
+        ),
+        "static-c-sigrtmax must retain its pinned-musl bridge oracle",
+    )
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-sigrtmax"},
+        "static-c-sigrtmax must use the closed libc-sigrtmax command",
+    )
+    scope = evidence[0].get("scope")
+    require(
+        isinstance(scope, str)
+        and all(
+            phrase in scope
+            for phrase in (
+                "Pinned-musl 1.2.6",
+                "C++ POSIX/GNU feature matrix",
+                "`-nostdlib -static` candidate",
+                "handlers/actions",
+                "signal masks",
+                "process signaling",
+                "waits, queues, descriptors, timers",
+                "__libc_current_sigrtmax disassembly with no call or syscall",
+                "direct/macro 64",
+                "stale-errno",
+                "SIGRTMIN bridge",
+                "signal-family completion, promotion, or public x86 support",
+            )
+        ),
+        "static-c-sigrtmax evidence must retain its exact macro-bridge regression",
+    )
+
+
 def require_sigset_mutation_artifact(family: Mapping[str, Any]) -> None:
     """Keep pure POSIX signal-set mutation below signal-runtime promotion."""
     artifacts = require_verified_artifacts(
@@ -39446,6 +39628,7 @@ def validate_ledger(
     require_sigisemptyset_artifact(by_id["libc.posix-runtime"])
     require_sigandset_sigorset_artifact(by_id["libc.posix-runtime"])
     require_sigpending_artifact(by_id["libc.posix-runtime"])
+    require_sigrtmax_artifact(by_id["libc.posix-runtime"])
     require_sigset_mutation_artifact(by_id["libc.posix-runtime"])
     require_clock_nanosleep_artifact(by_id["libc.posix-runtime"])
     require_nanosleep_artifact(by_id["libc.posix-runtime"])
