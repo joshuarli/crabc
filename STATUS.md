@@ -228,6 +228,24 @@ sysroot path. It does not promote Rust-subsumed `memory.bytes-basic`, general
 string/tokenization, `strtok`/`strtok_r`, memory-search, `mempcpy`, getsubopt,
 allocator lifecycle/interposition, family completion, promotion, or public x86
 support.
+
+`./scripts/dev-x86_64.sh libc-strtok` is a separate private
+`static-c-strtok` artifact inside still-planned `libc.posix-runtime`. Its
+project-first/pinned-musl C/C++ `<string.h>` gate proves the unconditional
+unmangled `char *(char *, const char *)` ABI under strict, POSIX, X/Open, GNU,
+and BSD selectors. Its pinned-musl and true `-nostdlib -static` routes extract
+one `strtok` object from musl `src/string/strtok.c`, with no undefined closure.
+They prove leading-delimiter skipping, in-place NUL splitting, empty input and
+empty delimiter behavior, high-bit delimiters, replacement of a previous
+continuation by new input, and musl's one shared non-TLS cursor across
+interleaved sequences. That cursor is intentionally historical and
+non-thread-safe: concurrent unsynchronized calls are outside the C contract.
+The leaf has no errno/TLS, allocator, locale, syscall, dynamic-runtime, CRT,
+loader, or sysroot path. It does not select `strtok_r`, general
+string/tokenization or thread-safe text behavior, `memory.bytes-basic`, family
+completion, promotion, or public x86 support; the generic AArch64 export is
+unchanged.
+
 `./scripts/dev-x86_64.sh libc-bsearch` is a separate private `static-c-bsearch`
 artifact inside still-planned `libc.c-abi-compat`. Its pinned-musl/project
 C/C++ `<stdlib.h>` matrix proves the unconditional five-argument declaration

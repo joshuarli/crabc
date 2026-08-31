@@ -2141,6 +2141,7 @@ source_owners = [
   "libc/src/c_abi/x86_64/legacy_memory.rs",
   "libc/src/c_abi/x86_64/memccpy.rs",
   "libc/src/c_abi/x86_64/strsep.rs",
+  "libc/src/c_abi/x86_64/strtok.rs",
   "libc/src/c_abi/x86_64/ffs.rs",
   "libc/src/c_abi/x86_64/intmax_arithmetic.rs",
   "libc/src/c_abi/x86_64/stat_compat.rs",
@@ -6166,6 +6167,47 @@ x86_abi_prerequisites = [
 x86_header_prerequisites = ["The dedicated C/C++ `strsep-header-abi` gate compares project-first and pinned-musl `string.h`: `char *strsep(char **, const char *)` is GNU/BSD-selected, hidden by default/strict/POSIX/XOPEN C selectors, and retains unmangled C++ linkage. The behavior fixture additionally traces project string.h, features.h, and bits/alltypes.h; it does not select general header, string, or C ABI completion."]
 native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-strsep", scope = "Pinned-musl C reference plus a true `-nostdlib -static` x86 candidate. The gate runs the dedicated C/C++ strsep declaration matrix, traces project headers, ratchets strsep against the pinned AArch64 static-ABI row and complete selected static-export list, and extracts exactly one object exporting only strsep with no undefined symbols or syscall. The freestanding matrix proves leading/consecutive/trailing delimiter empty tokens, multi-byte delimiter sets, empty delimiter/no-match final-state clearing, high-bit delimiter byte matching, null stored-state behavior, caller-buffer NUL mutation, and caller `char **` state-slot mutation. The final candidate has no interpreter, DT_NEEDED, unresolved symbols, PT_TLS, dynamic TLS model, PLT, ambient libc, allocator, errno, locale, or unowned string utilities. It does not select general string/tokenization behavior or `memory.bytes-basic`, strtok/strtok_r, memory-search, mempcpy, getsubopt, allocator lifecycle/interposition, libc.so, general startup, CRT, loader, sysroot, family completion, promotion, or public x86 support." }]
 oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source mapping, GNU/BSD declaration, and mutation-behavior oracle for src/string/strsep.c: null stored-state return, delimiter-set scan, in-place NUL replacement, one-byte state advance, and terminal-state clearing. The pinned AArch64 libc.a static TSV fixes only strsep.lo ownership." }, { kind = "elf-abi", source = "System V AMD64 psABI", role = "LP64 pointer arguments in rdi/rsi, rax pointer return, static linking, and no-dynamic-dependency fixture contract." }]
+
+[[family.verified_artifact]]
+id = "static-c-strtok"
+description = "Private native x86 selected-static-archive `strtok` leaf within still-planned `libc.posix-runtime`. The true static candidate extracts exactly one Rust object exporting only `strtok`, with no undefined symbol, relocation, or final-ELF dependency on the existing byte-string, reentrant-tokenizer, allocator, or generic runtime surface. It executes pinned musl 1.2.6 `src/string/strtok.c` behavior first through pinned musl and then through `-nostdlib -static`: a non-null caller-owned mutable C string begins or replaces the one shared process-global non-TLS continuation cursor, null input resumes it, leading delimiter runs are skipped, and one selected separator becomes NUL. A final token or delimiter-only/empty input clears the cursor. Interleaved sequences deliberately overwrite that one cursor; concurrent unsynchronized calls remain outside the historical C contract. Local scalar delimiter scans preserve the musl source closure without selecting `strspn`, `strcspn`, or the separately queued reentrant tokenizer API. The leaf has no errno, TLS, syscall, locale, allocator, or other mutable runtime state. It does not promote Rust-subsumed `memory.bytes-basic`, general string/tokenization or thread-safe text behavior, the reentrant tokenizer API, allocator lifecycle/interposition, libc.so, family completion, promotion, or public x86 support. The existing generic AArch64 `strtok` export remains unchanged."
+source_owners = [
+  "compat/upstreams.toml",
+  "compat/abi/musl-1.2.6/aarch64/libc.a.static.tsv",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "libc/src/c_abi.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/strtok.rs",
+  "include/string.h",
+  "include/features.h",
+  "include/bits/alltypes.h",
+  "compat/x86_64/strtok_header_abi_probe.c",
+  "compat/x86_64/strtok_header_abi_probe.cpp",
+  "compat/x86_64/run_strtok_header_abi.sh",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/libc_strtok_probe.c",
+  "compat/x86_64/libc_strtok_start.S",
+  "compat/x86_64/run_libc_strtok.sh",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "compat/x86_64/aarch64_parity_inventory.py",
+  "compat/x86_64/aarch64_parity_inventory.json",
+  "compat/x86_64/README.md",
+  "STATUS.md",
+  "x86-64.md",
+  "scripts/dev-x86_64.sh",
+  "scripts/check_structure.py",
+]
+x86_abi_prerequisites = [
+  "System V AMD64 passes `strtok(char *restrict, const char *restrict)` input and delimiter pointers in rdi/rsi and returns the token pointer or null in rax. A non-null input denotes a caller-owned mutable NUL-terminated C string and replaces the historical process-global continuation; null resumes it. The delimiter denotes a readable NUL-terminated C string. The C restrict and no-concurrent-unsynchronized-call obligations remain with the caller.",
+  "Pinned musl 1.2.6 `src/string/strtok.c` maps the public entry to its static `char *p`, leading delimiter span, token delimiter span, in-place one-byte NUL replacement, and exhaustion clearing. The pinned AArch64 static ABI inventory fixes only `strtok\\tstrtok.lo\\tT\\tGLOBAL\\t0\\t88` public object ownership; this x86 leaf retains that source closure locally while leaving the generic AArch64 export unchanged.",
+  "The selected Rust object exports exactly strtok and has no undefined symbols, call, syscall, errno/TLS, allocator, byte-string, reentrant-tokenizer, or span-helper relocation. Its final `-nostdlib -static` candidate has no unresolved symbols, interpreter, DT_NEEDED entry, no PT_TLS, dynamic TLS model, PLT, ambient libc, or unowned allocator, runtime, or string utility; its fixture-only _start exits directly and supplies no CRT or runtime contract.",
+]
+x86_header_prerequisites = ["The dedicated C/C++ `strtok-header-abi` gate compares project-first and pinned-musl `string.h`: the unconditional declaration has the exact `char *(char *, const char *)` ABI (musl's C spelling retains `restrict`) across default, strict, POSIX, X/Open, GNU, and BSD selectors, and retains unmangled C++ linkage. The behavior fixture additionally traces project string.h, features.h, bits/alltypes.h, and errno.h; it does not select general header, string, or C ABI completion."]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-strtok", scope = "Pinned-musl C reference plus a true `-nostdlib -static` x86 candidate. The gate runs the dedicated C/C++ strtok declaration matrix, traces project headers, ratchets strtok against the pinned AArch64 static-ABI row and complete selected static-export list, and extracts exactly one object exporting only strtok with no undefined symbols, call, or syscall. The freestanding matrix proves leading delimiter skipping, in-place NUL splitting, continuation-after-separator and null-after-final-token behavior, empty input and empty delimiters, high-bit delimiter matching, non-null replacement of a prior continuation, and musl's one shared cursor when sequences interleave. The final candidate has no interpreter, DT_NEEDED, unresolved symbols, PT_TLS, dynamic TLS model, PLT, ambient libc, allocator, errno, locale, or unowned string utilities. It does not select general string/tokenization or thread-safe text behavior, the reentrant tokenizer API, `memory.bytes-basic`, allocator lifecycle/interposition, libc.so, general startup, CRT, loader, sysroot, family completion, promotion, or public x86 support." }]
+oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source mapping, unconditional declaration, and one shared continuation-cursor behavior oracle for src/string/strtok.c: leading-span skip, token-span split, one delimiter NUL replacement, replacement-input state, and exhaustion clearing. The pinned AArch64 libc.a static TSV fixes only strtok.lo ownership." }, { kind = "elf-abi", source = "System V AMD64 psABI", role = "LP64 pointer arguments in rdi/rsi, rax pointer return, static linking, and no-dynamic-dependency fixture contract." }]
 
 [[family.verified_artifact]]
 id = "static-c-random-entropy"

@@ -831,6 +831,7 @@ strtod_l
 strtof
 strtof_l
 strtoimax
+strtok
 strtol
 strtold
 strtold_l

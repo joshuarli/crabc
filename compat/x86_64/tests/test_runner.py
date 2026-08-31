@@ -1429,6 +1429,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "memccpy-header-abi",
             "mempcpy-header-abi",
             "strsep-header-abi",
+            "strtok-header-abi",
             "string-copy-header-abi",
             "error-strings-header-abi|strsignal-header-abi|gettext-catalog-header-abi",
             "string-duplication-header-abi",
@@ -1454,6 +1455,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "libc-memccpy",
             "libc-mempcpy",
             "libc-strsep",
+            "libc-strtok",
             "libc-allocator-runtime",
             "libc-allocator-string-duplication",
             "libc-allocator-observability",
@@ -13383,6 +13385,99 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         )
         self.assertIn("strsep-header-abi", runner)
         self.assertIn("libc-strsep", runner)
+
+    def test_libc_static_c_abi_strtok_artifact_keeps_shared_state_bounded(self) -> None:
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        implementation = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "strtok.rs"
+        ).read_text(encoding="utf-8")
+        fixture = (
+            ROOT / "compat" / "x86_64" / "libc_strtok_probe.c"
+        ).read_text(encoding="utf-8")
+        artifact_runner = (
+            ROOT / "compat" / "x86_64" / "run_libc_strtok.sh"
+        ).read_text(encoding="utf-8")
+        header_c = (
+            ROOT / "compat" / "x86_64" / "strtok_header_abi_probe.c"
+        ).read_text(encoding="utf-8")
+        header_cxx = (
+            ROOT / "compat" / "x86_64" / "strtok_header_abi_probe.cpp"
+        ).read_text(encoding="utf-8")
+        header_runner = (
+            ROOT / "compat" / "x86_64" / "run_strtok_header_abi.sh"
+        ).read_text(encoding="utf-8")
+        static_exports = (
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        ).read_text(encoding="utf-8")
+        parity_ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        runner = RUNNER.read_text(encoding="utf-8")
+
+        self.assertIn('#[path = "strtok.rs"]\nmod strtok;', static_root)
+        for required in (
+            "src/string/strtok.c",
+            "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+            "static mut CONTINUATION",
+            "shared\n//! non-TLS cursor",
+            "skip_separators",
+            "token_end",
+            'pub unsafe extern "C" fn strtok',
+            "concurrent\n//! unsynchronized calls",
+        ):
+            self.assertIn(required, implementation)
+        for forbidden in (
+            "errno::",
+            "raw_syscall",
+            "crabc_core",
+            "crabc_mimalloc",
+            "strtok_r",
+        ):
+            self.assertNotIn(forbidden, implementation)
+
+        for required in (
+            "CRABC_STRTOK_FREESTANDING",
+            "check_primary_sequence",
+            "check_empty_and_empty_separator",
+            "check_replacement_and_shared_cursor",
+            "check_high_byte_separator",
+            "errno = E2BIG",
+        ):
+            self.assertIn(required, fixture)
+        for required in (
+            "strtok.lo",
+            "run_strtok_header_abi.sh",
+            "-nostdlib -static",
+            "--no-undefined",
+            "strtok object unexpectedly depends on another symbol",
+            "call|syscall",
+            "strtok_r strsep strspn strcspn",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn("--whole-archive", artifact_runner)
+        for header_probe in (header_c, header_cxx):
+            for required in ("strtok_signature", "CRABC_EXPECT_STRTOK", "strtok declaration"):
+                self.assertIn(required, header_probe)
+        for required in (
+            "CANDIDATE_CC=/usr/bin/gcc",
+            "-nostdinc",
+            "-nostdinc++",
+            "strict_definitions=(-D__STRICT_ANSI__)",
+            "posix_definitions=(-D_POSIX_C_SOURCE=200809L)",
+            "xopen_definitions=(-D_XOPEN_SOURCE=700)",
+            "retain C linkage",
+            "escaped its declared roots",
+        ):
+            self.assertIn(required, header_runner)
+        self.assertIn("strtok", static_exports.splitlines())
+        self.assertIn('id = "static-c-strtok"', parity_ledger)
+        self.assertIn(
+            'command = "./scripts/dev-x86_64.sh libc-strtok"', parity_ledger
+        )
+        self.assertIn("strtok-header-abi", runner)
+        self.assertIn("libc-strtok", runner)
 
     def test_libc_static_c_abi_memory_search_artifact_stays_narrow(self) -> None:
         static_root = (

@@ -7705,6 +7705,59 @@ class X86ParityLedgerTests(unittest.TestCase):
             "libc/src/c_abi/x86_64/strsep.rs",
             posix_runtime["source_owners"],
         )
+        strtok = artifacts_by_id["static-c-strtok"]
+        assert isinstance(strtok, dict)
+        self.assertNotIn("capabilities", strtok)
+        for owner in (
+            "compat/upstreams.toml",
+            "compat/abi/musl-1.2.6/aarch64/libc.a.static.tsv",
+            "libc/src/c_abi.rs",
+            "libc/src/c_abi/x86_64/static_c_abi.rs",
+            "libc/src/c_abi/x86_64/strtok.rs",
+            "include/string.h",
+            "compat/x86_64/strtok_header_abi_probe.c",
+            "compat/x86_64/strtok_header_abi_probe.cpp",
+            "compat/x86_64/run_strtok_header_abi.sh",
+            "compat/x86_64/static_c_abi_exports.txt",
+            "compat/x86_64/libc_strtok_probe.c",
+            "compat/x86_64/libc_strtok_start.S",
+            "compat/x86_64/run_libc_strtok.sh",
+            "compat/x86_64/validate_parity_ledger.py",
+            "scripts/check_structure.py",
+        ):
+            self.assertIn(owner, strtok["source_owners"])
+        self.assertEqual(
+            {evidence["command"] for evidence in strtok["native_evidence"]},
+            {"./scripts/dev-x86_64.sh libc-strtok"},
+        )
+        for phrase in (
+            "exactly one Rust object exporting only `strtok`",
+            "one shared process-global non-TLS continuation cursor",
+            "Interleaved sequences deliberately overwrite that one cursor",
+            "concurrent unsynchronized calls remain outside the historical C contract",
+            "generic AArch64 `strtok` export remains unchanged",
+            "Rust-subsumed `memory.bytes-basic`",
+            "general string/tokenization or thread-safe text behavior",
+            "allocator lifecycle/interposition",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, strtok["description"])
+        self.assertIn("rdi/rsi", strtok["x86_abi_prerequisites"][0])
+        self.assertIn("src/string/strtok.c", strtok["x86_abi_prerequisites"][1])
+        strtok_scope = strtok["native_evidence"][0]["scope"]
+        for phrase in (
+            "leading delimiter skipping",
+            "in-place NUL splitting",
+            "empty input and empty delimiters",
+            "high-bit delimiter matching",
+            "non-null replacement of a prior continuation",
+            "one shared cursor when sequences interleave",
+        ):
+            self.assertIn(phrase, strtok_scope)
+        self.assertIn(
+            "libc/src/c_abi/x86_64/strtok.rs",
+            posix_runtime["source_owners"],
+        )
         random_entropy = artifacts_by_id["static-c-random-entropy"]
         assert isinstance(random_entropy, dict)
         self.assertNotIn("capabilities", random_entropy)
@@ -13241,6 +13294,63 @@ class X86ParityLedgerTests(unittest.TestCase):
         evidence[0]["command"] = "./scripts/dev-x86_64.sh libc-memory-search"
         with self.assertRaisesRegex(
             ledger.LedgerError, "closed libc-strsep command"
+        ):
+            ledger.validate_ledger(data)
+
+    def test_strtok_artifact_keeps_its_shared_cursor_nonpromoting_contract(self) -> None:
+        data = self.data()
+        family = self.family(data, "libc.posix-runtime")
+        family["status"] = "foundation-verified"
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "static-c-strtok must not promote"
+        ):
+            ledger.require_strtok_artifact(family)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-strtok"
+        )
+        artifact["description"] = artifact["description"].replace(
+            "Interleaved sequences deliberately overwrite that one cursor",
+            "Interleaved sequences use independent cursors",
+        )
+        with self.assertRaisesRegex(
+            ledger.LedgerError,
+            "description omits Interleaved sequences deliberately overwrite that one cursor",
+        ):
+            ledger.validate_ledger(data)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-strtok"
+        )
+        artifact["capabilities"] = ["memory.bytes-basic"]
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "must not carry capabilities; use verified_slice instead"
+        ):
+            ledger.validate_ledger(data)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-strtok"
+        )
+        evidence = artifact["native_evidence"]
+        assert isinstance(evidence, list) and isinstance(evidence[0], dict)
+        evidence[0]["command"] = "./scripts/dev-x86_64.sh libc-strsep"
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "closed libc-strtok command"
         ):
             ledger.validate_ledger(data)
 

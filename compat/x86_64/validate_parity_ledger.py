@@ -1049,6 +1049,8 @@ MEMPCPY_SYMBOLS = ("mempcpy",)
 
 STRSEP_SYMBOLS = ("strsep",)
 
+STRTOK_SYMBOLS = ("strtok",)
+
 RANDOM_ENTROPY_SYMBOLS = ("getrandom", "getentropy")
 
 MEMORY_SEARCH_SYMBOLS = ("memchr", "memrchr", "memmem")
@@ -7098,6 +7100,289 @@ def require_strsep_artifact(family: Mapping[str, Any]) -> None:
         "libc-strsep)",
         "run_libc_strsep()",
         "run_libc_strsep",
+    ):
+        require(snippet in dispatcher, f"x86 dispatcher omits {snippet}")
+
+
+def require_strtok_artifact(family: Mapping[str, Any]) -> None:
+    """Keep musl's one shared historical tokenizer cursor below promotion."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.posix-runtime].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [entry for entry in artifacts if entry.get("id") == "static-c-strtok"]
+    require(
+        len(matching) == 1,
+        "libc.posix-runtime must contain exactly one static-c-strtok artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-strtok must not promote libc.posix-runtime",
+    )
+    artifact = matching[0]
+    require(
+        "capabilities" not in artifact,
+        "static-c-strtok must not promote memory.bytes-basic",
+    )
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for symbol in STRTOK_SYMBOLS:
+        require(symbol in description, f"static-c-strtok description omits {symbol}")
+    for phrase in (
+        "still-planned `libc.posix-runtime`",
+        "exactly one Rust object exporting only `strtok`",
+        "no undefined symbol, relocation, or final-ELF dependency",
+        "one shared process-global non-TLS continuation cursor",
+        "Interleaved sequences deliberately overwrite that one cursor",
+        "concurrent unsynchronized calls remain outside the historical C contract",
+        "Local scalar delimiter scans",
+        "reentrant tokenizer API",
+        "Rust-subsumed `memory.bytes-basic`",
+        "general string/tokenization or thread-safe text behavior",
+        "allocator lifecycle/interposition",
+        "family completion",
+        "promotion",
+        "public x86 support",
+        "generic AArch64 `strtok` export remains unchanged",
+    ):
+        require(phrase in description, f"static-c-strtok description omits {phrase}")
+
+    owners = set(
+        nonempty_strings(artifact["source_owners"], "static-c-strtok.source_owners")
+    )
+    for owner in (
+        "compat/upstreams.toml",
+        "compat/abi/musl-1.2.6/aarch64/libc.a.static.tsv",
+        "libc/Cargo.toml",
+        "libc/src/lib.rs",
+        "libc/src/c_abi.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/strtok.rs",
+        "include/string.h",
+        "include/features.h",
+        "include/bits/alltypes.h",
+        "compat/x86_64/strtok_header_abi_probe.c",
+        "compat/x86_64/strtok_header_abi_probe.cpp",
+        "compat/x86_64/run_strtok_header_abi.sh",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/libc_strtok_probe.c",
+        "compat/x86_64/libc_strtok_start.S",
+        "compat/x86_64/run_libc_strtok.sh",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/aarch64_parity_inventory.py",
+        "compat/x86_64/aarch64_parity_inventory.json",
+        "compat/x86_64/README.md",
+        "STATUS.md",
+        "x86-64.md",
+        "scripts/dev-x86_64.sh",
+        "scripts/check_structure.py",
+    ):
+        require(owner in owners, f"static-c-strtok source owners omit {owner}")
+
+    prerequisites = nonempty_strings(
+        artifact["x86_abi_prerequisites"], "static-c-strtok.x86_abi_prerequisites"
+    )
+    require(
+        any(
+            "strtok(char *restrict, const char *restrict)" in item
+            and "rdi/rsi" in item
+            and "rax" in item
+            and "non-null input" in item
+            and "no-concurrent-unsynchronized-call" in item
+            for item in prerequisites
+        ),
+        "static-c-strtok must retain its SysV C ABI and shared-state contract",
+    )
+    require(
+        any(
+            "src/string/strtok.c" in item
+            and "strtok.lo" in item
+            and "generic AArch64 export unchanged" in item
+            for item in prerequisites
+        ),
+        "static-c-strtok must retain musl source and AArch64 boundary provenance",
+    )
+    require(
+        any(
+            "exactly strtok" in item
+            and "no undefined symbols" in item
+            and "no PT_TLS" in item
+            and "unowned allocator, runtime, or string utility" in item
+            for item in prerequisites
+        ),
+        "static-c-strtok must retain its closed static dependency boundary",
+    )
+
+    header_prerequisites = nonempty_strings(
+        artifact["x86_header_prerequisites"], "static-c-strtok.x86_header_prerequisites"
+    )
+    require(
+        any(
+            "string.h" in item
+            and "char *(char *, const char *)" in item
+            and "default, strict, POSIX, X/Open, GNU, and BSD" in item
+            and "unmangled C++ linkage" in item
+            for item in header_prerequisites
+        ),
+        "static-c-strtok must retain its focused C/C++ header ABI",
+    )
+
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-strtok"},
+        "static-c-strtok must use the closed libc-strtok command",
+    )
+    scope = evidence[0].get("scope")
+    require(
+        isinstance(scope, str)
+        and all(
+            phrase in scope
+            for phrase in (
+                "dedicated C/C++ strtok declaration matrix",
+                "pinned AArch64 static-ABI row",
+                "exactly one object exporting only strtok",
+                "no undefined symbols, call, or syscall",
+                "leading delimiter skipping",
+                "in-place NUL splitting",
+                "empty input and empty delimiters",
+                "high-bit delimiter matching",
+                "non-null replacement of a prior continuation",
+                "one shared cursor when sequences interleave",
+                "no interpreter, DT_NEEDED, unresolved symbols, PT_TLS",
+                "general string/tokenization or thread-safe text behavior",
+                "reentrant tokenizer API",
+                "memory.bytes-basic",
+                "allocator lifecycle/interposition",
+                "public x86 support",
+            )
+        ),
+        "static-c-strtok evidence must retain its bounded static contract",
+    )
+
+    exports = set(
+        static_c_abi_export_names(
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        )
+    )
+    for symbol in STRTOK_SYMBOLS:
+        require(symbol in exports, f"static C ABI export contract omits {symbol}")
+
+    static_root = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+    ).read_text(encoding="utf-8")
+    require(
+        '#[path = "strtok.rs"]\nmod strtok;' in static_root,
+        "x86 static C ABI must compose the strtok leaf",
+    )
+    source = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "strtok.rs"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "musl 1.2.6",
+        "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+        "src/string/strtok.c",
+        "static mut CONTINUATION",
+        "shared\n//! non-TLS cursor",
+        "skip_separators",
+        "token_end",
+        "pub unsafe extern \"C\" fn strtok",
+        "concurrent\n//! unsynchronized calls",
+    ):
+        require(snippet in source, f"strtok implementation omits {snippet}")
+    rust_exports = set(
+        re.findall(
+            r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(', source
+        )
+    )
+    require(rust_exports == {"strtok"}, "strtok implementation must export only strtok")
+    for forbidden in (
+        "raw_syscall::",
+        "errno::",
+        "crabc_core",
+        "crabc_mimalloc",
+        "malloc",
+        "strtok_r",
+        "use super::",
+    ):
+        require(forbidden not in source, f"strtok implementation selects {forbidden}")
+
+    runner = (ROOT / "compat" / "x86_64" / "run_libc_strtok.sh").read_text(
+        encoding="utf-8"
+    )
+    for snippet in (
+        "run_musl_oracle.sh",
+        "run_strtok_header_abi.sh",
+        "strtok.lo",
+        "static_c_abi_exports.txt",
+        "archive_member_for_symbol",
+        "strtok object export surface drifted",
+        "strtok object unexpectedly depends on another symbol",
+        "strtok object unexpectedly performs a call or syscall",
+        "-nostdlib -static",
+        "--no-undefined",
+        "candidate retains a PLT",
+        "unowned allocator, runtime, or string utility",
+    ):
+        require(snippet in runner, f"strtok runner omits {snippet}")
+    require("--whole-archive" not in runner, "strtok runner must not force-link the archive")
+
+    probe = (ROOT / "compat" / "x86_64" / "libc_strtok_probe.c").read_text(
+        encoding="utf-8"
+    )
+    for snippet in (
+        "strtok_signature",
+        "_Static_assert",
+        "check_primary_sequence",
+        "check_empty_and_empty_separator",
+        "check_replacement_and_shared_cursor",
+        "check_high_byte_separator",
+        "CRABC_STRTOK_FREESTANDING",
+        "errno = E2BIG",
+    ):
+        require(snippet in probe, f"strtok probe omits {snippet}")
+    start = (ROOT / "compat" / "x86_64" / "libc_strtok_start.S").read_text(
+        encoding="utf-8"
+    )
+    for snippet in ("crabc_x86_64_strtok_probe", "mov $60, %eax"):
+        require(snippet in start, f"strtok start shim omits {snippet}")
+
+    header_c = (
+        ROOT / "compat" / "x86_64" / "strtok_header_abi_probe.c"
+    ).read_text(encoding="utf-8")
+    header_cxx = (
+        ROOT / "compat" / "x86_64" / "strtok_header_abi_probe.cpp"
+    ).read_text(encoding="utf-8")
+    header_runner = (
+        ROOT / "compat" / "x86_64" / "run_strtok_header_abi.sh"
+    ).read_text(encoding="utf-8")
+    for snippet in ("strtok_signature", "CRABC_EXPECT_STRTOK", "strtok declaration"):
+        require(snippet in header_c, f"strtok C header evidence omits {snippet}")
+        require(snippet in header_cxx, f"strtok C++ header evidence omits {snippet}")
+    for snippet in (
+        "default_definitions=()",
+        "strict_definitions=(-D__STRICT_ANSI__)",
+        "posix_definitions=(-D_POSIX_C_SOURCE=200809L)",
+        "xopen_definitions=(-D_XOPEN_SOURCE=700)",
+        "gnu_definitions=(-D_GNU_SOURCE)",
+        "bsd_definitions=(-D_BSD_SOURCE)",
+        "retain C linkage",
+        "escaped its declared roots",
+    ):
+        require(snippet in header_runner, f"strtok header runner omits {snippet}")
+
+    dispatcher = (ROOT / "scripts" / "dev-x86_64.sh").read_text(encoding="utf-8")
+    for snippet in (
+        "strtok-header-abi)",
+        "run_strtok_header_abi()",
+        "run_strtok_header_abi",
+        "libc-strtok)",
+        "run_libc_strtok()",
+        "run_libc_strtok",
     ):
         require(snippet in dispatcher, f"x86 dispatcher omits {snippet}")
 
@@ -41201,6 +41486,7 @@ def validate_ledger(
     require_memccpy_artifact(by_id["libc.posix-runtime"])
     require_mempcpy_artifact(by_id["libc.posix-runtime"])
     require_strsep_artifact(by_id["libc.posix-runtime"])
+    require_strtok_artifact(by_id["libc.posix-runtime"])
     require_random_entropy_artifact(by_id["libc.posix-runtime"])
     require_memory_search_artifact(by_id["libc.posix-runtime"])
     require_string_copy_artifact(by_id["libc.posix-runtime"])

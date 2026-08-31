@@ -212,6 +212,7 @@ X86_RUNTIME_FOUNDATION_LIBC_SOURCES = {
     Path("libc/src/c_abi/x86_64/memccpy.rs"),
     Path("libc/src/c_abi/x86_64/mempcpy.rs"),
     Path("libc/src/c_abi/x86_64/strsep.rs"),
+    Path("libc/src/c_abi/x86_64/strtok.rs"),
     Path("libc/src/c_abi/x86_64/legacy_memory.rs"),
     Path("libc/src/c_abi/x86_64/process_context.rs"),
     Path("libc/src/c_abi/x86_64/environment.rs"),
@@ -3748,6 +3749,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         '#[path = "memccpy.rs"]',
         '#[path = "mempcpy.rs"]',
         '#[path = "strsep.rs"]',
+        '#[path = "strtok.rs"]',
         '#[path = "legacy_memory.rs"]',
         '#[path = "fenv.rs"]',
         '#[path = "setjmp.rs"]',
@@ -4526,6 +4528,74 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
     if "--whole-archive" in strsep_runner_text:
         errors.append(
             "compat/x86_64/run_libc_strsep.sh: selected static strsep "
+            "evidence must not force-link the archive"
+        )
+
+    strtok_source = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "strtok.rs"
+    strtok_text = strtok_source.read_text(errors="replace")
+    for required in (
+        "musl 1.2.6",
+        "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+        "src/string/strtok.c",
+        "shared\n//! non-TLS cursor",
+        "static mut CONTINUATION",
+        "skip_separators",
+        "token_end",
+        "pub unsafe extern \"C\" fn strtok",
+        "concurrent\n//! unsynchronized calls",
+    ):
+        if required not in strtok_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/strtok.rs: selected static strtok "
+                f"boundary is missing {required!r}"
+            )
+    strtok_exports = set(
+        re.findall(
+            r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(',
+            strtok_text,
+        )
+    )
+    if strtok_exports != {"strtok"}:
+        errors.append(
+            "libc/src/c_abi/x86_64/strtok.rs: selected static strtok "
+            "artifact must export only strtok"
+        )
+    for forbidden in (
+        "raw_syscall::",
+        "errno::",
+        "crabc_core",
+        "crabc_mimalloc",
+        "malloc",
+        "strtok_r",
+        "use super::",
+    ):
+        if forbidden in strtok_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/strtok.rs: selected static strtok "
+                f"leaf must not select {forbidden!r}"
+            )
+    strtok_runner = ROOT / "compat" / "x86_64" / "run_libc_strtok.sh"
+    strtok_runner_text = strtok_runner.read_text(errors="replace")
+    for required in (
+        "run_musl_oracle.sh",
+        "run_strtok_header_abi.sh",
+        "strtok.lo",
+        "archive_member_for_symbol",
+        "strtok object export surface drifted",
+        "strtok object unexpectedly depends on another symbol",
+        "strtok object unexpectedly performs a call or syscall",
+        "-nostdlib -static",
+        "--no-undefined",
+        "candidate retains a PLT",
+    ):
+        if required not in strtok_runner_text:
+            errors.append(
+                "compat/x86_64/run_libc_strtok.sh: selected static strtok "
+                f"evidence is missing {required!r}"
+            )
+    if "--whole-archive" in strtok_runner_text:
+        errors.append(
+            "compat/x86_64/run_libc_strtok.sh: selected static strtok "
             "evidence must not force-link the archive"
         )
 
@@ -10609,6 +10679,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         byte_strings_text,
         memccpy_text,
         strsep_text,
+        strtok_text,
         random_entropy_text,
         memory_search_text,
         string_copy_text,
@@ -10752,6 +10823,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         "memccpy",
         "mempcpy",
         "strsep",
+        "strtok",
         "memset",
         "memmove",
         "feclearexcept",
@@ -11128,7 +11200,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
             "signal-control, separate realtime-minimum/realtime-maximum bridges, one pure GNU signal-set predicate, paired GNU binary set-operation leaf, and a three-symbol POSIX signal-set mutation leaf, bounded process-signal execution, and one legacy single-signal pause wait, bounded pthread create/exit/join/detach initial-TLS worker, its private selected-main/worker pthread-key/C11-TSS lifecycle, private process-normal pthread mutexes and their musl private condition-variable handoff, the complete selected rwlock/attribute family with private-or-shared futex operation, plus the distinct C11 plain-sync adapter and normal-return pthread/C11 once state machine, its typed C11 create/exit/join/detach sibling, and pthread/C11 identity aliases, named termios-control, direct terminal-descriptor and foreground-group observations plus one named foreground-group assignment, historical ctermid pathname spelling, constant historical gethostid compatibility, selected process-context, child-reaping, C11 immediate termination, callback algorithms, direct clock_gettime, binary64 difftime, caller-buffered fixed-UTC gmtime_r, fixed-UTC timegm, caller-owned mapping-core, no-cancellation mapping synchronization, direct anonymous-memory descriptor creation, nanosleep, and clock_nanosleep, selected "
             "POSIX _exit forwarding, descriptor-entry, selected filesystem-access, bounded descriptor-control, timestamp updates, and descriptor-I/O, selected process-resources, selected readiness/signal-waits, "
             "selected socket transport and selected socket-message/options, selected system-observation, selected UTS-identity, "
-            "selected numeric-address codecs, immutable IPv6 unspecified/loopback address data objects, and legacy classful IPv4 arithmetic, fixed-profile h_errno message text, byte-string, legacy-memory adapters, source-backed memccpy/mempcpy, caller-buffer strsep, random-entropy, memory-search, C-string-copy, immutable error-string, "
+            "selected numeric-address codecs, immutable IPv6 unspecified/loopback address data objects, and legacy classful IPv4 arithmetic, fixed-profile h_errno message text, byte-string, legacy-memory adapters, source-backed memccpy/mempcpy, caller-buffer strsep and shared-cursor strtok, random-entropy, memory-search, C-string-copy, immutable error-string, "
             "fixed-C-locale ctype, integer-arithmetic, integer-parsing, intmax-arithmetic, one-symbol process-personality, one-symbol filesystem-credential setfsgid and setfsuid, credential-observation, and "
             "raw auxiliary-vector observation, startup-derived secure-environment, and environment-backed login-name observation, find-first-set, startup-published program names, short/GNU-long "
             "getopt state and aliases, standalone linear search, callback-tree/hash-table search, and the "
