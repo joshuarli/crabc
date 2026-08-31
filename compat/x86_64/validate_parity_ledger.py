@@ -8664,6 +8664,158 @@ def require_no_std_static_pie_full_lto_consumer_artifact(
         )
 
 
+def require_static_pthread_create_membarrier_binding_artifact(
+    family: Mapping[str, Any],
+) -> None:
+    """Retain musl's inert pthread-create membarrier fallback without promotion."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.pthread-tls].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [
+        entry
+        for entry in artifacts
+        if entry.get("id") == "static-c-pthread-create-join-tls"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.pthread-tls must contain exactly one static-c-pthread-create-join-tls artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-pthread-create-join-tls must not promote libc.pthread-tls",
+    )
+    artifact = matching[0]
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for phrase in (
+        "private weak `__membarrier_init` fallback",
+        "default-visible STB_WEAK binding",
+        "caller STB_GLOBAL private override",
+        "selected worker route never dispatches it",
+        "private expedited command",
+        "public membarrier API",
+        "public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"static-c-pthread-create-join-tls description omits {phrase}",
+        )
+    prerequisites = artifact["x86_abi_prerequisites"]
+    assert isinstance(prerequisites, list)
+    prerequisite_text = " ".join(prerequisites)
+    for phrase in (
+        "weak_alias(dummy_0, __membarrier_init)",
+        "src/linux/membarrier.c::__membarrier_init",
+        "__membarrier_init pthread_create.lo W WEAK",
+        "__membarrier_init membarrier.lo T GLOBAL",
+        "caller STB_GLOBAL private definition overrides it",
+        "selected worker creation never dispatches it",
+        "membarrier syscall/registration",
+        "public membarrier API",
+        "dynamic TLS",
+        "loader behavior",
+    ):
+        require(
+            phrase in prerequisite_text,
+            f"static-c-pthread-create-join-tls ABI prerequisites omit {phrase}",
+        )
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-pthread-create-join-tls"},
+        "static-c-pthread-create-join-tls must use the closed create/join command",
+    )
+    scope = evidence[0]["scope"]
+    assert isinstance(scope, str)
+    for phrase in (
+        "default-visible STB_WEAK `__membarrier_init`",
+        "caller STB_GLOBAL private override runs only after the selected worker routes",
+        "pthread_create does not dispatch it",
+        "membarrier syscall/registration",
+        "public API",
+        "dynamic-TLS",
+        "loader behavior",
+        "public x86 support",
+    ):
+        require(
+            phrase in scope,
+            f"static-c-pthread-create-join-tls evidence scope omits {phrase}",
+        )
+    oracle_entries = artifact["oracle"]
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "c-posix"
+            and entry.get("source")
+            == "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417"
+            and isinstance(entry.get("role"), str)
+            and "weak_alias(dummy_0, __membarrier_init)" in entry["role"]
+            and "src/linux/membarrier.c::__membarrier_init" in entry["role"]
+            and "not a membarrier syscall" in entry["role"]
+            for entry in oracle_entries
+        ),
+        "static-c-pthread-create-join-tls must retain its pinned weak membarrier source oracle",
+    )
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "aarch64-contract"
+            and entry.get("source")
+            == "compat/abi/musl-1.2.6/aarch64/libc.a.static.tsv"
+            and isinstance(entry.get("role"), str)
+            and "__membarrier_init pthread_create.lo W WEAK" in entry["role"]
+            and "__membarrier_init membarrier.lo T GLOBAL" in entry["role"]
+            and "private static archive-binding evidence only" in entry["role"]
+            for entry in oracle_entries
+        ),
+        "static-c-pthread-create-join-tls must retain its pinned weak membarrier static-manifest oracle",
+    )
+    static_exports = set(
+        static_c_abi_export_names(
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        )
+    )
+    require(
+        "__membarrier_init" in static_exports,
+        "static-c-pthread-create-join-tls must expose the selected weak membarrier fallback",
+    )
+    require(
+        "membarrier" not in static_exports,
+        "static-c-pthread-create-join-tls must not select the public membarrier API",
+    )
+    implementation = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "pthread_create_join.rs"
+    ).read_text(encoding="utf-8")
+    for phrase in (
+        "fn __membarrier_init()",
+        '#[linkage = "weak"]',
+        "does not call the fallback",
+        "public membarrier API",
+    ):
+        require(
+            phrase in implementation,
+            f"static-c-pthread-create-join-tls implementation omits {phrase}",
+        )
+    runner = (
+        ROOT / "compat" / "x86_64" / "run_libc_pthread_create_join_tls.sh"
+    ).read_text(encoding="utf-8")
+    for phrase in (
+        "__membarrier_init",
+        "CRABC_PTHREAD_MEMBARRIER_INIT_OVERRIDE",
+        "archive pthread-create member lost musl weak __membarrier_init binding",
+        "caller override did not extract the archive pthread-create member",
+        "caller strong __membarrier_init did not override the archive weak binding",
+        "for unselected in clone __clone membarrier",
+    ):
+        require(
+            phrase in runner,
+            f"static-c-pthread-create-join-tls runner omits {phrase}",
+        )
+
+
 def require_static_pthread_identity_artifact(family: Mapping[str, Any]) -> None:
     """Ratchet static pthread/C11 identity without promoting pthread parity."""
     artifacts = require_verified_artifacts(
@@ -28811,6 +28963,7 @@ def validate_ledger(
     require_static_initial_tls_v1_artifact(by_id["libc.pthread-tls"])
     require_static_crt_initial_tls_handoff_artifact(by_id["libc.pthread-tls"])
     require_static_crt1_initial_tls_handoff_artifact(by_id["libc.pthread-tls"])
+    require_static_pthread_create_membarrier_binding_artifact(by_id["libc.pthread-tls"])
     require_owned_static_sysroot_artifacts(
         by_id["sysroot.static-tls"], by_id["sysroot.owned-artifact"]
     )

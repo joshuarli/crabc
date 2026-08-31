@@ -9758,6 +9758,52 @@ class X86ParityLedgerTests(unittest.TestCase):
             self.assertIn(owner, explicit_exit["source_owners"])
         self.assertIn("null attributes pointer", normal_return["description"])
         self.assertIn("each concurrently live worker", normal_return["description"])
+        for phrase in (
+            "private weak `__membarrier_init` fallback",
+            "default-visible STB_WEAK binding",
+            "caller STB_GLOBAL private override",
+            "selected worker route never dispatches it",
+            "private expedited command",
+            "public membarrier API",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, normal_return["description"])
+        normal_return_scope = normal_return["native_evidence"][0]["scope"]
+        for phrase in (
+            "default-visible STB_WEAK `__membarrier_init`",
+            "caller STB_GLOBAL private override runs only after the selected worker routes",
+            "pthread_create does not dispatch it",
+            "membarrier syscall/registration",
+            "public API",
+            "dynamic-TLS",
+            "loader behavior",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, normal_return_scope)
+        normal_return_oracles = normal_return["oracle"]
+        self.assertTrue(
+            any(
+                entry["kind"] == "c-posix"
+                and "weak_alias(dummy_0, __membarrier_init)" in entry["role"]
+                and "src/linux/membarrier.c::__membarrier_init" in entry["role"]
+                for entry in normal_return_oracles
+            )
+        )
+        self.assertTrue(
+            any(
+                entry["kind"] == "aarch64-contract"
+                and entry["source"] == "compat/abi/musl-1.2.6/aarch64/libc.a.static.tsv"
+                and "__membarrier_init pthread_create.lo W WEAK" in entry["role"]
+                and "__membarrier_init membarrier.lo T GLOBAL" in entry["role"]
+                and "not membarrier registration" in entry["role"]
+                for entry in normal_return_oracles
+            )
+        )
+        static_exports = (
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        ).read_text(encoding="utf-8").splitlines()
+        self.assertIn("__membarrier_init", static_exports)
+        self.assertNotIn("membarrier", static_exports)
         self.assertIn("pthread_exit", explicit_exit["description"])
         self.assertIn("fixed private 64-slot registry", explicit_exit["description"])
         self.assertIn("Linux gettid", explicit_exit["description"])

@@ -29,6 +29,29 @@ _Static_assert(__builtin_types_compatible_p(__typeof__(&pthread_create),
 _Static_assert(__builtin_types_compatible_p(__typeof__(&pthread_join),
     int (*)(pthread_t, void **)), "pthread_join declaration");
 
+#ifdef CRABC_PTHREAD_MEMBARRIER_INIT_OVERRIDE
+/*
+ * Musl's static pthread_create object retains this private weak no-op. The
+ * caller-owned strong spelling verifies archive precedence after the selected
+ * worker route extracts that object; it does not select membarrier syscall or
+ * registration behavior.
+ */
+static volatile unsigned int membarrier_init_calls;
+
+void __membarrier_init(void)
+{
+    ++membarrier_init_calls;
+}
+
+static int check_membarrier_init_override(void)
+{
+    if (membarrier_init_calls != 0)
+        return 1;
+    __membarrier_init();
+    return membarrier_init_calls == 1 ? 0 : 2;
+}
+#endif
+
 struct worker_observation {
     int *errno_location;
     int initial_errno;
@@ -433,6 +456,12 @@ int crabc_x86_64_pthread_create_join_tls_probe(void)
     int registry_capacity = run_registry_capacity_round(main_errno_location);
     if (registry_capacity != 0)
         return 160 + registry_capacity;
+#endif
+
+#ifdef CRABC_PTHREAD_MEMBARRIER_INIT_OVERRIDE
+    int membarrier_override = check_membarrier_init_override();
+    if (membarrier_override != 0)
+        return 180 + membarrier_override;
 #endif
 
     return 0;

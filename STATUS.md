@@ -397,6 +397,16 @@ clear-child-tid join reclamation. A fixed private 64-worker registry
 serializes explicit-exit publication with join withdrawal and validates
 `%fs:0`, the child kernel TID, and its still-live clear-child-tid word; the
 candidate-only cap check exhausts all slots and proves reuse after joining.
+The same `pthread_create` archive owner also retains musl 1.2.6
+`src/thread/pthread_create.c`'s private `weak_alias(dummy_0,
+__membarrier_init)` fallback. The pinned AArch64 static manifest records that
+binding as weak in `pthread_create.lo` and records the optional strong body in
+`membarrier.lo`; the staged archive and normal candidate retain the weak
+definition, while a caller-owned private strong spelling wins after
+`pthread_create` extracts its owner. This is archive-binding evidence only:
+selected worker creation never calls it, so no `membarrier`
+syscall/registration, public API, dynamic TLS, loader state, or process-startup
+policy is selected.
 The separate `./scripts/dev-x86_64.sh libc-pthread-identity` artifact proves
 the bounded opaque x86 identity contract: weak same-address
 `pthread_self`/`thrd_current` and `pthread_equal`/`thrd_equal` pairs, direct

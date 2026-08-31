@@ -53,6 +53,33 @@ assert_selected_c_abi_surface() {
     fi
 }
 
+assert_pthread_create_weak_membarrier_owner() {
+    local archive_path="$1"
+    local members_path="$work_dir/pthread-create-membarrier-members"
+    local pthread_create_member
+    local -a members pthread_create_members
+
+    mapfile -t members < <(ar t "$archive_path" | grep -E '^c\..+\.rcgu\.o$')
+    [ "${#members[@]}" -gt 0 ] || fail "archive has no crabc-libc object members"
+    mkdir "$members_path"
+    (
+        cd "$members_path"
+        ar x "$archive_path" "${members[@]}"
+    )
+    mapfile -t pthread_create_members < <(
+        (
+            cd "$members_path"
+            nm -A -g --defined-only --format=posix "${members[@]}"
+        ) | awk '$2 == "pthread_create" && $3 ~ /^[TW]$/ { name = $1; sub(/:$/, "", name); print name }' | sort -u
+    )
+    [ "${#pthread_create_members[@]}" = 1 ] ||
+        fail "archive does not retain one pthread-create owner: ${pthread_create_members[*]:-(none)}"
+    pthread_create_member="${pthread_create_members[0]}"
+    nm -g --defined-only --format=posix "$members_path/$pthread_create_member" |
+        awk '$1 == "__membarrier_init" && $2 == "W" { found=1 } END { exit found ? 0 : 1 }' ||
+        fail "archive pthread-create member lost musl weak __membarrier_init binding"
+}
+
 require_native_linux_x86_64
 for tool in ar cargo cmp diff grep mkdir nm objdump readelf rustup; do
     require_tool "$tool"
@@ -67,6 +94,7 @@ trap 'rm -rf -- "$work_dir"' EXIT
 cargo_target="$work_dir/cargo-target"
 reference="$work_dir/musl-pthread-create-join-tls-reference"
 candidate="$work_dir/crabc-static-pthread-create-join-tls-candidate"
+candidate_membarrier_override="$work_dir/crabc-static-pthread-create-join-tls-membarrier-override-candidate"
 archive="$cargo_target/x86_64-unknown-linux-musl/debug/libc.a"
 header_trace="$work_dir/header-trace"
 archive_symbols="$work_dir/archive-symbols"
@@ -76,6 +104,7 @@ expected_c_abi_symbols="$work_dir/expected-c-abi-symbols"
 archive_relocations="$work_dir/archive-relocations"
 archive_disassembly="$work_dir/archive-disassembly"
 candidate_symbols="$work_dir/candidate-symbols"
+candidate_membarrier_override_symbols="$work_dir/candidate-membarrier-override-symbols"
 candidate_program_headers="$work_dir/candidate-program-headers"
 candidate_dynamic="$work_dir/candidate-dynamic"
 candidate_relocations="$work_dir/candidate-relocations"
@@ -107,11 +136,14 @@ nm -A --defined-only "$archive" >"$archive_symbols"
 readelf --symbols --wide "$archive" >"$archive_elf_symbols"
 assert_selected_c_abi_surface "$archive" "$selected_c_abi_symbols" \
     "$expected_c_abi_symbols"
+assert_pthread_create_weak_membarrier_owner "$archive"
 for symbol in __errno_location __crabc_x86_static_tls_bootstrap \
     pthread_create pthread_exit pthread_join; do
     grep -Eq "[[:space:]][TW][[:space:]]${symbol}$" "$archive_symbols" \
         || fail "archive does not define ${symbol}"
 done
+grep -Eq 'FUNC +WEAK +DEFAULT +.*__membarrier_init$' "$archive_elf_symbols" \
+    || fail 'archive lost musl weak __membarrier_init binding'
 grep -Eq 'GLOBAL +HIDDEN +.*__crabc_x86_pthread_clone$' "$archive_elf_symbols" \
     || fail "archive pthread clone boundary is not hidden"
 grep -Eq 'GLOBAL +HIDDEN +.*__crabc_x86_static_tls_bootstrap$' "$archive_elf_symbols" \
@@ -121,7 +153,7 @@ grep -Eq 'GLOBAL +HIDDEN +.*__crabc_x86_static_tls_bootstrap$' "$archive_elf_sym
  # fixture does not exercise those siblings; retain the narrower rejection for
  # every still-unselected pthread synchronization surface instead of treating
  # selected sibling exports as accidental.
-for unselected in clone __clone \
+for unselected in clone __clone membarrier \
     pthread_mutexattr_init pthread_mutexattr_destroy pthread_mutexattr_settype \
     pthread_mutex_timedlock pthread_mutex_consistent \
     pthread_condattr_init pthread_condattr_destroy pthread_condattr_setclock \
@@ -148,8 +180,17 @@ fi
     -ffreestanding -fno-builtin -fno-stack-protector -Wl,-e,_start \
     -Wl,--no-undefined compat/x86_64/libc_pthread_create_join_tls_probe.c \
     compat/x86_64/libc_pthread_create_join_tls_start.S "$archive" -o "$candidate"
+"$ORACLE_CC" -std=c11 -D_GNU_SOURCE -DCRABC_PTHREAD_CREATE_JOIN_TLS_FREESTANDING \
+    -DCRABC_PTHREAD_CREATE_JOIN_TLS_SELECTED_WORKER_LIMIT=64 \
+    -DCRABC_PTHREAD_MEMBARRIER_INIT_OVERRIDE -I"$ROOT_DIR/include" \
+    -nostdlib -static -fno-pie -no-pie -ffreestanding -fno-builtin \
+    -fno-stack-protector -Wl,-e,_start -Wl,--no-undefined \
+    compat/x86_64/libc_pthread_create_join_tls_probe.c \
+    compat/x86_64/libc_pthread_create_join_tls_start.S "$archive" \
+    -o "$candidate_membarrier_override"
 
 readelf --symbols --wide "$candidate" >"$candidate_symbols"
+readelf --symbols --wide "$candidate_membarrier_override" >"$candidate_membarrier_override_symbols"
 readelf --program-headers --wide "$candidate" >"$candidate_program_headers"
 readelf --dynamic --wide "$candidate" >"$candidate_dynamic" || true
 readelf --relocs --wide "$candidate" >"$candidate_relocations"
@@ -159,6 +200,16 @@ for symbol in __errno_location __crabc_x86_static_tls_bootstrap \
     grep -Eq "[[:space:]]${symbol}$" "$candidate_symbols" \
         || fail "candidate does not define ${symbol}"
 done
+grep -Eq 'FUNC +WEAK +DEFAULT +.*__membarrier_init$' "$candidate_symbols" \
+    || fail 'candidate lost musl weak __membarrier_init binding'
+awk '$4 == "FUNC" && $5 == "GLOBAL" && $6 == "DEFAULT" && $7 != "UND" && $8 == "pthread_create" { found=1 } END { exit found ? 0 : 1 }' \
+    "$candidate_membarrier_override_symbols" ||
+    fail 'caller override did not extract the archive pthread-create member'
+grep -Eq 'FUNC +GLOBAL +DEFAULT +.*__membarrier_init$' "$candidate_membarrier_override_symbols" ||
+    fail 'caller strong __membarrier_init did not override the archive weak binding'
+if grep -Eq 'FUNC +WEAK +DEFAULT +.*__membarrier_init$' "$candidate_membarrier_override_symbols"; then
+    fail 'caller override retained the archive weak __membarrier_init binding'
+fi
 grep -Eq 'GLOBAL +HIDDEN +.*__crabc_x86_pthread_clone$' "$candidate_symbols" \
     || fail "candidate pthread clone boundary is not hidden"
 grep -Eq 'GLOBAL +HIDDEN +.*__crabc_x86_static_tls_bootstrap$' "$candidate_symbols" \
@@ -235,6 +286,12 @@ if "$candidate"; then
 else
     candidate_status=$?
     fail "candidate execution exited ${candidate_status}"
+fi
+if "$candidate_membarrier_override"; then
+    :
+else
+    candidate_status=$?
+    fail "static membarrier-override candidate execution exited ${candidate_status}"
 fi
 
 printf 'x86 static crabc-libc pthread create/exit/join TLS: PASS\n'

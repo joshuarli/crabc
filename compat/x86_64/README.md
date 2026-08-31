@@ -2669,6 +2669,17 @@ recorded identity artifact,
 cancellation, synchronization objects, dynamic TLS/DTV, loader or CRT TLS,
 broader C11 threads, or public x86 support.
 
+The same `pthread_create` archive owner also retains musl 1.2.6
+`src/thread/pthread_create.c`'s private `weak_alias(dummy_0,
+__membarrier_init)` fallback. The pinned AArch64 static manifest records that
+binding as weak in `pthread_create.lo` and records the optional strong body in
+`membarrier.lo`; the staged archive and normal candidate retain the weak
+definition, while a caller-owned private strong spelling wins after
+`pthread_create` extracts its owner. This is archive-binding evidence only:
+selected worker creation never calls it, so no `membarrier`
+syscall/registration, public API, dynamic TLS, loader state, or process-startup
+policy is selected.
+
 `libc-pthread-identity` is a separately recorded private static
 `verified_artifact` under the same still-planned `libc.pthread-tls` family. Its
 project-header C body first runs against pinned musl and then through a

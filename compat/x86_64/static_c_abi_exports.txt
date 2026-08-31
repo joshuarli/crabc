@@ -36,6 +36,7 @@ __lgammal_r
 __libc_current_sigrtmax
 __libc_start_main
 __lxstat
+__membarrier_init
 __memcpy_fwd
 __optpos
 __optreset
