@@ -3752,6 +3752,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         '#[path = "ns_get32.rs"]',
         '#[path = "ns_put16.rs"]',
         '#[path = "ns_put32.rs"]',
+        '#[path = "ns_skiprr.rs"]',
         '#[path = "inet_address.rs"]',
         '#[path = "inet_ntoa.rs"]',
         '#[path = "inet_classful.rs"]',
@@ -8575,6 +8576,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
             "ns_get32_signature",
             "ns_put16_signature",
             "ns_put32_signature",
+            "ns_skiprr_signature",
             "NS_CMPRSFLGS == 0xc0",
             "NS_MAXLABEL == 63",
             "NS_MAXCDNAME == 255",
@@ -8595,6 +8597,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         "_Z.*ns_get32",
         "_Z.*ns_put16",
         "_Z.*ns_put32",
+        "_Z.*ns_skiprr",
         "resolv.h arpa/nameser.h netinet/in.h",
         "DNS packet I/O",
         "netdb",
@@ -9367,6 +9370,161 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
             "must not link libc.a"
         )
 
+    ns_skiprr_probe_source = ROOT / "compat" / "x86_64" / "libc_ns_skiprr_probe.c"
+    ns_skiprr_start_source = ROOT / "compat" / "x86_64" / "libc_ns_skiprr_start.S"
+    ns_skiprr_runner_source = ROOT / "compat" / "x86_64" / "run_libc_ns_skiprr.sh"
+    for path in (ns_skiprr_probe_source, ns_skiprr_start_source, ns_skiprr_runner_source):
+        if not path.is_file():
+            errors.append(
+                f"x86 static ns_skiprr artifact is missing {path.relative_to(ROOT)}"
+            )
+            return
+
+    ns_skiprr_source = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "ns_skiprr.rs"
+    ns_skiprr_text = ns_skiprr_source.read_text(errors="replace")
+    ns_skiprr_probe = ns_skiprr_probe_source.read_text(errors="replace")
+    ns_skiprr_start = ns_skiprr_start_source.read_text(errors="replace")
+    ns_skiprr_runner = ns_skiprr_runner_source.read_text(errors="replace")
+    for required in (
+        "Selected static Linux/x86-64 DNS resource-record span C ABI boundary",
+        "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+        "src/network/ns_parse.c::ns_skiprr",
+        '#[link_name = "dn_skipname"]',
+        '#[link_name = "ns_get16"]',
+        "selected_dn_skipname",
+        "selected_ns_get16",
+        "QUESTION_FIXED_BYTES",
+        "RESOURCE_FIXED_BYTES",
+        "EMSGSIZE: c_int = 90",
+        "super::errno::set_errno",
+        "remaining_records.wrapping_sub(1)",
+        'pub unsafe extern "C" fn ns_skiprr',
+        "`count` must be nonnegative",
+    ):
+        if required not in ns_skiprr_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/ns_skiprr.rs: selected static RR-span "
+                f"boundary is missing {required!r}"
+            )
+    ns_skiprr_exports = set(
+        re.findall(
+            r'(?m)^pub\s+unsafe\s+extern\s+"C"\s+fn\s+(\w+)\s*\(', ns_skiprr_text
+        )
+    )
+    if ns_skiprr_exports != {"ns_skiprr"}:
+        errors.append(
+            "libc/src/c_abi/x86_64/ns_skiprr.rs: selected static artifact "
+            "must export only ns_skiprr"
+        )
+    for forbidden in (
+        "static mut",
+        "raw_syscall::",
+        "static_tls::",
+        "crabc_core",
+        "crabc_mimalloc",
+        "fn ns_initparse",
+        "fn ns_parserr",
+        "fn ns_name_uncompress",
+        "fn dn_expand",
+        "socket(",
+        "getaddrinfo",
+    ):
+        if forbidden in ns_skiprr_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/ns_skiprr.rs: selected static RR-span "
+                f"boundary must not select {forbidden!r}"
+            )
+    for dependency_name, dependency_text in (
+        ("dn_skipname", dn_skipname_text),
+        ("ns_get16", ns_get16_text),
+    ):
+        if "#[inline(never)]" not in dependency_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/"
+                f"{dependency_name}.rs: ns_skiprr must retain its object-level dependency"
+            )
+    for header_probe in (nameser_header_c, nameser_header_cpp):
+        for required in ("ns_skiprr_signature", "ns_skiprr_function"):
+            if required not in header_probe:
+                errors.append(
+                    "compat/x86_64 nameser C/C++ header probe: selected RR-span "
+                    f"ABI is missing {required!r}"
+                )
+    for required in ("ns_skiprr declaration",):
+        if required not in nameser_header_c:
+            errors.append(
+                "compat/x86_64/nameser_header_abi_probe.c: selected RR-span "
+                f"ABI is missing {required!r}"
+            )
+    for required in ("ns_skiprr C++ declaration",):
+        if required not in nameser_header_cpp:
+            errors.append(
+                "compat/x86_64/nameser_header_abi_probe.cpp: selected RR-span "
+                f"ABI is missing {required!r}"
+            )
+    for required in ("ns_skiprr", "_Z.*ns_skiprr"):
+        if required not in nameser_header_runner:
+            errors.append(
+                "compat/x86_64/run_nameser_header_abi.sh: selected RR-span "
+                f"declaration evidence is missing {required!r}"
+            )
+    for required in (
+        "#include <errno.h>",
+        "#include <resolv.h>",
+        "ns_skiprr_signature",
+        "ns_s_qd == 0 && ns_s_an == 1",
+        "questions",
+        "answers",
+        "expect_malformed",
+        "EMSGSIZE",
+        "CRABC_NS_SKIPRR_FREESTANDING",
+    ):
+        if required not in ns_skiprr_probe:
+            errors.append(
+                "compat/x86_64/libc_ns_skiprr_probe.c: static RR-span "
+                f"regression is missing {required!r}"
+            )
+    for required in (
+        "__crabc_x86_static_tls_bootstrap",
+        "crabc_x86_64_ns_skiprr_probe",
+        "mov $231, %eax",
+    ):
+        if required not in ns_skiprr_start:
+            errors.append(
+                "compat/x86_64/libc_ns_skiprr_start.S: static RR-span "
+                f"entry is missing {required!r}"
+            )
+    for required in (
+        "run_nameser_header_abi.sh",
+        "AARCH64_STATIC_TSV",
+        "ns_parse.lo",
+        "ns_parse.c",
+        "assert_selected_c_abi_surface",
+        "extract_selected_member",
+        "ns_skiprr archive member also defines a nameserver sibling",
+        "-nostdlib -static",
+        '"$selected_member" "$archive"',
+        "candidate lacks the selected errno TLS segment",
+        "candidate errno does not use direct fs initial TLS",
+        "ns_skiprr does not call its selected dn_skipname dependency",
+        "ns_skiprr does not call its selected ns_get16 dependency",
+        "ns_skiprr implementation unexpectedly performs a syscall",
+        "ns_initparse ns_parserr ns_name_uncompress",
+        "res_query res_querydomain res_search",
+        "getaddrinfo freeaddrinfo",
+        "bind connect send recv",
+    ):
+        if required not in ns_skiprr_runner:
+            errors.append(
+                "compat/x86_64/run_libc_ns_skiprr.sh: static RR-span "
+                f"evidence is missing {required!r}"
+            )
+    if "--whole-archive" in ns_skiprr_runner:
+        errors.append(
+            "compat/x86_64/run_libc_ns_skiprr.sh: static RR-span evidence "
+            "must not force-link the archive"
+        )
+
     byte_strings_source = (
         ROOT / "libc" / "src" / "c_abi" / "x86_64" / "byte_strings.rs"
     )
@@ -10110,6 +10268,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         ns_get32_text,
         ns_put16_text,
         ns_put32_text,
+        ns_skiprr_text,
         byte_strings_text,
         random_entropy_text,
         memory_search_text,
@@ -10457,6 +10616,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         "ns_get32",
         "ns_put16",
         "ns_put32",
+        "ns_skiprr",
         "uname",
         "sysinfo",
         "gethostname",
@@ -10594,7 +10754,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
             "signal-control, bounded process-signal execution, and one legacy single-signal pause wait, bounded pthread create/exit/join/detach initial-TLS worker, its private selected-main/worker pthread-key/C11-TSS lifecycle, private process-normal pthread mutexes and their musl private condition-variable handoff, the complete selected rwlock/attribute family with private-or-shared futex operation, plus the distinct C11 plain-sync adapter and normal-return pthread/C11 once state machine, its typed C11 create/exit/join/detach sibling, and pthread/C11 identity aliases, named termios-control, selected process-context, child-reaping, C11 immediate termination, callback algorithms, direct clock_gettime, caller-owned mapping-core, no-cancellation mapping synchronization, direct anonymous-memory descriptor creation, nanosleep, and clock_nanosleep, selected "
             "descriptor-entry, selected filesystem-access, bounded descriptor-control, timestamp updates, and descriptor-I/O, selected process-resources, selected readiness/signal-waits, "
             "selected socket transport and selected socket-message/options, selected system-observation, selected UTS-identity, "
-            "immutable IPv6 unspecified-address and loopback-address data objects, immutable nameserver flag-accessor data, selected numeric-address codecs and legacy classful IPv4 arithmetic, fixed-profile h_errno message text, byte-string, random-entropy, memory-search, C-string-copy, immutable error-string, "
+            "immutable IPv6 unspecified-address and loopback-address data objects, immutable nameserver flag-accessor data, selected nameserver wire codecs and resource-record span accounting, selected numeric-address codecs and legacy classful IPv4 arithmetic, fixed-profile h_errno message text, byte-string, random-entropy, memory-search, C-string-copy, immutable error-string, "
             "fixed-C-locale ctype, integer-arithmetic, integer-parsing, intmax-arithmetic, credential-observation, and "
             "environment-backed login-name observation, find-first-set, startup-published program names, short/GNU-long "
             "getopt state and aliases, callback-tree/hash-table search, and the "
@@ -10669,6 +10829,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         ("ns_get32.rs", ns_get32_text),
         ("ns_put16.rs", ns_put16_text),
         ("ns_put32.rs", ns_put32_text),
+        ("ns_skiprr.rs", ns_skiprr_text),
         ("random_entropy.rs", random_entropy_text),
         ("memory_search.rs", memory_search_text),
         ("string_copy.rs", string_copy_text),

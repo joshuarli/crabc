@@ -10090,7 +10090,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn("dn_skipname", static_exports.splitlines())
         self.assertFalse(
             set(static_exports.splitlines())
-            & {"ns_initparse", "ns_parserr", "ns_skiprr", "ns_name_uncompress"}
+            & {"ns_initparse", "ns_parserr", "ns_name_uncompress"}
         )
         self.assertIn('id = "static-c-dn-skipname"', parity_ledger)
         self.assertIn(
@@ -10376,7 +10376,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn("_ns_flagdata", static_exports.splitlines())
         self.assertFalse(
             set(static_exports.splitlines())
-            & {"ns_initparse", "ns_parserr", "ns_skiprr", "ns_name_uncompress"}
+            & {"ns_initparse", "ns_parserr", "ns_name_uncompress"}
         )
         self.assertIn('id = "static-c-ns-flagdata"', parity_ledger)
         self.assertIn(
@@ -10507,10 +10507,6 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             self.assertIn(required, artifact_runner)
         self.assertNotIn('"$archive" -o "$candidate"', artifact_runner)
         self.assertIn("ns_get16", static_exports.splitlines())
-        self.assertFalse(
-            set(static_exports.splitlines())
-            & {"ns_skiprr"}
-        )
         self.assertIn('id = "static-c-ns-get16"', parity_ledger)
         self.assertIn(
             'command = "./scripts/dev-x86_64.sh libc-ns-get16"',
@@ -10642,10 +10638,6 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             self.assertIn(required, artifact_runner)
         self.assertNotIn('"$archive" -o "$candidate"', artifact_runner)
         self.assertIn("ns_get32", static_exports.splitlines())
-        self.assertFalse(
-            set(static_exports.splitlines())
-            & {"ns_skiprr"}
-        )
         self.assertIn('id = "static-c-ns-get32"', parity_ledger)
         self.assertIn(
             'command = "./scripts/dev-x86_64.sh libc-ns-get32"',
@@ -10778,10 +10770,6 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             self.assertIn(required, artifact_runner)
         self.assertNotIn('"$archive" -o "$candidate"', artifact_runner)
         self.assertIn("ns_put16", static_exports.splitlines())
-        self.assertFalse(
-            set(static_exports.splitlines())
-            & {"ns_skiprr"}
-        )
         self.assertIn('id = "static-c-ns-put16"', parity_ledger)
         self.assertIn(
             'command = "./scripts/dev-x86_64.sh libc-ns-put16"',
@@ -10916,7 +10904,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn("ns_put32", static_exports.splitlines())
         self.assertFalse(
             set(static_exports.splitlines())
-            & {"ns_skiprr", "ns_name_uncompress", "res_init"}
+            & {"ns_name_uncompress", "res_init"}
         )
         self.assertIn('id = "static-c-ns-put32"', parity_ledger)
         self.assertIn(
@@ -10925,6 +10913,147 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         )
         self.assertIn("nameser-header-abi)", dispatcher)
         self.assertIn("libc-ns-put32)", dispatcher)
+
+    def test_libc_static_c_abi_ns_skiprr_artifact_stays_private(self) -> None:
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        leaf = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "ns_skiprr.rs"
+        ).read_text(encoding="utf-8")
+        dn_skipname = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "dn_skipname.rs"
+        ).read_text(encoding="utf-8")
+        ns_get16 = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "ns_get16.rs"
+        ).read_text(encoding="utf-8")
+        header_c = (
+            ROOT / "compat" / "x86_64" / "nameser_header_abi_probe.c"
+        ).read_text(encoding="utf-8")
+        header_cpp = (
+            ROOT / "compat" / "x86_64" / "nameser_header_abi_probe.cpp"
+        ).read_text(encoding="utf-8")
+        header_runner = (
+            ROOT / "compat" / "x86_64" / "run_nameser_header_abi.sh"
+        ).read_text(encoding="utf-8")
+        probe = (
+            ROOT / "compat" / "x86_64" / "libc_ns_skiprr_probe.c"
+        ).read_text(encoding="utf-8")
+        start = (
+            ROOT / "compat" / "x86_64" / "libc_ns_skiprr_start.S"
+        ).read_text(encoding="utf-8")
+        artifact_runner = (
+            ROOT / "compat" / "x86_64" / "run_libc_ns_skiprr.sh"
+        ).read_text(encoding="utf-8")
+        static_exports = (
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        ).read_text(encoding="utf-8")
+        parity_ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        dispatcher = RUNNER.read_text(encoding="utf-8")
+
+        self.assertIn('#[path = "ns_skiprr.rs"]', static_root)
+        for required in (
+            "Selected static Linux/x86-64 DNS resource-record span C ABI boundary",
+            "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+            "src/network/ns_parse.c::ns_skiprr",
+            '#[link_name = "dn_skipname"]',
+            '#[link_name = "ns_get16"]',
+            "selected_dn_skipname",
+            "selected_ns_get16",
+            "QUESTION_FIXED_BYTES",
+            "RESOURCE_FIXED_BYTES",
+            "EMSGSIZE: c_int = 90",
+            "super::errno::set_errno",
+            "remaining_records.wrapping_sub(1)",
+            'pub unsafe extern "C" fn ns_skiprr',
+            "`count` must be nonnegative",
+        ):
+            self.assertIn(required, leaf)
+        self.assertEqual(
+            re.findall(
+                r'(?m)^pub\s+unsafe\s+extern\s+"C"\s+fn\s+(\w+)\s*\(', leaf
+            ),
+            ["ns_skiprr"],
+        )
+        for forbidden in (
+            "static mut",
+            "raw_syscall::",
+            "static_tls::",
+            "crabc_core",
+            "crabc_mimalloc",
+            "fn ns_initparse",
+            "fn ns_parserr",
+            "fn ns_name_uncompress",
+            "fn dn_expand",
+            "socket(",
+            "getaddrinfo",
+        ):
+            self.assertNotIn(forbidden, leaf)
+        self.assertIn("#[inline(never)]", dn_skipname)
+        self.assertIn("#[inline(never)]", ns_get16)
+
+        for header in (header_c, header_cpp):
+            self.assertIn("ns_skiprr_signature", header)
+            self.assertIn("ns_skiprr_function", header)
+        self.assertIn("ns_skiprr declaration", header_c)
+        self.assertIn("ns_skiprr C++ declaration", header_cpp)
+        for required in ("ns_skiprr", "_Z.*ns_skiprr", "check_cxx_c_linkage"):
+            self.assertIn(required, header_runner)
+
+        for required in (
+            "#include <errno.h>",
+            "#include <resolv.h>",
+            "ns_skiprr_signature",
+            "ns_s_qd == 0 && ns_s_an == 1",
+            "questions",
+            "answers",
+            "expect_malformed",
+            "EMSGSIZE",
+            "CRABC_NS_SKIPRR_FREESTANDING",
+        ):
+            self.assertIn(required, probe)
+        for required in (
+            "__crabc_x86_static_tls_bootstrap",
+            "crabc_x86_64_ns_skiprr_probe",
+            "mov $231, %eax",
+        ):
+            self.assertIn(required, start)
+        for required in (
+            "run_nameser_header_abi.sh",
+            "AARCH64_STATIC_TSV",
+            "ns_parse.lo",
+            "ns_parse.c",
+            "assert_selected_c_abi_surface",
+            "extract_selected_member",
+            "ns_skiprr archive member also defines a nameserver sibling",
+            "-nostdlib -static",
+            '"$selected_member" "$archive"',
+            "candidate lacks the selected errno TLS segment",
+            "candidate errno does not use direct fs initial TLS",
+            "ns_skiprr does not call its selected dn_skipname dependency",
+            "ns_skiprr does not call its selected ns_get16 dependency",
+            "ns_skiprr implementation unexpectedly performs a syscall",
+            "ns_initparse ns_parserr ns_name_uncompress",
+            "res_query res_querydomain res_search",
+            "getaddrinfo freeaddrinfo",
+            "bind connect send recv",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn("--whole-archive", artifact_runner)
+        self.assertIn("ns_skiprr", static_exports.splitlines())
+        self.assertFalse(
+            set(static_exports.splitlines())
+            & {"ns_initparse", "ns_parserr", "ns_name_uncompress", "res_init"}
+        )
+        self.assertIn('id = "static-c-ns-skiprr"', parity_ledger)
+        self.assertIn(
+            'command = "./scripts/dev-x86_64.sh libc-ns-skiprr"', parity_ledger
+        )
+        self.assertIn("nameser-header-abi)", dispatcher)
+        self.assertIn("libc-ns-skiprr)", dispatcher)
+        self.assertIn("run_libc_ns_skiprr.sh", dispatcher)
 
     def test_libc_static_c_abi_socket_transport_artifact_stays_narrow(self) -> None:
         static_root = (

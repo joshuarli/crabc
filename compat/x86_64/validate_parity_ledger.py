@@ -1423,6 +1423,8 @@ NS_PUT16_SYMBOLS = ("ns_put16",)
 
 NS_PUT32_SYMBOLS = ("ns_put32",)
 
+NS_SKIPRR_SYMBOLS = ("ns_skiprr",)
+
 INET_NTOA_SYMBOLS = ("inet_ntoa",)
 
 INET_CLASSFUL_SYMBOLS = ("inet_lnaof", "inet_makeaddr")
@@ -21017,8 +21019,8 @@ def require_dn_skipname_artifact(family: Mapping[str, Any]) -> None:
         "static-c-dn-skipname must retain its selected export",
     )
     require(
-        not (exports & {"ns_skiprr", "ns_name_uncompress", "res_init"}),
-        "static-c-dn-skipname must not add broader nameserver exports",
+        not (exports & {"ns_name_uncompress", "res_init"}),
+        "static-c-dn-skipname must not add unselected nameserver exports",
     )
 
     static_root = (
@@ -21372,8 +21374,8 @@ def require_dn_expand_artifact(family: Mapping[str, Any]) -> None:
         "static-c-dn-expand must retain both source-required alias exports",
     )
     require(
-        not (exports & {"ns_skiprr", "ns_name_uncompress", "res_init"}),
-        "static-c-dn-expand must not add broader nameserver exports",
+        not (exports & {"ns_name_uncompress", "res_init"}),
+        "static-c-dn-expand must not add unselected nameserver exports",
     )
 
     static_root = (
@@ -21752,7 +21754,7 @@ def require_ns_flagdata_artifact(family: Mapping[str, Any]) -> None:
         "static-c-ns-flagdata must retain _ns_flagdata export",
     )
     require(
-        not (exports & {"ns_initparse", "ns_parserr", "ns_skiprr", "ns_name_uncompress", "res_init"}),
+        not (exports & {"ns_initparse", "ns_parserr", "ns_name_uncompress", "res_init"}),
         "static-c-ns-flagdata must not add parser or resolver exports",
     )
 
@@ -22118,7 +22120,6 @@ def require_ns_get16_artifact(family: Mapping[str, Any]) -> None:
         not (
             exports
             & {
-                "ns_skiprr",
                 "ns_name_uncompress",
                 "res_init",
             }
@@ -22470,7 +22471,6 @@ def require_ns_get32_artifact(family: Mapping[str, Any]) -> None:
         not (
             exports
             & {
-                "ns_skiprr",
                 "ns_name_uncompress",
                 "res_init",
             }
@@ -22830,7 +22830,6 @@ def require_ns_put16_artifact(family: Mapping[str, Any]) -> None:
         not (
             exports
             & {
-                "ns_skiprr",
                 "ns_name_uncompress",
                 "res_init",
             }
@@ -23189,7 +23188,7 @@ def require_ns_put32_artifact(family: Mapping[str, Any]) -> None:
     require(
         not (
             exports
-            & {"ns_skiprr", "ns_name_uncompress", "res_init"}
+            & {"ns_name_uncompress", "res_init"}
         ),
         "static-c-ns-put32 must not add broader nameserver exports",
     )
@@ -23389,6 +23388,361 @@ def require_ns_put32_artifact(family: Mapping[str, Any]) -> None:
         and "libc-ns-put32)" in dispatch
         and "run_libc_ns_put32.sh" in dispatch,
         "ns_put32 dispatcher bindings are missing",
+    )
+
+
+def require_ns_skiprr_artifact(family: Mapping[str, Any]) -> None:
+    """Keep one dependency-composed RR span helper outside resolver behavior."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.resolver].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [entry for entry in artifacts if entry.get("id") == "static-c-ns-skiprr"]
+    require(
+        len(matching) == 1,
+        "libc.resolver must contain exactly one static-c-ns-skiprr artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-ns-skiprr must not promote libc.resolver",
+    )
+    artifact = matching[0]
+    description = artifact.get("description")
+    require(isinstance(description, str), "static-c-ns-skiprr needs a description")
+    for phrase in (
+        "Private native x86 static `ns_skiprr` caller-owned DNS resource-record span C ABI artifact",
+        "still-planned `libc.resolver`",
+        "true `-nostdlib -static` candidate",
+        "exactly `ns_skiprr`",
+        "separately selected `dn_skipname`",
+        "separately selected `ns_get16`",
+        "`EMSGSIZE`",
+        "initial-TLS `errno`",
+        "deliberately not archive-free",
+        "`ns_initparse`",
+        "`ns_parserr`",
+        "`ns_name_uncompress`",
+        "`dn_expand`",
+        "DNS packet I/O",
+        "netdb/database",
+        "public x86 support",
+    ):
+        require(phrase in description, f"static-c-ns-skiprr description omits {phrase}")
+
+    owners = set(
+        nonempty_strings(artifact.get("source_owners"), "static-c-ns-skiprr.source_owners")
+    )
+    for owner in (
+        "compat/upstreams.toml",
+        "compat/abi/musl-1.2.6/aarch64/libc.a.static.tsv",
+        "libc/Cargo.toml",
+        "libc/src/lib.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/ns_skiprr.rs",
+        "libc/src/c_abi/x86_64/dn_skipname.rs",
+        "libc/src/c_abi/x86_64/ns_get16.rs",
+        "libc/src/c_abi/x86_64/errno.rs",
+        "libc/src/c_abi/x86_64/static_tls.rs",
+        "include/errno.h",
+        "include/resolv.h",
+        "include/arpa/nameser.h",
+        "compat/x86_64/nameser_header_abi_probe.c",
+        "compat/x86_64/nameser_header_abi_probe.cpp",
+        "compat/x86_64/run_nameser_header_abi.sh",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/libc_ns_skiprr_probe.c",
+        "compat/x86_64/libc_ns_skiprr_start.S",
+        "compat/x86_64/run_libc_ns_skiprr.sh",
+        "compat/x86_64/aarch64_parity_inventory.py",
+        "compat/x86_64/aarch64_parity_inventory.json",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/README.md",
+        "STATUS.md",
+        "x86-64.md",
+        "scripts/dev-x86_64.sh",
+        "scripts/check_structure.py",
+    ):
+        require(owner in owners, f"static-c-ns-skiprr source owners omit {owner}")
+
+    prerequisites = nonempty_strings(
+        artifact.get("x86_abi_prerequisites"),
+        "static-c-ns-skiprr.x86_abi_prerequisites",
+    )
+    require(
+        any(
+            "SysV AMD64 LP64" in item
+            and "ns_skiprr(const unsigned char *, const unsigned char *, ns_sect, int)" in item
+            and "rdi/rsi" in item
+            and "edx" in item
+            and "ecx" in item
+            and "eax" in item
+            and "ordered readable ptr..eom range in one allocation" in item
+            and "nonnegative count" in item
+            for item in prerequisites
+        ),
+        "static-c-ns-skiprr must retain its caller-owned four-argument ABI",
+    )
+    require(
+        any(
+            "9fa28ece75d8a2191de7c5bb53bed224c5947417" in item
+            and "src/network/ns_parse.c" in item
+            and "ns_parse.lo" in item
+            and "dn_skipname" in item
+            and "NS_GET16" in item
+            and "errno=EMSGSIZE" in item
+            and "ns_initparse" in item
+            and "ns_parserr" in item
+            for item in prerequisites
+        ),
+        "static-c-ns-skiprr must retain its pinned-musl source mapping",
+    )
+    require(
+        any(
+            "exactly one extracted `ns_skiprr` object" in item
+            and "ordinary demand-driven `libc.a`" in item
+            and "dn_skipname/ns_get16" in item
+            and "initial-TLS errno" in item
+            and "not archive-free" in item
+            and "DNS packet I/O" in item
+            and "Ethernet" in item
+            for item in prerequisites
+        ),
+        "static-c-ns-skiprr must retain its bounded static closure",
+    )
+
+    headers = nonempty_strings(
+        artifact.get("x86_header_prerequisites"),
+        "static-c-ns-skiprr.x86_header_prerequisites",
+    )
+    require(
+        any(
+            "<resolv.h>" in item
+            and "ns_skiprr(const unsigned char *, const unsigned char *, ns_sect, int)" in item
+            and "NS_QFIXEDSZ" in item
+            and "NS_RRFIXEDSZ" in item
+            and "unmangled C++ C linkage" in item
+            for item in headers
+        ),
+        "static-c-ns-skiprr must retain its C/C++ nameser declaration boundary",
+    )
+
+    exports = set(
+        static_c_abi_export_names(
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        )
+    )
+    require(
+        set(NS_SKIPRR_SYMBOLS) <= exports,
+        "static-c-ns-skiprr must retain its selected export",
+    )
+    require(
+        not (exports & {"ns_initparse", "ns_parserr", "ns_name_uncompress", "res_init"}),
+        "static-c-ns-skiprr must not expose a broader parser or resolver entry",
+    )
+
+    static_root = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+    ).read_text(encoding="utf-8")
+    require(
+        '#[path = "ns_skiprr.rs"]\nmod ns_skiprr;' in static_root,
+        "x86 static C ABI must compose the ns_skiprr leaf",
+    )
+    implementation = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "ns_skiprr.rs"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+        "src/network/ns_parse.c::ns_skiprr",
+        "#[link_name = \"dn_skipname\"]",
+        "#[link_name = \"ns_get16\"]",
+        "selected_dn_skipname",
+        "selected_ns_get16",
+        "QUESTION_FIXED_BYTES",
+        "RESOURCE_FIXED_BYTES",
+        "EMSGSIZE: c_int = 90",
+        "super::errno::set_errno",
+        "remaining_records.wrapping_sub(1)",
+        'pub unsafe extern "C" fn ns_skiprr',
+        "`count` must be nonnegative",
+    ):
+        require(snippet in implementation, f"ns_skiprr leaf omits {snippet}")
+    exported_functions = set(
+        re.findall(
+            r'(?m)^pub\s+unsafe\s+extern\s+"C"\s+fn\s+(\w+)\s*\(', implementation
+        )
+    )
+    require(
+        exported_functions == set(NS_SKIPRR_SYMBOLS),
+        "ns_skiprr leaf must export only ns_skiprr",
+    )
+    for forbidden in (
+        "static mut",
+        "raw_syscall::",
+        "static_tls::",
+        "crabc_core",
+        "crabc_mimalloc",
+        "fn ns_initparse",
+        "fn ns_parserr",
+        "fn ns_name_uncompress",
+        "fn dn_expand",
+        "socket(",
+        "getaddrinfo",
+    ):
+        require(forbidden not in implementation, f"ns_skiprr leaf widens into {forbidden}")
+    for dependency_path, symbol in (
+        ("dn_skipname.rs", "dn_skipname"),
+        ("ns_get16.rs", "ns_get16"),
+    ):
+        dependency = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / dependency_path
+        ).read_text(encoding="utf-8")
+        require(
+            "#[inline(never)]" in dependency
+            and f'pub unsafe extern "C" fn {symbol}' in dependency,
+            f"ns_skiprr must retain its object-level selected {symbol} dependency",
+        )
+
+    header_c = (
+        ROOT / "compat" / "x86_64" / "nameser_header_abi_probe.c"
+    ).read_text(encoding="utf-8")
+    header_cpp = (
+        ROOT / "compat" / "x86_64" / "nameser_header_abi_probe.cpp"
+    ).read_text(encoding="utf-8")
+    header_runner = (
+        ROOT / "compat" / "x86_64" / "run_nameser_header_abi.sh"
+    ).read_text(encoding="utf-8")
+    for snippet in ("ns_skiprr_signature", "ns_skiprr declaration", "ns_skiprr_function"):
+        require(snippet in header_c, f"nameser C header probe omits {snippet}")
+    for snippet in ("ns_skiprr_signature", "ns_skiprr C++ declaration", "ns_skiprr_function"):
+        require(snippet in header_cpp, f"nameser C++ header probe omits {snippet}")
+    for snippet in ("ns_skiprr", "_Z.*ns_skiprr", "check_cxx_c_linkage"):
+        require(snippet in header_runner, f"nameser header runner omits {snippet}")
+
+    fixture = (
+        ROOT / "compat" / "x86_64" / "libc_ns_skiprr_probe.c"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "#include <errno.h>",
+        "#include <resolv.h>",
+        "ns_skiprr_signature",
+        "ns_s_qd == 0 && ns_s_an == 1",
+        "questions",
+        "answers",
+        "expect_malformed",
+        "EMSGSIZE",
+        "CRABC_NS_SKIPRR_FREESTANDING",
+    ):
+        require(snippet in fixture, f"ns_skiprr fixture omits {snippet}")
+    start = (
+        ROOT / "compat" / "x86_64" / "libc_ns_skiprr_start.S"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "__crabc_x86_static_tls_bootstrap",
+        "crabc_x86_64_ns_skiprr_probe",
+        "mov $231, %eax",
+    ):
+        require(snippet in start, f"ns_skiprr static entry omits {snippet}")
+
+    runner = (
+        ROOT / "compat" / "x86_64" / "run_libc_ns_skiprr.sh"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "run_nameser_header_abi.sh",
+        "AARCH64_STATIC_TSV",
+        "ns_parse.lo",
+        "ns_parse.c",
+        "assert_selected_c_abi_surface",
+        "extract_selected_member",
+        "ns_skiprr archive member also defines a nameserver sibling",
+        "-nostdlib -static",
+        '"$selected_member" "$archive"',
+        "candidate lacks the selected errno TLS segment",
+        "candidate errno does not use direct fs initial TLS",
+        "ns_skiprr does not call its selected dn_skipname dependency",
+        "ns_skiprr does not call its selected ns_get16 dependency",
+        "ns_skiprr implementation unexpectedly performs a syscall",
+        "ns_initparse ns_parserr ns_name_uncompress",
+        "res_query res_querydomain res_search",
+        "getaddrinfo freeaddrinfo",
+        "socket ",
+        "bind connect send recv",
+    ):
+        require(snippet in runner, f"ns_skiprr runner omits {snippet}")
+    require(
+        "--whole-archive" not in runner,
+        "ns_skiprr runner must not force-link the archive",
+    )
+
+    oracle = artifact.get("oracle")
+    require(isinstance(oracle, list), "static-c-ns-skiprr needs oracle evidence")
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "c-posix"
+            and isinstance(entry.get("role"), str)
+            and "src/network/ns_parse.c::ns_skiprr" in entry["role"]
+            and "dn_skipname and NS_GET16" in entry["role"]
+            and "EMSGSIZE" in entry["role"]
+            and "ns_initparse" in entry["role"]
+            and "Ethernet" in entry["role"]
+            for entry in oracle
+        ),
+        "static-c-ns-skiprr must retain its pinned-musl codec oracle",
+    )
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "elf-abi"
+            and isinstance(entry.get("role"), str)
+            and "rdi/rsi" in entry["role"]
+            and "edx" in entry["role"]
+            and "ecx" in entry["role"]
+            and "eax" in entry["role"]
+            and "initial-exec errno" in entry["role"]
+            for entry in oracle
+        ),
+        "static-c-ns-skiprr must retain its static ELF ABI oracle",
+    )
+
+    evidence = artifact.get("native_evidence")
+    require(isinstance(evidence, list), "static-c-ns-skiprr needs evidence")
+    require(
+        {entry.get("command") for entry in evidence if isinstance(entry, Mapping)}
+        == {"./scripts/dev-x86_64.sh libc-ns-skiprr"},
+        "static-c-ns-skiprr must use the closed libc-ns-skiprr command",
+    )
+    scope = evidence[0].get("scope")
+    require(isinstance(scope, str), "static-c-ns-skiprr evidence needs a scope")
+    for phrase in (
+        "Pinned-musl/project C/C++ nameser header proof",
+        "true x86 `-nostdlib -static` candidate",
+        "ns_parse.c/ns_parse.lo mapping",
+        "one extracted ns_skiprr object",
+        "dn_skipname/ns_get16/direct initial-TLS errno",
+        "question and resource-record multi-span advancement",
+        "zero-count stale errno",
+        "EMSGSIZE outcomes",
+        "no interpreter/DT_NEEDED/unresolved symbol/dynamic-TLS model",
+        "direct fs initial TLS",
+        "no syscall in ns_skiprr",
+        "ns_initparse/ns_parserr/ns_name_uncompress/dn_expand",
+        "hosts/resolv.conf",
+        "DNS packet I/O",
+        "netdb/database",
+        "public x86 support",
+    ):
+        require(phrase in scope, f"static-c-ns-skiprr evidence omits {phrase}")
+
+    dispatch = (ROOT / "scripts" / "dev-x86_64.sh").read_text(encoding="utf-8")
+    require(
+        "nameser-header-abi)" in dispatch
+        and "run_nameser_header_abi.sh" in dispatch
+        and "libc-ns-skiprr)" in dispatch
+        and "run_libc_ns_skiprr.sh" in dispatch,
+        "ns_skiprr dispatcher bindings are missing",
     )
 
 
@@ -33401,6 +33755,7 @@ def validate_ledger(
     require_ns_get32_artifact(by_id["libc.resolver"])
     require_ns_put16_artifact(by_id["libc.resolver"])
     require_ns_put32_artifact(by_id["libc.resolver"])
+    require_ns_skiprr_artifact(by_id["libc.resolver"])
     require_auxv_observation_artifact(by_id["libc.c-abi-compat"])
     require_endservent_artifact(by_id["libc.c-abi-compat"])
     require_process_globals_getopt_artifact(by_id["libc.c-abi-compat"])

@@ -24,6 +24,7 @@ use core::ffi::c_uint;
 /// input; it reads exactly those two bytes and does not write memory or consult
 /// nameserver state.
 #[no_mangle]
+#[inline(never)]
 pub unsafe extern "C" fn ns_get16(bytes: *const u8) -> c_uint {
     let high = unsafe { core::ptr::read(bytes) } as c_uint;
     let low = unsafe { core::ptr::read(bytes.add(1)) } as c_uint;

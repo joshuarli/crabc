@@ -46,7 +46,8 @@
 //! data object and one immutable IPv6 loopback-address data object, one
 //! immutable nameserver flag-accessor table, one caller-owned nameserver 16-bit
 //! wire-read codec, one caller-owned DNS wire-name span codec, and one
-//! caller-owned DNS wire-name expansion codec,
+//! caller-owned DNS wire-name expansion codec, plus one caller-owned DNS
+//! resource-record span codec over those selected wire primitives,
 //! isolated shared static IPv4 presentation buffer with no resolver state, and
 //! selected classful raw-word
 //! IPv4 arithmetic/network-part extraction with no resolver state, padded
@@ -405,6 +406,8 @@ mod ns_get32;
 mod ns_put16;
 #[path = "ns_put32.rs"]
 mod ns_put32;
+#[path = "ns_skiprr.rs"]
+mod ns_skiprr;
 #[path = "inet_address.rs"]
 mod inet_address;
 #[path = "inet_ntoa.rs"]

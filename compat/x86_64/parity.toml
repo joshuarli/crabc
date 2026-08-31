@@ -7820,9 +7820,9 @@ id = "libc.resolver"
 order = 100
 depends_on = ["oracle.musl-toolchain", "libc.headers-layouts", "libc.posix-runtime", "libc.text-math-locale-stdio"]
 category = "c-abi"
-description = "Bounded /etc hosts/resolv.conf resolver profile with A/AAAA/CNAME UDP/TCP retry and failover behavior. Its separately verified numeric-address codec, legacy inet_network parser-composition, shared inet_ntoa scratch-buffer, classful IPv4 arithmetic and network-part extraction, hstrerror message, dependency-free dn_skipname wire-name span codec, dependency-free dn_expand wire-name expansion codec, immutable _ns_flagdata nameserver flag-accessor table, dependency-free ns_get16 caller-owned 16-bit wire-read codec, dependency-free ns_get32 caller-owned 32-bit wire-read codec, dependency-free ns_put16 caller-owned 16-bit wire-write codec, dependency-free ns_put32 caller-owned 32-bit wire-write codec, and deterministic numeric netdb result-lifetime slices are private static C artifacts only; none promotes resolver-network behavior, this family, or public x86 support."
+description = "Bounded /etc hosts/resolv.conf resolver profile with A/AAAA/CNAME UDP/TCP retry and failover behavior. Its separately verified numeric-address codec, legacy inet_network parser-composition, shared inet_ntoa scratch-buffer, classful IPv4 arithmetic and network-part extraction, hstrerror message, dependency-free dn_skipname wire-name span codec, dependency-free dn_expand wire-name expansion codec, immutable _ns_flagdata nameserver flag-accessor table, dependency-free ns_get16 caller-owned 16-bit wire-read codec, dependency-free ns_get32 caller-owned 32-bit wire-read codec, dependency-free ns_put16 caller-owned 16-bit wire-write codec, dependency-free ns_put32 caller-owned 32-bit wire-write codec, dependency-composed ns_skiprr resource-record span codec, and deterministic numeric netdb result-lifetime slices are private static C artifacts only; none promotes resolver-network behavior, this family, or public x86 support."
 aarch64_gates = ["resolver-network", "libc-test"]
-source_owners = ["libc/src/c_abi.rs", "libc/src/c_abi/x86_64/dn_skipname.rs", "libc/src/c_abi/x86_64/dn_expand.rs", "libc/src/c_abi/x86_64/ns_flagdata.rs", "libc/src/c_abi/x86_64/ns_get16.rs", "libc/src/c_abi/x86_64/ns_get32.rs", "libc/src/c_abi/x86_64/ns_put16.rs", "libc/src/c_abi/x86_64/ns_put32.rs", "compat/resolver-network"]
+source_owners = ["libc/src/c_abi.rs", "libc/src/c_abi/x86_64/dn_skipname.rs", "libc/src/c_abi/x86_64/dn_expand.rs", "libc/src/c_abi/x86_64/ns_flagdata.rs", "libc/src/c_abi/x86_64/ns_get16.rs", "libc/src/c_abi/x86_64/ns_get32.rs", "libc/src/c_abi/x86_64/ns_put16.rs", "libc/src/c_abi/x86_64/ns_put32.rs", "libc/src/c_abi/x86_64/ns_skiprr.rs", "compat/resolver-network"]
 x86_abi_prerequisites = ["socket and DNS wire I/O syscall boundary", "x86 socket/address record layouts"]
 x86_header_prerequisites = ["netdb.h, arpa/inet.h, resolv.h, arpa/nameser.h, sys/socket.h, and netinet/in.h selected contracts."]
 native_evidence = [{ state = "required", command = "Define a native x86 isolated resolver-network differential gate", scope = "Use the same local-only DNS environment; do not add NSS, DoH, DoT, or mDNS." }]
@@ -8534,6 +8534,63 @@ native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc
 oracle = [
   { kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source and C/POSIX behavior oracle for `src/network/ns_parse.c` ns_put32's high-byte-first writes from the low 32 bits of C unsigned long, including unaligned caller-owned output and no input read. Resolver state/files, DNS packet I/O, socket, netdb, parser siblings, separate byte-order helpers, h_errno, and Ethernet behavior remain unselected." },
   { kind = "elf-abi", source = "System V AMD64 psABI and pinned musl x86 static object", role = "LP64 unsigned-long-in-rdi and mutable-byte-pointer-in-rsi void C-call ABI, plus the isolated 5-byte ns_put32 section and archive-free static final-ELF boundary for exactly one ns_put32 object." },
+]
+
+[[family.verified_artifact]]
+id = "static-c-ns-skiprr"
+description = "Private native x86 static `ns_skiprr` caller-owned DNS resource-record span C ABI artifact inside still-planned `libc.resolver`, not resolver-network behavior or a DNS parser. One project-header C fixture first executes through pinned musl 1.2.6 and then through a true `-nostdlib -static` candidate. It exposes exactly `ns_skiprr`: it advances a caller-owned bounded question or resource-record sequence, consumes names only through the separately selected `dn_skipname`, skips type/class and non-question TTL, reads RDLENGTH only through the separately selected `ns_get16`, and publishes `EMSGSIZE` for malformed spans through the selected initial-TLS `errno` slot. The final link begins with exactly one extracted `ns_skiprr` object and then admits ordinary demand-driven `libc.a` closure only for those selected wire helpers and errno/TLS support, so this evidence is deliberately not archive-free. It does not select `ns_initparse`, `ns_parserr`, `ns_name_uncompress`, `dn_expand`, DNS name compression, resolver state/configuration, `/etc/hosts`, `/etc/resolv.conf`, DNS packet I/O, socket, netdb/database, h_errno, allocation, libc.so, CRT, loader, sysroot, family completion, promotion, or public x86 support."
+source_owners = [
+  "compat/upstreams.toml",
+  "compat/abi/musl-1.2.6/aarch64/libc.a.static.tsv",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/ns_skiprr.rs",
+  "libc/src/c_abi/x86_64/dn_skipname.rs",
+  "libc/src/c_abi/x86_64/ns_get16.rs",
+  "libc/src/c_abi/x86_64/errno.rs",
+  "libc/src/c_abi/x86_64/static_tls.rs",
+  "include/errno.h",
+  "include/resolv.h",
+  "include/arpa/nameser.h",
+  "include/netinet/in.h",
+  "include/stddef.h",
+  "include/stdint.h",
+  "include/sys/socket.h",
+  "include/sys/types.h",
+  "include/bits/alltypes.h",
+  "compat/x86_64/nameser_header_abi_probe.c",
+  "compat/x86_64/nameser_header_abi_probe.cpp",
+  "compat/x86_64/run_nameser_header_abi.sh",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/libc_ns_skiprr_probe.c",
+  "compat/x86_64/libc_ns_skiprr_start.S",
+  "compat/x86_64/run_libc_ns_skiprr.sh",
+  "compat/x86_64/aarch64_parity_inventory.py",
+  "compat/x86_64/aarch64_parity_inventory.json",
+  "compat/x86_64/tests/test_aarch64_parity_inventory.py",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "compat/x86_64/README.md",
+  "STATUS.md",
+  "x86-64.md",
+  "scripts/dev-x86_64.sh",
+  "scripts/check_structure.py",
+]
+x86_abi_prerequisites = [
+  "The selected C boundary is SysV AMD64 LP64: `ns_skiprr(const unsigned char *, const unsigned char *, ns_sect, int)` receives ptr/eom in rdi/rsi, four-byte `ns_sect` in edx, and four-byte count in ecx, returning its signed byte span or -1 in eax. The caller supplies an ordered readable ptr..eom range in one allocation, a nonnegative count, and a span representable by C int; `ns_sect` remains the four-byte enum with ns_s_qd=0 and ns_s_an=1.",
+  "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417 maps `ns_skiprr` to `src/network/ns_parse.c`; the pinned AArch64 static inventory maps it to `ns_parse.lo`. Each record calls dn_skipname, requires name plus type/class, then for non-question sections requires TTL plus RDLENGTH, reads RDLENGTH through NS_GET16, and requires that many RDATA bytes. Any malformed selected span reaches errno=EMSGSIZE; `ns_initparse`, `ns_parserr`, and ns_name_uncompress remain unselected.",
+  "The true static final link begins with exactly one extracted `ns_skiprr` object and then uses ordinary demand-driven `libc.a` only for its selected dn_skipname/ns_get16 and direct initial-TLS errno closure, so it is deliberately not archive-free. The final ET_EXEC has no interpreter, DT_NEEDED, unresolved symbol, or dynamic-TLS model; ns_skiprr disassembly retains direct calls to those two selected wire helpers and no syscall. It excludes DNS packet I/O, resolver configuration/state, parser/name-expansion, socket, netdb/database, allocation, and Ethernet behavior.",
+]
+x86_header_prerequisites = [
+  "The shared pinned-musl/project C11/C++17 `<resolv.h>` nameser declaration matrix proves the exact `ns_skiprr(const unsigned char *, const unsigned char *, ns_sect, int)` function-pointer type, ns_sect/NS_QFIXEDSZ/NS_RRFIXEDSZ wire constants, project-header provenance, and unmangled C++ C linkage beside the separately selected dn_skipname/ns_get16 helpers. It selects no resolver state, DNS I/O, socket, netdb, parser, installed-header completion, family promotion, or public x86 support.",
+  "The runtime fixture preprocesses only project `errno.h`, `resolv.h`, `arpa/nameser.h`, `netinet/in.h`, `stddef.h`, `stdint.h`, socket/type, and alltypes headers before it compares bounded question/resource-record spans, zero-count stale errno, and malformed-name/fixed-tail/RDATA EMSGSIZE behavior with pinned musl and the static candidate.",
+]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-ns-skiprr", scope = "Pinned-musl/project C/C++ nameser header proof plus equivalent pinned-musl C execution and one true x86 `-nostdlib -static` candidate. The gate ratchets the pinned-musl ns_parse.c/ns_parse.lo mapping, exact aggregate static C export surface, one extracted ns_skiprr object, and ordinary demand-driven archive closure only for selected dn_skipname/ns_get16/direct initial-TLS errno. It proves question and resource-record multi-span advancement, zero-count stale errno, malformed-name/fixed-tail/RDATA EMSGSIZE outcomes, no interpreter/DT_NEEDED/unresolved symbol/dynamic-TLS model, direct fs initial TLS, direct selected helper calls, and no syscall in ns_skiprr. It rejects ns_initparse/ns_parserr/ns_name_uncompress/dn_expand, resolver configuration/state, hosts/resolv.conf, DNS packet I/O, socket, netdb/database, h_errno, allocation, libc.so, CRT, loader, sysroot, family completion, promotion, and public x86 support." }]
+oracle = [
+  { kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source, declaration, static-member, and behavior oracle for src/network/ns_parse.c::ns_skiprr: caller-owned question/resource-record span accounting through dn_skipname and NS_GET16, with EMSGSIZE on malformed selected ranges. ns_initparse, ns_parserr, ns_name_uncompress, resolver state/files, DNS packet I/O, socket, netdb, and Ethernet behavior remain unselected." },
+  { kind = "elf-abi", source = "System V AMD64 psABI and pinned musl x86 static object", role = "LP64 ptr/eom-in-rdi/rsi, ns_sect-in-edx, count-in-ecx, signed-int-in-eax C-call ABI plus the exact selected-helper and direct initial-exec errno static ET_EXEC closure." },
 ]
 
 [[family]]

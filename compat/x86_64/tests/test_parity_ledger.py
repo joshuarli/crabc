@@ -50,7 +50,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 40)
-        self.assertEqual(report["verified_artifact_count"], 165)
+        self.assertEqual(report["verified_artifact_count"], 166)
         self.assertEqual(report["header_layout_probe_count"], 47)
         self.assertEqual(report["public_header_inventory_count"], 183)
         self.assertEqual(report["header_foundation_header_count"], 191)
@@ -15235,9 +15235,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             .splitlines()
         )
         self.assertIn("dn_skipname", exports)
-        self.assertFalse(
-            exports & {"ns_skiprr", "ns_name_uncompress", "res_init"}
-        )
+        self.assertFalse(exports & {"ns_name_uncompress", "res_init"})
 
         prerequisites = artifact["x86_abi_prerequisites"]
         assert isinstance(prerequisites, list)
@@ -15348,7 +15346,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             .splitlines()
         )
         self.assertTrue({"__dn_expand", "dn_expand"} <= exports)
-        self.assertFalse(exports & {"ns_skiprr", "ns_name_uncompress", "res_init"})
+        self.assertFalse(exports & {"ns_name_uncompress", "res_init"})
 
         prerequisites = artifact["x86_abi_prerequisites"]
         assert isinstance(prerequisites, list)
@@ -15481,9 +15479,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             .splitlines()
         )
         self.assertIn("_ns_flagdata", exports)
-        self.assertFalse(
-            exports & {"ns_initparse", "ns_parserr", "ns_skiprr", "ns_name_uncompress"}
-        )
+        self.assertFalse(exports & {"ns_initparse", "ns_parserr", "ns_name_uncompress"})
 
         prerequisites = artifact["x86_abi_prerequisites"]
         assert isinstance(prerequisites, list)
@@ -15616,10 +15612,6 @@ class X86ParityLedgerTests(unittest.TestCase):
             .splitlines()
         )
         self.assertIn("ns_get16", exports)
-        self.assertFalse(
-            exports
-            & {"ns_skiprr"}
-        )
 
         prerequisites = artifact["x86_abi_prerequisites"]
         assert isinstance(prerequisites, list)
@@ -15732,7 +15724,6 @@ class X86ParityLedgerTests(unittest.TestCase):
             .splitlines()
         )
         self.assertIn("ns_get32", exports)
-        self.assertFalse(exports & {"ns_skiprr"})
 
         prerequisites = artifact["x86_abi_prerequisites"]
         assert isinstance(prerequisites, list)
@@ -15844,9 +15835,6 @@ class X86ParityLedgerTests(unittest.TestCase):
             .splitlines()
         )
         self.assertIn("ns_put16", exports)
-        self.assertFalse(
-            exports & {"ns_skiprr"}
-        )
 
         prerequisites = artifact["x86_abi_prerequisites"]
         assert isinstance(prerequisites, list)
@@ -15960,9 +15948,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             .splitlines()
         )
         self.assertIn("ns_put32", exports)
-        self.assertFalse(
-            exports & {"ns_skiprr", "ns_name_uncompress", "res_init"}
-        )
+        self.assertFalse(exports & {"ns_name_uncompress", "res_init"})
 
         prerequisites = artifact["x86_abi_prerequisites"]
         assert isinstance(prerequisites, list)
@@ -16016,6 +16002,128 @@ class X86ParityLedgerTests(unittest.TestCase):
         evidence[0]["scope"] = "static nameserver dword helper"
         with self.assertRaisesRegex(
             ledger.LedgerError, "Pinned-musl project-header C execution"
+        ):
+            ledger.validate_ledger(data)
+
+    def test_ns_skiprr_artifact_keeps_its_private_parser_boundary(self) -> None:
+        data = self.data()
+        family = self.family(data, "libc.resolver")
+        self.assertEqual(family["status"], "planned")
+        self.assertIn("libc/src/c_abi/x86_64/ns_skiprr.rs", family["source_owners"])
+        artifacts = family["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-ns-skiprr"
+        )
+        self.assertNotIn("capabilities", artifact)
+        for owner in (
+            "libc/src/c_abi/x86_64/ns_skiprr.rs",
+            "libc/src/c_abi/x86_64/dn_skipname.rs",
+            "libc/src/c_abi/x86_64/ns_get16.rs",
+            "libc/src/c_abi/x86_64/errno.rs",
+            "libc/src/c_abi/x86_64/static_tls.rs",
+            "include/errno.h",
+            "include/resolv.h",
+            "include/arpa/nameser.h",
+            "compat/x86_64/nameser_header_abi_probe.c",
+            "compat/x86_64/nameser_header_abi_probe.cpp",
+            "compat/x86_64/run_nameser_header_abi.sh",
+            "compat/x86_64/libc_ns_skiprr_probe.c",
+            "compat/x86_64/libc_ns_skiprr_start.S",
+            "compat/x86_64/run_libc_ns_skiprr.sh",
+            "compat/x86_64/static_c_abi_exports.txt",
+            "compat/x86_64/validate_parity_ledger.py",
+            "scripts/dev-x86_64.sh",
+            "scripts/check_structure.py",
+        ):
+            self.assertIn(owner, artifact["source_owners"])
+        self.assertEqual(
+            {entry["command"] for entry in artifact["native_evidence"]},
+            {"./scripts/dev-x86_64.sh libc-ns-skiprr"},
+        )
+        for phrase in (
+            "Private native x86 static `ns_skiprr` caller-owned DNS resource-record span C ABI artifact",
+            "still-planned `libc.resolver`",
+            "separately selected `dn_skipname`",
+            "separately selected `ns_get16`",
+            "`EMSGSIZE`",
+            "initial-TLS `errno`",
+            "deliberately not archive-free",
+            "`ns_initparse`",
+            "`ns_parserr`",
+            "`ns_name_uncompress`",
+            "`dn_expand`",
+            "DNS packet I/O",
+            "netdb/database",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, artifact["description"])
+
+        exports = set(
+            (ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt")
+            .read_text(encoding="utf-8")
+            .splitlines()
+        )
+        self.assertIn("ns_skiprr", exports)
+        self.assertFalse(exports & {"ns_initparse", "ns_parserr", "ns_name_uncompress", "res_init"})
+
+        prerequisites = artifact["x86_abi_prerequisites"]
+        assert isinstance(prerequisites, list)
+        c_abi = next(item for item in prerequisites if "SysV AMD64 LP64" in item)
+        assert isinstance(c_abi, str)
+        for phrase in (
+            "rdi/rsi",
+            "edx",
+            "ecx",
+            "eax",
+            "ordered readable ptr..eom range in one allocation",
+            "nonnegative count",
+        ):
+            self.assertIn(phrase, c_abi)
+        source_mapping = next(
+            item for item in prerequisites if "src/network/ns_parse.c" in item
+        )
+        assert isinstance(source_mapping, str)
+        for phrase in (
+            "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+            "ns_parse.lo",
+            "dn_skipname",
+            "NS_GET16",
+            "errno=EMSGSIZE",
+            "ns_initparse",
+            "ns_parserr",
+        ):
+            self.assertIn(phrase, source_mapping)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.resolver")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-ns-skiprr"
+        )
+        artifact["description"] = artifact["description"].replace(
+            "deliberately not archive-free", "archive-free"
+        )
+        with self.assertRaisesRegex(ledger.LedgerError, "omits deliberately not archive-free"):
+            ledger.validate_ledger(data)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.resolver")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-ns-skiprr"
+        )
+        evidence = artifact["native_evidence"]
+        assert isinstance(evidence, list) and isinstance(evidence[0], dict)
+        evidence[0]["scope"] = "static parser span helper"
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "Pinned-musl/project C/C\\+\\+ nameser header proof"
         ):
             ledger.validate_ledger(data)
 

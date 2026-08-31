@@ -459,6 +459,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-in6addr-loopback
 ./scripts/dev-x86_64.sh libc-dn-skipname
 ./scripts/dev-x86_64.sh libc-ns-get16
+./scripts/dev-x86_64.sh libc-ns-skiprr
 ./scripts/dev-x86_64.sh libc-socket-transport
 ./scripts/dev-x86_64.sh libc-socket-messages
 ./scripts/dev-x86_64.sh libc-byte-strings
@@ -1286,15 +1287,16 @@ address-conversion or socket behavior, `crabc-libc`, or public x86 support.
 `dn_skipname(const unsigned char *, const unsigned char *)`,
 `dn_expand(const unsigned char *, const unsigned char *, const unsigned char *, char *, int)`, and
 `ns_get16(const unsigned char *)`, `ns_get32(const unsigned char *)`, and
-`ns_put16(unsigned, unsigned char *)`, plus
-`ns_put32(unsigned long, unsigned char *)`, plus the eight-byte align-4
+`ns_put16(unsigned, unsigned char *)`, `ns_put32(unsigned long, unsigned char *)`, and
+`ns_skiprr(const unsigned char *, const unsigned char *, ns_sect, int)`, plus the eight-byte align-4
 `struct _ns_flagdata { int mask; int shift; }` and `const struct _ns_flagdata *`
 array-decay declaration. It ratchets `NS_CMPRSFLGS=0xc0`, `NS_MAXLABEL=63`,
 `NS_MAXCDNAME=255`, and `NS_MAXDNAME=1025`, then checks the C++ object retains
-the six unmangled C function symbols and one unmangled `_ns_flagdata` data
+the seven unmangled C function symbols and one unmangled `_ns_flagdata` data
 reference. It is declaration-only evidence for caller-owned DNS wire-name span
 walking and expansion, immutable nameserver flag-accessor data, caller-owned
-16-bit and 32-bit wire reads, and caller-owned 16-bit and 32-bit wire writes; it does not
+16-bit and 32-bit wire reads, caller-owned 16-bit and 32-bit wire writes, and
+caller-owned resource-record span accounting; it does not
 establish archive linkage, resolver state, `/etc/resolv.conf` parsing, DNS
 packet I/O, sockets, netdb, installed-header completion, family promotion, or
 public x86 support.
@@ -1527,6 +1529,23 @@ It has no resolver state, `h_errno`/`errno`/TLS, `/etc/hosts` or
 sibling, address codec, integer byte-order helper, interface, Ethernet,
 allocation, syscall, libc.so, CRT, loader, sysroot, family promotion, or
 public x86 support.
+
+`libc-ns-skiprr` (`./scripts/dev-x86_64.sh libc-ns-skiprr`) is a distinct
+private static caller-owned DNS resource-record span C ABI artifact inside
+still-planned `libc.resolver`, not resolver-network behavior or a parser. Its
+shared `nameser-header-abi` gate proves the exact C/C++ `ns_skiprr` declaration
+and unmangled linkage. The project-header fixture executes first through
+pinned musl 1.2.6 and then through a true `-nostdlib -static` candidate whose
+link begins with exactly one extracted `ns_skiprr` object. It then uses ordinary
+demand-driven `libc.a` only for the separately selected `dn_skipname`,
+`ns_get16`, and initial-TLS errno closure, so it is deliberately not
+archive-free. The differential covers question and resource-record multi-span
+advancement, zero-count errno preservation, and malformed name/fixed-tail/RDATA
+`EMSGSIZE` outcomes. It excludes `ns_initparse`, `ns_parserr`,
+`ns_name_uncompress`, `dn_expand`, resolver configuration/state,
+`/etc/hosts`, `/etc/resolv.conf`, DNS packet I/O, socket, netdb/database,
+h_errno, allocation, libc.so, CRT, loader, sysroot, family completion,
+promotion, and public x86 support.
 
 `libc-numeric-netdb` is a separate private static C `netdb.h` result-record
 artifact under still-planned `libc.resolver`. Its project-header C body first

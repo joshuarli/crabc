@@ -23,6 +23,7 @@ use core::ffi::c_int;
 /// musl's C ABI, the function may read the first byte of each encoded label and
 /// has no ownership, alignment, resolver-state, or packet-I/O contract.
 #[no_mangle]
+#[inline(never)]
 pub unsafe extern "C" fn dn_skipname(source: *const u8, end: *const u8) -> c_int {
     let start = source as usize;
     let limit = end as usize;

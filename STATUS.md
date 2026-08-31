@@ -131,7 +131,8 @@ C/C++ `dn_skipname(const unsigned char *, const unsigned char *)` and
 `dn_expand(const unsigned char *, const unsigned char *, const unsigned char *, char *, int)`,
 `ns_get16(const unsigned char *)`, `ns_get32(const unsigned char *)`, and
 `ns_put16(unsigned, unsigned char *)`, and
-`ns_put32(unsigned long, unsigned char *)` declarations, plus the
+`ns_put32(unsigned long, unsigned char *)`, and
+`ns_skiprr(const unsigned char *, const unsigned char *, ns_sect, int)` declarations, plus the
 eight-byte align-4 `{ int mask; int shift; }` `_ns_flagdata` record, its
 `const struct _ns_flagdata *` array-decay type, and unmangled C++ data
 reference. It also proves the `NS_CMPRSFLGS`/name-size constants. The static
@@ -239,6 +240,22 @@ TLS, `/etc/hosts` or `/etc/resolv.conf` access, DNS packet I/O, socket,
 netdb/database, parser sibling, integer byte-order helper, allocation,
 syscall, interface, or Ethernet dependency; it is not resolver completion,
 promotion, or public x86 support.
+
+`./scripts/dev-x86_64.sh libc-ns-skiprr` is a private
+`static-c-ns-skiprr` artifact inside still-planned `libc.resolver`. The shared
+`./scripts/dev-x86_64.sh nameser-header-abi` gate proves the exact C/C++
+`ns_skiprr(const unsigned char *, const unsigned char *, ns_sect, int)`
+declaration and unmangled C++ linkage. Its fixture first runs through pinned
+musl 1.2.6, then through a true `-nostdlib -static` candidate beginning with
+one extracted `ns_skiprr` object. The ordinary demand-driven `libc.a` closure
+is limited to separately selected `dn_skipname`, `ns_get16`, and direct
+initial-TLS errno, so the artifact is deliberately not archive-free. It
+compares question/resource-record multi-span advancement, zero-count stale
+errno, and malformed name/fixed-tail/RDATA `EMSGSIZE` outcomes. It does not
+select `ns_initparse`, `ns_parserr`, `ns_name_uncompress`, `dn_expand`, DNS
+name compression, resolver configuration/state, `/etc/hosts`,
+`/etc/resolv.conf`, DNS packet I/O, socket, netdb/database, h_errno,
+allocation, family completion, promotion, or public x86 support.
 
 `./scripts/dev-x86_64.sh libc-login-name` is a private
 `static-c-login-name` artifact inside planned `libc.posix-runtime`. Its
