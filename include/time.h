@@ -76,6 +76,8 @@ struct timespec {
 };
 #endif
 
+#if defined(_POSIX_SOURCE) || defined(_POSIX_C_SOURCE) \
+ || defined(_XOPEN_SOURCE) || defined(_GNU_SOURCE) || defined(_BSD_SOURCE)
 #ifndef _TIMEVAL_DEFINED
 #define _TIMEVAL_DEFINED
 struct itimerspec {
@@ -84,6 +86,7 @@ struct itimerspec {
 };
 
 struct sigevent;
+#endif
 #endif
 
 #if defined(__x86_64__) && (defined(_BSD_SOURCE) || defined(_GNU_SOURCE))

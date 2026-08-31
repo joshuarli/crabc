@@ -2952,6 +2952,64 @@ native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc
 oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source mapping and behavior oracle for src/signal/sigaltstack.c, including preflight ordering; the documented fixed-minimum divergence excludes its auxv-backed dynamic size floor." }, { kind = "kernel-abi", source = "Linux 5.10 x86-64 ABI", role = "sigaltstack=131 rdi/rsi, stack-state, SA_ONSTACK signal-frame, in-handler EPERM, and raw errno contract." }, { kind = "elf-abi", source = "System V AMD64 psABI", role = "LP64 stack_t record, hidden restorer linkage, and static initial-exec TLS fixture contract." }]
 
 [[family.verified_artifact]]
+id = "static-c-timerfd"
+description = "Private native x86 selected-static-archive timer-descriptor artifact inside planned `libc.posix-runtime`. One dependency-free `crabc-libc` archive exposes exactly `timerfd_create`, `timerfd_settime`, and `timerfd_gettime`; its freestanding project-header C fixture first runs through pinned musl 1.2.6 and then through the static candidate. The separate 16-row project-first/pinned-musl C/C++ header matrix preserves the strict C/C++ incomplete `itimerspec` pointer boundary and the POSIX-profile 32-byte align-8 `itimerspec` definition. The static fixture proves direct Linux validation of creation and set-time flags, stale errno on successful calls, EINVAL/EBADF/EFAULT errors, nonblocking/close-on-exec creation, one-shot readiness plus an eight-byte expiration read, periodic query/disarm, and `TFD_TIMER_ABSTIME`/`TFD_TIMER_CANCEL_ON_SET` acceptance. It does not select POSIX process timers, signal delivery/masks/queues, callbacks, timer allocation or registry policy, a generic event loop or readiness policy, pthread cancellation, libc.so, CRT, dynamic TLS, loader, sysroot, family completion, AArch64 parity, promotion, or public x86 support."
+source_owners = [
+  "compat/upstreams.toml",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/timer_fd.rs",
+  "libc/src/c_abi/x86_64/errno.rs",
+  "libc/src/c_abi/x86_64/syscall.rs",
+  "libc/src/c_abi/x86_64/descriptor_control.rs",
+  "libc/src/c_abi/x86_64/descriptor_io.rs",
+  "libc/src/c_abi/x86_64/readiness_waits.rs",
+  "include/features.h",
+  "include/errno.h",
+  "include/fcntl.h",
+  "include/poll.h",
+  "include/stddef.h",
+  "include/stdint.h",
+  "include/time.h",
+  "include/sys/syscall.h",
+  "include/sys/timerfd.h",
+  "include/unistd.h",
+  "include/bits/alltypes.h",
+  "include/bits/syscall.h",
+  "compat/x86_64/timerfd_header_abi_probe.c",
+  "compat/x86_64/timerfd_header_abi_probe.cpp",
+  "compat/x86_64/run_timerfd_header_abi.sh",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/libc_timerfd_probe.c",
+  "compat/x86_64/libc_timerfd_start.S",
+  "compat/x86_64/run_libc_timerfd.sh",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "compat/x86_64/README.md",
+  "STATUS.md",
+  "x86-64.md",
+  "scripts/dev-x86_64.sh",
+  "scripts/check_structure.py",
+]
+x86_abi_prerequisites = [
+  "Linux/x86-64 timerfd_create=283 takes clock and flags in rdi/rsi; timerfd_settime=286 takes descriptor, flags, new record, and old record in rdi/rsi/rdx/r10; timerfd_gettime=287 takes descriptor and output record in rdi/rsi. Raw -4095 through -1 alone becomes C -1 plus the calling initial-TLS errno.",
+  "The public x86 `struct timespec` is 16-byte align-8 and `struct itimerspec` is a 32-byte align-8 pair with interval/value offsets 0/16. The wrappers pass borrowed public records directly to Linux, including null pointers, so kernel validation retains ordinary EFAULT behavior without a typed copy or timer registry.",
+  "Pinned musl 1.2.6 src/linux/timerfd.c maps timerfd_create, timerfd_settime, and timerfd_gettime to direct syscalls on LP64 x86-64. Its 32-bit time64 conversion and ENOSYS fallback branches are irrelevant to the selected Linux 5.10 x86-64 boundary and are deliberately absent.",
+  "Linux owns accepted clock/flag combinations, descriptor lifetime, arming/disarming, expiration counts, and read readiness. The fixture covers TFD_NONBLOCK/TFD_CLOEXEC, TFD_TIMER_ABSTIME/TFD_TIMER_CANCEL_ON_SET, future-flag EINVAL, one-shot/periodic/disarm control, and the eight-byte expiration read without selecting POSIX process timers, signal policy, callbacks, or a generic event loop.",
+  "Pinned musl sys/timerfd.h retains a forward declaration of struct itimerspec after time.h: strict C/C++ can name the three pointer signatures while POSIX profiles define the record. The dedicated matrix keeps that declaration distinction and unmangled C++ linkage rather than treating timerfd as time-header or installed-header completion.",
+  "The final static candidate has a PT_TLS errno datum with direct initial-exec TPOFF access and no TLSGD/TLSLD/TLSDESC/GOTTPOFF/DTPMOD/DTPOFF model form or __tls_get_addr. Fixture-local startup writes one Variant-II thread-pointer self word at %fs:0 and does not claim CRT or TLS lifecycle.",
+]
+x86_header_prerequisites = ["The project-first/pinned-musl eight-profile C11/C++17 sys/timerfd.h matrix proves TFD_NONBLOCK/TFD_CLOEXEC, TFD_TIMER_ABSTIME/TFD_TIMER_CANCEL_ON_SET, exact three function signatures, strict C/C++ incomplete-record pointer visibility, POSIX-profile 32-byte align-8 itimerspec layout, and unmangled C++ linkage across 16 tree/profile rows. The static fixture separately preprocesses project errno.h, fcntl.h, poll.h, stddef.h, stdint.h, sys/syscall.h, sys/timerfd.h, time.h, unistd.h, bits/alltypes.h, and bits/syscall.h. This is selected header/layout plus static linkage, not installed-header, timer/process-signal family, or public-support completion."]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-timerfd", scope = "Pinned-musl 1.2.6 project-header C reference plus a true dependency-free x86 crabc-libc archive and `-nostdlib -static` candidate. The gate runs the 16-row timerfd header matrix; checks project-header provenance and exact crate-owned export closure separately from compiler-builtins; rejects interpreter/DT_NEEDED/unresolved symbols/dynamic TLS/unowned runtime, POSIX process-timer, signal, generic event, pthread/cancellation, allocator, auxv, and sysconf paths; proves direct initial-TLS errno plus emitted timerfd_create=283, timerfd_settime=286 with r10, and timerfd_gettime=287; and executes invalid clock/flag, EBADF/EFAULT, nonblocking/close-on-exec, stale-errno, one-shot expiration-read, periodic/query/disarm, and realtime CANCEL_ON_SET behavior. It adds no POSIX process-timer, signal policy, callback/registry runtime, generic event loop, dynamic libc, CRT, loader, sysroot, family completion, AArch64 parity, promotion, or public x86 support." }]
+oracle = [
+  { kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source mapping, declarations, and behavior oracle for src/linux/timerfd.c; the 32-bit time64 and ENOSYS portability branches remain unselected on the Linux/x86-64 LP64 boundary." },
+  { kind = "kernel-abi", source = "Linux 5.10 x86-64 ABI", role = "timerfd_create=283, timerfd_settime=286, and timerfd_gettime=287 register placement; public itimerspec pointers; descriptor flags; expiration reads; and raw errno contract." },
+  { kind = "elf-abi", source = "System V AMD64 psABI", role = "LP64 timespec/itimerspec pointer calling ABI, r10 fourth-syscall-argument adaptation, and static initial-exec TLS fixture contract." },
+]
+
+[[family.verified_artifact]]
 id = "static-c-process-signal-execution"
 description = "Private native x86 selected-static-archive process-signal execution block. One dependency-free `crabc-libc` archive composes the existing simple action/set/mask/sigsuspend boundary with exactly `kill`, `killpg`, `raise`, `sigqueue`, `sigtimedwait`, `sigwaitinfo`, and `sigwait` into a freestanding C fixture after an equivalent pinned-musl execution. It preserves musl's one-word application-signal block/restore transaction around `raise` and `sigqueue`, exact queued `siginfo_t` sender/value initialization, stale errno on successful delivery/waits, `sigtimedwait` EINTR retry, and musl's `sigwait` `-1`/errno failure convention. A fixture-only raw clone/pipe/wait/exit route makes an interrupted wait followed by a queued wake deterministic; it is not a lifecycle API. The corrected baseline now uses this same pinned-musl sigwait result convention across the target contract. This artifact excludes `tgkill`, sigaltstack, signalfd, legacy signal APIs, pthread signal/cancellation policy, generic process lifecycle, allocator, libc.so, CRT, loader, sysroot, and public x86 support. It is one verified artifact within planned `libc.posix-runtime`, not process.signal, signal/header family, C-runtime, or platform completion."
 source_owners = [

@@ -1285,9 +1285,6 @@ EVENT_DESCRIPTOR_UNSELECTED_SYMBOLS = (
     "lio_listio",
     "signalfd",
     "signalfd4",
-    "timerfd_create",
-    "timerfd_gettime",
-    "timerfd_settime",
 )
 
 PATHNAME_LIFECYCLE_SYMBOLS = (
@@ -12112,6 +12109,119 @@ def require_signal_altstack_artifact(family: Mapping[str, Any]) -> None:
     )
 
 
+def require_timerfd_artifact(family: Mapping[str, Any]) -> None:
+    """Keep direct timer descriptors independent of broader timer/runtime work."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.posix-runtime].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [entry for entry in artifacts if entry.get("id") == "static-c-timerfd"]
+    require(
+        len(matching) == 1,
+        "libc.posix-runtime must contain exactly one static-c-timerfd artifact",
+    )
+    artifact = matching[0]
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for phrase in (
+        "timer-descriptor artifact",
+        "planned `libc.posix-runtime`",
+        "`timerfd_create`",
+        "`timerfd_settime`",
+        "`timerfd_gettime`",
+        "16-row project-first/pinned-musl C/C++ header matrix",
+        "strict C/C++ incomplete `itimerspec` pointer boundary",
+        "32-byte align-8 `itimerspec`",
+        "direct Linux validation",
+        "eight-byte expiration read",
+        "POSIX process timers",
+        "generic event loop or readiness policy",
+        "AArch64 parity, promotion, or public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"static-c-timerfd description omits {phrase}",
+        )
+    owners = set(artifact["source_owners"])
+    for owner in (
+        "libc/src/c_abi/x86_64/timer_fd.rs",
+        "libc/src/c_abi/x86_64/syscall.rs",
+        "include/time.h",
+        "include/sys/timerfd.h",
+        "compat/x86_64/timerfd_header_abi_probe.c",
+        "compat/x86_64/timerfd_header_abi_probe.cpp",
+        "compat/x86_64/run_timerfd_header_abi.sh",
+        "compat/x86_64/libc_timerfd_probe.c",
+        "compat/x86_64/libc_timerfd_start.S",
+        "compat/x86_64/run_libc_timerfd.sh",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "scripts/dev-x86_64.sh",
+    ):
+        require(owner in owners, f"static-c-timerfd must own {owner}")
+    prerequisites = artifact["x86_abi_prerequisites"]
+    assert isinstance(prerequisites, list)
+    require(
+        any(
+            "timerfd_create=283" in item
+            and "timerfd_settime=286" in item
+            and "timerfd_gettime=287" in item
+            and "rdi/rsi/rdx/r10" in item
+            for item in prerequisites
+        ),
+        "static-c-timerfd must record its x86 syscall ABI",
+    )
+    require(
+        any(
+            "32-byte align-8" in item
+            and "interval/value offsets 0/16" in item
+            and "ordinary EFAULT" in item
+            for item in prerequisites
+        ),
+        "static-c-timerfd must record its public itimerspec ABI",
+    )
+    require(
+        any(
+            "src/linux/timerfd.c" in item
+            and "Linux 5.10" in item
+            and "ENOSYS fallback" in item
+            for item in prerequisites
+        ),
+        "static-c-timerfd must retain its pinned-musl and Linux-floor boundary",
+    )
+    require(
+        any(
+            "TFD_NONBLOCK/TFD_CLOEXEC" in item
+            and "TFD_TIMER_ABSTIME/TFD_TIMER_CANCEL_ON_SET" in item
+            and "eight-byte expiration read" in item
+            and "POSIX process timers" in item
+            for item in prerequisites
+        ),
+        "static-c-timerfd must keep its descriptor-only behavior boundary",
+    )
+    header_prerequisites = nonempty_strings(
+        artifact["x86_header_prerequisites"],
+        "static-c-timerfd.x86_header_prerequisites",
+    )
+    require(
+        any(
+            "eight-profile C11/C++17" in item
+            and "16 tree/profile rows" in item
+            and "strict C/C++" in item
+            and "unmangled C++ linkage" in item
+            for item in header_prerequisites
+        ),
+        "static-c-timerfd must retain its strict/POSIX C/C++ header matrix",
+    )
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-timerfd"},
+        "static-c-timerfd must use the closed libc-timerfd command",
+    )
+
+
 def require_signal_execution_artifact(family: Mapping[str, Any]) -> None:
     """Keep the coherent C process-signal artifact bounded and evidence-led."""
     artifacts = require_verified_artifacts(
@@ -21565,6 +21675,7 @@ def validate_ledger(
     require_memfd_create_artifact(by_id["libc.posix-runtime"])
     require_signal_altstack_artifact(by_id["libc.posix-runtime"])
     require_signal_execution_artifact(by_id["libc.posix-runtime"])
+    require_timerfd_artifact(by_id["libc.posix-runtime"])
     require_clock_nanosleep_artifact(by_id["libc.posix-runtime"])
     require_nanosleep_artifact(by_id["libc.posix-runtime"])
     require_descriptor_entry_artifact(by_id["libc.posix-runtime"])

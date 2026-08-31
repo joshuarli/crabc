@@ -164,8 +164,9 @@ for symbol in __errno_location __crabc_x86_static_tls_bootstrap epoll_create \
 done
 grep -Eq 'GLOBAL +HIDDEN +.*__crabc_x86_static_tls_bootstrap$' "$archive_elf_symbols" ||
     fail "archive Static Initial TLS v1 bootstrap is not hidden"
-for unselected in epoll_pwait2 timerfd_create timerfd_gettime timerfd_settime \
-    signalfd signalfd4 fanotify_init fanotify_mark aio_read aio_write \
+# timerfd is a separately selected archive leaf. Its wrappers may be present
+# here, but must not be pulled into this event-descriptor candidate below.
+for unselected in epoll_pwait2 signalfd signalfd4 fanotify_init fanotify_mark aio_read aio_write \
     io_setup io_submit mq_open sem_open malloc free calloc realloc __tls_get_addr; do
     if grep -Eq "[[:space:]][TW][[:space:]]${unselected}$" "$archive_symbols"; then
         fail "archive accidentally exports unselected $unselected"
@@ -196,6 +197,11 @@ for symbol in __errno_location __crabc_x86_static_tls_bootstrap epoll_create \
     eventfd_write inotify_init inotify_init1 inotify_add_watch inotify_rm_watch; do
     grep -Eq "[[:space:]]${symbol}$" "$candidate_symbols" ||
         fail "candidate does not define $symbol"
+done
+for unselected in timerfd_create timerfd_gettime timerfd_settime; do
+    if grep -Eq "[[:space:]]${unselected}$" "$candidate_symbols"; then
+        fail "event-descriptor candidate unexpectedly pulls ${unselected}"
+    fi
 done
 unresolved_symbols="$(awk '$7 == "UND" && NF >= 8 { print }' "$candidate_symbols")"
 if [ -n "$unresolved_symbols" ]; then

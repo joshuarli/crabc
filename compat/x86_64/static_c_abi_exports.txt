@@ -706,6 +706,9 @@ thrd_exit
 thrd_join
 thrd_sleep
 time
+timerfd_create
+timerfd_gettime
+timerfd_settime
 timespec_get
 tmpfile
 toascii

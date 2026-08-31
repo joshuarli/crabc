@@ -5,6 +5,11 @@
 #include <time.h>
 #include <fcntl.h>
 
+/* Strict C/C++ may name timerfd's pointer parameters without selecting the
+ * POSIX time-record definition from <time.h>. Match musl by forward-declaring
+ * the record at this header boundary. */
+struct itimerspec;
+
 #ifdef __cplusplus
 extern "C" {
 #endif

@@ -251,6 +251,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh error-strings-header-abi
 ./scripts/dev-x86_64.sh random-entropy-header-abi
 ./scripts/dev-x86_64.sh time-header-abi
+./scripts/dev-x86_64.sh timerfd-header-abi
 ./scripts/dev-x86_64.sh poll-header-abi
 ./scripts/dev-x86_64.sh select-header-abi
 ./scripts/dev-x86_64.sh fcntl-header-abi
@@ -365,6 +366,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-signal-control
 ./scripts/dev-x86_64.sh libc-signal-execution
 ./scripts/dev-x86_64.sh libc-signal-altstack
+./scripts/dev-x86_64.sh libc-timerfd
 ./scripts/dev-x86_64.sh libc-static-tls-v1
 ./scripts/dev-x86_64.sh libc-crt-static-tls
 ./scripts/dev-x86_64.sh libc-crt1-static-tls
@@ -1020,6 +1022,14 @@ declarations, including LP64 time types, `timespec`, `itimerspec`, `tm`, GNU
 aliases, clock values, `clock_nanosleep`, and selected timer declarations. It
 is source-only header evidence; it does not provide C time behavior or select
 `crabc-libc`.
+
+`timerfd-header-abi` is the paired eight-profile C11/C++17 matrix over project
+and pinned-musl `<sys/timerfd.h>`. It proves the exact three timerfd
+declarations and flag values, preserves strict C/C++'s forward-declared
+`itimerspec` pointer boundary, proves the POSIX-profile 32-byte align-8 record
+and its interval/value offsets, and retains unmangled C++ linkage across 16
+tree/profile rows. It is timerfd-artifact header evidence, not installed-header,
+time/signal family, runtime, promotion, or public-support completion.
 
 `poll-header-abi` compiles project and pinned-musl C/C++ `<poll.h>`
 declarations, including `nfds_t`, `pollfd`, and the x86 extension values. It
@@ -2279,6 +2289,19 @@ allocation/ownership, generic delivery, waits/queues/signalfd, pthread signal
 policy/cancellation, libc.so, CRT, loader, sysroot, family completion, or
 public x86 support.
 
+`libc-timerfd` is a separate `static-c-timerfd` `verified_artifact` within
+planned `libc.posix-runtime`. Its project-header C body runs first through
+pinned musl 1.2.6 and then through a true `-nostdlib -static` candidate. It
+selects exactly `timerfd_create`, `timerfd_settime`, and `timerfd_gettime`,
+with direct Linux `283`/`286`/`287` paths and a 32-byte align-8 `itimerspec`.
+It proves creation flags, direct invalid/null/closed-descriptor errors,
+stale-errno success, one-shot eight-byte expiration reads, periodic query and
+disarm, plus realtime `TFD_TIMER_ABSTIME`/`TFD_TIMER_CANCEL_ON_SET` acceptance.
+The runner rejects POSIX process-timer, signal, callback/registry, generic
+event-loop, pthread, allocator, and dynamic-runtime paths. This is not C
+time/signal/event family completion, AArch64 parity, promotion, or public x86
+support.
+
 `libc-static-tls-v1` is a separately recorded private static
 `verified_artifact` inside still-planned `libc.pthread-tls`. Its freestanding
 candidate start shim passes the untouched Linux entry stack to the hidden
@@ -3239,7 +3262,8 @@ plus bounded eventfd and inotify lifecycles. The direct leaf deliberately
 omits pthread cancellation and pre-Linux-5.10 `ENOSYS` fallbacks. It excludes
 `epoll_pwait2`, timerfd, signalfd, fanotify, AIO, watcher policy, dynamic
 runtime, header/runtime family completion, promotion, full x86-64 parity, and
-public x86 support.
+public x86 support. The separately selected timerfd archive leaf remains
+outside this event-descriptor candidate.
 
 `pathname-lifecycle-header-abi` is a separate eight-profile C11/C++17
 project-header/pinned-musl matrix for the selected `fcntl.h`, `stdio.h`,
@@ -4116,7 +4140,7 @@ startup, loader TLS, sysroot, nor public x86 support.
 
 Apart from the narrowly named `libc-stat-compat`, `libc-credentials`,
 `libc-bootstrap-primitives`, `libc-signal-control`, `libc-signal-execution`,
-`libc-signal-altstack`, and
+`libc-signal-altstack`, `libc-timerfd`, and
 `libc-static-tls-v1`, `libc-crt-static-tls`,
 `libc-pthread-create-join-tls`, `libc-pthread-identity`, `libc-c11-lifecycle`,
 `libc-pthread-detach`, `libc-thrd-sleep`, `libc-pthread-mutex-normal`,

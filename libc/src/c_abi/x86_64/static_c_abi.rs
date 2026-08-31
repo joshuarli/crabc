@@ -9,7 +9,8 @@
 //! `math.special` error/Bessel/gamma/decomposition/stepping/scaling/conversion
 //! block with binary80 preserved end to end, plus deliberately narrow simple
 //! signal action/mask, bounded process-signal execution, and fixed-minimum
-//! alternate signal-stack behavior, one default-attribute
+//! alternate signal-stack behavior, plus direct timer-descriptor
+//! creation/query/control, one default-attribute
 //! create/explicit-exit/join/detach worker and its typed C11
 //! `thrd_create`/`thrd_exit`/`thrd_join`/`thrd_detach`/`thrd_sleep` sibling, a
 //! process-private normal `pthread_mutex_*` block and its paired private
@@ -302,6 +303,8 @@ mod memfd_create;
 mod readiness_waits;
 #[path = "event_descriptors.rs"]
 mod event_descriptors;
+#[path = "timer_fd.rs"]
+mod timer_fd;
 #[path = "pathname_lifecycle.rs"]
 mod pathname_lifecycle;
 #[path = "directory_streams.rs"]

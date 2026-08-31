@@ -771,6 +771,20 @@ separate artifact, signalfd, legacy
 signal APIs, pthread signal policy, libc.so, CRT, loader, sysroot, family or
 platform parity, or public x86 support.
 
+`./scripts/dev-x86_64.sh libc-timerfd` is a separate private
+`static-c-timerfd` artifact inside planned `libc.posix-runtime`. Its 16-row
+pinned-musl/project `<sys/timerfd.h>` C/C++ matrix keeps strict-profile
+incomplete `itimerspec` pointer declarations distinct from the POSIX-profile
+32-byte align-8 record definition. Its pinned-musl/freestanding-static C proof
+exposes exactly `timerfd_create`, `timerfd_settime`, and `timerfd_gettime`;
+proves x86 `283`/`286`/`287` direct syscall paths, initial-TLS errno,
+`TFD_NONBLOCK`/`TFD_CLOEXEC`, invalid clock/flag and null-pointer errors,
+one-shot eight-byte expiration reads, periodic query/disarm, and
+`TFD_TIMER_ABSTIME`/`TFD_TIMER_CANCEL_ON_SET` acceptance. It does not select
+POSIX process timers, signal policy, callbacks/timer registry, a generic event
+loop/readiness policy, pthread cancellation, libc.so, CRT, loader, sysroot,
+family/platform parity, promotion, or public x86 support.
+
 `./scripts/dev-x86_64.sh libc-ioctl` is a private
 `static-c-generic-ioctl` artifact inside planned `libc.posix-runtime`. It
 proves the direct signed `int ioctl(int, int, ...)` C boundary through pinned
