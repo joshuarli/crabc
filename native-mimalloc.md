@@ -42,8 +42,9 @@ compatibility engineering, not allocator research.
    implement the smallest source-faithful change, then rerun the focused and
    relevant aggregate gates.
 5. Use all fifteen available Terra `max` implementation subagents in
-   isolated git worktrees for every substantial implementation wave. The
-   parallel-worktree protocol in this file is mandatory.
+   isolated git worktrees for every substantial implementation wave. Do not
+   substitute Sol or another model tier unless the user explicitly changes
+   this rule. The parallel-worktree protocol in this file is mandatory.
 6. Prefer deleting or bypassing temporary allocator-control scaffolding over
    extending it.
 7. Never weaken, rewrite, or reschedule an upstream workload merely to avoid a
