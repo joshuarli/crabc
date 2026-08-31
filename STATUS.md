@@ -433,6 +433,17 @@ retains preexisting exception flags. It is mapped to the AArch64
 instruction order target-private. `exp10*`/`pow10*`, `fdim*`, integer-result
 rounding, category/family completion, promotion, and public x86 support remain
 unselected.
+The x86 static archive now also has one private allocation-free wide-character
+core: `./scripts/dev-x86_64.sh libc-wide-character` runs an exact
+`_XOPEN_SOURCE=700` C/C++ ABI gate and one shared pinned-musl/freestanding
+static runtime fixture for 46 wide string/memory, code-point collation,
+Unicode classification/simple-case, descriptor, and display-width entries.
+Its compressed tables are mechanically transcribed from pinned musl 1.2.6,
+and an exhaustive U+0000-through-U+110000 fingerprint prevents Unicode-table
+drift. It adds no locale database, legacy encoding, `wcsdup`, locale-object or
+`_l` behavior, wide stdio/format/time surface, allocation, family completion,
+promotion, or public x86 support. Wide numeric parsing is separately selected
+and is not exercised by this artifact.
 
 The x86 static C archive also has one private caller-owned mapping-core
 artifact: `./scripts/dev-x86_64.sh libc-mapping-core` runs the project-header

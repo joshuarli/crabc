@@ -4,7 +4,8 @@
 # One project-header fixture executes through pinned musl, then a closed
 # `-nostdlib -static` crabc-libc archive. It composes only the already
 # selected float parser, classifier, named C.UTF-8 multibyte, errno, and
-# permanent stdout seams; it is not general text/math/locale/stdio evidence.
+# permanent stdout seams; separately archived iconv and wide-character leaves
+# are not invoked. This is not general text/math/locale/stdio evidence.
 set -euo pipefail
 
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"

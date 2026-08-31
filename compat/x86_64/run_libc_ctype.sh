@@ -78,13 +78,14 @@ for symbol in isalnum isalpha isblank iscntrl isdigit isgraph islower isprint \
 done
 for unselected in isalnum_l isalpha_l isblank_l iscntrl_l isdigit_l isgraph_l \
     islower_l isprint_l ispunct_l isspace_l isupper_l isxdigit_l tolower_l \
-    toupper_l iswalpha iswalnum iswblank iswcntrl iswdigit iswgraph iswlower \
-    iswprint iswpunct iswspace iswupper iswxdigit strcasecmp strncasecmp \
+    toupper_l strcasecmp strncasecmp \
     strcoll strxfrm malloc free calloc realloc; do
     if grep -Eq "[[:space:]][TW][[:space:]]${unselected}$" "$archive_symbols"; then
         fail "archive accidentally exports unselected $unselected"
     fi
 done
+# A separately evidenced wide-character leaf shares the aggregate archive;
+# the final ctype fixture below neither calls nor establishes that surface.
 
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -DCRABC_CTYPE_FREESTANDING \
     -I"$ROOT_DIR/include" -nostdlib -static -fno-pie -no-pie -ffreestanding \

@@ -42,7 +42,9 @@
 //! C-locale binary32/binary64/x87-binary80 floating parsing plus complete
 //! fixed-C/POSIX/C.UTF-8 narrow/wide numeric parsing, legacy decimal
 //! conversion, and suboption parsing, named
-//! C/POSIX/C.UTF-8 multibyte state and fixed UTF/ASCII `iconv` conversion,
+//! C/POSIX/C.UTF-8 multibyte state, fixed UTF/ASCII `iconv` conversion, and
+//! allocation-free wide strings/memory, Unicode classification/simple case,
+//! code-point collation, and terminal-column width,
 //! bounded permanent stdin/stdout/stderr byte/block I/O with explicit flushing, selected
 //! allocation-free byte-buffer formatting and NUL-string scanning,
 //! plus one fixed
@@ -138,6 +140,10 @@ mod string_copy;
 mod ctype;
 #[path = "locale_multibyte.rs"]
 mod locale_multibyte;
+#[path = "wide_character_tables.rs"]
+mod wide_character_tables;
+#[path = "wide_character.rs"]
+mod wide_character;
 #[path = "regex.rs"]
 mod regex;
 #[path = "iconv.rs"]

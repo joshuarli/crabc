@@ -231,6 +231,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh ctype-header-abi
 ./scripts/dev-x86_64.sh locale-multibyte-header-abi
 ./scripts/dev-x86_64.sh iconv-header-abi
+./scripts/dev-x86_64.sh wide-character-header-abi
 ./scripts/dev-x86_64.sh integer-arithmetic-header-abi
 ./scripts/dev-x86_64.sh integer-parse-header-abi
 ./scripts/dev-x86_64.sh float-parse-header-abi
@@ -443,6 +444,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-fenv-rounding
 ./scripts/dev-x86_64.sh libc-locale-multibyte
 ./scripts/dev-x86_64.sh libc-locale-wide-iconv
+./scripts/dev-x86_64.sh libc-wide-character
 ./scripts/dev-x86_64.sh libc-memory
 ./scripts/dev-x86_64.sh libc-setjmp
 ./scripts/dev-x86_64.sh libc-atomic
@@ -3516,6 +3518,26 @@ UTF-16, UCS-2, arbitrary legacy codepages,
 locale objects, collation, wide streams/stdio, Unicode normalization,
 allocation, general text/locale/iconv completion, `libc.so`, CRT, loader,
 sysroot, promotion, and public x86 support remain outside this artifact.
+
+`wide-character-header-abi` and `libc-wide-character` record a separate
+private `static-c-wide-character-core` artifact. The `_XOPEN_SOURCE=700`
+C11/C++17 matrix proves signed 32-bit `wchar_t`, unsigned 32-bit `wint_t`,
+LP64 `wctype_t`, pointer-shaped `wctrans_t`, all 46 selected declarations,
+and unmangled C linkage from project and pinned-musl headers. The shared
+runtime fixture then runs under pinned musl and a true `-nostdlib -static`
+candidate. It covers allocation-free wide string/memory operations,
+caller-owned `wcstok` state, code-point collation/transformation in the named
+`C`, `POSIX`, and `C.UTF-8` locales, Unicode case comparison, and terminal
+column width. A byte-for-byte fingerprint over U+0000 through U+110000 closes
+all selected classification, simple-case, descriptor, and width behavior
+against musl 1.2.6. The checked-in compressed alpha, punctuation, case-map,
+nonspacing, and wide tables are a mechanical MIT-licensed transcription of
+the pinned musl release, not a runtime locale or legacy-encoding database.
+`wcsdup`, locale objects and every `_l` entry, Unicode normalization, wide
+stdio/streams, formatting/scanning, time conversion, allocation,
+general text/locale completion, `libc.so`, CRT, loader, sysroot, promotion,
+and public x86 support remain unselected. Wide numeric parsing belongs to the
+separate selected numeric-parse slice and is not exercised by this artifact.
 
 `libc-memory` compiles only `libc/src/c_abi/x86_64/memory.rs`, then runs one C
 fixture against pinned musl and the isolated x86 object with project

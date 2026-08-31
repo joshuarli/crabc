@@ -6,8 +6,8 @@
 # crabc-libc archive. This proves the named C/POSIX/C.UTF-8 global-state,
 # CTYPE-only built-in UTF-8 map, and multibyte block without selecting locale
 # objects, environment lookup, wide-streams, collation, libc.so, a CRT, or
-# public x86 support. The separate iconv artifact may share the archive, but
-# this fixture neither invokes nor establishes its behavior.
+# public x86 support. Separate iconv and allocation-free wide-character
+# artifacts may share the archive, but this fixture invokes neither.
 set -euo pipefail
 
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -111,12 +111,14 @@ for symbol in __ctype_get_mb_cur_max btowc localeconv mblen mbrlen mbrtowc \
         fail "archive does not define $symbol"
 done
 for unselected in newlocale duplocale uselocale freelocale nl_langinfo \
-    mbsnrtowcs wcsnrtombs wcsftime_l wcscoll wcscoll_l \
-    wcsxfrm wcsxfrm_l fwide fgetwc fputwc iswalpha iswalnum towlower towupper; do
+    mbsnrtowcs wcsnrtombs wcsftime_l wcscoll_l \
+    wcsxfrm_l fwide fgetwc fputwc; do
     if grep -Eq "[[:space:]][TW][[:space:]]${unselected}$" "$archive_symbols"; then
         fail "archive accidentally exports unselected $unselected"
     fi
 done
+# A separately evidenced allocation-free wide-character core shares the
+# aggregate archive; this fixture neither invokes nor establishes it.
 readelf --relocs --wide "$archive" >"$archive_relocations"
 grep -Eq 'R_X86_64_TPOFF(32|64)?' "$archive_relocations" ||
     fail "archive errno lacks an initial-TLS TPOFF relocation"

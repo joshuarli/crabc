@@ -1512,6 +1512,17 @@ BOUNDED_REGEX_SYMBOLS = (
     "regfree",
 )
 LOCALE_WIDE_ICONV_SYMBOLS = ("iconv_open", "iconv", "iconv_close")
+WIDE_CHARACTER_SYMBOLS = (
+    "wcslen", "wcsnlen", "wcscpy", "wcsncpy", "wcpcpy", "wcpncpy",
+    "wcscat", "wcsncat", "wcscmp", "wcsncmp", "wcschr", "wcsrchr",
+    "wcsstr", "wcscspn", "wcsspn", "wcspbrk", "wcsxfrm", "wcscoll",
+    "wcstok", "wcscasecmp", "wcsncasecmp", "wmemchr", "wmemcmp",
+    "wmemcpy", "wmemmove", "wmemset", "wcwidth", "wcswidth",
+    "iswalnum", "iswalpha", "iswblank", "iswcntrl", "iswdigit",
+    "iswgraph", "iswlower", "iswprint", "iswpunct", "iswspace",
+    "iswupper", "iswxdigit", "iswctype", "wctype", "towlower",
+    "towupper", "towctrans", "wctrans",
+)
 
 
 class LedgerError(ValueError):
@@ -18669,8 +18680,8 @@ def require_locale_wide_iconv_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 12,
-        "libc.text-math-locale-stdio must retain exactly twelve private verified artifacts",
+        len(artifacts) == 13,
+        "libc.text-math-locale-stdio must retain exactly thirteen private verified artifacts",
     )
     matching = [
         entry for entry in artifacts if entry.get("id") == "static-c-locale-wide-iconv"
@@ -18884,6 +18895,188 @@ def require_locale_wide_iconv_artifact(family: Mapping[str, Any]) -> None:
         "iconv-header-abi)",
         "libc-locale-wide-iconv)",
         "run_iconv_header_abi()",
+    ):
+        require(snippet in dispatcher, f"x86 dispatcher omits {snippet}")
+
+
+def require_wide_character_artifact(family: Mapping[str, Any]) -> None:
+    """Keep the Unicode wide core exact, allocation-free, and non-promoting."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.text-math-locale-stdio].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [
+        entry for entry in artifacts if entry.get("id") == "static-c-wide-character-core"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.text-math-locale-stdio must contain exactly one static-c-wide-character-core artifact",
+    )
+    artifact = matching[0]
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for symbol in WIDE_CHARACTER_SYMBOLS:
+        require(
+            f"`{symbol}`" in description or symbol.startswith(("wcs", "wmem", "isw")),
+            f"static-c-wide-character-core description omits {symbol}",
+        )
+    for phrase in (
+        "allocation-free wide-character core",
+        "C/POSIX/C.UTF-8",
+        "compressed Unicode",
+        "U+0000 through U+110000",
+        "wcsdup",
+        "locale-object/`*_l`",
+        "legacy-encoding database",
+        "wide stdio/streams",
+        "family completion",
+        "promotion",
+        "public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"static-c-wide-character-core description omits {phrase}",
+        )
+
+    owners = nonempty_strings(
+        artifact["source_owners"], "static-c-wide-character-core.source_owners"
+    )
+    for owner in (
+        "libc/src/c_abi.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/wide_character.rs",
+        "libc/src/c_abi/x86_64/wide_character_tables.rs",
+        "include/bits/alltypes.h",
+        "include/wchar.h",
+        "include/wctype.h",
+        "compat/x86_64/wide_character_header_abi_probe.c",
+        "compat/x86_64/wide_character_header_abi_probe.cpp",
+        "compat/x86_64/run_wide_character_header_abi.sh",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/libc_wide_character_probe.c",
+        "compat/x86_64/libc_wide_character_start.S",
+        "compat/x86_64/run_libc_wide_character.sh",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/README.md",
+        "STATUS.md",
+        "x86-64.md",
+        "scripts/dev-x86_64.sh",
+    ):
+        require(owner in owners, f"static-c-wide-character-core omits {owner}")
+
+    abi_prerequisites = nonempty_strings(
+        artifact["x86_abi_prerequisites"],
+        "static-c-wide-character-core.x86_abi_prerequisites",
+    )
+    require(
+        any("signed 32-bit" in item and "wctype_t" in item and "wctrans_t" in item
+            for item in abi_prerequisites),
+        "static-c-wide-character-core must record its x86 wide ABI",
+    )
+    require(
+        any("alpha.h" in item and "casemap.h" in item and "MIT license" in item
+            for item in abi_prerequisites),
+        "static-c-wide-character-core must record the pinned-musl table mapping",
+    )
+    require(
+        any("no errno" in item and "no TLS" in item and "no locale object" in item
+            for item in abi_prerequisites),
+        "static-c-wide-character-core must record its allocation/state boundary",
+    )
+    header_prerequisites = nonempty_strings(
+        artifact["x86_header_prerequisites"],
+        "static-c-wide-character-core.x86_header_prerequisites",
+    )
+    require(
+        any("C11/C++17" in item and "46 selected declarations" in item
+            for item in header_prerequisites),
+        "static-c-wide-character-core must record its exact header ABI",
+    )
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-wide-character"},
+        "static-c-wide-character-core must use the closed libc-wide-character command",
+    )
+    oracles = artifact["oracle"]
+    assert isinstance(oracles, list)
+    require(
+        any(
+            entry.get("kind") == "project-contract"
+            and "AArch64" in str(entry.get("source"))
+            and "does not inherit" in str(entry.get("role"))
+            for entry in oracles
+        ),
+        "static-c-wide-character-core must record its bounded AArch64 oracle",
+    )
+
+    static_root = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        '#[path = "wide_character_tables.rs"]\nmod wide_character_tables;',
+        '#[path = "wide_character.rs"]\nmod wide_character;',
+    ):
+        require(snippet in static_root, f"x86 static C ABI omits {snippet}")
+    implementation = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "wide_character.rs"
+    ).read_text(encoding="utf-8")
+    for symbol in WIDE_CHARACTER_SYMBOLS:
+        require(f"fn {symbol}(" in implementation, f"wide core omits {symbol}")
+    for snippet in (
+        "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+        "CASE_EXCEPTIONS",
+        "property(&NONSPACING",
+        "property(&WIDE",
+        "approximate non-ASCII classification",
+    ):
+        require(snippet in implementation, f"wide core omits {snippet}")
+
+    exports = static_c_abi_export_names(
+        ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+    )
+    for symbol in WIDE_CHARACTER_SYMBOLS:
+        require(symbol in exports, f"static C ABI export contract omits {symbol}")
+    for unselected in (
+        "wcsdup", "wcscoll_l", "wcsxfrm_l", "iswalpha_l", "towlower_l",
+        "fgetwc", "swprintf", "wcsftime", "newlocale", "malloc",
+    ):
+        require(unselected not in exports, f"wide core promoted unselected {unselected}")
+
+    fixture = (
+        ROOT / "compat" / "x86_64" / "libc_wide_character_probe.c"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "CRABC_WIDE_CHARACTER_FREESTANDING",
+        "C.UTF-8",
+        "wmemmove",
+        "wcstok",
+        "wcsxfrm(NULL",
+        "0x110000u",
+        "write(STDOUT_FILENO",
+    ):
+        require(snippet in fixture, f"wide-character fixture omits {snippet}")
+    runner = (
+        ROOT / "compat" / "x86_64" / "run_libc_wide_character.sh"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "run_wide_character_header_abi.sh",
+        "-nostdlib -static",
+        "static_c_abi_exports.txt",
+        "reference-fingerprint",
+        "candidate-fingerprint",
+        "U+0000..U+110000",
+    ):
+        require(snippet in runner, f"wide-character runner omits {snippet}")
+    dispatcher = (ROOT / "scripts" / "dev-x86_64.sh").read_text(encoding="utf-8")
+    for snippet in (
+        "wide-character-header-abi)",
+        "libc-wide-character)",
+        "run_wide_character_header_abi()",
     ):
         require(snippet in dispatcher, f"x86 dispatcher omits {snippet}")
 
@@ -19527,6 +19720,7 @@ def validate_ledger(
     require_posix_process_abi_admission_artifact(by_id["compat.posix-process"])
     require_bounded_regex_artifact(by_id["libc.text-math-locale-stdio"])
     require_locale_wide_iconv_artifact(by_id["libc.text-math-locale-stdio"])
+    require_wide_character_artifact(by_id["libc.text-math-locale-stdio"])
 
     musl_oracle = by_id["oracle.musl-toolchain"]
     require(musl_oracle["status"] == "foundation-verified", "musl oracle must remain foundation-verified")

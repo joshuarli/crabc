@@ -110,12 +110,14 @@ for symbol in __ctype_get_mb_cur_max btowc localeconv mblen mbrlen mbrtowc \
     grep -Eq "[[:space:]][TW][[:space:]]${symbol}$" "$archive_symbols" ||
         fail "archive does not define $symbol"
 done
-for unselected in newlocale duplocale uselocale freelocale nl_langinfo mbsnrtowcs wcsnrtombs wcsftime_l wcscoll wcscoll_l \
-    wcsxfrm wcsxfrm_l fwide fgetwc fputwc iswalpha iswalnum towlower towupper; do
+for unselected in newlocale duplocale uselocale freelocale nl_langinfo mbsnrtowcs wcsnrtombs wcsftime_l wcscoll_l \
+    wcsxfrm_l fwide fgetwc fputwc; do
     if grep -Eq "[[:space:]][TW][[:space:]]${unselected}$" "$archive_symbols"; then
         fail "archive accidentally exports unselected $unselected"
     fi
 done
+# A separately evidenced allocation-free wide-character core shares the
+# aggregate archive; this iconv fixture neither invokes nor establishes it.
 readelf --relocs --wide "$archive" >"$archive_relocations"
 grep -Eq 'R_X86_64_TPOFF(32|64)?' "$archive_relocations" ||
     fail "archive errno lacks an initial-TLS TPOFF relocation"

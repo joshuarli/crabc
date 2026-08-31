@@ -71,6 +71,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   ctype-header-abi  compile the staged x86 C/C++ ctype declarations
   locale-multibyte-header-abi  verify x86 named-locale/multibyte C/C++ declarations and linkage
   iconv-header-abi  verify x86 selected UTF/ASCII iconv C/C++ declarations and linkage
+  wide-character-header-abi  verify x86 selected wide-character C/C++ declarations and linkage
   integer-arithmetic-header-abi  compile the staged x86 C/C++ stdlib integer-arithmetic declarations
   integer-parse-header-abi  compile the staged x86 C/C++ integer-parsing declarations
   float-parse-header-abi  verify complete x86 numeric.parse-float-locale declarations and linkage
@@ -277,6 +278,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-locale-multibyte  run the static x86 crabc-libc named locale/multibyte slice
   libc-regex  run the bounded static x86 crabc-libc POSIX regex slice
   libc-locale-wide-iconv  run the static x86 crabc-libc locale/wide/iconv composition slice
+  libc-wide-character  run the static x86 crabc-libc allocation-free wide-character core
   libc-integer-arithmetic  run the static x86 crabc-libc integer-arithmetic slice
   libc-integer-parse  run the static x86 crabc-libc integer-parsing slice
   libc-float-parse  run the complete static x86 numeric.parse-float-locale slice
@@ -1716,6 +1718,10 @@ run_iconv_header_abi() {
     run_in_container bash /workspace/compat/x86_64/run_iconv_header_abi.sh
 }
 
+run_wide_character_header_abi() {
+    run_in_container bash /workspace/compat/x86_64/run_wide_character_header_abi.sh
+}
+
 run_integer_arithmetic_header_abi() {
     run_in_container bash /workspace/compat/x86_64/run_integer_arithmetic_header_abi.sh
 }
@@ -2978,7 +2984,7 @@ case "$command" in
     access-header-abi) ;;
     xattr-header-abi) ;;
     madvise-reference) ;;
-    ctype-header-abi|locale-multibyte-header-abi|iconv-header-abi) ;;
+    ctype-header-abi|locale-multibyte-header-abi|iconv-header-abi|wide-character-header-abi) ;;
     integer-arithmetic-header-abi|integer-parse-header-abi|float-parse-header-abi|intmax-arithmetic-header-abi|credential-observation-header-abi|child-reaping-header-abi|immediate-termination-header-abi|callback-algorithms-header-abi) ;;
     ffs-header-abi) ;;
     byte-strings-header-abi) ;;
@@ -3000,7 +3006,7 @@ case "$command" in
     libc-memfd-create) ;;
     libc-static-c-abi-differential) ;;
     libc-static-c-abi-same-object-differential|qualification-posix-abi-admission) ;;
-    libc-readiness-waits|libc-system-observation|libc-system-information|libc-fcntl-record-locks|libc-flock|libc-sendfile|libc-posix-fallocate|libc-descriptor-advice|libc-filesystem-capacity|libc-uts-identity|libc-ctype|libc-locale-multibyte|libc-locale-wide-iconv|libc-regex|libc-integer-arithmetic|libc-integer-parse|libc-float-parse|libc-intmax-arithmetic|libc-credential-observation|libc-child-reaping|libc-immediate-termination|libc-callback-algorithms|libc-access|libc-clock-gettime|libc-time-observation|libc-system-configuration|libc-mapping-core|libc-header-layouts-baseline|libc-nanosleep|libc-clock-nanosleep|libc-descriptor-entry|libc-fcntl-status-control|libc-ioctl|libc-ffs|libc-byte-strings|libc-process-globals-getopt|libc-inet-address|libc-numeric-netdb|libc-random-entropy|libc-memory-search|libc-string-copy|libc-descriptor-pipeline) ;;
+    libc-readiness-waits|libc-system-observation|libc-system-information|libc-fcntl-record-locks|libc-flock|libc-sendfile|libc-posix-fallocate|libc-descriptor-advice|libc-filesystem-capacity|libc-uts-identity|libc-ctype|libc-locale-multibyte|libc-locale-wide-iconv|libc-wide-character|libc-regex|libc-integer-arithmetic|libc-integer-parse|libc-float-parse|libc-intmax-arithmetic|libc-credential-observation|libc-child-reaping|libc-immediate-termination|libc-callback-algorithms|libc-access|libc-clock-gettime|libc-time-observation|libc-system-configuration|libc-mapping-core|libc-header-layouts-baseline|libc-nanosleep|libc-clock-nanosleep|libc-descriptor-entry|libc-fcntl-status-control|libc-ioctl|libc-ffs|libc-byte-strings|libc-process-globals-getopt|libc-inet-address|libc-numeric-netdb|libc-random-entropy|libc-memory-search|libc-string-copy|libc-descriptor-pipeline) ;;
     libc-vector-io|libc-uio-cxx-linkage) ;;
     libc-sysv-semaphore) ;;
     libc-sysv-message-shared-memory) ;;
@@ -3171,6 +3177,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "iconv-header-abi takes no arguments"
         ensure_image
         run_iconv_header_abi
+        ;;
+    wide-character-header-abi)
+        [ "$#" -eq 0 ] || fail "wide-character-header-abi takes no arguments"
+        ensure_image
+        run_wide_character_header_abi
         ;;
     integer-arithmetic-header-abi)
         [ "$#" -eq 0 ] || fail "integer-arithmetic-header-abi takes no arguments"
@@ -4105,6 +4116,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "libc-locale-wide-iconv takes no arguments"
         ensure_image
         run_in_container bash /workspace/compat/x86_64/run_libc_locale_wide_iconv.sh
+        ;;
+    libc-wide-character)
+        [ "$#" -eq 0 ] || fail "libc-wide-character takes no arguments"
+        ensure_image
+        run_in_container bash /workspace/compat/x86_64/run_libc_wide_character.sh
         ;;
     libc-integer-arithmetic)
         [ "$#" -eq 0 ] || fail "libc-integer-arithmetic takes no arguments"
