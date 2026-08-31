@@ -95,6 +95,7 @@ use crate::process_arena::{
 use crate::process_page_map::{
     LiveAllocationPageState, LiveAllocationPointer, ProcessPageMapError, ProcessPageMapLease,
 };
+use crate::remote_free;
 use crate::single_thread::{
     ProcessPostOwnerExitPointerFreeDisposition, ProcessPostOwnerExitPointerFreeRejection,
     RemoteFreeProducer, RemoteFreeProducerPair,
@@ -108,7 +109,7 @@ use crate::thread_local::{
     PersistentCompilerTlsOwnerCell, PersistentCompilerTlsOwnerError,
     PersistentCompilerTlsOwnerInitializeError, PersistentCompilerTlsOwnerTeardownError,
 };
-use crate::types::LiveThreadId;
+use crate::types::{LiveThreadId, Page};
 
 const PROCESS_COLD: u8 = 0;
 const PROCESS_INITIALIZING: u8 = 1;
@@ -5544,6 +5545,23 @@ fn with_current_thread_native_initial_persistent_owner<R>(
     if !RUNTIME_PROCESS.is_on_initial_thread() {
         return Err(NativeInitialPersistentThreadOwnerAccessError::Unavailable);
     }
+    with_pointer_associated_initial_persistent_owner(operation)
+}
+
+/// Borrows the initial persistent owner after pointer dispatch has already
+/// proved that the running thread is both the process initial thread and the
+/// source page's current owner.
+///
+/// This is deliberately narrower than
+/// [`with_current_thread_native_initial_persistent_owner`]. A valid local
+/// `native_free` has already taken the source `xthread_id` snapshot and
+/// compared it to this thread before it reaches this helper. Repeating an
+/// ambient initial-thread classification here would turn pointer dispatch into
+/// a caller-first route and could make a valid foreign or abandoned source
+/// appear to belong to the initial TLS owner.
+fn with_pointer_associated_initial_persistent_owner<R>(
+    operation: impl FnOnce(&mut NativeInitialPersistentThreadOwner) -> R,
+) -> Result<R, NativeInitialPersistentThreadOwnerAccessError> {
     if !current_thread_slot().initial_native_persistent_owner_installed {
         return Err(NativeInitialPersistentThreadOwnerAccessError::NotInstalled);
     }
@@ -6305,6 +6323,39 @@ fn native_initial_thread_free_pointer_first(
     }
 }
 
+/// Frees a PageMap-proven current initial-thread client without reopening the
+/// generic initial-owner admission boundary.
+///
+/// The caller has already derived this branch from the same source
+/// `xthread_id` snapshot that selected the current local page. A live source
+/// cannot require initial-owner promotion at this point: its page exists only
+/// after that owner has installed its persistent TLS cell. A missing or
+/// terminal cell is therefore a source-state failure, not an opportunity to
+/// route this pointer through a scheduler, former owner, or foreign path.
+fn native_initial_thread_free_pointer_first_associated(
+    block: core::ptr::NonNull<u8>,
+) -> NativePageFreeResult {
+    let result = with_pointer_associated_initial_persistent_owner(|owner| {
+        // SAFETY: the caller's PageMap observation associated this exact
+        // live allocation with the current initial source owner.
+        let free = unsafe { owner.free(block) };
+        (free, owner.is_retained())
+    });
+    match result {
+        Ok((Ok(()), false)) => NativePageFreeResult::Freed,
+        Ok((Ok(()) | Err(_), true))
+        | Ok((Err(_), false))
+        | Err(
+            NativeInitialPersistentThreadOwnerAccessError::NotInstalled
+            | NativeInitialPersistentThreadOwnerAccessError::Unavailable
+            | NativeInitialPersistentThreadOwnerAccessError::Retained,
+        ) => {
+            RUNTIME_PROCESS.retain_page_owner();
+            NativePageFreeResult::Retained
+        }
+    }
+}
+
 /// Reallocates one documented current initial-thread client through the same
 /// direct owner. This preserves the existing helper's scope; it adds no W02
 /// cross-owner replacement policy.
@@ -6692,6 +6743,34 @@ pub unsafe fn native_free(block: core::ptr::NonNull<u8>) -> NativePageFreeResult
         RUNTIME_PROCESS.retain_page_owner();
         return NativePageFreeResult::Retained;
     };
+    // SAFETY: `native_free` accepts one exact current native allocation. Its
+    // live source block keeps the selected PageMap entry and metadata stable
+    // through this pointer-only page dispatch; this touches no lifecycle or
+    // owner-local PageMap state.
+    let page = match unsafe { page_map.lookup_page_for_live_client(block) } {
+        Ok(Some(page)) => page,
+        Ok(None) => return NativePageFreeResult::InvalidPointer,
+        Err(_) => {
+            RUNTIME_PROCESS.retain_page_owner();
+            return NativePageFreeResult::Retained;
+        }
+    };
+    // Pinned `mi_free_nonnull` reaches the page before it compares a source
+    // owner identity with the freeing thread. Keep that source order for both
+    // the permanent-initial live-owner publication and the generic fallback.
+    let Some(current) = current_thread_identity() else {
+        RUNTIME_PROCESS.retain_page_owner();
+        return NativePageFreeResult::Retained;
+    };
+    // SAFETY: `page` came from the current allocation's short PageMap lookup;
+    // the helper uses it only for the permanent initial owner, whose source
+    // page remains owner-associated for the process lifetime. Any other page
+    // state continues below through the coherent state-capturing lookup.
+    if let Some(result) = unsafe {
+        native_free_pointer_first_live_initial_foreign_page(page, block, current)
+    } {
+        return result;
+    }
     // SAFETY: `native_free` accepts only an exact current native allocation.
     // Its source lifetime keeps the selected registration and page metadata
     // stable until one branch below consumes the observation.
@@ -6704,19 +6783,72 @@ pub unsafe fn native_free(block: core::ptr::NonNull<u8>) -> NativePageFreeResult
         }
     };
 
-    // Pinned `mi_free_nonnull` resolves the page before comparing the page's
-    // captured owner identity against the caller. Do not select a former
-    // owner, route, or current-thread ledger before this comparison.
-    let Some(current) = current_thread_identity() else {
-        drop(allocation);
-        RUNTIME_PROCESS.retain_page_owner();
-        return NativePageFreeResult::Retained;
-    };
+    // This is the source `mi_free_nonnull` caller-relative decision after the
+    // complete pointer-derived state capture. Do not select a former owner,
+    // route, or current-thread ledger before this comparison.
     if allocation.is_associated_with(current) {
-        return native_free_pointer_first_local(allocation);
+        return native_free_pointer_first_local(allocation, current);
     }
 
     native_free_pointer_first_nonlocal(allocation)
+}
+
+/// Publishes a foreign free to the permanent initial owner's live page.
+///
+/// Pinned `mi_free_block_mt` may use its ordinary atomic push without an
+/// abandoned-page claim only when the source owner remains associated for the
+/// complete publication. The process initial owner is the one native runtime
+/// owner with that property: it is persistent process storage and has no
+/// thread-exit teardown. General later-owner and abandoned pages intentionally
+/// return `None` so the state-capturing path below can use the
+/// `allow_collect=true` W03 continuation instead of weakening its race
+/// semantics.
+///
+/// # Safety
+///
+/// `page` must be the PageMap result for `block`, and `block` must be an exact
+/// current native allocation that keeps its page and source block area live
+/// through this atomic publication.
+unsafe fn native_free_pointer_first_live_initial_foreign_page(
+    page: core::ptr::NonNull<Page>,
+    block: core::ptr::NonNull<u8>,
+    current: LiveThreadId,
+) -> Option<NativePageFreeResult> {
+    let initial = RUNTIME_PROCESS.initial_live_thread_identity()?;
+    if current == initial {
+        return None;
+    }
+    // SAFETY: the exact live client pins initialized source metadata. This
+    // check reads only the initial owner's atomic identity/head fields and
+    // confirms that the page never enters a later-owner or abandoned route.
+    if !unsafe { Page::is_live_owner_for_thread_at(page, initial) } {
+        return None;
+    }
+    // SAFETY: the same live client keeps this permanently initial-owned page's
+    // geometry fixed. This is the source aligned/interior canonical recovery
+    // before the remote head receives its free-list block.
+    let Some(canonical_block) =
+        (unsafe { Page::canonical_remote_block_for_live_client_at(page, block) })
+    else {
+        RUNTIME_PROCESS.retain_page_owner();
+        return Some(NativePageFreeResult::Retained);
+    };
+    // SAFETY: the initial owner cannot execute a thread-exit unown transition,
+    // so this stable owner-associated page satisfies `remote_free::push`'s
+    // `allow_collect=false` contract. The foreign caller gives up the exact
+    // canonical block only after this source CAS succeeds.
+    let producer = unsafe { Page::remote_free_producer_state_at(page) };
+    match unsafe { remote_free::push(producer, canonical_block) } {
+        Ok(()) => Some(NativePageFreeResult::Freed),
+        Err(_) => {
+            // A PageMap-proven permanent-initial source cannot legitimately
+            // lose its owner association or canonical alignment. Preserve the
+            // runtime rather than retrying through a registry, scheduler, or
+            // post-exit continuation after an uncertain publication.
+            RUNTIME_PROCESS.retain_page_owner();
+            Some(NativePageFreeResult::Retained)
+        }
+    }
 }
 
 /// Consumes one PageMap-derived allocation through its current source owner.
@@ -6725,12 +6857,15 @@ pub unsafe fn native_free(block: core::ptr::NonNull<u8>) -> NativePageFreeResult
 /// identity. This helper deliberately performs no second PageMap lookup and
 /// never inspects a route, registry, or client ledger to recover local
 /// ownership.
-fn native_free_pointer_first_local(allocation: LiveAllocationPointer) -> NativePageFreeResult {
+fn native_free_pointer_first_local(
+    allocation: LiveAllocationPointer,
+    current: LiveThreadId,
+) -> NativePageFreeResult {
     let client = allocation.client();
-    if RUNTIME_PROCESS.is_on_initial_thread() {
+    if RUNTIME_PROCESS.initial_live_thread_identity() == Some(current) {
         // SAFETY: the preceding PageMap classification associated this exact
         // live allocation with the current initial source owner.
-        let result = native_initial_thread_free_pointer_first(client);
+        let result = native_initial_thread_free_pointer_first_associated(client);
         drop(allocation);
         return result;
     }
