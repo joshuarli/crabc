@@ -412,11 +412,12 @@ fn same_arena_memory(left: MemoryId, right: MemoryId) -> bool {
 #[must_use = "a post-owner-exit claim result can retain source page ownership"]
 enum ProcessPostOwnerExitRemoteClaimResult {
     /// The regular source tail transferred its claimed low-bit owner into a
-    /// terminal release that could not complete. `mutation` exists only when
-    /// the terminal callback had already acquired the exact PageMap mutation
-    /// lease immediately before its unregister step.
+    /// terminal release that could not complete. `mutation` remains only when
+    /// an exact `unregister_range` may have changed a leading sub-range. A
+    /// completed PageMap tail retains the source owner without its short
+    /// mutation lease.
     RegularTerminalRetained {
-        claim: remote_free::ClaimedAbandonedRemoteFree,
+        release: abandoned::ClaimedPostOwnerExitRegularRelease,
         mutation: Option<ProcessPageMapMutationLease>,
     },
     Regular(abandoned::ClaimedPostOwnerExitRegularFreeResult),
@@ -433,7 +434,7 @@ enum ProcessPostOwnerExitRemoteClaimResult {
     /// non-arena backing facts and last completed stage.
     SingletonNonArenaTerminalRetained {
         owner: ProcessPostOwnerExitNonArenaTerminalOwner,
-        mutation: ProcessPageMapMutationLease,
+        mutation: Option<ProcessPageMapMutationLease>,
     },
     /// The exact page terminal release completed, but releasing its scoped
     /// PageMap mutation lease visibly failed. No page or mapping owner
@@ -460,6 +461,21 @@ enum ProcessPostOwnerExitNonArenaTerminalStage {
     SecondaryAliasesCleared,
     /// The primary metadata record was retired; only mapping reclaim remained.
     PrimaryRetired,
+}
+
+impl ProcessPostOwnerExitNonArenaTerminalStage {
+    /// Once the source PageMap range has been completely unregistered, the
+    /// short mutation boundary may be released even though later alias,
+    /// metadata, or backing release remains terminally retained. The
+    /// `OsListRemoved` state intentionally stays conservative because it also
+    /// covers an `unregister_range` failure after partial plain-entry writes.
+    #[inline]
+    const fn page_map_tail_completed(self) -> bool {
+        matches!(
+            self,
+            Self::PageMapUnregistered | Self::SecondaryAliasesCleared | Self::PrimaryRetired
+        )
+    }
 }
 
 /// One retained non-arena singleton terminal transition after list removal.
@@ -560,9 +576,9 @@ pub(crate) enum ProcessPostOwnerExitPointerFreeRejection {
 
 /// One exact source owner that crossed a W03 one-way boundary.
 ///
-/// It remains separate from its PageMap mutation lease so successful scalar
-/// results can release the short exact-range lease while retained paths store
-/// both objects together below.
+/// It remains separate from its PageMap mutation lease: only a possibly
+/// partial PageMap tail retains that short exact-range lease. A terminal tail
+/// that completed unregistration retains only its exact source owner below.
 #[must_use = "a claimed W03 source owner must be released or sealed terminally"]
 enum ProcessPostOwnerExitClaimTerminalRetained {
     /// A different exact page already made the process terminal after this
@@ -570,7 +586,7 @@ enum ProcessPostOwnerExitClaimTerminalRetained {
     /// PageMap terminal tail.
     Uncontinued(remote_free::ClaimedAbandonedRemoteFree),
     Regular {
-        claim: remote_free::ClaimedAbandonedRemoteFree,
+        release: abandoned::ClaimedPostOwnerExitRegularRelease,
         mutation: Option<ProcessPageMapMutationLease>,
     },
     Singleton {
@@ -579,7 +595,7 @@ enum ProcessPostOwnerExitClaimTerminalRetained {
     },
     NonArenaSingleton {
         owner: ProcessPostOwnerExitNonArenaTerminalOwner,
-        mutation: ProcessPageMapMutationLease,
+        mutation: Option<ProcessPageMapMutationLease>,
     },
     Continuation {
         failure: ProcessPostOwnerExitRemoteClaimFailure,
@@ -596,11 +612,12 @@ enum ProcessPostOwnerExitClaimTerminalRetained {
 /// transition, not a replacement post-exit route.
 #[must_use = "a terminal W03 source owner must be sealed, never reconstructed"]
 enum ProcessPostOwnerExitTerminalRetained {
-    /// A claim path retained both its W07/source owner and, after the map
-    /// stage began, the exclusive PageMap mutation lease. The latter prevents
-    /// any unfinished map tail from being reopened by a copyable process-pair
-    /// observer. There is no process-global slot: every exact claim is
-    /// terminalized independently by the page-local source low-bit owner.
+    /// A claim path retained its W07/source owner and, only when unregister
+    /// may have made partial progress, its exclusive PageMap mutation lease.
+    /// The latter prevents an unfinished map tail from being reopened by a
+    /// copyable process-pair observer. There is no process-global slot: every
+    /// exact claim is terminalized independently by the page-local source
+    /// low-bit owner.
     Claimed {
         owner: ProcessPostOwnerExitClaimTerminalRetained,
     },
@@ -721,8 +738,8 @@ impl ProcessPostOwnerExitRemoteClaimResult {
         ProcessPostOwnerExitClaimTerminalRetained,
     > {
         match self {
-            Self::RegularTerminalRetained { claim, mutation } => {
-                Err(ProcessPostOwnerExitClaimTerminalRetained::Regular { claim, mutation })
+            Self::RegularTerminalRetained { release, mutation } => {
+                Err(ProcessPostOwnerExitClaimTerminalRetained::Regular { release, mutation })
             }
             Self::Regular(
                 abandoned::ClaimedPostOwnerExitRegularFreeResult::PublishedToExistingOwner,
@@ -735,9 +752,9 @@ impl ProcessPostOwnerExitRemoteClaimResult {
                 Ok(ProcessPostOwnerExitPointerFreeDisposition::Released)
             }
             Self::Regular(
-                abandoned::ClaimedPostOwnerExitRegularFreeResult::TerminalReleaseRetained(claim),
+                abandoned::ClaimedPostOwnerExitRegularFreeResult::TerminalReleaseRetained(release),
             ) => Err(ProcessPostOwnerExitClaimTerminalRetained::Regular {
-                claim,
+                release,
                 mutation: None,
             }),
             Self::SingletonTerminalRetained { release, mutation } => {
@@ -939,19 +956,30 @@ unsafe fn continue_post_owner_exit_remote_claim_with_process_page_facts(
                     )
                 },
                 |page| abandoned::collect_post_owner_exit_local_free_false(page),
-                |page| {
+                |release| {
                     let mutation = match process.begin_blocking_exact_post_owner_exit_mutation() {
                         Ok(mutation) => mutation,
-                        Err(_) => return abandoned::PostOwnerExitTerminalRelease::Retained,
+                        Err(_) => {
+                            return abandoned::ClaimedPostOwnerExitRegularTerminalRelease::Retained(
+                                release,
+                            );
+                        }
                     };
                     let page_map = match mutation.page_map() {
                         Ok(page_map) => page_map,
                         Err(_) => {
                             retained_mutation = Some(mutation);
-                            return abandoned::PostOwnerExitTerminalRelease::Retained;
+                            return abandoned::ClaimedPostOwnerExitRegularTerminalRelease::Retained(
+                                release,
+                            );
                         }
                     };
-                    match release_claimed_process_regular_arena_page(page_map, &arena, page) {
+                    match release_claimed_process_regular_arena_page(
+                        page_map,
+                        &arena,
+                        release.page(),
+                        release.memory(),
+                    ) {
                         ClaimedProcessArenaTerminalRelease::Released => {}
                         ClaimedProcessArenaTerminalRelease::RetainedBeforePageMap => {
                             // The terminal callback acquired the short map
@@ -964,40 +992,50 @@ unsafe fn continue_post_owner_exit_remote_claim_with_process_page_facts(
                             // it and publish the exception marker; do not
                             // misclassify it as a completed-tail unlock
                             // failure or trip a debug assertion below.
-                            let _ = unsafe {
-                                mutation.finish_after_exact_post_owner_exit_operation()
-                            };
-                            return abandoned::PostOwnerExitTerminalRelease::Retained;
+                            let _ = mutation.finish_after_exact_post_owner_exit_operation();
+                            return abandoned::ClaimedPostOwnerExitRegularTerminalRelease::Retained(
+                                release,
+                            );
                         }
-                        ClaimedProcessArenaTerminalRelease::RetainedAfterPageMapMutation => {
+                        ClaimedProcessArenaTerminalRelease::RetainedDuringPageMapMutation => {
                             // `unregister_range` may have changed one or more
                             // plain entries before it reports an error.  Keep
                             // this exact lease with the W07 claim rather than
                             // reopening a partially released range.
                             retained_mutation = Some(mutation);
-                            return abandoned::PostOwnerExitTerminalRelease::Retained;
+                            return abandoned::ClaimedPostOwnerExitRegularTerminalRelease::Retained(
+                                release,
+                            );
+                        }
+                        ClaimedProcessArenaTerminalRelease::RetainedAfterPageMapRelease => {
+                            // PageMap unregistration has completed. Retain
+                            // the exact regular backing owner, but release
+                            // the short mutation boundary so its source state
+                            // remains auditable without offering a retry.
+                            let _ = mutation.finish_after_exact_post_owner_exit_operation();
+                            return abandoned::ClaimedPostOwnerExitRegularTerminalRelease::Retained(
+                                release,
+                            );
                         }
                     }
                     // SAFETY: this exact W07 claim serialized every plain
                     // operation on `page`; terminal release removed its range
                     // before metadata/slice release, while nonterminal paths
                     // never acquired this scoped lease.
-                    if unsafe { mutation.finish_after_exact_post_owner_exit_operation() }
-                        .is_err()
-                    {
+                    if mutation.finish_after_exact_post_owner_exit_operation().is_err() {
                         mutation_lease_release_failed = true;
                     }
-                    abandoned::PostOwnerExitTerminalRelease::Released
+                    abandoned::ClaimedPostOwnerExitRegularTerminalRelease::Released
                 },
             )
         };
         return match result {
             Ok(abandoned::ClaimedPostOwnerExitRegularFreeResult::TerminalReleaseRetained(
-                claim,
+                release,
             )) => {
                 debug_assert!(!mutation_lease_release_failed);
                 Ok(ProcessPostOwnerExitRemoteClaimResult::RegularTerminalRetained {
-                    claim,
+                    release,
                     mutation: retained_mutation,
                 })
             }
@@ -1065,19 +1103,26 @@ unsafe fn continue_post_owner_exit_remote_claim_with_process_page_facts(
                             // failure still poisons the short boundary, while
                             // the exact W07 wrapper remains the retained
                             // terminal owner returned below.
-                            let _ = unsafe {
-                                mutation.finish_after_exact_post_owner_exit_operation()
-                            };
+                            let _ = mutation.finish_after_exact_post_owner_exit_operation();
                             return abandoned::ClaimedPostOwnerExitSingletonFreeResult::TerminalReleaseRetained(
                                 release,
                             );
                         }
-                        ClaimedProcessArenaTerminalRelease::RetainedAfterPageMapMutation => {
-                            // This arena tail can fail after PageMap
-                            // unregister, ordinary-bit clear, retirement, or
-                            // slice release.  The exact W07 wrapper and this
-                            // mutation lease must remain one terminal owner.
+                        ClaimedProcessArenaTerminalRelease::RetainedDuringPageMapMutation => {
+                            // `unregister_range` may have partially changed
+                            // plain entries, so keep this exact lease with the
+                            // W07 wrapper rather than reopening that range.
                             retained_mutation = Some(mutation);
+                            return abandoned::ClaimedPostOwnerExitSingletonFreeResult::TerminalReleaseRetained(
+                                release,
+                            );
+                        }
+                        ClaimedProcessArenaTerminalRelease::RetainedAfterPageMapRelease => {
+                            // The PageMap tail is complete; an arena-bit,
+                            // metadata, or slice-release failure retains the
+                            // exact W07 wrapper without retaining a short map
+                            // lock that no later source step may use.
+                            let _ = mutation.finish_after_exact_post_owner_exit_operation();
                             return abandoned::ClaimedPostOwnerExitSingletonFreeResult::TerminalReleaseRetained(
                                 release,
                             );
@@ -1093,10 +1138,21 @@ unsafe fn continue_post_owner_exit_remote_claim_with_process_page_facts(
                     ) {
                         ClaimedProcessNonArenaSingletonRelease::Released => {}
                         ClaimedProcessNonArenaSingletonRelease::RetainedAfterList(backing) => {
+                            let page_map_tail_completed = backing.stage.page_map_tail_completed();
                             failed_non_arena_release = Some(backing);
-                            // List removal is irreversible, so retain the
-                            // exact mutation lease with its W07 wrapper.
-                            retained_mutation = Some(mutation);
+                            if page_map_tail_completed {
+                                // The source list/PageMap tail is complete.
+                                // The opaque owner keeps the exact OS or
+                                // external backing after a later terminal
+                                // failure, while the short map boundary is
+                                // released for read-only audit only.
+                                let _ = mutation.finish_after_exact_post_owner_exit_operation();
+                            } else {
+                                // A failed `unregister_range` may have
+                                // changed a leading sub-range. Keep the exact
+                                // mutation lease with its W07 wrapper.
+                                retained_mutation = Some(mutation);
+                            }
                             return abandoned::ClaimedPostOwnerExitSingletonFreeResult::TerminalReleaseRetained(
                                 release,
                             );
@@ -1106,9 +1162,7 @@ unsafe fn continue_post_owner_exit_remote_claim_with_process_page_facts(
                             // wrapper is still the terminal source owner; a
                             // failed short-lease wake is terminal but has no
                             // lease left to retain.
-                            let _ = unsafe {
-                                mutation.finish_after_exact_post_owner_exit_operation()
-                            };
+                            let _ = mutation.finish_after_exact_post_owner_exit_operation();
                             return abandoned::ClaimedPostOwnerExitSingletonFreeResult::TerminalReleaseRetained(
                                 release,
                             );
@@ -1119,9 +1173,7 @@ unsafe fn continue_post_owner_exit_remote_claim_with_process_page_facts(
             // SAFETY: this singleton's terminal callback just completed the
             // source list-or-bitmap/PageMap/metadata/backing tail while this
             // scoped mutation lease held its plain map entries.
-            if unsafe { mutation.finish_after_exact_post_owner_exit_operation() }
-                .is_err()
-            {
+            if mutation.finish_after_exact_post_owner_exit_operation().is_err() {
                 mutation_lease_release_failed = true;
             }
             abandoned::ClaimedPostOwnerExitSingletonFreeResult::Released
@@ -1138,8 +1190,7 @@ unsafe fn continue_post_owner_exit_remote_claim_with_process_page_facts(
                         backing: backing.backing,
                         stage: backing.stage,
                     },
-                    mutation: retained_mutation
-                        .expect("post-list singleton retention keeps its PageMap mutation lease"),
+                    mutation: retained_mutation,
                 },
             ),
             None => Ok(ProcessPostOwnerExitRemoteClaimResult::SingletonTerminalRetained {
@@ -1370,16 +1421,18 @@ fn select_process_main_mapped_abandoned_page(
 
 /// Stage-aware outcome of one arena terminal tail.
 ///
-/// `PageMapMutationAttempted` is intentionally conservative: `PageMap`
-/// range clearing can fail after changing a leading sub-range, so the exact
-/// mutation lease must remain sealed with W07's linear owner from the moment
-/// the unregister call begins.  There is deliberately no retry surface for
-/// either retained form.
+/// An `unregister_range` failure may have changed a leading sub-range, so its
+/// mutation lease remains sealed with W07's linear owner. Once unregister
+/// succeeds, however, the PageMap transition is complete even if the later
+/// arena bit, metadata, or slice release fails. The latter terminal owner can
+/// release the short PageMap lease and remain mechanically auditable without
+/// creating a retry surface.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum ClaimedProcessArenaTerminalRelease {
     Released,
     RetainedBeforePageMap,
-    RetainedAfterPageMapMutation,
+    RetainedDuringPageMapMutation,
+    RetainedAfterPageMapRelease,
 }
 
 /// Completes `_mi_arenas_page_free` for one all-free claimed regular arena
@@ -1392,6 +1445,7 @@ unsafe fn release_claimed_process_regular_arena_page(
     page_map: &PageMap,
     arena: &ArenaView<'static>,
     mut page: NonNull<Page>,
+    expected_memory: MemoryId,
 ) -> ClaimedProcessArenaTerminalRelease {
     // SAFETY: W07 retained this exact page's low owner bit through the
     // all-free result, so its source ordinary fields are stable here.
@@ -1401,6 +1455,7 @@ unsafe fn release_claimed_process_regular_arena_page(
         return ClaimedProcessArenaTerminalRelease::RetainedBeforePageMap;
     };
     if memory.kind() != MemoryKind::Arena
+        || !same_arena_memory(memory, expected_memory)
         || arena_memory.arena != core::ptr::from_ref(arena.arena()).cast_mut()
     {
         return ClaimedProcessArenaTerminalRelease::RetainedBeforePageMap;
@@ -1470,7 +1525,7 @@ unsafe fn release_claimed_process_regular_arena_page(
     // SAFETY: the preceding exact-range check proves the source PageMap
     // publication that is removed before any ordinary bitmap/metadata write.
     if unsafe { page_map.unregister_range(slice_start, page_map_size) }.is_err() {
-        return ClaimedProcessArenaTerminalRelease::RetainedAfterPageMapMutation;
+        return ClaimedProcessArenaTerminalRelease::RetainedDuringPageMapMutation;
     }
     // The ordinary arena bit is separate from the mapped-abandoned identity
     // W07's source tail may already have cleared.
@@ -1478,22 +1533,22 @@ unsafe fn release_claimed_process_regular_arena_page(
         .and_then(|pages| pages.clear_range(slice_index, 1))
         != Some(true)
     {
-        return ClaimedProcessArenaTerminalRelease::RetainedAfterPageMapMutation;
+        return ClaimedProcessArenaTerminalRelease::RetainedAfterPageMapRelease;
     }
     // SAFETY: queue ownership ended during owner exit; no former Theap is
     // read here, and map/ordinary-bitmap publication now precede retirement.
     let Some(retired) = (unsafe { page.as_mut().retire_exclusive() }) else {
-        return ClaimedProcessArenaTerminalRelease::RetainedAfterPageMapMutation;
+        return ClaimedProcessArenaTerminalRelease::RetainedAfterPageMapRelease;
     };
-    if !same_arena_memory(retired, memory) {
-        return ClaimedProcessArenaTerminalRelease::RetainedAfterPageMapMutation;
+    if !same_arena_memory(retired, expected_memory) {
+        return ClaimedProcessArenaTerminalRelease::RetainedAfterPageMapRelease;
     }
     // SAFETY: `retired` is the exact arena span after every source-visible
     // PageMap and metadata predecessor has completed.
     if unsafe { release_arena_slices(retired) } {
         ClaimedProcessArenaTerminalRelease::Released
     } else {
-        ClaimedProcessArenaTerminalRelease::RetainedAfterPageMapMutation
+        ClaimedProcessArenaTerminalRelease::RetainedAfterPageMapRelease
     }
 }
 
@@ -1563,27 +1618,27 @@ unsafe fn release_claimed_process_arena_singleton_page(
     // Source terminal order is PageMap unregister, one ordinary main-arena
     // bit clear, metadata retirement, then full singleton slice release.
     if unsafe { page_map.unregister_range(slice_start, size) }.is_err() {
-        return ClaimedProcessArenaTerminalRelease::RetainedAfterPageMapMutation;
+        return ClaimedProcessArenaTerminalRelease::RetainedDuringPageMapMutation;
     }
     if unsafe { arena.pages() }
         .and_then(|pages| pages.clear_range(slice_index, 1))
         != Some(true)
     {
-        return ClaimedProcessArenaTerminalRelease::RetainedAfterPageMapMutation;
+        return ClaimedProcessArenaTerminalRelease::RetainedAfterPageMapRelease;
     }
     // SAFETY: all queue/list/map predecessors completed under the exact W07
     // release wrapper; retirement cannot inspect a departed Theap.
     let Some(retired) = (unsafe { page.as_mut().retire_exclusive() }) else {
-        return ClaimedProcessArenaTerminalRelease::RetainedAfterPageMapMutation;
+        return ClaimedProcessArenaTerminalRelease::RetainedAfterPageMapRelease;
     };
     if !same_arena_memory(retired, expected_memory) {
-        return ClaimedProcessArenaTerminalRelease::RetainedAfterPageMapMutation;
+        return ClaimedProcessArenaTerminalRelease::RetainedAfterPageMapRelease;
     }
     // SAFETY: this is the exact remaining externally managed arena span.
     if unsafe { release_arena_slices(retired) } {
         ClaimedProcessArenaTerminalRelease::Released
     } else {
-        ClaimedProcessArenaTerminalRelease::RetainedAfterPageMapMutation
+        ClaimedProcessArenaTerminalRelease::RetainedAfterPageMapRelease
     }
 }
 

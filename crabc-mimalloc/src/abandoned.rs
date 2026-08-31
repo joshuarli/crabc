@@ -461,14 +461,49 @@ pub(crate) enum PostOwnerExitRegularFreeResult {
     TerminalReleaseRetained,
 }
 
+/// Exact terminal release authority for one all-free regular arena page.
+///
+/// The source page metadata can be retired before returning its arena slices.
+/// Keep the copied `MemoryId` with the original remote-free claim so a failed
+/// slice return still has one mechanically auditable owner after retirement
+/// clears the page's own `memid`. This is not a page lookup, route, or retry
+/// handle: terminal callers may only release or retain this exact value.
+#[must_use = "an all-free regular claim must be released or retained terminally"]
+pub(crate) struct ClaimedPostOwnerExitRegularRelease {
+    owner: remote_free::ClaimedAbandonedRemoteFree,
+    memory: MemoryId,
+}
+
+impl ClaimedPostOwnerExitRegularRelease {
+    /// Returns the exact all-free page held by this terminal owner.
+    #[inline]
+    pub(crate) const fn page(&self) -> NonNull<Page> { self.owner.page() }
+
+    /// Returns the copied source arena provenance retained across metadata
+    /// retirement and a possible failed slice release.
+    #[inline]
+    pub(crate) const fn memory(&self) -> MemoryId { self.memory }
+}
+
+/// Result of a claimed regular page's terminal callback.
+///
+/// Unlike the older scalar terminal disposition, the retained form returns
+/// the same exact owner that entered the callback. This makes it impossible
+/// to report a failed post-retirement slice release with only a raw page
+/// pointer whose provenance has already been cleared.
+#[must_use = "a regular terminal callback must release or retain its exact owner"]
+pub(crate) enum ClaimedPostOwnerExitRegularTerminalRelease {
+    Released,
+    Retained(ClaimedPostOwnerExitRegularRelease),
+}
+
 /// Disposition after consuming an already-published remote-free owner claim.
 ///
 /// Unlike [`PostOwnerExitRegularFreeResult`], the terminal-retention branch
-/// carries the same non-copyable source owner capability forward. Successful
-/// release or an unown/reabandon transition discharges it; no fieldless result
-/// permits a caller to return while silently retaining `xthread_free`'s low
-/// owner bit.
-#[derive(Debug, Eq, PartialEq)]
+/// carries the same non-copyable source owner capability and copied backing
+/// provenance forward. Successful release or an unown/reabandon transition
+/// discharges it; no fieldless result permits a caller to return while
+/// silently retaining `xthread_free`'s low owner bit.
 #[must_use = "a post-claim result may retain the unique abandoned-page owner"]
 pub(crate) enum ClaimedPostOwnerExitRegularFreeResult {
     /// A racing producer became responsible after the continuation transferred
@@ -478,8 +513,9 @@ pub(crate) enum ClaimedPostOwnerExitRegularFreeResult {
     StillLive,
     /// The supplied terminal owner completed PageMap/span/metadata release.
     Released,
-    /// Terminal release retained the unique low-bit owner and all page state.
-    TerminalReleaseRetained(remote_free::ClaimedAbandonedRemoteFree),
+    /// Terminal release retained the unique low-bit owner and exact backing
+    /// provenance, including after metadata retirement.
+    TerminalReleaseRetained(ClaimedPostOwnerExitRegularRelease),
 }
 
 /// A post-claim continuation error with its unique page owner preserved.
@@ -1452,16 +1488,20 @@ where
 /// it never calls `push_abandoned` and therefore cannot link the same block a
 /// second time. A legal release, reabandon, or unown consumes the capability.
 /// Every error and terminal-retention result returns it to the caller as the
-/// unique auditable owner of the page, PageMap entry, metadata, and mapping.
+/// unique auditable owner of the page, PageMap entry, metadata, and backing.
+/// The terminal callback receives a typed wrapper with copied arena
+/// provenance, so a failure after `retire_exclusive` cannot lose the source
+/// slice claim when the page's own `memid` becomes empty.
 ///
 /// # Safety
 ///
 /// `claim` must come directly from the current free's
-/// `LiveRemoteFreePublish::ClaimedAbandonedPage` result. `select_map`,
-/// `collect_owner_deferred_frees`, and `terminal_release` must satisfy the
-/// corresponding obligations of [`free_post_owner_exit_regular_page`]. On a
-/// `Released` result, `terminal_release` may have invalidated the page and
-/// block, and this function performs no later access.
+/// `LiveRemoteFreePublish::ClaimedAbandonedPage` result. `select_map` and
+/// `collect_owner_deferred_frees` satisfy the corresponding obligations of
+/// [`free_post_owner_exit_regular_page`]. `terminal_release` receives the
+/// exact typed terminal owner and must return it intact on failure. On a
+/// `Released` result, it may have invalidated the page and block, and this
+/// function performs no later access.
 pub(crate) unsafe fn continue_post_owner_exit_remote_claim<M, F, C, R>(
     claim: remote_free::ClaimedAbandonedRemoteFree,
     select_map: F,
@@ -1475,7 +1515,7 @@ where
     M: MappedAbandonedPages,
     F: FnOnce(MemoryId, usize) -> Result<M, AbandonError>,
     C: FnMut(NonNull<Page>) -> Result<(), AbandonError>,
-    R: FnOnce(NonNull<Page>) -> PostOwnerExitTerminalRelease,
+    R: FnOnce(ClaimedPostOwnerExitRegularRelease) -> ClaimedPostOwnerExitRegularTerminalRelease,
 {
     let page = claim.page();
     let block = claim.published_block();
@@ -1502,14 +1542,20 @@ where
             Ok(ClaimedPostOwnerExitRegularFreeResult::StillLive)
         }
         Ok(RegularAbandonedFreeAfterFailedReclaimResult::Empty) => {
-            // No page access follows this callback: `Released` may invalidate
-            // the metadata, while `Retained` returns the still-owning token.
-            match terminal_release(page) {
-                PostOwnerExitTerminalRelease::Released => {
+            // Source all-free collection leaves this exact low-bit owner in
+            // place. Copy its backing before the callback because terminal
+            // metadata retirement may clear `page.memid`; no page access
+            // follows the callback.
+            let release = ClaimedPostOwnerExitRegularRelease {
+                owner: claim,
+                memory: unsafe { Page::abandonment_state_at(page) }.memid,
+            };
+            match terminal_release(release) {
+                ClaimedPostOwnerExitRegularTerminalRelease::Released => {
                     Ok(ClaimedPostOwnerExitRegularFreeResult::Released)
                 }
-                PostOwnerExitTerminalRelease::Retained => Ok(
-                    ClaimedPostOwnerExitRegularFreeResult::TerminalReleaseRetained(claim),
+                ClaimedPostOwnerExitRegularTerminalRelease::Retained(release) => Ok(
+                    ClaimedPostOwnerExitRegularFreeResult::TerminalReleaseRetained(release),
                 ),
             }
         }
@@ -4334,7 +4380,7 @@ mod tests {
         // SAFETY: `claim` is the unique low-bit owner produced by the source
         // CAS above. Each callback retains only its documented phase and the
         // terminal callback performs the test's source release boundary.
-        assert_eq!(
+        assert!(matches!(
             unsafe {
                 continue_post_owner_exit_remote_claim(
                     claim,
@@ -4349,14 +4395,16 @@ mod tests {
                         owner_local_collections.set(owner_local_collections.get() + 1);
                         Ok(())
                     },
-                    |_page| {
+                    |release| {
+                        assert_eq!(release.page(), page);
+                        assert_eq!(release.memory().kind(), MemoryKind::Arena);
                         terminal_releases.set(terminal_releases.get() + 1);
-                        PostOwnerExitTerminalRelease::Released
+                        ClaimedPostOwnerExitRegularTerminalRelease::Released
                     },
                 )
             },
             Ok(ClaimedPostOwnerExitRegularFreeResult::Released)
-        );
+        ));
         assert_eq!(selected_map.get(), 1);
         assert_eq!(owner_local_collections.get(), 1);
         assert_eq!(terminal_releases.get(), 1);
