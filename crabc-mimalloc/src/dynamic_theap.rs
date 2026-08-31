@@ -12818,7 +12818,15 @@ mod tests {
                 page.as_ptr(),
                 "the two-block route starts from one shared large page"
             );
-            let (memory, bin, slice_start, span_size, slice_index, arena_ptr) = {
+            let (
+                memory,
+                bin,
+                slice_start,
+                span_size,
+                page_map_slice_count,
+                slice_index,
+                arena_ptr,
+            ) = {
                 // SAFETY: both client blocks are live and the source page has
                 // not crossed its dynamic thread-exit owner boundary.
                 let page_ref = unsafe { page.as_ref() };
@@ -12830,6 +12838,16 @@ mod tests {
                     .and_then(|arena| arena.slice_start(arena_memory.slice_index as usize))
                     .expect("the dynamic large span begins in its published arena");
                 let span_size = arena_memory.slice_count as usize * ARENA_SLICE_SIZE;
+                let page_start_offset = unsafe { page_ref.start() }
+                    .addr()
+                    .checked_sub(slice_start.addr())
+                    .expect("the large page area starts within its arena span");
+                let page_map_slice_count = crate::page::page_map_slice_count(
+                    page_ref.block_size(),
+                    page_ref.reserved(),
+                    page_start_offset,
+                )
+                .expect("the large page has source PageMap geometry");
                 let bin = crate::size_class::bin(page_ref.block_size())
                     .expect("the regular large page has one source bin");
                 assert_eq!(memory.kind(), MemoryKind::Arena);
@@ -12844,11 +12862,16 @@ mod tests {
                 );
                 assert!(page_ref.reserved() > 2);
                 assert_eq!(page_ref.used(), 2);
+                assert_eq!(
+                    page_map_slice_count, 63,
+                    "page-map.c clips the furthest-interior-pointer range below the 64-slice arena span"
+                );
                 (
                     memory,
                     bin,
                     slice_start,
                     span_size,
+                    page_map_slice_count,
                     arena_memory.slice_index as usize,
                     arena_memory.arena,
                 )
@@ -12911,13 +12934,23 @@ mod tests {
                     "large queue removal leaves the no-op direct-cache image empty"
                 );
             }
-            for offset in (0..span_size).step_by(ARENA_SLICE_SIZE) {
+            for offset in
+                (0..page_map_slice_count * ARENA_SLICE_SIZE).step_by(ARENA_SLICE_SIZE)
+            {
                 assert_eq!(
                     handoff.test_page_map_entry(slice_start.wrapping_add(offset)),
                     page.as_ptr(),
-                    "mapped abandonment retains every large-span PageMap entry"
+                    "mapped abandonment retains every source-registered large PageMap entry"
                 );
             }
+            assert!(
+                handoff
+                    .test_page_map_entry(
+                        slice_start.wrapping_add(page_map_slice_count * ARENA_SLICE_SIZE),
+                    )
+                    .is_null(),
+                "the final arena slice is source-owned slack, not PageMap-reachable page area"
+            );
 
             // SAFETY: this exact first live block leaves one client block in
             // the source page, so the normal failed-reclaim tail must
@@ -12944,11 +12977,13 @@ mod tests {
             assert_eq!(unsafe { page.as_ref().used() }, 1);
             assert_eq!(handoff.test_abandoned_count(), Some(1));
             assert!(handoff.test_dynamic_abandoned_page_is_set());
-            for offset in (0..span_size).step_by(ARENA_SLICE_SIZE) {
+            for offset in
+                (0..page_map_slice_count * ARENA_SLICE_SIZE).step_by(ARENA_SLICE_SIZE)
+            {
                 assert_eq!(
                     handoff.test_page_map_entry(slice_start.wrapping_add(offset)),
                     page.as_ptr(),
-                    "the first normal free preserves every large-span PageMap entry"
+                    "the first normal free preserves every source-registered large PageMap entry"
                 );
             }
 
@@ -13485,9 +13520,20 @@ mod tests {
                 .and_then(|arena| arena.slice_start(arena_memory.slice_index as usize))
                 .expect("the complete large source span begins in its arena");
             let span_size = arena_memory.slice_count as usize * ARENA_SLICE_SIZE;
+            let page_start_offset = unsafe { page_ref.start() }
+                .addr()
+                .checked_sub(slice_start.addr())
+                .expect("the large page area starts within its arena span");
+            let page_map_slice_count = crate::page::page_map_slice_count(
+                page_ref.block_size(),
+                page_ref.reserved(),
+                page_start_offset,
+            )
+            .expect("the large page has source PageMap geometry");
             let bin = crate::size_class::bin(page_ref.block_size())
                 .expect("the large page has one source bin");
             assert_eq!(span_size / ARENA_SLICE_SIZE, 64);
+            assert_eq!(page_map_slice_count, 63);
 
             let mut drain = match allocator.begin_thread_exit_drain() {
                 Ok(drain) => drain,
@@ -13542,11 +13588,13 @@ mod tests {
                     "collection failure preserves the large no-op direct-cache image"
                 );
             }
-            for offset in (0..span_size).step_by(ARENA_SLICE_SIZE) {
+            for offset in
+                (0..page_map_slice_count * ARENA_SLICE_SIZE).step_by(ARENA_SLICE_SIZE)
+            {
                 assert_eq!(
                     drain.test_page_map_entry(slice_start.wrapping_add(offset)),
                     page.as_ptr(),
-                    "collection failure preserves every large-span PageMap entry"
+                    "collection failure preserves every source-registered large PageMap entry"
                 );
             }
 
@@ -13586,8 +13634,20 @@ mod tests {
                 .and_then(|arena| arena.slice_start(arena_memory.slice_index as usize))
                 .expect("the complete large source span begins in its arena");
             let span_size = arena_memory.slice_count as usize * ARENA_SLICE_SIZE;
+            let page_start_offset = unsafe { page_ref.start() }
+                .addr()
+                .checked_sub(slice_start.addr())
+                .expect("the large page area starts within its arena span");
+            let page_map_slice_count = crate::page::page_map_slice_count(
+                page_ref.block_size(),
+                page_ref.reserved(),
+                page_start_offset,
+            )
+            .expect("the large page has source PageMap geometry");
             let bin = crate::size_class::bin(page_ref.block_size())
                 .expect("the large page has one source bin");
+            assert_eq!(span_size / ARENA_SLICE_SIZE, 64);
+            assert_eq!(page_map_slice_count, 63);
 
             let mut drain = match allocator.begin_thread_exit_drain() {
                 Ok(drain) => drain,
@@ -13641,11 +13701,13 @@ mod tests {
                     "false collection failure preserves the large no-op direct-cache image"
                 );
             }
-            for offset in (0..span_size).step_by(ARENA_SLICE_SIZE) {
+            for offset in
+                (0..page_map_slice_count * ARENA_SLICE_SIZE).step_by(ARENA_SLICE_SIZE)
+            {
                 assert_eq!(
                     drain.test_page_map_entry(slice_start.wrapping_add(offset)),
                     page.as_ptr(),
-                    "false collection failure preserves every large-span PageMap entry"
+                    "false collection failure preserves every source-registered large PageMap entry"
                 );
             }
 

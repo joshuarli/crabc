@@ -12070,6 +12070,20 @@ mod tests {
                     let slice_start = arena
                         .slice_start(slice)
                         .expect("the complete large source span remains addressable");
+                    let page_start_offset = unsafe { page_ref.start() }
+                        .addr()
+                        .checked_sub(slice_start.addr())
+                        .expect("the large page area starts within its arena span");
+                    let page_map_slice_count = crate::page::page_map_slice_count(
+                        page_ref.block_size(),
+                        page_ref.reserved(),
+                        page_start_offset,
+                    )
+                    .expect("the large page has source PageMap geometry");
+                    assert_eq!(
+                        page_map_slice_count, 63,
+                        "page-map.c clips the furthest-interior-pointer range below the 64-slice arena span"
+                    );
 
                     let drain = match allocator.begin_thread_exit_drain() {
                         Ok(drain) => drain,
@@ -12100,16 +12114,27 @@ mod tests {
                         "the route releases the old Theap/TLD before any client free"
                     );
                     assert_eq!(route.test_abandoned_count(), Some(1));
-                    for offset in 0..slice_count {
+                    for offset in 0..page_map_slice_count {
                         let address = unsafe {
                             slice_start.add(offset * crate::config::ARENA_SLICE_SIZE)
                         };
                         assert_eq!(
                             unsafe { page_map.page_map().unwrap().checked_lookup(address) },
                             page.as_ptr(),
-                            "post-exit ownership retains every PageMap entry in the large span"
+                            "post-exit ownership retains every source-registered PageMap entry"
                         );
                     }
+                    assert!(
+                        unsafe {
+                            page_map.page_map().unwrap().checked_lookup(
+                                slice_start.add(
+                                    page_map_slice_count * crate::config::ARENA_SLICE_SIZE,
+                                ),
+                            )
+                        }
+                        .is_null(),
+                        "the final arena slice is source-owned slack, not PageMap-reachable page area"
+                    );
                     assert_eq!(
                         unsafe { arena.pages() }.unwrap().is_clear_range(slice, slice_count),
                         Some(false),
@@ -12126,14 +12151,14 @@ mod tests {
                         Err(_) => panic!("the first client free stays routed after TLD teardown"),
                     };
                     assert_eq!(route.test_abandoned_count(), Some(1));
-                    for offset in 0..slice_count {
+                    for offset in 0..page_map_slice_count {
                         let address = unsafe {
                             slice_start.add(offset * crate::config::ARENA_SLICE_SIZE)
                         };
                         assert_eq!(
                             unsafe { page_map.page_map().unwrap().checked_lookup(address) },
                             page.as_ptr(),
-                            "the first client free preserves every PageMap entry in the large span"
+                            "the first client free preserves every source-registered PageMap entry"
                         );
                     }
 
