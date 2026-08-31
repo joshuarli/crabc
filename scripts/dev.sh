@@ -555,6 +555,7 @@ case "$command" in
             --loader target/debug/libldso.so \
             -- cargo test -q -p crabc-libc --features native-mimalloc-shadow \
             --test allocator \
+            --test native_mimalloc_shadow_abi \
             --test native_mimalloc_owner_exit \
             --test native_mimalloc_retired_owner_exit \
             --test native_mimalloc_two_owner_exit \

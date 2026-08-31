@@ -67,6 +67,11 @@ path = "../tests/allocator.rs"
 
 
 [[test]]
+name = "native_mimalloc_shadow_abi"
+path = "../tests/native_mimalloc_shadow_abi.rs"
+
+
+[[test]]
 name = "native_mimalloc_owner_exit"
 path = "../tests/native_mimalloc_owner_exit.rs"
 
