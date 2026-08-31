@@ -4,8 +4,9 @@
 //! independently evidenced metadata and credential verticals alongside the x86
 //! bulk-memory, floating-environment, continuation, binary32/binary64/x87
 //! classification/sign, and basic complex accessor/conjugation primitives as a
-//! real C bootstrap block, plus deliberately narrow simple signal action/mask
-//! and bounded process-signal execution, one default-attribute
+//! real C bootstrap block, plus deliberately narrow simple signal action/mask,
+//! bounded process-signal execution, and fixed-minimum alternate signal-stack
+//! behavior, one default-attribute
 //! create/explicit-exit/join/detach worker and its typed C11
 //! `thrd_create`/`thrd_exit`/`thrd_join`/`thrd_detach`/`thrd_sleep` sibling, a
 //! process-private normal `pthread_mutex_*` block and its paired private
@@ -150,6 +151,8 @@ mod signal_foundation;
 mod signal_control;
 #[path = "signal_execution.rs"]
 mod signal_execution;
+#[path = "signal_altstack.rs"]
+mod signal_altstack;
 #[path = "pthread_identity.rs"]
 mod pthread_identity;
 #[path = "pthread_create_join.rs"]

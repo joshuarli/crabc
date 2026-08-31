@@ -11280,6 +11280,84 @@ def require_memory_locking_header_evidence(family: Mapping[str, Any]) -> None:
         )
 
 
+def require_signal_altstack_artifact(family: Mapping[str, Any]) -> None:
+    """Keep the static alternate-stack proof exact and explicitly non-promoting."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.posix-runtime].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [
+        entry for entry in artifacts if entry.get("id") == "static-c-signal-altstack"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.posix-runtime must contain exactly one static-c-signal-altstack artifact",
+    )
+    artifact = matching[0]
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for phrase in (
+        "alternate signal-stack artifact",
+        "still-planned `libc.posix-runtime`",
+        "`sigaltstack`",
+        "size-before-`SS_ONSTACK`",
+        "`ENOMEM`/`EINVAL`",
+        "`SA_ONSTACK`",
+        "hidden syscall-15 restorer",
+        "_SC_MINSIGSTKSZ",
+        "AT_MINSIGSTKSZ",
+        "MINSIGSTKSZ=2048",
+        "auxv/sysconf selector is not selected",
+        "waits/queues/signalfd",
+        "pthread signal policy or cancellation",
+        "family completion, promotion, or public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"static-c-signal-altstack description omits {phrase}",
+        )
+    owners = set(artifact["source_owners"])
+    for owner in (
+        "libc/src/c_abi/x86_64/signal_altstack.rs",
+        "compat/x86_64/libc_signal_altstack_probe.c",
+        "compat/x86_64/libc_signal_altstack_start.S",
+        "compat/x86_64/run_libc_signal_altstack.sh",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "scripts/dev-x86_64.sh",
+    ):
+        require(owner in owners, f"static-c-signal-altstack must own {owner}")
+    prerequisites = artifact["x86_abi_prerequisites"]
+    assert isinstance(prerequisites, list)
+    require(
+        any(
+            "sigaltstack=131" in item
+            and "rdi/rsi" in item
+            and "24-byte align-8" in item
+            and "offsets 0/8/16" in item
+            for item in prerequisites
+        ),
+        "static-c-signal-altstack must record its x86 syscall and stack_t ABI",
+    )
+    require(
+        any(
+            "size before SS_ONSTACK" in item
+            and "ENOMEM" in item
+            and "_SC_MINSIGSTKSZ" in item
+            and "AT_MINSIGSTKSZ" in item
+            for item in prerequisites
+        ),
+        "static-c-signal-altstack must record musl ordering and dynamic-minimum exclusion",
+    )
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-signal-altstack"},
+        "static-c-signal-altstack must use the closed libc-signal-altstack command",
+    )
+
+
 def require_signal_execution_artifact(family: Mapping[str, Any]) -> None:
     """Keep the coherent C process-signal artifact bounded and evidence-led."""
     artifacts = require_verified_artifacts(
@@ -17226,6 +17304,7 @@ def validate_ledger(
     require_memory_sync_artifact(by_id["libc.posix-runtime"])
     require_memory_locking_artifact(by_id["libc.posix-runtime"])
     require_memfd_create_artifact(by_id["libc.posix-runtime"])
+    require_signal_altstack_artifact(by_id["libc.posix-runtime"])
     require_signal_execution_artifact(by_id["libc.posix-runtime"])
     require_clock_nanosleep_artifact(by_id["libc.posix-runtime"])
     require_nanosleep_artifact(by_id["libc.posix-runtime"])

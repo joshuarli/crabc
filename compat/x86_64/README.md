@@ -357,6 +357,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-bootstrap-primitives
 ./scripts/dev-x86_64.sh libc-signal-control
 ./scripts/dev-x86_64.sh libc-signal-execution
+./scripts/dev-x86_64.sh libc-signal-altstack
 ./scripts/dev-x86_64.sh libc-static-tls-v1
 ./scripts/dev-x86_64.sh libc-crt-static-tls
 ./scripts/dev-x86_64.sh libc-crt1-static-tls
@@ -2143,9 +2144,21 @@ exit child is fixture-only deterministic containment for the interrupted wait;
 the archive exposes no lifecycle API. The runner ratchets exact archive
 exports and rejects dynamic TLS, C++ runtime, allocator, pthread/clone,
 auxv/sysconf, and unselected signal paths. It does not select `tgkill`,
-alternate stacks, signalfd, legacy signal APIs, pthread signal/cancellation
-policy, generic process lifecycle, libc.so, CRT, loader, sysroot, signal/header
-family completion, or public x86 support.
+alternate stacks outside their separate artifact, signalfd, legacy signal APIs,
+pthread signal/cancellation policy, generic process lifecycle, libc.so, CRT,
+loader, sysroot, signal/header family completion, or public x86 support.
+
+`libc-signal-altstack` is a separate static `verified_artifact` within planned
+`libc.posix-runtime`. Its project-header C body runs through pinned musl and a
+true `-nostdlib -static` candidate. It selects `sigaltstack`'s 24-byte x86
+`stack_t` query/install/disable, stale-`errno`, null query, fixed-minimum
+prechecks, and a single `SA_ONSTACK` handler entry/return through the existing
+hidden restorer. It preserves musl's too-small-before-`SS_ONSTACK` ordering but
+intentionally keeps the existing fixed x86 `MINSIGSTKSZ=2048` preflight rather
+than musl's startup-auxv dynamic minimum. It does not select alternate-stack
+allocation/ownership, generic delivery, waits/queues/signalfd, pthread signal
+policy/cancellation, libc.so, CRT, loader, sysroot, family completion, or
+public x86 support.
 
 `libc-static-tls-v1` is a separately recorded private static
 `verified_artifact` inside still-planned `libc.pthread-tls`. Its freestanding
@@ -3653,7 +3666,8 @@ fixed 32-entry LIFO ordinary-exit block and rejects malformed final
 startup, loader TLS, sysroot, nor public x86 support.
 
 Apart from the narrowly named `libc-stat-compat`, `libc-credentials`,
-`libc-bootstrap-primitives`, `libc-signal-control`, `libc-signal-execution`, and
+`libc-bootstrap-primitives`, `libc-signal-control`, `libc-signal-execution`,
+`libc-signal-altstack`, and
 `libc-static-tls-v1`, `libc-crt-static-tls`,
 `libc-pthread-create-join-tls`, `libc-pthread-identity`, `libc-c11-lifecycle`,
 `libc-pthread-detach`, `libc-thrd-sleep`, `libc-pthread-mutex-normal`,

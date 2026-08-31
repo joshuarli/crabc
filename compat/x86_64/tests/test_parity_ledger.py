@@ -50,7 +50,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 30)
-        self.assertEqual(report["verified_artifact_count"], 105)
+        self.assertEqual(report["verified_artifact_count"], 106)
         self.assertEqual(report["header_layout_probe_count"], 45)
         self.assertEqual(report["public_header_inventory_count"], 183)
         self.assertEqual(report["header_foundation_header_count"], 191)
@@ -8852,6 +8852,66 @@ class X86ParityLedgerTests(unittest.TestCase):
         with self.assertRaisesRegex(
             ledger.LedgerError, "closed libc-mapping-core command"
         ):
+            ledger.validate_ledger(data)
+
+    def test_signal_altstack_artifact_keeps_its_closed_static_contract(self) -> None:
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-signal-altstack"
+        )
+        self.assertNotIn("capabilities", artifact)
+        for owner in (
+            "libc/src/c_abi/x86_64/signal_altstack.rs",
+            "compat/x86_64/libc_signal_altstack_probe.c",
+            "compat/x86_64/libc_signal_altstack_start.S",
+            "compat/x86_64/run_libc_signal_altstack.sh",
+        ):
+            self.assertIn(owner, artifact["source_owners"])
+        self.assertEqual(
+            {evidence["command"] for evidence in artifact["native_evidence"]},
+            {"./scripts/dev-x86_64.sh libc-signal-altstack"},
+        )
+        for phrase in (
+            "size-before-`SS_ONSTACK`",
+            "`SA_ONSTACK`",
+            "_SC_MINSIGSTKSZ",
+            "AT_MINSIGSTKSZ",
+            "MINSIGSTKSZ=2048",
+            "auxv/sysconf selector is not selected",
+            "family completion, promotion, or public x86 support",
+        ):
+            self.assertIn(phrase, artifact["description"])
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-signal-altstack"
+        )
+        prerequisites = artifact["x86_abi_prerequisites"]
+        assert isinstance(prerequisites, list) and isinstance(prerequisites[0], str)
+        prerequisites[0] = prerequisites[0].replace("sigaltstack=131", "sigaltstack=132")
+        with self.assertRaisesRegex(ledger.LedgerError, "x86 syscall and stack_t ABI"):
+            ledger.validate_ledger(data)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-signal-altstack"
+        )
+        artifact["description"] = artifact["description"].replace(
+            "MINSIGSTKSZ=2048", "dynamic only"
+        )
+        with self.assertRaisesRegex(ledger.LedgerError, "MINSIGSTKSZ=2048"):
             ledger.validate_ledger(data)
 
     def test_signal_execution_artifact_keeps_its_closed_static_contract(self) -> None:

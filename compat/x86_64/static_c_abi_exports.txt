@@ -402,6 +402,7 @@ shmget
 shutdown
 sigaction
 sigaddset
+sigaltstack
 sigdelset
 sigemptyset
 sigfillset

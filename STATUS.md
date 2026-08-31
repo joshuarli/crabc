@@ -535,6 +535,17 @@ selected `UTIME_NOW`/`UTIME_OMIT` and legacy conversion boundaries. It does
 not establish filesystem policy, a general C runtime, dynamic libc, loader,
 CRT/sysroot, family completion, AArch64 parity, or public x86 support.
 
+`./scripts/dev-x86_64.sh libc-signal-altstack` is one separate private
+`static-c-signal-altstack` artifact inside planned `libc.posix-runtime`. Its
+pinned-musl/freestanding-static C proof covers the 24-byte x86 `stack_t`
+query/install/disable boundary, fixed-minimum `ENOMEM`/`EINVAL` prechecks, and
+one `SA_ONSTACK` handler entry/return through the existing restorer. It preserves
+musl's size-before-`SS_ONSTACK` ordering while explicitly retaining the
+selected fixed `MINSIGSTKSZ=2048`, not musl's startup-auxv dynamic minimum. It
+does not select stack allocation/ownership, generic delivery, waits/queues,
+pthread signal policy, libc.so, CRT, loader, sysroot, family/platform parity,
+or public x86 support.
+
 `./scripts/dev-x86_64.sh libc-signal-execution` is one further private
 `static-c-process-signal-execution` artifact inside planned
 `libc.posix-runtime`. Its pinned-musl/freestanding-static C proof composes the
@@ -543,7 +554,8 @@ existing simple signal action/set/mask boundary with exactly `kill`, `killpg`,
 the application-signal mask transaction, queued `siginfo_t` layout, stale
 `errno`, EINTR retry, and musl `sigwait` `-1`/`errno` failure convention. A
 fixture-only raw child makes the interrupted wait deterministic. It does not
-select general process lifecycle, `tgkill`, alternate stacks, signalfd, legacy
+select general process lifecycle, `tgkill`, alternate stacks outside their
+separate artifact, signalfd, legacy
 signal APIs, pthread signal policy, libc.so, CRT, loader, sysroot, family or
 platform parity, or public x86 support.
 

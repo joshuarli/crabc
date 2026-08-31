@@ -857,7 +857,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             if line.strip().endswith(") ;;")
         )
         expected_groups = (
-            "image|musl-oracle|header-abi-reference|public-header-surface|header-abi-project|math-complex-header-abi|sys-reg-header-abi|types-header-abi|stat-header-abi|utime-header-abi|pthread-c11-header-abi|pthread-cancellation-header-abi|stdlib-header-abi|stdio-standard-header-abi|time-header-abi|poll-header-abi|select-header-abi|fcntl-header-abi|descriptor-advice-header-abi|filesystem-capacity-header-abi|flock-header-abi|sendfile-header-abi|ioctl-header-abi|unistd-header-abi|system-header-abi|syscall-header-abi|signal-header-abi|termios-header-abi|mman-header-abi|resource-header-abi|socket-header-abi|socket-messages-header-abi|random-entropy-header-abi|mm-abi-reference|mapping-reference|memory-vm-reference|pty-basic-reference|terminal-reference|mlock-reference|msync-reference|mincore-reference|fs-advice-reference|memfd-reference|ftruncate-reference|statfs-reference|timestamp-reference|path-lifecycle-reference|namespace-reference|path-core-reference|xattr-reference|directory-reference|temporary-object-reference|statx-reference|cwd-canonicalize-reference|root-change-reference|mount-reference|thread-kill-reference|ipc-reference|shm-reference|inotify-reference|socket-transport-reference|interface-device-reference|resolver-transport-reference|resolver-facade-reference|netdb-reference|users-databases-reference|posix-fallocate-reference|fallocate-reference|file-position-reference|sync-reference|syncfs-reference|sync-file-range-reference|rand-reference|time-abi-reference|time-observation-reference|calendar-time-reference|advanced-time-reference|relative-sleep-reference|clock-nanosleep-reference|getitimer-reference|setitimer-reference|timerfd-reference|pselect-reference|poll-reference|ppoll-reference|epoll-reference|process-identity-reference|child-ownership-reference|getgroups-reference|process-session-reference|pidfd-open-reference|fcntl-getlk-reference|fcntl-status-reference|flock-reference|sendfile-reference|copy-file-range-reference|scheduler-priority-bounds-reference|rr-interval-reference|sched-affinity-reference|sched-affinity-set-reference|priority-reference|setpriority-reference|rlimit-reference|rlimit-targeted-reference|setrlimit-reference|umask-reference|rusage-reference|times-reference|fstat-reference|statat-reference|getcwd-reference|readlinkat-reference|access-reference|system-reference|thread-reference|thread-credentials-reference|fs-credentials-reference|core|facade|facade-record-owning|libc-syscall|libc-errno-tls|libc-stat-compat|libc-credentials|libc-bootstrap-primitives|libc-signal-control|libc-signal-execution|libc-static-tls-v1|libc-crt-static-tls|libc-pthread-create-join-tls|libc-c11-lifecycle|libc-c11-plain-sync|libc-pthread-c11-once|libc-pthread-c11-tsd|libc-pthread-tls-aggregate|libc-pthread-cancel-deferred|libc-pthread-atfork|libc-thrd-sleep|libc-pthread-mutex-normal|libc-pthread-rwlock|libc-pthread-cond-private|libc-termios-control|libc-process-context|libc-environment|libc-descriptor-io|libc-descriptor-lifecycle|libc-timestamp-updates|libc-process-resources|libc-socket-transport|libc-socket-messages|libc-thread-pointer|libc-foundation|libc-fenv|libc-math-complex|libc-memory|libc-setjmp|libc-atomic|libc-clone-raw|libc-signal-foundation|ldso-relocation|ldso-image|ldso-initial-graph|ldso-initial-tls|ldso-initial-exec-tls|ldso-owned-crt-handoff|ldso-fixed-graph-introspection|ldso-dynamic-admission",
+            "image|musl-oracle|header-abi-reference|public-header-surface|header-abi-project|math-complex-header-abi|sys-reg-header-abi|types-header-abi|stat-header-abi|utime-header-abi|pthread-c11-header-abi|pthread-cancellation-header-abi|stdlib-header-abi|stdio-standard-header-abi|time-header-abi|poll-header-abi|select-header-abi|fcntl-header-abi|descriptor-advice-header-abi|filesystem-capacity-header-abi|flock-header-abi|sendfile-header-abi|ioctl-header-abi|unistd-header-abi|system-header-abi|syscall-header-abi|signal-header-abi|termios-header-abi|mman-header-abi|resource-header-abi|socket-header-abi|socket-messages-header-abi|random-entropy-header-abi|mm-abi-reference|mapping-reference|memory-vm-reference|pty-basic-reference|terminal-reference|mlock-reference|msync-reference|mincore-reference|fs-advice-reference|memfd-reference|ftruncate-reference|statfs-reference|timestamp-reference|path-lifecycle-reference|namespace-reference|path-core-reference|xattr-reference|directory-reference|temporary-object-reference|statx-reference|cwd-canonicalize-reference|root-change-reference|mount-reference|thread-kill-reference|ipc-reference|shm-reference|inotify-reference|socket-transport-reference|interface-device-reference|resolver-transport-reference|resolver-facade-reference|netdb-reference|users-databases-reference|posix-fallocate-reference|fallocate-reference|file-position-reference|sync-reference|syncfs-reference|sync-file-range-reference|rand-reference|time-abi-reference|time-observation-reference|calendar-time-reference|advanced-time-reference|relative-sleep-reference|clock-nanosleep-reference|getitimer-reference|setitimer-reference|timerfd-reference|pselect-reference|poll-reference|ppoll-reference|epoll-reference|process-identity-reference|child-ownership-reference|getgroups-reference|process-session-reference|pidfd-open-reference|fcntl-getlk-reference|fcntl-status-reference|flock-reference|sendfile-reference|copy-file-range-reference|scheduler-priority-bounds-reference|rr-interval-reference|sched-affinity-reference|sched-affinity-set-reference|priority-reference|setpriority-reference|rlimit-reference|rlimit-targeted-reference|setrlimit-reference|umask-reference|rusage-reference|times-reference|fstat-reference|statat-reference|getcwd-reference|readlinkat-reference|access-reference|system-reference|thread-reference|thread-credentials-reference|fs-credentials-reference|core|facade|facade-record-owning|libc-syscall|libc-errno-tls|libc-stat-compat|libc-credentials|libc-bootstrap-primitives|libc-signal-control|libc-signal-execution|libc-static-tls-v1|libc-crt-static-tls|libc-pthread-create-join-tls|libc-c11-lifecycle|libc-c11-plain-sync|libc-pthread-c11-once|libc-pthread-c11-tsd|libc-pthread-tls-aggregate|libc-pthread-cancel-deferred|libc-pthread-atfork|libc-thrd-sleep|libc-pthread-mutex-normal|libc-pthread-rwlock|libc-pthread-cond-private|libc-termios-control|libc-process-context|libc-environment|libc-descriptor-io|libc-descriptor-lifecycle|libc-timestamp-updates|libc-process-resources|libc-socket-transport|libc-socket-messages|libc-thread-pointer|libc-foundation|libc-fenv|libc-math-complex|libc-memory|libc-setjmp|libc-atomic|libc-clone-raw|libc-signal-altstack|libc-signal-foundation|ldso-relocation|ldso-image|ldso-initial-graph|ldso-initial-tls|ldso-initial-exec-tls|ldso-owned-crt-handoff|ldso-fixed-graph-introspection|ldso-dynamic-admission",
             "inet-address-header-abi",
             "ldso-target-root",
             "machine-context-header-abi",
@@ -933,6 +933,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn("libc-bootstrap-primitives", source)
         self.assertIn("libc-signal-control", source)
         self.assertIn("libc-signal-execution", source)
+        self.assertIn("libc-signal-altstack", source)
         self.assertIn("libc-static-tls-v1", source)
         self.assertIn("libc-crt-static-tls", source)
         self.assertIn("libc-pthread-create-join-tls", source)
@@ -3484,9 +3485,12 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         # The archive is shared with the separately selected process-signal
         # and readiness/waits artifacts. Their named exports must not be
         # treated as accidental signal-control exports by this older gate.
-        self.assertIn("The selected process-signal and readiness artifacts", control_runner)
+        self.assertIn(
+            "The selected process-signal, alternate-stack, and readiness artifacts",
+            control_runner,
+        )
         self.assertIn("tgkill", control_runner)
-        self.assertIn("sigaltstack pthread_sigmask", control_runner)
+        self.assertIn("pthread_sigmask", control_runner)
         self.assertIn("signalfd", control_runner)
         for required in (
             "static_c_abi_exports.txt",
@@ -3663,6 +3667,107 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         )
         self.assertIn(
             '    libc-signal-execution)\n        [ "$#" -eq 0 ] || fail "libc-signal-execution takes no arguments"',
+            runner,
+        )
+
+    def test_libc_static_c_abi_signal_altstack_artifact_stays_bounded(
+        self,
+    ) -> None:
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        signal_altstack = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "signal_altstack.rs"
+        ).read_text(encoding="utf-8")
+        probe_path = ROOT / "compat" / "x86_64" / "libc_signal_altstack_probe.c"
+        start_path = ROOT / "compat" / "x86_64" / "libc_signal_altstack_start.S"
+        artifact_runner_path = (
+            ROOT / "compat" / "x86_64" / "run_libc_signal_altstack.sh"
+        )
+        for path in (probe_path, start_path, artifact_runner_path):
+            self.assertTrue(path.is_file(), f"missing signal-altstack input: {path}")
+        probe = probe_path.read_text(encoding="utf-8")
+        start = start_path.read_text(encoding="utf-8")
+        artifact_runner = artifact_runner_path.read_text(encoding="utf-8")
+        static_exports = {
+            line
+            for line in (
+                ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+            ).read_text(encoding="utf-8").splitlines()
+            if line and not line.startswith("#")
+        }
+        parity_ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        runner = RUNNER.read_text(encoding="utf-8")
+
+        self.assertIn('#[path = "signal_altstack.rs"]', static_root)
+        for required in (
+            "src/signal/sigaltstack.c",
+            "struct PublicSignalStack",
+            "size_of::<PublicSignalStack>() == 24",
+            "offset_of!(PublicSignalStack, flags) == 8",
+            "offset_of!(PublicSignalStack, size) == 16",
+            "raw_syscall::SYS_SIGALTSTACK",
+            "MINSIGSTKSZ: usize = 2_048",
+            "requested.size < MINSIGSTKSZ",
+            "requested.flags & SS_ONSTACK",
+            "_SC_MINSIGSTKSZ",
+            "AT_MINSIGSTKSZ",
+        ):
+            self.assertIn(required, signal_altstack)
+        self.assertLess(
+            signal_altstack.index("requested.size < MINSIGSTKSZ"),
+            signal_altstack.index("requested.flags & SS_ONSTACK"),
+        )
+        self.assertNotIn("padding: c_int", signal_altstack)
+        for forbidden in ("fn signalfd(", "fn sigqueue(", "fn sigtimedwait(", "fn pthread_"):
+            self.assertNotIn(forbidden, signal_altstack)
+
+        for required in (
+            "sizeof(stack_t) == 24",
+            "MINSIGSTKSZ == 2048",
+            "SYS_sigaltstack == 131",
+            "too_small_onstack",
+            "errno != ENOMEM",
+            "SA_ONSTACK",
+            "handler_disable_rejected",
+            "disabled_previous",
+            "observed.ss_flags != SS_DISABLE",
+        ):
+            self.assertIn(required, probe)
+        for required in (
+            "ARCH_SET_FS",
+            "mov %rsi, %fs:0",
+            "crabc_x86_64_signal_altstack_probe",
+        ):
+            self.assertIn(required, start)
+        for required in (
+            "run_musl_oracle.sh",
+            "run_signal_header_abi.sh",
+            "static_c_abi_exports.txt",
+            "-nostdlib -static",
+            "-Wl,-e,_start",
+            "-Wl,--no-undefined",
+            "R_X86_64_TPOFF",
+            "assert_named_syscall sigaltstack 83",
+            "sysconf getauxval",
+            "crabc_x86_64_signal_restorer",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn("--whole-archive", artifact_runner)
+        self.assertIn("sigaltstack", static_exports)
+        self.assertIn('id = "static-c-signal-altstack"', parity_ledger)
+        self.assertIn(
+            'command = "./scripts/dev-x86_64.sh libc-signal-altstack"',
+            parity_ledger,
+        )
+        self.assertIn("run_libc_signal_altstack_probe()", runner)
+        self.assertIn(
+            "/workspace/compat/x86_64/run_libc_signal_altstack.sh", runner
+        )
+        self.assertIn(
+            '    libc-signal-altstack)\n        [ "$#" -eq 0 ] || fail "libc-signal-altstack takes no arguments"',
             runner,
         )
 
