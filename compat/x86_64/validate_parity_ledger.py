@@ -1186,6 +1186,10 @@ POSIX_EXIT_SYMBOLS = ("_exit",)
 SCHED_YIELD_SYMBOLS = ("sched_yield",)
 SCHED_GETCPU_SYMBOLS = ("sched_getcpu",)
 SCHED_CPUCOUNT_SYMBOLS = ("__sched_cpucount",)
+SCHED_PRIORITY_BOUNDS_SYMBOLS = (
+    "sched_get_priority_max",
+    "sched_get_priority_min",
+)
 
 CALLBACK_ALGORITHM_SYMBOLS = ("bsearch", "__qsort_r", "qsort", "qsort_r")
 
@@ -16633,6 +16637,261 @@ def require_static_sched_cpucount_artifact(family: Mapping[str, Any]) -> None:
         require(
             snippet in dispatcher,
             f"static-c-sched-cpucount dispatcher omits {snippet}",
+        )
+
+
+def require_static_sched_priority_bounds_artifact(
+    family: Mapping[str, Any],
+) -> None:
+    """Keep the paired priority queries read-only, source-closed, and private."""
+
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.posix-runtime].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [
+        entry
+        for entry in artifacts
+        if entry.get("id") == "static-c-sched-priority-bounds"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.posix-runtime must contain exactly one static-c-sched-priority-bounds artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-sched-priority-bounds must not promote libc.posix-runtime",
+    )
+    artifact = matching[0]
+    require(
+        "capabilities" not in artifact,
+        "static-c-sched-priority-bounds must not carry capabilities",
+    )
+
+    description = artifact.get("description")
+    require(
+        isinstance(description, str),
+        "static-c-sched-priority-bounds needs a description",
+    )
+    for phrase in (
+        "`sched_get_priority_max` and `sched_get_priority_min`",
+        "still-planned `libc.posix-runtime`",
+        "src/sched/sched_get_priority_max.c",
+        "SCHED_OTHER/FIFO/RR",
+        "invalid `-1`",
+        "`-1` with `errno=EINVAL`",
+        "no scheduler policy selection or mutation",
+        "current-policy or parameter query",
+        "affinity",
+        "clocks/timers/calendar/timezone/environment",
+        "family completion, promotion, or public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"static-c-sched-priority-bounds description omits {phrase}",
+        )
+
+    owners = set(
+        nonempty_strings(
+            artifact.get("source_owners"),
+            "static-c-sched-priority-bounds.source_owners",
+        )
+    )
+    for owner in (
+        "compat/upstreams.toml",
+        "libc/Cargo.toml",
+        "libc/src/lib.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/sched_priority_bounds.rs",
+        "libc/src/c_abi/x86_64/errno.rs",
+        "libc/src/c_abi/x86_64/syscall.rs",
+        "include/errno.h",
+        "include/sched.h",
+        "include/sys/syscall.h",
+        "compat/x86_64/sched_priority_bounds_header_abi_probe.c",
+        "compat/x86_64/sched_priority_bounds_header_abi_probe.cpp",
+        "compat/x86_64/run_sched_priority_bounds_header_abi.sh",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/libc_sched_priority_bounds_probe.c",
+        "compat/x86_64/libc_sched_priority_bounds_start.S",
+        "compat/x86_64/run_libc_sched_priority_bounds.sh",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/aarch64_parity_inventory.py",
+        "compat/x86_64/aarch64_parity_inventory.json",
+        "compat/x86_64/README.md",
+        "STATUS.md",
+        "x86-64.md",
+        "scripts/dev-x86_64.sh",
+        "scripts/check_structure.py",
+    ):
+        require(
+            owner in owners,
+            f"static-c-sched-priority-bounds source ownership omits {owner}",
+        )
+
+    abi_text = " ".join(
+        nonempty_strings(
+            artifact.get("x86_abi_prerequisites"),
+            "static-c-sched-priority-bounds.x86_abi_prerequisites",
+        )
+    )
+    for phrase in (
+        "System V AMD64",
+        "int sched_get_priority_max(int)",
+        "int sched_get_priority_min(int)",
+        "rdi",
+        "eax",
+        "146",
+        "147",
+        "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+        "src/sched/sched_get_priority_max.c",
+        "syscall(SYS_sched_get_priority_max",
+        "syscall(SYS_sched_get_priority_min",
+        "raw -4095 through -1",
+        "initial-TLS errno",
+        "SCHED_OTHER/FIFO/RR",
+        "invalid -1/EINVAL",
+    ):
+        require(
+            phrase in abi_text,
+            f"static-c-sched-priority-bounds ABI prerequisites omit {phrase}",
+        )
+
+    header_text = " ".join(
+        nonempty_strings(
+            artifact.get("x86_header_prerequisites"),
+            "static-c-sched-priority-bounds.x86_header_prerequisites",
+        )
+    )
+    for phrase in (
+        "strict/POSIX/XOPEN/GNU",
+        "C11/C++17",
+        "int (*)(int)",
+        "sched_get_priority_max",
+        "sched_get_priority_min",
+        "unmangled C++",
+        "unconditional",
+        "installed-header completion",
+    ):
+        require(
+            phrase in header_text,
+            f"static-c-sched-priority-bounds header prerequisites omit {phrase}",
+        )
+
+    exports = set(
+        static_c_abi_export_names(
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        )
+    )
+    require(
+        set(SCHED_PRIORITY_BOUNDS_SYMBOLS) <= exports,
+        "static-c-sched-priority-bounds must retain its exact selected export set",
+    )
+
+    static_root = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+    ).read_text(encoding="utf-8")
+    require(
+        '#[path = "sched_priority_bounds.rs"]\nmod sched_priority_bounds;'
+        in static_root,
+        "x86 static C ABI must compose the scheduler-priority bounds leaf",
+    )
+    source = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "sched_priority_bounds.rs"
+    ).read_text(encoding="utf-8")
+    for phrase in (
+        "src/sched/sched_get_priority_max.c::sched_get_priority_max",
+        "src/sched/sched_get_priority_max.c::sched_get_priority_min",
+        "SYS_SCHED_GET_PRIORITY_MAX",
+        "SYS_SCHED_GET_PRIORITY_MIN",
+        "raw_syscall::syscall1",
+        "c_status(result)",
+        'pub extern "C" fn sched_get_priority_max',
+        'pub extern "C" fn sched_get_priority_min',
+        "public x86 support",
+    ):
+        require(
+            phrase in source,
+            f"static-c-sched-priority-bounds source omits {phrase}",
+        )
+    for forbidden in (
+        "crabc_core",
+        "crabc_mimalloc",
+        "sched_getaffinity(",
+        "sched_setaffinity(",
+        "sched_getparam(",
+        "sched_setparam(",
+        "sched_setscheduler(",
+        "sched_getscheduler(",
+        "clock_gettime(",
+        "__tls_get_addr",
+    ):
+        require(
+            forbidden not in source,
+            f"static-c-sched-priority-bounds source must not select {forbidden}",
+        )
+
+    evidence = artifact.get("native_evidence")
+    require(
+        isinstance(evidence, list),
+        "static-c-sched-priority-bounds needs evidence",
+    )
+    require(
+        {entry.get("command") for entry in evidence if isinstance(entry, Mapping)}
+        == {"./scripts/dev-x86_64.sh libc-sched-priority-bounds"},
+        "static-c-sched-priority-bounds must use the closed libc-sched-priority-bounds command",
+    )
+    scope = evidence[0].get("scope")
+    require(
+        isinstance(scope, str),
+        "static-c-sched-priority-bounds evidence needs a scope",
+    )
+    for phrase in (
+        "Pinned-musl 1.2.6 project-header normal C execution",
+        "strict/POSIX/XOPEN/GNU C/C++",
+        "`-nostdlib -static` candidate",
+        "SCHED_OTHER/FIFO/RR",
+        "invalid -1/EINVAL",
+        "146/147",
+        "initial-TLS errno",
+        "env -i",
+        "no interpreter/DT_NEEDED/unresolved symbol",
+        "policy selection or mutation",
+        "family completion, promotion, and public x86 support",
+    ):
+        require(
+            phrase in scope,
+            f"static-c-sched-priority-bounds evidence omits {phrase}",
+        )
+
+    oracle = artifact.get("oracle")
+    require(
+        isinstance(oracle, list),
+        "static-c-sched-priority-bounds needs oracle records",
+    )
+    oracle_text = " ".join(
+        str(entry.get("role", "")) for entry in oracle if isinstance(entry, Mapping)
+    )
+    require(
+        "src/sched/sched_get_priority_max.c" in oracle_text
+        and "syscall(SYS_sched_get_priority_max, policy)" in oracle_text
+        and "syscall(SYS_sched_get_priority_min, policy)" in oracle_text,
+        "static-c-sched-priority-bounds must retain the exact musl source mapping",
+    )
+
+    dispatcher = (ROOT / "scripts" / "dev-x86_64.sh").read_text(encoding="utf-8")
+    for snippet in (
+        "run_sched_priority_bounds_header_abi()",
+        "run_libc_sched_priority_bounds_probe()",
+        "sched-priority-bounds-header-abi)",
+        "libc-sched-priority-bounds)",
+    ):
+        require(
+            snippet in dispatcher,
+            f"static-c-sched-priority-bounds dispatcher omits {snippet}",
         )
 
 
@@ -47384,6 +47643,7 @@ def validate_ledger(
     require_static_sched_yield_artifact(by_id["libc.posix-runtime"])
     require_static_sched_getcpu_artifact(by_id["libc.posix-runtime"])
     require_static_sched_cpucount_artifact(by_id["libc.posix-runtime"])
+    require_static_sched_priority_bounds_artifact(by_id["libc.posix-runtime"])
     require_readlinkat_artifact(by_id["libc.posix-runtime"])
     require_callback_algorithms_artifact(by_id["libc.posix-runtime"])
     require_clock_gettime_artifact(by_id["libc.posix-runtime"])

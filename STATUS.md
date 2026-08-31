@@ -1621,6 +1621,18 @@ clock/timer/calendar/timezone/environment path. Invalid storage, count
 conversion above `INT_MAX`, CPU-mask construction/allocation/comparison macros,
 family completion, promotion, and public x86 support remain excluded.
 
+`./scripts/dev-x86_64.sh libc-sched-priority-bounds` is a separate private
+`static-c-sched-priority-bounds` artifact, not scheduler or time support. Its
+strict/POSIX/XOPEN/GNU C/C++ `<sched.h>` declaration gate and
+pinned-musl/true-static fixture map exactly to musl 1.2.6
+`src/sched/sched_get_priority_max.c`: only the read-only
+`sched_get_priority_max`/`sched_get_priority_min` scalar queries for
+`SCHED_OTHER`, `SCHED_FIFO`, `SCHED_RR`, and invalid `-1` errno translation
+are observed. It selects no policy selection/mutation, current policy or
+parameter query, affinity, scheduler-progress guarantee, thread state,
+clocks/timers/calendar/timezone/environment, family completion, promotion, or
+public x86 support.
+
 `./scripts/dev-x86_64.sh libc-timegm` is a distinct private
 `static-c-timegm-utc` artifact in still-planned `libc.posix-runtime`. Its
 pinned-musl and true-static C fixture selects only GNU/BSD `timegm` as a

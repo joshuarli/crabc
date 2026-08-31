@@ -1372,6 +1372,14 @@ three GNU spellings. This is declaration/macro evidence only, not affinity,
 CPU topology, CPU-mask construction/allocation/comparison, scheduler policy,
 time support, or general-header completion.
 
+`sched-priority-bounds-header-abi` separately compiles project-first and
+pinned-musl strict/POSIX/XOPEN/GNU C11/C++17 `<sched.h>` declarations for the
+unconditional `int sched_get_priority_max(int)` and
+`int sched_get_priority_min(int)` signatures, including unmangled C++
+references. It is declaration/linkage evidence for only that read-only pair,
+not scheduler policy, parameters, affinity, time support, or general-header
+completion.
+
 `callback-algorithms-header-abi` compiles project-first and pinned-musl C/C++
 `<stdlib.h>` declarations for `bsearch`, `qsort`, and GNU/BSD `qsort_r`.
 `bsearch` and `qsort` are unconditional; strict, POSIX, and XOPEN selections
@@ -4424,6 +4432,17 @@ priority/yield, clock/timer/calendar/timezone, or ambient runtime path.
 Invalid caller storage, count conversion above `INT_MAX`, the rest of the
 `CPU_*` macro family, family completion, promotion, and public x86 support
 remain excluded.
+
+`libc-sched-priority-bounds` is a separate private
+`static-c-sched-priority-bounds` artifact, not scheduler or time support. Its
+project-header C fixture first runs through pinned musl 1.2.6 and then a true
+`-nostdlib -static` candidate. It maps exactly to musl's
+`src/sched/sched_get_priority_max.c` pair of direct scalar queries, proving
+`SCHED_OTHER`, `SCHED_FIFO`, `SCHED_RR` bounds and invalid-policy
+`-1`/`EINVAL` conversion with stale errno retained on success. It excludes
+policy selection/mutation, current-policy/parameter queries, affinity,
+scheduler progress/fairness, threads, clocks/timers/calendar/timezone,
+environment, family completion, promotion, and public x86 support.
 
 `libc-readiness-waits` is the fixture for a separately recorded
 `static-c-readiness-signal-waits` `verified_artifact` gate over that archive,

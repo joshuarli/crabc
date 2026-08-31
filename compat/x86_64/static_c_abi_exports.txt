@@ -727,6 +727,8 @@ scalblnl
 scalbn
 scalbnf
 scalbnl
+sched_get_priority_max
+sched_get_priority_min
 sched_getcpu
 sched_getscheduler
 sched_yield
