@@ -104,16 +104,17 @@ for symbol in stpcpy stpncpy strcpy strncpy strcat strncat strlcpy strlcat; do
     grep -Eq "[[:space:]][TW][[:space:]]${symbol}$" "$archive_symbols" ||
         fail "archive does not define ${symbol}"
 done
-# Shared bootstrap memory/string-search symbols are deliberate exports; this
-# artifact only rejects neighboring unselected string and runtime families.
-for unselected in __stpcpy __stpncpy memccpy mempcpy strtok strtok_r strcoll \
-    strxfrm strdup strndup malloc free calloc realloc; do
+# Shared bootstrap memory/string-search and fixed-locale collation roots are
+# deliberate exports. Their materialization does not establish this copy
+# artifact's contract.
+for unselected in __stpcpy __stpncpy memccpy mempcpy strtok strtok_r strdup \
+    strndup malloc free calloc realloc; do
     if grep -Eq "[[:space:]][TW][[:space:]]${unselected}$" "$archive_symbols"; then
         fail "archive accidentally exports unselected ${unselected}"
     fi
 done
 # Fixed-locale collation/transformation is a separately evidenced aggregate
-# sibling and is not selected by this copy fixture.
+# sibling, even though its shared archive roots are materialized.
 
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -DCRABC_STRING_COPY_FREESTANDING \
     -I"$ROOT_DIR/include" -nostdlib -static -fno-pie -no-pie \

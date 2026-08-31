@@ -116,18 +116,18 @@ for symbol in index rindex strchr strchrnul strcmp strverscmp strcspn strlen str
 done
 # Closed-surface hygiene: these neighboring families must not be pulled into
 # this artifact merely because the byte-string fixture links the selected set.
-# The bulk-memory, memory-search, and separately evidenced C-string-copy
-# symbols are deliberate exports of the shared x86 archive, so they are not
-# exclusions of this byte-string artifact.
-for unselected in __memrchr __strchrnul strtok strtok_r strcoll strxfrm \
-    strcasecmp strncasecmp strdup \
+# The bulk-memory, memory-search, separately evidenced C-string-copy, and
+# fixed-locale collation roots are deliberate exports of the shared x86
+# archive. Their materialization does not establish this byte-string
+# artifact's contract.
+for unselected in __memrchr __strchrnul strtok strtok_r strdup \
     strndup malloc free calloc realloc; do
     if grep -Eq "[[:space:]][TW][[:space:]]${unselected}$" "$archive_symbols"; then
         fail "archive accidentally exports unselected ${unselected}"
     fi
 done
-# Fixed-locale case comparison and collation are separately evidenced
-# aggregate siblings and are not selected by this byte-string fixture.
+# Fixed-locale case comparison and collation are separately evidenced aggregate
+# siblings, even though their shared archive roots are materialized.
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -DCRABC_BYTE_STRINGS_FREESTANDING \
     -I"$ROOT_DIR/include" -nostdlib -static -fno-pie -no-pie \
     -ffreestanding -fno-builtin -fno-stack-protector -Wl,-e,_start \

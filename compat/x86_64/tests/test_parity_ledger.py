@@ -3638,7 +3638,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         data = self.data()
         text_math = self.family(data, "libc.text-math-locale-stdio")
         artifacts = text_math["verified_artifact"]
-        assert isinstance(artifacts, list) and len(artifacts) == 10
+        assert isinstance(artifacts, list) and len(artifacts) == 16
         artifact = next(
             entry
             for entry in artifacts
