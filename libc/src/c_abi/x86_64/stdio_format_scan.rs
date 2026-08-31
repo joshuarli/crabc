@@ -6,10 +6,13 @@
 //! formatter declaration is an implementation: output accepts literals,
 //! `%%`, flags `-+ 0#`, numeric or `*` width/precision, integer length forms
 //! `hh`, `h`, `l`, `ll`, `j`, `z`, and `t`, and `%d`/`%i`/`%u`/`%o`/`%x`/`%X`,
-//! `%c`, `%s`, count-store `%n`, and binary64 hexadecimal `%a`/`%A` output
-//! (with ordinary or `l` length). Input accepts literals and format
-//! whitespace, assignment suppression and width, the same integer length
-//! forms for `%d`/`%i`/`%u`/`%o`/`%x`/`%X`, plus `%c`, `%s`, and `%n`.
+//! `%c`, `%s`, count-store `%n`, bare GNU/musl `%m`, and binary64 hexadecimal
+//! `%a`/`%A` output (with ordinary or `l` length). `%m` consumes no variadic
+//! argument and emits the current thread's immutable fixed-C-locale errno
+//! message through the existing selected error-string table. Input accepts
+//! literals and format whitespace, assignment suppression and width, the same
+//! integer length forms for `%d`/`%i`/`%u`/`%o`/`%x`/`%X`, plus `%c`, `%s`, and
+//! `%n`.
 //!
 //! The implementation is allocation-free and has no `FILE`, stream lock,
 //! locale-object, decimal or long-double floating conversion, wide-character,
@@ -22,7 +25,9 @@
 //! sized writable destinations. Integer scanner overflow and unsupported
 //! conversion grammar remain outside this closed artifact; unsupported
 //! conversions fail closed with `EINVAL` rather than silently routing through
-//! an ambient libc. `snprintf` additionally retains zero-capacity
+//! an ambient libc. `%m` is not a general error-reporting or locale boundary:
+//! it neither calls public `strerror` nor selects locale translation, streams,
+//! or process diagnostics. `snprintf` additionally retains zero-capacity
 //! null-destination behavior: it never dereferences a null destination when
 //! the supplied capacity is zero.
 //!
@@ -38,7 +43,8 @@
 //! | Pinned musl source | Owned bounded x86 translation |
 //! | --- | --- |
 //! | `src/stdio/vsnprintf.c`, `vsprintf.c`, `sprintf.c`, `snprintf.c` | byte-buffer count/truncation wrappers and C varargs entry boundary |
-//! | `src/stdio/vfprintf.c` (`printf_core`, `fmt_fp`) | selected integer/byte-string parser plus binary64 `%a`/`%A` spelling, flag, width, precision, and count-store behavior |
+//! | `src/stdio/vfprintf.c` (`printf_core`, `fmt_fp`) | selected integer/byte-string parser plus bare `%m` no-argument errno-message behavior and binary64 `%a`/`%A` spelling, flag, width, precision, and count-store behavior |
+//! | `src/errno/__strerror.h`; `src/errno/strerror.c` | selected immutable fixed-C-locale `%m` message lookup, shared directly with the existing `strerror` leaf |
 //! | `src/stdio/sscanf.c`, `vsscanf.c`, `vfscanf.c`; `src/internal/intscan.c` | NUL-terminated byte scanner, assignment/count discipline, prefix admission, and selected integer/string conversions |
 //!
 //! The full musl formatter/scanner also owns decimal and long-double
@@ -67,7 +73,7 @@ use core::ffi::{
     c_char, c_int, c_long, c_longlong, c_uint, c_ulong, c_ulonglong, VaList,
 };
 
-use super::errno;
+use super::{errno, error_strings};
 
 const EINVAL: c_int = 22;
 const EOVERFLOW: c_int = 75;
@@ -797,6 +803,18 @@ unsafe fn format_to_buffer(
                     )
                 };
             }
+            b'm' if length == Length::None => {
+                let message = error_strings::error_message(unsafe { errno::get_errno() });
+                unsafe {
+                    write_string(
+                        &mut output,
+                        message.as_ptr().cast::<c_char>(),
+                        width,
+                        precision,
+                        flags,
+                    )
+                };
+            }
             b'n' => unsafe { assign_count(args, length, output.count) },
             _ => {
                 unsafe { errno::set_errno(EINVAL) };
@@ -816,7 +834,8 @@ unsafe fn format_to_buffer(
 /// is nonzero, `destination` must be writable for that many bytes; it may be
 /// null only when `capacity` is zero.  Every `%s` source must be readable
 /// through its selected precision or NUL, and every `%n` destination must be
-/// writable with the type selected by its length modifier.
+/// writable with the type selected by its length modifier. Bare `%m` consumes
+/// no argument and observes the calling thread's current errno message.
 #[no_mangle]
 pub unsafe extern "C" fn vsnprintf(
     destination: *mut c_char,

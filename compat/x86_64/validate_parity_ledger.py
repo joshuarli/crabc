@@ -19522,6 +19522,7 @@ def require_stdio_format_scan_artifact(family: Mapping[str, Any]) -> None:
         "zero-capacity null-destination behavior",
         "`EOVERFLOW`",
         "count-store `%n`",
+        "`static-c-stdio-errno-output`",
         "assignment and EOF/matching-failure boundaries",
         "FILE streams",
         "decimal float or long-double conversion",
@@ -19545,6 +19546,7 @@ def require_stdio_format_scan_artifact(family: Mapping[str, Any]) -> None:
     for path in (
         "libc/src/c_abi/x86_64/static_c_abi.rs",
         "libc/src/c_abi/x86_64/stdio_format_scan.rs",
+        "libc/src/c_abi/x86_64/error_strings.rs",
         "compat/x86_64/static_c_abi_exports.txt",
         "compat/x86_64/libc_stdio_format_scan_probe.c",
         "compat/x86_64/libc_stdio_format_scan_start.S",
@@ -19828,6 +19830,217 @@ def require_stdio_float_hex_output_artifact(family: Mapping[str, Any]) -> None:
         "libc-stdio-float-hex-output)" in dispatcher
         and "run_libc_stdio_float_hex_output.sh" in dispatcher,
         "stdio float hexadecimal-output dispatcher binding is missing",
+    )
+
+
+def require_stdio_errno_output_artifact(family: Mapping[str, Any]) -> None:
+    """Keep bare musl `%m` below general formatting or diagnostics support."""
+
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.text-math-locale-stdio].verified_artifact",
+        family.get("status", ""),
+    )
+    require(
+        len(artifacts) == 21,
+        "libc.text-math-locale-stdio must retain exactly twenty-one private verified artifacts",
+    )
+    matching = [
+        entry for entry in artifacts if entry.get("id") == "static-c-stdio-errno-output"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.text-math-locale-stdio must contain exactly one static-c-stdio-errno-output artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-stdio-errno-output must not promote libc.text-math-locale-stdio",
+    )
+    artifact = matching[0]
+    require(
+        "capabilities" not in artifact,
+        "static-c-stdio-errno-output must not claim a formatter or diagnostics capability",
+    )
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for phrase in (
+        "still-planned `libc.text-math-locale-stdio`",
+        "bare GNU/musl `%m`",
+        "does not consume a variadic argument",
+        "immutable fixed-C-locale",
+        "zero flag's required non-zero-padding behavior",
+        "`%lm`",
+        "positional `%1$m`",
+        "not a new C export",
+        "`strerror` call",
+        "general error-reporting API",
+        "locale translation/message catalog",
+        "Negative errno",
+        "general stdio",
+        "family completion",
+        "promotion",
+        "public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"static-c-stdio-errno-output description omits {phrase}",
+        )
+    owners = set(
+        string_list(
+            artifact["source_owners"], "static-c-stdio-errno-output source owners"
+        )
+    )
+    for path in (
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/stdio_format_scan.rs",
+        "libc/src/c_abi/x86_64/error_strings.rs",
+        "libc/src/c_abi/x86_64/errno.rs",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/libc_stdio_errno_output_probe.c",
+        "compat/x86_64/libc_stdio_errno_output_start.S",
+        "compat/x86_64/run_libc_stdio_format_scan.sh",
+        "compat/x86_64/run_libc_stdio_errno_output.sh",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/README.md",
+        "STATUS.md",
+        "x86-64.md",
+        "scripts/dev-x86_64.sh",
+    ):
+        require(path in owners, f"static-c-stdio-errno-output source owners omit {path}")
+    prerequisites = string_list(
+        artifact["x86_abi_prerequisites"],
+        "static-c-stdio-errno-output.x86_abi_prerequisites",
+    )
+    require(
+        any("System V AMD64" in item and "%m/%d/%m" in item for item in prerequisites),
+        "static-c-stdio-errno-output must record its no-argument varargs proof",
+    )
+    require(
+        any(
+            "S('m') = NOARG" in item
+            and "strerror(errno)" in item
+            and "ZERO_PAD" in item
+            and "src/errno/__strerror.h" in item
+            for item in prerequisites
+        ),
+        "static-c-stdio-errno-output must record the exact musl m source map",
+    )
+    require(
+        any(
+            "initial-exec errno TLS" in item and "does not change" in item
+            for item in prerequisites
+        ),
+        "static-c-stdio-errno-output must retain its errno-read boundary",
+    )
+    header_prerequisites = string_list(
+        artifact["x86_header_prerequisites"],
+        "static-c-stdio-errno-output.x86_header_prerequisites",
+    )
+    require(
+        len(header_prerequisites) == 1
+        and "_GNU_SOURCE" in header_prerequisites[0]
+        and "snprintf/vsnprintf" in header_prerequisites[0]
+        and "not a claim for a broader stdio-header" in header_prerequisites[0],
+        "static-c-stdio-errno-output must retain its narrow project-header boundary",
+    )
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-stdio-errno-output"},
+        "static-c-stdio-errno-output must use the closed libc-stdio-errno-output command",
+    )
+    scope = evidence[0]["scope"]
+    assert isinstance(scope, str)
+    for phrase in (
+        "bare `%m`",
+        "`-nostdlib -static`",
+        "`%lm`",
+        "`%1$m`",
+        "direct initial-exec errno TLS",
+        "`strerror` calls",
+        "general diagnostics/locale translation",
+        "public x86 support",
+    ):
+        require(
+            phrase in scope,
+            f"static-c-stdio-errno-output evidence scope omits {phrase}",
+        )
+    implementation = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "stdio_format_scan.rs"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "b'm' if length == Length::None",
+        "error_strings::error_message",
+        "errno::get_errno()",
+        "Bare `%m` consumes",
+    ):
+        require(
+            snippet in implementation,
+            f"stdio errno-message conversion omits {snippet}",
+        )
+    error_strings = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "error_strings.rs"
+    ).read_text(encoding="utf-8")
+    require(
+        "pub(super) fn error_message" in error_strings
+        and "interposable C `strerror` call" in error_strings,
+        "errno-message output must use the parent-local fixed C-locale table",
+    )
+    runner = (
+        ROOT / "compat" / "x86_64" / "run_libc_stdio_format_scan.sh"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "CRABC_STDIO_FORMAT_SCAN_PROFILE",
+        "errno-output)",
+        "CRABC_STDIO_ERRNO_OUTPUT_FREESTANDING",
+        "libc_stdio_errno_output_probe.c",
+        "b'm' if length == Length::None",
+        "error_strings::error_message",
+        "errno::get_errno()",
+    ):
+        require(
+            snippet in runner,
+            f"stdio errno-message shared runner omits {snippet}",
+        )
+    wrapper = (
+        ROOT / "compat" / "x86_64" / "run_libc_stdio_errno_output.sh"
+    ).read_text(encoding="utf-8")
+    require(
+        "CRABC_STDIO_FORMAT_SCAN_PROFILE=errno-output" in wrapper
+        and "run_libc_stdio_format_scan.sh" in wrapper,
+        "stdio errno-message wrapper no longer selects its closed profile",
+    )
+    fixture = (
+        ROOT / "compat" / "x86_64" / "libc_stdio_errno_output_probe.c"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        '"[%-20.8m][%020m][%#.0m]"',
+        '"%m/%d/%m"',
+        '"[%*.*m]"',
+        '"%lm"',
+        '"%1$m"',
+        "check_candidate_limitations",
+    ):
+        require(
+            snippet in fixture,
+            f"stdio errno-message fixture omits {snippet}",
+        )
+    start = (
+        ROOT / "compat" / "x86_64" / "libc_stdio_errno_output_start.S"
+    ).read_text(encoding="utf-8")
+    for snippet in ("arch_prctl(ARCH_SET_FS", "%fs:0", "mov $60, %eax"):
+        require(
+            snippet in start,
+            f"stdio errno-message start shim omits {snippet}",
+        )
+    dispatcher = (ROOT / "scripts" / "dev-x86_64.sh").read_text(encoding="utf-8")
+    require(
+        "libc-stdio-errno-output)" in dispatcher
+        and "run_libc_stdio_errno_output.sh" in dispatcher,
+        "stdio errno-message dispatcher binding is missing",
     )
 
 
@@ -22437,8 +22650,8 @@ def require_locale_wide_iconv_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 20,
-        "libc.text-math-locale-stdio must retain exactly twenty private verified artifacts",
+        len(artifacts) == 21,
+        "libc.text-math-locale-stdio must retain exactly twenty-one private verified artifacts",
     )
     matching = [
         entry for entry in artifacts if entry.get("id") == "static-c-locale-wide-iconv"
@@ -24268,6 +24481,7 @@ def validate_ledger(
     require_stdio_standard_streams_artifact(by_id["libc.text-math-locale-stdio"])
     require_stdio_format_scan_artifact(by_id["libc.text-math-locale-stdio"])
     require_stdio_float_hex_output_artifact(by_id["libc.text-math-locale-stdio"])
+    require_stdio_errno_output_artifact(by_id["libc.text-math-locale-stdio"])
     require_stdio_path_stream_artifact(by_id["libc.text-math-locale-stdio"])
     require_stdio_tmpfile_artifact(by_id["libc.text-math-locale-stdio"])
     require_math_complex_foundation_artifact(by_id["libc.text-math-locale-stdio"])

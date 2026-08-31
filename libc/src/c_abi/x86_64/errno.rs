@@ -48,9 +48,10 @@ pub(crate) unsafe fn set_errno(value: c_int) {
 
 /// Read the calling thread's C `errno` slot within the selected x86 ABI.
 ///
-/// This remains private to local adapters that must inspect a translated
-/// error, notably `nice`'s `EACCES` to `EPERM` compatibility mapping. Public
-/// C callers use [`__errno_location`] instead.
+/// This remains private to local adapters that must inspect a translated or
+/// selected current error, notably `nice`'s `EACCES` to `EPERM` compatibility
+/// mapping and the bare `%m` fixed-C-locale formatter conversion. Public C
+/// callers use [`__errno_location`] instead.
 #[inline]
 pub(crate) unsafe fn get_errno() -> c_int {
     // SAFETY: The selected C ABI owns the calling thread's one initial-TLS

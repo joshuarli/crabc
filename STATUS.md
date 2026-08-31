@@ -60,6 +60,12 @@ candidate fixture proves selected integer/byte-string format and scan grammar,
 C99 would-have-written/truncation/NUL/zero-capacity and `EOVERFLOW` behavior,
 output and input count stores, integer-prefix admission, and x86 native
 `va_list` forwarding.
+The sibling `./scripts/dev-x86_64.sh libc-stdio-errno-output` gate proves only
+bare GNU/musl `%m`: it reads the existing initial-exec errno slot without
+consuming a variadic argument, then formats the already selected immutable
+fixed-C-locale error message with bounded string width/precision behavior.
+It neither calls public `strerror` nor selects diagnostics, locale translation,
+or a broader formatter grammar; `%lm` and positional `%1$m` remain rejected.
 `FILE` streams, `printf`/`fprintf`/`scanf`/`fscanf`, decimal/long-double/
 wide/scanset/positional/pointer-valued `%p` conversion, allocation, locale objects, integer
 scanner overflow, general stdio, family/platform parity, promotion, and public

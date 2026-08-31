@@ -1,15 +1,17 @@
 #!/usr/bin/env bash
-# Native Linux/x86-64 selected static byte-string stdio format/scan evidence.
+# Native Linux/x86-64 selected static byte-string stdio evidence profiles.
 #
 # One project-header C fixture first executes against pinned musl 1.2.6, then
 # as a true `-nostdlib -static` candidate linked only through crabc's selected
-# archive.  It owns exactly snprintf/vsnprintf/sprintf/vsprintf and
-# sscanf/vsscanf over the bounded integer, count-store, and byte-string grammar
-# documented in stdio_format_scan.rs. The sibling float-hex-output profile
-# selects only `%a`/`%A` binary64 byte-buffer output. Neither profile selects
-# FILE streams, printf/fprintf, scanf/fscanf, decimal or long-double floats,
-# wide text, scansets, positional arguments, pointer-valued %p, allocation,
-# locale objects, a dynamic libc, CRT, loader, sysroot, or public x86 support.
+# archive. The default `integer` profile owns the bounded integer, count-store,
+# and byte-string format/scan grammar. The sibling `float-hex-output` profile
+# selects only binary64 `%a`/`%A` output, while the closed `errno-output`
+# profile adds only bare GNU/musl `%m` C-locale errno-message output through
+# that same formatter. None selects a general error-reporting, stream, locale,
+# or ambient-formatting boundary, FILE streams, printf/fprintf, scanf/fscanf,
+# decimal or long-double floats, wide text, scansets, positional arguments,
+# pointer-valued %p, allocation, a dynamic libc, CRT, loader, sysroot, or
+# public x86 support.
 set -euo pipefail
 
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -32,6 +34,12 @@ float-hex-output)
     readonly START_SOURCE=compat/x86_64/libc_stdio_float_hex_output_start.S
     readonly FREESTANDING_DEFINE=CRABC_STDIO_FLOAT_HEX_OUTPUT_FREESTANDING
     readonly EVIDENCE_LABEL="stdio binary64 hexadecimal output"
+    ;;
+errno-output)
+    readonly FIXTURE_SOURCE=compat/x86_64/libc_stdio_errno_output_probe.c
+    readonly START_SOURCE=compat/x86_64/libc_stdio_errno_output_start.S
+    readonly FREESTANDING_DEFINE=CRABC_STDIO_ERRNO_OUTPUT_FREESTANDING
+    readonly EVIDENCE_LABEL="errno-message stdio output"
     ;;
 *)
     printf 'ERROR: unknown x86 stdio format/scan evidence profile: %s\n' \
@@ -102,7 +110,7 @@ done
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -fno-builtin -fno-stack-protector \
     -I"$ROOT_DIR/include" "$FIXTURE_SOURCE" -o "$reference"
 timeout --foreground "$EXECUTION_TIMEOUT" "$reference" ||
-    fail "pinned-musl format/scan fixture failed"
+    fail "pinned-musl ${EVIDENCE_LABEL} fixture failed"
 
 CARGO_TARGET_DIR="$target_dir" cargo rustc --locked -p crabc-libc --lib \
     --target x86_64-unknown-linux-musl -- \
@@ -171,10 +179,21 @@ grep -Eq '%fs:0x0|%fs:-' "$errno_disassembly" ||
     fail "candidate errno does not use direct fs initial TLS"
 grep -Fq 'args.next_arg' "$ROOT_DIR/libc/src/c_abi/x86_64/stdio_format_scan.rs" ||
     fail "format/scan leaf no longer owns the x86 variadic boundary"
+if [ "$EVIDENCE_PROFILE" = errno-output ]; then
+    grep -Fq "b'm' if length == Length::None" \
+        "$ROOT_DIR/libc/src/c_abi/x86_64/stdio_format_scan.rs" ||
+        fail "format/scan leaf no longer owns bare errno-message conversion"
+    grep -Fq 'error_strings::error_message' \
+        "$ROOT_DIR/libc/src/c_abi/x86_64/stdio_format_scan.rs" ||
+        fail "errno-message conversion no longer uses the fixed C-locale table"
+    grep -Fq 'errno::get_errno()' \
+        "$ROOT_DIR/libc/src/c_abi/x86_64/stdio_format_scan.rs" ||
+        fail "errno-message conversion no longer reads the selected TLS slot"
+fi
 if timeout --foreground "$EXECUTION_TIMEOUT" "$candidate"; then
     :
 else
     status=$?
-    fail "freestanding format/scan fixture failed with status ${status}"
+    fail "freestanding ${EVIDENCE_LABEL} fixture failed with status ${status}"
 fi
 printf 'x86 static crabc-libc %s: PASS\n' "$EVIDENCE_LABEL"

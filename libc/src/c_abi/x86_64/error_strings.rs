@@ -31,8 +31,13 @@ const ERANGE: c_int = 34;
 const NO_ERROR_INFORMATION: &[u8] = b"No error information\0";
 
 /// Return the fixed musl C-locale message for one Linux/x86 errno value.
+///
+/// This parent-local helper is shared by the selected bare `printf` `%m`
+/// adapter. Keeping that adapter on the immutable table avoids turning one
+/// formatter conversion into an interposable C `strerror` call or a broader
+/// error-reporting boundary.
 #[inline]
-fn error_message(error: c_int) -> &'static [u8] {
+pub(super) fn error_message(error: c_int) -> &'static [u8] {
     match error {
         1 => b"Operation not permitted\0",
         2 => b"No such file or directory\0",

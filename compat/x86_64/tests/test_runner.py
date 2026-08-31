@@ -1217,7 +1217,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "libc-pathname-lifecycle",
             "libc-directory-streams",
             "libc-lchmod-unsupported",
-            "libc-stdio-standard|libc-stdio-format-scan|libc-stdio-float-hex-output|libc-stdio-path-stream|libc-stdio-tmpfile|libc-text-math-locale-stdio-composition",
+            "libc-stdio-standard|libc-stdio-format-scan|libc-stdio-float-hex-output|libc-stdio-errno-output|libc-stdio-path-stream|libc-stdio-tmpfile|libc-text-math-locale-stdio-composition",
             "libc-pthread-identity",
             "libc-pthread-affinity",
             "libc-pthread-detach",
@@ -10532,6 +10532,84 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         )
         self.assertIn("libc-stdio-float-hex-output", dispatcher)
         self.assertIn("run_libc_stdio_float_hex_output.sh", dispatcher)
+
+    def test_libc_static_c_abi_stdio_errno_output_stays_narrow(self) -> None:
+        implementation = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" /
+            "stdio_format_scan.rs"
+        ).read_text(encoding="utf-8")
+        error_strings = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" /
+            "error_strings.rs"
+        ).read_text(encoding="utf-8")
+        fixture = (
+            ROOT / "compat" / "x86_64" /
+            "libc_stdio_errno_output_probe.c"
+        ).read_text(encoding="utf-8")
+        start = (
+            ROOT / "compat" / "x86_64" /
+            "libc_stdio_errno_output_start.S"
+        ).read_text(encoding="utf-8")
+        shared_runner = (
+            ROOT / "compat" / "x86_64" / "run_libc_stdio_format_scan.sh"
+        ).read_text(encoding="utf-8")
+        wrapper = (
+            ROOT / "compat" / "x86_64" / "run_libc_stdio_errno_output.sh"
+        ).read_text(encoding="utf-8")
+        parity_ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        dispatcher = RUNNER.read_text(encoding="utf-8")
+
+        for required in (
+            "b'm' if length == Length::None",
+            "error_strings::error_message",
+            "errno::get_errno()",
+            "Bare `%m` consumes",
+        ):
+            self.assertIn(required, implementation)
+        self.assertNotIn("strerror(", implementation)
+        self.assertIn("pub(super) fn error_message", error_strings)
+        self.assertIn("interposable C `strerror` call", error_strings)
+        for required in (
+            "CRABC_TYPE_IS(__typeof__(&snprintf)",
+            "call_vsnprintf",
+            '"[%-20.8m][%020m][%#.0m]"',
+            '"%m/%d/%m"',
+            '"[%*.*m]"',
+            '"%lm"',
+            '"%1$m"',
+            "CRABC_STDIO_ERRNO_OUTPUT_FREESTANDING",
+            "check_candidate_limitations",
+        ):
+            self.assertIn(required, fixture)
+        for required in (
+            "arch_prctl(ARCH_SET_FS",
+            "%fs:0",
+            "mov $60, %eax",
+        ):
+            self.assertIn(required, start)
+        for required in (
+            "CRABC_STDIO_FORMAT_SCAN_PROFILE",
+            "errno-output)",
+            "CRABC_STDIO_ERRNO_OUTPUT_FREESTANDING",
+            "libc_stdio_errno_output_probe.c",
+            "b'm' if length == Length::None",
+            "error_strings::error_message",
+            "errno::get_errno()",
+            "-nostdlib -static",
+            "R_X86_64_TPOFF",
+        ):
+            self.assertIn(required, shared_runner)
+        self.assertIn("CRABC_STDIO_FORMAT_SCAN_PROFILE=errno-output", wrapper)
+        self.assertIn("run_libc_stdio_format_scan.sh", wrapper)
+        self.assertIn('id = "static-c-stdio-errno-output"', parity_ledger)
+        self.assertIn(
+            'command = "./scripts/dev-x86_64.sh libc-stdio-errno-output"',
+            parity_ledger,
+        )
+        self.assertIn("libc-stdio-errno-output", dispatcher)
+        self.assertIn("run_libc_stdio_errno_output.sh", dispatcher)
 
     def test_libc_static_c_abi_stdio_path_stream_stays_one_slot(self) -> None:
         """The pathname stream is a fixed static lifecycle, not general stdio."""

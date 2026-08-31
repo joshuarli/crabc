@@ -707,6 +707,19 @@ arguments. Candidate-only `%f`, `%La`, and positional `%3$a` reject with
 output, FILE streams, wide/allocating forms, locale objects, general stdio,
 parity, promotion, and public x86 support remain excluded.
 
+The sibling `libc-stdio-errno-output` gate
+(`./scripts/dev-x86_64.sh libc-stdio-errno-output`) records only bare
+GNU/musl `%m` output through that existing byte-buffer formatter. Its
+project-header C fixture first runs against pinned musl 1.2.6, then a true
+`-nostdlib -static` candidate, proving no variadic argument is consumed, the
+current selected initial-exec errno slot supplies the immutable fixed-C-locale
+message, and ordinary selected string width/precision, truncation, `%n`, and
+`v*` forwarding preserve errno. The leaf does not call public `strerror`, add
+an export, or select general diagnostics, locale translation, streams, or a
+broader output grammar; `%lm` and positional `%1$m` remain candidate-only
+`EINVAL` rejections. It does not establish general stdio, family completion,
+promotion, or public x86 support.
+
 The separate `libc-stdio-path-stream` gate records one fixed private static
 path-stream slot inside still-planned `libc.text-math-locale-stdio`: exactly
 one externally serialized regular-file `fopen("r")`/`fopen("w+")` lifecycle
