@@ -116,7 +116,7 @@ It neither calls public `strerror` nor selects diagnostics, locale translation,
 or a broader formatter grammar; `%lm` and positional `%1$m` remain rejected.
 `FILE` streams, `printf`/`fprintf`/`scanf`/`fscanf`, decimal/long-double/
 wide/scanset/positional/pointer-valued `%p` conversion, allocation, locale objects, all
-integer scanner overflow apart from the separate bounded source profile below,
+integer scanner overflow apart from the separate bounded source profiles below,
 general stdio, family/platform parity, promotion, and public x86 support remain
 excluded.
 
@@ -131,6 +131,21 @@ saturates, clears a leading minus, and reaches the existing ordinary target
 store; `vsscanf` forwarding is included. This is not a portable ISO C
 target-overflow, float/wide/scanset/positional/FILE, byte-formatting, general
 scanner, general stdio, family-completion, promotion, or public-x86 claim.
+
+The separate private `./scripts/dev-x86_64.sh libc-stdio-octal-hex-scan`
+artifact adds no export or capability. It limits a pinned-musl 1.2.6 versus
+true `-nostdlib -static` differential to six fixed C-locale narrow byte-string
+cases and only `%o`/`%X` (using `%llo`/`%llX` solely for exact ULLONG_MAX).
+Its independent C11/C++17 header gate checks only the existing
+`sscanf`/`vsscanf` signatures and unmangled C++ C spellings.
+Its 22-digit octal and 17-digit uppercase-hex source-overflow witnesses prove
+the power-of-two `intscan` path consumes the complete digit run through a
+literal or `%22o`/`%17X` boundary, sets ERANGE, saturates, clears a leading
+minus, and then reaches musl's ordinary x86 target store; direct and `vsscanf`
+calls are both covered. This is pinned-musl source-overflow evidence rather
+than a portable ISO C target-overflow, decimal/float/wide/scanset/positional/
+FILE, byte-formatting, arbitrary-input, general scanner, general stdio,
+family-completion, promotion, or public-x86 claim.
 
 The separate private `./scripts/dev-x86_64.sh libc-stdio-float-hex-output`
 artifact adds no export and selects only allocation-free C-locale binary64

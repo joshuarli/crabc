@@ -22345,8 +22345,8 @@ def require_stdio_integer_scan_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 27,
-        "libc.text-math-locale-stdio must retain exactly twenty-seven private verified artifacts",
+        len(artifacts) == 28,
+        "libc.text-math-locale-stdio must retain exactly twenty-eight private verified artifacts",
     )
     matching = [
         entry for entry in artifacts if entry.get("id") == "static-c-stdio-integer-scan"
@@ -22619,6 +22619,336 @@ def require_stdio_integer_scan_artifact(family: Mapping[str, Any]) -> None:
     )
 
 
+def require_stdio_octal_hex_scan_artifact(family: Mapping[str, Any]) -> None:
+    """Keep musl's sealed `%o`/`%X` source-overflow path below stdio support."""
+
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.text-math-locale-stdio].verified_artifact",
+        family.get("status", ""),
+    )
+    require(
+        len(artifacts) == 28,
+        "libc.text-math-locale-stdio must retain exactly twenty-eight private verified artifacts",
+    )
+    matching = [
+        entry
+        for entry in artifacts
+        if entry.get("id") == "static-c-stdio-octal-hex-scan"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.text-math-locale-stdio must contain exactly one static-c-stdio-octal-hex-scan artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-stdio-octal-hex-scan must not promote libc.text-math-locale-stdio",
+    )
+    artifact = matching[0]
+    require(
+        "capabilities" not in artifact,
+        "static-c-stdio-octal-hex-scan must not claim a scanner capability",
+    )
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for phrase in (
+        "still-planned `libc.text-math-locale-stdio`",
+        "adds no C export or capability",
+        "`sscanf`/`vsscanf`",
+        "`%o`/`%X`",
+        "`%llo`/`%llX`",
+        "ULLONG_MAX",
+        "22-digit octal",
+        "17-digit uppercase-hex",
+        "ERANGE",
+        "clears a leading minus",
+        "`%22o`/`%17X`",
+        "pinned-musl behavior profile",
+        "not a portable ISO C target-overflow claim",
+        "`%d`/`%i`/`%u`/`%x` overflow",
+        "float scanning",
+        "wide text",
+        "scansets",
+        "positional arguments",
+        "FILE input",
+        "byte formatting",
+        "general scanner",
+        "general stdio",
+        "family completion",
+        "promotion",
+        "public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"static-c-stdio-octal-hex-scan description omits {phrase}",
+        )
+    owners = set(
+        string_list(
+            artifact["source_owners"], "static-c-stdio-octal-hex-scan source owners"
+        )
+    )
+    for path in (
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/stdio_format_scan.rs",
+        "libc/src/c_abi/x86_64/errno.rs",
+        "include/errno.h",
+        "include/limits.h",
+        "include/stdarg.h",
+        "include/stdio.h",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/stdio_octal_hex_scan_header_abi_probe.c",
+        "compat/x86_64/stdio_octal_hex_scan_header_abi_probe.cpp",
+        "compat/x86_64/run_stdio_octal_hex_scan_header_abi.sh",
+        "compat/x86_64/libc_stdio_octal_hex_scan_probe.c",
+        "compat/x86_64/libc_stdio_octal_hex_scan_start.S",
+        "compat/x86_64/run_libc_stdio_format_scan.sh",
+        "compat/x86_64/run_libc_stdio_octal_hex_scan.sh",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/README.md",
+        "STATUS.md",
+        "x86-64.md",
+        "scripts/dev-x86_64.sh",
+    ):
+        require(
+            path in owners,
+            f"static-c-stdio-octal-hex-scan source owners omit {path}",
+        )
+    prerequisites = string_list(
+        artifact["x86_abi_prerequisites"],
+        "static-c-stdio-octal-hex-scan.x86_abi_prerequisites",
+    )
+    require(
+        any(
+            "System V AMD64" in item
+            and "rdi/rsi" in item
+            and "vsscanf" in item
+            and "no FILE or floating variadic boundary" in item
+            for item in prerequisites
+        ),
+        "static-c-stdio-octal-hex-scan must retain its direct and va_list ABI boundary",
+    )
+    require(
+        any(
+            "src/stdio/{sscanf,vsscanf,vfscanf}.c" in item
+            and "src/internal/intscan.c" in item
+            and "power-of-two" in item
+            and "ULLONG_MAX" in item
+            and "lim&1" in item
+            and "store_int" in item
+            for item in prerequisites
+        ),
+        "static-c-stdio-octal-hex-scan must retain its pinned-musl source map",
+    )
+    require(
+        any(
+            "initial-exec errno TLS" in item
+            and "stale success errno" in item
+            and "ERANGE" in item
+            for item in prerequisites
+        ),
+        "static-c-stdio-octal-hex-scan must retain its errno/TLS boundary",
+    )
+    header_prerequisites = string_list(
+        artifact["x86_header_prerequisites"],
+        "static-c-stdio-octal-hex-scan.x86_header_prerequisites",
+    )
+    require(
+        len(header_prerequisites) == 1
+        and "sscanf/vsscanf" in header_prerequisites[0]
+        and "C11/C++17" in header_prerequisites[0]
+        and "unmangled C spellings" in header_prerequisites[0]
+        and "not a broader stdio-header" in header_prerequisites[0],
+        "static-c-stdio-octal-hex-scan must retain its narrow project-header boundary",
+    )
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-stdio-octal-hex-scan"},
+        "static-c-stdio-octal-hex-scan must use the closed libc-stdio-octal-hex-scan command",
+    )
+    scope = evidence[0]["scope"]
+    assert isinstance(scope, str)
+    for phrase in (
+        "Pinned-musl 1.2.6 C11/C++17 project-header declaration/linkage proof",
+        "`-nostdlib -static` candidate",
+        "unmangled C++ C spellings",
+        "octal/uppercase-hex ULLONG_MAX",
+        "22-digit octal",
+        "17-digit uppercase-hex",
+        "`%o`/`%X`",
+        "`%22o`/`%17X`",
+        "ERANGE",
+        "negative-sign clearing",
+        "direct vsscanf forwarding",
+        "direct initial-exec errno TLS",
+        "pinned-musl source-overflow evidence only",
+        "decimal/float/wide/scanset/positional/FILE",
+        "byte-formatting",
+        "general scanner",
+        "general stdio",
+        "public-x86 claim",
+    ):
+        require(
+            phrase in scope,
+            f"static-c-stdio-octal-hex-scan evidence scope omits {phrase}",
+        )
+    oracle = artifact["oracle"]
+    assert isinstance(oracle, list)
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "c-posix"
+            and isinstance(entry.get("role"), str)
+            and "src/stdio/{sscanf,vsscanf,vfscanf}.c" in entry["role"]
+            and "src/internal/intscan.c" in entry["role"]
+            and "%o/%X" in entry["role"]
+            and "power-of-two full digit-run consumption" in entry["role"]
+            and "odd-limit sign clearing" in entry["role"]
+            for entry in oracle
+        ),
+        "static-c-stdio-octal-hex-scan must retain its musl integer-scan oracle",
+    )
+    implementation = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "stdio_format_scan.rs"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "const ERANGE: c_int = 34;",
+        "track_source_overflow",
+        "u64::MAX",
+        "overflowed = true",
+        "negative = false",
+        "ScanBase::Octal",
+        "ScanBase::HexUpper",
+        "static-c-stdio-octal-hex-scan",
+    ):
+        require(
+            snippet in implementation,
+            f"stdio octal/uppercase-hex scan implementation omits {snippet}",
+        )
+    exports = static_c_abi_export_names(
+        ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+    )
+    require(
+        {"sscanf", "vsscanf"}.issubset(exports),
+        "static C ABI export contract omits the existing scan boundary",
+    )
+    for unselected in ("scanf", "fscanf", "vfscanf", "fwscanf", "swscanf"):
+        require(
+            unselected not in exports,
+            f"static-c-stdio-octal-hex-scan must not select {unselected}",
+        )
+    fixture = (
+        ROOT / "compat" / "x86_64" / "libc_stdio_octal_hex_scan_probe.c"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "CRABC_TYPE_IS(__typeof__(&sscanf)",
+        "call_vsscanf",
+        '"1777777777777777777777!"',
+        '"FFFFFFFFFFFFFFFF?"',
+        '"-2000000000000000000000;"',
+        '"1000000000000000A."',
+        '"%22o#"',
+        '"%17X#"',
+        "ULLONG_MAX",
+        "UINT_MAX",
+        "ERANGE",
+        "CRABC_STDIO_OCTAL_HEX_SCAN_FREESTANDING",
+    ):
+        require(
+            snippet in fixture,
+            f"libc-stdio-octal-hex-scan fixture omits {snippet}",
+        )
+    start = (
+        ROOT / "compat" / "x86_64" / "libc_stdio_octal_hex_scan_start.S"
+    ).read_text(encoding="utf-8")
+    for snippet in ("arch_prctl(ARCH_SET_FS", "%fs:0", "mov $60, %eax"):
+        require(
+            snippet in start,
+            f"libc-stdio-octal-hex-scan start shim omits {snippet}",
+        )
+    c_header_probe = (
+        ROOT / "compat" / "x86_64" / "stdio_octal_hex_scan_header_abi_probe.c"
+    ).read_text(encoding="utf-8")
+    cxx_header_probe = (
+        ROOT / "compat" / "x86_64" / "stdio_octal_hex_scan_header_abi_probe.cpp"
+    ).read_text(encoding="utf-8")
+    header_runner = (
+        ROOT / "compat" / "x86_64" / "run_stdio_octal_hex_scan_header_abi.sh"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "CRABC_STDIO_OCTAL_HEX_SCAN_HEADER_C11",
+        "crabc_sscanf_signature",
+        "crabc_vsscanf_signature",
+    ):
+        require(
+            snippet in c_header_probe,
+            f"octal/uppercase-hex C header probe omits {snippet}",
+        )
+    for snippet in (
+        "CRABC_STDIO_OCTAL_HEX_SCAN_HEADER_CXX17",
+        "decltype(&sscanf)",
+        "decltype(&vsscanf)",
+        "crabc_sscanf_reference",
+        "crabc_vsscanf_reference",
+    ):
+        require(
+            snippet in cxx_header_probe,
+            f"octal/uppercase-hex C++ header probe omits {snippet}",
+        )
+    for snippet in (
+        "-nostdinc++",
+        "assert_cxx_c_linkage",
+        "sscanf vsscanf",
+        "mangled scanf reference",
+        "run_musl_oracle.sh",
+    ):
+        require(
+            snippet in header_runner,
+            f"octal/uppercase-hex header runner omits {snippet}",
+        )
+    wrapper = (
+        ROOT / "compat" / "x86_64" / "run_libc_stdio_octal_hex_scan.sh"
+    ).read_text(encoding="utf-8")
+    require(
+        "CRABC_STDIO_FORMAT_SCAN_PROFILE=octal-hex-scan" in wrapper
+        and "run_libc_stdio_format_scan.sh" in wrapper,
+        "libc-stdio-octal-hex-scan wrapper no longer selects its closed profile",
+    )
+    runner = (
+        ROOT / "compat" / "x86_64" / "run_libc_stdio_format_scan.sh"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "octal-hex-scan)",
+        "CRABC_STDIO_OCTAL_HEX_SCAN_FREESTANDING",
+        "libc_stdio_octal_hex_scan_probe.c",
+        "libc_stdio_octal_hex_scan_start.S",
+        "REQUIRED_C_ABI_SYMBOLS=(sscanf vsscanf)",
+        "complete `%X` consumption",
+        "-nostdlib -static",
+        "--no-undefined",
+        "R_X86_64_TPOFF",
+        "__errno_location",
+    ):
+        require(
+            snippet in runner,
+            f"libc-stdio-octal-hex-scan shared runner omits {snippet}",
+        )
+    dispatcher = (ROOT / "scripts" / "dev-x86_64.sh").read_text(encoding="utf-8")
+    require(
+        "libc-stdio-octal-hex-scan)" in dispatcher
+        and "run_libc_stdio_octal_hex_scan.sh" in dispatcher,
+        "stdio octal/uppercase-hex scanner dispatcher binding is missing",
+    )
+    require(
+        "stdio-octal-hex-scan-header-abi)" in dispatcher
+        and "run_stdio_octal_hex_scan_header_abi.sh" in dispatcher,
+        "stdio octal/uppercase-hex scanner header dispatcher binding is missing",
+    )
+
+
 def require_stdio_float_hex_output_artifact(family: Mapping[str, Any]) -> None:
     """Keep binary64 hexadecimal output distinct from general float stdio."""
 
@@ -22824,8 +23154,8 @@ def require_stdio_errno_output_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 27,
-        "libc.text-math-locale-stdio must retain exactly twenty-seven private verified artifacts",
+        len(artifacts) == 28,
+        "libc.text-math-locale-stdio must retain exactly twenty-eight private verified artifacts",
     )
     matching = [
         entry for entry in artifacts if entry.get("id") == "static-c-stdio-errno-output"
@@ -23345,8 +23675,8 @@ def require_stdio_permanent_byte_io_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 27,
-        "libc.text-math-locale-stdio must retain exactly twenty-seven private verified artifacts",
+        len(artifacts) == 28,
+        "libc.text-math-locale-stdio must retain exactly twenty-eight private verified artifacts",
     )
     matching = [
         entry
@@ -27189,8 +27519,8 @@ def require_locale_wide_iconv_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 27,
-        "libc.text-math-locale-stdio must retain exactly twenty-seven private verified artifacts",
+        len(artifacts) == 28,
+        "libc.text-math-locale-stdio must retain exactly twenty-eight private verified artifacts",
     )
     matching = [
         entry for entry in artifacts if entry.get("id") == "static-c-locale-wide-iconv"
@@ -28015,8 +28345,8 @@ def require_locale_error_strings_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 27,
-        "libc.text-math-locale-stdio must retain exactly twenty-seven private verified artifacts",
+        len(artifacts) == 28,
+        "libc.text-math-locale-stdio must retain exactly twenty-eight private verified artifacts",
     )
     matching = [
         entry for entry in artifacts if entry.get("id") == "static-c-locale-error-strings"
@@ -29685,6 +30015,7 @@ def validate_ledger(
     require_stdio_standard_streams_artifact(by_id["libc.text-math-locale-stdio"])
     require_stdio_format_scan_artifact(by_id["libc.text-math-locale-stdio"])
     require_stdio_integer_scan_artifact(by_id["libc.text-math-locale-stdio"])
+    require_stdio_octal_hex_scan_artifact(by_id["libc.text-math-locale-stdio"])
     require_stdio_float_hex_output_artifact(by_id["libc.text-math-locale-stdio"])
     require_stdio_errno_output_artifact(by_id["libc.text-math-locale-stdio"])
     require_stdio_permanent_line_io_artifact(by_id["libc.text-math-locale-stdio"])

@@ -24,12 +24,13 @@
 //! callers supply readable NUL-terminated format/input strings and suitably
 //! sized writable destinations. The separate private
 //! `static-c-stdio-integer-scan` artifact owns only musl's unsigned-long-long
-//! source-overflow result for narrow `%d`/`%i`/`%u`/`%x`: it consumes the
-//! bounded digit run, sets `ERANGE`, saturates at `ULLONG_MAX`, and clears a
-//! negative sign before the ordinary selected target store. Other integer
-//! scanner overflow and unsupported conversion grammar remain outside this
-//! closed artifact; unsupported conversions fail closed with `EINVAL` rather
-//! than silently routing through an ambient libc. `%m` is not a general
+//! source-overflow result for narrow `%d`/`%i`/`%u`/`%x`, while the separate
+//! `static-c-stdio-octal-hex-scan` artifact owns only `%o`/`%X`: each consumes
+//! its bounded digit run, sets `ERANGE`, saturates at `ULLONG_MAX`, and clears
+//! a negative sign before the ordinary selected target store. Their fixed
+//! profiles do not establish general scanner overflow behavior; unsupported
+//! conversion grammar fails closed with `EINVAL` rather than silently routing
+//! through an ambient libc. `%m` is not a general
 //! error-reporting or locale boundary:
 //! it neither calls public `strerror` nor selects locale translation, streams,
 //! or process diagnostics. `snprintf` additionally retains zero-capacity
@@ -928,10 +929,11 @@ unsafe fn skip_input_space(mut cursor: *const u8) -> *const u8 {
 
 /// Parse one selected scanf integer conversion.  The caller has already
 /// skipped ordinary conversion whitespace.  Width counts every sign/prefix
-/// byte, as musl's scanner does.  The bounded `static-c-stdio-integer-scan`
-/// profile additionally preserves `vfscanf`/`intscan`'s ULLONG_MAX
-/// source-overflow behavior for `%d`, `%i`, `%u`, and `%x`; `%o` and `%X`
-/// remain in the older scanner artifact's unowned overflow domain.
+/// byte, as musl's scanner does. The two closed source-overflow artifacts
+/// preserve `vfscanf`/`intscan`'s ULLONG_MAX behavior only for their named
+/// forms: `static-c-stdio-integer-scan` owns `%d`, `%i`, `%u`, and `%x`, while
+/// `static-c-stdio-octal-hex-scan` owns `%o` and `%X`. Neither artifact makes
+/// this shared scanner a general input boundary.
 unsafe fn scan_integer(
     start: *const u8,
     width: usize,
@@ -988,12 +990,17 @@ unsafe fn scan_integer(
     }
 
     // musl's `vfscanf` invokes `__intscan` with ULLONG_MAX as its source
-    // limit, then performs its ordinary width-specific store.  Keep that
-    // narrow source-overflow behavior separate from `%o`, whose overflow was
-    // deliberately outside the preceding static scan artifact.
+    // limit, then performs its ordinary width-specific store. The selected
+    // source-overflow artifacts split that behavior into their sealed scan
+    // forms, rather than turning it into a general scanner guarantee.
     let track_source_overflow = matches!(
         requested,
-        ScanBase::Decimal | ScanBase::Auto | ScanBase::UnsignedDecimal | ScanBase::Hex
+        ScanBase::Decimal
+            | ScanBase::Auto
+            | ScanBase::UnsignedDecimal
+            | ScanBase::Octal
+            | ScanBase::Hex
+            | ScanBase::HexUpper
     );
     let mut overflowed = false;
     while used < width {

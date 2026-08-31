@@ -739,7 +739,7 @@ ratchets deterministic `EINVAL` rejection for selected unsupported grammar.
 It excludes `FILE` streams, `printf`/`fprintf`/`scanf`/`fscanf`, decimal/long-double,
 wide, scanset, grouping/positional, and pointer-valued `%p` conversion,
 allocation, locale objects, all integer scanner overflow apart from the
-separate bounded source-overflow profile below, general stdio, parity,
+separate bounded source-overflow profiles below, general stdio, parity,
 promotion, and public x86 support.
 
 The distinct `libc-stdio-integer-scan` gate
@@ -753,10 +753,30 @@ decimal or 17-digit hexadecimal run beyond ULLONG_MAX consumes the complete
 run, writes ERANGE, saturates at ULLONG_MAX, clears a leading minus, and then
 uses the existing ordinary target store; the direct `vsscanf` path is covered
 as well. This is pinned-musl source-overflow evidence, not a portable ISO C
-target-overflow claim. `%o`/`%X` overflow, arbitrary input, float/wide/scanset/
+target-overflow claim. The sibling `libc-stdio-octal-hex-scan` gate owns the
+separate `%o`/`%X` overflow profile; arbitrary input, float/wide/scanset/
 positional/FILE input, byte formatting, allocation, locale objects, a general
 scanner or stdio boundary, parity, promotion, and public x86 support remain
-outside it.
+outside this decimal/hex artifact.
+
+The distinct `libc-stdio-octal-hex-scan` gate
+(`./scripts/dev-x86_64.sh libc-stdio-octal-hex-scan`) records one private
+`static-c-stdio-octal-hex-scan` artifact without adding an export or
+capability. Its project-header fixture runs six fixed narrow NUL-byte strings
+through pinned musl 1.2.6 and one true `-nostdlib -static` candidate, limiting
+itself to `%o`/`%X` scans (with `%llo`/`%llX` only for exact ULLONG_MAX
+boundaries). Its independent C11/C++17 header gate checks only the existing
+`sscanf`/`vsscanf` signatures and unmangled C++ C spellings. It records the
+power-of-two `vfscanf`/`intscan` source-overflow
+path: a 22-digit octal or 17-digit uppercase-hex run beyond ULLONG_MAX consumes
+its complete digit run, writes ERANGE, saturates to ULLONG_MAX, clears a leading
+minus, and then makes musl's ordinary x86 target store; literal suffixes and
+`%22o`/`%17X` width witnesses seal exact consumption, while direct and
+`vsscanf` paths are both covered. This is pinned-musl source-overflow evidence,
+not a portable ISO C target-overflow claim. Decimal/float/wide/scanset/
+positional/FILE input, byte formatting, arbitrary input, allocation, locale
+objects, a general scanner or stdio boundary, parity, promotion, and public x86
+support remain outside it.
 
 The separate `libc-stdio-float-hex-output` gate
 (`./scripts/dev-x86_64.sh libc-stdio-float-hex-output`) records one private

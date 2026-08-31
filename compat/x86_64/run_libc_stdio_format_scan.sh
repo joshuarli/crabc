@@ -6,9 +6,10 @@
 # archive. The default `integer` profile owns the bounded integer, count-store,
 # and byte-string format/scan grammar. The closed `integer-scan` profile owns
 # only musl's ULLONG_MAX source-overflow behavior for narrow `%d`/`%i`/`%u`/
-# `%x` scans through the existing `sscanf`/`vsscanf` boundary. The sibling
-# `float-hex-output` profile selects only binary64 `%a`/`%A` output, while the
-# closed `errno-output` profile adds only bare GNU/musl `%m` C-locale
+# `%x` scans through the existing `sscanf`/`vsscanf` boundary. The separately
+# closed `octal-hex-scan` profile owns only the matching `%o`/`%X` behavior.
+# The sibling `float-hex-output` profile selects only binary64 `%a`/`%A`
+# output, while the closed `errno-output` profile adds only bare GNU/musl `%m` C-locale
 # errno-message output through that same formatter. None selects a general
 # error-reporting, stream, locale, or ambient-formatting boundary, FILE
 # streams, printf/fprintf, scanf/fscanf, decimal or long-double floats, wide
@@ -37,6 +38,13 @@ integer-scan)
     readonly START_SOURCE=compat/x86_64/libc_stdio_integer_scan_start.S
     readonly FREESTANDING_DEFINE=CRABC_STDIO_INTEGER_SCAN_FREESTANDING
     readonly EVIDENCE_LABEL="bounded stdio integer source scan"
+    readonly -a REQUIRED_C_ABI_SYMBOLS=(sscanf vsscanf)
+    ;;
+octal-hex-scan)
+    readonly FIXTURE_SOURCE=compat/x86_64/libc_stdio_octal_hex_scan_probe.c
+    readonly START_SOURCE=compat/x86_64/libc_stdio_octal_hex_scan_start.S
+    readonly FREESTANDING_DEFINE=CRABC_STDIO_OCTAL_HEX_SCAN_FREESTANDING
+    readonly EVIDENCE_LABEL="bounded stdio octal/uppercase-hex source scan"
     readonly -a REQUIRED_C_ABI_SYMBOLS=(sscanf vsscanf)
     ;;
 float-hex-output)
@@ -212,6 +220,17 @@ if [ "$EVIDENCE_PROFILE" = integer-scan ]; then
     grep -Fq 'u64::MAX' \
         "$ROOT_DIR/libc/src/c_abi/x86_64/stdio_format_scan.rs" ||
         fail "integer scan implementation no longer saturates at ULLONG_MAX"
+fi
+if [ "$EVIDENCE_PROFILE" = octal-hex-scan ]; then
+    grep -Fq 'ScanBase::Octal' \
+        "$ROOT_DIR/libc/src/c_abi/x86_64/stdio_format_scan.rs" ||
+        fail "octal source overflow is no longer selected"
+    grep -Fq 'ScanBase::HexUpper' \
+        "$ROOT_DIR/libc/src/c_abi/x86_64/stdio_format_scan.rs" ||
+        fail "uppercase-hex source overflow is no longer selected"
+    grep -Fq 'complete `%X` consumption' \
+        "$ROOT_DIR/compat/x86_64/libc_stdio_octal_hex_scan_probe.c" ||
+        fail "octal/uppercase-hex fixture no longer records exact consumption"
 fi
 if timeout --foreground "$EXECUTION_TIMEOUT" "$candidate"; then
     :
