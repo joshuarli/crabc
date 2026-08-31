@@ -96,7 +96,8 @@
 //! allocator-export-free hash-table search, a bounded no-catalog
 //! gettext/message-catalog ABI profile, and POSIX `nanosleep`
 //! and `clock_nanosleep`, direct clock-observation artifacts, one direct
-//! rejected-request `clock_settime` error-ABI artifact, one binary64 scalar
+//! rejected-request `clock_settime` error-ABI artifact, one direct
+//! rejected-ID `clock_adjtime` error-ABI artifact, one binary64 scalar
 //! `difftime` artifact, one caller-buffered fixed-UTC `gmtime_r`
 //! conversion artifact, and one fixed-UTC `timegm` conversion artifact, plus one
 //! bounded System V message-queue/shared-memory artifact, one bounded
@@ -416,6 +417,8 @@ mod clock_nanosleep;
 mod clock_gettime;
 #[path = "clock_settime.rs"]
 mod clock_settime;
+#[path = "clock_adjtime.rs"]
+mod clock_adjtime;
 #[path = "difftime.rs"]
 mod difftime;
 #[path = "gmtime_r.rs"]

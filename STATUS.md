@@ -1477,6 +1477,21 @@ behavior, `memfd_secret`, huge-page resource/page-size policy, descriptor
 lifecycle or close ownership, broad filesystem behavior, C-runtime/family/
 platform parity, promotion, or public x86 support.
 
+The same archive has a private rejected-ID clock-adjustment error-ABI
+artifact: `./scripts/dev-x86_64.sh clock-adjtime-header-abi` and
+`./scripts/dev-x86_64.sh libc-clock-adjtime` map exactly to pinned musl 1.2.6
+`src/linux/clock_adjtime.c`'s LP64 non-`CLOCK_REALTIME` direct
+`clock_adjtime=305` wrapper. Strict/POSIX/XOPEN/GNU C11/C++17 `<sys/timex.h>`
+profiles prove its unconditional exact C/C++ declaration, record layout, and
+unmangled linkage. The shared musl/static fixture calls only rejected `-1` and
+`CLOCK_MONOTONIC` IDs with a writable zero `struct timex`, accepting Linux's
+`EINVAL`, capability-first `EPERM`, or direct `EOPNOTSUPP` result and never
+issuing a valid `CLOCK_REALTIME` adjustment. The wrapper has no added
+authority guard, so a valid caller remains outside this evidence; this does
+not claim clock-adjustment authority, successful discipline/state semantics,
+valid-record behavior, clock observation, calendar/timezone/timer behavior, C
+time-family completion, promotion, or public x86 support.
+
 The same archive has a private rejected-request clock-setting error-ABI
 artifact: `./scripts/dev-x86_64.sh clock-settime-header-abi` and
 `./scripts/dev-x86_64.sh libc-clock-settime` map exactly to pinned musl 1.2.6

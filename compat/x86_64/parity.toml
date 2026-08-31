@@ -2163,6 +2163,7 @@ source_owners = [
   "libc/src/c_abi/x86_64/posix_exit.rs",
   "libc/src/c_abi/x86_64/callback_algorithms.rs",
   "libc/src/c_abi/x86_64/clock_gettime.rs",
+  "libc/src/c_abi/x86_64/clock_adjtime.rs",
   "libc/src/c_abi/x86_64/clock_settime.rs",
   "libc/src/c_abi/x86_64/nanosleep.rs",
   "libc/src/c_abi/x86_64/clock_nanosleep.rs",
@@ -3064,6 +3065,62 @@ oracle = [
   { kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source mapping and behavior oracle for src/time/clock_gettime.c, including its public result/errno convention and possible internal vDSO route." },
   { kind = "kernel-abi", source = "Linux 5.10 x86-64 ABI", role = "clock_gettime=228 rdi/rsi ABI, public timespec output, clock observations, and raw negative errno contract." },
   { kind = "elf-abi", source = "System V AMD64 psABI", role = "C scalar/pointer calling convention and static initial-TLS fixture contract." },
+]
+
+[[family.verified_artifact]]
+id = "static-c-clock-adjtime-error-abi"
+description = "Private native x86 static C `clock_adjtime` rejected-ID error-ABI artifact inside still-planned `libc.posix-runtime`. One project-header C fixture first executes through pinned musl 1.2.6 and then through a true dependency-free `-nostdlib -static` candidate linked only with the selected `crabc-libc` archive. On LP64 x86, pinned musl `src/linux/clock_adjtime.c` has no clock_adjtime64 conversion path and its non-`CLOCK_REALTIME` final branch is exactly `syscall(SYS_clock_adjtime, clock_id, utx)`; Linux syscall 305 receives the signed clock ID and writable `struct timex` pointer in rdi/rsi, then raw failure becomes C `-1` plus initial-TLS errno. The fixture calls only `clockid_t -1` and `CLOCK_MONOTONIC` with a zero 208-byte timex record, both rejected before any valid adjustment. It records Linux's `EINVAL`, capability-first `EPERM`, or direct `EOPNOTSUPP` result, never calls valid `CLOCK_REALTIME`, and proves the rejected record remains zero. Strict/POSIX/XOPEN/GNU C11/C++17 profiles prove the unconditional exact `int (*)(clockid_t, struct timex *)` declaration, x86 record layout, and unmangled C++ linkage. This exact wrapper does not install an authority guard, so a valid caller can still reach Linux and is outside selected evidence. The artifact establishes neither clock-adjustment authority nor successful discipline/state semantics, valid-record behavior, clock observation, calendar/timezone/environment, timers, cancellation, libc.so, CRT, dynamic TLS lifecycle, loader, sysroot, family completion, promotion, or public x86 support."
+source_owners = [
+  "compat/upstreams.toml",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/clock_adjtime.rs",
+  "libc/src/c_abi/x86_64/errno.rs",
+  "libc/src/c_abi/x86_64/syscall.rs",
+  "include/errno.h",
+  "include/features.h",
+  "include/time.h",
+  "include/sys/timex.h",
+  "include/sys/time.h",
+  "include/sys/select.h",
+  "include/sys/types.h",
+  "include/sys/syscall.h",
+  "include/bits/alltypes.h",
+  "include/bits/syscall.h",
+  "compat/x86_64/clock_adjtime_header_abi_probe.c",
+  "compat/x86_64/clock_adjtime_header_abi_probe.cpp",
+  "compat/x86_64/run_clock_adjtime_header_abi.sh",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/libc_clock_adjtime_probe.c",
+  "compat/x86_64/libc_clock_adjtime_start.S",
+  "compat/x86_64/run_libc_clock_adjtime.sh",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "compat/x86_64/aarch64_parity_inventory.py",
+  "compat/x86_64/aarch64_parity_inventory.json",
+  "compat/x86_64/README.md",
+  "STATUS.md",
+  "x86-64.md",
+  "scripts/dev-x86_64.sh",
+  "scripts/check_structure.py",
+]
+x86_abi_prerequisites = [
+  "System V AMD64 calls `int clock_adjtime(clockid_t, struct timex *)` with the signed four-byte clock ID in rdi and borrowed writable record pointer in rsi, returning the signed int result in eax. Linux/x86-64 syscall 305 is clock_adjtime and preserves the same two-word rdi/rsi input order.",
+  "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417 maps src/linux/clock_adjtime.c exactly on x86 LP64: no SYS_clock_adjtime64 conversion is selected because time_t is not wider than long, and a non-CLOCK_REALTIME ID reaches syscall(SYS_clock_adjtime, clock_id, utx) without local policy or state.",
+  "Linux raw -4095 through -1 errors become C -1 plus the selected initial-TLS errno through c_status. The pinned-musl and true-static common fixture passes only writable zero 208-byte align-8 timex storage to -1 and CLOCK_MONOTONIC IDs; each is rejected before a valid CLOCK_REALTIME adjustment, with EINVAL, capability-first EPERM, or direct EOPNOTSUPP accepted as the Linux error result and the record left zero. A valid adjustment, state change, and authority outcome have no selected contract.",
+  "The final static candidate owns only direct initial-TLS errno access after fixture-local Variant-II %fs:0 setup, with no dynamic TLS resolver, allocation, environment, calendar/timezone, timer, or runtime state. It is a bounded rejected-ID ABI artifact, not clock adjustment support.",
+]
+x86_header_prerequisites = [
+  "Pinned-musl/project strict/POSIX/XOPEN/GNU C11/C++17 probes require the unconditional exact `int (*)(clockid_t, struct timex *)` declaration, 208-byte align-8 x86 timex layout, and unmangled C++ external-C reference; they select no valid clock-adjustment semantics.",
+  "The fixture preprocesses only project sys/timex.h, sys/time.h, sys/select.h, and bits/alltypes.h for this declaration/linkage/layout fact. This is a focused header ABI gate, not installed-header completion or C time capability evidence.",
+]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-clock-adjtime", scope = "Pinned-musl 1.2.6 project-header normal C execution and the separate strict/POSIX/XOPEN/GNU-visible C/C++ declaration/linkage/layout gate precede a true `-nostdlib -static` candidate. The shared fixture calls only writable zero timex values with rejected -1 and CLOCK_MONOTONIC IDs, accepting Linux EINVAL, capability-first EPERM, or direct EOPNOTSUPP while never issuing a valid CLOCK_REALTIME adjustment. Header/archive/final-ELF/source/disassembly checks require exactly clock_adjtime=305, direct rdi syscall input, initial-TLS errno conversion, and an env -i closure with no interpreter/DT_NEEDED/unresolved symbol, dynamic TLS resolver, allocation, ambient runtime, clock query, calendar/timezone/environment, timer, or valid adjustment call. It excludes successful clock authority/discipline/state semantics, valid-record behavior, family completion, promotion, and public x86 support." }]
+oracle = [
+  { kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT C declaration and source oracle for src/linux/clock_adjtime.c: the x86 LP64 non-CLOCK_REALTIME path returns syscall(SYS_clock_adjtime, clock_id, utx) without local policy or state." },
+  { kind = "kernel-abi", source = "Linux 5.10 x86-64 ABI", role = "clock_adjtime=305 rdi/rsi record-pointer ABI, raw negative errno convention, EINVAL/capability-first EPERM/EOPNOTSUPP rejected-ID possibilities, and no valid fixture adjustment." },
+  { kind = "elf-abi", source = "System V AMD64 psABI", role = "clockid_t/pointer C register ABI, external-C linkage, and true-static initial-TLS errno fixture boundary." },
 ]
 
 [[family.verified_artifact]]

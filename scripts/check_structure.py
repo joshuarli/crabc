@@ -134,7 +134,8 @@ X86_RUNTIME_FOUNDATION_LDSO_SOURCES = {
 # locale ctype and the separately bounded named-locale/multibyte conversion
 # artifact, scalar integer arithmetic, complete integer parsing, intmax
 # arithmetic, and find-first-set, direct POSIX clock_gettime, direct rejected-
-# request clock_settime error translation, bounded clock observation,
+# ID clock_adjtime and rejected-request clock_settime error translation, bounded
+# clock observation,
 # no-cancellation mapping synchronization, direct anonymous-memory
 # descriptor creation, nanosleep, and clock_nanosleep, descriptor entry, selected
 # filesystem access, bounded fcntl
@@ -156,6 +157,7 @@ X86_RUNTIME_FOUNDATION_LIBC_SOURCES = {
     Path("libc/src/c_abi/x86_64/credential_observation.rs"),
     Path("libc/src/c_abi/x86_64/child_reaping.rs"),
     Path("libc/src/c_abi/x86_64/clock_gettime.rs"),
+    Path("libc/src/c_abi/x86_64/clock_adjtime.rs"),
     Path("libc/src/c_abi/x86_64/clock_settime.rs"),
     Path("libc/src/c_abi/x86_64/difftime.rs"),
     Path("libc/src/c_abi/x86_64/gmtime_r.rs"),
@@ -3796,6 +3798,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         '#[path = "search_hash_table.rs"]',
         '#[path = "gettext_catalog.rs"]',
         '#[path = "clock_gettime.rs"]',
+        '#[path = "clock_adjtime.rs"]',
         '#[path = "clock_settime.rs"]',
         '#[path = "difftime.rs"]',
         '#[path = "gmtime_r.rs"]',
@@ -8140,6 +8143,53 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
             "must export only clock_gettime"
         )
 
+    clock_adjtime_source = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "clock_adjtime.rs"
+    clock_adjtime_text = clock_adjtime_source.read_text(errors="replace")
+    for required in (
+        "musl 1.2.6 release commit",
+        "src/linux/clock_adjtime.c::clock_adjtime",
+        "SYS_CLOCK_ADJTIME",
+        "raw_syscall::syscall2",
+        "c_status(result)",
+        "rejected-ID C error",
+        "valid caller",
+        "successful discipline/state semantics",
+        "public x86 support",
+    ):
+        if required not in clock_adjtime_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/clock_adjtime.rs: selected static "
+                f"clock_adjtime error ABI is missing {required!r}"
+            )
+    clock_adjtime_exports = set(
+        re.findall(
+            r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(',
+            clock_adjtime_text,
+        )
+    )
+    if clock_adjtime_exports != {"clock_adjtime"}:
+        errors.append(
+            "libc/src/c_abi/x86_64/clock_adjtime.rs: selected static artifact "
+            "must export only clock_adjtime"
+        )
+    for forbidden in (
+        "crabc_core",
+        "crabc_mimalloc",
+        "clock_settime(",
+        "clock_gettime(",
+        "clock_getres(",
+        "adjtimex(",
+        "timer_create(",
+        "timer_delete(",
+        "nanosleep(",
+        "__tls_get_addr",
+    ):
+        if forbidden in clock_adjtime_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/clock_adjtime.rs: selected static "
+                f"clock_adjtime error ABI must not select {forbidden!r}"
+            )
+
     clock_settime_source = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "clock_settime.rs"
     clock_settime_text = clock_settime_source.read_text(errors="replace")
     for required in (
@@ -8511,6 +8561,11 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         errors.append(
             "libc/src/c_abi/x86_64/syscall.rs: selected static clock_settime "
             "error ABI requires SYS_CLOCK_SETTIME=227"
+        )
+    if "pub(crate) const SYS_CLOCK_ADJTIME: i64 = 305;" not in raw_syscall_text:
+        errors.append(
+            "libc/src/c_abi/x86_64/syscall.rs: selected static clock_adjtime "
+            "error ABI requires SYS_CLOCK_ADJTIME=305"
         )
 
     memory_mapping_source = (
@@ -11578,6 +11633,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         search_hash_table_text,
         gettext_catalog_text,
         clock_gettime_text,
+        clock_adjtime_text,
         clock_settime_text,
         difftime_text,
         gmtime_r_text,
@@ -11906,6 +11962,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         "waitpid",
         "waitid",
         "clock_gettime",
+        "clock_adjtime",
         "clock_settime",
         "difftime",
         "gmtime_r",
@@ -12213,6 +12270,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         ("search_hash_table.rs", search_hash_table_text),
         ("gettext_catalog.rs", gettext_catalog_text),
         ("clock_gettime.rs", clock_gettime_text),
+        ("clock_adjtime.rs", clock_adjtime_text),
         ("clock_settime.rs", clock_settime_text),
         ("sched_cpucount.rs", sched_cpucount_text),
         ("sched_getcpu.rs", sched_getcpu_text),

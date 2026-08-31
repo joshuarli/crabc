@@ -153,6 +153,7 @@ cimagl
 clearenv
 clearerr
 clock
+clock_adjtime
 clock_getres
 clock_gettime
 clock_nanosleep

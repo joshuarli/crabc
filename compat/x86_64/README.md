@@ -271,6 +271,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh string-duplication-header-abi
 ./scripts/dev-x86_64.sh random-entropy-header-abi
 ./scripts/dev-x86_64.sh time-header-abi
+./scripts/dev-x86_64.sh clock-adjtime-header-abi
 ./scripts/dev-x86_64.sh clock-settime-header-abi
 ./scripts/dev-x86_64.sh timerfd-header-abi
 ./scripts/dev-x86_64.sh signalfd-header-abi
@@ -464,6 +465,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-search-tree-intrusive
 ./scripts/dev-x86_64.sh libc-search-hash-table
 ./scripts/dev-x86_64.sh libc-clock-gettime
+./scripts/dev-x86_64.sh libc-clock-adjtime
 ./scripts/dev-x86_64.sh libc-clock-settime
 ./scripts/dev-x86_64.sh libc-time-observation
 ./scripts/dev-x86_64.sh libc-difftime
@@ -3894,6 +3896,21 @@ this direct leaf intentionally owns no vDSO resolver or dynamic runtime state.
 It excludes `clock_getres`/`clock_settime`, `time`, calendar/timer state,
 pthread cancellation, dynamic runtime, and public x86 support.
 
+`libc-clock-adjtime` is a separately recorded
+`static-c-clock-adjtime-error-abi` `verified_artifact` gate over that archive,
+not clock-adjustment support. Its `<sys/timex.h>` C/C++ profiles prove the
+unconditional exact external-C declaration and x86 `struct timex` layout.
+The project-header C body first executes through pinned musl and then through
+a `-nostdlib -static` candidate, but only with rejected `clockid_t -1` and
+`CLOCK_MONOTONIC` requests. It proves the direct `clock_adjtime=305` rdi/rsi
+error convention, initial-TLS errno publication, and Linux's `EINVAL`,
+capability-first `EPERM`, or direct `EOPNOTSUPP` result without issuing a valid
+`CLOCK_REALTIME` adjustment. The wrapper deliberately installs no authority
+guard: a valid caller can reach Linux outside this evidence. It excludes
+successful clock authority/discipline/state semantics, valid-record behavior,
+clock observation, calendar/time-zone policy, POSIX timers, cancellation,
+dynamic runtime, family completion, promotion, and public x86 support.
+
 `libc-clock-settime` is a separately recorded
 `static-c-clock-settime-error-abi` `verified_artifact` gate over that archive,
 not clock-setting support. Its header gate proves that `<time.h>` hides the
@@ -5892,6 +5909,7 @@ Apart from the narrowly named `libc-stat-compat`, `libc-credentials`,
 `libc-search-hash-table`,
 `libc-gettext-catalog`,
 `libc-clock-gettime`,
+`libc-clock-adjtime`,
 `libc-clock-settime`,
 `libc-time-observation`,
 `libc-difftime`,
