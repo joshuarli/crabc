@@ -508,6 +508,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-network-byte-order
 ./scripts/dev-x86_64.sh libc-in6addr-any
 ./scripts/dev-x86_64.sh libc-in6addr-loopback
+./scripts/dev-x86_64.sh libc-dn-skipname
 ./scripts/dev-x86_64.sh libc-socket-transport
 ./scripts/dev-x86_64.sh libc-socket-messages
 ./scripts/dev-x86_64.sh libc-byte-strings
@@ -1546,6 +1547,16 @@ signatures, and the named IPv6 macro classifications. It is source-only header
 evidence: it does not select socket options, vector or ancillary-message APIs,
 address-conversion or socket behavior, `crabc-libc`, or public x86 support.
 
+`nameser-header-abi` compile-checks project-first and pinned-musl C and C++
+`<resolv.h>` consumers for exactly
+`dn_skipname(const unsigned char *, const unsigned char *)`. It ratchets
+`NS_CMPRSFLGS=0xc0`, `NS_MAXLABEL=63`, `NS_MAXCDNAME=255`, and
+`NS_MAXDNAME=1025`, then checks the C++ object retains the unmangled C symbol.
+It is declaration-only evidence for a caller-owned DNS wire-name span; it does
+not establish archive linkage, resolver state, `/etc/resolv.conf` parsing, DNS
+packet I/O, sockets, netdb, installed-header completion, family promotion, or
+public x86 support.
+
 `inet-address-header-abi` compile-checks project-first and pinned-musl
 default/GNU/strict C and C++ `<arpa/inet.h>` profiles. It ratchets the exact
 `inet_pton`, `inet_ntop`, `inet_aton`, `inet_addr`, `inet_ntoa`,
@@ -1609,6 +1620,22 @@ writes `h_errno` or `errno`, nor selects h_errno storage, TLS, locale catalogs,
 allocation, stdio, syscalls, `/etc/hosts`, `/etc/resolv.conf`, resolver
 configuration, DNS, network-database/NSS, interface, socket, libc.so, CRT,
 loader, sysroot, resolver completion, family promotion, or public x86 support.
+
+`libc-dn-skipname` (`./scripts/dev-x86_64.sh libc-dn-skipname`) is a distinct
+private static C ABI artifact inside still-planned `libc.resolver`, not
+resolver-network behavior or a promotion. Its project-header C fixture runs
+first through pinned musl 1.2.6 and then through an archive-free true
+`-nostdlib -static` candidate linked from exactly one extracted `dn_skipname`
+object, never `libc.a`; the aggregate archive ratchet separately proves the
+export. Musl maps its dependency-free 83-byte `dn_skipname.lo` object to
+`src/network/dn_skipname.c`. The fixed differential covers root and ordinary
+labels, a compressed-pointer octet consuming exactly two bytes without pointer
+following, truncated pointer/label failure, and musl's intentional treatment
+of octets 64 through 191 as label lengths. It has no resolver state,
+`h_errno`/`errno`/TLS, `/etc/hosts` or `/etc/resolv.conf` access, DNS packet
+I/O, socket, netdb/database, parser sibling, address-codec, interface,
+Ethernet, allocation, syscall, libc.so, CRT, loader, sysroot, family
+promotion, or public x86 support.
 
 `libc-numeric-netdb` is a separate private static C `netdb.h` result-record
 artifact under still-planned `libc.resolver`. Its project-header C body first

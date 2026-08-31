@@ -50,8 +50,8 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 41)
-        self.assertEqual(report["verified_artifact_count"], 201)
-        self.assertEqual(report["header_layout_probe_count"], 46)
+        self.assertEqual(report["verified_artifact_count"], 202)
+        self.assertEqual(report["header_layout_probe_count"], 47)
         self.assertEqual(report["public_header_inventory_count"], 183)
         self.assertEqual(report["header_foundation_header_count"], 191)
         self.assertEqual(report["header_foundation_pinned_header_count"], 183)
@@ -1558,7 +1558,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         report = ledger.validate_ledger(data, header_layout_manifest=manifest)
         headers_layouts = self.family(data, "libc.headers-layouts")
 
-        self.assertEqual(report["header_layout_probe_count"], 46)
+        self.assertEqual(report["header_layout_probe_count"], 47)
         self.assertEqual(manifest["schema"], "crabc.x86_64-headers-layouts/v1")
         self.assertEqual(manifest["status"], "planned")
         self.assertEqual(manifest["family"], "libc.headers-layouts")
@@ -1601,6 +1601,18 @@ class X86ParityLedgerTests(unittest.TestCase):
                 "compat/x86_64/socket_header_abi_probe.cpp",
                 "compat/x86_64/socket_header_ipv6_macro_probe.c",
                 "compat/x86_64/run_socket_header_abi.sh",
+            ],
+        )
+        nameser = next(probe for probe in probes if probe["id"] == "nameser")
+        assert isinstance(nameser, dict)
+        self.assertEqual(nameser["kind"], "compile-only")
+        self.assertEqual(nameser["headers"], ["include/resolv.h"])
+        self.assertEqual(
+            nameser["sources"],
+            [
+                "compat/x86_64/nameser_header_abi_probe.c",
+                "compat/x86_64/nameser_header_abi_probe.cpp",
+                "compat/x86_64/run_nameser_header_abi.sh",
             ],
         )
         inet_address = next(probe for probe in probes if probe["id"] == "inet-address")
@@ -19098,6 +19110,358 @@ class X86ParityLedgerTests(unittest.TestCase):
             "n<256, n<65536", "unbounded prefixes"
         )
         with self.assertRaisesRegex(ledger.LedgerError, "n<256, n<65536"):
+            ledger.validate_ledger(data)
+
+    def test_inet_netof_artifact_keeps_its_archive_free_private_boundary(self) -> None:
+        data = self.data()
+        family = self.family(data, "libc.resolver")
+        self.assertEqual(family["status"], "planned")
+        artifacts = family["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-inet-netof"
+        )
+        self.assertNotIn("capabilities", artifact)
+        for owner in (
+            "libc/src/c_abi/x86_64/inet_netof.rs",
+            "include/arpa/inet.h",
+            "compat/x86_64/inet_address_header_abi_probe.c",
+            "compat/x86_64/inet_address_header_abi_probe.cpp",
+            "compat/x86_64/run_inet_address_header_abi.sh",
+            "compat/x86_64/static_c_abi_exports.txt",
+            "compat/x86_64/libc_inet_netof_probe.c",
+            "compat/x86_64/libc_inet_netof_start.S",
+            "compat/x86_64/run_libc_inet_netof.sh",
+            "compat/x86_64/run_libc_inet_address.sh",
+            "compat/x86_64/run_libc_inet_classful.sh",
+            "compat/x86_64/aarch64_parity_inventory.json",
+            "compat/x86_64/validate_parity_ledger.py",
+            "scripts/dev-x86_64.sh",
+        ):
+            self.assertIn(owner, artifact["source_owners"])
+        self.assertEqual(
+            {entry["command"] for entry in artifact["native_evidence"]},
+            {"./scripts/dev-x86_64.sh libc-inet-netof"},
+        )
+        for phrase in (
+            "Private native x86 static classful IPv4 network-part extraction artifact",
+            "still-planned `libc.resolver`",
+            "archive-free true `-nostdlib -static` candidate",
+            "exactly one extracted crabc object",
+            "never `libc.a`",
+            "exactly `inet_netof`",
+            "`src/network/inet_legacy.c`",
+            "`inet_network`",
+            "`inet_addr` dependency",
+            "`inet_makeaddr`",
+            "`inet_lnaof`",
+            "`s_addr` high byte",
+            "byte-order helper",
+            "h_errno/errno storage",
+            "mutable state",
+            "DNS",
+            "netdb",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, artifact["description"])
+
+        exports = set(
+            (ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt")
+            .read_text(encoding="utf-8")
+            .splitlines()
+        )
+        self.assertIn("inet_netof", exports)
+        self.assertFalse(
+            exports
+            & {
+                "h_errno",
+                "__h_errno_location",
+                "herror",
+            }
+        )
+
+        prerequisites = artifact["x86_abi_prerequisites"]
+        assert isinstance(prerequisites, list)
+        source_mapping = next(
+            item for item in prerequisites if "src/network/inet_legacy.c" in item
+        )
+        assert isinstance(source_mapping, str)
+        for phrase in (
+            "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+            "inet_network",
+            "inet_makeaddr",
+            "inet_lnaof",
+            "inet_netof",
+            "inet_addr",
+            "h >> 24",
+            "h >> 16",
+            "h >> 8",
+            "< 128",
+            "< 192",
+            "no resolver or DNS source is selected",
+        ):
+            self.assertIn(phrase, source_mapping)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.resolver")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-inet-netof"
+        )
+        artifact["description"] = artifact["description"].replace(
+            "archive-free", "selected-archive"
+        )
+        with self.assertRaisesRegex(ledger.LedgerError, "archive-free true"):
+            ledger.validate_ledger(data)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.resolver")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-inet-netof"
+        )
+        evidence = artifact["native_evidence"]
+        assert isinstance(evidence, list) and isinstance(evidence[0], dict)
+        evidence[0]["scope"] = evidence[0]["scope"].replace(
+            "0/127, 128/191", "unbounded prefixes"
+        )
+        with self.assertRaisesRegex(ledger.LedgerError, "0/127, 128/191"):
+            ledger.validate_ledger(data)
+
+    def test_inet_network_artifact_keeps_its_private_parser_boundary(self) -> None:
+        data = self.data()
+        family = self.family(data, "libc.resolver")
+        self.assertEqual(family["status"], "planned")
+        artifacts = family["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-inet-network"
+        )
+        self.assertNotIn("capabilities", artifact)
+        for owner in (
+            "libc/src/c_abi/x86_64/inet_network.rs",
+            "libc/src/c_abi/x86_64/inet_address.rs",
+            "compat/x86_64/inet_address_header_abi_probe.c",
+            "compat/x86_64/inet_address_header_abi_probe.cpp",
+            "compat/x86_64/run_inet_address_header_abi.sh",
+            "compat/x86_64/static_c_abi_exports.txt",
+            "compat/x86_64/libc_inet_network_probe.c",
+            "compat/x86_64/libc_inet_network_start.S",
+            "compat/x86_64/run_libc_inet_network.sh",
+            "compat/x86_64/run_libc_inet_address.sh",
+            "compat/x86_64/aarch64_parity_inventory.json",
+            "compat/x86_64/validate_parity_ledger.py",
+            "scripts/dev-x86_64.sh",
+            "scripts/check_structure.py",
+        ):
+            self.assertIn(owner, artifact["source_owners"])
+        self.assertEqual(
+            {entry["command"] for entry in artifact["native_evidence"]},
+            {"./scripts/dev-x86_64.sh libc-inet-network"},
+        )
+        for phrase in (
+            "Private native x86 static legacy IPv4 textual-network artifact",
+            "still-planned `libc.resolver`",
+            "true `-nostdlib -static` candidate",
+            "exactly `inet_network`",
+            "`src/network/inet_legacy.c`",
+            "`ntohl(inet_addr(p))`",
+            "exactly one extracted `inet_network` object",
+            "demand-driven `libc.a` closure",
+            "not archive-free",
+            "local scalar byte swap",
+            "abbreviated",
+            "base-zero",
+            "all-ones ambiguity",
+            "`ERANGE`/`EINVAL`",
+            "DNS",
+            "netdb",
+            "h_errno",
+            "classful arithmetic/extraction",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, artifact["description"])
+
+        exports = set(
+            (ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt")
+            .read_text(encoding="utf-8")
+            .splitlines()
+        )
+        self.assertIn("inet_network", exports)
+        self.assertFalse(
+            exports
+            & {
+                "h_errno",
+                "__h_errno_location",
+                "gethostbyname",
+            }
+        )
+
+        prerequisites = artifact["x86_abi_prerequisites"]
+        assert isinstance(prerequisites, list)
+        source_mapping = next(
+            item for item in prerequisites if "src/network/inet_legacy.c" in item
+        )
+        assert isinstance(source_mapping, str)
+        for phrase in (
+            "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+            "inet_network",
+            "inet_makeaddr",
+            "inet_lnaof",
+            "inet_netof",
+            "ntohl(inet_addr(p))",
+            "inet_addr",
+            "ERANGE",
+            "EINVAL",
+            "No resolver or DNS source is selected",
+        ):
+            self.assertIn(phrase, source_mapping)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.resolver")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-inet-network"
+        )
+        artifact["description"] = artifact["description"].replace(
+            "not archive-free", "archive-free"
+        )
+        with self.assertRaisesRegex(ledger.LedgerError, "not archive-free"):
+            ledger.validate_ledger(data)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.resolver")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-inet-network"
+        )
+        evidence = artifact["native_evidence"]
+        assert isinstance(evidence, list) and isinstance(evidence[0], dict)
+        evidence[0]["scope"] = evidence[0]["scope"].replace(
+            "bswap/ntohl equivalence", "generic byte conversion"
+        )
+        with self.assertRaisesRegex(ledger.LedgerError, "bswap/ntohl equivalence"):
+            ledger.validate_ledger(data)
+
+    def test_dn_skipname_artifact_keeps_its_private_codec_boundary(self) -> None:
+        data = self.data()
+        family = self.family(data, "libc.resolver")
+        self.assertEqual(family["status"], "planned")
+        self.assertIn("libc/src/c_abi/x86_64/dn_skipname.rs", family["source_owners"])
+        artifacts = family["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-dn-skipname"
+        )
+        self.assertNotIn("capabilities", artifact)
+        for owner in (
+            "libc/src/c_abi/x86_64/dn_skipname.rs",
+            "include/resolv.h",
+            "include/arpa/nameser.h",
+            "compat/x86_64/nameser_header_abi_probe.c",
+            "compat/x86_64/nameser_header_abi_probe.cpp",
+            "compat/x86_64/run_nameser_header_abi.sh",
+            "compat/x86_64/static_c_abi_exports.txt",
+            "compat/x86_64/libc_dn_skipname_probe.c",
+            "compat/x86_64/libc_dn_skipname_start.S",
+            "compat/x86_64/run_libc_dn_skipname.sh",
+            "compat/x86_64/validate_parity_ledger.py",
+            "scripts/dev-x86_64.sh",
+            "scripts/check_structure.py",
+        ):
+            self.assertIn(owner, artifact["source_owners"])
+        self.assertEqual(
+            {entry["command"] for entry in artifact["native_evidence"]},
+            {"./scripts/dev-x86_64.sh libc-dn-skipname"},
+        )
+        for phrase in (
+            "Private native x86 static `dn_skipname` caller-owned DNS wire-name span C ABI artifact",
+            "still-planned `libc.resolver`",
+            "archive-free true `-nostdlib -static` candidate",
+            "exactly one extracted crabc object",
+            "never `libc.a`",
+            "root label",
+            "octet at least 192",
+            "64 through 191",
+            "`/etc/hosts`",
+            "`/etc/resolv.conf`",
+            "DNS packet I/O",
+            "netdb/database",
+            "Ethernet",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, artifact["description"])
+
+        exports = set(
+            (ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt")
+            .read_text(encoding="utf-8")
+            .splitlines()
+        )
+        self.assertIn("dn_skipname", exports)
+        self.assertFalse(
+            exports & {"dn_expand", "ns_skiprr", "ns_name_uncompress", "res_init"}
+        )
+
+        prerequisites = artifact["x86_abi_prerequisites"]
+        assert isinstance(prerequisites, list)
+        c_abi = next(item for item in prerequisites if "SysV AMD64 LP64" in item)
+        assert isinstance(c_abi, str)
+        for phrase in ("rdi/rsi", "eax", "source..end byte range in one allocation"):
+            self.assertIn(phrase, c_abi)
+        source_mapping = next(
+            item for item in prerequisites if "src/network/dn_skipname.c" in item
+        )
+        assert isinstance(source_mapping, str)
+        for phrase in (
+            "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+            "83-byte `dn_skipname.lo`",
+            "no undefined references, calls, or syscalls",
+            "64 through 191",
+        ):
+            self.assertIn(phrase, source_mapping)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.resolver")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-dn-skipname"
+        )
+        artifact["description"] = artifact["description"].replace(
+            "64 through 191", "64-191"
+        )
+        with self.assertRaisesRegex(ledger.LedgerError, "omits 64 through 191"):
+            ledger.validate_ledger(data)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.resolver")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-dn-skipname"
+        )
+        evidence = artifact["native_evidence"]
+        assert isinstance(evidence, list) and isinstance(evidence[0], dict)
+        evidence[0]["scope"] = "static DNS byte helper"
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "Pinned-musl project-header C execution"
+        ):
             ledger.validate_ledger(data)
 
     def test_hstrerror_artifact_keeps_its_fixed_profile_boundary(self) -> None:

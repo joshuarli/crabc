@@ -213,6 +213,7 @@ dlerror
 dlinfo
 dlopen
 dlsym
+dn_skipname
 dngettext
 drem
 dremf

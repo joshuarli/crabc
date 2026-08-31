@@ -93,6 +93,21 @@ locale, environment, allocator, stdio, syscall, byte-string dependency, or
 parser state. It is not a second capability selection, parser/environment/
 locale completion, text/math/locale/stdio family promotion, or public x86
 support claim.
+`./scripts/dev-x86_64.sh libc-dn-skipname` is a private
+`static-c-dn-skipname` artifact inside still-planned `libc.resolver`. Its
+companion `./scripts/dev-x86_64.sh nameser-header-abi` gate proves the exact
+C/C++ `dn_skipname(const unsigned char *, const unsigned char *)` declaration,
+the `NS_CMPRSFLGS`/name-size constants, and unmangled C++ linkage. The static
+fixture then runs through pinned musl 1.2.6 and an archive-free
+`-nostdlib -static` candidate linked from exactly one extracted object, never
+`libc.a`. It selects only musl `src/network/dn_skipname.c`'s caller-owned
+wire-name span walk: root consumption, two-byte disposition for an octet at
+least 192 without following its pointer, truncated-span failure, and the
+deliberate 64-through-191 label-length behavior. It has no resolver state,
+`h_errno`, `errno`, TLS, `/etc/hosts` or `/etc/resolv.conf` access, DNS packet
+I/O, socket, netdb/database, parser sibling, allocation, syscall, interface,
+or Ethernet dependency; it is not resolver completion, promotion, or public
+x86 support.
 
 `./scripts/dev-x86_64.sh libc-login-name` is a private
 `static-c-login-name` artifact inside planned `libc.posix-runtime`. Its
