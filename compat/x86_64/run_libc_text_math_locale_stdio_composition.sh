@@ -55,6 +55,7 @@ for tool in ar awk cargo cmp diff grep mkdir nm objdump readelf rustup sort; do 
 
 bash "$ROOT_DIR/compat/x86_64/run_musl_oracle.sh" >/dev/null
 for header_gate in run_math_complex_header_abi.sh run_math_complex_complete_header_abi.sh \
+    run_math_exp2_header_abi.sh \
     run_float_parse_header_abi.sh \
     run_locale_multibyte_header_abi.sh run_stdio_standard_header_abi.sh; do
     bash "$ROOT_DIR/compat/x86_64/$header_gate" >/dev/null

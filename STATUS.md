@@ -1143,6 +1143,21 @@ fallback, `cbrtl`, fma, fmod/remainder/modf, static rounding/truncation,
 bit-sign/minmax/fdim, special/complex/binary80 math, family completion,
 promotion, and public x86 support.
 
+The separate private `static-c-math-exp2` artifact records only binary64
+`exp2` and binary32 `exp2f`: `./scripts/dev-x86_64.sh libc-math-exp2` runs
+project-header C and default-SSE/`-mfpmath=387` C++ function-pointer fixtures
+through pinned musl and one freestanding static candidate. Its checked GCC
+15.2.0 translation of musl 1.2.6 `exp2.c`/`exp2f.c` localizes the binary64 and
+binary32 tables plus all overflow/underflow range helpers, so it neither calls
+ambient libm nor shares selected `math.special` state. The 232-record
+differential covers signed zero, tiny/subnormal and range-boundary inputs,
+ordinary reduction values, infinities, quiet/signaling NaNs, results, flags,
+and all four requested-and-observed MXCSR rounding directions. Strong
+target-owned definitions and final ELF checks reject weak compiler-builtins
+fallback, `exp2l`, adjacent exp/log/pow functions, fenv API/policy,
+special/complex/binary80 math, family completion, promotion, and public x86
+support.
+
 The separate private `static-c-math-ceil` artifact records only binary64
 `ceil` and binary32 `ceilf`: `./scripts/dev-x86_64.sh libc-math-ceil` runs
 project-header C and default-SSE/`-mfpmath=387` C++ function-pointer fixtures

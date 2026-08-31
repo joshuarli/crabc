@@ -238,6 +238,8 @@ eventfd
 eventfd_read
 eventfd_write
 exit
+exp2
+exp2f
 exp2l
 expl
 expm1l
