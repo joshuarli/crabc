@@ -239,6 +239,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh stat-header-abi
 ./scripts/dev-x86_64.sh utime-header-abi
 ./scripts/dev-x86_64.sh pthread-c11-header-abi
+./scripts/dev-x86_64.sh pthread-spin-destroy-header-abi
 ./scripts/dev-x86_64.sh ctype-header-abi
 ./scripts/dev-x86_64.sh locale-profile-header-abi
 ./scripts/dev-x86_64.sh locale-multibyte-header-abi
@@ -422,6 +423,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-pthread-cpuclock
 ./scripts/dev-x86_64.sh libc-pthread-name
 ./scripts/dev-x86_64.sh libc-pthread-barrierattr-pshared
+./scripts/dev-x86_64.sh libc-pthread-spin-destroy
 ./scripts/dev-x86_64.sh libc-pthread-mutex-normal
 ./scripts/dev-x86_64.sh libc-pthread-rwlock
 ./scripts/dev-x86_64.sh libc-pthread-cond-private
@@ -3577,6 +3579,21 @@ destruction, or process-shared operation. Threads, TLS, synchronization,
 cancellation, CRT, loader, sysroot, family completion, promotion, and public
 x86 support remain excluded.
 
+`libc-pthread-spin-destroy` is a twenty-fourth separately recorded private
+static `verified_artifact` under the same still-planned `libc.pthread-tls`
+family. Its dedicated C/C++ header matrix verifies the unconditional
+four-byte `pthread_spinlock_t` and exact unmangled
+`pthread_spin_destroy(pthread_spinlock_t *)` spelling under pinned musl and
+project headers. Its shared C fixture then runs against pinned musl and one
+extracted crabc object in a `-nostdlib -static` candidate: direct and typed
+function-pointer calls return zero and leave a caller-owned sentinel unchanged.
+The pinned object is source-closed and has no peer call or state operation;
+the sentinel is non-observation evidence, not a valid initialization or
+lifecycle claim. `pthread_spin_init`, lock/trylock/unlock, arbitrary spin
+state, synchronization, atomics, threads, cancellation, a general pthread
+runtime, family completion, promotion, x86-64 parity, and public x86 support
+remain excluded.
+
 `libc-pthread-mutex-normal` is a tenth separately recorded private static
 `verified_artifact` under the same still-planned `libc.pthread-tls` family.
 Its project-header C body first runs against pinned musl and then through a
@@ -6233,7 +6250,7 @@ Apart from the narrowly named `libc-stat-compat`, `libc-credentials`,
 `libc-sigaddset-sigdelset-sigfillset`,
 `libc-static-tls-v1`, `libc-crt-static-tls`,
 `libc-pthread-create-join-tls`, `libc-pthread-identity`, `libc-c11-lifecycle`,
-`libc-pthread-detach`, `libc-thrd-sleep`, `libc-thrd-yield`, `libc-pthread-cpuclock`, `libc-pthread-name`, `libc-pthread-barrierattr-pshared`, `libc-pthread-mutex-normal`,
+`libc-pthread-detach`, `libc-thrd-sleep`, `libc-thrd-yield`, `libc-pthread-cpuclock`, `libc-pthread-name`, `libc-pthread-barrierattr-pshared`, `libc-pthread-spin-destroy`, `libc-pthread-mutex-normal`,
 `libc-pthread-rwlock`, `libc-pthread-cond-private`, `libc-c11-plain-sync`, `libc-pthread-c11-once`,
 `libc-pthread-c11-tsd`,
 `libc-termios-control`,

@@ -685,6 +685,7 @@ pthread_setcancelstate
 pthread_setcanceltype
 pthread_setname_np
 pthread_setspecific
+pthread_spin_destroy
 pthread_testcancel
 putc
 putchar

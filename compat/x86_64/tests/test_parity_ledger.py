@@ -50,7 +50,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 41)
-        self.assertEqual(report["verified_artifact_count"], 229)
+        self.assertEqual(report["verified_artifact_count"], 230)
         self.assertEqual(report["header_layout_probe_count"], 47)
         self.assertEqual(report["public_header_inventory_count"], 183)
         self.assertEqual(report["header_foundation_header_count"], 191)
@@ -12358,7 +12358,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             "libc/src/c_abi/x86_64/pthread_atfork.rs", pthread_tls["source_owners"]
         )
         self.assertIn(
-            "Twenty-three separately verified static artifacts", pthread_tls["description"]
+            "Twenty-four separately verified static artifacts", pthread_tls["description"]
         )
         self.assertIn(
             "sole delivery point is explicit `pthread_testcancel`",
@@ -12381,7 +12381,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         pthread_tls = self.family(data, "libc.pthread-tls")
         self.assertEqual(pthread_tls["status"], "planned")
         artifacts = pthread_tls["verified_artifact"]
-        self.assertEqual(len(artifacts), 23)
+        self.assertEqual(len(artifacts), 24)
         by_id = {artifact["id"]: artifact for artifact in artifacts}
         self.assertEqual(
             set(by_id),
@@ -12407,6 +12407,7 @@ class X86ParityLedgerTests(unittest.TestCase):
                 "static-c-pthread-affinity",
                 "static-c-pthread-cpuclock",
                 "static-c-pthread-name",
+                "static-c-pthread-spin-destroy",
                 "static-c-pthread-barrierattr-pshared",
                 "static-c-thrd-yield",
             },
@@ -12432,6 +12433,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         affinity = by_id["static-c-pthread-affinity"]
         cpuclock = by_id["static-c-pthread-cpuclock"]
         name = by_id["static-c-pthread-name"]
+        spin_destroy = by_id["static-c-pthread-spin-destroy"]
         barrierattr_pshared = by_id["static-c-pthread-barrierattr-pshared"]
         thrd_yield = by_id["static-c-thrd-yield"]
         for artifact in artifacts:
@@ -12558,6 +12560,38 @@ class X86ParityLedgerTests(unittest.TestCase):
             "family completion, promotion, and public x86 support",
         ):
             self.assertIn(phrase, name_scope)
+        self.assertEqual(
+            spin_destroy["native_evidence"][0]["command"],
+            "./scripts/dev-x86_64.sh libc-pthread-spin-destroy",
+        )
+        for phrase in (
+            "still-planned `libc.pthread-tls`",
+            "`pthread_spin_destroy` source-closed artifact",
+            "caller-owned opaque `pthread_spinlock_t *`",
+            "returns zero without reading, writing, retaining, freeing, initializing, locking, unlocking, or otherwise observing the object",
+            "closed return-zero object",
+            "no TLS, errno, helper call, syscall, allocator, or runtime state",
+            "unchanged caller bytes",
+            "sentinel fixture is non-observation evidence only",
+            "not a spin-object initialization or lifecycle claim",
+            "`pthread_spin_init`, `pthread_spin_lock`, `pthread_spin_trylock`, or `pthread_spin_unlock`",
+            "spin object lifecycle/state, synchronization, atomics, threads, cancellation",
+            "general pthread/TLS behavior",
+            "family completion, promotion, x86-64 parity, or public x86 support",
+        ):
+            self.assertIn(phrase, spin_destroy["description"])
+        spin_destroy_scope = spin_destroy["native_evidence"][0]["scope"]
+        for phrase in (
+            "source-closed one-object musl disassembly",
+            "one extracted object never libc.a",
+            "direct and function-pointer fixed zero returns",
+            "unchanged caller bytes",
+            "sentinel is non-observation evidence, not spin initialization or a valid lifecycle",
+            "`pthread_spin_init`/lock/trylock/unlock",
+            "arbitrary spin state, general pthread runtime, synchronization",
+            "family completion, promotion, public x86 support, and x86-64 parity",
+        ):
+            self.assertIn(phrase, spin_destroy_scope)
         self.assertEqual(
             barrierattr_pshared["native_evidence"][0]["command"],
             "./scripts/dev-x86_64.sh libc-pthread-barrierattr-pshared",
@@ -14095,6 +14129,72 @@ class X86ParityLedgerTests(unittest.TestCase):
         with self.assertRaisesRegex(
             ledger.LedgerError,
             "static-c-pthread-cancel-deferred must use the closed libc-pthread-cancel-deferred command",
+        ):
+            ledger.validate_ledger(changed)
+
+    def test_pthread_spin_destroy_artifact_stays_private_and_non_promoting(
+        self,
+    ) -> None:
+        """Keep the return-zero leaf distinct from a spin-lock lifecycle."""
+
+        data = self.data()
+        family = self.family(data, "libc.pthread-tls")
+        self.assertEqual(family["status"], "planned")
+        artifacts = family["verified_artifact"]
+        artifact = next(
+            entry
+            for entry in artifacts
+            if entry["id"] == "static-c-pthread-spin-destroy"
+        )
+        self.assertNotIn("capabilities", artifact)
+        self.assertEqual(
+            artifact["native_evidence"][0]["command"],
+            "./scripts/dev-x86_64.sh libc-pthread-spin-destroy",
+        )
+        self.assertEqual(
+            {entry["kind"] for entry in artifact["oracle"]},
+            {"c-posix", "elf-abi"},
+        )
+        for owner in (
+            "libc/src/c_abi/x86_64/pthread_spin_destroy.rs",
+            "compat/x86_64/pthread_spin_destroy_header_abi_probe.c",
+            "compat/x86_64/pthread_spin_destroy_header_abi_probe.cpp",
+            "compat/x86_64/run_pthread_spin_destroy_header_abi.sh",
+            "compat/x86_64/libc_pthread_spin_destroy_probe.c",
+            "compat/x86_64/libc_pthread_spin_destroy_start.S",
+            "compat/x86_64/run_libc_pthread_spin_destroy.sh",
+            "compat/abi/musl-1.2.6/aarch64/libc.a.static.tsv",
+        ):
+            self.assertIn(owner, artifact["source_owners"])
+        for text in (
+            artifact["description"],
+            " ".join(artifact["x86_abi_prerequisites"]),
+            artifact["native_evidence"][0]["scope"],
+        ):
+            self.assertIn("pthread_spin_destroy", text)
+        self.assertIn(
+            "does not select `pthread_spin_init`, `pthread_spin_lock`, `pthread_spin_trylock`, or `pthread_spin_unlock`",
+            artifact["description"],
+        )
+        self.assertIn(
+            "sentinel fixture is non-observation evidence only",
+            artifact["description"],
+        )
+
+        changed = copy.deepcopy(data)
+        changed_artifact = next(
+            entry
+            for entry in self.family(changed, "libc.pthread-tls")[
+                "verified_artifact"
+            ]
+            if entry["id"] == "static-c-pthread-spin-destroy"
+        )
+        changed_artifact["native_evidence"][0]["command"] = (
+            "./scripts/dev-x86_64.sh core"
+        )
+        with self.assertRaisesRegex(
+            ledger.LedgerError,
+            "pthread spin-destroy must use its closed native command",
         ):
             ledger.validate_ledger(changed)
 

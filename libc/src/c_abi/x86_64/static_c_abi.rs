@@ -145,7 +145,10 @@
 //! it owns no dereferenceable TCB, worker handle, or general C clock surface.
 //! The adjacent GNU task-name pair similarly admits only that bootstrapped
 //! process-main self handle through direct Linux `prctl`; it owns neither
-//! worker names nor musl's `/proc` target-name/cancellation path. The mutex
+//! worker names nor musl's `/proc` target-name/cancellation path. One
+//! source-closed `pthread_spin_destroy` leaf
+//! returns success without dereferencing its opaque caller record and does not
+//! select spin initialization, lock state, or synchronization. The mutex
 //! block is limited to all-zero/NULL-attribute process-private normal mutexes
 //! and private futex contention. Its condition sibling retains musl's private
 //! waiter-list/barrier/requeue protocol only for all-zero/NULL-attribute
@@ -345,6 +348,8 @@ mod pthread_atfork;
 mod pthread_tsd;
 #[path = "pthread_mutex.rs"]
 mod pthread_mutex;
+#[path = "pthread_spin_destroy.rs"]
+mod pthread_spin_destroy;
 #[path = "pthread_cond.rs"]
 mod pthread_cond;
 #[path = "pthread_rwlock.rs"]
