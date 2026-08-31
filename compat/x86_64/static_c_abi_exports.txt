@@ -470,6 +470,7 @@ ldexp
 ldexpf
 ldexpl
 ldiv
+lfind
 lgamma
 lgamma_r
 lgammaf
@@ -505,6 +506,7 @@ lrintl
 lround
 lroundf
 lroundl
+lsearch
 lseek
 lsetxattr
 lstat

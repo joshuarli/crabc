@@ -1414,7 +1414,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "xattr-header-abi",
             "madvise-reference",
             "ctype-header-abi|locale-profile-header-abi|locale-multibyte-header-abi|iconv-header-abi|wide-character-header-abi|locale-object-wide-header-abi|locale-narrow-header-abi",
-            "integer-arithmetic-header-abi|integer-parse-header-abi|float-parse-header-abi|getsubopt-header-abi|intmax-arithmetic-header-abi|credential-observation-header-abi|login-name-header-abi|child-reaping-header-abi|immediate-termination-header-abi|bsearch-header-abi|qsort-header-abi|callback-algorithms-header-abi",
+            "integer-arithmetic-header-abi|integer-parse-header-abi|float-parse-header-abi|getsubopt-header-abi|intmax-arithmetic-header-abi|credential-observation-header-abi|login-name-header-abi|child-reaping-header-abi|immediate-termination-header-abi|bsearch-header-abi|linear-search-header-abi|qsort-header-abi|callback-algorithms-header-abi",
             "posix-exit-header-abi",
             "ffs-header-abi",
             "byte-strings-header-abi",
@@ -1455,7 +1455,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "libc-static-c-abi-same-object-differential|qualification-posix-abi-admission",
             "libc-interface-discovery",
             "libc-posix-exit",
-            "libc-readiness-waits|libc-system-observation|libc-system-information|libc-fcntl-record-locks|libc-flock|libc-sendfile|libc-posix-fallocate|libc-descriptor-advice|libc-filesystem-capacity|libc-uts-identity|libc-ctype|libc-locale-profile|libc-locale-multibyte|libc-locale-wide-iconv|libc-wide-character|libc-locale-object-wide|libc-locale-narrow|libc-locale-ctype-locators|libc-locale-error-strings|libc-regex|libc-integer-arithmetic|libc-integer-parse|libc-float-parse|libc-getsubopt|libc-intmax-arithmetic|libc-credential-observation|libc-secure-environment|libc-login-name|libc-child-reaping|libc-immediate-termination|libc-bsearch|libc-qsort|libc-callback-algorithms|libc-search-tree-intrusive|libc-search-hash-table|libc-gettext-catalog|libc-access|libc-clock-gettime|libc-time-observation|libc-difftime|libc-timegm|libc-gmtime-r|libc-system-configuration|libc-mapping-core|libc-header-layouts-baseline|libc-nanosleep|libc-clock-nanosleep|libc-descriptor-entry|libc-fcntl-status-control|libc-ioctl|libc-ffs|libc-byte-strings|libc-process-globals-getopt|libc-auxv-observation|libc-inet-address|libc-inet-ntoa|libc-inet-classful|libc-hstrerror|libc-numeric-netdb|libc-random-entropy|libc-memory-search|libc-string-copy|libc-error-strings|libc-strsignal|libc-descriptor-pipeline",
+            "libc-readiness-waits|libc-system-observation|libc-system-information|libc-fcntl-record-locks|libc-flock|libc-sendfile|libc-posix-fallocate|libc-descriptor-advice|libc-filesystem-capacity|libc-uts-identity|libc-ctype|libc-locale-profile|libc-locale-multibyte|libc-locale-wide-iconv|libc-wide-character|libc-locale-object-wide|libc-locale-narrow|libc-locale-ctype-locators|libc-locale-error-strings|libc-regex|libc-integer-arithmetic|libc-integer-parse|libc-float-parse|libc-getsubopt|libc-intmax-arithmetic|libc-credential-observation|libc-secure-environment|libc-login-name|libc-child-reaping|libc-immediate-termination|libc-bsearch|libc-linear-search|libc-qsort|libc-callback-algorithms|libc-search-tree-intrusive|libc-search-hash-table|libc-gettext-catalog|libc-access|libc-clock-gettime|libc-time-observation|libc-difftime|libc-timegm|libc-gmtime-r|libc-system-configuration|libc-mapping-core|libc-header-layouts-baseline|libc-nanosleep|libc-clock-nanosleep|libc-descriptor-entry|libc-fcntl-status-control|libc-ioctl|libc-ffs|libc-byte-strings|libc-process-globals-getopt|libc-auxv-observation|libc-inet-address|libc-inet-ntoa|libc-inet-classful|libc-hstrerror|libc-numeric-netdb|libc-random-entropy|libc-memory-search|libc-string-copy|libc-error-strings|libc-strsignal|libc-descriptor-pipeline",
             "libc-vector-io|libc-uio-cxx-linkage",
             "libc-sysv-semaphore|libc-posix-semaphore",
             "libc-sysv-message-shared-memory",
@@ -15246,6 +15246,141 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         )
         self.assertIn(
             '    libc-bsearch)\n        [ "$#" -eq 0 ] || fail "libc-bsearch takes no arguments"',
+            runner,
+        )
+
+    def test_libc_static_c_abi_linear_search_artifact_stays_standalone(self) -> None:
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        implementation = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "linear_search.rs"
+        ).read_text(encoding="utf-8")
+        probe = (
+            ROOT / "compat" / "x86_64" / "libc_linear_search_probe.c"
+        ).read_text(encoding="utf-8")
+        start = (
+            ROOT / "compat" / "x86_64" / "libc_linear_search_start.S"
+        ).read_text(encoding="utf-8")
+        artifact_runner = (
+            ROOT / "compat" / "x86_64" / "run_libc_linear_search.sh"
+        ).read_text(encoding="utf-8")
+        header_runner = (
+            ROOT / "compat" / "x86_64" / "run_linear_search_header_abi.sh"
+        ).read_text(encoding="utf-8")
+        header_c = (
+            ROOT / "compat" / "x86_64" / "linear_search_header_abi_probe.c"
+        ).read_text(encoding="utf-8")
+        header_cxx = (
+            ROOT / "compat" / "x86_64" / "linear_search_header_abi_probe.cpp"
+        ).read_text(encoding="utf-8")
+        static_exports = {
+            line
+            for line in (
+                ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+            ).read_text(encoding="utf-8").splitlines()
+            if line and not line.startswith("#")
+        }
+        parity_ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        runner = RUNNER.read_text(encoding="utf-8")
+
+        self.assertIn('#[path = "linear_search.rs"]', static_root)
+        for required in (
+            "Selected static Linux/x86-64 C linear-search ABI boundary",
+            "musl 1.2.6 release commit",
+            "src/search/lsearch.c::{lsearch,lfind}",
+            "first-match scan",
+            "n + 1",
+            'pub unsafe extern "C" fn lfind',
+            'pub unsafe extern "C" fn lsearch',
+        ):
+            self.assertIn(required, implementation)
+        for forbidden in (
+            "raw_syscall::",
+            "errno::",
+            "crabc_core",
+            "crabc_mimalloc",
+            "global_asm!",
+        ):
+            self.assertNotIn(forbidden, implementation)
+        for symbol in ("lfind", "lsearch"):
+            self.assertIn(symbol, static_exports)
+
+        for required in (
+            "lfind_signature",
+            "lsearch_signature",
+            "const lfind_signature function = lfind",
+            "const lsearch_signature function = lsearch",
+            "found != records + 3",
+            "comparison_calls != 3",
+            "zero_count_calls == 0",
+            "CRABC_LINEAR_SEARCH_FREESTANDING",
+        ):
+            self.assertIn(required, probe)
+        for required in (
+            "crabc_x86_64_linear_search_probe",
+            "mov $60, %eax",
+        ):
+            self.assertIn(required, start)
+        for header in (header_c, header_cxx):
+            for required in (
+                "lfind declaration",
+                "lsearch declaration",
+                "lfind_signature",
+                "lsearch_signature",
+                "lfind_function",
+                "lsearch_function",
+            ):
+                self.assertIn(required, header)
+        for required in (
+            "linear_search_header_abi_probe.c",
+            "linear_search_header_abi_probe.cpp",
+            "-D__STRICT_ANSI__",
+            "-D_POSIX_C_SOURCE=200809L",
+            "-D_XOPEN_SOURCE=700",
+            "-D_GNU_SOURCE",
+            "-D_BSD_SOURCE",
+            "nm --undefined-only",
+            "retained a mangled linear-search reference",
+        ):
+            self.assertIn(required, header_runner)
+        for required in (
+            "run_linear_search_header_abi.sh",
+            "static_c_abi_exports.txt",
+            "-nostdlib -static",
+            "-Wl,-e,_start",
+            "-Wl,--no-undefined",
+            "--disassemble=lfind",
+            "--disassemble=lsearch",
+            "linear-search candidate unexpectedly retains TLS",
+            "linear search unexpectedly performs a syscall",
+            "outside the test entry shim",
+            "bsearch __qsort_r qsort qsort_r",
+            "candidate accidentally selects ${symbol}",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn("--whole-archive", artifact_runner)
+        self.assertIn('id = "static-c-linear-search"', parity_ledger)
+        self.assertIn(
+            'command = "./scripts/dev-x86_64.sh libc-linear-search"',
+            parity_ledger,
+        )
+        self.assertIn("run_linear_search_header_abi()", runner)
+        self.assertIn(
+            "/workspace/compat/x86_64/run_linear_search_header_abi.sh", runner
+        )
+        self.assertIn("run_libc_linear_search()", runner)
+        self.assertIn(
+            "/workspace/compat/x86_64/run_libc_linear_search.sh", runner
+        )
+        self.assertIn(
+            '    linear-search-header-abi)\n        [ "$#" -eq 0 ] || fail "linear-search-header-abi takes no arguments"',
+            runner,
+        )
+        self.assertIn(
+            '    libc-linear-search)\n        [ "$#" -eq 0 ] || fail "libc-linear-search takes no arguments"',
             runner,
         )
 

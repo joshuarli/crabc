@@ -1423,6 +1423,8 @@ INET_CLASSFUL_SYMBOLS = ("inet_lnaof", "inet_makeaddr")
 GETSUBOPT_SYMBOLS = ("getsubopt",)
 BSEARCH_SYMBOLS = ("bsearch",)
 
+LINEAR_SEARCH_SYMBOLS = ("lfind", "lsearch")
+
 QSORT_SYMBOLS = ("qsort",)
 
 INET_ADDRESS_UNSELECTED_SYMBOLS = (
@@ -24249,6 +24251,323 @@ def require_bsearch_artifact(family: Mapping[str, Any]) -> None:
         require(snippet in dispatcher, f"bsearch dispatcher omits {snippet}")
 
 
+def require_linear_search_artifact(family: Mapping[str, Any]) -> None:
+    """Keep musl's paired linear-search leaf capability-free and closed."""
+
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.c-abi-compat].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [
+        entry for entry in artifacts if entry.get("id") == "static-c-linear-search"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.c-abi-compat must contain exactly one static-c-linear-search artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-linear-search must not promote libc.c-abi-compat",
+    )
+    artifact = matching[0]
+    require(
+        "capabilities" not in artifact,
+        "static-c-linear-search must remain capability-free",
+    )
+    description = artifact.get("description")
+    require(
+        isinstance(description, str), "static-c-linear-search needs a description"
+    )
+    for phrase in (
+        "`lfind`/`lsearch` compatibility artifact",
+        "still-planned `libc.c-abi-compat`",
+        "`src/search/lsearch.c`",
+        "first matching record",
+        "missed `lsearch` copy/count update",
+        "zero elements without a callback",
+        "rejects `bsearch`, `qsort`, `qsort_r`, `__qsort_r`",
+        "search-container helpers",
+        "byte-copy helpers",
+        "capability-free ABI artifact",
+        "does not select general sorting/searching or callback ownership",
+        "family completion",
+        "promotion",
+        "public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"static-c-linear-search description omits {phrase}",
+        )
+
+    owners = set(
+        nonempty_strings(
+            artifact.get("source_owners"), "static-c-linear-search.source_owners"
+        )
+    )
+    for owner in (
+        "compat/upstreams.toml",
+        "libc/Cargo.toml",
+        "libc/src/lib.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/linear_search.rs",
+        "include/features.h",
+        "include/bits/alltypes.h",
+        "include/stddef.h",
+        "include/search.h",
+        "compat/x86_64/linear_search_header_abi_probe.c",
+        "compat/x86_64/linear_search_header_abi_probe.cpp",
+        "compat/x86_64/run_linear_search_header_abi.sh",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/libc_linear_search_probe.c",
+        "compat/x86_64/libc_linear_search_start.S",
+        "compat/x86_64/run_libc_linear_search.sh",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/README.md",
+        "STATUS.md",
+        "x86-64.md",
+        "scripts/dev-x86_64.sh",
+        "scripts/check_structure.py",
+    ):
+        require(
+            owner in owners,
+            f"static-c-linear-search source owners omit {owner}",
+        )
+
+    prerequisites = nonempty_strings(
+        artifact.get("x86_abi_prerequisites"),
+        "static-c-linear-search.x86_abi_prerequisites",
+    )
+    require(
+        any(
+            "SysV AMD64" in item
+            and "rdi/rsi/rdx/rcx/r8" in item
+            and "rax" in item
+            and "eax" in item
+            and "lfind/lsearch" in item
+            for item in prerequisites
+        ),
+        "static-c-linear-search must retain its LP64 function and callback ABI",
+    )
+    require(
+        any(
+            "9fa28ece75d8a2191de7c5bb53bed224c5947417" in item
+            and "src/search/lsearch.c::{lsearch,lfind}" in item
+            and "n + 1" in item
+            and "C-defined record-array domain" in item
+            for item in prerequisites
+        ),
+        "static-c-linear-search must retain its bounded musl source closure",
+    )
+    require(
+        any(
+            "no interpreter" in item
+            and "PT_TLS" in item
+            and "bsearch" in item
+            and "qsort_r" in item
+            and "search-container" in item
+            and "one exit syscall" in item
+            for item in prerequisites
+        ),
+        "static-c-linear-search must retain its standalone static closure",
+    )
+
+    headers = nonempty_strings(
+        artifact.get("x86_header_prerequisites"),
+        "static-c-linear-search.x86_header_prerequisites",
+    )
+    require(
+        any(
+            "void *lfind(" in item
+            and "void *lsearch(" in item
+            and "<search.h>" in item
+            and "strict" in item
+            and "POSIX" in item
+            and "X/Open" in item
+            and "GNU" in item
+            and "BSD" in item
+            and "unmangled C++ linkage" in item
+            for item in headers
+        ),
+        "static-c-linear-search must retain its unconditional C/C++ header ABI",
+    )
+
+    evidence = artifact.get("native_evidence")
+    require(isinstance(evidence, list), "static-c-linear-search needs evidence")
+    require(
+        {entry.get("command") for entry in evidence if isinstance(entry, Mapping)}
+        == {"./scripts/dev-x86_64.sh libc-linear-search"},
+        "static-c-linear-search must use the closed libc-linear-search command",
+    )
+    scope = evidence[0].get("scope")
+    require(
+        isinstance(scope, str)
+        and all(
+            phrase in scope
+            for phrase in (
+                "Pinned-musl/project C11/C++ header",
+                "`-nostdlib -static` candidate",
+                "first matching record",
+                "miss copy and count increment",
+                "zero-count callback suppression",
+                "bsearch/qsort/qsort_r",
+                "family promotion",
+                "public x86 support",
+            )
+        ),
+        "static-c-linear-search evidence must retain its standalone static closure",
+    )
+
+    exports = set(
+        static_c_abi_export_names(
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        )
+    )
+    require(
+        set(LINEAR_SEARCH_SYMBOLS) <= exports,
+        "static-c-linear-search must retain its selected exports",
+    )
+    require(
+        {symbol for symbol in exports if symbol in LINEAR_SEARCH_SYMBOLS}
+        == set(LINEAR_SEARCH_SYMBOLS),
+        "static-c-linear-search must retain the complete paired export set",
+    )
+
+    static_root = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+    ).read_text(encoding="utf-8")
+    require(
+        '#[path = "linear_search.rs"]\nmod linear_search;' in static_root,
+        "x86 static C ABI must compose the standalone linear-search leaf",
+    )
+    source = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "linear_search.rs"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "pinned musl 1.2.6 release commit",
+        "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+        "src/search/lsearch.c::{lsearch,lfind}",
+        "first-match scan",
+        "n + 1",
+        'pub unsafe extern "C" fn lfind',
+        'pub unsafe extern "C" fn lsearch',
+    ):
+        require(snippet in source, f"linear-search implementation omits {snippet}")
+    exports_in_source = set(
+        re.findall(
+            r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(',
+            source,
+        )
+    )
+    require(
+        exports_in_source == set(LINEAR_SEARCH_SYMBOLS),
+        "linear-search implementation must expose lfind and lsearch only",
+    )
+    for forbidden in (
+        "raw_syscall::",
+        "errno::",
+        "crabc_core",
+        "crabc_mimalloc",
+        "global_asm!",
+    ):
+        require(
+            forbidden not in source,
+            f"linear-search leaf widens into {forbidden}",
+        )
+
+    runner = (
+        ROOT / "compat" / "x86_64" / "run_libc_linear_search.sh"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "run_musl_oracle.sh",
+        "run_linear_search_header_abi.sh",
+        "static_c_abi_exports.txt",
+        "-nostdlib -static",
+        "--no-undefined",
+        "archive does not define ${symbol}",
+        "--disassemble=lfind",
+        "--disassemble=lsearch",
+        "linear-search candidate unexpectedly retains TLS",
+        "linear search unexpectedly performs a syscall",
+        "outside the test entry shim",
+        "bsearch __qsort_r qsort qsort_r",
+        "candidate accidentally selects ${symbol}",
+    ):
+        require(snippet in runner, f"linear-search runner omits {snippet}")
+    require(
+        "--whole-archive" not in runner,
+        "linear-search runner must preserve archive-member extraction",
+    )
+
+    probe = (
+        ROOT / "compat" / "x86_64" / "libc_linear_search_probe.c"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "lfind_signature",
+        "lsearch_signature",
+        "const lfind_signature function = lfind",
+        "const lsearch_signature function = lsearch",
+        "found != records + 3",
+        "comparison_calls != 3",
+        "zero_count_calls == 0",
+        "CRABC_LINEAR_SEARCH_FREESTANDING",
+    ):
+        require(snippet in probe, f"linear-search probe omits {snippet}")
+
+    header_c = (
+        ROOT / "compat" / "x86_64" / "linear_search_header_abi_probe.c"
+    ).read_text(encoding="utf-8")
+    header_cxx = (
+        ROOT / "compat" / "x86_64" / "linear_search_header_abi_probe.cpp"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "lfind declaration",
+        "lsearch declaration",
+        "lfind_signature",
+        "lsearch_signature",
+        "lfind_function",
+        "lsearch_function",
+    ):
+        require(snippet in header_c, f"linear-search C header probe omits {snippet}")
+        require(
+            snippet in header_cxx,
+            f"linear-search C++ header probe omits {snippet}",
+        )
+
+    header_runner = (
+        ROOT / "compat" / "x86_64" / "run_linear_search_header_abi.sh"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "linear_search_header_abi_probe.c",
+        "linear_search_header_abi_probe.cpp",
+        "Pinned musl 1.2.6",
+        "-D__STRICT_ANSI__",
+        "-D_POSIX_C_SOURCE=200809L",
+        "-D_XOPEN_SOURCE=700",
+        "-D_GNU_SOURCE",
+        "-D_BSD_SOURCE",
+        "retained a mangled linear-search reference",
+    ):
+        require(
+            snippet in header_runner,
+            f"linear-search header runner omits {snippet}",
+        )
+
+    dispatcher = (ROOT / "scripts" / "dev-x86_64.sh").read_text(encoding="utf-8")
+    for snippet in (
+        "linear-search-header-abi)",
+        "run_linear_search_header_abi",
+        "libc-linear-search)",
+        "run_libc_linear_search",
+    ):
+        require(
+            snippet in dispatcher,
+            f"linear-search dispatcher omits {snippet}",
+        )
+
+
 def require_gethostid_artifact(family: Mapping[str, Any]) -> None:
     """Keep musl's constant historical host-ID spelling below promotion."""
 
@@ -37148,6 +37467,7 @@ def validate_ledger(
     require_gethostid_artifact(by_id["libc.c-abi-compat"])
     require_qsort_artifact(by_id["libc.c-abi-compat"])
     require_bsearch_artifact(by_id["libc.c-abi-compat"])
+    require_linear_search_artifact(by_id["libc.c-abi-compat"])
     require_auxv_observation_artifact(by_id["libc.c-abi-compat"])
     require_process_globals_getopt_artifact(by_id["libc.c-abi-compat"])
     require_search_tree_intrusive_slice(by_id["libc.c-abi-compat"])

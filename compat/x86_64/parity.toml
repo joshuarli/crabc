@@ -9367,6 +9367,46 @@ native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc
 oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source, unconditional stdlib declaration, and executable behavior oracle for src/stdlib/bsearch.c::bsearch: midpoint selection, signed comparator branches, found pointer, miss, and zero-count behavior." }, { kind = "elf-abi", source = "System V AMD64 psABI", role = "LP64 five-argument function/callback register convention, pointer/int result ABI, C++ C linkage, and true-static ET_EXEC closure." }]
 
 [[family.verified_artifact]]
+id = "static-c-linear-search"
+description = "Private native x86 selected-static-archive `lfind`/`lsearch` compatibility artifact inside still-planned `libc.c-abi-compat`. One dependency-free `crabc-libc` archive resolves exactly the paired linear lookup/append entries into a freestanding C fixture after an equivalent pinned-musl execution. Musl's complete `src/search/lsearch.c` leaf retains its forward first matching record scan over valid caller-owned records: direct and function-pointer calls cover lfind's first duplicate/miss result without count mutation, an existing lsearch hit, a missed `lsearch` copy/count update at the caller-owned spare record, a non-int record width, and zero elements without a callback. The final candidate rejects `bsearch`, `qsort`, `qsort_r`, `__qsort_r`, search-container helpers, byte-copy helpers, TLS/errno, allocation, locale, locks, syscalls, and runtime state. This capability-free ABI artifact does not select general sorting/searching or callback ownership, C longjmp/C++ exception transport, libc.so, CRT, loader, sysroot, family completion, promotion, or public x86 support."
+source_owners = [
+  "compat/upstreams.toml",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/linear_search.rs",
+  "include/features.h",
+  "include/bits/alltypes.h",
+  "include/stddef.h",
+  "include/search.h",
+  "compat/x86_64/linear_search_header_abi_probe.c",
+  "compat/x86_64/linear_search_header_abi_probe.cpp",
+  "compat/x86_64/run_linear_search_header_abi.sh",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/libc_linear_search_probe.c",
+  "compat/x86_64/libc_linear_search_start.S",
+  "compat/x86_64/run_libc_linear_search.sh",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "compat/x86_64/README.md",
+  "STATUS.md",
+  "x86-64.md",
+  "scripts/dev-x86_64.sh",
+  "scripts/check_structure.py",
+]
+x86_abi_prerequisites = [
+  "The SysV AMD64 LP64 C ABI passes lfind/lsearch(key, base, nelp, width, cmp) in rdi/rsi/rdx/rcx/r8, returns the found or appended mutable record pointer (or NULL) in rax, and invokes cmp(key, record) with two pointers in rdi/rsi and a signed four-byte int result in eax.",
+  "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417 maps src/search/lsearch.c::{lsearch,lfind} directly to the paired forward loops. On the C-defined record-array domain, lfind keeps *nelp unchanged and a missed lsearch writes n + 1 before copying width bytes to record n; lsearch's source memcpy requires a distinct destination range.",
+  "The final `-nostdlib -static` candidate has no interpreter, DT_NEEDED, unresolved symbol, PT_TLS, errno path, allocation, locale, byte-copy helper, or ambient runtime dependency. It exposes lfind/lsearch while rejecting bsearch, qsort_r, and search-container helpers; apart from the test entry's one exit syscall, its linear-search closure has no syscall boundary.",
+]
+x86_header_prerequisites = [
+  "The focused pinned-musl/project-first C11/C++17 `<search.h>` matrix proves unconditional `void *lfind(const void *, const void *, size_t *, size_t, int (*)(const void *, const void *))` and `void *lsearch(const void *, void *, size_t *, size_t, int (*)(const void *, const void *))` under strict, POSIX, X/Open, GNU, and BSD profiles, with exact function-pointer types and unmangled C++ linkage. It selects no tree/hash declaration, general search lifecycle, archive linkage, installed-header completion, or public x86 support.",
+]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-linear-search", scope = "Pinned-musl/project C11/C++ header compilation plus equivalent pinned-musl C execution and one true dependency-free x86 crabc-libc `-nostdlib -static` candidate. The fixture proves the SysV callback ABI through direct and function-pointer calls; lfind's first matching record and miss without count mutation; lsearch's existing hit; a non-int stride miss copy and count increment; and zero-count callback suppression. It audits exact crate-owned export closure, no interpreter/DT_NEEDED/unresolved symbol/PT_TLS/errno/allocation/locale/panic path, no byte-copy helper, and no linear-search syscall beyond the fixture entry. It rejects bsearch/qsort/qsort_r plus search-container extraction. It does not select general sorting/searching or callback ownership, libc.so, CRT, loader, sysroot, family promotion, or public x86 support." }]
+oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source, unconditional search.h declaration, and executable behavior oracle for src/search/lsearch.c::{lsearch,lfind}: forward first-match lookup, unchanged count for lfind and existing lsearch hits, missed append/copy/count order, and zero-count callback suppression." }, { kind = "elf-abi", source = "System V AMD64 psABI", role = "LP64 five-argument function/two-pointer callback register convention, mutable pointer/int result ABI, C++ C linkage, and true-static ET_EXEC closure." }]
+
+[[family.verified_artifact]]
 id = "static-c-qsort"
 description = "Private native x86 selected-static-archive `qsort` compatibility artifact inside still-planned `libc.c-abi-compat`. One dependency-free `crabc-libc` archive resolves exactly `qsort` and its non-exported smoothsort worker into a freestanding C fixture after an equivalent pinned-musl execution. Musl's complete `src/stdlib/qsort.c` smoothsort and `src/stdlib/qsort_nr.c` two-argument comparator adapter retain their O(1) 256-byte cycling buffer, unsigned Leonardo state, and unstable equal-key behavior for valid caller-owned records: direct and function-pointer calls cover signed integer ordering, duplicate keys, record permutation, a 308-byte record width, and zero elements without a callback. The target-local private worker preserves the existing `__qsort_r`/weak `qsort_r` context-ABI behavior without extracting either symbol into this candidate. The checked multiplication guard applies only outside the valid C array domain, where musl's source multiplication/pointer expression is already undefined. The final candidate rejects `bsearch`, `__qsort_r`, `qsort_r`, search-container helpers, TLS/errno, allocation, locale, locks, syscalls, and runtime state. This capability-free ABI artifact does not select general sorting/searching or callback ownership, alter qsort_r behavior, or select libc.so, CRT, loader, sysroot, family completion, promotion, or public x86 support."
 source_owners = [

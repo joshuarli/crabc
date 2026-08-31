@@ -213,6 +213,20 @@ syscall, or mutable runtime state. It does not change qsort/qsort_r behavior,
 select general sorting/searching or callback ownership, family completion,
 promotion, or public x86 support.
 
+`./scripts/dev-x86_64.sh libc-linear-search` is a separate private
+`static-c-linear-search` artifact inside still-planned `libc.c-abi-compat`.
+Its pinned-musl/project C/C++ `<search.h>` matrix proves unconditional exact
+five-argument `lfind` and `lsearch` declarations from strict through BSD
+selection and unmangled C++ linkage. Equivalent pinned-musl and
+freestanding-static routes then prove direct/function-pointer callbacks,
+first-match duplicate and miss lookup without count mutation, an existing
+`lsearch` hit, a non-int-stride miss copy/count increment, and zero-count
+callback suppression. The selected candidate contains only `lfind`/`lsearch`
+from this boundary without bsearch/qsort/qsort_r, search containers, byte-copy
+helpers, TLS/errno, allocation, locale, syscall, or mutable runtime state. It
+does not select general sorting/searching or callback ownership, family
+completion, promotion, or public x86 support.
+
 `./scripts/dev-x86_64.sh libc-qsort` is a separate private `static-c-qsort`
 artifact inside still-planned `libc.c-abi-compat`. Its pinned-musl/project
 C/C++ `<stdlib.h>` matrix proves the unconditional four-argument declaration

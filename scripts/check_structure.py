@@ -168,6 +168,7 @@ X86_RUNTIME_FOUNDATION_LIBC_SOURCES = {
     Path("libc/src/c_abi/x86_64/immediate_termination.rs"),
     Path("libc/src/c_abi/x86_64/posix_exit.rs"),
     Path("libc/src/c_abi/x86_64/bsearch.rs"),
+    Path("libc/src/c_abi/x86_64/linear_search.rs"),
     Path("libc/src/c_abi/x86_64/qsort.rs"),
     Path("libc/src/c_abi/x86_64/callback_algorithms.rs"),
     Path("libc/src/c_abi/x86_64/search_tree_intrusive.rs"),
@@ -3764,6 +3765,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         '#[path = "immediate_termination.rs"]',
         '#[path = "posix_exit.rs"]',
         '#[path = "bsearch.rs"]',
+        '#[path = "linear_search.rs"]',
         '#[path = "qsort.rs"]',
         '#[path = "callback_algorithms.rs"]',
         '#[path = "search_tree_intrusive.rs"]',
@@ -7192,6 +7194,43 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
                 f"boundary widens into {forbidden!r}"
             )
 
+    linear_search_source = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "linear_search.rs"
+    )
+    linear_search_text = linear_search_source.read_text(errors="replace")
+    for required in (
+        "Selected static Linux/x86-64 C linear-search ABI boundary",
+        "pinned musl 1.2.6 release commit",
+        "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+        "src/search/lsearch.c::{lsearch,lfind}",
+        "first-match scan",
+        "n + 1",
+        'pub unsafe extern "C" fn lfind',
+        'pub unsafe extern "C" fn lsearch',
+    ):
+        if required not in linear_search_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/linear_search.rs: selected static "
+                f"linear-search boundary is missing {required!r}"
+            )
+    linear_search_exports = set(
+        re.findall(
+            r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(',
+            linear_search_text,
+        )
+    )
+    if linear_search_exports != {"lfind", "lsearch"}:
+        errors.append(
+            "libc/src/c_abi/x86_64/linear_search.rs: selected static artifact "
+            "must export lfind and lsearch only as Rust entries"
+        )
+    for forbidden in ("raw_syscall::", "errno::", "crabc_core", "crabc_mimalloc", "global_asm!"):
+        if forbidden in linear_search_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/linear_search.rs: selected static "
+                f"linear-search boundary widens into {forbidden!r}"
+            )
+
     qsort_source = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "qsort.rs"
     qsort_text = qsort_source.read_text(errors="replace")
     for required in (
@@ -9856,6 +9895,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         immediate_termination_text,
         posix_exit_text,
         bsearch_text,
+        linear_search_text,
         qsort_text,
         callback_algorithms_text,
         search_tree_text,
@@ -10356,6 +10396,8 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         "program_invocation_name",
         "program_invocation_short_name",
         "bsearch",
+        "lfind",
+        "lsearch",
         "__qsort_r",
         "qsort",
         "qsort_r",
@@ -10395,7 +10437,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
             "selected numeric-address codecs and legacy classful IPv4 arithmetic, fixed-profile h_errno message text, byte-string, legacy-memory adapters, source-backed memccpy/mempcpy, caller-buffer strsep, random-entropy, memory-search, C-string-copy, immutable error-string, "
             "fixed-C-locale ctype, integer-arithmetic, integer-parsing, intmax-arithmetic, credential-observation, and "
             "raw auxiliary-vector observation, startup-derived secure-environment, and environment-backed login-name observation, find-first-set, startup-published program names, short/GNU-long "
-            "getopt state and aliases, callback-tree/hash-table search, and the "
+            "getopt state and aliases, standalone linear search, callback-tree/hash-table search, and the "
             "bounded no-catalog gettext/message-catalog ABI, "
             "and abort-personality surfaces"
         )
@@ -10448,6 +10490,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         ("immediate_termination.rs", immediate_termination_text),
         ("posix_exit.rs", posix_exit_text),
         ("bsearch.rs", bsearch_text),
+        ("linear_search.rs", linear_search_text),
         ("qsort.rs", qsort_text),
         ("callback_algorithms.rs", callback_algorithms_text),
         ("search_tree_intrusive.rs", search_tree_text),

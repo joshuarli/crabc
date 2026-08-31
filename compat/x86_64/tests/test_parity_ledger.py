@@ -50,7 +50,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 41)
-        self.assertEqual(report["verified_artifact_count"], 184)
+        self.assertEqual(report["verified_artifact_count"], 185)
         self.assertEqual(report["header_layout_probe_count"], 46)
         self.assertEqual(report["public_header_inventory_count"], 183)
         self.assertEqual(report["header_foundation_header_count"], 191)
@@ -18276,6 +18276,66 @@ class X86ParityLedgerTests(unittest.TestCase):
         with self.assertRaisesRegex(
             ledger.LedgerError,
             "static-c-bsearch evidence must retain its standalone static closure",
+        ):
+            ledger.validate_ledger(data)
+
+    def test_linear_search_artifact_keeps_lfind_and_lsearch_atomic(self) -> None:
+        data = self.data()
+        family = self.family(data, "libc.c-abi-compat")
+        self.assertEqual(family["status"], "planned")
+        artifacts = family["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict)
+            and entry["id"] == "static-c-linear-search"
+        )
+
+        self.assertNotIn("capabilities", artifact)
+        self.assertIn("`lfind`", artifact["description"])
+        self.assertIn("`lsearch`", artifact["description"])
+        self.assertIn("public x86 support", artifact["description"])
+
+        owners = artifact["source_owners"]
+        assert isinstance(owners, list)
+        for owner in (
+            "libc/src/c_abi/x86_64/linear_search.rs",
+            "include/search.h",
+            "compat/x86_64/linear_search_header_abi_probe.c",
+            "compat/x86_64/linear_search_header_abi_probe.cpp",
+            "compat/x86_64/run_linear_search_header_abi.sh",
+            "compat/x86_64/libc_linear_search_probe.c",
+            "compat/x86_64/libc_linear_search_start.S",
+            "compat/x86_64/run_libc_linear_search.sh",
+            "compat/x86_64/static_c_abi_exports.txt",
+        ):
+            self.assertIn(owner, owners)
+
+        evidence = artifact["native_evidence"]
+        assert isinstance(evidence, list) and isinstance(evidence[0], dict)
+        self.assertEqual(
+            evidence[0]["command"],
+            "./scripts/dev-x86_64.sh libc-linear-search",
+        )
+        for phrase in (
+            "Pinned-musl/project C11/C++ header",
+            "`-nostdlib -static` candidate",
+            "first matching record",
+            "miss copy and count increment",
+            "zero-count callback suppression",
+            "bsearch/qsort/qsort_r",
+            "family promotion",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, evidence[0]["scope"])
+
+        evidence[0]["scope"] = evidence[0]["scope"].replace(
+            "miss copy and count increment", "record insertion"
+        )
+        with self.assertRaisesRegex(
+            ledger.LedgerError,
+            "static-c-linear-search evidence must retain its standalone static closure",
         ):
             ledger.validate_ledger(data)
 
