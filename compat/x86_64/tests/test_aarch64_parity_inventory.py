@@ -69,6 +69,14 @@ class AArch64ParityInventoryTests(unittest.TestCase):
             row for row in report["families"] if row["id"] == "libc.posix-runtime"
         )
         self.assertEqual(posix_runtime["verified_artifact_count"], 102)
+        c_abi_compat = next(
+            row for row in report["families"] if row["id"] == "libc.c-abi-compat"
+        )
+        self.assertEqual(c_abi_compat["verified_artifact_count"], 10)
+        self.assertIn(
+            {"family": "libc.c-abi-compat", "id": "static-c-basename"},
+            report["selected_private_artifacts"],
+        )
         self.assertIn(
             {"family": "libc.posix-runtime", "id": "static-c-munlockall"},
             report["selected_private_artifacts"],

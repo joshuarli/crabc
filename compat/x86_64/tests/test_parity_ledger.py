@@ -20968,6 +20968,120 @@ class X86ParityLedgerTests(unittest.TestCase):
         ):
             ledger.validate_ledger(data)
 
+    def test_basename_artifact_stays_private_and_non_promoting(self) -> None:
+        data = self.data()
+        family = self.family(data, "libc.c-abi-compat")
+        self.assertEqual(family["status"], "planned")
+        artifacts = family["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-basename"
+        )
+        self.assertNotIn("capabilities", artifact)
+        for phrase in (
+            "`basename`",
+            "`__xpg_basename`",
+            "still-planned `libc.c-abi-compat`",
+            "sibling `dirname`",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, artifact["description"])
+
+        owners = artifact["source_owners"]
+        assert isinstance(owners, list)
+        for owner in (
+            "libc/src/c_abi/x86_64/basename.rs",
+            "include/libgen.h",
+            "compat/x86_64/basename_header_abi_probe.c",
+            "compat/x86_64/basename_header_abi_probe.cpp",
+            "compat/x86_64/run_basename_header_abi.sh",
+            "compat/x86_64/libc_basename_probe.c",
+            "compat/x86_64/libc_basename_start.S",
+            "compat/x86_64/run_libc_basename.sh",
+            "compat/x86_64/static_c_abi_exports.txt",
+        ):
+            self.assertIn(owner, owners)
+
+        prerequisites = artifact["x86_abi_prerequisites"]
+        assert isinstance(prerequisites, list)
+        self.assertTrue(
+            any(
+                "SysV AMD64" in item
+                and "mutable `char *` in rdi" in item
+                and "`char *` in rax" in item
+                for item in prerequisites
+            )
+        )
+        self.assertTrue(
+            any(
+                "src/misc/basename.c" in item
+                and "basename.lo" in item
+                and "weak_alias(basename, __xpg_basename)" in item
+                and "black_box" in item
+                for item in prerequisites
+            )
+        )
+
+        evidence = artifact["native_evidence"]
+        assert isinstance(evidence, list) and isinstance(evidence[0], dict)
+        self.assertEqual(
+            evidence[0]["command"],
+            "./scripts/dev-x86_64.sh libc-basename",
+        )
+        for phrase in (
+            "Pinned-musl project-header C execution",
+            "one-member `-nostdlib -static` candidate",
+            "repeated and trailing slash mutation",
+            "weak same-address __xpg_basename",
+            "no interpreter/DT_NEEDED/unresolved symbol/PLT/PT_TLS/errno",
+            "dirname",
+            "family completion, promotion, or public x86 support",
+        ):
+            self.assertIn(phrase, evidence[0]["scope"])
+
+        changed = copy.deepcopy(data)
+        changed_family = self.family(changed, "libc.c-abi-compat")
+        changed_family["status"] = "foundation-verified"
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "static-c-basename must not promote"
+        ):
+            ledger.require_basename_artifact(changed_family)
+
+        changed = copy.deepcopy(data)
+        changed_artifacts = self.family(changed, "libc.c-abi-compat")[
+            "verified_artifact"
+        ]
+        assert isinstance(changed_artifacts, list)
+        changed_artifact = next(
+            entry for entry in changed_artifacts if entry["id"] == "static-c-basename"
+        )
+        assert isinstance(changed_artifact, dict)
+        changed_artifact["description"] = changed_artifact["description"].replace(
+            "weak same-address `__xpg_basename`",
+            "weak different-address `__xpg_basename`",
+        )
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "static-c-basename description omits"
+        ):
+            ledger.validate_ledger(changed)
+
+        changed = copy.deepcopy(data)
+        changed_artifacts = self.family(changed, "libc.c-abi-compat")[
+            "verified_artifact"
+        ]
+        assert isinstance(changed_artifacts, list)
+        changed_artifact = next(
+            entry for entry in changed_artifacts if entry["id"] == "static-c-basename"
+        )
+        assert isinstance(changed_artifact, dict)
+        changed_artifact["native_evidence"][0]["command"] = (
+            "./scripts/dev-x86_64.sh libc-basename-broad"
+        )
+        with self.assertRaisesRegex(ledger.LedgerError, "closed libc-basename command"):
+            ledger.validate_ledger(changed)
+
     def test_gethostid_artifact_stays_private_and_non_promoting(self) -> None:
         data = self.data()
         family = self.family(data, "libc.c-abi-compat")

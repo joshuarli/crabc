@@ -1436,7 +1436,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "memory-search-header-abi",
             "memccpy-header-abi",
             "mempcpy-header-abi",
-            "strsep-header-abi",
+            "strsep-header-abi|basename-header-abi",
             "string-copy-header-abi",
             "error-strings-header-abi|strsignal-header-abi|gettext-catalog-header-abi",
             "string-duplication-header-abi",
@@ -1462,7 +1462,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "libc-legacy-memory",
             "libc-memccpy",
             "libc-mempcpy",
-            "libc-strsep",
+            "libc-strsep|libc-basename",
             "libc-allocator-runtime",
             "libc-allocator-string-duplication",
             "libc-allocator-observability",
@@ -13695,6 +13695,134 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         )
         self.assertIn("strsep-header-abi", runner)
         self.assertIn("libc-strsep", runner)
+
+    def test_libc_static_c_abi_basename_artifact_stays_mutable_and_closed(
+        self,
+    ) -> None:
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        implementation = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "basename.rs"
+        ).read_text(encoding="utf-8")
+        header_c_probe = (
+            ROOT / "compat" / "x86_64" / "basename_header_abi_probe.c"
+        ).read_text(encoding="utf-8")
+        header_cxx_probe = (
+            ROOT / "compat" / "x86_64" / "basename_header_abi_probe.cpp"
+        ).read_text(encoding="utf-8")
+        header_runner = (
+            ROOT / "compat" / "x86_64" / "run_basename_header_abi.sh"
+        ).read_text(encoding="utf-8")
+        fixture = (
+            ROOT / "compat" / "x86_64" / "libc_basename_probe.c"
+        ).read_text(encoding="utf-8")
+        start = (
+            ROOT / "compat" / "x86_64" / "libc_basename_start.S"
+        ).read_text(encoding="utf-8")
+        artifact_runner = (
+            ROOT / "compat" / "x86_64" / "run_libc_basename.sh"
+        ).read_text(encoding="utf-8")
+        static_exports = (
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        ).read_text(encoding="utf-8")
+        static_export_names = {
+            line for line in static_exports.splitlines()
+            if line and not line.startswith("#")
+        }
+        parity_ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        structure_guard = (ROOT / "scripts" / "check_structure.py").read_text(
+            encoding="utf-8"
+        )
+        runner = RUNNER.read_text(encoding="utf-8")
+
+        self.assertIn('#[path = "basename.rs"]\nmod basename;', static_root)
+        for required in (
+            "src/misc/basename.c",
+            "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+            "weak_alias(basename, __xpg_basename)",
+            ".weak __xpg_basename",
+            ".set __xpg_basename, basename",
+            "strlen",
+            "black_box",
+            "static_dot",
+            "path.add(index).write(0)",
+            'pub unsafe extern "C" fn basename',
+            "pathname lookup",
+            "dirname",
+        ):
+            self.assertIn(required, implementation)
+        for forbidden in (
+            "static mut",
+            "errno::",
+            "raw_syscall",
+            "crabc_core",
+            "crabc_mimalloc",
+            "byte_strings::",
+            'pub unsafe extern "C" fn dirname',
+        ):
+            self.assertNotIn(forbidden, implementation)
+
+        for header_probe in (header_c_probe, header_cxx_probe):
+            for required in ("basename", "char *", "CRABC_EXPECT_BASENAME"):
+                self.assertIn(required, header_probe)
+        for required in (
+            "CANDIDATE_CC=/usr/bin/gcc",
+            "-nostdinc",
+            "-nostdinc++",
+            "compile_profile strict",
+            "compile_profile posix",
+            "compile_profile xopen",
+            "compile_profile gnu",
+            "compile_profile bsd",
+            "retain C linkage",
+            "escaped its declared roots",
+        ):
+            self.assertIn(required, header_runner)
+        for required in (
+            "check_case",
+            "check_null",
+            "check_trailing_slash_bytes",
+            "check_all_slash_bytes",
+            "check_weak_alias",
+            "__xpg_basename",
+            "CRABC_BASENAME_FREESTANDING",
+        ):
+            self.assertIn(required, fixture)
+        self.assertIn("crabc_x86_64_basename_probe", start)
+        self.assertIn("mov $60, %eax", start)
+        for required in (
+            "basename.lo",
+            "__xpg_basename",
+            "strlen",
+            "run_basename_header_abi.sh",
+            "-nostdlib -static",
+            "--no-undefined",
+            "basename object unexpectedly retains mutable static storage",
+            "call|syscall",
+            "dirname strlen",
+            "ambient libc runtime",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn("--whole-archive", artifact_runner)
+        self.assertTrue({"basename", "__xpg_basename"} <= static_export_names)
+        for required in (
+            'Path("libc/src/c_abi/x86_64/basename.rs")',
+            '#[path = "basename.rs"]',
+            "basename_exports != {\"basename\"}",
+            "__xpg_basename",
+        ):
+            self.assertIn(required, structure_guard)
+        self.assertIn('id = "static-c-basename"', parity_ledger)
+        self.assertIn(
+            'command = "./scripts/dev-x86_64.sh libc-basename"', parity_ledger
+        )
+        self.assertIn("basename-header-abi", runner)
+        self.assertIn("libc-basename", runner)
+        self.assertIn("run_basename_header_abi()", runner)
+        self.assertIn("run_libc_basename()", runner)
 
     def test_libc_static_c_abi_memory_search_artifact_stays_narrow(self) -> None:
         static_root = (

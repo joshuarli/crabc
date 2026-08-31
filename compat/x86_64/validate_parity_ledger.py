@@ -1071,6 +1071,7 @@ STRING_COPY_SYMBOLS = (
 )
 
 ERROR_STRING_SYMBOLS = ("strerror", "strerror_r", "__xpg_strerror_r")
+BASENAME_SYMBOLS = ("basename", "__xpg_basename")
 STRING_DUPLICATION_SYMBOLS = ("strdup", "strndup")
 
 STRSIGNAL_SYMBOLS = ("strsignal",)
@@ -12632,6 +12633,261 @@ def require_error_strings_artifact(family: Mapping[str, Any]) -> None:
             phrase in scope,
             f"static-c-error-strings evidence scope omits {phrase}",
         )
+
+
+def require_basename_artifact(family: Mapping[str, Any]) -> None:
+    """Keep musl's mutable basename leaf and weak alias archive-closed."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.c-abi-compat].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [entry for entry in artifacts if entry.get("id") == "static-c-basename"]
+    require(
+        len(matching) == 1,
+        "libc.c-abi-compat must contain exactly one static-c-basename artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-basename must not promote libc.c-abi-compat",
+    )
+    artifact = matching[0]
+    require(
+        "capabilities" not in artifact,
+        "static-c-basename must not alter C-ABI capability accounting",
+    )
+
+    description = artifact.get("description")
+    require(isinstance(description, str), "static-c-basename needs a description")
+    for phrase in (
+        "Private native x86 selected-static-archive `basename` artifact",
+        "still-planned `libc.c-abi-compat`",
+        "direct Rust archive member",
+        "true one-member `-nostdlib -static` candidate",
+        "null or empty input returns immutable `.`",
+        "weak same-address `__xpg_basename`",
+        "every trailing slash after byte zero becomes NUL",
+        "`src/misc/basename.c` invokes `strlen` from `basename.lo`",
+        "`black_box`",
+        "strict, POSIX.1-2008, X/Open 700, GNU, and BSD C/C++ profiles",
+        "unmangled `char *(char *)`",
+        "no errno, TLS, locale, allocator, syscall, path lookup, normalization, static mutable buffer",
+        "sibling `dirname`",
+        "family completion, promotion, or public x86 support",
+    ):
+        require(phrase in description, f"static-c-basename description omits {phrase}")
+
+    owners = set(
+        nonempty_strings(artifact.get("source_owners"), "static-c-basename.source_owners")
+    )
+    for owner in (
+        "compat/upstreams.toml",
+        "compat/crabc-rs/coverage.toml",
+        "libc/Cargo.toml",
+        "libc/src/lib.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/basename.rs",
+        "include/libgen.h",
+        "compat/abi/musl-1.2.6/aarch64/libc.a.static.tsv",
+        "compat/x86_64/basename_header_abi_probe.c",
+        "compat/x86_64/basename_header_abi_probe.cpp",
+        "compat/x86_64/run_basename_header_abi.sh",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/libc_basename_probe.c",
+        "compat/x86_64/libc_basename_start.S",
+        "compat/x86_64/run_libc_basename.sh",
+        "compat/x86_64/aarch64_parity_inventory.py",
+        "compat/x86_64/aarch64_parity_inventory.json",
+        "compat/x86_64/tests/test_aarch64_parity_inventory.py",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/README.md",
+        "STATUS.md",
+        "x86-64.md",
+        "scripts/dev-x86_64.sh",
+        "scripts/check_structure.py",
+    ):
+        require(owner in owners, f"static-c-basename source owners omit {owner}")
+
+    prerequisites = nonempty_strings(
+        artifact.get("x86_abi_prerequisites"), "static-c-basename.x86_abi_prerequisites"
+    )
+    require(
+        any(
+            "SysV AMD64 LP64" in item
+            and "mutable `char *` in rdi" in item
+            and "`char *` in rax" in item
+            and "immutable process-static `.`" in item
+            and "writable NUL-terminated" in item
+            for item in prerequisites
+        ),
+        "static-c-basename must record its exact x86 C ABI and caller ownership",
+    )
+    require(
+        any(
+            "9fa28ece75d8a2191de7c5bb53bed224c5947417" in item
+            and "src/misc/basename.c::basename" in item
+            and "basename.lo" in item
+            and "basename.rs::basename" in item
+            and "strlen" in item
+            and "black_box" in item
+            and "s[i] = 0" in item
+            and "weak_alias(basename, __xpg_basename)" in item
+            for item in prerequisites
+        ),
+        "static-c-basename must retain its pinned-musl source, alias, and local scan mapping",
+    )
+    require(
+        any(
+            "no errno/TLS/locale/environment/process state" in item
+            and "allocator, stdio, syscall, or runtime edge" in item
+            and "dirname" in item
+            and "pathname lookup" in item
+            for item in prerequisites
+        ),
+        "static-c-basename must retain its state-free and path-scope boundary",
+    )
+
+    headers = nonempty_strings(
+        artifact.get("x86_header_prerequisites"), "static-c-basename.x86_header_prerequisites"
+    )
+    require(
+        any(
+            "<libgen.h>" in item
+            and "strict, POSIX.1-2008, X/Open 700, GNU, and BSD" in item
+            and "char *(char *)" in item
+            and "unmangled C++ linkage" in item
+            and "-nostdinc" in item
+            and "project `libgen.h`" in item
+            for item in headers
+        ),
+        "static-c-basename must retain its installed-header ABI boundary",
+    )
+
+    exports = set(
+        static_c_abi_export_names(
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        )
+    )
+    require(
+        set(BASENAME_SYMBOLS) <= exports,
+        "static-c-basename must retain basename and __xpg_basename exports",
+    )
+
+    static_root = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+    ).read_text(encoding="utf-8")
+    require(
+        '#[path = "basename.rs"]\nmod basename;' in static_root,
+        "x86 static C ABI must compose the basename leaf",
+    )
+    implementation = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "basename.rs"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "musl 1.2.6",
+        "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+        "src/misc/basename.c",
+        "weak_alias(basename, __xpg_basename)",
+        ".weak __xpg_basename",
+        ".set __xpg_basename, basename",
+        "strlen",
+        "black_box",
+        "static_dot",
+        "path.add(index).write(0)",
+        'pub unsafe extern "C" fn basename',
+        "pathname lookup",
+        "dirname",
+    ):
+        require(snippet in implementation, f"basename leaf omits {snippet}")
+    for forbidden in (
+        "static mut",
+        "errno::",
+        "raw_syscall",
+        "getenv",
+        "setenv",
+        "crabc_core",
+        "crabc_mimalloc",
+        "byte_strings::",
+        'pub unsafe extern "C" fn dirname',
+    ):
+        require(
+            forbidden not in implementation,
+            f"basename leaf widens into {forbidden}",
+        )
+
+    header_runner = (
+        ROOT / "compat" / "x86_64" / "run_basename_header_abi.sh"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "CANDIDATE_CC=/usr/bin/gcc",
+        "-nostdinc",
+        "-nostdinc++",
+        "CRABC_EXPECT_BASENAME",
+        "compile_profile strict",
+        "compile_profile posix",
+        "compile_profile xopen",
+        "compile_profile gnu",
+        "compile_profile bsd",
+        "retain C linkage",
+        "escaped its declared roots",
+    ):
+        require(snippet in header_runner, f"basename header runner omits {snippet}")
+    for probe_name in ("basename_header_abi_probe.c", "basename_header_abi_probe.cpp"):
+        probe = (ROOT / "compat" / "x86_64" / probe_name).read_text(encoding="utf-8")
+        for snippet in ("basename", "char *", "CRABC_EXPECT_BASENAME"):
+            require(snippet in probe, f"basename header probe {probe_name} omits {snippet}")
+
+    fixture = (ROOT / "compat" / "x86_64" / "libc_basename_probe.c").read_text(
+        encoding="utf-8"
+    )
+    for snippet in (
+        "CRABC_BASENAME_FREESTANDING",
+        "check_case",
+        "check_null",
+        "check_trailing_slash_bytes",
+        "check_weak_alias",
+        "__xpg_basename",
+        "basename((char *)0)",
+    ):
+        require(snippet in fixture, f"basename fixture omits {snippet}")
+    runner = (ROOT / "compat" / "x86_64" / "run_libc_basename.sh").read_text(
+        encoding="utf-8"
+    )
+    for snippet in (
+        "basename.lo",
+        "__xpg_basename",
+        "strlen",
+        "run_basename_header_abi.sh",
+        "-nostdlib -static",
+        "--no-undefined",
+        "basename object unexpectedly retains mutable static storage",
+        "call|syscall",
+        "dirname strlen",
+        "ambient libc runtime",
+    ):
+        require(snippet in runner, f"basename runner omits {snippet}")
+
+    evidence = artifact.get("native_evidence")
+    require(isinstance(evidence, list), "static-c-basename needs evidence")
+    require(
+        {entry.get("command") for entry in evidence if isinstance(entry, Mapping)}
+        == {"./scripts/dev-x86_64.sh libc-basename"},
+        "static-c-basename must use the closed libc-basename command",
+    )
+    scope = evidence[0].get("scope")
+    require(isinstance(scope, str), "static-c-basename evidence needs a scope")
+    for phrase in (
+        "null/empty",
+        "repeated and trailing slash mutation",
+        "weak same-address __xpg_basename",
+        "basename.lo`/`strlen` provenance",
+        "no interpreter/DT_NEEDED/unresolved symbol/PLT/PT_TLS/errno",
+        "dirname",
+        "family completion, promotion, or public x86 support",
+    ):
+        require(phrase in scope, f"static-c-basename evidence scope omits {phrase}")
 
 
 def require_error_strsignal_slice(family: Mapping[str, Any]) -> None:
@@ -44138,6 +44394,7 @@ def validate_ledger(
     require_memory_search_artifact(by_id["libc.posix-runtime"])
     require_string_copy_artifact(by_id["libc.posix-runtime"])
     require_error_strings_artifact(by_id["libc.c-abi-compat"])
+    require_basename_artifact(by_id["libc.c-abi-compat"])
     require_error_strsignal_slice(by_id["libc.c-abi-compat"])
     require_ctype_artifact(by_id["libc.posix-runtime"])
     require_integer_arithmetic_artifact(by_id["libc.posix-runtime"])

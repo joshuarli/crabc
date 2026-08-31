@@ -60,6 +60,7 @@ __strtod_l
 __strtof_l
 __strtold_l
 __tsearch_balance
+__xpg_basename
 __xpg_strerror_r
 __xstat
 _environ
@@ -86,6 +87,7 @@ atof
 atoi
 atol
 atoll
+basename
 bcmp
 bcopy
 bind

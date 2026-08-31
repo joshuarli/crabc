@@ -181,6 +181,20 @@ select host identity policy, secure-execution policy, the broad
 `system.kernel-admin` capability, family completion, promotion, or public x86
 support.
 
+`./scripts/dev-x86_64.sh libc-basename` is a private `static-c-basename`
+artifact inside still-planned `libc.c-abi-compat`, not a pathname capability
+selection. Its unconditional `<libgen.h>` C/C++ matrix proves exact unmangled
+`char *(char *)` linkage under strict through BSD profiles. One project-header
+C body runs through pinned musl 1.2.6 and then a true one-member
+`-nostdlib -static` candidate, mapping only `src/misc/basename.c::basename`
+plus weak same-address `__xpg_basename`: null/empty input returns immutable
+`.`, nonempty input returns an input offset, and trailing slashes after byte
+zero are overwritten with NUL. The candidate ratchets `basename.lo`/`strlen`
+provenance and a local optimizer-barrier scan with no byte-string helper or
+ambient runtime. It selects no `dirname`, path lookup, normalization,
+filesystem, errno/TLS, locale, allocator, syscall, mutable static buffer,
+family completion, promotion, or public x86 support.
+
 `./scripts/dev-x86_64.sh libc-gettid` is a private `static-c-gettid` artifact
 inside still-planned `libc.c-abi-compat`. Its focused GNU-only `<unistd.h>`
 C/C++ matrix proves the four-byte `pid_t gettid(void)` declaration,

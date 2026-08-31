@@ -10486,6 +10486,51 @@ capabilities = [
 status = "planned"
 
 [[family.verified_artifact]]
+id = "static-c-basename"
+description = "Private native x86 selected-static-archive `basename` artifact inside still-planned `libc.c-abi-compat`. One direct Rust archive member first runs one unconditional project-header C body through pinned musl 1.2.6 and then through a true one-member `-nostdlib -static` candidate. It selects only musl's caller-owned mutable path scan plus weak same-address `__xpg_basename`: null or empty input returns immutable `.`, nonempty input returns one pointer into caller storage, and every trailing slash after byte zero becomes NUL before the final component offset is found. Pinned `src/misc/basename.c` invokes `strlen` from `basename.lo`; the target-local scan retains a local `black_box` byte walk so its one archive member imports no separately owned byte-string helper. `<libgen.h>` exposes exact unmangled `char *(char *)` under strict, POSIX.1-2008, X/Open 700, GNU, and BSD C/C++ profiles. This direct leaf owns no errno, TLS, locale, allocator, syscall, path lookup, normalization, static mutable buffer, filesystem, process, or runtime state. It deliberately excludes sibling `dirname`, general path behavior, libc.so, CRT, loader, sysroot, family completion, promotion, or public x86 support."
+source_owners = [
+  "compat/upstreams.toml",
+  "compat/crabc-rs/coverage.toml",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/basename.rs",
+  "include/libgen.h",
+  "compat/abi/musl-1.2.6/aarch64/libc.a.static.tsv",
+  "compat/x86_64/basename_header_abi_probe.c",
+  "compat/x86_64/basename_header_abi_probe.cpp",
+  "compat/x86_64/run_basename_header_abi.sh",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/libc_basename_probe.c",
+  "compat/x86_64/libc_basename_start.S",
+  "compat/x86_64/run_libc_basename.sh",
+  "compat/x86_64/aarch64_parity_inventory.py",
+  "compat/x86_64/aarch64_parity_inventory.json",
+  "compat/x86_64/tests/test_aarch64_parity_inventory.py",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "compat/x86_64/README.md",
+  "STATUS.md",
+  "x86-64.md",
+  "scripts/dev-x86_64.sh",
+  "scripts/check_structure.py",
+]
+x86_abi_prerequisites = [
+  "The selected SysV AMD64 LP64 C boundary passes one eight-byte mutable `char *` in rdi and returns one `char *` in rax. A non-null input must remain a writable NUL-terminated byte string through musl's backward scan and trailing-slash writes; the result aliases that input, while null and empty inputs return immutable process-static `.` storage.",
+  "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417 maps `src/misc/basename.c::basename` and `basename.lo` directly to `libc/src/c_abi/x86_64/basename.rs::basename`. Its `strlen` result starts the backward loops; the target-local `black_box` byte walk preserves that source mapping without importing a separately selected string helper, and `path.add(index).write(0)` is musl's exact `s[i] = 0` trailing-slash mutation. Musl's `weak_alias(basename, __xpg_basename)` remains one same-address weak ELF alias.",
+  "The leaf has no errno/TLS/locale/environment/process state and owns no allocator, stdio, syscall, or runtime edge. Invalid non-null pointers remain outside musl's direct-dereference contract; `dirname`, pathname lookup, normalization, path allocation, and any static mutable result buffer are deliberately unselected.",
+]
+x86_header_prerequisites = [
+  "The pinned-musl/project `<libgen.h>` C11/C++17 matrix proves strict, POSIX.1-2008, X/Open 700, GNU, and BSD profiles all retain exact `char *(char *)` with unmangled C++ linkage. The raw project pass uses `-nostdinc`/`-nostdinc++`, compiler builtin headers, and a project `libgen.h` trace; it is declaration evidence, not installed-header closure or general pathname support.",
+]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-basename", scope = "Pinned-musl project-header C execution precedes a true x86 one-member `-nostdlib -static` candidate. The C/C++ header gate ratchets unconditional x86 LP64 declaration visibility and unmangled linkage. The common fixture differentials null/empty, root, repeated and trailing slash mutation, returned final-component offsets, and weak same-address __xpg_basename behavior. Archive and final-ELF evidence require basename.lo`/`strlen` provenance, one direct owner, local `black_box` byte walk, and no interpreter/DT_NEEDED/unresolved symbol/PLT/PT_TLS/errno, calls/syscalls, byte-string helper, allocator, or ambient runtime. It rejects dirname and path lookup, normalization, filesystem, or general pathname behavior, and does not select libc.so, CRT, loader, sysroot, family completion, promotion, or public x86 support." }]
+oracle = [
+  { kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source, installed `<libgen.h>` declaration, basename.lo provenance, and C behavior oracle for src/misc/basename.c::basename: strlen-backed backward scan, null/empty dot fallback, trailing slash mutation, final-component pointer, and weak same-address __xpg_basename alias. The separately mapped dirname source remains unselected." },
+  { kind = "elf-abi", source = "System V AMD64 psABI and pinned musl libgen.h", role = "LP64 rdi mutable-char-pointer argument, rax char-pointer return, unmangled C++ linkage, weak same-address alias binding, and closed static ET_EXEC candidate contract." },
+]
+
+[[family.verified_artifact]]
 id = "static-c-gethostid"
 description = "Private native x86 selected-static-archive historical `gethostid` compatibility boundary inside still-planned `libc.c-abi-compat`. One dependency-free `crabc-libc` archive resolves exactly `long gethostid(void)` into a freestanding C fixture after an equivalent pinned-musl execution. Musl's complete Linux leaf returns the deterministic zero host identifier: it has no input, mutable state, syscall, errno, TLS, allocation, configuration-file, namespace, or authority boundary. It is not hostname/domain-name observation or mutation, a host-identity policy, secure-execution policy, or a system-information framework. This capability-free ABI artifact does not select the broad `system.kernel-admin` capability, libc.so, CRT, loader, sysroot, family completion, promotion, or public x86 support."
 source_owners = [

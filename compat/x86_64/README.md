@@ -265,6 +265,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh memccpy-header-abi
 ./scripts/dev-x86_64.sh mempcpy-header-abi
 ./scripts/dev-x86_64.sh strsep-header-abi
+./scripts/dev-x86_64.sh basename-header-abi
 ./scripts/dev-x86_64.sh string-copy-header-abi
 ./scripts/dev-x86_64.sh error-strings-header-abi
 ./scripts/dev-x86_64.sh string-duplication-header-abi
@@ -533,6 +534,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-memccpy
 ./scripts/dev-x86_64.sh libc-mempcpy
 ./scripts/dev-x86_64.sh libc-strsep
+./scripts/dev-x86_64.sh libc-basename
 ./scripts/dev-x86_64.sh libc-process-globals-getopt
 ./scripts/dev-x86_64.sh libc-auxv-observation
 ./scripts/dev-x86_64.sh libc-inet-address
@@ -1374,6 +1376,14 @@ declarations for `char *strsep(char **, const char *)`. It verifies GNU/BSD
 visibility, default/strict/POSIX/XOPEN C hiding, exact signature, and
 unmangled C++ linkage. This is compile-only header evidence; it does not
 select C string behavior or `crabc-libc`.
+
+`basename-header-abi` separately proves the unconditional `<libgen.h>`
+boundary for one private mutable-path leaf. Strict, POSIX.1-2008, X/Open 700,
+GNU, and BSD C11/C++17 profiles all retain exact unmangled `char *(char *)`
+linkage. The raw project pass uses `-nostdinc`/`-nostdinc++` and traces only
+project `libgen.h` plus compiler builtins. This is declaration evidence for
+`basename` alone, not `dirname`, a broad pathname API, or installed-header
+family completion.
 
 `string-copy-header-abi` compiles project-first and pinned-musl C/C++
 `<string.h>` declarations for the closed C-string-copy set: unconditional
@@ -4641,6 +4651,20 @@ sysroot path; it does not select general string/tokenization, `strtok`/
 `strtok_r`, memory-search, `mempcpy`, getsubopt, allocator
 lifecycle/interposition, family completion, promotion, or public x86 support.
 
+`basename-header-abi` and `libc-basename` separately record the private,
+non-promoting `static-c-basename` artifact in still-planned
+`libc.c-abi-compat`, not a pathname capability selection. One unconditional
+`<libgen.h>` project-header C fixture runs through pinned musl 1.2.6 and then
+a true one-member `-nostdlib -static` candidate. It maps only
+`src/misc/basename.c::basename` and its weak same-address `__xpg_basename`
+alias: null/empty input returns immutable `.`, nonempty input returns an input
+offset, and trailing slashes after byte zero are overwritten with NUL. The
+candidate ratchets `basename.lo`/`strlen` provenance while retaining a local
+optimizer-barrier byte walk, so it imports no byte-string helper or ambient
+runtime. It selects no `dirname`, path lookup, normalization, filesystem,
+errno/TLS, locale, allocator, syscall, static mutable buffer, libc.so, CRT,
+loader, sysroot, family completion, promotion, or public x86 support.
+
 `libc-random-entropy` is a separately recorded
 `static-c-random-entropy` `verified_artifact` gate over that archive, not a
 promotion of the Rust random-source or random-state capabilities. Its
@@ -5916,7 +5940,7 @@ Apart from the narrowly named `libc-stat-compat`, `libc-credentials`,
 `libc-process-resources`, `libc-readiness-waits`, and
 `libc-system-observation`, `libc-system-information`, `libc-uts-identity`, `libc-socket-transport`,
 `libc-socket-messages`,
-`libc-byte-strings`, `libc-legacy-memory`, `libc-memccpy`, `libc-mempcpy`, `libc-strsep`, `libc-random-entropy`, `libc-memory-search`,
+`libc-byte-strings`, `libc-legacy-memory`, `libc-memccpy`, `libc-mempcpy`, `libc-strsep`, `libc-basename`, `libc-random-entropy`, `libc-memory-search`,
 `libc-string-copy`, `libc-allocator-string-duplication`, `libc-error-strings`,
 `libc-locale-error-strings`, `libc-ctype`, `libc-integer-arithmetic`,
 `libc-integer-parse`, `libc-float-parse`, `libc-getsubopt`, `libc-intmax-arithmetic`, `libc-credential-observation`,

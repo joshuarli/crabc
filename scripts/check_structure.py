@@ -214,6 +214,7 @@ X86_RUNTIME_FOUNDATION_LIBC_SOURCES = {
     Path("libc/src/c_abi/x86_64/memccpy.rs"),
     Path("libc/src/c_abi/x86_64/mempcpy.rs"),
     Path("libc/src/c_abi/x86_64/strsep.rs"),
+    Path("libc/src/c_abi/x86_64/basename.rs"),
     Path("libc/src/c_abi/x86_64/legacy_memory.rs"),
     Path("libc/src/c_abi/x86_64/process_context.rs"),
     Path("libc/src/c_abi/x86_64/environment.rs"),
@@ -3750,6 +3751,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         '#[path = "memccpy.rs"]',
         '#[path = "mempcpy.rs"]',
         '#[path = "strsep.rs"]',
+        '#[path = "basename.rs"]',
         '#[path = "legacy_memory.rs"]',
         '#[path = "fenv.rs"]',
         '#[path = "setjmp.rs"]',
@@ -4671,6 +4673,89 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
     if "--whole-archive" in strsep_runner_text:
         errors.append(
             "compat/x86_64/run_libc_strsep.sh: selected static strsep "
+            "evidence must not force-link the archive"
+        )
+
+    basename_source = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "basename.rs"
+    basename_text = basename_source.read_text(errors="replace")
+    for required in (
+        "musl 1.2.6",
+        "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+        "src/misc/basename.c",
+        "weak_alias(basename, __xpg_basename)",
+        ".weak __xpg_basename",
+        ".set __xpg_basename, basename",
+        "strlen",
+        "black_box",
+        "static_dot",
+        "path.add(index).write(0)",
+        "pathname lookup",
+    ):
+        if required not in basename_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/basename.rs: selected static mutable "
+                f"basename boundary is missing {required!r}"
+            )
+    basename_exports = set(
+        re.findall(
+            r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(',
+            basename_text,
+        )
+    )
+    if basename_exports != {"basename"}:
+        errors.append(
+            "libc/src/c_abi/x86_64/basename.rs: selected static mutable basename "
+            "artifact must export only strong basename"
+        )
+    basename_aliases = set(
+        re.findall(
+            r'(?m)^\s*"\.set\s+(\w+)\s*,\s*basename",\s*$',
+            basename_text,
+        )
+    )
+    if basename_aliases != {"__xpg_basename"}:
+        errors.append(
+            "libc/src/c_abi/x86_64/basename.rs: selected static mutable basename "
+            "artifact must retain only the weak same-address __xpg_basename alias"
+        )
+    for forbidden in (
+        "static mut",
+        "errno::",
+        "raw_syscall",
+        "crabc_core",
+        "crabc_mimalloc",
+        "byte_strings::",
+        'pub unsafe extern "C" fn dirname',
+    ):
+        if forbidden in basename_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/basename.rs: selected static mutable basename "
+                f"artifact selects forbidden runtime seam {forbidden!r}"
+            )
+    basename_runner = ROOT / "compat" / "x86_64" / "run_libc_basename.sh"
+    basename_runner_text = basename_runner.read_text(errors="replace")
+    for required in (
+        "run_musl_oracle.sh",
+        "run_basename_header_abi.sh",
+        "basename.lo",
+        "__xpg_basename",
+        "archive_member_for_symbol",
+        "basename object export surface drifted",
+        "basename object unexpectedly depends on another symbol",
+        "basename object unexpectedly performs a call or syscall",
+        "-nostdlib -static",
+        "--no-undefined",
+        "candidate retains a PLT",
+        "dirname strlen",
+    ):
+        if required not in basename_runner_text:
+            errors.append(
+                "compat/x86_64/run_libc_basename.sh: selected static basename "
+                f"evidence is missing {required!r}"
+            )
+    if "--whole-archive" in basename_runner_text:
+        errors.append(
+            "compat/x86_64/run_libc_basename.sh: selected static basename "
             "evidence must not force-link the archive"
         )
 
@@ -11363,6 +11448,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         byte_strings_text,
         memccpy_text,
         strsep_text,
+        basename_text,
         random_entropy_text,
         memory_search_text,
         string_copy_text,
@@ -11414,6 +11500,17 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
             "libc/src/c_abi/x86_64/timestamp_updates.rs: selected static artifact "
             "must retain futimesat as the musl same-address assembler alias"
         )
+    basename_weak_aliases = set(
+        re.findall(
+            r'(?m)^\s*"\.set\s+(\w+)\s*,\s*basename",\s*$',
+            basename_text,
+        )
+    )
+    if basename_weak_aliases != {"__xpg_basename"}:
+        errors.append(
+            "libc/src/c_abi/x86_64/basename.rs: selected static artifact "
+            "must retain __xpg_basename as the musl same-address assembler alias"
+        )
     auxv_observation_aliases = set(
         re.findall(
             r'(?m)^\s*"\.set\s+(\w+)\s*,\s*__getauxval",\s*$',
@@ -11459,6 +11556,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         | error_string_aliases
         | locale_error_string_aliases
         | timestamp_aliases
+        | basename_weak_aliases
         | auxv_observation_aliases
         | pthread_rwlock_public_aliases
         | pthread_identity_exports
@@ -11506,6 +11604,8 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         "memccpy",
         "mempcpy",
         "strsep",
+        "basename",
+        "__xpg_basename",
         "memset",
         "memmove",
         "feclearexcept",
@@ -11889,7 +11989,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
             "signal-control, separate realtime-minimum/realtime-maximum bridges, one historical SIGALRM interval-timer adapter leaf, one pure GNU signal-set predicate, paired GNU binary set-operation leaf, and a three-symbol POSIX signal-set mutation leaf, bounded process-signal execution, and one legacy single-signal pause wait, bounded pthread create/exit/join/detach initial-TLS worker, its private selected-main/worker pthread-key/C11-TSS lifecycle, private process-normal pthread mutexes and their musl private condition-variable handoff, the complete selected rwlock/attribute family with private-or-shared futex operation, plus the distinct C11 plain-sync adapter and normal-return pthread/C11 once state machine, its typed C11 create/exit/join/detach sibling, and pthread/C11 identity aliases, named termios-control, direct terminal-descriptor and foreground-group observations plus one named foreground-group assignment, historical ctermid pathname spelling, constant historical gethostid compatibility, selected process-context, child-reaping, C11 immediate termination, callback algorithms, direct clock_gettime, binary64 difftime, caller-buffered fixed-UTC gmtime_r, fixed-UTC timegm, a status-returning POSIX scheduler-yield leaf, caller-owned mapping-core, no-cancellation mapping synchronization, direct anonymous-memory descriptor creation, nanosleep, and clock_nanosleep, selected "
             "POSIX _exit forwarding, descriptor-entry, selected filesystem-access, bounded descriptor-control, timestamp updates, and descriptor-I/O, selected process-resources, selected readiness/signal-waits, "
             "selected socket transport and selected socket-message/options, selected system-observation, selected UTS-identity, "
-            "selected numeric-address codecs, immutable IPv6 unspecified/loopback address data objects, and legacy classful IPv4 arithmetic, fixed-profile h_errno message text, byte-string, legacy-memory adapters, source-backed memccpy/mempcpy, caller-buffer strsep, random-entropy, memory-search, C-string-copy, immutable error-string, "
+            "selected numeric-address codecs, immutable IPv6 unspecified/loopback address data objects, and legacy classful IPv4 arithmetic, fixed-profile h_errno message text, byte-string, legacy-memory adapters, source-backed memccpy/mempcpy, caller-buffer strsep, mutable basename with weak XSI compatibility alias, random-entropy, memory-search, C-string-copy, immutable error-string, "
             "fixed-C-locale ctype, integer-arithmetic, integer-parsing, intmax-arithmetic, credential-observation, and "
             "raw auxiliary-vector observation, startup-derived secure-environment, and environment-backed login-name observation, find-first-set, startup-published program names, short/GNU-long "
             "getopt state and aliases, standalone linear search, callback-tree/hash-table search, and the "
@@ -11914,6 +12014,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         ("memccpy.rs", memccpy_text),
         ("mempcpy.rs", mempcpy_text),
         ("strsep.rs", strsep_text),
+        ("basename.rs", basename_text),
         ("fenv.rs", fenv_text),
         ("setjmp.rs", setjmp_text),
         ("signal_foundation.rs", signal_foundation_text),
