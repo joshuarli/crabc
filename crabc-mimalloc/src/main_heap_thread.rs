@@ -321,6 +321,21 @@ impl<'main> MainHeapThreadAttachment<'main> {
         MainHeapThreadPageSession::begin(self)
     }
 
+    /// Revalidates this already-attached source owner for one short operation
+    /// of its continuously stored owner-local page engine.
+    ///
+    /// Unlike [`Self::page_session`], this projection accepts pages already
+    /// owned by the attachment. It neither suspends the source owner nor
+    /// changes its fast-slot, list, or page-count state; the caller must keep
+    /// the matching engine continuously alive and bind this view only for the
+    /// duration of one synchronous local operation.
+    #[inline]
+    pub(crate) fn owner_local_page_session(
+        &mut self,
+    ) -> Result<MainHeapThreadPageSession<'_, 'main>, MainHeapThreadPageSessionError> {
+        MainHeapThreadPageSession::begin_owner_local(self)
+    }
+
     /// Installs one attachment-local deferred-free observer for a focused
     /// source-order regression.
     ///
@@ -822,6 +837,32 @@ impl<'attachment, 'main> MainHeapThreadPageSession<'attachment, 'main> {
     ) -> Result<Self, MainHeapThreadPageSessionError> {
         attachment
             .prevalidate_attached_no_pages()
+            .map_err(MainHeapThreadPageSessionError::Attachment)?;
+        if attachment.terminal_os_release.is_some() {
+            return Err(MainHeapThreadPageSessionError::Attachment(
+                MainHeapThreadAttachmentError::Poisoned,
+            ));
+        }
+        if attachment
+            .tld
+            .as_ref()
+            .ok_or(MainHeapThreadPageSessionError::Attachment(
+                MainHeapThreadAttachmentError::Poisoned,
+            ))?
+            .sequence()
+            .get()
+            == 0
+        {
+            return Err(MainHeapThreadPageSessionError::FirstTicket);
+        }
+        Ok(Self { attachment })
+    }
+
+    fn begin_owner_local(
+        attachment: &'attachment mut MainHeapThreadAttachment<'main>,
+    ) -> Result<Self, MainHeapThreadPageSessionError> {
+        attachment
+            .prevalidate_attached_page_drain(false)
             .map_err(MainHeapThreadPageSessionError::Attachment)?;
         if attachment.terminal_os_release.is_some() {
             return Err(MainHeapThreadPageSessionError::Attachment(

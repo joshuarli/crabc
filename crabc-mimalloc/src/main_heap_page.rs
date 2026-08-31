@@ -19,6 +19,12 @@
 //! ticket-zero page owner. It holds the pair's exclusive Rust PageMap
 //! lifecycle lease for its complete engine and scoped remote-producer
 //! lifetime, and uses the selected arena's in-place `pages_main` bitmap.
+//! `MainHeapThreadOwnerLocalPageEngine` is the reusable attached-owner path:
+//! it continuously stores that page engine and binds only a short source-Theap
+//! projection per local call. Its already-owned operations need no scheduler,
+//! suspend/resume transition, mutation lease, registry, or client ledger;
+//! fresh page registration and final unregistration use the stable process map
+//! under the exact-owned-ranges contract.
 //!
 //! This is deliberately one sequential later-thread page lifecycle, not
 //! process initialization, a dynamic heap-local bitmap path, or pthread
@@ -105,7 +111,8 @@ use crate::process_page_map::{
     ProcessPageMapSuspendedEngineAccess,
 };
 use crate::single_thread::{
-    FreeError, PageAllocatorEngine, PageAllocatorEngineState, RemoteFreePreparationError, RemoteFreeProducer,
+    FreeError, OwnerLocalMainHeapPageAllocator, OwnerLocalMainHeapPageSessionBindError,
+    PageAllocatorEngine, PageAllocatorEngineState, RemoteFreePreparationError, RemoteFreeProducer,
     RemoteFreeProducerPair,
     ThreadExitMappedRegularPostExitAdoptError,
     ThreadExitMappedRegularPostExitAdoptOutcome,
@@ -209,6 +216,78 @@ use crate::types::Page;
 
 #[cfg(test)]
 extern crate std;
+
+/// Continuously stored source page state for one attached later-thread owner.
+///
+/// The engine has no attachment self-reference and holds no global scheduler,
+/// registry, client ledger, or PageMap mutation lease. Each local operation
+/// receives one freshly revalidated attachment view, while all allocator
+/// queue/cache/poison state remains in this value between calls.
+#[must_use = "an owner-local page engine must finish or be retained with its attachment"]
+pub(crate) struct MainHeapThreadOwnerLocalPageEngine {
+    engine: Option<OwnerLocalMainHeapPageAllocator<'static, 'static>>,
+    _not_send_or_sync: PhantomData<*mut ()>,
+}
+
+/// Why an attached later-main owner could not create its persistent local
+/// page engine.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum MainHeapThreadOwnerLocalPageEngineBeginError {
+    Attachment(MainHeapThreadAttachmentError),
+    Pair(ProcessPageArenaLeaseError),
+    Session(MainHeapThreadPageSessionError),
+    SubprocessMismatch,
+    ConfigurationMismatch,
+}
+
+/// Why one short local operation could not borrow the continuously stored
+/// engine.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum MainHeapThreadOwnerLocalPageEngineAccessError {
+    Session(MainHeapThreadPageSessionError),
+    Bind(OwnerLocalMainHeapPageSessionBindError),
+    MissingEngine,
+}
+
+/// A consuming all-free finish which retained the exact persistent engine.
+#[must_use = "a failed owner-local finish retains the exact page engine"]
+pub(crate) enum MainHeapThreadOwnerLocalPageEngineFinishFailure {
+    Access {
+        owner: MainHeapThreadOwnerLocalPageEngine,
+        error: MainHeapThreadOwnerLocalPageEngineAccessError,
+    },
+    NotQuiescent(MainHeapThreadOwnerLocalPageEngine),
+}
+
+impl MainHeapThreadOwnerLocalPageEngineFinishFailure {
+    /// Recovers the exact engine for the pinned TLS payload's retained state.
+    #[inline]
+    pub(crate) fn into_owner(self) -> MainHeapThreadOwnerLocalPageEngine {
+        match self {
+            Self::Access { owner, .. } | Self::NotQuiescent(owner) => owner,
+        }
+    }
+}
+
+impl core::fmt::Debug for MainHeapThreadOwnerLocalPageEngineFinishFailure {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::Access { error, .. } => formatter
+                .debug_tuple("MainHeapThreadOwnerLocalPageEngineFinishFailure::Access")
+                .field(error)
+                .finish(),
+            Self::NotQuiescent(_) => formatter
+                .write_str("MainHeapThreadOwnerLocalPageEngineFinishFailure::NotQuiescent"),
+        }
+    }
+}
+
+/// One closure-scoped local allocation view over the continuously stored
+/// owner engine. It deliberately exposes only raw source allocation facts;
+/// allocation tracking remains allocator metadata, not a parallel ledger.
+pub(crate) struct MainHeapThreadOwnerLocalAllocator<'owner> {
+    engine: &'owner mut OwnerLocalMainHeapPageAllocator<'static, 'static>,
+}
 
 /// One bounded page engine for a later metadata Theap linked to `mi_heap_main`.
 ///
@@ -2075,6 +2154,198 @@ pub(crate) enum MainHeapThreadProcessPageExitMappedRegularPagesAdoptFailure<
         adoption: MainHeapThreadProcessPageExitMappedRegularPagesAdoption<'attachment, 'main>,
         error: MainHeapThreadProcessPageExitMappedRegularPagesAdoptError,
     },
+}
+
+impl MainHeapThreadOwnerLocalPageEngine {
+    /// Promotes one attached later-thread owner into its persistent local page
+    /// engine. The paired process capability is consumed once; only its
+    /// stable arena view and exact-owned-ranges PageMap reference remain.
+    pub(crate) fn begin(
+        attachment: &mut MainHeapThreadAttachment<'_>,
+        pair: ProcessPageArenaLease,
+    ) -> Result<Self, MainHeapThreadOwnerLocalPageEngineBeginError> {
+        let attachment_subprocess = attachment
+            .subprocess()
+            .map_err(MainHeapThreadOwnerLocalPageEngineBeginError::Attachment)?;
+        let process = pair
+            .subprocess()
+            .map_err(MainHeapThreadOwnerLocalPageEngineBeginError::Pair)?;
+        if !core::ptr::eq(attachment_subprocess.as_ptr(), process.as_ptr()) {
+            return Err(MainHeapThreadOwnerLocalPageEngineBeginError::SubprocessMismatch);
+        }
+        let attachment_config = attachment
+            .memory_config()
+            .map_err(MainHeapThreadOwnerLocalPageEngineBeginError::Attachment)?;
+        let pair_config = pair
+            .memory_config()
+            .map_err(MainHeapThreadOwnerLocalPageEngineBeginError::Pair)?;
+        if attachment_config != pair_config {
+            return Err(MainHeapThreadOwnerLocalPageEngineBeginError::ConfigurationMismatch);
+        }
+        let arena = pair
+            .arena()
+            .map_err(MainHeapThreadOwnerLocalPageEngineBeginError::Pair)?;
+        // SAFETY: this persistent engine registers and unregisters only the
+        // exact ranges it owns, retains their page metadata until local access
+        // is quiescent, and finishes those entries before arena reuse. Other
+        // plain map operations may overlap only for disjoint owned ranges.
+        let page_map = unsafe { pair.page_map_for_owned_ranges() }
+            .map_err(MainHeapThreadOwnerLocalPageEngineBeginError::Pair)?;
+        let session = attachment
+            .owner_local_page_session()
+            .map_err(MainHeapThreadOwnerLocalPageEngineBeginError::Session)?;
+        // SAFETY: the pair and attachment checks above establish one process
+        // image, and the initial short session captures the exact owner
+        // identity which every later operation revalidates before binding.
+        let engine = unsafe {
+            PageAllocatorEngine::activate_owner_local_later_main_thread(
+                &session,
+                arena,
+                ArenaId::none(),
+                page_map,
+            )
+        };
+        Ok(Self {
+            engine: Some(engine),
+            _not_send_or_sync: PhantomData,
+        })
+    }
+
+    /// Runs one synchronous local allocation operation without parking,
+    /// suspending, resuming, scheduling, or moving the stored engine state.
+    pub(crate) fn with_local_allocator<R>(
+        &mut self,
+        attachment: &mut MainHeapThreadAttachment<'_>,
+        operation: impl FnOnce(&mut MainHeapThreadOwnerLocalAllocator<'_>) -> R,
+    ) -> Result<R, MainHeapThreadOwnerLocalPageEngineAccessError> {
+        let session = attachment
+            .owner_local_page_session()
+            .map_err(MainHeapThreadOwnerLocalPageEngineAccessError::Session)?;
+        let engine = self
+            .engine
+            .as_mut()
+            .ok_or(MainHeapThreadOwnerLocalPageEngineAccessError::MissingEngine)?;
+        engine
+            .with_owner_local_main_heap_session(session, |engine| {
+                operation(&mut MainHeapThreadOwnerLocalAllocator { engine })
+            })
+            .map_err(MainHeapThreadOwnerLocalPageEngineAccessError::Bind)
+    }
+
+    /// Consumes an all-free persistent engine after source force collection.
+    /// Any failed preflight or nonempty state returns the exact owner for the
+    /// pinned TLS payload to retain or retry.
+    pub(crate) fn finish(
+        mut self,
+        attachment: &mut MainHeapThreadAttachment<'_>,
+    ) -> Result<(), MainHeapThreadOwnerLocalPageEngineFinishFailure> {
+        let session = match attachment.owner_local_page_session() {
+            Ok(session) => session,
+            Err(error) => {
+                return Err(MainHeapThreadOwnerLocalPageEngineFinishFailure::Access {
+                    owner: self,
+                    error: MainHeapThreadOwnerLocalPageEngineAccessError::Session(error),
+                });
+            }
+        };
+        let Some(engine) = self.engine.as_mut() else {
+            return Err(MainHeapThreadOwnerLocalPageEngineFinishFailure::Access {
+                owner: self,
+                error: MainHeapThreadOwnerLocalPageEngineAccessError::MissingEngine,
+            });
+        };
+        match engine.finish_owner_local_main_heap_session(session) {
+            Ok(true) => {
+                drop(self.engine.take());
+                Ok(())
+            }
+            Ok(false) => Err(MainHeapThreadOwnerLocalPageEngineFinishFailure::NotQuiescent(self)),
+            Err(error) => Err(MainHeapThreadOwnerLocalPageEngineFinishFailure::Access {
+                owner: self,
+                error: MainHeapThreadOwnerLocalPageEngineAccessError::Bind(error),
+            }),
+        }
+    }
+}
+
+impl Drop for MainHeapThreadOwnerLocalPageEngine {
+    fn drop(&mut self) {
+        if let Some(engine) = self.engine.take() {
+            // An unbound adapter cannot latch its attachment on Drop. The
+            // owning TLS lifecycle must retain a failed/non-finished engine;
+            // conservatively leaking its exact page state is safer than
+            // manufacturing collection or attachment teardown here.
+            core::mem::forget(engine);
+        }
+    }
+}
+
+impl MainHeapThreadOwnerLocalAllocator<'_> {
+    #[inline]
+    pub(crate) fn allocate(&mut self, request: usize, zero: bool) -> Option<NonNull<u8>> {
+        self.engine.allocate(request, zero)
+    }
+
+    #[inline]
+    pub(crate) fn allocate_aligned(
+        &mut self,
+        size: usize,
+        alignment: usize,
+    ) -> Option<NonNull<u8>> {
+        self.engine.allocate_aligned(size, alignment)
+    }
+
+    #[inline]
+    pub(crate) fn allocate_aligned_zeroed(
+        &mut self,
+        size: usize,
+        alignment: usize,
+    ) -> Option<NonNull<u8>> {
+        self.engine.allocate_aligned_zeroed(size, alignment)
+    }
+
+    /// # Safety
+    ///
+    /// When present, `block` must be one current allocation from this exact
+    /// owner, with no aliased access during the operation.
+    #[inline]
+    pub(crate) unsafe fn reallocate(
+        &mut self,
+        block: Option<NonNull<u8>>,
+        new_size: usize,
+    ) -> Option<NonNull<u8>> {
+        unsafe { self.engine.reallocate(block, new_size) }
+    }
+
+    /// # Safety
+    ///
+    /// `block` must remain a current allocation of this exact owner, without
+    /// concurrent free, reallocation, or remote publication.
+    #[inline]
+    pub(crate) unsafe fn usable_size(&self, block: NonNull<u8>) -> Option<usize> {
+        unsafe { self.engine.usable_size(block) }
+    }
+
+    /// # Safety
+    ///
+    /// `block` must be a current allocation returned by this exact owner and
+    /// must not have been freed or transferred.
+    #[inline]
+    pub(crate) unsafe fn free(&mut self, block: NonNull<u8>) -> Result<(), FreeError> {
+        unsafe { self.engine.free(block) }
+    }
+
+    /// # Safety
+    ///
+    /// `block` must remain a current allocation of this exact owner, without
+    /// concurrent mutation or remote publication.
+    #[inline]
+    pub(crate) unsafe fn current_allocation_page_reserved(
+        &self,
+        block: NonNull<u8>,
+    ) -> Option<usize> {
+        unsafe { self.engine.current_allocation_page_reserved(block) }
+    }
 }
 
 impl<'attachment, 'main> MainHeapThreadProcessPageAllocator<'attachment, 'main> {
@@ -7730,6 +8001,124 @@ mod tests {
         })
         .join()
         .expect("later main-heap page fixture remains current-thread local");
+    }
+
+    #[test]
+    fn persistent_owner_local_engine_repeats_raw_pointer_cycles_without_reactivation() {
+        thread::spawn(|| {
+            let config = memory_config();
+            let storage = MainStaticAttachmentStorage::test_static_owner();
+            let subprocess = MainSubprocess::test_static_owner();
+            let metadata = MetaAllocator::test_static_owner();
+            let (page_map, process_arena) = paired_process_owner(config, subprocess);
+            let pair = ProcessPageArenaLease::join(page_map, process_arena)
+                .expect("the selected map and arena form one process image");
+            let mut main = unsafe {
+                MainStaticTheapAttachment::begin_with_test_storage(storage, subprocess)
+            }
+            .expect("ticket zero attaches the source-static main images");
+            let main_heap = main
+                .shared_main_heap_lease()
+                .expect("the live main attachment lends its static heap");
+
+            thread::scope(|scope| {
+                let worker = scope.spawn(move || {
+                    let mut attachment = match unsafe {
+                        MainHeapThreadAttachment::begin_with_test_metadata(
+                            main_heap,
+                            metadata,
+                            config,
+                        )
+                    } {
+                        Ok(attachment) => attachment,
+                        Err(MainHeapThreadAttachmentBeginError::Rejected(error)) => {
+                            panic!("persistent source thread attachment rejected: {error:?}")
+                        }
+                        Err(MainHeapThreadAttachmentBeginError::Retained { error, .. }) => {
+                            panic!("persistent source thread attachment retained: {error:?}")
+                        }
+                    };
+                    let mut owner = MainHeapThreadOwnerLocalPageEngine::begin(
+                        &mut attachment,
+                        pair,
+                    )
+                    .expect("the attached worker creates one persistent owner-local engine");
+
+                    let anchor = owner
+                        .with_local_allocator(&mut attachment, |allocator| {
+                            allocator.allocate(37, false)
+                        })
+                        .expect("the first local projection uses the attached source owner")
+                        .expect("the anchor allocation creates one retained local page");
+
+                    for cycle in 0..64usize {
+                        owner
+                            .with_local_allocator(&mut attachment, |allocator| {
+                                let request = if cycle % 2 == 0 { 53 } else { 1025 };
+                                let replacement_request = if cycle % 2 == 0 { 193 } else { 4097 };
+                                let seed = 0x31u8.wrapping_add(cycle as u8);
+                                let block = allocator
+                                    .allocate(request, false)
+                                    .expect("the persistent engine allocates from its source queues");
+                                // SAFETY: `block` is this exact local owner's current allocation.
+                                let usable = unsafe { allocator.usable_size(block) }
+                                    .expect("the local usable-size query resolves from page state");
+                                assert!(usable >= request);
+                                // SAFETY: the requested prefix is writable until local realloc consumes it.
+                                unsafe {
+                                    for offset in 0..request {
+                                        block.as_ptr().add(offset).write(seed.wrapping_add(offset as u8));
+                                    }
+                                }
+                                // SAFETY: `block` remains current and exclusively owner-local.
+                                let replacement = unsafe {
+                                    allocator.reallocate(Some(block), replacement_request)
+                                }
+                                .expect("the owner-local source realloc preserves the old block on failure");
+                                // SAFETY: successful realloc returns this owner's current replacement.
+                                let replacement_usable = unsafe { allocator.usable_size(replacement) }
+                                    .expect("the replacement usable extent remains pointer-derived");
+                                assert!(replacement_usable >= replacement_request);
+                                // SAFETY: realloc preserves the initialized overlap through `request`.
+                                unsafe {
+                                    for offset in 0..request {
+                                        assert_eq!(
+                                            replacement.as_ptr().add(offset).read(),
+                                            seed.wrapping_add(offset as u8),
+                                            "cycle {cycle} preserves initialized byte {offset}",
+                                        );
+                                    }
+                                    allocator.free(replacement)
+                                }
+                                .expect("each replacement returns through source local free");
+                            })
+                            .expect("every cycle reborrows the same continuously stored engine state");
+                    }
+
+                    owner
+                        .with_local_allocator(&mut attachment, |allocator| {
+                            // SAFETY: the anchor stayed current across every intervening local projection.
+                            unsafe { allocator.free(anchor) }
+                        })
+                        .expect("the final local projection reuses the attached source owner")
+                        .expect("the anchor returns through source local free");
+                    owner
+                        .finish(&mut attachment)
+                        .expect("the all-free persistent engine releases its pages once at teardown");
+                    attachment
+                        .finish_after_user_destructors()
+                        .expect("the empty later source attachment tears down after the engine");
+                });
+                worker
+                    .join()
+                    .expect("the persistent owner-local engine stays on its source thread");
+            });
+
+            main.teardown()
+                .expect("the static main images retire after the persistent worker");
+        })
+        .join()
+        .expect("the repeated owner-local fixture remains current-thread local");
     }
 
     #[test]

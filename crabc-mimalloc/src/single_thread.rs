@@ -140,6 +140,7 @@ use crate::arena::{ArenaId, ArenaView, MainArenaMappedAbandonedPage, release_are
 use crate::{aligned, alloc, support};
 use crate::bootstrap::{
     BootstrapError, ExclusiveTheapBootstrap, ExclusiveTheapSession, TheapPageSession,
+    theap_page_session_sealed,
 };
 use crate::dynamic_theap::{
     DynamicPostExitArenaOwner, DynamicPostExitArenaOwnerFinishFailure,
@@ -695,6 +696,193 @@ pub(crate) type SingleThreadAllocator<'bootstrap, 'arena, 'map> =
 /// Private dynamic attachment specialization of the same page engine.
 pub(crate) type DynamicTheapAllocator<'attach, 'heap, 'arena, 'map> =
     PageAllocatorEngine<'arena, 'map, DynamicTheapPageSession<'attach, 'heap>>;
+
+/// Persistent later-main specialization whose source attachment is borrowed
+/// only for one synchronous local operation at a time.
+pub(crate) type OwnerLocalMainHeapPageAllocator<'arena, 'map> =
+    PageAllocatorEngine<'arena, 'map, OwnerLocalMainHeapPageSession>;
+
+/// Why a short later-main source view could not bind to its persistent local
+/// page engine.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum OwnerLocalMainHeapPageSessionBindError {
+    /// An operation tried to bind another source view before the prior local
+    /// operation returned.
+    Reentrant,
+    /// The view names a different live thread or source sequence.
+    DifferentOwner,
+}
+
+/// Short-view adapter for one continuously stored later-main page engine.
+///
+/// The adapter owns no attachment or page state. A synchronous engine call
+/// installs a raw pointer to one freshly revalidated
+/// [`MainHeapThreadPageSession`], delegates the source transitions, and clears
+/// that pointer before the attachment borrow ends. Keeping this adapter inside
+/// [`PageAllocatorEngine`] preserves every queue/cache/poison field in place
+/// between calls without making the TLS payload self-referential.
+pub(crate) struct OwnerLocalMainHeapPageSession {
+    active: Option<NonNull<MainHeapThreadPageSession<'static, 'static>>>,
+    thread: LiveThreadId,
+    thread_sequence: usize,
+    _not_send_or_sync: PhantomData<*mut ()>,
+}
+
+impl OwnerLocalMainHeapPageSession {
+    fn new(session: &MainHeapThreadPageSession<'_, '_>) -> Self {
+        Self {
+            active: None,
+            thread: session
+                .thread_id()
+                .expect("a later-main page session always has a live owner"),
+            thread_sequence: session.thread_sequence(),
+            _not_send_or_sync: PhantomData,
+        }
+    }
+
+    fn bind(
+        &mut self,
+        session: &mut MainHeapThreadPageSession<'_, '_>,
+    ) -> Result<(), OwnerLocalMainHeapPageSessionBindError> {
+        if self.active.is_some() {
+            return Err(OwnerLocalMainHeapPageSessionBindError::Reentrant);
+        }
+        if session.thread_id() != Some(self.thread)
+            || session.thread_sequence() != self.thread_sequence
+        {
+            return Err(OwnerLocalMainHeapPageSessionBindError::DifferentOwner);
+        }
+        // Lifetimes are erased only in this private pointer slot. The caller
+        // installs an unbind guard before any engine operation and keeps the
+        // stack session alive until that guard has cleared the slot.
+        self.active = Some(NonNull::from(session).cast());
+        Ok(())
+    }
+
+    #[inline]
+    fn active(&self) -> &MainHeapThreadPageSession<'static, 'static> {
+        let active = self
+            .active
+            .expect("an owner-local page engine is callable only while bound");
+        // SAFETY: `bind` installs only a live stack session and its guard
+        // clears the pointer before that session is dropped.
+        unsafe { active.as_ref() }
+    }
+
+    #[inline]
+    fn active_mut(&mut self) -> &mut MainHeapThreadPageSession<'static, 'static> {
+        let mut active = self
+            .active
+            .expect("an owner-local page engine is callable only while bound");
+        // SAFETY: `with_owner_local_main_heap_session` holds the unique engine
+        // borrow and the source attachment's unique short session borrow.
+        unsafe { active.as_mut() }
+    }
+}
+
+struct OwnerLocalMainHeapPageSessionUnbind {
+    session: *mut OwnerLocalMainHeapPageSession,
+}
+
+impl Drop for OwnerLocalMainHeapPageSessionUnbind {
+    fn drop(&mut self) {
+        // SAFETY: the guard cannot outlive the engine call which created it;
+        // that call keeps the adapter alive and does not move the engine.
+        unsafe { (*self.session).active = None };
+    }
+}
+
+impl theap_page_session_sealed::Sealed for OwnerLocalMainHeapPageSession {}
+
+// SAFETY: the adapter is private and delegates only while bound to a freshly
+// revalidated short `MainHeapThreadPageSession` for its exact captured
+// thread/sequence. Session construction itself proves the current Theap/root/
+// list identity. The continuously stored engine owns all page state, and the
+// guard clears the erased pointer before the attachment borrow ends.
+unsafe impl TheapPageSession for OwnerLocalMainHeapPageSession {
+    #[inline]
+    fn theap(&self) -> &Theap { self.active().theap() }
+    #[inline]
+    fn thread_id(&self) -> Option<LiveThreadId> { self.active().thread_id() }
+    #[inline]
+    fn queue(&self, bin: usize) -> Option<&crate::types::PageQueue> {
+        self.active().queue(bin)
+    }
+    #[inline]
+    fn queue_mut(&mut self, bin: usize) -> Option<&mut crate::types::PageQueue> {
+        self.active_mut().queue_mut(bin)
+    }
+    #[inline]
+    fn direct_page(&self, index: usize) -> Option<*mut Page> {
+        self.active().direct_page(index)
+    }
+    #[inline]
+    fn set_direct_page(&mut self, index: usize, page: *mut Page) -> bool {
+        self.active_mut().set_direct_page(index, page)
+    }
+    #[inline]
+    fn note_page_added(&mut self) { self.active_mut().note_page_added() }
+    #[inline]
+    fn note_page_removed(&mut self) -> bool { self.active_mut().note_page_removed() }
+    #[inline]
+    fn ensure_arena_pages(&mut self, arena: &ArenaView<'_>, config: crate::os::MemoryConfig) -> bool {
+        self.active_mut().ensure_arena_pages(arena, config)
+    }
+    #[inline]
+    fn set_arena_page(&mut self, arena: &ArenaView<'_>, memory: MemoryId) -> bool {
+        self.active_mut().set_arena_page(arena, memory)
+    }
+    #[inline]
+    fn clear_arena_page(&mut self, arena: &ArenaView<'_>, memory: MemoryId) -> bool {
+        self.active_mut().clear_arena_page(arena, memory)
+    }
+    #[inline]
+    unsafe fn publish_fresh_page(
+        &mut self,
+        metadata: NonNull<Page>,
+        block_size: usize,
+        page_offset: usize,
+        reserved: u16,
+        slice_pcommitted: u16,
+        free_is_zero: bool,
+        memid: MemoryId,
+    ) -> Option<NonNull<Page>> {
+        unsafe {
+            self.active_mut().publish_fresh_page(
+                metadata,
+                block_size,
+                page_offset,
+                reserved,
+                slice_pcommitted,
+                free_is_zero,
+                memid,
+            )
+        }
+    }
+    #[inline]
+    fn retire_page(&mut self, page: &mut Page) -> Option<MemoryId> {
+        self.active_mut().retire_page(page)
+    }
+    #[inline]
+    fn retired_bounds(&self) -> (usize, usize) { self.active().retired_bounds() }
+    #[inline]
+    fn note_retired_bin(&mut self, bin: usize) -> bool {
+        self.active_mut().note_retired_bin(bin)
+    }
+    #[inline]
+    fn reset_retired_bounds(&mut self) { self.active_mut().reset_retired_bounds() }
+    #[inline]
+    fn retain_unfinished_os_release(
+        &mut self,
+        owner: OsAlignedPageOwner,
+    ) -> Result<(), OsAlignedPageOwner> {
+        self.active_mut().retain_unfinished_os_release(owner)
+    }
+    #[inline]
+    fn latch_unfinished_page_engine(&mut self) {
+        self.active_mut().latch_unfinished_page_engine()
+    }
+}
 
 /// A deliberately narrow post-TLS dynamic page-drain owner. It is not a
 /// general allocator: source thread exit has already cleared the Heap's
@@ -5928,6 +6116,79 @@ impl<'attachment, 'main, 'arena, 'map>
                 error,
             )),
         }
+    }
+}
+
+impl<'arena, 'map> PageAllocatorEngine<'arena, 'map, OwnerLocalMainHeapPageSession> {
+    /// Activates a continuously stored page engine for one already-attached
+    /// later-main owner. The initial source session contributes identity only;
+    /// every operation revalidates and binds a new short view of that same
+    /// attachment.
+    ///
+    /// # Safety
+    ///
+    /// `page_map` must remain valid until every page owned by this engine has
+    /// been unregistered and its readers have quiesced. While this engine is
+    /// live, plain PageMap operations may overlap only for disjoint exact
+    /// owned ranges. `session` must name the current attached owner paired
+    /// with `arena` and `page_map`.
+    pub(crate) unsafe fn activate_owner_local_later_main_thread(
+        session: &MainHeapThreadPageSession<'_, '_>,
+        arena: ArenaView<'arena>,
+        requested_arena: ArenaId,
+        page_map: &'map PageMap,
+    ) -> Self {
+        let thread_sequence = session.thread_sequence();
+        Self {
+            session: OwnerLocalMainHeapPageSession::new(session),
+            arena,
+            requested_arena,
+            page_map,
+            thread_sequence,
+            pending_os_release: None,
+            collection_poison: None,
+            page_commit_poison: false,
+            #[cfg(test)]
+            page_free_collect_failure_once: PageCollectFailureInjection::None,
+            #[cfg(test)]
+            page_release_after_page_map_unregister_failure_once: false,
+            #[cfg(test)]
+            aggregate_abandon_after_queue_detach_failure_once: false,
+            #[cfg(test)]
+            last_page_to_full: None,
+            #[cfg(test)]
+            page_commit_on_demand: false,
+            #[cfg(test)]
+            page_area_commit_lease: None,
+            shutdown_complete: false,
+        }
+    }
+
+    /// Runs one local operation through a freshly revalidated source view.
+    /// The adapter and every engine field stay in place across calls; only the
+    /// temporary session pointer is installed for this closure.
+    pub(crate) fn with_owner_local_main_heap_session<R>(
+        &mut self,
+        mut session: MainHeapThreadPageSession<'_, '_>,
+        operation: impl FnOnce(&mut Self) -> R,
+    ) -> Result<R, OwnerLocalMainHeapPageSessionBindError> {
+        self.session.bind(&mut session)?;
+        let _unbind = OwnerLocalMainHeapPageSessionUnbind {
+            session: core::ptr::addr_of_mut!(self.session),
+        };
+        Ok(operation(self))
+    }
+
+    /// Performs the all-free quiescence check while the source attachment is
+    /// briefly bound. `false` retains the complete engine for an explicit
+    /// later decision; a successful result disarms its conservative Drop.
+    pub(crate) fn finish_owner_local_main_heap_session(
+        &mut self,
+        session: MainHeapThreadPageSession<'_, '_>,
+    ) -> Result<bool, OwnerLocalMainHeapPageSessionBindError> {
+        self.with_owner_local_main_heap_session(session, |engine| {
+            engine.finish_quiescent_in_place()
+        })
     }
 }
 
@@ -32363,29 +32624,37 @@ impl<'arena, 'map, Session: TheapPageSession> PageAllocatorEngine<'arena, 'map, 
     /// runtime has one narrower continuation: it recovers its permanent
     /// session, releases the artificial process PageMap exclusion, and may
     /// later reactivate only against the already-published first arena.
-    fn finish_quiescent(mut self) -> Result<Self, Self> {
+    fn finish_quiescent_in_place(&mut self) -> bool {
         if self.is_collection_poisoned() || self.pending_os_release.is_some() {
-            return Err(self);
+            return false;
         }
         if !self.collect_retired(true)
             || self.is_collection_poisoned()
             || self.pending_os_release.is_some()
             || self.session.theap().page_count() != 0
         {
-            return Err(self);
+            return false;
         }
         for bin in 0..BIN_COUNT {
             if !self.session.queue(bin).is_some_and(|queue| queue.count() == 0) {
-                return Err(self);
+                return false;
             }
         }
         for index in 0..PAGES_DIRECT {
             if self.session.direct_page(index) != Some(EMPTY_PAGE.as_ptr()) {
-                return Err(self);
+                return false;
             }
         }
         self.shutdown_complete = true;
-        Ok(self)
+        true
+    }
+
+    fn finish_quiescent(mut self) -> Result<Self, Self> {
+        if self.finish_quiescent_in_place() {
+            Ok(self)
+        } else {
+            Err(self)
+        }
     }
 
     /// Explicitly quiesces this bounded page lifecycle. A successful finish
