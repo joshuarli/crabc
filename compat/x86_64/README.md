@@ -461,6 +461,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-process-globals-getopt
 ./scripts/dev-x86_64.sh libc-auxv-observation
 ./scripts/dev-x86_64.sh libc-inet-address
+./scripts/dev-x86_64.sh libc-inet-ntoa
 ./scripts/dev-x86_64.sh libc-hstrerror
 ./scripts/dev-x86_64.sh libc-numeric-netdb
 ./scripts/dev-x86_64.sh libc-interface-discovery
@@ -1270,8 +1271,8 @@ address-conversion or socket behavior, `crabc-libc`, or public x86 support.
 
 `inet-address-header-abi` compile-checks project-first and pinned-musl
 default/GNU/strict C and C++ `<arpa/inet.h>` profiles. It ratchets the exact
-`inet_pton`, `inet_ntop`, `inet_aton`, and `inet_addr` declarations, the x86
-`in_addr_t`/`in_port_t`/`struct in_addr` layouts, `INET_ADDRSTRLEN` and
+`inet_pton`, `inet_ntop`, `inet_aton`, `inet_addr`, and `inet_ntoa`
+declarations, the x86 `in_addr_t`/`in_port_t`/`struct in_addr` layouts, `INET_ADDRSTRLEN` and
 `INET6_ADDRSTRLEN`, and unmangled C++ C spellings. It is declaration/layout
 evidence only: it does not establish archive linkage, numeric-address runtime
 behavior, DNS/resolver state, netdb, installed-header completion, family
@@ -1286,9 +1287,24 @@ fixture pins strict IPv4/IPv6 grammar, historical base-zero and abbreviated
 `inet_aton` forms, network bytes, `INADDR_NONE` ambiguity, partial parse and
 output writes, mapped-v4/longest-zero-run text, AF-family errors, and the
 different short-buffer behavior for AF_INET and AF_INET6 `inet_ntop`. It does
-not select DNS/resolver state, netdb, interface lookup, `inet_ntoa` scratch
-storage, allocation, stdio, libc.so, CRT, loader, sysroot, resolver-network
+not select DNS/resolver state, netdb, interface lookup, the separate
+`inet_ntoa` scratch-buffer candidate, allocation, stdio, libc.so, CRT, loader, sysroot, resolver-network
 behavior, family promotion, or public x86 support.
+
+`libc-inet-ntoa` is a distinct private static C `inet_ntoa` scratch-buffer
+artifact under still-planned `libc.resolver`. Its project-header C body runs
+through pinned musl 1.2.6 and then through an archive-free
+`-nostdlib -static` candidate whose final link receives only the one extracted
+`inet_ntoa` object, never `libc.a`; a separate archive ratchet proves that
+object is published. It preserves musl's one shared static 16-byte dotted-IPv4
+buffer: calls return the same pointer and the next call overwrites its text.
+Musl uses `snprintf`; this bounded leaf manually writes four decimal octets
+because the longest result is fifteen bytes plus NUL, so it does not select
+stdio. It neither reads nor writes `h_errno` or `errno`, and has no h_errno
+storage, TLS, numeric netdb, resolver configuration, DNS, `/etc/hosts`,
+`/etc/resolv.conf`, conventional network database, interface, socket,
+allocation, syscall, libc.so, CRT, loader, sysroot, resolver completion,
+family promotion, or public x86 support.
 
 `libc-hstrerror` is a separate private static C message leaf under
 still-planned `libc.resolver`. Its project-header C body first executes through

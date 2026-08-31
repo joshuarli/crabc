@@ -1398,6 +1398,8 @@ NUMERIC_NETDB_SYMBOLS = (
 
 HSTRERROR_SYMBOLS = ("hstrerror",)
 
+INET_NTOA_SYMBOLS = ("inet_ntoa",)
+
 INET_ADDRESS_UNSELECTED_SYMBOLS = (
     "calloc",
     "free",
@@ -1407,7 +1409,6 @@ INET_ADDRESS_UNSELECTED_SYMBOLS = (
     "inet_makeaddr",
     "inet_netof",
     "inet_network",
-    "inet_ntoa",
     "malloc",
     "realloc",
 )
@@ -5378,7 +5379,7 @@ def require_inet_address_header_evidence(family: Mapping[str, Any]) -> None:
             for phrase in (
                 "default/GNU/strict C/C++",
                 "<arpa/inet.h>",
-                "`inet_pton`/`inet_ntop`/`inet_aton`/`inet_addr`",
+                "`inet_pton`/`inet_ntop`/`inet_aton`/`inet_addr`/`inet_ntoa`",
                 "`in_addr_t`/`in_port_t`/`struct in_addr`",
                 "INET text-buffer constants",
                 "archive linkage",
@@ -17832,6 +17833,7 @@ def require_inet_address_artifact(family: Mapping[str, Any]) -> None:
             and "`inet_ntop`" in item
             and "`inet_aton`" in item
             and "`inet_addr`" in item
+            and "`inet_ntoa`" in item
             and "unmangled C++" in item
             and "public x86 support" in item
             for item in headers
@@ -17936,6 +17938,357 @@ def require_inet_address_artifact(family: Mapping[str, Any]) -> None:
     require(
         "libc-inet-address)" in dispatch_source,
         "libc-inet-address is absent from the native dispatcher",
+    )
+
+
+def require_inet_ntoa_artifact(family: Mapping[str, Any]) -> None:
+    """Keep musl's shared inet_ntoa buffer archive-free and resolver-free."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.resolver].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [
+        entry for entry in artifacts if entry.get("id") == "static-c-inet-ntoa-scratch"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.resolver must contain exactly one static-c-inet-ntoa-scratch artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-inet-ntoa-scratch must not promote libc.resolver",
+    )
+    artifact = matching[0]
+    description = artifact.get("description")
+    require(isinstance(description, str), "static-c-inet-ntoa-scratch needs a description")
+    for phrase in (
+        "Private native x86 static `inet_ntoa` scratch-buffer artifact",
+        "still-planned `libc.resolver`",
+        "pinned musl 1.2.6",
+        "archive-free true `-nostdlib -static` candidate",
+        "exactly one extracted crabc object",
+        "never `libc.a`",
+        "single shared static 16-byte buffer",
+        "same returned pointer",
+        "overwrites its prior text",
+        "struct in_addr",
+        "`snprintf`",
+        "`h_errno`",
+        "`errno`",
+        "no h_errno/errno storage, TLS",
+        "DNS/resolver state",
+        "netdb",
+        "/etc/hosts",
+        "/etc/resolv.conf",
+        "interface lookup",
+        "socket dependency",
+        "allocation",
+        "stdio",
+        "family promotion",
+        "public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"static-c-inet-ntoa-scratch description omits {phrase}",
+        )
+
+    owners = set(
+        nonempty_strings(
+            artifact.get("source_owners"), "static-c-inet-ntoa-scratch.source_owners"
+        )
+    )
+    for owner in (
+        "compat/upstreams.toml",
+        "libc/Cargo.toml",
+        "libc/src/lib.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/inet_ntoa.rs",
+        "include/arpa/inet.h",
+        "include/netinet/in.h",
+        "include/stddef.h",
+        "include/stdint.h",
+        "include/sys/socket.h",
+        "include/sys/types.h",
+        "include/bits/alltypes.h",
+        "compat/x86_64/inet_address_header_abi_probe.c",
+        "compat/x86_64/inet_address_header_abi_probe.cpp",
+        "compat/x86_64/run_inet_address_header_abi.sh",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/libc_inet_ntoa_probe.c",
+        "compat/x86_64/libc_inet_ntoa_start.S",
+        "compat/x86_64/run_libc_inet_ntoa.sh",
+        "compat/x86_64/run_libc_inet_address.sh",
+        "compat/x86_64/aarch64_parity_inventory.py",
+        "compat/x86_64/aarch64_parity_inventory.json",
+        "compat/x86_64/tests/test_aarch64_parity_inventory.py",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/README.md",
+        "STATUS.md",
+        "x86-64.md",
+        "scripts/dev-x86_64.sh",
+        "scripts/check_structure.py",
+    ):
+        require(owner in owners, f"static-c-inet-ntoa-scratch source owners omit {owner}")
+
+    prerequisites = nonempty_strings(
+        artifact.get("x86_abi_prerequisites"),
+        "static-c-inet-ntoa-scratch.x86_abi_prerequisites",
+    )
+    require(
+        any(
+            "SysV AMD64 LP64" in item
+            and "struct in_addr" in item
+            and "four-byte" in item
+            and "s_addr" in item
+            and "offset zero" in item
+            and "edi" in item
+            and "char *" in item
+            and "rax" in item
+            for item in prerequisites
+        ),
+        "static-c-inet-ntoa-scratch must record its by-value x86 in_addr C ABI",
+    )
+    require(
+        any(
+            "9fa28ece75d8a2191de7c5bb53bed224c5947417" in item
+            and "src/network/inet_ntoa.c" in item
+            and "static char buf[16]" in item
+            and "snprintf" in item
+            and "fifteen bytes plus NUL" in item
+            and "no resolver or DNS source is selected" in item
+            for item in prerequisites
+        ),
+        "static-c-inet-ntoa-scratch must record exact pinned-musl source mapping and delta",
+    )
+    require(
+        any(
+            "shared static 16-byte buffer" in item
+            and "same pointer" in item
+            and "overwrites" in item
+            and "to_ne_bytes" in item
+            and "ordinary BSS" in item
+            and "not TLS" in item
+            and "synchronize" in item
+            for item in prerequisites
+        ),
+        "static-c-inet-ntoa-scratch must record its shared-buffer contract",
+    )
+    require(
+        any(
+            "h_errno" in item
+            and "errno" in item
+            and "resolver configuration" in item
+            and "DNS" in item
+            and "/etc/hosts" in item
+            and "/etc/resolv.conf" in item
+            and "interface" in item
+            and "socket" in item
+            for item in prerequisites
+        ),
+        "static-c-inet-ntoa-scratch must retain its resolver and runtime exclusions",
+    )
+
+    headers = nonempty_strings(
+        artifact.get("x86_header_prerequisites"),
+        "static-c-inet-ntoa-scratch.x86_header_prerequisites",
+    )
+    require(
+        any(
+            "six-profile" in item
+            and "project-first/pinned-musl" in item
+            and "<arpa/inet.h>" in item
+            and "`inet_ntoa`" in item
+            and "struct in_addr" in item
+            and "unmangled C++" in item
+            and "public x86 support" in item
+            for item in headers
+        ),
+        "static-c-inet-ntoa-scratch must record its direct header boundary",
+    )
+
+    static_exports = set(
+        static_c_abi_export_names(
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        )
+    )
+    require(
+        set(INET_NTOA_SYMBOLS) <= static_exports,
+        "static-c-inet-ntoa-scratch must retain inet_ntoa in the static export manifest",
+    )
+    require(
+        "inet_ntoa" not in INET_ADDRESS_UNSELECTED_SYMBOLS,
+        "static-c-inet-address-codecs must leave the separate inet_ntoa export selectable",
+    )
+
+    static_root = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+    ).read_text(encoding="utf-8")
+    require(
+        '#[path = "inet_ntoa.rs"]\nmod inet_ntoa;' in static_root,
+        "x86 static C ABI must compose the inet_ntoa leaf",
+    )
+    implementation = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "inet_ntoa.rs"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+        "src/network/inet_ntoa.c",
+        "snprintf",
+        "INET_NTOA_BUFFER",
+        "[c_char; 16]",
+        "write_decimal_octet",
+        "to_ne_bytes",
+        'pub unsafe extern "C" fn inet_ntoa',
+        "Concurrent callers must externally synchronize",
+    ):
+        require(snippet in implementation, f"inet_ntoa leaf omits {snippet}")
+    static_mut_names = re.findall(r"(?m)^static mut (\w+)", implementation)
+    require(
+        static_mut_names == ["INET_NTOA_BUFFER"],
+        "inet_ntoa must own exactly one shared static mutable buffer",
+    )
+    for forbidden in (
+        "raw_syscall",
+        "errno::",
+        "__h_errno_location",
+        "getaddrinfo",
+        "gethostby",
+        "if_nameindex",
+        "socket(",
+        "std::",
+        "alloc::",
+        "crabc_core",
+        "crabc_mimalloc",
+    ):
+        require(
+            forbidden not in implementation,
+            f"inet_ntoa leaf widens into {forbidden}",
+        )
+
+    oracle = artifact.get("oracle")
+    require(isinstance(oracle, list), "static-c-inet-ntoa-scratch needs oracle evidence")
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "c-posix"
+            and isinstance(entry.get("role"), str)
+            and "src/network/inet_ntoa.c" in entry["role"]
+            and "static char buf[16]" in entry["role"]
+            and "snprintf" in entry["role"]
+            and "deliberate bounded decimal-write inlining" in entry["role"]
+            and "h_errno" in entry["role"]
+            and "interface" in entry["role"]
+            and "socket" in entry["role"]
+            for entry in oracle
+        ),
+        "static-c-inet-ntoa-scratch must retain its pinned-musl source and delta",
+    )
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "elf-abi"
+            and isinstance(entry.get("role"), str)
+            and "struct in_addr" in entry["role"]
+            and "single 32-bit word in edi" in entry["role"]
+            and "char pointer in rax" in entry["role"]
+            and "archive-free" in entry["role"]
+            for entry in oracle
+        ),
+        "static-c-inet-ntoa-scratch must retain its archive-free in_addr ABI contract",
+    )
+
+    evidence = artifact.get("native_evidence")
+    require(isinstance(evidence, list), "static-c-inet-ntoa-scratch needs evidence")
+    require(
+        {entry.get("command") for entry in evidence if isinstance(entry, Mapping)}
+        == {"./scripts/dev-x86_64.sh libc-inet-ntoa"},
+        "static-c-inet-ntoa-scratch must use the closed libc-inet-ntoa command",
+    )
+    scope = evidence[0].get("scope")
+    require(isinstance(scope, str), "static-c-inet-ntoa-scratch evidence needs a scope")
+    for phrase in (
+        "Pinned-musl project-header C execution",
+        "archive-free x86 `-nostdlib -static` candidate",
+        "exactly one extracted object",
+        "never `libc.a`",
+        "0.0.0.0/0.9.10.99/100.255.0.1/255.255.255.255",
+        "same returned pointer",
+        "overwrites",
+        "no TLS/errno or h_errno",
+        "no interpreter/DT_NEEDED/unresolved",
+        "no calls or syscalls in `inet_ntoa`",
+        "DNS/resolver state",
+        "netdb",
+        "/etc/hosts",
+        "/etc/resolv.conf",
+        "interfaces",
+        "sockets",
+        "allocation",
+        "stdio",
+        "public x86 support",
+    ):
+        require(
+            phrase in scope,
+            f"static-c-inet-ntoa-scratch evidence omits {phrase}",
+        )
+
+    fixture = (
+        ROOT / "compat" / "x86_64" / "libc_inet_ntoa_probe.c"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "inet_ntoa_signature",
+        "sizeof(struct in_addr) == 4",
+        "offsetof(struct in_addr, s_addr) == 0",
+        '"0.9.10.99"',
+        '"100.255.0.1"',
+        '"255.255.255.255"',
+        '"0.0.0.0"',
+        "second != first",
+        "CRABC_INET_NTOA_FREESTANDING",
+    ):
+        require(snippet in fixture, f"inet_ntoa fixture omits {snippet}")
+    runner_path = ROOT / "compat" / "x86_64" / "run_libc_inet_ntoa.sh"
+    require(runner_path.is_file(), "static-c-inet-ntoa-scratch runner is missing")
+    runner = runner_path.read_text(encoding="utf-8")
+    for snippet in (
+        "inet_ntoa.lo",
+        "snprintf",
+        "%d.%d.%d.%d",
+        "assert_selected_c_abi_surface",
+        "extract_selected_member",
+        "exactly one selected archive member",
+        "-nostdlib -static",
+        '"$selected_member" -o "$candidate"',
+        "archive-free candidate",
+        "candidate unexpectedly selects TLS",
+        "__h_errno_location",
+        "getaddrinfo",
+        "if_nameindex",
+        "socket bind connect send recv",
+        "malloc free calloc realloc snprintf",
+        "call|syscall",
+    ):
+        require(snippet in runner, f"static-c-inet-ntoa-scratch runner omits {snippet}")
+    require(
+        '"$archive" -o "$candidate"' not in runner,
+        "static-c-inet-ntoa-scratch final candidate must not link libc.a",
+    )
+    inet_address_runner = (
+        ROOT / "compat" / "x86_64" / "run_libc_inet_address.sh"
+    ).read_text(encoding="utf-8")
+    require(
+        "candidate accidentally selects separate inet_ntoa scratch storage"
+        in inet_address_runner,
+        "numeric inet-address candidate must continue excluding inet_ntoa",
+    )
+    dispatch_source = (ROOT / "scripts" / "dev-x86_64.sh").read_text(encoding="utf-8")
+    require(
+        "libc-inet-ntoa)" in dispatch_source
+        and "run_libc_inet_ntoa.sh" in dispatch_source,
+        "inet_ntoa dispatcher binding is missing",
     )
 
 
@@ -28271,6 +28624,7 @@ def validate_ledger(
     require_directory_streams_artifact(by_id["libc.posix-runtime"])
     require_extended_attributes_artifact(by_id["libc.posix-runtime"])
     require_inet_address_artifact(by_id["libc.resolver"])
+    require_inet_ntoa_artifact(by_id["libc.resolver"])
     require_numeric_netdb_artifact(by_id["libc.resolver"])
     require_hstrerror_artifact(by_id["libc.resolver"])
     require_auxv_observation_artifact(by_id["libc.c-abi-compat"])
