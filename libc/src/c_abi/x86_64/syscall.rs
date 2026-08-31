@@ -43,6 +43,9 @@
 //! direct syscalls here. All other public C wrappers remain unintegrated until
 //! their own ABI
 //! boundaries have evidence.
+//! The separately selected one-symbol POSIX message-queue attribute leaf uses
+//! `mq_getsetattr=245` here; it does not select queue lifecycle, transfer, or
+//! notification behavior.
 //!
 //! Linux/x86-64 enters the kernel with `syscall`: `rax` holds the syscall
 //! number and result, then arguments one through six are `rdi`, `rsi`, `rdx`,
@@ -396,6 +399,8 @@ pub(crate) const SYS_CLOCK_NANOSLEEP: i64 = 230;
 pub(crate) const SYS_EXIT_GROUP: i64 = 231;
 pub(crate) const SYS_EPOLL_CTL: i64 = 233;
 pub(crate) const SYS_TGKILL: i64 = 234;
+/// Linux x86-64 `mq_getsetattr` uses `rdi/rsi/rdx` for its three arguments.
+pub(crate) const SYS_MQ_GETSETATTR: i64 = 245;
 pub(crate) const SYS_WAITID: i64 = 247;
 pub(crate) const SYS_INOTIFY_ADD_WATCH: i64 = 254;
 pub(crate) const SYS_INOTIFY_RM_WATCH: i64 = 255;

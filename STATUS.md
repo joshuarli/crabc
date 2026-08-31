@@ -1884,6 +1884,18 @@ translation, the `SEM_VALUE_MAX` overflow boundary, and one caller-owned
 `MAP_SHARED` pshared futex handoff. It deliberately does not select
 `sem_timedwait`, named semaphores, cancellation cleanup, signal-action restart
 policy, destruction races, or general POSIX IPC. The paired
+`./scripts/dev-x86_64.sh mq-setattr-header-abi` gate is the separate
+project-header/pinned-musl C/C++ declaration/layout proof for only signed
+four-byte `mqd_t`, 64-byte align-8 `mq_attr`, `mq_getsetattr=245`, and C
+linkage. Its accompanying `./scripts/dev-x86_64.sh libc-mq-setattr` command
+records the private `static-c-mq-setattr` artifact: one pinned-musl and true
+freestanding `-nostdlib -static` C body selects only
+`mq_setattr(mqd_t, const struct mq_attr *, struct mq_attr *)`,
+`O_NONBLOCK` replacement, optional old-attribute output, stale errno on
+success, and direct `EINVAL`/`EBADF`. It excludes queue open/close/unlink,
+message transfer, notification, timed operations, general IPC, Rust facade
+behavior, cancellation, dynamic runtime, family completion, and public x86
+support. The paired
 `./scripts/dev-x86_64.sh sysv-message-shared-memory-header-abi` gate now
 compares selected `sys/ipc.h`/`sys/msg.h`/`sys/shm.h` declarations,
 feature-visible member spellings, x86 LP64 layouts and constants, and C++

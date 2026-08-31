@@ -2179,6 +2179,7 @@ source_owners = [
   "libc/src/c_abi/x86_64/memfd_create.rs",
   "libc/src/c_abi/x86_64/readiness_waits.rs",
   "libc/src/c_abi/x86_64/event_descriptors.rs",
+  "libc/src/c_abi/x86_64/mq_setattr.rs",
   "libc/src/c_abi/x86_64/pathname_lifecycle.rs",
   "libc/src/c_abi/x86_64/socket_transport.rs",
   "libc/src/c_abi/x86_64/network_byte_order.rs",
@@ -5409,8 +5410,61 @@ native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc
 oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source mapping: src/thread/sem_init.c, sem_destroy.c, sem_getvalue.c, sem_trywait.c, sem_post.c, sem_timedwait.c, and sem_wait.c supply the public sem_t record, value/waiter/futex state, errno, spin-before-wait, wake, cancellation, and restart comparison boundary." }, { kind = "kernel-abi", source = "Linux 5.10 x86-64 ABI", role = "futex=202 FUTEX_WAIT/FUTEX_WAKE private/shared forms, raw errno, caller-owned aligned sem_t word, MAP_SHARED wakeup, fork, mmap, and wait result contract." }, { kind = "elf-abi", source = "System V AMD64 psABI", role = "LP64 semaphore C call register convention and static initial-exec TLS fixture contract." }]
 
 [[family.verified_artifact]]
+id = "static-c-mq-setattr"
+description = "Private native x86 selected-static-archive one-symbol POSIX message-queue attribute block. Its dependency-free `crabc-libc` fixture resolves only `mq_setattr(mqd_t, const struct mq_attr *, struct mq_attr *)` after an equivalent pinned-musl execution. It forwards Linux `mq_getsetattr=245` through rdi/rsi/rdx: a caller-owned 64-byte LP64 input record replaces only `O_NONBLOCK`, an optional output record receives the prior attributes, and the fixture proves stale errno on success plus direct EINVAL and EBADF. This does not select mq_open/mq_close/mq_getattr/mq_notify/mq_send/mq_receive/mq_timedreceive/mq_timedsend/mq_unlink, queue naming or lifecycle, message transfer, timed operations, generic IPC, Rust facade behavior, cancellation, libc.so, CRT, pthread/TLS lifecycle, dynamic TLS, loader, sysroot, allocator, family completion, promotion, or public x86 support."
+source_owners = [
+  "compat/upstreams.toml",
+  "compat/abi/musl-1.2.6/aarch64/libc.a.static.tsv",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/mq_setattr.rs",
+  "libc/src/c_abi/x86_64/errno.rs",
+  "libc/src/c_abi/x86_64/syscall.rs",
+  "include/errno.h",
+  "include/fcntl.h",
+  "include/mqueue.h",
+  "include/stddef.h",
+  "include/stdint.h",
+  "include/sys/types.h",
+  "include/sys/syscall.h",
+  "include/unistd.h",
+  "include/bits/syscall.h",
+  "compat/x86_64/mq_setattr_header_abi_probe.c",
+  "compat/x86_64/mq_setattr_header_abi_probe.cpp",
+  "compat/x86_64/run_mq_setattr_header_abi.sh",
+  "compat/x86_64/run_x86_mqueue_reference.sh",
+  "compat/x86_64/x86_mqueue_reference_probe.c",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/libc_mq_setattr_probe.c",
+  "compat/x86_64/libc_mq_setattr_start.S",
+  "compat/x86_64/run_libc_mq_setattr.sh",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "compat/x86_64/README.md",
+  "STATUS.md",
+  "x86-64.md",
+  "scripts/dev-x86_64.sh",
+  "scripts/check_structure.py",
+]
+x86_abi_prerequisites = [
+  "Linux/x86-64 mq_getsetattr=245 receives one signed four-byte mqd_t descriptor plus optional input and output `struct mq_attr` pointers in rdi/rsi/rdx. The selected C wrapper returns zero or maps only Linux's raw -4095..=-1 range to C -1 plus the selected initial-TLS errno slot",
+  "The selected C mqd_t is a signed four-byte descriptor and its LP64 struct mq_attr is 64-byte align-8 storage with mq_flags/mq_maxmsg/mq_msgsize/mq_curmsgs/reserved at offsets 0/8/16/24/32. Linux replaces only the O_NONBLOCK status flag; the caller owns both record pointers, queue descriptor, queue naming, lifecycle, transfer, and synchronization contracts",
+  "Pinned musl 1.2.6 src/mq/mq_setattr.c directly invokes syscall(SYS_mq_getsetattr, mqd, new, old) without cancellation-point, queue-name translation, allocation, or fallback machinery. This selected x86 leaf preserves only that direct source path",
+  "The final static candidate has a PT_TLS errno datum with direct initial-exec TPOFF access and no TLSGD/TLSLD/TLSDESC/GOTTPOFF/DTPMOD/DTPOFF model form or __tls_get_addr; fixture-local startup writes one Variant-II thread-pointer self word at %fs:0 without claiming CRT or TLS lifecycle",
+]
+x86_header_prerequisites = ["The dedicated project-first/pinned-musl C/C++ mqueue.h gate proves only `mq_setattr(mqd_t, const struct mq_attr *, struct mq_attr *)`, signed four-byte mqd_t, the 64-byte align-8 LP64 mq_attr layout, mq_getsetattr=245, and unmangled C++ linkage. The candidate fixture additionally preprocesses project errno.h, fcntl.h, mqueue.h, stddef.h, stdint.h, sys/types.h, sys/syscall.h, unistd.h, and bits/syscall.h. This is a bounded mq_setattr declaration/layout facet, not a complete mqueue header or C IPC ABI."]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-mq-setattr", scope = "Pinned-musl C differential plus a true dependency-free x86 crabc-libc static archive and freestanding `-nostdlib -static` candidate. The gate proves project-header C/C++ mqueue.h provenance; exact crate-owned C object-member export closure separately from compiler-builtins; no interpreter/DT_NEEDED/unresolved symbol or final-artifact dynamic TLS model; direct initial-TLS errno access; an mq_getsetattr=245 wrapper with rdi/rsi/rdx forwarding; nonblocking replacement, optional old-attribute output, stale errno on success, EINVAL, and EBADF. It does not select mq_open/mq_close/mq_getattr/mq_notify/mq_send/mq_receive/mq_timedreceive/mq_timedsend/mq_unlink, queue naming/lifecycle, transfer, timed operations, generic IPC, Rust facade behavior, cancellation, libc.so, CRT, loader, sysroot, family completion, promotion, or public x86 support." }]
+oracle = [
+  { kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source mapping, mqueue.h declaration, direct syscall forwarding, and errno behavior oracle for src/mq/mq_setattr.c." },
+  { kind = "kernel-abi", source = "Linux 5.10 x86-64 ABI", role = "mq_getsetattr=245 rdi/rsi/rdx register order, mqd_t/mq_attr layout, O_NONBLOCK replacement, optional old-attribute output, and raw errno contract." },
+  { kind = "elf-abi", source = "System V AMD64 psABI", role = "LP64 C pointer/int register convention and static initial-exec TLS fixture contract." },
+]
+
+[[family.verified_artifact]]
 id = "static-c-sysv-message-shared-memory"
-description = "Private native x86 selected-static-archive SysV message/shared-memory block. Its dependency-free `crabc-libc` fixture resolves exactly `ftok`, `msgget`, `msgsnd`, `msgrcv`, `msgctl`, `shmget`, `shmat`, `shmdt`, and `shmctl` after an equivalent pinned-musl execution. The selected local message queues and shared memory lifecycles prove ftok's stat-derived low-byte key formula, nonblocking message send/receive, IPC_STAT/IPC_RMID control, attach/write/detach/remove, direct raw errors, stale initial-TLS errno preservation, musl's oversized shared-memory size rewrite, and the exact shmat `(void *)-1` failure sentinel. It is not complete SysV IPC: it does not select SysV semaphore policy, POSIX message queues, POSIX shared memory, named or timed POSIX semaphores, cross-process coordination, broad namespace/permission policy, IPC information/locking adjuncts, pthread cancellation, libc.so, CRT, dynamic TLS, loader, sysroot, allocator, or public x86 support."
+description = "Private native x86 selected-static-archive SysV message/shared-memory block. Its dependency-free `crabc-libc` fixture resolves exactly `ftok`, `msgget`, `msgsnd`, `msgrcv`, `msgctl`, `shmget`, `shmat`, `shmdt`, and `shmctl` after an equivalent pinned-musl execution. The selected local message queues and shared memory lifecycles prove ftok's stat-derived low-byte key formula, nonblocking message send/receive, IPC_STAT/IPC_RMID control, attach/write/detach/remove, direct raw errors, stale initial-TLS errno preservation, musl's oversized shared-memory size rewrite, and the exact shmat `(void *)-1` failure sentinel. It is not complete SysV IPC: it does not select SysV semaphore policy, general POSIX message queues beyond the separate one-symbol `mq_setattr` artifact, POSIX shared memory, named or timed POSIX semaphores, cross-process coordination, broad namespace/permission policy, IPC information/locking adjuncts, pthread cancellation, libc.so, CRT, dynamic TLS, loader, sysroot, allocator, or public x86 support."
 source_owners = [
   "compat/upstreams.toml",
   "libc/Cargo.toml",

@@ -91,7 +91,8 @@
 //! scalar `difftime` artifact, one caller-buffered fixed-UTC `gmtime_r`
 //! conversion artifact, and one fixed-UTC `timegm` conversion artifact, plus one
 //! bounded System V message-queue/shared-memory artifact, one bounded
-//! unnamed POSIX semaphore artifact, and one bounded event-descriptor
+//! unnamed POSIX semaphore artifact, one sealed POSIX message-queue attribute
+//! entry point, and one bounded event-descriptor
 //! artifact, one bounded pathname-mutation/lifecycle artifact, and one
 //! bounded directory-stream/raw-directory artifact.
 //! The fixed-graph dlfcn bridge is a separate public-C spelling over the
@@ -440,6 +441,8 @@ mod memfd_create;
 mod readiness_waits;
 #[path = "event_descriptors.rs"]
 mod event_descriptors;
+#[path = "mq_setattr.rs"]
+mod mq_setattr;
 #[path = "timer_fd.rs"]
 mod timer_fd;
 #[path = "signal_fd.rs"]

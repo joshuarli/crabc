@@ -1247,6 +1247,20 @@ POSIX_SEMAPHORE_UNSELECTED_SYMBOLS = (
     "sem_unlink",
 )
 
+MQ_SETATTR_SYMBOLS = ("mq_setattr",)
+
+MQ_SETATTR_UNSELECTED_SYMBOLS = (
+    "mq_close",
+    "mq_getattr",
+    "mq_notify",
+    "mq_open",
+    "mq_receive",
+    "mq_send",
+    "mq_timedreceive",
+    "mq_timedsend",
+    "mq_unlink",
+)
+
 SYSV_MESSAGE_SHARED_MEMORY_SYMBOLS = (
     "ftok",
     "msgget",
@@ -1266,7 +1280,6 @@ SYSV_MESSAGE_SHARED_MEMORY_UNSELECTED_SYMBOLS = (
     "mq_open",
     "mq_receive",
     "mq_send",
-    "mq_setattr",
     "mq_timedreceive",
     "mq_timedsend",
     "mq_unlink",
@@ -22327,6 +22340,198 @@ def require_posix_semaphore_artifact(family: Mapping[str, Any]) -> None:
     )
 
 
+def require_mq_setattr_artifact(family: Mapping[str, Any]) -> None:
+    """Keep the single selected POSIX message-queue C entry point private."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.posix-runtime].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [entry for entry in artifacts if entry.get("id") == "static-c-mq-setattr"]
+    require(
+        len(matching) == 1,
+        "libc.posix-runtime must contain exactly one static-c-mq-setattr artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-mq-setattr must not promote libc.posix-runtime",
+    )
+    artifact = matching[0]
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for phrase in (
+        "one-symbol POSIX message-queue attribute block",
+        "`mq_setattr(mqd_t, const struct mq_attr *, struct mq_attr *)`",
+        "mq_getsetattr=245",
+        "rdi/rsi/rdx",
+        "O_NONBLOCK",
+        "stale errno",
+        "mq_open/mq_close/mq_getattr/mq_notify/mq_send/mq_receive/mq_timedreceive/mq_timedsend/mq_unlink",
+        "public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"static-c-mq-setattr description omits {phrase}",
+        )
+
+    owners = set(
+        nonempty_strings(artifact["source_owners"], "static-c-mq-setattr.source_owners")
+    )
+    for owner in (
+        "compat/upstreams.toml",
+        "compat/abi/musl-1.2.6/aarch64/libc.a.static.tsv",
+        "libc/Cargo.toml",
+        "libc/src/lib.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/mq_setattr.rs",
+        "libc/src/c_abi/x86_64/errno.rs",
+        "libc/src/c_abi/x86_64/syscall.rs",
+        "include/errno.h",
+        "include/fcntl.h",
+        "include/mqueue.h",
+        "include/stddef.h",
+        "include/stdint.h",
+        "include/sys/types.h",
+        "include/sys/syscall.h",
+        "include/unistd.h",
+        "include/bits/syscall.h",
+        "compat/x86_64/mq_setattr_header_abi_probe.c",
+        "compat/x86_64/mq_setattr_header_abi_probe.cpp",
+        "compat/x86_64/run_mq_setattr_header_abi.sh",
+        "compat/x86_64/run_x86_mqueue_reference.sh",
+        "compat/x86_64/x86_mqueue_reference_probe.c",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/libc_mq_setattr_probe.c",
+        "compat/x86_64/libc_mq_setattr_start.S",
+        "compat/x86_64/run_libc_mq_setattr.sh",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/README.md",
+        "STATUS.md",
+        "x86-64.md",
+        "scripts/dev-x86_64.sh",
+        "scripts/check_structure.py",
+    ):
+        require(owner in owners, f"static-c-mq-setattr source owners omit {owner}")
+
+    prerequisites = nonempty_strings(
+        artifact["x86_abi_prerequisites"], "static-c-mq-setattr.x86_abi_prerequisites"
+    )
+    require(
+        any(
+            "mq_getsetattr=245" in item
+            and "rdi/rsi/rdx" in item
+            and "mqd_t" in item
+            and "initial-TLS" in item
+            for item in prerequisites
+        ),
+        "static-c-mq-setattr must record its three-word syscall ABI",
+    )
+    require(
+        any(
+            "64-byte" in item
+            and "align-8" in item
+            and "O_NONBLOCK" in item
+            and "offsets 0/8/16/24/32" in item
+            for item in prerequisites
+        ),
+        "static-c-mq-setattr must record its mq_attr layout and flag boundary",
+    )
+    require(
+        any(
+            "src/mq/mq_setattr.c" in item
+            and "cancellation-point" in item
+            and "queue-name translation" in item
+            and "fallback" in item
+            for item in prerequisites
+        ),
+        "static-c-mq-setattr must retain its source-closed musl boundary",
+    )
+
+    headers = nonempty_strings(
+        artifact["x86_header_prerequisites"],
+        "static-c-mq-setattr.x86_header_prerequisites",
+    )
+    require(
+        any(
+            "mqueue.h" in item
+            and "C/C++" in item
+            and "mq_setattr" in item
+            and "mq_getsetattr=245" in item
+            and "unmangled C++" in item
+            for item in headers
+        ),
+        "static-c-mq-setattr must record its direct mqueue header boundary",
+    )
+
+    static_exports = set(
+        static_c_abi_export_names(
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        )
+    )
+    require(
+        set(MQ_SETATTR_SYMBOLS) <= static_exports,
+        "static-c-mq-setattr must retain its selected export",
+    )
+    require(
+        not (static_exports & set(MQ_SETATTR_UNSELECTED_SYMBOLS)),
+        "static-c-mq-setattr must not add other POSIX message-queue exports",
+    )
+
+    oracle = artifact["oracle"]
+    assert isinstance(oracle, list)
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "c-posix"
+            and isinstance(entry.get("role"), str)
+            and "src/mq/mq_setattr.c" in entry["role"]
+            for entry in oracle
+        ),
+        "static-c-mq-setattr must retain its pinned-musl source mapping",
+    )
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "kernel-abi"
+            and isinstance(entry.get("role"), str)
+            and "mq_getsetattr=245" in entry["role"]
+            and "rdi/rsi/rdx" in entry["role"]
+            for entry in oracle
+        ),
+        "static-c-mq-setattr must retain its Linux syscall oracle",
+    )
+
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-mq-setattr"},
+        "static-c-mq-setattr must use the closed libc-mq-setattr command",
+    )
+    scope = evidence[0].get("scope")
+    require(
+        isinstance(scope, str)
+        and all(
+            phrase in scope
+            for phrase in (
+                "Pinned-musl C differential",
+                "-nostdlib -static",
+                "mq_getsetattr=245",
+                "rdi/rsi/rdx",
+                "nonblocking replacement",
+                "stale errno",
+                "EINVAL",
+                "EBADF",
+                "mq_open/mq_close/mq_getattr/mq_notify/mq_send/mq_receive/mq_timedreceive/mq_timedsend/mq_unlink",
+                "public x86 support",
+            )
+        ),
+        "static-c-mq-setattr evidence must retain its bounded runtime proof",
+    )
+
+
 def require_sysv_message_shared_memory_artifact(family: Mapping[str, Any]) -> None:
     """Keep the selected SysV message/shared-memory artifact private and exact."""
     artifacts = require_verified_artifacts(
@@ -42725,6 +42930,7 @@ def validate_ledger(
     require_socket_messages_artifact(by_id["libc.posix-runtime"])
     require_sysv_semaphore_artifact(by_id["libc.posix-runtime"])
     require_posix_semaphore_artifact(by_id["libc.posix-runtime"])
+    require_mq_setattr_artifact(by_id["libc.posix-runtime"])
     require_sysv_message_shared_memory_artifact(by_id["libc.posix-runtime"])
     require_event_descriptors_artifact(by_id["libc.posix-runtime"])
     require_pathname_lifecycle_artifact(by_id["libc.posix-runtime"])

@@ -88,8 +88,9 @@ The separate `ipc-reference` gate verifies the private `ipc` POSIX
 named-message-queue slice: typed fixed-arity `mq_*` syscalls, owned queue
 descriptors, queue attributes and nonblocking status, bounded priorities,
 borrowed message buffers, absolute realtime deadlines, and unlink-after-open
-lifetime. It leaves `mq_notify`, C mqueue APIs/ABI and `errno` TLS, and public
-x86 runtime support unselected.
+lifetime. It leaves `mq_notify`, the general C mqueue APIs/ABI and `errno` TLS,
+and public x86 runtime support unselected; the separately sealed
+`static-c-mq-setattr` archive artifact does not widen this Rust-facing slice.
 The separate `shm-reference` gate verifies the private `ipc.posix-shm` slice:
 validated POSIX names map to `/dev/shm`, `shm::open` forces `CLOEXEC` only and
 returns an owned descriptor, and unlink-after-open lifetime remains direct.
@@ -290,6 +291,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh inet-address-header-abi
 ./scripts/dev-x86_64.sh socket-messages-header-abi
 ./scripts/dev-x86_64.sh sysv-semaphore-header-abi
+./scripts/dev-x86_64.sh mq-setattr-header-abi
 ./scripts/dev-x86_64.sh sysv-message-shared-memory-header-abi
 ./scripts/dev-x86_64.sh xattr-header-abi
 ./scripts/dev-x86_64.sh pathname-lifecycle-header-abi
@@ -476,6 +478,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-filesystem-capacity
 ./scripts/dev-x86_64.sh libc-vector-io
 ./scripts/dev-x86_64.sh libc-sysv-semaphore
+./scripts/dev-x86_64.sh libc-mq-setattr
 ./scripts/dev-x86_64.sh libc-sysv-message-shared-memory
 ./scripts/dev-x86_64.sh event-descriptors-header-abi
 ./scripts/dev-x86_64.sh libc-event-descriptors
@@ -2500,8 +2503,10 @@ absolute-deadline `timespec`. The direct Rust boundary validates POSIX
 descriptor ownership explicit through close/drop and unlink-after-open, and
 covers typed attributes, `CLOEXEC`, nonblocking/full/empty behavior, priority
 ordering through 32767, and absolute `CLOCK_REALTIME` timeouts. It does not
-select `mq_notify`, SysV IPC, semaphores, AIO, C mqueue headers/APIs/errno TLS,
-a C ABI, or public x86 support.
+itself select `mq_notify`, SysV IPC, semaphores, AIO, general C mqueue
+headers/APIs/errno TLS, a C ABI, or public x86 support. The separately sealed
+`static-c-mq-setattr` archive artifact below does not promote this Rust-facing
+slice.
 
 `shm-reference` is the separate private x86 POSIX named-shared-memory vertical
 slice. Its focused Rust regression and paired pinned-musl/raw C fixture lock
@@ -4336,6 +4341,19 @@ parent/child futex handoff. `sem_timedwait`, named semaphores, cancellation
 cleanup, signal-action restart policy, destruction races, general POSIX IPC,
 and public x86 support remain outside this artifact.
 
+`mq-setattr-header-abi` is a project-first/pinned-musl C/C++ `mqueue.h`
+declaration/layout gate for only `mq_setattr`: signed four-byte `mqd_t`, the
+64-byte align-8 LP64 `mq_attr` record, `mq_getsetattr=245`, and unmangled C++
+linkage. Its paired `libc-mq-setattr` command records the private
+`static-c-mq-setattr` artifact. The same one-symbol C fixture first executes
+through pinned musl and then through a `-nostdlib -static` archive candidate;
+it selects only `mq_setattr(mqd_t, const struct mq_attr *, struct mq_attr *)`,
+the `O_NONBLOCK` replacement, optional prior-attribute result, stale `errno`
+on success, and direct `EINVAL`/`EBADF` outcomes. It does not select queue
+open/close/unlink, transfer, notification, timed operations, general IPC, a
+Rust facade contract, cancellation, dynamic runtime, family completion, or
+public x86 support.
+
 `libc-sysv-message-shared-memory` is a separately recorded private
 `static-c-sysv-message-shared-memory` `verified_artifact` gate over that
 archive, not complete SysV IPC. Its project-header C body first executes
@@ -4347,7 +4365,8 @@ lifecycle, raw errors and stale errno on success, the x86 `r10`/`r8` syscall
 argument paths, musl's `shmget` rewrite above `PTRDIFF_MAX`, and the exact
 `shmat` `(void *)-1` error sentinel. `msgsnd` and `msgrcv` deliberately omit
 musl's cancellation machinery because that runtime lifecycle remains
-unselected. It excludes POSIX IPC and semaphores, broader SysV operations and
+unselected. It excludes general POSIX IPC beyond the separately selected
+one-symbol `mq_setattr` artifact, semaphores, broader SysV operations and
 namespace/permission policy, cancellation, dynamic runtime, header/runtime
 family completion, promotion, full x86-64 parity, and public x86 support.
 
@@ -5706,6 +5725,7 @@ Apart from the narrowly named `libc-stat-compat`, `libc-credentials`,
 `libc-vector-io`,
 `libc-ioctl`,
 `libc-sysv-semaphore`,
+`libc-mq-setattr`,
 `libc-sysv-message-shared-memory`,
 `libc-event-descriptors`,
 `libc-pathname-lifecycle`,

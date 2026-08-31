@@ -146,7 +146,9 @@ Native Linux/x86-64 staged-foundation evidence commands:
   sysv-semaphore-header-abi  verify staged x86 SysV semaphore C/C++ declarations/layouts
   posix-semaphore-header-abi  verify staged x86 POSIX semaphore C/C++ declarations/layouts
   sysv-message-shared-memory-header-abi  verify staged x86 SysV message/shared-memory C/C++ declarations/layouts
+  mq-setattr-header-abi  compile the staged x86 C/C++ mqueue.h mq_setattr declaration
   libc-event-descriptors  run the static x86 crabc-libc epoll/eventfd/inotify slice
+  libc-mq-setattr  run the static x86 crabc-libc mq_setattr slice
   libc-timerfd  run the static x86 crabc-libc timer-descriptor slice
   libc-signalfd  run the static x86 crabc-libc signal-descriptor slice
   libc-sigpause  run the static x86 crabc-libc one-signal pause slice
@@ -498,6 +500,13 @@ application signal, and proves Linux restores the original mask after the
 interrupted wait. It does not select a public mask/action API, process control,
 signal queues/descriptors, timers, pthread behavior, dynamic libc, or
 application startup.
+`libc-mq-setattr` exercises one separate freestanding project-header C fixture
+after the equivalent pinned-musl run. It selects only direct POSIX
+message-queue status-flag replacement through `mq_getsetattr`: the LP64
+`mq_attr` record, nonblocking flag transition, optional old-attribute output,
+stale `errno` on success, and direct `EINVAL`/`EBADF` errors. It does not
+select queue open/close/unlink, message transfer, notification, timed
+operations, general IPC, dynamic libc, or application startup.
 `libc-sigisemptyset` is a separate one-entry GNU signal-set predicate boundary.
 It reads exactly musl's first public x86 signal-set word, ignores the remaining
 128-byte-record tail, preserves stale errno, and has no syscall path. It does
@@ -2423,6 +2432,10 @@ run_libc_timerfd_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_timerfd.sh
 }
 
+run_libc_mq_setattr_probe() {
+    run_in_container bash /workspace/compat/x86_64/run_libc_mq_setattr.sh
+}
+
 run_libc_signalfd_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_signalfd.sh
 }
@@ -2525,6 +2538,10 @@ run_time_header_abi() {
 
 run_timerfd_header_abi() {
     run_in_container bash /workspace/compat/x86_64/run_timerfd_header_abi.sh
+}
+
+run_mq_setattr_header_abi() {
+    run_in_container bash /workspace/compat/x86_64/run_mq_setattr_header_abi.sh
 }
 
 run_signalfd_header_abi() {
@@ -3758,6 +3775,7 @@ command="$1"
 shift
 
 case "$command" in
+    mq-setattr-header-abi|libc-mq-setattr) ;;
     timerfd-header-abi|signalfd-header-abi) ;;
     libc-timerfd|libc-signalfd|libc-sigpause|libc-sigisemptyset|libc-sigandset-sigorset|libc-sigpending|libc-sigrtmax|libc-sigrtmin|libc-sigaddset-sigdelset-sigfillset) ;;
     ctermid-header-abi|gethostid-header-abi|isatty-header-abi|tcgetpgrp-header-abi|tcsetpgrp-header-abi|getpass-header-abi|libc-ctermid|libc-gethostid|libc-isatty|libc-tcgetpgrp|libc-tcsetpgrp|libc-getpass|mkfifo-header-abi|mkfifoat-header-abi|libc-mkfifo|libc-mkfifoat|mktemp-header-abi|libc-mktemp) ;;
@@ -4267,6 +4285,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "timerfd-header-abi takes no arguments"
         ensure_image
         run_timerfd_header_abi
+        ;;
+    mq-setattr-header-abi)
+        [ "$#" -eq 0 ] || fail "mq-setattr-header-abi takes no arguments"
+        ensure_image
+        run_mq_setattr_header_abi
         ;;
     signalfd-header-abi)
         [ "$#" -eq 0 ] || fail "signalfd-header-abi takes no arguments"
@@ -5635,6 +5658,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "libc-timerfd takes no arguments"
         ensure_image
         run_libc_timerfd_probe
+        ;;
+    libc-mq-setattr)
+        [ "$#" -eq 0 ] || fail "libc-mq-setattr takes no arguments"
+        ensure_image
+        run_libc_mq_setattr_probe
         ;;
     libc-signalfd)
         [ "$#" -eq 0 ] || fail "libc-signalfd takes no arguments"

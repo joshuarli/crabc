@@ -1368,6 +1368,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             if line.strip().endswith(") ;;")
         )
         expected_groups = (
+            "mq-setattr-header-abi|libc-mq-setattr",
             "timerfd-header-abi|signalfd-header-abi",
             "libc-timerfd|libc-signalfd|libc-sigpause|libc-sigisemptyset|libc-sigandset-sigorset|libc-sigpending|libc-sigrtmax|libc-sigrtmin|libc-sigaddset-sigdelset-sigfillset",
             "ctermid-header-abi|gethostid-header-abi|isatty-header-abi|tcgetpgrp-header-abi|tcsetpgrp-header-abi|getpass-header-abi|libc-ctermid|libc-gethostid|libc-isatty|libc-tcgetpgrp|libc-tcsetpgrp|libc-getpass|mkfifo-header-abi|mkfifoat-header-abi|libc-mkfifo|libc-mkfifoat|mktemp-header-abi|libc-mktemp",
@@ -20115,6 +20116,164 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             runner,
         )
 
+    def test_libc_static_c_abi_mq_setattr_artifact_stays_narrow(self) -> None:
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        implementation = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "mq_setattr.rs"
+        ).read_text(encoding="utf-8")
+        syscall = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "syscall.rs"
+        ).read_text(encoding="utf-8")
+        header_c_probe = (
+            ROOT / "compat" / "x86_64" / "mq_setattr_header_abi_probe.c"
+        ).read_text(encoding="utf-8")
+        header_cxx_probe = (
+            ROOT / "compat" / "x86_64" / "mq_setattr_header_abi_probe.cpp"
+        ).read_text(encoding="utf-8")
+        header_runner = (
+            ROOT / "compat" / "x86_64" / "run_mq_setattr_header_abi.sh"
+        ).read_text(encoding="utf-8")
+        probe = (
+            ROOT / "compat" / "x86_64" / "libc_mq_setattr_probe.c"
+        ).read_text(encoding="utf-8")
+        start = (
+            ROOT / "compat" / "x86_64" / "libc_mq_setattr_start.S"
+        ).read_text(encoding="utf-8")
+        artifact_runner = (
+            ROOT / "compat" / "x86_64" / "run_libc_mq_setattr.sh"
+        ).read_text(encoding="utf-8")
+        static_export_names = {
+            line
+            for line in (
+                ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+            ).read_text(encoding="utf-8").splitlines()
+            if line and not line.startswith("#")
+        }
+        parity_ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        runner = RUNNER.read_text(encoding="utf-8")
+
+        self.assertIn('#[path = "mq_setattr.rs"]', static_root)
+        for required in (
+            "Selected static Linux/x86-64 C `mq_setattr(3)` boundary",
+            "musl 1.2.6 release commit",
+            "src/mq/mq_setattr.c",
+            "struct MqAttr",
+            "size_of::<MqAttr>() == 64",
+            "align_of::<MqAttr>() == 8",
+            "offset_of!(MqAttr, reserved) == 32",
+            "raw_syscall::SYS_MQ_GETSETATTR",
+            "raw_syscall::syscall3(",
+            "c_status(unsafe",
+        ):
+            self.assertIn(required, implementation)
+        self.assertIn("pub(crate) const SYS_MQ_GETSETATTR: i64 = 245;", syscall)
+        self.assertIn("fn mq_setattr(", implementation)
+        for forbidden in (
+            "fn mq_close(",
+            "fn mq_getattr(",
+            "fn mq_notify(",
+            "fn mq_open(",
+            "fn mq_receive(",
+            "fn mq_send(",
+            "fn mq_timedreceive(",
+            "fn mq_timedsend(",
+            "fn mq_unlink(",
+            "crabc_core",
+        ):
+            self.assertNotIn(forbidden, implementation)
+
+        for header_probe in (header_c_probe, header_cxx_probe):
+            for required in (
+                "mqueue.h",
+                "sizeof(mqd_t) == sizeof(int)",
+                "mq_attr",
+                "mq_setattr",
+                "SYS_mq_getsetattr == 245",
+            ):
+                self.assertIn(required, header_probe)
+        for required in (
+            "ORACLE_CC",
+            "mqueue.h",
+            "mq_setattr_header_abi_probe.c",
+            "mq_setattr_header_abi_probe.cpp",
+            "pinned-musl C/C++",
+        ):
+            self.assertIn(required, header_runner)
+
+        for required in (
+            "#include <mqueue.h>",
+            "SYS_mq_open == 240",
+            "SYS_mq_getsetattr == 245",
+            "O_NONBLOCK == 0x800",
+            "mq_setattr(descriptor, &new_attributes, &old_attributes)",
+            "errno != ERANGE",
+            "errno != EDOM",
+            "new_attributes.mq_flags = 1",
+            "errno != EINVAL",
+            "mq_setattr(-1",
+            "errno != EBADF",
+            "SYS_mq_unlink",
+        ):
+            self.assertIn(required, probe)
+        for required in (
+            "ARCH_SET_FS",
+            "crabc_x86_64_mq_setattr_probe",
+            "mov $60, %eax",
+        ):
+            self.assertIn(required, start)
+
+        for required in (
+            "static_c_abi_exports.txt",
+            "run_mq_setattr_header_abi.sh",
+            "run_x86_mqueue_reference.sh",
+            "-nostdlib -static",
+            "-Wl,-e,_start",
+            "R_X86_64_TPOFF",
+            "mq_setattr lacks Linux syscall 245",
+            "unowned dependency",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn("--whole-archive", artifact_runner)
+        self.assertIn("mq_setattr", static_export_names)
+        self.assertFalse(
+            static_export_names
+            & {
+                "mq_close",
+                "mq_getattr",
+                "mq_notify",
+                "mq_open",
+                "mq_receive",
+                "mq_send",
+                "mq_timedreceive",
+                "mq_timedsend",
+                "mq_unlink",
+            }
+        )
+        self.assertIn('id = "static-c-mq-setattr"', parity_ledger)
+        self.assertIn(
+            'command = "./scripts/dev-x86_64.sh libc-mq-setattr"', parity_ledger
+        )
+        self.assertIn("run_mq_setattr_header_abi()", runner)
+        self.assertIn(
+            "/workspace/compat/x86_64/run_mq_setattr_header_abi.sh", runner
+        )
+        self.assertIn("run_libc_mq_setattr_probe()", runner)
+        self.assertIn(
+            "/workspace/compat/x86_64/run_libc_mq_setattr.sh", runner
+        )
+        self.assertIn(
+            '    mq-setattr-header-abi)\n        [ "$#" -eq 0 ] || fail "mq-setattr-header-abi takes no arguments"',
+            runner,
+        )
+        self.assertIn(
+            '    libc-mq-setattr)\n        [ "$#" -eq 0 ] || fail "libc-mq-setattr takes no arguments"',
+            runner,
+        )
+
     def test_libc_static_c_abi_sysv_semaphore_artifact_stays_narrow(self) -> None:
         static_root = (
             ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
@@ -20491,7 +20650,6 @@ class X86_64CoreRunnerTests(unittest.TestCase):
                 "mq_open",
                 "mq_receive",
                 "mq_send",
-                "mq_setattr",
                 "mq_timedreceive",
                 "mq_timedsend",
                 "mq_unlink",
