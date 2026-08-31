@@ -4976,6 +4976,28 @@ strong crabc-owned definitions, local closure providers, and scalar
 API/policy, special/complex/binary80 math, dynamic linkage, TLS, and
 ambient-libm surface. Family completion, promotion, full x86-64 parity, and
 public x86 support remain unselected.
+`libc-math-asinh` is the separate non-promoting `static-c-math-asinh` artifact
+for binary64/binary32 `asinh`/`asinhf`. Its project-header C fixture and
+default-SSE/`-mfpmath=387` C++ signature probes run first through pinned musl
+and then through one garbage-collected `-nostdlib -static` candidate. The
+checked GCC 15.2.0 assembly translation of musl 1.2.6 `asinh.c`/`asinhf.c`
+preserves raw sign/magnitude classification, signed tiny-input behavior,
+log-plus-ln2 large reconstruction, reciprocal-square-root middle
+reconstruction, log1p near-one reconstruction, and final sign restoration
+through its exact fifteen-source local log/log1p/square-root closure. That
+closure retains private log/log1p/sqrt providers, log/logf and reciprocal-
+square-root tables, and IEEE error helpers, but exports neither public
+log/log1p/square-root ABI nor an implementation helper. The 256-record raw
+differential compares signed zero, tiny/normal/subnormal and reconstruction
+thresholds, high finite values, infinities, quiet/signaling NaNs, exception
+flags, and requested versus observed MXCSR direction in all four modes.
+Final-link proof requires strong crabc-owned definitions, local closure
+providers, and scalar `addsd`/`addss`/`subsd`/`subss`/`mulsd`/`mulss`/
+`divsd`/`divss`/`cvtss2sd`/`cvtsd2ss`, while rejecting weak compiler-builtins
+fallback, `asinhl`, other public hyperbolic surface, public log/log1p/square-
+root ABI, fenv API/policy, special/complex/binary80 math, dynamic linkage,
+TLS, and ambient-libm surface. Family completion, promotion, full x86-64
+parity, and public x86 support remain unselected.
 `libc-math-sinh` is the separate non-promoting `static-c-math-sinh` artifact
 for binary64/binary32 `sinh`/`sinhf`. Its project-header C fixture and
 default-SSE/`-mfpmath=387` C++ signature probes run first through pinned musl

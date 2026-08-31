@@ -76,6 +76,8 @@ acoshl
 acosl
 alarm
 alphasort
+asinh
+asinhf
 asinhl
 asinl
 atan2l

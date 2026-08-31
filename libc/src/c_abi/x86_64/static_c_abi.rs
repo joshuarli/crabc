@@ -274,6 +274,8 @@ mod math_exp;
 mod math_cos;
 #[path = "math_cosh.rs"]
 mod math_cosh;
+#[path = "math_asinh.rs"]
+mod math_asinh;
 #[path = "math_sinh.rs"]
 mod math_sinh;
 #[path = "math_minmax.rs"]

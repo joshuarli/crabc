@@ -1304,6 +1304,22 @@ hyperbolic surface, public exp/expm1 ABI, fenv API/policy,
 special/complex/binary80 math, family completion, promotion, and public x86
 support.
 
+The separate private `static-c-math-asinh` artifact records only binary64
+`asinh` and binary32 `asinhf`: `./scripts/dev-x86_64.sh libc-math-asinh` runs
+project-header C and default-SSE/`-mfpmath=387` C++ function-pointer fixtures
+through pinned musl and one freestanding static candidate. Its checked GCC
+15.2.0 translation of musl 1.2.6 `asinh.c`/`asinhf.c` keeps the exact
+fifteen-source log/log1p/square-root closure private: local log and log1p
+providers, log/logf and reciprocal-square-root tables, and IEEE
+invalid/divide-by-zero helpers. The 256-record differential covers signed
+zero, tiny/normal/subnormal and reconstruction thresholds, high finite values,
+infinities, quiet/signaling NaNs, all four requested-and-observed rounding
+directions, and exception flags. Strong target-owned definitions and final ELF
+checks reject weak compiler-builtins fallback, public closure helpers,
+`asinhl`, other hyperbolic surface, public log/log1p/square-root ABI, fenv
+API/policy, special/complex/binary80 math, family completion, promotion, and
+public x86 support.
+
 The separate private `static-c-math-sinh` artifact records only binary64
 `sinh` and binary32 `sinhf`: `./scripts/dev-x86_64.sh libc-math-sinh` runs
 project-header C and default-SSE/`-mfpmath=387` C++ function-pointer fixtures

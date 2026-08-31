@@ -1,0 +1,205 @@
+/*
+ * Static Linux/x86-64 asinh/asinhf C ABI differential regression.
+ *
+ * This raw-bit corpus runs through pinned musl 1.2.6 and one freestanding
+ * crabc archive. It records result bits and IEEE exception flags under each
+ * MXCSR rounding direction, including tiny/subnormal inputs, the local
+ * log1p, square-root, and log-plus-ln2 reconstructions, signed zero,
+ * infinite, quiet-NaN, and signaling-NaN inputs. It selects only
+ * binary64/binary32 inverse hyperbolic sine: asinhl, other hyperbolic
+ * surface, public log/log1p/square-root ABI, fenv policy, special math, and
+ * general libm remain outside this leaf.
+ */
+
+#if !defined(__linux__) || !defined(__x86_64__) || !defined(__LP64__) || \
+	!defined(__BYTE_ORDER__) || !defined(__ORDER_LITTLE_ENDIAN__) || \
+	__BYTE_ORDER__ != __ORDER_LITTLE_ENDIAN__
+#error "this fixture requires native Linux/x86-64 little-endian LP64"
+#endif
+
+#include <fenv.h>
+#include <float.h>
+#include <math.h>
+#include <stddef.h>
+#include <stdint.h>
+#ifndef CRABC_MATH_ASINH_FREESTANDING
+#include <unistd.h>
+#endif
+
+#pragma STDC FENV_ACCESS ON
+
+#if FLT_EVAL_METHOD != 0
+#error "the raw binary32/binary64 fixture requires SSE evaluation"
+#endif
+
+#define ASINH_F64_CASES 32
+#define ASINH_F32_CASES 32
+#define ASINH_ROUNDING_CASES 4
+#define ASINH_RECORD_WORDS 4
+#define ASINH_RECORD_COUNT ((ASINH_F64_CASES + ASINH_F32_CASES) * ASINH_ROUNDING_CASES)
+#define ASINH_RECORD_STORAGE_WORDS (ASINH_RECORD_COUNT * ASINH_RECORD_WORDS)
+
+typedef double (*double_unary_function)(double);
+typedef float (*float_unary_function)(float);
+
+/* Parentheses force callable C ABI symbols instead of compiler builtins. */
+static double_unary_function volatile direct_asinh = (asinh);
+static float_unary_function volatile direct_asinhf = (asinhf);
+
+/* The freestanding start object writes these exact 8,192 bytes with syscall. */
+uint64_t crabc_x86_64_math_asinh_records[ASINH_RECORD_STORAGE_WORDS];
+
+static const uint64_t binary64_inputs[ASINH_F64_CASES] = {
+	UINT64_C(0x0000000000000000), UINT64_C(0x8000000000000000),
+	UINT64_C(0x0000000000000001), UINT64_C(0x8000000000000001),
+	UINT64_C(0x000fffffffffffff), UINT64_C(0x0010000000000000),
+	UINT64_C(0x3e40000000000000), UINT64_C(0xbe40000000000000),
+	UINT64_C(0x3e50000000000000), UINT64_C(0xbe50000000000000),
+	UINT64_C(0x3e60000000000000), UINT64_C(0xbe60000000000000),
+	UINT64_C(0x3fc0000000000000), UINT64_C(0xbfc0000000000000),
+	UINT64_C(0x3fe0000000000000), UINT64_C(0xbfe0000000000000),
+	UINT64_C(0x3ff0000000000000), UINT64_C(0xbff0000000000000),
+	UINT64_C(0x3fffffffffffffff), UINT64_C(0x4000000000000000),
+	UINT64_C(0x4000000000000001), UINT64_C(0xc000000000000000),
+	UINT64_C(0x418fffffffffffff), UINT64_C(0x4190000000000000),
+	UINT64_C(0x4190000000000001), UINT64_C(0xc190000000000000),
+	UINT64_C(0x7fefffffffffffff), UINT64_C(0xffefffffffffffff),
+	UINT64_C(0x7ff0000000000000), UINT64_C(0xfff0000000000000),
+	UINT64_C(0x7ff8000000000041), UINT64_C(0x7ff0000000000042),
+};
+
+static const uint32_t binary32_inputs[ASINH_F32_CASES] = {
+	UINT32_C(0x00000000), UINT32_C(0x80000000), UINT32_C(0x00000001),
+	UINT32_C(0x80000001), UINT32_C(0x007fffff), UINT32_C(0x00800000),
+	UINT32_C(0x39000000), UINT32_C(0xb9000000), UINT32_C(0x39800000),
+	UINT32_C(0xb9800000), UINT32_C(0x3a000000), UINT32_C(0xba000000),
+	UINT32_C(0x3e000000), UINT32_C(0xbe000000), UINT32_C(0x3f000000),
+	UINT32_C(0xbf000000), UINT32_C(0x3f800000), UINT32_C(0xbf800000),
+	UINT32_C(0x3fffffff), UINT32_C(0x40000000), UINT32_C(0x40000001),
+	UINT32_C(0xc0000000), UINT32_C(0x457fffff), UINT32_C(0x45800000),
+	UINT32_C(0x45800001), UINT32_C(0xc5800000), UINT32_C(0x7f7fffff),
+	UINT32_C(0xff7fffff), UINT32_C(0x7f800000), UINT32_C(0xff800000),
+	UINT32_C(0x7fc00041), UINT32_C(0x7f800042),
+};
+
+static const int rounding_modes[ASINH_ROUNDING_CASES] = {
+	FE_TONEAREST, FE_DOWNWARD, FE_UPWARD, FE_TOWARDZERO,
+};
+
+static uint64_t double_bits(double value)
+{
+	union { double value; uint64_t bits; } view = { .value = value };
+	return view.bits;
+}
+
+static uint32_t float_bits(float value)
+{
+	union { float value; uint32_t bits; } view = { .value = value };
+	return view.bits;
+}
+
+static double double_from_bits(uint64_t bits)
+{
+	union { double value; uint64_t bits; } view = { .bits = bits };
+	return view.value;
+}
+
+static float float_from_bits(uint32_t bits)
+{
+	union { float value; uint32_t bits; } view = { .bits = bits };
+	return view.value;
+}
+
+static int record_binary64(size_t *cursor, int rounding_mode, uint64_t input)
+{
+	double result;
+
+	if (fesetround(rounding_mode) != 0 || feclearexcept(FE_ALL_EXCEPT) != 0)
+		return 1;
+	result = direct_asinh(double_from_bits(input));
+	if (*cursor + ASINH_RECORD_WORDS > ASINH_RECORD_STORAGE_WORDS)
+		return 2;
+	crabc_x86_64_math_asinh_records[(*cursor)++] = input;
+	crabc_x86_64_math_asinh_records[(*cursor)++] = double_bits(result);
+	crabc_x86_64_math_asinh_records[(*cursor)++] =
+		((uint64_t)(uint32_t)rounding_mode << 32) |
+		(uint32_t)fegetround();
+	crabc_x86_64_math_asinh_records[(*cursor)++] =
+		(uint32_t)fetestexcept(FE_ALL_EXCEPT);
+	return 0;
+}
+
+static int record_binary32(size_t *cursor, int rounding_mode, uint32_t input)
+{
+	float result;
+
+	if (fesetround(rounding_mode) != 0 || feclearexcept(FE_ALL_EXCEPT) != 0)
+		return 1;
+	result = direct_asinhf(float_from_bits(input));
+	if (*cursor + ASINH_RECORD_WORDS > ASINH_RECORD_STORAGE_WORDS)
+		return 2;
+	crabc_x86_64_math_asinh_records[(*cursor)++] =
+		UINT64_C(0x0000000100000000) | input;
+	crabc_x86_64_math_asinh_records[(*cursor)++] = float_bits(result);
+	crabc_x86_64_math_asinh_records[(*cursor)++] =
+		((uint64_t)(uint32_t)rounding_mode << 32) |
+		(uint32_t)fegetround();
+	crabc_x86_64_math_asinh_records[(*cursor)++] =
+		(uint32_t)fetestexcept(FE_ALL_EXCEPT);
+	return 0;
+}
+
+int crabc_x86_64_math_asinh_probe(void)
+{
+	fenv_t original;
+	size_t cursor = 0;
+	size_t input_index;
+	size_t mode_index;
+	int status = 0;
+
+	if (fegetenv(&original) != 0 || fesetenv(FE_DFL_ENV) != 0)
+		return 1;
+	for (mode_index = 0; mode_index < ASINH_ROUNDING_CASES && status == 0;
+		mode_index++) {
+		for (input_index = 0; input_index < ASINH_F64_CASES && status == 0;
+			input_index++)
+			status = record_binary64(&cursor, rounding_modes[mode_index],
+				binary64_inputs[input_index]);
+		for (input_index = 0; input_index < ASINH_F32_CASES && status == 0;
+			input_index++)
+			status = record_binary32(&cursor, rounding_modes[mode_index],
+				binary32_inputs[input_index]);
+	}
+	if (cursor != ASINH_RECORD_STORAGE_WORDS && status == 0)
+		status = 3;
+	if (fesetenv(&original) != 0 && status == 0)
+		status = 4;
+	return status;
+}
+
+#ifndef CRABC_MATH_ASINH_FREESTANDING
+static int write_all(const void *buffer, size_t length)
+{
+	const unsigned char *cursor = buffer;
+
+	while (length != 0) {
+		ssize_t written = write(1, cursor, length);
+
+		if (written <= 0)
+			return 1;
+		cursor += written;
+		length -= (size_t)written;
+	}
+	return 0;
+}
+
+int main(void)
+{
+	int status = crabc_x86_64_math_asinh_probe();
+
+	if (status != 0)
+		return status;
+	return write_all(crabc_x86_64_math_asinh_records,
+		sizeof(crabc_x86_64_math_asinh_records));
+}
+#endif

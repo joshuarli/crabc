@@ -1666,6 +1666,8 @@ MATH_COS_SYMBOLS = ("cos", "cosf")
 
 MATH_COSH_SYMBOLS = ("cosh", "coshf")
 
+MATH_ASINH_SYMBOLS = ("asinh", "asinhf")
+
 MATH_SINH_SYMBOLS = ("sinh", "sinhf")
 
 NAMED_LOCALE_MULTIBYTE_SYMBOLS = (
@@ -30732,8 +30734,8 @@ def require_getsubopt_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 43,
-        "libc.text-math-locale-stdio must retain exactly forty-three private verified artifacts",
+        len(artifacts) == 44,
+        "libc.text-math-locale-stdio must retain exactly forty-four private verified artifacts",
     )
     matching = [
         entry for entry in artifacts if entry.get("id") == "static-c-getsubopt"
@@ -32189,8 +32191,8 @@ def require_stdio_integer_scan_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 43,
-        "libc.text-math-locale-stdio must retain exactly forty-three private verified artifacts",
+        len(artifacts) == 44,
+        "libc.text-math-locale-stdio must retain exactly forty-four private verified artifacts",
     )
     matching = [
         entry for entry in artifacts if entry.get("id") == "static-c-stdio-integer-scan"
@@ -32472,8 +32474,8 @@ def require_stdio_octal_hex_scan_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 43,
-        "libc.text-math-locale-stdio must retain exactly forty-three private verified artifacts",
+        len(artifacts) == 44,
+        "libc.text-math-locale-stdio must retain exactly forty-four private verified artifacts",
     )
     matching = [
         entry
@@ -32998,8 +33000,8 @@ def require_stdio_errno_output_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 43,
-        "libc.text-math-locale-stdio must retain exactly forty-three private verified artifacts",
+        len(artifacts) == 44,
+        "libc.text-math-locale-stdio must retain exactly forty-four private verified artifacts",
     )
     matching = [
         entry for entry in artifacts if entry.get("id") == "static-c-stdio-errno-output"
@@ -33519,8 +33521,8 @@ def require_stdio_permanent_byte_io_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 43,
-        "libc.text-math-locale-stdio must retain exactly forty-three private verified artifacts",
+        len(artifacts) == 44,
+        "libc.text-math-locale-stdio must retain exactly forty-four private verified artifacts",
     )
     matching = [
         entry
@@ -33846,8 +33848,8 @@ def require_stdio_permanent_status_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 43,
-        "libc.text-math-locale-stdio must retain exactly forty-three private verified artifacts",
+        len(artifacts) == 44,
+        "libc.text-math-locale-stdio must retain exactly forty-four private verified artifacts",
     )
     matching = [
         entry
@@ -34174,8 +34176,8 @@ def require_stdio_permanent_feof_unlocked_artifact(
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 43,
-        "libc.text-math-locale-stdio must retain exactly forty-three private verified artifacts",
+        len(artifacts) == 44,
+        "libc.text-math-locale-stdio must retain exactly forty-four private verified artifacts",
     )
     matching = [
         entry
@@ -34542,8 +34544,8 @@ def require_stdio_permanent_fileno_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 43,
-        "libc.text-math-locale-stdio must retain exactly forty-three private verified artifacts",
+        len(artifacts) == 44,
+        "libc.text-math-locale-stdio must retain exactly forty-four private verified artifacts",
     )
     matching = [
         entry
@@ -34847,8 +34849,8 @@ def require_stdio_permanent_fileno_unlocked_artifact(
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 43,
-        "libc.text-math-locale-stdio must retain exactly forty-three private verified artifacts",
+        len(artifacts) == 44,
+        "libc.text-math-locale-stdio must retain exactly forty-four private verified artifacts",
     )
     matching = [
         entry
@@ -38384,8 +38386,8 @@ def require_math_ceil_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 43,
-        "libc.text-math-locale-stdio must retain exactly forty-three private verified artifacts",
+        len(artifacts) == 44,
+        "libc.text-math-locale-stdio must retain exactly forty-four private verified artifacts",
     )
     matching = [entry for entry in artifacts if entry.get("id") == "static-c-math-ceil"]
     require(
@@ -38609,8 +38611,8 @@ def require_math_floor_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 43,
-        "libc.text-math-locale-stdio must retain exactly forty-three private verified artifacts",
+        len(artifacts) == 44,
+        "libc.text-math-locale-stdio must retain exactly forty-four private verified artifacts",
     )
     matching = [entry for entry in artifacts if entry.get("id") == "static-c-math-floor"]
     require(
@@ -38835,8 +38837,8 @@ def require_math_round_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 43,
-        "libc.text-math-locale-stdio must retain exactly forty-three private verified artifacts",
+        len(artifacts) == 44,
+        "libc.text-math-locale-stdio must retain exactly forty-four private verified artifacts",
     )
     matching = [entry for entry in artifacts if entry.get("id") == "static-c-math-round"]
     require(
@@ -39063,8 +39065,8 @@ def require_math_log2_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 43,
-        "libc.text-math-locale-stdio must retain exactly forty-three private verified artifacts",
+        len(artifacts) == 44,
+        "libc.text-math-locale-stdio must retain exactly forty-four private verified artifacts",
     )
     matching = [entry for entry in artifacts if entry.get("id") == "static-c-math-log2"]
     require(
@@ -39322,8 +39324,8 @@ def require_math_exp_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 43,
-        "libc.text-math-locale-stdio must retain exactly forty-three private verified artifacts",
+        len(artifacts) == 44,
+        "libc.text-math-locale-stdio must retain exactly forty-four private verified artifacts",
     )
     matching = [entry for entry in artifacts if entry.get("id") == "static-c-math-exp"]
     require(
@@ -39584,8 +39586,8 @@ def require_math_cos_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 43,
-        "libc.text-math-locale-stdio must retain exactly forty-three private verified artifacts",
+        len(artifacts) == 44,
+        "libc.text-math-locale-stdio must retain exactly forty-four private verified artifacts",
     )
     matching = [entry for entry in artifacts if entry.get("id") == "static-c-math-cos"]
     require(
@@ -39874,8 +39876,8 @@ def require_math_cosh_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 43,
-        "libc.text-math-locale-stdio must retain exactly forty-three private verified artifacts",
+        len(artifacts) == 44,
+        "libc.text-math-locale-stdio must retain exactly forty-four private verified artifacts",
     )
     matching = [entry for entry in artifacts if entry.get("id") == "static-c-math-cosh"]
     require(
@@ -40171,6 +40173,311 @@ def require_math_cosh_artifact(family: Mapping[str, Any]) -> None:
 
 
 
+def require_math_asinh_artifact(family: Mapping[str, Any]) -> None:
+    """Keep the closed binary32/binary64 inverse-hyperbolic-sine leaf private."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.text-math-locale-stdio].verified_artifact",
+        family.get("status", ""),
+    )
+    require(
+        len(artifacts) == 44,
+        "libc.text-math-locale-stdio must retain exactly forty-four private verified artifacts",
+    )
+    matching = [entry for entry in artifacts if entry.get("id") == "static-c-math-asinh"]
+    require(
+        len(matching) == 1,
+        "libc.text-math-locale-stdio must contain exactly one static-c-math-asinh artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-math-asinh must not promote libc.text-math-locale-stdio",
+    )
+    artifact = matching[0]
+    require(
+        "capabilities" not in artifact,
+        "static-c-math-asinh must remain a non-capability artifact",
+    )
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for symbol in MATH_ASINH_SYMBOLS:
+        require(
+            f"`{symbol}`" in description,
+            f"static-c-math-asinh description omits {symbol}",
+        )
+    for phrase in (
+        "binary32/binary64 inverse-hyperbolic-sine artifact",
+        "GCC 15.2.0 assembly translation",
+        "raw sign/magnitude classification",
+        "signed tiny-input behavior",
+        "log-plus-ln2 large reconstruction",
+        "reciprocal-square-root middle reconstruction",
+        "log1p near-one reconstruction",
+        "final sign restoration",
+        "localized log/square-root closure",
+        "no undefined callable symbols",
+        "requested/observed rounding directions",
+        "compiler-builtins",
+        "binary80 `asinhl`",
+        "fenv API/policy",
+        "public acosh/atanh/cosh/sinh/tanh and direct trigonometry",
+        "public log/log1p/sqrt/exp/pow functions",
+        "special and complex functions",
+        "binary80/x87 math",
+        "family completion",
+        "promotion",
+        "public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"static-c-math-asinh description omits {phrase}",
+        )
+
+    owners = nonempty_strings(
+        artifact["source_owners"], "static-c-math-asinh.source_owners"
+    )
+    for owner in (
+        "compat/upstreams.toml",
+        "docker/Dockerfile.x86_64",
+        "libc/Cargo.toml",
+        "libc/src/lib.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/fenv.rs",
+        "libc/src/c_abi/x86_64/math_asinh.rs",
+        "libc/src/c_abi/x86_64/math_asinh_musl_x86_64.S",
+        "include/fenv.h",
+        "include/float.h",
+        "include/math.h",
+        "compat/x86_64/generate_libc_math_asinh.py",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/math_asinh_header_abi_probe.cpp",
+        "compat/x86_64/libc_math_asinh_probe.c",
+        "compat/x86_64/libc_math_asinh_start.S",
+        "compat/x86_64/run_libc_math_asinh.sh",
+        "compat/x86_64/aarch64_parity_inventory.py",
+        "compat/x86_64/aarch64_parity_inventory.json",
+        "compat/x86_64/tests/test_aarch64_parity_inventory.py",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/README.md",
+        "SCOPE.md",
+        "COMPATIBILITY-PROFILE.md",
+        "STATUS.md",
+        "x86-64.md",
+        "scripts/check_structure.py",
+        "scripts/dev-x86_64.sh",
+    ):
+        require(owner in owners, f"static-c-math-asinh omits {owner}")
+
+    prerequisites = " ".join(
+        nonempty_strings(
+            artifact["x86_abi_prerequisites"],
+            "static-c-math-asinh.x86_abi_prerequisites",
+        )
+    )
+    for phrase in (
+        "src/math/asinh.c",
+        "asinhf.c",
+        "log.c",
+        "logf.c",
+        "log_data.c",
+        "logf_data.c",
+        "log1p.c",
+        "log1pf.c",
+        "sqrt.c",
+        "sqrtf.c",
+        "sqrt_data.c",
+        "__math_invalid",
+        "__math_divzero",
+        "fifteen-source closure",
+        "normalized 1.2.6 source-tree digest",
+        "GCC 15.2.0",
+        "Sun and Arm notices",
+        "musl's MIT license",
+        "-frounding-math",
+        "-ffp-contract=off",
+        "-fexcess-precision=standard",
+        "FLT_EVAL_METHOD=0",
+        "xmm0",
+        "addsd/subsd/mulsd/divsd",
+        "addss/subss/mulss/divss",
+        "cvtss2sd/cvtsd2ss",
+        "localized",
+        "`asinhl`",
+        "no undefined callable symbols",
+        "existing selected static fegetenv",
+        "without selecting fenv API or policy",
+    ):
+        require(
+            phrase in prerequisites,
+            f"static-c-math-asinh prerequisites omit {phrase}",
+        )
+    header_prerequisites = " ".join(
+        nonempty_strings(
+            artifact["x86_header_prerequisites"],
+            "static-c-math-asinh.x86_header_prerequisites",
+        )
+    )
+    for phrase in ("parenthesized", "C++17", "-mfpmath=387", "unmangled C"):
+        require(
+            phrase in header_prerequisites,
+            f"static-c-math-asinh header prerequisites omit {phrase}",
+        )
+
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-math-asinh"},
+        "static-c-math-asinh must use the closed libc-math-asinh command",
+    )
+    scope = evidence[0]["scope"]
+    assert isinstance(scope, str)
+    for phrase in (
+        "256 exact 32-byte records",
+        "requested/observed MXCSR direction",
+        "fifteen-source localized log/square-root closure",
+        "log1p",
+        "addsd/addss/subsd/subss/mulsd/mulss/divsd/divss/cvtss2sd/cvtsd2ss",
+        "compiler-builtins",
+        "asinhl",
+        "public x86 support",
+    ):
+        require(phrase in scope, f"static-c-math-asinh evidence omits {phrase}")
+
+    static_root = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+    ).read_text(encoding="utf-8")
+    require(
+        '#[path = "math_asinh.rs"]\nmod math_asinh;' in static_root,
+        "x86 static C ABI must compose the math_asinh leaf",
+    )
+    leaf = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "math_asinh.rs"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "Private static Linux/x86-64 binary32/binary64 `asinh`/`asinhf` C ABI leaf",
+        "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+        "d585fd3b613c66151fc3249e8ed44f77020cb5e6c1e635a616d3f9f82460512a",
+        "src/math/asinh.c",
+        "src/math/asinhf.c",
+        "src/math/log.c",
+        "src/math/log1p.c",
+        "src/math/sqrt.c",
+        "src/math/log_data.c",
+        "src/math/sqrt_data.c",
+        "src/math/__math_invalidf.c",
+        "localized",
+        "-frounding-math",
+        "fenv API or policy",
+        'include_str!("math_asinh_musl_x86_64.S")',
+        "public x86 support",
+    ):
+        require(snippet in leaf, f"math_asinh leaf omits {snippet}")
+
+    generator = (
+        ROOT / "compat" / "x86_64" / "generate_libc_math_asinh.py"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "2ebc86943f5cdac77729695b304a08f6308e7a218f9d484cec5675006b207d88",
+        '"src/math/asinh.c"',
+        '"src/math/asinhf.c"',
+        '"src/math/log.c"',
+        '"src/math/logf.c"',
+        '"src/math/log1p.c"',
+        '"src/math/log1pf.c"',
+        '"src/math/sqrt.c"',
+        '"src/math/sqrtf.c"',
+        '"src/math/sqrt_data.c"',
+        '"src/math/__math_invalidf.c"',
+        '"15.2.0"',
+        '"-frounding-math"',
+        '"-ffp-contract=off"',
+        '"-mfpmath=sse"',
+        "PRIVATE_RENAMES",
+        "retained_notices",
+    ):
+        require(snippet in generator, f"math-asinh generator omits {snippet}")
+    assembly = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "math_asinh_musl_x86_64.S"
+    ).read_text(encoding="utf-8")
+    for notice in ("Sun Microsystems", "Arm Limited", "musl's MIT license"):
+        require(notice in assembly, f"generated math-asinh assembly omits {notice}")
+    for symbol in MATH_ASINH_SYMBOLS:
+        require(
+            f"\t.globl\t{symbol}\n" in assembly,
+            f"generated math-asinh assembly omits {symbol}",
+        )
+    for provider in (
+        "crabc_x86_math_asinh_provider_log",
+        "crabc_x86_math_asinh_provider_logf",
+        "crabc_x86_math_asinh_provider_log1p",
+        "crabc_x86_math_asinh_provider_log1pf",
+        "crabc_x86_math_asinh_provider_sqrt",
+        "crabc_x86_math_asinh_provider_sqrtf",
+        "crabc_x86_math_asinh_data_log",
+        "crabc_x86_math_asinh_data_logf",
+        "crabc_x86_math_asinh_data_rsqrt",
+        "crabc_x86_math_asinh_helper_invalid",
+        "crabc_x86_math_asinh_helper_invalidf",
+        "crabc_x86_math_asinh_helper_divzero",
+        "crabc_x86_math_asinh_helper_divzerof",
+    ):
+        require(
+            f"\t.local {provider}" in assembly,
+            f"generated math-asinh assembly does not keep {provider} local",
+        )
+    for instruction in (
+        "addsd",
+        "addss",
+        "subsd",
+        "subss",
+        "mulsd",
+        "mulss",
+        "divsd",
+        "divss",
+        "cvtss2sd",
+        "cvtsd2ss",
+    ):
+        require(
+            instruction in assembly,
+            f"generated math-asinh assembly omits {instruction}",
+        )
+
+    exports = static_c_abi_export_names(
+        ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+    )
+    require(exports == sorted(exports), "static C ABI export contract must remain ASCII-sorted")
+    for symbol in MATH_ASINH_SYMBOLS:
+        require(symbol in exports, f"static C ABI export contract omits {symbol}")
+
+    runner = (ROOT / "compat" / "x86_64" / "run_libc_math_asinh.sh").read_text(
+        encoding="utf-8"
+    )
+    for snippet in (
+        "-nostdlib -static",
+        "--no-undefined",
+        "--gc-sections",
+        "math_asinh_header_abi_probe.cpp",
+        "strong crabc-owned",
+        "weak compiler-builtins",
+        "candidate accidentally retains unselected",
+        "candidate retains TLS",
+        "crabc_x86_math_asinh_provider_log",
+        "addsd addss subsd subss mulsd mulss divsd divss cvtsd2ss cvtss2sd",
+        "asinhl acosh acoshf acoshl",
+    ):
+        require(snippet in runner, f"libc-math-asinh runner omits {snippet}")
+    dispatcher = (ROOT / "scripts" / "dev-x86_64.sh").read_text(encoding="utf-8")
+    for snippet in (
+        "libc-math-asinh)",
+        "run_libc_math_asinh_probe()",
+        "/workspace/compat/x86_64/run_libc_math_asinh.sh",
+    ):
+        require(snippet in dispatcher, f"x86 dispatcher omits {snippet}")
+
+
 def require_math_sinh_artifact(family: Mapping[str, Any]) -> None:
     """Keep the closed binary32/binary64 hyperbolic-sine leaf below math parity."""
     artifacts = require_verified_artifacts(
@@ -40179,8 +40486,8 @@ def require_math_sinh_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 43,
-        "libc.text-math-locale-stdio must retain exactly forty-three private verified artifacts",
+        len(artifacts) == 44,
+        "libc.text-math-locale-stdio must retain exactly forty-four private verified artifacts",
     )
     matching = [entry for entry in artifacts if entry.get("id") == "static-c-math-sinh"]
     require(
@@ -41207,8 +41514,8 @@ def require_locale_wide_iconv_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 43,
-        "libc.text-math-locale-stdio must retain exactly forty-three private verified artifacts",
+        len(artifacts) == 44,
+        "libc.text-math-locale-stdio must retain exactly forty-four private verified artifacts",
     )
     matching = [
         entry for entry in artifacts if entry.get("id") == "static-c-locale-wide-iconv"
@@ -42033,8 +42340,8 @@ def require_locale_error_strings_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 43,
-        "libc.text-math-locale-stdio must retain exactly forty-three private verified artifacts",
+        len(artifacts) == 44,
+        "libc.text-math-locale-stdio must retain exactly forty-four private verified artifacts",
     )
     matching = [
         entry for entry in artifacts if entry.get("id") == "static-c-locale-error-strings"
@@ -43969,6 +44276,7 @@ def validate_ledger(
     require_math_exp_artifact(by_id["libc.text-math-locale-stdio"])
     require_math_cos_artifact(by_id["libc.text-math-locale-stdio"])
     require_math_cosh_artifact(by_id["libc.text-math-locale-stdio"])
+    require_math_asinh_artifact(by_id["libc.text-math-locale-stdio"])
     require_math_sinh_artifact(by_id["libc.text-math-locale-stdio"])
     require_math_x87_extended_artifact(by_id["libc.text-math-locale-stdio"])
     require_math_special_slice(by_id["libc.text-math-locale-stdio"])

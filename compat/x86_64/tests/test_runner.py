@@ -25302,6 +25302,139 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         ):
             self.assertIn(required, assembly)
 
+    def test_math_asinh_runner_keeps_the_binary32_binary64_static_boundary(self) -> None:
+        """Keep the private inverse-hyperbolic-sine archive leaf source-closed."""
+
+        dispatcher = RUNNER.read_text(encoding="utf-8")
+        runner = (ROOT / "compat" / "x86_64" / "run_libc_math_asinh.sh").read_text(
+            encoding="utf-8"
+        )
+        probe = (ROOT / "compat" / "x86_64" / "libc_math_asinh_probe.c").read_text(
+            encoding="utf-8"
+        )
+        header = (
+            ROOT / "compat" / "x86_64" / "math_asinh_header_abi_probe.cpp"
+        ).read_text(encoding="utf-8")
+        leaf = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "math_asinh.rs"
+        ).read_text(encoding="utf-8")
+        assembly = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "math_asinh_musl_x86_64.S"
+        ).read_text(encoding="utf-8")
+        generator = (
+            ROOT / "compat" / "x86_64" / "generate_libc_math_asinh.py"
+        ).read_text(encoding="utf-8")
+
+        for required in (
+            "libc-math-asinh)",
+            "run_libc_math_asinh_probe()",
+            "/workspace/compat/x86_64/run_libc_math_asinh.sh",
+        ):
+            self.assertIn(required, dispatcher)
+        for required in (
+            "-nostdlib -static",
+            "--no-undefined",
+            "--gc-sections",
+            "math_asinh_header_abi_probe.cpp",
+            "strong crabc-owned",
+            "weak compiler-builtins",
+            "candidate accidentally retains unselected",
+            "candidate retains TLS",
+            "crabc_x86_math_asinh_provider_log",
+            "crabc_x86_math_asinh_provider_sqrt",
+            "crabc_x86_math_asinh_data_log",
+            "crabc_x86_math_asinh_data_rsqrt",
+            "asinhl acosh acoshf acoshl",
+            "log logf logl log1p",
+        ):
+            self.assertIn(required, runner)
+        for required in (
+            "direct_asinh",
+            "direct_asinhf",
+            "ASINH_RECORD_WORDS 4",
+            "binary64_inputs",
+            "binary32_inputs",
+            "FE_TONEAREST",
+            "FE_DOWNWARD",
+            "FE_UPWARD",
+            "FE_TOWARDZERO",
+            "fegetround",
+            "fetestexcept",
+            "0x3e50000000000000",
+            "0x4190000000000000",
+            "0x7ff0000000000042",
+            "0x39800000",
+            "0x45800000",
+            "0x7f800042",
+        ):
+            self.assertIn(required, probe)
+        for required in (
+            "double_unary_signature",
+            "float_unary_signature",
+            "direct_asinh",
+            "direct_asinhf",
+            "direct_asinh(0.0)",
+            "direct_asinhf(0.0f)",
+        ):
+            self.assertIn(required, header)
+        for required in (
+            "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+            "d585fd3b613c66151fc3249e8ed44f77020cb5e6c1e635a616d3f9f82460512a",
+            "src/math/asinh.c",
+            "src/math/asinhf.c",
+            "src/math/log.c",
+            "src/math/log1p.c",
+            "src/math/sqrt.c",
+            "src/math/log_data.c",
+            "src/math/sqrt_data.c",
+            "src/math/__math_invalidf.c",
+            "-frounding-math",
+            "localized",
+            'include_str!("math_asinh_musl_x86_64.S")',
+            "public x86 support",
+        ):
+            self.assertIn(required, leaf)
+        for required in (
+            "2ebc86943f5cdac77729695b304a08f6308e7a218f9d484cec5675006b207d88",
+            '"src/math/asinh.c"',
+            '"src/math/asinhf.c"',
+            '"src/math/log.c"',
+            '"src/math/logf.c"',
+            '"src/math/log1p.c"',
+            '"src/math/log1pf.c"',
+            '"src/math/sqrt.c"',
+            '"src/math/sqrtf.c"',
+            '"src/math/sqrt_data.c"',
+            '"src/math/__math_invalidf.c"',
+            '"15.2.0"',
+            '"-frounding-math"',
+            "PRIVATE_RENAMES",
+            "musl's MIT license",
+        ):
+            self.assertIn(required, generator)
+        for required in (
+            "musl's MIT license",
+            "Sun Microsystems",
+            "Arm Limited",
+            "\t.globl\tasinh\n",
+            "\t.globl\tasinhf\n",
+            "crabc_x86_math_asinh_provider_log",
+            "crabc_x86_math_asinh_provider_log1p",
+            "crabc_x86_math_asinh_provider_sqrt",
+            "crabc_x86_math_asinh_data_log",
+            "crabc_x86_math_asinh_data_rsqrt",
+            "crabc_x86_math_asinh_helper_invalid",
+            "addsd",
+            "addss",
+            "subsd",
+            "subss",
+            "mulsd",
+            "mulss",
+            "divsd",
+            "divss",
+        ):
+            self.assertIn(required, assembly)
+
     def test_facade_keeps_native_pattern_archives_checked(self) -> None:
         source = RUNNER.read_text(encoding="utf-8")
         fnmatch_verifier = (
