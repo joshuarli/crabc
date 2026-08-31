@@ -1368,7 +1368,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         expected_groups = (
             "timerfd-header-abi|signalfd-header-abi",
             "libc-timerfd|libc-signalfd|libc-sigpause|libc-sigisemptyset|libc-sigandset-sigorset",
-            "ctermid-header-abi|gethostid-header-abi|isatty-header-abi|getpass-header-abi|libc-ctermid|libc-gethostid|libc-isatty|libc-getpass|mkfifo-header-abi|libc-mkfifo|mktemp-header-abi|libc-mktemp",
+            "ctermid-header-abi|gethostid-header-abi|isatty-header-abi|getpass-header-abi|libc-ctermid|libc-gethostid|libc-isatty|libc-getpass|mkfifo-header-abi|mkfifoat-header-abi|libc-mkfifo|libc-mkfifoat|mktemp-header-abi|libc-mktemp",
             "stdio-permanent-line-io-header-abi|stdio-octal-hex-scan-header-abi",
             "math-complex-complete-header-abi|libc-math-complex-complete",
             "stdio-permanent-byte-io-header-abi",
@@ -1502,6 +1502,8 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn("libc-getpass", source)
         self.assertIn("mkfifo-header-abi", source)
         self.assertIn("libc-mkfifo", source)
+        self.assertIn("mkfifoat-header-abi", source)
+        self.assertIn("libc-mkfifoat", source)
         self.assertIn("mktemp-header-abi", source)
         self.assertIn("libc-mktemp", source)
         self.assertIn("libc-process-context", source)

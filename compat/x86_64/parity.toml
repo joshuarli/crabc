@@ -5130,6 +5130,61 @@ oracle = [
 ]
 
 [[family.verified_artifact]]
+id = "static-c-mkfifoat"
+description = "Private native x86 selected-static-archive `mkfifoat` leaf. One project-header C body runs first through pinned musl 1.2.6 and then through a true `-nostdlib -static` crabc-libc candidate. It resolves only `mkfifoat(int, const char *, mode_t)`: musl's `mode | S_IFIFO` spelling passes the caller-supplied dirfd directly to Linux x86-64 `mknodat=259` with dev 0. The fixture's child-local shell umask 000 makes FIFO type and requested mode observable inside a raw-created fixture directory, preserves stale errno on successful creation, checks duplicate `EEXIST`, bad-dirfd `EBADF`, and null-path `EFAULT`; raw mkdirat/openat/newfstatat/unlinkat/close only set up, observe, and clean that fixture-owned directory. It does not select the wider `filesystem.special-nodes` capability, `mkfifo`, `mknod`, `mknodat`, device-node or C umask policy, an `AT_FDCWD`/CWD/pathname policy, allocation, locale, terminal/environment/process state, libc.so, CRT, loader, sysroot, family completion, promotion, or public x86 support."
+source_owners = [
+  "compat/upstreams.toml",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/mkfifoat.rs",
+  "libc/src/c_abi/x86_64/errno.rs",
+  "libc/src/c_abi/x86_64/syscall.rs",
+  "libc/src/c_abi/x86_64/static_tls.rs",
+  "include/errno.h",
+  "include/fcntl.h",
+  "include/stdint.h",
+  "include/sys/stat.h",
+  "include/sys/syscall.h",
+  "include/sys/types.h",
+  "include/bits/alltypes.h",
+  "include/bits/fcntl.h",
+  "include/bits/stat.h",
+  "include/bits/syscall.h",
+  "compat/abi/musl-1.2.6/aarch64/libc.a.static.tsv",
+  "compat/x86_64/mkfifoat_header_abi_probe.c",
+  "compat/x86_64/mkfifoat_header_abi_probe.cpp",
+  "compat/x86_64/run_mkfifoat_header_abi.sh",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/libc_mkfifoat_probe.c",
+  "compat/x86_64/libc_mkfifoat_start.S",
+  "compat/x86_64/run_libc_mkfifoat.sh",
+  "compat/x86_64/aarch64_parity_inventory.py",
+  "compat/x86_64/aarch64_parity_inventory.json",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "compat/x86_64/README.md",
+  "STATUS.md",
+  "x86-64.md",
+  "scripts/dev-x86_64.sh",
+  "scripts/check_structure.py",
+]
+x86_abi_prerequisites = [
+  "The SysV AMD64 C ABI passes mkfifoat's signed four-byte dirfd, pathname pointer, and unsigned four-byte mode_t in rdi/rsi/rdx and returns signed int in eax. The private Linux x86-64 mknodat=259 request receives that caller-supplied dirfd, pathname, mode|S_IFIFO, and dev 0 in rdi/rsi/rdx/r10; only raw -4095 through -1 results publish the selected initial-TLS errno.",
+  "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417 maps src/stat/mkfifoat.c exactly: `mkfifoat` returns `mknodat(fd, path, mode | S_IFIFO, 0)`. Its src/stat/mknodat.c body issues SYS_mknodat, so the static leaf preserves the direct Linux 5.10 closure while deliberately exporting neither mkfifo/mknod/mknodat nor a general special-node subsystem.",
+  "S_IFIFO=0010000 is ORed into the caller's mode_t and Linux applies the calling process's umask. The native runner sets only its reference/candidate child shell umask to 000; raw mkdirat/openat obtains a fixture-owned directory fd, and raw newfstatat compares FIFO type and requested mode relative to that fd. The candidate does not choose AT_FDCWD, call or select C umask, mutate CWD, normalize pathnames, or own device-node policy.",
+  "The final static candidate has a PT_TLS errno datum with direct initial-exec TPOFF access and no TLSGD/TLSLD/TLSDESC/GOTTPOFF/DTPMOD/DTPOFF model form or __tls_get_addr; fixture-local startup delegates to the archive Static Initial TLS v1 bootstrap without claiming CRT or TLS lifecycle.",
+]
+x86_header_prerequisites = ["The eight-profile C11/C++17 project-first/pinned-musl sys/stat.h and sys/types.h matrix proves unconditional `mkfifoat(int, const char *, mode_t)`, the x86 LP64 signed int dirfd and unsigned four-byte mode_t spellings, S_IFMT/S_IFIFO and selected permission constants, and unmangled C++ linkage. This is declaration evidence for one caller-supplied-dirfd leaf, not special-node-family, installed-header, or public x86 support."]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-mkfifoat", scope = "Pinned-musl project-header C reference plus a true dependency-free x86 `-nostdlib -static` crabc-libc candidate. The gate runs the eight-profile mkfifoat C/C++ header matrix; ratchets the exact crate-owned archive export; rejects interpreter/DT_NEEDED, unresolved symbols, dynamic TLS, and unowned runtime dependencies; proves direct initial-TLS errno; disassembles direct mknodat=259 with rdi/rsi/rdx/r10; and runs descriptor-relative FIFO type/mode, stale-errno success, duplicate EEXIST, bad-dirfd EBADF, and null-path EFAULT checks under a child-local shell umask 000. It does not select mkfifo/mknod/mknodat, device nodes, C umask or AT_FDCWD/CWD/pathname policy, allocation, locale, terminal/environment/process state, libc.so, CRT, loader, sysroot, filesystem capability completion, promotion, or public x86 support." }]
+oracle = [
+  { kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source, declaration, and behavior oracle for include/sys/stat.h plus src/stat/mkfifoat.c and src/stat/mknodat.c; mkfifoat's one-line body supplies mode|S_IFIFO then delegates mknodat(fd, ..., 0). The direct Linux mknodat closure is an intentional private implementation boundary, not a wider mknod-family claim." },
+  { kind = "kernel-abi", source = "Linux 5.10 x86-64 ABI", role = "mknodat=259 rdi/rsi/rdx/r10, caller-supplied directory-fd relative FIFO inode creation, umask application, mkdirat/openat/newfstatat/unlinkat/close fixture setup and observation, and raw errno contract." },
+  { kind = "elf-abi", source = "System V AMD64 psABI", role = "LP64 dirfd/pathname/mode_t/int C calling convention, unmangled C++ linkage, and static initial-exec TLS fixture contract." },
+]
+
+[[family.verified_artifact]]
 id = "static-c-directory-streams"
 description = "Private native x86 selected-static-archive directory-stream/raw-directory block. Its dependency-free `crabc-libc` fixture resolves exactly `opendir`, `fdopendir`, `closedir`, `dirfd`, `readdir`, `readdir_r`, `rewinddir`, `seekdir`, `telldir`, `alphasort`, GNU `versionsort`, `getdents`, and `posix_getdents` after an equivalent pinned-musl execution. The bounded lifecycle proves owned close-on-exec directory descriptors, opaque cursor rewind/seek behavior, stable-until-next-call records, legacy readdir_r copying, C-locale alphasort, GNU versionsort delegated to the selected byte-string `strverscmp` leaf, and direct raw directory records. It uses one private anonymous mapping per DIR object rather than selecting any C allocator. It is not scandir, directory walking, general locale/collation, C allocation, libc.so, CRT, dynamic TLS, loader, sysroot, family completion, promotion, or public x86 support."
 source_owners = [

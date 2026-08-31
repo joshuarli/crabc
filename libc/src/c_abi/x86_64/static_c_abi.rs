@@ -363,6 +363,8 @@ mod mktemp;
 mod lchmod_unsupported;
 #[path = "mkfifo.rs"]
 mod mkfifo;
+#[path = "mkfifoat.rs"]
+mod mkfifoat;
 #[path = "extended_attributes.rs"]
 mod extended_attributes;
 #[path = "descriptor_control.rs"]

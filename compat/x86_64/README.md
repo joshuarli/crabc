@@ -291,6 +291,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh xattr-header-abi
 ./scripts/dev-x86_64.sh pathname-lifecycle-header-abi
 ./scripts/dev-x86_64.sh mkfifo-header-abi
+./scripts/dev-x86_64.sh mkfifoat-header-abi
 ./scripts/dev-x86_64.sh mm-abi-reference
 ./scripts/dev-x86_64.sh mlock-reference
 ./scripts/dev-x86_64.sh msync-reference
@@ -461,6 +462,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-event-descriptors
 ./scripts/dev-x86_64.sh libc-pathname-lifecycle
 ./scripts/dev-x86_64.sh libc-mkfifo
+./scripts/dev-x86_64.sh libc-mkfifoat
 ./scripts/dev-x86_64.sh libc-extended-attributes
 ./scripts/dev-x86_64.sh libc-descriptor-io
 ./scripts/dev-x86_64.sh libc-descriptor-lifecycle
@@ -950,6 +952,20 @@ observable, while stale errno on success, duplicate `EEXIST`, and null-path
 `mkfifoat`, `mknod`, `mknodat`, device-node/C-umask/pathname/CWD policy,
 allocation, locale/terminal/environment/process state, family promotion, or
 public x86 support.
+
+`mkfifoat-header-abi` is a distinct eight-profile C11/C++17 project-header/
+pinned-musl matrix for unconditional `mkfifoat(int, const char *, mode_t)`, x86
+LP64 `int`/`mode_t`, FIFO mode constants, and unmangled C++ linkage. Its paired
+`libc-mkfifoat` private `static-c-mkfifoat` artifact runs a project-header C
+fixture first through pinned musl 1.2.6 and then through a `-nostdlib -static`
+candidate. It selects only `mkfifoat`: musl's `mode | S_IFIFO` passes the
+caller-supplied directory fd to direct Linux x86-64 `mknodat=259` with dev 0.
+Raw setup owns one fixture directory; the test observes descriptor-relative
+FIFO type/mode, stale errno on success, duplicate `EEXIST`, bad-dirfd `EBADF`,
+and null-path `EFAULT` under a child-local shell `umask 000`. It neither chooses
+`AT_FDCWD` nor selects `mkfifo`, `mknod`, `mknodat`, device nodes, C umask/CWD/
+pathname policy, `filesystem.special-nodes`, allocation, locale/terminal/
+environment/process state, family promotion, or public x86 support.
 
 `libc-extended-attributes` is the separate private static C runtime artifact
 paired with that header gate. Its project-header fixture first runs through
@@ -5141,6 +5157,7 @@ Apart from the narrowly named `libc-stat-compat`, `libc-credentials`,
 `libc-event-descriptors`,
 `libc-pathname-lifecycle`,
 `libc-mkfifo`,
+`libc-mkfifoat`,
 `libc-descriptor-io`,
 `libc-descriptor-lifecycle`,
 `libc-descriptor-pipeline`,

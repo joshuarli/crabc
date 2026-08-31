@@ -1329,6 +1329,22 @@ and null-path `EFAULT` are checked. It does not select the broader
 device-node or C-umask policy, pathname/CWD policy, locale/process state,
 filesystem-family completion, promotion, or public x86 support.
 
+`./scripts/dev-x86_64.sh mkfifoat-header-abi` is a distinct eight-profile
+C11/C++17 project-header/pinned-musl declaration gate for unconditional
+`mkfifoat(int, const char *, mode_t)`, x86 LP64 `int`/`mode_t`, FIFO mode
+constants, and unmangled C++ linkage. Its paired private
+`./scripts/dev-x86_64.sh libc-mkfifoat` artifact runs one project-header C
+fixture through pinned musl 1.2.6 and a true `-nostdlib -static` archive
+candidate. It implements only musl's caller-supplied-dirfd `mode | S_IFIFO`
+behavior through direct Linux x86-64 `mknodat=259` with dev 0; raw setup opens
+one fixture-owned directory and validates relative creation, stale-errno
+success, duplicate `EEXIST`, invalid-dirfd `EBADF`, and null-path `EFAULT`.
+The child-local shell `umask 000` only makes the requested FIFO mode observable.
+It neither chooses `AT_FDCWD` nor selects `mkfifo`, `mknod`, `mknodat`,
+device-node/C-umask/CWD/pathname policy, locale/process state, the broader
+`filesystem.special-nodes` capability, family completion, promotion, or public
+x86 support.
+
 `./scripts/dev-x86_64.sh libc-descriptor-lifecycle` is a separate private
 `static-c-descriptor-lifecycle` composition artifact inside that same planned
 family. It runs one project-header C body through pinned musl and then a
