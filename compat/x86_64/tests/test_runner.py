@@ -20892,6 +20892,153 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             runner,
         )
 
+    def test_libc_static_c_abi_hasmntopt_artifact_stays_a_pure_parser(self) -> None:
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        implementation = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "hasmntopt.rs"
+        ).read_text(encoding="utf-8")
+        probe = (
+            ROOT / "compat" / "x86_64" / "libc_hasmntopt_probe.c"
+        ).read_text(encoding="utf-8")
+        start = (
+            ROOT / "compat" / "x86_64" / "libc_hasmntopt_start.S"
+        ).read_text(encoding="utf-8")
+        artifact_runner = (
+            ROOT / "compat" / "x86_64" / "run_libc_hasmntopt.sh"
+        ).read_text(encoding="utf-8")
+        header_runner = (
+            ROOT / "compat" / "x86_64" / "run_hasmntopt_header_abi.sh"
+        ).read_text(encoding="utf-8")
+        header_c = (
+            ROOT / "compat" / "x86_64" / "hasmntopt_header_abi_probe.c"
+        ).read_text(encoding="utf-8")
+        header_cxx = (
+            ROOT / "compat" / "x86_64" / "hasmntopt_header_abi_probe.cpp"
+        ).read_text(encoding="utf-8")
+        static_exports = {
+            line
+            for line in (
+                ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+            ).read_text(encoding="utf-8").splitlines()
+            if line and not line.startswith("#")
+        }
+        parity_ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        runner = RUNNER.read_text(encoding="utf-8")
+
+        self.assertIn('#[path = "hasmntopt.rs"]', static_root)
+        for required in (
+            "Selected static Linux/x86-64 `hasmntopt` C ABI boundary",
+            "musl 1.2.6 release commit",
+            "src/misc/mntent.c::hasmntopt",
+            "struct MntEnt",
+            "size_of::<MntEnt>() == 40",
+            "offset_of!(MntEnt, options) == 24",
+            "c_string_length",
+            "c_prefix_matches",
+            "c_comma",
+            "core::hint::black_box",
+            "if prefix_matches {",
+            "short final token ends",
+            'pub unsafe extern "C" fn hasmntopt',
+            "no mount, unmount, filesystem",
+        ):
+            self.assertIn(required, implementation)
+        for forbidden in (
+            "use super::",
+            "raw_syscall::",
+            "errno::",
+            "alloc::",
+            "crabc_core",
+            "crabc_mimalloc",
+        ):
+            self.assertNotIn(forbidden, implementation)
+        self.assertIn("hasmntopt", static_exports)
+
+        for required in (
+            "#include <mntent.h>",
+            "sizeof(struct mntent) == 40",
+            "offsetof(struct mntent, mnt_opts) == 24",
+            "primary_options",
+            "const hasmntopt_signature function = hasmntopt",
+            '"ro=bind"',
+            '"bind"',
+            "separator_options",
+            "empty_options",
+            "check_short_token_guard_page",
+            "CRABC_LINUX_SYS_MPROTECT",
+            "r != x at the terminal NUL",
+            "bytes_match",
+            "CRABC_HASMNTOPT_FREESTANDING",
+        ):
+            self.assertIn(required, probe)
+        for required in (
+            "crabc_x86_64_hasmntopt_probe",
+            "mov $60, %eax",
+        ):
+            self.assertIn(required, start)
+
+        for header in (header_c, header_cxx):
+            for required in (
+                "#include <mntent.h>",
+                "sizeof(struct mntent) == 40",
+                "hasmntopt declaration",
+                "hasmntopt_signature",
+                "CRABC_EXPECT_HASMNTOPT",
+            ):
+                self.assertIn(required, header)
+        for required in (
+            "hasmntopt_header_abi_probe.c",
+            "hasmntopt_header_abi_probe.cpp",
+            "-D__STRICT_ANSI__",
+            "-D_POSIX_SOURCE",
+            "-D_POSIX_C_SOURCE=200809L",
+            "-D_XOPEN_SOURCE=700",
+            "-D_GNU_SOURCE",
+            "-D_BSD_SOURCE",
+            "retained a mangled hasmntopt reference",
+        ):
+            self.assertIn(required, header_runner)
+
+        for required in (
+            "run_hasmntopt_header_abi.sh",
+            "static_c_abi_exports.txt",
+            "-nostdlib -static",
+            "-Wl,-e,_start",
+            "-Wl,--no-undefined",
+            "hasmntopt object must have no ambient C ABI dependency",
+            "--disassemble=hasmntopt",
+            "candidate unexpectedly selects TLS",
+            "candidate selects mntent I/O or mount behavior",
+            "external string helper",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn("--whole-archive", artifact_runner)
+        self.assertIn('id = "static-c-hasmntopt"', parity_ledger)
+        self.assertIn(
+            'command = "./scripts/dev-x86_64.sh libc-hasmntopt"',
+            parity_ledger,
+        )
+        self.assertIn("run_hasmntopt_header_abi()", runner)
+        self.assertIn(
+            "/workspace/compat/x86_64/run_hasmntopt_header_abi.sh", runner
+        )
+        self.assertIn("run_libc_hasmntopt_probe()", runner)
+        self.assertIn(
+            "/workspace/compat/x86_64/run_libc_hasmntopt.sh", runner
+        )
+        self.assertIn(
+            '    hasmntopt-header-abi)\n        [ "$#" -eq 0 ] || fail "hasmntopt-header-abi takes no arguments"',
+            runner,
+        )
+        self.assertIn(
+            '    libc-hasmntopt)\n        [ "$#" -eq 0 ] || fail "libc-hasmntopt takes no arguments"',
+            runner,
+        )
+
     def test_libc_static_c_abi_sync_artifact_stays_void_and_private(self) -> None:
         static_root = (
             ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"

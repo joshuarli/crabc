@@ -134,6 +134,20 @@ select host identity policy, secure-execution policy, the broad
 `system.kernel-admin` capability, family completion, promotion, or public x86
 support.
 
+`./scripts/dev-x86_64.sh libc-hasmntopt` is a separate private
+`static-c-hasmntopt` artifact inside still-planned `libc.c-abi-compat`. Its
+pinned-musl/project C/C++ `<mntent.h>` matrix fixes only the unconditional
+`char *hasmntopt(const struct mntent *, const char *)` declaration, unmangled
+linkage, and the 40-byte x86 LP64 caller record under default, strict, POSIX,
+X/Open, GNU, and BSD profiles. The shared C fixture then differentially proves
+only comma-token scanning in caller-owned `mnt_opts` bytes: whole tokens,
+`=` suffixes, duplicate/interior rejection, empty-token behavior, a
+short-final-token guard-page miss, and no mutation. It has no mtab-file,
+mount, stdio, filesystem-I/O, errno/TLS,
+allocation, locale, lock, syscall, or runtime-state path. It does not select
+`setmntent`/`endmntent`/`getmntent`/`getmntent_r`/`addmntent`, mount APIs,
+family completion, promotion, or public x86 support.
+
 `./scripts/dev-x86_64.sh libc-isatty` is a separate private `static-c-isatty`
 artifact inside still-planned `libc.posix-runtime`. Its strict/POSIX/X/Open/GNU/
 BSD C/C++ declaration gate and pinned-musl/static C fixture select only

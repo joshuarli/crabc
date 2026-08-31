@@ -333,6 +333,8 @@ mod termios_control;
 mod ctermid;
 #[path = "gethostid.rs"]
 mod gethostid;
+#[path = "hasmntopt.rs"]
+mod hasmntopt;
 #[path = "isatty.rs"]
 mod isatty;
 #[path = "tcgetpgrp.rs"]

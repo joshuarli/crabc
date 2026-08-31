@@ -1421,6 +1421,7 @@ HSTRERROR_SYMBOLS = ("hstrerror",)
 INET_NTOA_SYMBOLS = ("inet_ntoa",)
 
 GETHOSTID_SYMBOLS = ("gethostid",)
+HASMNTOPT_SYMBOLS = ("hasmntopt",)
 GETLOADAVG_SYMBOLS = ("getloadavg",)
 SYNC_SYMBOLS = ("sync",)
 SLEEP_SYMBOLS = ("sleep",)
@@ -27266,6 +27267,314 @@ def require_gethostid_artifact(family: Mapping[str, Any]) -> None:
         require(snippet in dispatcher, f"gethostid dispatcher omits {snippet}")
 
 
+def require_hasmntopt_artifact(family: Mapping[str, Any]) -> None:
+    """Keep the one mntent token parser below mount-table or mount support."""
+
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.c-abi-compat].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [entry for entry in artifacts if entry.get("id") == "static-c-hasmntopt"]
+    require(
+        len(matching) == 1,
+        "libc.c-abi-compat must contain exactly one static-c-hasmntopt artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-hasmntopt must not promote libc.c-abi-compat",
+    )
+    artifact = matching[0]
+    require(
+        "capabilities" not in artifact,
+        "static-c-hasmntopt must remain capability-free",
+    )
+    description = artifact.get("description")
+    require(isinstance(description, str), "static-c-hasmntopt needs a description")
+    for phrase in (
+        "`hasmntopt` compatibility artifact",
+        "still-planned `libc.c-abi-compat`",
+        "caller-owned NUL-terminated `mnt_opts` byte string",
+        "NUL, comma, or `=`",
+        "empty-token/empty-option",
+        "mount-table state",
+        "setmntent",
+        "getmntent_r",
+        "mount APIs",
+        "family completion",
+        "promotion",
+        "public x86 support",
+    ):
+        require(phrase in description, f"static-c-hasmntopt description omits {phrase}")
+
+    owners = set(
+        nonempty_strings(artifact.get("source_owners"), "static-c-hasmntopt.source_owners")
+    )
+    for owner in (
+        "compat/upstreams.toml",
+        "libc/Cargo.toml",
+        "libc/src/lib.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/hasmntopt.rs",
+        "include/features.h",
+        "include/bits/alltypes.h",
+        "include/stddef.h",
+        "include/stdio.h",
+        "include/mntent.h",
+        "compat/x86_64/hasmntopt_header_abi_probe.c",
+        "compat/x86_64/hasmntopt_header_abi_probe.cpp",
+        "compat/x86_64/run_hasmntopt_header_abi.sh",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/libc_hasmntopt_probe.c",
+        "compat/x86_64/libc_hasmntopt_start.S",
+        "compat/x86_64/run_libc_hasmntopt.sh",
+        "compat/x86_64/aarch64_parity_inventory.py",
+        "compat/x86_64/aarch64_parity_inventory.json",
+        "compat/x86_64/tests/test_aarch64_parity_inventory.py",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/README.md",
+        "STATUS.md",
+        "x86-64.md",
+        "scripts/dev-x86_64.sh",
+        "scripts/check_structure.py",
+    ):
+        require(owner in owners, f"static-c-hasmntopt source owners omit {owner}")
+
+    prerequisites = nonempty_strings(
+        artifact.get("x86_abi_prerequisites"),
+        "static-c-hasmntopt.x86_abi_prerequisites",
+    )
+    require(
+        any(
+            "SysV AMD64" in item
+            and "rdi/rsi" in item
+            and "rax" in item
+            and "40-byte" in item
+            and "offset 24" in item
+            for item in prerequisites
+        ),
+        "static-c-hasmntopt must retain its mntent pointer/record ABI",
+    )
+    require(
+        any(
+            "9fa28ece75d8a2191de7c5bb53bed224c5947417" in item
+            and "src/misc/mntent.c::hasmntopt" in item
+            and "strncmp" in item
+            and "strchr" in item
+            for item in prerequisites
+        ),
+        "static-c-hasmntopt must retain its pinned-musl parser mapping",
+    )
+    require(
+        any(
+            "empty token" in item
+            and "empty option" in item
+            and "Null, dangling, or unterminated" in item
+            for item in prerequisites
+        ),
+        "static-c-hasmntopt must retain its caller-buffer and invalid-input boundary",
+    )
+    require(
+        any(
+            "short-final-token guard-page" in item
+            and "r\\0" in item
+            and "short-circuit" in item
+            for item in prerequisites
+        ),
+        "static-c-hasmntopt must retain its short-token suffix-read boundary",
+    )
+    require(
+        any(
+            "one hasmntopt object" in item
+            and "no unresolved relocation" in item
+            and "PT_TLS" in item
+            and "no call, syscall, or fs access" in item
+            for item in prerequisites
+        ),
+        "static-c-hasmntopt must retain its pure static closure",
+    )
+
+    headers = nonempty_strings(
+        artifact.get("x86_header_prerequisites"),
+        "static-c-hasmntopt.x86_header_prerequisites",
+    )
+    require(
+        any(
+            "<mntent.h>" in item
+            and "unconditional" in item
+            and "40-byte" in item
+            and "default, strict, POSIX, X/Open, GNU, and BSD" in item
+            and "unmangled C++ linkage" in item
+            for item in headers
+        ),
+        "static-c-hasmntopt must retain its focused C/C++ header ABI",
+    )
+
+    evidence = artifact.get("native_evidence")
+    require(isinstance(evidence, list), "static-c-hasmntopt needs evidence")
+    require(
+        {entry.get("command") for entry in evidence if isinstance(entry, Mapping)}
+        == {"./scripts/dev-x86_64.sh libc-hasmntopt"},
+        "static-c-hasmntopt must use the closed libc-hasmntopt command",
+    )
+    scope = evidence[0].get("scope")
+    require(
+        isinstance(scope, str)
+        and all(
+            phrase in scope
+            for phrase in (
+                "default/strict/POSIX/X/Open/GNU/BSD",
+                "caller-buffer",
+                "hasmntopt object",
+                "empty-token",
+                "mntent-I/O/mount/syscall",
+                "public x86 support",
+            )
+        ),
+        "static-c-hasmntopt evidence must retain its narrow parser scope",
+    )
+
+    exports = set(
+        static_c_abi_export_names(
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        )
+    )
+    require(
+        set(HASMNTOPT_SYMBOLS) <= exports,
+        "static-c-hasmntopt must retain its selected export",
+    )
+
+    static_root = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+    ).read_text(encoding="utf-8")
+    require(
+        '#[path = "hasmntopt.rs"]\nmod hasmntopt;' in static_root,
+        "x86 static C ABI must compose the hasmntopt leaf",
+    )
+    source = (ROOT / "libc" / "src" / "c_abi" / "x86_64" / "hasmntopt.rs").read_text(
+        encoding="utf-8"
+    )
+    for snippet in (
+        "Selected static Linux/x86-64 `hasmntopt` C ABI boundary",
+        "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+        "src/misc/mntent.c::hasmntopt",
+        "struct MntEnt",
+        "size_of::<MntEnt>() == 40",
+        "offset_of!(MntEnt, options) == 24",
+        "c_string_length",
+        "c_prefix_matches",
+        "c_comma",
+        "core::hint::black_box",
+        "if prefix_matches {",
+        "short final token ends",
+        'pub unsafe extern "C" fn hasmntopt',
+        "no mount, unmount, filesystem",
+    ):
+        require(snippet in source, f"hasmntopt implementation omits {snippet}")
+    source_exports = set(
+        re.findall(r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(', source)
+    )
+    require(
+        source_exports == set(HASMNTOPT_SYMBOLS),
+        "hasmntopt leaf must export only hasmntopt",
+    )
+    for forbidden in (
+        "use super::",
+        "raw_syscall::",
+        "errno::",
+        "alloc::",
+        "crabc_core",
+        "crabc_mimalloc",
+    ):
+        require(forbidden not in source, f"hasmntopt leaf widens into {forbidden}")
+
+    runner = (ROOT / "compat" / "x86_64" / "run_libc_hasmntopt.sh").read_text(
+        encoding="utf-8"
+    )
+    for snippet in (
+        "run_musl_oracle.sh",
+        "run_hasmntopt_header_abi.sh",
+        "static_c_abi_exports.txt",
+        "-nostdlib -static",
+        "-Wl,--no-undefined",
+        "hasmntopt object must have no ambient C ABI dependency",
+        "--disassemble=hasmntopt",
+        "candidate unexpectedly selects TLS",
+        "candidate selects mntent I/O or mount behavior",
+        "external string helper",
+    ):
+        require(snippet in runner, f"hasmntopt runner omits {snippet}")
+
+    probe = (ROOT / "compat" / "x86_64" / "libc_hasmntopt_probe.c").read_text(
+        encoding="utf-8"
+    )
+    for snippet in (
+        "sizeof(struct mntent) == 40",
+        "offsetof(struct mntent, mnt_opts) == 24",
+        "primary_options",
+        "const hasmntopt_signature function = hasmntopt",
+        '"ro=bind"',
+        '"bind"',
+        "separator_options",
+        "empty_options",
+        "check_short_token_guard_page",
+        "CRABC_LINUX_SYS_MPROTECT",
+        "r != x at the terminal NUL",
+        "bytes_match",
+        "CRABC_HASMNTOPT_FREESTANDING",
+    ):
+        require(snippet in probe, f"hasmntopt probe omits {snippet}")
+
+    start = (ROOT / "compat" / "x86_64" / "libc_hasmntopt_start.S").read_text(
+        encoding="utf-8"
+    )
+    for snippet in ("crabc_x86_64_hasmntopt_probe", "mov $60, %eax"):
+        require(snippet in start, f"hasmntopt start shim omits {snippet}")
+
+    header_c = (
+        ROOT / "compat" / "x86_64" / "hasmntopt_header_abi_probe.c"
+    ).read_text(encoding="utf-8")
+    header_cxx = (
+        ROOT / "compat" / "x86_64" / "hasmntopt_header_abi_probe.cpp"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "#include <mntent.h>",
+        "sizeof(struct mntent) == 40",
+        "hasmntopt declaration",
+        "hasmntopt_signature",
+        "CRABC_EXPECT_HASMNTOPT",
+    ):
+        require(snippet in header_c, f"hasmntopt C header probe omits {snippet}")
+        require(snippet in header_cxx, f"hasmntopt C++ header probe omits {snippet}")
+
+    header_runner = (
+        ROOT / "compat" / "x86_64" / "run_hasmntopt_header_abi.sh"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "hasmntopt_header_abi_probe.c",
+        "hasmntopt_header_abi_probe.cpp",
+        "-D__STRICT_ANSI__",
+        "-D_POSIX_SOURCE",
+        "-D_POSIX_C_SOURCE=200809L",
+        "-D_XOPEN_SOURCE=700",
+        "-D_GNU_SOURCE",
+        "-D_BSD_SOURCE",
+        "retained a mangled hasmntopt reference",
+    ):
+        require(snippet in header_runner, f"hasmntopt header runner omits {snippet}")
+
+    dispatcher = (ROOT / "scripts" / "dev-x86_64.sh").read_text(encoding="utf-8")
+    for snippet in (
+        "hasmntopt-header-abi)",
+        "run_hasmntopt_header_abi",
+        "libc-hasmntopt)",
+        "run_libc_hasmntopt_probe",
+    ):
+        require(snippet in dispatcher, f"hasmntopt dispatcher omits {snippet}")
+
+
 def require_auxv_observation_artifact(family: Mapping[str, Any]) -> None:
     """Keep direct initial-vector lookup bounded, static, and private."""
     artifacts = require_verified_artifacts(
@@ -40969,6 +41278,7 @@ def validate_ledger(
     require_numeric_netdb_artifact(by_id["libc.resolver"])
     require_hstrerror_artifact(by_id["libc.resolver"])
     require_gethostid_artifact(by_id["libc.c-abi-compat"])
+    require_hasmntopt_artifact(by_id["libc.c-abi-compat"])
     require_qsort_artifact(by_id["libc.c-abi-compat"])
     require_bsearch_artifact(by_id["libc.c-abi-compat"])
     require_linear_search_artifact(by_id["libc.c-abi-compat"])

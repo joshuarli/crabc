@@ -424,6 +424,8 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-ctermid
 ./scripts/dev-x86_64.sh gethostid-header-abi
 ./scripts/dev-x86_64.sh libc-gethostid
+./scripts/dev-x86_64.sh hasmntopt-header-abi
+./scripts/dev-x86_64.sh libc-hasmntopt
 ./scripts/dev-x86_64.sh isatty-header-abi
 ./scripts/dev-x86_64.sh libc-isatty
 ./scripts/dev-x86_64.sh tcgetpgrp-header-abi
@@ -3353,6 +3355,21 @@ host configuration nor selects hostname/domain-name state, host-identity or
 secure-execution policy, libc.so, CRT, loader, sysroot, family completion,
 promotion, or public x86 support.
 
+`libc-hasmntopt` is a separate static `verified_artifact` inside still-planned
+`libc.c-abi-compat`, not mntent, mtab, mount, or filesystem capability. Its
+all-profile project/pinned-musl C11/C++17 `<mntent.h>` gate fixes the
+unconditional `char *hasmntopt(const struct mntent *, const char *)`
+declaration, unmangled linkage, and 40-byte x86 LP64 `struct mntent` layout.
+One project-header C body then executes through pinned musl and a
+`-nostdlib -static` candidate. It proves only caller-owned comma-token scans:
+whole tokens, `=` suffixes, duplicate/interior rejection, empty-token
+behavior, a short-final-token guard-page miss, and unchanged bytes. The
+candidate rejects TLS/errno, external
+string helpers, allocation, stdio, mntent I/O, mount APIs, filesystem I/O,
+and syscalls. It does not select `setmntent`, `endmntent`, `getmntent`,
+`getmntent_r`, `addmntent`, libc.so, CRT, loader, sysroot, family completion,
+promotion, or public x86 support.
+
 `libc-isatty` is a separately recorded static `static-c-isatty`
 `verified_artifact` gate over that archive, not a terminal capability. Its
 strict/POSIX/X/Open/GNU/BSD C/C++ `unistd.h` declaration gate and one
@@ -5584,6 +5601,7 @@ Apart from the narrowly named `libc-stat-compat`, `libc-credentials`,
 `libc-termios-control`,
 `libc-ctermid`,
 `libc-gethostid`,
+`libc-hasmntopt`,
 `libc-isatty`,
 `libc-tcgetpgrp`,
 `libc-tcsetpgrp`,

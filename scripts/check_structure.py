@@ -6170,6 +6170,54 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
                 f"gethostid boundary must not select {forbidden!r}"
             )
 
+    hasmntopt_source = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "hasmntopt.rs"
+    hasmntopt_text = hasmntopt_source.read_text(errors="replace")
+    for required in (
+        "Selected static Linux/x86-64 `hasmntopt` C ABI boundary",
+        "musl 1.2.6 release commit",
+        "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+        "src/misc/mntent.c::hasmntopt",
+        "struct MntEnt",
+        "size_of::<MntEnt>() == 40",
+        "offset_of!(MntEnt, options) == 24",
+        "c_string_length",
+        "c_prefix_matches",
+        "c_comma",
+        "core::hint::black_box",
+        "if prefix_matches {",
+        "short final token ends",
+        'pub unsafe extern "C" fn hasmntopt',
+    ):
+        if required not in hasmntopt_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/hasmntopt.rs: selected static mntent "
+                f"option-parser boundary is missing {required!r}"
+            )
+    hasmntopt_exports = set(
+        re.findall(
+            r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(',
+            hasmntopt_text,
+        )
+    )
+    if hasmntopt_exports != {"hasmntopt"}:
+        errors.append(
+            "libc/src/c_abi/x86_64/hasmntopt.rs: selected static mntent "
+            "option-parser artifact must export only hasmntopt"
+        )
+    for forbidden in (
+        "use super::",
+        "raw_syscall::",
+        "errno::",
+        "alloc::",
+        "crabc_core",
+        "crabc_mimalloc",
+    ):
+        if forbidden in hasmntopt_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/hasmntopt.rs: selected static mntent "
+                f"option-parser boundary must not select {forbidden!r}"
+            )
+
     isatty_source = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "isatty.rs"
     isatty_text = isatty_source.read_text(errors="replace")
     for required in (
@@ -10447,6 +10495,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         termios_control_text,
         ctermid_text,
         gethostid_text,
+        hasmntopt_text,
         isatty_text,
         tcgetpgrp_text,
         tcsetpgrp_text,
@@ -10761,6 +10810,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         "tcsetwinsize",
         "ctermid",
         "gethostid",
+        "hasmntopt",
         "isatty",
         "tcgetpgrp",
         "tcsetpgrp",
@@ -11005,7 +11055,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         errors.append(
             "libc/src/c_abi/x86_64: selected static archive must export only its "
             "stat, credential, errno, bootstrap-memory/fenv/continuation, simple "
-            "signal-control, separate realtime-minimum/realtime-maximum bridges, one pure GNU signal-set predicate, paired GNU binary set-operation leaf, and a three-symbol POSIX signal-set mutation leaf, bounded process-signal execution, and one legacy single-signal pause wait, bounded pthread create/exit/join/detach initial-TLS worker, its private selected-main/worker pthread-key/C11-TSS lifecycle, private process-normal pthread mutexes and their musl private condition-variable handoff, the complete selected rwlock/attribute family with private-or-shared futex operation, plus the distinct C11 plain-sync adapter and normal-return pthread/C11 once state machine, its typed C11 create/exit/join/detach sibling, and pthread/C11 identity aliases, named termios-control, direct terminal-descriptor and foreground-group observations plus one named foreground-group assignment, historical ctermid pathname spelling, constant historical gethostid compatibility, selected process-context, child-reaping, C11 immediate termination, callback algorithms, direct clock_gettime, binary64 difftime, caller-buffered fixed-UTC gmtime_r, fixed-UTC timegm, a status-returning POSIX scheduler-yield leaf, caller-owned mapping-core, no-cancellation mapping synchronization, direct anonymous-memory descriptor creation, nanosleep, sleep, and clock_nanosleep, selected "
+            "signal-control, separate realtime-minimum/realtime-maximum bridges, one pure GNU signal-set predicate, paired GNU binary set-operation leaf, and a three-symbol POSIX signal-set mutation leaf, bounded process-signal execution, and one legacy single-signal pause wait, bounded pthread create/exit/join/detach initial-TLS worker, its private selected-main/worker pthread-key/C11-TSS lifecycle, private process-normal pthread mutexes and their musl private condition-variable handoff, the complete selected rwlock/attribute family with private-or-shared futex operation, plus the distinct C11 plain-sync adapter and normal-return pthread/C11 once state machine, its typed C11 create/exit/join/detach sibling, and pthread/C11 identity aliases, named termios-control, direct terminal-descriptor and foreground-group observations plus one named foreground-group assignment, historical ctermid pathname spelling, constant historical gethostid compatibility, caller-buffer mntent option parsing, selected process-context, child-reaping, C11 immediate termination, callback algorithms, direct clock_gettime, binary64 difftime, caller-buffered fixed-UTC gmtime_r, fixed-UTC timegm, a status-returning POSIX scheduler-yield leaf, caller-owned mapping-core, no-cancellation mapping synchronization, direct anonymous-memory descriptor creation, nanosleep, sleep, and clock_nanosleep, selected "
             "POSIX _exit forwarding, descriptor-entry, selected filesystem-access, bounded descriptor-control, timestamp updates, and descriptor-I/O, selected process-resources, selected readiness/signal-waits, "
             "selected socket transport and selected socket-message/options, selected system-observation, historical load snapshot, direct global-sync void boundary, selected UTS-identity, "
             "selected numeric-address codecs, immutable IPv6 unspecified/loopback address data objects, and legacy classful IPv4 arithmetic, fixed-profile h_errno message text, byte-string, legacy-memory adapters, source-backed memccpy/mempcpy, caller-buffer strsep, random-entropy, memory-search, C-string-copy, immutable error-string, "
@@ -11057,6 +11107,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         ("pthread_tsd.rs", pthread_tsd_text),
         ("termios_control.rs", termios_control_text),
         ("ctermid.rs", ctermid_text),
+        ("hasmntopt.rs", hasmntopt_text),
         ("isatty.rs", isatty_text),
         ("tcgetpgrp.rs", tcgetpgrp_text),
         ("tcsetpgrp.rs", tcsetpgrp_text),

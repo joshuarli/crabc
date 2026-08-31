@@ -91,6 +91,20 @@ class AArch64ParityInventoryTests(unittest.TestCase):
         self.assertFalse(report["x86_boundary"]["promotion_ready"])
         self.assertFalse(report["x86_boundary"]["public_support"])
 
+    def test_hasmntopt_remains_a_private_c_abi_parser_artifact(self) -> None:
+        report = inventory.validate_inventory()
+        c_abi_compat = next(
+            row for row in report["families"] if row["id"] == "libc.c-abi-compat"
+        )
+        self.assertEqual(c_abi_compat["contract_state"], "selected-private")
+        self.assertEqual(c_abi_compat["verified_artifact_count"], 9)
+        self.assertIn(
+            {"family": "libc.c-abi-compat", "id": "static-c-hasmntopt"},
+            report["selected_private_artifacts"],
+        )
+        self.assertFalse(report["x86_boundary"]["promotion_ready"])
+        self.assertFalse(report["x86_boundary"]["public_support"])
+
     def test_snapshot_rejects_any_unreviewed_derived_change(self) -> None:
         actual = inventory.build_inventory()
         expected = json.loads(inventory.INVENTORY_PATH.read_text(encoding="utf-8"))

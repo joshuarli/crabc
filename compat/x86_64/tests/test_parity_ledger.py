@@ -19268,6 +19268,96 @@ class X86ParityLedgerTests(unittest.TestCase):
         ):
             ledger.validate_ledger(data)
 
+    def test_hasmntopt_artifact_stays_a_private_caller_buffer_parser(self) -> None:
+        data = self.data()
+        family = self.family(data, "libc.c-abi-compat")
+        self.assertEqual(family["status"], "planned")
+        artifacts = family["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-hasmntopt"
+        )
+        self.assertNotIn("capabilities", artifact)
+        for phrase in (
+            "`hasmntopt` compatibility artifact",
+            "caller-owned NUL-terminated `mnt_opts` byte string",
+            "empty-token/empty-option",
+            "mount-table state",
+            "mount APIs",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, artifact["description"])
+
+        owners = artifact["source_owners"]
+        assert isinstance(owners, list)
+        for owner in (
+            "libc/src/c_abi/x86_64/hasmntopt.rs",
+            "include/mntent.h",
+            "compat/x86_64/hasmntopt_header_abi_probe.c",
+            "compat/x86_64/hasmntopt_header_abi_probe.cpp",
+            "compat/x86_64/run_hasmntopt_header_abi.sh",
+            "compat/x86_64/libc_hasmntopt_probe.c",
+            "compat/x86_64/libc_hasmntopt_start.S",
+            "compat/x86_64/run_libc_hasmntopt.sh",
+            "compat/x86_64/static_c_abi_exports.txt",
+        ):
+            self.assertIn(owner, owners)
+
+        prerequisites = artifact["x86_abi_prerequisites"]
+        assert isinstance(prerequisites, list)
+        self.assertTrue(
+            any(
+                "SysV AMD64" in item
+                and "rdi/rsi" in item
+                and "40-byte" in item
+                and "offset 24" in item
+                for item in prerequisites
+            )
+        )
+        self.assertTrue(
+            any(
+                "src/misc/mntent.c::hasmntopt" in item
+                and "strncmp" in item
+                and "strchr" in item
+                for item in prerequisites
+            )
+        )
+        self.assertTrue(
+            any(
+                "short-final-token guard-page" in item
+                and "r\\0" in item
+                and "short-circuit" in item
+                for item in prerequisites
+            )
+        )
+
+        evidence = artifact["native_evidence"]
+        assert isinstance(evidence, list) and isinstance(evidence[0], dict)
+        self.assertEqual(
+            evidence[0]["command"],
+            "./scripts/dev-x86_64.sh libc-hasmntopt",
+        )
+        for phrase in (
+            "default/strict/POSIX/X/Open/GNU/BSD",
+            "caller-buffer",
+            "hasmntopt object",
+            "empty-token",
+            "mntent-I/O/mount/syscall",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, evidence[0]["scope"])
+
+        evidence[0]["scope"] = evidence[0]["scope"].replace(
+            "empty-token", "arbitrary mntent state"
+        )
+        with self.assertRaisesRegex(
+            ledger.LedgerError,
+            "static-c-hasmntopt evidence must retain its narrow parser scope",
+        ):
+            ledger.validate_ledger(data)
+
     def test_bsearch_artifact_stays_private_and_non_promoting(self) -> None:
         data = self.data()
         family = self.family(data, "libc.c-abi-compat")

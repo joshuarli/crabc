@@ -9919,6 +9919,52 @@ native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc
 oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source and declaration oracle: src/misc/gethostid.c returns the fixed zero Linux host identifier; include/unistd.h provides the X/Open/GNU/BSD declaration boundary." }, { kind = "elf-abi", source = "System V AMD64 psABI", role = "No-argument LP64 long return, C++ C linkage, and true-static ET_EXEC closure contract." }]
 
 [[family.verified_artifact]]
+id = "static-c-hasmntopt"
+description = "Private native x86 selected-static-archive `hasmntopt` compatibility artifact inside still-planned `libc.c-abi-compat`. One dependency-free `crabc-libc` archive resolves exactly `char *hasmntopt(const struct mntent *, const char *)` into a freestanding C fixture after an equivalent pinned-musl execution. Musl's complete `src/misc/mntent.c` leaf scans only a caller-owned NUL-terminated `mnt_opts` byte string from its beginning and each comma successor, returning the first token whose prefix is followed by NUL, comma, or `=`. Direct and function-pointer fixture calls cover whole tokens, the first `ro=bind` result for both `ro` and `ro=bind`, duplicate and interior-substring rejection, empty-token/empty-option behavior, and unchanged caller bytes. This leaf neither opens nor parses an mtab file, mounts or unmounts anything, nor selects mount-table state, stdio, filesystem I/O, errno, TLS, allocation, locale, locks, syscalls, or runtime state. This capability-free ABI artifact does not select `setmntent`, `endmntent`, `getmntent`, `getmntent_r`, `addmntent`, mount APIs, libc.so, CRT, loader, sysroot, family completion, promotion, or public x86 support."
+source_owners = [
+  "compat/upstreams.toml",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/hasmntopt.rs",
+  "include/features.h",
+  "include/bits/alltypes.h",
+  "include/stddef.h",
+  "include/stdio.h",
+  "include/mntent.h",
+  "compat/x86_64/hasmntopt_header_abi_probe.c",
+  "compat/x86_64/hasmntopt_header_abi_probe.cpp",
+  "compat/x86_64/run_hasmntopt_header_abi.sh",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/libc_hasmntopt_probe.c",
+  "compat/x86_64/libc_hasmntopt_start.S",
+  "compat/x86_64/run_libc_hasmntopt.sh",
+  "compat/x86_64/aarch64_parity_inventory.py",
+  "compat/x86_64/aarch64_parity_inventory.json",
+  "compat/x86_64/tests/test_aarch64_parity_inventory.py",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "compat/x86_64/README.md",
+  "STATUS.md",
+  "x86-64.md",
+  "scripts/dev-x86_64.sh",
+  "scripts/check_structure.py",
+]
+x86_abi_prerequisites = [
+  "The SysV AMD64 LP64 C ABI passes `hasmntopt(const struct mntent *, const char *)` in rdi/rsi and returns the matching mutable `char *` or NULL in rax. The project/pinned-musl `struct mntent` is 40-byte align-8 storage: four char-pointer fields at offsets 0/8/16/24 and two signed four-byte ints at 32/36; only the caller-owned `mnt_opts` pointer at offset 24 is read.",
+  "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417 maps `src/misc/mntent.c::hasmntopt` directly to this leaf. Its complete loop computes `strlen(opt)`, compares at the initial byte and each comma successor with `strncmp`, accepts only NUL/comma/`=` suffixes, then obtains the next token with `strchr`; it neither accesses an mtab stream nor issues a Linux operation.",
+  "The common pinned-musl/candidate C body uses mutable fixture records to observe the first whole-token pointer for `rw`, `relatime`, `nosuid`, `ro=bind`, and repeated `ro`; rejects partial/interior/missing spellings; covers an empty token and empty option; and proves the scanned caller bytes stay unchanged. Null, dangling, or unterminated pointers remain outside the C-defined/musl source contract.",
+  "A valid short-final-token guard-page case puts `r\\0` at the end of a readable page and protects the following page before looking up `rx`. It differentially proves musl's `strncmp(...) && p[l]` short-circuit: the failed comparison returns NULL without reading the otherwise inaccessible suffix byte.",
+  "The final `-nostdlib -static` candidate has one hasmntopt object with exactly that public export, no unresolved relocation, PT_TLS, errno path, dynamic relocation/resolver, external string helper, allocator, stdio, mount-table, filesystem-I/O, or syscall dependency. Its own disassembly contains no call, syscall, or fs access, so it cannot become mntent stream or mount behavior through an implicit runtime seam.",
+]
+x86_header_prerequisites = [
+  "The focused pinned-musl/project-first C11/C++17 `<mntent.h>` matrix proves the unconditional exact `char *hasmntopt(const struct mntent *, const char *)` declaration and 40-byte x86 LP64 `struct mntent` layout under default, strict, POSIX, X/Open, GNU, and BSD selectors, plus unmangled C++ linkage. It selects only this parser declaration/record shape, not general mntent APIs, installed-header completion, archive linkage, mount-table behavior, or public x86 support.",
+]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-hasmntopt", scope = "Pinned-musl/project default/strict/POSIX/X/Open/GNU/BSD C/C++ `<mntent.h>` compilation plus one project-header caller-buffer C body through pinned musl and a true x86 `-nostdlib -static` candidate. The gate ratchets the full selected archive surface, extracts exactly the hasmntopt object, rejects interpreter/DT_NEEDED/unresolved symbols/PT_TLS/errno/dynamic-TLS/allocator/external string helper/stdio/mntent-I/O/mount/syscall dependencies, and verifies no call/syscall/fs path in the parser. Direct/function-pointer calls prove whole-token, equals-suffix, duplicate/interior rejection, empty-token, and unchanged-caller-byte semantics. It does not select mtab parsing, setmntent/endmntent/getmntent/getmntent_r/addmntent, mounting, filesystem I/O, libc.so, CRT, loader, sysroot, family completion, promotion, or public x86 support." }]
+oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source, unconditional `<mntent.h>` declaration/layout, and executable behavior oracle for `src/misc/mntent.c::hasmntopt`: first comma-delimited whole-token pointer, NUL/comma/equals suffix boundary, null miss, and no input mutation." }, { kind = "elf-abi", source = "System V AMD64 psABI and pinned musl x86 headers", role = "LP64 two-pointer/mutable-pointer-return convention, six-field mntent record layout, unmangled C++ linkage, and true-static ET_EXEC closure." }]
+
+[[family.verified_artifact]]
 id = "static-c-bsearch"
 description = "Private native x86 selected-static-archive `bsearch` compatibility artifact inside still-planned `libc.c-abi-compat`. One dependency-free `crabc-libc` archive resolves exactly `bsearch` into a freestanding C fixture after an equivalent pinned-musl execution. Musl's complete `src/stdlib/bsearch.c` leaf retains its midpoint and signed comparator branches for caller-owned valid contiguous records: direct and function-pointer calls cover first/last/miss, a duplicate-key midpoint return, a wide record, and zero elements without a callback. The checked multiplication guard applies only outside the valid C array domain, where musl's source pointer expression is already undefined. The final candidate rejects `qsort`, `qsort_r`, `__qsort_r`, search-container helpers, TLS/errno, allocation, locale, locks, syscalls, and runtime state. This capability-free ABI artifact does not change the existing qsort/qsort_r behavior or select general sorting/searching, callback ownership, C longjmp/C++ exception transport, libc.so, CRT, loader, sysroot, family completion, promotion, or public x86 support."
 source_owners = [
