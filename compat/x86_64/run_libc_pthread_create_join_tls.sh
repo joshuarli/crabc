@@ -124,8 +124,7 @@ grep -Eq 'GLOBAL +HIDDEN +.*__crabc_x86_static_tls_bootstrap$' "$archive_elf_sym
 for unselected in clone __clone \
     pthread_mutexattr_init pthread_mutexattr_destroy pthread_mutexattr_settype \
     pthread_mutex_timedlock pthread_mutex_consistent \
-    pthread_condattr_init pthread_condattr_destroy pthread_condattr_setclock \
-    pthread_condattr_getclock pthread_cond_timedwait \
+    pthread_condattr_init pthread_condattr_destroy pthread_cond_timedwait \
     pthread_sigmask \
     malloc free calloc realloc __tls_get_addr; do
     if grep -Eq "[[:space:]][TW][[:space:]]${unselected}$" "$archive_symbols"; then

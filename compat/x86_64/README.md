@@ -409,6 +409,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-pthread-name
 ./scripts/dev-x86_64.sh libc-pthread-barrierattr-pshared
 ./scripts/dev-x86_64.sh libc-pthread-condattr-pshared
+./scripts/dev-x86_64.sh libc-pthread-condattr-clock
 ./scripts/dev-x86_64.sh libc-pthread-mutex-normal
 ./scripts/dev-x86_64.sh libc-pthread-rwlock
 ./scripts/dev-x86_64.sh libc-pthread-cond-private
@@ -642,8 +643,9 @@ The direct `utime-header-abi` gate checks the x86 LP64 `struct utimbuf`,
 `threads.h`, and `sched.h` layouts, macros, type identities, include orders,
 GNU declarations, and unmangled C linkage. Its selected declarations include
 every `pthread_rwlock_*` and `pthread_rwlockattr_*` signature plus the exact
-`pthread_barrierattr_*pshared` and `pthread_condattr_*pshared` pairs, and the
-C++ object probe requires their unmangled C linkage. Both are compile-only
+`pthread_barrierattr_*pshared`, `pthread_condattr_*pshared`, and
+`pthread_condattr_*clock` pairs, and the C++ object probe requires their
+unmangled C linkage. Both are compile-only
 partial evidence: they do not select archive linkage, pthread behavior,
 header-family completion, or public x86 support.
 
@@ -3143,6 +3145,22 @@ process-shared operation. Threads, TLS, synchronization, cancellation, CRT,
 loader, sysroot, family completion, promotion, and public x86 support remain
 excluded.
 
+`libc-pthread-condattr-clock` is a twenty-fifth separately recorded private
+static `verified_artifact` under the same still-planned `libc.pthread-tls`
+family. Its project-header C body first runs against pinned musl and then
+through a `-nostdlib -static` candidate. It selects only
+`pthread_condattr_setclock`/`pthread_condattr_getclock` over the public
+four-byte word: every nonnegative clock ID except CPU-clock IDs `2` and `3`
+replaces only low bits 0 through 30 while preserving bit 31, the getter masks
+back to those low clock bits, and invalid `-1`, `2`, and `3` preserve the
+complete word. The fixture deliberately supplies caller-owned raw storage
+without an attribute lifecycle call, process-sharing selection, or
+`pthread_cond_init`; the selected private condition initializer still rejects
+non-null attributes. It therefore does not establish condition initialization,
+timed waiting, clock observation, destruction, process-shared operation,
+threads, TLS, synchronization, cancellation, CRT, loader, sysroot, family
+completion, promotion, or public x86 support.
+
 `libc-pthread-mutex-normal` is a tenth separately recorded private static
 `verified_artifact` under the same still-planned `libc.pthread-tls` family.
 Its project-header C body first runs against pinned musl and then through a
@@ -5537,7 +5555,7 @@ Apart from the narrowly named `libc-stat-compat`, `libc-credentials`,
 `libc-sigrtmax`, `libc-sigrtmin`, `libc-sigaddset-sigdelset-sigfillset`,
 `libc-static-tls-v1`, `libc-crt-static-tls`,
 `libc-pthread-create-join-tls`, `libc-pthread-identity`, `libc-c11-lifecycle`,
-`libc-pthread-detach`, `libc-thrd-sleep`, `libc-thrd-yield`, `libc-pthread-cpuclock`, `libc-pthread-name`, `libc-pthread-barrierattr-pshared`, `libc-pthread-condattr-pshared`, `libc-pthread-mutex-normal`,
+`libc-pthread-detach`, `libc-thrd-sleep`, `libc-thrd-yield`, `libc-pthread-cpuclock`, `libc-pthread-name`, `libc-pthread-barrierattr-pshared`, `libc-pthread-condattr-pshared`, `libc-pthread-condattr-clock`, `libc-pthread-mutex-normal`,
 `libc-pthread-rwlock`, `libc-pthread-cond-private`, `libc-c11-plain-sync`, `libc-pthread-c11-once`,
 `libc-pthread-c11-tsd`,
 `libc-termios-control`,

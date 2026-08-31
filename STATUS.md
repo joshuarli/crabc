@@ -734,6 +734,20 @@ process-shared condition operation, threads, TLS, synchronization,
 cancellation, CRT, loader, sysroot, family completion, promotion, or public
 x86 support.
 
+The separate `./scripts/dev-x86_64.sh libc-pthread-condattr-clock` artifact is
+a twenty-fifth private static artifact in that same still-planned family. It
+selects only `pthread_condattr_setclock` and `pthread_condattr_getclock` over
+the public four-byte attribute word: musl accepts every nonnegative clock ID
+except CPU-clock IDs `2` and `3`, replaces bits 0 through 30 while preserving
+bit 31, and returns those raw low bits on get. Invalid `-1`, `2`, and `3`
+preserve the complete word. The fixture uses caller-owned raw storage without
+an attribute lifecycle call, process-sharing selection, or `pthread_cond_init`;
+the selected private condition initializer continues to reject non-null
+attributes. It therefore does not select condition initialization, timed
+waiting, clock observation, destruction, process-shared condition operation,
+threads, TLS, synchronization, cancellation, CRT, loader, sysroot, family
+completion, promotion, or public x86 support.
+
 `./scripts/dev-x86_64.sh libc-pthread-mutex-normal` artifact is a tenth private static
 `verified_artifact` in the same still-planned `libc.pthread-tls` family. It admits only an all-zero or
 `pthread_mutex_init(..., NULL)` process-private `PTHREAD_MUTEX_NORMAL` record

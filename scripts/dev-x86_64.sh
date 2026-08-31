@@ -281,6 +281,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-pthread-name  run the static x86 crabc-libc bounded pthread task-name slice
   libc-pthread-barrierattr-pshared  run the static x86 crabc-libc barrier-attribute pshared record slice
   libc-pthread-condattr-pshared  run the static x86 crabc-libc condition-attribute pshared record slice
+  libc-pthread-condattr-clock  run the static x86 crabc-libc condition-attribute clock record slice
   libc-pthread-mutex-normal  run the static x86 crabc-libc normal pthread-mutex slice
   libc-pthread-rwlock  run the static x86 crabc-libc pthread read/write-lock slice
   libc-pthread-cond-private  run the static x86 crabc-libc private pthread-condition slice
@@ -630,6 +631,18 @@ call `pthread_cond_init`. It does not select condition initialization, waiting,
 destruction, or process-shared condition operation; thread, TLS,
 synchronization, cancellation, CRT, loader, sysroot, pthread-family
 completion, or public x86 support.
+`libc-pthread-condattr-clock` is a separate static project-header fixture
+that first runs through pinned musl, then links only the selected archive. It
+selects only the four-byte public `pthread_condattr_t` record's
+`pthread_condattr_setclock`/`pthread_condattr_getclock` behavior: accepted
+clock IDs replace only bits 0..30 while retaining bit 31, negative and the two
+CPU-clock IDs preserve the complete word, and the getter reads only the low
+clock bits. The fixture deliberately constructs caller-owned record words and
+does not call an attribute lifecycle function, select process sharing, or call
+`pthread_cond_init`. It does not select condition initialization, timed
+waiting, clock observation, destruction, or process-shared condition operation;
+thread, TLS, synchronization, cancellation, CRT, loader, sysroot,
+pthread-family completion, or public x86 support.
 `libc-pthread-mutex-normal` is a separate static project-header fixture that
 first runs through pinned musl, then links only the selected archive. It
 selects only zero/NULL-attribute process-private `PTHREAD_MUTEX_NORMAL`
@@ -3409,6 +3422,10 @@ run_libc_pthread_condattr_pshared_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_pthread_condattr_pshared.sh
 }
 
+run_libc_pthread_condattr_clock_probe() {
+    run_in_container bash /workspace/compat/x86_64/run_libc_pthread_condattr_clock.sh
+}
+
 run_libc_pthread_detach_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_pthread_detach.sh
 }
@@ -3853,6 +3870,7 @@ case "$command" in
     libc-pthread-name) ;;
     libc-pthread-barrierattr-pshared) ;;
     libc-pthread-condattr-pshared) ;;
+    libc-pthread-condattr-clock) ;;
     libc-pthread-detach) ;;
     libc-thrd-yield) ;;
     libc-memory-sync) ;;
@@ -4970,6 +4988,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "libc-pthread-condattr-pshared takes no arguments"
         ensure_image
         run_libc_pthread_condattr_pshared_probe
+        ;;
+    libc-pthread-condattr-clock)
+        [ "$#" -eq 0 ] || fail "libc-pthread-condattr-clock takes no arguments"
+        ensure_image
+        run_libc_pthread_condattr_clock_probe
         ;;
     libc-pthread-detach)
         [ "$#" -eq 0 ] || fail "libc-pthread-detach takes no arguments"

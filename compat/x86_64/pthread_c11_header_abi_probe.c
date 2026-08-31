@@ -180,6 +180,10 @@ typedef int (*crabc_pthread_condattr_setpshared_signature)(
 	pthread_condattr_t *, int);
 typedef int (*crabc_pthread_condattr_getpshared_signature)(
 	const pthread_condattr_t *, int *);
+typedef int (*crabc_pthread_condattr_setclock_signature)(
+	pthread_condattr_t *, clockid_t);
+typedef int (*crabc_pthread_condattr_getclock_signature)(
+	const pthread_condattr_t *, clockid_t *);
 typedef void (*crabc_once_init_signature)(void);
 typedef int (*crabc_pthread_once_signature)(
 	pthread_once_t *, crabc_once_init_signature);
@@ -281,6 +285,10 @@ _Static_assert(CRABC_TYPE_IS(__typeof__(&pthread_condattr_setpshared),
 	crabc_pthread_condattr_setpshared_signature), "pthread_condattr_setpshared signature");
 _Static_assert(CRABC_TYPE_IS(__typeof__(&pthread_condattr_getpshared),
 	crabc_pthread_condattr_getpshared_signature), "pthread_condattr_getpshared signature");
+_Static_assert(CRABC_TYPE_IS(__typeof__(&pthread_condattr_setclock),
+	crabc_pthread_condattr_setclock_signature), "pthread_condattr_setclock signature");
+_Static_assert(CRABC_TYPE_IS(__typeof__(&pthread_condattr_getclock),
+	crabc_pthread_condattr_getclock_signature), "pthread_condattr_getclock signature");
 _Static_assert(CRABC_TYPE_IS(__typeof__(&pthread_once), crabc_pthread_once_signature),
 	"pthread_once signature");
 #if defined(CRABC_EXPECT_POSIX_SIGNAL_DECLARATIONS)

@@ -1446,6 +1446,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "libc-pthread-name",
             "libc-pthread-barrierattr-pshared",
             "libc-pthread-condattr-pshared",
+            "libc-pthread-condattr-clock",
             "libc-pthread-detach",
             "libc-thrd-yield",
             "libc-memory-sync",
@@ -1513,6 +1514,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn("libc-pthread-name", source)
         self.assertIn("libc-pthread-barrierattr-pshared", source)
         self.assertIn("libc-pthread-condattr-pshared", source)
+        self.assertIn("libc-pthread-condattr-clock", source)
         self.assertIn("libc-termios-control", source)
         self.assertIn("ctermid-header-abi", source)
         self.assertIn("libc-ctermid", source)
@@ -7500,8 +7502,6 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             {
                 "pthread_condattr_init",
                 "pthread_condattr_destroy",
-                "pthread_condattr_setclock",
-                "pthread_condattr_getclock",
             }.isdisjoint(static_exports)
         )
         for header_probe in (c_header_probe, cxx_header_probe):
@@ -7535,6 +7535,183 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn("    libc-pthread-condattr-pshared) ;;", runner)
         self.assertIn(
             '    libc-pthread-condattr-pshared)\n        [ "$#" -eq 0 ] || fail "libc-pthread-condattr-pshared takes no arguments"',
+            runner,
+        )
+
+    def test_libc_static_c_abi_pthread_condattr_clock_stays_record_only(
+        self,
+    ) -> None:
+        """Keep condattr clock as an unconsumed raw low-bit record pair."""
+
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        clock = (
+            ROOT
+            / "libc"
+            / "src"
+            / "c_abi"
+            / "x86_64"
+            / "pthread_condattr_clock.rs"
+        ).read_text(encoding="utf-8")
+        probe_path = (
+            ROOT
+            / "compat"
+            / "x86_64"
+            / "libc_pthread_condattr_clock_probe.c"
+        )
+        start_path = (
+            ROOT
+            / "compat"
+            / "x86_64"
+            / "libc_pthread_condattr_clock_start.S"
+        )
+        artifact_runner_path = (
+            ROOT
+            / "compat"
+            / "x86_64"
+            / "run_libc_pthread_condattr_clock.sh"
+        )
+        c_header_probe = (
+            ROOT / "compat" / "x86_64" / "pthread_c11_header_abi_probe.c"
+        ).read_text(encoding="utf-8")
+        cxx_header_probe = (
+            ROOT / "compat" / "x86_64" / "pthread_c11_header_abi_probe.cpp"
+        ).read_text(encoding="utf-8")
+        header_runner = (
+            ROOT / "compat" / "x86_64" / "run_pthread_c11_header_abi.sh"
+        ).read_text(encoding="utf-8")
+        static_exports = {
+            line
+            for line in (
+                ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+            ).read_text(encoding="utf-8").splitlines()
+            if line and not line.startswith("#")
+        }
+        parity_ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        runner = RUNNER.read_text(encoding="utf-8")
+
+        for path in (probe_path, start_path, artifact_runner_path):
+            self.assertTrue(path.is_file(), f"missing condattr clock input: {path}")
+        probe = probe_path.read_text(encoding="utf-8")
+        start = start_path.read_text(encoding="utf-8")
+        artifact_runner = artifact_runner_path.read_text(encoding="utf-8")
+
+        self.assertIn('#[path = "pthread_condattr_clock.rs"]', static_root)
+        for required in (
+            "src/thread/pthread_condattr_setclock.c::pthread_condattr_setclock",
+            "src/thread/pthread_attr_get.c::pthread_condattr_getclock",
+            "if (clk < 0 || clk-2U < 2) return EINVAL",
+            "a->__attr &= 0x80000000",
+            "a->__attr |= clk",
+            "*clk = a->__attr & 0x7fffffff",
+            "four-byte `pthread_condattr_t`",
+            "separately selected high process-sharing bit",
+            "no selected condition initializer consumes a clock record",
+            "timed waiting",
+            "no allocation,",
+            "C-`errno`",
+        ):
+            self.assertIn(required, clock)
+        for forbidden in (
+            "use super",
+            "raw_syscall::",
+            "static_tls::",
+            "pthread_identity::",
+            "pthread_cond::",
+            "atomic::",
+        ):
+            self.assertNotIn(forbidden, clock)
+
+        for required in (
+            "#include <errno.h>",
+            "#include <pthread.h>",
+            "#include <time.h>",
+            "sizeof(clockid_t) == 4",
+            "CLOCK_REALTIME == 0 && CLOCK_MONOTONIC == 1",
+            "CLOCK_PROCESS_CPUTIME_ID == 2 && CLOCK_THREAD_CPUTIME_ID == 3",
+            "pthread_condattr_setclock",
+            "pthread_condattr_getclock",
+            "CRABC_SHARED_MONOTONIC_WORD 0x80000001U",
+            "CRABC_SHARED_RAW_CLOCK_WORD 0x92345678U",
+            "pthread_condattr_setclock(&attr, -1) != EINVAL",
+            "pthread_condattr_setclock(&attr, CLOCK_PROCESS_CPUTIME_ID) != EINVAL",
+            "pthread_condattr_setclock(&attr, CLOCK_THREAD_CPUTIME_ID) != EINVAL",
+            "CRABC_PTHREAD_CONDATTR_CLOCK_FREESTANDING",
+        ):
+            self.assertIn(required, probe)
+        for unselected in (
+            "pthread_condattr_init(",
+            "pthread_condattr_destroy(",
+            "pthread_condattr_setpshared(",
+            "pthread_condattr_getpshared(",
+            "pthread_cond_init(",
+            "clock_gettime(",
+        ):
+            self.assertNotIn(unselected, probe)
+        for required in (
+            "crabc_x86_64_pthread_condattr_clock_probe",
+            "mov $60, %eax",
+            "syscall",
+        ):
+            self.assertIn(required, start)
+        self.assertNotIn("__crabc_x86_static_tls_bootstrap", start)
+        self.assertNotIn("%fs", start)
+        for required in (
+            "static_c_abi_exports.txt",
+            "run_pthread_c11_header_abi.sh",
+            "-nostdlib -static",
+            "-Wl,-e,_start",
+            "-Wl,--no-undefined",
+            "assert_direct_record_path",
+            "must remain TLS-free",
+            "src/thread/pthread_condattr_setclock.c",
+            "src/thread/pthread_attr_get.c",
+            "assert_no_unselected_condattr_exports",
+            "pthread_condattr_setpshared pthread_condattr_getpshared",
+            "pthread_cond_init pthread_cond_destroy pthread_cond_wait",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn("--whole-archive", artifact_runner)
+        self.assertTrue(
+            {"pthread_condattr_setclock", "pthread_condattr_getclock"}
+            <= static_exports
+        )
+        self.assertTrue(
+            {"pthread_condattr_init", "pthread_condattr_destroy"}.isdisjoint(
+                static_exports
+            )
+        )
+        for header_probe in (c_header_probe, cxx_header_probe):
+            for required in (
+                "crabc_pthread_condattr_setclock_signature",
+                "crabc_pthread_condattr_getclock_signature",
+                "pthread_condattr_setclock signature",
+                "pthread_condattr_getclock signature",
+            ):
+                self.assertIn(required, header_probe)
+        self.assertIn("crabc_force_pthread_condattr_setclock", cxx_header_probe)
+        self.assertIn("crabc_force_pthread_condattr_getclock", cxx_header_probe)
+        self.assertIn(
+            "pthread_condattr_setclock pthread_condattr_getclock", header_runner
+        )
+        self.assertIn(
+            "pthread_condattr_setclock|pthread_condattr_getclock", header_runner
+        )
+        self.assertIn('id = "static-c-pthread-condattr-clock"', parity_ledger)
+        self.assertIn(
+            'command = "./scripts/dev-x86_64.sh libc-pthread-condattr-clock"',
+            parity_ledger,
+        )
+        self.assertIn("run_libc_pthread_condattr_clock_probe()", runner)
+        self.assertIn(
+            "/workspace/compat/x86_64/run_libc_pthread_condattr_clock.sh", runner
+        )
+        self.assertIn("    libc-pthread-condattr-clock) ;;", runner)
+        self.assertIn(
+            '    libc-pthread-condattr-clock)\n        [ "$#" -eq 0 ] || fail "libc-pthread-condattr-clock takes no arguments"',
             runner,
         )
 
@@ -8654,7 +8831,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "pthread_cond_signal pthread_cond_broadcast\n        pthread_rwlock_init pthread_rwlock_destroy pthread_rwlock_rdlock",
             "thrd_create thrd_detach thrd_join thrd_exit thrd_sleep thrd_yield thrd_current thrd_equal",
             "call_once",
-            "pthread_rwlockattr_getpshared|pthread_barrierattr_setpshared|pthread_barrierattr_getpshared|pthread_condattr_setpshared|pthread_condattr_getpshared|pthread_once",
+            "pthread_rwlockattr_getpshared|pthread_barrierattr_setpshared|pthread_barrierattr_getpshared|pthread_condattr_setpshared|pthread_condattr_getpshared|pthread_condattr_setclock|pthread_condattr_getclock|pthread_once",
             "thrd_equal|call_once|tss_create|tss_delete|tss_get|tss_set|mtx_init",
         ):
             self.assertIn(required, header_runner)

@@ -308,6 +308,8 @@ mod pthread_name;
 mod pthread_barrierattr_pshared;
 #[path = "pthread_condattr_pshared.rs"]
 mod pthread_condattr_pshared;
+#[path = "pthread_condattr_clock.rs"]
+mod pthread_condattr_clock;
 #[path = "pthread_cancel.rs"]
 mod pthread_cancel;
 #[path = "pthread_atfork.rs"]
