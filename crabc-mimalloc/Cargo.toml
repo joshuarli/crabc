@@ -57,6 +57,29 @@ path = "tests/native_pointer_first_post_exit_os_release.rs"
 required-features = ["native-runtime-test-audit", "native-runtime-test-fault"]
 
 [[test]]
+name = "native_pointer_first_initial_local_free"
+path = "tests/native_pointer_first_initial_local_free.rs"
+# This direct-only audit ratchet proves initial-thread pointer-first local
+# free does not re-enter the legacy page-owner scheduler or parked bridge.
+required-features = ["native-runtime-test-audit"]
+
+[[test]]
+name = "native_initial_persistent_live_transfer"
+path = "tests/native_initial_persistent_live_transfer.rs"
+# This direct-only ownership-transition witness distinguishes a source-dormant
+# initial promotion, which may prepare a later worker, from an attempted live
+# transfer, which must retain rather than park or revive the old static owner.
+required-features = ["native-runtime-test-audit"]
+
+[[test]]
+name = "native_initial_persistent_preclone"
+path = "tests/native_initial_persistent_preclone.rs"
+# This direct-only pre-clone witness proves cold initial preparation promotes
+# its persistent source owner before a later admission can make first local
+# native allocation terminally unavailable.
+required-features = ["native-runtime-test-audit"]
+
+[[test]]
 name = "native_source_published_live_owner_exit"
 path = "tests/native_source_published_live_owner_exit.rs"
 # This direct-only lifecycle witness constructs the one joined source

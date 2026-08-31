@@ -107,29 +107,74 @@ fn native_free_pointer_first_post_exit_os_release_is_terminal_without_retry() {
         "source owner exit releases its worker admission before a later pointer free"
     );
 
-    // SAFETY: A supplied this exact current native client before it completed
-    // source owner exit. The PageMap registration keeps it lookup-visible
-    // through this one source-state dispatch attempt.
-    let os_singleton = unsafe { core::ptr::NonNull::new_unchecked(os_singleton as *mut u8) };
-    let unmap_failure = native_runtime_test_fail_next_unmap();
+    let releaser = std::thread::spawn(move || {
+        assert_eq!(attach_current_thread(), ThreadAttachResult::Attached);
+
+        // B first owns and releases an unrelated local client. Its later
+        // foreign free receives only A's raw C-shaped address: no A owner,
+        // route, ledger, scheduler token, PageMap capability, or terminal
+        // release capability crosses this thread boundary.
+        let local = match native_allocate_aligned(53, 16, false) {
+            NativePageAllocationResult::Allocated(block) => block,
+            _ => panic!("B establishes an independent local owner before the foreign free"),
+        };
+        assert_eq!(
+            unsafe { native_free(local) },
+            NativePageFreeResult::Freed,
+            "B's own pointer remains a local free before it submits A's address"
+        );
+        assert_eq!(
+            native_runtime_fork_admission_test_audit().active_later_thread_count,
+            1,
+            "B owns only its own active admission before the foreign pointer dispatch"
+        );
+
+        // SAFETY: A supplied this exact current native client before its
+        // source owner exited. The PageMap registration keeps it
+        // lookup-visible through this source-state dispatch attempt.
+        let os_singleton = unsafe { core::ptr::NonNull::new_unchecked(os_singleton as *mut u8) };
+        let unmap_failure = native_runtime_test_fail_next_unmap();
+        assert_eq!(
+            unsafe { native_free(os_singleton) },
+            NativePageFreeResult::Retained,
+            "the PageMap-derived OS terminal release retains its exact failed source owner"
+        );
+        assert_eq!(
+            unmap_failure.observed(),
+            1,
+            "the terminal PageMap-owned tail attempts exactly one injected munmap"
+        );
+        assert_eq!(
+            unsafe { native_free(os_singleton) },
+            NativePageFreeResult::Retained,
+            "the retained terminal owner is not reopened into a second source publication"
+        );
+        assert_eq!(
+            unmap_failure.observed(),
+            1,
+            "a second pointer free does not retry the failed terminal unmap"
+        );
+        (
+            unmap_failure.observed(),
+            finish_current_thread_native_after_user_destructors(),
+        )
+    });
+    let (unmap_attempts, releaser_finish) = releaser
+        .join()
+        .expect("B releases only its independent local owner after A's terminal failure");
     assert_eq!(
-        unsafe { native_free(os_singleton) },
-        NativePageFreeResult::Retained,
-        "the PageMap-derived OS terminal release retains its exact failed source owner"
-    );
-    assert_eq!(
-        unmap_failure.observed(),
+        unmap_attempts,
         1,
-        "the terminal PageMap-owned tail attempts exactly one injected munmap"
+        "B's teardown cannot reopen A's terminal release for a second munmap"
     );
     assert_eq!(
-        unsafe { native_free(os_singleton) },
-        NativePageFreeResult::Retained,
-        "the retained terminal owner is not reopened into a second source publication"
+        releaser_finish,
+        ThreadFinishResult::Finished,
+        "A's retained source claim does not retain B's independently empty owner"
     );
     assert_eq!(
-        unmap_failure.observed(),
-        1,
-        "a second pointer free does not retry the failed terminal unmap"
+        native_runtime_fork_admission_test_audit().active_later_thread_count,
+        0,
+        "B's finished teardown releases its own admission without reviving A's retained claim"
     );
 }

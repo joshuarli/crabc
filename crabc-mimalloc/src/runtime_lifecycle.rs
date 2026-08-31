@@ -36,6 +36,7 @@
 //! without traversing inherited locks, roots, or page state.
 
 use core::cell::UnsafeCell;
+use core::convert::Infallible;
 use core::marker::PhantomData;
 use core::mem::MaybeUninit;
 use core::pin::Pin;
@@ -113,7 +114,12 @@ const PAGE_OWNER_COLD: usize = 0;
 const PAGE_OWNER_STARTING: usize = 1;
 const PAGE_OWNER_READY: usize = 2;
 const PAGE_OWNER_BUSY: usize = 3;
-const PAGE_OWNER_PARKED_BASE: usize = 4;
+/// The process-static ticket-zero slot was moved into the initial thread's
+/// compiler-TLS owner cell.  This is an ownership publication used only at
+/// the one-time promotion boundary; ordinary initial local operations never
+/// inspect or transition this word.
+const PAGE_OWNER_INITIAL_PERSISTENT: usize = 4;
+const PAGE_OWNER_PARKED_BASE: usize = 5;
 /// Compatibility spelling for the first parked owner. Callers that need the
 /// number of independently suspended engines use
 /// [`page_owner_parked_count`] instead of treating this as one global route.
@@ -139,8 +145,10 @@ const fn page_owner_parked_state(count: usize) -> Option<usize> {
 
 /// Decodes the quiescent or parked portion of the runtime scheduler.
 ///
-/// `COLD`, `STARTING`, `BUSY`, and `RETAINED` deliberately have no count:
-/// none represents a retryable collection of suspended owner tokens.
+/// `COLD`, `STARTING`, `BUSY`, `INITIAL_PERSISTENT`, and `RETAINED`
+/// deliberately have no count: none represents a retryable collection of
+/// suspended owner tokens.  In particular, the initial persistent owner is
+/// not a parked compatibility engine that another thread may borrow.
 #[inline]
 const fn page_owner_parked_count(state: usize) -> Option<usize> {
     if state == PAGE_OWNER_READY {
@@ -3793,6 +3801,46 @@ impl RuntimeForkAdmission {
         }
     }
 
+    /// Runs one initial-thread-only ownership publication while no later
+    /// attachment can begin.
+    ///
+    /// This reuses the existing short admission gate solely for the one-time
+    /// ticket-zero -> compiler-TLS promotion.  It is not an allocator
+    /// scheduler: normal initial local calls happen after this closure has
+    /// released the gate, and no page or PageMap operation is represented by
+    /// the admission word.  A nonzero existing count refuses the transfer so
+    /// a waiting worker can never revive or alias the moved static owner.
+    fn with_no_later_thread_admissions<R>(&self, operation: impl FnOnce() -> R) -> Option<R> {
+        loop {
+            let observed = self.state.load(Ordering::Acquire);
+            if observed & FORK_GATE_HELD != 0 {
+                core::hint::spin_loop();
+                continue;
+            }
+            // A preserved fork image is valid only while `HELD` is set. Do
+            // not clear or reinterpret any unexpected non-count flag here:
+            // promotion has no fork-preservation authority and may proceed
+            // only from the exact ordinary idle word.
+            if observed != 0 {
+                return None;
+            }
+            let held = FORK_GATE_HELD;
+            if self
+                .state
+                .compare_exchange_weak(observed, held, Ordering::AcqRel, Ordering::Acquire)
+                .is_ok()
+            {
+                let result = operation();
+                // The successful publication began from the exact zero word,
+                // so it owns only this temporary HELD flag. Release that same
+                // flag before ordinary lifecycle code resumes; no fork
+                // preservation bit is created, consumed, or overwritten.
+                self.state.store(0, Ordering::Release);
+                return Some(result);
+            }
+        }
+    }
+
     /// Holds the direct internal fork boundary and records whether the copied
     /// child may preserve its quiescent ticket-zero image. No allocation,
     /// lock traversal, page operation, or public pthread-atfork slot is
@@ -5434,9 +5482,15 @@ pub fn native_runtime_lifecycle_test_audit() -> Option<NativeRuntimeLifecycleAud
 
     Some(NativeRuntimeLifecycleAudit {
         process_active: usize::from(process_active),
-        page_owner_ready: usize::from(
-            RUNTIME_PROCESS.page_owner_state.load(Ordering::Acquire) == PAGE_OWNER_READY,
-        ),
+        // The audit's scalar "ready" means the initial source owner can
+        // accept its ordinary current-thread operation. Once W01 has moved
+        // the static staging image into compiler TLS, that direct owner has
+        // the same externally observable readiness without being a legacy
+        // scheduler `READY` slot.
+        page_owner_ready: usize::from(matches!(
+            RUNTIME_PROCESS.page_owner_state.load(Ordering::Acquire),
+            PAGE_OWNER_READY | PAGE_OWNER_INITIAL_PERSISTENT
+        )),
         page_map_registered_entry_count: page_map.test_registered_entry_count().ok()?,
         page_map_published_submap_count: page_map.test_published_submap_count().ok()?,
         page_map_lazy_submap_allocation_count: page_map.test_lazy_submap_allocation_count(),
@@ -5655,6 +5709,115 @@ enum NativePersistentThreadOwnerAccessError {
     Retained,
 }
 
+/// The initial thread's continuously owned source page engine.
+///
+/// Pinned initialization gives ticket zero static storage, but that storage
+/// does not require an ordinary operation to pass through the historical
+/// process scheduler.  At one explicit promotion boundary the complete
+/// `MainStaticRuntimeFirstArenaPageAllocator` moves from its process-static
+/// staging slot into this compiler-TLS cell.  The cell then owns the exact
+/// session, active engine, and any long PageMap lifecycle for the initial
+/// thread's lifetime.  It contains no route, registry, client ledger, or
+/// scheduler token.
+#[must_use = "the initial persistent owner remains in compiler TLS for the process lifetime"]
+struct NativeInitialPersistentThreadOwner {
+    allocator: MainStaticRuntimeFirstArenaPageAllocator,
+}
+
+impl NativeInitialPersistentThreadOwner {
+    #[inline]
+    fn allocate(&mut self, request: usize, zero: bool) -> Option<core::ptr::NonNull<u8>> {
+        self.allocator
+            .allocate_current_initial_thread_local(request, zero)
+    }
+
+    #[inline]
+    fn allocate_aligned(
+        &mut self,
+        request: usize,
+        alignment: usize,
+        zero: bool,
+    ) -> Option<core::ptr::NonNull<u8>> {
+        self.allocator
+            .allocate_aligned_current_initial_thread_local(request, alignment, zero)
+    }
+
+    /// Reallocates one exact current initial-thread client without entering a
+    /// parked compatibility engine.
+    ///
+    /// # Safety
+    ///
+    /// `block` must remain a live local allocation of this exact persistent
+    /// owner and must not have been remotely published or freed.
+    #[inline]
+    unsafe fn reallocate(
+        &mut self,
+        block: core::ptr::NonNull<u8>,
+        new_size: usize,
+    ) -> Option<core::ptr::NonNull<u8>> {
+        // SAFETY: forwarded unchanged from this owner-local boundary.
+        unsafe {
+            self.allocator
+                .reallocate_current_initial_thread_local(Some(block), new_size)
+        }
+    }
+
+    /// Frees one exact current initial-thread client without a scheduler
+    /// claim, park, or resume.
+    ///
+    /// # Safety
+    ///
+    /// `block` must remain a live local allocation of this exact persistent
+    /// owner and must not have been remotely published or freed.
+    #[inline]
+    unsafe fn free(
+        &mut self,
+        block: core::ptr::NonNull<u8>,
+    ) -> Result<(), crate::main_static_page::MainStaticRuntimeFirstArenaPageAllocatorFreeError>
+    {
+        // SAFETY: forwarded unchanged from this owner-local boundary.
+        unsafe {
+            self.allocator
+                .free_current_initial_thread_local(block)
+        }
+    }
+
+    /// Queries a live initial-thread client directly from its current engine.
+    ///
+    /// # Safety
+    ///
+    /// `block` must remain current in this exact local owner.
+    #[inline]
+    unsafe fn usable_size(&mut self, block: core::ptr::NonNull<u8>) -> Option<usize> {
+        // SAFETY: forwarded unchanged from this owner-local boundary.
+        unsafe {
+            self.allocator
+                .usable_size_current_initial_thread_local(block)
+        }
+    }
+
+    /// Establishes or confirms the dormant first-arena state before a later
+    /// worker starts. A live initial engine is deliberately rejected instead
+    /// of being parked or lent through the former static owner.
+    #[inline]
+    fn prepare_dormant_page_pair_for_later_thread(&mut self) -> bool {
+        self.allocator
+            .prepare_dormant_page_pair_current_initial_thread_local()
+    }
+
+    #[inline]
+    fn is_retained(&self) -> bool {
+        self.allocator.is_retained()
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum NativeInitialPersistentThreadOwnerAccessError {
+    NotInstalled,
+    Unavailable,
+    Retained,
+}
+
 /// Per-pthread compiler-TLS storage for the explicit later-thread owner.
 ///
 /// It intentionally has no destructor: libc calls the source-ordered finish
@@ -5688,6 +5851,16 @@ struct ThreadLifecycleSlot {
     /// lifecycle shapes whose attachment and page-owner fields are empty.
     /// This is current-thread scalar state, not allocation or route metadata.
     native_persistent_owner_installed: bool,
+    /// The initial thread has a distinct static-storage source owner.  It
+    /// moves here once and remains in this same compiler-TLS cell for the
+    /// process lifetime, so ordinary initial local operations do not claim
+    /// the legacy ticket-zero scheduler.
+    initial_native_persistent_owner:
+        PersistentCompilerTlsOwnerCell<NativeInitialPersistentThreadOwner>,
+    /// Distinguishes an installed initial persistent source owner from the
+    /// untouched process-static staging slot.  This is current-thread state,
+    /// never a pointer lookup or process routing record.
+    initial_native_persistent_owner_installed: bool,
     /// A current-thread-only page engine that deliberately released its Rust
     /// borrow before it entered compiler TLS.  A normal no-page finalizer
     /// must never cross this state: it has to resume the matching engine and
@@ -5710,6 +5883,8 @@ impl ThreadLifecycleSlot {
             attachment: None,
             native_persistent_owner: PersistentCompilerTlsOwnerCell::new(),
             native_persistent_owner_installed: false,
+            initial_native_persistent_owner: PersistentCompilerTlsOwnerCell::new(),
+            initial_native_persistent_owner_installed: false,
             page_owner: None,
             next_page_owner_session_generation: 0,
         }
@@ -6746,6 +6921,203 @@ fn current_thread_slot() -> &'static mut ThreadLifecycleSlot {
     unsafe { &mut *current_thread_slot_pointer().as_ptr() }
 }
 
+/// Pins the initial thread's persistent static-owner cell at its compiler-TLS
+/// address.
+///
+/// The initial thread shares the same statically allocated TLS record as the
+/// later-thread lifecycle, but it deliberately uses a separate owner type:
+/// it has source-required static ticket-zero storage rather than an attached
+/// pthread `MainHeapThreadAttachment`.
+#[inline]
+fn current_thread_native_initial_persistent_owner_cell(
+) -> Pin<&'static PersistentCompilerTlsOwnerCell<NativeInitialPersistentThreadOwner>> {
+    let slot = current_thread_slot_pointer();
+    // SAFETY: compiler TLS gives the record its final address before the
+    // process enters the allocator. The cell never moves after installation.
+    unsafe { Pin::new_unchecked(&(*slot.as_ptr()).initial_native_persistent_owner) }
+}
+
+#[inline]
+fn current_thread_has_native_initial_persistent_owner() -> bool {
+    RUNTIME_PROCESS.is_on_initial_thread()
+        && current_thread_slot().initial_native_persistent_owner_installed
+}
+
+/// Uses the direct initial source owner after its one-time promotion.
+///
+/// This performs no `page_owner_state` read, scheduler claim, parked-engine
+/// resume, route/registry lookup, or PageMap lease acquisition. The compiler
+/// TLS cell itself is the reentrancy and exact-current-thread boundary.
+fn with_current_thread_native_initial_persistent_owner<R>(
+    operation: impl FnOnce(&mut NativeInitialPersistentThreadOwner) -> R,
+) -> Result<R, NativeInitialPersistentThreadOwnerAccessError> {
+    if !RUNTIME_PROCESS.is_on_initial_thread() {
+        return Err(NativeInitialPersistentThreadOwnerAccessError::Unavailable);
+    }
+    if !current_thread_slot().initial_native_persistent_owner_installed {
+        return Err(NativeInitialPersistentThreadOwnerAccessError::NotInstalled);
+    }
+    match current_thread_native_initial_persistent_owner_cell()
+        .with_owner(|owner| operation(owner.get_mut()))
+    {
+        Ok(result) => Ok(result),
+        Err(PersistentCompilerTlsOwnerError::NotAttached) => {
+            Err(NativeInitialPersistentThreadOwnerAccessError::NotInstalled)
+        }
+        Err(
+            PersistentCompilerTlsOwnerError::Initializing
+            | PersistentCompilerTlsOwnerError::Reentrant,
+        ) => {
+            // A recursive initial local operation cannot safely borrow the
+            // static engine a second time. It is a source-owner violation,
+            // never an availability signal for a valid local free.
+            RUNTIME_PROCESS.retain_page_owner();
+            Err(NativeInitialPersistentThreadOwnerAccessError::Retained)
+        }
+        Err(
+            PersistentCompilerTlsOwnerError::InvalidCurrentThread
+            | PersistentCompilerTlsOwnerError::WrongThread
+            | PersistentCompilerTlsOwnerError::AlreadyActive
+            | PersistentCompilerTlsOwnerError::Exiting
+            | PersistentCompilerTlsOwnerError::Retained
+            | PersistentCompilerTlsOwnerError::TornDown,
+        ) => {
+            RUNTIME_PROCESS.retain_page_owner();
+            Err(NativeInitialPersistentThreadOwnerAccessError::Retained)
+        }
+    }
+}
+
+/// Moves the one initialized static ticket-zero engine into the initial
+/// thread's persistent compiler-TLS owner cell.
+///
+/// The short admission gate is used only here, at startup/promotion, to
+/// exclude a later attachment while the process-static staging slot is moved.
+/// It is released before any ordinary allocation, free, realloc, or usable
+/// size query. Once publication succeeds, later-worker preparation refuses to
+/// borrow the vacated static slot rather than recreating a scheduler path.
+fn begin_current_thread_native_initial_persistent_owner(
+) -> Result<(), NativeInitialPersistentThreadOwnerAccessError> {
+    if !RUNTIME_PROCESS.is_on_initial_thread() {
+        return Err(NativeInitialPersistentThreadOwnerAccessError::Unavailable);
+    }
+    if current_thread_slot().initial_native_persistent_owner_installed {
+        return Ok(());
+    }
+
+    let promoted = RUNTIME_FORK_ADMISSION.with_no_later_thread_admissions(|| {
+        if !RUNTIME_PROCESS.start_ticket_zero_page_owner() {
+            return Err(());
+        }
+        if RUNTIME_PROCESS
+            .page_owner_state
+            .compare_exchange(
+                PAGE_OWNER_READY,
+                PAGE_OWNER_BUSY,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            )
+            .is_err()
+        {
+            return Err(());
+        }
+        #[cfg(feature = "native-runtime-test-audit")]
+        note_native_scheduler_transition();
+
+        // SAFETY: the temporary admission gate excludes every later
+        // attachment, and READY -> BUSY excludes every legacy ticket-zero
+        // operation. This is the sole move out of the initialized static
+        // staging slot. No ordinary local operation can observe it there
+        // again after the INITIAL_PERSISTENT publication below.
+        let allocator = unsafe { (&*RUNTIME_PROCESS.page_owner.get()).assume_init_read() };
+        let owner = NativeInitialPersistentThreadOwner { allocator };
+        match current_thread_native_initial_persistent_owner_cell().initialize(
+            owner,
+            |_owner| -> Result<(), Infallible> { Ok(()) },
+        ) {
+            Ok(()) => {
+                current_thread_slot().initial_native_persistent_owner_installed = true;
+                RUNTIME_PROCESS
+                    .page_owner_state
+                    .store(PAGE_OWNER_INITIAL_PERSISTENT, Ordering::Release);
+                Ok(())
+            }
+            Err(PersistentCompilerTlsOwnerInitializeError::State { owner, .. }) => {
+                // The cell rejected the offered owner before consuming it;
+                // restore exactly the same static image before terminalizing
+                // the impossible transfer.
+                unsafe { (*RUNTIME_PROCESS.page_owner.get()).write(owner.allocator) };
+                RUNTIME_PROCESS
+                    .page_owner_state
+                    .store(PAGE_OWNER_READY, Ordering::Release);
+                Err(())
+            }
+            Err(PersistentCompilerTlsOwnerInitializeError::Owner(never)) => match never {},
+        }
+    });
+
+    match promoted {
+        Some(Ok(())) => Ok(()),
+        Some(Err(())) | None => {
+            // An existing or racing worker can no longer be allowed to borrow
+            // a static slot that this initial thread attempted to make
+            // persistent. There is no safe scheduler-based recovery here.
+            RUNTIME_PROCESS.retain_page_owner();
+            Err(NativeInitialPersistentThreadOwnerAccessError::Retained)
+        }
+    }
+}
+
+/// Runs one ordinary initial local operation, promoting only before the first
+/// such operation. Later iterations use the exact same pinned TLS owner.
+fn with_current_thread_native_initial_persistent_allocator<R>(
+    create_if_absent: bool,
+    mut operation: impl FnMut(&mut NativeInitialPersistentThreadOwner) -> R,
+) -> Result<R, NativeInitialPersistentThreadOwnerAccessError> {
+    match with_current_thread_native_initial_persistent_owner(|owner| operation(owner)) {
+        Ok(result) => Ok(result),
+        Err(NativeInitialPersistentThreadOwnerAccessError::NotInstalled) if create_if_absent => {
+            begin_current_thread_native_initial_persistent_owner()?;
+            with_current_thread_native_initial_persistent_owner(|owner| operation(owner))
+        }
+        Err(error) => Err(error),
+    }
+}
+
+/// Promotes the initial static owner before a later-thread preparation can
+/// make an admission observable, then leaves only its source-dormant pair
+/// available to that later owner.
+///
+/// This is the one preparation/clone boundary that may create the persistent
+/// initial owner while the process is still cold. It is deliberately not a
+/// steady allocation or free path: promotion holds the short fork-admission
+/// gate exactly once, after which the owner remains pinned in initial-thread
+/// compiler TLS. A live or terminal initial engine is retained rather than
+/// being parked, lent, or reconstructed through the former static slot.
+fn prepare_current_thread_native_initial_persistent_owner_for_later_thread() -> bool {
+    let prepared = with_current_thread_native_initial_persistent_allocator(true, |owner| {
+        (
+            owner.prepare_dormant_page_pair_for_later_thread(),
+            owner.is_retained(),
+        )
+    });
+    match prepared {
+        // The direct initial owner is source-dormant. A later worker may
+        // construct an independent local engine from the immutable process
+        // pair; it never borrows, parks, or revives the moved static staging
+        // owner.
+        Ok((true, false)) => true,
+        // This is specifically an attempted live/terminal transfer. Do not
+        // make all later workers unavailable merely because the initial owner
+        // was promoted; fail closed only when its actual source state cannot
+        // yield the dormant pair.
+        Ok((true, true)) | Ok((false, _)) | Err(_) => {
+            RUNTIME_PROCESS.retain_page_owner();
+            false
+        }
+    }
+}
+
 /// Pins the inline native owner cell at its final compiler-TLS address.
 ///
 /// The TLS slot is allocated by the runtime loader before this thread enters
@@ -6984,6 +7356,9 @@ pub fn ticket_zero_allocate(request: usize, zero: bool) -> TicketZeroPageAllocat
     if !crate::size_class::request_size_is_valid(request) {
         return TicketZeroPageAllocationResult::AllocationFailed;
     }
+    if current_thread_has_native_initial_persistent_owner() {
+        return ticket_zero_initial_persistent_allocate(request, None, zero);
+    }
     ticket_zero_allocation_result(
         RUNTIME_PROCESS.with_ticket_zero_page_owner(|owner| owner.allocate(request, zero)),
     )
@@ -7009,6 +7384,9 @@ pub fn ticket_zero_allocate_aligned(
     {
         return TicketZeroPageAllocationResult::AllocationFailed;
     }
+    if current_thread_has_native_initial_persistent_owner() {
+        return ticket_zero_initial_persistent_allocate(request, Some(alignment), zero);
+    }
     ticket_zero_allocation_result(RUNTIME_PROCESS.with_ticket_zero_page_owner(|owner| {
         owner.allocate_aligned(request, alignment, zero)
     }))
@@ -7033,6 +7411,128 @@ fn ticket_zero_allocation_result(
     }
 }
 
+/// Preserves the old private ticket-zero test seam after native initial-owner
+/// promotion without sending it back through the legacy scheduler.
+///
+/// This compatibility helper is not an alternative allocator owner: it merely
+/// lets existing internal fixtures keep using their historical spelling once
+/// the exact static engine has moved into the initial thread's TLS cell.
+fn ticket_zero_initial_persistent_allocate(
+    request: usize,
+    alignment: Option<usize>,
+    zero: bool,
+) -> TicketZeroPageAllocationResult {
+    let result = with_current_thread_native_initial_persistent_allocator(false, |owner| {
+        let block = match alignment {
+            Some(alignment) => owner.allocate_aligned(request, alignment, zero),
+            None => owner.allocate(request, zero),
+        };
+        (block, owner.is_retained())
+    });
+    match result {
+        Ok((Some(block), false)) => TicketZeroPageAllocationResult::Allocated(block),
+        Ok((None, false)) => TicketZeroPageAllocationResult::AllocationFailed,
+        Ok((Some(_) | None, true))
+        | Err(
+            NativeInitialPersistentThreadOwnerAccessError::NotInstalled
+            | NativeInitialPersistentThreadOwnerAccessError::Unavailable
+            | NativeInitialPersistentThreadOwnerAccessError::Retained,
+        ) => {
+            RUNTIME_PROCESS.retain_page_owner();
+            TicketZeroPageAllocationResult::Retained
+        }
+    }
+}
+
+/// Preserves the private ticket-zero reallocation seam after the direct
+/// initial owner has been installed.
+unsafe fn ticket_zero_initial_persistent_reallocate(
+    block: Option<core::ptr::NonNull<u8>>,
+    new_size: usize,
+) -> TicketZeroPageAllocationResult {
+    let result = with_current_thread_native_initial_persistent_allocator(false, |owner| {
+        let replacement = match block {
+            Some(block) => {
+                // SAFETY: forwarded from the private ticket-zero caller
+                // contract while the direct initial owner is current.
+                unsafe { owner.reallocate(block, new_size) }
+            }
+            None => owner.allocate(new_size, false),
+        };
+        (replacement, owner.is_retained())
+    });
+    match result {
+        Ok((Some(block), false)) => TicketZeroPageAllocationResult::Allocated(block),
+        Ok((None, false)) => TicketZeroPageAllocationResult::AllocationFailed,
+        Ok((Some(_) | None, true))
+        | Err(
+            NativeInitialPersistentThreadOwnerAccessError::NotInstalled
+            | NativeInitialPersistentThreadOwnerAccessError::Unavailable
+            | NativeInitialPersistentThreadOwnerAccessError::Retained,
+        ) => {
+            RUNTIME_PROCESS.retain_page_owner();
+            TicketZeroPageAllocationResult::Retained
+        }
+    }
+}
+
+/// Preserves the private ticket-zero free spelling after native promotion.
+unsafe fn ticket_zero_initial_persistent_free(
+    block: core::ptr::NonNull<u8>,
+) -> TicketZeroPageFreeResult {
+    let result = with_current_thread_native_initial_persistent_allocator(false, |owner| {
+        // SAFETY: forwarded from the private ticket-zero current-block
+        // contract while the direct initial owner is current.
+        let free = unsafe { owner.free(block) };
+        (free, owner.is_retained())
+    });
+    match result {
+        Ok((Ok(()), false)) => TicketZeroPageFreeResult::Freed,
+        Ok((Err(
+            crate::main_static_page::MainStaticRuntimeFirstArenaPageAllocatorFreeError::Free(
+                crate::single_thread::FreeError::Unmapped
+                | crate::single_thread::FreeError::ForeignPage
+                | crate::single_thread::FreeError::InvalidBlock(_),
+            ),
+        ), false)) => TicketZeroPageFreeResult::InvalidPointer,
+        Ok((Ok(()) | Err(_), true))
+        | Ok((Err(_), false))
+        | Err(
+            NativeInitialPersistentThreadOwnerAccessError::NotInstalled
+            | NativeInitialPersistentThreadOwnerAccessError::Unavailable
+            | NativeInitialPersistentThreadOwnerAccessError::Retained,
+        ) => {
+            RUNTIME_PROCESS.retain_page_owner();
+            TicketZeroPageFreeResult::Retained
+        }
+    }
+}
+
+/// Preserves the private ticket-zero usable-size spelling after native
+/// promotion without reopening the process-static owner staging slot.
+unsafe fn ticket_zero_initial_persistent_usable_size(
+    block: core::ptr::NonNull<u8>,
+) -> Option<usize> {
+    let result = with_current_thread_native_initial_persistent_allocator(false, |owner| {
+        // SAFETY: forwarded from the private ticket-zero current-block
+        // contract while the direct initial owner is current.
+        let usable_size = unsafe { owner.usable_size(block) };
+        (usable_size, owner.is_retained())
+    });
+    match result {
+        Ok((usable_size, false)) => usable_size,
+        Ok((_, true))
+        | Err(
+            NativeInitialPersistentThreadOwnerAccessError::NotInstalled
+            | NativeInitialPersistentThreadOwnerAccessError::Unavailable
+            | NativeInitialPersistentThreadOwnerAccessError::Retained,
+        ) => {
+            RUNTIME_PROCESS.retain_page_owner();
+            None
+        }
+    }
+}
+
 /// Reallocates one current private ticket-zero native allocation.
 ///
 /// # Safety
@@ -7048,6 +7548,11 @@ pub unsafe fn ticket_zero_reallocate(
 ) -> TicketZeroPageAllocationResult {
     if !crate::size_class::request_size_is_valid(new_size) {
         return TicketZeroPageAllocationResult::AllocationFailed;
+    }
+    if current_thread_has_native_initial_persistent_owner() {
+        // SAFETY: forwarded unchanged from this private current-block
+        // contract to the direct persistent initial owner.
+        return unsafe { ticket_zero_initial_persistent_reallocate(block, new_size) };
     }
     if block.is_some() && !RUNTIME_PROCESS.page_owner_has_started() {
         return RUNTIME_PROCESS.page_owner_unavailable_result();
@@ -7076,6 +7581,11 @@ pub unsafe fn ticket_zero_reallocate(
 /// [`ticket_zero_reallocate`]. It must not be a libc/C-backend pointer.
 #[doc(hidden)]
 pub unsafe fn ticket_zero_free(block: core::ptr::NonNull<u8>) -> TicketZeroPageFreeResult {
+    if current_thread_has_native_initial_persistent_owner() {
+        // SAFETY: forwarded unchanged from this private current-block
+        // contract to the direct persistent initial owner.
+        return unsafe { ticket_zero_initial_persistent_free(block) };
+    }
     if !RUNTIME_PROCESS.page_owner_has_started() {
         return match RUNTIME_PROCESS.page_owner_unavailable_result() {
             TicketZeroPageAllocationResult::Retained => TicketZeroPageFreeResult::Retained,
@@ -7124,6 +7634,11 @@ pub unsafe fn ticket_zero_free(block: core::ptr::NonNull<u8>) -> TicketZeroPageF
 /// reinterpret a foreign C-backend allocation.
 #[doc(hidden)]
 pub unsafe fn ticket_zero_usable_size(block: core::ptr::NonNull<u8>) -> Option<usize> {
+    if current_thread_has_native_initial_persistent_owner() {
+        // SAFETY: forwarded unchanged from this private current-block
+        // contract to the direct persistent initial owner.
+        return unsafe { ticket_zero_initial_persistent_usable_size(block) };
+    }
     if !RUNTIME_PROCESS.page_owner_has_started() {
         return None;
     }
@@ -7137,74 +7652,159 @@ pub unsafe fn ticket_zero_usable_size(block: core::ptr::NonNull<u8>) -> Option<u
         .flatten()
 }
 
-#[inline]
-fn native_allocation_from_ticket_zero(
-    result: TicketZeroPageAllocationResult,
+/// Allocates through the initial thread's continuously stored source owner.
+/// The promotion below is a one-time startup transition; once installed, an
+/// active owner performs this local operation with no process scheduler or
+/// parked-engine bridge.
+fn native_initial_thread_allocate_aligned(
+    request: usize,
+    alignment: usize,
+    zero: bool,
 ) -> NativePageAllocationResult {
-    match result {
-        TicketZeroPageAllocationResult::Allocated(block) => NativePageAllocationResult::Allocated(block),
-        TicketZeroPageAllocationResult::Unavailable => NativePageAllocationResult::Unavailable,
-        TicketZeroPageAllocationResult::AllocationFailed => NativePageAllocationResult::AllocationFailed,
-        TicketZeroPageAllocationResult::Retained => NativePageAllocationResult::Retained,
+    match with_current_thread_native_initial_persistent_allocator(true, |owner| {
+        (
+            owner.allocate_aligned(request, alignment, zero),
+            owner.is_retained(),
+        )
+    }) {
+        Ok((Some(block), false)) => NativePageAllocationResult::Allocated(block),
+        Ok((None, false)) => NativePageAllocationResult::AllocationFailed,
+        Ok((Some(_) | None, true))
+        | Err(
+            NativeInitialPersistentThreadOwnerAccessError::NotInstalled
+            | NativeInitialPersistentThreadOwnerAccessError::Unavailable
+            | NativeInitialPersistentThreadOwnerAccessError::Retained,
+        ) => {
+            RUNTIME_PROCESS.retain_page_owner();
+            NativePageAllocationResult::Retained
+        }
     }
 }
 
-#[inline]
-fn native_free_from_ticket_zero(result: TicketZeroPageFreeResult) -> NativePageFreeResult {
+/// Frees a PageMap-proven current initial-thread client through that owner's
+/// direct engine. Unlike the legacy ticket-zero helper, this has no scheduler
+/// miss to translate into an ordinary unavailable result.
+fn native_initial_thread_free_pointer_first(
+    block: core::ptr::NonNull<u8>,
+) -> NativePageFreeResult {
+    let result = with_current_thread_native_initial_persistent_allocator(true, |owner| {
+        // SAFETY: the caller's one PageMap observation associated this exact
+        // live client with the current initial owner for the complete local
+        // source operation.
+        let free = unsafe { owner.free(block) };
+        (free, owner.is_retained())
+    });
     match result {
-        TicketZeroPageFreeResult::Freed => NativePageFreeResult::Freed,
-        TicketZeroPageFreeResult::Unavailable => NativePageFreeResult::Unavailable,
-        TicketZeroPageFreeResult::InvalidPointer => NativePageFreeResult::InvalidPointer,
-        TicketZeroPageFreeResult::Retained => NativePageFreeResult::Retained,
+        Ok((Ok(()), false)) => NativePageFreeResult::Freed,
+        Ok((Ok(()) | Err(_), true))
+        | Ok((Err(_), false))
+        | Err(
+            NativeInitialPersistentThreadOwnerAccessError::NotInstalled
+            | NativeInitialPersistentThreadOwnerAccessError::Unavailable
+            | NativeInitialPersistentThreadOwnerAccessError::Retained,
+        ) => {
+            // PageMap already proved this is a valid current local block. A
+            // failed source transition must retain rather than falling back to
+            // a ticket-zero scheduler, route, or caller-selected owner.
+            RUNTIME_PROCESS.retain_page_owner();
+            NativePageFreeResult::Retained
+        }
+    }
+}
+
+/// Reallocates one documented current initial-thread client through the same
+/// direct owner. This preserves the existing helper's scope; it adds no W02
+/// cross-owner replacement policy.
+unsafe fn native_initial_thread_reallocate(
+    block: core::ptr::NonNull<u8>,
+    new_size: usize,
+) -> NativePageAllocationResult {
+    let result = with_current_thread_native_initial_persistent_allocator(true, |owner| {
+        // SAFETY: forwarded from `native_reallocate`'s exact-current initial
+        // owner contract.
+        let replacement = unsafe { owner.reallocate(block, new_size) };
+        (replacement, owner.is_retained())
+    });
+    match result {
+        Ok((Some(block), false)) => NativePageAllocationResult::Allocated(block),
+        Ok((None, false)) => NativePageAllocationResult::AllocationFailed,
+        Ok((Some(_) | None, true))
+        | Err(
+            NativeInitialPersistentThreadOwnerAccessError::NotInstalled
+            | NativeInitialPersistentThreadOwnerAccessError::Unavailable
+            | NativeInitialPersistentThreadOwnerAccessError::Retained,
+        ) => {
+            RUNTIME_PROCESS.retain_page_owner();
+            NativePageAllocationResult::Retained
+        }
+    }
+}
+
+/// Returns the usable extent of one current initial-thread client directly
+/// from its persistent source engine.
+unsafe fn native_initial_thread_usable_size(block: core::ptr::NonNull<u8>) -> Option<usize> {
+    let result = with_current_thread_native_initial_persistent_allocator(true, |owner| {
+        // SAFETY: forwarded from the exact-current initial native query.
+        let usable_size = unsafe { owner.usable_size(block) };
+        (usable_size, owner.is_retained())
+    });
+    match result {
+        Ok((usable_size, false)) => usable_size,
+        Ok((_, true))
+        | Err(
+            NativeInitialPersistentThreadOwnerAccessError::NotInstalled
+            | NativeInitialPersistentThreadOwnerAccessError::Unavailable
+            | NativeInitialPersistentThreadOwnerAccessError::Retained,
+        ) => {
+            RUNTIME_PROCESS.retain_page_owner();
+            None
+        }
     }
 }
 
 /// Primes the one source first arena before a native-shadow worker can borrow
 /// the existing dormant pair.
 ///
-/// This is intentionally an initial-thread-only integration step. It creates
-/// and releases one private word-sized block only if the permanent owner has
-/// never entered a page engine, leaving the owner in its established dormant
-/// first-arena state. A live ticket-zero allocation or any terminal runtime
-/// state rejects rather than borrowing a page image that already has a caller
-/// owner. The ordinary C backend never calls this boundary.
+/// This is intentionally an initial-thread-only integration step. Before it
+/// can expose a later-worker preparation, it promotes even a cold static
+/// ticket-zero staging owner into the initial thread's persistent TLS cell
+/// while the later-admission count is zero. It then creates and releases one
+/// private word-sized block only if that owner has no live page engine,
+/// leaving its established dormant first-arena pair available to the worker.
+/// A live initial allocation or any terminal runtime state rejects rather
+/// than borrowing a page image that already has a caller owner. The ordinary
+/// C backend never calls this boundary.
 #[doc(hidden)]
 pub fn prepare_native_later_thread_arena() -> bool {
     if !RUNTIME_PROCESS.is_on_initial_thread() {
         return false;
     }
-    matches!(
-        RUNTIME_PROCESS.with_ticket_zero_page_owner(|owner| owner.prepare_dormant_page_pair()),
-        Some(true)
-    ) && RUNTIME_PROCESS.page_owner_state.load(Ordering::Acquire) == PAGE_OWNER_READY
+    prepare_current_thread_native_initial_persistent_owner_for_later_thread()
 }
 
-/// Prepares a live ticket-zero native owner before its creating initial thread
-/// publishes a later pthread.
+/// Prepares the persistent initial native owner before its creating initial
+/// thread publishes a later pthread.
 ///
-/// The creator alone may move its permanent engine into the typed suspended
-/// state: it keeps every initial client and source engine field private while
-/// making only the immutable process pair available to one serialized worker
-/// operation.  This does not attach the child, route a pointer, or change the
-/// C backend. A cold owner remains cold, a dormant owner stays on its existing
-/// pair path, and a retained/busy owner remains unavailable rather than
-/// manufacturing a lifecycle repair.
+/// The creator first performs the one-time static-to-TLS promotion while no
+/// later admission exists, including from `COLD`. It keeps every initial
+/// client and source engine field private while making only the immutable
+/// process pair available to one serialized worker operation. This does not
+/// attach the child, route a pointer, or change the C backend. A dormant owner
+/// stays on its direct pair path; a live/retained owner is unavailable rather
+/// than manufacturing a lifecycle repair.
 #[doc(hidden)]
 pub fn prepare_native_initial_owner_for_later_thread() {
-    if !RUNTIME_PROCESS.is_on_initial_thread()
-        || RUNTIME_PROCESS.page_owner_state.load(Ordering::Acquire) == PAGE_OWNER_COLD
-    {
+    if !RUNTIME_PROCESS.is_on_initial_thread() {
         return;
     }
-    let _ = RUNTIME_PROCESS.with_ticket_zero_page_owner(|owner| {
-        owner.prepare_live_engine_for_later_thread()
-    });
+    let _ = prepare_current_thread_native_initial_persistent_owner_for_later_thread();
 }
 
 /// Allocates one C-facing native-shadow block on the current thread.
 ///
-/// The initial process thread uses its permanent ticket-zero owner. An
-/// attached later pthread uses its continuously stored compiler-TLS owner.
+/// The initial process thread uses its continuously stored static-source
+/// owner. An attached later pthread uses its own continuously stored
+/// compiler-TLS owner.
 /// Natural C alignment remains an ordinary source allocation; only wider
 /// alignment takes the distinct aligned path. The local allocation is
 /// represented solely by source Page used/free state plus the process PageMap;
@@ -7221,11 +7821,7 @@ pub fn native_allocate_aligned(
         return NativePageAllocationResult::AllocationFailed;
     }
     if RUNTIME_PROCESS.is_on_initial_thread() {
-        return native_allocation_from_ticket_zero(ticket_zero_allocate_aligned(
-            request,
-            alignment,
-            zero,
-        ));
+        return native_initial_thread_allocate_aligned(request, alignment, zero);
     }
     // A final B-side free may already have recorded one or more A terminal
     // completions for this attachment. Those entries retain only A's parked
@@ -7313,9 +7909,7 @@ pub unsafe fn native_reallocate(
     if RUNTIME_PROCESS.is_on_initial_thread() {
         // SAFETY: forwarded unchanged from this boundary's exact-current
         // native block contract.
-        return native_allocation_from_ticket_zero(unsafe {
-            ticket_zero_reallocate(Some(block), new_size)
-        });
+        return unsafe { native_initial_thread_reallocate(block, new_size) };
     }
     // Phase B first derives this exact pointer's PageMap association and, for
     // the current owner, performs realloc through the continuously stored TLS
@@ -7613,21 +8207,9 @@ fn native_free_pointer_first_local(allocation: LiveAllocationPointer) -> NativeP
     if RUNTIME_PROCESS.is_on_initial_thread() {
         // SAFETY: the preceding PageMap classification associated this exact
         // live allocation with the current initial source owner.
-        let result = unsafe { ticket_zero_free(client) };
+        let result = native_initial_thread_free_pointer_first(client);
         drop(allocation);
-        return match result {
-            TicketZeroPageFreeResult::Freed => NativePageFreeResult::Freed,
-            TicketZeroPageFreeResult::Unavailable
-            | TicketZeroPageFreeResult::InvalidPointer
-            | TicketZeroPageFreeResult::Retained => {
-                // A PageMap-proven local allocation cannot become an
-                // ordinary caller-unavailable or invalid free. Preserve the
-                // source owner terminally instead of retrying a different
-                // runtime route.
-                RUNTIME_PROCESS.retain_page_owner();
-                NativePageFreeResult::Retained
-            }
-        };
+        return result;
     }
 
     // The worker's continuously stored owner is already current. Its short
@@ -7722,7 +8304,7 @@ pub unsafe fn native_usable_size(block: core::ptr::NonNull<u8>) -> Option<usize>
     if RUNTIME_PROCESS.is_on_initial_thread() {
         // SAFETY: forwarded unchanged from this boundary's exact-current
         // native block contract.
-        return unsafe { ticket_zero_usable_size(block) };
+        return unsafe { native_initial_thread_usable_size(block) };
     }
     // The persistent local owner consumes W02 pointer association before any
     // detached/live-owner compatibility ledger is inspected.
