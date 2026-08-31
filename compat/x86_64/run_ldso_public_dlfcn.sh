@@ -128,6 +128,13 @@ if readelf -Ws "$members_dir"/*.o | awk \
     '$4 == "FUNC" && $5 == "GLOBAL" && $7 != "UND" && $8 == "dlopen" { found=1 } END { exit found ? 0 : 1 }'; then
     fail 'staged static archive made dlopen strong'
 fi
+readelf -Ws "$members_dir"/*.o | awk \
+    '$4 == "FUNC" && $5 == "WEAK" && $7 != "UND" && $8 == "dladdr" { found=1 } END { exit found ? 0 : 1 }' ||
+    fail 'staged static archive lost musl weak dladdr binding'
+if readelf -Ws "$members_dir"/*.o | awk \
+    '$4 == "FUNC" && $5 == "GLOBAL" && $7 != "UND" && $8 == "dladdr" { found=1 } END { exit found ? 0 : 1 }'; then
+    fail 'staged static archive made dladdr strong'
+fi
 
 rustc --edition=2021 --crate-type staticlib -C relocation-model=pic \
     -C code-model=small -C panic=abort "$BRIDGE_SOURCE" -o "$archive"
@@ -155,11 +162,14 @@ build_main "$work_dir/ld-crabc-x86_64-public-dlfcn.so" \
     "$work_dir/main-crabc-public-dlfcn-override" -DCRABC_PUBLIC_DLFCN_OVERRIDE_ITERATE=1
 build_main "$work_dir/ld-crabc-x86_64-public-dlfcn.so" \
     "$work_dir/main-crabc-public-dlfcn-override-open" -DCRABC_PUBLIC_DLFCN_OVERRIDE_OPEN=1
+build_main "$work_dir/ld-crabc-x86_64-public-dlfcn.so" \
+    "$work_dir/main-crabc-public-dlfcn-override-addr" -DCRABC_PUBLIC_DLFCN_OVERRIDE_ADDR=1
 
 for candidate in "$work_dir/main-crabc-public-dlfcn" \
     "$work_dir/main-crabc-public-dlfcn-malformed" \
     "$work_dir/main-crabc-public-dlfcn-override" \
-    "$work_dir/main-crabc-public-dlfcn-override-open"; do
+    "$work_dir/main-crabc-public-dlfcn-override-open" \
+    "$work_dir/main-crabc-public-dlfcn-override-addr"; do
     [ "$(readelf -h "$candidate" | awk '/Type:/{print $2}')" = DYN ] ||
         fail "public candidate is not ET_DYN: $candidate"
     ! readelf -dW "$candidate" | grep -Eq '\(NEEDED\).*(libc|libgcc|ld-linux)' ||
@@ -190,6 +200,13 @@ for candidate in "$work_dir/main-crabc-public-dlfcn" \
         '$4 == "FUNC" && $5 == "GLOBAL" && $7 != "UND" && $8 == "dlopen" { found=1 } END { exit found ? 0 : 1 }'; then
         fail "public candidate made dlopen strong: $candidate"
     fi
+    readelf -Ws "$candidate" | awk \
+        '$4 == "FUNC" && $5 == "WEAK" && $6 == "DEFAULT" && $7 != "UND" && $8 == "dladdr" { found=1 } END { exit found ? 0 : 1 }' ||
+        fail "public candidate lost musl weak dladdr binding: $candidate"
+    if readelf -Ws "$candidate" | awk \
+        '$4 == "FUNC" && $5 == "GLOBAL" && $7 != "UND" && $8 == "dladdr" { found=1 } END { exit found ? 0 : 1 }'; then
+        fail "public candidate made dladdr strong: $candidate"
+    fi
 done
 readelf -Ws "$work_dir/main-crabc-public-dlfcn-override" | awk \
     '$4 == "FUNC" && $5 == "GLOBAL" && $7 != "UND" && $8 == "dl_iterate_phdr" { found=1 } END { exit found ? 0 : 1 }' ||
@@ -204,6 +221,13 @@ readelf -Ws "$work_dir/main-crabc-public-dlfcn-override-open" | awk \
 if readelf -Ws "$work_dir/main-crabc-public-dlfcn-override-open" | awk \
     '$4 == "FUNC" && $5 == "WEAK" && $7 != "UND" && $8 == "dlopen" { found=1 } END { exit found ? 0 : 1 }'; then
     fail 'caller override retained the archive weak dlopen binding'
+fi
+readelf -Ws "$work_dir/main-crabc-public-dlfcn-override-addr" | awk \
+    '$4 == "FUNC" && $5 == "GLOBAL" && $6 == "DEFAULT" && $7 != "UND" && $8 == "dladdr" { found=1 } END { exit found ? 0 : 1 }' ||
+    fail 'caller strong dladdr did not override the archive weak binding'
+if readelf -Ws "$work_dir/main-crabc-public-dlfcn-override-addr" | awk \
+    '$4 == "FUNC" && $5 == "WEAK" && $7 != "UND" && $8 == "dladdr" { found=1 } END { exit found ? 0 : 1 }'; then
+    fail 'caller override retained the archive weak dladdr binding'
 fi
 readelf -Ws "$work_dir/main-crabc-public-dlfcn" | awk \
     '$5 == "WEAK" && $7 == "UND" && $8 == "__crabc_x86_64_fixed_graph_dlfcn_v1" { found=1 } END { exit found ? 0 : 1 }' ||
@@ -235,5 +259,7 @@ run_clean() { env -i PATH=/usr/bin:/bin "$1"; }
     fail 'caller strong dl_iterate_phdr did not override the archive weak binding'
 (cd "$work_dir" && run_clean "$work_dir/main-crabc-public-dlfcn-override-open") ||
     fail 'caller strong dlopen did not override the archive weak binding'
+(cd "$work_dir" && run_clean "$work_dir/main-crabc-public-dlfcn-override-addr") ||
+    fail 'caller strong dladdr did not override the archive weak binding'
 
 printf '%s\n' 'x86 public C fixed-graph dlfcn ABI/diagnostics/introspection: PASS'

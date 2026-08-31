@@ -8,8 +8,8 @@
 //! does not accidentally pull the canonical archive's independently selected
 //! static-initial-TLS `errno` object through a shared Rust codegen unit.
 //! It enables the same target-scoped weak-linkage support as `libc/src/lib.rs`
-//! so the isolated bridge retains musl's static `dl_iterate_phdr` and
-//! `dlopen` bindings.
+//! so the isolated bridge retains musl's static `dl_iterate_phdr`, `dlopen`,
+//! and `dladdr` bindings.
 
 #[path = "syscall.rs"]
 #[allow(dead_code)]

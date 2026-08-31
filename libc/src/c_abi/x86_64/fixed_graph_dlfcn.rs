@@ -578,6 +578,14 @@ unsafe fn clear_dl_info(information: *mut DlInfo) {
 /// graph's exact `loader address not found` error. Other non-null failures and
 /// unavailable records retain their existing output-clearing fail-closed paths.
 #[no_mangle]
+// Musl 1.2.6 `src/ldso/dladdr.c` keeps its static stub private and publishes
+// `weak_alias(stub_dladdr, dladdr)`, while `ldso/dynlink.c:dladdr` supplies
+// the dynamic-loader spelling. The AArch64 static manifest therefore records
+// this archive entry as `STB_WEAK`. Keep this staged static body weak so an
+// application-owned strong `dladdr` can override it after another bridge
+// entry extracts the archive member; this changes no address lookup, output,
+// diagnostic, or loader operation.
+#[linkage = "weak"]
 pub unsafe extern "C" fn dladdr(address: *const c_void, information: *mut DlInfo) -> c_int {
     if information.is_null() || address.is_null() {
         return 0;

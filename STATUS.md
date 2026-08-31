@@ -289,8 +289,14 @@ stub private and publishes `weak_alias(stub_dlopen, dlopen)`: the AArch64 static
 manifest records weak `dlopen`, while libc.so records it global. The same
 archive and normal/malformed candidates retain that default-visible weak
 binding, and a strong caller `dlopen` wins after a `dlsym` reference extracts
+the bridge. Pinned musl 1.2.6 `src/ldso/dladdr.c` also keeps its static stub
+private and publishes `weak_alias(stub_dladdr, dladdr)`: the AArch64 static
+manifest records weak `dladdr`, while libc.so records it global. The same
+archive and normal/malformed candidates retain that default-visible weak
+binding, and a strong caller `dladdr` wins after a `dlsym` reference extracts
 the bridge. These static-link ABI ratchets do not change NULL-open behavior,
-iteration, mapping, lookup, lifecycle, or public-support scope. For a live
+address lookup/output, iteration, mapping, lifecycle, or public-support scope.
+For a live
 retained handle within that 32-slot table, the sole
 musl `dlinfo` request is `RTLD_DI_LINKMAP`: the `-7` differential leaves its
 result pointer untouched, keeps exact `Unsupported request -7` pending through

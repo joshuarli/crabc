@@ -7013,7 +7013,10 @@ def require_ldso_public_fixed_graph_dlfcn_artifact(family: Mapping[str, Any]) ->
         "weak_alias(stub_dlopen, dlopen)",
         "normal/malformed isolated candidates retain that weak `dlopen` binding",
         "caller strong `dlopen` definition wins after a retained `dlsym` address extracts the bridge",
-        "Both are static-link ABI ratchets only",
+        "weak_alias(stub_dladdr, dladdr)",
+        "normal/malformed isolated candidates retain that weak `dladdr` binding",
+        "caller strong `dladdr` definition wins after a retained `dlsym` address extracts the bridge",
+        "All three are static-link ABI ratchets only",
         "real ET_DYN main",
         "weak undefined `R_X86_64_GLOB_DAT`",
         "never falls back to an ambient loader",
@@ -7103,6 +7106,7 @@ def require_ldso_public_fixed_graph_dlfcn_artifact(family: Mapping[str, Any]) ->
         "AArch64 libc.so and libc.a ABI manifests retain dl_iterate_phdr, dladdr, dlclose, dlinfo, dlerror, dlsym, and dlopen exports",
         "dl_iterate_phdr dl_iterate_phdr.lo W WEAK",
         "dlopen dlopen.lo W WEAK",
+        "dladdr dladdr.lo W WEAK",
         "src/ldso/dl_iterate_phdr.c",
         "weak_alias(static_dl_iterate_phdr, dl_iterate_phdr)",
         "caller STB_GLOBAL definition overrides it after a `dlopen` reference extracts the bridge",
@@ -7110,6 +7114,10 @@ def require_ldso_public_fixed_graph_dlfcn_artifact(family: Mapping[str, Any]) ->
         "weak_alias(stub_dlopen, dlopen)",
         "caller STB_GLOBAL dlopen overrides it after a `dlsym` reference extracts the bridge",
         "bounded NULL-open path",
+        "src/ldso/dladdr.c",
+        "weak_alias(stub_dladdr, dladdr)",
+        "caller STB_GLOBAL dladdr overrides it after a `dlsym` reference extracts the bridge",
+        "address lookup/output",
         "src/ldso/dlinfo.c:dlinfo",
         "Unsupported request %d",
         "does not consume that pending state",
@@ -7167,6 +7175,8 @@ def require_ldso_public_fixed_graph_dlfcn_artifact(family: Mapping[str, Any]) ->
         "caller STB_GLOBAL override after a `dlopen` reference extracts the bridge",
         "pinned static STB_WEAK `dlopen` binding",
         "caller STB_GLOBAL dlopen override after a `dlsym` reference extracts the bridge",
+        "pinned static STB_WEAK `dladdr` binding",
+        "caller STB_GLOBAL dladdr override after a `dlsym` reference extracts the bridge",
         "weak GLOB_DAT/64-byte RuntimeV1-prefix wire",
         "rejects ambient libc/loader dependencies and PT_TLS",
         "two concurrent TLS-free clone threads",
@@ -7216,10 +7226,13 @@ def require_ldso_public_fixed_graph_dlfcn_artifact(family: Mapping[str, Any]) ->
         "main-crabc-public-dlfcn-absent",
         "main-crabc-public-dlfcn-override",
         "main-crabc-public-dlfcn-override-open",
+        "main-crabc-public-dlfcn-override-addr",
         "CRABC_PUBLIC_DLFCN_OVERRIDE_ITERATE",
         "CRABC_PUBLIC_DLFCN_OVERRIDE_OPEN",
+        "CRABC_PUBLIC_DLFCN_OVERRIDE_ADDR",
         "staged static archive lost musl weak dl_iterate_phdr binding",
         "staged static archive lost musl weak dlopen binding",
+        "staged static archive lost musl weak dladdr binding",
         "env -i PATH=/usr/bin:/bin",
     ):
         require(
@@ -7264,6 +7277,8 @@ def require_ldso_public_fixed_graph_dlfcn_artifact(family: Mapping[str, Any]) ->
         "crabc_bounded_runtime_dlopen",
         "src/ldso/dlopen.c",
         "weak_alias(stub_dlopen, dlopen)",
+        "src/ldso/dladdr.c",
+        "weak_alias(stub_dladdr, dladdr)",
         "ldso/dynlink.c:dl_iterate_phdr",
         "src/ldso/dl_iterate_phdr.c",
         "weak_alias(static_dl_iterate_phdr, dl_iterate_phdr)",
@@ -7320,6 +7335,9 @@ def require_ldso_public_fixed_graph_dlfcn_artifact(family: Mapping[str, Any]) ->
         "CRABC_PUBLIC_DLFCN_OVERRIDE_OPEN",
         "override_dlopen_calls",
         "typed_dlopen(NULL, RTLD_NOW)",
+        "CRABC_PUBLIC_DLFCN_OVERRIDE_ADDR",
+        "override_dladdr_calls",
+        "typed_dladdr(NULL, NULL)",
         "typed_dlsym",
         "extract_bridge",
     ):
@@ -7351,12 +7369,20 @@ def require_ldso_public_fixed_graph_dlfcn_artifact(family: Mapping[str, Any]) ->
         "pinned AArch64 musl static manifest lacks weak dlopen binding",
     )
     require(
+        "\ndladdr\tdladdr.lo\tW\tWEAK\t" in aarch64_static,
+        "pinned AArch64 musl static manifest lacks weak dladdr binding",
+    )
+    require(
         "\ndl_iterate_phdr\tFUNC\tGLOBAL\tDEFAULT\t" in aarch64_dynamic,
         "pinned AArch64 musl dynamic manifest lacks global dl_iterate_phdr binding",
     )
     require(
         "\ndlopen\tFUNC\tGLOBAL\tDEFAULT\t" in aarch64_dynamic,
         "pinned AArch64 musl dynamic manifest lacks global dlopen binding",
+    )
+    require(
+        "\ndladdr\tFUNC\tGLOBAL\tDEFAULT\t" in aarch64_dynamic,
+        "pinned AArch64 musl dynamic manifest lacks global dladdr binding",
     )
     oracle = artifact["oracle"]
     assert isinstance(oracle, list)
@@ -7367,6 +7393,7 @@ def require_ldso_public_fixed_graph_dlfcn_artifact(family: Mapping[str, Any]) ->
             and isinstance(entry.get("source"), str)
             and "src/ldso/dl_iterate_phdr.c" in entry["source"]
             and "src/ldso/dlopen.c" in entry["source"]
+            and "src/ldso/dladdr.c" in entry["source"]
             and "src/ldso/dlinfo.c" in entry["source"]
             and "src/ldso/dlclose.c" in entry["source"]
             and "src/ldso/dlsym.c" in entry["source"]
@@ -7374,6 +7401,7 @@ def require_ldso_public_fixed_graph_dlfcn_artifact(family: Mapping[str, Any]) ->
             and "exact live-handle unsupported-dlinfo diagnostic" in entry["role"]
             and "static `weak_alias(static_dl_iterate_phdr, dl_iterate_phdr)` archive-binding contract" in entry["role"]
             and "`weak_alias(stub_dlopen, dlopen)` archive-binding contract" in entry["role"]
+            and "`weak_alias(stub_dladdr, dladdr)` archive-binding contract" in entry["role"]
             and "exact null-dlclose return/diagnostic" in entry["role"]
             and "exact live-handle empty-dlsym diagnostic" in entry["role"]
             and "exact null-dladdr untouched-output/no-error behavior" in entry["role"]
@@ -7393,7 +7421,7 @@ def require_ldso_public_fixed_graph_dlfcn_artifact(family: Mapping[str, Any]) ->
             and "libc.a.static.tsv" in entry["source"]
             and isinstance(entry.get("role"), str)
             and "dl_iterate_phdr, dladdr, dlclose, dlinfo, dlerror, dlsym, and dlopen exports" in entry["role"]
-            and "static manifest records weak dl_iterate_phdr and dlopen while the shared manifest records global dl_iterate_phdr and dlopen" in entry["role"]
+            and "static manifest records weak dl_iterate_phdr, dlopen, and dladdr while the shared manifest records global dl_iterate_phdr, dlopen, and dladdr" in entry["role"]
             and "ABI-presence/binding evidence" in entry["role"]
             and "not a behavioral fallback" in entry["role"]
             for entry in oracle

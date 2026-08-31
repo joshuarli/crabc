@@ -68,6 +68,21 @@ void *dlopen(const char *filename, int flags) {
 }
 #endif
 
+#ifdef CRABC_PUBLIC_DLFCN_OVERRIDE_ADDR
+/*
+ * Musl's static dladdr stub is also a weak alias. dlsym keeps the bridge
+ * archive member live while this caller-owned strong spelling must win.
+ */
+static int override_dladdr_calls;
+
+int dladdr(const void *address, Dl_info *information) {
+    (void)address;
+    (void)information;
+    ++override_dladdr_calls;
+    return 78;
+}
+#endif
+
 struct observed_graph {
     int main_seen;
     int mid_seen;
@@ -206,6 +221,10 @@ int main(void) {
     if (extract_bridge == NULL) return 96;
     return typed_dlopen(NULL, RTLD_NOW) == (void *)(uintptr_t)0x5a5a
         && override_dlopen_calls == 1 ? 0 : 97;
+#elif defined(CRABC_PUBLIC_DLFCN_OVERRIDE_ADDR)
+    void *(*volatile extract_bridge)(void *restrict, const char *restrict) = typed_dlsym;
+    if (extract_bridge == NULL) return 98;
+    return typed_dladdr(NULL, NULL) == 78 && override_dladdr_calls == 1 ? 0 : 99;
 #else
     (void)typed_dlopen;
     (void)typed_dlclose;

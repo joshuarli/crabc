@@ -4628,6 +4628,15 @@ definition wins after a `dlsym` reference extracts the bridge. The NULL-open
 rule and all graph behavior remain unchanged, so this adds neither loader
 admission/lifecycle behavior nor capability/platform promotion.
 
+Pinned musl 1.2.6 `src/ldso/dladdr.c` keeps its static stub private and
+publishes `weak_alias(stub_dladdr, dladdr)`. The pinned AArch64 static manifest
+records its weak public spelling, whereas libc.so records it global.
+`ldso-public-dlfcn` now proves default-visible weak `dladdr` in both the staged
+archive and normal/malformed isolated ET_DYN candidates; a caller-owned strong
+definition wins after a `dlsym` reference extracts the bridge. Address lookup,
+its output contract, and all graph behavior remain unchanged, so this adds
+neither loader admission/lifecycle behavior nor capability/platform promotion.
+
 `ldso-dladdr-symbol-bounds` is a separate fixed-graph `dladdr` differential
 over that already-existing bridge, not an additional loader admission path.
 Its real leaf has one four-byte default-visible dynamic object immediately
