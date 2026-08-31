@@ -6971,7 +6971,9 @@ fn native_free_pointer_first_nonlocal(
 #[doc(hidden)]
 pub unsafe fn native_usable_size(block: core::ptr::NonNull<u8>) -> Option<usize> {
     let Some(page_map) = RUNTIME_PROCESS.page_map_for_live_native_allocation() else {
-        RUNTIME_PROCESS.retain_page_owner();
+        // `mi_usable_size` turns a missing validated page into its zero-sized
+        // result. This is a read-only pointer observation, so an unavailable
+        // PageMap cannot retain the process or select another owner path.
         return None;
     };
     // SAFETY: `native_usable_size` receives an exact live native client. Its
@@ -6979,11 +6981,10 @@ pub unsafe fn native_usable_size(block: core::ptr::NonNull<u8>) -> Option<usize>
     // until the captured scalar has been copied below.
     let allocation = match unsafe { page_map.lookup_live_allocation(block) } {
         Ok(Some(allocation)) => allocation,
-        Ok(None) => return None,
-        Err(_) => {
-            RUNTIME_PROCESS.retain_page_owner();
-            return None;
-        }
+        // A missing or unusable PageMap fact remains the C-shaped no-extent
+        // result. Do not reinterpret it through an initial-thread, caller,
+        // registry, scheduler, session, or terminal lifecycle path.
+        Ok(None) | Err(_) => return None,
     };
     let usable_size = allocation.usable_size();
     drop(allocation);
