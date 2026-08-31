@@ -9,7 +9,7 @@
     "not_a_runtime_selector": true,
     "not_a_general_lifecycle_claim": true,
     "nonlocal_musl_differentials_are_required": true,
-    "purpose": "Preserve the ordinary libc artifact before native-mimalloc-shadow selection, then run the same normalized public C trace through both explicitly selected dynamic libc artifacts and record exact semantic matches or named known reds. The two named nonlocal realloc cases remain failed/deferred until their exact source-faithful fixtures run through pinned musl 1.2.6 and the selected native artifact with identical required streams."
+    "purpose": "Preserve the ordinary libc artifact before native-mimalloc-shadow selection, then run the same normalized public C trace through both explicitly selected dynamic libc artifacts and record exact semantic matches or named known reds. The two named nonlocal realloc cases are required source-faithful pinned-musl 1.2.6 differentials: their exact fixtures must run through musl and the selected native artifact with identical required streams."
   },
   "fixture": {
     "path": "tests/fixtures/native_mimalloc_shadow_backend_matrix_test.c",
@@ -175,13 +175,13 @@
         "realloc"
       ],
       "classification": "musl-differential-required",
-      "activation": "deferred",
+      "activation": "required",
       "expected": {
         "status": 0,
         "stdout": "native mimalloc shadow foreign realloc ok\n",
         "stderr": ""
       },
-      "reason": "This one synchronized live-owner foreign realloc must remain a source-faithful pinned-musl differential. Its current activation is deferred until the paired core and fixture siblings land; an intentional-divergence or native-only acceptance is forbidden."
+      "reason": "This one synchronized live-owner foreign realloc is a required source-faithful pinned-musl differential. An intentional-divergence or native-only acceptance is forbidden."
     },
     {
       "id": "post-owner-exit-realloc",
@@ -209,25 +209,25 @@
         "realloc"
       ],
       "classification": "musl-differential-required",
-      "activation": "deferred",
+      "activation": "required",
       "expected": {
         "status": 0,
         "stdout": "native mimalloc owner exit realloc ok\n",
         "stderr": ""
       },
-      "reason": "This one serialized post-owner-exit realloc must remain a source-faithful pinned-musl differential. Its current activation is deferred until the paired core and fixture siblings land; an intentional-divergence or native-only acceptance is forbidden."
+      "reason": "This one serialized post-owner-exit realloc is a required source-faithful pinned-musl differential. An intentional-divergence or native-only acceptance is forbidden."
     }
   ],
   "intentionally_blocked_cases": [
     {
       "id": "foreign-worker-free-routing",
       "status": "blocked",
-      "reason": "General foreign-worker free routing remains outside this bounded matrix. The named `foreign-worker-realloc` fixture above is not part of this block: it is a required pinned-musl differential once activated."
+      "reason": "General foreign-worker free routing remains outside this bounded matrix. The named `foreign-worker-realloc` fixture above is not part of this block: it is a required pinned-musl differential."
     },
     {
       "id": "owner-exit-routing-outside-selected-realloc",
       "status": "blocked",
-      "reason": "General owner-exit, deferred-release, and cross-owner routing remain outside this bounded matrix. The named `post-owner-exit-realloc` fixture above is not part of this block: it is a required pinned-musl differential once activated."
+      "reason": "General owner-exit, deferred-release, and cross-owner routing remain outside this bounded matrix. The named `post-owner-exit-realloc` fixture above is not part of this block: it is a required pinned-musl differential."
     },
     {
       "id": "dso-interposition-and-static-linking",

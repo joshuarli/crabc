@@ -22,7 +22,7 @@ SPEC.loader.exec_module(RUNNER)
 
 
 class ShadowAbiMatrixContractTests(unittest.TestCase):
-    def test_checked_in_contract_has_the_closed_local_trace_and_deferred_required_nonlocal_cases(self) -> None:
+    def test_checked_in_contract_has_the_closed_local_trace_and_active_required_nonlocal_cases(self) -> None:
         contract = RUNNER.load_contract()
         self.assertEqual(
             RUNNER.expected_trace(contract),
@@ -63,7 +63,7 @@ class ShadowAbiMatrixContractTests(unittest.TestCase):
         self.assertTrue(
             all(case["classification"] == "musl-differential-required" for case in required.values())
         )
-        self.assertTrue(all(case["activation"] == "deferred" for case in required.values()))
+        self.assertTrue(all(case["activation"] == "required" for case in required.values()))
         self.assertEqual(
             {case["id"] for case in contract["intentionally_blocked_cases"]},
             {
@@ -157,8 +157,11 @@ class ShadowAbiMatrixContractTests(unittest.TestCase):
 
     def test_deferred_nonlocal_cases_block_runtime_acceptance_and_activation_requires_fixture_provenance(self) -> None:
         contract = RUNNER.load_contract()
+        deferred = copy.deepcopy(contract)
+        for case in deferred["musl_differential_required_cases"]:
+            case["activation"] = "deferred"
         with self.assertRaisesRegex(RUNNER.MatrixError, "deferred pending source-faithful siblings"):
-            RUNNER.active_musl_differential_cases(contract)
+            RUNNER.active_musl_differential_cases(deferred)
 
         activated = copy.deepcopy(contract)
         activated["musl_differential_required_cases"][0]["activation"] = "required"
@@ -265,9 +268,14 @@ class ShadowAbiMatrixContractTests(unittest.TestCase):
             RUNNER.require_pinned_musl_oracle(contract)
 
     def test_deferred_nonlocal_requirements_make_run_report_failed_without_runtime_inputs(self) -> None:
+        deferred = RUNNER.load_contract()
+        for case in deferred["musl_differential_required_cases"]:
+            case["activation"] = "deferred"
         with tempfile.TemporaryDirectory() as temporary:
             report_path = Path(temporary) / "shadow-matrix.json"
-            with mock.patch.object(RUNNER, "require_runtime_inputs") as runtime_inputs:
+            with mock.patch.object(RUNNER, "load_contract", return_value=deferred), mock.patch.object(
+                RUNNER, "require_runtime_inputs"
+            ) as runtime_inputs:
                 self.assertEqual(RUNNER.main(["run", "--report", str(report_path)]), 1)
             runtime_inputs.assert_not_called()
             report = json.loads(report_path.read_text(encoding="utf-8"))
@@ -277,7 +285,7 @@ class ShadowAbiMatrixContractTests(unittest.TestCase):
         self.assertIn("deferred pending source-faithful siblings", report["first_fact"]["message"])
         self.assertEqual(report["musl_differential_cases"], [])
 
-    def test_report_base_carries_blocked_and_deferred_required_cases_without_turning_them_into_passes(self) -> None:
+    def test_report_base_carries_blocked_and_active_required_cases_without_turning_them_into_passes(self) -> None:
         contract = RUNNER.load_contract()
         report = RUNNER.report_base(contract)
         self.assertEqual(report["status"], "failed")
@@ -289,7 +297,7 @@ class ShadowAbiMatrixContractTests(unittest.TestCase):
         )
         self.assertEqual(report["musl_differential_cases"], [])
         self.assertTrue(
-            all(case["activation"] == "deferred" for case in report["musl_differential_required_cases"])
+            all(case["activation"] == "required" for case in report["musl_differential_required_cases"])
         )
 
     def test_known_reds_are_recorded_as_differences_not_matching_passes(self) -> None:

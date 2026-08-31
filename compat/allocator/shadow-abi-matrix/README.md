@@ -45,16 +45,13 @@ differentials, rather than as native-only exceptions:
 
 Each case records its exact fixture path and SHA-256, normal successful stdout,
 empty stderr, exit status, selected-shadow link shape, and pinned musl 1.2.6
-link shape. While its manifest activation is `deferred`, `run.py run` publishes
-a failed report instead of treating either row as accepted. Activating a row
-hard-fails if its source digest differs, then compiles and runs the exact source
-with pinned `musl-gcc` and with the independently attested selected
+link shape. Both rows are active requirements: `run.py run` hard-fails if a
+source digest differs, then compiles and runs the exact source with pinned
+`musl-gcc` and with the independently attested selected
 `native-mimalloc-shadow` artifact. Both executions must produce the recorded
 successful status/stdout/stderr byte streams exactly. Thus a candidate-only
 refusal witness, a changed fixture, or two matching but wrong outputs cannot be
-relabeled as a musl differential. The initial deferred state records that the
-source-faithful core and C-fixture siblings have not yet landed; it is not a
-pass or a compatibility decision.
+relabeled as a musl differential.
 
 The contract intentionally keeps these broader rows blocked rather than
 silently treating them as ordinary behavior:
