@@ -118,6 +118,8 @@ catanl
 catclose
 catgets
 catopen
+cbrt
+cbrtf
 cbrtl
 ccos
 ccosf

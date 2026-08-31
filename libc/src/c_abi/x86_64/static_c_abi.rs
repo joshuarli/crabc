@@ -7,7 +7,8 @@
 //! `math.complex` magnitude/phase/projection/power/root/transcendental block,
 //! hardware
 //! square root, binary32/binary64 bit-sign masks, binary32/binary64 extrema,
-//! binary32/binary64 truncation and remainder, selected fenv-sensitive rounding,
+//! binary32/binary64 truncation, remainder, and cube root, selected
+//! fenv-sensitive rounding,
 //! and one selected x87 binary80 extended-math block as real C bootstrap
 //! leaves, plus the complete private
 //! `math.special` error/Bessel/gamma/decomposition/stepping/scaling/conversion
@@ -232,6 +233,8 @@ mod math_bit_sign;
 mod math_trunc;
 #[path = "math_fmod.rs"]
 mod math_fmod;
+#[path = "math_cbrt.rs"]
+mod math_cbrt;
 #[path = "math_minmax.rs"]
 mod math_minmax;
 #[path = "math_x87_extended.rs"]

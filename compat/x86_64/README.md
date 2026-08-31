@@ -4236,6 +4236,22 @@ crabc-owned definitions rather than compiler-builtins weak fallbacks and
 rejects `fmodl`, remainder/remquo/modf, rounding/truncation, special/complex,
 and binary80/x87 math. Family completion, promotion, full x86-64 parity, and
 public x86 support remain unselected.
+`libc-math-cbrt` is the separate non-promoting `static-c-math-cbrt` artifact
+for binary64/binary32 `cbrt`/`cbrtf`. Its project-header C fixture and
+default-SSE/`-mfpmath=387` C++ signature probes run first through pinned musl
+and then through one garbage-collected `-nostdlib -static` candidate. The
+checked GCC 15.2.0 assembly translation of musl 1.2.6 `cbrt.c`/`cbrtf.c`
+preserves the source's binary64 rough estimate and Newton order, including
+`cbrtf`'s MXCSR-directed final binary64-to-binary32 conversion. The complete
+record differential compares raw binary64/binary32 payloads, exception flags,
+and requested versus observed rounding directions for signed zero, normal and
+subnormal bounds, ordinary powers, maximum finite values, infinities, and
+quiet/signaling NaNs in all four modes. Final-link proof requires strong
+crabc-owned definitions and `divsd`/`mulsd`/`cvtsd2ss`, while rejecting weak
+compiler-builtins fallback, `cbrtl`, fma, fmod/remainder/modf,
+rounding/truncation, bit-sign/minmax/fdim, special/complex, and binary80/x87
+math. Family completion, promotion, full x86-64 parity, and public x86 support
+remain unselected.
 `libc-fdim` is a separate non-promoting `static-c-fdim` artifact for the
 binary64/binary32 positive-difference pair. Its project-header C fixture and
 default-SSE/`-mfpmath=387` C++ signature probes run first through pinned musl

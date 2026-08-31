@@ -940,6 +940,20 @@ weak compiler-builtins fallback, `fmodl`, remainder/remquo/modf, static
 rounding/truncation, special/complex/binary80 math, family completion,
 promotion, and public x86 support.
 
+The separate private `static-c-math-cbrt` artifact records only binary64
+`cbrt` and binary32 `cbrtf`: `./scripts/dev-x86_64.sh libc-math-cbrt` runs
+project-header C and default-SSE/`-mfpmath=387` C++ function-pointer fixtures
+through pinned musl and one freestanding static candidate. Its checked GCC
+15.2.0 translation of musl 1.2.6 `cbrt.c`/`cbrtf.c` retains the binary64
+estimate/Newton operation order and `cbrtf`'s MXCSR-directed final conversion.
+The 168-record differential covers signed zero, normal and subnormal bounds,
+ordinary powers, maximum finite values, infinities, quiet/signaling NaNs, all
+four requested-and-observed rounding directions, and exception flags. Strong
+target-owned definitions and final ELF checks reject weak compiler-builtins
+fallback, `cbrtl`, fma, fmod/remainder/modf, static rounding/truncation,
+bit-sign/minmax/fdim, special/complex/binary80 math, family completion,
+promotion, and public x86 support.
+
 The x86 static archive now also has one private allocation-free wide-character
 core: `./scripts/dev-x86_64.sh libc-wide-character` runs an exact
 `_XOPEN_SOURCE=700` C/C++ ABI gate and one shared pinned-musl/freestanding

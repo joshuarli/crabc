@@ -377,6 +377,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-math-bit-sign  run the static x86 fabs/copysign bit-sign slice
   libc-math-trunc  run the static x86 trunc/truncf scalar slice
   libc-math-fmod  run the static x86 fmod/fmodf scalar remainder slice
+  libc-math-cbrt  run the static x86 cbrt/cbrtf scalar cube-root slice
   libc-math-elementary-long-double  run the complete static x86 math.elementary-long-double capability
   libc-math-x87-extended  run the static x86 x87 long-double math/remainder block
   libc-math-special  run the complete static x86 math.special capability
@@ -1609,6 +1610,18 @@ preexisting `FE_DIVBYZERO` in one freestanding static candidate. It excludes
 `truncl`, `round*`, `rint*`/`nearbyint*`, bit-sign, `fdim*`, fmax/fmin,
 special and complex math, binary80/x87, family completion, promotion, and
 public x86 support.
+`libc-math-cbrt` is the separate selected binary32/binary64 cube-root slice
+for `cbrt` and `cbrtf`. It compares parenthesized C calls and default-SSE/
+`-mfpmath=387` C++ declarations with pinned musl, then runs one freestanding
+static candidate. The checked GCC 15.2.0 translation of musl 1.2.6
+`cbrt.c`/`cbrtf.c` preserves the binary64 estimate/Newton operation order and
+the cbrtf MXCSR-directed final conversion. Its raw 32-byte records cover
+signed zero, normal/subnormal bounds, ordinary powers, maximum finite values,
+infinities, quiet/signaling NaNs, exception flags, and requested versus
+observed direction in all four MXCSR modes. It excludes `cbrtl`, fma,
+fmod/remainder/modf, rounding/truncation, bit-sign/minmax/fdim,
+special/complex/binary80 math, family completion, promotion, and public x86
+support.
 `libc-math-elementary-long-double` proves the exact 35-symbol
 `math.elementary-long-double` capability through project headers, a closed
 static archive, and 2,764 exact pinned-musl binary80/fenv records across all
@@ -3347,6 +3360,10 @@ run_libc_math_fmod_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_math_fmod.sh
 }
 
+run_libc_math_cbrt_probe() {
+    run_in_container bash /workspace/compat/x86_64/run_libc_math_cbrt.sh
+}
+
 run_libc_math_elementary_long_double_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_math_elementary_long_double.sh
 }
@@ -3470,6 +3487,7 @@ case "$command" in
     libc-math-bit-sign) ;;
     libc-math-trunc) ;;
     libc-math-fmod) ;;
+    libc-math-cbrt) ;;
     libc-fdim) ;;
     machine-context-header-abi) ;;
     memory-sync-header-abi) ;;
@@ -5262,6 +5280,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "libc-math-fmod takes no arguments"
         ensure_image
         run_libc_math_fmod_probe
+        ;;
+    libc-math-cbrt)
+        [ "$#" -eq 0 ] || fail "libc-math-cbrt takes no arguments"
+        ensure_image
+        run_libc_math_cbrt_probe
         ;;
     libc-math-elementary-long-double)
         [ "$#" -eq 0 ] || fail "libc-math-elementary-long-double takes no arguments"

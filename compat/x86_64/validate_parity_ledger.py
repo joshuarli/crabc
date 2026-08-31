@@ -1611,6 +1611,8 @@ MATH_TRUNC_SYMBOLS = ("trunc", "truncf")
 
 MATH_FMOD_SYMBOLS = ("fmod", "fmodf")
 
+MATH_CBRT_SYMBOLS = ("cbrt", "cbrtf")
+
 NAMED_LOCALE_MULTIBYTE_SYMBOLS = (
     "__ctype_get_mb_cur_max",
     "btowc",
@@ -24051,8 +24053,8 @@ def require_stdio_integer_scan_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 30,
-        "libc.text-math-locale-stdio must retain exactly thirty private verified artifacts",
+        len(artifacts) == 31,
+        "libc.text-math-locale-stdio must retain exactly thirty-one private verified artifacts",
     )
     matching = [
         entry for entry in artifacts if entry.get("id") == "static-c-stdio-integer-scan"
@@ -24334,8 +24336,8 @@ def require_stdio_octal_hex_scan_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 30,
-        "libc.text-math-locale-stdio must retain exactly thirty private verified artifacts",
+        len(artifacts) == 31,
+        "libc.text-math-locale-stdio must retain exactly thirty-one private verified artifacts",
     )
     matching = [
         entry
@@ -24860,8 +24862,8 @@ def require_stdio_errno_output_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 30,
-        "libc.text-math-locale-stdio must retain exactly thirty private verified artifacts",
+        len(artifacts) == 31,
+        "libc.text-math-locale-stdio must retain exactly thirty-one private verified artifacts",
     )
     matching = [
         entry for entry in artifacts if entry.get("id") == "static-c-stdio-errno-output"
@@ -25381,8 +25383,8 @@ def require_stdio_permanent_byte_io_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 30,
-        "libc.text-math-locale-stdio must retain exactly thirty private verified artifacts",
+        len(artifacts) == 31,
+        "libc.text-math-locale-stdio must retain exactly thirty-one private verified artifacts",
     )
     matching = [
         entry
@@ -25708,8 +25710,8 @@ def require_stdio_permanent_status_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 30,
-        "libc.text-math-locale-stdio must retain exactly thirty private verified artifacts",
+        len(artifacts) == 31,
+        "libc.text-math-locale-stdio must retain exactly thirty-one private verified artifacts",
     )
     matching = [
         entry
@@ -29010,6 +29012,222 @@ def require_math_fmod_artifact(family: Mapping[str, Any]) -> None:
         require(snippet in dispatcher, f"x86 dispatcher omits {snippet}")
 
 
+def require_math_cbrt_artifact(family: Mapping[str, Any]) -> None:
+    """Keep the selected binary32/binary64 cube-root leaf below math parity."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.text-math-locale-stdio].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [entry for entry in artifacts if entry.get("id") == "static-c-math-cbrt"]
+    require(
+        len(matching) == 1,
+        "libc.text-math-locale-stdio must contain exactly one static-c-math-cbrt artifact",
+    )
+    artifact = matching[0]
+    require(
+        "capabilities" not in artifact,
+        "static-c-math-cbrt must remain a non-capability artifact",
+    )
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for symbol in MATH_CBRT_SYMBOLS:
+        require(
+            f"`{symbol}`" in description,
+            f"static-c-math-cbrt description omits {symbol}",
+        )
+    for phrase in (
+        "binary32/binary64 cube-root artifact",
+        "GCC 15.2.0 assembly translation",
+        "binary64 rough estimate",
+        "polynomial/Newton operation order",
+        "MXCSR-directed `cvtsd2ss`",
+        "requested and observed rounding directions",
+        "compiler-builtins",
+        "`cbrtl`",
+        "`fma`/`fmaf`",
+        "fmod/remainder/modf",
+        "fenv rounding/truncation",
+        "special and complex functions",
+        "binary80/x87 math",
+        "family completion",
+        "promotion",
+        "public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"static-c-math-cbrt description omits {phrase}",
+        )
+
+    owners = nonempty_strings(
+        artifact["source_owners"], "static-c-math-cbrt.source_owners"
+    )
+    for owner in (
+        "compat/upstreams.toml",
+        "docker/Dockerfile.x86_64",
+        "libc/src/lib.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/fenv.rs",
+        "libc/src/c_abi/x86_64/math_cbrt.rs",
+        "libc/src/c_abi/x86_64/math_cbrt_musl_x86_64.S",
+        "compat/x86_64/generate_libc_math_cbrt.py",
+        "include/fenv.h",
+        "include/float.h",
+        "include/math.h",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/math_cbrt_header_abi_probe.cpp",
+        "compat/x86_64/libc_math_cbrt_probe.c",
+        "compat/x86_64/libc_math_cbrt_start.S",
+        "compat/x86_64/run_libc_math_cbrt.sh",
+        "compat/x86_64/aarch64_parity_inventory.py",
+        "compat/x86_64/aarch64_parity_inventory.json",
+        "compat/x86_64/tests/test_aarch64_parity_inventory.py",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/README.md",
+        "STATUS.md",
+        "x86-64.md",
+        "scripts/check_structure.py",
+        "scripts/dev-x86_64.sh",
+    ):
+        require(owner in owners, f"static-c-math-cbrt omits {owner}")
+
+    prerequisites = " ".join(
+        nonempty_strings(
+            artifact["x86_abi_prerequisites"],
+            "static-c-math-cbrt.x86_abi_prerequisites",
+        )
+    )
+    for phrase in (
+        "src/math/cbrt.c",
+        "cbrtf.c",
+        "normalized 1.2.6 source-tree digest",
+        "GCC 15.2.0",
+        "Sun notice",
+        "-frounding-math",
+        "FLT_EVAL_METHOD=0",
+        "xmm0",
+        "cvtsd2ss",
+        "divsd/mulsd",
+        "`cbrtl`",
+        "existing selected static fegetenv",
+        "without selecting fenv API",
+    ):
+        require(
+            phrase in prerequisites,
+            f"static-c-math-cbrt prerequisites omit {phrase}",
+        )
+    header_prerequisites = " ".join(
+        nonempty_strings(
+            artifact["x86_header_prerequisites"],
+            "static-c-math-cbrt.x86_header_prerequisites",
+        )
+    )
+    for phrase in ("parenthesized", "C++17", "-mfpmath=387", "unmangled C"):
+        require(
+            phrase in header_prerequisites,
+            f"static-c-math-cbrt header prerequisites omit {phrase}",
+        )
+
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-math-cbrt"},
+        "static-c-math-cbrt must use the closed libc-math-cbrt command",
+    )
+    scope = evidence[0]["scope"]
+    assert isinstance(scope, str)
+    for phrase in (
+        "168 exact 32-byte records",
+        "requested/observed MXCSR direction",
+        "divsd/mulsd/cvtsd2ss",
+        "compiler-builtins",
+        "public x86 support",
+    ):
+        require(phrase in scope, f"static-c-math-cbrt evidence omits {phrase}")
+
+    static_root = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+    ).read_text(encoding="utf-8")
+    require(
+        '#[path = "math_cbrt.rs"]\nmod math_cbrt;' in static_root,
+        "x86 static C ABI must compose the math_cbrt leaf",
+    )
+    leaf = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "math_cbrt.rs"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "Selected static Linux/x86-64 `cbrt`/`cbrtf` C ABI leaf",
+        "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+        "d585fd3b613c66151fc3249e8ed44f77020cb5e6c1e635a616d3f9f82460512a",
+        "-frounding-math",
+        "MXCSR-directed binary64-to-binary32 conversion",
+        'include_str!("math_cbrt_musl_x86_64.S")',
+        "public x86 support",
+    ):
+        require(snippet in leaf, f"math_cbrt leaf omits {snippet}")
+
+    generator = (
+        ROOT / "compat" / "x86_64" / "generate_libc_math_cbrt.py"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "2ebc86943f5cdac77729695b304a08f6308e7a218f9d484cec5675006b207d88",
+        '"src/math/cbrt.c"',
+        '"src/math/cbrtf.c"',
+        '"15.2.0"',
+        '"-frounding-math"',
+        "Sun Microsystems",
+    ):
+        require(snippet in generator, f"math-cbrt generator omits {snippet}")
+    assembly = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "math_cbrt_musl_x86_64.S"
+    ).read_text(encoding="utf-8")
+    for notice in ("Sun Microsystems", "musl's MIT license"):
+        require(notice in assembly, f"generated math-cbrt assembly omits {notice}")
+    for symbol in MATH_CBRT_SYMBOLS:
+        require(
+            f"\t.globl\t{symbol}\n" in assembly,
+            f"generated math-cbrt assembly omits {symbol}",
+        )
+    require(
+        "cvtsd2ss" in assembly,
+        "generated math-cbrt assembly omits cbrtf MXCSR conversion",
+    )
+
+    exports = static_c_abi_export_names(
+        ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+    )
+    require(exports == sorted(exports), "static C ABI export contract must remain ASCII-sorted")
+    for symbol in MATH_CBRT_SYMBOLS:
+        require(symbol in exports, f"static C ABI export contract omits {symbol}")
+
+    runner = (ROOT / "compat" / "x86_64" / "run_libc_math_cbrt.sh").read_text(
+        encoding="utf-8"
+    )
+    for snippet in (
+        "-nostdlib -static",
+        "--no-undefined",
+        "--gc-sections",
+        "math_cbrt_header_abi_probe.cpp",
+        "strong crabc-owned",
+        "weak compiler-builtins",
+        "candidate accidentally retains unselected",
+        "candidate retains TLS",
+        "divsd mulsd cvtsd2ss",
+        "cbrtl fmod",
+    ):
+        require(snippet in runner, f"libc-math-cbrt runner omits {snippet}")
+    dispatcher = (ROOT / "scripts" / "dev-x86_64.sh").read_text(encoding="utf-8")
+    for snippet in (
+        "libc-math-cbrt)",
+        "run_libc_math_cbrt_probe()",
+        "/workspace/compat/x86_64/run_libc_math_cbrt.sh",
+    ):
+        require(snippet in dispatcher, f"x86 dispatcher omits {snippet}")
+
+
 def require_named_locale_multibyte_artifact(family: Mapping[str, Any]) -> None:
     """Keep the named-locale/text archive slice below locale-family completion.
 
@@ -29743,8 +29961,8 @@ def require_locale_wide_iconv_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 30,
-        "libc.text-math-locale-stdio must retain exactly thirty private verified artifacts",
+        len(artifacts) == 31,
+        "libc.text-math-locale-stdio must retain exactly thirty-one private verified artifacts",
     )
     matching = [
         entry for entry in artifacts if entry.get("id") == "static-c-locale-wide-iconv"
@@ -30569,8 +30787,8 @@ def require_locale_error_strings_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 30,
-        "libc.text-math-locale-stdio must retain exactly thirty private verified artifacts",
+        len(artifacts) == 31,
+        "libc.text-math-locale-stdio must retain exactly thirty-one private verified artifacts",
     )
     matching = [
         entry for entry in artifacts if entry.get("id") == "static-c-locale-error-strings"
@@ -32262,6 +32480,7 @@ def validate_ledger(
     require_math_bit_sign_artifact(by_id["libc.text-math-locale-stdio"])
     require_math_trunc_artifact(by_id["libc.text-math-locale-stdio"])
     require_math_fmod_artifact(by_id["libc.text-math-locale-stdio"])
+    require_math_cbrt_artifact(by_id["libc.text-math-locale-stdio"])
     require_math_x87_extended_artifact(by_id["libc.text-math-locale-stdio"])
     require_math_special_slice(by_id["libc.text-math-locale-stdio"])
     require_math_complex_complete_slice(by_id["libc.text-math-locale-stdio"])
