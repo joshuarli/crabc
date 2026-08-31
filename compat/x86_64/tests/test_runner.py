@@ -1374,7 +1374,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "libc-sched-getcpu|libc-sched-yield",
             "sched-getscheduler-header-abi",
             "ctermid-header-abi|gethostid-header-abi|getpagesize-header-abi|gettid-header-abi|isatty-header-abi|tcgetpgrp-header-abi|tcsetpgrp-header-abi|getpass-header-abi|libc-ctermid|libc-gethostid|libc-getpagesize|libc-gettid|libc-isatty|libc-tcgetpgrp|libc-tcsetpgrp|libc-getpass|mkfifo-header-abi|mkfifoat-header-abi|libc-mkfifo|libc-mkfifoat|mktemp-header-abi|libc-mktemp",
-            "readlinkat-header-abi|libc-readlinkat|linkat-header-abi|libc-linkat|lchown-header-abi|libc-lchown|hasmntopt-header-abi|libc-hasmntopt",
+            "readlinkat-header-abi|libc-readlinkat|linkat-header-abi|libc-linkat|lchown-header-abi|libc-lchown|hasmntopt-header-abi|libc-hasmntopt|sync-header-abi|libc-sync",
             "stdio-permanent-line-io-header-abi|stdio-octal-hex-scan-header-abi",
             "math-complex-complete-header-abi|libc-math-complex-complete",
             "stdio-permanent-byte-io-header-abi",
@@ -1550,6 +1550,8 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn("libc-lchown", source)
         self.assertIn("hasmntopt-header-abi", source)
         self.assertIn("libc-hasmntopt", source)
+        self.assertIn("sync-header-abi", source)
+        self.assertIn("libc-sync", source)
         self.assertIn("libc-readiness-waits", source)
         self.assertIn("libc-socket-transport", source)
         self.assertIn("libc-system-observation", source)
@@ -21285,6 +21287,137 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         )
         self.assertIn(
             '    libc-hasmntopt)\n        [ "$#" -eq 0 ] || fail "libc-hasmntopt takes no arguments"',
+            runner,
+        )
+
+    def test_libc_static_c_abi_sync_artifact_stays_bounded(self) -> None:
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        implementation = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "sync.rs"
+        ).read_text(encoding="utf-8")
+        header_c_probe = (
+            ROOT / "compat" / "x86_64" / "sync_header_abi_probe.c"
+        ).read_text(encoding="utf-8")
+        header_cxx_probe = (
+            ROOT / "compat" / "x86_64" / "sync_header_abi_probe.cpp"
+        ).read_text(encoding="utf-8")
+        header_runner = (
+            ROOT / "compat" / "x86_64" / "run_sync_header_abi.sh"
+        ).read_text(encoding="utf-8")
+        probe = (ROOT / "compat" / "x86_64" / "libc_sync_probe.c").read_text(
+            encoding="utf-8"
+        )
+        start = (ROOT / "compat" / "x86_64" / "libc_sync_start.S").read_text(
+            encoding="utf-8"
+        )
+        artifact_runner = (
+            ROOT / "compat" / "x86_64" / "run_libc_sync.sh"
+        ).read_text(encoding="utf-8")
+        static_export_names = {
+            line
+            for line in (
+                ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+            ).read_text(encoding="utf-8").splitlines()
+            if line and not line.startswith("#")
+        }
+        parity_ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        runner = RUNNER.read_text(encoding="utf-8")
+
+        self.assertIn('#[path = "sync.rs"]', static_root)
+        for required in (
+            "Selected static Linux/x86-64 `sync` C ABI leaf",
+            "musl 1.2.6",
+            "src/unistd/sync.c::sync",
+            "__syscall(SYS_sync)",
+            "raw_syscall::SYS_SYNC",
+            "raw_syscall::syscall0",
+            "pub extern \"C\" fn sync",
+            "void public C ABI",
+        ):
+            self.assertIn(required, implementation)
+        for forbidden in (
+            "fn syncfs(",
+            "fn fsync(",
+            "fn fdatasync(",
+            "fn sync_file_range(",
+            "c_status(",
+            "errno::",
+            "static mut",
+            "alloc::",
+            "Vec<",
+            "__tls_get_addr",
+        ):
+            self.assertNotIn(forbidden, implementation)
+
+        for header_probe in (header_c_probe, header_cxx_probe):
+            for required in ("unistd.h", "sync_signature", "CRABC_EXPECT_SYNC"):
+                self.assertIn(required, header_probe)
+        self.assertIn("__builtin_types_compatible_p", header_c_probe)
+        self.assertIn("__is_same", header_cxx_probe)
+        for required in (
+            "EXPECTED_PROFILE_COUNT=8",
+            "EXPECTED_VISIBLE_PROFILE_COUNT=5",
+            "EXPECTED_HIDDEN_PROFILE_COUNT=3",
+            "c-default c11-gnu cxx17-gnu",
+            "CRABC_REQUIRE_SYNC_HIDDEN",
+            "-nostdinc",
+            "-nostdinc++",
+            "run_musl_oracle.sh",
+            "unmangled",
+        ):
+            self.assertIn(required, header_runner)
+
+        for required in (
+            "#include <unistd.h>",
+            "sync_signature",
+            "SYS_sync == 162",
+            "through_pointer",
+            "raw0(SYS_sync)",
+            "CRABC_SYNC_FREESTANDING",
+        ):
+            self.assertIn(required, probe)
+        for required in ("crabc_x86_64_sync_probe", "mov $60, %eax", "syscall"):
+            self.assertIn(required, start)
+        self.assertNotIn("static_tls", start)
+
+        for required in (
+            "static_c_abi_exports.txt",
+            "run_sync_header_abi.sh",
+            "run_x86_sync_reference.sh",
+            "-nostdlib -static",
+            "-Wl,-e,_start",
+            "assert_selected_c_abi_surface",
+            "extract_selected_member",
+            "sync must have exactly one selected archive member",
+            "candidate unexpectedly selects TLS",
+            "sync implementation calls an unselected runtime boundary",
+            "fsync fdatasync syncfs sync_file_range",
+            "unowned runtime dependency",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn("--whole-archive", artifact_runner)
+
+        self.assertIn("sync", static_export_names)
+        self.assertFalse(static_export_names & {"syncfs", "sync_file_range"})
+        self.assertIn('id = "static-c-sync"', parity_ledger)
+        self.assertIn('command = "./scripts/dev-x86_64.sh libc-sync"', parity_ledger)
+        self.assertIn("run_sync_header_abi()", runner)
+        self.assertIn(
+            "/workspace/compat/x86_64/run_sync_header_abi.sh",
+            runner,
+        )
+        self.assertIn("run_libc_sync_probe()", runner)
+        self.assertIn("/workspace/compat/x86_64/run_libc_sync.sh", runner)
+        self.assertIn(
+            '    sync-header-abi)\n        [ "$#" -eq 0 ] || fail "sync-header-abi takes no arguments"',
+            runner,
+        )
+        self.assertIn(
+            '    libc-sync)\n        [ "$#" -eq 0 ] || fail "libc-sync takes no arguments"',
             runner,
         )
 

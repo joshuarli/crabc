@@ -50,7 +50,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 41)
-        self.assertEqual(report["verified_artifact_count"], 205)
+        self.assertEqual(report["verified_artifact_count"], 206)
         self.assertEqual(report["header_layout_probe_count"], 47)
         self.assertEqual(report["public_header_inventory_count"], 183)
         self.assertEqual(report["header_foundation_header_count"], 191)
@@ -17475,6 +17475,110 @@ class X86ParityLedgerTests(unittest.TestCase):
         )
         prerequisites[index] = prerequisites[index].replace("p[l]=='='", "p[l]=='!'")
         with self.assertRaisesRegex(ledger.LedgerError, "exact pinned-musl scan mapping"):
+            ledger.validate_ledger(data)
+
+    def test_sync_artifact_keeps_its_void_direct_request_boundary(self) -> None:
+        data = self.data()
+        family = self.family(data, "libc.posix-runtime")
+        self.assertEqual(family["status"], "planned")
+        artifacts = family["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-sync"
+        )
+        self.assertNotIn("capabilities", artifact)
+        for owner in (
+            "libc/src/c_abi/x86_64/static_c_abi.rs",
+            "libc/src/c_abi/x86_64/syscall.rs",
+            "libc/src/c_abi/x86_64/sync.rs",
+            "include/unistd.h",
+            "compat/x86_64/sync_header_abi_probe.c",
+            "compat/x86_64/sync_header_abi_probe.cpp",
+            "compat/x86_64/run_sync_header_abi.sh",
+            "compat/x86_64/libc_sync_probe.c",
+            "compat/x86_64/libc_sync_start.S",
+            "compat/x86_64/run_libc_sync.sh",
+            "compat/x86_64/aarch64_parity_inventory.json",
+            "compat/x86_64/validate_parity_ledger.py",
+            "scripts/dev-x86_64.sh",
+        ):
+            self.assertIn(owner, artifact["source_owners"])
+        for phrase in (
+            "selected-static-archive `sync`",
+            "still-planned `libc.posix-runtime`",
+            "pinned musl 1.2.6",
+            "one-member `-nostdlib -static`",
+            "src/unistd/sync.c::sync",
+            "__syscall(SYS_sync)",
+            "sync=162",
+            "direct/function-pointer fixture",
+            "dirty regular-file witness",
+            "no errno, TLS",
+            "`syncfs`",
+            "`fsync`",
+            "`fdatasync`",
+            "`sync_file_range`",
+            "filesystem policy",
+            "writeback timing",
+            "power-loss durability",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, artifact["description"])
+        self.assertEqual(
+            {entry["command"] for entry in artifact["native_evidence"]},
+            {"./scripts/dev-x86_64.sh libc-sync"},
+        )
+
+        prerequisites = artifact["x86_abi_prerequisites"]
+        assert isinstance(prerequisites, list)
+        abi = next(item for item in prerequisites if "void sync(void)" in item)
+        assert isinstance(abi, str)
+        for phrase in ("sync=162", "rax", "rcx/r11", "no pointer, descriptor, errno, TLS"):
+            self.assertIn(phrase, abi)
+        source_mapping = next(
+            item for item in prerequisites if "src/unistd/sync.c::sync" in item
+        )
+        assert isinstance(source_mapping, str)
+        for phrase in (
+            "void sync(void) { __syscall(SYS_sync); }",
+            "syscall_cp/cancellation",
+            "errno bridge",
+        ):
+            self.assertIn(phrase, source_mapping)
+        matrix = next(item for item in prerequisites if "five visible" in item)
+        assert isinstance(matrix, str)
+        for phrase in ("three hidden", "strict C11", "POSIX.1-2008", "strict C++"):
+            self.assertIn(phrase, matrix)
+
+        headers = artifact["x86_header_prerequisites"]
+        assert isinstance(headers, list) and isinstance(headers[0], str)
+        for phrase in (
+            "eight-profile",
+            "unistd.h",
+            "void sync(void)",
+            "five visible",
+            "three hidden",
+            "unmangled C++",
+        ):
+            self.assertIn(phrase, headers[0])
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-sync"
+        )
+        prerequisites = artifact["x86_abi_prerequisites"]
+        assert isinstance(prerequisites, list)
+        index = next(
+            index for index, item in enumerate(prerequisites) if "five visible" in item
+        )
+        prerequisites[index] = prerequisites[index].replace("five visible", "six visible")
+        with self.assertRaisesRegex(ledger.LedgerError, "feature-visibility matrix"):
             ledger.validate_ledger(data)
 
     def test_filesystem_access_artifact_keeps_its_closed_mapping_contract(self) -> None:

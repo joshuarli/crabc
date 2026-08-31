@@ -16565,6 +16565,302 @@ def require_hasmntopt_artifact(family: Mapping[str, Any]) -> None:
         require(snippet in runner, f"hasmntopt runner omits {snippet}")
 
 
+def require_static_sync_artifact(family: Mapping[str, Any]) -> None:
+    """Keep musl's direct void global-writeback request self-contained."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.posix-runtime].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [entry for entry in artifacts if entry.get("id") == "static-c-sync"]
+    require(
+        len(matching) == 1,
+        "libc.posix-runtime must contain exactly one static-c-sync artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-sync must not promote libc.posix-runtime",
+    )
+    artifact = matching[0]
+    require(
+        "capabilities" not in artifact,
+        "static-c-sync must remain a private artifact rather than a capability",
+    )
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for phrase in (
+        "selected-static-archive `sync`",
+        "still-planned `libc.posix-runtime`",
+        "pinned musl 1.2.6",
+        "one-member `-nostdlib -static`",
+        "src/unistd/sync.c::sync",
+        "__syscall(SYS_sync)",
+        "sync=162",
+        "direct/function-pointer fixture",
+        "dirty regular-file witness",
+        "no errno, TLS",
+        "`syncfs`",
+        "`fsync`",
+        "`fdatasync`",
+        "`sync_file_range`",
+        "filesystem policy",
+        "writeback timing",
+        "power-loss durability",
+        "public x86 support",
+    ):
+        require(phrase in description, f"static-c-sync description omits {phrase}")
+
+    owners = set(nonempty_strings(artifact["source_owners"], "static-c-sync.source_owners"))
+    for owner in (
+        "COMPATIBILITY-PROFILE.md",
+        "compat/upstreams.toml",
+        "libc/Cargo.toml",
+        "libc/src/lib.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/syscall.rs",
+        "libc/src/c_abi/x86_64/sync.rs",
+        "include/features.h",
+        "include/stdint.h",
+        "include/unistd.h",
+        "include/sys/syscall.h",
+        "include/bits/syscall.h",
+        "compat/abi/musl-1.2.6/aarch64/headers.tsv",
+        "compat/abi/musl-1.2.6/aarch64/libc.a.static.tsv",
+        "compat/x86_64/sync_header_abi_probe.c",
+        "compat/x86_64/sync_header_abi_probe.cpp",
+        "compat/x86_64/run_sync_header_abi.sh",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/x86_sync_reference_probe.c",
+        "compat/x86_64/run_x86_sync_reference.sh",
+        "compat/x86_64/libc_sync_probe.c",
+        "compat/x86_64/libc_sync_start.S",
+        "compat/x86_64/run_libc_sync.sh",
+        "compat/x86_64/aarch64_parity_inventory.py",
+        "compat/x86_64/aarch64_parity_inventory.json",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/README.md",
+        "STATUS.md",
+        "x86-64.md",
+        "scripts/dev-x86_64.sh",
+        "scripts/check_structure.py",
+    ):
+        require(owner in owners, f"static-c-sync source owners omit {owner}")
+
+    prerequisites = nonempty_strings(
+        artifact["x86_abi_prerequisites"], "static-c-sync.x86_abi_prerequisites"
+    )
+    require(
+        any(
+            "void sync(void)" in item
+            and "sync=162" in item
+            and "rax" in item
+            and "rcx/r11" in item
+            and "no pointer, descriptor, errno, TLS" in item
+            for item in prerequisites
+        ),
+        "static-c-sync must record its zero-argument void Linux ABI",
+    )
+    require(
+        any(
+            "src/unistd/sync.c::sync" in item
+            and "void sync(void) { __syscall(SYS_sync); }" in item
+            and "syscall_cp/cancellation" in item
+            for item in prerequisites
+        ),
+        "static-c-sync must retain its exact pinned-musl source mapping",
+    )
+    require(
+        any(
+            "five visible" in item
+            and "three hidden" in item
+            and "strict C11" in item
+            and "POSIX.1-2008" in item
+            and "strict C++" in item
+            for item in prerequisites
+        ),
+        "static-c-sync must retain its feature-visibility matrix",
+    )
+    require(
+        any(
+            "dirty regular-file witness" in item
+            and "direct and function-pointer" in item
+            and "raw sync=162 unit-success" in item
+            and "writeback timing" in item
+            for item in prerequisites
+        ),
+        "static-c-sync must retain its bounded native fixture",
+    )
+    require(
+        any(
+            "only the archive member defining sync" in item
+            and "no PT_TLS" in item
+            and "errno/h_errno" in item
+            and "call instruction" in item
+            for item in prerequisites
+        ),
+        "static-c-sync must retain its one-member no-runtime closure",
+    )
+
+    headers = nonempty_strings(
+        artifact["x86_header_prerequisites"], "static-c-sync.x86_header_prerequisites"
+    )
+    require(
+        any(
+            "eight-profile" in item
+            and "unistd.h" in item
+            and "void sync(void)" in item
+            and "five visible" in item
+            and "three hidden" in item
+            and "unmangled C++" in item
+            for item in headers
+        ),
+        "static-c-sync must retain its exact unistd feature matrix",
+    )
+
+    static_exports = set(
+        static_c_abi_export_names(ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt")
+    )
+    require("sync" in static_exports, "static-c-sync must export sync")
+    for forbidden in ("syncfs", "sync_file_range"):
+        require(forbidden not in static_exports, f"static-c-sync must not add {forbidden}")
+    static_root = (ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs").read_text(
+        encoding="utf-8"
+    )
+    require(
+        '#[path = "sync.rs"]\nmod sync;' in static_root,
+        "x86 static C ABI must compose the sync leaf",
+    )
+    implementation = (ROOT / "libc" / "src" / "c_abi" / "x86_64" / "sync.rs").read_text(
+        encoding="utf-8"
+    )
+    for snippet in (
+        "Selected static Linux/x86-64 `sync` C ABI leaf",
+        "src/unistd/sync.c::sync",
+        "__syscall(SYS_sync)",
+        "raw_syscall::SYS_SYNC",
+        "raw_syscall::syscall0",
+        "pub extern \"C\" fn sync",
+        "void public C ABI",
+    ):
+        require(snippet in implementation, f"sync leaf omits {snippet}")
+    implementation_exports = set(
+        re.findall(
+            r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(', implementation
+        )
+    )
+    require(
+        implementation_exports == {"sync"},
+        "sync implementation must expose only sync as a Rust C entry",
+    )
+    for forbidden in (
+        "fn syncfs(",
+        "fn fsync(",
+        "fn fdatasync(",
+        "fn sync_file_range(",
+        "c_status(",
+        "errno::",
+        "static mut",
+        "alloc::",
+        "Vec<",
+        "__tls_get_addr",
+    ):
+        require(forbidden not in implementation, f"sync leaf unexpectedly contains {forbidden}")
+
+    oracle = artifact["oracle"]
+    assert isinstance(oracle, list)
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "c-posix"
+            and isinstance(entry.get("role"), str)
+            and "include/unistd.h" in entry["role"]
+            and "src/unistd/sync.c::sync" in entry["role"]
+            and "__syscall(SYS_sync);" in entry["role"]
+            for entry in oracle
+        ),
+        "static-c-sync must retain its pinned-musl declaration and source mapping",
+    )
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "kernel-abi"
+            and isinstance(entry.get("role"), str)
+            and "sync=162" in entry["role"]
+            and "durability" in entry["role"]
+            for entry in oracle
+        ),
+        "static-c-sync must retain its Linux 5.10 ABI oracle",
+    )
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "elf-abi"
+            and isinstance(entry.get("role"), str)
+            and "No-argument void" in entry["role"]
+            and "no-TLS" in entry["role"]
+            for entry in oracle
+        ),
+        "static-c-sync must retain its x86 static ABI oracle",
+    )
+
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence} == {"./scripts/dev-x86_64.sh libc-sync"},
+        "static-c-sync must use the dedicated native command",
+    )
+    scope = evidence[0].get("scope")
+    require(
+        isinstance(scope, str)
+        and all(
+            phrase in scope
+            for phrase in (
+                "one-member",
+                "`-nostdlib -static`",
+                "five visible and three hidden",
+                "dirty-regular-file",
+                "PT_TLS/dynamic TLS",
+                "sync=162",
+                "direct/function-pointer",
+                "syncfs/fsync/fdatasync/sync_file_range",
+                "public x86 support",
+            )
+        ),
+        "static-c-sync evidence must retain its exact one-member regression",
+    )
+    header_runner = (ROOT / "compat" / "x86_64" / "run_sync_header_abi.sh").read_text(
+        encoding="utf-8"
+    )
+    for snippet in (
+        "MUSL_ROOT=/opt/musl-1.2.6",
+        "EXPECTED_PROFILE_COUNT=8",
+        "EXPECTED_VISIBLE_PROFILE_COUNT=5",
+        "EXPECTED_HIDDEN_PROFILE_COUNT=3",
+        "CRABC_EXPECT_SYNC",
+        "CRABC_REQUIRE_SYNC_HIDDEN",
+        "unmangled",
+    ):
+        require(snippet in header_runner, f"sync header runner omits {snippet}")
+    runner = (ROOT / "compat" / "x86_64" / "run_libc_sync.sh").read_text(encoding="utf-8")
+    for snippet in (
+        "run_musl_oracle.sh",
+        "run_sync_header_abi.sh",
+        "run_x86_sync_reference.sh",
+        "-nostdlib -static",
+        "--no-undefined",
+        "assert_selected_c_abi_surface",
+        "extract_selected_member",
+        "sync must have exactly one selected archive member",
+        "candidate unexpectedly selects TLS",
+        "sync lacks Linux x86-64 sync=162",
+        "sync implementation calls an unselected runtime boundary",
+        "fsync fdatasync syncfs sync_file_range",
+    ):
+        require(snippet in runner, f"sync runner omits {snippet}")
+
+
 def require_static_sched_yield_artifact(family: Mapping[str, Any]) -> None:
     """Keep musl's status-returning POSIX scheduler-yield closure bounded."""
 
@@ -42944,6 +43240,7 @@ def validate_ledger(
     require_linkat_artifact(by_id["libc.posix-runtime"])
     require_lchown_artifact(by_id["libc.posix-runtime"])
     require_hasmntopt_artifact(by_id["libc.posix-runtime"])
+    require_static_sync_artifact(by_id["libc.posix-runtime"])
     require_callback_algorithms_artifact(by_id["libc.posix-runtime"])
     require_clock_gettime_artifact(by_id["libc.posix-runtime"])
     require_time_observation_artifact(by_id["libc.posix-runtime"])

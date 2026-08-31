@@ -99,8 +99,8 @@
 //! caller-buffered descriptor-relative readlinkat leaf, one distinct
 //! caller-supplied-directory hard-link linkat leaf, and one bounded
 //! no-follow pathname-ownership lchown leaf, one caller-owned mntent
-//! option-string lookup leaf, and one bounded directory-stream/raw-directory
-//! artifact.
+//! option-string lookup leaf, one direct system-wide filesystem writeback
+//! request, and one bounded directory-stream/raw-directory artifact.
 //! The fixed-graph dlfcn bridge is a separate public-C spelling over the
 //! loader-owned immutable RuntimeV1-prefix record. It owns only bounded
 //! per-thread diagnostics and borrowed C views of copied loader metadata; it
@@ -441,6 +441,8 @@ mod descriptor_advice;
 mod ioctl;
 #[path = "descriptor_io.rs"]
 mod descriptor_io;
+#[path = "sync.rs"]
+mod sync;
 #[path = "vector_io.rs"]
 mod vector_io;
 #[path = "process_resources.rs"]

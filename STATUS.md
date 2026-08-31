@@ -1683,6 +1683,22 @@ general string APIs, locale objects/environment/catalogs/general locale,
 pathname/CWD policy, a Rust facade, family completion, promotion, or public
 x86 support.
 
+`./scripts/dev-x86_64.sh sync-header-abi` is a separate eight-profile
+C11/C++17 project-header/pinned-musl `<unistd.h>` feature matrix for
+`void sync(void)`: default, GNU C/C++, X/Open 700, and BSD are the five visible
+profiles, while strict C11, POSIX.1-2008, and strict C++ are the three hidden
+profiles. Its paired private `./scripts/dev-x86_64.sh libc-sync` artifact maps
+only pinned musl 1.2.6 `src/unistd/sync.c::sync`, whose complete body issues
+`__syscall(SYS_sync)` and discards its raw result. One project-header C body
+first runs through musl and then through only the defining archive member under
+`-nostdlib -static`; it proves direct/function-pointer return and raw
+`sync=162` unit success, while the separate existing reference retains the
+dirty regular-file witness. The candidate rejects calls, TLS, errno, and
+unowned runtime closure. It does not select `syncfs`, `fsync`, `fdatasync`,
+`sync_file_range`, descriptor/path behavior, filesystem policy, writeback
+timing, storage-cache or power-loss durability, family completion, promotion,
+or public x86 support.
+
 `./scripts/dev-x86_64.sh libc-descriptor-lifecycle` is a separate private
 `static-c-descriptor-lifecycle` composition artifact inside that same planned
 family. It runs one project-header C body through pinned musl and then a

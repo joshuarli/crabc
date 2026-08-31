@@ -302,6 +302,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh linkat-header-abi
 ./scripts/dev-x86_64.sh lchown-header-abi
 ./scripts/dev-x86_64.sh hasmntopt-header-abi
+./scripts/dev-x86_64.sh sync-header-abi
 ./scripts/dev-x86_64.sh mm-abi-reference
 ./scripts/dev-x86_64.sh mlock-reference
 ./scripts/dev-x86_64.sh msync-reference
@@ -499,6 +500,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-linkat
 ./scripts/dev-x86_64.sh libc-lchown
 ./scripts/dev-x86_64.sh libc-hasmntopt
+./scripts/dev-x86_64.sh libc-sync
 ./scripts/dev-x86_64.sh libc-extended-attributes
 ./scripts/dev-x86_64.sh libc-descriptor-io
 ./scripts/dev-x86_64.sh libc-descriptor-lifecycle
@@ -1123,6 +1125,22 @@ FILE/stdio, allocation, or mntent stream/parser closure. It excludes
 lookup, mount databases, general string APIs, locale objects/environment/
 catalogs/general locale, pathname policy, a Rust facade, promotion, and public
 x86 support.
+
+`sync-header-abi` is a separate eight-profile C11/C++17 project-header/
+pinned-musl `<unistd.h>` matrix for `void sync(void)`. It confirms the exact
+X/Open/GNU/BSD feature boundary: five default/GNU C/C++/X/Open 700/BSD profiles
+expose an unmangled C++ declaration, while strict C11/POSIX.1-2008/strict C++
+are the three hidden profiles. Its paired private `libc-sync` static artifact
+maps only musl 1.2.6 `src/unistd/sync.c::sync`, a direct
+`__syscall(SYS_sync)` whose raw result is intentionally discarded. One
+project-header C fixture first runs with musl and then with just the defining
+archive member under true `-nostdlib -static`, proving direct/function-pointer
+return and raw Linux x86-64 `sync=162` unit success; the separate raw reference
+retains the dirty regular-file witness. It rejects calls, PT_TLS/dynamic TLS,
+errno, and unowned runtime closure. It excludes `syncfs`, `fsync`, `fdatasync`,
+`sync_file_range`, descriptor/path behavior, filesystem policy, writeback
+timing, storage-cache or power-loss durability, family completion, promotion,
+and public x86 support.
 
 `libc-extended-attributes` is the separate private static C runtime artifact
 paired with that header gate. Its project-header fixture first runs through
@@ -5780,6 +5798,7 @@ Apart from the narrowly named `libc-stat-compat`, `libc-credentials`,
 `libc-linkat`,
 `libc-lchown`,
 `libc-hasmntopt`,
+`libc-sync`,
 `libc-descriptor-io`,
 `libc-descriptor-lifecycle`,
 `libc-descriptor-pipeline`,
