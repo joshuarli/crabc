@@ -120,14 +120,17 @@ until every pending B completion has finished; a terminally retained route is a
 permanent blocker. Fresh attached B workers, including one with an
 independently parked local session, may query an exact source-recorded usable
 extent through immutable PageMap facts or present an exact C address for
-generic pointer-first free. They cannot use a detached source as a B-side
-`realloc` input: the direct boundary first compares the PageMap source identity
-with the caller, returns unavailable on a mismatch, and leaves the original
-client and bytes live for the later pointer-first free. Only a current owner
-may enter its local source realloc engine. Neither operation exposes a ledger
-member, page, or allocator. The sole mapped-regular branch grants no B
-adoption, reclaim, allocation-time, or foreign-reallocation authority; it
-still cannot hand B A's page engine.
+generic pointer-first free. A TLS- or route-detached source can retain PageMap
+state `Abandoned` or `AbandonedMapped`. For either state, W01 establishes B's
+persistent target owner, allocates and copies B's replacement, then consumes
+the source client through generic pointer-first nonlocal free; it never enters
+or borrows A's local engine or route. A true
+`LiveAllocationPageState::Detached` source has no W03 producer, so the
+unpublished B replacement rolls back and the operation fails closed as
+`Retained`. Only a current owner may enter its local source realloc engine.
+Neither operation exposes a ledger member, page, or allocator. The sole
+mapped-regular branch grants no B adoption, reclaim, allocation-time, or
+source-engine authority; it still cannot hand B A's page engine.
 The aggregate branch may consume the existing final-member adoption only when sequential exact
 frees leave one source-recorded normal request whose A-side owner-exit
 force-collection has an immediately reusable local free block. Natural C ABI
@@ -187,23 +190,30 @@ in-flight A finishes its complete publication before that closure, while a
 later A cannot publish beside the discarded handoff. Native failure
 returns the C allocation failure result, and an unknown or wrong-owner native
 pointer fail-stops instead of crossing to the C allocator. This remains a
-bounded source route, not an iterable or general pointer registry: detached
-`realloc` never enters any source in-place, replacement, or route transition
-after A's Theap has torn down. Once pointer-first free terminally releases A
-and stores its proof in B TLS, B's subsequent local `realloc` remains current
-owner-only; an unavailable B-local operation leaves B's existing client intact
-until its exact free and normal finish. The selected C witness keeps a B-local
-client in its TSD value, whose destructor reallocates and releases that client
-before the following native all-free finish settles A's proof. On B's
+bounded source route, not an iterable or general pointer registry: a TLS- or
+route-detached source never enters A's in-place or local realloc engine after
+A's Theap has torn down. When its PageMap state is `Abandoned` or
+`AbandonedMapped`, W01 instead establishes B's persistent target owner and
+performs B's replacement/copy plus generic pointer-first nonlocal free without
+borrowing A's route. A true `LiveAllocationPageState::Detached` source has no
+W03 producer and fails closed as `Retained` after its unpublished replacement
+rolls back. Once pointer-first free terminally releases A and stores its proof
+in B TLS, B's subsequent local `realloc` remains current owner-only; an
+unavailable B-local operation leaves B's existing client intact until its exact
+free and normal finish. The selected C witness keeps a B-local client in its
+TSD value, whose destructor reallocates and releases that client before the
+following native all-free finish settles A's proof. On B's
 `pthread_exit`, the preceding cleanup handler also allocates and frees a new
 local client; the TSD destructor then continues the existing B-local client
 before it frees that client. The same proof repeats through normal return,
 where only the TSD destructor runs, and through deferred cancellation at a
 real cancellation point before the native all-free finish can settle A's
 proof. Usable-size is one PageMap-derived source extent for any
-exact live native client; foreign reallocation and
-cross-thread exit/abandoned-page routing remain unavailable; the ticket-zero
-source route is exact-live-client free-only. General single-page/adoption
+exact live native client; nonmatching `Abandoned` and `AbandonedMapped`
+sources have only the W01 replacement path, while true `Detached` fails closed
+as `Retained`; other cross-thread exit/abandoned-page routing remains
+unavailable, and the ticket-zero source route is exact-live-client free-only.
+General single-page/adoption
 exits, general concurrent owner-exit traversal or worker engines, and other
 general C pointer routing remain unavailable. A live registry entry is not a
 worker-admission lock: while A owns one, a second independently parked worker
@@ -1564,20 +1574,24 @@ x86 runtime, or AArch64 support is claimed.
 An attached B may establish one independent native local session before it
 sees A's exact C address. The direct pointer boundary captures that address's
 PageMap facts first: `native_usable_size` returns the captured extent without
-claiming a route, while `native_reallocate` rejects an A-owned source as
-unavailable and leaves its bytes live. Only generic pointer-first `native_free`
-may consume A's detached client. B's own `realloc` remains a separate
-current-owner operation and never borrows A's route or engine. On the terminal
-A free, `NativePostExitRouteCompletion` is retained in B TLS beside B's local
-session; the validated lane detaches B's still-live client into B's successor
-route before B completes its ordinary attachment finish. A fresh C then
-releases that successor; neither route's parked count or admission can release
-early. A prepared B exit and a B that already holds a completion remain
+claiming a route, while `native_reallocate` treats an A source with
+`Abandoned` or `AbandonedMapped` PageMap facts as W01 pointer-first
+replacement: B's persistent target owner allocates and copies its replacement,
+then generic pointer-first nonlocal free consumes A's source client. It never
+borrows A's route or engine. A true `LiveAllocationPageState::Detached` source
+has no W03 producer, so the unpublished B replacement rolls back and returns
+`Retained`. Generic pointer-first `native_free` may also consume A's detached
+client. B's own `realloc` remains a separate current-owner operation. On the
+terminal A free, `NativePostExitRouteCompletion` is retained in B TLS beside
+B's local session; the validated lane detaches B's still-live client into B's
+successor route before B completes its ordinary attachment finish. A fresh C
+then releases that successor; neither route's parked count or admission can
+release early. A prepared B exit and a B that already holds a completion remain
 rejected. The direct `native_post_exit_with_local_session` regression proves
-the PageMap-query/refusal/free boundary beside B-local replacement and, under
-its scalar audit, the `A + B -> B-successor -> none` admission sequence; the
-selected owner-exit C fixture proves the same refusal/free boundary without
-exposing a route address, ledger, page, or allocator capability. Its
+the PageMap-query/replacement/free boundary beside B-local replacement and,
+under its scalar audit, the `A + B -> B-successor -> none` admission sequence;
+the selected owner-exit C fixture proves the same replacement/free boundary
+without exposing a route address, ledger, page, or allocator capability. Its
 `native_mimalloc_post_exit_split_releaser` companion proves the same existing
 aggregate can cross B then C: B finishes after a nonterminal exact subset, C
 performs the terminal exact frees, and only C's normal finish returns A's
