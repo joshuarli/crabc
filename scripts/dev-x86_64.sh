@@ -319,6 +319,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-math-elementary-long-double  run the complete static x86 math.elementary-long-double capability
   libc-math-x87-extended  run the static x86 x87 long-double math/remainder block
   libc-math-special  run the complete static x86 math.special capability
+  libc-fdim  run the static x86 binary32/binary64 positive-difference slice
   libc-memory  run the source-only x86 C memcpy/memmove/memset probe
   libc-setjmp  run the source-only x86 C setjmp/signal-mask ABI probe
   libc-atomic  run the source-only x86 atomic-helper probe
@@ -2954,6 +2955,10 @@ run_libc_math_special_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_math_special.sh
 }
 
+run_libc_fdim_probe() {
+    run_in_container bash /workspace/compat/x86_64/run_libc_fdim.sh
+}
+
 run_libc_memory_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_memory.sh
 }
@@ -3030,6 +3035,7 @@ case "$command" in
     inet-address-header-abi) ;;
     ldso-target-root) ;;
     libc-fenv-rounding) ;;
+    libc-fdim) ;;
     machine-context-header-abi) ;;
     memory-sync-header-abi) ;;
     memory-locking-header-abi) ;;
@@ -4511,6 +4517,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "libc-math-special takes no arguments"
         ensure_image
         run_libc_math_special_probe
+        ;;
+    libc-fdim)
+        [ "$#" -eq 0 ] || fail "libc-fdim takes no arguments"
+        ensure_image
+        run_libc_fdim_probe
         ;;
     libc-memory)
         [ "$#" -eq 0 ] || fail "libc-memory takes no arguments"

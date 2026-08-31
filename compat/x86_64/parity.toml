@@ -5927,6 +5927,52 @@ x86_header_prerequisites = [
 native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-fenv-rounding", scope = "Pinned-musl project-header C reference plus one true dependency-free x86 crabc-libc archive and `-nostdlib -static --gc-sections` candidate. The gate proves the exact closed archive export contract; function-pointer rint/rintf/rintl and nearbyint/nearbyintf/nearbyintl calls across all four independently reset MXCSR/x87 rounding modes; exact binary32/binary64/binary80 integral and signed-zero results; FE_INEXACT raising versus suppression; preservation of preexisting FE_INEXACT plus FE_DIVBYZERO; generated addsd/subsd/addss/subss and x87 fldt/faddp/subtract-pop operations; and no interpreter/DT_NEEDED/unresolved symbol, retained TLS/dynamic-TLS resolver, ambient libm, or unowned runtime dependency. It rejects sqrt*, cproj*, exp10*/pow10*, fdim*, and other unselected math from the final candidate. It excludes category/family completion, promotion, full x86-64 parity, and public x86 support." }]
 oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source mapping and C/fenv behavior oracle for src/math/{rint,rintf,rintl,nearbyint,nearbyintf,nearbyintl}.c." }, { kind = "aarch64-contract", source = "libc/src/math_lrint.rs and libc/src/math_compat.rs", role = "The existing AArch64 semantic mapping for the same public C names, with binary128 long double and target instructions kept representation-distinct." }, { kind = "elf-abi", source = "System V AMD64 psABI", role = "xmm0 binary32/binary64 and stack-argument/st0-return x87 binary80 ABI plus the split MXCSR/x87 environment." }]
 
+[[family.verified_artifact]]
+id = "static-c-fdim"
+description = "Private native x86 selected-static positive-difference artifact inside still-planned `libc.text-math-locale-stdio`. One dependency-free `crabc-libc` archive resolves exactly binary64 `fdim` and binary32 `fdimf` into a freestanding project-header C fixture after the equivalent pinned-musl execution. The fixture proves ordinary positive differences, exact positive zero for x <= y including signed-zero and infinity inputs, left-to-right quiet/signaling-NaN payload return without `FE_INVALID`, all four MXCSR rounding modes with `FE_INEXACT` for a half-ULP difference, and overflow with `FE_OVERFLOW` plus `FE_INEXACT`. Strong target-owned definitions reject a weak compiler-builtins fallback. This artifact excludes `fdiml`, `exp10*`/`pow10*`, current/integer-result rounding, special functions, binary80/x87 math, errno policy, general libm, libc.so, CRT/TLS lifecycle, loader, sysroot, `math.elementary-fenv-sensitive` family completion, promotion, full x86-64 parity, and public x86 support."
+source_owners = [
+  "compat/upstreams.toml",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "libc/src/math_compat.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/fenv.rs",
+  "libc/src/c_abi/x86_64/fenv_rounding.rs",
+  "libc/src/c_abi/x86_64/fdim.rs",
+  "include/fenv.h",
+  "include/float.h",
+  "include/math.h",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/fdim_header_abi_probe.cpp",
+  "compat/x86_64/libc_fdim_probe.c",
+  "compat/x86_64/libc_fdim_start.S",
+  "compat/x86_64/run_libc_fdim.sh",
+  "compat/x86_64/run_libc_fenv_rounding.sh",
+  "compat/x86_64/aarch64_parity_inventory.py",
+  "compat/x86_64/aarch64_parity_inventory.json",
+  "compat/x86_64/tests/test_aarch64_parity_inventory.py",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "compat/x86_64/README.md",
+  "SCOPE.md",
+  "COMPATIBILITY-PROFILE.md",
+  "STATUS.md",
+  "x86-64.md",
+  "scripts/dev-x86_64.sh",
+  "scripts/check_structure.py",
+]
+x86_abi_prerequisites = [
+  "Pinned musl 1.2.6 src/math/fdim.c and src/math/fdimf.c define left-to-right NaN selection followed by x > y ? x-y : +0. musl's `isnan` macro uses raw IEEE bit inspection, so the target leaf observes each payload through an opaque integer `read_volatile` before its UCOMIS comparison; a signaling NaN therefore returns unchanged without a spurious invalid exception.",
+  "System V AMD64 with FLT_EVAL_METHOD=0 passes and returns binary64/binary32 through xmm0 (with the second argument in xmm1). After non-NaN classification, SSE `ucomisd`/`ucomiss` and `subsd`/`subss` consume the caller's MXCSR rounding and exception state. x87 binary80 `fdiml` is representation- and ABI-distinct and remains excluded.",
+  "AArch64 retains the same public binary32/binary64 source-level rule in libc/src/math_compat.rs, but its target implementation and binary128 long-double sibling are not imported into the x86 archive.",
+]
+x86_header_prerequisites = [
+  "The focused C fixture preprocesses project fenv.h, float.h, math.h, stdint.h, features.h, and bits/alltypes.h, then takes parenthesized `fdim`/`fdimf` function addresses so compiler builtins cannot replace the C ABI calls.",
+  "Dedicated C++17 objects compiled with the default SSE mode and `-mfpmath=387` pin the exact binary64/binary32 function-pointer signatures and unmangled C references from the project header against pinned musl.",
+]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-fdim", scope = "Pinned-musl/project-header C and C++ ABI execution plus one dependency-free `-nostdlib -static --no-undefined --gc-sections` candidate. Function pointers prove binary32/binary64 ordinary, zero, infinity, raw quiet/signaling-NaN, all-four-mode half-ULP, and overflow behavior; ELF proof requires strong global target-owned fdim/fdimf definitions, SSE comparisons/subtractions, exact archive surface, and rejects weak compiler-builtins fallback, fdiml, exp10*/pow10*, rint*/nearbyint*, unresolved symbols, dynamic linkage, TLS, ambient libm, and unowned runtime dependencies. It excludes category/family completion, promotion, full x86-64 parity, and public x86 support." }]
+oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source, IEEE NaN-selection, C/fenv behavior, and public ABI oracle for exactly src/math/fdim.c and src/math/fdimf.c." }, { kind = "aarch64-contract", source = "libc/src/math_compat.rs", role = "Existing AArch64 source-level fdim/fdimf semantic mapping; its target code and binary128 long-double sibling remain distinct." }, { kind = "elf-abi", source = "System V AMD64 psABI", role = "xmm0/xmm1 binary32/binary64 argument and xmm0 return ABI for the selected static C entries." }]
 [[family.verified_slice]]
 id = "numeric.parse-float-locale"
 description = "Private native x86 completion of the AArch64 `numeric.parse-float-locale` capability. The selected static archive owns all twenty-three ledger symbols: narrow `atof`/`strto*`, ignored-locale public and weak-internal `_l` wrappers, arbitrary-length wide floating and integer conversions, musl-compatible static-buffer `ecvt`/`fcvt`, caller-buffered `gcvt`, and in-place `getsubopt`. C/POSIX/C.UTF-8 share the fixed decimal grammar; no arbitrary locale map, locale-dependent radix, public FILE, general printf, allocator, libc.so, CRT, loader, or sysroot is selected. The family stays planned and the repository retains promotion_ready=false and public_support=false."

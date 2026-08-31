@@ -1075,6 +1075,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn("    libc-fenv-rounding) ;;", source)
         self.assertIn("    libc-math-x87-extended)", source)
         self.assertIn("    libc-math-special)", source)
+        self.assertIn("    libc-fdim) ;;", source)
         preflight = source.split('case "$command" in\n', 1)[1].split(
             '\nesac\n\nrequire_native_linux_x86_64_host\n\ncase "$command" in\n', 1
         )[0]
@@ -1090,6 +1091,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "inet-address-header-abi",
             "ldso-target-root",
             "libc-fenv-rounding",
+            "libc-fdim",
             "machine-context-header-abi",
             "memory-sync-header-abi",
             "memory-locking-header-abi",
@@ -16122,6 +16124,57 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             self.assertNotIn(forbidden, leaf)
         self.assertIn("libc-process-globals-getopt)", dispatcher)
         self.assertIn("run_libc_process_globals_getopt.sh", dispatcher)
+
+    def test_fdim_runner_keeps_the_binary32_binary64_static_boundary(self) -> None:
+        dispatcher = RUNNER.read_text(encoding="utf-8")
+        runner = (ROOT / "compat" / "x86_64" / "run_libc_fdim.sh").read_text(
+            encoding="utf-8"
+        )
+        probe = (ROOT / "compat" / "x86_64" / "libc_fdim_probe.c").read_text(
+            encoding="utf-8"
+        )
+        header = (ROOT / "compat" / "x86_64" / "fdim_header_abi_probe.cpp").read_text(
+            encoding="utf-8"
+        )
+        for required in (
+            "libc-fdim)",
+            "run_libc_fdim_probe()",
+            "/workspace/compat/x86_64/run_libc_fdim.sh",
+        ):
+            self.assertIn(required, dispatcher)
+        for required in (
+            "-nostdlib -static",
+            "--no-undefined",
+            "--gc-sections",
+            "fdim_header_abi_probe.cpp",
+            "strong crabc-owned",
+            "weak compiler-builtins",
+            "candidate retains TLS",
+            "subsd",
+            "subss",
+            "ucomisd",
+            "ucomiss",
+        ):
+            self.assertIn(required, runner)
+        for required in (
+            "check_binary64_values",
+            "check_binary32_values",
+            "signaling_nan_x",
+            "FE_INVALID",
+            "check_binary64_rounding",
+            "check_binary32_rounding",
+            "FE_OVERFLOW",
+            "direct_fdim",
+            "direct_fdimf",
+        ):
+            self.assertIn(required, probe)
+        for required in (
+            "double_binary_signature",
+            "float_binary_signature",
+            "direct_fdim",
+            "direct_fdimf",
+        ):
+            self.assertIn(required, header)
 
     def test_facade_keeps_native_pattern_archives_checked(self) -> None:
         source = RUNNER.read_text(encoding="utf-8")

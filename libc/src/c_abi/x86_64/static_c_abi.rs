@@ -194,6 +194,8 @@ mod math_x87_extended;
 mod math_elementary_long_double;
 #[path = "math_special.rs"]
 mod math_special;
+#[path = "fdim.rs"]
+mod fdim;
 #[path = "setjmp.rs"]
 mod setjmp;
 #[path = "signal_foundation.rs"]

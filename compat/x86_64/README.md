@@ -451,6 +451,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-elementary-sqrt-fenv
 ./scripts/dev-x86_64.sh libc-fenv-rounding
 ./scripts/dev-x86_64.sh libc-math-elementary-long-double
+./scripts/dev-x86_64.sh libc-fdim
 ./scripts/dev-x86_64.sh libc-locale-multibyte
 ./scripts/dev-x86_64.sh libc-locale-wide-iconv
 ./scripts/dev-x86_64.sh libc-wide-character
@@ -3503,6 +3504,20 @@ target-private. ELF/disassembly gates reject dynamic/TLS dependencies,
 ambient libm, and unselected `sqrt*`, `cproj*`, `exp10*`/`pow10*`, and `fdim*`.
 It does not complete `math.elementary-fenv-sensitive`, the containing family,
 general math, promotion, full x86-64 parity, or public x86 support.
+`libc-fdim` is a separate non-promoting `static-c-fdim` artifact for the
+binary64/binary32 positive-difference pair. Its project-header C fixture and
+default-SSE/`-mfpmath=387` C++ signature probes run first through pinned musl
+and then through one garbage-collected `-nostdlib -static` candidate. They
+prove the exact `fdim`/`fdimf` C linkage; ordinary positive and +0 results;
+left-to-right raw quiet/signaling-NaN payload return without `FE_INVALID`; all
+four MXCSR rounding modes and `FE_INEXACT` for a half-ULP subtraction; and
+overflow with `FE_OVERFLOW|FE_INEXACT`. The target leaf uses musl-shaped
+integer NaN classification before SSE comparison, and the ELF gate requires a
+strong crabc-owned definition rather than the compiler-builtins weak fallback.
+`fdiml`, `exp10*`/`pow10*`, current/integer-result rounding, special and x87
+math, errno policy, category/family completion, promotion, full x86-64 parity,
+and public x86 support remain unselected.
+
 
 `libc-math-x87-extended` is the separate
 `static-c-math-x87-extended` artifact. It carries pinned musl 1.2.6's

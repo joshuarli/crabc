@@ -530,6 +530,17 @@ normalization, allocation, gettext, localized numeric parsing, wide
 stdio/format/time conversion, family completion, promotion, and public x86
 support remain excluded.
 
+The separate private `static-c-fdim` artifact is the binary64/binary32
+positive-difference slice of still-planned `math.elementary-fenv-sensitive`:
+`./scripts/dev-x86_64.sh libc-fdim` differentially executes parenthesized
+`fdim`/`fdimf` C calls and default-SSE/`-mfpmath=387` C++ ABI probes against
+pinned musl and one freestanding static candidate. It proves ordinary/+0,
+left-to-right quiet/signaling-NaN payload, all-four-MXCSR-mode/inexact, and
+overflow behavior, while requiring strong target-owned definitions rather than
+the weak compiler-builtins fallback. `fdiml`, `exp10*`/`pow10*`,
+current/integer-result rounding, special/binary80 math, category/family
+completion, promotion, and public x86 support remain unselected.
+
 The x86 static C archive also has one private caller-owned mapping-core
 artifact: `./scripts/dev-x86_64.sh libc-mapping-core` runs the project-header
 C/C++ `sys/mman.h` gate and then one pinned-musl/freestanding-static proof for
