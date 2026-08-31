@@ -282,6 +282,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-pthread-barrierattr-pshared  run the static x86 crabc-libc barrier-attribute pshared record slice
   libc-pthread-condattr-pshared  run the static x86 crabc-libc condition-attribute pshared record slice
   libc-pthread-condattr-clock  run the static x86 crabc-libc condition-attribute clock record slice
+  libc-pthread-mutexattr-protocol-query  run the static x86 crabc-libc mutex-attribute protocol-bit query slice
   libc-pthread-mutexattr-robust-query  run the static x86 crabc-libc mutex-attribute robust-bit query slice
   libc-pthread-mutex-normal  run the static x86 crabc-libc normal pthread-mutex slice
   libc-pthread-rwlock  run the static x86 crabc-libc pthread read/write-lock slice
@@ -654,6 +655,17 @@ words and does not call `pthread_mutexattr_setrobust`, an attribute lifecycle
 function, or any mutex entry. It does not select robust-list probing, robust
 mutex operation, threads, TLS, synchronization, cancellation, CRT, loader,
 sysroot, pthread-family completion, or public x86 support.
+`libc-pthread-mutexattr-protocol-query` is a separate static project-header
+fixture that first runs through pinned musl, then links only the selected
+archive. It selects only the four-byte public `pthread_mutexattr_t` record's
+`pthread_mutexattr_getprotocol` raw bit-3 projection: it returns the installed
+`PTHREAD_PRIO_NONE`/`PTHREAD_PRIO_INHERIT` `0`/`1` vocabulary without changing
+caller-owned storage. The fixture deliberately constructs raw record words and
+does not call `pthread_mutexattr_setprotocol`, an attribute lifecycle function,
+or any mutex entry. It does not select the setter's futex-PI capability probe,
+priority-inheritance mutex operation, threads, TLS, synchronization,
+cancellation, CRT, loader, sysroot, pthread-family completion, or public x86
+support.
 `libc-pthread-mutex-normal` is a separate static project-header fixture that
 first runs through pinned musl, then links only the selected archive. It
 selects only zero/NULL-attribute process-private `PTHREAD_MUTEX_NORMAL`
@@ -3441,6 +3453,10 @@ run_libc_pthread_mutexattr_robust_query_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_pthread_mutexattr_robust_query.sh
 }
 
+run_libc_pthread_mutexattr_protocol_query_probe() {
+    run_in_container bash /workspace/compat/x86_64/run_libc_pthread_mutexattr_protocol_query.sh
+}
+
 run_libc_pthread_detach_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_pthread_detach.sh
 }
@@ -3886,6 +3902,7 @@ case "$command" in
     libc-pthread-barrierattr-pshared) ;;
     libc-pthread-condattr-pshared) ;;
     libc-pthread-condattr-clock) ;;
+    libc-pthread-mutexattr-protocol-query) ;;
     libc-pthread-mutexattr-robust-query) ;;
     libc-pthread-detach) ;;
     libc-thrd-yield) ;;
@@ -5014,6 +5031,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "libc-pthread-mutexattr-robust-query takes no arguments"
         ensure_image
         run_libc_pthread_mutexattr_robust_query_probe
+        ;;
+    libc-pthread-mutexattr-protocol-query)
+        [ "$#" -eq 0 ] || fail "libc-pthread-mutexattr-protocol-query takes no arguments"
+        ensure_image
+        run_libc_pthread_mutexattr_protocol_query_probe
         ;;
     libc-pthread-detach)
         [ "$#" -eq 0 ] || fail "libc-pthread-detach takes no arguments"

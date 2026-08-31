@@ -410,6 +410,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-pthread-barrierattr-pshared
 ./scripts/dev-x86_64.sh libc-pthread-condattr-pshared
 ./scripts/dev-x86_64.sh libc-pthread-condattr-clock
+./scripts/dev-x86_64.sh libc-pthread-mutexattr-protocol-query
 ./scripts/dev-x86_64.sh libc-pthread-mutexattr-robust-query
 ./scripts/dev-x86_64.sh libc-pthread-mutex-normal
 ./scripts/dev-x86_64.sh libc-pthread-rwlock
@@ -644,7 +645,7 @@ The direct `utime-header-abi` gate checks the x86 LP64 `struct utimbuf`,
 `threads.h`, and `sched.h` layouts, macros, type identities, include orders,
 GNU declarations, and unmangled C linkage. Its selected declarations include
 every `pthread_rwlock_*` and `pthread_rwlockattr_*` signature plus the exact
-`pthread_mutexattr_getrobust`, `pthread_barrierattr_*pshared`, `pthread_condattr_*pshared`, and
+`pthread_mutexattr_getprotocol`, `pthread_mutexattr_getrobust`, `pthread_barrierattr_*pshared`, `pthread_condattr_*pshared`, and
 `pthread_condattr_*clock` pairs, and the C++ object probe requires their
 unmangled C linkage. Both are compile-only
 partial evidence: they do not select archive linkage, pthread behavior,
@@ -3177,6 +3178,21 @@ mutex initialization/locking/destruction, threads, TLS, synchronization,
 cancellation, CRT, loader, sysroot, family completion, promotion, or public
 x86 support.
 
+`libc-pthread-mutexattr-protocol-query` is a twenty-seventh separately
+recorded private static `verified_artifact` under the same still-planned
+`libc.pthread-tls` family. Its project-header C body first runs against pinned
+musl and then through a `-nostdlib -static` candidate. It selects only
+`pthread_mutexattr_getprotocol` over the public four-byte word: musl projects
+raw bit 3 to `PTHREAD_PRIO_NONE`/`PTHREAD_PRIO_INHERIT` `0`/`1` without changing
+caller-owned storage. The fixture deliberately supplies raw record words
+without invoking `pthread_mutexattr_setprotocol`, lifecycle, or any mutex
+entry. Musl's `PTHREAD_PRIO_INHERIT` setter performs a cached `FUTEX_LOCK_PI`
+capability probe and is not selected; the selected normal-mutex artifact still
+rejects non-null attributes. It therefore does not establish priority-
+inheritance mutex behavior, futex-PI support, mutex initialization/locking/
+destruction, threads, TLS, synchronization, cancellation, CRT, loader,
+sysroot, family completion, promotion, or public x86 support.
+
 `libc-pthread-mutex-normal` is a tenth separately recorded private static
 `verified_artifact` under the same still-planned `libc.pthread-tls` family.
 Its project-header C body first runs against pinned musl and then through a
@@ -5571,7 +5587,7 @@ Apart from the narrowly named `libc-stat-compat`, `libc-credentials`,
 `libc-sigrtmax`, `libc-sigrtmin`, `libc-sigaddset-sigdelset-sigfillset`,
 `libc-static-tls-v1`, `libc-crt-static-tls`,
 `libc-pthread-create-join-tls`, `libc-pthread-identity`, `libc-c11-lifecycle`,
-`libc-pthread-detach`, `libc-thrd-sleep`, `libc-thrd-yield`, `libc-pthread-cpuclock`, `libc-pthread-name`, `libc-pthread-barrierattr-pshared`, `libc-pthread-condattr-pshared`, `libc-pthread-condattr-clock`, `libc-pthread-mutexattr-robust-query`, `libc-pthread-mutex-normal`,
+`libc-pthread-detach`, `libc-thrd-sleep`, `libc-thrd-yield`, `libc-pthread-cpuclock`, `libc-pthread-name`, `libc-pthread-barrierattr-pshared`, `libc-pthread-condattr-pshared`, `libc-pthread-condattr-clock`, `libc-pthread-mutexattr-protocol-query`, `libc-pthread-mutexattr-robust-query`, `libc-pthread-mutex-normal`,
 `libc-pthread-rwlock`, `libc-pthread-cond-private`, `libc-c11-plain-sync`, `libc-pthread-c11-once`,
 `libc-pthread-c11-tsd`,
 `libc-termios-control`,

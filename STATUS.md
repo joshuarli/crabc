@@ -762,6 +762,21 @@ mutex operation, robust-list capability, mutex initialization/locking/
 destruction, threads, TLS, synchronization, cancellation, CRT, loader,
 sysroot, family completion, promotion, or public x86 support.
 
+The separate
+`./scripts/dev-x86_64.sh libc-pthread-mutexattr-protocol-query` artifact is a
+twenty-seventh private static artifact in that same still-planned family. It
+selects only `pthread_mutexattr_getprotocol` over the public four-byte
+attribute word: musl reads raw bit 3 as the installed
+`PTHREAD_PRIO_NONE`/`PTHREAD_PRIO_INHERIT` `0`/`1` vocabulary without modifying
+caller storage. The fixture uses raw caller-owned words and makes no
+`pthread_mutexattr_setprotocol`, lifecycle, or mutex call. Musl's
+`PTHREAD_PRIO_INHERIT` setter performs a cached kernel `FUTEX_LOCK_PI` support
+probe, so it remains excluded; the selected normal-mutex artifact continues to
+reject non-null attributes. It therefore does not select priority-inheritance
+mutex operation, futex-PI capability, mutex initialization/locking/destruction,
+threads, TLS, synchronization, cancellation, CRT, loader, sysroot, family
+completion, promotion, or public x86 support.
+
 `./scripts/dev-x86_64.sh libc-pthread-mutex-normal` artifact is a tenth private static
 `verified_artifact` in the same still-planned `libc.pthread-tls` family. It admits only an all-zero or
 `pthread_mutex_init(..., NULL)` process-private `PTHREAD_MUTEX_NORMAL` record
