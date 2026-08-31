@@ -298,7 +298,14 @@ unavailable-record paths retain their output-clearing fail-closed handling.
 Only in this non-runtime public bridge,
 `dlopen(NULL, RTLD_NOLOAD)` returns musl's permanent main handle and leaves
 `dlerror` clear before mode processing; its bounded runtime-mapping sibling
-continues to reject that bare NULL/NOLOAD initial-object request. Search/mapping, graph mutation, `RTLD_NEXT`,
+continues to reject that bare NULL/NOLOAD initial-object request. Musl
+`ldso/dynlink.c:dl_iterate_phdr` calls a callback before it takes the reader
+lock for the next image. The public bridge's copied snapshot likewise leaves
+both loader and diagnostic-slot locks free, so the first callback can consume
+the nonempty pending same-thread diagnostic from the existing unknown-object
+failure, return `74`, and leave the next `dlerror` null. This selects only that
+diagnostic-state transaction, not callback mapping, graph mutation, or general
+loader reentrancy. Search/mapping, graph mutation, `RTLD_NEXT`,
 global promotion, finalization, and unload remain excluded, so neither dlfcn capability nor the
 dynamic-runtime family or public x86 platform is promoted.
 

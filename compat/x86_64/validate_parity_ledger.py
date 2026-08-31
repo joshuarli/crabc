@@ -7037,6 +7037,9 @@ def require_ldso_public_fixed_graph_dlfcn_artifact(family: Mapping[str, Any]) ->
         "only that exact flags value into its existing local main-token open",
         "`crabc_bounded_runtime_dlopen`",
         "bare-null `RTLD_NOLOAD` rejection",
+        "`ldso/dynlink.c:dl_iterate_phdr`",
+        "the first callback may consume its nonempty same-thread pending `dlerror`",
+        "callback-driven mapping, graph mutation, or a general reentrant loader",
         "`RTLD_NEXT`",
         "`RTLD_GLOBAL`",
         "neither `loader.dlfcn-basic` nor `loader.dlfcn-introspection` is selected",
@@ -7090,7 +7093,7 @@ def require_ldso_public_fixed_graph_dlfcn_artifact(family: Mapping[str, Any]) ->
         "32 fixed diagnostic slots",
         "tgkill=234",
         "RTLD_DEFAULT",
-        "AArch64 libc.so and libc.a ABI manifests retain dladdr, dlclose, dlinfo, dlerror, dlsym, and dlopen exports",
+        "AArch64 libc.so and libc.a ABI manifests retain dl_iterate_phdr, dladdr, dlclose, dlinfo, dlerror, dlsym, and dlopen exports",
         "src/ldso/dlinfo.c:dlinfo",
         "Unsupported request %d",
         "does not consume that pending state",
@@ -7120,6 +7123,10 @@ def require_ldso_public_fixed_graph_dlfcn_artifact(family: Mapping[str, Any]) ->
         "run_ldso_bounded_dlopen.sh",
         "crabc_bounded_runtime_dlopen",
         "bare `NULL RTLD_NOLOAD` retains the runtime sibling's initial-object rejection",
+        "ldso/dynlink.c:dl_iterate_phdr",
+        "before taking the reader lock for the next image",
+        "consume an already-pending same-thread `dlerror` once",
+        "callback-driven mapping, graph mutation, or general loader reentrancy",
         "never searched, mapped, finalized, or unmapped",
     ):
         require(
@@ -7164,6 +7171,11 @@ def require_ldso_public_fixed_graph_dlfcn_artifact(family: Mapping[str, Any]) ->
         "loader-confirmed `loader address not found`",
         "`dlopen(NULL, RTLD_NOLOAD)`",
         "both executions return the same main handle",
+        "existing unknown-object failure",
+        "first dl_iterate_phdr callback consumes its nonempty pending dlerror",
+        "returns `74`",
+        "leaves the next dlerror null",
+        "callback-driven mapping",
         "loader.dlfcn-basic",
         "public x86 support",
     ):
@@ -7224,6 +7236,9 @@ def require_ldso_public_fixed_graph_dlfcn_artifact(family: Mapping[str, Any]) ->
         "if (!file) return head",
         "filename.is_null() && flags == RTLD_NOLOAD",
         "crabc_bounded_runtime_dlopen",
+        "ldso/dynlink.c:dl_iterate_phdr",
+        "diagnostic-slot lock across the callback",
+        "callback-driven mapping, graph mutation, or a general reentrant loader",
     ):
         require(
             snippet in bridge,
@@ -7257,6 +7272,11 @@ def require_ldso_public_fixed_graph_dlfcn_artifact(family: Mapping[str, Any]) ->
         "no_image_address.dli_fname !=",
         "void *main_noload = typed_dlopen(NULL, RTLD_NOLOAD)",
         "main_noload != main_handle",
+        "struct callback_error_state",
+        "consume_pending_error",
+        "typed_dl_iterate_phdr(consume_pending_error, &callback_error)",
+        "callback_error.visits != 1",
+        "callback_error.error == NULL",
     ):
         require(
             snippet in probe,
@@ -7268,7 +7288,7 @@ def require_ldso_public_fixed_graph_dlfcn_artifact(family: Mapping[str, Any]) ->
     aarch64_dynamic = (
         ROOT / "compat" / "abi" / "musl-1.2.6" / "aarch64" / "libc.so.dynamic.tsv"
     ).read_text(encoding="utf-8")
-    for symbol in ("dladdr", "dlclose", "dlerror", "dlinfo", "dlsym", "dlopen"):
+    for symbol in ("dl_iterate_phdr", "dladdr", "dlclose", "dlerror", "dlinfo", "dlsym", "dlopen"):
         require(
             f"\n{symbol}\t" in aarch64_static,
             f"pinned AArch64 musl static manifest omits {symbol}",
@@ -7294,6 +7314,7 @@ def require_ldso_public_fixed_graph_dlfcn_artifact(family: Mapping[str, Any]) ->
             and "exact null-dladdr untouched-output/no-error behavior" in entry["role"]
             and "exact nonnull-no-image dladdr untouched-output/no-error behavior" in entry["role"]
             and "exact null-RTLD_NOLOAD main-handle/no-error behavior" in entry["role"]
+            and "callback-before-next-lock same-thread pending-dlerror consumption" in entry["role"]
             for entry in oracle
         ),
         "ldso-public-fixed-graph-dlfcn must retain its pinned musl dlinfo/dlclose/dlsym/dladdr oracle",
@@ -7306,7 +7327,7 @@ def require_ldso_public_fixed_graph_dlfcn_artifact(family: Mapping[str, Any]) ->
             and "aarch64/libc.so.dynamic.tsv" in entry["source"]
             and "libc.a.static.tsv" in entry["source"]
             and isinstance(entry.get("role"), str)
-            and "dladdr, dlclose, dlinfo, dlerror, dlsym, and dlopen exports" in entry["role"]
+            and "dl_iterate_phdr, dladdr, dlclose, dlinfo, dlerror, dlsym, and dlopen exports" in entry["role"]
             and "not a behavioral fallback" in entry["role"]
             for entry in oracle
         ),

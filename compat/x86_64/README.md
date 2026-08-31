@@ -4594,6 +4594,13 @@ fail-closed handling. Only in this non-runtime
 public bridge, `dlopen(NULL, RTLD_NOLOAD)` returns musl's permanent main handle
 and leaves `dlerror` clear before mode processing; the bounded runtime-mapping
 sibling continues to reject that bare NULL/NOLOAD initial-object request.
+Pinned musl's `ldso/dynlink.c:dl_iterate_phdr` invokes a callback before taking
+its reader lock for the next image. After the bridge's already-existing
+unknown-object failure, both executions let the first callback consume the
+nonempty same-thread `dlerror` once, return `74` through iteration, and leave
+the next `dlerror` null. This is only a diagnostic-state reentrancy proof:
+callback-driven mapping, graph mutation, and general loader reentrancy remain
+unselected.
 Pinned musl and project C/C++
 headers prove the public LP64 ABI and ordinary behavior; raw clone workers
 prove diagnostic isolation without TLS, and absent/malformed records prove

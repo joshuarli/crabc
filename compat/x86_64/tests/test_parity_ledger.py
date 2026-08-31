@@ -947,6 +947,9 @@ class X86ParityLedgerTests(unittest.TestCase):
             "only that exact flags value into its existing local main-token open",
             "`crabc_bounded_runtime_dlopen`",
             "bare-null `RTLD_NOLOAD` rejection",
+            "`ldso/dynlink.c:dl_iterate_phdr`",
+            "the first callback may consume its nonempty same-thread pending `dlerror`",
+            "callback-driven mapping, graph mutation, or a general reentrant loader",
             "`RTLD_NEXT`",
             "`RTLD_GLOBAL`",
             "neither `loader.dlfcn-basic` nor `loader.dlfcn-introspection` is selected",
@@ -959,7 +962,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         )
         prerequisites = " ".join(artifact["x86_abi_prerequisites"])
         for phrase in (
-            "AArch64 libc.so and libc.a ABI manifests retain dladdr, dlclose, dlinfo, dlerror, dlsym, and dlopen exports",
+            "AArch64 libc.so and libc.a ABI manifests retain dl_iterate_phdr, dladdr, dlclose, dlinfo, dlerror, dlsym, and dlopen exports",
             "src/ldso/dlinfo.c:dlinfo",
             "Unsupported request %d",
             "does not consume that pending state",
@@ -989,6 +992,10 @@ class X86ParityLedgerTests(unittest.TestCase):
             "run_ldso_bounded_dlopen.sh",
             "crabc_bounded_runtime_dlopen",
             "bare `NULL RTLD_NOLOAD` retains the runtime sibling's initial-object rejection",
+            "ldso/dynlink.c:dl_iterate_phdr",
+            "before taking the reader lock for the next image",
+            "consume an already-pending same-thread `dlerror` once",
+            "callback-driven mapping, graph mutation, or general loader reentrancy",
         ):
             self.assertIn(phrase, prerequisites)
         scope = artifact["native_evidence"][0]["scope"]
@@ -1011,14 +1018,28 @@ class X86ParityLedgerTests(unittest.TestCase):
             "loader-confirmed `loader address not found`",
             "`dlopen(NULL, RTLD_NOLOAD)`",
             "both executions return the same main handle",
+            "existing unknown-object failure",
+            "first dl_iterate_phdr callback consumes its nonempty pending dlerror",
+            "returns `74`",
+            "leaves the next dlerror null",
+            "callback-driven mapping",
         ):
             self.assertIn(phrase, scope)
         self.assertTrue(
             any(
                 entry["kind"] == "aarch64-contract"
                 and "aarch64/libc.so.dynamic.tsv" in entry["source"]
-                and "dladdr, dlclose, dlinfo, dlerror, dlsym, and dlopen exports" in entry["role"]
+                and "dl_iterate_phdr, dladdr, dlclose, dlinfo, dlerror, dlsym, and dlopen exports" in entry["role"]
                 and "not a behavioral fallback" in entry["role"]
+                for entry in artifact["oracle"]
+            )
+        )
+        self.assertTrue(
+            any(
+                entry["kind"] == "c-posix"
+                and "ldso/dynlink.c" in entry["source"]
+                and "callback-before-next-lock same-thread pending-dlerror consumption"
+                in entry["role"]
                 for entry in artifact["oracle"]
             )
         )
