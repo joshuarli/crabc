@@ -769,14 +769,32 @@ Its pinned-musl/static differential calls `fileno` only on permanent `stdin`,
 `stdout`, and `stderr`, proving their fixed `0`/`1`/`2` descriptor adapters.
 It creates no `FILE *`, performs no stream I/O or descriptor mutation, and
 does not select arbitrary-file, pathname, or descriptor-reopen behavior.
-Pinned musl's lock, negative-descriptor `EBADF`, and weak `fileno_unlocked`
-alias behavior remain outside this externally serialized leaf. The POSIX.1-2008
-C11/C++17 proof ratchets `int (FILE *)` and unmangled C++ linkage; matching
-strict witnesses retain its POSIX-only header visibility. It excludes
+Pinned musl's lock and negative-descriptor `EBADF` behavior remain outside this
+externally serialized leaf; the separate GNU/BSD `fileno_unlocked` sibling owns
+the weak alias. The POSIX.1-2008 C11/C++17 proof ratchets `int (FILE *)` and
+unmangled C++ linkage; matching strict witnesses retain its POSIX-only header
+visibility. It excludes
 `stdio.stream-io`, path/tmpfile/LFS behavior, byte/block/line/formatted/wide
 I/O, buffering/positions/status/lock/unlocked APIs, multiple streams,
 memory/cookie/popen I/O, ordinary-exit flushing, general stdio, parity,
 promotion, and public x86 support.
+
+The separate `stdio-permanent-fileno-unlocked-header-abi` and
+`libc-stdio-permanent-fileno-unlocked` gates record one private
+`static-c-stdio-permanent-fileno-unlocked` artifact. It adds only musl's weak,
+same-address GNU/BSD `fileno_unlocked` alias of strong `fileno`, without
+promoting a capability. Its pinned-musl/static fixture compares the two
+function-pointer addresses and their fixed `0`/`1`/`2` results on permanent
+`stdin`, `stdout`, and `stderr`; it creates no `FILE *`, does no stream I/O,
+and mutates no descriptor. The C11/C++17 header matrix proves GNU/BSD
+declaration visibility and unmangled C++ linkage while strict/POSIX profiles
+remain negative. The conventional `_unlocked` spelling does not claim a
+lock-free operation: musl's FLOCK/FUNLOCK and negative-descriptor `EBADF`
+paths remain outside this externally serialized leaf. It excludes
+`stdio.stream-io`, FILE/path or descriptor-reopen/tmpfile/LFS behavior, all
+other unlocked APIs, byte/block/line/formatted/wide I/O, buffering/position or
+status, multiple streams, memory/cookie/popen I/O, ordinary-exit flushing,
+general stdio, parity, promotion, and public x86 support.
 
 The separate `libc-stdio-format-scan` gate
 (`./scripts/dev-x86_64.sh libc-stdio-format-scan`) records one private

@@ -1,13 +1,11 @@
 #!/usr/bin/env bash
-# Native Linux/x86-64 permanent-standard-stream fileno evidence.
+# Native Linux/x86-64 permanent-standard-stream fileno_unlocked evidence.
 #
-# One project-header fixture first runs against pinned musl 1.2.6 and then as
-# a true `-nostdlib -static` candidate linked only through the selected archive.
-# It observes only fileno's adapter from stdin/stdout/stderr to 0/1/2. It is
-# not FILE/path-stream, descriptor-reopen, I/O, locking, general-stdio, or
-# public-x86 evidence.
-# The separately selected GNU/BSD `fileno_unlocked` sibling owns musl's weak
-# alias; this positive descriptor-adapter fixture intentionally does not call it.
+# One GNU project-header fixture first runs against pinned musl 1.2.6 and then
+# as a true `-nostdlib -static` candidate linked only through the selected
+# archive. It proves musl's weak, same-address `fileno_unlocked` alias of
+# `fileno` for stdin/stdout/stderr only. It is not a lock-free FILE claim,
+# general FILE/path-stream I/O, descriptor mutation, or public-x86 evidence.
 set -euo pipefail
 
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -19,7 +17,7 @@ readonly INITIAL_TLS_BYTES=4096
 readonly INITIAL_TLS_ALIGNMENT=64
 
 fail() {
-    printf 'ERROR: x86 static libc permanent-stream fileno: %s\n' "$*" >&2
+    printf 'ERROR: x86 static libc permanent-stream fileno_unlocked: %s\n' "$*" >&2
     exit 1
 }
 
@@ -60,6 +58,28 @@ assert_fixture_tls_capacity() {
         fail "fixture TLS scratch is incompatible with PT_TLS alignment ${tls_alignment}"
 }
 
+assert_weak_same_address_alias() {
+    local symbols_path="$1" alias_name="$2" target_name="$3" label="$4"
+    local alias_value alias_type alias_bind target_value target_type target_bind
+
+    read -r alias_value alias_type alias_bind < <(
+        awk -v name="$alias_name" '$8 == name && $7 != "UND" { print $2, $4, $5; exit }' \
+            "$symbols_path"
+    )
+    read -r target_value target_type target_bind < <(
+        awk -v name="$target_name" '$8 == name && $7 != "UND" { print $2, $4, $5; exit }' \
+            "$symbols_path"
+    )
+    [ -n "${alias_value:-}" ] || fail "$label lacks defined ${alias_name}"
+    [ -n "${target_value:-}" ] || fail "$label lacks defined ${target_name}"
+    [ "$alias_type" = FUNC ] || fail "$label ${alias_name} is not a function"
+    [ "$target_type" = FUNC ] || fail "$label ${target_name} is not a function"
+    [ "$alias_bind" = WEAK ] || fail "$label ${alias_name} is not weak"
+    [ "$target_bind" = GLOBAL ] || fail "$label ${target_name} is not strong global"
+    [ "$alias_value" = "$target_value" ] ||
+        fail "$label ${alias_name}/${target_name} are not a same-address alias pair"
+}
+
 [ "$(uname -s)" = Linux ] || fail "requires native Linux"
 case "$(uname -m)" in x86_64|amd64) ;; *) fail "requires native x86-64" ;; esac
 for tool in ar awk cargo cmp diff grep mkdir nm objdump readelf rustup sort timeout; do
@@ -69,14 +89,14 @@ done
 [ -f "$ORACLE_ARCHIVE" ] || fail "missing pinned musl static archive"
 
 bash "$ROOT_DIR/compat/x86_64/run_musl_oracle.sh" >/dev/null
-bash "$ROOT_DIR/compat/x86_64/run_stdio_permanent_fileno_header_abi.sh" >/dev/null
+bash "$ROOT_DIR/compat/x86_64/run_stdio_permanent_fileno_unlocked_header_abi.sh" >/dev/null
 
-work_dir="$(mktemp -d /tmp/crabc-x86-64-libc-stdio-permanent-fileno.XXXXXX)"
+work_dir="$(mktemp -d /tmp/crabc-x86-64-libc-stdio-permanent-fileno-unlocked.XXXXXX)"
 trap 'rm -rf -- "$work_dir"' EXIT
 target_dir="$work_dir/cargo-target"
 archive="$target_dir/x86_64-unknown-linux-musl/debug/libc.a"
-reference="$work_dir/musl-stdio-permanent-fileno-reference"
-candidate="$work_dir/crabc-static-stdio-permanent-fileno-candidate"
+reference="$work_dir/musl-stdio-permanent-fileno-unlocked-reference"
+candidate="$work_dir/crabc-static-stdio-permanent-fileno-unlocked-candidate"
 trace="$work_dir/header-trace"
 archive_symbols="$work_dir/archive-symbols"
 selected_symbols="$work_dir/selected-c-abi-symbols"
@@ -90,21 +110,23 @@ fileno_disassembly="$work_dir/fileno-disassembly"
 oracle_archive_symbols="$work_dir/oracle-archive-symbols"
 
 cd "$ROOT_DIR"
-"$ORACLE_CC" -std=c11 -D_POSIX_C_SOURCE=200809L -I"$ROOT_DIR/include" -E -H \
-    compat/x86_64/libc_stdio_permanent_fileno_probe.c >/dev/null 2>"$trace"
+"$ORACLE_CC" -std=c11 -D_GNU_SOURCE -I"$ROOT_DIR/include" -E -H \
+    compat/x86_64/libc_stdio_permanent_fileno_unlocked_probe.c >/dev/null 2>"$trace"
 for header in stdio.h features.h bits/alltypes.h; do
     grep -Fq "$ROOT_DIR/include/$header" "$trace" ||
         fail "fixture did not use the project $header header"
 done
-"$ORACLE_CC" -std=c11 -D_POSIX_C_SOURCE=200809L -fno-builtin \
-    -fno-stack-protector -I"$ROOT_DIR/include" \
-    compat/x86_64/libc_stdio_permanent_fileno_probe.c -o "$reference"
+"$ORACLE_CC" -std=c11 -D_GNU_SOURCE -fno-builtin -fno-stack-protector \
+    -I"$ROOT_DIR/include" compat/x86_64/libc_stdio_permanent_fileno_unlocked_probe.c \
+    -o "$reference"
 timeout "$EXECUTION_TIMEOUT" "$reference" ||
-    fail "pinned-musl permanent-stream fileno fixture failed"
+    fail "pinned-musl permanent-stream fileno_unlocked fixture failed"
 
 nm -A --defined-only "$ORACLE_ARCHIVE" >"$oracle_archive_symbols" 2>/dev/null
 grep -Eq "[[:space:]]T[[:space:]]fileno$" "$oracle_archive_symbols" ||
     fail "pinned-musl archive omits strong fileno"
+grep -Eq "[[:space:]]W[[:space:]]fileno_unlocked$" "$oracle_archive_symbols" ||
+    fail "pinned-musl archive omits weak fileno_unlocked"
 
 CARGO_TARGET_DIR="$target_dir" cargo rustc --locked -p crabc-libc --lib \
     --target x86_64-unknown-linux-musl -- \
@@ -112,37 +134,47 @@ CARGO_TARGET_DIR="$target_dir" cargo rustc --locked -p crabc-libc --lib \
 [ -f "$archive" ] || fail "cargo did not emit the x86 static libc archive"
 nm -A --defined-only "$archive" >"$archive_symbols"
 assert_selected_c_abi_surface "$archive" "$selected_symbols" "$expected_symbols"
-for symbol in __crabc_x86_static_tls_bootstrap; do
-    grep -Eq "[[:space:]][TW][[:space:]]${symbol}$" "$archive_symbols" ||
-        fail "archive does not define ${symbol}"
-done
+grep -Eq "[[:space:]][TW][[:space:]]__crabc_x86_static_tls_bootstrap$" "$archive_symbols" ||
+    fail "archive does not define static TLS bootstrap"
 grep -Eq "[[:space:]]T[[:space:]]fileno$" "$archive_symbols" ||
     fail "archive does not define strong fileno"
+grep -Eq "[[:space:]]W[[:space:]]fileno_unlocked$" "$archive_symbols" ||
+    fail "archive does not define weak fileno_unlocked"
 for symbol in stdin stdout stderr; do
     grep -Eq "[[:space:]][BDR][[:space:]]${symbol}$" "$archive_symbols" ||
         fail "archive does not define permanent stream data ${symbol}"
 done
-for source_name in 'src/stdio/fileno.c' 'pub unsafe extern "C" fn fileno'; do
+for unselected in feof_unlocked ferror_unlocked clearerr_unlocked \
+    fgetc_unlocked getc_unlocked getchar_unlocked fputc_unlocked \
+    putc_unlocked putchar_unlocked; do
+    if grep -Eq "[[:space:]][TW][[:space:]]${unselected}$" "$archive_symbols"; then
+        fail "archive accidentally exports unselected ${unselected}"
+    fi
+done
+for source_name in 'src/stdio/fileno.c' 'weak_alias(fileno, fileno_unlocked)' \
+    'pub unsafe extern "C" fn fileno' '.weak fileno_unlocked' \
+    '.set fileno_unlocked, fileno'; do
     grep -Fq "$source_name" "$ROOT_DIR/libc/src/c_abi/x86_64/stdio_standard.rs" ||
-        fail "permanent-stream fileno implementation omits $source_name"
+        fail "permanent-stream fileno_unlocked implementation omits $source_name"
 done
 
-"$ORACLE_CC" -std=c11 -D_POSIX_C_SOURCE=200809L \
-    -DCRABC_STDIO_PERMANENT_FILENO_FREESTANDING -I"$ROOT_DIR/include" \
+"$ORACLE_CC" -std=c11 -D_GNU_SOURCE \
+    -DCRABC_STDIO_PERMANENT_FILENO_UNLOCKED_FREESTANDING -I"$ROOT_DIR/include" \
     -nostdlib -static -fno-pie -no-pie -ffreestanding -fno-builtin \
     -fno-stack-protector -Wl,-e,_start -Wl,--no-undefined \
-    compat/x86_64/libc_stdio_permanent_fileno_probe.c \
-    compat/x86_64/libc_stdio_permanent_fileno_start.S "$archive" -o "$candidate"
+    compat/x86_64/libc_stdio_permanent_fileno_unlocked_probe.c \
+    compat/x86_64/libc_stdio_permanent_fileno_unlocked_start.S "$archive" -o "$candidate"
 readelf --symbols --wide "$candidate" >"$candidate_symbols"
 readelf --program-headers --wide "$candidate" >"$candidate_program_headers"
 readelf --dynamic --wide "$candidate" >"$candidate_dynamic" || true
 readelf --relocs --wide "$candidate" >"$candidate_relocations"
 objdump -d "$candidate" >"$candidate_disassembly"
 objdump -d --disassemble=fileno "$candidate" >"$fileno_disassembly"
-for symbol in fileno stdin stdout stderr; do
+for symbol in fileno fileno_unlocked stdin stdout stderr; do
     grep -Eq "[[:space:]]${symbol}$" "$candidate_symbols" ||
         fail "candidate lacks ${symbol}"
 done
+assert_weak_same_address_alias "$candidate_symbols" fileno_unlocked fileno candidate
 if awk '$7 == "UND" && NF >= 8 { print }' "$candidate_symbols" | grep -q .; then
     fail "candidate retains an unresolved symbol"
 fi
@@ -165,9 +197,9 @@ if grep -Eq '[[:space:]]syscall$' "$fileno_disassembly"; then
     fail "fileno unexpectedly contains a syscall path"
 fi
 grep -Eq 'call.*__crabc_x86_static_tls_bootstrap' \
-    compat/x86_64/libc_stdio_permanent_fileno_start.S ||
+    compat/x86_64/libc_stdio_permanent_fileno_unlocked_start.S ||
     fail "fixture start does not delegate first-thread TLS to libc"
 timeout "$EXECUTION_TIMEOUT" "$candidate" ||
-    fail "freestanding permanent-stream fileno fixture failed"
+    fail "freestanding permanent-stream fileno_unlocked fixture failed"
 
-printf 'x86 static crabc-libc permanent-stream fileno: PASS\n'
+printf 'x86 static crabc-libc permanent-stream fileno_unlocked: PASS\n'

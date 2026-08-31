@@ -5,7 +5,8 @@
 //! fixed pathname/tmpfile stream slot. The permanent streams expose their selected
 //! byte/block operations: `fgetc`/`getc`/`getchar`, `ungetc`, `fread`,
 //! `fputc`/`putc`/`putchar`, `fwrite`, `fflush`, `feof`, `ferror`,
-//! `clearerr`, and `fileno`. A separate permanent-only line-I/O leaf adds
+//! `clearerr`, `fileno`, and GNU/BSD-only `fileno_unlocked`. A separate
+//! permanent-only line-I/O leaf adds
 //! `fgets`, `fputs`, and `puts`; it deliberately does not admit the fixed
 //! pathname/tmpfile slot. The only valid non-null `FILE *` arguments for that
 //! permanent-standard-stream block are those three exported pointers.
@@ -19,12 +20,16 @@
 //! The focused permanent-fileno evidence leaf reads only the three permanent
 //! descriptor adapters and their fixed `0`/`1`/`2` numbers; it neither opens,
 //! mutates, nor claims a pathname stream or arbitrary `FILE` behavior.
+//! Its separate GNU/BSD `fileno_unlocked` sibling preserves musl's weak,
+//! same-address alias solely for those three permanent pointers; it does not
+//! select a broader unlocked or lock-free stream API.
 //! The sibling pathname/tmpfile block admits only one active `fopen("r")`,
 //! `fopen("w+")`, or `tmpfile` stream at a time, its exact `fclose`, pre-I/O
 //! caller-buffered `_IOFBF` configuration, and its selected
 //! `fseek`/`fseeko`/`ftell`/`ftello`/`rewind`/`fgetpos`/`fsetpos` routes. It is
 //! a deliberately lock-free, externally-serialized state machine: it does
-//! not select concurrent stream access, `flockfile`, unlocked entry points,
+//! not select concurrent stream access, `flockfile`, unlocked entry points
+//! other than the separately selected GNU/BSD `fileno_unlocked` alias,
 //! `fdopen`, `freopen`, append modes, dynamic stream allocation, a general
 //! stream registry, formatters/scanners, line or unbuffered configuration,
 //! wide streams, callbacks, memory/tmp/popen streams other than this single
@@ -49,7 +54,7 @@
 //! | `src/stdio/{fread,fwrite}.c` | selected public block entries |
 //! | `src/stdio/{fgets,fputs,puts}.c` | selected permanent-standard-stream line I/O |
 //! | `src/stdio/{feof,ferror,clearerr}.c` | selected permanent-status predicates and marker reset; focused evidence observes only stdin |
-//! | `src/stdio/fileno.c` | selected descriptor adapter; focused evidence observes only permanent stdin/stdout/stderr |
+//! | `src/stdio/fileno.c` | selected descriptor adapter plus musl-shaped weak `fileno_unlocked` alias; focused evidence observes only permanent stdin/stdout/stderr |
 //! | `src/stdio/fflush.c` | selected explicit-flush entry |
 //! | `src/stdio/{fopen,fclose,setvbuf,fseek,ftell,fgetpos,fsetpos,rewind}.c` | one fixed pathname-stream lifecycle, caller-buffered full buffering, and logical-position routes |
 //! | `src/stdio/tmpfile.c`, `src/temp/__randname.c` | one exclusive pathname created below `/tmp` with requested mode `0600`, immediately unlinked, and adopted as a `w+` fixed stream; Linux `getrandom` plus hex encoding replaces musl's noncryptographic name generator without adding a PRNG |
@@ -726,6 +731,14 @@ pub unsafe extern "C" fn fileno(stream: *mut StandardStream) -> c_int {
     // SAFETY: the selected public contract admits only the permanent pointers.
     unsafe { (*stream).file_descriptor }
 }
+
+// Musl's `weak_alias(fileno, fileno_unlocked)` preserves both a weak archive
+// override point and one ELF address. A Rust forwarding wrapper would create a
+// second address, so retain the source-specific GNU/BSD alias in assembler.
+core::arch::global_asm!(
+    ".weak fileno_unlocked",
+    ".set fileno_unlocked, fileno",
+);
 
 /// Flush one selected output stream, or every owned output stream for NULL.
 ///

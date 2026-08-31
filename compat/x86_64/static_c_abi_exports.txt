@@ -272,6 +272,7 @@ fgetpos
 fgets
 fgetxattr
 fileno
+fileno_unlocked
 finite
 finitef
 flistxattr
