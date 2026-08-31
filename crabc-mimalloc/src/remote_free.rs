@@ -2882,3 +2882,7 @@ mod tests {
 #[cfg(all(test, feature = "loom"))]
 #[path = "remote_free_loom.rs"]
 mod loom_tests;
+
+#[cfg(all(test, feature = "loom"))]
+#[path = "remote_free_owner_unown_loom.rs"]
+mod owner_unown_loom_tests;
