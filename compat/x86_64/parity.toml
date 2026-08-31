@@ -1885,6 +1885,7 @@ native_evidence = [
   { state = "required", command = "./scripts/dev-x86_64.sh memory-sync-header-abi", scope = "This project-first/pinned-musl eight-profile C/C++ sys/mman.h matrix checks only the unconditional `msync(void *, size_t, int)` declaration, MS_ASYNC/MS_INVALIDATE/MS_SYNC=1/2/4 values, and unmangled C++ linkage. It does not select archive linkage, runtime behavior, cancellation, complete sys/mman.h coverage, installed-header completion, family completion, or public support." },
   { state = "required", command = "./scripts/dev-x86_64.sh memory-locking-header-abi", scope = "This project-first/pinned-musl strict/POSIX/GNU C/C++ per-range locking matrix checks only `mlock`/`munlock` declarations, GNU `mlock2`/`MLOCK_ONFAULT` visibility, strict/POSIX GNU hiding, and unmangled C++ linkage. It does not select archive linkage, runtime behavior, installed-header completion, family completion, or public support." },
   { state = "required", command = "./scripts/dev-x86_64.sh membarrier-header-abi", scope = "This project-first/pinned-musl all-profile C/C++ sys/membarrier.h matrix checks only `int membarrier(int, int)`, MEMBARRIER_CMD_QUERY/GLOBAL/FLAG_CPU=0/1/1, and the documented C++ spelling difference: pinned musl retains a mangled declaration while the existing project header supplies an unmangled C bridge. It does not select archive linkage, runtime behavior, barrier commands, registration, source-level C++ header parity, general C++ runtime, installed-header completion, family completion, or public support." },
+  { state = "required", command = "./scripts/dev-x86_64.sh syncfs-header-abi", scope = "This project-first/pinned-musl eight-profile C/C++ `<unistd.h>` matrix checks only GNU `int syncfs(int)`, GNU visibility, hiding in default/strict/POSIX/XOPEN/BSD and macro-free C++ selections, and unmangled GNU C++ linkage. It does not select archive linkage, runtime behavior, filesystem synchronization or durability semantics, installed-header completion, family completion, or public support." },
   { state = "required", command = "./scripts/dev-x86_64.sh memfd-create-header-abi", scope = "This project-first/pinned-musl eight-profile C/C++ sys/mman.h matrix checks only GNU `memfd_create(const char *, unsigned)`, MFD_CLOEXEC/MFD_ALLOW_SEALING/MFD_HUGETLB=1/2/4 values, GNU visibility, hiding in default/strict/POSIX/XOPEN/BSD and macro-free C++ selections, and unmangled GNU C++ linkage. It does not select archive linkage, runtime behavior, seals/fcntl, installed-header completion, family completion, or public support." },
   { state = "required", command = "./scripts/dev-x86_64.sh resource-header-abi", scope = "This compile-only C/C++ sys/resource strict/GNU/LFS layout, declaration, and alias slice is partial evidence." },
   { state = "required", command = "./scripts/dev-x86_64.sh socket-header-abi", scope = "This project-first/pinned-musl C/C++ base socket transport declaration/layout plus tiny native IPv6 address-classification macro-behavior and immutable `in6addr_any`/`in6addr_loopback` union-layout/C++ data-linkage slice is partial evidence; it does not select socket options, vectored/ancillary messages, address conversion, or C networking runtime behavior." },
@@ -2172,6 +2173,7 @@ source_owners = [
   "libc/src/c_abi/x86_64/descriptor_advice.rs",
   "libc/src/c_abi/x86_64/ioctl.rs",
   "libc/src/c_abi/x86_64/descriptor_io.rs",
+  "libc/src/c_abi/x86_64/syncfs.rs",
   "libc/src/c_abi/x86_64/process_resources.rs",
   "libc/src/c_abi/x86_64/system_configuration.rs",
   "libc/src/c_abi/x86_64/system_information.rs",
@@ -3843,6 +3845,61 @@ oracle = [
   { kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source/header mapping for src/linux/membarrier.c::{__membarrier,__membarrier_init} and include/sys/membarrier.h. The selected Linux 5.10 direct syscall branch excludes musl's weak-alias relationship, old-kernel PRIVATE_EXPEDITED signal/semaphore fallback, and registration hook." },
   { kind = "kernel-abi", source = "Linux 5.10 x86-64 ABI", role = "membarrier=324 rdi/rsi, QUERY=0, invalid-command/QUERY-CPU-flag EINVAL, raw errno, and direct syscall-result contract; no barrier or registration command is issued." },
   { kind = "elf-abi", source = "System V AMD64 psABI", role = "LP64 signed-int calling convention, weak public symbol binding, and static initial-TLS Variant-II fixture contract." },
+]
+
+[[family.verified_artifact]]
+id = "static-c-syncfs"
+description = "Private native x86 selected-static-archive direct Linux 5.10 GNU `syncfs` C ABI artifact inside still-planned `libc.posix-runtime`. One dependency-free `crabc-libc` archive resolves only `syncfs(int)` plus the selected initial-TLS errno boundary into a freestanding C fixture after equivalent pinned-musl execution. It sends the signed descriptor word unchanged to Linux/x86-64 `syncfs=306` in rdi, returns the signed C status in eax, changes raw -4095 through -1 only into C -1 plus errno, and preserves stale errno on success. The fixture makes and immediately unlinks one regular file with fixture-local raw open/write/close syscalls, verifies direct and function-pointer success plus direct and function-pointer closed-descriptor `EBADF`, and never asserts filesystem, storage-cache, or power-loss durability. The independent pinned-musl/raw reference also records regular-file and pipe descriptor acceptance plus position stability, without promoting those observations into a filesystem policy. Pinned musl 1.2.6 `src/linux/syncfs.c` is exactly one `syscall(SYS_syncfs, fd)` wrapper; its AArch64 static inventory records the strong global `syncfs.lo` owner. This capability-free artifact does not select `sync`, `fsync`, `fdatasync`, `sync_file_range`, descriptor lifecycle, cancellation, a broad filesystem/runtime contract, libc.so, CRT, loader, sysroot, allocator/runtime behavior, family completion, promotion, or public x86 support."
+source_owners = [
+  "compat/upstreams.toml",
+  "compat/abi/musl-1.2.6/aarch64/libc.a.static.tsv",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/syncfs.rs",
+  "libc/src/c_abi/x86_64/errno.rs",
+  "libc/src/c_abi/x86_64/syscall.rs",
+  "include/errno.h",
+  "include/fcntl.h",
+  "include/bits/fcntl.h",
+  "include/features.h",
+  "include/stdint.h",
+  "include/sys/types.h",
+  "include/sys/syscall.h",
+  "include/bits/syscall.h",
+  "include/unistd.h",
+  "compat/x86_64/syncfs_header_abi_probe.c",
+  "compat/x86_64/syncfs_header_abi_probe.cpp",
+  "compat/x86_64/run_syncfs_header_abi.sh",
+  "compat/x86_64/x86_syncfs_reference_probe.c",
+  "compat/x86_64/run_x86_syncfs_reference.sh",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/libc_syncfs_probe.c",
+  "compat/x86_64/libc_syncfs_start.S",
+  "compat/x86_64/run_libc_syncfs.sh",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "compat/x86_64/aarch64_parity_inventory.py",
+  "compat/x86_64/aarch64_parity_inventory.json",
+  "compat/x86_64/README.md",
+  "STATUS.md",
+  "x86-64.md",
+  "scripts/dev-x86_64.sh",
+  "scripts/check_structure.py",
+]
+x86_abi_prerequisites = [
+  "System V AMD64 passes the signed C int descriptor in rdi and returns signed int in eax. Linux/x86-64 `syncfs=306` consumes that same word; the direct wrapper changes only raw -4095 through -1 into C -1 plus the selected initial-TLS errno, while direct success preserves stale errno.",
+  "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417 maps src/linux/syncfs.c directly to syscall(SYS_syncfs, fd); its AArch64 static inventory has `syncfs\tsyncfs.lo\tT\tGLOBAL\t0\t1c`. The selected source has no fallback, initialization, weak alias, or ancillary closure.",
+  "The freestanding fixture uses fixture-local raw open=2/write=1/unlink=87/close=3 only to make an immediately unlinked regular file, then proves direct/function-pointer stale-errno success and closed-descriptor EBADF. The independent pinned-musl/raw reference additionally observes accepted regular-file and pipe descriptors plus position stability. Neither fixture establishes filesystem, storage-cache, crash, or power-loss durability.",
+  "The final static candidate has a PT_TLS errno datum with direct initial-exec TPOFF access and no TLSGD/TLSLD/TLSDESC/GOTTPOFF/DTPMOD/DTPOFF model form or __tls_get_addr; fixture-local startup writes one Variant-II thread-pointer self word at %fs:0 without claiming CRT or TLS lifecycle.",
+]
+x86_header_prerequisites = ["The project-first/pinned-musl eight-profile C/C++ `<unistd.h>` matrix proves GNU-only `int syncfs(int)`, hidden default/strict/POSIX/XOPEN/BSD and macro-free C++ selections, and unmangled GNU C++ linkage. The static fixture additionally preprocesses project errno.h, fcntl.h, bits/fcntl.h, stdint.h, unistd.h, features.h, sys/types.h, sys/syscall.h, and bits/syscall.h. This is a selected declaration plus archive-linkage boundary, not complete `<unistd.h>`, installed-header, C ABI, filesystem, or runtime completion."]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-syncfs", scope = "Pinned-musl/project GNU C/C++ unistd header proof plus a true dependency-free x86 crabc-libc `-nostdlib -static -Wl,--gc-sections` candidate. The gate proves GNU visibility/hiding and unmangled C++ linkage; runs the independent pinned-musl/raw syncfs reference; ratchets exact crate-owned exports; requires only syncfs plus selected initial-TLS errno in the final ELF; rejects dynamic interpreter/DT_NEEDED/unresolved symbols/dynamic TLS/unowned runtime dependencies and sync/fsync/fdatasync/sync_file_range descriptor closure; disassembles syncfs=306; and executes the same regular-file direct/function-pointer stale-errno success and closed-FD EBADF C fixture through pinned musl then the freestanding candidate. It does not claim filesystem synchronization effects, storage-cache or power-loss durability, descriptor lifecycle, cancellation, allocator/runtime behavior, libc.so, CRT, loader, sysroot, family completion, promotion, or public x86 support." }]
+oracle = [
+  { kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source/header mapping and direct result behavior oracle for src/linux/syncfs.c and GNU include/unistd.h. The selected source is one direct syscall wrapper with no fallback/init/weak-alias closure." },
+  { kind = "kernel-abi", source = "Linux 5.10 x86-64 ABI", role = "syncfs=306 rdi signed descriptor, raw errno, accepted regular-file/pipe descriptor observations, and closed-descriptor EBADF contract; no filesystem durability inference." },
+  { kind = "elf-abi", source = "System V AMD64 psABI", role = "LP64 signed-int calling convention and static initial-TLS Variant-II fixture contract." },
 ]
 
 [[family.verified_artifact]]

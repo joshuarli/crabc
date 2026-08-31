@@ -1214,6 +1214,8 @@ MEMORY_SYNC_SYMBOLS = ("msync",)
 
 MEMBARRIER_SYMBOLS = ("membarrier",)
 
+SYNCFS_SYMBOLS = ("syncfs",)
+
 MEMFD_CREATE_SYMBOLS = ("memfd_create",)
 
 FILESYSTEM_ACCESS_SYMBOLS = ("access", "faccessat", "euidaccess", "eaccess")
@@ -19860,6 +19862,328 @@ def require_membarrier_artifact(family: Mapping[str, Any]) -> None:
         )
 
 
+def require_syncfs_artifact(family: Mapping[str, Any]) -> None:
+    """Keep the direct GNU syncfs leaf below runtime promotion."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.posix-runtime].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [entry for entry in artifacts if entry.get("id") == "static-c-syncfs"]
+    require(
+        len(matching) == 1,
+        "libc.posix-runtime must contain exactly one static-c-syncfs artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-syncfs must not promote libc.posix-runtime",
+    )
+    family_owners = set(
+        nonempty_strings(
+            family.get("source_owners"), "libc.posix-runtime.source_owners"
+        )
+    )
+    require(
+        "libc/src/c_abi/x86_64/syncfs.rs" in family_owners,
+        "libc.posix-runtime must own the selected syncfs source",
+    )
+
+    artifact = matching[0]
+    require(
+        "capabilities" not in artifact,
+        "static-c-syncfs must remain capability-free",
+    )
+    description = artifact.get("description")
+    require(isinstance(description, str), "static-c-syncfs needs a description")
+    for phrase in (
+        "direct Linux 5.10 GNU `syncfs` C ABI artifact",
+        "still-planned `libc.posix-runtime`",
+        "only `syncfs(int)`",
+        "`syncfs=306`",
+        "stale errno on success",
+        "closed-descriptor `EBADF`",
+        "filesystem, storage-cache, or power-loss durability",
+        "regular-file and pipe descriptor acceptance",
+        "src/linux/syncfs.c",
+        "one `syscall(SYS_syncfs, fd)` wrapper",
+        "`sync`, `fsync`, `fdatasync`, `sync_file_range`",
+        "descriptor lifecycle",
+        "allocator/runtime behavior",
+        "family completion, promotion, or public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"static-c-syncfs description omits {phrase}",
+        )
+
+    owners = set(
+        nonempty_strings(artifact.get("source_owners"), "static-c-syncfs.source_owners")
+    )
+    for owner in (
+        "compat/upstreams.toml",
+        "compat/abi/musl-1.2.6/aarch64/libc.a.static.tsv",
+        "libc/Cargo.toml",
+        "libc/src/lib.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/syncfs.rs",
+        "libc/src/c_abi/x86_64/errno.rs",
+        "libc/src/c_abi/x86_64/syscall.rs",
+        "include/errno.h",
+        "include/fcntl.h",
+        "include/bits/fcntl.h",
+        "include/features.h",
+        "include/stdint.h",
+        "include/sys/types.h",
+        "include/sys/syscall.h",
+        "include/bits/syscall.h",
+        "include/unistd.h",
+        "compat/x86_64/syncfs_header_abi_probe.c",
+        "compat/x86_64/syncfs_header_abi_probe.cpp",
+        "compat/x86_64/run_syncfs_header_abi.sh",
+        "compat/x86_64/x86_syncfs_reference_probe.c",
+        "compat/x86_64/run_x86_syncfs_reference.sh",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/libc_syncfs_probe.c",
+        "compat/x86_64/libc_syncfs_start.S",
+        "compat/x86_64/run_libc_syncfs.sh",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/aarch64_parity_inventory.py",
+        "compat/x86_64/aarch64_parity_inventory.json",
+        "compat/x86_64/README.md",
+        "STATUS.md",
+        "x86-64.md",
+        "scripts/dev-x86_64.sh",
+        "scripts/check_structure.py",
+    ):
+        require(owner in owners, f"static-c-syncfs source owners omit {owner}")
+
+    prerequisites = nonempty_strings(
+        artifact.get("x86_abi_prerequisites"),
+        "static-c-syncfs.x86_abi_prerequisites",
+    )
+    require(
+        any(
+            "syncfs=306" in item
+            and "rdi" in item
+            and "initial-TLS errno" in item
+            and "stale errno" in item
+            for item in prerequisites
+        ),
+        "static-c-syncfs must record its x86 syscall ABI",
+    )
+    require(
+        any(
+            "src/linux/syncfs.c" in item
+            and "syscall(SYS_syncfs, fd)" in item
+            and "syncfs.lo" in item
+            and "T" in item
+            and "GLOBAL" in item
+            and "no fallback, initialization, weak alias, or ancillary closure" in item
+            for item in prerequisites
+        ),
+        "static-c-syncfs must retain its exact musl source boundary",
+    )
+    require(
+        any(
+            "fixture-local raw open=2/write=1/unlink=87/close=3" in item
+            and "function-pointer stale-errno success" in item
+            and "closed-descriptor EBADF" in item
+            and "regular-file and pipe descriptors" in item
+            and "power-loss durability" in item
+            for item in prerequisites
+        ),
+        "static-c-syncfs must retain its fixture and non-durability boundary",
+    )
+
+    headers = nonempty_strings(
+        artifact.get("x86_header_prerequisites"),
+        "static-c-syncfs.x86_header_prerequisites",
+    )
+    require(
+        any(
+            "eight-profile C/C++ `<unistd.h>` matrix" in item
+            and "GNU-only `int syncfs(int)`" in item
+            and "hidden default/strict/POSIX/XOPEN/BSD" in item
+            and "macro-free C++" in item
+            and "unmangled GNU C++ linkage" in item
+            for item in headers
+        ),
+        "static-c-syncfs must record its bounded C/C++ header boundary",
+    )
+
+    evidence = artifact.get("native_evidence")
+    require(isinstance(evidence, list), "static-c-syncfs needs evidence")
+    require(
+        {entry.get("command") for entry in evidence if isinstance(entry, Mapping)}
+        == {"./scripts/dev-x86_64.sh libc-syncfs"},
+        "static-c-syncfs must use the closed libc-syncfs command",
+    )
+    scope = evidence[0].get("scope")
+    require(
+        isinstance(scope, str)
+        and all(
+            phrase in scope
+            for phrase in (
+                "Pinned-musl/project GNU C/C++ unistd header proof",
+                "`-nostdlib -static -Wl,--gc-sections` candidate",
+                "GNU visibility/hiding and unmangled C++ linkage",
+                "pinned-musl/raw syncfs reference",
+                "only syncfs plus selected initial-TLS errno",
+                "sync/fsync/fdatasync/sync_file_range descriptor closure",
+                "syncfs=306",
+                "direct/function-pointer stale-errno success",
+                "closed-FD EBADF",
+                "power-loss durability",
+                "allocator/runtime behavior",
+                "public x86 support",
+            )
+        ),
+        "static-c-syncfs evidence must retain its direct static closure",
+    )
+
+    oracle = artifact.get("oracle")
+    require(isinstance(oracle, list), "static-c-syncfs needs oracles")
+    require(
+        any(
+            entry.get("kind") == "c-posix"
+            and "src/linux/syncfs.c" in entry.get("role", "")
+            and "one direct syscall wrapper" in entry.get("role", "")
+            for entry in oracle
+            if isinstance(entry, Mapping)
+        ),
+        "static-c-syncfs must retain its musl source mapping",
+    )
+    require(
+        any(
+            entry.get("kind") == "kernel-abi"
+            and "syncfs=306" in entry.get("role", "")
+            and "closed-descriptor EBADF" in entry.get("role", "")
+            and "no filesystem durability inference" in entry.get("role", "")
+            for entry in oracle
+            if isinstance(entry, Mapping)
+        ),
+        "static-c-syncfs must retain its Linux direct-syscall oracle",
+    )
+
+    exports = set(
+        static_c_abi_export_names(
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        )
+    )
+    require(
+        set(SYNCFS_SYMBOLS) <= exports,
+        "static-c-syncfs must retain its selected public export",
+    )
+    require(
+        {symbol for symbol in exports if symbol in SYNCFS_SYMBOLS}
+        == set(SYNCFS_SYMBOLS),
+        "static-c-syncfs must retain exactly its public symbol",
+    )
+
+    static_root = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+    ).read_text(encoding="utf-8")
+    require(
+        '#[path = "syncfs.rs"]\nmod syncfs;' in static_root,
+        "x86 static C ABI must compose the standalone syncfs leaf",
+    )
+    source = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "syncfs.rs"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "GNU `syncfs(2)` C ABI boundary",
+        "pinned musl 1.2.6 release commit",
+        "src/linux/syncfs.c",
+        "no fallback, initialization, weak alias, or ancillary object closure",
+        "raw_syscall::SYS_SYNCFS",
+        "raw_syscall::syscall1",
+        "c_status(result)",
+        'pub extern "C" fn syncfs',
+    ):
+        require(snippet in source, f"syncfs implementation omits {snippet}")
+    source_exports = set(
+        re.findall(r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(', source)
+    )
+    require(
+        source_exports == set(SYNCFS_SYMBOLS),
+        "syncfs implementation must expose only syncfs",
+    )
+
+    runner = (ROOT / "compat" / "x86_64" / "run_libc_syncfs.sh").read_text(
+        encoding="utf-8"
+    )
+    for snippet in (
+        "run_musl_oracle.sh",
+        "run_syncfs_header_abi.sh",
+        "run_x86_syncfs_reference.sh",
+        "static_c_abi_exports.txt",
+        "-nostdlib -static",
+        "-Wl,--gc-sections",
+        "syncfs\\tsyncfs.lo",
+        "sync fsync fdatasync sync_file_range copy_file_range",
+        "--disassemble=syncfs",
+        "initial-exec errno",
+    ):
+        require(snippet in runner, f"syncfs runner omits {snippet}")
+    require(
+        "--whole-archive" not in runner,
+        "syncfs runner must preserve archive-member extraction",
+    )
+
+    probe = (ROOT / "compat" / "x86_64" / "libc_syncfs_probe.c").read_text(
+        encoding="utf-8"
+    )
+    for snippet in (
+        "SYS_syncfs == 306",
+        "open_unlinked_fixture_file",
+        "check_success",
+        "check_closed_descriptor",
+        "stale errno",
+        "power-loss durability",
+        "CRABC_SYNCFS_FREESTANDING",
+    ):
+        require(snippet in probe, f"syncfs probe omits {snippet}")
+
+    for path in (
+        ROOT / "compat" / "x86_64" / "syncfs_header_abi_probe.c",
+        ROOT / "compat" / "x86_64" / "syncfs_header_abi_probe.cpp",
+    ):
+        header = path.read_text(encoding="utf-8")
+        for snippet in (
+            "syncfs_signature",
+            "SYS_syncfs == 306",
+            "CRABC_SYNCFS_REQUIRE_GNU_HIDDEN",
+        ):
+            require(snippet in header, f"{path.name} omits {snippet}")
+
+    header_runner = (
+        ROOT / "compat" / "x86_64" / "run_syncfs_header_abi.sh"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "syncfs_header_abi_probe.c",
+        "syncfs_header_abi_probe.cpp",
+        "Pinned musl 1.2.6",
+        "_Z6syncfsi",
+        "-D_GNU_SOURCE",
+        "-D_BSD_SOURCE",
+        "-D_POSIX_C_SOURCE=200809L",
+        "-D_XOPEN_SOURCE=700",
+        "-U_GNU_SOURCE",
+    ):
+        require(snippet in header_runner, f"syncfs header runner omits {snippet}")
+
+    dispatcher = (ROOT / "scripts" / "dev-x86_64.sh").read_text(encoding="utf-8")
+    for snippet in (
+        "syncfs-header-abi)",
+        "run_syncfs_header_abi",
+        "libc-syncfs)",
+        "run_libc_syncfs",
+    ):
+        require(snippet in dispatcher, f"syncfs dispatcher omits {snippet}")
+
+
 def require_memory_sync_header_evidence(family: Mapping[str, Any]) -> None:
     """Keep the artifact-local unconditional msync declaration gate explicit."""
     evidence = family.get("native_evidence")
@@ -20028,6 +20352,48 @@ def require_membarrier_header_evidence(family: Mapping[str, Any]) -> None:
         require(
             phrase in scope,
             f"membarrier-header-abi evidence scope omits {phrase}",
+        )
+
+
+def require_syncfs_header_evidence(family: Mapping[str, Any]) -> None:
+    """Keep the artifact-local GNU syncfs declaration gate explicit."""
+    evidence = family.get("native_evidence")
+    require(
+        isinstance(evidence, list),
+        "libc.headers-layouts must retain native evidence",
+    )
+    matching = [
+        entry
+        for entry in evidence
+        if isinstance(entry, Mapping)
+        and entry.get("command") == "./scripts/dev-x86_64.sh syncfs-header-abi"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.headers-layouts must retain exactly one syncfs-header-abi evidence command",
+    )
+    entry = matching[0]
+    scope = entry.get("scope")
+    require(
+        entry.get("state") == "required" and isinstance(scope, str),
+        "syncfs-header-abi evidence must remain required text",
+    )
+    for phrase in (
+        "eight-profile C/C++ `<unistd.h>` matrix",
+        "GNU `int syncfs(int)`",
+        "GNU visibility",
+        "default/strict/POSIX/XOPEN/BSD",
+        "macro-free C++",
+        "unmangled GNU C++ linkage",
+        "archive linkage",
+        "runtime behavior",
+        "filesystem synchronization or durability semantics",
+        "installed-header completion",
+        "public support",
+    ):
+        require(
+            phrase in scope,
+            f"syncfs-header-abi evidence scope omits {phrase}",
         )
 
 
@@ -43043,6 +43409,7 @@ def validate_ledger(
     require_memory_sync_header_evidence(by_id["libc.headers-layouts"])
     require_memory_locking_header_evidence(by_id["libc.headers-layouts"])
     require_membarrier_header_evidence(by_id["libc.headers-layouts"])
+    require_syncfs_header_evidence(by_id["libc.headers-layouts"])
     require_memfd_create_header_evidence(by_id["libc.headers-layouts"])
     require_inet_address_header_evidence(by_id["libc.headers-layouts"])
 
@@ -43134,6 +43501,7 @@ def validate_ledger(
     require_memory_sync_artifact(by_id["libc.posix-runtime"])
     require_memory_locking_artifact(by_id["libc.posix-runtime"])
     require_membarrier_artifact(by_id["libc.posix-runtime"])
+    require_syncfs_artifact(by_id["libc.posix-runtime"])
     require_memfd_create_artifact(by_id["libc.posix-runtime"])
     require_signal_altstack_artifact(by_id["libc.posix-runtime"])
     require_signal_execution_artifact(by_id["libc.posix-runtime"])

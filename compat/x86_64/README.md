@@ -287,6 +287,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh getpagesize-header-abi
 ./scripts/dev-x86_64.sh getdtablesize-header-abi
 ./scripts/dev-x86_64.sh membarrier-header-abi
+./scripts/dev-x86_64.sh syncfs-header-abi
 ./scripts/dev-x86_64.sh system-header-abi
 ./scripts/dev-x86_64.sh syscall-header-abi
 ./scripts/dev-x86_64.sh signal-header-abi
@@ -473,6 +474,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-getpagesize
 ./scripts/dev-x86_64.sh libc-getdtablesize
 ./scripts/dev-x86_64.sh libc-membarrier
+./scripts/dev-x86_64.sh libc-syncfs
 ./scripts/dev-x86_64.sh libc-mapping-core
 ./scripts/dev-x86_64.sh libc-memory-sync
 ./scripts/dev-x86_64.sh libc-memory-locking
@@ -3982,6 +3984,22 @@ select barrier lifecycle, pthread/signal/semaphore coordination, allocator or
 runtime behavior, C runtime/family/platform parity, promotion, or public x86
 support.
 
+`libc-syncfs` is a separate capability-free `static-c-syncfs` artifact over
+that archive, not a descriptor/filesystem or runtime capability. Its
+eight-profile project-header/pinned-musl GNU `<unistd.h>` C/C++ matrix proves
+only `int syncfs(int)`, GNU visibility/hiding, and unmangled C++ linkage. The
+same project-header C fixture first runs through pinned musl and then through a
+true `-nostdlib -static -Wl,--gc-sections` candidate. It preserves musl
+1.2.6's one-wrapper `src/linux/syncfs.c` mapping: direct x86 `syncfs=306`,
+stale-`errno` success, and closed-descriptor `EBADF`; fixture-local raw setup
+creates and unlinks one regular file, while the independent musl/raw reference
+also records regular-file/pipe acceptance and stable position. Success means
+only that Linux accepted the request—neither fixture makes a filesystem,
+storage-cache, or power-loss durability assertion. It excludes `sync`,
+`fsync`, `fdatasync`, `sync_file_range`, descriptor lifecycle, cancellation,
+allocator/runtime behavior, libc.so, CRT, loader, sysroot, family completion,
+promotion, and public x86 support.
+
 `libc-memfd-create` is a separately recorded private planned
 `static-c-memfd-create` evidence artifact over that archive, not a descriptor,
 filesystem, or C-runtime capability. Its GNU project-header C body first
@@ -5773,6 +5791,7 @@ Apart from the narrowly named `libc-stat-compat`, `libc-credentials`,
 `libc-getpagesize`,
 `libc-getdtablesize`,
 `libc-membarrier`,
+`libc-syncfs`,
 `libc-mapping-core`,
 `libc-memory-sync`,
 `libc-memory-locking`,

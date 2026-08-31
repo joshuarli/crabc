@@ -14437,6 +14437,92 @@ class X86ParityLedgerTests(unittest.TestCase):
         ):
             ledger.validate_ledger(data)
 
+    def test_syncfs_artifact_keeps_its_direct_private_contract(self) -> None:
+        data = self.data()
+        family = self.family(data, "libc.posix-runtime")
+        self.assertEqual(family["status"], "planned")
+        artifacts = family["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-syncfs"
+        )
+        self.assertNotIn("capabilities", artifact)
+        self.assertIn("direct Linux 5.10 GNU `syncfs` C ABI artifact", artifact["description"])
+        self.assertIn("power-loss durability", artifact["description"])
+        self.assertIn("public x86 support", artifact["description"])
+
+        owners = artifact["source_owners"]
+        assert isinstance(owners, list)
+        for owner in (
+            "compat/abi/musl-1.2.6/aarch64/libc.a.static.tsv",
+            "libc/src/c_abi/x86_64/syncfs.rs",
+            "include/unistd.h",
+            "compat/x86_64/syncfs_header_abi_probe.c",
+            "compat/x86_64/syncfs_header_abi_probe.cpp",
+            "compat/x86_64/run_syncfs_header_abi.sh",
+            "compat/x86_64/libc_syncfs_probe.c",
+            "compat/x86_64/libc_syncfs_start.S",
+            "compat/x86_64/run_libc_syncfs.sh",
+            "compat/x86_64/aarch64_parity_inventory.py",
+            "compat/x86_64/aarch64_parity_inventory.json",
+        ):
+            self.assertIn(owner, owners)
+
+        prerequisites = artifact["x86_abi_prerequisites"]
+        assert isinstance(prerequisites, list) and isinstance(prerequisites[0], str)
+        prerequisites[0] = prerequisites[0].replace("syncfs=306", "syncfs=999")
+        with self.assertRaisesRegex(ledger.LedgerError, "x86 syscall ABI"):
+            ledger.validate_ledger(data)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-syncfs"
+        )
+        prerequisites = artifact["x86_abi_prerequisites"]
+        assert isinstance(prerequisites, list) and isinstance(prerequisites[1], str)
+        prerequisites[1] = prerequisites[1].replace(
+            "no fallback, initialization, weak alias, or ancillary closure",
+            "unbounded source closure",
+        )
+        with self.assertRaisesRegex(ledger.LedgerError, "exact musl source boundary"):
+            ledger.validate_ledger(data)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-syncfs"
+        )
+        evidence = artifact["native_evidence"]
+        assert isinstance(evidence, list) and isinstance(evidence[0], dict)
+        evidence[0]["command"] = "./scripts/dev-x86_64.sh syncfs-reference"
+        with self.assertRaisesRegex(ledger.LedgerError, "closed libc-syncfs command"):
+            ledger.validate_ledger(data)
+
+        data = self.data()
+        headers = self.family(data, "libc.headers-layouts")
+        evidence = headers["native_evidence"]
+        assert isinstance(evidence, list)
+        header_evidence = next(
+            entry
+            for entry in evidence
+            if isinstance(entry, dict)
+            and entry["command"] == "./scripts/dev-x86_64.sh syncfs-header-abi"
+        )
+        header_evidence["command"] = "./scripts/dev-x86_64.sh syncfs-header-abi-broken"
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "syncfs-header-abi evidence command"
+        ):
+            ledger.validate_ledger(data)
+
     def test_memory_sync_artifact_keeps_its_closed_mapping_contract(self) -> None:
         data = self.data()
         artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]

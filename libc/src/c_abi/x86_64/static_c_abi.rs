@@ -428,6 +428,8 @@ mod descriptor_advice;
 mod ioctl;
 #[path = "descriptor_io.rs"]
 mod descriptor_io;
+#[path = "syncfs.rs"]
+mod syncfs;
 #[path = "vector_io.rs"]
 mod vector_io;
 #[path = "process_resources.rs"]

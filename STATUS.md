@@ -1392,6 +1392,22 @@ synchronization semantics. This is not full musl membarrier, source-level C++
 header parity, a barrier/runtime lifecycle, allocator behavior, C-runtime or
 family/platform parity, promotion, or public x86 support.
 
+The same selected archive has a separate capability-free private
+`static-c-syncfs` artifact: `./scripts/dev-x86_64.sh syncfs-header-abi` records
+only GNU `int syncfs(int)` C/C++ visibility/hiding and unmangled linkage across
+the project-header/pinned-musl eight-profile `<unistd.h>` matrix.
+`./scripts/dev-x86_64.sh libc-syncfs` then runs one project-header C fixture
+through pinned musl and a true `-nostdlib -static -Wl,--gc-sections` candidate.
+It maps musl 1.2.6 `src/linux/syncfs.c`'s one direct syscall wrapper to x86
+`syncfs=306`, records stale-`errno` success and closed-descriptor `EBADF`, and
+uses fixture-local raw setup only for an immediately unlinked regular file.
+The independent musl/raw reference additionally observes regular-file/pipe
+acceptance and stable position. None of this asserts filesystem, storage-cache,
+or power-loss durability. The artifact excludes `sync`, `fsync`, `fdatasync`,
+`sync_file_range`, descriptor lifecycle, cancellation, allocator/runtime
+behavior, libc.so, CRT, loader, sysroot, family completion, promotion, and
+public x86 support.
+
 The same archive also has a private planned GNU memory-file-descriptor
 creation evidence artifact: `./scripts/dev-x86_64.sh memfd-create-header-abi`
 and `./scripts/dev-x86_64.sh libc-memfd-create` compare the GNU-only

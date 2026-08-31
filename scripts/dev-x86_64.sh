@@ -128,6 +128,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   getpagesize-header-abi  compile the staged x86 C/C++ GNU/BSD getpagesize declaration
   getdtablesize-header-abi  compile the staged x86 C/C++ GNU/BSD getdtablesize declaration
   membarrier-header-abi  verify x86 C/C++ sys/membarrier.h declaration and linkage
+  syncfs-header-abi  verify x86 C/C++ GNU syncfs declaration and linkage
   confstr-header-abi  verify x86 C/C++ unconditional confstr declaration and linkage
   fpathconf-header-abi  verify x86 C/C++ unconditional fpathconf declaration and linkage
   pathconf-header-abi  verify x86 C/C++ unconditional pathconf declaration and linkage
@@ -329,6 +330,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-getpagesize  run the static x86 crabc-libc getpagesize slice
   libc-getdtablesize  run the static x86 crabc-libc getdtablesize slice
   libc-membarrier  run the static x86 crabc-libc membarrier slice
+  libc-syncfs  run the static x86 crabc-libc syncfs slice
   libc-confstr  run the static x86 crabc-libc confstr slice
   libc-fpathconf  run the static x86 crabc-libc fpathconf slice
   libc-pathconf  run the static x86 crabc-libc pathconf slice
@@ -2361,6 +2363,10 @@ run_libc_membarrier() {
     run_in_container bash /workspace/compat/x86_64/run_libc_membarrier.sh
 }
 
+run_libc_syncfs() {
+    run_in_container bash /workspace/compat/x86_64/run_libc_syncfs.sh
+}
+
 run_libc_getdtablesize() {
     run_in_container bash /workspace/compat/x86_64/run_libc_getdtablesize.sh
 }
@@ -2623,6 +2629,10 @@ run_getpagesize_header_abi() {
 
 run_membarrier_header_abi() {
     run_in_container bash /workspace/compat/x86_64/run_membarrier_header_abi.sh
+}
+
+run_syncfs_header_abi() {
+    run_in_container bash /workspace/compat/x86_64/run_syncfs_header_abi.sh
 }
 
 run_getdtablesize_header_abi() {
@@ -3854,7 +3864,7 @@ shift
 case "$command" in
     timerfd-header-abi|signalfd-header-abi) ;;
     libc-timerfd|libc-signalfd|libc-sigpause|libc-sigisemptyset|libc-sigandset-sigorset|libc-sigpending|libc-sigrtmax|libc-sigrtmin|libc-sigaddset-sigdelset-sigfillset) ;;
-    ctermid-header-abi|gethostid-header-abi|getpagesize-header-abi|getdtablesize-header-abi|membarrier-header-abi|confstr-header-abi|fpathconf-header-abi|pathconf-header-abi|sysconf-header-abi|isatty-header-abi|tcgetpgrp-header-abi|tcsetpgrp-header-abi|getpass-header-abi|libc-ctermid|libc-gethostid|libc-getpagesize|libc-getdtablesize|libc-membarrier|libc-confstr|libc-fpathconf|libc-pathconf|libc-sysconf|libc-isatty|libc-tcgetpgrp|libc-tcsetpgrp|libc-getpass|mkfifo-header-abi|mkfifoat-header-abi|libc-mkfifo|libc-mkfifoat|mktemp-header-abi|libc-mktemp) ;;
+    ctermid-header-abi|gethostid-header-abi|getpagesize-header-abi|getdtablesize-header-abi|membarrier-header-abi|syncfs-header-abi|confstr-header-abi|fpathconf-header-abi|pathconf-header-abi|sysconf-header-abi|isatty-header-abi|tcgetpgrp-header-abi|tcsetpgrp-header-abi|getpass-header-abi|libc-ctermid|libc-gethostid|libc-getpagesize|libc-getdtablesize|libc-membarrier|libc-syncfs|libc-confstr|libc-fpathconf|libc-pathconf|libc-sysconf|libc-isatty|libc-tcgetpgrp|libc-tcsetpgrp|libc-getpass|mkfifo-header-abi|mkfifoat-header-abi|libc-mkfifo|libc-mkfifoat|mktemp-header-abi|libc-mktemp) ;;
     stdio-permanent-line-io-header-abi|stdio-octal-hex-scan-header-abi) ;;
     math-complex-complete-header-abi|libc-math-complex-complete) ;;
     stdio-permanent-byte-io-header-abi) ;;
@@ -4383,6 +4393,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "membarrier-header-abi takes no arguments"
         ensure_image
         run_membarrier_header_abi
+        ;;
+    syncfs-header-abi)
+        [ "$#" -eq 0 ] || fail "syncfs-header-abi takes no arguments"
+        ensure_image
+        run_syncfs_header_abi
         ;;
     getdtablesize-header-abi)
         [ "$#" -eq 0 ] || fail "getdtablesize-header-abi takes no arguments"
@@ -5608,6 +5623,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "libc-membarrier takes no arguments"
         ensure_image
         run_libc_membarrier
+        ;;
+    libc-syncfs)
+        [ "$#" -eq 0 ] || fail "libc-syncfs takes no arguments"
+        ensure_image
+        run_libc_syncfs
         ;;
     libc-getdtablesize)
         [ "$#" -eq 0 ] || fail "libc-getdtablesize takes no arguments"

@@ -18782,6 +18782,135 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         ):
             self.assertIn(required, runner)
 
+    def test_libc_static_c_abi_syncfs_artifact_stays_direct_and_private(
+        self,
+    ) -> None:
+        """The GNU wrapper must not become a broad filesystem/runtime claim."""
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        syscall = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "syscall.rs"
+        ).read_text(encoding="utf-8")
+        implementation_path = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "syncfs.rs"
+        header_c_path = ROOT / "compat" / "x86_64" / "syncfs_header_abi_probe.c"
+        header_cpp_path = ROOT / "compat" / "x86_64" / "syncfs_header_abi_probe.cpp"
+        header_runner_path = ROOT / "compat" / "x86_64" / "run_syncfs_header_abi.sh"
+        fixture_path = ROOT / "compat" / "x86_64" / "libc_syncfs_probe.c"
+        start_path = ROOT / "compat" / "x86_64" / "libc_syncfs_start.S"
+        artifact_runner_path = ROOT / "compat" / "x86_64" / "run_libc_syncfs.sh"
+        for path in (
+            implementation_path,
+            header_c_path,
+            header_cpp_path,
+            header_runner_path,
+            fixture_path,
+            start_path,
+            artifact_runner_path,
+        ):
+            self.assertTrue(path.is_file(), f"missing syncfs artifact input: {path}")
+
+        implementation = implementation_path.read_text(encoding="utf-8")
+        header_c = header_c_path.read_text(encoding="utf-8")
+        header_cpp = header_cpp_path.read_text(encoding="utf-8")
+        header_runner = header_runner_path.read_text(encoding="utf-8")
+        fixture = fixture_path.read_text(encoding="utf-8")
+        start = start_path.read_text(encoding="utf-8")
+        artifact_runner = artifact_runner_path.read_text(encoding="utf-8")
+        static_exports = {
+            line
+            for line in (
+                ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+            ).read_text(encoding="utf-8").splitlines()
+            if line and not line.startswith("#")
+        }
+        parity_ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        structure = (ROOT / "scripts" / "check_structure.py").read_text(
+            encoding="utf-8"
+        )
+        runner = RUNNER.read_text(encoding="utf-8")
+
+        self.assertIn('#[path = "syncfs.rs"]', static_root)
+        self.assertIn('Path("libc/src/c_abi/x86_64/syncfs.rs")', structure)
+        self.assertIn("syncfs_exports != {\"syncfs\"}", structure)
+        self.assertIn("SYS_SYNCFS: i64 = 306", syscall)
+        for required in (
+            "GNU `syncfs(2)` C ABI boundary",
+            "src/linux/syncfs.c",
+            "no fallback, initialization, weak alias, or ancillary object closure",
+            "raw_syscall::SYS_SYNCFS",
+            "raw_syscall::syscall1",
+            "c_status(result)",
+            'pub extern "C" fn syncfs',
+        ):
+            self.assertIn(required, implementation)
+        for forbidden in ("crabc_mimalloc", "__tls_get_addr", "pthread_"):
+            self.assertNotIn(forbidden, implementation)
+        for header in (header_c, header_cpp):
+            for required in (
+                "syncfs_signature",
+                "SYS_syncfs == 306",
+                "CRABC_SYNCFS_REQUIRE_GNU_HIDDEN",
+            ):
+                self.assertIn(required, header)
+        for required in (
+            "syncfs_header_abi_probe.c",
+            "syncfs_header_abi_probe.cpp",
+            "_Z6syncfsi",
+            "-D_GNU_SOURCE",
+            "-D_BSD_SOURCE",
+            "-D_POSIX_C_SOURCE=200809L",
+            "-D_XOPEN_SOURCE=700",
+            "-U_GNU_SOURCE",
+        ):
+            self.assertIn(required, header_runner)
+        for required in (
+            "SYS_syncfs == 306",
+            "open_unlinked_fixture_file",
+            "check_success",
+            "check_closed_descriptor",
+            "stale errno",
+            "power-loss durability",
+            "CRABC_SYNCFS_FREESTANDING",
+        ):
+            self.assertIn(required, fixture)
+        for required in (
+            "ARCH_SET_FS",
+            "mov %rsi, %fs:0",
+            "crabc_x86_64_syncfs_probe",
+        ):
+            self.assertIn(required, start)
+        for required in (
+            "run_syncfs_header_abi.sh",
+            "run_x86_syncfs_reference.sh",
+            "syncfs\\tsyncfs.lo",
+            "-nostdlib -static",
+            "-Wl,--gc-sections",
+            "--disassemble=syncfs",
+            "sync fsync fdatasync sync_file_range copy_file_range",
+            "candidate unexpectedly pulls",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn("--whole-archive", artifact_runner)
+        self.assertIn("syncfs", static_exports)
+        self.assertIn('id = "static-c-syncfs"', parity_ledger)
+        for command in (
+            "./scripts/dev-x86_64.sh syncfs-header-abi",
+            "./scripts/dev-x86_64.sh libc-syncfs",
+        ):
+            self.assertIn(command, parity_ledger)
+        for required in (
+            "run_syncfs_header_abi()",
+            "/workspace/compat/x86_64/run_syncfs_header_abi.sh",
+            "run_libc_syncfs()",
+            "/workspace/compat/x86_64/run_libc_syncfs.sh",
+            '    syncfs-header-abi)\n        [ "$#" -eq 0 ] || fail "syncfs-header-abi takes no arguments"',
+            '    libc-syncfs)\n        [ "$#" -eq 0 ] || fail "libc-syncfs takes no arguments"',
+        ):
+            self.assertIn(required, runner)
+
     def test_libc_static_header_layouts_baseline_stays_c_and_cxx_only(self) -> None:
         """The aggregate records must not smuggle in a C++ runtime or exports."""
         probe_path = (

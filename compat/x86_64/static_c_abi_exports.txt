@@ -839,6 +839,7 @@ strverscmp
 strxfrm
 strxfrm_l
 symlink
+syncfs
 sysconf
 sysinfo
 tanhl

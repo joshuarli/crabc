@@ -181,6 +181,7 @@ X86_RUNTIME_FOUNDATION_LIBC_SOURCES = {
     Path("libc/src/c_abi/x86_64/locale_objects.rs"),
     Path("libc/src/c_abi/x86_64/locale_narrow.rs"),
     Path("libc/src/c_abi/x86_64/descriptor_io.rs"),
+    Path("libc/src/c_abi/x86_64/syncfs.rs"),
     Path("libc/src/c_abi/x86_64/ffs.rs"),
     Path("libc/src/c_abi/x86_64/integer_arithmetic.rs"),
     Path("libc/src/c_abi/x86_64/integer_parse.rs"),
@@ -3793,6 +3794,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         '#[path = "descriptor_control.rs"]',
         '#[path = "ioctl.rs"]',
         '#[path = "descriptor_io.rs"]',
+        '#[path = "syncfs.rs"]',
         '#[path = "process_resources.rs"]',
         '#[path = "memory_mapping.rs"]',
         '#[path = "memory_sync.rs"]',
@@ -8604,6 +8606,40 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
             "direct branch requires SYS_MEMBARRIER=324"
         )
 
+    syncfs_source = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "syncfs.rs"
+    syncfs_text = syncfs_source.read_text(errors="replace")
+    for required in (
+        "GNU `syncfs(2)` C ABI boundary",
+        "src/linux/syncfs.c",
+        "syscall(SYS_syncfs, fd)",
+        "raw_syscall::SYS_SYNCFS",
+        "raw_syscall::syscall1",
+        "c_status(result)",
+        "power-loss",
+        "sync_file_range",
+    ):
+        if required not in syncfs_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/syncfs.rs: selected static direct "
+                f"filesystem synchronization boundary is missing {required!r}"
+            )
+    syncfs_exports = set(
+        re.findall(
+            r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(',
+            syncfs_text,
+        )
+    )
+    if syncfs_exports != {"syncfs"}:
+        errors.append(
+            "libc/src/c_abi/x86_64/syncfs.rs: selected static artifact "
+            "must export only syncfs"
+        )
+    if "pub(crate) const SYS_SYNCFS: i64 = 306;" not in raw_syscall_text:
+        errors.append(
+            "libc/src/c_abi/x86_64/syscall.rs: selected static filesystem "
+            "synchronization boundary requires SYS_SYNCFS=306"
+        )
+
     memfd_create_source = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "memfd_create.rs"
     memfd_create_text = memfd_create_source.read_text(errors="replace")
     for required in (
@@ -11009,6 +11045,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         memory_sync_text,
         memory_locking_text,
         membarrier_text,
+        syncfs_text,
         memfd_create_text,
         nanosleep_text,
         descriptor_entry_text,
@@ -11331,6 +11368,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         "munlock",
         "mlock2",
         "memfd_create",
+        "syncfs",
         "nanosleep",
         "open",
         "openat",
@@ -11538,7 +11576,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         errors.append(
             "libc/src/c_abi/x86_64: selected static archive must export only its "
             "stat, credential, errno, bootstrap-memory/fenv/continuation, simple "
-            "signal-control, separate realtime-minimum/realtime-maximum bridges, one pure GNU signal-set predicate, paired GNU binary set-operation leaf, and a three-symbol POSIX signal-set mutation leaf, bounded process-signal execution, and one legacy single-signal pause wait, bounded pthread create/exit/join/detach initial-TLS worker, its private selected-main/worker pthread-key/C11-TSS lifecycle, private process-normal pthread mutexes and their musl private condition-variable handoff, the complete selected rwlock/attribute family with private-or-shared futex operation, plus the distinct C11 plain-sync adapter and normal-return pthread/C11 once state machine, its typed C11 create/exit/join/detach sibling, and pthread/C11 identity aliases, named termios-control, direct terminal-descriptor and foreground-group observations plus one named foreground-group assignment, historical ctermid pathname spelling, constant historical gethostid compatibility, selected process-context, child-reaping, C11 immediate termination, callback algorithms, direct clock_gettime, binary64 difftime, caller-buffered fixed-UTC gmtime_r, fixed-UTC timegm, caller-owned mapping-core, no-cancellation mapping synchronization, direct anonymous-memory descriptor creation, nanosleep, and clock_nanosleep, selected "
+            "signal-control, separate realtime-minimum/realtime-maximum bridges, one pure GNU signal-set predicate, paired GNU binary set-operation leaf, and a three-symbol POSIX signal-set mutation leaf, bounded process-signal execution, and one legacy single-signal pause wait, bounded pthread create/exit/join/detach initial-TLS worker, its private selected-main/worker pthread-key/C11-TSS lifecycle, private process-normal pthread mutexes and their musl private condition-variable handoff, the complete selected rwlock/attribute family with private-or-shared futex operation, plus the distinct C11 plain-sync adapter and normal-return pthread/C11 once state machine, its typed C11 create/exit/join/detach sibling, and pthread/C11 identity aliases, named termios-control, direct terminal-descriptor and foreground-group observations plus one named foreground-group assignment, historical ctermid pathname spelling, constant historical gethostid compatibility, selected process-context, child-reaping, C11 immediate termination, callback algorithms, direct clock_gettime, binary64 difftime, caller-buffered fixed-UTC gmtime_r, fixed-UTC timegm, caller-owned mapping-core, no-cancellation mapping synchronization, direct descriptor-scoped mounted-filesystem synchronization, direct anonymous-memory descriptor creation, nanosleep, and clock_nanosleep, selected "
             "POSIX _exit forwarding, descriptor-entry, selected filesystem-access, bounded descriptor-control, timestamp updates, and descriptor-I/O, selected process-resources, selected readiness/signal-waits, "
             "selected socket transport and selected socket-message/options, selected system-observation, selected UTS-identity, "
             "selected numeric-address codecs, immutable IPv6 unspecified/loopback address data objects, and legacy classful IPv4 arithmetic, fixed-profile h_errno message text, byte-string, legacy-memory adapters, source-backed memccpy/mempcpy, caller-buffer strsep, random-entropy, memory-search, C-string-copy, immutable error-string, "
@@ -11612,6 +11650,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         ("memory_sync.rs", memory_sync_text),
         ("memory_locking.rs", memory_locking_text),
         ("membarrier.rs", membarrier_text),
+        ("syncfs.rs", syncfs_text),
         ("memfd_create.rs", memfd_create_text),
         ("nanosleep.rs", nanosleep_text),
         ("descriptor_entry.rs", descriptor_entry_text),
