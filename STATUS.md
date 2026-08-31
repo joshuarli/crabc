@@ -123,6 +123,19 @@ select terminal policy, PTY/session/termios/tty discovery, getpass, generic
 filesystem behavior, temporary-file families, filesystem handles, family
 completion, promotion, or public x86 support.
 
+`./scripts/dev-x86_64.sh libc-grantpt` is a separate private
+`static-c-grantpt` artifact inside still-planned `libc.posix-runtime`. Its
+pinned-musl/project-header C/C++ gate proves the exact X/Open/GNU/BSD
+`int grantpt(int)` declaration, strict/POSIX hiding, and unmangled C++
+linkage. Its pinned-musl and freestanding-static routes then prove only musl's
+legacy zero-return compatibility wrapper for `-1`, `INT32_MIN`, `0`, and
+`INT32_MAX`, with stale errno unchanged in the musl route. The candidate does
+not inspect the descriptor, access errno/TLS, allocate, call helpers, or issue
+a syscall. It does not select PTY allocation/grant/unlock/naming, descriptor
+authority, terminal discovery or session policy, `posix_openpt`, `unlockpt`,
+`ptsname`/`ptsname_r`, openpty/forkpty/login_tty/vhangup, generic ioctl,
+family completion, promotion, or public x86 support.
+
 `./scripts/dev-x86_64.sh libc-gethostid` is a private `static-c-gethostid`
 artifact inside still-planned `libc.c-abi-compat`. Its pinned-musl/project
 X/Open C/C++ header gate proves `long gethostid(void)` visibility only under

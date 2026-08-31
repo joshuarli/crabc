@@ -2443,6 +2443,43 @@ native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc
 oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source mapping: src/unistd/ctermid.c supplies the declaration visibility, fixed literal, caller-buffer copy, and null-result behavior oracle." }, { kind = "elf-abi", source = "System V AMD64 psABI", role = "C char-pointer argument/result and true-static closure contract." }]
 
 [[family.verified_artifact]]
+id = "static-c-grantpt"
+description = "Private native x86 selected-static-archive legacy `grantpt` compatibility no-op inside still-planned `libc.posix-runtime`. One dependency-free `crabc-libc` archive resolves exactly `int grantpt(int)` into a freestanding C fixture after equivalent pinned-musl execution. Pinned musl `src/unistd/grantpt.c::grantpt` returns zero for every signed int descriptor without inspecting it, changing errno, or issuing a syscall; Linux devpts allocation has already performed the kernel PTY grant before this historical compatibility spelling. This selected-private leaf selects no PTY allocation, lock/unlock operation, slave-name lookup, descriptor authority, terminal discovery, terminal/session policy, generic ioctl, errno/TLS, allocation, dynamic runtime, CRT, loader, sysroot, family completion, promotion, or public x86 support. It explicitly excludes `posix_openpt`, `unlockpt`, `ptsname`/`ptsname_r`, openpty/forkpty/login_tty/vhangup, and any general terminal or PTY capability claim."
+source_owners = [
+  "compat/upstreams.toml",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/grantpt.rs",
+  "include/stdlib.h",
+  "include/features.h",
+  "include/bits/alltypes.h",
+  "compat/x86_64/grantpt_header_abi_probe.c",
+  "compat/x86_64/grantpt_header_abi_probe.cpp",
+  "compat/x86_64/run_grantpt_header_abi.sh",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/libc_grantpt_probe.c",
+  "compat/x86_64/libc_grantpt_start.S",
+  "compat/x86_64/run_libc_grantpt.sh",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "compat/x86_64/README.md",
+  "STATUS.md",
+  "x86-64.md",
+  "scripts/dev-x86_64.sh",
+  "scripts/check_structure.py",
+]
+x86_abi_prerequisites = [
+  "System V AMD64 passes the signed four-byte `int grantpt(int)` descriptor in rdi and returns its signed four-byte result in eax. The selected wrapper accepts every int bit pattern, does not dereference or inspect rdi, and returns zero",
+  "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417 maps `src/unistd/grantpt.c::grantpt` to a literal `return 0`; the pinned x86 pty object disassembles to `xor %eax,%eax; ret`, with no descriptor, PTY, or kernel operation",
+  "The linked `-nostdlib -static` candidate has no PT_TLS/TLS relocation, errno accessor, dynamic resolver, or call/jump/syscall instruction in grantpt. The only syscall belongs to the test entry shim, so this leaf has no kernel, descriptor-authority, or terminal-state ABI boundary",
+]
+x86_header_prerequisites = ["The focused pinned-musl/project-header-first C11/C++17 gate proves the exact `int grantpt(int)` stdlib.h declaration and unmangled C++ reference under X/Open, GNU, and BSD profiles. Strict and POSIX profiles hide the extension. This header-only boundary selects no PTY allocation/grant/unlock/naming, archive linkage, installed-header completion, or public x86 support."]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-grantpt", scope = "Pinned-musl/project C/C++ header compilation plus equivalent pinned-musl C execution and a true dependency-free x86 crabc-libc archive with one `-nostdlib -static` candidate. The fixture calls direct and function-pointer `grantpt` with -1, INT32_MIN, 0, and INT32_MAX and proves zero success with stale errno preserved in the musl route. It ratchets exact crate-owned exports and rejects an interpreter, DT_NEEDED, unresolved symbols, PT_TLS/TLS/errno, allocation, runtime dependencies, calls, jumps, and any syscall in grantpt. It excludes posix_openpt/unlockpt/ptsname/ptsname_r, openpty/forkpty/login_tty/vhangup, descriptor I/O, terminal discovery or session policy, generic ioctl, family completion, promotion, and public x86 support." }]
+oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source mapping: src/unistd/grantpt.c::grantpt supplies the X/Open/GNU/BSD declaration visibility and literal zero-return compatibility behavior oracle." }, { kind = "elf-abi", source = "System V AMD64 psABI", role = "C signed-int argument/result and true-static closure contract." }]
+
+[[family.verified_artifact]]
 id = "static-c-isatty"
 description = "Private native x86 selected-static-archive `isatty` descriptor-observation boundary inside still-planned `libc.posix-runtime`. One dependency-free `crabc-libc` archive resolves exactly `isatty(int)` into a freestanding C fixture after equivalent pinned-musl execution. Pinned musl `src/unistd/isatty.c` maps fixed Linux `ioctl=16`/`TIOCGWINSZ=0x5413` and a private four-u16 winsize scratch to `syscall(...) + 1`: a zero ioctl result becomes one and preserves errno, while raw `EBADF`/`ENOTTY` errors become zero and publish the raw errno. Fixture-local raw devpts setup only supplies a known terminal descriptor. The leaf neither opens nor names a terminal and selects no terminal discovery, terminal path/session discovery, termios mutation/control, PTY/session policy, `ttyname`, `getpass`, generic ioctl, generic filesystem completion, temporary-file creation family, dynamic runtime, CRT, loader, sysroot, family completion, promotion, or public x86 support."
 source_owners = [

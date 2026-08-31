@@ -50,7 +50,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 41)
-        self.assertEqual(report["verified_artifact_count"], 201)
+        self.assertEqual(report["verified_artifact_count"], 202)
         self.assertEqual(report["header_layout_probe_count"], 46)
         self.assertEqual(report["public_header_inventory_count"], 183)
         self.assertEqual(report["header_foundation_header_count"], 191)
@@ -13558,6 +13558,63 @@ class X86ParityLedgerTests(unittest.TestCase):
         evidence[0]["command"] = "./scripts/dev-x86_64.sh libc-termios-control"
         with self.assertRaisesRegex(
             ledger.LedgerError, "closed libc-ctermid command"
+        ):
+            ledger.validate_ledger(data)
+
+    def test_static_grantpt_artifact_keeps_its_noop_nonpromoting_contract(
+        self,
+    ) -> None:
+        data = self.data()
+        family = self.family(data, "libc.posix-runtime")
+        family["status"] = "foundation-verified"
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "static-c-grantpt must not promote"
+        ):
+            ledger.require_grantpt_artifact(family)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-grantpt"
+        )
+        artifact["capabilities"] = ["terminal.session-control"]
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "must not carry capabilities"
+        ):
+            ledger.validate_ledger(data)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-grantpt"
+        )
+        artifact["description"] = artifact["description"].replace(
+            "returns zero for every signed int descriptor", "generic compatibility"
+        )
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "description omits returns zero for every signed int descriptor"
+        ):
+            ledger.validate_ledger(data)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-grantpt"
+        )
+        evidence = artifact["native_evidence"]
+        assert isinstance(evidence, list) and isinstance(evidence[0], dict)
+        evidence[0]["command"] = "./scripts/dev-x86_64.sh libc-ctermid"
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "closed libc-grantpt command"
         ):
             ledger.validate_ledger(data)
 

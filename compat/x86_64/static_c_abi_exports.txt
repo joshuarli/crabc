@@ -376,6 +376,7 @@ gettimeofday
 getuid
 getxattr
 gmtime_r
+grantpt
 hcreate
 hcreate_r
 hdestroy

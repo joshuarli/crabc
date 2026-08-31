@@ -1372,7 +1372,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "libc-timerfd|libc-signalfd|libc-sigpause|libc-sigisemptyset|libc-sigandset-sigorset|libc-sigpending|libc-sigrtmax|libc-sigrtmin|libc-sched-getscheduler|libc-sigaddset-sigdelset-sigfillset",
             "libc-sched-yield",
             "sched-getscheduler-header-abi",
-            "ctermid-header-abi|gethostid-header-abi|getpagesize-header-abi|gettid-header-abi|isatty-header-abi|tcgetpgrp-header-abi|tcsetpgrp-header-abi|getpass-header-abi|libc-ctermid|libc-gethostid|libc-getpagesize|libc-gettid|libc-isatty|libc-tcgetpgrp|libc-tcsetpgrp|libc-getpass|mkfifo-header-abi|mkfifoat-header-abi|libc-mkfifo|libc-mkfifoat|mktemp-header-abi|libc-mktemp",
+            "ctermid-header-abi|grantpt-header-abi|gethostid-header-abi|getpagesize-header-abi|gettid-header-abi|isatty-header-abi|tcgetpgrp-header-abi|tcsetpgrp-header-abi|getpass-header-abi|libc-ctermid|libc-grantpt|libc-gethostid|libc-getpagesize|libc-gettid|libc-isatty|libc-tcgetpgrp|libc-tcsetpgrp|libc-getpass|mkfifo-header-abi|mkfifoat-header-abi|libc-mkfifo|libc-mkfifoat|mktemp-header-abi|libc-mktemp",
             "readlinkat-header-abi|libc-readlinkat",
             "stdio-permanent-line-io-header-abi|stdio-octal-hex-scan-header-abi",
             "math-complex-complete-header-abi|libc-math-complex-complete",
@@ -1517,6 +1517,8 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn("libc-termios-control", source)
         self.assertIn("ctermid-header-abi", source)
         self.assertIn("libc-ctermid", source)
+        self.assertIn("grantpt-header-abi", source)
+        self.assertIn("libc-grantpt", source)
         self.assertIn("tcsetpgrp-header-abi", source)
         self.assertIn("libc-tcsetpgrp", source)
         self.assertIn("getpass-header-abi", source)
@@ -2929,6 +2931,18 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         )
         self.assertIn(
             '    libc-ctermid)\n        [ "$#" -eq 0 ] || fail "libc-ctermid takes no arguments"',
+            source,
+        )
+        self.assertIn('run_grantpt_header_abi()', source)
+        self.assertIn(
+            '/workspace/compat/x86_64/run_grantpt_header_abi.sh', source
+        )
+        self.assertIn('run_libc_grantpt_probe()', source)
+        self.assertIn(
+            '/workspace/compat/x86_64/run_libc_grantpt.sh', source
+        )
+        self.assertIn(
+            '    libc-grantpt)\n        [ "$#" -eq 0 ] || fail "libc-grantpt takes no arguments"',
             source,
         )
         self.assertIn('run_isatty_header_abi()', source)
@@ -9847,6 +9861,113 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertNotIn("#define L_ctermid 20\n\n/* File access */", stdio_header)
         self.assertIn("ctermid-header-abi", runner)
         self.assertIn("libc-ctermid", runner)
+
+    def test_libc_static_c_abi_grantpt_artifact_stays_narrow(self) -> None:
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        source = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "grantpt.rs"
+        ).read_text(encoding="utf-8")
+        probe = (
+            ROOT / "compat" / "x86_64" / "libc_grantpt_probe.c"
+        ).read_text(encoding="utf-8")
+        start = (
+            ROOT / "compat" / "x86_64" / "libc_grantpt_start.S"
+        ).read_text(encoding="utf-8")
+        artifact_runner = (
+            ROOT / "compat" / "x86_64" / "run_libc_grantpt.sh"
+        ).read_text(encoding="utf-8")
+        header_runner = (
+            ROOT / "compat" / "x86_64" / "run_grantpt_header_abi.sh"
+        ).read_text(encoding="utf-8")
+        header_c = (
+            ROOT / "compat" / "x86_64" / "grantpt_header_abi_probe.c"
+        ).read_text(encoding="utf-8")
+        header_cxx = (
+            ROOT / "compat" / "x86_64" / "grantpt_header_abi_probe.cpp"
+        ).read_text(encoding="utf-8")
+        stdlib_header = (ROOT / "include" / "stdlib.h").read_text(encoding="utf-8")
+        static_exports = (
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        ).read_text(encoding="utf-8")
+        static_export_names = {
+            line
+            for line in static_exports.splitlines()
+            if line and not line.startswith("#")
+        }
+        runner = RUNNER.read_text(encoding="utf-8")
+
+        self.assertIn('#[path = "grantpt.rs"]', static_root)
+        self.assertIn("grantpt", static_export_names)
+        self.assertEqual(
+            set(
+                re.findall(
+                    r'(?m)^pub\s+unsafe\s+extern\s+"C"\s+fn\s+(\w+)\s*\(',
+                    source,
+                )
+            ),
+            {"grantpt"},
+        )
+        for required in (
+            "pinned musl 1.2.6 release commit",
+            "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+            "src/unistd/grantpt.c::grantpt",
+            "returns zero without",
+            "does not dereference or retain",
+            "# Safety",
+        ):
+            self.assertIn(required, source)
+        for forbidden in (
+            "raw_syscall::",
+            "errno::",
+            "termios_control::",
+            "crabc_core",
+            "crabc_mimalloc",
+            "global_asm!",
+        ):
+            self.assertNotIn(forbidden, source)
+        for required in (
+            "grantpt_signature",
+            "grantpt(-1)",
+            "invoke(INT32_MIN)",
+            "grantpt(0)",
+            "invoke(INT32_MAX)",
+            "errno = 313",
+            "CRABC_GRANTPT_FREESTANDING",
+        ):
+            self.assertIn(required, probe)
+        for required in ("crabc_x86_64_grantpt_probe", "mov $60, %eax"):
+            self.assertIn(required, start)
+        for required in (
+            "run_musl_oracle.sh",
+            "run_grantpt_header_abi.sh",
+            "static_c_abi_exports.txt",
+            "-nostdlib -static",
+            "-Wl,--no-undefined",
+            "archive does not define grantpt",
+            "--disassemble=grantpt",
+            "grantpt candidate unexpectedly retains TLS",
+            "no-call no-syscall wrapper",
+            "zero-return instruction",
+            "assert_candidate_excludes_pty_policy",
+            'timeout "$EXECUTION_TIMEOUT"',
+        ):
+            self.assertIn(required, artifact_runner)
+        for required in (
+            "grantpt_header_abi_probe.c",
+            "grantpt_header_abi_probe.cpp",
+            "Pinned musl 1.2.6",
+            "outside X/Open/GNU/BSD",
+            "retained a mangled grantpt reference",
+        ):
+            self.assertIn(required, header_runner)
+        for required in ("grantpt declaration", "grantpt_function", "grantpt_must_be_hidden"):
+            self.assertIn(required, header_c)
+            self.assertIn(required, header_cxx)
+        self.assertIn("int grantpt(int);", stdlib_header)
+        self.assertIn("grantpt-header-abi", runner)
+        self.assertIn("libc-grantpt", runner)
 
     def test_libc_static_c_abi_isatty_artifact_stays_narrow(self) -> None:
         static_root = (

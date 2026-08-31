@@ -426,6 +426,8 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-termios-control
 ./scripts/dev-x86_64.sh ctermid-header-abi
 ./scripts/dev-x86_64.sh libc-ctermid
+./scripts/dev-x86_64.sh grantpt-header-abi
+./scripts/dev-x86_64.sh libc-grantpt
 ./scripts/dev-x86_64.sh gethostid-header-abi
 ./scripts/dev-x86_64.sh libc-gethostid
 ./scripts/dev-x86_64.sh gettid-header-abi
@@ -3395,6 +3397,20 @@ PTY/session/termios/tty discovery, getpass, generic filesystem behavior,
 temporary-file families, filesystem handles, dynamic runtime, family
 completion, promotion, and public x86 support.
 
+`libc-grantpt` is a separately recorded static `static-c-grantpt`
+`verified_artifact` gate over that archive, not a PTY or terminal capability.
+Its X/Open/GNU/BSD C/C++ `<stdlib.h>` declaration gate proves exact
+`int grantpt(int)` linkage and strict/POSIX hiding before one project-header C
+body executes through pinned musl and a `-nostdlib -static` candidate. It
+selects only musl's historical zero-return compatibility wrapper: direct and
+function-pointer calls with `-1`, `INT32_MIN`, `0`, and `INT32_MAX` succeed;
+the pinned-musl route preserves stale errno. The candidate does not inspect the
+descriptor or use TLS/errno, allocation, helper calls, or a syscall. It
+excludes PTY allocation/grant/unlock/naming, descriptor authority, terminal
+discovery or session policy, `posix_openpt`, `unlockpt`, `ptsname`/`ptsname_r`,
+openpty/forkpty/login_tty/vhangup, generic ioctl, dynamic runtime, family
+completion, promotion, and public x86 support.
+
 `libc-gethostid` is a separate static `verified_artifact` inside
 still-planned `libc.c-abi-compat`, not a `system.kernel-admin` capability. Its
 focused X/Open/GNU/BSD `<unistd.h>` C/C++ gate proves `long gethostid(void)`,
@@ -5645,6 +5661,7 @@ Apart from the narrowly named `libc-stat-compat`, `libc-credentials`,
 `libc-pthread-c11-tsd`,
 `libc-termios-control`,
 `libc-ctermid`,
+`libc-grantpt`,
 `libc-gethostid`,
 `libc-gettid`,
 `libc-isatty`,
