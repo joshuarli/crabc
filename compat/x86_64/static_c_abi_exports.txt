@@ -859,6 +859,7 @@ tcsetpgrp
 tcsetwinsize
 tdelete
 tdestroy
+tee
 telldir
 textdomain
 tfind

@@ -277,6 +277,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh fcntl-header-abi
 ./scripts/dev-x86_64.sh flock-header-abi
 ./scripts/dev-x86_64.sh sendfile-header-abi
+./scripts/dev-x86_64.sh tee-header-abi
 ./scripts/dev-x86_64.sh filesystem-capacity-header-abi
 ./scripts/dev-x86_64.sh vector-io-header-abi
 ./scripts/dev-x86_64.sh unistd-header-abi
@@ -487,6 +488,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-fcntl-record-locks
 ./scripts/dev-x86_64.sh libc-flock
 ./scripts/dev-x86_64.sh libc-sendfile
+./scripts/dev-x86_64.sh libc-tee
 ./scripts/dev-x86_64.sh libc-posix-fallocate
 ./scripts/dev-x86_64.sh libc-filesystem-capacity
 ./scripts/dev-x86_64.sh libc-vector-io
@@ -1466,6 +1468,12 @@ evidence; it does not select locking behavior or `crabc-libc`.
 `SYS_sendfile=40`, the direct signature, large-file alias spelling, and
 unmangled C++ linkage. It is source-only header evidence; it does not select
 descriptor transfer behavior or `crabc-libc`.
+
+`tee-header-abi` compiles project and pinned-musl C/C++ GNU `<fcntl.h>`
+declarations for `ssize_t tee(int, int, size_t, unsigned)`, with C++ linkage.
+It also proves default, strict, POSIX, XOPEN, and BSD C selector profiles hide
+that GNU-only spelling. It is source-only declaration evidence; it does not
+select pipe-buffer transfer behavior or `crabc-libc`.
 
 `unistd-header-abi` compiles project and pinned-musl C/C++ `<unistd.h>`
 declarations, including the staged x86 LP64 POSIX/GNU selectors, process and
@@ -4048,6 +4056,16 @@ EOF zero, stale errno on success, and `EINVAL`/`EBADF` errors. It does not
 select pathname, socket/pipe, splice, copy-file-range, vector-I/O, durability,
 cancellation, general runtime, or public x86 support.
 
+`libc-tee` is a separately recorded `static-c-tee` `verified_artifact` gate
+over the same archive, not a general pipe or descriptor capability. Its
+project-header C/C++ GNU `<fcntl.h>` gate runs before a pinned-musl and
+`-nostdlib -static` candidate fixture for direct pipe-buffer duplication. It
+proves `tee=276` x86 ABI forwarding, source bytes remain readable after an
+equal destination-pipe copy, zero-length stale errno on success, and direct
+`EBADF`. It does not select pipe creation/ownership, generic descriptor
+policy, `splice`/`vmsplice`, cancellation, general runtime, or public x86
+support.
+
 `libc-posix-fallocate` is a separately recorded
 `static-c-posix-fallocate` `verified_artifact` gate over the same archive, not
 a general allocation or descriptor capability. Its strict/no-feature and
@@ -5715,6 +5733,7 @@ Apart from the narrowly named `libc-stat-compat`, `libc-credentials`,
 `libc-fcntl-record-locks`,
 `libc-flock`,
 `libc-sendfile`,
+`libc-tee`,
 `libc-posix-fallocate`,
 `libc-filesystem-capacity`,
 `libc-vector-io`,

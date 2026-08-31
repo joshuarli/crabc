@@ -50,7 +50,8 @@
 //! pathname-selection leaf, fixed Linux `lchmod`
 //! unsupported compatibility, bounded fcntl status-control
 //! and nonblocking record-lock boundaries, advisory whole-file flock, bounded
-//! regular-file sendfile transfer, mode-zero POSIX range allocation,
+//! regular-file sendfile transfer, direct GNU pipe-buffer duplication,
+//! mode-zero POSIX range allocation,
 //! descriptor advice, timestamp updates, descriptor-I/O, vector-I/O, and
 //! selected process-resources, selected readiness/signal-waits, and selected
 //! system-configuration, caller-owned mapping-core, per-range memory locking,
@@ -434,6 +435,8 @@ mod record_locks;
 mod flock;
 #[path = "sendfile.rs"]
 mod sendfile;
+#[path = "tee.rs"]
+mod tee;
 #[path = "posix_fallocate.rs"]
 mod posix_fallocate;
 #[path = "descriptor_advice.rs"]

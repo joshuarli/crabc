@@ -1540,6 +1540,15 @@ position through short-transfer and EOF-zero cases, and stale `errno`,
 socket/pipe, splice, copy-file-range, vector-I/O, durability, cancellation,
 family/platform parity, or public x86 support.
 
+`./scripts/dev-x86_64.sh libc-tee` is a separate private `static-c-tee`
+artifact inside planned `libc.posix-runtime`. Its GNU-only project-header C/C++
+gate and pinned-musl/freestanding-static fixture prove only direct pipe-buffer
+`tee`: source bytes remain readable after an equal destination-pipe copy,
+zero-length success leaves stale `errno`, and a bad source descriptor maps to
+`EBADF`. It does not select pipe creation or ownership, generic descriptor
+policy, `splice`/`vmsplice` transfer, cancellation, family/platform parity, or
+public x86 support.
+
 `./scripts/dev-x86_64.sh libc-posix-fallocate` is a separate private
 `static-c-posix-fallocate` artifact inside planned `libc.posix-runtime`. Its
 strict and large-file-only project-header C/C++ profiles, plus its

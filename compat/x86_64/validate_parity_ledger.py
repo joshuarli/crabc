@@ -21516,6 +21516,114 @@ def require_sendfile_artifact(family: Mapping[str, Any]) -> None:
         )
 
 
+def require_tee_artifact(family: Mapping[str, Any]) -> None:
+    """Keep GNU C tee on its direct pipe-buffer duplication boundary."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.posix-runtime].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [entry for entry in artifacts if entry.get("id") == "static-c-tee"]
+    require(
+        len(matching) == 1,
+        "libc.posix-runtime must contain exactly one static-c-tee artifact",
+    )
+    artifact = matching[0]
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for phrase in (
+        "GNU pipe-buffer duplication block",
+        "tee=276",
+        "rdi/rsi/rdx/r10",
+        "retaining source-pipe bytes",
+        "destination pipe",
+        "zero-length stale errno",
+        "splice",
+        "vmsplice",
+        "public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"static-c-tee description omits {phrase}",
+        )
+    owners = set(artifact["source_owners"])
+    for owner in (
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/tee.rs",
+        "libc/src/c_abi/x86_64/errno.rs",
+        "libc/src/c_abi/x86_64/syscall.rs",
+        "include/fcntl.h",
+        "compat/x86_64/tee_header_abi_probe.c",
+        "compat/x86_64/tee_header_abi_probe.cpp",
+        "compat/x86_64/run_tee_header_abi.sh",
+        "compat/x86_64/libc_tee_probe.c",
+        "compat/x86_64/libc_tee_start.S",
+        "compat/x86_64/run_libc_tee.sh",
+    ):
+        require(owner in owners, f"static-c-tee must own {owner}")
+    prerequisites = artifact["x86_abi_prerequisites"]
+    assert isinstance(prerequisites, list)
+    require(
+        any(
+            "tee=276" in item
+            and "rdi/rsi/rdx/r10" in item
+            and "syscall4" in item
+            for item in prerequisites
+        ),
+        "static-c-tee must record its four-word syscall ABI",
+    )
+    require(
+        any(
+            "source pipe" in item
+            and "remain readable" in item
+            and "destination-pipe copy" in item
+            and "zero length" in item
+            and "EBADF" in item
+            for item in prerequisites
+        ),
+        "static-c-tee must record its narrow pipe-buffer behavior",
+    )
+    require(
+        any("src/linux/tee.c" in item and "cancellation" in item for item in prerequisites),
+        "static-c-tee must record musl's direct non-cancellation path",
+    )
+    header = artifact["x86_header_prerequisites"]
+    assert isinstance(header, list)
+    require(
+        any(
+            "GNU fcntl.h" in item
+            and "Default, strict, POSIX, XOPEN, and BSD" in item
+            and "hidden" in item
+            for item in header
+        ),
+        "static-c-tee must retain its GNU-only C header boundary",
+    )
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-tee"},
+        "static-c-tee must use the closed libc-tee command",
+    )
+    scope = evidence[0]["scope"]
+    assert isinstance(scope, str)
+    for phrase in (
+        "tee=276",
+        "rdi/rsi/rdx/r10",
+        "source remains readable",
+        "destination copy",
+        "zero-length stale errno",
+        "EBADF",
+        "splice",
+        "vmsplice",
+        "public x86 support",
+    ):
+        require(
+            phrase in scope,
+            f"static-c-tee evidence scope omits {phrase}",
+        )
+
+
 def require_posix_fallocate_artifact(family: Mapping[str, Any]) -> None:
     """Keep C POSIX range allocation on its direct-error, mode-zero boundary."""
     artifacts = require_verified_artifacts(
@@ -42328,6 +42436,7 @@ def validate_ledger(
     require_fcntl_record_locks_artifact(by_id["libc.posix-runtime"])
     require_flock_artifact(by_id["libc.posix-runtime"])
     require_sendfile_artifact(by_id["libc.posix-runtime"])
+    require_tee_artifact(by_id["libc.posix-runtime"])
     require_posix_fallocate_artifact(by_id["libc.posix-runtime"])
     require_descriptor_advice_artifact(by_id["libc.posix-runtime"])
     require_generic_ioctl_artifact(by_id["libc.posix-runtime"])

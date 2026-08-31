@@ -255,6 +255,7 @@ X86_RUNTIME_FOUNDATION_LIBC_SOURCES = {
     Path("libc/src/c_abi/x86_64/error_strings.rs"),
     Path("libc/src/c_abi/x86_64/strsignal.rs"),
     Path("libc/src/c_abi/x86_64/termios_control.rs"),
+    Path("libc/src/c_abi/x86_64/tee.rs"),
     Path("libc/src/c_abi/x86_64/grantpt.rs"),
     Path("libc/src/c_abi/x86_64/unlockpt.rs"),
     Path("libc/src/c_abi/x86_64/isatty.rs"),
@@ -3771,6 +3772,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         '#[path = "c11_sync.rs"]',
         '#[path = "pthread_once.rs"]',
         '#[path = "termios_control.rs"]',
+        '#[path = "tee.rs"]',
         '#[path = "grantpt.rs"]',
         '#[path = "unlockpt.rs"]',
         '#[path = "isatty.rs"]',
@@ -6459,6 +6461,41 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
             errors.append(
                 "libc/src/c_abi/x86_64/unlockpt.rs: selected static fixed PTY "
                 f"lock-release boundary must not select {forbidden!r}"
+            )
+
+    tee_source = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "tee.rs"
+    tee_text = tee_source.read_text(errors="replace")
+    for required in (
+        "musl 1.2.6 release commit",
+        "src/linux/tee.c",
+        "tee=276",
+        "rdi/rsi/rdx/r10",
+        "raw_syscall::SYS_TEE",
+        "raw_syscall::syscall4(",
+        "c_ssize_status(result)",
+        'pub unsafe extern "C" fn tee',
+        "cancellation-point machinery",
+    ):
+        if required not in tee_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/tee.rs: selected static GNU pipe-buffer "
+                f"boundary is missing {required!r}"
+            )
+    tee_exports = set(
+        re.findall(
+            r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(', tee_text
+        )
+    )
+    if tee_exports != {"tee"}:
+        errors.append(
+            "libc/src/c_abi/x86_64/tee.rs: selected static GNU pipe-buffer "
+            "artifact must export only tee"
+        )
+    for forbidden in ("crabc_core", "crabc_mimalloc", "fn splice(", "fn vmsplice("):
+        if forbidden in tee_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/tee.rs: selected static GNU pipe-buffer "
+                f"boundary must not select {forbidden!r}"
             )
 
     gethostid_source = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "gethostid.rs"
@@ -10912,6 +10949,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         ctermid_text,
         grantpt_text,
         unlockpt_text,
+        tee_text,
         gethostid_text,
         gettid_text,
         isatty_text,
@@ -11229,6 +11267,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         "ctermid",
         "grantpt",
         "unlockpt",
+        "tee",
         "gethostid",
         "gettid",
         "isatty",
@@ -11531,6 +11570,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         ("ctermid.rs", ctermid_text),
         ("grantpt.rs", grantpt_text),
         ("unlockpt.rs", unlockpt_text),
+        ("tee.rs", tee_text),
         ("gettid.rs", gettid_text),
         ("isatty.rs", isatty_text),
         ("tcgetpgrp.rs", tcgetpgrp_text),
