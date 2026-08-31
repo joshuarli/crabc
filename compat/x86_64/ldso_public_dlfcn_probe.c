@@ -35,6 +35,23 @@ static int (*const typed_dlinfo)(void *, int, void *) = dlinfo;
 static int (*const typed_dl_iterate_phdr)(
     int (*)(struct dl_phdr_info *, size_t, void *), void *) = dl_iterate_phdr;
 
+#ifdef CRABC_PUBLIC_DLFCN_OVERRIDE_ITERATE
+/*
+ * A strong application definition must displace the archive's weak static
+ * spelling. The separate candidate below still references dlopen so the
+ * bridge object is extracted before this override is exercised.
+ */
+static int override_dl_iterate_phdr_calls;
+
+int dl_iterate_phdr(int (*callback)(struct dl_phdr_info *, size_t, void *),
+                    void *data) {
+    (void)callback;
+    (void)data;
+    ++override_dl_iterate_phdr_calls;
+    return 79;
+}
+#endif
+
 struct observed_graph {
     int main_seen;
     int mid_seen;
@@ -163,6 +180,12 @@ static int run_concurrent_errors(struct error_worker *workers) {
 #endif
 
 int main(void) {
+#ifdef CRABC_PUBLIC_DLFCN_OVERRIDE_ITERATE
+    void *(*volatile extract_bridge)(const char *, int) = typed_dlopen;
+    if (extract_bridge == NULL) return 94;
+    return typed_dl_iterate_phdr(NULL, NULL) == 79
+        && override_dl_iterate_phdr_calls == 1 ? 0 : 95;
+#else
     (void)typed_dlopen;
     (void)typed_dlclose;
     (void)typed_dladdr;
@@ -323,5 +346,6 @@ int main(void) {
 #endif
     if (typed_dlclose(leaf) != 0 || typed_dlclose(main_handle) != 0) return 58;
     return 0;
+#endif
 #endif
 }

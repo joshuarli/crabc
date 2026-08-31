@@ -50,7 +50,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 40)
-        self.assertEqual(report["verified_artifact_count"], 151)
+        self.assertEqual(report["verified_artifact_count"], 152)
         self.assertEqual(report["header_layout_probe_count"], 46)
         self.assertEqual(report["public_header_inventory_count"], 183)
         self.assertEqual(report["header_foundation_header_count"], 191)
@@ -920,6 +920,9 @@ class X86ParityLedgerTests(unittest.TestCase):
         for phrase in (
             "public-C dlfcn bridge artifact",
             "staged static `libc.a`",
+            "weak_alias(static_dl_iterate_phdr, dl_iterate_phdr)",
+            "normal/malformed isolated candidates retain default-visible `STB_WEAK`",
+            "caller strong definition wins after a retained `dlopen` address forces bridge extraction",
             "real ET_DYN main",
             "never falls back to an ambient loader",
             "32-live-thread",
@@ -963,6 +966,10 @@ class X86ParityLedgerTests(unittest.TestCase):
         prerequisites = " ".join(artifact["x86_abi_prerequisites"])
         for phrase in (
             "AArch64 libc.so and libc.a ABI manifests retain dl_iterate_phdr, dladdr, dlclose, dlinfo, dlerror, dlsym, and dlopen exports",
+            "dl_iterate_phdr dl_iterate_phdr.lo W WEAK",
+            "src/ldso/dl_iterate_phdr.c",
+            "weak_alias(static_dl_iterate_phdr, dl_iterate_phdr)",
+            "caller STB_GLOBAL definition overrides it after a `dlopen` reference extracts the bridge",
             "src/ldso/dlinfo.c:dlinfo",
             "Unsupported request %d",
             "does not consume that pending state",
@@ -1001,6 +1008,8 @@ class X86ParityLedgerTests(unittest.TestCase):
         scope = artifact["native_evidence"][0]["scope"]
         for phrase in (
             "request -7",
+            "pinned static STB_WEAK `dl_iterate_phdr` binding",
+            "caller STB_GLOBAL override after a `dlopen` reference extracts the bridge",
             "leaves its result pointer untouched",
             "exact `Unsupported request -7`",
             "valid RTLD_DI_LINKMAP query leaves that error pending",
@@ -1030,6 +1039,8 @@ class X86ParityLedgerTests(unittest.TestCase):
                 entry["kind"] == "aarch64-contract"
                 and "aarch64/libc.so.dynamic.tsv" in entry["source"]
                 and "dl_iterate_phdr, dladdr, dlclose, dlinfo, dlerror, dlsym, and dlopen exports" in entry["role"]
+                and "static manifest records weak dl_iterate_phdr while the shared manifest records global dl_iterate_phdr" in entry["role"]
+                and "ABI-presence/binding evidence" in entry["role"]
                 and "not a behavioral fallback" in entry["role"]
                 for entry in artifact["oracle"]
             )
@@ -1037,7 +1048,9 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertTrue(
             any(
                 entry["kind"] == "c-posix"
+                and "src/ldso/dl_iterate_phdr.c" in entry["source"]
                 and "ldso/dynlink.c" in entry["source"]
+                and "static `weak_alias(static_dl_iterate_phdr, dl_iterate_phdr)` archive-binding contract" in entry["role"]
                 and "callback-before-next-lock same-thread pending-dlerror consumption"
                 in entry["role"]
                 for entry in artifact["oracle"]
@@ -5296,7 +5309,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         data = self.data()
         text_math = self.family(data, "libc.text-math-locale-stdio")
         artifacts = text_math["verified_artifact"]
-        assert isinstance(artifacts, list) and len(artifacts) == 19
+        assert isinstance(artifacts, list) and len(artifacts) == 26
         artifact = next(
             entry
             for entry in artifacts

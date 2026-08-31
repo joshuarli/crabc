@@ -7007,6 +7007,9 @@ def require_ldso_public_fixed_graph_dlfcn_artifact(family: Mapping[str, Any]) ->
         "still-planned `ldso.dynamic-runtime`",
         "staged static `libc.a`",
         "`dlopen`, `dlsym`, `dlclose`, `dlerror`, `dladdr`, `dlinfo`, and `dl_iterate_phdr`",
+        "weak_alias(static_dl_iterate_phdr, dl_iterate_phdr)",
+        "normal/malformed isolated candidates retain default-visible `STB_WEAK`",
+        "caller strong definition wins after a retained `dlopen` address forces bridge extraction",
         "real ET_DYN main",
         "weak undefined `R_X86_64_GLOB_DAT`",
         "never falls back to an ambient loader",
@@ -7094,6 +7097,10 @@ def require_ldso_public_fixed_graph_dlfcn_artifact(family: Mapping[str, Any]) ->
         "tgkill=234",
         "RTLD_DEFAULT",
         "AArch64 libc.so and libc.a ABI manifests retain dl_iterate_phdr, dladdr, dlclose, dlinfo, dlerror, dlsym, and dlopen exports",
+        "dl_iterate_phdr dl_iterate_phdr.lo W WEAK",
+        "src/ldso/dl_iterate_phdr.c",
+        "weak_alias(static_dl_iterate_phdr, dl_iterate_phdr)",
+        "caller STB_GLOBAL definition overrides it after a `dlopen` reference extracts the bridge",
         "src/ldso/dlinfo.c:dlinfo",
         "Unsupported request %d",
         "does not consume that pending state",
@@ -7147,6 +7154,8 @@ def require_ldso_public_fixed_graph_dlfcn_artifact(family: Mapping[str, Any]) ->
         "pinned-musl 1.2.6",
         "project C/C++ header ABI",
         "staged libc.a export contract",
+        "pinned static STB_WEAK `dl_iterate_phdr` binding",
+        "caller STB_GLOBAL override after a `dlopen` reference extracts the bridge",
         "weak GLOB_DAT/64-byte RuntimeV1-prefix wire",
         "rejects ambient libc/loader dependencies and PT_TLS",
         "two concurrent TLS-free clone threads",
@@ -7194,6 +7203,9 @@ def require_ldso_public_fixed_graph_dlfcn_artifact(family: Mapping[str, Any]) ->
         "main-musl-public-dlfcn",
         "main-crabc-public-dlfcn-malformed",
         "main-crabc-public-dlfcn-absent",
+        "main-crabc-public-dlfcn-override",
+        "CRABC_PUBLIC_DLFCN_OVERRIDE_ITERATE",
+        "staged static archive lost musl weak dl_iterate_phdr binding",
         "env -i PATH=/usr/bin:/bin",
     ):
         require(
@@ -7237,6 +7249,9 @@ def require_ldso_public_fixed_graph_dlfcn_artifact(family: Mapping[str, Any]) ->
         "filename.is_null() && flags == RTLD_NOLOAD",
         "crabc_bounded_runtime_dlopen",
         "ldso/dynlink.c:dl_iterate_phdr",
+        "src/ldso/dl_iterate_phdr.c",
+        "weak_alias(static_dl_iterate_phdr, dl_iterate_phdr)",
+        "#[linkage = \"weak\"]",
         "diagnostic-slot lock across the callback",
         "callback-driven mapping, graph mutation, or a general reentrant loader",
     ):
@@ -7244,6 +7259,13 @@ def require_ldso_public_fixed_graph_dlfcn_artifact(family: Mapping[str, Any]) ->
             snippet in bridge,
             f"public fixed-graph dlfcn bridge omits bounded dlinfo diagnostic {snippet}",
         )
+    isolated_bridge = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "fixed_graph_dlfcn_runtime.rs"
+    ).read_text(encoding="utf-8")
+    require(
+        "#![feature(linkage)]" in isolated_bridge,
+        "isolated public fixed-graph dlfcn bridge cannot retain weak dl_iterate_phdr linkage",
+    )
     loader = (ROOT / "ldso" / "src" / "x86_64_initial_graph.rs").read_text(
         encoding="utf-8"
     )
@@ -7277,6 +7299,9 @@ def require_ldso_public_fixed_graph_dlfcn_artifact(family: Mapping[str, Any]) ->
         "typed_dl_iterate_phdr(consume_pending_error, &callback_error)",
         "callback_error.visits != 1",
         "callback_error.error == NULL",
+        "CRABC_PUBLIC_DLFCN_OVERRIDE_ITERATE",
+        "override_dl_iterate_phdr_calls",
+        "extract_bridge",
     ):
         require(
             snippet in probe,
@@ -7297,6 +7322,14 @@ def require_ldso_public_fixed_graph_dlfcn_artifact(family: Mapping[str, Any]) ->
             f"\n{symbol}\t" in aarch64_dynamic,
             f"pinned AArch64 musl dynamic manifest omits {symbol}",
         )
+    require(
+        "\ndl_iterate_phdr\tdl_iterate_phdr.lo\tW\tWEAK\t" in aarch64_static,
+        "pinned AArch64 musl static manifest lacks weak dl_iterate_phdr binding",
+    )
+    require(
+        "\ndl_iterate_phdr\tFUNC\tGLOBAL\tDEFAULT\t" in aarch64_dynamic,
+        "pinned AArch64 musl dynamic manifest lacks global dl_iterate_phdr binding",
+    )
     oracle = artifact["oracle"]
     assert isinstance(oracle, list)
     require(
@@ -7304,11 +7337,13 @@ def require_ldso_public_fixed_graph_dlfcn_artifact(family: Mapping[str, Any]) ->
             isinstance(entry, Mapping)
             and entry.get("kind") == "c-posix"
             and isinstance(entry.get("source"), str)
+            and "src/ldso/dl_iterate_phdr.c" in entry["source"]
             and "src/ldso/dlinfo.c" in entry["source"]
             and "src/ldso/dlclose.c" in entry["source"]
             and "src/ldso/dlsym.c" in entry["source"]
             and isinstance(entry.get("role"), str)
             and "exact live-handle unsupported-dlinfo diagnostic" in entry["role"]
+            and "static `weak_alias(static_dl_iterate_phdr, dl_iterate_phdr)` archive-binding contract" in entry["role"]
             and "exact null-dlclose return/diagnostic" in entry["role"]
             and "exact live-handle empty-dlsym diagnostic" in entry["role"]
             and "exact null-dladdr untouched-output/no-error behavior" in entry["role"]
@@ -7328,6 +7363,8 @@ def require_ldso_public_fixed_graph_dlfcn_artifact(family: Mapping[str, Any]) ->
             and "libc.a.static.tsv" in entry["source"]
             and isinstance(entry.get("role"), str)
             and "dl_iterate_phdr, dladdr, dlclose, dlinfo, dlerror, dlsym, and dlopen exports" in entry["role"]
+            and "static manifest records weak dl_iterate_phdr while the shared manifest records global dl_iterate_phdr" in entry["role"]
+            and "ABI-presence/binding evidence" in entry["role"]
             and "not a behavioral fallback" in entry["role"]
             for entry in oracle
         ),

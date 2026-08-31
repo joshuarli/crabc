@@ -764,6 +764,14 @@ pub unsafe extern "C" fn dlinfo(
 /// one already-pending same-thread `dlerror` state; this is not admission for
 /// callback-driven mapping, graph mutation, or a general reentrant loader.
 #[no_mangle]
+// Musl 1.2.6 `src/ldso/dl_iterate_phdr.c` keeps its static body private and
+// publishes `weak_alias(static_dl_iterate_phdr, dl_iterate_phdr)`, so
+// `libc.a` records this entry as `STB_WEAK` even though shared `libc.so` uses
+// a global spelling. The existing target root enables the unstable linkage
+// attribute only on the two admitted Linux targets. Marking this direct body
+// weak preserves the archive override contract without a forwarding wrapper
+// or an extra helper export.
+#[linkage = "weak"]
 pub unsafe extern "C" fn dl_iterate_phdr(
     callback: Option<unsafe extern "C" fn(*mut DlPhdrInfo, usize, *mut c_void) -> c_int>,
     data: *mut c_void,

@@ -278,7 +278,15 @@ PT_TLS; a bounded 32-live-thread Linux-TID table owns one-shot `dlerror` and
 copied `dladdr` names, and dead slots are reclaimed only after `tgkill` reports
 `ESRCH`. Pinned-musl plus project-header C/C++ evidence covers ABI layouts,
 iteration, link maps, concurrent diagnostics, malformed/absent records, and
-stale handles. For a live retained handle within that 32-slot table, the sole
+stale handles. Pinned musl 1.2.6 `src/ldso/dl_iterate_phdr.c` keeps its static
+body private and publishes `weak_alias(static_dl_iterate_phdr,
+dl_iterate_phdr)`: the AArch64 static manifest records weak
+`dl_iterate_phdr`, while libc.so records the global spelling. The staged
+archive and normal/malformed isolated candidates retain that default-visible
+weak binding, and a strong caller definition wins after a `dlopen` reference
+extracts the bridge. This ratchets static-link ABI only; it does not change
+iteration, mapping, lookup, lifecycle, or public-support scope. For a live
+retained handle within that 32-slot table, the sole
 musl `dlinfo` request is `RTLD_DI_LINKMAP`: the `-7` differential leaves its
 result pointer untouched, keeps exact `Unsupported request -7` pending through
 a succeeding valid query, then consumes it once. Within the same bound, `dlclose(NULL)` returns exactly

@@ -114,6 +114,13 @@ for symbol in __crabc_x86_fixed_graph_dlfcn_record dl_iterate_phdr dladdr dlclos
     dlerror dlinfo dlopen dlsym; do
     grep -Fxq "$symbol" "$work_dir/actual-exports" || fail "archive lacks $symbol"
 done
+readelf -Ws "$members_dir"/*.o | awk \
+    '$4 == "FUNC" && $5 == "WEAK" && $7 != "UND" && $8 == "dl_iterate_phdr" { found=1 } END { exit found ? 0 : 1 }' ||
+    fail 'staged static archive lost musl weak dl_iterate_phdr binding'
+if readelf -Ws "$members_dir"/*.o | awk \
+    '$4 == "FUNC" && $5 == "GLOBAL" && $7 != "UND" && $8 == "dl_iterate_phdr" { found=1 } END { exit found ? 0 : 1 }'; then
+    fail 'staged static archive made dl_iterate_phdr strong'
+fi
 
 rustc --edition=2021 --crate-type staticlib -C relocation-model=pic \
     -C code-model=small -C panic=abort "$BRIDGE_SOURCE" -o "$archive"
@@ -137,9 +144,12 @@ build_main "$work_dir/ld-crabc-x86_64-public-dlfcn-malformed.so" \
     "$work_dir/main-crabc-public-dlfcn-malformed" -DCRABC_PUBLIC_DLFCN_MALFORMED=1
 build_main "$MUSL_LOADER" "$work_dir/main-crabc-public-dlfcn-absent" \
     -DCRABC_PUBLIC_DLFCN_MALFORMED=1
+build_main "$work_dir/ld-crabc-x86_64-public-dlfcn.so" \
+    "$work_dir/main-crabc-public-dlfcn-override" -DCRABC_PUBLIC_DLFCN_OVERRIDE_ITERATE=1
 
 for candidate in "$work_dir/main-crabc-public-dlfcn" \
-    "$work_dir/main-crabc-public-dlfcn-malformed"; do
+    "$work_dir/main-crabc-public-dlfcn-malformed" \
+    "$work_dir/main-crabc-public-dlfcn-override"; do
     [ "$(readelf -h "$candidate" | awk '/Type:/{print $2}')" = DYN ] ||
         fail "public candidate is not ET_DYN: $candidate"
     ! readelf -dW "$candidate" | grep -Eq '\(NEEDED\).*(libc|libgcc|ld-linux)' ||
@@ -154,6 +164,23 @@ for candidate in "$work_dir/main-crabc-public-dlfcn" \
             fail "public candidate lacks defined $symbol"
     done
 done
+for candidate in "$work_dir/main-crabc-public-dlfcn" \
+    "$work_dir/main-crabc-public-dlfcn-malformed"; do
+    readelf -Ws "$candidate" | awk \
+        '$4 == "FUNC" && $5 == "WEAK" && $6 == "DEFAULT" && $7 != "UND" && $8 == "dl_iterate_phdr" { found=1 } END { exit found ? 0 : 1 }' ||
+        fail "public candidate lost musl weak dl_iterate_phdr binding: $candidate"
+    if readelf -Ws "$candidate" | awk \
+        '$4 == "FUNC" && $5 == "GLOBAL" && $7 != "UND" && $8 == "dl_iterate_phdr" { found=1 } END { exit found ? 0 : 1 }'; then
+        fail "public candidate made dl_iterate_phdr strong: $candidate"
+    fi
+done
+readelf -Ws "$work_dir/main-crabc-public-dlfcn-override" | awk \
+    '$4 == "FUNC" && $5 == "GLOBAL" && $7 != "UND" && $8 == "dl_iterate_phdr" { found=1 } END { exit found ? 0 : 1 }' ||
+    fail 'caller strong dl_iterate_phdr did not override the archive weak binding'
+if readelf -Ws "$work_dir/main-crabc-public-dlfcn-override" | awk \
+    '$4 == "FUNC" && $5 == "WEAK" && $7 != "UND" && $8 == "dl_iterate_phdr" { found=1 } END { exit found ? 0 : 1 }'; then
+    fail 'caller override retained the archive weak dl_iterate_phdr binding'
+fi
 readelf -Ws "$work_dir/main-crabc-public-dlfcn" | awk \
     '$5 == "WEAK" && $7 == "UND" && $8 == "__crabc_x86_64_fixed_graph_dlfcn_v1" { found=1 } END { exit found ? 0 : 1 }' ||
     fail 'public candidate lost weak loader-record import'
@@ -180,5 +207,7 @@ run_clean() { env -i PATH=/usr/bin:/bin "$1"; }
     fail 'malformed loader record did not fail closed through public dlfcn'
 (cd "$work_dir" && run_clean "$work_dir/main-crabc-public-dlfcn-absent") ||
     fail 'absent loader record fell back to the ambient musl loader'
+(cd "$work_dir" && run_clean "$work_dir/main-crabc-public-dlfcn-override") ||
+    fail 'caller strong dl_iterate_phdr did not override the archive weak binding'
 
 printf '%s\n' 'x86 public C fixed-graph dlfcn ABI/diagnostics/introspection: PASS'

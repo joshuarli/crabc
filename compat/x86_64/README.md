@@ -4609,6 +4609,16 @@ filesystem search/mapping, graph mutation, finalization, and unload remain
 excluded. This artifact deliberately selects neither dlfcn capability,
 `ldso.dynamic-runtime`, nor public x86 support.
 
+Pinned musl 1.2.6 `src/ldso/dl_iterate_phdr.c` keeps its static body private
+and publishes `weak_alias(static_dl_iterate_phdr, dl_iterate_phdr)`. The pinned
+AArch64 static manifest records the weak public spelling, whereas libc.so
+records it global. `ldso-public-dlfcn` now proves default-visible weak
+`dl_iterate_phdr` in both the staged archive and its normal/malformed isolated
+ET_DYN candidates; a strong caller definition wins after a `dlopen` reference
+extracts the bridge. The declaration and all graph behavior are unchanged, so
+this is neither loader admission/lifecycle expansion nor capability/platform
+promotion.
+
 `ldso-dladdr-symbol-bounds` is a separate fixed-graph `dladdr` differential
 over that already-existing bridge, not an additional loader admission path.
 Its real leaf has one four-byte default-visible dynamic object immediately
