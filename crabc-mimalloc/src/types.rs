@@ -2580,9 +2580,13 @@ impl Page {
     /// # Safety
     ///
     /// `page` must name stable initialized metadata that remains live while a
-    /// returned producer state can be used. The caller must prohibit page
-    /// abandonment, detachment, retirement, reuse, and release, but remote
-    /// producer code itself must not inspect any non-atomic page field.
+    /// returned producer state can be used. A current allocation may provide
+    /// that lifetime: its still-counted source `used` contribution prevents
+    /// final page release until its remote publication reaches
+    /// `xthread_free`. Page abandonment may race that publication, but reuse
+    /// and final release may not. Remote producer code itself must not inspect
+    /// any non-atomic page field, and a producer that claims an abandoned low
+    /// owner bit must complete the corresponding source owner protocol.
     #[inline]
     pub(super) unsafe fn remote_free_producer_state_at(
         page: NonNull<Self>,

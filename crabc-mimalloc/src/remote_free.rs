@@ -11,16 +11,17 @@
 // the exact `mi_thread_free_t` low-bit representation from
 // `include/mimalloc/types.h:388-418`.
 //
-// This bounded Milestone 5 slice handles remote push and owner collection for
-// live owner-associated pages, plus the narrow `allow_collect=true` head
-// transitions used by `abandoned`, including its expected-head unown tail.
-// It deliberately excludes the separate `_mi_deferred_free` callback, general
-// allocation/free routing, TLS/theap attachment, and general page retirement
-// or release. `single_thread.rs` is the sole bounded consumer that follows a
-// successful detach with false-force full-page collection, whose caller proves
-// live producers are joined/quiescent before its queue transition. The
-// explicit detached metadata branch has no remote producer path and does not
-// call this module.
+// The production-facing live path consumes one pointer-derived PageMap
+// observation and performs the raw source publication and owner collection
+// without a registry, TLD lookup, or generation sidecar. This module also
+// retains older bounded page-lifetime fault evidence and the narrow
+// `allow_collect=true` transitions used by `abandoned`, including its
+// expected-head unown tail. It deliberately excludes the separate
+// `_mi_deferred_free` callback, top-level allocation/free routing, and the
+// complete abandoned-page policy selected after a producer claims ownership.
+// `single_thread.rs` remains the sole bounded consumer that follows a detach
+// with false-force full-page collection, whose caller proves live producers
+// are joined/quiescent before its queue transition.
 // `remote_free_loom.rs` separately models this module's exact head CAS and
 // compact page-lifetime-word transitions with Loom; it does not model raw
 // block pointers or owner-local mutation.
@@ -31,6 +32,7 @@ use crate::atomic::{
     AtomicWord, word_cas_weak_acq_rel, word_load_acquire, word_load_relaxed, word_or_acq_rel,
     word_sub_acq_rel,
 };
+use crate::process_page_map::{LiveAllocationPageState, LiveAllocationPointer};
 use crate::types::{
     Block, Page, PageRemoteFreeOwnerState, PageRemoteFreeProducerState, ThreadFree,
     PAGE_FLAG_MASK, THREAD_ID_ABANDONED, THREAD_ID_ABANDONED_MAPPED,
@@ -40,10 +42,104 @@ use crate::types::{
 const THREAD_FREE_OWNED: ThreadFree = 1;
 const THREAD_FREE_BLOCK_MASK: ThreadFree = !THREAD_FREE_OWNED;
 
-// The low 32 bits form a page-local Rust lifetime supplement.  The source
-// remote head stays unchanged: it remains the exact `mi_thread_free_t` low-bit
-// list from `types.h`.  The page owner supplies one additional word only until
-// PageMap lookup/release can retain this proof in `Page` itself.
+/// One coherent pointer-dispatch observation accepted by live remote free.
+///
+/// The general source path must not accept an independently supplied page and
+/// block: both facts come from one valid-live-client PageMap lookup and its
+/// canonical block recovery. Keeping this as a narrow unsafe projection lets
+/// the remote-free tests exercise the source atomics without constructing a
+/// process PageMap, while production implements it only for
+/// [`LiveAllocationPointer`].
+///
+/// # Safety
+///
+/// `page`, `canonical_block`, and `page_state` must be one coherent
+/// observation of the same exact current allocation. The allocation must keep
+/// its page metadata, PageMap registration, and complete block area live until
+/// the consuming source publication completes. `canonical_block` must be the
+/// source block base recovered from the exact client pointer, and the caller
+/// must still own that allocation exclusively.
+pub(crate) unsafe trait LiveRemoteFreeAllocation {
+    /// Returns the copied source facts from one valid-live-client lookup.
+    fn live_remote_free_allocation(
+        &self,
+    ) -> (NonNull<Page>, NonNull<u8>, LiveAllocationPageState);
+}
+
+// SAFETY: `LiveAllocationPointer` is constructed only by the checked process
+// PageMap lookup from one exact live native allocation. Its page, canonical
+// block, and decoded owner state are copied from that single observation, and
+// its caller contract retains the allocation through the consuming operation.
+unsafe impl LiveRemoteFreeAllocation for LiveAllocationPointer {
+    #[inline]
+    fn live_remote_free_allocation(
+        &self,
+    ) -> (NonNull<Page>, NonNull<u8>, LiveAllocationPageState) {
+        (self.page(), self.canonical_block(), self.page_state())
+    }
+}
+
+/// Outcome of the source `mi_free_block_mt(..., allow_collect=true)` push for
+/// a pointer that dispatch observed on a live owner-associated page.
+///
+/// Normally the page's low remote-head owner bit remains set and its owner
+/// performs the later collection. If owner exit won the race after pointer
+/// dispatch, the publication claims the now-abandoned head exactly as pinned
+/// `free.c`; the caller must continue with the abandoned-page collection
+/// protocol rather than returning while it owns that page.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum LiveRemoteFreePublish {
+    PublishedToOwner,
+    ClaimedAbandonedPage,
+}
+
+/// Publishes one pointer-dispatched remote free with pinned source atomics.
+///
+/// This is the production-facing `mi_free_block_mt(..., allow_collect=true)`
+/// seam. Pointer dispatch has already selected one registered page and its
+/// canonical block under the valid-live-allocation precondition. The block
+/// keeps the page registered, its uncollected contribution to `used` prevents
+/// source release, and the successful `xthread_free` CAS completes the
+/// lifetime handoff to either the live owner or the abandoned-page collector.
+/// No owner/TLD registry, allocation ledger, generation word, or structural
+/// PageMap mutation lease participates in this operation.
+///
+/// # Safety
+///
+/// `allocation` must satisfy [`LiveRemoteFreeAllocation`]'s coherent lookup
+/// contract and name an exact current allocation owned by a foreign thread.
+/// The caller must not access the canonical block after success. If this
+/// returns [`LiveRemoteFreePublish::ClaimedAbandonedPage`], the caller owns the
+/// page's source low bit and must immediately finish the abandoned collection,
+/// release, reclaim, reabandon, or unown protocol before returning.
+pub(crate) unsafe fn push_live_allocation<A>(
+    allocation: A,
+) -> Result<LiveRemoteFreePublish, RemoteFreeError>
+where
+    A: LiveRemoteFreeAllocation,
+{
+    let (page, block, page_state) = allocation.live_remote_free_allocation();
+    if page_state != LiveAllocationPageState::LiveOwnerAssociated {
+        return Err(RemoteFreeError::NotOwnerAssociated);
+    }
+    // SAFETY: the coherent live-allocation projection pins this exact page and
+    // canonical block. The source helper touches only `block->next` and the
+    // page's atomic `xthread_free`; `allow_collect=true` also closes the race
+    // where owner exit clears the low owner bit after pointer dispatch.
+    let was_owned = unsafe { push_source_block_mt(page, block, true) }?;
+    Ok(if was_owned {
+        LiveRemoteFreePublish::PublishedToOwner
+    } else {
+        LiveRemoteFreePublish::ClaimedAbandonedPage
+    })
+}
+
+// The following compact lifetime word is retained only as older bounded
+// failure evidence. It is not required by `push_live_allocation` or
+// `collect_live_page`: pinned source lifetime comes from the exact current
+// block, its still-counted `used` contribution, and the `xthread_free`
+// publication handoff. The source remote head itself stays the exact
+// `mi_thread_free_t` low-bit list from `types.h`.
 //
 // `ACTIVE` admits a producer that already resolved this exact PageMap entry;
 // each admitted publisher adds `PUBLICATION_ONE` before it touches the source
@@ -61,16 +157,14 @@ const LIVE_REMOTE_PAGE_TERMINALLY_RETAINED: usize = 1 << 30;
 const LIVE_REMOTE_PAGE_OWNER_DRAINING: usize = 1 << 31;
 const LIVE_REMOTE_PAGE_GENERATION_SHIFT: usize = 32;
 
-/// One compact page-owned lifetime state for a live remote-free producer.
+/// One compact lifetime state retained for bounded remote-free fault evidence.
 ///
-/// This supplements, but never changes, mimalloc's source `xthread_free`
-/// protocol.  Pinned `free.c:80-87` relies on a valid client to keep its page
-/// live through the atomic push.  Rust needs the same proof at the raw
-/// PageMap-to-page boundary without borrowing the owner's Theap or retaining a
-/// registry entry per allocation.  The eventual `Page` field must initialize
-/// this state when it publishes its PageMap entry and must call
-/// [`Self::begin_retirement`] only after the normal source collection proof
-/// establishes that there is no live client and no detached remote list.
+/// This never changes mimalloc's source `xthread_free` protocol. Pinned
+/// `free.c:80-87` relies on the current block and `used` accounting to keep its
+/// page live; [`push_live_allocation`] uses that source proof directly. The
+/// extra word below exists only to preserve older generation, retirement, and
+/// post-detach terminal-retention witnesses without expanding this slice into
+/// every page release failure owner.
 ///
 /// It is `repr(transparent)` so the intended page field stays one atomic word.
 #[repr(transparent)]
@@ -85,6 +179,41 @@ pub(crate) struct LiveRemoteFreePageState {
 /// reinitialized page receives a different generation, preventing a stale
 /// lookup from pinning a later page at the same metadata address.
 pub(crate) type LiveRemoteFreePageGeneration = u32;
+
+/// A borrowed page-lifetime projection consumed only by the bounded witness.
+///
+/// The source `mi_free_block_mt` path needs only a page's remote atomic
+/// fields, while the owner-side `mi_page_thread_free_collect` path needs the
+/// same page's owner-only fields. Rust also needs the page-lifetime state that
+/// keeps that metadata valid from PageMap lookup through either operation.
+/// This trait joins those three facts at the pointer-dispatch boundary without
+/// passing a caller-owned lifetime sidecar or consulting an owner registry.
+///
+/// # Safety
+///
+/// Every returned tuple must describe one and the same currently published
+/// `Page` metadata lifetime: `page` names that initialized page,
+/// `state` is the page-owned [`LiveRemoteFreePageState`] for that exact
+/// metadata instance, and `generation` is its PageMap generation. The
+/// implementation must keep the state projection reachable while a caller
+/// first enters its publication or owner-collection guard. It must never pair
+/// a page pointer from one metadata lifetime with state or a generation from
+/// another, including after PageMap unregistration, metadata reuse, or a
+/// terminal retention transition.
+///
+/// No production PageMap type implements this projection. It remains solely
+/// to keep the existing fail-closed generation/terminal-retention tests while
+/// the general source-shaped seam consumes [`LiveRemoteFreeAllocation`].
+pub(crate) unsafe trait BoundedLiveRemoteFreePageProjection {
+    /// Returns the one page-local lifetime used by both source operations.
+    fn live_remote_free_page_lifetime(
+        &self,
+    ) -> (
+        NonNull<Page>,
+        &LiveRemoteFreePageState,
+        LiveRemoteFreePageGeneration,
+    );
+}
 
 /// A publisher could not safely enter the requested source page lifetime.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -302,7 +431,8 @@ impl<'page> LiveRemoteFreePageOwnerCollection<'page> {
     ///
     /// `page` must be this guard's live, associated page. The caller must be
     /// its sole source owner for all non-atomic page fields and retain its
-    /// block area through the collection. Foreign threads may run [`push_live`]
+    /// block area through the collection. Foreign threads may run
+    /// [`push_bounded_live`]
     /// concurrently, but no path may abandon, detach, reuse, or release this
     /// page until this guard drops and the owner completes source collection.
     #[inline]
@@ -312,9 +442,32 @@ impl<'page> LiveRemoteFreePageOwnerCollection<'page> {
         unsafe { collect(page) }
     }
 
+    /// Executes the source owner drain after one test-only pre-CAS hook.
+    ///
+    /// The hook names the precise `mi_page_thread_free_collect` interleaving
+    /// after the owner has observed a nonempty `xthread_free` head and before
+    /// it attempts the source compare/exchange. Production callers use
+    /// [`Self::collect`] and pass no hook; this exists only so the in-file
+    /// race witnesses exercise the same head-detach transition deterministically.
+    #[cfg(test)]
+    unsafe fn collect_with_before_detach_cas<F>(
+        &self,
+        page: NonNull<Page>,
+        before_detach_cas: &mut Option<F>,
+    ) -> Result<usize, RemoteFreeError>
+    where
+        F: FnOnce(),
+    {
+        // SAFETY: the caller supplies the same proof as `collect`; the hook
+        // runs only before the source head CAS and does not grant access to
+        // owner-only page fields.
+        unsafe { collect_with_before_detach_cas(page, before_detach_cas) }
+    }
+
     /// Converts a post-detach source failure into the only retained page owner.
     ///
-    /// This is intentionally private to the generic [`collect_live`] seam so
+    /// This is intentionally private to the bounded
+    /// [`collect_bounded_live`] seam so
     /// a caller cannot accidentally drop an owner guard after an irreversible
     /// `mi_page_thread_free_collect` error and make the page reusable.
     fn into_terminal(self) -> LiveRemoteFreePageTerminal<'page> {
@@ -352,30 +505,31 @@ impl LiveRemoteFreePageTerminal<'_> {
     }
 }
 
-/// Publishes one source-shaped live remote free under a page-local lifetime
-/// pin.
+/// Publishes one source-shaped live remote free under the older bounded
+/// page-lifetime witness.
 ///
-/// This is the integration seam for general pointer-centered `free`: PageMap
-/// lookup supplies `page` plus `generation`, canonical block recovery supplies
-/// `block`, then this function performs the existing `mi_free_block_mt` CAS.
-/// It consults no owner registry and records no allocation identity.  The
-/// lifetime pin covers exactly the raw producer projection and source atomic
-/// publication; it drops before an owner can retire the page.
+/// This generation-guarded path remains only as bounded fault/retention
+/// evidence. General pointer-centered free uses [`push_live_allocation`], whose
+/// valid allocation, source `used`, and remote-head handoff provide the pinned
+/// lifetime without this supplement.
 ///
 /// # Safety
 ///
-/// `page`, `generation`, and `lifetime` must be one PageMap-published page
-/// lifetime. `block` must be the aligned canonical block for one current
-/// allocation from that page. The caller must not publish PageMap removal,
-/// page reuse, abandonment, or owner-local mutation outside the source
-/// protocol while this operation is in progress. On success the block is
-/// consumed exactly as by [`push`]; on error the caller retains its block.
-pub(crate) unsafe fn push_live(
-    lifetime: &LiveRemoteFreePageState,
-    generation: LiveRemoteFreePageGeneration,
-    page: NonNull<Page>,
+/// `projection` must be the PageMap-published lifetime for `block`'s page;
+/// see [`BoundedLiveRemoteFreePageProjection`]'s implementation contract. `block`
+/// must be the aligned canonical block for one current allocation from that
+/// page. The caller must not publish PageMap removal, page reuse, abandonment,
+/// or owner-local mutation outside the source protocol while this operation is
+/// in progress. On success the block is consumed exactly as by [`push`]; on
+/// error the caller retains its block.
+pub(crate) unsafe fn push_bounded_live<P>(
+    projection: &P,
     block: NonNull<u8>,
-) -> Result<(), LiveRemoteFreePushError> {
+) -> Result<(), LiveRemoteFreePushError>
+where
+    P: BoundedLiveRemoteFreePageProjection + ?Sized,
+{
+    let (page, lifetime, generation) = projection.live_remote_free_page_lifetime();
     let publication = lifetime
         .begin_publication(generation)
         .map_err(LiveRemoteFreePushError::Lifetime)?;
@@ -387,26 +541,30 @@ pub(crate) unsafe fn push_live(
     result
 }
 
-/// Performs one generic owner-side remote-list drain for a live page.
+/// Performs the older bounded owner-side remote-list drain.
 ///
-/// This is the live counterpart to [`collect`] and the narrow integration seam
-/// for ordinary allocation/free slow paths: it establishes page-local
-/// retirement exclusion, executes pinned `mi_page_thread_free_collect` plus
+/// This is the bounded counterpart to [`collect_live_page`]: it uses the same
+/// supplemental page-lifetime projection as [`push_bounded_live`], establishes
+/// page-local retirement exclusion,
+/// executes pinned `mi_page_thread_free_collect` plus
 /// `mi_page_thread_collect_to_local`, then releases only that exclusion. It
 /// intentionally does not force collection, requeue a page, inspect an owner
 /// registry, or decide PageMap release.
 ///
 /// # Safety
 ///
-/// `page`, `generation`, and `lifetime` must describe one live associated
-/// PageMap entry. The caller must be the sole source owner of the ordinary
-/// page fields and preserve the page/block-area lifetime while this function
-/// runs. It may race only with source-shaped [`push_live`] producers.
-pub(crate) unsafe fn collect_live<'page>(
-    lifetime: &'page LiveRemoteFreePageState,
-    generation: LiveRemoteFreePageGeneration,
-    page: NonNull<Page>,
-) -> Result<usize, LiveRemoteFreePageCollectError<'page>> {
+/// `projection` must describe one live associated PageMap entry; see
+/// [`BoundedLiveRemoteFreePageProjection`]'s implementation contract. The caller
+/// must be the sole source owner of the ordinary page fields and preserve the
+/// page/block-area lifetime while this function runs. It may race only with
+/// source-shaped [`push_bounded_live`] producers.
+pub(crate) unsafe fn collect_bounded_live<'page, P>(
+    projection: &'page P,
+) -> Result<usize, LiveRemoteFreePageCollectError<'page>>
+where
+    P: BoundedLiveRemoteFreePageProjection + ?Sized,
+{
+    let (page, lifetime, generation) = projection.live_remote_free_page_lifetime();
     let collection = lifetime
         .begin_owner_collection(generation)
         .map_err(LiveRemoteFreePageCollectError::Lifetime)?;
@@ -429,8 +587,43 @@ pub(crate) unsafe fn collect_live<'page>(
     }
 }
 
-/// The bounded remote-free protocol encountered a state whose lifecycle is
-/// not yet implemented, or an invalid remote-list accounting condition.
+/// Test-only form of [`collect_bounded_live`] with a source head-CAS interleaving
+/// point. It preserves the bounded projection API: the lifetime, page, and
+/// generation remain one projection rather than test arguments.
+#[cfg(test)]
+unsafe fn collect_bounded_live_with_before_detach_cas<'page, P, F>(
+    projection: &'page P,
+    before_detach_cas: &mut Option<F>,
+) -> Result<usize, LiveRemoteFreePageCollectError<'page>>
+where
+    P: BoundedLiveRemoteFreePageProjection + ?Sized,
+    F: FnOnce(),
+{
+    let (page, lifetime, generation) = projection.live_remote_free_page_lifetime();
+    let collection = lifetime
+        .begin_owner_collection(generation)
+        .map_err(LiveRemoteFreePageCollectError::Lifetime)?;
+    // SAFETY: the caller supplied the same source owner/lifetime proof as
+    // `collect_bounded_live`; the test hook runs only between source head observation
+    // and its compare/exchange attempt.
+    match unsafe { collection.collect_with_before_detach_cas(page, before_detach_cas) } {
+        Ok(collected) => {
+            drop(collection);
+            Ok(collected)
+        }
+        Err(source) if collection_error_is_post_detach(source) => {
+            let owner = collection.into_terminal();
+            Err(LiveRemoteFreePageCollectError::Terminal { owner, source })
+        }
+        Err(source) => {
+            drop(collection);
+            Err(LiveRemoteFreePageCollectError::Source(source))
+        }
+    }
+}
+
+/// The source remote-free protocol encountered an unsupported lifecycle
+/// state or an invalid remote-list accounting condition.
 ///
 /// These errors preserve the source boundary rather than claiming recovery
 /// for allocator misuse. In particular, a collection accounting error occurs
@@ -541,9 +734,6 @@ pub(crate) unsafe fn push(
     page: NonNull<Page>,
     block: NonNull<u8>,
 ) -> Result<(), RemoteFreeError> {
-    if block.as_ptr().addr() & THREAD_FREE_OWNED != 0 {
-        return Err(RemoteFreeError::UnalignedBlock);
-    }
     // SAFETY: the caller supplies the pinned live-page and lifecycle proof.
     // This derives only atomic subobject pointers; it does not read `theap`.
     let state = unsafe { Page::remote_free_producer_state_at(page) };
@@ -551,16 +741,56 @@ pub(crate) unsafe fn push(
         return Err(RemoteFreeError::NotOwnerAssociated);
     }
 
+    // SAFETY: the caller proves this page remains live and owner-associated,
+    // so preserving the observed source low bit is the exact bounded
+    // `allow_collect=false` transition.
+    unsafe { push_source_block_mt(page, block, false) }.map(|_| ())
+}
+
+/// Raw source `mi_free_block_mt` publication over disjoint page fields.
+///
+/// `allow_collect=false` preserves the prior low owner bit. The general
+/// pointer-dispatch path passes `true`, exactly matching ordinary `mi_free`:
+/// the replacement is always owned and the returned boolean reports whether
+/// a live/abandoned collector already owned the previous word.
+///
+/// # Safety
+///
+/// `page` must remain initialized and address-stable through this call.
+/// `block` must be one distinct aligned current allocation from that page and
+/// exclusively owned by this caller. Its first word must remain writable
+/// until publication succeeds and inaccessible to the caller afterward. If
+/// `allow_collect` is false, the page must remain owner-associated with its low
+/// remote-head bit set. If it is true, the caller must complete the source
+/// abandoned-page owner obligation when this returns `Ok(false)`.
+unsafe fn push_source_block_mt(
+    page: NonNull<Page>,
+    block: NonNull<u8>,
+    allow_collect: bool,
+) -> Result<bool, RemoteFreeError> {
+    if block.as_ptr().addr() & THREAD_FREE_OWNED != 0 {
+        return Err(RemoteFreeError::UnalignedBlock);
+    }
+    // SAFETY: the caller supplies stable initialized metadata. This helper
+    // consumes only the atomic head subobject from the producer projection;
+    // no owner-local page field or `theap` is read.
+    let state = unsafe { Page::remote_free_producer_state_at(page) };
+
     // SAFETY: `state` names the initialized `xthread_free` atomic field.
     let word = unsafe { state.xthread_free.as_ref() };
     let block = block.cast::<Block>();
     let block_address = block.as_ptr().expose_provenance();
-    publish_to_head(word, block_address, |previous_block| {
-        // SAFETY: the caller retains exclusive ownership of `block`; the
-        // source normal-release profile stores its unencoded next pointer
-        // before the release half of the publishing compare/exchange.
-        unsafe { block_set_next(block, thread_free_block(previous_block)) };
-    })
+    publish_to_head_with_owner(
+        word,
+        block_address,
+        |previous| allow_collect || is_owned(previous),
+        |previous_block| {
+            // SAFETY: the caller retains exclusive ownership of `block`; the
+            // source normal-release profile stores its unencoded next pointer
+            // before the release half of the publishing compare/exchange.
+            unsafe { block_set_next(block, thread_free_block(previous_block)) };
+        },
+    )
 }
 
 /// Atomically detaches remote frees and merges them into the owner's local
@@ -589,6 +819,62 @@ pub(crate) unsafe fn collect(page: NonNull<Page>) -> Result<usize, RemoteFreeErr
     let state = unsafe { Page::remote_free_owner_state_at(page) }
         .ok_or(RemoteFreeError::NotOwnerAssociated)?;
     collect_state(state)
+}
+
+/// Production-facing live-owner collection sibling to
+/// [`push_live_allocation`].
+///
+/// This is only the pinned `mi_page_thread_free_collect` detach followed by
+/// `mi_page_thread_collect_to_local`. The caller's existing page ownership is
+/// the authority for ordinary fields; no generation sidecar, owner registry,
+/// or TLD lookup is part of the source operation.
+///
+/// # Safety
+///
+/// `page` must be a live owner-associated page and the caller must be its sole
+/// writer for ordinary fields. The current allocation counts in `used` and
+/// every published remote block must keep the page and block area live until
+/// this operation finishes. Foreign threads may concurrently execute
+/// [`push_live_allocation`] for distinct current blocks from this page.
+#[inline]
+pub(crate) unsafe fn collect_live_page(
+    page: NonNull<Page>,
+) -> Result<usize, RemoteFreeError> {
+    // SAFETY: this is the same source owner/lifetime contract as `collect`.
+    unsafe { collect(page) }
+}
+
+/// Test-only source owner drain with one hook after the relaxed head load and
+/// before the first source detach CAS. It intentionally reuses the production
+/// `collect_state_with_before_detach_cas` transition rather than reimplementing
+/// the remote list/accounting algorithm in a race harness.
+#[cfg(test)]
+unsafe fn collect_with_before_detach_cas<F>(
+    page: NonNull<Page>,
+    before_detach_cas: &mut Option<F>,
+) -> Result<usize, RemoteFreeError>
+where
+    F: FnOnce(),
+{
+    // SAFETY: test callers provide the same stable owner/lifetime proof as
+    // `collect`; this only changes the deterministic scheduling point.
+    let state = unsafe { Page::remote_free_owner_state_at(page) }
+        .ok_or(RemoteFreeError::NotOwnerAssociated)?;
+    collect_state_with_before_detach_cas(state, before_detach_cas)
+}
+
+/// Deterministic test hook for [`collect_live_page`].
+#[cfg(test)]
+unsafe fn collect_live_page_with_before_detach_cas<F>(
+    page: NonNull<Page>,
+    before_detach_cas: &mut Option<F>,
+) -> Result<usize, RemoteFreeError>
+where
+    F: FnOnce(),
+{
+    // SAFETY: the test caller supplies the same sole-owner and page lifetime
+    // proof as the production collection seam.
+    unsafe { collect_with_before_detach_cas(page, before_detach_cas) }
 }
 
 /// Publishes a remote free after a page has entered one of the source
@@ -692,9 +978,24 @@ pub(crate) unsafe fn collect_abandoned_partly(
 }
 
 fn collect_state(state: PageRemoteFreeOwnerState) -> Result<usize, RemoteFreeError> {
+    let mut no_before_detach_cas = None::<fn()>;
+    collect_state_with_before_detach_cas(state, &mut no_before_detach_cas)
+}
+
+/// One source `mi_page_thread_free_collect` plus local-list merge, optionally
+/// exposing the test-only point between its initial head observation and CAS.
+/// The normal production path above always supplies `None`, so the source
+/// transition remains the same relaxed-load/AcqRel-CAS loop that Loom calls.
+fn collect_state_with_before_detach_cas<F>(
+    state: PageRemoteFreeOwnerState,
+    before_detach_cas: &mut Option<F>,
+) -> Result<usize, RemoteFreeError>
+where
+    F: FnOnce(),
+{
     // SAFETY: state construction proved this is the initialized page atomic.
     let xthread_free = unsafe { state.xthread_free.as_ref() };
-    let detached = detach_from_head(xthread_free)?;
+    let detached = detach_from_head_with_before_detach_cas(xthread_free, before_detach_cas)?;
     let Some(head) = NonNull::new(thread_free_block(detached)) else {
         return Ok(0);
     };
@@ -1224,6 +1525,25 @@ fn detach_from_head<H>(head: &H) -> Result<ThreadFree, RemoteFreeError>
 where
     H: ThreadFreeHead + ?Sized,
 {
+    let mut no_before_detach_cas = None::<fn()>;
+    detach_from_head_with_before_detach_cas(head, &mut no_before_detach_cas)
+}
+
+/// Exact source head-detach loop with one optional test interleaving point.
+///
+/// The ordinary path passes `None`, so it executes the same relaxed load and
+/// AcqRel/Acquire weak-CAS transition as pinned `mi_page_thread_free_collect`.
+/// The in-file race witnesses provide one hook after a nonempty head was read
+/// and before the first CAS, forcing a foreign `mi_free_block_mt` publication
+/// to make that CAS retry without introducing production synchronization.
+fn detach_from_head_with_before_detach_cas<H, F>(
+    head: &H,
+    before_detach_cas: &mut Option<F>,
+) -> Result<ThreadFree, RemoteFreeError>
+where
+    H: ThreadFreeHead + ?Sized,
+    F: FnOnce(),
+{
     let mut previous = head.load_relaxed();
     loop {
         if !is_owned(previous) {
@@ -1231,6 +1551,9 @@ where
         }
         if thread_free_block_address(previous) == 0 {
             return Ok(previous);
+        }
+        if let Some(before_detach_cas) = before_detach_cas.take() {
+            before_detach_cas();
         }
         let replacement = thread_free_create_address(0, is_owned(previous))
             .expect("a null thread-free head always preserves its owner bit");
@@ -1557,10 +1880,148 @@ mod tests {
                 NonNull::new_unchecked(core::ptr::addr_of!(self.0).cast_mut())
             }
         }
+
+        /// Simulates source owner exit after pointer dispatch captured a live
+        /// owner identity: abandonment publishes the special thread identity
+        /// and releases the remote-head owner bit while the current block's
+        /// `used` contribution keeps the page alive.
+        fn mark_abandoned_unowned_after_lookup(&self) {
+            // SAFETY: this isolated fixture keeps the initialized metadata
+            // live and has no owner collector or other producer at this point.
+            // Only the two source atomics are changed.
+            let state = unsafe { Page::remote_free_producer_state_at(self.page_pointer()) };
+            // SAFETY: the projection names the initialized page atomics.
+            unsafe {
+                state
+                    .xthread_id
+                    .as_ref()
+                    .store(THREAD_ID_ABANDONED, Ordering::Release);
+                state.xthread_free.as_ref().store(0, Ordering::Release);
+            }
+        }
+    }
+
+    /// Test-only stand-in for W02's coherent PageMap lookup result.
+    ///
+    /// Construction stays inside each producer after it has taken exclusive
+    /// ownership of one block, so the test cannot accidentally pass a page
+    /// and canonical block as independent production arguments.
+    #[derive(Clone, Copy)]
+    struct TestLiveRemoteFreeAllocation<'page> {
+        page: &'page ConcurrentTestPage,
+        canonical_block: NonNull<u8>,
+        page_state: LiveAllocationPageState,
+    }
+
+    impl<'page> TestLiveRemoteFreeAllocation<'page> {
+        fn new(page: &'page ConcurrentTestPage, canonical_block: NonNull<u8>) -> Self {
+            Self {
+                page,
+                canonical_block,
+                page_state: LiveAllocationPageState::LiveOwnerAssociated,
+            }
+        }
+    }
+
+    // SAFETY: every fixture keeps the initialized page and exact current test
+    // block alive for the complete call. The constructor is invoked only by
+    // the producer that exclusively owns that block, and the copied state is
+    // the live-owner identity installed by `remote_free_test_page`.
+    unsafe impl LiveRemoteFreeAllocation for TestLiveRemoteFreeAllocation<'_> {
+        fn live_remote_free_allocation(
+            &self,
+        ) -> (NonNull<Page>, NonNull<u8>, LiveAllocationPageState) {
+            (self.page.page_pointer(), self.canonical_block, self.page_state)
+        }
     }
 
     #[test]
-    fn std_multi_producer_pushes_are_all_collected_once() {
+    fn sidecar_free_live_publication_completes_owner_exit_handoff() {
+        let page = ConcurrentTestPage(Page::remote_free_test_page(1, 1));
+        let mut block = TestBlock([0; 16]);
+        let allocation = TestLiveRemoteFreeAllocation::new(&page, block.pointer());
+
+        // Pointer dispatch observed the live owner first. Source owner exit
+        // then abandons the still-used page and releases its low owner bit.
+        page.mark_abandoned_unowned_after_lookup();
+
+        // SAFETY: `allocation` remains the coherent observation of this exact
+        // current block. Its `used == 1` contribution pins the abandoned page
+        // until the CAS claims it and returns the collection obligation.
+        assert_eq!(
+            unsafe { push_live_allocation(allocation) },
+            Ok(LiveRemoteFreePublish::ClaimedAbandonedPage)
+        );
+        assert_eq!(page.0.remote_free_test_head(), block.pointer().as_ptr().addr() | 1);
+
+        // SAFETY: the preceding source push claimed the abandoned page's low
+        // owner bit; this test immediately completes its owner collection.
+        assert_eq!(unsafe { collect_abandoned(page.page_pointer()) }, Ok(1));
+        assert_eq!(page.0.remote_free_test_used(), 0);
+        assert_eq!(page.0.remote_free_test_head(), 1);
+    }
+
+    #[test]
+    fn sidecar_free_live_publication_rejects_non_live_dispatch_state() {
+        let page = ConcurrentTestPage(Page::remote_free_test_page(1, 1));
+        let mut block = TestBlock([0; 16]);
+        let mut allocation = TestLiveRemoteFreeAllocation::new(&page, block.pointer());
+        allocation.page_state = LiveAllocationPageState::Abandoned;
+
+        // SAFETY: this deliberately supplies a coherent but non-live-owner
+        // dispatch result. The seam must reject it before touching the current
+        // block or page remote head.
+        assert_eq!(
+            unsafe { push_live_allocation(allocation) },
+            Err(RemoteFreeError::NotOwnerAssociated)
+        );
+        assert_eq!(page.0.remote_free_test_head(), 1);
+        assert_eq!(page.0.remote_free_test_used(), 1);
+    }
+
+    /// Test binding for the retained bounded page-lifetime witness.
+    ///
+    /// These focused bounded-evidence tests keep the source-layout `Page`
+    /// fixture unchanged and bind its stable address to a separate state. No
+    /// production PageMap metadata owns or consults this state; the general
+    /// live remote-free endpoints use `LiveAllocationPointer` instead.
+    #[derive(Clone, Copy)]
+    struct TestLiveRemoteFreePage<'page> {
+        page: &'page ConcurrentTestPage,
+        lifetime: &'page LiveRemoteFreePageState,
+        generation: LiveRemoteFreePageGeneration,
+    }
+
+    impl<'page> TestLiveRemoteFreePage<'page> {
+        fn new(
+            page: &'page ConcurrentTestPage,
+            lifetime: &'page LiveRemoteFreePageState,
+        ) -> Self {
+            Self {
+                page,
+                lifetime,
+                generation: lifetime.current_generation(),
+            }
+        }
+    }
+
+    // SAFETY: the test fixture keeps this exact initialized `Page` and its
+    // state alive for every scoped producer/owner operation. The generation
+    // is captured only once from that state and no test reuses the metadata.
+    unsafe impl BoundedLiveRemoteFreePageProjection for TestLiveRemoteFreePage<'_> {
+        fn live_remote_free_page_lifetime(
+            &self,
+        ) -> (
+            NonNull<Page>,
+            &LiveRemoteFreePageState,
+            LiveRemoteFreePageGeneration,
+        ) {
+            (self.page.page_pointer(), self.lifetime, self.generation)
+        }
+    }
+
+    #[test]
+    fn sidecar_free_multi_producer_pushes_are_all_collected_once() {
         const PRODUCERS: usize = 8;
         const BLOCKS_PER_PRODUCER: usize = 64;
         const BLOCKS: usize = PRODUCERS * BLOCKS_PER_PRODUCER;
@@ -1574,20 +2035,22 @@ mod tests {
                 scope.spawn(move || {
                     for block in producer_blocks {
                         // SAFETY: the scoped owner keeps the page and every
-                        // block live; each producer uniquely owns this block
-                        // while it publishes it exactly once.
-                        let block = block.pointer();
-                        unsafe {
-                            push(page.page_pointer(), block)
-                                .expect("the live associated page stays publishable");
-                        }
+                        // block live. Each coherent lookup stand-in joins the
+                        // page to the canonical block that this producer owns
+                        // and publishes exactly once.
+                        let allocation =
+                            TestLiveRemoteFreeAllocation::new(page, block.pointer());
+                        assert_eq!(
+                            unsafe { push_live_allocation(allocation) },
+                            Ok(LiveRemoteFreePublish::PublishedToOwner)
+                        );
                     }
                 });
             }
         });
 
         // SAFETY: all producers joined before the sole owner collects.
-        assert_eq!(unsafe { collect(page.page_pointer()) }, Ok(BLOCKS));
+        assert_eq!(unsafe { collect_live_page(page.page_pointer()) }, Ok(BLOCKS));
         assert_eq!(page.0.remote_free_test_head(), 1);
         assert_eq!(page.0.remote_free_test_used(), 0);
         assert_eq!(page.0.remote_free_test_local_chain_len(BLOCKS + 1), BLOCKS);
@@ -1601,22 +2064,23 @@ mod tests {
 
         let page = ConcurrentTestPage(Page::remote_free_test_page(BLOCKS as u16, BLOCKS));
         let lifetime = LiveRemoteFreePageState::new();
-        let generation = lifetime.current_generation();
+        let projection = TestLiveRemoteFreePage::new(&page, &lifetime);
+        let generation = projection.generation;
         let mut blocks: [TestBlock; BLOCKS] = std::array::from_fn(|_| TestBlock([0; 16]));
 
         thread::scope(|scope| {
             for producer_blocks in blocks.chunks_mut(BLOCKS_PER_PRODUCER) {
-                let page = &page;
-                let lifetime = &lifetime;
+                let projection = &projection;
                 scope.spawn(move || {
                     for block in producer_blocks {
                         // SAFETY: each worker owns one exact current block;
-                        // `push_live` admits only this PageMap generation and
-                        // then runs the existing source remote-head CAS. The
-                        // test owner touches ordinary page fields only after
-                        // every producer has joined.
+                        // the page-lifetime projection admits only this
+                        // PageMap generation and then runs the existing
+                        // source remote-head CAS. The test owner touches
+                        // ordinary page fields only after every producer has
+                        // joined.
                         unsafe {
-                            push_live(lifetime, generation, page.page_pointer(), block.pointer())
+                            push_bounded_live(projection, block.pointer())
                                 .expect("the page-local lifetime admits each remote publication");
                         }
                     }
@@ -1624,11 +2088,11 @@ mod tests {
             }
         });
 
-        // SAFETY: all production-shaped source publishers joined, so this is
+        // SAFETY: all bounded source publishers joined, so this is
         // the exclusive owner collection that accounts their remote list
         // under the page-local retirement exclusion.
         assert!(matches!(
-            unsafe { collect_live(&lifetime, generation, page.page_pointer()) },
+            unsafe { collect_bounded_live(&projection) },
             Ok(BLOCKS)
         ));
         assert_eq!(page.0.remote_free_test_head(), 1);
@@ -1644,7 +2108,8 @@ mod tests {
     fn live_owner_collection_allows_remote_publication_before_retirement() {
         let page = ConcurrentTestPage(Page::remote_free_test_page(1, 1));
         let lifetime = LiveRemoteFreePageState::new();
-        let generation = lifetime.current_generation();
+        let projection = TestLiveRemoteFreePage::new(&page, &lifetime);
+        let generation = projection.generation;
         let collection = lifetime
             .begin_owner_collection(generation)
             .expect("the live source owner starts one page-local thread-free drain");
@@ -1657,13 +2122,13 @@ mod tests {
         );
 
         thread::scope(|scope| {
-            let lifetime = &lifetime;
+            let projection = &projection;
             scope.spawn(|| {
                 // SAFETY: the exact client remains live while the owner drain
                 // holds this page lifetime. The source collector accepts a
                 // concurrent producer through the unchanged remote-head CAS.
                 unsafe {
-                    push_live(lifetime, generation, page.page_pointer(), block.pointer())
+                    push_bounded_live(projection, block.pointer())
                         .expect("the drain does not reject a legal remote producer");
                 }
             });
@@ -1685,7 +2150,8 @@ mod tests {
     fn post_detach_collection_error_terminally_retains_the_page_lifetime() {
         let page = ConcurrentTestPage(Page::remote_free_test_page(1, 0));
         let lifetime = LiveRemoteFreePageState::new();
-        let generation = lifetime.current_generation();
+        let projection = TestLiveRemoteFreePage::new(&page, &lifetime);
+        let generation = projection.generation;
         let mut block = TestBlock([0; 16]);
 
         // SAFETY: this deliberately invalid accounting image keeps the source
@@ -1693,10 +2159,10 @@ mod tests {
         // block. The owner collector must detach before it observes the
         // underflow, exercising the irreversible source error boundary.
         assert_eq!(
-            unsafe { push_live(&lifetime, generation, page.page_pointer(), block.pointer()) },
+            unsafe { push_bounded_live(&projection, block.pointer()) },
             Ok(())
         );
-        let terminal = match unsafe { collect_live(&lifetime, generation, page.page_pointer()) } {
+        let terminal = match unsafe { collect_bounded_live(&projection) } {
             Err(LiveRemoteFreePageCollectError::Terminal { owner, source }) => {
                 assert_eq!(source, RemoteFreeError::UsedCountUnderflow);
                 owner
@@ -1717,6 +2183,230 @@ mod tests {
             Err(LiveRemoteFreePageReinitializeError::TerminallyRetained),
             "the retained page metadata may not be reused under the old generation"
         );
+    }
+
+    /// Forces a source owner detach CAS to race every later producer.
+    ///
+    /// Each producer first publishes a seed block. The owner then observes
+    /// that nonempty source head and pauses at the precise test-only point
+    /// before its `mi_page_thread_free_collect` CAS. Every producer publishes
+    /// a second block before the owner resumes, so the observed head is stale
+    /// and the source loop must retry and collect all blocks. The barriers
+    /// make this race deterministic without a scheduler, registry, or sleep.
+    fn assert_live_remote_owner_drain_race(producer_count: usize) {
+        const BLOCKS_PER_PRODUCER: usize = 2;
+        let block_count = producer_count * BLOCKS_PER_PRODUCER;
+        let page = ConcurrentTestPage(Page::remote_free_test_page(
+            block_count as u16,
+            block_count,
+        ));
+        let mut blocks: std::vec::Vec<TestBlock> = (0..block_count)
+            .map(|_| TestBlock([0; 16]))
+            .collect();
+        let seeds_published = Barrier::new(producer_count + 1);
+        let publish_late = Barrier::new(producer_count + 1);
+        let late_publications_complete = Barrier::new(producer_count + 1);
+
+        let collected = thread::scope(|scope| {
+            for producer_blocks in blocks.chunks_mut(BLOCKS_PER_PRODUCER) {
+                let page = &page;
+                let seeds_published = &seeds_published;
+                let publish_late = &publish_late;
+                let late_publications_complete = &late_publications_complete;
+                scope.spawn(move || {
+                    // SAFETY: this scoped producer exclusively owns its two
+                    // current blocks. Each coherent allocation projection
+                    // supplies the page plus its canonical block, the exact
+                    // source `used` count keeps the page live, and producer
+                    // access remains limited to raw source atomics.
+                    unsafe {
+                        assert_eq!(
+                            push_live_allocation(TestLiveRemoteFreeAllocation::new(
+                                page,
+                                producer_blocks[0].pointer(),
+                            )),
+                            Ok(LiveRemoteFreePublish::PublishedToOwner),
+                            "the seed remote publication reaches the live owner"
+                        );
+                    }
+                    seeds_published.wait();
+                    publish_late.wait();
+                    // SAFETY: the second block is distinct from the seed and
+                    // is published while the owner holds only its page-local
+                    // source collection guard.
+                    unsafe {
+                        assert_eq!(
+                            push_live_allocation(TestLiveRemoteFreeAllocation::new(
+                                page,
+                                producer_blocks[1].pointer(),
+                            )),
+                            Ok(LiveRemoteFreePublish::PublishedToOwner),
+                            "the forced racing publication reaches the live owner"
+                        );
+                    }
+                    late_publications_complete.wait();
+                });
+            }
+
+            // The owner cannot see an empty fast path: all seed publications
+            // completed before it loads the source head.
+            seeds_published.wait();
+            let mut before_detach_cas = Some(|| {
+                publish_late.wait();
+                late_publications_complete.wait();
+            });
+            // SAFETY: this scope pins every block and page field. The caller
+            // is the sole owner of ordinary fields; foreign threads retain
+            // only the source producer projection.
+            let collected = unsafe {
+                collect_live_page_with_before_detach_cas(
+                    page.page_pointer(),
+                    &mut before_detach_cas,
+                )
+            }
+            .expect("the owner retries its stale detach and collects every producer");
+            assert!(
+                before_detach_cas.is_none(),
+                "the test reached the nonempty source head-to-CAS race point"
+            );
+            collected
+        });
+
+        assert_eq!(collected, block_count);
+        assert_eq!(page.0.remote_free_test_head(), 1);
+        assert_eq!(page.0.remote_free_test_used(), 0);
+        assert_eq!(
+            page.0.remote_free_test_local_chain_len(block_count + 1),
+            block_count,
+            "no source remote block was lost or collected twice"
+        );
+    }
+
+    #[test]
+    fn sidecar_free_live_remote_owner_drain_races_one_producer() {
+        assert_live_remote_owner_drain_race(1);
+    }
+
+    #[test]
+    fn sidecar_free_live_remote_owner_drain_races_two_producers() {
+        assert_live_remote_owner_drain_race(2);
+    }
+
+    #[test]
+    fn sidecar_free_live_remote_owner_drain_races_four_producers() {
+        assert_live_remote_owner_drain_race(4);
+    }
+
+    #[test]
+    fn sidecar_free_live_remote_owner_drain_races_eight_producers() {
+        assert_live_remote_owner_drain_race(8);
+    }
+
+    /// Repeats the deterministic source CAS race with impossible post-detach
+    /// accounting. The only legal result is one permanently retained
+    /// page-lifetime owner; a later producer, drain, retirement, or metadata
+    /// reuse must not guess how to recover the detached list.
+    fn assert_bounded_live_remote_owner_drain_terminal_retention(producer_count: usize) {
+        const BLOCKS_PER_PRODUCER: usize = 2;
+        let block_count = producer_count * BLOCKS_PER_PRODUCER;
+        let page = ConcurrentTestPage(Page::remote_free_test_page(block_count as u16, 0));
+        let lifetime = LiveRemoteFreePageState::new();
+        let projection = TestLiveRemoteFreePage::new(&page, &lifetime);
+        let mut blocks: std::vec::Vec<TestBlock> = (0..block_count)
+            .map(|_| TestBlock([0; 16]))
+            .collect();
+        let seeds_published = Barrier::new(producer_count + 1);
+        let publish_late = Barrier::new(producer_count + 1);
+        let late_publications_complete = Barrier::new(producer_count + 1);
+
+        let terminal = thread::scope(|scope| {
+            for producer_blocks in blocks.chunks_mut(BLOCKS_PER_PRODUCER) {
+                let projection = &projection;
+                let seeds_published = &seeds_published;
+                let publish_late = &publish_late;
+                let late_publications_complete = &late_publications_complete;
+                scope.spawn(move || {
+                    // SAFETY: see the successful-race helper. The fixture's
+                    // only intentional fault is owner-side `used == 0`.
+                    unsafe {
+                        push_bounded_live(projection, producer_blocks[0].pointer())
+                            .expect("the seed publication enters the active lifetime");
+                    }
+                    seeds_published.wait();
+                    publish_late.wait();
+                    // SAFETY: this distinct block makes the owner's captured
+                    // source head stale before its detach CAS.
+                    unsafe {
+                        push_bounded_live(projection, producer_blocks[1].pointer())
+                            .expect("the racing publication enters before the source detach");
+                    }
+                    late_publications_complete.wait();
+                });
+            }
+
+            seeds_published.wait();
+            let mut before_detach_cas = Some(|| {
+                publish_late.wait();
+                late_publications_complete.wait();
+            });
+            // SAFETY: the test preserves the normal page/block lifetime and
+            // sole owner proof. `used == 0` is deliberately invalid only
+            // after the source head has irreversibly detached.
+            let terminal = match unsafe {
+                collect_bounded_live_with_before_detach_cas(
+                    &projection,
+                    &mut before_detach_cas,
+                )
+            } {
+                Err(LiveRemoteFreePageCollectError::Terminal { owner, source }) => {
+                    assert_eq!(source, RemoteFreeError::UsedCountUnderflow);
+                    owner
+                }
+                _ => panic!("post-detach accounting failure must retain one terminal owner"),
+            };
+            assert!(
+                before_detach_cas.is_none(),
+                "the fault follows the deterministic owner/producer CAS race"
+            );
+            terminal
+        });
+
+        assert_eq!(terminal.generation(), projection.generation);
+        assert!(terminal.is_retained());
+        assert_eq!(page.0.remote_free_test_head(), 1);
+
+        let mut rejected_block = TestBlock([0; 16]);
+        // SAFETY: this page remains terminally retained. The publication is
+        // rejected before it may touch the supplied current block.
+        assert_eq!(
+            unsafe { push_bounded_live(&projection, rejected_block.pointer()) },
+            Err(LiveRemoteFreePushError::Lifetime(
+                LiveRemoteFreePagePublicationError::TerminallyRetained
+            ))
+        );
+        assert!(matches!(
+            // SAFETY: the page remains the same retained metadata lifetime;
+            // the source owner proof is intentionally tested at the gate.
+            unsafe { collect_bounded_live(&projection) },
+            Err(LiveRemoteFreePageCollectError::Lifetime(
+                LiveRemoteFreePageOwnerCollectionError::TerminallyRetained
+            ))
+        ));
+        assert_eq!(
+            lifetime.begin_retirement(projection.generation),
+            Err(LiveRemoteFreePageRetirementError::TerminallyRetained)
+        );
+        assert_eq!(
+            lifetime.reinitialize(projection.generation),
+            Err(LiveRemoteFreePageReinitializeError::TerminallyRetained)
+        );
+    }
+
+    #[test]
+    fn bounded_live_remote_owner_drain_post_detach_failure_retains_terminal_lifetime() {
+        for producer_count in [1, 2, 4, 8] {
+            assert_bounded_live_remote_owner_drain_terminal_retention(producer_count);
+        }
     }
 
     /// Emits the fixed, address-independent native x86-64 differential
