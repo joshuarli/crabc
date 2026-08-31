@@ -21810,8 +21810,8 @@ def require_stdio_integer_scan_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 26,
-        "libc.text-math-locale-stdio must retain exactly twenty-six private verified artifacts",
+        len(artifacts) == 27,
+        "libc.text-math-locale-stdio must retain exactly twenty-seven private verified artifacts",
     )
     matching = [
         entry for entry in artifacts if entry.get("id") == "static-c-stdio-integer-scan"
@@ -22289,8 +22289,8 @@ def require_stdio_errno_output_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 26,
-        "libc.text-math-locale-stdio must retain exactly twenty-six private verified artifacts",
+        len(artifacts) == 27,
+        "libc.text-math-locale-stdio must retain exactly twenty-seven private verified artifacts",
     )
     matching = [
         entry for entry in artifacts if entry.get("id") == "static-c-stdio-errno-output"
@@ -22793,6 +22793,333 @@ def require_stdio_permanent_line_io_artifact(family: Mapping[str, Any]) -> None:
         require(
             snippet in dispatcher,
             f"x86 dispatcher omits permanent line-I/O {snippet}",
+        )
+
+
+def require_stdio_permanent_byte_io_artifact(family: Mapping[str, Any]) -> None:
+    """Keep the permanent standard-stream byte aliases below stream-I/O.
+
+    The archive also owns an independently selected pathname-byte route.  This
+    evidence leaf is deliberately narrower: it calls only stdin/stdout/stderr,
+    proves each selected alias once, and proves one musl-shaped post-EOF
+    ungetc transition without implying a general pushback or stream contract.
+    """
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.text-math-locale-stdio].verified_artifact",
+        family.get("status", ""),
+    )
+    require(
+        len(artifacts) == 27,
+        "libc.text-math-locale-stdio must retain exactly twenty-seven private verified artifacts",
+    )
+    matching = [
+        entry
+        for entry in artifacts
+        if entry.get("id") == "static-c-stdio-permanent-byte-io"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.text-math-locale-stdio must contain exactly one static-c-stdio-permanent-byte-io artifact",
+    )
+    artifact = matching[0]
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for phrase in (
+        "still-planned `libc.text-math-locale-stdio`",
+        "adds no C export or capability",
+        "existing strong `fgetc`/`getc`/`getchar`",
+        "`fputc`/`putc`/`putchar`",
+        "only through the process-lifetime `stdin`/`stdout`/`stderr` objects",
+        "fgetc/getc/getchar input ordering",
+        "exactly one non-EOF `ungetc(-2)` after EOF",
+        "converted unsigned-byte value",
+        "fputc/putc write the converted byte directly to permanent stderr",
+        "putchar reaches permanent stdout",
+        "existing explicit fflush used solely to observe",
+        "C11/C++17 header gate",
+        "unmangled C++ spellings",
+        "independently selected pathname-byte routes",
+        "never creates or invokes a pathname `FILE *`",
+        "does not select `stdio.stream-io`",
+        "FILE/path streams",
+        "descriptor adoption/reopen",
+        "`tmpfile`",
+        "LP64/LFS aliases",
+        "`fread`/`fwrite`",
+        "general buffering or buffer configuration",
+        "locks or unlocked entries",
+        "pushback capacity or multiple pushbacks",
+        "multiple live streams",
+        "allocation/registry",
+        "line/formatted/wide I/O",
+        "memory/cookie/`fopencookie`/`popen` streams",
+        "ordinary-exit flushing",
+        "general stdio",
+        "capability or family completion",
+        "promotion",
+        "public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"static-c-stdio-permanent-byte-io description omits {phrase}",
+        )
+
+    owners = nonempty_strings(
+        artifact["source_owners"], "static-c-stdio-permanent-byte-io.source_owners"
+    )
+    for owner in (
+        "compat/upstreams.toml",
+        "libc/Cargo.toml",
+        "libc/src/lib.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/stdio_standard.rs",
+        "libc/src/c_abi/x86_64/errno.rs",
+        "libc/src/c_abi/x86_64/static_tls.rs",
+        "libc/src/c_abi/x86_64/syscall.rs",
+        "include/bits/alltypes.h",
+        "include/errno.h",
+        "include/features.h",
+        "include/stdio.h",
+        "include/unistd.h",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/stdio_permanent_byte_io_header_abi_probe.c",
+        "compat/x86_64/stdio_permanent_byte_io_header_abi_probe.cpp",
+        "compat/x86_64/run_stdio_permanent_byte_io_header_abi.sh",
+        "compat/x86_64/libc_stdio_permanent_byte_io_probe.c",
+        "compat/x86_64/libc_stdio_permanent_byte_io_start.S",
+        "compat/x86_64/run_libc_stdio_permanent_byte_io.sh",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/README.md",
+        "x86-64.md",
+        "scripts/dev-x86_64.sh",
+    ):
+        require(
+            owner in owners,
+            f"static-c-stdio-permanent-byte-io omits {owner}",
+        )
+    require(
+        not artifact.get("capabilities"),
+        "static-c-stdio-permanent-byte-io must not promote stdio.stream-io",
+    )
+
+    exports = static_c_abi_export_names(
+        ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+    )
+    for symbol in ("fgetc", "getc", "getchar", "fputc", "putc", "putchar", "ungetc"):
+        require(
+            symbol in exports,
+            f"static C ABI export contract omits permanent byte-I/O {symbol}",
+        )
+    for symbol in (
+        "fgetc_unlocked",
+        "fputc_unlocked",
+        "getc_unlocked",
+        "getchar_unlocked",
+        "putc_unlocked",
+        "putchar_unlocked",
+        "gets",
+        "getw",
+        "putw",
+        "getdelim",
+        "getline",
+    ):
+        require(
+            symbol not in exports,
+            f"permanent byte-I/O artifact accidentally exports unselected {symbol}",
+        )
+
+    implementation = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "stdio_standard.rs"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "src/stdio/{fgetc,getc,getchar,fputc,putc,putchar,ungetc}.c",
+        'pub unsafe extern "C" fn fgetc',
+        'pub unsafe extern "C" fn getc',
+        'pub unsafe extern "C" fn getchar',
+        'pub unsafe extern "C" fn fputc',
+        'pub unsafe extern "C" fn putc',
+        'pub unsafe extern "C" fn putchar',
+        'pub unsafe extern "C" fn ungetc',
+        "raw_syscall::SYS_READ",
+        "raw_syscall::SYS_WRITE",
+    ):
+        require(
+            snippet in implementation,
+            f"permanent byte-I/O implementation omits {snippet}",
+        )
+
+    for probe_name in (
+        "stdio_permanent_byte_io_header_abi_probe.c",
+        "stdio_permanent_byte_io_header_abi_probe.cpp",
+    ):
+        probe = (ROOT / "compat" / "x86_64" / probe_name).read_text(
+            encoding="utf-8"
+        )
+        for snippet in ("fgetc", "getc", "getchar", "fputc", "putc", "putchar", "ungetc", "FILE"):
+            require(
+                snippet in probe,
+                f"permanent byte-I/O header probe {probe_name} omits {snippet}",
+            )
+    header_runner = (
+        ROOT / "compat" / "x86_64" / "run_stdio_permanent_byte_io_header_abi.sh"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "CRABC_STDIO_PERMANENT_BYTE_IO_C11",
+        "CRABC_STDIO_PERMANENT_BYTE_IO_CXX17",
+        "-nostdinc",
+        "-nostdinc++",
+        "assert_cxx_c_linkage",
+        "does not retain C spelling",
+        "mangled permanent-byte-I/O reference",
+        "run_musl_oracle.sh",
+    ):
+        require(
+            snippet in header_runner,
+            f"permanent byte-I/O header runner omits {snippet}",
+        )
+
+    fixture = (
+        ROOT / "compat" / "x86_64" / "libc_stdio_permanent_byte_io_probe.c"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "fgetc_entry(stdin) != 'A'",
+        "getc_entry(stdin) != 'B'",
+        "getchar_entry() != EOF",
+        "ungetc_entry(-2, stdin) != 254 || getchar_entry() != 254",
+        "fgetc_entry(stdin) != EOF",
+        "fputc_entry(-2, stderr) != 254",
+        "putc_entry('C', stderr) != 'C'",
+        "putchar_entry('P') != 'P'",
+        "fflush_entry(stdout) != 0",
+        "CRABC_STDIO_PERMANENT_BYTE_IO_FREESTANDING",
+    ):
+        require(
+            snippet in fixture,
+            f"permanent byte-I/O fixture omits {snippet}",
+        )
+    start = (
+        ROOT / "compat" / "x86_64" / "libc_stdio_permanent_byte_io_start.S"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "__crabc_x86_static_tls_bootstrap",
+        "crabc_x86_64_stdio_permanent_byte_io_probe",
+        "mov $231, %eax",
+    ):
+        require(
+            snippet in start,
+            f"permanent byte-I/O start shim omits {snippet}",
+        )
+    runner = (
+        ROOT / "compat" / "x86_64" / "run_libc_stdio_permanent_byte_io.sh"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "ORACLE_ARCHIVE",
+        "run_stdio_permanent_byte_io_header_abi.sh",
+        "strong ${symbol}",
+        "STATIC_C_ABI_EXPORTS",
+        "-nostdlib -static",
+        "fgetc_unlocked fputc_unlocked getc_unlocked getchar_unlocked",
+        "dynamic TLS model",
+        "__crabc_x86_static_tls_bootstrap",
+    ):
+        require(
+            snippet in runner,
+            f"permanent byte-I/O runner omits {snippet}",
+        )
+
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-stdio-permanent-byte-io"},
+        "static-c-stdio-permanent-byte-io must use its closed native command",
+    )
+    scope = evidence[0].get("scope")
+    require(
+        isinstance(scope, str)
+        and all(
+            phrase in scope
+            for phrase in (
+                "Pinned-musl project-header C reference",
+                "dependency-free x86 crabc-libc archive",
+                "`-nostdlib -static` candidate",
+                "C11/C++17 permanent-byte-I/O declaration/linkage proof",
+                "strong fgetc/getc/getchar/fputc/putc/putchar/ungetc",
+                "direct initial-exec errno TLS",
+                "Static Initial TLS v1 bootstrap",
+                "fgetc/getc/getchar ordering and EOF",
+                "exactly one converted-byte ungetc after EOF",
+                "converted fputc/putc stderr output",
+                "putchar stdout output",
+                "existing fflush publishes",
+                "pathname, descriptor-reopen, tmpfile, LFS, fread/fwrite",
+                "multiple-stream",
+                "general stdio",
+                "capability or family completion",
+                "promotion",
+                "public x86 support",
+            )
+        ),
+        "static-c-stdio-permanent-byte-io evidence must retain its closed native boundary",
+    )
+
+    oracle = artifact["oracle"]
+    assert isinstance(oracle, list)
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "c-posix"
+            and all(
+                source in str(entry.get("role"))
+                for source in (
+                    "src/stdio/{fgetc,getc,getchar,fputc,putc,putchar,ungetc}.c",
+                    "do_getc/do_putc",
+                    "one non-EOF ungetc",
+                )
+            )
+            for entry in oracle
+        ),
+        "static-c-stdio-permanent-byte-io must retain its pinned-musl source oracle",
+    )
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "kernel-abi"
+            and all(number in str(entry.get("role")) for number in ("read=0", "write=1"))
+            for entry in oracle
+        ),
+        "static-c-stdio-permanent-byte-io must retain its raw stream-I/O oracle",
+    )
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "elf-abi"
+            and all(
+                phrase in str(entry.get("role"))
+                for phrase in (
+                    "FILE-pointer/int",
+                    "C/C++ declaration linkage",
+                    "Variant-II initial-exec errno TLS",
+                )
+            )
+            for entry in oracle
+        ),
+        "static-c-stdio-permanent-byte-io must retain its ABI/TLS oracle",
+    )
+
+    dispatcher = (ROOT / "scripts" / "dev-x86_64.sh").read_text(encoding="utf-8")
+    for snippet in (
+        "stdio-permanent-byte-io-header-abi)",
+        "libc-stdio-permanent-byte-io)",
+        "run_stdio_permanent_byte_io_header_abi.sh",
+        "run_libc_stdio_permanent_byte_io.sh",
+    ):
+        require(
+            snippet in dispatcher,
+            f"x86 dispatcher omits permanent byte-I/O {snippet}",
         )
 
 
@@ -26327,8 +26654,8 @@ def require_locale_wide_iconv_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 26,
-        "libc.text-math-locale-stdio must retain exactly twenty-six private verified artifacts",
+        len(artifacts) == 27,
+        "libc.text-math-locale-stdio must retain exactly twenty-seven private verified artifacts",
     )
     matching = [
         entry for entry in artifacts if entry.get("id") == "static-c-locale-wide-iconv"
@@ -27153,8 +27480,8 @@ def require_locale_error_strings_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 26,
-        "libc.text-math-locale-stdio must retain exactly twenty-six private verified artifacts",
+        len(artifacts) == 27,
+        "libc.text-math-locale-stdio must retain exactly twenty-seven private verified artifacts",
     )
     matching = [
         entry for entry in artifacts if entry.get("id") == "static-c-locale-error-strings"
@@ -28824,6 +29151,7 @@ def validate_ledger(
     require_stdio_float_hex_output_artifact(by_id["libc.text-math-locale-stdio"])
     require_stdio_errno_output_artifact(by_id["libc.text-math-locale-stdio"])
     require_stdio_permanent_line_io_artifact(by_id["libc.text-math-locale-stdio"])
+    require_stdio_permanent_byte_io_artifact(by_id["libc.text-math-locale-stdio"])
     require_stdio_path_stream_artifact(by_id["libc.text-math-locale-stdio"])
     require_stdio_tmpfile_artifact(by_id["libc.text-math-locale-stdio"])
     require_math_complex_foundation_artifact(by_id["libc.text-math-locale-stdio"])

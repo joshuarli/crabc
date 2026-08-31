@@ -701,6 +701,23 @@ Run `./scripts/dev-x86_64.sh stdio-standard-header-abi` for the declaration
 matrix and `./scripts/dev-x86_64.sh libc-stdio-standard` for the static
 runtime fixture.
 
+The separate `stdio-permanent-byte-io-header-abi` and
+`libc-stdio-permanent-byte-io` gates record a private
+`static-c-stdio-permanent-byte-io` artifact without adding an export or
+capability. Its pinned-musl/static differential exercises only permanent
+`stdin`/`stdout`/`stderr`: `fgetc`/`getc`/`getchar` consume two bytes then EOF,
+one `ungetc(-2)` returns and supplies the converted byte after EOF,
+`fputc`/`putc` directly write permanent stderr, and `putchar` reaches stdout.
+Its strict C11/C++17 proof ratchets the seven exact signatures and unmangled C++
+spellings. An existing explicit `fflush(stdout)` only observes the `putchar`
+byte; this does not select a buffering contract. The artifact never creates a
+pathname `FILE *`, despite the shared implementation's separately selected
+pathname sibling. It excludes `stdio.stream-io`, path/descriptor-reopen/tmpfile
+or LP64/LFS behavior, `fread`/`fwrite`, general buffering, locks/unlocked APIs,
+pushback capacity, multiple streams, line/formatted/wide/memory/cookie/popen
+I/O, ordinary-exit flushing, general stdio, parity, promotion, and public x86
+support.
+
 The separate `libc-stdio-format-scan` gate
 (`./scripts/dev-x86_64.sh libc-stdio-format-scan`) records one private
 `static-c-stdio-format-scan` artifact in the still-planned

@@ -9,6 +9,9 @@
 //! `fgets`, `fputs`, and `puts`; it deliberately does not admit the fixed
 //! pathname/tmpfile slot. The only valid non-null `FILE *` arguments for that
 //! permanent-standard-stream block are those three exported pointers.
+//! The focused permanent-byte-I/O evidence leaf rechecks the byte aliases and
+//! one `ungetc` transition only through those permanent pointers; it neither
+//! changes nor claims the pathname sibling's independently selected byte routes.
 //! The sibling pathname/tmpfile block admits only one active `fopen("r")`,
 //! `fopen("w+")`, or `tmpfile` stream at a time, its exact `fclose`, pre-I/O
 //! caller-buffered `_IOFBF` configuration, and its selected
@@ -35,7 +38,8 @@
 //! | `src/stdio/{stdin,stdout,stderr}.c` | permanent stream data symbols and static buffers |
 //! | `src/stdio/{__stdio_read,__uflow,__toread}.c` | read lookahead/refill, EOF/error, and byte/block input state |
 //! | `src/stdio/{__stdio_write,__overflow,__towrite}.c` | buffered/direct output and musl-shaped error/discard state |
-//! | `src/stdio/{fread,fwrite,fgetc,getc,getchar,fputc,putc,putchar,ungetc}.c` | selected public byte/block entries |
+//! | `src/stdio/{fgetc,getc,getchar,fputc,putc,putchar,ungetc}.c` | selected permanent-byte entries; focused evidence calls only the three permanent objects |
+//! | `src/stdio/{fread,fwrite}.c` | selected public block entries |
 //! | `src/stdio/{fgets,fputs,puts}.c` | selected permanent-standard-stream line I/O |
 //! | `src/stdio/{fflush,feof,ferror,clearerr,fileno}.c` | selected flush, status, and descriptor entries |
 //! | `src/stdio/{fopen,fclose,setvbuf,fseek,ftell,fgetpos,fsetpos,rewind}.c` | one fixed pathname-stream lifecycle, caller-buffered full buffering, and logical-position routes |
