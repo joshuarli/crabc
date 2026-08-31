@@ -80,6 +80,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   stdio-permanent-freadable-stdin-header-abi  verify x86 <stdio_ext.h> permanent stdin __freadable C/C++ declaration and linkage
   stdio-permanent-fwritable-stderr-header-abi  verify x86 <stdio_ext.h> permanent stderr __fwritable C/C++ declaration and linkage
   stdio-permanent-fbufsize-stderr-header-abi  verify x86 <stdio_ext.h> permanent stderr __fbufsize C/C++ declaration and linkage
+  stdio-permanent-flbf-stderr-header-abi  verify x86 <stdio_ext.h> permanent stderr __flbf C/C++ declaration and linkage
   stdio-permanent-fileno-header-abi  verify x86 <stdio.h> permanent fileno C/C++ declarations and linkage
   stdio-permanent-fileno-unlocked-header-abi  verify x86 GNU/BSD permanent fileno_unlocked C/C++ declarations and linkage
   stdio-permanent-feof-unlocked-header-abi  verify x86 GNU/BSD permanent feof_unlocked C/C++ declarations and linkage
@@ -4113,6 +4114,7 @@ case "$command" in
     stdio-permanent-freadable-stdin-header-abi) ;;
     stdio-permanent-fwritable-stderr-header-abi) ;;
     stdio-permanent-fbufsize-stderr-header-abi) ;;
+    stdio-permanent-flbf-stderr-header-abi) ;;
     stdio-permanent-fileno-header-abi) ;;
     stdio-permanent-fileno-unlocked-header-abi) ;;
     stdio-permanent-feof-unlocked-header-abi) ;;
@@ -4179,7 +4181,7 @@ case "$command" in
     libc-pathname-lifecycle) ;;
     libc-directory-streams) ;;
     libc-lchmod-unsupported) ;;
-    libc-stdio-standard|libc-stdio-format-scan|libc-stdio-integer-scan|libc-stdio-octal-hex-scan|libc-stdio-float-hex-output|libc-stdio-errno-output|libc-stdio-permanent-line-io|libc-stdio-permanent-byte-io|libc-stdio-permanent-status|libc-stdio-permanent-freadable-stdin|libc-stdio-permanent-fwritable-stderr|libc-stdio-permanent-fbufsize-stderr|libc-stdio-permanent-fileno|libc-stdio-permanent-fileno-unlocked|libc-stdio-permanent-feof-unlocked|libc-stdio-path-stream|libc-stdio-tmpfile|libc-text-math-locale-stdio-composition) ;;
+    libc-stdio-standard|libc-stdio-format-scan|libc-stdio-integer-scan|libc-stdio-octal-hex-scan|libc-stdio-float-hex-output|libc-stdio-errno-output|libc-stdio-permanent-line-io|libc-stdio-permanent-byte-io|libc-stdio-permanent-status|libc-stdio-permanent-freadable-stdin|libc-stdio-permanent-fwritable-stderr|libc-stdio-permanent-fbufsize-stderr|libc-stdio-permanent-flbf-stderr|libc-stdio-permanent-fileno|libc-stdio-permanent-fileno-unlocked|libc-stdio-permanent-feof-unlocked|libc-stdio-path-stream|libc-stdio-tmpfile|libc-text-math-locale-stdio-composition) ;;
     libc-pthread-identity) ;;
     libc-pthread-affinity) ;;
     libc-pthread-cpuclock) ;;
@@ -4423,6 +4425,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "stdio-permanent-fbufsize-stderr-header-abi takes no arguments"
         ensure_image
         run_in_container bash /workspace/compat/x86_64/run_stdio_permanent_fbufsize_stderr_header_abi.sh
+        ;;
+    stdio-permanent-flbf-stderr-header-abi)
+        [ "$#" -eq 0 ] || fail "stdio-permanent-flbf-stderr-header-abi takes no arguments"
+        ensure_image
+        run_in_container bash /workspace/compat/x86_64/run_stdio_permanent_flbf_stderr_header_abi.sh
         ;;
     stdio-permanent-fileno-header-abi)
         [ "$#" -eq 0 ] || fail "stdio-permanent-fileno-header-abi takes no arguments"
@@ -5883,6 +5890,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "libc-stdio-permanent-fbufsize-stderr takes no arguments"
         ensure_image
         run_in_container bash /workspace/compat/x86_64/run_libc_stdio_permanent_fbufsize_stderr.sh
+        ;;
+    libc-stdio-permanent-flbf-stderr)
+        [ "$#" -eq 0 ] || fail "libc-stdio-permanent-flbf-stderr takes no arguments"
+        ensure_image
+        run_in_container bash /workspace/compat/x86_64/run_libc_stdio_permanent_flbf_stderr.sh
         ;;
     libc-stdio-permanent-fileno)
         [ "$#" -eq 0 ] || fail "libc-stdio-permanent-fileno takes no arguments"

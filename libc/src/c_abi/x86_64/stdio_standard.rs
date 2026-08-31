@@ -39,6 +39,11 @@
 //! `stderr` pointer. Musl's fixed stderr record has `buf_size = 0`, matching
 //! this module's permanently zero capacity without observing buffering setup,
 //! a cursor, or output transition.
+//! The separately selected GNU `__flbf` observation likewise reads only the
+//! process-lifetime `stderr` pointer. Musl's fixed stderr record has `lbf =
+//! -1`; this x86 leaf deliberately admits no permanent-stream configuration,
+//! so its exact fixed result remains false without modeling a general line
+//! buffering mode, cursor, or output transition.
 //! The sibling pathname/tmpfile block admits only one active `fopen("r")`,
 //! `fopen("w+")`, or `tmpfile` stream at a time, its exact `fclose`, pre-I/O
 //! caller-buffered `_IOFBF` configuration, and its selected
@@ -140,6 +145,11 @@ const F_PATH: u32 = 64;
 const F_ACTIVE: u32 = 128;
 const F_EXTERNAL_BUFFER: u32 = 256;
 const F_IO_STARTED: u32 = 512;
+
+// Musl's `src/stdio/stderr.c` installs this immutable value in its permanent
+// stderr record. Keep the fixed observation separate from `StandardStream` so
+// this private adapter cannot imply a caller-configurable line-buffer model.
+const STDERR_LBF: c_int = -1;
 
 const O_RDONLY: c_int = 0;
 const O_RDWR: c_int = 2;
@@ -833,6 +843,33 @@ pub unsafe extern "C" fn __fbufsize(stream: *mut StandardStream) -> usize {
     }
     // SAFETY: pointer equality above proves this is the fixed stderr record.
     unsafe { (*stream).capacity }
+}
+
+/// Observe musl's fixed permanent-stderr line-buffer predicate.
+///
+/// Musl 1.2.6 `src/stdio/ext.c` has the fixed body
+/// `return f->lbf >= 0;`, while
+/// its permanent `src/stdio/stderr.c` record fixes `lbf = -1`. This target's
+/// selected `setvbuf` route admits only the private pathname slot, so the
+/// permanent stderr value remains exactly false for the process lifetime. The
+/// adapter intentionally imports neither a general FILE line-buffer field nor
+/// any configuration, cursor, or output transition, and rejects every pointer
+/// other than stderr before dereference.
+///
+/// # Safety
+///
+/// `stream` must be the exported process-lifetime `stderr` pointer. Its
+/// observation is externally serialized with the selected permanent stream.
+#[no_mangle]
+pub unsafe extern "C" fn __flbf(stream: *mut StandardStream) -> c_int {
+    // The fixed permanent stderr record is complete before first use; this
+    // query must not trigger shared permanent-stream buffer initialization.
+    if stream != ptr::addr_of_mut!(STDERR_STREAM) {
+        // SAFETY: no caller stream was dereferenced on this closed boundary.
+        unsafe { reject_stream() };
+        return 0;
+    }
+    (STDERR_LBF >= 0) as c_int
 }
 
 // Musl's `weak_alias(fileno, fileno_unlocked)` preserves both a weak archive

@@ -21,6 +21,7 @@ __environ
 __errno_location
 __fbufsize
 __fesetround
+__flbf
 __flt_rounds
 __fork_handler
 __fpclassify

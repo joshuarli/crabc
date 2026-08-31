@@ -840,8 +840,8 @@ read-only observation returns exact `int` `1`. The strict C11/C++17
 unmangled C++ linkage. This is neither input behavior nor a general FILE
 access-mode claim: it excludes arbitrary FILEs, FLOCK/FUNLOCK or lock-free
 behavior, other permanent streams, every other `stdio_ext` helper except the
-separately selected fixed `__fwritable(stderr)` and `__fbufsize(stderr)`
-siblings,
+separately selected fixed `__fwritable(stderr)`, `__fbufsize(stderr)`, and
+`__flbf(stderr)` siblings,
 stdio.stream-io, path/descriptor-reopen/tmpfile/LFS behavior, byte/block I/O
 including `fread`/`fwrite`, positions/status/configuration/buffering, multiple
 streams, general stdio, parity, promotion, and public x86 support.
@@ -857,7 +857,7 @@ so each read-only observation returns exact `int` `1`. The strict C11/C++17
 unmangled C++ linkage. This is neither output behavior nor a general FILE
 access-mode claim: it excludes arbitrary FILEs, FLOCK/FUNLOCK or lock-free
 behavior, other permanent streams, every other `stdio_ext` helper except the
-separately selected fixed `__fbufsize(stderr)` sibling,
+separately selected fixed `__fbufsize(stderr)` and `__flbf(stderr)` siblings,
 stdio.stream-io, path/descriptor-reopen/tmpfile/LFS behavior, byte/block I/O
 including `fread`/`fwrite`, positions/status/configuration/buffering, multiple
 streams, general stdio, parity, promotion, and public x86 support.
@@ -873,12 +873,29 @@ The strict C11/C++17 `stdio_ext.h` matrix proves its unconditional
 `size_t (FILE *)` declaration and unmangled C++ linkage. This is neither
 buffering setup nor a general FILE buffer-size claim: it excludes arbitrary
 FILEs, FLOCK/FUNLOCK or lock-free behavior, the separately selected
-`__freadable(stdin)` sibling and `__fwritable(stderr)` sibling, other
-permanent streams, every other unselected `stdio_ext` helper, stdio.stream-io,
-path/descriptor-reopen/tmpfile/LFS
+`__freadable(stdin)` sibling, `__fwritable(stderr)` sibling, and
+`__flbf(stderr)` sibling, other permanent streams, every other unselected
+`stdio_ext` helper, stdio.stream-io, path/descriptor-reopen/tmpfile/LFS
 behavior, byte/block I/O including `fread`/`fwrite`, positions/status/
 configuration, multiple streams, general stdio, parity, promotion, and public
 x86 support.
+
+The separate `stdio-permanent-flbf-stderr-header-abi` and
+`libc-stdio-permanent-flbf-stderr` gates record one private
+`static-c-stdio-permanent-flbf-stderr` artifact. It adds only the GNU
+`__flbf` C ABI spelling, without promoting a capability. Its pinned-musl/static
+differential calls `__flbf(stderr)` directly and through a function pointer;
+musl's permanent stderr record fixes `lbf = -1`, and this x86 leaf admits no
+permanent-stream configuration, so every read-only observation returns exact
+`int` `0`. The strict C11/C++17 `stdio_ext.h` matrix proves its unconditional
+`int (FILE *)` declaration and unmangled C++ linkage. This is neither
+line-buffer setup nor a general FILE line-buffer claim: it excludes arbitrary
+FILEs, FLOCK/FUNLOCK or lock-free behavior, the separately selected
+`__freadable(stdin)`, `__fwritable(stderr)`, and `__fbufsize(stderr)`
+siblings, other permanent streams, every other unselected `stdio_ext` helper,
+stdio.stream-io, path/descriptor-reopen/tmpfile/LFS behavior, byte/block I/O
+including `fread`/`fwrite`, positions/status/configuration, multiple streams,
+general stdio, parity, promotion, and public x86 support.
 
 The separate `stdio-permanent-feof-unlocked-header-abi` and
 `libc-stdio-permanent-feof-unlocked` gates record one private
