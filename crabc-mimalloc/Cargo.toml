@@ -92,6 +92,13 @@ path = "tests/native_persistent_worker_fastpath.rs"
 # persistent local owners under the scalar lifecycle audit only.
 required-features = ["native-runtime-test-audit"]
 
+[[test]]
+name = "native_pointer_first_current_owner_reallocate"
+path = "tests/native_pointer_first_current_owner_reallocate.rs"
+# This direct Phase-B/C witness keeps exact current local realloc dispatch
+# behind the scalar audit surface rather than the production allocator ABI.
+required-features = ["native-runtime-test-audit"]
+
 [features]
 default = []
 # Private, allocation-backed process context used only by the standalone
