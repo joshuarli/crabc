@@ -29,6 +29,20 @@ storage, TLS, numeric netdb, resolver configuration, DNS, `/etc/hosts`,
 `/etc/resolv.conf`, conventional network database, interface, socket,
 allocation, syscall, stdio, promotion, or public x86 support.
 
+`./scripts/dev-x86_64.sh libc-inet-classful` is a separate private
+`static-c-inet-classful` artifact inside still-planned `libc.resolver`. Its
+project-header C fixture first executes through pinned musl 1.2.6 and then
+through an archive-free true static candidate: an archive ratchet proves
+`inet_makeaddr` and `inet_lnaof`, while the final `-nostdlib -static` link
+takes only their one extracted object, never `libc.a`. Pinned musl keeps those
+two raw classful IPv4 arithmetic functions beside `inet_network` and
+`inet_netof` in `inet_legacy.c`; this slice explicitly leaves both neighbors
+and `inet_network`'s `inet_addr` dependency out. It covers the exact
+`n < 256`/`n < 65536` construction shifts and the raw `s_addr` <128/<192/else
+local-part masks. It has no byte-order helper, `inet_ntoa` storage, h_errno or
+errno state, TLS, allocation, syscall, stdio, `/etc/hosts`, `/etc/resolv.conf`,
+resolver/DNS, netdb, interface, socket, promotion, or public x86 support.
+
 `./scripts/dev-x86_64.sh libc-hstrerror` is a private `static-c-hstrerror`
 artifact inside still-planned `libc.resolver`. Its project-header C fixture
 first executes through pinned musl 1.2.6 and then through a true static

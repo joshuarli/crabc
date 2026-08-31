@@ -383,6 +383,8 @@ mod network_byte_order;
 mod inet_address;
 #[path = "inet_ntoa.rs"]
 mod inet_ntoa;
+#[path = "inet_classful.rs"]
+mod inet_classful;
 #[path = "hstrerror.rs"]
 mod hstrerror;
 #[path = "numeric_netdb.rs"]
