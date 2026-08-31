@@ -2140,6 +2140,7 @@ source_owners = [
   "libc/src/c_abi/x86_64/static_c_abi.rs",
   "libc/src/c_abi/x86_64/legacy_memory.rs",
   "libc/src/c_abi/x86_64/memccpy.rs",
+  "libc/src/c_abi/x86_64/strsep.rs",
   "libc/src/c_abi/x86_64/ffs.rs",
   "libc/src/c_abi/x86_64/intmax_arithmetic.rs",
   "libc/src/c_abi/x86_64/stat_compat.rs",
@@ -5717,6 +5718,47 @@ x86_abi_prerequisites = [
 x86_header_prerequisites = ["The dedicated C/C++ `mempcpy-header-abi` gate compares project-first and pinned-musl `string.h`: `void *mempcpy(void *restrict, const void *, size_t)` is GNU-only, hidden by default/strict/POSIX/XOPEN/BSD C selectors, and retains unmangled C++ linkage. The behavior fixture additionally traces project string.h, features.h, and bits/alltypes.h; it does not select general header or C-memory ABI completion."]
 native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-mempcpy", scope = "Pinned-musl C reference plus a true `-nostdlib -static` x86 candidate. The gate runs the dedicated C/C++ mempcpy declaration matrix, traces project headers, ratchets mempcpy against the pinned AArch64 static-ABI row and the complete selected static-export list, and extracts exactly one adapter object exporting only mempcpy with exactly one direct memcpy dependency beside the established bulk-memory owner. The freestanding matrix proves destination+length returns and exact copied/untouched bytes across source/destination residues 0..7, lengths 0..16 plus aligned/near-word boundaries through 64, including zero length. The final candidate has no interpreter, DT_NEEDED, unresolved symbols, PT_TLS, dynamic TLS model, PLT, ambient libc, allocator, errno, locale, syscall, or unowned memory utility. It does not select general bulk memory or `memory.bytes-basic`, memccpy/explicit_bzero, allocator lifecycle/interposition, libc.so, general startup, CRT, loader, sysroot, family completion, promotion, or public x86 support." }]
 oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source mapping, declaration, and behavior oracle for src/string/mempcpy.c: call memcpy and return the destination one-past the count. The pinned AArch64 libc.a static TSV fixes only mempcpy.lo ownership." }, { kind = "elf-abi", source = "System V AMD64 psABI", role = "LP64 pointer/size_t, rdi/rsi/rdx argument placement, rax return, rbx callee preservation, call-stack alignment, static linking, and no-dynamic-dependency fixture contract." }]
+
+[[family.verified_artifact]]
+id = "static-c-strsep"
+description = "Private native x86 selected-static-archive `strsep` leaf within still-planned `libc.posix-runtime`. The true static candidate extracts exactly one Rust object exporting only `strsep`, with no undefined symbol, relocation, or final-ELF dependency on the existing byte-string, C-string-copy, allocator, or generic runtime surface. It executes pinned musl 1.2.6 `src/string/strsep.c` behavior first through pinned musl and then through `-nostdlib -static`: a non-null caller-owned `char **` slot yields its current token or null when that value is null; the first byte selected by the readable delimiter C string becomes NUL and the slot advances one byte, while the final/no-match token clears the slot. The local scalar byte traversal preserves musl's delimiter-set and mutation behavior without importing musl's neighboring span helper or this repository's AArch64-owned `string_exports.rs` implementation. The leaf is stateless and allocation-free, with no errno, TLS, syscall, locale, allocator, mutable-runtime, CRT, loader, or sysroot dependency. It does not promote Rust-subsumed `memory.bytes-basic`, general string/tokenization behavior, `strtok`/`strtok_r`, memory-search, `mempcpy`, getsubopt, allocator lifecycle/interposition, libc.so, family completion, promotion, or public x86 support."
+source_owners = [
+  "compat/upstreams.toml",
+  "compat/abi/musl-1.2.6/aarch64/libc.a.static.tsv",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/strsep.rs",
+  "libc/src/string_exports.rs",
+  "include/string.h",
+  "include/features.h",
+  "include/bits/alltypes.h",
+  "compat/x86_64/strsep_header_abi_probe.c",
+  "compat/x86_64/strsep_header_abi_probe.cpp",
+  "compat/x86_64/run_strsep_header_abi.sh",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/libc_strsep_probe.c",
+  "compat/x86_64/libc_strsep_start.S",
+  "compat/x86_64/run_libc_strsep.sh",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "compat/x86_64/aarch64_parity_inventory.py",
+  "compat/x86_64/aarch64_parity_inventory.json",
+  "compat/x86_64/README.md",
+  "STATUS.md",
+  "x86-64.md",
+  "scripts/dev-x86_64.sh",
+  "scripts/check_structure.py",
+]
+x86_abi_prerequisites = [
+  "System V AMD64 passes `strsep(char **, const char *)` state-slot and delimiter pointers in rdi/rsi and returns the current token pointer or null in rax. `stringp` itself is non-null and writable; its stored char pointer may be null, otherwise it denotes a caller-owned mutable NUL-terminated C string. The delimiter pointer denotes a readable NUL-terminated C string. A selected delimiter byte is replaced in place with NUL, and the state slot receives its following byte; no C restrict contract is declared.",
+  "Pinned musl 1.2.6 `src/string/strsep.c` maps the public entry to a delimiter-set scan followed by the same one-byte NUL replacement/state advancement, or null state after the terminal byte. The pinned AArch64 static ABI inventory fixes only `strsep\tstrsep.lo\tT\tGLOBAL\t0\t48` public object ownership; the selected x86 Rust leaf is a standalone source-faithful closure rather than an AArch64 implementation import.",
+  "The selected Rust object exports exactly strsep and has no undefined symbols, syscall, errno/TLS, allocator, byte-string, C-string-copy, or span-helper relocation. Its final `-nostdlib -static` candidate has no unresolved symbols, interpreter, DT_NEEDED entry, no PT_TLS, dynamic TLS model, PLT, ambient libc, or unowned allocator, runtime, or string utility; its fixture-only _start exits directly and supplies no CRT or runtime contract.",
+]
+x86_header_prerequisites = ["The dedicated C/C++ `strsep-header-abi` gate compares project-first and pinned-musl `string.h`: `char *strsep(char **, const char *)` is GNU/BSD-selected, hidden by default/strict/POSIX/XOPEN C selectors, and retains unmangled C++ linkage. The behavior fixture additionally traces project string.h, features.h, and bits/alltypes.h; it does not select general header, string, or C ABI completion."]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-strsep", scope = "Pinned-musl C reference plus a true `-nostdlib -static` x86 candidate. The gate runs the dedicated C/C++ strsep declaration matrix, traces project headers, ratchets strsep against the pinned AArch64 static-ABI row and complete selected static-export list, and extracts exactly one object exporting only strsep with no undefined symbols or syscall. The freestanding matrix proves leading/consecutive/trailing delimiter empty tokens, multi-byte delimiter sets, empty delimiter/no-match final-state clearing, high-bit delimiter byte matching, null stored-state behavior, caller-buffer NUL mutation, and caller `char **` state-slot mutation. The final candidate has no interpreter, DT_NEEDED, unresolved symbols, PT_TLS, dynamic TLS model, PLT, ambient libc, allocator, errno, locale, or unowned string utilities. It does not select general string/tokenization behavior or `memory.bytes-basic`, strtok/strtok_r, memory-search, mempcpy, getsubopt, allocator lifecycle/interposition, libc.so, general startup, CRT, loader, sysroot, family completion, promotion, or public x86 support." }]
+oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source mapping, GNU/BSD declaration, and mutation-behavior oracle for src/string/strsep.c: null stored-state return, delimiter-set scan, in-place NUL replacement, one-byte state advance, and terminal-state clearing. The pinned AArch64 libc.a static TSV fixes only strsep.lo ownership." }, { kind = "elf-abi", source = "System V AMD64 psABI", role = "LP64 pointer arguments in rdi/rsi, rax pointer return, static linking, and no-dynamic-dependency fixture contract." }]
 
 [[family.verified_artifact]]
 id = "static-c-random-entropy"

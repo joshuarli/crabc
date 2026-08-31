@@ -129,7 +129,8 @@ X86_RUNTIME_FOUNDATION_LDSO_SOURCES = {
 # selected readiness/signal waits, selected system observation, selected
 # UTS-namespace identity, selected legacy bcopy/bzero adapters, selected
 # source-backed memccpy copy-until-target and mempcpy return-after-copy adapters,
-# selected C-string copy/concatenation, fixed-C-
+# one caller-buffer `strsep` token-mutation leaf, selected C-string
+# copy/concatenation, fixed-C-
 # locale ctype and the separately bounded named-locale/multibyte conversion
 # artifact, scalar integer arithmetic, complete integer parsing, intmax
 # arithmetic, and find-first-set, direct POSIX clock_gettime, bounded clock
@@ -200,6 +201,7 @@ X86_RUNTIME_FOUNDATION_LIBC_SOURCES = {
     Path("libc/src/c_abi/x86_64/memory.rs"),
     Path("libc/src/c_abi/x86_64/memccpy.rs"),
     Path("libc/src/c_abi/x86_64/mempcpy.rs"),
+    Path("libc/src/c_abi/x86_64/strsep.rs"),
     Path("libc/src/c_abi/x86_64/legacy_memory.rs"),
     Path("libc/src/c_abi/x86_64/process_context.rs"),
     Path("libc/src/c_abi/x86_64/environment.rs"),
@@ -3726,6 +3728,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         '#[path = "memory.rs"]',
         '#[path = "memccpy.rs"]',
         '#[path = "mempcpy.rs"]',
+        '#[path = "strsep.rs"]',
         '#[path = "legacy_memory.rs"]',
         '#[path = "fenv.rs"]',
         '#[path = "setjmp.rs"]',
@@ -4425,6 +4428,74 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
     if "--whole-archive" in mempcpy_runner_text:
         errors.append(
             "compat/x86_64/run_libc_mempcpy.sh: selected static mempcpy "
+            "evidence must not force-link the archive"
+        )
+
+    strsep_source = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "strsep.rs"
+    strsep_text = strsep_source.read_text(errors="replace")
+    for required in (
+        "musl 1.2.6",
+        "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+        "src/string/strsep.c",
+        "caller-owned `char **` state slot",
+        "pub unsafe extern \"C\" fn strsep",
+        "stringp.write(null_mut())",
+        "current.write(0)",
+    ):
+        if required not in strsep_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/strsep.rs: selected static strsep "
+                f"boundary is missing {required!r}"
+            )
+    strsep_exports = set(
+        re.findall(
+            r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(',
+            strsep_text,
+        )
+    )
+    if strsep_exports != {"strsep"}:
+        errors.append(
+            "libc/src/c_abi/x86_64/strsep.rs: selected static strsep "
+            "artifact must export only strsep"
+        )
+    for forbidden in (
+        "raw_syscall::",
+        "errno::",
+        "crabc_core",
+        "crabc_mimalloc",
+        "malloc",
+        "strcspn",
+        "strtok",
+        "strtok_r",
+        "use super::",
+    ):
+        if forbidden in strsep_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/strsep.rs: selected static strsep "
+                f"leaf must not select {forbidden!r}"
+            )
+    strsep_runner = ROOT / "compat" / "x86_64" / "run_libc_strsep.sh"
+    strsep_runner_text = strsep_runner.read_text(errors="replace")
+    for required in (
+        "run_musl_oracle.sh",
+        "run_strsep_header_abi.sh",
+        "strsep.lo",
+        "archive_member_for_symbol",
+        "strsep object export surface drifted",
+        "strsep object unexpectedly depends on another symbol",
+        "strsep object unexpectedly performs a syscall",
+        "-nostdlib -static",
+        "--no-undefined",
+        "candidate retains a PLT",
+    ):
+        if required not in strsep_runner_text:
+            errors.append(
+                "compat/x86_64/run_libc_strsep.sh: selected static strsep "
+                f"evidence is missing {required!r}"
+            )
+    if "--whole-archive" in strsep_runner_text:
+        errors.append(
+            "compat/x86_64/run_libc_strsep.sh: selected static strsep "
             "evidence must not force-link the archive"
         )
 
@@ -9746,6 +9817,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         hstrerror_text,
         byte_strings_text,
         memccpy_text,
+        strsep_text,
         random_entropy_text,
         memory_search_text,
         string_copy_text,
@@ -9886,6 +9958,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         "bzero",
         "memccpy",
         "mempcpy",
+        "strsep",
         "memset",
         "memmove",
         "feclearexcept",
@@ -10250,7 +10323,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
             "signal-control, one pure GNU signal-set predicate, paired GNU binary set-operation leaf, and a three-symbol POSIX signal-set mutation leaf, bounded process-signal execution, and one legacy single-signal pause wait, bounded pthread create/exit/join/detach initial-TLS worker, its private selected-main/worker pthread-key/C11-TSS lifecycle, private process-normal pthread mutexes and their musl private condition-variable handoff, the complete selected rwlock/attribute family with private-or-shared futex operation, plus the distinct C11 plain-sync adapter and normal-return pthread/C11 once state machine, its typed C11 create/exit/join/detach sibling, and pthread/C11 identity aliases, named termios-control, direct terminal-descriptor and foreground-group observations plus one named foreground-group assignment, historical ctermid pathname spelling, constant historical gethostid compatibility, selected process-context, child-reaping, C11 immediate termination, callback algorithms, direct clock_gettime, binary64 difftime, caller-buffered fixed-UTC gmtime_r, fixed-UTC timegm, caller-owned mapping-core, no-cancellation mapping synchronization, direct anonymous-memory descriptor creation, nanosleep, and clock_nanosleep, selected "
             "POSIX _exit forwarding, descriptor-entry, selected filesystem-access, bounded descriptor-control, timestamp updates, and descriptor-I/O, selected process-resources, selected readiness/signal-waits, "
             "selected socket transport and selected socket-message/options, selected system-observation, selected UTS-identity, "
-            "selected numeric-address codecs and legacy classful IPv4 arithmetic, fixed-profile h_errno message text, byte-string, legacy-memory adapters, source-backed memccpy/mempcpy, random-entropy, memory-search, C-string-copy, immutable error-string, "
+            "selected numeric-address codecs and legacy classful IPv4 arithmetic, fixed-profile h_errno message text, byte-string, legacy-memory adapters, source-backed memccpy/mempcpy, caller-buffer strsep, random-entropy, memory-search, C-string-copy, immutable error-string, "
             "fixed-C-locale ctype, integer-arithmetic, integer-parsing, intmax-arithmetic, credential-observation, and "
             "raw auxiliary-vector observation, startup-derived secure-environment, and environment-backed login-name observation, find-first-set, startup-published program names, short/GNU-long "
             "getopt state and aliases, callback-tree/hash-table search, and the "
@@ -10274,6 +10347,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         ("legacy_memory.rs", legacy_memory_text),
         ("memccpy.rs", memccpy_text),
         ("mempcpy.rs", mempcpy_text),
+        ("strsep.rs", strsep_text),
         ("fenv.rs", fenv_text),
         ("setjmp.rs", setjmp_text),
         ("signal_foundation.rs", signal_foundation_text),

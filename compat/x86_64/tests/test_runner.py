@@ -1421,6 +1421,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "memory-search-header-abi",
             "memccpy-header-abi",
             "mempcpy-header-abi",
+            "strsep-header-abi",
             "string-copy-header-abi",
             "error-strings-header-abi|strsignal-header-abi|gettext-catalog-header-abi",
             "string-duplication-header-abi",
@@ -1445,6 +1446,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "libc-legacy-memory",
             "libc-memccpy",
             "libc-mempcpy",
+            "libc-strsep",
             "libc-allocator-runtime",
             "libc-allocator-string-duplication",
             "libc-allocator-observability",
@@ -11837,6 +11839,118 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         )
         self.assertIn("mempcpy-header-abi", runner)
         self.assertIn("libc-mempcpy", runner)
+
+    def test_libc_static_c_abi_strsep_artifact_stays_narrow(self) -> None:
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        implementation = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "strsep.rs"
+        ).read_text(encoding="utf-8")
+        probe = (
+            ROOT / "compat" / "x86_64" / "libc_strsep_probe.c"
+        ).read_text(encoding="utf-8")
+        start = (
+            ROOT / "compat" / "x86_64" / "libc_strsep_start.S"
+        ).read_text(encoding="utf-8")
+        artifact_runner = (
+            ROOT / "compat" / "x86_64" / "run_libc_strsep.sh"
+        ).read_text(encoding="utf-8")
+        header_c = (
+            ROOT / "compat" / "x86_64" / "strsep_header_abi_probe.c"
+        ).read_text(encoding="utf-8")
+        header_cxx = (
+            ROOT / "compat" / "x86_64" / "strsep_header_abi_probe.cpp"
+        ).read_text(encoding="utf-8")
+        header_runner = (
+            ROOT / "compat" / "x86_64" / "run_strsep_header_abi.sh"
+        ).read_text(encoding="utf-8")
+        static_exports = (
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        ).read_text(encoding="utf-8")
+        static_export_names = {
+            line for line in static_exports.splitlines()
+            if line and not line.startswith("#")
+        }
+        parity_ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        runner = RUNNER.read_text(encoding="utf-8")
+
+        self.assertIn('#[path = "strsep.rs"]', static_root)
+        for required in (
+            "musl 1.2.6",
+            "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+            "src/string/strsep.c",
+            "pub unsafe extern \"C\" fn strsep",
+            "caller-owned `char **` state slot",
+            "stringp.write(null_mut())",
+            "current.write(0)",
+        ):
+            self.assertIn(required, implementation)
+        for forbidden in (
+            "raw_syscall::",
+            "errno::",
+            "crabc_core",
+            "crabc_mimalloc",
+            "malloc",
+            "strcspn",
+            "strtok",
+            "strtok_r",
+            "use super::",
+        ):
+            self.assertNotIn(forbidden, implementation)
+        for required in (
+            "strsep_signature",
+            "_Static_assert",
+            "check_basic_sequence",
+            "check_delimiter_set_sequence",
+            "check_no_separator_cases",
+            "check_unsigned_delimiter_byte",
+            "check_null_state_value",
+            "CRABC_STRSEP_FREESTANDING",
+        ):
+            self.assertIn(required, probe)
+        for required in ("crabc_x86_64_strsep_probe", "mov $60, %eax"):
+            self.assertIn(required, start)
+        for required in (
+            "run_musl_oracle.sh",
+            "run_strsep_header_abi.sh",
+            "strsep.lo",
+            "archive_member_for_symbol",
+            "strsep object export surface drifted",
+            "strsep object unexpectedly depends on another symbol",
+            "strsep object unexpectedly performs a syscall",
+            "-nostdlib -static",
+            "-Wl,--no-undefined",
+            "candidate retains a PLT",
+            "unowned allocator, runtime, or string utility",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn("--whole-archive", artifact_runner)
+        for required in (
+            "strsep_signature",
+            "CRABC_EXPECT_STRSEP",
+            "CRABC_REQUIRE_STRSEP_HIDDEN",
+        ):
+            self.assertIn(required, header_c)
+        for required in ("strsep_signature", "CRABC_EXPECT_STRSEP"):
+            self.assertIn(required, header_cxx)
+        for required in (
+            "default_definitions=()",
+            "xopen_definitions=(-D_XOPEN_SOURCE=700)",
+            "gnu_definitions=(-D_GNU_SOURCE -DCRABC_EXPECT_STRSEP)",
+            "bsd_definitions=(-D_BSD_SOURCE -DCRABC_EXPECT_STRSEP)",
+            "default/strict/POSIX/XOPEN C",
+        ):
+            self.assertIn(required, header_runner)
+        self.assertIn("strsep", static_export_names)
+        self.assertIn('id = "static-c-strsep"', parity_ledger)
+        self.assertIn(
+            'command = "./scripts/dev-x86_64.sh libc-strsep"', parity_ledger
+        )
+        self.assertIn("strsep-header-abi", runner)
+        self.assertIn("libc-strsep", runner)
 
     def test_libc_static_c_abi_memory_search_artifact_stays_narrow(self) -> None:
         static_root = (

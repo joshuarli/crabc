@@ -1047,6 +1047,8 @@ MEMCCPY_SYMBOLS = ("memccpy",)
 
 MEMPCPY_SYMBOLS = ("mempcpy",)
 
+STRSEP_SYMBOLS = ("strsep",)
+
 RANDOM_ENTROPY_SYMBOLS = ("getrandom", "getentropy")
 
 MEMORY_SEARCH_SYMBOLS = ("memchr", "memrchr", "memmem")
@@ -6799,6 +6801,289 @@ def require_mempcpy_artifact(family: Mapping[str, Any]) -> None:
         "libc-mempcpy)",
         "run_libc_mempcpy()",
         "run_libc_mempcpy",
+    ):
+        require(snippet in dispatcher, f"x86 dispatcher omits {snippet}")
+
+
+def require_strsep_artifact(family: Mapping[str, Any]) -> None:
+    """Keep one caller-buffer token leaf below string-family promotion."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.posix-runtime].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [entry for entry in artifacts if entry.get("id") == "static-c-strsep"]
+    require(
+        len(matching) == 1,
+        "libc.posix-runtime must contain exactly one static-c-strsep artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-strsep must not promote libc.posix-runtime",
+    )
+    artifact = matching[0]
+    require(
+        "capabilities" not in artifact,
+        "static-c-strsep must not promote memory.bytes-basic",
+    )
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for symbol in STRSEP_SYMBOLS:
+        require(symbol in description, f"static-c-strsep description omits {symbol}")
+    for phrase in (
+        "still-planned `libc.posix-runtime`",
+        "exactly one Rust object exporting only `strsep`",
+        "no undefined symbol, relocation, or final-ELF dependency",
+        "caller-owned `char **` slot",
+        "first byte selected by the readable delimiter C string becomes NUL",
+        "local scalar byte traversal",
+        "Rust-subsumed `memory.bytes-basic`",
+        "general string/tokenization behavior",
+        "allocator lifecycle/interposition",
+        "family completion",
+        "promotion",
+        "public x86 support",
+    ):
+        require(phrase in description, f"static-c-strsep description omits {phrase}")
+
+    owners = set(
+        nonempty_strings(artifact["source_owners"], "static-c-strsep.source_owners")
+    )
+    for owner in (
+        "compat/upstreams.toml",
+        "compat/abi/musl-1.2.6/aarch64/libc.a.static.tsv",
+        "libc/Cargo.toml",
+        "libc/src/lib.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/strsep.rs",
+        "libc/src/string_exports.rs",
+        "include/string.h",
+        "include/features.h",
+        "include/bits/alltypes.h",
+        "compat/x86_64/strsep_header_abi_probe.c",
+        "compat/x86_64/strsep_header_abi_probe.cpp",
+        "compat/x86_64/run_strsep_header_abi.sh",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/libc_strsep_probe.c",
+        "compat/x86_64/libc_strsep_start.S",
+        "compat/x86_64/run_libc_strsep.sh",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/aarch64_parity_inventory.py",
+        "compat/x86_64/aarch64_parity_inventory.json",
+        "compat/x86_64/README.md",
+        "STATUS.md",
+        "x86-64.md",
+        "scripts/dev-x86_64.sh",
+        "scripts/check_structure.py",
+    ):
+        require(owner in owners, f"static-c-strsep source owners omit {owner}")
+
+    prerequisites = nonempty_strings(
+        artifact["x86_abi_prerequisites"], "static-c-strsep.x86_abi_prerequisites"
+    )
+    require(
+        any(
+            "strsep(char **, const char *)" in item
+            and "rdi/rsi" in item
+            and "rax" in item
+            and "stringp" in item
+            and "NUL" in item
+            for item in prerequisites
+        ),
+        "static-c-strsep must retain its SysV C ABI and mutation contract",
+    )
+    require(
+        any(
+            "src/string/strsep.c" in item
+            and "strsep.lo" in item
+            and "standalone source-faithful closure" in item
+            for item in prerequisites
+        ),
+        "static-c-strsep must retain musl source and ABI inventory provenance",
+    )
+    require(
+        any(
+            "exactly strsep" in item
+            and "no undefined symbols" in item
+            and "no PT_TLS" in item
+            and "unowned allocator, runtime, or string utility" in item
+            for item in prerequisites
+        ),
+        "static-c-strsep must retain its closed static dependency boundary",
+    )
+
+    header_prerequisites = nonempty_strings(
+        artifact["x86_header_prerequisites"], "static-c-strsep.x86_header_prerequisites"
+    )
+    require(
+        any(
+            "string.h" in item
+            and "char *strsep(char **, const char *)" in item
+            and "GNU/BSD-selected" in item
+            and "default/strict/POSIX/XOPEN C selectors" in item
+            and "unmangled C++ linkage" in item
+            for item in header_prerequisites
+        ),
+        "static-c-strsep must retain its focused C/C++ header ABI",
+    )
+
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-strsep"},
+        "static-c-strsep must use the closed libc-strsep command",
+    )
+    scope = evidence[0].get("scope")
+    require(
+        isinstance(scope, str)
+        and all(
+            phrase in scope
+            for phrase in (
+                "dedicated C/C++ strsep declaration matrix",
+                "pinned AArch64 static-ABI row",
+                "exactly one object exporting only strsep",
+                "no undefined symbols",
+                "leading/consecutive/trailing delimiter empty tokens",
+                "empty delimiter/no-match final-state clearing",
+                "high-bit delimiter byte matching",
+                "caller-buffer NUL mutation",
+                "caller `char **` state-slot mutation",
+                "no interpreter, DT_NEEDED, unresolved symbols, PT_TLS",
+                "general string/tokenization behavior",
+                "memory.bytes-basic",
+                "allocator lifecycle/interposition",
+                "public x86 support",
+            )
+        ),
+        "static-c-strsep evidence must retain its bounded static contract",
+    )
+
+    exports = set(
+        static_c_abi_export_names(
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        )
+    )
+    for symbol in STRSEP_SYMBOLS:
+        require(symbol in exports, f"static C ABI export contract omits {symbol}")
+
+    static_root = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+    ).read_text(encoding="utf-8")
+    require(
+        '#[path = "strsep.rs"]\nmod strsep;' in static_root,
+        "x86 static C ABI must compose the strsep leaf",
+    )
+    source = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "strsep.rs"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "musl 1.2.6",
+        "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+        "src/string/strsep.c",
+        "pub unsafe extern \"C\" fn strsep",
+        "stringp.write(null_mut())",
+        "current.write(0)",
+        "caller-owned `char **` state slot",
+    ):
+        require(snippet in source, f"strsep implementation omits {snippet}")
+    rust_exports = set(
+        re.findall(
+            r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(', source
+        )
+    )
+    require(
+        rust_exports == {"strsep"},
+        "strsep implementation must export only strsep",
+    )
+    for forbidden in (
+        "raw_syscall::",
+        "errno::",
+        "crabc_core",
+        "crabc_mimalloc",
+        "malloc",
+        "strcspn",
+        "strtok",
+        "strtok_r",
+        "use super::",
+    ):
+        require(
+            forbidden not in source,
+            f"strsep implementation selects {forbidden}",
+        )
+
+    runner = (ROOT / "compat" / "x86_64" / "run_libc_strsep.sh").read_text(
+        encoding="utf-8"
+    )
+    for snippet in (
+        "run_musl_oracle.sh",
+        "run_strsep_header_abi.sh",
+        "strsep.lo",
+        "static_c_abi_exports.txt",
+        "archive_member_for_symbol",
+        "strsep object export surface drifted",
+        "strsep object unexpectedly depends on another symbol",
+        "strsep object unexpectedly performs a syscall",
+        "-nostdlib -static",
+        "--no-undefined",
+        "candidate retains a PLT",
+        "unowned allocator, runtime, or string utility",
+    ):
+        require(snippet in runner, f"strsep runner omits {snippet}")
+    require("--whole-archive" not in runner, "strsep runner must not force-link the archive")
+
+    probe = (ROOT / "compat" / "x86_64" / "libc_strsep_probe.c").read_text(
+        encoding="utf-8"
+    )
+    for snippet in (
+        "strsep_signature",
+        "_Static_assert",
+        "check_basic_sequence",
+        "check_delimiter_set_sequence",
+        "check_no_separator_cases",
+        "check_unsigned_delimiter_byte",
+        "check_null_state_value",
+        "CRABC_STRSEP_FREESTANDING",
+    ):
+        require(snippet in probe, f"strsep probe omits {snippet}")
+    start = (ROOT / "compat" / "x86_64" / "libc_strsep_start.S").read_text(
+        encoding="utf-8"
+    )
+    for snippet in ("crabc_x86_64_strsep_probe", "mov $60, %eax"):
+        require(snippet in start, f"strsep start shim omits {snippet}")
+
+    header_c = (
+        ROOT / "compat" / "x86_64" / "strsep_header_abi_probe.c"
+    ).read_text(encoding="utf-8")
+    header_cxx = (
+        ROOT / "compat" / "x86_64" / "strsep_header_abi_probe.cpp"
+    ).read_text(encoding="utf-8")
+    header_runner = (
+        ROOT / "compat" / "x86_64" / "run_strsep_header_abi.sh"
+    ).read_text(encoding="utf-8")
+    for snippet in ("strsep_signature", "CRABC_EXPECT_STRSEP", "CRABC_REQUIRE_STRSEP_HIDDEN"):
+        require(snippet in header_c, f"strsep C header evidence omits {snippet}")
+    for snippet in ("strsep_signature", "CRABC_EXPECT_STRSEP"):
+        require(snippet in header_cxx, f"strsep C++ header evidence omits {snippet}")
+    for snippet in (
+        "default_definitions=()",
+        "xopen_definitions=(-D_XOPEN_SOURCE=700)",
+        "gnu_definitions=(-D_GNU_SOURCE -DCRABC_EXPECT_STRSEP)",
+        "bsd_definitions=(-D_BSD_SOURCE -DCRABC_EXPECT_STRSEP)",
+        "default/strict/POSIX/XOPEN C",
+    ):
+        require(snippet in header_runner, f"strsep header runner omits {snippet}")
+
+    dispatcher = (ROOT / "scripts" / "dev-x86_64.sh").read_text(encoding="utf-8")
+    for snippet in (
+        "strsep-header-abi)",
+        "run_strsep_header_abi()",
+        "run_strsep_header_abi",
+        "libc-strsep)",
+        "run_libc_strsep()",
+        "run_libc_strsep",
     ):
         require(snippet in dispatcher, f"x86 dispatcher omits {snippet}")
 
@@ -36214,6 +36499,7 @@ def validate_ledger(
     require_legacy_memory_artifact(by_id["libc.posix-runtime"])
     require_memccpy_artifact(by_id["libc.posix-runtime"])
     require_mempcpy_artifact(by_id["libc.posix-runtime"])
+    require_strsep_artifact(by_id["libc.posix-runtime"])
     require_random_entropy_artifact(by_id["libc.posix-runtime"])
     require_memory_search_artifact(by_id["libc.posix-runtime"])
     require_string_copy_artifact(by_id["libc.posix-runtime"])

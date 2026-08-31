@@ -189,6 +189,8 @@ mod memory_search;
 mod byte_strings;
 #[path = "string_copy.rs"]
 mod string_copy;
+#[path = "strsep.rs"]
+mod strsep;
 #[path = "error_strings.rs"]
 mod error_strings;
 #[path = "locale_error_strings.rs"]

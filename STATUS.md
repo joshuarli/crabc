@@ -187,6 +187,21 @@ bulk-memory owner. It does not promote Rust-subsumed `memory.bytes-basic`,
 general bulk-memory behavior, `memccpy`/`explicit_bzero`, allocator
 lifecycle/interposition, family completion, promotion, or public x86 support.
 
+`./scripts/dev-x86_64.sh libc-strsep` is a separate private
+`static-c-strsep` artifact inside still-planned `libc.posix-runtime`. Its
+dedicated project-header/pinned-musl C/C++ gate proves GNU/BSD visibility,
+default/strict/POSIX/XOPEN C hiding, the exact unmangled
+`char *strsep(char **, const char *)` signature, and header provenance. Its
+pinned-musl and true `-nostdlib -static` routes extract exactly one `strsep`
+object with no undefined closure. They prove caller-buffer and `char **` state
+mutation across leading/consecutive/trailing delimiters, multi-byte delimiter
+sets, empty/no-match terminal clearing, and high-bit delimiter bytes. The leaf
+has no errno/TLS, allocator, locale, syscall, dynamic-runtime, CRT, loader, or
+sysroot path. It does not promote Rust-subsumed `memory.bytes-basic`, general
+string/tokenization, `strtok`/`strtok_r`, memory-search, `mempcpy`, getsubopt,
+allocator lifecycle/interposition, family completion, promotion, or public x86
+support.
+
 `./scripts/dev-x86_64.sh libc-getpass` is a separate private
 `static-c-getpass` artifact inside still-planned `libc.posix-runtime`. Its
 pinned-musl and freestanding-static routes select only the historical C

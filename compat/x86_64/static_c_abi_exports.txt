@@ -803,6 +803,7 @@ strncpy
 strnlen
 strpbrk
 strrchr
+strsep
 strsignal
 strspn
 strstr

@@ -50,7 +50,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 41)
-        self.assertEqual(report["verified_artifact_count"], 181)
+        self.assertEqual(report["verified_artifact_count"], 182)
         self.assertEqual(report["header_layout_probe_count"], 46)
         self.assertEqual(report["public_header_inventory_count"], 183)
         self.assertEqual(report["header_foundation_header_count"], 191)
@@ -6215,7 +6215,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             "does not select libc.so", credentials["native_evidence"][0]["scope"]
         )
         posix_artifacts = posix_runtime["verified_artifact"]
-        assert isinstance(posix_artifacts, list) and len(posix_artifacts) == 79
+        assert isinstance(posix_artifacts, list) and len(posix_artifacts) == 80
         artifacts_by_id = {
             artifact["id"]: artifact
             for artifact in posix_artifacts
@@ -7139,6 +7139,56 @@ class X86ParityLedgerTests(unittest.TestCase):
             self.assertIn(phrase, mempcpy_scope)
         self.assertIn(
             "libc/src/c_abi/x86_64/mempcpy.rs",
+            posix_runtime["source_owners"],
+        )
+        strsep = artifacts_by_id["static-c-strsep"]
+        assert isinstance(strsep, dict)
+        self.assertNotIn("capabilities", strsep)
+        for owner in (
+            "compat/upstreams.toml",
+            "compat/abi/musl-1.2.6/aarch64/libc.a.static.tsv",
+            "libc/src/c_abi/x86_64/static_c_abi.rs",
+            "libc/src/c_abi/x86_64/strsep.rs",
+            "libc/src/string_exports.rs",
+            "include/string.h",
+            "compat/x86_64/strsep_header_abi_probe.c",
+            "compat/x86_64/strsep_header_abi_probe.cpp",
+            "compat/x86_64/run_strsep_header_abi.sh",
+            "compat/x86_64/static_c_abi_exports.txt",
+            "compat/x86_64/libc_strsep_probe.c",
+            "compat/x86_64/libc_strsep_start.S",
+            "compat/x86_64/run_libc_strsep.sh",
+            "compat/x86_64/validate_parity_ledger.py",
+            "scripts/check_structure.py",
+        ):
+            self.assertIn(owner, strsep["source_owners"])
+        self.assertEqual(
+            {evidence["command"] for evidence in strsep["native_evidence"]},
+            {"./scripts/dev-x86_64.sh libc-strsep"},
+        )
+        for phrase in (
+            "exactly one Rust object exporting only `strsep`",
+            "caller-owned `char **` slot",
+            "local scalar byte traversal",
+            "Rust-subsumed `memory.bytes-basic`",
+            "general string/tokenization behavior",
+            "allocator lifecycle/interposition",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, strsep["description"])
+        self.assertIn("rdi/rsi", strsep["x86_abi_prerequisites"][0])
+        self.assertIn("src/string/strsep.c", strsep["x86_abi_prerequisites"][1])
+        strsep_scope = strsep["native_evidence"][0]["scope"]
+        for phrase in (
+            "leading/consecutive/trailing delimiter empty tokens",
+            "empty delimiter/no-match final-state clearing",
+            "high-bit delimiter byte matching",
+            "caller-buffer NUL mutation",
+            "caller `char **` state-slot mutation",
+        ):
+            self.assertIn(phrase, strsep_scope)
+        self.assertIn(
+            "libc/src/c_abi/x86_64/strsep.rs",
             posix_runtime["source_owners"],
         )
         random_entropy = artifacts_by_id["static-c-random-entropy"]
@@ -12620,6 +12670,61 @@ class X86ParityLedgerTests(unittest.TestCase):
         evidence[0]["command"] = "./scripts/dev-x86_64.sh libc-memory-search"
         with self.assertRaisesRegex(
             ledger.LedgerError, "closed libc-mempcpy command"
+        ):
+            ledger.validate_ledger(data)
+
+    def test_strsep_artifact_keeps_its_nonpromoting_mutation_contract(self) -> None:
+        data = self.data()
+        family = self.family(data, "libc.posix-runtime")
+        family["status"] = "foundation-verified"
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "static-c-strsep must not promote"
+        ):
+            ledger.require_strsep_artifact(family)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-strsep"
+        )
+        artifact["description"] = artifact["description"].replace(
+            "general string/tokenization behavior", "general text behavior"
+        )
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "description omits general string/tokenization behavior"
+        ):
+            ledger.validate_ledger(data)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-strsep"
+        )
+        artifact["capabilities"] = ["memory.bytes-basic"]
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "must not carry capabilities; use verified_slice instead"
+        ):
+            ledger.validate_ledger(data)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-strsep"
+        )
+        evidence = artifact["native_evidence"]
+        assert isinstance(evidence, list) and isinstance(evidence[0], dict)
+        evidence[0]["command"] = "./scripts/dev-x86_64.sh libc-memory-search"
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "closed libc-strsep command"
         ):
             ledger.validate_ledger(data)
 
