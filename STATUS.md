@@ -492,7 +492,10 @@ PT_TLS; a bounded 32-live-thread Linux-TID table owns one-shot `dlerror` and
 copied `dladdr` names, and dead slots are reclaimed only after `tgkill` reports
 `ESRCH`. Pinned-musl plus project-header C/C++ evidence covers ABI layouts,
 iteration, link maps, concurrent diagnostics, malformed/absent records, and
-stale handles. Search/mapping, graph mutation, `RTLD_NEXT`, global promotion,
+stale handles. For a live retained handle within that 32-slot table, the sole
+musl `dlinfo` request is `RTLD_DI_LINKMAP`: the `-7` differential leaves its result pointer untouched,
+keeps exact `Unsupported request -7` pending through a succeeding valid query,
+then consumes it once. Search/mapping, graph mutation, `RTLD_NEXT`, global promotion,
 finalization, and unload remain excluded, so neither dlfcn capability nor the
 dynamic-runtime family or public x86 platform is promoted.
 
