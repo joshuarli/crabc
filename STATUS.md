@@ -16,6 +16,19 @@ netdb/database, Ethernet/interface, address-codec, or socket-transport path;
 it is not resolver/network completion, family promotion, or public x86
 support.
 
+`./scripts/dev-x86_64.sh libc-inet-ntoa` is a private
+`static-c-inet-ntoa-scratch` artifact inside still-planned `libc.resolver`.
+Its project-header C fixture first executes through pinned musl 1.2.6 and then
+through an archive-free true static candidate: an archive ratchet proves the
+export, while the final `-nostdlib -static` link takes only its one extracted
+`inet_ntoa` object, never `libc.a`. It preserves musl's single shared static
+16-byte dotted-IPv4 buffer, same returned pointer, and next-call overwrite;
+the source `snprintf` is equivalently inlined for four bounded decimal octets.
+It neither reads nor writes `h_errno` or `errno` and has no h_errno/errno
+storage, TLS, numeric netdb, resolver configuration, DNS, `/etc/hosts`,
+`/etc/resolv.conf`, conventional network database, interface, socket,
+allocation, syscall, stdio, promotion, or public x86 support.
+
 `./scripts/dev-x86_64.sh libc-hstrerror` is a private `static-c-hstrerror`
 artifact inside still-planned `libc.resolver`. Its project-header C fixture
 first executes through pinned musl 1.2.6 and then through a true static

@@ -3749,6 +3749,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         '#[path = "readiness_waits.rs"]',
         '#[path = "socket_transport.rs"]',
         '#[path = "inet_address.rs"]',
+        '#[path = "inet_ntoa.rs"]',
         '#[path = "hstrerror.rs"]',
         '#[path = "socket_messages.rs"]',
         '#[path = "posix_semaphore.rs"]',
@@ -7500,6 +7501,139 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
             "address-codec evidence must not force-link the whole archive"
         )
 
+    inet_ntoa_probe_source = ROOT / "compat" / "x86_64" / "libc_inet_ntoa_probe.c"
+    inet_ntoa_start_source = ROOT / "compat" / "x86_64" / "libc_inet_ntoa_start.S"
+    inet_ntoa_runner_source = ROOT / "compat" / "x86_64" / "run_libc_inet_ntoa.sh"
+    for path in (
+        inet_ntoa_probe_source,
+        inet_ntoa_start_source,
+        inet_ntoa_runner_source,
+    ):
+        if not path.is_file():
+            errors.append(
+                f"x86 static inet_ntoa artifact is missing {path.relative_to(ROOT)}"
+            )
+            return
+
+    inet_ntoa_source = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "inet_ntoa.rs"
+    inet_ntoa_text = inet_ntoa_source.read_text(errors="replace")
+    inet_ntoa_probe = inet_ntoa_probe_source.read_text(errors="replace")
+    inet_ntoa_start = inet_ntoa_start_source.read_text(errors="replace")
+    inet_ntoa_runner = inet_ntoa_runner_source.read_text(errors="replace")
+    for required in (
+        "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+        "src/network/inet_ntoa.c",
+        "snprintf",
+        "INET_NTOA_BUFFER",
+        "[c_char; 16]",
+        "write_decimal_octet",
+        "to_ne_bytes",
+        'pub unsafe extern "C" fn inet_ntoa',
+        "Concurrent callers must externally synchronize",
+    ):
+        if required not in inet_ntoa_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/inet_ntoa.rs: selected static "
+                f"scratch-buffer boundary is missing {required!r}"
+            )
+    if re.findall(r"(?m)^static mut (\w+)", inet_ntoa_text) != ["INET_NTOA_BUFFER"]:
+        errors.append(
+            "libc/src/c_abi/x86_64/inet_ntoa.rs: selected static artifact "
+            "must own exactly one shared mutable buffer"
+        )
+    for forbidden in (
+        "raw_syscall",
+        "errno::",
+        "__h_errno_location",
+        "getaddrinfo",
+        "gethostby",
+        "if_nameindex",
+        "socket(",
+        "std::",
+        "alloc::",
+        "crabc_core",
+        "crabc_mimalloc",
+    ):
+        if forbidden in inet_ntoa_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/inet_ntoa.rs: selected static "
+                f"scratch-buffer boundary must not select {forbidden!r}"
+            )
+    inet_ntoa_exports = set(
+        re.findall(
+            r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(',
+            inet_ntoa_text,
+        )
+    )
+    if inet_ntoa_exports != {"inet_ntoa"}:
+        errors.append(
+            "libc/src/c_abi/x86_64/inet_ntoa.rs: selected static artifact "
+            "must export only inet_ntoa"
+        )
+    for required in (
+        "inet_ntoa_signature",
+        "sizeof(struct in_addr) == 4",
+        "offsetof(struct in_addr, s_addr) == 0",
+        '"0.9.10.99"',
+        '"100.255.0.1"',
+        '"255.255.255.255"',
+        '"0.0.0.0"',
+        "second != first",
+        "CRABC_INET_NTOA_FREESTANDING",
+    ):
+        if required not in inet_ntoa_probe:
+            errors.append(
+                "compat/x86_64/libc_inet_ntoa_probe.c: static scratch-buffer "
+                f"regression is missing {required!r}"
+            )
+    for required in (
+        "crabc_x86_64_inet_ntoa_probe",
+        "mov $60, %eax",
+    ):
+        if required not in inet_ntoa_start:
+            errors.append(
+                "compat/x86_64/libc_inet_ntoa_start.S: static scratch-buffer "
+                f"entry is missing {required!r}"
+            )
+    if "ARCH_SET_FS" in inet_ntoa_start:
+        errors.append(
+            "compat/x86_64/libc_inet_ntoa_start.S: scratch-buffer entry "
+            "must not bootstrap TLS"
+        )
+    for required in (
+        "inet_ntoa.lo",
+        "snprintf",
+        "%d.%d.%d.%d",
+        "assert_selected_c_abi_surface",
+        "extract_selected_member",
+        "exactly one selected archive member",
+        "-nostdlib -static",
+        '"$selected_member" -o "$candidate"',
+        "archive-free candidate",
+        "candidate unexpectedly selects TLS",
+        "__h_errno_location",
+        "getaddrinfo",
+        "if_nameindex",
+        "socket bind connect send recv",
+        "malloc free calloc realloc snprintf",
+        "call|syscall",
+    ):
+        if required not in inet_ntoa_runner:
+            errors.append(
+                "compat/x86_64/run_libc_inet_ntoa.sh: archive-free static "
+                f"scratch-buffer evidence is missing {required!r}"
+            )
+    if '"$archive" -o "$candidate"' in inet_ntoa_runner:
+        errors.append(
+            "compat/x86_64/run_libc_inet_ntoa.sh: final scratch-buffer "
+            "candidate must not link libc.a"
+        )
+    if "candidate accidentally selects separate inet_ntoa scratch storage" not in inet_address_runner:
+        errors.append(
+            "compat/x86_64/run_libc_inet_address.sh: numeric candidate must "
+            "continue excluding the separate inet_ntoa scratch buffer"
+        )
+
     hstrerror_probe_source = ROOT / "compat" / "x86_64" / "libc_hstrerror_probe.c"
     hstrerror_start_source = ROOT / "compat" / "x86_64" / "libc_hstrerror_start.S"
     hstrerror_runner_source = ROOT / "compat" / "x86_64" / "run_libc_hstrerror.sh"
@@ -8343,6 +8477,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         socket_transport_text,
         socket_messages_text,
         inet_address_text,
+        inet_ntoa_text,
         hstrerror_text,
         byte_strings_text,
         random_entropy_text,
@@ -8673,6 +8808,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         "__inet_aton",
         "inet_aton",
         "inet_addr",
+        "inet_ntoa",
         "hstrerror",
         "uname",
         "sysinfo",
@@ -8873,6 +9009,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         ("socket_transport.rs", socket_transport_text),
         ("socket_messages.rs", socket_messages_text),
         ("inet_address.rs", inet_address_text),
+        ("inet_ntoa.rs", inet_ntoa_text),
         ("hstrerror.rs", hstrerror_text),
         ("random_entropy.rs", random_entropy_text),
         ("memory_search.rs", memory_search_text),

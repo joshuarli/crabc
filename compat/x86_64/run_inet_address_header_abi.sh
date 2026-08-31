@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Native Linux/x86-64 <arpa/inet.h> numeric-address header ABI matrix.
 #
-# Pinned musl 1.2.6 makes inet_pton, inet_ntop, inet_aton, and inet_addr
+# Pinned musl 1.2.6 makes inet_pton, inet_ntop, inet_aton, inet_addr, and
+# inet_ntoa
 # unconditional in its default, GNU, and strict feature selections. The
 # candidate must retain that exact C/C++ declaration, type/layout, constant,
 # and C-linkage surface through project headers alone. This compile-only gate
@@ -143,14 +144,14 @@ check_cxx_c_linkage() {
     local object="$3"
     local undefined
     local symbol
-    local -a expected=(inet_pton inet_ntop inet_aton inet_addr)
+    local -a expected=(inet_pton inet_ntop inet_aton inet_addr inet_ntoa)
 
     undefined="$(nm --undefined-only "$object")"
     for symbol in "${expected[@]}"; do
         printf '%s\n' "$undefined" | grep -Eq "[[:space:]]${symbol}$" ||
             fail "$tree $profile C++ probe does not retain C linkage for $symbol"
     done
-    if printf '%s\n' "$undefined" | grep -Eq '_Z.*inet_(pton|ntop|aton|addr)'; then
+    if printf '%s\n' "$undefined" | grep -Eq '_Z.*inet_(pton|ntop|aton|addr|ntoa)'; then
         fail "$tree $profile C++ probe retained a mangled inet-address reference"
     fi
 }
