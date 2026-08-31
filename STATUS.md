@@ -833,6 +833,17 @@ attributes, mutex lifecycle, scheduler policy/priority behavior, threads, TLS,
 synchronization, cancellation, CRT, loader, sysroot, family completion,
 promotion, or public x86 support.
 
+The separate `./scripts/dev-x86_64.sh libc-pthread-setconcurrency` artifact is
+a thirty-first private static artifact in that same still-planned family. It
+selects only musl's direct `pthread_setconcurrency(int)` status table:
+negative inputs return `EINVAL`, zero is an unrecorded no-op success, and
+positive inputs return `EAGAIN`. The reference fixture proves preserved
+`errno`; its freestanding candidate intentionally owns no errno/TLS state.
+It does not select `pthread_getconcurrency`, a retained concurrency setting,
+thread lifecycle, scheduler policy or pthread scheduling attributes, mutexes,
+conditions, rwlocks, barriers, TSD, cancellation, synchronization, CRT,
+loader, sysroot, family completion, promotion, or public x86 support.
+
 `./scripts/dev-x86_64.sh libc-pthread-mutex-normal` artifact is a tenth private static
 `verified_artifact` in the same still-planned `libc.pthread-tls` family. It admits only an all-zero or
 `pthread_mutex_init(..., NULL)` process-private `PTHREAD_MUTEX_NORMAL` record

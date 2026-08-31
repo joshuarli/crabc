@@ -136,6 +136,7 @@ typedef int (*crabc_pthread_create_signature)(
 typedef int (*crabc_pthread_detach_signature)(pthread_t);
 typedef int (*crabc_pthread_equal_signature)(pthread_t, pthread_t);
 typedef int (*crabc_pthread_getcpuclockid_signature)(pthread_t, clockid_t *);
+typedef int (*crabc_pthread_setconcurrency_signature)(int);
 typedef int (*crabc_pthread_key_create_signature)(
 	pthread_key_t *, void (*)(void *));
 typedef int (*crabc_pthread_key_delete_signature)(pthread_key_t);
@@ -233,6 +234,8 @@ _Static_assert(CRABC_TYPE_IS(__typeof__(&pthread_equal), crabc_pthread_equal_sig
 	"pthread_equal signature");
 _Static_assert(CRABC_TYPE_IS(__typeof__(&pthread_getcpuclockid),
 	crabc_pthread_getcpuclockid_signature), "pthread_getcpuclockid signature");
+_Static_assert(CRABC_TYPE_IS(__typeof__(&pthread_setconcurrency),
+	crabc_pthread_setconcurrency_signature), "pthread_setconcurrency signature");
 _Static_assert(CRABC_TYPE_IS(__typeof__(&pthread_key_create),
 	crabc_pthread_key_create_signature), "pthread_key_create signature");
 _Static_assert(CRABC_TYPE_IS(__typeof__(&pthread_key_delete),

@@ -658,6 +658,7 @@ pthread_self
 pthread_setaffinity_np
 pthread_setcancelstate
 pthread_setcanceltype
+pthread_setconcurrency
 pthread_setname_np
 pthread_setspecific
 pthread_testcancel

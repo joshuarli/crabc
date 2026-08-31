@@ -130,7 +130,7 @@ X86_RUNTIME_FOUNDATION_LDSO_SOURCES = {
 # UTS-namespace identity, selected legacy bcopy/bzero adapters, selected
 # source-backed memccpy copy-until-target and mempcpy return-after-copy adapters,
 # one caller-buffer `strsep` token-mutation leaf, one caller-owned `rand_r`
-# PRNG-state transform, selected C-string
+# PRNG-state transform, one stateless `pthread_setconcurrency` status leaf, selected C-string
 # copy/concatenation, fixed-C-
 # locale ctype and the separately bounded named-locale/multibyte conversion
 # artifact, scalar integer arithmetic, complete integer parsing, intmax
@@ -211,6 +211,7 @@ X86_RUNTIME_FOUNDATION_LIBC_SOURCES = {
     Path("libc/src/c_abi/x86_64/mempcpy.rs"),
     Path("libc/src/c_abi/x86_64/strsep.rs"),
     Path("libc/src/c_abi/x86_64/rand_r.rs"),
+    Path("libc/src/c_abi/x86_64/pthread_setconcurrency.rs"),
     Path("libc/src/c_abi/x86_64/legacy_memory.rs"),
     Path("libc/src/c_abi/x86_64/process_context.rs"),
     Path("libc/src/c_abi/x86_64/environment.rs"),
@@ -3758,6 +3759,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         '#[path = "timer_fd.rs"]',
         '#[path = "pthread_identity.rs"]',
         '#[path = "pthread_create_join.rs"]',
+        '#[path = "pthread_setconcurrency.rs"]',
         '#[path = "pthread_tsd.rs"]',
         '#[path = "pthread_mutex.rs"]',
         '#[path = "pthread_cond.rs"]',
@@ -4586,6 +4588,77 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
     if "--whole-archive" in rand_r_runner_text:
         errors.append(
             "compat/x86_64/run_libc_rand_r.sh: selected static rand_r "
+            "evidence must not force-link the archive"
+        )
+
+    pthread_setconcurrency_source = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "pthread_setconcurrency.rs"
+    )
+    pthread_setconcurrency_text = pthread_setconcurrency_source.read_text(errors="replace")
+    for required in (
+        "musl 1.2.6",
+        "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+        "src/thread/pthread_setconcurrency.c::pthread_setconcurrency",
+        "EAGAIN",
+        "EINVAL",
+        "pthread_getconcurrency",
+        'pub extern "C" fn pthread_setconcurrency',
+        "no errno/TLS, syscall, allocator",
+    ):
+        if required not in pthread_setconcurrency_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/pthread_setconcurrency.rs: selected static "
+                f"boundary is missing {required!r}"
+            )
+    pthread_setconcurrency_exports = set(
+        re.findall(
+            r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(',
+            pthread_setconcurrency_text,
+        )
+    )
+    if pthread_setconcurrency_exports != {"pthread_setconcurrency"}:
+        errors.append(
+            "libc/src/c_abi/x86_64/pthread_setconcurrency.rs: selected static "
+            "artifact must export only pthread_setconcurrency"
+        )
+    for forbidden in (
+        "raw_syscall::",
+        "static_tls::",
+        "crabc_core",
+        "crabc_mimalloc",
+        "static mut",
+        "use super::",
+        "fn pthread_getconcurrency",
+    ):
+        if forbidden in pthread_setconcurrency_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/pthread_setconcurrency.rs: selected static "
+                f"leaf must not select {forbidden!r}"
+            )
+    pthread_setconcurrency_runner = (
+        ROOT / "compat" / "x86_64" / "run_libc_pthread_setconcurrency.sh"
+    )
+    pthread_setconcurrency_runner_text = pthread_setconcurrency_runner.read_text(
+        errors="replace"
+    )
+    for required in (
+        "run_musl_oracle.sh",
+        "run_pthread_c11_header_abi.sh",
+        "pthread_setconcurrency",
+        "pthread_getconcurrency",
+        "assert_direct_status_path",
+        "-nostdlib -static",
+        "--no-undefined",
+        "candidate must remain TLS-free",
+    ):
+        if required not in pthread_setconcurrency_runner_text:
+            errors.append(
+                "compat/x86_64/run_libc_pthread_setconcurrency.sh: selected static "
+                f"evidence is missing {required!r}"
+            )
+    if "--whole-archive" in pthread_setconcurrency_runner_text:
+        errors.append(
+            "compat/x86_64/run_libc_pthread_setconcurrency.sh: selected static "
             "evidence must not force-link the archive"
         )
 
@@ -10396,6 +10469,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         memccpy_text,
         strsep_text,
         rand_r_text,
+        pthread_setconcurrency_text,
         random_entropy_text,
         memory_search_text,
         string_copy_text,
@@ -10540,6 +10614,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         "mempcpy",
         "strsep",
         "rand_r",
+        "pthread_setconcurrency",
         "memset",
         "memmove",
         "feclearexcept",
@@ -10909,7 +10984,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
             "signal-control, separate realtime-minimum/realtime-maximum bridges, one pure GNU signal-set predicate, paired GNU binary set-operation leaf, and a three-symbol POSIX signal-set mutation leaf, bounded process-signal execution, and one legacy single-signal pause wait, bounded pthread create/exit/join/detach initial-TLS worker, its private selected-main/worker pthread-key/C11-TSS lifecycle, private process-normal pthread mutexes and their musl private condition-variable handoff, the complete selected rwlock/attribute family with private-or-shared futex operation, plus the distinct C11 plain-sync adapter and normal-return pthread/C11 once state machine, its typed C11 create/exit/join/detach sibling, and pthread/C11 identity aliases, named termios-control, direct terminal-descriptor and foreground-group observations plus one named foreground-group assignment, historical ctermid pathname spelling, constant historical gethostid compatibility, selected process-context, child-reaping, C11 immediate termination, callback algorithms, direct clock_gettime, binary64 difftime, caller-buffered fixed-UTC gmtime_r, fixed-UTC timegm, caller-owned mapping-core, no-cancellation mapping synchronization, direct anonymous-memory descriptor creation, nanosleep, and clock_nanosleep, selected "
             "POSIX _exit forwarding, descriptor-entry, selected filesystem-access, bounded descriptor-control, timestamp updates, and descriptor-I/O, selected process-resources, selected readiness/signal-waits, "
             "selected socket transport and selected socket-message/options, selected system-observation, selected UTS-identity, "
-            "selected numeric-address codecs, immutable IPv6 unspecified/loopback address data objects, and legacy classful IPv4 arithmetic, fixed-profile h_errno message text, byte-string, legacy-memory adapters, source-backed memccpy/mempcpy, caller-buffer strsep, caller-state rand_r, random-entropy, memory-search, C-string-copy, immutable error-string, "
+            "selected numeric-address codecs, immutable IPv6 unspecified/loopback address data objects, and legacy classful IPv4 arithmetic, fixed-profile h_errno message text, byte-string, legacy-memory adapters, source-backed memccpy/mempcpy, caller-buffer strsep, caller-state rand_r, stateless pthread_setconcurrency, random-entropy, memory-search, C-string-copy, immutable error-string, "
             "fixed-C-locale ctype, integer-arithmetic, integer-parsing, intmax-arithmetic, credential-observation, and "
             "raw auxiliary-vector observation, startup-derived secure-environment, and environment-backed login-name observation, find-first-set, startup-published program names, short/GNU-long "
             "getopt state and aliases, standalone linear search, callback-tree/hash-table search, and the "
@@ -10935,6 +11010,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         ("mempcpy.rs", mempcpy_text),
         ("strsep.rs", strsep_text),
         ("rand_r.rs", rand_r_text),
+        ("pthread_setconcurrency.rs", pthread_setconcurrency_text),
         ("fenv.rs", fenv_text),
         ("setjmp.rs", setjmp_text),
         ("signal_foundation.rs", signal_foundation_text),
@@ -10997,6 +11073,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         ("inet_classful.rs", inet_classful_text),
         ("hstrerror.rs", hstrerror_text),
         ("rand_r.rs", rand_r_text),
+        ("pthread_setconcurrency.rs", pthread_setconcurrency_text),
         ("random_entropy.rs", random_entropy_text),
         ("memory_search.rs", memory_search_text),
         ("string_copy.rs", string_copy_text),

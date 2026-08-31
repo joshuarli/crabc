@@ -118,6 +118,7 @@ using crabc_pthread_detach_signature = int (*)(pthread_t);
 using crabc_pthread_self_signature = pthread_t (*)();
 using crabc_pthread_equal_signature = int (*)(pthread_t, pthread_t);
 using crabc_pthread_getcpuclockid_signature = int (*)(pthread_t, clockid_t *);
+using crabc_pthread_setconcurrency_signature = int (*)(int);
 using crabc_pthread_key_create_signature = int (*)(
 	pthread_key_t *, void (*)(void *));
 using crabc_pthread_key_delete_signature = int (*)(pthread_key_t);
@@ -215,6 +216,8 @@ static_assert(__is_same(decltype(&pthread_equal), crabc_pthread_equal_signature)
 	"pthread_equal signature");
 static_assert(__is_same(decltype(&pthread_getcpuclockid),
 	crabc_pthread_getcpuclockid_signature), "pthread_getcpuclockid signature");
+static_assert(__is_same(decltype(&pthread_setconcurrency),
+	crabc_pthread_setconcurrency_signature), "pthread_setconcurrency signature");
 static_assert(__is_same(decltype(&pthread_key_create),
 	crabc_pthread_key_create_signature), "pthread_key_create signature");
 static_assert(__is_same(decltype(&pthread_key_delete),
@@ -365,6 +368,8 @@ static crabc_pthread_equal_signature const crabc_force_pthread_equal
 	__attribute__((used)) = &pthread_equal;
 static crabc_pthread_getcpuclockid_signature const crabc_force_pthread_getcpuclockid
 	__attribute__((used)) = &pthread_getcpuclockid;
+static crabc_pthread_setconcurrency_signature const crabc_force_pthread_setconcurrency
+	__attribute__((used)) = &pthread_setconcurrency;
 static crabc_pthread_key_create_signature const crabc_force_pthread_key_create
 	__attribute__((used)) = &pthread_key_create;
 static crabc_pthread_key_delete_signature const crabc_force_pthread_key_delete

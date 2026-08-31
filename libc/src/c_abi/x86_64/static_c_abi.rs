@@ -26,7 +26,8 @@
 //! creation/query/control and direct signal-descriptor creation/update, one default-attribute
 //! create/explicit-exit/join/detach worker and its typed C11
 //! `thrd_create`/`thrd_exit`/`thrd_join`/`thrd_detach`/`thrd_sleep` sibling, a
-//! direct C11 `thrd_yield` leaf, a
+//! direct C11 `thrd_yield` leaf, one stateless pthread concurrency-status
+//! entry, and a
 //! process-private normal `pthread_mutex_*` block and its paired private
 //! process-private condition-variable handoff, a complete selected
 //! `pthread_rwlock_*`/`pthread_rwlockattr_*` block with private and
@@ -126,7 +127,12 @@
 //! it owns no dereferenceable TCB, worker handle, or general C clock surface.
 //! The adjacent GNU task-name pair similarly admits only that bootstrapped
 //! process-main self handle through direct Linux `prctl`; it owns neither
-//! worker names nor musl's `/proc` target-name/cancellation path. The mutex
+//! worker names nor musl's `/proc` target-name/cancellation path. The adjacent
+//! concurrency-status leaf maps only negative/zero/positive `int` inputs to
+//! direct EINVAL/zero/EAGAIN results without retaining a setting or touching
+//! TLS, scheduler state, or a thread record; it does not select
+//! `pthread_getconcurrency`, pthread scheduling attributes, or a general
+//! pthread runtime. The mutex
 //! block is limited to all-zero/NULL-attribute process-private normal mutexes
 //! and private futex contention. Its condition sibling retains musl's private
 //! waiter-list/barrier/requeue protocol only for all-zero/NULL-attribute
@@ -306,6 +312,8 @@ mod pthread_affinity;
 mod pthread_cpuclock;
 #[path = "pthread_name.rs"]
 mod pthread_name;
+#[path = "pthread_setconcurrency.rs"]
+mod pthread_setconcurrency;
 #[path = "pthread_barrierattr_pshared.rs"]
 mod pthread_barrierattr_pshared;
 #[path = "pthread_condattr_pshared.rs"]
