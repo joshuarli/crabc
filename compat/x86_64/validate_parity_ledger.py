@@ -28305,8 +28305,8 @@ def require_getsubopt_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 38,
-        "libc.text-math-locale-stdio must retain exactly thirty-eight private verified artifacts",
+        len(artifacts) == 39,
+        "libc.text-math-locale-stdio must retain exactly thirty-nine private verified artifacts",
     )
     matching = [
         entry for entry in artifacts if entry.get("id") == "static-c-getsubopt"
@@ -29762,8 +29762,8 @@ def require_stdio_integer_scan_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 38,
-        "libc.text-math-locale-stdio must retain exactly thirty-eight private verified artifacts",
+        len(artifacts) == 39,
+        "libc.text-math-locale-stdio must retain exactly thirty-nine private verified artifacts",
     )
     matching = [
         entry for entry in artifacts if entry.get("id") == "static-c-stdio-integer-scan"
@@ -30045,8 +30045,8 @@ def require_stdio_octal_hex_scan_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 38,
-        "libc.text-math-locale-stdio must retain exactly thirty-eight private verified artifacts",
+        len(artifacts) == 39,
+        "libc.text-math-locale-stdio must retain exactly thirty-nine private verified artifacts",
     )
     matching = [
         entry
@@ -30366,6 +30366,347 @@ def require_stdio_octal_hex_scan_artifact(family: Mapping[str, Any]) -> None:
     )
 
 
+def require_stdio_fixed_percent_scan_artifact(family: Mapping[str, Any]) -> None:
+    """Keep musl vfscanf's literal `%%` parser state below stdio support."""
+
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.text-math-locale-stdio].verified_artifact",
+        family.get("status", ""),
+    )
+    require(
+        len(artifacts) == 39,
+        "libc.text-math-locale-stdio must retain exactly thirty-nine private verified artifacts",
+    )
+    matching = [
+        entry
+        for entry in artifacts
+        if entry.get("id") == "static-c-stdio-fixed-percent-scan"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.text-math-locale-stdio must contain exactly one static-c-stdio-fixed-percent-scan artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-stdio-fixed-percent-scan must not promote libc.text-math-locale-stdio",
+    )
+    artifact = matching[0]
+    require(
+        "capabilities" not in artifact,
+        "static-c-stdio-fixed-percent-scan must not claim a scanner capability",
+    )
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for phrase in (
+        "still-planned `libc.text-math-locale-stdio`",
+        "adds no C export or capability",
+        "`sscanf`/`vsscanf`",
+        "C-locale `%%`",
+        "C11/C++17",
+        "unmangled C spellings",
+        "top-level `p[1] == '%'` branch",
+        "no va_list destination access or assignment",
+        "stale errno",
+        "pinned-musl parser-state profile",
+        "not a portable general scanf-literal claim",
+        "`%n`/`%hhn` count-store",
+        "character/string/scanset/pointer/integer/floating/wide",
+        "format whitespace beyond this `%%` branch",
+        "FILE input",
+        "byte formatting",
+        "general scanner",
+        "general stdio",
+        "family completion",
+        "promotion",
+        "public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"static-c-stdio-fixed-percent-scan description omits {phrase}",
+        )
+    owners = set(
+        string_list(
+            artifact["source_owners"],
+            "static-c-stdio-fixed-percent-scan source owners",
+        )
+    )
+    for path in (
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/stdio_format_scan.rs",
+        "libc/src/c_abi/x86_64/errno.rs",
+        "include/errno.h",
+        "include/limits.h",
+        "include/stdarg.h",
+        "include/stdio.h",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/stdio_fixed_percent_scan_header_abi_probe.c",
+        "compat/x86_64/stdio_fixed_percent_scan_header_abi_probe.cpp",
+        "compat/x86_64/run_stdio_fixed_percent_scan_header_abi.sh",
+        "compat/x86_64/libc_stdio_fixed_percent_scan_probe.c",
+        "compat/x86_64/libc_stdio_fixed_percent_scan_start.S",
+        "compat/x86_64/run_libc_stdio_format_scan.sh",
+        "compat/x86_64/run_libc_stdio_fixed_percent_scan.sh",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/README.md",
+        "STATUS.md",
+        "x86-64.md",
+        "scripts/dev-x86_64.sh",
+    ):
+        require(
+            path in owners,
+            f"static-c-stdio-fixed-percent-scan source owners omit {path}",
+        )
+    prerequisites = string_list(
+        artifact["x86_abi_prerequisites"],
+        "static-c-stdio-fixed-percent-scan.x86_abi_prerequisites",
+    )
+    require(
+        any(
+            "System V AMD64" in item
+            and "rdi/rsi" in item
+            and "no caller destination" in item
+            and "does not advance it" in item
+            and "no FILE, count-store, or floating variadic boundary" in item
+            for item in prerequisites
+        ),
+        "static-c-stdio-fixed-percent-scan must retain its direct and va_list ABI boundary",
+    )
+    require(
+        any(
+            "src/stdio/{sscanf,vsscanf,vfscanf}.c" in item
+            and "p[1] == '%'" in item
+            and "shlim" in item
+            and "isspace" in item
+            and "shgetc" in item
+            and "shcnt" in item
+            and "without store_int, va_arg, or assignment" in item
+            for item in prerequisites
+        ),
+        "static-c-stdio-fixed-percent-scan must retain its pinned-musl source map",
+    )
+    require(
+        any(
+            "initial-exec errno TLS" in item
+            and "remains stale" in item
+            and "%fs:0" in item
+            for item in prerequisites
+        ),
+        "static-c-stdio-fixed-percent-scan must retain its errno/TLS boundary",
+    )
+    header_prerequisites = string_list(
+        artifact["x86_header_prerequisites"],
+        "static-c-stdio-fixed-percent-scan.x86_header_prerequisites",
+    )
+    require(
+        len(header_prerequisites) == 1
+        and "sscanf/vsscanf" in header_prerequisites[0]
+        and "C11/C++17" in header_prerequisites[0]
+        and "unmangled C spellings" in header_prerequisites[0]
+        and "not a broader stdio-header" in header_prerequisites[0],
+        "static-c-stdio-fixed-percent-scan must retain its narrow project-header boundary",
+    )
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-stdio-fixed-percent-scan"},
+        "static-c-stdio-fixed-percent-scan must use the closed libc-stdio-fixed-percent-scan command",
+    )
+    scope = evidence[0]["scope"]
+    assert isinstance(scope, str)
+    for phrase in (
+        "Pinned-musl 1.2.6 C11/C++17 project-header declaration/linkage proof",
+        "`-nostdlib -static` candidate",
+        "unmangled C++ C spellings",
+        "literal `%%` C-locale input-whitespace skip",
+        "exactly one percent consumption",
+        "no destination or assignment",
+        "direct vsscanf forwarding with an untouched va_list",
+        "following ordinary literal",
+        "zero-assignment matching failure",
+        "whitespace-only or empty input EOF",
+        "stale errno",
+        "direct initial-exec errno TLS",
+        "pinned-musl parser-state evidence only",
+        "`%n`/`%hhn` count-store",
+        "character/string/scanset/pointer/integer/floating/wide",
+        "general literal/format-whitespace",
+        "FILE",
+        "byte-formatting",
+        "general scanner",
+        "general stdio",
+        "public-x86 claim",
+    ):
+        require(
+            phrase in scope,
+            f"static-c-stdio-fixed-percent-scan evidence scope omits {phrase}",
+        )
+    oracle = artifact["oracle"]
+    assert isinstance(oracle, list)
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "c-posix"
+            and isinstance(entry.get("role"), str)
+            and "src/stdio/{sscanf,vsscanf,vfscanf}.c" in entry["role"]
+            and "p[1] == '%'" in entry["role"]
+            and "isspace" in entry["role"]
+            and "without va_arg or assignment" in entry["role"]
+            and "matching failure from input EOF" in entry["role"]
+            for entry in oracle
+        ),
+        "static-c-stdio-fixed-percent-scan must retain its musl literal-percent oracle",
+    )
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "elf-abi"
+            and isinstance(entry.get("role"), str)
+            and "input/format pointer ABI" in entry["role"]
+            and "remains unadvanced" in entry["role"]
+            and "initial-exec errno TLS" in entry["role"]
+            for entry in oracle
+        ),
+        "static-c-stdio-fixed-percent-scan must retain its SysV/TLS oracle",
+    )
+    implementation = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "stdio_format_scan.rs"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "static-c-stdio-fixed-percent-scan",
+        "if unsafe { read_byte(directive) } == b'%'",
+        "cursor = unsafe { skip_input_space(cursor) };",
+        "if unsafe { read_byte(cursor) } != b'%'",
+        "assignment count",
+    ):
+        require(
+            snippet in implementation,
+            f"stdio literal-percent scan implementation omits {snippet}",
+        )
+    exports = static_c_abi_export_names(
+        ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+    )
+    require(
+        {"sscanf", "vsscanf"}.issubset(exports),
+        "static C ABI export contract omits the existing scan boundary",
+    )
+    for unselected in ("scanf", "fscanf", "vfscanf", "fwscanf", "swscanf"):
+        require(
+            unselected not in exports,
+            f"static-c-stdio-fixed-percent-scan must not select {unselected}",
+        )
+    fixture = (
+        ROOT / "compat" / "x86_64" / "libc_stdio_fixed_percent_scan_probe.c"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "CRABC_TYPE_IS(__typeof__(&sscanf)",
+        "call_vsscanf",
+        r'" \t\n\r\v\f%"',
+        r'"%%!"',
+        r'"\v\f"',
+        "without an assignment",
+        "matching failure",
+        "return EOF",
+        "CRABC_STDIO_FIXED_PERCENT_SCAN_FREESTANDING",
+    ):
+        require(
+            snippet in fixture,
+            f"libc-stdio-fixed-percent-scan fixture omits {snippet}",
+        )
+    start = (
+        ROOT / "compat" / "x86_64" / "libc_stdio_fixed_percent_scan_start.S"
+    ).read_text(encoding="utf-8")
+    for snippet in ("arch_prctl(ARCH_SET_FS", "%fs:0", "mov $60, %eax"):
+        require(
+            snippet in start,
+            f"libc-stdio-fixed-percent-scan start shim omits {snippet}",
+        )
+    c_header_probe = (
+        ROOT / "compat" / "x86_64" /
+        "stdio_fixed_percent_scan_header_abi_probe.c"
+    ).read_text(encoding="utf-8")
+    cxx_header_probe = (
+        ROOT / "compat" / "x86_64" /
+        "stdio_fixed_percent_scan_header_abi_probe.cpp"
+    ).read_text(encoding="utf-8")
+    header_runner = (
+        ROOT / "compat" / "x86_64" /
+        "run_stdio_fixed_percent_scan_header_abi.sh"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "CRABC_STDIO_FIXED_PERCENT_SCAN_HEADER_C11",
+        "crabc_sscanf_signature",
+        "crabc_vsscanf_signature",
+    ):
+        require(
+            snippet in c_header_probe,
+            f"literal-percent C header probe omits {snippet}",
+        )
+    for snippet in (
+        "CRABC_STDIO_FIXED_PERCENT_SCAN_HEADER_CXX17",
+        "decltype(&sscanf)",
+        "decltype(&vsscanf)",
+        "crabc_sscanf_reference",
+        "crabc_vsscanf_reference",
+    ):
+        require(
+            snippet in cxx_header_probe,
+            f"literal-percent C++ header probe omits {snippet}",
+        )
+    for snippet in (
+        "-nostdinc++",
+        "assert_cxx_c_linkage",
+        "sscanf vsscanf",
+        "mangled scanf reference",
+        "run_musl_oracle.sh",
+    ):
+        require(
+            snippet in header_runner,
+            f"literal-percent header runner omits {snippet}",
+        )
+    wrapper = (
+        ROOT / "compat" / "x86_64" / "run_libc_stdio_fixed_percent_scan.sh"
+    ).read_text(encoding="utf-8")
+    require(
+        "CRABC_STDIO_FORMAT_SCAN_PROFILE=fixed-percent-scan" in wrapper
+        and "run_libc_stdio_format_scan.sh" in wrapper,
+        "libc-stdio-fixed-percent-scan wrapper no longer selects its closed profile",
+    )
+    runner = (
+        ROOT / "compat" / "x86_64" / "run_libc_stdio_format_scan.sh"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "fixed-percent-scan)",
+        "CRABC_STDIO_FIXED_PERCENT_SCAN_FREESTANDING",
+        "libc_stdio_fixed_percent_scan_probe.c",
+        "libc_stdio_fixed_percent_scan_start.S",
+        "REQUIRED_C_ABI_SYMBOLS=(sscanf vsscanf)",
+        "literal-percent scanner branch is no longer selected",
+        "-nostdlib -static",
+        "--no-undefined",
+        "R_X86_64_TPOFF",
+        "__errno_location",
+    ):
+        require(
+            snippet in runner,
+            f"libc-stdio-fixed-percent-scan shared runner omits {snippet}",
+        )
+    dispatcher = (ROOT / "scripts" / "dev-x86_64.sh").read_text(encoding="utf-8")
+    require(
+        "libc-stdio-fixed-percent-scan)" in dispatcher
+        and "run_libc_stdio_fixed_percent_scan.sh" in dispatcher,
+        "stdio fixed-percent scanner dispatcher binding is missing",
+    )
+    require(
+        "stdio-fixed-percent-scan-header-abi)" in dispatcher
+        and "run_stdio_fixed_percent_scan_header_abi.sh" in dispatcher,
+        "stdio fixed-percent scanner header dispatcher binding is missing",
+    )
+
+
 def require_stdio_float_hex_output_artifact(family: Mapping[str, Any]) -> None:
     """Keep binary64 hexadecimal output distinct from general float stdio."""
 
@@ -30571,8 +30912,8 @@ def require_stdio_errno_output_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 38,
-        "libc.text-math-locale-stdio must retain exactly thirty-eight private verified artifacts",
+        len(artifacts) == 39,
+        "libc.text-math-locale-stdio must retain exactly thirty-nine private verified artifacts",
     )
     matching = [
         entry for entry in artifacts if entry.get("id") == "static-c-stdio-errno-output"
@@ -31092,8 +31433,8 @@ def require_stdio_permanent_byte_io_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 38,
-        "libc.text-math-locale-stdio must retain exactly thirty-eight private verified artifacts",
+        len(artifacts) == 39,
+        "libc.text-math-locale-stdio must retain exactly thirty-nine private verified artifacts",
     )
     matching = [
         entry
@@ -31419,8 +31760,8 @@ def require_stdio_permanent_status_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 38,
-        "libc.text-math-locale-stdio must retain exactly thirty-eight private verified artifacts",
+        len(artifacts) == 39,
+        "libc.text-math-locale-stdio must retain exactly thirty-nine private verified artifacts",
     )
     matching = [
         entry
@@ -31747,8 +32088,8 @@ def require_stdio_permanent_feof_unlocked_artifact(
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 38,
-        "libc.text-math-locale-stdio must retain exactly thirty-eight private verified artifacts",
+        len(artifacts) == 39,
+        "libc.text-math-locale-stdio must retain exactly thirty-nine private verified artifacts",
     )
     matching = [
         entry
@@ -32115,8 +32456,8 @@ def require_stdio_permanent_fileno_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 38,
-        "libc.text-math-locale-stdio must retain exactly thirty-eight private verified artifacts",
+        len(artifacts) == 39,
+        "libc.text-math-locale-stdio must retain exactly thirty-nine private verified artifacts",
     )
     matching = [
         entry
@@ -32420,8 +32761,8 @@ def require_stdio_permanent_fileno_unlocked_artifact(
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 38,
-        "libc.text-math-locale-stdio must retain exactly thirty-eight private verified artifacts",
+        len(artifacts) == 39,
+        "libc.text-math-locale-stdio must retain exactly thirty-nine private verified artifacts",
     )
     matching = [
         entry
@@ -35957,8 +36298,8 @@ def require_math_ceil_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 38,
-        "libc.text-math-locale-stdio must retain exactly thirty-eight private verified artifacts",
+        len(artifacts) == 39,
+        "libc.text-math-locale-stdio must retain exactly thirty-nine private verified artifacts",
     )
     matching = [entry for entry in artifacts if entry.get("id") == "static-c-math-ceil"]
     require(
@@ -36182,8 +36523,8 @@ def require_math_floor_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 38,
-        "libc.text-math-locale-stdio must retain exactly thirty-eight private verified artifacts",
+        len(artifacts) == 39,
+        "libc.text-math-locale-stdio must retain exactly thirty-nine private verified artifacts",
     )
     matching = [entry for entry in artifacts if entry.get("id") == "static-c-math-floor"]
     require(
@@ -36408,8 +36749,8 @@ def require_math_round_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 38,
-        "libc.text-math-locale-stdio must retain exactly thirty-eight private verified artifacts",
+        len(artifacts) == 39,
+        "libc.text-math-locale-stdio must retain exactly thirty-nine private verified artifacts",
     )
     matching = [entry for entry in artifacts if entry.get("id") == "static-c-math-round"]
     require(
@@ -37361,8 +37702,8 @@ def require_locale_wide_iconv_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 38,
-        "libc.text-math-locale-stdio must retain exactly thirty-eight private verified artifacts",
+        len(artifacts) == 39,
+        "libc.text-math-locale-stdio must retain exactly thirty-nine private verified artifacts",
     )
     matching = [
         entry for entry in artifacts if entry.get("id") == "static-c-locale-wide-iconv"
@@ -38187,8 +38528,8 @@ def require_locale_error_strings_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 38,
-        "libc.text-math-locale-stdio must retain exactly thirty-eight private verified artifacts",
+        len(artifacts) == 39,
+        "libc.text-math-locale-stdio must retain exactly thirty-nine private verified artifacts",
     )
     matching = [
         entry for entry in artifacts if entry.get("id") == "static-c-locale-error-strings"
@@ -39886,6 +40227,9 @@ def validate_ledger(
     require_stdio_format_scan_artifact(by_id["libc.text-math-locale-stdio"])
     require_stdio_integer_scan_artifact(by_id["libc.text-math-locale-stdio"])
     require_stdio_octal_hex_scan_artifact(by_id["libc.text-math-locale-stdio"])
+    require_stdio_fixed_percent_scan_artifact(
+        by_id["libc.text-math-locale-stdio"]
+    )
     require_stdio_float_hex_output_artifact(by_id["libc.text-math-locale-stdio"])
     require_stdio_errno_output_artifact(by_id["libc.text-math-locale-stdio"])
     require_stdio_permanent_line_io_artifact(by_id["libc.text-math-locale-stdio"])

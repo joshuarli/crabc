@@ -345,6 +345,18 @@ than a portable ISO C target-overflow, decimal/float/wide/scanset/positional/
 FILE, byte-formatting, arbitrary-input, general scanner, general stdio,
 family-completion, promotion, or public-x86 claim.
 
+The separate private `./scripts/dev-x86_64.sh libc-stdio-fixed-percent-scan`
+artifact adds no export or capability. It narrows a pinned-musl 1.2.6 versus
+true `-nostdlib -static` differential to `sscanf`/`vsscanf`'s one fixed
+C-locale literal `%%` parser state: it skips input whitespace, consumes one
+percent without a destination or assignment, distinguishes matching failure
+from whitespace-only/empty-input EOF, and leaves errno stale. Its independent
+C11/C++17 header gate proves only the existing `sscanf`/`vsscanf` declarations
+and unmangled C++ C spellings. It is not `%n`/`%hhn` count-store,
+character/string/scanset/pointer/integer/float/wide, general literal or
+format-whitespace, FILE, general scanner, general stdio, family-completion,
+promotion, or public-x86 evidence.
+
 The separate private `./scripts/dev-x86_64.sh libc-stdio-float-hex-output`
 artifact adds no export and selects only allocation-free C-locale binary64
 `%a`/`%A` byte-buffer output. It preserves musl's no-op `l` modifier,

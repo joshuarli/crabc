@@ -51,7 +51,7 @@
 //! | `src/stdio/vsnprintf.c`, `vsprintf.c`, `sprintf.c`, `snprintf.c` | byte-buffer count/truncation wrappers and C varargs entry boundary |
 //! | `src/stdio/vfprintf.c` (`printf_core`, `fmt_fp`) | selected integer/byte-string parser plus bare `%m` no-argument errno-message behavior and binary64 `%a`/`%A` spelling, flag, width, precision, and count-store behavior |
 //! | `src/errno/__strerror.h`; `src/errno/strerror.c` | selected immutable fixed-C-locale `%m` message lookup, shared directly with the existing `strerror` leaf |
-//! | `src/stdio/sscanf.c`, `vsscanf.c`, `vfscanf.c`; `src/internal/intscan.c` | NUL-terminated byte scanner, assignment/count discipline, prefix admission, and selected integer/string conversions |
+//! | `src/stdio/sscanf.c`, `vsscanf.c`, `vfscanf.c`; `src/internal/intscan.c` | NUL-terminated byte scanner, assignment/count discipline, prefix admission, selected integer/string conversions, and the sealed `vfscanf` top-level `%%` state that skips C-locale input whitespace before one literal percent |
 //!
 //! The full musl formatter/scanner also owns decimal and long-double
 //! conversion, locale, wide input, scansets, positional arguments, stream
@@ -1125,6 +1125,12 @@ unsafe fn scan_from_string(
         }
         directive = directive.wrapping_add(1);
         if unsafe { read_byte(directive) } == b'%' {
+            // musl vfscanf's top-level `%%` path first consumes C-locale
+            // input whitespace, then matches exactly one percent without
+            // touching the va_list or assignment count.  The private
+            // static-c-stdio-fixed-percent-scan artifact records only this
+            // sealed parser state; it does not promote general literal scan
+            // behavior.
             cursor = unsafe { skip_input_space(cursor) };
             if unsafe { read_byte(cursor) } == 0 {
                 return if assignments == 0 { EOF } else { assignments };

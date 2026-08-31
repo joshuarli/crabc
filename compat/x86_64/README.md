@@ -894,6 +894,23 @@ positional/FILE input, byte formatting, arbitrary input, allocation, locale
 objects, a general scanner or stdio boundary, parity, promotion, and public x86
 support remain outside it.
 
+The distinct `libc-stdio-fixed-percent-scan` gate
+(`./scripts/dev-x86_64.sh libc-stdio-fixed-percent-scan`) records one private
+`static-c-stdio-fixed-percent-scan` artifact without adding an export or
+capability. Its independent C11/C++17 header gate proves only the existing
+`sscanf`/`vsscanf` signatures and unmangled C++ C spellings. The fixed
+project-header fixture compares pinned musl 1.2.6 with a true
+`-nostdlib -static` candidate for only vfscanf's top-level `%%` parser state: selected
+C-locale input whitespace is skipped, exactly one percent is consumed without
+a destination or assignment, a following literal continues normally, and
+zero-assignment matching failure remains distinct from whitespace-only or
+empty-input EOF while errno stays stale. Direct `vsscanf` forwarding proves
+the compiler-owned va_list is untouched. This is pinned-musl parser-state
+evidence, not a general scanf-literal claim. `%n`/`%hhn` count-store,
+character/string/scanset/pointer/integer/floating/wide forms, general format
+whitespace, FILE input, byte formatting, locale objects, a general scanner or
+stdio boundary, parity, promotion, and public x86 support remain outside it.
+
 The separate `libc-stdio-float-hex-output` gate
 (`./scripts/dev-x86_64.sh libc-stdio-float-hex-output`) records one private
 `static-c-stdio-float-hex-output` artifact without adding an export or

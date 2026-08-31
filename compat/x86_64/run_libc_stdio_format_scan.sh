@@ -7,7 +7,8 @@
 # and byte-string format/scan grammar. The closed `integer-scan` profile owns
 # only musl's ULLONG_MAX source-overflow behavior for narrow `%d`/`%i`/`%u`/
 # `%x` scans through the existing `sscanf`/`vsscanf` boundary. The separately
-# closed `octal-hex-scan` profile owns only the matching `%o`/`%X` behavior.
+# closed `octal-hex-scan` profile owns only the matching `%o`/`%X` behavior,
+# and `fixed-percent-scan` owns only vfscanf's literal `%%` parser state.
 # The sibling `float-hex-output` profile selects only binary64 `%a`/`%A`
 # output, while the closed `errno-output` profile adds only bare GNU/musl `%m` C-locale
 # errno-message output through that same formatter. None selects a general
@@ -45,6 +46,13 @@ octal-hex-scan)
     readonly START_SOURCE=compat/x86_64/libc_stdio_octal_hex_scan_start.S
     readonly FREESTANDING_DEFINE=CRABC_STDIO_OCTAL_HEX_SCAN_FREESTANDING
     readonly EVIDENCE_LABEL="bounded stdio octal/uppercase-hex source scan"
+    readonly -a REQUIRED_C_ABI_SYMBOLS=(sscanf vsscanf)
+    ;;
+fixed-percent-scan)
+    readonly FIXTURE_SOURCE=compat/x86_64/libc_stdio_fixed_percent_scan_probe.c
+    readonly START_SOURCE=compat/x86_64/libc_stdio_fixed_percent_scan_start.S
+    readonly FREESTANDING_DEFINE=CRABC_STDIO_FIXED_PERCENT_SCAN_FREESTANDING
+    readonly EVIDENCE_LABEL="sealed stdio literal-percent scan"
     readonly -a REQUIRED_C_ABI_SYMBOLS=(sscanf vsscanf)
     ;;
 float-hex-output)
@@ -231,6 +239,19 @@ if [ "$EVIDENCE_PROFILE" = octal-hex-scan ]; then
     grep -Fq 'complete `%X` consumption' \
         "$ROOT_DIR/compat/x86_64/libc_stdio_octal_hex_scan_probe.c" ||
         fail "octal/uppercase-hex fixture no longer records exact consumption"
+fi
+if [ "$EVIDENCE_PROFILE" = fixed-percent-scan ]; then
+    grep -Fq "if unsafe { read_byte(directive) } == b'%'" \
+        "$ROOT_DIR/libc/src/c_abi/x86_64/stdio_format_scan.rs" ||
+        fail "literal-percent scanner branch is no longer selected"
+    grep -Fq 'cursor = unsafe { skip_input_space(cursor) };' \
+        "$ROOT_DIR/libc/src/c_abi/x86_64/stdio_format_scan.rs" ||
+        fail "literal-percent scanner no longer skips C-locale input whitespace"
+    grep -Fq "if unsafe { read_byte(cursor) } != b'%'" \
+        "$ROOT_DIR/libc/src/c_abi/x86_64/stdio_format_scan.rs" ||
+        fail "literal-percent scanner no longer matches exactly one percent"
+    grep -Fq 'without an assignment' "$ROOT_DIR/$FIXTURE_SOURCE" ||
+        fail "literal-percent fixture no longer records its assignment boundary"
 fi
 if timeout --foreground "$EXECUTION_TIMEOUT" "$candidate"; then
     :

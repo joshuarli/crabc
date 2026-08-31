@@ -1371,7 +1371,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "timerfd-header-abi|signalfd-header-abi",
             "libc-timerfd|libc-signalfd|libc-sigpause|libc-sigisemptyset|libc-sigandset-sigorset|libc-sigpending|libc-sigrtmax|libc-sigrtmin|libc-sigaddset-sigdelset-sigfillset",
             "ctermid-header-abi|gethostid-header-abi|isatty-header-abi|tcgetpgrp-header-abi|tcsetpgrp-header-abi|getpass-header-abi|libc-ctermid|libc-gethostid|libc-isatty|libc-tcgetpgrp|libc-tcsetpgrp|libc-getpass|mkfifo-header-abi|mkfifoat-header-abi|libc-mkfifo|libc-mkfifoat|mktemp-header-abi|libc-mktemp",
-            "stdio-permanent-line-io-header-abi|stdio-octal-hex-scan-header-abi",
+            "stdio-permanent-line-io-header-abi|stdio-octal-hex-scan-header-abi|stdio-fixed-percent-scan-header-abi",
             "math-complex-complete-header-abi|libc-math-complex-complete",
             "stdio-permanent-byte-io-header-abi",
             "stdio-permanent-status-header-abi",
@@ -1439,7 +1439,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "libc-pathname-lifecycle",
             "libc-directory-streams",
             "libc-lchmod-unsupported",
-            "libc-stdio-standard|libc-stdio-format-scan|libc-stdio-integer-scan|libc-stdio-octal-hex-scan|libc-stdio-float-hex-output|libc-stdio-errno-output|libc-stdio-permanent-line-io|libc-stdio-permanent-byte-io|libc-stdio-permanent-status|libc-stdio-permanent-fileno|libc-stdio-permanent-fileno-unlocked|libc-stdio-permanent-feof-unlocked|libc-stdio-path-stream|libc-stdio-tmpfile|libc-text-math-locale-stdio-composition",
+            "libc-stdio-standard|libc-stdio-format-scan|libc-stdio-integer-scan|libc-stdio-octal-hex-scan|libc-stdio-fixed-percent-scan|libc-stdio-float-hex-output|libc-stdio-errno-output|libc-stdio-permanent-line-io|libc-stdio-permanent-byte-io|libc-stdio-permanent-status|libc-stdio-permanent-fileno|libc-stdio-permanent-fileno-unlocked|libc-stdio-permanent-feof-unlocked|libc-stdio-path-stream|libc-stdio-tmpfile|libc-text-math-locale-stdio-composition",
             "libc-pthread-identity",
             "libc-pthread-affinity",
             "libc-pthread-cpuclock",
@@ -14007,6 +14007,131 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn("run_libc_stdio_octal_hex_scan.sh", dispatcher)
         self.assertIn("stdio-octal-hex-scan-header-abi", dispatcher)
         self.assertIn("run_stdio_octal_hex_scan_header_abi.sh", dispatcher)
+
+    def test_libc_static_c_abi_stdio_fixed_percent_scan_stays_narrow(
+        self,
+    ) -> None:
+        implementation = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" /
+            "stdio_format_scan.rs"
+        ).read_text(encoding="utf-8")
+        fixture = (
+            ROOT / "compat" / "x86_64" /
+            "libc_stdio_fixed_percent_scan_probe.c"
+        ).read_text(encoding="utf-8")
+        start = (
+            ROOT / "compat" / "x86_64" /
+            "libc_stdio_fixed_percent_scan_start.S"
+        ).read_text(encoding="utf-8")
+        c_header_probe = (
+            ROOT / "compat" / "x86_64" /
+            "stdio_fixed_percent_scan_header_abi_probe.c"
+        ).read_text(encoding="utf-8")
+        cxx_header_probe = (
+            ROOT / "compat" / "x86_64" /
+            "stdio_fixed_percent_scan_header_abi_probe.cpp"
+        ).read_text(encoding="utf-8")
+        header_runner = (
+            ROOT / "compat" / "x86_64" /
+            "run_stdio_fixed_percent_scan_header_abi.sh"
+        ).read_text(encoding="utf-8")
+        wrapper = (
+            ROOT / "compat" / "x86_64" /
+            "run_libc_stdio_fixed_percent_scan.sh"
+        ).read_text(encoding="utf-8")
+        shared_runner = (
+            ROOT / "compat" / "x86_64" /
+            "run_libc_stdio_format_scan.sh"
+        ).read_text(encoding="utf-8")
+        static_exports = (
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        ).read_text(encoding="utf-8")
+        static_export_names = {
+            line
+            for line in static_exports.splitlines()
+            if line and not line.startswith("#")
+        }
+        parity_ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        dispatcher = RUNNER.read_text(encoding="utf-8")
+
+        for required in (
+            "static-c-stdio-fixed-percent-scan",
+            "if unsafe { read_byte(directive) } == b'%'",
+            "skip_input_space(cursor)",
+            "if unsafe { read_byte(cursor) } != b'%'",
+        ):
+            self.assertIn(required, implementation)
+        self.assertIn("sscanf", static_export_names)
+        self.assertIn("vsscanf", static_export_names)
+        for unselected in ("scanf", "fscanf", "vfscanf", "fwscanf", "swscanf"):
+            self.assertNotIn(unselected, static_export_names)
+        for required in (
+            "CRABC_TYPE_IS(__typeof__(&sscanf)",
+            "call_vsscanf",
+            r'" \t\n\r\v\f%"',
+            r'"%%!"',
+            r'"\v\f"',
+            "without an assignment",
+            "CRABC_STDIO_FIXED_PERCENT_SCAN_FREESTANDING",
+        ):
+            self.assertIn(required, fixture)
+        for required in (
+            "arch_prctl(ARCH_SET_FS",
+            "%fs:0",
+            "mov $60, %eax",
+        ):
+            self.assertIn(required, start)
+        for required in (
+            "CRABC_STDIO_FIXED_PERCENT_SCAN_HEADER_C11",
+            "crabc_sscanf_signature",
+            "crabc_vsscanf_signature",
+        ):
+            self.assertIn(required, c_header_probe)
+        for required in (
+            "CRABC_STDIO_FIXED_PERCENT_SCAN_HEADER_CXX17",
+            "decltype(&sscanf)",
+            "decltype(&vsscanf)",
+            "crabc_sscanf_reference",
+            "crabc_vsscanf_reference",
+        ):
+            self.assertIn(required, cxx_header_probe)
+        for required in (
+            "-nostdinc++",
+            "assert_cxx_c_linkage",
+            "sscanf vsscanf",
+            "mangled scanf reference",
+            "run_musl_oracle.sh",
+        ):
+            self.assertIn(required, header_runner)
+        self.assertIn(
+            "CRABC_STDIO_FORMAT_SCAN_PROFILE=fixed-percent-scan", wrapper
+        )
+        self.assertIn("run_libc_stdio_format_scan.sh", wrapper)
+        for required in (
+            "fixed-percent-scan)",
+            "CRABC_STDIO_FIXED_PERCENT_SCAN_FREESTANDING",
+            "libc_stdio_fixed_percent_scan_probe.c",
+            "libc_stdio_fixed_percent_scan_start.S",
+            "REQUIRED_C_ABI_SYMBOLS=(sscanf vsscanf)",
+            "literal-percent scanner branch is no longer selected",
+            "-nostdlib -static",
+            "--no-undefined",
+            "R_X86_64_TPOFF",
+            "__errno_location",
+        ):
+            self.assertIn(required, shared_runner)
+        self.assertNotIn("--whole-archive", shared_runner)
+        self.assertIn('id = "static-c-stdio-fixed-percent-scan"', parity_ledger)
+        self.assertIn(
+            'command = "./scripts/dev-x86_64.sh libc-stdio-fixed-percent-scan"',
+            parity_ledger,
+        )
+        self.assertIn("libc-stdio-fixed-percent-scan", dispatcher)
+        self.assertIn("run_libc_stdio_fixed_percent_scan.sh", dispatcher)
+        self.assertIn("stdio-fixed-percent-scan-header-abi", dispatcher)
+        self.assertIn("run_stdio_fixed_percent_scan_header_abi.sh", dispatcher)
 
     def test_libc_static_c_abi_stdio_float_hex_output_stays_narrow(self) -> None:
         implementation = (
