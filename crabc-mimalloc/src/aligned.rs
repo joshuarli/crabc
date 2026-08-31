@@ -21,6 +21,10 @@ use crate::config::{
     PAGE_MAX_START_BLOCK_ALIGN2, PAGE_META_ALIGNMENT, PAGE_OSPAGE_BLOCK_ALIGN2,
     SMALL_SIZE_MAX,
 };
+use crate::alloc::{
+    AllocationPointerFacts, PointerReallocationDecision, PointerReplacement,
+    PointerReplacementWork, pointer_replacement_decision,
+};
 use crate::size_class;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -163,6 +167,95 @@ pub(crate) const fn replacement_zero_range(
     }
 }
 
+/// Selects the pinned aligned-realloc reuse or replacement path from one
+/// pointer-facts observation.
+///
+/// Unlike ordinary `mi_theap_realloc_zero_ex`, pinned
+/// `mi_theap_realloc_zero_aligned_at` does not compare the allocation page's
+/// Heap with the target Theap's Heap before returning an in-place result. The
+/// source's exact usable-size, ceil-half, and pointer-plus-offset alignment
+/// checks remain the complete in-place predicate.
+#[inline]
+pub(crate) fn aligned_reallocation_decision<P: AllocationPointerFacts>(
+    source: Option<P>,
+    new_size: usize,
+    alignment: usize,
+    offset: usize,
+    zero: bool,
+) -> Option<PointerReallocationDecision<P>> {
+    if !size_class::alignment_is_valid(alignment) {
+        return None;
+    }
+    let source = match source {
+        Some(pointer) => {
+            if realloc_can_reuse(
+                pointer.client_address(),
+                pointer.usable_size(),
+                new_size,
+                alignment,
+                offset,
+            ) {
+                return Some(PointerReallocationDecision::Reuse(pointer));
+            }
+            Some(pointer)
+        }
+        None => None,
+    };
+
+    let old_usable = source.as_ref().map(AllocationPointerFacts::usable_size).unwrap_or(0);
+    let copy_size = core::cmp::min(new_size, old_usable);
+    let zero_start = if copy_size >= size_of::<isize>() {
+        copy_size - size_of::<isize>()
+    } else {
+        0
+    };
+    Some(pointer_replacement_decision(
+        source,
+        new_size,
+        zero,
+        zero_start,
+        false,
+    ))
+}
+
+/// Computes aligned replacement initialization from the replacement pointer's
+/// usable extent.
+///
+/// The encoded plan already carries aligned realloc's unrounded zero start and
+/// deliberately omits ordinary realloc's zero-size first-byte compatibility
+/// clear.
+#[inline]
+pub(crate) fn aligned_replacement_work<P: AllocationPointerFacts>(
+    replacement: &P,
+    plan: &PointerReplacement<P>,
+) -> PointerReplacementWork {
+    crate::alloc::ordinary_replacement_work(replacement, plan)
+}
+
+#[cfg(test)]
+fn pointer_facts_from_page_geometry(
+    client_address: usize,
+    page_start: usize,
+    block_size: usize,
+    has_interior_pointers: bool,
+) -> Option<crate::alloc::TestAllocationPointer> {
+    if client_address < page_start {
+        return None;
+    }
+    let canonical_address = if has_interior_pointers {
+        recover_block_start(client_address, page_start, block_size)?
+    } else {
+        client_address
+    };
+    let usable_size = usable_size(block_size, client_address, canonical_address)?;
+    crate::alloc::TestAllocationPointer::new(
+        client_address,
+        canonical_address,
+        block_size,
+        usable_size,
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -248,5 +341,45 @@ mod tests {
         assert_eq!(replacement_zero_range(7, 144, true), Some(0..144));
         assert_eq!(replacement_zero_range(31, 23, true), None);
         assert_eq!(replacement_zero_range(31, 144, false), None);
+    }
+
+    #[test]
+    fn page_pointer_facts_recover_exact_and_adjusted_clients() {
+        let exact = pointer_facts_from_page_geometry(0x1080, 0x1000, 64, false)
+            .expect("a normal page derives facts directly from its block size");
+        assert_eq!(exact.client_address(), 0x1080);
+        assert_eq!(exact.canonical_address(), 0x1080);
+        assert!(!exact.is_interior());
+        assert_eq!(crate::alloc::malloc_usable_size(&exact), 64);
+
+        let adjusted = pointer_facts_from_page_geometry(0x1079, 0x1000, 96, true)
+            .expect("an adjusted aligned client recovers its source block");
+        assert_eq!(adjusted.client_address(), 0x1079);
+        assert_eq!(adjusted.canonical_address(), 0x1060);
+        assert!(adjusted.is_interior());
+        assert_eq!(adjusted.interior_adjustment(), 25);
+        assert_eq!(crate::alloc::malloc_usable_size(&adjusted), 71);
+
+        assert!(pointer_facts_from_page_geometry(0x0fff, 0x1000, 64, true).is_none());
+    }
+
+    #[test]
+    fn aligned_reallocation_uses_adjusted_usable_extent_and_source_threshold() {
+        let old = pointer_facts_from_page_geometry(0x1079, 0x1000, 96, true)
+            .expect("the adjusted client is live");
+
+        assert_eq!(
+            aligned_reallocation_decision(Some(old), 36, 64, 7, false),
+            Some(crate::alloc::PointerReallocationDecision::Reuse(old)),
+            "aligned realloc accepts exactly ceil(usable / 2) without an owner route"
+        );
+
+        let replacement = aligned_reallocation_decision(Some(old), 35, 64, 7, false)
+            .expect("a valid alignment still selects replacement when too much would be wasted");
+        assert!(matches!(
+            replacement,
+            crate::alloc::PointerReallocationDecision::Replace(_)
+        ));
+        assert_eq!(aligned_reallocation_decision(Some(old), 36, 24, 7, false), None);
     }
 }
