@@ -12942,6 +12942,206 @@ def require_intmax_arithmetic_artifact(family: Mapping[str, Any]) -> None:
     )
 
 
+def require_setfsgid_artifact(family: Mapping[str, Any]) -> None:
+    """Keep the one-symbol filesystem-credential leaf below promotion."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.posix-runtime].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [entry for entry in artifacts if entry.get("id") == "static-c-setfsgid"]
+    require(
+        len(matching) == 1,
+        "libc.posix-runtime must contain exactly one static-c-setfsgid artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-setfsgid must not promote libc.posix-runtime",
+    )
+    artifact = matching[0]
+    require(
+        "capabilities" not in artifact,
+        "static-c-setfsgid must not promote an existing capability",
+    )
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for phrase in (
+        "one-symbol filesystem-credential compatibility artifact",
+        "planned `libc.posix-runtime`",
+        "exactly `setfsgid(gid_t)`",
+        "`src/linux/setfsgid.c::setfsgid`",
+        "raw Linux x86 syscall 123",
+        "prior-filesystem-GID",
+        "all-ones query",
+        "current-effective-ID",
+        "stale initial-TLS `errno`",
+        "strict/POSIX/X/Open/GNU C and C++17",
+        "unconditional `int setfsgid(gid_t)`",
+        "neither `setfsuid`",
+        "credential observation/setter families",
+        "process-wide credential synchronization",
+        "process/session control",
+        "scheduler state",
+        "pthread lifecycle",
+        "family completion, promotion, or public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"static-c-setfsgid description omits {phrase}",
+        )
+    owners = set(
+        nonempty_strings(artifact["source_owners"], "static-c-setfsgid.source_owners")
+    )
+    for owner in (
+        "compat/upstreams.toml",
+        "libc/Cargo.toml",
+        "libc/src/lib.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/setfsgid.rs",
+        "libc/src/c_abi/x86_64/errno.rs",
+        "libc/src/c_abi/x86_64/static_tls.rs",
+        "libc/src/c_abi/x86_64/syscall.rs",
+        "include/errno.h",
+        "include/stdint.h",
+        "include/sys/fsuid.h",
+        "include/sys/syscall.h",
+        "include/bits/syscall.h",
+        "include/sys/types.h",
+        "compat/x86_64/setfsgid_header_abi_probe.c",
+        "compat/x86_64/setfsgid_header_abi_probe.cpp",
+        "compat/x86_64/run_setfsgid_header_abi.sh",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/libc_setfsgid_probe.c",
+        "compat/x86_64/libc_setfsgid_start.S",
+        "compat/x86_64/run_libc_setfsgid.sh",
+        "compat/x86_64/aarch64_parity_inventory.py",
+        "compat/x86_64/aarch64_parity_inventory.json",
+        "compat/x86_64/tests/test_aarch64_parity_inventory.py",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/README.md",
+        "STATUS.md",
+        "x86-64.md",
+        "scripts/dev-x86_64.sh",
+        "scripts/check_structure.py",
+    ):
+        require(owner in owners, f"static-c-setfsgid source owners omit {owner}")
+    prerequisites = nonempty_strings(
+        artifact["x86_abi_prerequisites"], "static-c-setfsgid.x86_abi_prerequisites"
+    )
+    require(
+        any(
+            "gid_t" in item
+            and "edi" in item
+            and "eax" in item
+            and "123" in item
+            and "prior filesystem GID" in item
+            for item in prerequisites
+        ),
+        "static-c-setfsgid must retain its x86 scalar/result ABI",
+    )
+    require(
+        any(
+            "src/linux/setfsgid.c::setfsgid" in item
+            and "__syscall_ret" in item
+            and "setfsuid" in item
+            for item in prerequisites
+        ),
+        "static-c-setfsgid must retain its pinned-musl source closure",
+    )
+    require(
+        any(
+            "all-ones gid_t query" in item
+            and "stale ERANGE" in item
+            and "current-effective-ID" in item
+            and "stale E2BIG" in item
+            and "Static Initial TLS v1" in item
+            for item in prerequisites
+        ),
+        "static-c-setfsgid must retain its raw/C differential",
+    )
+    headers = nonempty_strings(
+        artifact["x86_header_prerequisites"], "static-c-setfsgid.x86_header_prerequisites"
+    )
+    require(
+        any(
+            "strict/POSIX/X/Open/GNU C and C++17" in item
+            and "int setfsgid(gid_t)" in item
+            and "SYS_setfsgid=123" in item
+            and "unmangled C++ C linkage" in item
+            and "sys/fsuid.h" in item
+            for item in headers
+        ),
+        "static-c-setfsgid must retain its C/C++ header matrix",
+    )
+    static_exports = set(
+        static_c_abi_export_names(
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        )
+    )
+    require(
+        "setfsgid" in static_exports,
+        "static-c-setfsgid must expose its exact filesystem-credential spelling",
+    )
+    oracle = artifact["oracle"]
+    assert isinstance(oracle, list)
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "c-posix"
+            and isinstance(entry.get("role"), str)
+            and "src/linux/setfsgid.c::setfsgid" in entry["role"]
+            and "ordinary errno unchanged" in entry["role"]
+            for entry in oracle
+        ),
+        "static-c-setfsgid must retain its pinned-musl filesystem-credential oracle",
+    )
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "linux-uapi"
+            and isinstance(entry.get("role"), str)
+            and "123" in entry["role"]
+            and "prior filesystem GID" in entry["role"]
+            for entry in oracle
+        ),
+        "static-c-setfsgid must retain its Linux raw-syscall oracle",
+    )
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-setfsgid"},
+        "static-c-setfsgid must use the closed libc-setfsgid command",
+    )
+    scope = evidence[0].get("scope")
+    require(
+        isinstance(scope, str)
+        and all(
+            phrase in scope
+            for phrase in (
+                "Pinned-musl 1.2.6",
+                "strict/POSIX/X/Open/GNU C/C++ header matrix",
+                "`-nostdlib -static` candidate",
+                "setfsuid",
+                "credential observation/setter families",
+                "credential synchronization",
+                "process/session control",
+                "scheduler state",
+                "pthread lifecycle",
+                "setfsgid disassembly",
+                "raw syscall 123",
+                "all-ones query",
+                "current-effective-ID",
+                "stale errno",
+                "credential-family completion, dynamic libc, CRT, loader, sysroot, promotion, or public x86 support",
+            )
+        ),
+        "static-c-setfsgid evidence must retain its closed static regression",
+    )
+
+
 def require_setfsuid_artifact(family: Mapping[str, Any]) -> None:
     """Keep the one-symbol filesystem-credential leaf below promotion."""
     artifacts = require_verified_artifacts(
@@ -40806,6 +41006,7 @@ def validate_ledger(
     require_integer_arithmetic_artifact(by_id["libc.posix-runtime"])
     require_integer_parse_artifact(by_id["libc.posix-runtime"])
     require_intmax_arithmetic_artifact(by_id["libc.posix-runtime"])
+    require_setfsgid_artifact(by_id["libc.posix-runtime"])
     require_setfsuid_artifact(by_id["libc.posix-runtime"])
     require_credential_observation_artifact(by_id["libc.posix-runtime"])
     require_static_environment_artifact(by_id["libc.posix-runtime"])

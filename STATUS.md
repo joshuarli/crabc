@@ -1769,6 +1769,20 @@ account data, permission-detection policy, process-wide synchronization,
 process/session or scheduler state, pthread lifecycle, libc.so, CRT, loader,
 sysroot, family/platform parity, promotion, and public x86 support.
 
+`./scripts/dev-x86_64.sh libc-setfsgid` is a separate private
+`static-c-setfsgid` artifact inside planned `libc.posix-runtime`. Pinned musl
+1.2.6's `src/linux/setfsgid.c::setfsgid` forwards Linux x86 raw syscall 123
+and preserves its unusual prior-filesystem-GID result rather than inventing a
+zero-or-error status. Its true-static project-header C body compares only the
+all-ones query and a current-effective-ID request against the raw syscall, and
+proves stale initial-TLS `errno` on those ordinary returns. The paired
+strict/POSIX/X/Open/GNU C/C++ `<sys/fsuid.h>` gate retains the unconditional
+`int setfsgid(gid_t)` declaration, four-byte unsigned x86 `gid_t`, syscall
+macro, and unmangled C linkage. It excludes `setfsuid`, credential families,
+account data, permission-detection policy, process-wide synchronization,
+process/session or scheduler state, pthread lifecycle, libc.so, CRT, loader,
+sysroot, family/platform parity, promotion, and public x86 support.
+
 `./scripts/dev-x86_64.sh libc-sigaddset-sigdelset-sigfillset` is a separate
 private `static-c-sigset-mutation` artifact inside planned
 `libc.posix-runtime`. Its three-symbol pinned-musl/freestanding-static C proof

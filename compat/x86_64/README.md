@@ -251,6 +251,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh float-parse-header-abi
 ./scripts/dev-x86_64.sh getsubopt-header-abi
 ./scripts/dev-x86_64.sh intmax-arithmetic-header-abi
+./scripts/dev-x86_64.sh setfsgid-header-abi
 ./scripts/dev-x86_64.sh setfsuid-header-abi
 ./scripts/dev-x86_64.sh credential-observation-header-abi
 ./scripts/dev-x86_64.sh login-name-header-abi
@@ -524,6 +525,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-float-parse
 ./scripts/dev-x86_64.sh libc-getsubopt
 ./scripts/dev-x86_64.sh libc-intmax-arithmetic
+./scripts/dev-x86_64.sh libc-setfsgid
 ./scripts/dev-x86_64.sh libc-setfsuid
 ./scripts/dev-x86_64.sh libc-credential-observation
 ./scripts/dev-x86_64.sh libc-ffs
@@ -1245,6 +1247,14 @@ select `crabc-libc` or a general C runtime ABI.
 four-byte unsigned x86 `uid_t`, syscall macro 122, and unmangled C++ linkage.
 This is declaration-only evidence for the separately selected filesystem-UID
 artifact; it does not select `setfsgid`, credential mutation policy, account
+data, process-wide synchronization, or a general C-process ABI.
+
+`setfsgid-header-abi` separately compiles project-first and pinned-musl C/C++
+`<sys/fsuid.h>` declarations for the unconditional Linux extension
+`int setfsgid(gid_t)`. Strict, POSIX, X/Open, and GNU selections ratchet the
+four-byte unsigned x86 `gid_t`, syscall macro 123, and unmangled C++ linkage.
+This is declaration-only evidence for the separately selected filesystem-GID
+artifact; it does not select `setfsuid`, credential mutation policy, account
 data, process-wide synchronization, or a general C-process ABI.
 
 `credential-observation-header-abi` compiles project-first and pinned-musl
@@ -2980,6 +2990,20 @@ UID request, proving raw/C prior-ID agreement and stale `errno` on ordinary
 returns without claiming permission-detection policy. The
 strict/POSIX/X/Open/GNU C/C++ matrix retains the unconditional `int
 setfsuid(uid_t)` declaration and unmangled C linkage. It excludes `setfsgid`,
+other credential setters/observers, account data, process-wide synchronization,
+process/session state, scheduler state, pthread lifecycle, dynamic runtime,
+allocator, loader, sysroot, and public x86 support.
+
+`libc-setfsgid` is a separate `static-c-setfsgid` `verified_artifact` within
+planned `libc.posix-runtime`. Its one-symbol project-header C body first runs
+through pinned musl 1.2.6 and then through a true `-nostdlib -static`
+candidate. It maps only musl's `src/linux/setfsgid.c::setfsgid`: raw x86
+syscall 123 returns the previous filesystem GID instead of a zero-or-error
+status. The common C body uses only the all-ones query and a current-effective
+GID request, proving raw/C prior-ID agreement and stale `errno` on ordinary
+returns without claiming permission-detection policy. The
+strict/POSIX/X/Open/GNU C/C++ matrix retains the unconditional `int
+setfsgid(gid_t)` declaration and unmangled C linkage. It excludes `setfsuid`,
 other credential setters/observers, account data, process-wide synchronization,
 process/session state, scheduler state, pthread lifecycle, dynamic runtime,
 allocator, loader, sysroot, and public x86 support.
@@ -5655,7 +5679,7 @@ Apart from the narrowly named `libc-stat-compat`, `libc-credentials`,
 `libc-byte-strings`, `libc-legacy-memory`, `libc-memccpy`, `libc-mempcpy`, `libc-strsep`, `libc-random-entropy`, `libc-memory-search`,
 `libc-string-copy`, `libc-allocator-string-duplication`, `libc-error-strings`,
 `libc-locale-error-strings`, `libc-ctype`, `libc-integer-arithmetic`,
-`libc-integer-parse`, `libc-float-parse`, `libc-getsubopt`, `libc-intmax-arithmetic`, `libc-setfsuid`, `libc-credential-observation`,
+`libc-integer-parse`, `libc-float-parse`, `libc-getsubopt`, `libc-intmax-arithmetic`, `libc-setfsgid`, `libc-setfsuid`, `libc-credential-observation`,
 `libc-ffs`, `libc-math-complex`, `libc-math-complex-complete`, `libc-elementary-sqrt-fenv`, and
 `libc-fenv-rounding` static archive harnesses, and the separately scoped
 `static-pie` CRT gate, and the bounded `owned-static-sysroot` installed

@@ -138,7 +138,7 @@ done
 for unselected in preadv2 pwritev2 splice vmsplice tee copy_file_range \
     close_range _Fork \
     vfork clone execve gettid syscall \
-    setfsgid malloc free calloc realloc; do
+    malloc free calloc realloc; do
     if grep -Eq "[[:space:]][TW][[:space:]]${unselected}$" "$archive_symbols"; then
         fail "archive accidentally exports unselected ${unselected}"
     fi

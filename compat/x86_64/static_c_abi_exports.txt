@@ -727,6 +727,7 @@ setdomainname
 setegid
 setenv
 seteuid
+setfsgid
 setfsuid
 setgid
 setgroups
