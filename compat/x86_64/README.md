@@ -250,6 +250,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh integer-parse-header-abi
 ./scripts/dev-x86_64.sh float-parse-header-abi
 ./scripts/dev-x86_64.sh getsubopt-header-abi
+./scripts/dev-x86_64.sh l64a-header-abi
 ./scripts/dev-x86_64.sh intmax-arithmetic-header-abi
 ./scripts/dev-x86_64.sh credential-observation-header-abi
 ./scripts/dev-x86_64.sh login-name-header-abi
@@ -523,6 +524,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-integer-parse
 ./scripts/dev-x86_64.sh libc-float-parse
 ./scripts/dev-x86_64.sh libc-getsubopt
+./scripts/dev-x86_64.sh libc-l64a
 ./scripts/dev-x86_64.sh libc-intmax-arithmetic
 ./scripts/dev-x86_64.sh libc-credential-observation
 ./scripts/dev-x86_64.sh libc-ffs
@@ -1229,6 +1231,13 @@ The project pass uses raw `-nostdinc`/`-nostdinc++` compilation with a traced
 project-plus-compiler-builtin include closure. This is a declaration-only
 state-free parser boundary, not a broad parser, locale, environment, or
 installed-header-family completion.
+
+`l64a-header-abi` separately proves the installed `<stdlib.h>` boundary for
+the private `l64a` artifact: strict/POSIX C/C++ profiles hide it, while X/Open
+700, GNU, and BSD profiles expose exact `char *(long)` typing and unmangled C++
+linkage. The raw project-header pass traces only project `<stdlib.h>`,
+`<features.h>`, and `<bits/alltypes.h>` roots. This is declaration evidence,
+not general numeric conversion or `crabc-libc` support.
 
 `intmax-arithmetic-header-abi` compiles project-first and pinned-musl C/C++
 `<inttypes.h>` declarations for `imaxabs` and `imaxdiv`. Both declarations are
@@ -4499,6 +4508,17 @@ stdio, syscall, byte-string runtime dependency, or parser state. General
 parser/environment/locale behavior, family completion, promotion, and public
 x86 support remain excluded.
 
+`libc-l64a` is a separate private `static-c-l64a` artifact inside
+still-planned `libc.c-abi-compat`, not a general numeric-conversion claim. It
+maps only `l64a` from pinned musl 1.2.6 `src/misc/a64l.c`: one extracted,
+one-symbol `-nostdlib -static` object proves the low-32-bit cast, at most six
+low-to-high `./0-9A-Za-z` digits, initial NUL result, same process-global
+seven-byte address, and overwrite on a later call. The shared source's `a64l`
+decoder is deliberately absent. The candidate owns no errno, TLS, locale,
+allocator, syscall, or runtime edge; concurrent callers must synchronize and
+copy results before later calls. General numeric conversion, family completion,
+promotion, and public x86 support remain excluded.
+
 `libc-intmax-arithmetic` is a separately recorded
 `static-c-intmax-arithmetic` `verified_artifact` gate over that archive, not a
 general numeric or C runtime capability. Its project-header C body first
@@ -5615,7 +5635,7 @@ Apart from the narrowly named `libc-stat-compat`, `libc-credentials`,
 `libc-byte-strings`, `libc-legacy-memory`, `libc-memccpy`, `libc-mempcpy`, `libc-strsep`, `libc-random-entropy`, `libc-memory-search`,
 `libc-string-copy`, `libc-allocator-string-duplication`, `libc-error-strings`,
 `libc-locale-error-strings`, `libc-ctype`, `libc-integer-arithmetic`,
-`libc-integer-parse`, `libc-float-parse`, `libc-getsubopt`, `libc-intmax-arithmetic`, `libc-credential-observation`,
+`libc-integer-parse`, `libc-float-parse`, `libc-getsubopt`, `libc-l64a`, `libc-intmax-arithmetic`, `libc-credential-observation`,
 `libc-ffs`, `libc-math-complex`, `libc-math-complex-complete`, `libc-elementary-sqrt-fenv`, and
 `libc-fenv-rounding` static archive harnesses, and the separately scoped
 `static-pie` CRT gate, and the bounded `owned-static-sysroot` installed

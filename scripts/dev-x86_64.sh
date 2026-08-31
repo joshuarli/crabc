@@ -87,6 +87,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   integer-parse-header-abi  compile the staged x86 C/C++ integer-parsing declarations
   float-parse-header-abi  verify complete x86 numeric.parse-float-locale declarations and linkage
   getsubopt-header-abi  verify x86 getsubopt C/C++ feature visibility and linkage
+  l64a-header-abi  verify x86 X/Open/GNU/BSD l64a C/C++ feature visibility and linkage
   intmax-arithmetic-header-abi  compile the staged x86 C/C++ inttypes intmax-arithmetic declarations
   credential-observation-header-abi  compile the staged x86 C/C++ unistd credential-observation declarations
   login-name-header-abi  compile the staged x86 C/C++ unistd login-name declarations
@@ -368,6 +369,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-integer-parse  run the static x86 crabc-libc integer-parsing slice
   libc-float-parse  run the complete static x86 numeric.parse-float-locale slice
   libc-getsubopt  run the static x86 crabc-libc state-free getsubopt slice
+  libc-l64a  run the static x86 crabc-libc shared radix-64 result-buffer slice
   libc-stdio-standard  run the static x86 crabc-libc permanent standard-stream slice
   libc-stdio-format-scan  run the static x86 crabc-libc byte-string format/scan slice
   libc-stdio-integer-scan  run the static x86 crabc-libc bounded integer-source scan slice
@@ -3814,7 +3816,7 @@ case "$command" in
     xattr-header-abi) ;;
     madvise-reference) ;;
     ctype-header-abi|locale-profile-header-abi|locale-multibyte-header-abi|iconv-header-abi|wide-character-header-abi|locale-object-wide-header-abi|locale-narrow-header-abi) ;;
-    integer-arithmetic-header-abi|integer-parse-header-abi|float-parse-header-abi|getsubopt-header-abi|intmax-arithmetic-header-abi|credential-observation-header-abi|login-name-header-abi|child-reaping-header-abi|immediate-termination-header-abi|bsearch-header-abi|linear-search-header-abi|qsort-header-abi|callback-algorithms-header-abi) ;;
+    integer-arithmetic-header-abi|integer-parse-header-abi|float-parse-header-abi|getsubopt-header-abi|l64a-header-abi|intmax-arithmetic-header-abi|credential-observation-header-abi|login-name-header-abi|child-reaping-header-abi|immediate-termination-header-abi|bsearch-header-abi|linear-search-header-abi|qsort-header-abi|callback-algorithms-header-abi) ;;
     posix-exit-header-abi) ;;
     ffs-header-abi) ;;
     byte-strings-header-abi) ;;
@@ -3855,7 +3857,7 @@ case "$command" in
     libc-static-c-abi-same-object-differential|qualification-posix-abi-admission) ;;
     libc-interface-discovery) ;;
     libc-posix-exit) ;;
-    libc-readiness-waits|libc-system-observation|libc-system-information|libc-fcntl-record-locks|libc-flock|libc-sendfile|libc-posix-fallocate|libc-descriptor-advice|libc-filesystem-capacity|libc-uts-identity|libc-ctype|libc-locale-profile|libc-locale-multibyte|libc-locale-wide-iconv|libc-wide-character|libc-locale-object-wide|libc-locale-narrow|libc-locale-ctype-locators|libc-locale-error-strings|libc-regex|libc-integer-arithmetic|libc-integer-parse|libc-float-parse|libc-getsubopt|libc-intmax-arithmetic|libc-credential-observation|libc-secure-environment|libc-login-name|libc-child-reaping|libc-immediate-termination|libc-bsearch|libc-linear-search|libc-qsort|libc-callback-algorithms|libc-search-tree-intrusive|libc-search-hash-table|libc-gettext-catalog|libc-access|libc-clock-gettime|libc-time-observation|libc-difftime|libc-timegm|libc-gmtime-r|libc-system-configuration|libc-mapping-core|libc-header-layouts-baseline|libc-nanosleep|libc-clock-nanosleep|libc-descriptor-entry|libc-fcntl-status-control|libc-ioctl|libc-ffs|libc-byte-strings|libc-in6addr-any|libc-in6addr-loopback|libc-process-globals-getopt|libc-auxv-observation|libc-inet-address|libc-inet-ntoa|libc-inet-classful|libc-hstrerror|libc-numeric-netdb|libc-random-entropy|libc-memory-search|libc-string-copy|libc-error-strings|libc-strsignal|libc-descriptor-pipeline) ;;
+    libc-readiness-waits|libc-system-observation|libc-system-information|libc-fcntl-record-locks|libc-flock|libc-sendfile|libc-posix-fallocate|libc-descriptor-advice|libc-filesystem-capacity|libc-uts-identity|libc-ctype|libc-locale-profile|libc-locale-multibyte|libc-locale-wide-iconv|libc-wide-character|libc-locale-object-wide|libc-locale-narrow|libc-locale-ctype-locators|libc-locale-error-strings|libc-regex|libc-integer-arithmetic|libc-integer-parse|libc-float-parse|libc-getsubopt|libc-l64a|libc-intmax-arithmetic|libc-credential-observation|libc-secure-environment|libc-login-name|libc-child-reaping|libc-immediate-termination|libc-bsearch|libc-linear-search|libc-qsort|libc-callback-algorithms|libc-search-tree-intrusive|libc-search-hash-table|libc-gettext-catalog|libc-access|libc-clock-gettime|libc-time-observation|libc-difftime|libc-timegm|libc-gmtime-r|libc-system-configuration|libc-mapping-core|libc-header-layouts-baseline|libc-nanosleep|libc-clock-nanosleep|libc-descriptor-entry|libc-fcntl-status-control|libc-ioctl|libc-ffs|libc-byte-strings|libc-in6addr-any|libc-in6addr-loopback|libc-process-globals-getopt|libc-auxv-observation|libc-inet-address|libc-inet-ntoa|libc-inet-classful|libc-hstrerror|libc-numeric-netdb|libc-random-entropy|libc-memory-search|libc-string-copy|libc-error-strings|libc-strsignal|libc-descriptor-pipeline) ;;
     libc-vector-io|libc-uio-cxx-linkage) ;;
     libc-sysv-semaphore|libc-posix-semaphore) ;;
     libc-sysv-message-shared-memory) ;;
@@ -4111,6 +4113,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "getsubopt-header-abi takes no arguments"
         ensure_image
         run_in_container bash /workspace/compat/x86_64/run_getsubopt_header_abi.sh
+        ;;
+    l64a-header-abi)
+        [ "$#" -eq 0 ] || fail "l64a-header-abi takes no arguments"
+        ensure_image
+        run_in_container bash /workspace/compat/x86_64/run_l64a_header_abi.sh
         ;;
     libc-intmax-arithmetic)
         [ "$#" -eq 0 ] || fail "libc-intmax-arithmetic takes no arguments"
@@ -5285,6 +5292,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "libc-getsubopt takes no arguments"
         ensure_image
         run_in_container bash /workspace/compat/x86_64/run_libc_getsubopt.sh
+        ;;
+    libc-l64a)
+        [ "$#" -eq 0 ] || fail "libc-l64a takes no arguments"
+        ensure_image
+        run_in_container bash /workspace/compat/x86_64/run_libc_l64a.sh
         ;;
     libc-stdio-standard)
         [ "$#" -eq 0 ] || fail "libc-stdio-standard takes no arguments"

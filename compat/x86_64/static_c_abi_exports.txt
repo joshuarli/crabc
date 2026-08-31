@@ -472,6 +472,7 @@ jn
 jnf
 kill
 killpg
+l64a
 labs
 lchmod
 ldexp

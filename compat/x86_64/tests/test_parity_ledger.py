@@ -50,7 +50,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 41)
-        self.assertEqual(report["verified_artifact_count"], 195)
+        self.assertEqual(report["verified_artifact_count"], 196)
         self.assertEqual(report["header_layout_probe_count"], 46)
         self.assertEqual(report["public_header_inventory_count"], 183)
         self.assertEqual(report["header_foundation_header_count"], 191)
@@ -247,6 +247,80 @@ class X86ParityLedgerTests(unittest.TestCase):
         with self.assertRaisesRegex(
             ledger.LedgerError, "static-c-error-strings description omits"
         ):
+            ledger.validate_ledger(changed)
+
+    def test_l64a_artifact_is_source_split_shared_storage_and_non_promoting(
+        self,
+    ) -> None:
+        data = self.data()
+        family = self.family(data, "libc.c-abi-compat")
+        self.assertEqual(family["status"], "planned")
+        artifacts = family["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(entry for entry in artifacts if entry["id"] == "static-c-l64a")
+        assert isinstance(artifact, dict)
+        self.assertNotIn("capabilities", artifact)
+        for owner in (
+            "libc/src/c_abi/x86_64/l64a.rs",
+            "include/stdlib.h",
+            "compat/abi/musl-1.2.6/aarch64/libc.a.static.tsv",
+            "compat/x86_64/l64a_header_abi_probe.c",
+            "compat/x86_64/l64a_header_abi_probe.cpp",
+            "compat/x86_64/run_l64a_header_abi.sh",
+            "compat/x86_64/libc_l64a_probe.c",
+            "compat/x86_64/libc_l64a_start.S",
+            "compat/x86_64/run_libc_l64a.sh",
+        ):
+            self.assertIn(owner, artifact["source_owners"])
+        for phrase in (
+            "one-symbol Rust archive member",
+            "low-32-bit radix-64 encoder",
+            "static char s[7]",
+            "shared `src/misc/a64l.c` and `a64l.lo` also define the state-free `a64l` decoder",
+            "non-reentrant",
+            "Rust-facade `numeric.scalar-legacy-callback` accounting",
+            "complete `legacy.misc`",
+            "general numeric parsing/conversion",
+            "family completion, promotion, or public x86 support",
+        ):
+            self.assertIn(phrase, artifact["description"])
+        self.assertEqual(
+            {entry["command"] for entry in artifact["native_evidence"]},
+            {"./scripts/dev-x86_64.sh libc-l64a"},
+        )
+        self.assertIn("src/misc/a64l.c::l64a", artifact["oracle"][0]["role"])
+        self.assertIn("same-address overwrite", artifact["oracle"][0]["role"])
+
+        changed = copy.deepcopy(data)
+        changed_artifacts = self.family(changed, "libc.c-abi-compat")[
+            "verified_artifact"
+        ]
+        assert isinstance(changed_artifacts, list)
+        changed_artifact = next(
+            entry for entry in changed_artifacts if entry["id"] == "static-c-l64a"
+        )
+        assert isinstance(changed_artifact, dict)
+        changed_artifact["description"] = changed_artifact["description"].replace(
+            "static char s[7]", "shared encoder storage"
+        )
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "static-c-l64a description omits"
+        ):
+            ledger.validate_ledger(changed)
+
+        changed = copy.deepcopy(data)
+        changed_artifacts = self.family(changed, "libc.c-abi-compat")[
+            "verified_artifact"
+        ]
+        assert isinstance(changed_artifacts, list)
+        changed_artifact = next(
+            entry for entry in changed_artifacts if entry["id"] == "static-c-l64a"
+        )
+        assert isinstance(changed_artifact, dict)
+        changed_artifact["native_evidence"][0]["command"] = (
+            "./scripts/dev-x86_64.sh libc-l64a-broad"
+        )
+        with self.assertRaisesRegex(ledger.LedgerError, "closed libc-l64a command"):
             ledger.validate_ledger(changed)
 
     def test_error_strsignal_slice_is_selected_private_and_non_promoting(self) -> None:

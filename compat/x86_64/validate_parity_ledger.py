@@ -1069,6 +1069,8 @@ STRING_DUPLICATION_SYMBOLS = ("strdup", "strndup")
 
 STRSIGNAL_SYMBOLS = ("strsignal",)
 
+L64A_SYMBOLS = ("l64a",)
+
 CTYPE_SYMBOLS = (
     "isalnum",
     "isalpha",
@@ -12548,6 +12550,300 @@ def require_error_strings_artifact(family: Mapping[str, Any]) -> None:
             phrase in scope,
             f"static-c-error-strings evidence scope omits {phrase}",
         )
+
+
+def require_l64a_artifact(family: Mapping[str, Any]) -> None:
+    """Keep the source-split shared radix-64 result buffer private and exact."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.c-abi-compat].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [entry for entry in artifacts if entry.get("id") == "static-c-l64a"]
+    require(
+        len(matching) == 1,
+        "libc.c-abi-compat must contain exactly one static-c-l64a artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-l64a must not promote libc.c-abi-compat",
+    )
+    artifact = matching[0]
+    require(
+        "capabilities" not in artifact,
+        "static-c-l64a must not alter Rust-facade or legacy.misc capability accounting",
+    )
+
+    description = artifact.get("description")
+    require(isinstance(description, str), "static-c-l64a needs a description")
+    for phrase in (
+        "Private native x86 selected-static-archive `l64a` artifact",
+        "still-planned `libc.c-abi-compat`",
+        "one-symbol Rust archive member",
+        "true `-nostdlib -static` candidate",
+        "low-32-bit radix-64 encoder",
+        "at most six",
+        "static char s[7]",
+        "shared `src/misc/a64l.c` and `a64l.lo` also define the state-free `a64l` decoder",
+        "Strict/POSIX C/C++ hides",
+        "X/Open 700, GNU, and BSD",
+        "non-reentrant",
+        "errno, TLS, locale, allocator, syscall, or runtime edge",
+        "Rust-facade `numeric.scalar-legacy-callback` accounting",
+        "complete `legacy.misc`",
+        "general numeric parsing/conversion",
+        "family completion, promotion, or public x86 support",
+    ):
+        require(phrase in description, f"static-c-l64a description omits {phrase}")
+
+    owners = set(
+        nonempty_strings(artifact.get("source_owners"), "static-c-l64a.source_owners")
+    )
+    for owner in (
+        "compat/upstreams.toml",
+        "compat/crabc-rs/coverage.toml",
+        "libc/Cargo.toml",
+        "libc/src/lib.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/l64a.rs",
+        "include/features.h",
+        "include/bits/alltypes.h",
+        "include/stdlib.h",
+        "compat/abi/musl-1.2.6/aarch64/libc.a.static.tsv",
+        "compat/x86_64/l64a_header_abi_probe.c",
+        "compat/x86_64/l64a_header_abi_probe.cpp",
+        "compat/x86_64/run_l64a_header_abi.sh",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/libc_l64a_probe.c",
+        "compat/x86_64/libc_l64a_start.S",
+        "compat/x86_64/run_libc_l64a.sh",
+        "compat/x86_64/aarch64_parity_inventory.py",
+        "compat/x86_64/aarch64_parity_inventory.json",
+        "compat/x86_64/tests/test_aarch64_parity_inventory.py",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/README.md",
+        "STATUS.md",
+        "x86-64.md",
+        "scripts/dev-x86_64.sh",
+        "scripts/check_structure.py",
+    ):
+        require(owner in owners, f"static-c-l64a source owners omit {owner}")
+
+    prerequisites = nonempty_strings(
+        artifact.get("x86_abi_prerequisites"), "static-c-l64a.x86_abi_prerequisites"
+    )
+    require(
+        any(
+            "SysV AMD64 LP64" in item
+            and "rdi" in item
+            and "rax" in item
+            and "low 32 bits" in item
+            and "seven-byte" in item
+            for item in prerequisites
+        ),
+        "static-c-l64a must record its exact x86 C ABI",
+    )
+    require(
+        any(
+            "9fa28ece75d8a2191de7c5bb53bed224c5947417" in item
+            and "src/misc/a64l.c::l64a" in item
+            and "l64a.rs" in item
+            and "a64l.lo" in item
+            and "DIGITS" in item
+            and "remaining as u32" in item
+            and "*p = digits[x & 63]; x >>= 6; *p = 0" in item
+            for item in prerequisites
+        ),
+        "static-c-l64a must retain its pinned-musl source split and mapping",
+    )
+    require(
+        any(
+            "same-address successive calls" in item
+            and "externally synchronize" in item
+            and "not TLS" in item
+            and "allocation" in item
+            for item in prerequisites
+        ),
+        "static-c-l64a must retain its shared-buffer caller-ownership boundary",
+    )
+
+    headers = nonempty_strings(
+        artifact.get("x86_header_prerequisites"), "static-c-l64a.x86_header_prerequisites"
+    )
+    require(
+        any(
+            "C11/C++17" in item
+            and "strict C/C++ and POSIX.1-2008 hide" in item
+            and "X/Open 700, GNU, and BSD" in item
+            and "unmangled C++ linkage" in item
+            and "-nostdinc" in item
+            for item in headers
+        ),
+        "static-c-l64a must retain its installed-header ABI boundary",
+    )
+
+    exports = set(
+        static_c_abi_export_names(
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        )
+    )
+    require(
+        set(L64A_SYMBOLS) <= exports,
+        "static-c-l64a must retain its one selected export",
+    )
+
+    static_root = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+    ).read_text(encoding="utf-8")
+    require(
+        '#[path = "l64a.rs"]\nmod l64a;' in static_root,
+        "x86 static C ABI must compose the l64a leaf",
+    )
+    implementation = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "l64a.rs"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "musl 1.2.6",
+        "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+        "src/misc/a64l.c",
+        "a64l.lo",
+        "seven-byte",
+        "DIGITS",
+        "L64A_RESULT",
+        "remaining = value as u32",
+        'pub unsafe extern "C" fn l64a',
+        "must externally synchronize access",
+    ):
+        require(snippet in implementation, f"l64a leaf omits {snippet}")
+    static_mut_names = re.findall(r"(?m)^static mut (\w+)", implementation)
+    require(
+        static_mut_names == ["L64A_RESULT"],
+        "l64a must own exactly one shared seven-byte static mutable result buffer",
+    )
+    l64a_exports = set(
+        re.findall(
+            r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(',
+            implementation,
+        )
+    )
+    require(l64a_exports == {"l64a"}, "l64a leaf must export only l64a")
+    for forbidden in (
+        "raw_syscall",
+        "errno::",
+        "__errno_location",
+        "thread_local",
+        "crabc_core",
+        "crabc_mimalloc",
+        "alloc::",
+    ):
+        require(
+            forbidden not in implementation,
+            f"l64a leaf widens into {forbidden}",
+        )
+
+    header_runner = (
+        ROOT / "compat" / "x86_64" / "run_l64a_header_abi.sh"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "CANDIDATE_CC=/usr/bin/gcc",
+        "-nostdinc",
+        "-nostdinc++",
+        "CRABC_REQUIRE_L64A_HIDDEN",
+        "-D_POSIX_C_SOURCE=200809L",
+        "-D_XOPEN_SOURCE=700",
+        "-D_GNU_SOURCE",
+        "-D_BSD_SOURCE",
+        "retain C linkage",
+        "escaped its declared roots",
+    ):
+        require(snippet in header_runner, f"l64a header runner omits {snippet}")
+    for probe_name in ("l64a_header_abi_probe.c", "l64a_header_abi_probe.cpp"):
+        probe = (ROOT / "compat" / "x86_64" / probe_name).read_text(encoding="utf-8")
+        for snippet in ("l64a", "char *", "CRABC_EXPECT_L64A"):
+            require(snippet in probe, f"l64a header probe {probe_name} omits {snippet}")
+
+    fixture = (ROOT / "compat" / "x86_64" / "libc_l64a_probe.c").read_text(
+        encoding="utf-8"
+    )
+    for snippet in (
+        "CRABC_L64A_FREESTANDING",
+        "check_alphabet_and_order",
+        "check_low_32_bits",
+        "check_shared_buffer",
+        "errno = E2BIG",
+    ):
+        require(snippet in fixture, f"l64a fixture omits {snippet}")
+    runner = (ROOT / "compat" / "x86_64" / "run_libc_l64a.sh").read_text(
+        encoding="utf-8"
+    )
+    for snippet in (
+        "a64l.lo",
+        "run_l64a_header_abi.sh",
+        "-nostdlib -static",
+        "--no-undefined",
+        "seven-byte mutable static result buffer",
+        "call|syscall",
+        "a64l strchr",
+        "strtol strtoul strtoimax",
+    ):
+        require(snippet in runner, f"l64a runner omits {snippet}")
+
+    evidence = artifact.get("native_evidence")
+    require(isinstance(evidence, list), "static-c-l64a needs evidence")
+    require(
+        {entry.get("command") for entry in evidence if isinstance(entry, Mapping)}
+        == {"./scripts/dev-x86_64.sh libc-l64a"},
+        "static-c-l64a must use the closed libc-l64a command",
+    )
+    scope = evidence[0].get("scope")
+    require(isinstance(scope, str), "static-c-l64a evidence needs a scope")
+    for phrase in (
+        "Pinned-musl project-header X/Open C execution",
+        "shared `a64l.lo` provenance",
+        "one-member `-nostdlib -static` candidate",
+        "low-32-bit truncation",
+        "same-address overwrite",
+        "reference-only stale errno",
+        "both `l64a`/`a64l`",
+        "seven-byte mutable result object",
+        "TLS/errno",
+        "byte-string or numeric-parsing helpers",
+        "Rust-facade accounting",
+        "legacy.misc/general numeric conversion",
+        "public x86 support",
+    ):
+        require(phrase in scope, f"static-c-l64a evidence omits {phrase}")
+
+    oracle = artifact.get("oracle")
+    require(isinstance(oracle, list), "static-c-l64a needs an oracle")
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "c-posix"
+            and "src/misc/a64l.c::l64a" in str(entry.get("role"))
+            and "same-address overwrite" in str(entry.get("role"))
+            and "no errno" in str(entry.get("role"))
+            for entry in oracle
+        ),
+        "static-c-l64a must retain its musl behavior oracle",
+    )
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "elf-abi"
+            and "rdi" in str(entry.get("role"))
+            and "rax" in str(entry.get("role"))
+            and "BSS" in str(entry.get("role"))
+            for entry in oracle
+        ),
+        "static-c-l64a must retain its SysV ABI oracle",
+    )
+
+    dispatcher = (ROOT / "scripts" / "dev-x86_64.sh").read_text(encoding="utf-8")
+    for snippet in ("l64a-header-abi)", "libc-l64a)"):
+        require(snippet in dispatcher, f"x86 dispatcher omits {snippet}")
 
 
 def require_error_strsignal_slice(family: Mapping[str, Any]) -> None:
@@ -40392,6 +40688,7 @@ def validate_ledger(
     require_memory_search_artifact(by_id["libc.posix-runtime"])
     require_string_copy_artifact(by_id["libc.posix-runtime"])
     require_error_strings_artifact(by_id["libc.c-abi-compat"])
+    require_l64a_artifact(by_id["libc.c-abi-compat"])
     require_error_strsignal_slice(by_id["libc.c-abi-compat"])
     require_ctype_artifact(by_id["libc.posix-runtime"])
     require_integer_arithmetic_artifact(by_id["libc.posix-runtime"])
