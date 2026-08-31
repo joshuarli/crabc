@@ -66,6 +66,10 @@
 //! unnamed POSIX semaphore artifact, and one bounded event-descriptor
 //! artifact, one bounded pathname-mutation/lifecycle artifact, and one
 //! bounded directory-stream/raw-directory artifact.
+//! The fixed-graph dlfcn bridge is a separate public-C spelling over the
+//! loader-owned immutable RuntimeV1-prefix record. It owns only bounded
+//! per-thread diagnostics and borrowed C views of copied loader metadata; it
+//! cannot find, map, promote, finalize, or unmap an object.
 //! The independently selected extended-attribute leaf owns the complete
 //! direct Linux path, no-follow-path, and descriptor xattr syscall family;
 //! it keeps values and lists caller-owned and does not select ACL policy.
@@ -338,6 +342,8 @@ mod sysv_semaphore;
 mod posix_semaphore;
 #[path = "sysv_message_shared_memory.rs"]
 mod sysv_message_shared_memory;
+#[path = "fixed_graph_dlfcn.rs"]
+mod fixed_graph_dlfcn;
 
 use core::ffi::{c_int, c_void};
 

@@ -1506,7 +1506,7 @@
       "capability_count": 4,
       "contract_state": "selected-private",
       "id": "ldso.dynamic-runtime",
-      "verified_artifact_count": 9,
+      "verified_artifact_count": 10,
       "verified_slice_count": 0
     },
     {
@@ -1721,6 +1721,10 @@
     {
       "family": "ldso.dynamic-runtime",
       "id": "ldso-owned-crt-handoff-wire"
+    },
+    {
+      "family": "ldso.dynamic-runtime",
+      "id": "ldso-public-fixed-graph-dlfcn"
     },
     {
       "family": "ldso.dynamic-runtime",
@@ -2171,9 +2175,9 @@
     "aarch64_abi_manifest": "33dd504470f467caac7b149e747ee2b7ff8714c4fb23dfe5ad46e7f58bfe610c",
     "aarch64_capability_ledger": "128458dde00073bc0320b94972d864e66fa10d5f54e92b1b1c83081e2b4955e0",
     "aarch64_headers": "a0d35f0950abb3c060b978dfb5257cf50f70bed46ce91d371f43d65db7626b68",
-    "x86_parity_ledger": "6aa634c46cc0f079ae59f6310ca70cf4478d8d6e1cd56e08f2a0af96e0b3e09c",
+    "x86_parity_ledger": "d1683dacf55934efdc8ca04a31af8e7d6b041f6e96e4439e45ae61392142a162",
     "x86_public_headers": "2cdcd860a423d99afef8360b6376447cf17ae926f1cd47416be817d421fca80f",
-    "x86_static_c_exports": "98b90fa15cb4cb0884f79be83fe211abdb6f38aab241e0452aabfc26fc245f50"
+    "x86_static_c_exports": "a11098ca8a2ea15d925fc9e4a33339de69ee872aa30f7d25b4d770e91467d391"
   },
   "unsupported_contracts": [
     {
@@ -2185,7 +2189,7 @@
     "promotion_family_count": 26,
     "promotion_ready": false,
     "public_support": false,
-    "selected_static_export_count": 811,
-    "selected_static_exports_in_aarch64_dynamic_candidate_set": 798
+    "selected_static_export_count": 819,
+    "selected_static_exports_in_aarch64_dynamic_candidate_set": 805
   }
 }

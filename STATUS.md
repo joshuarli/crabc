@@ -136,6 +136,17 @@ not select numeric parsing, either remaining elementary capability, complex
 math, or a general libc/libm. The enclosing family, x86-64 promotion, full
 parity, and public support all remain planned.
 
+The following non-promoting `ldso-public-dlfcn` artifact exposes the seven
+musl-shaped public C entry points from the staged x86 static libc archive over
+that exact loader record. Its real ET_DYN candidate has no ambient libc edge or
+PT_TLS; a bounded 32-live-thread Linux-TID table owns one-shot `dlerror` and
+copied `dladdr` names, and dead slots are reclaimed only after `tgkill` reports
+`ESRCH`. Pinned-musl plus project-header C/C++ evidence covers ABI layouts,
+iteration, link maps, concurrent diagnostics, malformed/absent records, and
+stale handles. Search/mapping, graph mutation, `RTLD_NEXT`, global promotion,
+finalization, and unload remain excluded, so neither dlfcn capability nor the
+dynamic-runtime family or public x86 platform is promoted.
+
 The separate `static-c-math-elementary-long-double` verified slice now
 completes the exact private 35-symbol `math.elementary-long-double`
 capability. It composes seventeen prior x87 binary80 entries with eighteen

@@ -50,7 +50,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 36)
-        self.assertEqual(report["verified_artifact_count"], 127)
+        self.assertEqual(report["verified_artifact_count"], 128)
         self.assertEqual(report["header_layout_probe_count"], 46)
         self.assertEqual(report["public_header_inventory_count"], 183)
         self.assertEqual(report["header_foundation_header_count"], 191)
@@ -543,12 +543,13 @@ class X86ParityLedgerTests(unittest.TestCase):
         assert isinstance(artifact, dict)
         self.assertNotIn("capabilities", artifact)
         for phrase in (
-            "five fixed private interpreter graphs",
+            "six fixed private interpreter/bridge graphs",
             "R_X86_64_RELATIVE/GLOB_DAT/JUMP_SLOT",
             "R_X86_64_DTPMOD64/DTPOFF64",
             "weak `R_X86_64_GLOB_DAT`",
             "callback-free introspection graph",
             "fixed-graph dlfcn runtime graph",
+            "public C dlfcn bridge",
             "status 127",
             "general loader",
             "public x86 support",
@@ -561,12 +562,14 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(
             set(artifact["source_owners"]),
             {
+                "ldso/src/x86_64_initial_graph_source_root.rs",
                 "ldso/src/x86_64_initial_graph.rs",
                 "compat/x86_64/run_ldso_initial_graph.sh",
                 "compat/x86_64/run_ldso_initial_tls.sh",
                 "compat/x86_64/run_ldso_owned_crt_handoff.sh",
                 "compat/x86_64/run_ldso_fixed_graph_introspection.sh",
                 "compat/x86_64/run_ldso_fixed_graph_dlfcn.sh",
+                "compat/x86_64/run_ldso_public_dlfcn.sh",
                 "compat/x86_64/run_ldso_dynamic_admission.sh",
                 "scripts/dev-x86_64.sh",
             },
@@ -641,6 +644,72 @@ class X86ParityLedgerTests(unittest.TestCase):
         with self.assertRaisesRegex(
             ledger.LedgerError,
             "ldso-fixed-graph-dlfcn description omits",
+        ):
+            ledger.validate_ledger(changed)
+
+    def test_public_fixed_graph_dlfcn_bridge_is_explicitly_non_promoting(self) -> None:
+        data = self.data()
+        family = self.family(data, "ldso.dynamic-runtime")
+        self.assertEqual(family["status"], "planned")
+        artifacts = family["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry for entry in artifacts
+            if entry["id"] == "ldso-public-fixed-graph-dlfcn"
+        )
+        assert isinstance(artifact, dict)
+        self.assertNotIn("capabilities", artifact)
+        for phrase in (
+            "public-C dlfcn bridge artifact",
+            "staged static `libc.a`",
+            "real ET_DYN main",
+            "never falls back to an ambient loader",
+            "32-live-thread",
+            "one-shot `dlerror`",
+            "without PT_TLS",
+            "`RTLD_NEXT`",
+            "`RTLD_GLOBAL`",
+            "neither `loader.dlfcn-basic` nor `loader.dlfcn-introspection` is selected",
+            "public x86 support is not promoted",
+        ):
+            self.assertIn(phrase, artifact["description"])
+        self.assertEqual(
+            {entry["command"] for entry in artifact["native_evidence"]},
+            {"./scripts/dev-x86_64.sh ldso-public-dlfcn"},
+        )
+        self.assertEqual(
+            set(artifact["source_owners"]),
+            {
+                "ldso/src/x86_64_initial_graph_source_root.rs",
+                "ldso/src/x86_64_initial_graph.rs",
+                "libc/src/c_abi/x86_64/fixed_graph_dlfcn.rs",
+                "libc/src/c_abi/x86_64/fixed_graph_dlfcn_runtime.rs",
+                "libc/src/c_abi/x86_64/static_c_abi.rs",
+                "compat/x86_64/static_c_abi_exports.txt",
+                "include/dlfcn.h",
+                "include/link.h",
+                "compat/x86_64/ldso_initial_graph_leaf.c",
+                "compat/x86_64/ldso_initial_graph_mid.c",
+                "compat/x86_64/ldso_public_dlfcn_start.S",
+                "compat/x86_64/ldso_public_dlfcn_probe.c",
+                "compat/x86_64/ldso_public_dlfcn_header_probe.cpp",
+                "compat/x86_64/run_ldso_public_dlfcn.sh",
+                "scripts/dev-x86_64.sh",
+            },
+        )
+
+        changed = copy.deepcopy(data)
+        changed_artifacts = self.family(changed, "ldso.dynamic-runtime")["verified_artifact"]
+        assert isinstance(changed_artifacts, list)
+        changed_artifact = next(
+            entry for entry in changed_artifacts
+            if entry["id"] == "ldso-public-fixed-graph-dlfcn"
+        )
+        assert isinstance(changed_artifact, dict)
+        changed_artifact["capabilities"] = ["loader.dlfcn-basic"]
+        with self.assertRaisesRegex(
+            ledger.LedgerError,
+            "must not carry capabilities",
         ):
             ledger.validate_ledger(changed)
 

@@ -341,6 +341,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   ldso-owned-crt-handoff  run the bounded x86 ldso-to-Rust-Scrt1 handoff artifact
   ldso-fixed-graph-introspection  run copied introspection over the fixed x86 loader graph
   ldso-fixed-graph-dlfcn  run handle/symbol operations over the fixed x86 loader graph
+  ldso-public-dlfcn  run the public C bridge over the fixed x86 loader graph
   ldso-dynamic-admission  run the bounded x86 dynamic-loader fixed-graph admission inventory
 
 This closed runner rejects non-native Linux/x86-64 hosts and does not provide
@@ -1510,8 +1511,16 @@ information results. It rejects strong-main and weak-DSO record imports,
 unknown names, stale or forged handles, and global promotion; close never finalizes or unmaps startup
 objects. It is not public dlfcn, runtime mapping/search, process RuntimeV1,
 candidate libc, a general loader, dynamic CRT/sysroot, or public x86 support.
+`ldso-public-dlfcn` links the staged static x86 libc archive into a real PIE and
+exports the musl-shaped public dlopen/dlsym/dlclose/dlerror plus
+dladdr/dlinfo/dl_iterate_phdr surface over that exact loader record. Its
+32-live-thread TID-keyed diagnostic table does not require loader TLS. The gate
+proves public C/C++ ABI layouts, per-thread one-shot errors, stale handles,
+malformed and absent records, and copied introspection, while continuing to
+exclude search, mutation, global promotion, RTLD_NEXT, finalization, and unload.
+It remains a staged fixed-graph artifact, not capability or platform promotion.
 `ldso-dynamic-admission` executes the initial no-TLS, GNU-Dynamic TLS, owned-
-CRT, copied-introspection, and retained-object-dlfcn fixed-graph fixtures as
+CRT, copied-introspection, retained-object-dlfcn, and public-C-bridge fixed-graph fixtures as
 one consumed admission gate. Their fresh candidate ELF inspection and negative
 launches retain only the explicit accepted shapes and rejected metadata,
 relocation, record, handle, and scope forms. It is not a general x86 ldso,
@@ -3066,6 +3075,10 @@ run_ldso_fixed_graph_dlfcn_tests() {
     run_in_container bash /workspace/compat/x86_64/run_ldso_fixed_graph_dlfcn.sh
 }
 
+run_ldso_public_dlfcn_tests() {
+    run_in_container bash /workspace/compat/x86_64/run_ldso_public_dlfcn.sh
+}
+
 run_ldso_dynamic_admission_tests() {
     run_in_container bash /workspace/compat/x86_64/run_ldso_dynamic_admission.sh
 }
@@ -3084,6 +3097,7 @@ case "$command" in
     image|musl-oracle|header-abi-reference|public-header-surface|header-abi-project|math-complex-header-abi|sys-reg-header-abi|types-header-abi|stat-header-abi|utime-header-abi|pthread-c11-header-abi|pthread-cancellation-header-abi|stdlib-header-abi|stdio-standard-header-abi|time-header-abi|poll-header-abi|select-header-abi|fcntl-header-abi|descriptor-advice-header-abi|filesystem-capacity-header-abi|flock-header-abi|sendfile-header-abi|ioctl-header-abi|unistd-header-abi|system-header-abi|syscall-header-abi|signal-header-abi|termios-header-abi|mman-header-abi|resource-header-abi|socket-header-abi|socket-messages-header-abi|random-entropy-header-abi|mm-abi-reference|mapping-reference|memory-vm-reference|pty-basic-reference|terminal-reference|mlock-reference|msync-reference|mincore-reference|fs-advice-reference|memfd-reference|ftruncate-reference|statfs-reference|timestamp-reference|path-lifecycle-reference|namespace-reference|path-core-reference|xattr-reference|directory-reference|temporary-object-reference|statx-reference|cwd-canonicalize-reference|root-change-reference|mount-reference|thread-kill-reference|ipc-reference|shm-reference|inotify-reference|socket-transport-reference|interface-device-reference|resolver-transport-reference|resolver-facade-reference|netdb-reference|users-databases-reference|posix-fallocate-reference|fallocate-reference|file-position-reference|sync-reference|syncfs-reference|sync-file-range-reference|rand-reference|time-abi-reference|time-observation-reference|calendar-time-reference|advanced-time-reference|relative-sleep-reference|clock-nanosleep-reference|getitimer-reference|setitimer-reference|timerfd-reference|pselect-reference|poll-reference|ppoll-reference|epoll-reference|process-identity-reference|child-ownership-reference|getgroups-reference|process-session-reference|pidfd-open-reference|fcntl-getlk-reference|fcntl-status-reference|flock-reference|sendfile-reference|copy-file-range-reference|scheduler-priority-bounds-reference|rr-interval-reference|sched-affinity-reference|sched-affinity-set-reference|priority-reference|setpriority-reference|rlimit-reference|rlimit-targeted-reference|setrlimit-reference|umask-reference|rusage-reference|times-reference|fstat-reference|statat-reference|getcwd-reference|readlinkat-reference|access-reference|system-reference|thread-reference|thread-credentials-reference|fs-credentials-reference|core|facade|facade-record-owning|libc-syscall|libc-errno-tls|libc-stat-compat|libc-credentials|libc-bootstrap-primitives|libc-signal-control|libc-signal-execution|libc-static-tls-v1|libc-crt-static-tls|libc-pthread-create-join-tls|libc-c11-lifecycle|libc-c11-plain-sync|libc-pthread-c11-once|libc-pthread-c11-tsd|libc-pthread-tls-aggregate|libc-pthread-cancel-deferred|libc-pthread-atfork|libc-thrd-sleep|libc-pthread-mutex-normal|libc-pthread-rwlock|libc-pthread-cond-private|libc-termios-control|libc-process-context|libc-environment|libc-descriptor-io|libc-descriptor-lifecycle|libc-timestamp-updates|libc-process-resources|libc-socket-transport|libc-socket-messages|libc-thread-pointer|libc-foundation|libc-fenv|libc-math-complex|libc-elementary-sqrt-fenv|libc-math-x87-extended|libc-memory|libc-setjmp|libc-atomic|libc-clone-raw|libc-signal-altstack|libc-signal-foundation|ldso-relocation|ldso-image|ldso-initial-graph|ldso-initial-tls|ldso-initial-exec-tls|ldso-owned-crt-handoff|ldso-fixed-graph-introspection|ldso-dynamic-admission) ;;
     math-elementary-long-double-header-abi|libc-math-elementary-long-double) ;;
     ldso-fixed-graph-dlfcn) ;;
+    ldso-public-dlfcn) ;;
     math-special-header-abi|libc-math-special) ;;
     inet-address-header-abi) ;;
     ldso-target-root) ;;
@@ -4680,6 +4694,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "ldso-fixed-graph-dlfcn takes no arguments"
         ensure_image
         run_ldso_fixed_graph_dlfcn_tests
+        ;;
+    ldso-public-dlfcn)
+        [ "$#" -eq 0 ] || fail "ldso-public-dlfcn takes no arguments"
+        ensure_image
+        run_ldso_public_dlfcn_tests
         ;;
     ldso-dynamic-admission)
         [ "$#" -eq 0 ] || fail "ldso-dynamic-admission takes no arguments"

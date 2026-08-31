@@ -8,6 +8,7 @@
 # glue, uninstalled and not a stable public C API.
 _Exit
 ___environ
+__crabc_x86_fixed_graph_dlfcn_record
 __crabc_x86_static_tls_bootstrap
 __ctype_b_loc
 __ctype_get_mb_cur_max
@@ -130,6 +131,13 @@ creat
 difftime
 dirfd
 div
+dl_iterate_phdr
+dladdr
+dlclose
+dlerror
+dlinfo
+dlopen
+dlsym
 drem
 dremf
 dup

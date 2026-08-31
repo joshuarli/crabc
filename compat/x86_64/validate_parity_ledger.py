@@ -6556,7 +6556,7 @@ def require_ldso_dynamic_admission_artifact(family: Mapping[str, Any]) -> None:
     assert isinstance(description, str)
     for phrase in (
         "still-planned `ldso.dynamic-runtime`",
-        "five fixed private interpreter graphs",
+        "six fixed private interpreter/bridge graphs",
         "R_X86_64_RELATIVE/GLOB_DAT/JUMP_SLOT",
         "bounded leaf `DT_RELR`",
         "R_X86_64_DTPMOD64/DTPOFF64",
@@ -6567,11 +6567,13 @@ def require_ldso_dynamic_admission_artifact(family: Mapping[str, Any]) -> None:
         "fixed-graph dlfcn runtime graph",
         "64-byte v1 record",
         "cannot map, promote, finalize, or unload",
+        "public C dlfcn bridge",
+        "bounded per-thread diagnostics",
         "DT_TEXTREL",
         "DF_STATIC_TLS",
         "status 127",
         "general loader",
-        "public dlfcn or mutable loader graph",
+        "complete public dlfcn or mutable loader graph",
         "public x86 support",
     ):
         require(
@@ -6579,12 +6581,14 @@ def require_ldso_dynamic_admission_artifact(family: Mapping[str, Any]) -> None:
             f"ldso-dynamic-fixed-graph-admission description omits {phrase}",
         )
     expected_sources = {
+        "ldso/src/x86_64_initial_graph_source_root.rs",
         "ldso/src/x86_64_initial_graph.rs",
         "compat/x86_64/run_ldso_initial_graph.sh",
         "compat/x86_64/run_ldso_initial_tls.sh",
         "compat/x86_64/run_ldso_owned_crt_handoff.sh",
         "compat/x86_64/run_ldso_fixed_graph_introspection.sh",
         "compat/x86_64/run_ldso_fixed_graph_dlfcn.sh",
+        "compat/x86_64/run_ldso_public_dlfcn.sh",
         "compat/x86_64/run_ldso_dynamic_admission.sh",
         "scripts/dev-x86_64.sh",
     }
@@ -6607,10 +6611,12 @@ def require_ldso_dynamic_admission_artifact(family: Mapping[str, Any]) -> None:
         "run_ldso_owned_crt_handoff.sh",
         "run_ldso_fixed_graph_introspection.sh",
         "run_ldso_fixed_graph_dlfcn.sh",
+        "run_ldso_public_dlfcn.sh",
         "R_X86_64_COPY",
         "R_X86_64_TPOFF64",
         "__crabc_x86_64_fixed_graph_introspection_v1",
         "__crabc_x86_64_fixed_graph_dlfcn_v1",
+        "main-crabc-public-dlfcn-absent",
         "dso-import",
         "DT_TEXTREL",
         "STATIC_TLS",
@@ -6905,6 +6911,157 @@ def require_posix_process_abi_admission_artifact(family: Mapping[str, Any]) -> N
     require(
         "qualification-posix-abi-admission)" in dispatcher,
         "POSIX/ABI admission dispatcher binding is missing",
+    )
+
+
+def require_ldso_public_fixed_graph_dlfcn_artifact(family: Mapping[str, Any]) -> None:
+    """Ratchet the public C spelling without promoting incomplete dlfcn."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[ldso.dynamic-runtime].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [
+        entry for entry in artifacts
+        if entry.get("id") == "ldso-public-fixed-graph-dlfcn"
+    ]
+    require(
+        len(matching) == 1,
+        "ldso.dynamic-runtime needs exactly one ldso-public-fixed-graph-dlfcn artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "ldso-public-fixed-graph-dlfcn must not promote ldso.dynamic-runtime",
+    )
+    artifact = matching[0]
+    require(
+        "capabilities" not in artifact,
+        "ldso-public-fixed-graph-dlfcn must not select capabilities",
+    )
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for phrase in (
+        "public-C dlfcn bridge artifact",
+        "still-planned `ldso.dynamic-runtime`",
+        "staged static `libc.a`",
+        "`dlopen`, `dlsym`, `dlclose`, `dlerror`, `dladdr`, `dlinfo`, and `dl_iterate_phdr`",
+        "real ET_DYN main",
+        "weak undefined `R_X86_64_GLOB_DAT`",
+        "never falls back to an ambient loader",
+        "32-live-thread",
+        "Linux TID",
+        "one-shot `dlerror`",
+        "without PT_TLS",
+        "`dlinfo(RTLD_DI_LINKMAP)`",
+        "`RTLD_NEXT`",
+        "`RTLD_GLOBAL`",
+        "neither `loader.dlfcn-basic` nor `loader.dlfcn-introspection` is selected",
+        "public x86 support is not promoted",
+    ):
+        require(
+            phrase in description,
+            f"ldso-public-fixed-graph-dlfcn description omits {phrase}",
+        )
+    expected_sources = {
+        "ldso/src/x86_64_initial_graph_source_root.rs",
+        "ldso/src/x86_64_initial_graph.rs",
+        "libc/src/c_abi/x86_64/fixed_graph_dlfcn.rs",
+        "libc/src/c_abi/x86_64/fixed_graph_dlfcn_runtime.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "include/dlfcn.h",
+        "include/link.h",
+        "compat/x86_64/ldso_initial_graph_leaf.c",
+        "compat/x86_64/ldso_initial_graph_mid.c",
+        "compat/x86_64/ldso_public_dlfcn_start.S",
+        "compat/x86_64/ldso_public_dlfcn_probe.c",
+        "compat/x86_64/ldso_public_dlfcn_header_probe.cpp",
+        "compat/x86_64/run_ldso_public_dlfcn.sh",
+        "scripts/dev-x86_64.sh",
+    }
+    require(
+        set(string_list(artifact["source_owners"], "public fixed-graph dlfcn source owners"))
+        == expected_sources,
+        "ldso-public-fixed-graph-dlfcn source owners drifted",
+    )
+    prerequisite_text = " ".join(
+        string_list(
+            artifact["x86_abi_prerequisites"],
+            "ldso-public-fixed-graph-dlfcn ABI prerequisites",
+        )
+    )
+    for phrase in (
+        "RTLD_LAZY=1",
+        "RTLD_NEXT=(void *)-1",
+        "Dl_info=32",
+        "link_map=40",
+        "dl_phdr_info=64",
+        "STB_WEAK",
+        "R_X86_64_GLOB_DAT",
+        "0x43524142435f5844",
+        "ABI size 64",
+        "no ambient libc/loader DT_NEEDED edge and no PT_TLS",
+        "32 fixed diagnostic slots",
+        "tgkill=234",
+        "RTLD_DEFAULT",
+        "never searched, mapped, finalized, or unmapped",
+    ):
+        require(
+            phrase in prerequisite_text,
+            f"ldso-public-fixed-graph-dlfcn ABI prerequisites omit {phrase}",
+        )
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh ldso-public-dlfcn"},
+        "ldso-public-fixed-graph-dlfcn must use the dedicated native command",
+    )
+    scope = evidence[0]["scope"]
+    assert isinstance(scope, str)
+    for phrase in (
+        "public fixed-graph dlfcn ET_DYN proof",
+        "pinned-musl 1.2.6",
+        "project C/C++ header ABI",
+        "staged libc.a export contract",
+        "weak GLOB_DAT/64-byte RuntimeV1-prefix wire",
+        "rejects ambient libc/loader dependencies and PT_TLS",
+        "two concurrent TLS-free clone threads",
+        "40 more worker lifetimes",
+        "malformed and absent record fail-closure without ambient fallback",
+        "stale handles",
+        "loader.dlfcn-basic",
+        "public x86 support",
+    ):
+        require(
+            phrase in scope,
+            f"ldso-public-fixed-graph-dlfcn evidence scope omits {phrase}",
+        )
+    runner = (ROOT / "compat" / "x86_64" / "run_ldso_public_dlfcn.sh").read_text()
+    for phrase in (
+        "crabc_fixed_graph_dlfcn",
+        "crabc_fixed_graph_dlfcn_malformed",
+        "static_c_abi_exports.txt",
+        "__crabc_x86_64_fixed_graph_dlfcn_v1",
+        "R_X86_64_GLOB_DAT",
+        "PT_TLS",
+        "main-musl-public-dlfcn",
+        "main-crabc-public-dlfcn-malformed",
+        "main-crabc-public-dlfcn-absent",
+        "env -i PATH=/usr/bin:/bin",
+    ):
+        require(
+            phrase in runner,
+            f"ldso-public-fixed-graph-dlfcn runner omits {phrase}",
+        )
+    exports = (ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt").read_text().splitlines()
+    for symbol in (
+        "dlopen", "dlsym", "dlclose", "dlerror", "dladdr", "dlinfo", "dl_iterate_phdr"
+    ):
+        require(symbol in exports, f"static C ABI export ratchet omits {symbol}")
+    require(
+        "run_ldso_public_dlfcn.sh" in (ROOT / "scripts" / "dev-x86_64.sh").read_text(),
+        "ldso-public-dlfcn dispatcher binding is missing",
     )
 
 
@@ -22479,6 +22636,7 @@ def validate_ledger(
     require_ldso_owned_crt_handoff_publication_artifact(by_id["ldso.dynamic-runtime"])
     require_ldso_fixed_graph_introspection_artifact(by_id["ldso.dynamic-runtime"])
     require_ldso_fixed_graph_dlfcn_artifact(by_id["ldso.dynamic-runtime"])
+    require_ldso_public_fixed_graph_dlfcn_artifact(by_id["ldso.dynamic-runtime"])
     require_x86_crt_object_bundle_artifact(by_id["crt.dynamic-startup"])
     require_ldso_dynamic_admission_artifact(by_id["ldso.dynamic-runtime"])
     require_dynamic_pie_scrt1_artifact(by_id["crt.dynamic-startup"])
