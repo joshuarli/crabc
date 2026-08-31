@@ -228,6 +228,20 @@ sysroot path. It does not promote Rust-subsumed `memory.bytes-basic`, general
 string/tokenization, `strtok`/`strtok_r`, memory-search, `mempcpy`, getsubopt,
 allocator lifecycle/interposition, family completion, promotion, or public x86
 support.
+
+`./scripts/dev-x86_64.sh libc-rand-r` is a separate private `static-c-rand-r`
+artifact inside still-planned `libc.posix-runtime`. It reuses the strict,
+POSIX, X/Open, GNU, BSD, and LFS C/C++ `<stdlib.h>` matrix to prove the exact
+POSIX-selected `int rand_r(unsigned *)` declaration and unmangled C++ linkage.
+Its pinned-musl and true `-nostdlib -static` routes extract exactly one
+dependency-free `rand_r` object and prove the caller-owned 32-bit seed update,
+four-stage tempering, exact 31-bit returns, and function-pointer ABI for zero,
+one, mixed-bit, and all-one seeds. It has no global PRNG, TLS, errno, syscall,
+allocator, entropy, locale, dynamic-runtime, CRT, loader, or sysroot path. It
+does not select `rand`/`srand`, BSD random-state or `drand48` APIs, general
+random behavior, threads, synchronization, family completion, promotion, or
+public x86 support.
+
 `./scripts/dev-x86_64.sh libc-bsearch` is a separate private `static-c-bsearch`
 artifact inside still-planned `libc.c-abi-compat`. Its pinned-musl/project
 C/C++ `<stdlib.h>` matrix proves the unconditional five-argument declaration

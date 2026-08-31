@@ -1461,6 +1461,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "libc-memccpy",
             "libc-mempcpy",
             "libc-strsep",
+            "libc-rand-r",
             "libc-allocator-runtime",
             "libc-allocator-string-duplication",
             "libc-allocator-observability",
@@ -3183,6 +3184,12 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn('/workspace/compat/x86_64/run_libc_memccpy.sh', source)
         self.assertIn(
             '    libc-memccpy)\n        [ "$#" -eq 0 ] || fail "libc-memccpy takes no arguments"',
+            source,
+        )
+        self.assertIn('run_libc_rand_r()', source)
+        self.assertIn('/workspace/compat/x86_64/run_libc_rand_r.sh', source)
+        self.assertIn(
+            '    libc-rand-r)\n        [ "$#" -eq 0 ] || fail "libc-rand-r takes no arguments"',
             source,
         )
         self.assertIn('libc-random-entropy', source)
@@ -13368,6 +13375,130 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             parity_ledger,
         )
         self.assertIn("libc-random-entropy", runner)
+
+    def test_libc_static_c_abi_rand_r_artifact_stays_caller_state_only(self) -> None:
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        implementation = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "rand_r.rs"
+        ).read_text(encoding="utf-8")
+        probe = (
+            ROOT / "compat" / "x86_64" / "libc_rand_r_probe.c"
+        ).read_text(encoding="utf-8")
+        start = (
+            ROOT / "compat" / "x86_64" / "libc_rand_r_start.S"
+        ).read_text(encoding="utf-8")
+        artifact_runner = (
+            ROOT / "compat" / "x86_64" / "run_libc_rand_r.sh"
+        ).read_text(encoding="utf-8")
+        header_c = (
+            ROOT / "compat" / "x86_64" / "stdlib_header_abi_probe.c"
+        ).read_text(encoding="utf-8")
+        header_cxx = (
+            ROOT / "compat" / "x86_64" / "stdlib_header_abi_probe.cpp"
+        ).read_text(encoding="utf-8")
+        header_runner = (
+            ROOT / "compat" / "x86_64" / "run_stdlib_header_abi.sh"
+        ).read_text(encoding="utf-8")
+        static_exports = (
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        ).read_text(encoding="utf-8")
+        static_export_names = {
+            line for line in static_exports.splitlines()
+            if line and not line.startswith("#")
+        }
+        parity_ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        runner = RUNNER.read_text(encoding="utf-8")
+
+        self.assertIn('#[path = "rand_r.rs"]', static_root)
+        for required in (
+            "musl 1.2.6",
+            "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+            "src/prng/rand_r.c",
+            "LCG_MULTIPLIER",
+            "LCG_INCREMENT",
+            "TEMPER_LEFT_7_MASK",
+            "TEMPER_LEFT_15_MASK",
+            "wrapping_mul",
+            "wrapping_add",
+            "pub unsafe extern \"C\" fn rand_r",
+            "caller-owned seed",
+        ):
+            self.assertIn(required, implementation)
+        for forbidden in (
+            "raw_syscall::",
+            "errno::",
+            "crabc_core",
+            "crabc_mimalloc",
+            "static mut",
+            "getrandom",
+            "getentropy",
+            "use super::",
+        ):
+            self.assertNotIn(forbidden, implementation)
+        self.assertEqual(implementation.count('pub unsafe extern "C" fn'), 1)
+        for required in (
+            "rand_r_signature",
+            "_Static_assert",
+            "check_vector",
+            "check_function_pointer",
+            "0x00003039U",
+            "0x41c67ea6U",
+            "0x0b719151U",
+            "0xbe39e1ccU",
+            "CRABC_RAND_R_FREESTANDING",
+        ):
+            self.assertIn(required, probe)
+        for required in ("crabc_x86_64_rand_r_probe", "mov $60, %eax"):
+            self.assertIn(required, start)
+        for required in (
+            "run_musl_oracle.sh",
+            "run_stdlib_header_abi.sh",
+            "rand_r.lo",
+            "archive_member_for_symbol",
+            "rand_r object export surface drifted",
+            "rand_r object unexpectedly depends on another symbol",
+            "rand_r object unexpectedly calls, syscalls, or uses TLS",
+            "-nostdlib -static",
+            "-Wl,--no-undefined",
+            "candidate retains a PLT",
+            "candidate selects unowned",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn("--whole-archive", artifact_runner)
+        for required in (
+            "crabc_rand_r_signature",
+            "rand_r declaration",
+            "CRABC_STDLIB_REQUIRE_RAND_R_HIDDEN",
+        ):
+            self.assertIn(required, header_c)
+        for required in (
+            "crabc_rand_r_signature",
+            "rand_r C++ declaration",
+            "CRABC_STDLIB_REQUIRE_RAND_R_HIDDEN",
+        ):
+            self.assertIn(required, header_cxx)
+        for required in (
+            "c11-posix-2008",
+            "c11-xopen-700",
+            "c11-gnu",
+            "c11-bsd",
+            "cxx17-posix-2008",
+            "rand_r",
+            "rand-r-hidden",
+            "run_rand_r_hidden_witness",
+            "C++ linkage mismatch",
+        ):
+            self.assertIn(required, header_runner)
+        self.assertIn("rand_r", static_export_names)
+        self.assertIn('id = "static-c-rand-r"', parity_ledger)
+        self.assertIn(
+            'command = "./scripts/dev-x86_64.sh libc-rand-r"', parity_ledger
+        )
+        self.assertIn("libc-rand-r", runner)
 
     def test_libc_static_c_abi_legacy_memory_artifact_stays_bounded(self) -> None:
         static_root = (

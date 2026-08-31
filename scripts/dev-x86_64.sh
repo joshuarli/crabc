@@ -390,6 +390,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-memccpy  run the static x86 crabc-libc memccpy slice
   libc-mempcpy  run the static x86 crabc-libc mempcpy slice
   libc-strsep  run the static x86 crabc-libc strsep slice
+  libc-rand-r  run the static x86 crabc-libc caller-state rand_r slice
   libc-network-byte-order  run the static x86 crabc-libc network byte-order slice
   libc-in6addr-any  run the archive-free static x86 crabc-libc IPv6 unspecified-address object slice
   libc-in6addr-loopback  run the archive-free static x86 crabc-libc IPv6 loopback-address object slice
@@ -2428,6 +2429,10 @@ run_libc_strsep() {
     run_in_container bash /workspace/compat/x86_64/run_libc_strsep.sh
 }
 
+run_libc_rand_r() {
+    run_in_container bash /workspace/compat/x86_64/run_libc_rand_r.sh
+}
+
 run_libc_allocator_runtime() {
     run_in_container bash /workspace/compat/x86_64/run_libc_allocator_runtime.sh
 }
@@ -3960,6 +3965,7 @@ case "$command" in
     libc-memccpy) ;;
     libc-mempcpy) ;;
     libc-strsep) ;;
+    libc-rand-r) ;;
     libc-allocator-runtime) ;;
     libc-allocator-string-duplication) ;;
     libc-allocator-observability) ;;
@@ -5794,6 +5800,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "libc-strsep takes no arguments"
         ensure_image
         run_libc_strsep
+        ;;
+    libc-rand-r)
+        [ "$#" -eq 0 ] || fail "libc-rand-r takes no arguments"
+        ensure_image
+        run_libc_rand_r
         ;;
     libc-network-byte-order)
         [ "$#" -eq 0 ] || fail "libc-network-byte-order takes no arguments"

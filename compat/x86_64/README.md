@@ -507,6 +507,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-memccpy
 ./scripts/dev-x86_64.sh libc-mempcpy
 ./scripts/dev-x86_64.sh libc-strsep
+./scripts/dev-x86_64.sh libc-rand-r
 ./scripts/dev-x86_64.sh libc-process-globals-getopt
 ./scripts/dev-x86_64.sh libc-auxv-observation
 ./scripts/dev-x86_64.sh libc-inet-address
@@ -4422,6 +4423,20 @@ sysroot path; it does not select general string/tokenization, `strtok`/
 `strtok_r`, memory-search, `mempcpy`, getsubopt, allocator
 lifecycle/interposition, family completion, promotion, or public x86 support.
 
+`libc-rand-r` is a separately recorded `static-c-rand-r` `verified_artifact`,
+not a global-random-state or general `<stdlib.h>` claim. Its shared
+strict/POSIX/XOPEN/GNU/BSD/LFS C/C++ header matrix ratchets the exact
+POSIX-selected `int rand_r(unsigned *)` declaration and C++ C linkage against
+pinned musl. Its project-header C fixture first runs through pinned musl and
+then through a true `-nostdlib -static` candidate made from exactly one object
+exporting only `rand_r`. It proves the caller-owned 32-bit seed transition,
+four-stage tempering, exact nonnegative 31-bit values, and function-pointer
+calls across zero, one, mixed-bit, and all-one seeds. It has no global PRNG,
+errno/TLS, syscall, entropy, allocator, locale, dynamic-runtime, CRT, loader,
+or sysroot dependency. It does not select `rand`/`srand`, BSD random-state or
+`drand48` APIs, general random behavior, threads, synchronization, family
+completion, promotion, or public x86 support.
+
 `libc-random-entropy` is a separately recorded
 `static-c-random-entropy` `verified_artifact` gate over that archive, not a
 promotion of the Rust random-source or random-state capabilities. Its
@@ -5685,7 +5700,7 @@ Apart from the narrowly named `libc-stat-compat`, `libc-credentials`,
 `libc-process-resources`, `libc-readiness-waits`, and
 `libc-system-observation`, `libc-system-information`, `libc-uts-identity`, `libc-socket-transport`,
 `libc-socket-messages`,
-`libc-byte-strings`, `libc-legacy-memory`, `libc-memccpy`, `libc-mempcpy`, `libc-strsep`, `libc-random-entropy`, `libc-memory-search`,
+`libc-byte-strings`, `libc-legacy-memory`, `libc-memccpy`, `libc-mempcpy`, `libc-strsep`, `libc-rand-r`, `libc-random-entropy`, `libc-memory-search`,
 `libc-string-copy`, `libc-allocator-string-duplication`, `libc-error-strings`,
 `libc-locale-error-strings`, `libc-ctype`, `libc-integer-arithmetic`,
 `libc-integer-parse`, `libc-float-parse`, `libc-getsubopt`, `libc-intmax-arithmetic`, `libc-credential-observation`,

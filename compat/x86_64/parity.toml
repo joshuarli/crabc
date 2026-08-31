@@ -5964,6 +5964,48 @@ native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc
 oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source mapping, GNU/BSD declaration, and mutation-behavior oracle for src/string/strsep.c: null stored-state return, delimiter-set scan, in-place NUL replacement, one-byte state advance, and terminal-state clearing. The pinned AArch64 libc.a static TSV fixes only strsep.lo ownership." }, { kind = "elf-abi", source = "System V AMD64 psABI", role = "LP64 pointer arguments in rdi/rsi, rax pointer return, static linking, and no-dynamic-dependency fixture contract." }]
 
 [[family.verified_artifact]]
+id = "static-c-rand-r"
+description = "Private native x86 selected-static-archive `rand_r` leaf inside still-planned `libc.posix-runtime`. The true static candidate extracts exactly one Rust object exporting only `rand_r`, with no undefined symbol, relocation, or final-ELF dependency on a global PRNG, TLS, syscall, entropy, allocator, or generic runtime surface. It executes pinned musl 1.2.6 `src/prng/rand_r.c` behavior first through pinned musl and then through `-nostdlib -static`: one caller-owned four-byte `unsigned` seed receives exactly `seed * 1103515245 + 12345` modulo 2^32, then musl's four XOR-shift/mask tempering stages produce the returned nonnegative 31-bit `int`. The fixture covers zero, one, mixed-bit, and all-one inputs, exact post-call seed words, exact return values, and the function-pointer C ABI. The leaf is stateless and allocation-free, with no errno, TLS, syscall, locale, entropy, mutable runtime, or other random entry point. It establishes no `rand`/`srand`, BSD random-family, `drand48`-family, global PRNG, cryptographic/entropy, thread, or synchronization contract. It does not promote general random behavior, `libc.text-math-locale-stdio`, libc.so, CRT, loader, sysroot, family completion, promotion, or public x86 support."
+source_owners = [
+  "compat/upstreams.toml",
+  "compat/abi/musl-1.2.6/aarch64/libc.a.static.tsv",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/rand_r.rs",
+  "include/stdlib.h",
+  "include/features.h",
+  "include/bits/alltypes.h",
+  "compat/x86_64/stdlib_header_abi_probe.c",
+  "compat/x86_64/stdlib_header_abi_probe.cpp",
+  "compat/x86_64/run_stdlib_header_abi.sh",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/libc_rand_r_probe.c",
+  "compat/x86_64/libc_rand_r_start.S",
+  "compat/x86_64/run_libc_rand_r.sh",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "compat/x86_64/aarch64_parity_inventory.py",
+  "compat/x86_64/aarch64_parity_inventory.json",
+  "compat/x86_64/README.md",
+  "STATUS.md",
+  "x86-64.md",
+  "scripts/dev-x86_64.sh",
+  "scripts/check_structure.py",
+]
+x86_abi_prerequisites = [
+  "System V AMD64 passes the caller-owned `unsigned *seed` in rdi and returns the nonnegative `int` result in eax. On this selected LP64 target both public `unsigned` and `int` are four bytes; `seed` must be readable and writable for one word, and the call writes exactly that word once.",
+  "Pinned musl 1.2.6 `src/prng/rand_r.c` first stores `*seed = *seed * 1103515245 + 12345`, then applies x>>11, (x<<7)&0x9D2C5680, (x<<15)&0xEFC60000, and x>>18 tempering before unsigned division by two. The pinned AArch64 static ABI inventory fixes only `rand_r\trand_r.lo\tT\tGLOBAL\t0\t44` public object ownership; the selected x86 Rust leaf is a standalone source-faithful closure rather than an AArch64 implementation import.",
+  "The selected Rust object exports exactly rand_r and has no undefined symbols, syscall, TLS, errno, allocator, entropy, global-state, or helper-call dependency. Its final `-nostdlib -static` candidate has no unresolved symbols, interpreter, DT_NEEDED entry, no PT_TLS, dynamic TLS model, PLT, ambient libc, or unowned PRNG/runtime utility; its fixture-only _start exits directly and supplies no CRT or runtime contract.",
+]
+x86_header_prerequisites = [
+  "The shared strict/POSIX/XOPEN/GNU/BSD/LFS C/C++ `stdlib-header-abi` matrix compares project-first and pinned-musl `stdlib.h`, features.h, and bits/alltypes.h. It proves POSIX/XOPEN/GNU/BSD-selected exact `int (*)(unsigned *)` rand_r declaration, strict/LFS hiding, and an unmangled C++ reference; it does not select a global random-state, general stdlib, or installed-header completion contract.",
+]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-rand-r", scope = "Pinned-musl 1.2.6 project-header C reference plus a dependency-free x86 crabc-libc archive and `-nostdlib -static` candidate. The gate runs the shared C/C++ stdlib declaration matrix, traces project stdlib.h/features.h/bits/alltypes.h, ratchets rand_r against the pinned AArch64 static-ABI row and complete selected static-export list, and extracts exactly one object exporting only rand_r with no undefined symbols, call, syscall, or TLS use. The freestanding fixture proves zero, one, mixed-bit, and all-one caller-seed vectors, exact updated words, exact nonnegative 31-bit outputs, RAND_MAX bound, and function-pointer invocation. The final candidate has no interpreter, DT_NEEDED, unresolved symbols, PT_TLS, dynamic TLS model, PLT, ambient libc, allocator, errno, entropy, global PRNG, or unowned runtime utility. It excludes rand/srand, BSD random-family and drand48-family APIs, global PRNG/TLS/syscall/allocator behavior, cryptographic entropy, threads, synchronization, libc.text-math-locale-stdio completion, family completion, promotion, and public x86 support." }]
+oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source/declaration/behavior oracle for src/prng/rand_r.c: caller-word 32-bit recurrence, four-stage tempering, and unsigned half-range return. rand/srand, BSD random-state, drand48-family, and entropy APIs remain deliberately unselected." }, { kind = "elf-abi", source = "System V AMD64 psABI and pinned musl x86 headers", role = "LP64 rdi/eax calling convention, four-byte unsigned/int public ABI, C++ C linkage, static archive ownership, and direct static executable purity boundary." }]
+
+[[family.verified_artifact]]
 id = "static-c-random-entropy"
 description = "Private native x86 selected-static-archive random-entropy block. One dependency-free `crabc-libc` archive resolves exactly `getrandom` and `getentropy` into a freestanding C fixture after an equivalent pinned-musl execution. Musl's `getrandom` wrapper is a pthread cancellation point through `syscall_cp`, while musl's bounded `getentropy` loop disables cancellation and rejects lengths above 256 bytes; the current direct leaf deliberately omits pthread cancellation because that boundary remains deferred. Both selected wrappers translate direct Linux status to initial-TLS errno. This artifact is deliberately narrower than C random-state or pthread support; it does not select libc.so, CRT, dynamic TLS, loader, sysroot, allocator, or public x86 support."
 source_owners = [

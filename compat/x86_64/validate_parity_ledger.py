@@ -1049,6 +1049,8 @@ MEMPCPY_SYMBOLS = ("mempcpy",)
 
 STRSEP_SYMBOLS = ("strsep",)
 
+RAND_R_SYMBOLS = ("rand_r",)
+
 RANDOM_ENTROPY_SYMBOLS = ("getrandom", "getentropy")
 
 MEMORY_SEARCH_SYMBOLS = ("memchr", "memrchr", "memmem")
@@ -7099,6 +7101,302 @@ def require_strsep_artifact(family: Mapping[str, Any]) -> None:
         "run_libc_strsep()",
         "run_libc_strsep",
     ):
+        require(snippet in dispatcher, f"x86 dispatcher omits {snippet}")
+
+
+def require_rand_r_artifact(family: Mapping[str, Any]) -> None:
+    """Keep one caller-state PRNG transform below random-family promotion."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.posix-runtime].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [entry for entry in artifacts if entry.get("id") == "static-c-rand-r"]
+    require(
+        len(matching) == 1,
+        "libc.posix-runtime must contain exactly one static-c-rand-r artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-rand-r must not promote libc.posix-runtime",
+    )
+    artifact = matching[0]
+    require(
+        "capabilities" not in artifact,
+        "static-c-rand-r must not promote a random capability family",
+    )
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for symbol in RAND_R_SYMBOLS:
+        require(symbol in description, f"static-c-rand-r description omits {symbol}")
+    for phrase in (
+        "still-planned `libc.posix-runtime`",
+        "exactly one Rust object exporting only `rand_r`",
+        "no undefined symbol, relocation, or final-ELF dependency",
+        "caller-owned four-byte `unsigned` seed",
+        "1103515245 + 12345",
+        "four XOR-shift/mask tempering stages",
+        "nonnegative 31-bit `int`",
+        "global PRNG",
+        "BSD random-family",
+        "drand48`-family",
+        "cryptographic/entropy",
+        "libc.text-math-locale-stdio",
+        "family completion",
+        "promotion",
+        "public x86 support",
+    ):
+        require(phrase in description, f"static-c-rand-r description omits {phrase}")
+
+    owners = set(
+        nonempty_strings(artifact["source_owners"], "static-c-rand-r.source_owners")
+    )
+    for owner in (
+        "compat/upstreams.toml",
+        "compat/abi/musl-1.2.6/aarch64/libc.a.static.tsv",
+        "libc/Cargo.toml",
+        "libc/src/lib.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/rand_r.rs",
+        "include/stdlib.h",
+        "include/features.h",
+        "include/bits/alltypes.h",
+        "compat/x86_64/stdlib_header_abi_probe.c",
+        "compat/x86_64/stdlib_header_abi_probe.cpp",
+        "compat/x86_64/run_stdlib_header_abi.sh",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/libc_rand_r_probe.c",
+        "compat/x86_64/libc_rand_r_start.S",
+        "compat/x86_64/run_libc_rand_r.sh",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/aarch64_parity_inventory.py",
+        "compat/x86_64/aarch64_parity_inventory.json",
+        "compat/x86_64/README.md",
+        "STATUS.md",
+        "x86-64.md",
+        "scripts/dev-x86_64.sh",
+        "scripts/check_structure.py",
+    ):
+        require(owner in owners, f"static-c-rand-r source owners omit {owner}")
+
+    prerequisites = nonempty_strings(
+        artifact["x86_abi_prerequisites"], "static-c-rand-r.x86_abi_prerequisites"
+    )
+    require(
+        any(
+            "unsigned *seed" in item
+            and "rdi" in item
+            and "eax" in item
+            and "four bytes" in item
+            and "writes exactly that word once" in item
+            for item in prerequisites
+        ),
+        "static-c-rand-r must retain its SysV C ABI and caller-state contract",
+    )
+    require(
+        any(
+            "src/prng/rand_r.c" in item
+            and "1103515245" in item
+            and "0x9D2C5680" in item
+            and "rand_r.lo" in item
+            and "standalone source-faithful closure" in item
+            for item in prerequisites
+        ),
+        "static-c-rand-r must retain musl source and ABI inventory provenance",
+    )
+    require(
+        any(
+            "exactly rand_r" in item
+            and "no undefined symbols" in item
+            and "no PT_TLS" in item
+            and "unowned PRNG/runtime utility" in item
+            for item in prerequisites
+        ),
+        "static-c-rand-r must retain its closed static dependency boundary",
+    )
+
+    header_prerequisites = nonempty_strings(
+        artifact["x86_header_prerequisites"], "static-c-rand-r.x86_header_prerequisites"
+    )
+    require(
+        any(
+            "stdlib-header-abi" in item
+            and "int (*)(unsigned *)" in item
+            and "POSIX/XOPEN/GNU/BSD-selected" in item
+            and "strict/LFS hiding" in item
+            and "unmangled C++ reference" in item
+            for item in header_prerequisites
+        ),
+        "static-c-rand-r must retain its focused C/C++ header ABI",
+    )
+
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-rand-r"},
+        "static-c-rand-r must use the closed libc-rand-r command",
+    )
+    scope = evidence[0].get("scope")
+    require(
+        isinstance(scope, str)
+        and all(
+            phrase in scope
+            for phrase in (
+                "shared C/C++ stdlib declaration matrix",
+                "pinned AArch64 static-ABI row",
+                "exactly one object exporting only rand_r",
+                "no undefined symbols, call, syscall, or TLS use",
+                "zero, one, mixed-bit, and all-one caller-seed vectors",
+                "exact updated words",
+                "exact nonnegative 31-bit outputs",
+                "function-pointer invocation",
+                "no interpreter, DT_NEEDED, unresolved symbols, PT_TLS",
+                "BSD random-family",
+                "drand48-family",
+                "global PRNG/TLS/syscall/allocator behavior",
+                "cryptographic entropy",
+                "public x86 support",
+            )
+        ),
+        "static-c-rand-r evidence must retain its bounded static contract",
+    )
+
+    exports = set(
+        static_c_abi_export_names(
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        )
+    )
+    for symbol in RAND_R_SYMBOLS:
+        require(symbol in exports, f"static C ABI export contract omits {symbol}")
+
+    static_root = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+    ).read_text(encoding="utf-8")
+    require(
+        '#[path = "rand_r.rs"]\nmod rand_r;' in static_root,
+        "x86 static C ABI must compose the rand_r leaf",
+    )
+    source = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "rand_r.rs"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "musl 1.2.6",
+        "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+        "src/prng/rand_r.c",
+        "LCG_MULTIPLIER",
+        "LCG_INCREMENT",
+        "TEMPER_LEFT_7_MASK",
+        "TEMPER_LEFT_15_MASK",
+        "wrapping_mul",
+        "wrapping_add",
+        "pub unsafe extern \"C\" fn rand_r",
+        "caller-owned seed",
+    ):
+        require(snippet in source, f"rand_r implementation omits {snippet}")
+    rust_exports = set(
+        re.findall(
+            r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(', source
+        )
+    )
+    require(
+        rust_exports == {"rand_r"},
+        "rand_r implementation must export only rand_r",
+    )
+    for forbidden in (
+        "raw_syscall::",
+        "errno::",
+        "crabc_core",
+        "crabc_mimalloc",
+        "static mut",
+        "getrandom",
+        "getentropy",
+        "use super::",
+    ):
+        require(
+            forbidden not in source,
+            f"rand_r implementation selects {forbidden}",
+        )
+
+    runner = (ROOT / "compat" / "x86_64" / "run_libc_rand_r.sh").read_text(
+        encoding="utf-8"
+    )
+    for snippet in (
+        "run_musl_oracle.sh",
+        "run_stdlib_header_abi.sh",
+        "rand_r.lo",
+        "static_c_abi_exports.txt",
+        "archive_member_for_symbol",
+        "rand_r object export surface drifted",
+        "rand_r object unexpectedly depends on another symbol",
+        "rand_r object unexpectedly calls, syscalls, or uses TLS",
+        "-nostdlib -static",
+        "--no-undefined",
+        "candidate retains a PLT",
+        "candidate selects unowned",
+    ):
+        require(snippet in runner, f"rand_r runner omits {snippet}")
+    require("--whole-archive" not in runner, "rand_r runner must not force-link the archive")
+
+    probe = (ROOT / "compat" / "x86_64" / "libc_rand_r_probe.c").read_text(
+        encoding="utf-8"
+    )
+    for snippet in (
+        "rand_r_signature",
+        "_Static_assert",
+        "check_vector",
+        "check_function_pointer",
+        "0x00003039U",
+        "0x41c67ea6U",
+        "0x0b719151U",
+        "0xbe39e1ccU",
+        "CRABC_RAND_R_FREESTANDING",
+    ):
+        require(snippet in probe, f"rand_r probe omits {snippet}")
+    start = (ROOT / "compat" / "x86_64" / "libc_rand_r_start.S").read_text(
+        encoding="utf-8"
+    )
+    for snippet in ("crabc_x86_64_rand_r_probe", "mov $60, %eax"):
+        require(snippet in start, f"rand_r start shim omits {snippet}")
+
+    header_c = (
+        ROOT / "compat" / "x86_64" / "stdlib_header_abi_probe.c"
+    ).read_text(encoding="utf-8")
+    header_cxx = (
+        ROOT / "compat" / "x86_64" / "stdlib_header_abi_probe.cpp"
+    ).read_text(encoding="utf-8")
+    header_runner = (
+        ROOT / "compat" / "x86_64" / "run_stdlib_header_abi.sh"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "crabc_rand_r_signature",
+        "rand_r declaration",
+        "CRABC_STDLIB_REQUIRE_RAND_R_HIDDEN",
+    ):
+        require(snippet in header_c, f"rand_r C header evidence omits {snippet}")
+    for snippet in (
+        "crabc_rand_r_signature",
+        "rand_r C++ declaration",
+        "CRABC_STDLIB_REQUIRE_RAND_R_HIDDEN",
+    ):
+        require(snippet in header_cxx, f"rand_r C++ header evidence omits {snippet}")
+    for snippet in (
+        "c11-posix-2008",
+        "c11-xopen-700",
+        "c11-gnu",
+        "c11-bsd",
+        "cxx17-posix-2008",
+        "rand_r",
+        "rand-r-hidden",
+        "run_rand_r_hidden_witness",
+        "C++ linkage mismatch",
+    ):
+        require(snippet in header_runner, f"rand_r header runner omits {snippet}")
+
+    dispatcher = (ROOT / "scripts" / "dev-x86_64.sh").read_text(encoding="utf-8")
+    for snippet in ("libc-rand-r)", "run_libc_rand_r()", "run_libc_rand_r"):
         require(snippet in dispatcher, f"x86 dispatcher omits {snippet}")
 
 
@@ -41422,6 +41720,7 @@ def validate_ledger(
     require_memccpy_artifact(by_id["libc.posix-runtime"])
     require_mempcpy_artifact(by_id["libc.posix-runtime"])
     require_strsep_artifact(by_id["libc.posix-runtime"])
+    require_rand_r_artifact(by_id["libc.posix-runtime"])
     require_random_entropy_artifact(by_id["libc.posix-runtime"])
     require_memory_search_artifact(by_id["libc.posix-runtime"])
     require_string_copy_artifact(by_id["libc.posix-runtime"])

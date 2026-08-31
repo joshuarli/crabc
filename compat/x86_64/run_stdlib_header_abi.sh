@@ -214,6 +214,16 @@ compile_one() {
                 "-D$witness"
             )
             ;;
+        rand-r-hidden)
+            case "$profile" in
+                c11-strict|cxx17-strict|c11-lfs|cxx17-lfs) ;;
+                *) fail "$profile does not hide rand_r" ;;
+            esac
+            mode_args+=(
+                -DCRABC_STDLIB_HIDDEN_WITNESS_ONLY
+                -DCRABC_STDLIB_REQUIRE_RAND_R_HIDDEN
+            )
+            ;;
         cxx-null)
             profile_is_cxx "$profile" || fail "$profile cannot have a C++ null witness"
             mode_args+=(
@@ -400,6 +410,39 @@ run_hidden_witness() {
     done
 }
 
+run_rand_r_hidden_witness() {
+    local profile="$1"
+    local tree
+    local diagnostic
+    local object
+    local label
+
+    case "$profile" in
+        c11-strict|cxx17-strict|c11-lfs|cxx17-lfs) ;;
+        *) return 0 ;;
+    esac
+
+    for tree in reference candidate; do
+        diagnostic="$work_dir/$tree-$profile-rand-r-hidden.trace"
+        object="$work_dir/$tree-$profile-rand-r-hidden.o"
+        label="$tree/$profile/rand_r-hidden"
+        if compile_one "$tree" "$profile" rand-r-hidden "$diagnostic" "$object"; then
+            assert_header_provenance "$tree" "$diagnostic" "$label"
+            if [ "$tree" = reference ]; then
+                fail "$label pinned-musl unexpectedly exposes rand_r"
+            fi
+            record_mismatch "$label unexpectedly exposes a declaration musl hides" \
+                "$diagnostic"
+            continue
+        fi
+
+        assert_header_provenance "$tree" "$diagnostic" "$label"
+        grep -Fq "rand_r" "$diagnostic" ||
+            fail "$label hidden-witness diagnostic does not name rand_r"
+        printf 'PASS: %s\n' "$label"
+    done
+}
+
 assert_null_include_order_provenance() {
     local tree="$1"
     local trace="$2"
@@ -505,6 +548,9 @@ for profile in "${PROFILES[@]}"; do
 done
 for profile in "${PROFILES[@]}"; do
     run_hidden_witness "$profile"
+done
+for profile in "${PROFILES[@]}"; do
+    run_rand_r_hidden_witness "$profile"
 done
 for profile in "${PROFILES[@]}"; do
     run_cxx_null_witness "$profile"

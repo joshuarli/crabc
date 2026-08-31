@@ -670,6 +670,7 @@ pwritev
 qsort
 qsort_r
 raise
+rand_r
 read
 readahead
 readdir

@@ -236,6 +236,8 @@ mod intmax_arithmetic;
 mod ffs;
 #[path = "random_entropy.rs"]
 mod random_entropy;
+#[path = "rand_r.rs"]
+mod rand_r;
 #[path = "fenv.rs"]
 mod fenv;
 #[path = "math_complex.rs"]
