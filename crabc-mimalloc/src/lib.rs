@@ -111,8 +111,7 @@ pub use test_context::{
 pub mod __crabc_runtime {
     #[cfg(feature = "native-runtime-test-audit")]
     pub use crate::runtime_lifecycle::{
-        NativePostExitRouteRegistryAudit, NativeRuntimeForkAdmissionAudit,
-        NativeRuntimeLifecycleAudit, native_post_exit_registry_test_audit,
+        NativeRuntimeForkAdmissionAudit, NativeRuntimeLifecycleAudit,
         native_runtime_fork_admission_test_audit, native_runtime_lifecycle_test_audit,
     };
 
@@ -123,14 +122,6 @@ pub mod __crabc_runtime {
 
     pub use crate::runtime_lifecycle::{
         ThreadAttachResult, ThreadFinishResult, TicketZeroLaterThreadPageResult,
-        TicketZeroOwnerExitFreeConsumer, TicketZeroOwnerExitFreeOutcome,
-        TicketZeroOwnerExitFreeRoute, TicketZeroOwnerExitRemoteFreeProducer,
-        TicketZeroOwnerExitRemoteFreeProducerPair,
-        TicketZeroOwnerExitRemoteFreePublisher, TicketZeroOwnerExitReclaimConsumer,
-        TicketZeroOwnerExitReclaimOutcome, TicketZeroOwnerExitReclaimRoute,
-        TicketZeroOwnerExitMappedMediumRemoteFreeProducer,
-        TicketZeroOwnerExitMappedMediumRemoteFreeProducerPair,
-        TicketZeroOwnerExitMappedMediumRemoteFreePublisher,
         TicketZeroPageAllocationResult, TicketZeroPageFreeResult,
         NativePageAllocationResult, NativePageFreeResult,
         TicketZeroRemoteFreeProducer, TicketZeroRemoteFreeProducerPair,
@@ -143,20 +134,31 @@ pub mod __crabc_runtime {
         native_allocate_aligned, native_free, native_reallocate, native_usable_size,
         ticket_zero_allocate, ticket_zero_free,
         ticket_zero_allocate_aligned, ticket_zero_usable_size,
+        ticket_zero_later_thread_page_roundtrip,
+        ticket_zero_later_thread_persistent_local_workload,
+        ticket_zero_later_thread_remote_free_roundtrip, ticket_zero_reallocate,
+    };
+
+    #[cfg(test)]
+    pub use crate::runtime_lifecycle::{
+        TicketZeroOwnerExitFreeConsumer, TicketZeroOwnerExitFreeOutcome,
+        TicketZeroOwnerExitFreeRoute, TicketZeroOwnerExitMappedMediumRemoteFreeProducer,
+        TicketZeroOwnerExitMappedMediumRemoteFreeProducerPair,
+        TicketZeroOwnerExitMappedMediumRemoteFreePublisher,
+        TicketZeroOwnerExitReclaimConsumer, TicketZeroOwnerExitReclaimOutcome,
+        TicketZeroOwnerExitReclaimRoute, TicketZeroOwnerExitRemoteFreeProducer,
+        TicketZeroOwnerExitRemoteFreeProducerPair, TicketZeroOwnerExitRemoteFreePublisher,
+        ticket_zero_later_thread_direct_small_owner_exit_reclaim_through_normal_finish,
         ticket_zero_later_thread_active_session_rejects_normal_finish,
         ticket_zero_later_thread_all_free_session_through_normal_finish,
+        ticket_zero_later_thread_mapped_regular_owner_exit_through_normal_finish,
+        ticket_zero_later_thread_mapped_regular_owner_exit_reclaim_through_normal_finish,
         ticket_zero_later_thread_retired_then_live_session_owner_exit_through_normal_finish,
         ticket_zero_later_thread_single_source_published_session_through_normal_finish,
         ticket_zero_later_thread_source_published_session_through_normal_finish,
-        ticket_zero_later_thread_page_roundtrip,
-        ticket_zero_later_thread_direct_small_owner_exit_reclaim_through_normal_finish,
-        ticket_zero_later_thread_mapped_regular_owner_exit_through_normal_finish,
-        ticket_zero_later_thread_mapped_regular_owner_exit_reclaim_through_normal_finish,
         ticket_zero_later_thread_session_owner_exit_through_normal_finish,
-        ticket_zero_later_thread_session_owner_exit_with_post_exit_mapped_medium_publisher_through_normal_finish,
         ticket_zero_later_thread_session_owner_exit_with_initial_mapped_medium_post_exit_publisher_through_normal_finish,
+        ticket_zero_later_thread_session_owner_exit_with_post_exit_mapped_medium_publisher_through_normal_finish,
         ticket_zero_later_thread_session_owner_exit_with_post_exit_publisher_through_normal_finish,
-        ticket_zero_later_thread_persistent_local_workload,
-        ticket_zero_later_thread_remote_free_roundtrip, ticket_zero_reallocate,
     };
 }

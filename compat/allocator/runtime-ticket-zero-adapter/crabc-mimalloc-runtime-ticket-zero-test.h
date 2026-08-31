@@ -93,42 +93,6 @@ int crabc_ticket_zero_test_worker_mixed_roundtrip(void);
  */
 int crabc_ticket_zero_test_worker_remote_free_roundtrip(void);
 
-/*
- * After the original thread has freed every adapter allocation, one fresh
- * pthread may become mixed-page owner A. The adapter keeps direct-small,
- * non-direct-small, full-medium, large, arena-singleton, and OS-aligned
- * clients in its bounded aggregate route. Source collection maps one full
- * medium, releases the force-empty large page, and leaves another full medium
- * source-unmapped. A second joined fresh B receives only the opaque route,
- * including the arena singleton's PageMap-only terminal tail and the OS
- * singleton's private-list/clipped-map tail. B first directly frees one of
- * three existing direct-small clients after it claims that source page's low
- * owner bit. Joined C and D each serially receive one opaque same-page
- * producer, publish it, and join before B's existing collector consumes the
- * resulting two-node remote chain. B then releases its remaining private
- * clients and completes its own no-page runtime attachment. The runtime
- * releases A's worker admission only when that completed B lifecycle returns
- * the terminal proof. The C caller neither receives a client pointer nor
- * invokes a generic worker finalizer.
- * On success this returns 0 and preserves errno; on failure it returns -1
- * with errno set.
- */
-int crabc_ticket_zero_test_worker_owner_exit_roundtrip(void);
-
-/*
- * After the original thread has freed every adapter allocation, one fresh
- * pthread may become owner A of an initially nonfull mapped-regular page with
- * one returned local free block. Successive calls alternate the existing
- * sole-medium aggregate result and direct-small source drain; both enter the
- * same ordinary runtime finish and give B only an opaque reclamation route.
- * B attaches normally, adopts and uses A's exact page, frees all private
- * clients, and completes its page lifecycle before the route permits A's
- * admission claim to release. The C caller receives no client address, route,
- * PageMap, or generic finalizer authority. On success this returns 0 and
- * preserves errno; on failure it returns -1 with errno set.
- */
-int crabc_ticket_zero_test_worker_owner_exit_reclaim_roundtrip(void);
-
 #ifdef __cplusplus
 }
 #endif

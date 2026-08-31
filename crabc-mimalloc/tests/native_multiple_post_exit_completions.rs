@@ -62,10 +62,9 @@ fn allocate_owner_exit_aggregate() -> [usize; OWNER_EXIT_CLIENT_COUNT] {
 /// Returns the exact C-shaped clients from one finished owner. The consumer
 /// receives no owner, route token, client ledger, scheduler token, PageMap
 /// lease, or release capability; pointer-first operations must rediscover
-/// source state from the process PageMap. The current multi-owner source drain
-/// still has a deletion-pending registry preflight; Phase F must replace that
-/// preflight with PageMap/abandonment ownership without changing this consumer
-/// contract.
+/// source state from the process PageMap. Each source owner releases its own
+/// admission at owner exit; PageMap/abandonment ownership is the complete
+/// post-exit consumer contract.
 fn publish_owner_exit_page_map_sources() -> [usize; OWNER_EXIT_CLIENT_COUNT] {
     let (sender, receiver) = mpsc::sync_channel(0);
     let owner = std::thread::spawn(move || {

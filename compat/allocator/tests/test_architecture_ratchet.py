@@ -78,10 +78,6 @@ class ArchitectureRatchetTests(unittest.TestCase):
         selected_source_metrics = {
             "local_hot_path_process_scheduler_ops",
             "local_hot_path_global_pagemap_leases",
-            "local_operation_owner_registry_scans",
-            "local_operation_client_ledger_scans",
-            "remote_free_owner_registry_scans",
-            "extra_control_bytes_per_live_allocation",
             "per_call_engine_park_resume",
             "exited_owner_admission_survives_thread_exit",
         }
@@ -96,10 +92,7 @@ class ArchitectureRatchetTests(unittest.TestCase):
             set(report["forbidden_scaffolding_compiled"]["found"]),
             {
                 "exited_owner_admission_claim",
-                "geometry_shaped_post_exit_route",
                 "per_call_parked_engine",
-                "post_exit_route_registry",
-                "prepared_owner_exit_clients",
                 "process_global_page_owner_scheduler",
             },
         )
@@ -174,10 +167,16 @@ class ArchitectureRatchetTests(unittest.TestCase):
         else:
             self.assertTrue(audit_symbols <= RATCHET.PHASE_EF_TEST_AUDIT_RULES)
         self.assertEqual(phase_ef["ratchet"]["regressions"], [])
-        self.assertIn(
-            "Phase E/F post-exit registry, route, ledger, or lifecycle scaffolding",
-            report["summary"]["unmet"],
-        )
+        if phase_ef["production_retains_forbidden_surface"]:
+            self.assertIn(
+                "Phase E/F post-exit registry, route, ledger, or lifecycle scaffolding",
+                report["summary"]["unmet"],
+            )
+        else:
+            self.assertNotIn(
+                "Phase E/F post-exit registry, route, ledger, or lifecycle scaffolding",
+                report["summary"]["unmet"],
+            )
         stress = report["unmodified_upstream_stress"]
         self.assertEqual(stress["current_max_workers"], 0)
         self.assertFalse(stress["current_large_mode"])

@@ -122,26 +122,6 @@ static void *run_worker_remote_free_roundtrip(void *argument)
     return NULL;
 }
 
-static void *run_worker_owner_exit_roundtrip(void *argument)
-{
-    (void)argument;
-
-    errno = EAGAIN;
-    if (crabc_ticket_zero_test_worker_owner_exit_roundtrip() != 0 || errno != EAGAIN)
-        return (void *)(uintptr_t)1;
-    return NULL;
-}
-
-static void *run_worker_owner_exit_reclaim_roundtrip(void *argument)
-{
-    (void)argument;
-
-    errno = EAGAIN;
-    if (crabc_ticket_zero_test_worker_owner_exit_reclaim_roundtrip() != 0 || errno != EAGAIN)
-        return (void *)(uintptr_t)1;
-    return NULL;
-}
-
 typedef void *(*worker_start)(void *);
 
 /*
@@ -174,8 +154,6 @@ static int run_seeded_worker_cycle(uint64_t *stress_seed)
     worker_start routes[] = {
         run_worker_mixed_roundtrip,
         run_worker_remote_free_roundtrip,
-        run_worker_owner_exit_roundtrip,
-        run_worker_owner_exit_reclaim_roundtrip,
     };
     size_t index;
 

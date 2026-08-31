@@ -1,7 +1,7 @@
 {
   "format": 1,
   "full_lane": {
-    "routes_per_cycle": 4,
+    "routes_per_cycle": 2,
     "stress_seed": "0xd1b54a32d192ed03",
     "watchdog_seconds": 30,
     "worker_cycles": 128

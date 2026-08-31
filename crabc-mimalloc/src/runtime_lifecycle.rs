@@ -21,9 +21,9 @@
 //! containing the attachment and continuously stored owner-local page engine;
 //! later local calls use short in-place borrows and never park or resume it.
 //! The worker consumes that owner only after libc has run user cleanup handlers
-//! and pthread TSD destructors. Older typed post-exit fixtures retain their
-//! bounded dormant ticket-zero scheduler routes until pointer-first abandoned
-//! dispatch owns the complete replacement capability.
+//! and pthread TSD destructors. Historical typed post-exit fixtures are
+//! `#[cfg(test)]` oracles; selected native free, reallocation, and usable-size
+//! paths use pointer-first PageMap/W03 and abandoned-state behavior.
 //!
 //! It exposes no C symbol, does not select a backend, creates no public pthread
 //! key, and claims no general fork recovery. A failed process setup leaves
@@ -37,10 +37,13 @@
 
 use core::cell::UnsafeCell;
 use core::convert::Infallible;
+#[cfg(test)]
 use core::marker::PhantomData;
 use core::mem::MaybeUninit;
 use core::pin::Pin;
-use core::sync::atomic::{AtomicPtr, AtomicU8, AtomicUsize, Ordering};
+#[cfg(test)]
+use core::sync::atomic::AtomicPtr;
+use core::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
 
 use crate::compiler_tls::current_thread_identity;
 use crate::config::{
@@ -62,9 +65,10 @@ use crate::main_heap_page::{
     MainHeapThreadProcessPageExitDrainFailure,
     MainHeapThreadProcessPageAllocatorFinishError,
     MainHeapThreadProcessPageAllocatorSuspendFailure,
+};
+#[cfg(test)]
+use crate::main_heap_page::{
     MainHeapThreadProcessPageExitMappedRegularAdoptFailure,
-    MainHeapThreadProcessPageExitMappedRegularFreeFailure,
-    MainHeapThreadProcessPageExitMappedRegularFreeResult,
     MainHeapThreadProcessPageExitMappedRegularRoute,
     MainHeapThreadProcessPageExitMappedRegularPagesAdoptFailure,
     MainHeapThreadProcessPageExitMappedRegularPagesFreeFailure,
@@ -72,9 +76,17 @@ use crate::main_heap_page::{
     MainHeapThreadProcessPageExitMappedRegularPagesRouteBegin,
     MainHeapThreadProcessPageExitMappedRegularPagesRoute,
 };
+#[cfg(test)]
+use crate::main_heap_page::{
+    MainHeapThreadProcessPageExitMappedRegularFreeFailure,
+    MainHeapThreadProcessPageExitMappedRegularFreeResult,
+};
 use crate::main_static_page::MainStaticRuntimeFirstArenaPageAllocator;
 use crate::main_theap::MainStaticHeapLease;
-use crate::meta::{MetaAllocation, MetaAllocator};
+#[cfg(test)]
+use crate::meta::MetaAllocation;
+#[cfg(any(test, feature = "native-runtime-test-audit"))]
+use crate::meta::MetaAllocator;
 use crate::os::{MemoryConfig, PageSize, StartupInput};
 use crate::process_init::{ProcessMainInitializationStorage, ProcessMainThread};
 use crate::process_arena::{
@@ -86,6 +98,9 @@ use crate::process_page_map::{
 use crate::single_thread::{
     ProcessPostOwnerExitPointerFreeDisposition, ProcessPostOwnerExitPointerFreeRejection,
     RemoteFreeProducer, RemoteFreeProducerPair,
+};
+#[cfg(test)]
+use crate::single_thread::{
     ThreadExitMappedRegularPagesPostExitRemoteFreeProducer,
     ThreadExitMappedRegularPagesPostExitRemoteFreeProducerPair,
 };
@@ -180,32 +195,24 @@ const fn page_owner_session_begin_is_retryable(state: usize) -> bool {
     state == PAGE_OWNER_BUSY || page_owner_parked_count(state).is_some()
 }
 
-// The native libc shadow keeps detached post-exit routes in a metadata-backed
-// process registry. It is not a general allocator lock: each active entry
-// owns one already-detached A route and serializes only that route's private
-// ledger. The lower source `ProcessPageMapPostExitAccess` takes the shared
-// PageMap exclusion around each complete exact free, while this private router
-// never exposes a client or a page selection capability.
+// The retired exact-client registry remains only in unit-test compilation so
+// legacy route witnesses stay isolated from the production PageMap/W03 path.
+#[cfg(test)]
 const NATIVE_POST_EXIT_ROUTE_EMPTY: u8 = 0;
+#[cfg(test)]
 const NATIVE_POST_EXIT_ROUTE_ACTIVE: u8 = 1;
+#[cfg(test)]
 const NATIVE_POST_EXIT_ROUTE_BUSY: u8 = 2;
+#[cfg(test)]
 const NATIVE_POST_EXIT_ROUTE_RETAINED: u8 = 3;
-// A terminal source route has no remaining C client, but it still owns its
-// exact parked scheduler token and A's worker-admission proof until the
-// matched B attachment has completed its own normal teardown. Keeping that
-// completion in the stable private registry lets one B carry more than one
-// such boundary without turning client addresses into a cross-thread API.
+#[cfg(test)]
 const NATIVE_POST_EXIT_ROUTE_COMPLETED: u8 = 4;
 
-// Appending one permanent metadata-backed registry entry is separate from an
-// entry's own `ACTIVE -> BUSY` route serialization. Nodes never move or leave
-// the list, so a reader that acquired the list head may inspect a stable entry
-// without a raw-pointer lifetime race. An entry is reusable only after its
-// active route or completed B lifecycle has fully released. The short registry
-// mutation word serializes installation with terminal closure: once any route
-// is retained, a later detached A may not publish beside it.
+#[cfg(test)]
 const NATIVE_POST_EXIT_ROUTE_REGISTRY_IDLE: u8 = 0;
+#[cfg(test)]
 const NATIVE_POST_EXIT_ROUTE_REGISTRY_MUTATING: u8 = 1;
+#[cfg(test)]
 const NATIVE_POST_EXIT_ROUTE_REGISTRY_RETAINED: u8 = 2;
 
 // Linux/AArch64's public C allocation ABI guarantees 16-byte natural malloc
@@ -437,6 +444,7 @@ impl<'owner> TicketZeroRemoteFreeProducer<'owner> {
 /// route.
 #[doc(hidden)]
 #[must_use = "the post-exit remote publication must publish or return its opaque producer"]
+#[cfg(test)]
 pub struct TicketZeroOwnerExitRemoteFreeProducer<'route> {
     producer: ThreadExitMappedRegularPagesPostExitRemoteFreeProducer<'route>,
 }
@@ -444,8 +452,10 @@ pub struct TicketZeroOwnerExitRemoteFreeProducer<'route> {
 // SAFETY: the wrapped source producer is Send and carries only the one
 // already-proved private client plus the callback-local lifetime boundary.
 // Moving it transfers no PageMap, route, or terminal-release authority.
+#[cfg(test)]
 unsafe impl Send for TicketZeroOwnerExitRemoteFreeProducer<'_> {}
 
+#[cfg(test)]
 impl<'route> TicketZeroOwnerExitRemoteFreeProducer<'route> {
     /// Atomically publishes one private client to B's held source remote
     /// head. A failure returns the same opaque capability, allowing the
@@ -467,6 +477,7 @@ impl<'route> TicketZeroOwnerExitRemoteFreeProducer<'route> {
 /// higher-ranked synchronous callback.
 #[doc(hidden)]
 #[must_use = "both post-exit remote publications must publish or the opaque pair must return to the runtime callback"]
+#[cfg(test)]
 pub struct TicketZeroOwnerExitRemoteFreeProducerPair<'route> {
     producers: ThreadExitMappedRegularPagesPostExitRemoteFreeProducerPair<'route>,
 }
@@ -474,8 +485,10 @@ pub struct TicketZeroOwnerExitRemoteFreeProducerPair<'route> {
 // SAFETY: each component is Send and carries only one exact private client
 // plus the callback-local lifetime boundary. The pair gives no route,
 // PageMap, collector, or terminal-release authority to its receiver.
+#[cfg(test)]
 unsafe impl Send for TicketZeroOwnerExitRemoteFreeProducerPair<'_> {}
 
+#[cfg(test)]
 impl<'route> TicketZeroOwnerExitRemoteFreeProducerPair<'route> {
     /// Separates C and D's opaque atomic-only source publications. Both
     /// tokens remain bounded by B's direct source transition.
@@ -503,6 +516,7 @@ impl<'route> TicketZeroOwnerExitRemoteFreeProducerPair<'route> {
 /// and its existing collector. Its higher-ranked pair cannot outlive the
 /// synchronous callback that the aggregate route joins before it resumes.
 #[doc(hidden)]
+#[cfg(test)]
 pub type TicketZeroOwnerExitRemoteFreePublisher = for<'route> fn(
     TicketZeroOwnerExitRemoteFreeProducerPair<'route>,
 ) -> Result<(), TicketZeroOwnerExitRemoteFreeProducerPair<'route>>;
@@ -517,6 +531,7 @@ pub type TicketZeroOwnerExitRemoteFreePublisher = for<'route> fn(
 /// address, PageMap, collector, reclaim, or terminal-release authority.
 #[doc(hidden)]
 #[must_use = "the mapped-medium post-exit publication must publish or return its opaque producer"]
+#[cfg(test)]
 pub struct TicketZeroOwnerExitMappedMediumRemoteFreeProducer<'route> {
     producer: ThreadExitMappedRegularPagesPostExitRemoteFreeProducer<'route>,
 }
@@ -524,8 +539,10 @@ pub struct TicketZeroOwnerExitMappedMediumRemoteFreeProducer<'route> {
 // SAFETY: the wrapped source producer is Send and carries only one exact
 // private client plus its callback-local lifetime boundary. Moving it exposes
 // no route, map, collector, or terminal-release capability.
+#[cfg(test)]
 unsafe impl Send for TicketZeroOwnerExitMappedMediumRemoteFreeProducer<'_> {}
 
+#[cfg(test)]
 impl<'route> TicketZeroOwnerExitMappedMediumRemoteFreeProducer<'route> {
     /// Atomically publishes one private mapped-medium client to B's held
     /// source remote head. Failure returns the same opaque capability so the
@@ -543,6 +560,7 @@ impl<'route> TicketZeroOwnerExitMappedMediumRemoteFreeProducer<'route> {
 /// after B has claimed the source low owner bit for its direct medium free.
 #[doc(hidden)]
 #[must_use = "both mapped-medium post-exit publications must publish or the opaque pair must return to the runtime callback"]
+#[cfg(test)]
 pub struct TicketZeroOwnerExitMappedMediumRemoteFreeProducerPair<'route> {
     producers: ThreadExitMappedRegularPagesPostExitRemoteFreeProducerPair<'route>,
 }
@@ -550,8 +568,10 @@ pub struct TicketZeroOwnerExitMappedMediumRemoteFreeProducerPair<'route> {
 // SAFETY: each component is Send and carries only one exact private client
 // plus the callback-local lifetime boundary. The pair transfers no route,
 // PageMap, collector, or terminal-release authority.
+#[cfg(test)]
 unsafe impl Send for TicketZeroOwnerExitMappedMediumRemoteFreeProducerPair<'_> {}
 
+#[cfg(test)]
 impl<'route> TicketZeroOwnerExitMappedMediumRemoteFreeProducerPair<'route> {
     /// Separates C and D's opaque mapped-medium atomic-only publications.
     /// Both remain bounded by B's one direct source transition.
@@ -579,6 +599,7 @@ impl<'route> TicketZeroOwnerExitMappedMediumRemoteFreeProducerPair<'route> {
 /// low-bit claim and its existing collector. Its higher-ranked pair cannot
 /// outlive the synchronous callback that B joins before it resumes.
 #[doc(hidden)]
+#[cfg(test)]
 pub type TicketZeroOwnerExitMappedMediumRemoteFreePublisher = for<'route> fn(
     TicketZeroOwnerExitMappedMediumRemoteFreeProducerPair<'route>,
 ) -> Result<(), TicketZeroOwnerExitMappedMediumRemoteFreeProducerPair<'route>>;
@@ -589,6 +610,7 @@ pub type TicketZeroOwnerExitMappedMediumRemoteFreePublisher = for<'route> fn(
 /// owner name one already-accounted client while it still keeps the address
 /// private. In particular, direct-small's source drain may identify its
 /// exact first client without turning the route into a block-list API.
+#[cfg(test)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct DetachedOwnerExitClientKey {
     slot: usize,
@@ -599,6 +621,7 @@ struct DetachedOwnerExitClientKey {
 /// publication. This stays wholly inside the runtime ledger: it is not a
 /// selector exposed to the consumer callback.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg(test)]
 enum DetachedOwnerExitRemotePublicationKind {
     DirectSmall,
     MappedMedium,
@@ -607,6 +630,7 @@ enum DetachedOwnerExitRemotePublicationKind {
 /// Three opaque ledger identities together with the source shape that proved
 /// their shared-page relation while A still owned the live engine.
 #[derive(Clone, Copy)]
+#[cfg(test)]
 struct DetachedOwnerExitRemotePublicationSelection {
     kind: DetachedOwnerExitRemotePublicationKind,
     clients: [DetachedOwnerExitClientKey; 3],
@@ -616,11 +640,13 @@ struct DetachedOwnerExitRemotePublicationSelection {
 /// interleaving. It is checked against the opaque ledger selection before B
 /// removes any client from that selection, so a callback for one source shape
 /// cannot consume the other shape's route.
+#[cfg(test)]
 enum TicketZeroOwnerExitPostExitPublisher {
     DirectSmall(TicketZeroOwnerExitRemoteFreePublisher),
     MappedMedium(TicketZeroOwnerExitMappedMediumRemoteFreePublisher),
 }
 
+#[cfg(test)]
 impl TicketZeroOwnerExitPostExitPublisher {
     #[inline]
     fn accepts(&self, kind: DetachedOwnerExitRemotePublicationKind) -> bool {
@@ -643,6 +669,7 @@ impl TicketZeroOwnerExitPostExitPublisher {
 /// historical layout. The source-shaped traversal owns page classification;
 /// this object only proves that every live client has exactly one eventual
 /// post-exit consumer.
+#[cfg(test)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct DetachedOwnerExitClient {
     key: DetachedOwnerExitClientKey,
@@ -669,6 +696,7 @@ struct DetachedOwnerExitClient {
     has_pre_exit_owner_exit_collectable_local_free: bool,
 }
 
+#[cfg(test)]
 impl DetachedOwnerExitClient {
     #[inline]
     fn can_attempt_final_member_adoption(self) -> bool {
@@ -684,6 +712,7 @@ impl DetachedOwnerExitClient {
 /// every live entry into a detached-only client fact. That preserves the
 /// allocation capability all the way through B's terminal exact-free route:
 /// C still cannot enumerate an entry or obtain a client address from it.
+#[cfg(test)]
 enum DetachedOwnerExitClientLedger {
     Inline {
         entries: [
@@ -694,6 +723,7 @@ enum DetachedOwnerExitClientLedger {
     Session(PreparedOwnerExitClients),
 }
 
+#[cfg(test)]
 impl DetachedOwnerExitClientLedger {
     fn empty() -> Self {
         Self::Inline {
@@ -882,6 +912,7 @@ impl DetachedOwnerExitClientLedger {
 /// Its explicit kind keeps the direct-small and mapped-medium source proofs
 /// nominally separate. B directly claims the source low bit, then C and D
 /// each atomically append one same-page client before B's collector resumes.
+#[cfg(test)]
 struct DetachedOwnerExitRemotePublicationGroup {
     kind: DetachedOwnerExitRemotePublicationKind,
     direct: Option<core::ptr::NonNull<u8>>,
@@ -889,6 +920,7 @@ struct DetachedOwnerExitRemotePublicationGroup {
     second_published: Option<core::ptr::NonNull<u8>>,
 }
 
+#[cfg(test)]
 impl DetachedOwnerExitRemotePublicationGroup {
     #[inline]
     fn is_empty(&self) -> bool {
@@ -958,6 +990,7 @@ impl DetachedOwnerExitRemotePublicationGroup {
 /// selection capability.
 #[doc(hidden)]
 #[must_use = "the post-exit route must release every private client or remain terminally retained"]
+#[cfg(test)]
 pub struct TicketZeroOwnerExitFreeRoute<'main> {
     // Every production route originates from `ThreadLifecycleSlot`, whose
     // attachment and process-main roots are compiler-TLS/process-static.
@@ -982,6 +1015,7 @@ pub struct TicketZeroOwnerExitFreeRoute<'main> {
 // inaccessible to its receiver. The underlying aggregate route is Send but
 // deliberately !Sync, so moving this value transfers its unique linear
 // source release authority to one joined consumer.
+#[cfg(test)]
 unsafe impl Send for TicketZeroOwnerExitFreeRoute<'_> {}
 
 /// A proof that a private owner-exit route reached `ReleasedAll` and finished
@@ -991,10 +1025,12 @@ unsafe impl Send for TicketZeroOwnerExitFreeRoute<'_> {}
 /// runtime consumes it before releasing A's admission claim.
 #[doc(hidden)]
 #[must_use = "this proof must immediately complete the detached worker lifecycle"]
+#[cfg(test)]
 pub struct TicketZeroOwnerExitRouteFinished {
     admission: LaterThreadAdmissionClaim,
 }
 
+#[cfg(test)]
 impl TicketZeroOwnerExitRouteFinished {
     #[inline]
     fn into_admission(self) -> LaterThreadAdmissionClaim {
@@ -1022,10 +1058,12 @@ impl TicketZeroOwnerExitRouteFinished {
 /// retains the exact admission claim so the fork boundary remains explicit.
 #[doc(hidden)]
 #[must_use = "a poisoned owner-exit result must retain its exact worker admission claim"]
+#[cfg(test)]
 pub struct TicketZeroOwnerExitRoutePoisoned {
     admission: LaterThreadAdmissionClaim,
 }
 
+#[cfg(test)]
 impl TicketZeroOwnerExitRoutePoisoned {
     #[inline]
     fn into_admission(self) -> LaterThreadAdmissionClaim {
@@ -1043,6 +1081,7 @@ impl TicketZeroOwnerExitRoutePoisoned {
 /// scan, a raw client pointer, or a general PageMap scheduler capability.
 #[doc(hidden)]
 #[must_use = "the post-exit reclaim route must finish its exact later owner or remain terminally retained"]
+#[cfg(test)]
 pub struct TicketZeroOwnerExitReclaimRoute {
     route: MainHeapThreadProcessPageExitMappedRegularRoute<'static>,
     clients: DetachedOwnerExitClientLedger,
@@ -1056,11 +1095,13 @@ pub struct TicketZeroOwnerExitReclaimRoute {
 // client identities remain inaccessible to the receiving worker. Moving it
 // transfers one linear source reclamation decision; it grants neither
 // concurrent reclamation nor generic allocation authority.
+#[cfg(test)]
 unsafe impl Send for TicketZeroOwnerExitReclaimRoute {}
 
 /// Outcome of one joined B-side source reclamation operation.
 #[doc(hidden)]
 #[must_use = "a failed post-exit reclamation retains the exact admission and page owner"]
+#[cfg(test)]
 pub enum TicketZeroOwnerExitReclaimOutcome {
     /// B reclaimed the exact page, returned its engine empty, and completed
     /// its own attachment before returning A's terminal admission proof.
@@ -1076,6 +1117,7 @@ pub enum TicketZeroOwnerExitReclaimOutcome {
 /// A terminal outcome from the opaque B-side owner-exit consumer.
 #[doc(hidden)]
 #[must_use = "a retained route or poisoned outcome must retain the runtime boundary"]
+#[cfg(test)]
 pub enum TicketZeroOwnerExitFreeOutcome<'main> {
     /// B released every exact client and the last PageMap lifecycle completed.
     Finished(TicketZeroOwnerExitRouteFinished),
@@ -1091,6 +1133,7 @@ pub enum TicketZeroOwnerExitFreeOutcome<'main> {
 /// One result from consuming a private client through the aggregate source
 /// route. Keeping this classification separate lets both the ordinary ledger
 /// drain and the test-only B/C pair use the exact same terminal accounting.
+#[cfg(test)]
 enum DetachedOwnerExitFreeStep<'main> {
     Continue(MainHeapThreadProcessPageExitMappedRegularPagesRoute<'main>),
     ReleasedAll,
@@ -1102,6 +1145,7 @@ enum DetachedOwnerExitFreeStep<'main> {
 /// owner-exit route. The route remains opaque to the caller throughout: the
 /// only observable success is that this exact free completed; page state,
 /// client identities, and A's admission claim stay internal.
+#[cfg(test)]
 enum NativePostExitFreeStep {
     NotOwned(NativePostExitFreeRoute),
     Freed(NativePostExitFreeRoute),
@@ -1115,6 +1159,7 @@ enum NativePostExitFreeStep {
 /// typed runtime consumers with their original non-`'static` lifetimes;
 /// only the process-static native slot converts it into
 /// [`NativePostExitFreeRoute`].
+#[cfg(test)]
 enum AggregateNativePostExitFreeStep<'main> {
     NotOwned(TicketZeroOwnerExitFreeRoute<'main>),
     Freed(TicketZeroOwnerExitFreeRoute<'main>),
@@ -1130,6 +1175,7 @@ enum AggregateNativePostExitFreeStep<'main> {
 /// failed-reclaim free primitive.  Both retain the same private ledger and
 /// admission until a final native `free` produces a typed proof.
 #[must_use = "a native post-exit route must release every private client or remain terminally retained"]
+#[cfg(test)]
 enum NativePostExitFreeRoute {
     Aggregate(TicketZeroOwnerExitFreeRoute<'static>),
     SoleMappedRegular(NativeSoleMappedRegularPostExitRoute),
@@ -1143,6 +1189,7 @@ enum NativePostExitFreeRoute {
 /// and terminal release.  B receives no page, client, or reclaim capability,
 /// and cannot turn a C free into allocation-time adoption.
 #[must_use = "a sole mapped regular native route must release its exact client or remain terminally retained"]
+#[cfg(test)]
 struct NativeSoleMappedRegularPostExitRoute {
     route: MainHeapThreadProcessPageExitMappedRegularRoute<'static>,
     clients: DetachedOwnerExitClientLedger,
@@ -1154,6 +1201,7 @@ struct NativeSoleMappedRegularPostExitRoute {
     admission: LaterThreadAdmissionClaim,
 }
 
+#[cfg(test)]
 impl NativePostExitFreeRoute {
     fn free_exact_native_block(
         self,
@@ -1199,11 +1247,13 @@ impl NativePostExitFreeRoute {
     }
 }
 
+#[cfg(test)]
 impl NativeSoleMappedRegularPostExitRoute {
     /// Consumes one exact native C client through the already source-proved
     /// mapped regular post-exit free path.  The private ledger is the raw-C
     /// validation boundary; it is not a general PageMap lookup or pointer
     /// registry.
+    #[cfg(test)]
     fn free_exact_native_block(
         mut self,
         block: core::ptr::NonNull<u8>,
@@ -1274,6 +1324,7 @@ impl NativeSoleMappedRegularPostExitRoute {
     }
 }
 
+#[cfg(test)]
 fn classify_detached_owner_exit_free<'main>(
     free: Result<
         MainHeapThreadProcessPageExitMappedRegularPagesFreeResult<'main>,
@@ -1304,6 +1355,7 @@ fn classify_detached_owner_exit_free<'main>(
     }
 }
 
+#[cfg(test)]
 fn detached_owner_exit_released_all<'main>(
     clients: &mut DetachedOwnerExitClientLedger,
     has_remaining_clients: bool,
@@ -1323,6 +1375,7 @@ fn detached_owner_exit_released_all<'main>(
     }
 }
 
+#[cfg(test)]
 impl<'main> TicketZeroOwnerExitFreeRoute<'main> {
     /// Releases the detached owner's private remaining clients through the
     /// single general aggregate route. The ledger is populated by ordinary
@@ -1360,6 +1413,7 @@ impl<'main> TicketZeroOwnerExitFreeRoute<'main> {
     /// Every nonterminal outcome returns the same linear route for the
     /// router to retain; a terminal proof remains unavailable until the last
     /// source page and PageMap state have released.
+    #[cfg(test)]
     fn free_exact_native_block(
         self,
         attachment: &mut MainHeapThreadAttachment<'static>,
@@ -1394,6 +1448,7 @@ impl<'main> TicketZeroOwnerExitFreeRoute<'main> {
     /// not reached the one final mapped regular member.  A failed adoption
     /// preflight returns here with the same route, so a short-access refusal
     /// never turns an otherwise valid C free into a retained process owner.
+    #[cfg(test)]
     fn free_exact_native_block_sequential(
         mut self,
         block: core::ptr::NonNull<u8>,
@@ -1458,6 +1513,7 @@ impl<'main> TicketZeroOwnerExitFreeRoute<'main> {
     /// proof.  A source rejection restores the ordinary exact-free route;
     /// every post-claim failure is terminally retained rather than falling
     /// back to a fresh allocation or a normal no-page finalizer.
+    #[cfg(test)]
     fn adopt_last_native_mapped_regular_member(
         self,
         attachment: &mut MainHeapThreadAttachment<'static>,
@@ -1576,6 +1632,7 @@ impl<'main> TicketZeroOwnerExitFreeRoute<'main> {
     /// Theap/TLD, so B need not reopen the PageMap or receive a client handle
     /// merely to answer `malloc_usable_size` before a later exact `free`.
     #[inline]
+    #[cfg(test)]
     fn native_usable_size(&self, block: core::ptr::NonNull<u8>) -> Option<usize> {
         // The scoped B/C/D producer group is a test-only source interleaving and
         // intentionally has no raw-C lookup surface.
@@ -1978,6 +2035,7 @@ impl<'main> TicketZeroOwnerExitFreeRoute<'main> {
     }
 }
 
+#[cfg(test)]
 impl TicketZeroOwnerExitReclaimRoute {
     /// Reclaims the one source-approved mapped regular page into this fresh B
     /// worker, proves a normal allocation of the same private request can use
@@ -2145,6 +2203,7 @@ impl TicketZeroOwnerExitReclaimRoute {
 /// higher-ranked function pointer prevents retaining the route beyond the
 /// source owner's completed lifecycle boundary.
 #[doc(hidden)]
+#[cfg(test)]
 pub type TicketZeroOwnerExitFreeConsumer = for<'owner> fn(
     TicketZeroOwnerExitFreeRoute<'owner>,
 ) -> TicketZeroOwnerExitFreeOutcome<'owner>;
@@ -2153,6 +2212,7 @@ pub type TicketZeroOwnerExitFreeConsumer = for<'owner> fn(
 /// owner-exit reclamation witness. It receives no client address, PageMap
 /// lease, or admission token beyond the opaque linear route itself.
 #[doc(hidden)]
+#[cfg(test)]
 pub type TicketZeroOwnerExitReclaimConsumer = fn(
     TicketZeroOwnerExitReclaimRoute,
 ) -> TicketZeroOwnerExitReclaimOutcome;
@@ -3904,8 +3964,10 @@ static RUNTIME_FORK_ADMISSION: RuntimeForkAdmission = RuntimeForkAdmission::new(
 /// access to a TLS slot, route, page, client, allocator, or admission proof.
 /// Exhaustion closes the incomplete native lifecycle rather than allowing a
 /// wrapped identity to match a stale process-lifetime registry entry.
+#[cfg(test)]
 static NEXT_NATIVE_POST_EXIT_COMPLETION_OWNER_GENERATION: AtomicUsize = AtomicUsize::new(1);
 
+#[cfg(test)]
 fn claim_native_post_exit_completion_owner_generation() -> Option<usize> {
     let mut observed = NEXT_NATIVE_POST_EXIT_COMPLETION_OWNER_GENERATION.load(Ordering::Acquire);
     loop {
@@ -3934,6 +3996,7 @@ fn claim_native_post_exit_completion_owner_generation() -> Option<usize> {
 /// normal finish. Keeping both fields in one linear entry prevents a raw C
 /// free from reopening ticket zero before all source pages have released.
 #[must_use = "a native post-exit route must reach B's terminal proof or remain retained"]
+#[cfg(test)]
 struct NativePostExitRoute {
     parked: RuntimeParkedPostExitRoute,
     route: NativePostExitFreeRoute,
@@ -3947,6 +4010,7 @@ struct NativePostExitRoute {
 /// the nonzero lifecycle generation prevents an old completed entry from
 /// matching a later attachment in the same TLS slot.
 #[derive(Clone, Copy, Eq, PartialEq)]
+#[cfg(test)]
 struct NativePostExitRouteCompletionOwner {
     slot: core::ptr::NonNull<ThreadLifecycleSlot>,
     generation: usize,
@@ -3962,6 +4026,7 @@ struct NativePostExitRouteCompletionOwner {
 /// completion may remove only its route's parked token after B has detached
 /// its own attachment, then releases A's admission proof.
 #[must_use = "a terminal native route completion must finish B or remain retained"]
+#[cfg(test)]
 struct NativePostExitRouteCompletion {
     owner: NativePostExitRouteCompletionOwner,
     parked: RuntimeParkedPostExitRoute,
@@ -3973,6 +4038,7 @@ struct NativePostExitRouteCompletion {
 /// dropping an ambiguous route and making the fork-admission count appear
 /// quiescent.
 #[must_use = "a retained native post-exit entry must stay process-terminal"]
+#[cfg(test)]
 enum NativePostExitRouteEntry {
     Active(NativePostExitRoute),
     /// A completed source route has released every C client but remains live
@@ -4000,6 +4066,7 @@ enum NativePostExitRouteEntry {
 /// C address to the opaque post-exit route. No variant exposes a client,
 /// PageMap lease, or allocator authority.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg(test)]
 enum NativePostExitRouteFreeResult {
     NotOwned,
     Freed,
@@ -4010,6 +4077,7 @@ enum NativePostExitRouteFreeResult {
 /// Private result of probing one detached route for an exact usable-size
 /// query. It keeps a retained registry entry from being mistaken for an
 /// ordinary address miss while the private router considers another entry.
+#[cfg(test)]
 enum NativePostExitRouteUsableSizeResult {
     NotOwned,
     Owned(usize),
@@ -4018,6 +4086,7 @@ enum NativePostExitRouteUsableSizeResult {
 
 /// Private result of asking one stable entry to settle a completion for the
 /// current B attachment after that attachment's own source teardown.
+#[cfg(test)]
 enum NativePostExitRouteCompletionFinishResult {
     NotOwned,
     Finished,
@@ -4027,50 +4096,19 @@ enum NativePostExitRouteCompletionFinishResult {
 /// Aggregate result of finishing every completed route matched to one B
 /// attachment. The registry never returns an entry, route, client, page, or
 /// admission capability to its caller.
+#[cfg(test)]
 enum NativePostExitRouteCompletionsFinishResult {
     Finished,
     Retained,
 }
 
-/// One registry entry's observable ownership state.
-///
-/// `Live` includes the brief private `BUSY` move while its exact B-side
-/// operation runs and the post-terminal `COMPLETED` image that still owns a
-/// parked token and A admission. A retained entry closes the whole process
-/// runtime, so a later source owner may not use it as evidence that another
-/// route can safely append an OS-abandoned-list member.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum NativePostExitRouteStorageState {
-    Empty,
-    Live,
-    Retained,
-}
-
-/// Read-only scalar accounting for the private native post-exit registry.
-///
-/// This exists only in the default-off direct-test feature. It deliberately
-/// reports aggregate counts rather than a node address, route, client, page,
-/// allocator, or release capability. `published_entry_count` is also the
-/// registry's retained metadata high-water: nodes are append-only and an
-/// emptied node is the only reusable storage for a later detached owner.
-/// The direct regression samples it only after all participating workers have
-/// joined; a contemporaneous `BUSY` entry is conservatively reported live.
-#[cfg(feature = "native-runtime-test-audit")]
-#[doc(hidden)]
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct NativePostExitRouteRegistryAudit {
-    pub published_entry_count: usize,
-    pub live_entry_count: usize,
-    pub retained_entry_count: usize,
-}
-
 /// Read-only scalar accounting for one quiescent native runtime process.
 ///
 /// This is deliberately a default-off evidence hook. It reports lifecycle
-/// counts and readiness bits only; it does not reveal a route, client address,
-/// PageMap root, arena address, allocator, or release capability. Callers
-/// must sample only after every participating worker has joined, so no normal
-/// engine or detached route is concurrently mutating the source-owned state.
+/// counts and readiness bits only; it does not reveal a client address, PageMap
+/// root, arena address, allocator, or release capability. Callers must sample
+/// only after every participating worker has joined, so no normal engine or
+/// pointer-first source operation is concurrently mutating owned state.
 #[cfg(feature = "native-runtime-test-audit")]
 #[doc(hidden)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -4113,6 +4151,7 @@ pub struct NativeRuntimeForkAdmissionAudit {
 /// serializes each exact free, while its parked runtime token keeps ticket
 /// zero unavailable without preventing a distinct normal engine from using
 /// the shared process pair between route operations.
+#[cfg(test)]
 struct NativePostExitRouteStorage {
     state: AtomicU8,
     entry: UnsafeCell<MaybeUninit<NativePostExitRouteEntry>>,
@@ -4122,34 +4161,11 @@ struct NativePostExitRouteStorage {
 // `COMPLETED -> BUSY` with AcqRel. The static has one writer while installing
 // and one mutable route/completion consumer at a time; retained entries are
 // never read as active again.
+#[cfg(test)]
 unsafe impl Sync for NativePostExitRouteStorage {}
 
+#[cfg(test)]
 impl NativePostExitRouteStorage {
-    /// Classifies one stable metadata entry without exposing its route,
-    /// clients, PageMap access, or admission capability.
-    #[inline]
-    fn registry_state(&self) -> NativePostExitRouteStorageState {
-        match self.state.load(Ordering::Acquire) {
-            NATIVE_POST_EXIT_ROUTE_EMPTY => NativePostExitRouteStorageState::Empty,
-            NATIVE_POST_EXIT_ROUTE_ACTIVE
-            | NATIVE_POST_EXIT_ROUTE_BUSY
-            | NATIVE_POST_EXIT_ROUTE_COMPLETED => {
-                NativePostExitRouteStorageState::Live
-            }
-            NATIVE_POST_EXIT_ROUTE_RETAINED => NativePostExitRouteStorageState::Retained,
-            _ => {
-                // An invalid state cannot name a route whose source PageMap
-                // and admission ownership can be reconstructed. Preserve the
-                // registry entry and close the runtime rather than treating a
-                // corrupt word as an empty reusable slot.
-                RUNTIME_PROCESS.retain_page_owner();
-                self.state
-                    .store(NATIVE_POST_EXIT_ROUTE_RETAINED, Ordering::Release);
-                NativePostExitRouteStorageState::Retained
-            }
-        }
-    }
-
     /// Restores one unchanged or still-live route after this entry's private
     /// operation has completed. The route and its parked scheduler token move
     /// together so an address miss or a nonterminal exact free cannot make
@@ -4590,6 +4606,7 @@ impl NativePostExitRouteStorage {
 /// every terminal completion. This bounds retained metadata by the high-water
 /// of simultaneously detached routes and completed B-owned routes rather than
 /// by the number of sequential worker exits.
+#[cfg(test)]
 struct NativePostExitRouteRegistryNode {
     next: AtomicPtr<NativePostExitRouteRegistryNode>,
     storage: NativePostExitRouteStorage,
@@ -4601,6 +4618,7 @@ struct NativePostExitRouteRegistryNode {
 // Metadata's ordinary source allocation is naturally aligned to the native
 // malloc boundary. Keep this node's typed image within that established
 // guarantee before projecting its bytes as a registry entry.
+#[cfg(test)]
 const _: [(); 1] = [();
     (core::mem::align_of::<NativePostExitRouteRegistryNode>() <= NATIVE_C_MALLOC_ALIGNMENT)
         as usize
@@ -4611,6 +4629,7 @@ const _: [(); 1] = [();
 // `ACTIVE -> BUSY` protocol already provides the required exclusion. The
 // metadata capability is process-lived and never accessed through this shared
 // reference after initialization.
+#[cfg(test)]
 unsafe impl Sync for NativePostExitRouteRegistryNode {}
 
 /// The private metadata-backed native post-exit router.
@@ -4622,11 +4641,13 @@ unsafe impl Sync for NativePostExitRouteRegistryNode {}
 /// address restores the claimed entry before the next node is considered, so
 /// exact C frees remain serialized per route and source PageMap access remains
 /// route-local.
+#[cfg(test)]
 struct NativePostExitRouteRegistry {
     mutation: AtomicU8,
     head: AtomicPtr<NativePostExitRouteRegistryNode>,
 }
 
+#[cfg(test)]
 impl NativePostExitRouteRegistry {
     const fn new() -> Self {
         Self {
@@ -4790,53 +4811,17 @@ impl NativePostExitRouteRegistry {
         }
     }
 
-    /// Counts only stable entry states for the direct high-water regression.
-    /// It returns no route identity or capability, and it must be sampled
-    /// after the test's participating workers have joined. A transient busy
-    /// state is intentionally counted as live by `registry_state`.
-    #[cfg(feature = "native-runtime-test-audit")]
-    fn test_audit(&self) -> NativePostExitRouteRegistryAudit {
-        let mut audit = NativePostExitRouteRegistryAudit {
-            published_entry_count: 0,
-            live_entry_count: 0,
-            retained_entry_count: 0,
-        };
-        let mut current = self.head.load(Ordering::Acquire);
-        while !current.is_null() {
-            // SAFETY: every node is fully initialized before its Release
-            // publication, and append-only links keep the node address valid
-            // for this diagnostic-only traversal.
-            let node = unsafe { &*current };
-            audit.published_entry_count += 1;
-            match node.storage.registry_state() {
-                NativePostExitRouteStorageState::Empty => {}
-                NativePostExitRouteStorageState::Live => audit.live_entry_count += 1,
-                NativePostExitRouteStorageState::Retained => audit.retained_entry_count += 1,
-            }
-            current = node.next.load(Ordering::Acquire);
-        }
-        audit
-    }
 }
 
 // SAFETY: the registry publishes only fully initialized immutable node links.
 // Each node's mutable route state is independently protected by its storage
 // protocol, and the mutation word serializes installation with terminal
 // closure.
+#[cfg(test)]
 unsafe impl Sync for NativePostExitRouteRegistry {}
 
+#[cfg(test)]
 static NATIVE_POST_EXIT_ROUTE: NativePostExitRouteRegistry = NativePostExitRouteRegistry::new();
-
-/// Returns scalar-only accounting for the private native post-exit registry.
-///
-/// This direct-test hook is feature-gated and deliberately cannot identify,
-/// operate on, or release any registry entry. See
-/// [`NativePostExitRouteRegistryAudit`] for the quiescent-sampling contract.
-#[cfg(feature = "native-runtime-test-audit")]
-#[doc(hidden)]
-pub fn native_post_exit_registry_test_audit() -> NativePostExitRouteRegistryAudit {
-    NATIVE_POST_EXIT_ROUTE.test_audit()
-}
 
 /// Returns scalar-only lifecycle accounting for the process-global runtime.
 ///
@@ -4899,9 +4884,8 @@ pub fn native_runtime_lifecycle_test_audit() -> Option<NativeRuntimeLifecycleAud
 ///
 /// This direct-test hook intentionally reads one atomic word and cannot turn
 /// that read into an admission claim, a fork preparation, or any allocator
-/// operation. It exists so a terminal post-exit regression can distinguish
-/// A's still-retained worker admission from the independent parked page-owner
-/// token after B has completed its own ordinary finish.
+/// operation. It lets a terminal post-exit regression prove that A released
+/// its admission at source exit and that B later releases only B's admission.
 #[cfg(feature = "native-runtime-test-audit")]
 #[doc(hidden)]
 pub fn native_runtime_fork_admission_test_audit() -> NativeRuntimeForkAdmissionAudit {
@@ -4915,9 +4899,9 @@ pub fn native_runtime_fork_admission_test_audit() -> NativeRuntimeForkAdmissionA
 ///
 /// This deliberately exposes neither a generic fault plan nor any allocator
 /// route, page, client, scheduler, or PageMap capability. The sole native
-/// post-exit regression uses it after A's aggregate route has detached and
-/// immediately before B offers the exact OS-aligned client to that opaque
-/// route. Dropping the guard clears the one test process's injection.
+/// post-exit regression uses it after A's source owner exits and immediately
+/// before B offers the exact OS-aligned client to pointer-first PageMap/W03
+/// release. Dropping the guard clears the one test process's injection.
 #[cfg(feature = "native-runtime-test-fault")]
 #[doc(hidden)]
 pub struct NativeRuntimeTestUnmapFailure {
@@ -4940,7 +4924,7 @@ impl NativeRuntimeTestUnmapFailure {
 ///
 /// The default-off feature keeps this hook out of normal allocator and libc
 /// builds. It never exposes the fault subsystem's general plan or any source
-/// route capability to a caller.
+/// release capability to a caller.
 #[cfg(feature = "native-runtime-test-fault")]
 #[doc(hidden)]
 pub fn native_runtime_test_fail_next_unmap() -> NativeRuntimeTestUnmapFailure {
@@ -5228,11 +5212,13 @@ struct ThreadLifecycleSlot {
     /// their claim in the parent, making later fork preservation reject
     /// rather than treating ambiguous source ownership as quiescent.
     admission: Option<LaterThreadAdmissionClaim>,
+    #[cfg(test)]
     /// The opaque per-attachment generation matched by completed registry
     /// entries. It is never exposed beyond this module and makes an old
     /// completion unable to match a later attachment that reuses this TLS
     /// address.
     post_exit_route_completion_generation: usize,
+    #[cfg(test)]
     /// Counts terminal native post-exit completions assigned to this B
     /// attachment. The entries retain their typed parked tokens and proofs in
     /// the stable private registry until this attachment's ordinary finish;
@@ -5258,15 +5244,12 @@ struct ThreadLifecycleSlot {
     /// untouched process-static staging slot.  This is current-thread state,
     /// never a pointer lookup or process routing record.
     initial_native_persistent_owner_installed: bool,
-    /// A current-thread-only page engine that deliberately released its Rust
-    /// borrow before it entered compiler TLS.  A normal no-page finalizer
-    /// must never cross this state: it has to resume the matching engine and
-    /// drive the source owner-exit coordinator first.
+    /// Historical direct-test-only page-owner state. Production native owners
+    /// remain continuously stored and use pointer/PageMap operations instead.
+    #[cfg(test)]
     page_owner: Option<ThreadLifecyclePageOwner>,
-    /// A private current-thread session handle carries this generation while
-    /// ordinary page operations repeatedly park and resume the same source
-    /// engine.  Keeping it in TLS prevents a stale, dropped handle from
-    /// operating a later session that happens to reuse the slot.
+    /// Historical direct-test-only session generation.
+    #[cfg(test)]
     next_page_owner_session_generation: usize,
 }
 
@@ -5275,18 +5258,23 @@ impl ThreadLifecycleSlot {
         Self {
             state: ThreadLifecycleState::Fresh,
             admission: None,
+            #[cfg(test)]
             post_exit_route_completion_generation: 0,
+            #[cfg(test)]
             pending_post_exit_route_completion_count: 0,
             attachment: None,
             native_persistent_owner: PersistentCompilerTlsOwnerCell::new(),
             native_persistent_owner_installed: false,
             initial_native_persistent_owner: PersistentCompilerTlsOwnerCell::new(),
             initial_native_persistent_owner_installed: false,
+            #[cfg(test)]
             page_owner: None,
+            #[cfg(test)]
             next_page_owner_session_generation: 0,
         }
     }
 
+    #[cfg(test)]
     #[inline]
     fn next_page_owner_session_generation(&mut self) -> usize {
         self.next_page_owner_session_generation = self
@@ -5304,6 +5292,7 @@ impl ThreadLifecycleSlot {
     /// Starts the one process-unique opaque completion identity for this
     /// attachment. No completion can be assigned before this happens.
     #[inline]
+    #[cfg(test)]
     fn begin_post_exit_route_completion_lifecycle(&mut self, generation: usize) {
         debug_assert_ne!(generation, 0);
         self.post_exit_route_completion_generation = generation;
@@ -5314,6 +5303,7 @@ impl ThreadLifecycleSlot {
     /// The caller owns this compiler-TLS slot and publishes the matching
     /// registry entry before exposing success to the C free boundary.
     #[inline]
+    #[cfg(test)]
     fn record_post_exit_route_completion(
         &mut self,
         slot: core::ptr::NonNull<ThreadLifecycleSlot>,
@@ -5337,6 +5327,7 @@ impl ThreadLifecycleSlot {
     /// linear parked token/proof; the count merely detects a missing or stale
     /// entry before any later attachment could be admitted as quiescent.
     #[inline]
+    #[cfg(test)]
     fn post_exit_route_completion_owner_after_finish(
         &self,
         slot: core::ptr::NonNull<ThreadLifecycleSlot>,
@@ -5356,11 +5347,13 @@ impl ThreadLifecycleSlot {
     }
 
     #[inline]
+    #[cfg(test)]
     fn has_pending_post_exit_route_completions(&self) -> bool {
         self.pending_post_exit_route_completion_count != 0
     }
 
     #[inline]
+    #[cfg(test)]
     fn finish_post_exit_route_completions(
         &mut self,
         owner: NativePostExitRouteCompletionOwner,
@@ -5387,17 +5380,9 @@ impl ThreadLifecycleSlot {
     }
 }
 
-/// One private page-bearing state retained by the real per-pthread runtime
-/// slot between ordinary allocator activity and source-ordered thread exit.
-///
-/// This deliberately stores a suspended engine rather than an allocator that
-/// borrows `attachment`: compiler TLS owns both fields, so the split avoids a
-/// self-reference while the lower token preserves its exact PageMap and
-/// attachment-session authority. An active session owns its private live
-/// client ledger across ordinary operations; only a separately prepared exit
-/// may enter the source owner-exit dispatcher. This prevents an active
-/// allocator session from being mistaken for a no-page finalizer input.
+/// Historical direct-test-only suspended page-owner state.
 #[must_use = "a page-bearing runtime slot must resume into owner exit or remain terminally retained"]
+#[cfg(test)]
 enum ThreadLifecyclePageOwner {
     /// The current worker may resume this exact parked engine for another
     /// bounded ordinary operation. It has not yet selected a post-exit route;
@@ -5407,11 +5392,13 @@ enum ThreadLifecyclePageOwner {
     /// The active session has consumed every local client into a typed route.
     /// This state crosses `finish_current_thread_after_user_destructors` only
     /// through its typed post-exit route.
+    #[cfg(test)]
     PreparedExit(ThreadLifecyclePreparedPageOwner),
 }
 
 /// A fully prepared page-bearing owner whose old allocator borrow is parked
 /// in compiler TLS until the source-ordered destructor boundary resumes it.
+#[cfg(test)]
 struct ThreadLifecyclePreparedPageOwner {
     parked: RuntimeParkedPersistentPageEngine,
     exit: DetachedOwnerExit,
@@ -5423,6 +5410,7 @@ struct ThreadLifecyclePreparedPageOwner {
 /// disposition that changes lower control flow. It is deliberately not a
 /// sum type over test workloads, page kinds, or exact block counts.
 #[must_use = "a page-bearing owner exit must reach its typed post-exit route or remain terminally retained"]
+#[cfg(test)]
 struct DetachedOwnerExit {
     clients: DetachedOwnerExitClientLedger,
     disposition: DetachedOwnerExitDisposition,
@@ -5433,6 +5421,7 @@ struct DetachedOwnerExit {
 /// branch names the one source-proved immediate mapped regular handoff; its
 /// direct-small entrance remains distinct solely because upstream validates a
 /// complete rounded direct-cache image before it can produce that same route.
+#[cfg(test)]
 enum DetachedOwnerExitDisposition {
     SequentialFree {
         free_after_exit: TicketZeroOwnerExitFreeConsumer,
@@ -5445,6 +5434,7 @@ enum DetachedOwnerExitDisposition {
     },
 }
 
+#[cfg(test)]
 enum DetachedOwnerExitReclaimSource {
     AggregateTraversal,
     DirectSmall {
@@ -5452,6 +5442,7 @@ enum DetachedOwnerExitReclaimSource {
     },
 }
 
+#[cfg(test)]
 impl DetachedOwnerExit {
     fn free_locals(
         mut self,
@@ -5811,7 +5802,11 @@ fn begin_current_thread_native_persistent_owner(
         return Err(NativePersistentThreadOwnerAccessError::Unavailable);
     };
     let slot = current_thread_slot();
-    if slot.state != ThreadLifecycleState::Attached || slot.page_owner.is_some() {
+    if slot.state != ThreadLifecycleState::Attached {
+        return Err(NativePersistentThreadOwnerAccessError::Unavailable);
+    }
+    #[cfg(test)]
+    if slot.page_owner.is_some() {
         return Err(NativePersistentThreadOwnerAccessError::Unavailable);
     }
     let Some(attachment) = slot.attachment.take() else {
@@ -7261,6 +7256,7 @@ impl OwnerExitMappedRegularWorkload<core::ptr::NonNull<u8>> {
     }
 }
 
+#[cfg(test)]
 impl OwnerExitMappedRegularWorkload<PreparedOwnerExitClient> {
     /// Selects the three direct-small clients used only by the bounded B/C/D
     /// regression. The selection remains an opaque ledger-key fact: generic
@@ -7514,6 +7510,7 @@ impl OwnerExitDirectSmallReclaimWorkload<core::ptr::NonNull<u8>> {
 /// Selects one already-distinct source reclamation predecessor while keeping
 /// its consumer and all client identities in the same private TLS owner.
 #[derive(Clone, Copy)]
+#[cfg(test)]
 enum MappedRegularReclaimPredecessor {
     Medium,
     DirectSmall,
@@ -7525,6 +7522,7 @@ enum MappedRegularReclaimPredecessor {
 /// failures returned their engine empty and may use the existing no-page
 /// finish. Every other state remains terminal.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg(test)]
 enum OwnerExitMappedRegularPageOwnerInstallResult {
     Installed,
     AllocationFailed,
@@ -7533,6 +7531,7 @@ enum OwnerExitMappedRegularPageOwnerInstallResult {
 }
 
 #[inline]
+#[cfg(test)]
 fn retain_current_thread_detached_owner_exit() {
     let slot = current_thread_slot();
     // The old Theap/TLD has either already detached or its typed terminal
@@ -7554,6 +7553,7 @@ fn retain_current_thread_live_page_owner() {
 }
 
 #[inline]
+#[cfg(test)]
 fn retain_current_thread_detached_owner_exit_with_admission(
     admission: LaterThreadAdmissionClaim,
 ) {
@@ -7572,6 +7572,7 @@ fn retain_current_thread_detached_owner_exit_with_admission(
 /// `finish_current_thread_after_user_destructors`: that no-page entry would
 /// attempt to access an attachment whose Theap/TLD boundary was already
 /// completed by `finish_after_detached_process_page_route`.
+#[cfg(test)]
 fn finish_current_thread_after_detached_process_page_route(
     proof: TicketZeroOwnerExitRouteFinished,
 ) -> ThreadFinishResult {
@@ -7621,6 +7622,7 @@ fn finish_current_thread_after_detached_process_page_route(
     }
 }
 
+#[cfg(test)]
 fn free_owner_exit_locals(
     allocator: &mut MainHeapThreadProcessPageAllocator<'_, '_>,
     blocks: &mut [Option<core::ptr::NonNull<u8>>],
@@ -7640,6 +7642,7 @@ fn free_owner_exit_locals(
 /// its only consumers record local free, pre-exit publication, or the one
 /// typed post-exit route that will own it after A's engine suspends.
 #[must_use = "every prepared owner-exit client must be locally freed, published before exit, or transferred into the typed post-exit route"]
+#[cfg(test)]
 struct PreparedOwnerExitClient {
     slot: usize,
     generation: usize,
@@ -7648,6 +7651,7 @@ struct PreparedOwnerExitClient {
     normal_request: Option<usize>,
 }
 
+#[cfg(test)]
 impl PreparedOwnerExitClient {
     #[inline]
     fn key(&self) -> DetachedOwnerExitClientKey {
@@ -7676,6 +7680,7 @@ impl PreparedOwnerExitClient {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg(test)]
 enum PreparedOwnerExitClientState {
     Vacant,
     Live {
@@ -7703,12 +7708,14 @@ enum PreparedOwnerExitClientState {
 // within that source guarantee. Keeping the assertion beside the raw
 // projection below makes an accidental wider state fail at compile time
 // instead of reinterpreting an under-aligned metadata allocation.
+#[cfg(test)]
 const _: [(); 1] = [(); (core::mem::align_of::<PreparedOwnerExitClientState>() <= 16) as usize];
 
 /// One metadata-backed extension of the current thread's private client
 /// ledger. The linear [`MetaAllocation`] stays with the session until every
 /// local client has been freed or the typed exit route has terminally
 /// completed. The raw slot bytes never leave this module.
+#[cfg(test)]
 struct PreparedOwnerExitClientOverflow {
     allocation: MetaAllocation<'static>,
     slot_count: usize,
@@ -7725,6 +7732,7 @@ struct PreparedOwnerExitClientOverflow {
 /// That move keeps overflow storage and all C addresses private while A's
 /// old Theap/TLD is torn down; B can only submit an exact C address to its
 /// opaque route and cannot enumerate this registry.
+#[cfg(test)]
 struct PreparedOwnerExitClients {
     slots: [PreparedOwnerExitClientState; RUNTIME_PAGE_OWNER_PREPARATION_CLIENT_SLOTS],
     overflow: Option<PreparedOwnerExitClientOverflow>,
@@ -7735,6 +7743,7 @@ struct PreparedOwnerExitClients {
     next_generation: usize,
 }
 
+#[cfg(test)]
 impl PreparedOwnerExitClients {
     const fn new(metadata_config: Option<MemoryConfig>) -> Self {
         Self {
@@ -7920,6 +7929,7 @@ impl PreparedOwnerExitClients {
     }
 
     #[inline]
+    #[cfg(test)]
     fn detached_client_at(&self, slot: usize) -> Option<DetachedOwnerExitClient> {
         match self.state(slot)? {
             PreparedOwnerExitClientState::TransferredToExit(client) => Some(*client),
@@ -7928,6 +7938,7 @@ impl PreparedOwnerExitClients {
     }
 
     #[inline]
+    #[cfg(test)]
     fn detached_client_for_key(
         &self,
         key: DetachedOwnerExitClientKey,
@@ -7937,6 +7948,7 @@ impl PreparedOwnerExitClients {
     }
 
     #[inline]
+    #[cfg(test)]
     fn has_detached_client(&self) -> bool {
         self.any_state(|state| {
             matches!(state, PreparedOwnerExitClientState::TransferredToExit(_))
@@ -7944,16 +7956,19 @@ impl PreparedOwnerExitClients {
     }
 
     #[inline]
+    #[cfg(test)]
     fn detached_block_for(&self, key: DetachedOwnerExitClientKey) -> Option<core::ptr::NonNull<u8>> {
         self.detached_client_for_key(key).map(|client| client.block)
     }
 
     #[inline]
+    #[cfg(test)]
     fn next_detached_client(&self) -> Option<DetachedOwnerExitClient> {
         (0..self.slot_count()).find_map(|slot| self.detached_client_at(slot))
     }
 
     #[inline]
+    #[cfg(test)]
     fn take_detached_client_for_key(
         &mut self,
         key: DetachedOwnerExitClientKey,
@@ -7970,6 +7985,7 @@ impl PreparedOwnerExitClients {
     }
 
     #[inline]
+    #[cfg(test)]
     fn take_next_detached_client(&mut self) -> Option<DetachedOwnerExitClient> {
         for slot in 0..self.slot_count() {
             let Some(client) = self.detached_client_at(slot) else {
@@ -7981,6 +7997,7 @@ impl PreparedOwnerExitClients {
     }
 
     #[inline]
+    #[cfg(test)]
     fn take_detached_client_for_native_free(
         &mut self,
         block: core::ptr::NonNull<u8>,
@@ -7997,6 +8014,7 @@ impl PreparedOwnerExitClients {
     }
 
     #[inline]
+    #[cfg(test)]
     fn only_detached_client_for_native_free(
         &self,
         block: core::ptr::NonNull<u8>,
@@ -8014,6 +8032,7 @@ impl PreparedOwnerExitClients {
     }
 
     #[inline]
+    #[cfg(test)]
     fn detached_usable_size_for_native_block(
         &self,
         block: core::ptr::NonNull<u8>,
@@ -8025,6 +8044,7 @@ impl PreparedOwnerExitClients {
         })
     }
 
+    #[cfg(test)]
     fn take_detached_remote_publication_group(
         &mut self,
         selection: DetachedOwnerExitRemotePublicationSelection,
@@ -8060,6 +8080,7 @@ impl PreparedOwnerExitClients {
     /// still-routable client. A stale local `Live` state is also rejected:
     /// moving the registry is valid only when every such client crossed the
     /// same typed route exactly once.
+    #[cfg(test)]
     fn release_overflow_without_detached_clients(
         &mut self,
     ) -> Result<(), CurrentThreadPageOwnerPreparationError> {
@@ -8275,6 +8296,7 @@ impl PreparedOwnerExitClients {
     /// complete live registry.  A post-exit B/C pair is selected by these
     /// keys—not by a raw address—and must be rejected before the transfer
     /// changes any registry state.
+    #[cfg(test)]
     fn validate_live_key(
         &self,
         key: DetachedOwnerExitClientKey,
@@ -8300,6 +8322,7 @@ impl PreparedOwnerExitClients {
         }
     }
 
+    #[cfg(test)]
     fn transfer_clients(
         &mut self,
         clients: &mut [Option<PreparedOwnerExitClient>],
@@ -8313,6 +8336,7 @@ impl PreparedOwnerExitClients {
     /// registry has validated each client and must be conservative: `false`
     /// retains the ordinary sequential-free route, while a false positive
     /// could turn a reversible route into a post-claim retained owner.
+    #[cfg(test)]
     fn transfer_clients_with_final_member_adoption(
         &mut self,
         clients: &mut [Option<PreparedOwnerExitClient>],
@@ -8378,6 +8402,7 @@ impl PreparedOwnerExitClients {
     /// storage into the route after its live entries become detached facts;
     /// source-published clients remain outside the route for source
     /// collection before A detaches.
+    #[cfg(test)]
     fn transfer_all_live(
         &mut self,
     ) -> Result<DetachedOwnerExitClientLedger, CurrentThreadPageOwnerPreparationError> {
@@ -8389,6 +8414,7 @@ impl PreparedOwnerExitClients {
     /// selected form, a missing or failed observation is deliberately
     /// conservative and leaves the client sequential-free-only after A
     /// detaches.
+    #[cfg(test)]
     fn transfer_all_live_with_final_member_adoption(
         &mut self,
         mut has_pre_exit_owner_exit_collectable_local_free: impl FnMut(&PreparedOwnerExitClient) -> bool,
@@ -8464,6 +8490,7 @@ impl PreparedOwnerExitClients {
     /// into the scoped post-exit publication group. The keys are validated
     /// before the linear registry moves, so a stale, duplicate, freed, or
     /// pre-exit-published selection leaves the parked session recoverable.
+    #[cfg(test)]
     fn transfer_all_live_with_final_member_adoption_and_post_exit_remote_publication_group(
         &mut self,
         post_exit_remote_publication_group: Option<DetachedOwnerExitRemotePublicationSelection>,
@@ -8521,6 +8548,7 @@ impl PreparedOwnerExitClients {
     /// while the current session still owns it. The raw address enters only at
     /// the libc friend boundary; it is not an iterable or cross-thread
     /// registry surface.
+    #[cfg(test)]
     fn native_client_for_block(
         &self,
         block: core::ptr::NonNull<u8>,
@@ -8556,6 +8584,7 @@ impl PreparedOwnerExitClients {
     /// bounded parked-A read-only route, which holds its registry publication
     /// exclusively while it proves this address; it never receives the
     /// client capability, a page, or a PageMap lease.
+    #[cfg(test)]
     fn recorded_native_usable_size(
         &self,
         block: core::ptr::NonNull<u8>,
@@ -8567,6 +8596,7 @@ impl PreparedOwnerExitClients {
 
     /// Frees one exact C-facing local client after the native shadow has
     /// reconstructed its private ledger capability.
+    #[cfg(test)]
     fn free_native_block(
         &mut self,
         allocator: &mut MainHeapThreadProcessPageAllocator<'_, '_>,
@@ -8580,6 +8610,7 @@ impl PreparedOwnerExitClients {
     /// Reallocates one exact local C-facing client and replaces the private
     /// ledger address only after the source engine has returned a current
     /// replacement. A failed replacement leaves the old ledger entry live.
+    #[cfg(test)]
     fn reallocate_native_block(
         &mut self,
         allocator: &mut MainHeapThreadProcessPageAllocator<'_, '_>,
@@ -8616,6 +8647,7 @@ impl PreparedOwnerExitClients {
     /// Queries one exact local C-facing client while the runtime has resumed
     /// its owner engine. An untracked, transferred, or foreign address has no
     /// usable native extent.
+    #[cfg(test)]
     fn native_usable_size(
         &self,
         allocator: &MainHeapThreadProcessPageAllocator<'_, '_>,
@@ -8795,6 +8827,7 @@ impl PreparedOwnerExitClients {
         })
     }
 
+    #[cfg(test)]
     fn free_untransferred_locals(
         &mut self,
         allocator: &mut MainHeapThreadProcessPageAllocator<'_, '_>,
@@ -8823,6 +8856,7 @@ impl PreparedOwnerExitClients {
 /// private to the runtime boundary; callers receive only the existing
 /// installation result and no client pointer.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg(test)]
 enum CurrentThreadPageOwnerPreparationError {
     AllocationFailed,
     OverCapacity,
@@ -8839,11 +8873,13 @@ enum CurrentThreadPageOwnerPreparationError {
 /// publication. The source handoff either publishes the exact client or
 /// cancels it back to the same active owner, allowing a caller that owns a
 /// recovery policy to retain or locally free it without guessing identity.
+#[cfg(test)]
 struct PreparedOwnerExitRemoteFreeFailure {
     client: PreparedOwnerExitClient,
     error: CurrentThreadPageOwnerPreparationError,
 }
 
+#[cfg(test)]
 impl PreparedOwnerExitRemoteFreeFailure {
     #[inline]
     fn into_parts(
@@ -8860,12 +8896,14 @@ impl PreparedOwnerExitRemoteFreeFailure {
 /// pre-exit publication.  Source preparation keeps the same two clients
 /// local when C did not publish, so the failure path can cleanly free them
 /// before the engine finishes rather than suspending a half-described route.
+#[cfg(test)]
 struct PreparedOwnerExitRemotePairFailure {
     first: PreparedOwnerExitClient,
     second: PreparedOwnerExitClient,
     error: CurrentThreadPageOwnerPreparationError,
 }
 
+#[cfg(test)]
 impl PreparedOwnerExitRemotePairFailure {
     #[inline]
     fn into_parts(
@@ -8885,6 +8923,7 @@ impl PreparedOwnerExitRemotePairFailure {
 /// caller. The client ledger is the durable boundary across that park/resume
 /// split, never a public pointer registry.
 #[must_use = "an active page-owner session must prepare typed exit, enter its all-free drain, or remain terminally retained"]
+#[cfg(test)]
 struct CurrentThreadPageOwnerSession {
     parked: Option<RuntimeParkedPersistentPageEngine>,
     clients: PreparedOwnerExitClients,
@@ -8895,12 +8934,14 @@ struct CurrentThreadPageOwnerSession {
 /// contains neither a raw allocation address nor a page/process capability;
 /// every operation looks up the matching session again in this thread's TLS.
 #[must_use = "a current-thread page-owner session handle must prepare typed exit, leave its owner for all-free finish, or retain it"]
+#[cfg(test)]
 struct CurrentThreadPageOwnerSessionHandle {
     generation: usize,
     _current_thread_only: PhantomData<*mut ()>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg(test)]
 enum CurrentThreadPageOwnerSessionError {
     /// The current TLS image has no active session for this operation.
     Unavailable,
@@ -8918,16 +8959,19 @@ enum CurrentThreadPageOwnerSessionError {
     Retained,
 }
 
+#[cfg(test)]
 enum CurrentThreadPageOwnerSessionRemotePairFailure {
     Preparation(PreparedOwnerExitRemotePairFailure),
     Session(CurrentThreadPageOwnerSessionError),
 }
 
+#[cfg(test)]
 enum CurrentThreadPageOwnerSessionRemoteFreeFailure {
     Preparation(PreparedOwnerExitRemoteFreeFailure),
     Session(CurrentThreadPageOwnerSessionError),
 }
 
+#[cfg(test)]
 fn take_current_thread_page_owner_session(
     generation: usize,
 ) -> Result<CurrentThreadPageOwnerSession, CurrentThreadPageOwnerSessionError> {
@@ -8949,6 +8993,7 @@ fn take_current_thread_page_owner_session(
     }
 }
 
+#[cfg(test)]
 fn restore_current_thread_page_owner_session(session: CurrentThreadPageOwnerSession) {
     let slot = current_thread_slot();
     if slot.state == ThreadLifecycleState::Attached && slot.page_owner.is_none() {
@@ -8964,6 +9009,7 @@ fn restore_current_thread_page_owner_session(session: CurrentThreadPageOwnerSess
 }
 
 /// Preserves one session only as a terminal diagnostic owner.
+#[cfg(test)]
 fn retain_current_thread_page_owner_session(session: CurrentThreadPageOwnerSession) {
     let slot = current_thread_slot();
     if slot.state == ThreadLifecycleState::Attached && slot.page_owner.is_none() {
@@ -8976,11 +9022,13 @@ fn retain_current_thread_page_owner_session(session: CurrentThreadPageOwnerSessi
 
 /// Preserves a moved session as a terminal diagnostic owner after an
 /// irrecoverable lower transition.
+#[cfg(test)]
 fn retain_forgotten_current_thread_page_owner_session(session: CurrentThreadPageOwnerSession) {
     core::mem::forget(session);
     retain_current_thread_live_page_owner();
 }
 
+#[cfg(test)]
 impl CurrentThreadPageOwnerSessionHandle {
     /// Runs one bounded ordinary operation after resuming the exact parked
     /// source engine, then parks it again before any result becomes visible.
@@ -9174,6 +9222,7 @@ impl CurrentThreadPageOwnerSessionHandle {
     /// source owner-exit disposition. Its ledger accounts for every remaining
     /// local client, while a source-published pre-exit pair stays with the
     /// existing collector before A detaches.
+    #[cfg(test)]
     fn prepare_sequential_exit(
         self,
         free_after_exit: TicketZeroOwnerExitFreeConsumer,
@@ -9185,6 +9234,7 @@ impl CurrentThreadPageOwnerSessionHandle {
     /// source-valid scoped B/C/D publication group. The group contains only
     /// opaque registry keys selected before suspension; it grants neither a
     /// caller address nor a general post-exit producer route.
+    #[cfg(test)]
     fn prepare_sequential_exit_with_post_exit_remote_publication_group(
         self,
         post_exit_remote_publication_group: DetachedOwnerExitRemotePublicationSelection,
@@ -9196,6 +9246,7 @@ impl CurrentThreadPageOwnerSessionHandle {
         )
     }
 
+    #[cfg(test)]
     fn prepare_sequential_exit_with(
         self,
         post_exit_remote_publication_group: Option<DetachedOwnerExitRemotePublicationSelection>,
@@ -9374,6 +9425,7 @@ impl CurrentThreadPageOwnerSessionHandle {
 /// session operations must explicitly resume and re-park the same source
 /// attachment before returning. This is internal runtime state, not an
 /// allocator API or a raw-pointer escape hatch.
+#[cfg(test)]
 fn begin_current_thread_page_owner_session(
 ) -> Result<CurrentThreadPageOwnerSessionHandle, CurrentThreadPageOwnerSessionError> {
     let slot = current_thread_slot();
@@ -9502,6 +9554,7 @@ fn native_later_thread_allocate_aligned(
 /// in the registry until B finishes, but B may continue to consume a distinct
 /// still-active route through the same bounded pointer-private dispatcher.
 #[inline]
+#[cfg(test)]
 fn current_thread_can_access_native_post_exit_route() -> bool {
     let slot = current_thread_slot();
     if slot.state != ThreadLifecycleState::Attached {
@@ -9514,6 +9567,7 @@ fn current_thread_can_access_native_post_exit_route() -> bool {
     }
 }
 
+#[cfg(test)]
 impl OwnerExitClientAllocator for CurrentThreadPageOwnerSessionHandle {
     type Client = PreparedOwnerExitClient;
     type AllocationError = CurrentThreadPageOwnerSessionError;
@@ -9551,12 +9605,14 @@ impl OwnerExitClientAllocator for CurrentThreadPageOwnerSessionHandle {
 /// page-bearing TLS owner. It owns the linear client registry alongside the
 /// live engine borrow, so a closure cannot manufacture a raw post-exit block
 /// list or hide an ordinary allocation from the eventual typed route.
+#[cfg(test)]
 struct CurrentThreadPageOwnerPreparation<'allocator, 'attachment, 'main> {
     allocator: &'allocator mut MainHeapThreadProcessPageAllocator<'attachment, 'main>,
     clients: PreparedOwnerExitClients,
     exit: Option<DetachedOwnerExit>,
 }
 
+#[cfg(test)]
 impl<'allocator, 'attachment, 'main>
     CurrentThreadPageOwnerPreparation<'allocator, 'attachment, 'main>
 {
@@ -9751,6 +9807,7 @@ impl<'allocator, 'attachment, 'main>
     }
 }
 
+#[cfg(test)]
 impl<'allocator, 'attachment, 'main> OwnerExitClientAllocator
     for CurrentThreadPageOwnerPreparation<'allocator, 'attachment, 'main>
 {
@@ -9798,6 +9855,7 @@ impl<'allocator, 'attachment, 'main> OwnerExitClientAllocator
 /// [`finish_current_thread_after_user_destructors`]. A failed preparation
 /// restores every local client before the ordinary all-free engine finish;
 /// any unfinished engine remains terminal.
+#[cfg(test)]
 fn install_current_thread_page_owner(
     prepare: impl FnOnce(
         &mut CurrentThreadPageOwnerPreparation<'_, '_, '_>,
@@ -9896,6 +9954,7 @@ fn install_current_thread_page_owner(
 /// Builds the mixed Gate 5C source image through
 /// [`install_current_thread_page_owner`]. The workload remains a regression
 /// fixture; it is not the runtime's page-owner state.
+#[cfg(test)]
 fn install_mapped_regular_owner_exit_page_owner(
     publish_before_exit: TicketZeroRemoteFreePublisher,
     free_after_exit: TicketZeroOwnerExitFreeConsumer,
@@ -9935,6 +9994,7 @@ fn install_mapped_regular_owner_exit_page_owner(
 /// typed mapped regular route to B, which must adopt and drain the exact
 /// page. The predecessor workload is consumed before suspension, so it is
 /// never a property of the TLS lifecycle state.
+#[cfg(test)]
 fn install_mapped_regular_owner_exit_reclaim_page_owner(
     predecessor: MappedRegularReclaimPredecessor,
     reclaim_after_exit: TicketZeroOwnerExitReclaimConsumer,
@@ -10333,6 +10393,7 @@ enum PersistentRemoteWorkerResult {
 /// may release A's worker admission. It remains a pointer-private test seam,
 /// not a libc backend or a general post-exit free API.
 #[doc(hidden)]
+#[cfg(test)]
 pub fn ticket_zero_later_thread_mapped_regular_owner_exit_through_normal_finish(
     publish_before_exit: TicketZeroRemoteFreePublisher,
     free_after_exit: TicketZeroOwnerExitFreeConsumer,
@@ -10402,6 +10463,7 @@ enum ParkedSessionPostExitPublication {
 /// general sequential route. No raw client address, allocator, page identity,
 /// or general post-exit selector crosses this Rust-only test seam.
 #[doc(hidden)]
+#[cfg(test)]
 pub fn ticket_zero_later_thread_session_owner_exit_through_normal_finish(
     publish_before_exit: TicketZeroRemoteFreePublisher,
     free_after_exit: TicketZeroOwnerExitFreeConsumer,
@@ -10419,6 +10481,7 @@ pub fn ticket_zero_later_thread_session_owner_exit_through_normal_finish(
 /// route and may lend C/D scoped atomic producers only after B has the source
 /// low-bit claim. This is not a public producer or pointer-handoff API.
 #[doc(hidden)]
+#[cfg(test)]
 pub fn ticket_zero_later_thread_session_owner_exit_with_post_exit_publisher_through_normal_finish(
     publish_before_exit: TicketZeroRemoteFreePublisher,
     free_after_exit: TicketZeroOwnerExitFreeConsumer,
@@ -10438,6 +10501,7 @@ pub fn ticket_zero_later_thread_session_owner_exit_with_post_exit_publisher_thro
 /// owner bit. This is neither a general concurrent free route nor a public
 /// pointer-handoff API.
 #[doc(hidden)]
+#[cfg(test)]
 pub fn ticket_zero_later_thread_session_owner_exit_with_post_exit_mapped_medium_publisher_through_normal_finish(
     publish_before_exit: TicketZeroRemoteFreePublisher,
     free_after_exit: TicketZeroOwnerExitFreeConsumer,
@@ -10457,6 +10521,7 @@ pub fn ticket_zero_later_thread_session_owner_exit_with_post_exit_mapped_medium_
 /// the page's source low owner bit. This remains neither a general concurrent
 /// free route nor a public pointer-handoff API.
 #[doc(hidden)]
+#[cfg(test)]
 pub fn ticket_zero_later_thread_session_owner_exit_with_initial_mapped_medium_post_exit_publisher_through_normal_finish(
     publish_before_exit: TicketZeroRemoteFreePublisher,
     free_after_exit: TicketZeroOwnerExitFreeConsumer,
@@ -10468,6 +10533,7 @@ pub fn ticket_zero_later_thread_session_owner_exit_with_initial_mapped_medium_po
     )
 }
 
+#[cfg(test)]
 fn ticket_zero_later_thread_session_owner_exit_through_normal_finish_with_post_exit_publication(
     publish_before_exit: TicketZeroRemoteFreePublisher,
     free_after_exit: TicketZeroOwnerExitFreeConsumer,
@@ -10618,6 +10684,7 @@ fn ticket_zero_later_thread_session_owner_exit_through_normal_finish_with_post_e
 /// B completes its own attachment; this seam never supplies an address to the
 /// caller or substitutes the no-page finalizer after abandonment.
 #[doc(hidden)]
+#[cfg(test)]
 pub fn ticket_zero_later_thread_retired_then_live_session_owner_exit_through_normal_finish(
     free_after_exit: TicketZeroOwnerExitFreeConsumer,
 ) -> TicketZeroLaterThreadPageResult {
@@ -10692,6 +10759,7 @@ pub fn ticket_zero_later_thread_retired_then_live_session_owner_exit_through_nor
 /// routing or a permission to finalize a live session through the no-page
 /// path.
 #[doc(hidden)]
+#[cfg(test)]
 pub fn ticket_zero_later_thread_all_free_session_through_normal_finish(
 ) -> TicketZeroLaterThreadPageResult {
     match attach_current_thread() {
@@ -10748,6 +10816,7 @@ pub fn ticket_zero_later_thread_all_free_session_through_normal_finish(
 /// may it release this worker's admission. This is a Rust-only regression
 /// seam, not allocator routing.
 #[doc(hidden)]
+#[cfg(test)]
 pub fn ticket_zero_later_thread_source_published_session_through_normal_finish(
     publish_before_exit: TicketZeroRemoteFreePublisher,
 ) -> TicketZeroLaterThreadPageResult {
@@ -10817,6 +10886,7 @@ pub fn ticket_zero_later_thread_source_published_session_through_normal_finish(
 /// releasing this worker's admission. This remains a pointer-private Rust-only
 /// regression seam, not allocator routing or a general remote-free API.
 #[doc(hidden)]
+#[cfg(test)]
 pub fn ticket_zero_later_thread_single_source_published_session_through_normal_finish(
     publish_before_exit: TicketZeroSingleRemoteFreePublisher,
 ) -> TicketZeroLaterThreadPageResult {
@@ -10881,6 +10951,7 @@ pub fn ticket_zero_later_thread_single_source_published_session_through_normal_f
 /// the parked engine for a no-page attachment and release this worker's
 /// admission. This is a Rust-only regression seam, not allocator routing.
 #[doc(hidden)]
+#[cfg(test)]
 pub fn ticket_zero_later_thread_active_session_rejects_normal_finish(
 ) -> TicketZeroLaterThreadPageResult {
     match attach_current_thread() {
@@ -10930,6 +11001,7 @@ pub fn ticket_zero_later_thread_active_session_rejects_normal_finish(
 /// used, drained, and terminally finished it. This remains a pointer-private
 /// test seam, not a general reclamation or libc allocator interface.
 #[doc(hidden)]
+#[cfg(test)]
 pub fn ticket_zero_later_thread_mapped_regular_owner_exit_reclaim_through_normal_finish(
     reclaim_after_exit: TicketZeroOwnerExitReclaimConsumer,
 ) -> TicketZeroLaterThreadPageResult {
@@ -10949,6 +11021,7 @@ pub fn ticket_zero_later_thread_mapped_regular_owner_exit_reclaim_through_normal
 /// A's admission. This is private lifecycle evidence, not an aggregate-route
 /// claim, a public reclamation API, or a libc allocator interface.
 #[doc(hidden)]
+#[cfg(test)]
 pub fn ticket_zero_later_thread_direct_small_owner_exit_reclaim_through_normal_finish(
     reclaim_after_exit: TicketZeroOwnerExitReclaimConsumer,
 ) -> TicketZeroLaterThreadPageResult {
@@ -10958,6 +11031,7 @@ pub fn ticket_zero_later_thread_direct_small_owner_exit_reclaim_through_normal_f
     )
 }
 
+#[cfg(test)]
 fn ticket_zero_later_thread_owner_exit_reclaim_through_normal_finish(
     predecessor: MappedRegularReclaimPredecessor,
     reclaim_after_exit: TicketZeroOwnerExitReclaimConsumer,
@@ -11029,6 +11103,7 @@ fn ticket_zero_later_thread_owner_exit_reclaim_through_normal_finish(
 // fallback path.
 #[cfg(any())]
 #[doc(hidden)]
+#[cfg(test)]
 pub fn ticket_zero_later_thread_mapped_regular_owner_exit(
     publish_before_exit: TicketZeroRemoteFreePublisher,
     free_after_exit: TicketZeroOwnerExitFreeConsumer,
@@ -11225,6 +11300,7 @@ enum OwnerExitReclaimWorkerResult {
 /// finalizer crosses the A/B boundary.
 #[cfg(any())]
 #[doc(hidden)]
+#[cfg(test)]
 pub fn ticket_zero_later_thread_mapped_regular_owner_exit_reclaim(
     reclaim_after_exit: TicketZeroOwnerExitReclaimConsumer,
 ) -> TicketZeroLaterThreadPageResult {
@@ -11620,10 +11696,12 @@ pub fn attach_current_thread() -> ThreadAttachResult {
         RUNTIME_PROCESS.retain();
         return ThreadAttachResult::Retained;
     };
+    #[cfg(test)]
     let Some(completion_generation) = claim_native_post_exit_completion_owner_generation() else {
-        // A wrapped completion identity could make a process-lifetime
-        // completed registry entry appear to belong to this new B. Preserve
-        // the claimed admission and close the native lifecycle instead.
+        // A wrapped test-only completion identity could make a
+        // process-lifetime oracle entry appear to belong to this new B.
+        // Preserve the claimed admission rather than letting the oracle
+        // witness treat two attachments as one.
         slot.state = ThreadLifecycleState::Retained;
         RUNTIME_PROCESS.retain();
         return ThreadAttachResult::Retained;
@@ -11636,6 +11714,7 @@ pub fn attach_current_thread() -> ThreadAttachResult {
     match unsafe { MainHeapThreadAttachment::begin(main_heap, config) } {
         Ok(attachment) => {
             slot.attachment = Some(attachment);
+            #[cfg(test)]
             slot.begin_post_exit_route_completion_lifecycle(completion_generation);
             slot.state = ThreadLifecycleState::Attached;
             ThreadAttachResult::Attached
@@ -11660,14 +11739,25 @@ pub fn attach_current_thread() -> ThreadAttachResult {
 }
 
 /// Finishes one attached worker after libc's cleanup-handler and TSD phases.
+///
+/// A pointer-first post-owner-exit free reaches its PageMap/W03 terminal state
+/// at the free boundary. This worker therefore finishes only its own
+/// attachment and admission; it never completes an exited owner's release.
 #[doc(hidden)]
+#[cfg(not(test))]
 pub fn finish_current_thread_after_user_destructors() -> ThreadFinishResult {
     if current_thread_has_native_persistent_owner() {
-        let result = finish_current_thread_native_persistent_owner_after_user_destructors();
-        if result != ThreadFinishResult::Finished {
-            return result;
-        }
-        return finish_current_thread_post_exit_route_completions_after_user_destructors();
+        return finish_current_thread_native_persistent_owner_after_user_destructors();
+    }
+
+    finish_current_thread_no_page_after_user_destructors()
+}
+
+#[doc(hidden)]
+#[cfg(test)]
+pub fn finish_current_thread_after_user_destructors() -> ThreadFinishResult {
+    if current_thread_has_native_persistent_owner() {
+        return finish_current_thread_native_persistent_owner_after_user_destructors();
     }
 
     let page_owner = {
@@ -11680,63 +11770,9 @@ pub fn finish_current_thread_after_user_destructors() -> ThreadFinishResult {
         }
     };
 
-    let result = match page_owner {
+    match page_owner {
         Some(owner) => finish_current_thread_page_owner_after_user_destructors(owner),
         None => finish_current_thread_no_page_after_user_destructors(),
-    };
-    if result != ThreadFinishResult::Finished {
-        return result;
-    }
-
-    finish_current_thread_post_exit_route_completions_after_user_destructors()
-}
-/// Removes every detached-route scheduler token and releases every matched A
-/// admission only after this current B worker has completed its own attachment
-/// lifecycle.
-///
-/// Each completion is written by the native post-exit route only after its
-/// final PageMap release. Its stable entry carries the parked token and A-side
-/// proof, while B's compiler TLS carries only the opaque owner identity and
-/// scalar count. That keeps client addresses private and prevents a normal
-/// no-page finalizer from consuming an abandoned source route. B may receive
-/// several such completions, but neither the dormant pair nor any A admission
-/// becomes quiescent until this ordinary B teardown has succeeded.
-fn finish_current_thread_post_exit_route_completions_after_user_destructors() -> ThreadFinishResult {
-    let slot_pointer = current_thread_slot_pointer();
-    let (owner, expected_count) = {
-        // SAFETY: this function runs on the same B thread that has just
-        // completed the ordinary attachment finish. No registry entry may
-        // dereference this opaque identity; it is used only for equality.
-        let slot = unsafe { &mut *slot_pointer.as_ptr() };
-        let Some(completion) = slot.post_exit_route_completion_owner_after_finish(slot_pointer)
-        else {
-            slot.state = ThreadLifecycleState::Retained;
-            RUNTIME_PROCESS.retain_page_owner();
-            return ThreadFinishResult::Retained;
-        };
-        completion
-    };
-
-    match NATIVE_POST_EXIT_ROUTE.finish_completions_for_owner(owner, expected_count) {
-        NativePostExitRouteCompletionsFinishResult::Finished => {
-            // SAFETY: only this current B can change its TLS scalar after the
-            // source finish. The registry already consumed exactly the count
-            // it observed above; a mismatch is terminal rather than a reason
-            // to replay a completed route.
-            let slot = unsafe { &mut *slot_pointer.as_ptr() };
-            if slot.finish_post_exit_route_completions(owner, expected_count) {
-                ThreadFinishResult::Finished
-            } else {
-                slot.state = ThreadLifecycleState::Retained;
-                RUNTIME_PROCESS.retain_page_owner();
-                ThreadFinishResult::Retained
-            }
-        }
-        NativePostExitRouteCompletionsFinishResult::Retained => {
-            let slot = unsafe { &mut *slot_pointer.as_ptr() };
-            slot.state = ThreadLifecycleState::Retained;
-            ThreadFinishResult::Retained
-        }
     }
 }
 
@@ -11853,6 +11889,7 @@ fn finish_current_thread_no_page_after_user_destructors() -> ThreadFinishResult 
 /// admission proof. Both aggregate-free and sole-page-reclaim outcomes use
 /// this one boundary; neither may invoke the ordinary no-page finalizer for
 /// A after its source traversal already tore down the old Theap/TLD.
+#[cfg(test)]
 fn finish_current_thread_page_owner_after_post_exit_route(
     operation: RuntimeDormantPageOperation,
     proof: TicketZeroOwnerExitRouteFinished,
@@ -11876,6 +11913,7 @@ fn finish_current_thread_page_owner_after_post_exit_route(
 /// consumer. The route retains A's admission until that consumer has adopted,
 /// used, drained, and finished B; both source-valid medium and direct-small
 /// predecessors converge here after their distinct A-side source drains.
+#[cfg(test)]
 fn finish_current_thread_page_owner_reclaim_route(
     operation: RuntimeDormantPageOperation,
     route: MainHeapThreadProcessPageExitMappedRegularRoute<'static>,
@@ -11928,6 +11966,7 @@ fn finish_current_thread_page_owner_reclaim_route(
 /// teardown before its worker-admission claim can leave the runtime. Only a
 /// live or transferred client stays terminally retained for the typed
 /// owner-exit path instead.
+#[cfg(test)]
 fn finish_current_thread_all_free_page_owner_after_user_destructors(
     mut session: CurrentThreadPageOwnerSession,
 ) -> ThreadFinishResult {
@@ -12099,6 +12138,7 @@ fn finish_current_thread_all_free_page_owner_after_user_destructors(
 /// of A's client identities and admission claim until B returns its typed
 /// terminal proof.  Every failure stays terminal; this function must never
 /// fall back to [`finish_current_thread_no_page_after_user_destructors`].
+#[cfg(test)]
 fn finish_current_thread_page_owner_after_user_destructors(
     owner: ThreadLifecyclePageOwner,
 ) -> ThreadFinishResult {

@@ -1600,7 +1600,7 @@ class ContractTests(unittest.TestCase):
         header = RUNNER.RUNTIME_TICKET_ZERO_ADAPTER_HEADER.read_text(encoding="utf-8")
         self.assertEqual(
             RUNNER.validate_runtime_ticket_zero_adapter_contract(contract, header),
-            {"expected_adapter_symbol_count": 11},
+            {"expected_adapter_symbol_count": 9},
         )
         contract["lifecycle_audit"]["fixture_success_line"] = "stale success line"
         with self.assertRaisesRegex(RUNNER.HarnessError, "lifecycle audit contract"):
@@ -1648,8 +1648,8 @@ class ContractTests(unittest.TestCase):
             ),
             {
                 "seed": "0xd1b54a32d192ed03",
-                "worker_route_invocation_count": 512,
-                "worker_routes_per_cycle": 4,
+                "worker_route_invocation_count": 256,
+                "worker_routes_per_cycle": 2,
             },
         )
         self.assertEqual(
@@ -1705,7 +1705,7 @@ class ContractTests(unittest.TestCase):
         self.assertEqual(
             summary["full_lane"],
             {
-                "routes_per_cycle": 4,
+                "routes_per_cycle": 2,
                 "stress_seed": "0xd1b54a32d192ed03",
                 "watchdog_seconds": 30,
                 "worker_cycles": 128,
@@ -1833,8 +1833,8 @@ class ContractTests(unittest.TestCase):
                     "worker_cycles": 128,
                     "stress_schedule": {
                         "seed": "0xd1b54a32d192ed03",
-                        "worker_route_invocation_count": 512,
-                        "worker_routes_per_cycle": 4,
+                        "worker_route_invocation_count": 256,
+                        "worker_routes_per_cycle": 2,
                     },
                     "lifecycle_stability": {
                         "audit_snapshot_count": 129,

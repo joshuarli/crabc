@@ -1144,11 +1144,11 @@ transfer capability.
   and uses the exact page, drains its engine, and completes B's attachment.
   Its independent eight-cycle audit permits the one retained PageMap submap
   warmup, then proves exact state and metadata-high-water plateaus. The
-  prefixed C `allocator --churn` lane executes all four pointer-private worker
-  routes once per deterministic seed-shuffled cycle, including the bounded
-  post-exit B/C handoff and alternating reclamation source, for 128 cycles
+  prefixed C `allocator --churn` lane executes its two remaining
+  pointer-private worker routes once per deterministic seed-shuffled cycle for
+  128 cycles
   from recorded seed `0xd1b54a32d192ed03` under its 30-second watchdog. The
-  opt-in `allocator --soak` lane executes the same four-worker schedule for
+  opt-in `allocator --soak` lane executes the same two-worker schedule for
   1,024 cycles from seed `0x94d049bb133111eb` under a separate 180-second
   watchdog; and
   `unfinished_later_page_engine_poison_retains_the_attachment_and_process_map`
@@ -1362,10 +1362,9 @@ without an irreversible speculative claim. A resulting aggregate-free or sole-ad
   adopts/uses and drains, the exact route; the common completion boundary
   settles ticket zero only after B returns its typed proof. Rejected, retained,
   poisoned, or mismatched route outcomes remain terminal and never invoke A's
-  no-page finalizer. The C ABI remains eleven prefixed test symbols with no client
-  address or generic finalizer exposure. Its existing reclamation symbol
-  alternates source-valid sole-medium and direct-small predecessors; it does
-  not expose a direct-small C operation or a generic finalizer.
+  no-page finalizer. This exact-client façade is now `#[cfg(test)]` only. The
+  C ABI remains nine prefixed test symbols with no client address, generic
+  finalizer, owner-exit, or reclamation exposure.
 - **Evidence:** `crabc-mimalloc/tests/runtime_lifecycle.rs` pauses the mixed
   route after transfer, proves ticket zero remains unavailable until B's
   terminal proof, then drives the sole-medium and direct-small routes through

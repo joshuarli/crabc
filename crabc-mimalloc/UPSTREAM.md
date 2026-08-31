@@ -299,34 +299,15 @@ trace covers null/nonzero, zero-size, below-half, exact-fit, oversize, and
 failure-preservation cases. This is a crate-private engine behavior rather than
 a public allocator API; native AArch64 revalidation remains pending.
 
-The same test-only runtime layer separately exercises the general post-exit
-route through the ordinary post-destructor finish boundary. Its mixed owner A
-keeps a direct-small page, a non-direct-small page, two full medium pages, a
-distinct one-client force-empty large page, a distinct two-client live large
-page, one live arena singleton, and one live OS-aligned singleton, then
-suspends that exact engine through the generic `ThreadLifecycleSlot` transition.
-`CurrentThreadPageOwnerPreparation` mints every A-side allocation as a
-non-copyable private client capability in an explicit inline ledger; it must
-be locally freed, joined-published before exit, or transferred exactly once
-into the typed route, and omitted, duplicate, or caller-selected
-over-capacity sets reject before the engine can suspend. Separately,
-`CurrentThreadPageOwnerSession` starts with the same inline ledger beside one
-generation-checked parked engine, then grows private metadata-backed storage
-before an additional native C allocation can escape across ordinary allocation,
-local-free, and joined pre-exit-publication operations.
-`prepare_sequential_exit` consumes that session by transferring every still
-live ledger entry without accepting a workload-shaped client list, moving any
-metadata-backed storage with the opaque route until its final detached client
-has terminally released; a source-published entry remains solely with source
-collection. For the one
-source-valid post-exit B/C/D interleaving, the session moves three
-generation-checked private keys into the scoped publication group only after it
-validates all three while A still owns the parked ledger. The TLS state is therefore
-either an active session or a prepared parked engine with typed private route
-facts, never the mixed workload object. When an active session
-has no locally live entry, the dispatcher resumes its exact engine, runs the
-source fast-slot/all-free page drain, finishes the attachment, and only then
-releases A's admission. A joined source-published entry stays page-bearing
+The following former runtime-ledger narrative is retained solely to map the
+historical direct-engine fixtures. `CurrentThreadPageOwnerSession`,
+`CurrentThreadPageOwnerPreparation`, `PreparedOwnerExitClients`, and the
+`TicketZeroOwnerExit*` facade now compile only under `#[cfg(test)]`; none is a
+selected native-runtime route or C ABI. Production post-owner-exit free,
+usable-size, and reallocation derive the source page from the supplied pointer
+and use PageMap/W03 and abandoned-state operations without retaining A's
+admission through B's teardown. A joined source-published entry in the
+historical oracle stays page-bearing
 until that drain force-collects its remote head; a live session instead remains
 outside the no-page finalizer. Isolated warmed ticket-zero
 source-published-session regressions prove one or two joined publications
@@ -372,7 +353,7 @@ For the two source-valid post-exit B/C/D interleavings, pinned
 maps to `abandoned::free_regular_after_failed_reclaim_select_map_with_after_claim`,
 `single_thread::ThreadExitMappedRegularPagesPostExitParts::{remote_free_after_thread_exit_with_direct_small_publishers,remote_free_after_thread_exit_with_mapped_medium_publishers}`,
 and `main_heap_page::MainHeapThreadProcessPageExitMappedRegularPagesRoute::{remote_free_after_thread_exit_with_direct_small_publishers,remote_free_after_thread_exit_with_mapped_medium_publishers}`.
-The runtime exposes these only as the callback-scoped
+The historical test-only oracle exposes these only as the callback-scoped
 `TicketZeroOwnerExitRemoteFreeProducerPair` and nominally distinct
 `TicketZeroOwnerExitMappedMediumRemoteFreeProducerPair` inside their matching
 `TicketZeroOwnerExitFreeRoute` methods.
@@ -388,7 +369,7 @@ or generic finalizer authority to C or D. A missing or wrong-shape publisher
 retains the route rather than allowing B's normal no-page finalizer to stand in
 for the source interleaving.
 
-The same source-specific runtime row also records the distinct sole-medium
+The same historical test-only mapping also records the distinct sole-medium
 reclamation witness. A holds two private 64-KiB clients, returns one matching
 third client to its local free list, suspends that live engine into the same
 TLS owner, and consumes the general owner-exit traversal through ordinary
@@ -402,8 +383,9 @@ its normal attachment before it can return
 `TicketZeroOwnerExitRouteFinished`. That typed completion is the only path
 that releases A's admission. Rejection retains the source route, while a
 post-transfer error retains the concrete process/thread boundary instead of
-calling a generic no-page finalizer. The native C fixture executes its four
-existing pointer-private workers once per deterministic seed-shuffled cycle:
+calling a generic no-page finalizer. The current native C fixture does not
+execute this historical route: it schedules its two remaining pointer-private
+workers once per deterministic seed-shuffled cycle:
 the 128-cycle, 30-second `allocator --churn` lane records seed
 `0xd1b54a32d192ed03`, while the opt-in 1,024-cycle, 180-second
 `allocator --soak` lane records `0x94d049bb133111eb`. The isolated state audit
@@ -420,10 +402,10 @@ direct-cache image plus its immediate head before it transfers the same opaque
 `TicketZeroOwnerExitReclaimRoute` to B. B adopts, uses, drains, and finishes
 the exact page before its typed proof may release A's admission. The held-route
 Rust lifecycle integration pauses that boundary and then repeats eight
-direct-small normal-finish/reclaim cycles. The deterministic state audit and
-existing C reclamation fixture alternate this source with sole-medium
-reclamation without adding a direct-specific C symbol. They remain bounded
-source-specific evidence, not a general reclamation route.
+direct-small normal-finish/reclaim cycles. The deterministic state audit
+retains this source-specific historical evidence; the current C fixture no
+longer alternates it. These remain bounded direct-test evidence, not a general
+reclamation route.
 
 ### Current mapped page-area correction
 

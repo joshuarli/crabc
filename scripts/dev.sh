@@ -453,9 +453,9 @@ case "$command" in
                 run_in_container python3 compat/allocator/run.py --full
                 ;;
             --churn)
-                # This bounded lane repeats the existing mixed local,
-                # remote-free, mixed owner-exit, and sole-reclamation pthread
-                # witnesses under a watchdog; it is not a general allocator pass.
+                # This bounded lane repeats the mixed-local and live-owner
+                # remote-free pthread witnesses under a watchdog; it is not a
+                # general allocator pass.
                 run_in_container python3 compat/allocator/run.py --churn
                 ;;
             --soak)
@@ -526,26 +526,22 @@ case "$command" in
             --test native_live_remote_free \
             --test native_two_live_remote_owners \
             --test native_live_remote_owner_registry_reuse \
-            --test runtime_lifecycle_session_post_exit_publisher \
-            --test runtime_lifecycle_session_post_exit_mapped_medium_publisher \
-            --test runtime_lifecycle_session_post_exit_mapped_medium_requires_publisher \
-            --test runtime_lifecycle_session_post_exit_mismatch_publisher \
             -- --test-threads=1
-        # These direct tests compile scalar-only post-exit registry audits
-        # behind their own default-off feature. They establish detached-route
-        # completion high-waters without exposing a route or client capability.
+        # These direct tests compile scalar-only lifecycle and admission audits
+        # behind their own default-off feature. They establish that pointer-
+        # first post-exit operations leave B teardown independent of A.
         run_in_container cargo test -p crabc-mimalloc \
             --features native-runtime-test-audit \
-            --test native_post_exit_registry_high_water \
             --test native_multiple_post_exit_completions \
             --test native_terminal_completion_live_remote_free \
             -- --test-threads=1
         # The next-`munmap` injection is a separately gated direct witness:
-        # a failed OS terminal release must retain the opaque B-side route and
-        # A's scheduler/admission claim instead of manufacturing completion.
+        # a failed OS terminal release must retain its PageMap source without
+        # making B's independently empty owner terminal.
         run_in_container cargo test -p crabc-mimalloc \
             --features native-runtime-test-audit,native-runtime-test-fault \
             --test native_post_exit_failed_os_release \
+            --test native_pointer_first_post_exit_os_release \
             -- --test-threads=1
         # A joined pointer-first source publication is collected during A's
         # ordinary persistent-owner teardown before a fresh releaser frees
