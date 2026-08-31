@@ -50,7 +50,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 41)
-        self.assertEqual(report["verified_artifact_count"], 206)
+        self.assertEqual(report["verified_artifact_count"], 207)
         self.assertEqual(report["header_layout_probe_count"], 47)
         self.assertEqual(report["public_header_inventory_count"], 183)
         self.assertEqual(report["header_foundation_header_count"], 191)
@@ -15807,6 +15807,115 @@ class X86ParityLedgerTests(unittest.TestCase):
         assert isinstance(evidence, list) and isinstance(evidence[0], dict)
         evidence[0]["command"] = "./scripts/dev-x86_64.sh relative-sleep-reference"
         with self.assertRaisesRegex(ledger.LedgerError, "closed libc-usleep command"):
+            ledger.validate_ledger(data)
+
+    def test_clock_getcpuclockid_artifact_keeps_its_closed_static_contract(self) -> None:
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict)
+            and entry["id"] == "static-c-clock-getcpuclockid"
+        )
+        self.assertNotIn("capabilities", artifact)
+        for owner in (
+            "libc/src/c_abi/x86_64/clock_getcpuclockid.rs",
+            "libc/src/c_abi/x86_64/syscall.rs",
+            "include/time.h",
+            "compat/x86_64/clock_getcpuclockid_header_abi_probe.c",
+            "compat/x86_64/clock_getcpuclockid_header_abi_probe.cpp",
+            "compat/x86_64/run_clock_getcpuclockid_header_abi.sh",
+            "compat/x86_64/libc_clock_getcpuclockid_probe.c",
+            "compat/x86_64/libc_clock_getcpuclockid_start.S",
+            "compat/x86_64/run_libc_clock_getcpuclockid.sh",
+            "compat/x86_64/aarch64_parity_inventory.json",
+            "scripts/check_structure.py",
+        ):
+            self.assertIn(owner, artifact["source_owners"])
+        self.assertEqual(
+            {evidence["command"] for evidence in artifact["native_evidence"]},
+            {"./scripts/dev-x86_64.sh libc-clock-getcpuclockid"},
+        )
+        for phrase in (
+            "one-symbol process CPU-clock-ID compatibility artifact",
+            "planned `libc.posix-runtime`",
+            "exactly `clock_getcpuclockid`",
+            "`src/time/clock_getcpuclockid.c`",
+            "`(-pid-1)*8U + 2`",
+            "`clock_getres=229`",
+            "`EINVAL=22`",
+            "positive `ESRCH=3`",
+            "only after success",
+            "strict/default hiding",
+            "POSIX.1-2008/XOPEN=700/GNU visibility",
+            "INT_MAX",
+            "INT_MIN",
+            "`clock`, `clock_gettime`, C `clock_getres`",
+            "`pthread_getcpuclockid`",
+            "handlers/actions",
+            "signal masks",
+            "signal delivery",
+            "signal-family/timer-family completion, promotion, or public x86 support",
+        ):
+            self.assertIn(phrase, artifact["description"])
+        prerequisites = artifact["x86_abi_prerequisites"]
+        self.assertTrue(
+            any(
+                "int clock_getcpuclockid(pid_t, clockid_t *)" in prerequisite
+                and "edi" in prerequisite
+                and "rsi" in prerequisite
+                and "eax" in prerequisite
+                and "four-byte" in prerequisite
+                and "16-byte align-eight" in prerequisite
+                for prerequisite in prerequisites
+            )
+        )
+        self.assertTrue(
+            any(
+                "src/time/clock_getcpuclockid.c" in prerequisite
+                and "(-pid-1)*8U + 2" in prerequisite
+                and "SYS_clock_getres" in prerequisite
+                and "clock_getres=229" in prerequisite
+                and "-EINVAL" in prerequisite
+                and "-ESRCH" in prerequisite
+                and "INT_MIN" in prerequisite
+                and "errno/TLS" in prerequisite
+                for prerequisite in prerequisites
+            )
+        )
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict)
+            and entry["id"] == "static-c-clock-getcpuclockid"
+        )
+        artifact["description"] = "private CPU-clock helper"
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "static-c-clock-getcpuclockid description omits"
+        ):
+            ledger.validate_ledger(data)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict)
+            and entry["id"] == "static-c-clock-getcpuclockid"
+        )
+        evidence = artifact["native_evidence"]
+        assert isinstance(evidence, list) and isinstance(evidence[0], dict)
+        evidence[0]["command"] = "./scripts/dev-x86_64.sh time-observation-reference"
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "closed libc-clock-getcpuclockid command"
+        ):
             ledger.validate_ledger(data)
 
     def test_ftime_artifact_keeps_its_closed_static_contract(self) -> None:

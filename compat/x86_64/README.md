@@ -404,6 +404,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-alarm
 ./scripts/dev-x86_64.sh libc-usleep
 ./scripts/dev-x86_64.sh libc-ftime
+./scripts/dev-x86_64.sh libc-clock-getcpuclockid
 ./scripts/dev-x86_64.sh libc-sigaddset-sigdelset-sigfillset
 ./scripts/dev-x86_64.sh libc-static-tls-v1
 ./scripts/dev-x86_64.sh libc-crt-static-tls
@@ -481,6 +482,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-nanosleep
 ./scripts/dev-x86_64.sh libc-usleep
 ./scripts/dev-x86_64.sh libc-ftime
+./scripts/dev-x86_64.sh libc-clock-getcpuclockid
 ./scripts/dev-x86_64.sh libc-clock-nanosleep
 ./scripts/dev-x86_64.sh libc-descriptor-entry
 ./scripts/dev-x86_64.sh libc-access
@@ -3076,6 +3078,20 @@ fixture proves a realtime millisecond window, stale errno preservation, and
 the fixed fields. It does not select C time policy, calendar/timezone
 conversion, clock mutation, sleep, alarms/timers, signal actions/masks/
 delivery, pthread policy, family completion, promotion, or public x86 support.
+
+`libc-clock-getcpuclockid` is a separate
+`static-c-clock-getcpuclockid` `verified_artifact` within planned
+`libc.posix-runtime`. Its one-symbol project-header C body first runs through
+pinned musl 1.2.6 and then through a true `-nostdlib -static` candidate. It
+maps only `src/time/clock_getcpuclockid.c`: the 32-bit
+`(-pid-1)*8U + 2` process-clock encoding is accepted only after direct
+`clock_getres=229`; raw `EINVAL` becomes positive `ESRCH`, and the caller's
+`clockid_t` changes only on success. The C/C++ `<time.h>` matrix proves
+strict/default hiding, POSIX/XOPEN/GNU visibility, exact LP64 declarations,
+and unmangled linkage. The fixture covers pid zero, self, the defined
+`INT_MAX` wrap, and a missing pid without an output write. It has no C errno
+or TLS, general C clock, calendar, timer, scheduler, pthread, signal, or
+process-lifecycle path, and does not promote x86 support.
 
 `libc-sigaddset-sigdelset-sigfillset` is a separate
 `static-c-sigset-mutation` `verified_artifact` within planned
@@ -5765,6 +5781,7 @@ Apart from the narrowly named `libc-stat-compat`, `libc-credentials`,
 `libc-sigrtmax`, `libc-sigrtmin`, `libc-sched-getscheduler`,
 `libc-sigaddset-sigdelset-sigfillset`,
 `libc-sigrtmax`, `libc-sigrtmin`, `libc-alarm`, `libc-usleep`, `libc-ftime`,
+`libc-clock-getcpuclockid`,
 `libc-sigaddset-sigdelset-sigfillset`,
 `libc-static-tls-v1`, `libc-crt-static-tls`,
 `libc-pthread-create-join-tls`, `libc-pthread-identity`, `libc-c11-lifecycle`,
@@ -5802,6 +5819,7 @@ Apart from the narrowly named `libc-stat-compat`, `libc-credentials`,
 `libc-nanosleep`,
 `libc-usleep`,
 `libc-ftime`,
+`libc-clock-getcpuclockid`,
 `libc-clock-nanosleep`,
 `libc-descriptor-entry`,
 `libc-access`,

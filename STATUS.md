@@ -1874,6 +1874,19 @@ calendar/timezone, or clock-mutation policy; sleep, alarms/timers, signal
 actions/masks/delivery, pthread policy, libc.so, CRT, loader, sysroot,
 family/platform parity, promotion, or public x86 support.
 
+`./scripts/dev-x86_64.sh libc-clock-getcpuclockid` is a separate private
+`static-c-clock-getcpuclockid` artifact inside planned `libc.posix-runtime`.
+Its pinned-musl/project-header C body and freestanding-static candidate map
+only musl 1.2.6 `src/time/clock_getcpuclockid.c`: 32-bit
+`(-pid-1)*8U + 2` encoding, direct `clock_getres=229` validation, raw
+`EINVAL` to positive `ESRCH`, and a post-success `clockid_t` write. Its
+dedicated C/C++ `<time.h>` matrix proves strict/default hiding and
+POSIX/XOPEN/GNU visibility with exact LP64 declaration and C++ linkage; the
+shared fixture proves pid-zero/self/defined-`INT_MAX` behavior plus missing
+pid `ESRCH` without a write. It owns no errno/TLS, general C clock, calendar,
+timer, scheduler, pthread, signal, or process-lifecycle behavior and does not
+promote family/platform parity or public x86 support.
+
 `./scripts/dev-x86_64.sh libc-sigaddset-sigdelset-sigfillset` is a separate
 private `static-c-sigset-mutation` artifact inside planned
 `libc.posix-runtime`. Its three-symbol pinned-musl/freestanding-static C proof

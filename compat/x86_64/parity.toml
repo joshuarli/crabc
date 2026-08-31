@@ -3116,6 +3116,55 @@ oracle = [
 ]
 
 [[family.verified_artifact]]
+id = "static-c-clock-getcpuclockid"
+description = "Private native x86 selected-static-archive one-symbol process CPU-clock-ID compatibility artifact inside planned `libc.posix-runtime`. One dependency-free `crabc-libc` archive exposes exactly `clock_getcpuclockid`; its freestanding project-header C fixture first runs through pinned musl 1.2.6 and then through a true `-nostdlib -static` candidate. Pinned musl's `src/time/clock_getcpuclockid.c` computes `(-pid-1)*8U + 2`, asks raw Linux `clock_getres=229` whether that encoded clock exists, maps raw `EINVAL=22` to positive `ESRCH=3`, returns any other raw error as a positive status, and writes the caller's `clockid_t` only after success. The public C11/C++17 `<time.h>` feature matrix proves exact `int clock_getcpuclockid(pid_t, clockid_t *)`, four-byte `pid_t`/`clockid_t`, 16-byte align-eight `timespec`, `CLOCK_PROCESS_CPUTIME_ID=2`, strict/default hiding, POSIX.1-2008/XOPEN=700/GNU visibility, and unmangled C++ linkage. The shared fixture proves pid zero's `-6`, self encoding and valid resolution, source-defined `INT_MAX` wrap to `CLOCK_PROCESS_CPUTIME_ID`, and missing `INT_MAX-1` as `ESRCH` without overwriting its output. Musl's source has signed overflow before its unsigned multiplication for `INT_MIN`; that input and a success-path invalid output pointer remain outside this source-faithful private boundary. It does not select `clock`, `clock_gettime`, C `clock_getres`, clock mutation, calendar/timezone state, sleep or timers, scheduler policy, `pthread_getcpuclockid`, handlers/actions, signal masks, signal delivery, process lifecycle, signal-family/timer-family completion, promotion, or public x86 support."
+source_owners = [
+  "compat/upstreams.toml",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/clock_getcpuclockid.rs",
+  "libc/src/c_abi/x86_64/syscall.rs",
+  "include/features.h",
+  "include/limits.h",
+  "include/stdint.h",
+  "include/time.h",
+  "include/sys/syscall.h",
+  "include/bits/alltypes.h",
+  "include/bits/syscall.h",
+  "compat/x86_64/clock_getcpuclockid_header_abi_probe.c",
+  "compat/x86_64/clock_getcpuclockid_header_abi_probe.cpp",
+  "compat/x86_64/run_clock_getcpuclockid_header_abi.sh",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/libc_clock_getcpuclockid_probe.c",
+  "compat/x86_64/libc_clock_getcpuclockid_start.S",
+  "compat/x86_64/run_libc_clock_getcpuclockid.sh",
+  "compat/x86_64/aarch64_parity_inventory.py",
+  "compat/x86_64/aarch64_parity_inventory.json",
+  "compat/x86_64/tests/test_aarch64_parity_inventory.py",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "compat/x86_64/README.md",
+  "STATUS.md",
+  "x86-64.md",
+  "scripts/dev-x86_64.sh",
+  "scripts/check_structure.py",
+]
+x86_abi_prerequisites = [
+  "System V AMD64 passes int clock_getcpuclockid(pid_t, clockid_t *) with signed four-byte pid_t in edi and the caller-owned four-byte clockid_t pointer in rsi, returning its signed four-byte status in eax. The private raw validation record is one 16-byte align-eight LP64 timespec, and CLOCK_PROCESS_CPUTIME_ID is 2.",
+  "Pinned musl 1.2.6 `src/time/clock_getcpuclockid.c` is the complete MIT source closure: `clockid_t id = (-pid-1)*8U + 2`, local `struct timespec ts`, `__syscall(SYS_clock_getres, id, &ts)`, `-EINVAL` to `-ESRCH`, positive-status return, then output write after success. The direct Linux x86 `clock_getres=229` rdi/rsi probe deliberately does not call a separately selected C clock_getres boundary or use errno/TLS; musl's C source excludes INT_MIN before unsigned arithmetic.",
+  "The common pinned-musl/true-static candidate body uses fixture-private raw getpid=39 only to obtain self, then proves pid 0 gives -6, self's encoded process CPU clock has a normalized raw resolution, source-defined INT_MAX wraps to 2, and missing INT_MAX-1 maps raw -EINVAL to positive ESRCH without changing its output sentinel. The final `-nostdlib -static` candidate has no PT_TLS, C errno, C getpid, C clock_getres, or CRT bootstrap; its start only calls the probe and exit_group. A success-path invalid output pointer is deliberately unselected because musl writes it only after the kernel probe succeeds.",
+]
+x86_header_prerequisites = ["The dedicated project-first/pinned-musl C11/C++17 `<time.h>` matrix proves exact `int clock_getcpuclockid(pid_t, clockid_t *)`, four-byte pid_t/clockid_t, 16-byte align-eight timespec, and CLOCK_PROCESS_CPUTIME_ID=2. Default and strict profiles reject the declaration; POSIX.1-2008, XOPEN=700, and GNU select it. The C++ passes use `-U_GNU_SOURCE` and retain an unmangled C reference; the project trace proves time.h, features.h, and bits/alltypes.h provenance. This is a narrow header/static-linkage proof, not time-header, clock-family, or public-support completion."]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-clock-getcpuclockid", scope = "Pinned-musl 1.2.6 project-header C reference plus the C/C++ clock_getcpuclockid feature/header matrix and a true dependency-free x86 crabc-libc archive with a `-nostdlib -static` candidate. The gate checks project-header provenance and exact crate-owned C-object export closure separately from compiler-builtins; rejects interpreter, DT_NEEDED, unresolved symbols, PT_TLS/dynamic TLS, errno, C getpid, C clock_getres, C clock_gettime, clock mutation, calendar/timezone, sleep/timers, scheduler, pthread_getcpuclockid, handlers/actions, signal masks, signal delivery, process lifecycle, allocator, auxv, and sysconf paths; proves direct clock_getres=229 codegen; then executes zero/self/INT_MAX encoding, raw-resolution acceptance, and missing-process ESRCH-without-write observations. The raw getpid syscall is fixture-only containment. It does not select invalid-success-output behavior, C clock policy, signal-family/timer-family completion, promotion, or public x86 support." }]
+oracle = [
+  { kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source, time.h declaration, and behavior oracle for src/time/clock_getcpuclockid.c: encoded process CPU clock, clock_getres validation, EINVAL-to-ESRCH mapping, positive status, and post-success output write." },
+  { kind = "kernel-abi", source = "Linux 5.10 x86-64 ABI", role = "clock_getres=229 rdi/rsi contract, encoded process CPU-clock acceptance, and raw negative EINVAL result used by the bounded direct probe." },
+  { kind = "elf-abi", source = "System V AMD64 psABI and pinned musl x86 headers", role = "pid_t/clockid_t/int/pointer register ABI, C++ unmangled linkage, LP64 timespec layout, and TLS-free freestanding final-ELF proof." },
+]
+
+[[family.verified_artifact]]
 id = "static-c-difftime-binary64"
 description = "Private native x86 static binary64 `difftime` scalar block inside still-planned `libc.posix-runtime`. One dependency-free `crabc-libc` archive resolves exactly `difftime(time_t, time_t)` for a freestanding C fixture after equivalent pinned-musl execution. Pinned musl's one-expression `t1-t0` source subtracts signed LP64 `time_t` before converting once to binary64; the fixture covers ordinary positive, negative, and zero results, INT64_MAX/INT64_MIN against zero, endpoint-adjacent unit differences, and the 2047 near-endpoint result that distinguishes subtraction-before-conversion from independently rounded operands. The C source supplies no integer-overflow C source contract for cross-endpoint pairs, so those inputs are not promoted by this artifact. The candidate makes no kernel syscall and has no errno/TLS, environment, timezone, calendar policy, clock observation, timer, formatting/parsing, or floating-environment policy. It does not select a C time capability, libc.so, CRT, dynamic TLS lifecycle, loader, sysroot, allocator, family completion, promotion, or public x86 support."
 source_owners = [

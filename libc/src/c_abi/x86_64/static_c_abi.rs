@@ -402,6 +402,8 @@ mod gettext_catalog;
 mod clock_nanosleep;
 #[path = "clock_gettime.rs"]
 mod clock_gettime;
+#[path = "clock_getcpuclockid.rs"]
+mod clock_getcpuclockid;
 #[path = "difftime.rs"]
 mod difftime;
 #[path = "gmtime_r.rs"]

@@ -16252,6 +16252,248 @@ def require_time_observation_artifact(family: Mapping[str, Any]) -> None:
     )
 
 
+def require_clock_getcpuclockid_artifact(family: Mapping[str, Any]) -> None:
+    """Keep the one process CPU-clock-ID probe below C clock/runtime promotion."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.posix-runtime].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [
+        entry for entry in artifacts if entry.get("id") == "static-c-clock-getcpuclockid"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.posix-runtime must contain exactly one static-c-clock-getcpuclockid artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-clock-getcpuclockid must not promote libc.posix-runtime",
+    )
+    artifact = matching[0]
+    require(
+        "capabilities" not in artifact,
+        "static-c-clock-getcpuclockid must remain a private artifact without capabilities",
+    )
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for phrase in (
+        "one-symbol process CPU-clock-ID compatibility artifact",
+        "planned `libc.posix-runtime`",
+        "exactly `clock_getcpuclockid`",
+        "`src/time/clock_getcpuclockid.c`",
+        "`(-pid-1)*8U + 2`",
+        "`clock_getres=229`",
+        "`EINVAL=22`",
+        "positive `ESRCH=3`",
+        "only after success",
+        "strict/default hiding",
+        "POSIX.1-2008/XOPEN=700/GNU visibility",
+        "INT_MAX",
+        "INT_MIN",
+        "`clock`, `clock_gettime`, C `clock_getres`",
+        "`pthread_getcpuclockid`",
+        "handlers/actions",
+        "signal masks",
+        "signal delivery",
+        "signal-family/timer-family completion, promotion, or public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"static-c-clock-getcpuclockid description omits {phrase}",
+        )
+    owners = set(
+        nonempty_strings(
+            artifact["source_owners"], "static-c-clock-getcpuclockid.source_owners"
+        )
+    )
+    for owner in (
+        "compat/upstreams.toml",
+        "libc/Cargo.toml",
+        "libc/src/lib.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/clock_getcpuclockid.rs",
+        "libc/src/c_abi/x86_64/syscall.rs",
+        "include/features.h",
+        "include/limits.h",
+        "include/stdint.h",
+        "include/time.h",
+        "include/sys/syscall.h",
+        "include/bits/alltypes.h",
+        "include/bits/syscall.h",
+        "compat/x86_64/clock_getcpuclockid_header_abi_probe.c",
+        "compat/x86_64/clock_getcpuclockid_header_abi_probe.cpp",
+        "compat/x86_64/run_clock_getcpuclockid_header_abi.sh",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/libc_clock_getcpuclockid_probe.c",
+        "compat/x86_64/libc_clock_getcpuclockid_start.S",
+        "compat/x86_64/run_libc_clock_getcpuclockid.sh",
+        "compat/x86_64/aarch64_parity_inventory.py",
+        "compat/x86_64/aarch64_parity_inventory.json",
+        "compat/x86_64/tests/test_aarch64_parity_inventory.py",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/README.md",
+        "STATUS.md",
+        "x86-64.md",
+        "scripts/dev-x86_64.sh",
+        "scripts/check_structure.py",
+    ):
+        require(
+            owner in owners,
+            f"static-c-clock-getcpuclockid source owners omit {owner}",
+        )
+    prerequisites = nonempty_strings(
+        artifact["x86_abi_prerequisites"],
+        "static-c-clock-getcpuclockid.x86_abi_prerequisites",
+    )
+    require(
+        any(
+            "int clock_getcpuclockid(pid_t, clockid_t *)" in item
+            and "edi" in item
+            and "rsi" in item
+            and "eax" in item
+            and "four-byte" in item
+            and "16-byte align-eight" in item
+            for item in prerequisites
+        ),
+        "static-c-clock-getcpuclockid must record its x86 scalar/pointer ABI",
+    )
+    require(
+        any(
+            "src/time/clock_getcpuclockid.c" in item
+            and "(-pid-1)*8U + 2" in item
+            and "SYS_clock_getres" in item
+            and "clock_getres=229" in item
+            and "-EINVAL" in item
+            and "-ESRCH" in item
+            and "INT_MIN" in item
+            and "errno/TLS" in item
+            for item in prerequisites
+        ),
+        "static-c-clock-getcpuclockid must retain its pinned-musl source closure",
+    )
+    require(
+        any(
+            "pid 0 gives -6" in item
+            and "INT_MAX" in item
+            and "ESRCH" in item
+            and "no PT_TLS" in item
+            and "C errno" in item
+            and "C getpid" in item
+            and "C clock_getres" in item
+            and "CRT" in item
+            for item in prerequisites
+        ),
+        "static-c-clock-getcpuclockid must retain its closed static differential",
+    )
+    headers = nonempty_strings(
+        artifact["x86_header_prerequisites"],
+        "static-c-clock-getcpuclockid.x86_header_prerequisites",
+    )
+    require(
+        any(
+            "C11/C++17 `<time.h>` matrix" in item
+            and "int clock_getcpuclockid(pid_t, clockid_t *)" in item
+            and "four-byte pid_t/clockid_t" in item
+            and "16-byte align-eight timespec" in item
+            and "Default and strict" in item
+            and "POSIX.1-2008, XOPEN=700, and GNU" in item
+            and "unmangled C reference" in item
+            and "-U_GNU_SOURCE" in item
+            and "time.h, features.h, and bits/alltypes.h" in item
+            for item in headers
+        ),
+        "static-c-clock-getcpuclockid must retain its C/C++ header ABI matrix",
+    )
+    static_exports = set(
+        static_c_abi_export_names(
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        )
+    )
+    require(
+        "clock_getcpuclockid" in static_exports,
+        "static-c-clock-getcpuclockid must expose its exact C spelling",
+    )
+    implementation = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "clock_getcpuclockid.rs"
+    ).read_text(encoding="utf-8")
+    for required in (
+        "src/time/clock_getcpuclockid.c",
+        "(-pid-1)*8U + 2",
+        "raw_syscall::SYS_CLOCK_GETRES",
+        "MaybeUninit",
+        "if result == -EINVAL",
+        "clock_id.write(id)",
+        'pub unsafe extern "C" fn clock_getcpuclockid',
+    ):
+        require(
+            required in implementation,
+            f"static-c-clock-getcpuclockid implementation omits {required}",
+        )
+    for forbidden in (
+        "c_status(",
+        "set_errno",
+        "errno::",
+        "super::clock_gettime",
+        "super::clock_getres",
+        "static_tls::",
+    ):
+        require(
+            forbidden not in implementation,
+            f"static-c-clock-getcpuclockid implementation must not select {forbidden}",
+        )
+    oracle = artifact["oracle"]
+    assert isinstance(oracle, list)
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "c-posix"
+            and isinstance(entry.get("role"), str)
+            and "src/time/clock_getcpuclockid.c" in entry["role"]
+            and "EINVAL-to-ESRCH" in entry["role"]
+            and "post-success output write" in entry["role"]
+            for entry in oracle
+        ),
+        "static-c-clock-getcpuclockid must retain its pinned-musl oracle",
+    )
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-clock-getcpuclockid"},
+        "static-c-clock-getcpuclockid must use the closed libc-clock-getcpuclockid command",
+    )
+    scope = evidence[0].get("scope")
+    require(
+        isinstance(scope, str)
+        and all(
+            phrase in scope
+            for phrase in (
+                "Pinned-musl 1.2.6",
+                "C/C++ clock_getcpuclockid feature/header matrix",
+                "`-nostdlib -static` candidate",
+                "PT_TLS/dynamic TLS",
+                "C getpid",
+                "C clock_getres",
+                "C clock_gettime",
+                "clock mutation",
+                "sleep/timers",
+                "scheduler",
+                "pthread_getcpuclockid",
+                "handlers/actions",
+                "signal masks",
+                "signal delivery",
+                "process lifecycle",
+                "clock_getres=229",
+                "signal-family/timer-family completion, promotion, or public x86 support",
+            )
+        ),
+        "static-c-clock-getcpuclockid evidence must retain its bounded static regression",
+    )
+
+
 def require_ftime_artifact(family: Mapping[str, Any]) -> None:
     """Keep musl's one-record legacy adapter below time/signal promotion."""
     artifacts = require_verified_artifacts(
@@ -42367,7 +42609,6 @@ def require_static_pthread_cpuclock_artifact(
         "pthread CPU-clock static export contract is incomplete",
     )
     for unselected in (
-        "clock_getcpuclockid",
         "pthread_getschedparam",
         "pthread_setschedparam",
         "pthread_setschedprio",
@@ -43223,6 +43464,7 @@ def validate_ledger(
     require_callback_algorithms_artifact(by_id["libc.posix-runtime"])
     require_clock_gettime_artifact(by_id["libc.posix-runtime"])
     require_time_observation_artifact(by_id["libc.posix-runtime"])
+    require_clock_getcpuclockid_artifact(by_id["libc.posix-runtime"])
     require_ftime_artifact(by_id["libc.posix-runtime"])
     require_difftime_binary64_artifact(by_id["libc.posix-runtime"])
     require_timegm_utc_artifact(by_id["libc.posix-runtime"])

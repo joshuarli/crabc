@@ -1375,7 +1375,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         )
         expected_groups = (
             "timerfd-header-abi|signalfd-header-abi",
-            "usleep-header-abi|ftime-header-abi|libc-timerfd|libc-signalfd|libc-sigpause|libc-sigisemptyset|libc-sigandset-sigorset|libc-sigpending|libc-sigrtmax|libc-sigrtmin|libc-sched-getscheduler|libc-alarm|libc-usleep|libc-ftime|libc-sigaddset-sigdelset-sigfillset",
+            "usleep-header-abi|ftime-header-abi|clock-getcpuclockid-header-abi|libc-timerfd|libc-signalfd|libc-sigpause|libc-sigisemptyset|libc-sigandset-sigorset|libc-sigpending|libc-sigrtmax|libc-sigrtmin|libc-sched-getscheduler|libc-alarm|libc-usleep|libc-ftime|libc-clock-getcpuclockid|libc-sigaddset-sigdelset-sigfillset",
             "libc-sched-getcpu|libc-sched-yield",
             "sched-getscheduler-header-abi",
             "ctermid-header-abi|gethostid-header-abi|getpagesize-header-abi|gettid-header-abi|isatty-header-abi|tcgetpgrp-header-abi|tcsetpgrp-header-abi|getpass-header-abi|libc-ctermid|libc-gethostid|libc-getpagesize|libc-gettid|libc-isatty|libc-tcgetpgrp|libc-tcsetpgrp|libc-getpass|mkfifo-header-abi|mkfifoat-header-abi|libc-mkfifo|libc-mkfifoat|mktemp-header-abi|libc-mktemp",
@@ -19249,6 +19249,156 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         )
         self.assertIn(
             '    libc-ftime)\n        [ "$#" -eq 0 ] || fail "libc-ftime takes no arguments"',
+            runner,
+        )
+
+    def test_libc_static_c_abi_clock_getcpuclockid_artifact_stays_narrow(self) -> None:
+        """The process CPU-clock query remains a TLS-free one-symbol leaf."""
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        implementation_path = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "clock_getcpuclockid.rs"
+        )
+        header_c_path = (
+            ROOT / "compat" / "x86_64" / "clock_getcpuclockid_header_abi_probe.c"
+        )
+        header_cpp_path = (
+            ROOT / "compat" / "x86_64" / "clock_getcpuclockid_header_abi_probe.cpp"
+        )
+        header_runner_path = (
+            ROOT / "compat" / "x86_64" / "run_clock_getcpuclockid_header_abi.sh"
+        )
+        probe_path = ROOT / "compat" / "x86_64" / "libc_clock_getcpuclockid_probe.c"
+        start_path = ROOT / "compat" / "x86_64" / "libc_clock_getcpuclockid_start.S"
+        artifact_runner_path = (
+            ROOT / "compat" / "x86_64" / "run_libc_clock_getcpuclockid.sh"
+        )
+        for path in (
+            implementation_path,
+            header_c_path,
+            header_cpp_path,
+            header_runner_path,
+            probe_path,
+            start_path,
+            artifact_runner_path,
+        ):
+            self.assertTrue(
+                path.is_file(), f"missing clock_getcpuclockid artifact input: {path}"
+            )
+
+        implementation = implementation_path.read_text(encoding="utf-8")
+        header_c = header_c_path.read_text(encoding="utf-8")
+        header_cpp = header_cpp_path.read_text(encoding="utf-8")
+        header_runner = header_runner_path.read_text(encoding="utf-8")
+        probe = probe_path.read_text(encoding="utf-8")
+        start = start_path.read_text(encoding="utf-8")
+        artifact_runner = artifact_runner_path.read_text(encoding="utf-8")
+        static_exports = (
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        ).read_text(encoding="utf-8")
+        static_export_names = {
+            line
+            for line in static_exports.splitlines()
+            if line and not line.startswith("#")
+        }
+        parity_ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        runner = RUNNER.read_text(encoding="utf-8")
+
+        self.assertIn('#[path = "clock_getcpuclockid.rs"]', static_root)
+        for required in (
+            "Selected static Linux/x86-64 `clock_getcpuclockid` C boundary",
+            "musl 1.2.6 release revision",
+            "src/time/clock_getcpuclockid.c",
+            "(-pid-1)*8U + 2",
+            "clock_getres=229",
+            "raw_syscall::SYS_CLOCK_GETRES",
+            "MaybeUninit",
+            "INT_MIN",
+            "if result == -EINVAL",
+            'pub unsafe extern "C" fn clock_getcpuclockid',
+        ):
+            self.assertIn(required, implementation)
+        for forbidden in (
+            "crabc_core",
+            "crabc_mimalloc",
+            "c_status(",
+            "set_errno",
+            "errno::",
+            "super::clock_gettime",
+            "super::clock_getres",
+            "static_tls::",
+        ):
+            self.assertNotIn(forbidden, implementation)
+        for header in (header_c, header_cpp):
+            for required in (
+                "CRABC_EXPECT_CLOCK_GETCPUCLOCKID",
+                "pid_t",
+                "clockid_t",
+                "timespec size",
+                "timespec alignment",
+                "CLOCK_PROCESS_CPUTIME_ID == 2",
+                "clock_getcpuclockid_signature",
+            ):
+                self.assertIn(required, header)
+        for required in (
+            "reject_hidden",
+            "default",
+            "strict",
+            "_POSIX_C_SOURCE=200809L",
+            "_XOPEN_SOURCE=700",
+            "_GNU_SOURCE",
+            "-U_GNU_SOURCE",
+            "nm --undefined-only",
+            "mangled clock_getcpuclockid",
+            "time.h",
+            "features.h",
+            "bits/alltypes.h",
+        ):
+            self.assertIn(required, header_runner)
+        for required in (
+            "raw_syscall0",
+            "raw_syscall2",
+            "SYS_getpid == 39",
+            "SYS_clock_getres == 229",
+            "encoded_process_cpu_clock",
+            "INT_MAX",
+            "LINUX_ESRCH",
+            "CRABC_CLOCK_GETCPUCLOCKID_FREESTANDING",
+        ):
+            self.assertIn(required, probe)
+        for required in (
+            "crabc_x86_64_clock_getcpuclockid_probe",
+            "exit_group",
+        ):
+            self.assertIn(required, start)
+        self.assertNotIn("__crabc_x86_static_tls_bootstrap", start)
+        self.assertNotIn("arch_prctl", start.lower())
+        for required in (
+            "run_musl_oracle.sh",
+            "run_clock_getcpuclockid_header_abi.sh",
+            "-nostdlib -static",
+            "PT_TLS/dynamic TLS",
+            "assert_named_syscall clock_getcpuclockid e5",
+            "candidate unexpectedly pulls",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn("--whole-archive", artifact_runner)
+        self.assertIn("clock_getcpuclockid", static_export_names)
+        self.assertIn('id = "static-c-clock-getcpuclockid"', parity_ledger)
+        self.assertIn(
+            'command = "./scripts/dev-x86_64.sh libc-clock-getcpuclockid"',
+            parity_ledger,
+        )
+        self.assertIn("run_clock_getcpuclockid_header_abi()", runner)
+        self.assertIn("run_libc_clock_getcpuclockid_probe()", runner)
+        self.assertIn(
+            "/workspace/compat/x86_64/run_libc_clock_getcpuclockid.sh", runner
+        )
+        self.assertIn(
+            '    libc-clock-getcpuclockid)\n        [ "$#" -eq 0 ] || fail "libc-clock-getcpuclockid takes no arguments"',
             runner,
         )
 

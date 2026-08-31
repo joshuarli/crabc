@@ -133,7 +133,8 @@ X86_RUNTIME_FOUNDATION_LDSO_SOURCES = {
 # copy/concatenation, fixed-C-
 # locale ctype and the separately bounded named-locale/multibyte conversion
 # artifact, scalar integer arithmetic, complete integer parsing, intmax
-# arithmetic, and find-first-set, direct POSIX clock_gettime, bounded clock
+# arithmetic, and find-first-set, direct POSIX clock_gettime, one process
+# CPU-clock-ID query, bounded clock
 # observation, no-cancellation mapping synchronization, direct anonymous-memory
 # descriptor creation, nanosleep, one microsecond usleep adapter, one legacy
 # ftime snapshot adapter, and clock_nanosleep, descriptor entry, selected
@@ -156,6 +157,7 @@ X86_RUNTIME_FOUNDATION_LIBC_SOURCES = {
     Path("libc/src/c_abi/x86_64/credential_observation.rs"),
     Path("libc/src/c_abi/x86_64/child_reaping.rs"),
     Path("libc/src/c_abi/x86_64/clock_gettime.rs"),
+    Path("libc/src/c_abi/x86_64/clock_getcpuclockid.rs"),
     Path("libc/src/c_abi/x86_64/difftime.rs"),
     Path("libc/src/c_abi/x86_64/gmtime_r.rs"),
     Path("libc/src/c_abi/x86_64/timegm.rs"),
@@ -3789,6 +3791,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         '#[path = "search_hash_table.rs"]',
         '#[path = "gettext_catalog.rs"]',
         '#[path = "clock_gettime.rs"]',
+        '#[path = "clock_getcpuclockid.rs"]',
         '#[path = "difftime.rs"]',
         '#[path = "gmtime_r.rs"]',
         '#[path = "timegm.rs"]',
@@ -7930,6 +7933,52 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
             "must export only clock_gettime"
         )
 
+    clock_getcpuclockid_source = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "clock_getcpuclockid.rs"
+    )
+    clock_getcpuclockid_text = clock_getcpuclockid_source.read_text(errors="replace")
+    for required in (
+        "musl 1.2.6 release revision",
+        "src/time/clock_getcpuclockid.c",
+        "(-pid-1)*8U + 2",
+        "clock_getres=229",
+        "raw_syscall::SYS_CLOCK_GETRES",
+        "MaybeUninit",
+        "ESRCH",
+        "INT_MIN",
+        'pub unsafe extern \"C\" fn clock_getcpuclockid',
+    ):
+        if required not in clock_getcpuclockid_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/clock_getcpuclockid.rs: selected static "
+                f"process CPU-clock-ID boundary is missing {required!r}"
+            )
+    clock_getcpuclockid_exports = set(
+        re.findall(
+            r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(',
+            clock_getcpuclockid_text,
+        )
+    )
+    if clock_getcpuclockid_exports != {"clock_getcpuclockid"}:
+        errors.append(
+            "libc/src/c_abi/x86_64/clock_getcpuclockid.rs: selected static artifact "
+            "must export only clock_getcpuclockid"
+        )
+    for forbidden in (
+        "c_status(",
+        "set_errno",
+        "super::clock_gettime",
+        "super::clock_getres",
+        "timer_create",
+        "sigaction",
+        "sigprocmask",
+    ):
+        if forbidden in clock_getcpuclockid_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/clock_getcpuclockid.rs: selected static "
+                f"process CPU-clock-ID boundary must not select {forbidden!r}"
+            )
+
     ftime_source = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "ftime.rs"
     ftime_text = ftime_source.read_text(errors="replace")
     for required in (
@@ -11150,6 +11199,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         search_hash_table_text,
         gettext_catalog_text,
         clock_gettime_text,
+        clock_getcpuclockid_text,
         ftime_text,
         difftime_text,
         gmtime_r_text,
@@ -11474,6 +11524,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         "waitpid",
         "waitid",
         "clock_gettime",
+        "clock_getcpuclockid",
         "ftime",
         "difftime",
         "gmtime_r",
@@ -11773,6 +11824,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         ("search_hash_table.rs", search_hash_table_text),
         ("gettext_catalog.rs", gettext_catalog_text),
         ("clock_gettime.rs", clock_gettime_text),
+        ("clock_getcpuclockid.rs", clock_getcpuclockid_text),
         ("ftime.rs", ftime_text),
         ("sched_getcpu.rs", sched_getcpu_text),
         ("sched_yield.rs", sched_yield_text),
