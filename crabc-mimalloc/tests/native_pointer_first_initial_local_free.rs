@@ -6,8 +6,8 @@
 use crabc_mimalloc::__crabc_runtime::{
     NativePageAllocationResult, NativePageFreeResult, ThreadAttachResult, ThreadFinishResult,
     attach_current_thread, finish_current_thread_native_after_user_destructors, initialize_process,
-    native_allocate_aligned, native_free, native_runtime_lifecycle_test_audit, native_usable_size,
-    prepare_native_later_thread_arena,
+    native_allocate_aligned, native_free, native_reallocate, native_runtime_lifecycle_test_audit,
+    native_usable_size, prepare_native_later_thread_arena,
 };
 
 fn current_page_size() -> usize {
@@ -15,12 +15,13 @@ fn current_page_size() -> usize {
         .expect("the native Linux test process exposes AT_PAGESZ")
 }
 
-/// Pinned `mi_free_nonnull` performs local free after pointer/page
-/// classification. Once the initial thread has its own live page, that normal
-/// local operation must not borrow the old process page-owner scheduler or
-/// park bridge merely to reach its current source engine.
+/// Pinned `mi_malloc`, `mi_usable_size`, `mi_realloc`, and `mi_free_nonnull`
+/// all operate through the same current local owner after pointer/page
+/// classification. Once the initial thread has promoted its own live page,
+/// this ordinary local sequence must not borrow the old process page-owner
+/// scheduler or parked bridge merely to reach its current source engine.
 #[test]
-fn native_free_keeps_initial_local_page_out_of_legacy_scheduler() {
+fn native_initial_local_sequence_keeps_page_out_of_legacy_scheduler() {
     assert!(
         initialize_process(current_page_size()),
         "the native runtime initializes before the initial local-free ratchet"
@@ -33,6 +34,9 @@ fn native_free_keeps_initial_local_page_out_of_legacy_scheduler() {
             panic!("the initial thread creates its persistent local anchor")
         }
     };
+    let baseline = native_runtime_lifecycle_test_audit()
+        .expect("the live initial source anchor establishes a readable scalar baseline");
+
     let local = match native_allocate_aligned(53, 16, false) {
         NativePageAllocationResult::Allocated(block) => block,
         NativePageAllocationResult::Unavailable
@@ -41,24 +45,88 @@ fn native_free_keeps_initial_local_page_out_of_legacy_scheduler() {
             panic!("the initial thread creates its current local native client")
         }
     };
-    let baseline = native_runtime_lifecycle_test_audit()
-        .expect("the live initial source page has a readable scalar audit");
+    let after_allocate = native_runtime_lifecycle_test_audit()
+        .expect("the initial direct allocation retains a readable scalar audit");
+    assert_eq!(
+        after_allocate
+            .native_scheduler_transition_count
+            .saturating_sub(baseline.native_scheduler_transition_count),
+        0,
+        "ordinary initial local allocation never claims the legacy scheduler"
+    );
+    assert_eq!(
+        after_allocate
+            .native_parked_compatibility_operation_count
+            .saturating_sub(baseline.native_parked_compatibility_operation_count),
+        0,
+        "ordinary initial local allocation never enters the parked compatibility bridge"
+    );
+
+    // SAFETY: the direct persistent initial owner returned this exact local
+    // block and it remains live until the reallocation below consumes it.
+    assert!(
+        unsafe { native_usable_size(local) }.is_some_and(|usable_size| usable_size >= 53),
+        "the direct initial local query returns a valid source extent"
+    );
+    let after_usable = native_runtime_lifecycle_test_audit()
+        .expect("the initial direct query retains a readable scalar audit");
+    assert_eq!(
+        after_usable
+            .native_scheduler_transition_count
+            .saturating_sub(baseline.native_scheduler_transition_count),
+        0,
+        "ordinary initial local usable-size never claims the legacy scheduler"
+    );
+    assert_eq!(
+        after_usable
+            .native_parked_compatibility_operation_count
+            .saturating_sub(baseline.native_parked_compatibility_operation_count),
+        0,
+        "ordinary initial local usable-size never enters the parked compatibility bridge"
+    );
+
+    // SAFETY: the direct persistent initial owner still owns this exact live
+    // local client. A successful reallocation returns its one replacement.
+    let local = match unsafe { native_reallocate(Some(local), 97) } {
+        NativePageAllocationResult::Allocated(block) => block,
+        NativePageAllocationResult::Unavailable
+        | NativePageAllocationResult::AllocationFailed
+        | NativePageAllocationResult::Retained => {
+            panic!("the initial direct reallocation stays available in its current owner")
+        }
+    };
+    let after_reallocate = native_runtime_lifecycle_test_audit()
+        .expect("the initial direct reallocation retains a readable scalar audit");
+    assert_eq!(
+        after_reallocate
+            .native_scheduler_transition_count
+            .saturating_sub(baseline.native_scheduler_transition_count),
+        0,
+        "ordinary initial local reallocation never claims the legacy scheduler"
+    );
+    assert_eq!(
+        after_reallocate
+            .native_parked_compatibility_operation_count
+            .saturating_sub(baseline.native_parked_compatibility_operation_count),
+        0,
+        "ordinary initial local reallocation never enters the parked compatibility bridge"
+    );
 
     // SAFETY: this exact initial-thread client remains live and locally
     // owned until its one pointer-first native free below.
     assert_eq!(unsafe { native_free(local) }, NativePageFreeResult::Freed);
 
-    let after_local = native_runtime_lifecycle_test_audit()
+    let after_free = native_runtime_lifecycle_test_audit()
         .expect("the completed initial local free retains a readable scalar audit");
     assert_eq!(
-        after_local
+        after_free
             .native_scheduler_transition_count
             .saturating_sub(baseline.native_scheduler_transition_count),
         0,
         "ordinary initial pointer-first local free never claims the legacy scheduler"
     );
     assert_eq!(
-        after_local
+        after_free
             .native_parked_compatibility_operation_count
             .saturating_sub(baseline.native_parked_compatibility_operation_count),
         0,

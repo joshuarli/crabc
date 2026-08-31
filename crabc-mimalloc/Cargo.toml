@@ -80,6 +80,14 @@ path = "tests/native_initial_persistent_preclone.rs"
 required-features = ["native-runtime-test-audit"]
 
 [[test]]
+name = "native_initial_persistent_quiescent_fork"
+path = "tests/native_initial_persistent_quiescent_fork.rs"
+# This direct-only fork witness proves that the source-dormant promoted
+# initial owner is inspected through its pinned TLS cell and remains usable
+# in the prepared child; the scalar audit feature is absent from production.
+required-features = ["native-runtime-test-audit"]
+
+[[test]]
 name = "native_source_published_live_owner_exit"
 path = "tests/native_source_published_live_owner_exit.rs"
 # This direct-only lifecycle witness constructs the one joined source

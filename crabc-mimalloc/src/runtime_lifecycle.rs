@@ -2280,9 +2280,13 @@ pub enum ThreadFinishResult {
 /// Both values are written once before `PROCESS_ACTIVE` is Release-published
 /// and are never moved, mutated, or dropped by this slice. The heap witness
 /// must be minted by the ticket-zero thread before workers exist; worker TPIDR
-/// identities may use only the already-published copy. Main-thread teardown
-/// needs a complete process-exit/fork contract and remains deliberately out
-/// of scope while later workers can still carry source list members.
+/// identities may use only the already-published copy. The separate page-owner
+/// staging slot moves exactly once, under a zero-admission gate, into the
+/// initial thread's pinned compiler-TLS owner; it is unavailable afterward
+/// and every legacy access is guarded by `page_owner_state`. Main-thread
+/// teardown needs a complete process-exit/fork contract and remains
+/// deliberately out of scope while later workers can still carry source list
+/// members.
 struct RuntimeProcessStorage {
     state: AtomicU8,
     /// The ticket-zero Linux/AArch64 TPIDR_EL0 identity. A copied process
@@ -2292,9 +2296,10 @@ struct RuntimeProcessStorage {
     initial_thread_identity: AtomicUsize,
     owner: UnsafeCell<MaybeUninit<ProcessMainThread>>,
     main_heap: UnsafeCell<MaybeUninit<MainStaticHeapLease<'static>>>,
-    /// The permanent ticket-zero page owner is absent until the private
-    /// native seam asks it for a valid allocation. It stays in this final
-    /// slot afterward: source-shaped process exit is still out of scope.
+    /// The ticket-zero staging owner is absent until the private native seam
+    /// asks it for a valid allocation. It stays here only until the one-time
+    /// zero-admission promotion into pinned initial TLS; afterward
+    /// `PAGE_OWNER_INITIAL_PERSISTENT` keeps legacy static-slot access closed.
     page_owner_state: AtomicUsize,
     /// Counts only detached routes whose source aggregate still owns live
     /// page clients. This is deliberately narrower than `page_owner_state`'s
@@ -3221,6 +3226,16 @@ impl RuntimeProcessStorage {
                 let page_owner = unsafe { (&*self.page_owner.get()).assume_init_ref() };
                 page_owner.is_quiescent_for_fork()
             }
+            // The static staging slot is vacant after W01's one-time
+            // ticket-zero promotion. Do not read it here: the source owner
+            // now lives only in the original thread's pinned compiler-TLS
+            // cell. `before_fork_with` invokes this predicate while the
+            // admission gate is held at count zero, so no later owner can
+            // borrow or transition that direct initial engine during this
+            // temporary source-state inspection.
+            PAGE_OWNER_INITIAL_PERSISTENT => {
+                current_thread_initial_persistent_owner_is_quiescent_for_held_fork_gate()
+            }
             // Starting, a current operation, any parked page engine, and
             // retained source state all remain outside the child contract.
             PAGE_OWNER_STARTING | PAGE_OWNER_BUSY | PAGE_OWNER_RETAINED | _ => false,
@@ -3852,11 +3867,12 @@ impl RuntimeForkAdmission {
     /// Holds the gate before inspecting a potentially permanent page owner.
     ///
     /// The callback executes only after the gate has observed zero later
-    /// attachments.  That ordering matters: a READY ticket-zero owner may be
-    /// mutably borrowed by a later engine, so reading its dormant source image
-    /// before worker admission is closed would be an unsound concurrent view.
-    /// The callback is an allocation-free private predicate for the direct
-    /// libc fork path; it never exposes a page or fork capability.
+    /// attachments. That ordering matters: a READY static ticket-zero owner
+    /// or INITIAL_PERSISTENT initial TLS owner may otherwise be mutably
+    /// borrowed by a source operation, so inspecting its dormant image before
+    /// worker admission is closed would be an unsound concurrent view. The
+    /// callback is an allocation-free private predicate for the direct libc
+    /// fork path; it never exposes a page or fork capability.
     fn before_fork_with(&self, can_preserve_process_owner: impl FnOnce() -> bool) {
         let mut can_preserve_process_owner = Some(can_preserve_process_owner);
         loop {
@@ -3874,8 +3890,9 @@ impl RuntimeForkAdmission {
             {
                 // A zero count under HELD excludes every later attachment:
                 // `claim_later_thread` spins until the parent clears HELD.
-                // Therefore the predicate may safely inspect a READY
-                // permanent ticket-zero owner before this raw fork.
+                // Therefore the predicate may safely inspect a quiescent
+                // static or pinned-initial ticket-zero owner before this raw
+                // fork.
                 if count == 0
                     && can_preserve_process_owner
                         .take()
@@ -3913,8 +3930,10 @@ impl RuntimeForkAdmission {
     /// Resets the copied admission word without acquiring an inherited lock.
     /// The return value is true only when this exact fork path presented its
     /// prepared token and the gate recorded ticket zero with no bridge-owned
-    /// later attachment. The explicit token prevents an unprepared raw fork
-    /// on another thread from mistaking copied gate bits for its own proof.
+    /// later attachment. The source image may be the static dormant owner or
+    /// the original initial thread's pinned TLS owner. The explicit token
+    /// prevents an unprepared raw fork on another thread from mistaking
+    /// copied gate bits for its own proof.
     fn after_fork_child(&self, fork_was_prepared: bool) -> bool {
         let observed = self.state.swap(0, Ordering::AcqRel);
         fork_was_prepared
@@ -5809,6 +5828,18 @@ impl NativeInitialPersistentThreadOwner {
     fn is_retained(&self) -> bool {
         self.allocator.is_retained()
     }
+
+    /// Reports whether this direct initial source owner is safe to copy into
+    /// the prepared raw-fork child.
+    ///
+    /// The caller must have already held the fork-admission gate with zero
+    /// later admissions. That gate excludes the only other runtime owners;
+    /// the current initial thread then uses its pinned TLS cell rather than
+    /// the vacated process-static staging slot to inspect the source state.
+    #[inline]
+    fn is_quiescent_for_held_fork_gate(&self) -> bool {
+        self.allocator.is_quiescent_for_fork()
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -6941,6 +6972,36 @@ fn current_thread_native_initial_persistent_owner_cell(
 fn current_thread_has_native_initial_persistent_owner() -> bool {
     RUNTIME_PROCESS.is_on_initial_thread()
         && current_thread_slot().initial_native_persistent_owner_installed
+}
+
+/// Inspects the promoted initial owner's source state during the held,
+/// zero-admission fork boundary.
+///
+/// `RuntimeForkAdmission::before_fork_with` calls this only after it has
+/// installed `FORK_GATE_HELD` while every later admission count is zero. The
+/// direct owner was moved out of `RuntimeProcessStorage::page_owner` during
+/// promotion, so this deliberately projects only the original thread's
+/// pinned compiler-TLS cell and never reads that vacated static slot. A cell
+/// state mismatch is conservative: it cannot preserve a copied child and it
+/// must not terminalize or otherwise mutate the source owner while merely
+/// answering the fork predicate.
+#[inline]
+fn current_thread_initial_persistent_owner_is_quiescent_for_held_fork_gate() -> bool {
+    let gate = RUNTIME_FORK_ADMISSION.state.load(Ordering::Acquire);
+    if gate & (FORK_GATE_HELD | FORK_GATE_COUNT_MASK) != FORK_GATE_HELD {
+        return false;
+    }
+    if !current_thread_has_native_initial_persistent_owner() {
+        return false;
+    }
+    debug_assert_eq!(
+        gate & (FORK_GATE_HELD | FORK_GATE_COUNT_MASK),
+        FORK_GATE_HELD,
+        "the pinned initial-owner fork probe runs only under the held zero-admission gate"
+    );
+    current_thread_native_initial_persistent_owner_cell()
+        .with_owner(|owner| owner.as_ref().get_ref().is_quiescent_for_held_fork_gate())
+        .unwrap_or(false)
 }
 
 /// Uses the direct initial source owner after its one-time promotion.
@@ -14226,8 +14287,10 @@ pub fn ticket_zero_later_thread_page_roundtrip(
 /// consume a public `pthread_atfork` registration slot. The child is eligible
 /// for preservation only when the caller is the original ticket-zero
 /// TPIDR_EL0 image, no later bridge attachment is live or retained, and its
-/// permanent page owner is either unmapped or has returned to its source
-/// all-free dormant image. It does not repair a live page engine or client.
+/// ticket-zero source owner is either unmapped or has returned to its source
+/// all-free dormant image. That owner may remain in the static staging slot
+/// or, after one-time promotion, in the initial thread's pinned compiler-TLS
+/// cell. It does not repair a live page engine or client.
 #[doc(hidden)]
 #[inline]
 pub fn before_fork() {
@@ -15515,13 +15578,14 @@ fn finish_current_thread_page_owner_after_user_destructors(
 /// for the direct public `fork` path that just called [`before_fork`]. That
 /// explicit token, plus the gate, preserves the copied process owner only when
 /// no later bridge attachment was live or retained, the raw fork ran on the
-/// original ticket-zero TLS image, and its permanent page owner was unmapped
-/// or all-free dormant. It prevents another raw-fork caller from borrowing a
-/// concurrently copied gate. A preserving child may reactivate that dormant
-/// ticket-zero owner or attach a fresh pthread through the existing no-page
-/// path. Every other child remains disabled: this is intentionally not a
-/// general fork repair and never traverses inherited locks, roots, lists, or
-/// page ownership.
+/// original ticket-zero TLS image, and its source owner was unmapped or
+/// all-free dormant in either the static staging slot or pinned initial TLS
+/// cell. It prevents another raw-fork caller from borrowing a concurrently
+/// copied gate. A preserving child may reactivate that dormant ticket-zero
+/// owner or attach a fresh pthread through the existing no-page path. Every
+/// other child remains disabled: this is intentionally not a general fork
+/// repair and never traverses inherited locks, roots, lists, or page
+/// ownership.
 #[doc(hidden)]
 pub fn after_fork_child(fork_was_prepared: bool) {
     if RUNTIME_FORK_ADMISSION.after_fork_child(fork_was_prepared) {
