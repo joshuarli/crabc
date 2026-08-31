@@ -36,8 +36,10 @@
 //! deterministic numeric `netdb.h` address/service translation and result
 //! ownership without resolver configuration, hosts, or DNS,
 //! credential-observation, integer-arithmetic, integer-parsing, selected
-//! C-locale binary32/binary64/x87-binary80 floating parsing, bounded permanent
-//! stdin/stdout/stderr byte/block I/O with explicit flushing, intmax-arithmetic,
+//! C-locale binary32/binary64/x87-binary80 floating parsing, named
+//! C/POSIX/C.UTF-8 multibyte state and fixed UTF/ASCII `iconv` conversion,
+//! bounded permanent stdin/stdout/stderr byte/block I/O with explicit flushing,
+//! intmax-arithmetic,
 //! find-first-set, C11 immediate-termination, a bounded private static
 //! startup/ordinary-exit lifecycle, startup-published program-name globals
 //! and option parsing, callback-algorithms, POSIX `nanosleep`
@@ -128,6 +130,8 @@ mod ctype;
 mod locale_multibyte;
 #[path = "regex.rs"]
 mod regex;
+#[path = "iconv.rs"]
+mod iconv;
 #[path = "integer_arithmetic.rs"]
 mod integer_arithmetic;
 #[path = "integer_parse.rs"]

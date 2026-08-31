@@ -102,7 +102,9 @@ done
 # The archive-wide export contract deliberately contains other independently
 # selected leaves. The final linked fixture below, rather than this aggregate
 # archive listing, proves this composition did not pull format/path/wide I/O,
-# locale-object, `_l`, scalar-libm, iconv, or allocation dependencies.
+# locale-object, `_l`, scalar-libm, or allocation dependencies. A separate
+# iconv artifact may share the archive but is neither invoked nor established
+# by this composition.
 readelf --relocs --wide "$archive" >"$work_dir/archive-relocations"
 grep -Eq 'R_X86_64_TPOFF(32|64)?' "$work_dir/archive-relocations" ||
     fail "archive errno lacks an initial-TLS TPOFF relocation"
@@ -141,7 +143,7 @@ fi
 objdump -d --disassemble=__errno_location "$candidate" >"$errno_disassembly"
 grep -Eq '%fs:0x0|%fs:-' "$errno_disassembly" ||
     fail "candidate errno does not use direct fs initial TLS"
-if grep -Eq 'crabc_core|mimalloc|sha_crypt|printf|fopen|newlocale|strtod_l|iconv' \
+if grep -Eq 'crabc_core|mimalloc|sha_crypt|printf|fopen|newlocale|strtod_l' \
     "$symbols" "$disassembly"; then
     fail "candidate selects an unowned or unselected runtime dependency"
 fi

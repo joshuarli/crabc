@@ -1,13 +1,12 @@
 #!/usr/bin/env bash
-# Native Linux/x86-64 selected static C locale/multibyte evidence.
+# Native Linux/x86-64 selected static C locale/wide/iconv evidence.
 #
 # The project-header fixture first executes against pinned musl 1.2.6, then
 # links as a true -nostdlib/-static candidate through the one selected x86
-# crabc-libc archive. This proves the named C/POSIX/C.UTF-8 global-state,
-# CTYPE-only built-in UTF-8 map, and multibyte block without selecting locale
-# objects, environment lookup, wide-streams, collation, libc.so, a CRT, or
-# public x86 support. The separate iconv artifact may share the archive, but
-# this fixture neither invokes nor establishes its behavior.
+# crabc-libc archive. It composes the already selected named C/POSIX/C.UTF-8
+# locale and ordinary multibyte seam with fixed UTF/ASCII iconv descriptors,
+# without selecting locale objects, environment lookup, wide streams, general
+# iconv state/codepages, libc.so, a CRT, or public x86 support.
 set -euo pipefail
 
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -16,7 +15,7 @@ readonly STATIC_C_ABI_EXPORTS="$ROOT_DIR/compat/x86_64/static_c_abi_exports.txt"
 readonly INITIAL_TLS_BYTES=4096
 readonly INITIAL_TLS_ALIGNMENT=64
 
-fail() { printf 'ERROR: x86 static libc locale/multibyte: %s\n' "$*" >&2; exit 1; }
+fail() { printf 'ERROR: x86 static libc locale/wide/iconv: %s\n' "$*" >&2; exit 1; }
 require_tool() { command -v "$1" >/dev/null 2>&1 || fail "requires $1"; }
 
 assert_selected_c_abi_surface() {
@@ -66,13 +65,14 @@ for tool in ar awk cargo cmp diff grep nm objdump readelf rustup sort; do requir
 [ -x "$ORACLE_CC" ] || fail "missing pinned musl oracle compiler"
 bash "$ROOT_DIR/compat/x86_64/run_musl_oracle.sh" >/dev/null
 bash "$ROOT_DIR/compat/x86_64/run_locale_multibyte_header_abi.sh" >/dev/null
+bash "$ROOT_DIR/compat/x86_64/run_iconv_header_abi.sh" >/dev/null
 
-work_dir="$(mktemp -d /tmp/crabc-x86-64-libc-locale-multibyte.XXXXXX)"
+work_dir="$(mktemp -d /tmp/crabc-x86-64-libc-locale-wide-iconv.XXXXXX)"
 trap 'rm -rf -- "$work_dir"' EXIT
 target_dir="$work_dir/cargo-target"
 archive="$target_dir/x86_64-unknown-linux-musl/debug/libc.a"
-reference="$work_dir/musl-locale-multibyte-reference"
-candidate="$work_dir/crabc-static-locale-multibyte-candidate"
+reference="$work_dir/musl-locale-wide-iconv-reference"
+candidate="$work_dir/crabc-static-locale-wide-iconv-candidate"
 trace="$work_dir/header-trace"
 archive_symbols="$work_dir/archive-symbols"
 archive_relocations="$work_dir/archive-relocations"
@@ -87,15 +87,15 @@ errno_disassembly="$work_dir/errno-disassembly"
 
 cd "$ROOT_DIR"
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -I"$ROOT_DIR/include" -E -H \
-    compat/x86_64/libc_locale_multibyte_probe.c >/dev/null 2>"$trace"
-for header in errno.h limits.h locale.h stddef.h stdio.h stdlib.h wchar.h features.h bits/alltypes.h; do
+    compat/x86_64/libc_locale_wide_iconv_probe.c >/dev/null 2>"$trace"
+for header in errno.h iconv.h limits.h locale.h stddef.h stdlib.h wchar.h features.h bits/alltypes.h; do
     grep -Fq "$ROOT_DIR/include/$header" "$trace" ||
         fail "fixture did not use project $header"
 done
 
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -fno-builtin -fno-stack-protector \
-    -I"$ROOT_DIR/include" compat/x86_64/libc_locale_multibyte_probe.c -o "$reference"
-"$reference" || fail "pinned-musl locale/multibyte fixture failed"
+    -I"$ROOT_DIR/include" compat/x86_64/libc_locale_wide_iconv_probe.c -o "$reference"
+"$reference" || fail "pinned-musl locale/wide/iconv fixture failed"
 
 CARGO_TARGET_DIR="$target_dir" cargo rustc --locked -p crabc-libc --lib \
     --target x86_64-unknown-linux-musl -- \
@@ -106,12 +106,11 @@ assert_selected_c_abi_surface "$archive" "$selected_symbols" "$expected_symbols"
 
 for symbol in __ctype_get_mb_cur_max btowc localeconv mblen mbrlen mbrtowc \
     mbsinit mbsrtowcs mbstowcs mbtowc setlocale wcrtomb wcsrtombs wcstombs \
-    wctob wctomb; do
+    wctob wctomb iconv iconv_open iconv_close; do
     grep -Eq "[[:space:]][TW][[:space:]]${symbol}$" "$archive_symbols" ||
         fail "archive does not define $symbol"
 done
-for unselected in newlocale duplocale uselocale freelocale nl_langinfo \
-    mbsnrtowcs wcsnrtombs wcsftime_l wcscoll wcscoll_l \
+for unselected in newlocale duplocale uselocale freelocale nl_langinfo mbsnrtowcs wcsnrtombs wcsftime_l wcscoll wcscoll_l \
     wcsxfrm wcsxfrm_l fwide fgetwc fputwc iswalpha iswalnum towlower towupper; do
     if grep -Eq "[[:space:]][TW][[:space:]]${unselected}$" "$archive_symbols"; then
         fail "archive accidentally exports unselected $unselected"
@@ -128,11 +127,11 @@ if grep -Eq 'TLSGD|TLSLD|TLSDESC|GOTTPOFF|DTPMOD(64)?|__tls_get_addr' \
     fail "archive selects dynamic TLS or an unowned runtime dependency"
 fi
 
-"$ORACLE_CC" -std=c11 -D_GNU_SOURCE -DCRABC_LOCALE_MULTIBYTE_FREESTANDING \
+"$ORACLE_CC" -std=c11 -D_GNU_SOURCE -DCRABC_LOCALE_WIDE_ICONV_FREESTANDING \
     -I"$ROOT_DIR/include" -nostdlib -static -fno-pie -no-pie -ffreestanding \
     -fno-builtin -fno-stack-protector -Wl,-e,_start -Wl,--no-undefined \
-    compat/x86_64/libc_locale_multibyte_probe.c \
-    compat/x86_64/libc_locale_multibyte_start.S "$archive" -o "$candidate"
+    compat/x86_64/libc_locale_wide_iconv_probe.c \
+    compat/x86_64/libc_locale_wide_iconv_start.S "$archive" -o "$candidate"
 readelf --symbols --wide "$candidate" >"$symbols"
 readelf --program-headers --wide "$candidate" >"$headers"
 readelf --dynamic --wide "$candidate" >"$dynamic" || true
@@ -140,7 +139,7 @@ readelf --relocs --wide "$candidate" >"$relocs"
 objdump -d "$candidate" >"$disassembly"
 for symbol in __ctype_get_mb_cur_max __errno_location btowc localeconv mblen \
     mbrlen mbrtowc mbsinit mbsrtowcs mbstowcs mbtowc setlocale wcrtomb \
-    wcsrtombs wcstombs wctob wctomb; do
+    wcsrtombs wcstombs wctob wctomb iconv iconv_open iconv_close; do
     grep -Eq "[[:space:]]${symbol}$" "$symbols" || fail "candidate lacks $symbol"
 done
 if awk '$7 == "UND" && NF >= 8 { print }' "$symbols" | grep -q .; then
@@ -159,9 +158,9 @@ fi
 objdump -d --disassemble=__errno_location "$candidate" >"$errno_disassembly"
 grep -Eq '%fs:0x0|%fs:-' "$errno_disassembly" ||
     fail "candidate errno does not use direct fs initial TLS"
-if grep -Eq 'crabc_core|mimalloc|sha_crypt|newlocale|uselocale|duplocale|freelocale' \
+if grep -Eq 'crabc_core|mimalloc|sha_crypt|newlocale|uselocale|duplocale|freelocale|malloc|free' \
     "$symbols" "$disassembly"; then
     fail "candidate selects an unowned runtime dependency"
 fi
-"$candidate" || fail "freestanding locale/multibyte fixture failed"
-printf 'x86 static libc locale/multibyte: PASS\n'
+"$candidate" || fail "freestanding locale/wide/iconv fixture failed"
+printf 'x86 static libc locale/wide/iconv: PASS\n'

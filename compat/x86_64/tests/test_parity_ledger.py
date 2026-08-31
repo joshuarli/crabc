@@ -50,7 +50,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 30)
-        self.assertEqual(report["verified_artifact_count"], 108)
+        self.assertEqual(report["verified_artifact_count"], 109)
         self.assertEqual(report["header_layout_probe_count"], 45)
         self.assertEqual(report["public_header_inventory_count"], 183)
         self.assertEqual(report["header_foundation_header_count"], 191)
@@ -2264,7 +2264,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         text_math = self.family(data, "libc.text-math-locale-stdio")
         self.assertEqual(text_math["status"], "planned")
         artifacts = text_math["verified_artifact"]
-        assert isinstance(artifacts, list) and len(artifacts) == 6
+        assert isinstance(artifacts, list) and len(artifacts) == 7
         artifact = next(
             entry
             for entry in artifacts
@@ -2347,7 +2347,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         text_math = self.family(data, "libc.text-math-locale-stdio")
         self.assertEqual(text_math["status"], "planned")
         artifacts = text_math["verified_artifact"]
-        assert isinstance(artifacts, list) and len(artifacts) == 6
+        assert isinstance(artifacts, list) and len(artifacts) == 7
         artifact = next(
             entry
             for entry in artifacts
@@ -2485,7 +2485,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         text_math = self.family(data, "libc.text-math-locale-stdio")
         self.assertEqual(text_math["status"], "planned")
         artifacts = text_math["verified_artifact"]
-        assert isinstance(artifacts, list) and len(artifacts) == 6
+        assert isinstance(artifacts, list) and len(artifacts) == 7
         artifacts_by_id = {
             entry["id"]: entry for entry in artifacts if isinstance(entry, dict)
         }
@@ -2563,7 +2563,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         text_math = self.family(data, "libc.text-math-locale-stdio")
         self.assertEqual(text_math["status"], "planned")
         artifacts = text_math["verified_artifact"]
-        assert isinstance(artifacts, list) and len(artifacts) == 6
+        assert isinstance(artifacts, list) and len(artifacts) == 7
         artifact = next(
             entry
             for entry in artifacts
@@ -2658,6 +2658,90 @@ class X86ParityLedgerTests(unittest.TestCase):
         evidence[0]["command"] = "./scripts/dev-x86_64.sh libc-ctype"
         with self.assertRaisesRegex(
             ledger.LedgerError, "closed libc-locale-multibyte command"
+        ):
+            ledger.validate_ledger(data)
+
+    def test_locale_wide_iconv_remains_a_closed_non_capability_artifact(
+        self,
+    ) -> None:
+        data = self.data()
+        text_math = self.family(data, "libc.text-math-locale-stdio")
+        artifacts = text_math["verified_artifact"]
+        assert isinstance(artifacts, list) and len(artifacts) == 7
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-locale-wide-iconv"
+        )
+        self.assertNotIn("capabilities", artifact)
+        for owner in (
+            "libc/src/c_abi.rs",
+            "libc/src/c_abi/x86_64/iconv.rs",
+            "include/iconv.h",
+            "compat/x86_64/run_iconv_header_abi.sh",
+            "compat/x86_64/libc_locale_wide_iconv_probe.c",
+            "compat/x86_64/libc_locale_wide_iconv_start.S",
+            "compat/x86_64/run_libc_locale_wide_iconv.sh",
+        ):
+            self.assertIn(owner, artifact["source_owners"])
+        self.assertEqual(
+            {evidence["command"] for evidence in artifact["native_evidence"]},
+            {"./scripts/dev-x86_64.sh libc-locale-wide-iconv"},
+        )
+        self.assertTrue(
+            any(
+                oracle["kind"] == "project-contract"
+                and "AArch64" in oracle["source"]
+                and "libc/src/c_abi.rs" in oracle["source"]
+                for oracle in artifact["oracle"]
+            )
+        )
+        for phrase in (
+            "C.UTF-8",
+            "UTF-16LE/BE",
+            "UTF-32LE/BE",
+            "WCHAR_T",
+            "exact fuzzy name normalization boundary",
+            "fixed-endian UTF-16 and UTF-32 byte order",
+            "ASCII `'*'` substitution",
+            "UCS-2",
+            "legacy codepages",
+            "family completion",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, artifact["description"])
+
+        data = self.data()
+        artifacts = self.family(data, "libc.text-math-locale-stdio")[
+            "verified_artifact"
+        ]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-locale-wide-iconv"
+        )
+        artifact["description"] = artifact["description"].replace(
+            "public x86 support", "x86 support"
+        )
+        with self.assertRaisesRegex(ledger.LedgerError, "public x86 support"):
+            ledger.validate_ledger(data)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.text-math-locale-stdio")[
+            "verified_artifact"
+        ]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-locale-wide-iconv"
+        )
+        evidence = artifact["native_evidence"]
+        assert isinstance(evidence, list) and isinstance(evidence[0], dict)
+        evidence[0]["command"] = "./scripts/dev-x86_64.sh libc-locale-multibyte"
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "closed libc-locale-wide-iconv command"
         ):
             ledger.validate_ledger(data)
 

@@ -1420,6 +1420,7 @@ BOUNDED_REGEX_SYMBOLS = (
     "regerror",
     "regfree",
 )
+LOCALE_WIDE_ICONV_SYMBOLS = ("iconv_open", "iconv", "iconv_close")
 
 
 class LedgerError(ValueError):
@@ -17123,6 +17124,238 @@ def require_bounded_regex_artifact(family: Mapping[str, Any]) -> None:
     require("libc-regex)" in dispatcher, "x86 dispatcher omits libc-regex")
 
 
+def require_locale_wide_iconv_artifact(family: Mapping[str, Any]) -> None:
+    """Keep the fixed UTF/ASCII iconv composition below broad text parity.
+
+    This is intentionally a descriptor-token and pointer-progress proof, not
+    a general encoding registry or a way to promote the named locale artifact
+    into wide-text, iconv, or locale-family completion.
+    """
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.text-math-locale-stdio].verified_artifact",
+        family.get("status", ""),
+    )
+    require(
+        len(artifacts) == 7,
+        "libc.text-math-locale-stdio must retain exactly seven private verified artifacts",
+    )
+    matching = [
+        entry for entry in artifacts if entry.get("id") == "static-c-locale-wide-iconv"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.text-math-locale-stdio must contain exactly one static-c-locale-wide-iconv artifact",
+    )
+    artifact = matching[0]
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for symbol in LOCALE_WIDE_ICONV_SYMBOLS:
+        require(
+            f"`{symbol}`" in description,
+            f"static-c-locale-wide-iconv description omits {symbol}",
+        )
+    for phrase in (
+        "selected-static C composition",
+        "C.UTF-8",
+        "mbstate_t",
+        "ASCII, UTF-8, UTF-16LE/BE, UTF-32LE/BE",
+        "WCHAR_T",
+        "allocation-free token",
+        "exact fuzzy name normalization boundary",
+        "fixed-endian UTF-16 and UTF-32 byte order",
+        "ASCII `'*'` substitution",
+        "EILSEQ",
+        "E2BIG",
+        "UCS-2",
+        "legacy codepages",
+        "wide streams/stdio",
+        "family completion",
+        "promotion",
+        "public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"static-c-locale-wide-iconv description omits {phrase}",
+        )
+
+    owners = nonempty_strings(
+        artifact["source_owners"], "static-c-locale-wide-iconv.source_owners"
+    )
+    for owner in (
+        "libc/src/c_abi.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/locale_multibyte.rs",
+        "libc/src/c_abi/x86_64/iconv.rs",
+        "include/iconv.h",
+        "compat/x86_64/iconv_header_abi_probe.c",
+        "compat/x86_64/iconv_header_abi_probe.cpp",
+        "compat/x86_64/run_iconv_header_abi.sh",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/libc_locale_wide_iconv_probe.c",
+        "compat/x86_64/libc_locale_wide_iconv_start.S",
+        "compat/x86_64/run_libc_locale_wide_iconv.sh",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/README.md",
+        "x86-64.md",
+        "scripts/dev-x86_64.sh",
+    ):
+        require(
+            owner in owners,
+            f"static-c-locale-wide-iconv omits {owner}",
+        )
+
+    abi_prerequisites = nonempty_strings(
+        artifact["x86_abi_prerequisites"],
+        "static-c-locale-wide-iconv.x86_abi_prerequisites",
+    )
+    require(
+        any("System V AMD64" in item and "iconv_t" in item and "WCHAR_T" in item
+            for item in abi_prerequisites),
+        "static-c-locale-wide-iconv must record its x86 pointer/WCHAR_T ABI",
+    )
+    require(
+        any(
+            "src/locale/iconv.c" in item
+            and "iconv_close.c" in item
+            and "stateful descriptor allocation" in item
+            for item in abi_prerequisites
+        ),
+        "static-c-locale-wide-iconv must record its pinned-musl source boundary",
+    )
+    require(
+        any("initial-exec errno TLS" in item and "no allocator" in item
+            for item in abi_prerequisites),
+        "static-c-locale-wide-iconv must record its allocation/TLS boundary",
+    )
+
+    header_prerequisites = nonempty_strings(
+        artifact["x86_header_prerequisites"],
+        "static-c-locale-wide-iconv.x86_header_prerequisites",
+    )
+    require(
+        any("C11/C++17" in item and "unmangled C++ C linkage" in item
+            for item in header_prerequisites),
+        "static-c-locale-wide-iconv must record its C/C++ header ABI boundary",
+    )
+
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-locale-wide-iconv"},
+        "static-c-locale-wide-iconv must use the closed libc-locale-wide-iconv command",
+    )
+    oracles = artifact["oracle"]
+    assert isinstance(oracles, list)
+    require(
+        any(
+            entry.get("kind") == "project-contract"
+            and "AArch64" in str(entry.get("source"))
+            and "libc/src/c_abi.rs" in str(entry.get("source"))
+            and "does not inherit" in str(entry.get("role"))
+            for entry in oracles
+        ),
+        "static-c-locale-wide-iconv must record its bounded AArch64 project oracle",
+    )
+
+    static_root = (ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs").read_text(
+        encoding="utf-8"
+    )
+    require(
+        '#[path = "iconv.rs"]\nmod iconv;' in static_root,
+        "x86 static C ABI must compose the iconv leaf",
+    )
+    implementation = (ROOT / "libc" / "src" / "c_abi" / "x86_64" / "iconv.rs").read_text(
+        encoding="utf-8"
+    )
+    for symbol in LOCALE_WIDE_ICONV_SYMBOLS:
+        require(
+            f"fn {symbol}(" in implementation,
+            f"x86 iconv leaf omits {symbol}",
+        )
+    for snippet in (
+        "ENC_UTF8",
+        "ENC_UTF16LE",
+        "ENC_UTF32BE",
+        "ENC_WCHAR_T",
+        "ENC_ASCII",
+        "DecodeError::Incomplete",
+        "DecodeError::Invalid",
+        "E2BIG",
+        "EILSEQ",
+        "make_descriptor",
+        "publish_progress",
+        "wrapping_sub(b'a') > 26",
+        "wrapping_sub(b'0') > 10",
+    ):
+        require(
+            snippet in implementation,
+            f"x86 iconv leaf omits its closed {snippet} boundary",
+        )
+    require(
+        'name_matches(name, b"ucs2le")' not in implementation
+        and 'name_matches(name, b"ucs2be")' not in implementation,
+        "x86 iconv leaf must not silently select UCS-2 aliases",
+    )
+
+    exports = static_c_abi_export_names(
+        ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+    )
+    for symbol in LOCALE_WIDE_ICONV_SYMBOLS:
+        require(symbol in exports, f"static C ABI export contract omits {symbol}")
+
+    header = (ROOT / "include" / "iconv.h").read_text(encoding="utf-8")
+    for snippet in ("extern \"C\"", "typedef void *iconv_t", "iconv_open", "iconv_close"):
+        require(snippet in header, f"project iconv.h omits {snippet}")
+    header_runner = (ROOT / "compat" / "x86_64" / "run_iconv_header_abi.sh").read_text(
+        encoding="utf-8"
+    )
+    for snippet in ("C11/C++17", "unmangled", "nm --undefined-only", "iconv_open"):
+        require(snippet in header_runner, f"iconv header runner omits {snippet}")
+    runner = (ROOT / "compat" / "x86_64" / "run_libc_locale_wide_iconv.sh").read_text(
+        encoding="utf-8"
+    )
+    for snippet in (
+        "run_locale_multibyte_header_abi.sh",
+        "run_iconv_header_abi.sh",
+        "-nostdlib -static",
+        "--no-undefined",
+        "R_X86_64_TPOFF",
+        "iconv_open",
+        "malloc",
+    ):
+        require(snippet in runner, f"libc-locale-wide-iconv runner omits {snippet}")
+    fixture = (ROOT / "compat" / "x86_64" / "libc_locale_wide_iconv_probe.c").read_text(
+        encoding="utf-8"
+    )
+    for snippet in (
+        "CRABC_LOCALE_WIDE_ICONV_FREESTANDING",
+        "UTF-16LE",
+        "UTF-16BE",
+        "Ut_F-32BE",
+        "WCHAR_T",
+        "ASCII",
+        "EILSEQ",
+        "E2BIG",
+        "UTF-8-",
+        "UTF:8",
+        "invalid_utf16le",
+        "invalid_utf32le",
+        "UCS-2LE",
+    ):
+        require(snippet in fixture, f"locale/wide/iconv fixture omits {snippet}")
+    dispatcher = (ROOT / "scripts" / "dev-x86_64.sh").read_text(encoding="utf-8")
+    for snippet in (
+        "iconv-header-abi)",
+        "libc-locale-wide-iconv)",
+        "run_iconv_header_abi()",
+    ):
+        require(snippet in dispatcher, f"x86 dispatcher omits {snippet}")
+
+
 def baseline_capability_ids(path: Path) -> set[str]:
     """Load the checked-in baseline ledger instead of freezing its ID count here."""
     baseline = load_toml(path)
@@ -17753,6 +17986,7 @@ def validate_ledger(
     require_same_object_static_c_abi_artifact(by_id["compat.abi-differential"])
     require_posix_process_abi_admission_artifact(by_id["compat.posix-process"])
     require_bounded_regex_artifact(by_id["libc.text-math-locale-stdio"])
+    require_locale_wide_iconv_artifact(by_id["libc.text-math-locale-stdio"])
 
     musl_oracle = by_id["oracle.musl-toolchain"]
     require(musl_oracle["status"] == "foundation-verified", "musl oracle must remain foundation-verified")

@@ -230,6 +230,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh pthread-c11-header-abi
 ./scripts/dev-x86_64.sh ctype-header-abi
 ./scripts/dev-x86_64.sh locale-multibyte-header-abi
+./scripts/dev-x86_64.sh iconv-header-abi
 ./scripts/dev-x86_64.sh integer-arithmetic-header-abi
 ./scripts/dev-x86_64.sh integer-parse-header-abi
 ./scripts/dev-x86_64.sh float-parse-header-abi
@@ -439,6 +440,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-fenv
 ./scripts/dev-x86_64.sh libc-math-complex
 ./scripts/dev-x86_64.sh libc-locale-multibyte
+./scripts/dev-x86_64.sh libc-locale-wide-iconv
 ./scripts/dev-x86_64.sh libc-memory
 ./scripts/dev-x86_64.sh libc-setjmp
 ./scripts/dev-x86_64.sh libc-atomic
@@ -3353,6 +3355,22 @@ target-local errno, multibyte, string, and permanent-stream adapters. It owns
 no environment object or mutation API, auxv/secure state, loader startup,
 allocator, general locale/stdio, `libc.so`, CRT family, sysroot, C ABI closure,
 family promotion, or public x86 support.
+
+`iconv-header-abi` and `libc-locale-wide-iconv` add a separate, non-promoting
+static composition artifact. The C11/C++17 gate checks the pointer-sized
+`iconv_t` typedef, `iconv_open`/`iconv`/`iconv_close` signatures, project
+header provenance, and unmangled C++ spellings. The runtime fixture first
+runs under pinned musl and then a true `-nostdlib -static` candidate. It
+composes the existing named `C`/`POSIX`/`C.UTF-8` multibyte seam with only
+allocation-free ASCII, UTF-8, UTF-16LE/BE, UTF-32LE/BE, and native 32-bit
+`WCHAR_T` descriptor conversions. It observes musl's exact fuzzy
+name-normalization boundary, fixed-endian UTF-16 and UTF-32 byte order,
+malformed-scalar pointer/count progress, ASCII `'*'` substitution,
+EILSEQ/EINVAL/E2BIG, stale errno, reset, and close. Generic BOM/stateful
+UTF-16, UCS-2, arbitrary legacy codepages,
+locale objects, collation, wide streams/stdio, Unicode normalization,
+allocation, general text/locale/iconv completion, `libc.so`, CRT, loader,
+sysroot, promotion, and public x86 support remain outside this artifact.
 
 `libc-memory` compiles only `libc/src/c_abi/x86_64/memory.rs`, then runs one C
 fixture against pinned musl and the isolated x86 object with project
