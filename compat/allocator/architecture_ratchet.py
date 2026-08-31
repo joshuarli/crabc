@@ -43,6 +43,27 @@ class SourceMatch:
         return {"line": self.line, "path": self.path, "pattern": self.pattern}
 
 
+@dataclass(frozen=True)
+class RustFunction:
+    """One syntactically selected Rust function in the bounded source graph."""
+
+    node: str
+    path: str
+    name: str
+    line: int
+    public: bool
+    body_line: int
+    body: str
+
+    def identity(self) -> dict[str, object]:
+        return {
+            "function": self.name,
+            "line": self.line,
+            "path": self.path,
+            "public": self.public,
+        }
+
+
 def read_json(path: Path) -> dict[str, Any]:
     try:
         value = json.loads(path.read_text(encoding="utf-8"))
@@ -61,7 +82,7 @@ def sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def strip_rust_comments(source: str) -> str:
+def strip_rust_comments(source: str, *, mask_literals: bool = True) -> str:
     """Mask comments while preserving line numbers for simple source anchors.
 
     The ratchet intentionally does not pretend to be a Rust parser.  It does
@@ -101,7 +122,9 @@ def strip_rust_comments(source: str) -> str:
                 index += 1
             continue
         if in_string is not None:
-            result.append("\n" if character == "\n" else " ")
+            result.append(
+                character if not mask_literals else ("\n" if character == "\n" else " ")
+            )
             if not escaped and character == in_string:
                 in_string = None
             escaped = not escaped and character == "\\"
@@ -117,19 +140,166 @@ def strip_rust_comments(source: str) -> str:
             block_depth = 1
             result.extend((" ", " "))
             index += 2
-        # Rust lifetimes use an apostrophe (`'main`), so treating every
-        # apostrophe as a character literal would hide large portions of the
-        # selected source. The declaration/call patterns below do not match
-        # character literals; masking only ordinary strings is sufficient to
-        # keep diagnostics out of this lightweight source inspection.
+        # Rust lifetimes use an apostrophe (`'main`), so mask only the bounded
+        # one-codepoint/escaped shape of a character literal. This matters to
+        # the brace walker even though the declaration patterns do not match
+        # character contents.
+        elif character == "'" and re.match(r"'(?:\\.|[^\\'\n])'", source[index:]):
+            literal = re.match(r"'(?:\\.|[^\\'\n])'", source[index:])
+            assert literal is not None
+            result.extend(
+                source[index : index + literal.end()]
+                if not mask_literals
+                else (" " for _ in range(literal.end()))
+            )
+            index += literal.end()
         elif character == '"':
             in_string = character
-            result.append(" ")
+            result.append(character if not mask_literals else " ")
             index += 1
         else:
             result.append(character)
             index += 1
     return "".join(result)
+
+
+def matching_rust_delimiter(source: str, opening: int, left: str, right: str) -> int:
+    depth = 0
+    for index in range(opening, len(source)):
+        if source[index] == left:
+            depth += 1
+        elif source[index] == right:
+            depth -= 1
+            if depth == 0:
+                return index
+    raise RatchetError(f"selected Rust source has an unclosed {left}{right} delimiter")
+
+
+def mask_source_range(source: str, start: int, end: int) -> str:
+    return source[:start] + "".join(
+        "\n" if character == "\n" else " " for character in source[start:end]
+    ) + source[end:]
+
+
+def rust_cfg_attribute_spans(source: str) -> list[tuple[int, int, str]]:
+    """Find balanced Rust attributes containing a `cfg(...)` predicate."""
+
+    result: list[tuple[int, int, str]] = []
+    cursor = 0
+    while True:
+        start = source.find("#[", cursor)
+        if start < 0:
+            return result
+        end = matching_rust_delimiter(source, start + 1, "[", "]") + 1
+        attribute = source[start:end]
+        if re.search(r"\bcfg\s*\(", attribute):
+            result.append((start, end, attribute))
+        cursor = end
+
+
+def excluded_cfg_item_end(source: str, attribute_end: int) -> int:
+    """Return the end of the item or statement selected by one cfg attribute.
+
+    This is deliberately a narrow lexical boundary, not a Rust parser.  It
+    handles the production shapes used here: cfg-gated modules, functions,
+    impls, declarations, fields, and block/semicolon statements.  Masking the
+    whole outer `#[cfg(test)] mod tests` is what keeps nested harness helpers
+    out of the selected production graph.
+    """
+
+    cursor = attribute_end
+    while True:
+        whitespace = re.match(r"\s*", source[cursor:])
+        assert whitespace is not None
+        cursor += whitespace.end()
+        if not source.startswith("#[", cursor):
+            break
+        cursor = matching_rust_delimiter(source, cursor + 1, "[", "]") + 1
+
+    block_item = re.match(
+        r"(?:pub(?:\([^)]*\))?\s+)?"
+        r"(?:(?:unsafe|async|const|extern)\s+)*"
+        r"(?:fn|mod|impl|trait|struct|enum|union)\b",
+        source[cursor:],
+    )
+    if block_item is not None or source.startswith("{", cursor):
+        opening = source.find("{", cursor)
+        semicolon = source.find(";", cursor)
+        if semicolon >= 0 and (opening < 0 or semicolon < opening):
+            return semicolon + 1
+        if opening < 0:
+            raise RatchetError("cfg-gated Rust block item has no body")
+        return matching_rust_delimiter(source, opening, "{", "}") + 1
+
+    field = re.match(r"(?:pub(?:\([^)]*\))?\s+)?[A-Za-z_][A-Za-z0-9_]*\s*:", source[cursor:])
+    if field is not None:
+        comma = source.find(",", cursor)
+        return len(source) if comma < 0 else comma + 1
+
+    semicolon = source.find(";", cursor)
+    opening = source.find("{", cursor)
+    candidates = [position for position in (semicolon, opening) if position >= 0]
+    if not candidates:
+        return len(source)
+    first = min(candidates)
+    if first == opening:
+        return matching_rust_delimiter(source, opening, "{", "}") + 1
+    return first + 1
+
+
+def production_rust_source(source: str, excluded_cfg_patterns: list[str]) -> str:
+    """Mask comments, strings, and configured test-only/disabled cfg items."""
+
+    code = strip_rust_comments(source)
+    cfg_code = strip_rust_comments(source, mask_literals=False)
+    excluded_ranges: list[tuple[int, int]] = []
+    for start, end, attribute in rust_cfg_attribute_spans(cfg_code):
+        if any(re.search(pattern, attribute) for pattern in excluded_cfg_patterns):
+            excluded_ranges.append((start, excluded_cfg_item_end(code, end)))
+    for start, end in sorted(excluded_ranges, reverse=True):
+        code = mask_source_range(code, start, end)
+    return code
+
+
+RUST_FUNCTION_HEADER = re.compile(
+    r"\b(?P<header>"
+    r"(?:pub(?:\([^)]*\))?\s+)?"
+    r"(?:(?:unsafe|async|const|extern)\s+)*"
+    r"fn\s+(?P<name>[A-Za-z_][A-Za-z0-9_]*)\b[^;{}]*\{"
+    r")",
+    re.MULTILINE,
+)
+
+
+def selected_rust_functions(
+    root: Path, relative_path: str, excluded_cfg_patterns: list[str]
+) -> list[RustFunction]:
+    path = root / relative_path
+    if not path.is_file():
+        raise RatchetError(f"selected production source is absent: {relative_path}")
+    code = production_rust_source(path.read_text(encoding="utf-8"), excluded_cfg_patterns)
+    functions: list[RustFunction] = []
+    cursor = 0
+    while True:
+        match = RUST_FUNCTION_HEADER.search(code, cursor)
+        if match is None:
+            return functions
+        opening = code.find("{", match.start("header"), match.end("header"))
+        closing = matching_rust_delimiter(code, opening, "{", "}")
+        name = match.group("name")
+        line = code.count("\n", 0, match.start("header")) + 1
+        functions.append(
+            RustFunction(
+                node=f"{relative_path}:{line}:{name}",
+                path=relative_path,
+                name=name,
+                line=line,
+                public=bool(re.search(r"\bpub(?:\([^)]*\))?\s+", match.group("header"))),
+                body_line=code.count("\n", 0, opening + 1) + 1,
+                body=code[opening + 1 : closing],
+            )
+        )
+        cursor = closing + 1
 
 
 def source_matches(root: Path, relative_path: str, pattern: str) -> list[SourceMatch]:
@@ -253,6 +423,184 @@ def required_string(value: object, name: str) -> str:
     return value
 
 
+def validate_entry_points(value: object, name: str) -> list[Mapping[str, Any]]:
+    if not isinstance(value, list) or not value:
+        raise RatchetError(f"architecture manifest {name} must be a non-empty array")
+    entries: list[Mapping[str, Any]] = []
+    identities: set[tuple[str, str]] = set()
+    for index, raw_entry in enumerate(value):
+        entry = required_mapping(raw_entry, f"{name}[{index}]")
+        path = required_string(entry.get("path"), f"{name}[{index}].path")
+        function = required_string(entry.get("function"), f"{name}[{index}].function")
+        if type(entry.get("public")) is not bool:
+            raise RatchetError(f"architecture manifest {name}[{index}].public must be boolean")
+        identity = (path, function)
+        if identity in identities:
+            raise RatchetError(f"architecture manifest {name} repeats {path}::{function}")
+        identities.add(identity)
+        entries.append(entry)
+    return entries
+
+
+def phase_bc_policy(manifest: Mapping[str, Any]) -> Mapping[str, Any]:
+    return required_mapping(manifest.get("phase_bc_call_graph"), "phase_bc_call_graph")
+
+
+def validate_phase_bc_manifest(
+    manifest: Mapping[str, Any], metrics: Mapping[str, Any], selected_sources: set[str]
+) -> None:
+    phase_bc = phase_bc_policy(manifest)
+    required_string(phase_bc.get("meaning"), "phase_bc_call_graph.meaning")
+    sources = phase_bc.get("sources")
+    if not isinstance(sources, list) or not sources or not all(
+        isinstance(path, str) and path for path in sources
+    ):
+        raise RatchetError("architecture manifest phase_bc_call_graph.sources must be string paths")
+    missing_selected_sources = sorted(set(sources) - selected_sources)
+    if missing_selected_sources:
+        raise RatchetError(
+            "architecture manifest Phase-B/C sources are absent from selected source hashing: "
+            + ", ".join(missing_selected_sources)
+        )
+    cfg_patterns = phase_bc.get("test_only_cfg_patterns")
+    if not isinstance(cfg_patterns, list) or not cfg_patterns or not all(
+        isinstance(pattern, str) and pattern for pattern in cfg_patterns
+    ):
+        raise RatchetError(
+            "architecture manifest phase_bc_call_graph.test_only_cfg_patterns must be regex strings"
+        )
+    for pattern in cfg_patterns:
+        try:
+            re.compile(pattern)
+        except re.error as error:
+            raise RatchetError(f"invalid Phase-B/C cfg regex {pattern!r}: {error}") from error
+    default_entries = validate_entry_points(
+        phase_bc.get("entry_points"), "phase_bc_call_graph.entry_points"
+    )
+    source_set = set(sources)
+    if any(entry["path"] not in source_set for entry in default_entries):
+        raise RatchetError("architecture manifest Phase-B/C entry point is outside its source graph")
+
+    ratchets = required_mapping(phase_bc.get("ratchets"), "phase_bc_call_graph.ratchets")
+    if not ratchets:
+        raise RatchetError("architecture manifest phase_bc_call_graph.ratchets is empty")
+    maximum_names: set[str] = set()
+    minimum_names: set[str] = set()
+    for name, raw_ratchet in ratchets.items():
+        if not isinstance(name, str) or not name:
+            raise RatchetError("architecture manifest Phase-B/C ratchet name is invalid")
+        ratchet = required_mapping(raw_ratchet, f"phase_bc_call_graph.ratchets.{name}")
+        patterns = required_mapping(
+            ratchet.get("patterns"), f"phase_bc_call_graph.ratchets.{name}.patterns"
+        )
+        if not patterns:
+            raise RatchetError(f"architecture manifest Phase-B/C ratchet {name} has no patterns")
+        for pattern_name, pattern in patterns.items():
+            if not isinstance(pattern_name, str) or not pattern_name:
+                raise RatchetError(f"architecture manifest Phase-B/C ratchet {name} has an invalid pattern name")
+            regex = required_string(
+                pattern, f"phase_bc_call_graph.ratchets.{name}.patterns.{pattern_name}"
+            )
+            try:
+                re.compile(regex)
+            except re.error as error:
+                raise RatchetError(
+                    f"invalid Phase-B/C ratchet regex {name}.{pattern_name}: {error}"
+                ) from error
+        entries = validate_entry_points(
+            ratchet.get("entry_points", default_entries),
+            f"phase_bc_call_graph.ratchets.{name}.entry_points",
+        )
+        if any(entry["path"] not in source_set for entry in entries):
+            raise RatchetError(f"architecture manifest Phase-B/C ratchet {name} has an external entry")
+        covered_metrics = ratchet.get("covered_metrics")
+        if not isinstance(covered_metrics, list) or not all(
+            isinstance(metric, str) and metric in metrics for metric in covered_metrics
+        ):
+            raise RatchetError(f"architecture manifest Phase-B/C ratchet {name} covers an unknown metric")
+        direction = ratchet.get("direction")
+        if direction == "maximum":
+            maximum_names.add(name)
+            if ratchet.get("final_required") != 0:
+                raise RatchetError(
+                    f"architecture manifest Phase-B/C maximum {name} must retain final_required 0"
+                )
+        elif direction == "minimum_per_pattern":
+            minimum_names.add(name)
+            required_string(
+                ratchet.get("final_required"),
+                f"phase_bc_call_graph.ratchets.{name}.final_required",
+            )
+        else:
+            raise RatchetError(f"architecture manifest Phase-B/C ratchet {name} has invalid direction")
+
+    runtime_required = required_mapping(
+        phase_bc.get("runtime_evidence_required"),
+        "phase_bc_call_graph.runtime_evidence_required",
+    )
+    phase_b = required_mapping(
+        runtime_required.get("phase_b"),
+        "phase_bc_call_graph.runtime_evidence_required.phase_b",
+    )
+    if phase_b.get("persistent_thread_local_owner") is not True:
+        raise RatchetError("architecture manifest Phase-B evidence must require a persistent TLS owner")
+    local = required_mapping(
+        phase_b.get("local_steady_state"),
+        "phase_bc_call_graph.runtime_evidence_required.phase_b.local_steady_state",
+    )
+    expected_local = {
+        "client_ledger_scans": 0,
+        "global_pagemap_mutation_leases": 0,
+        "owner_registry_scans": 0,
+        "per_call_engine_park_resume": False,
+        "process_scheduler_ops": 0,
+    }
+    if dict(local) != expected_local:
+        raise RatchetError("architecture manifest Phase-B local steady-state requirements changed")
+    phase_c = required_mapping(
+        runtime_required.get("phase_c"),
+        "phase_bc_call_graph.runtime_evidence_required.phase_c",
+    )
+    expected_phase_c = {
+        "canonical_block_recovery": True,
+        "native_free_pointer_first": True,
+        "owner_or_thread_count_dependent_lookup": False,
+        "page_local_remote_publication": True,
+        "pointer_to_page_lookup": True,
+    }
+    if dict(phase_c) != expected_phase_c:
+        raise RatchetError("architecture manifest Phase-C pointer-dispatch requirements changed")
+
+    baseline = required_mapping(manifest.get("ratchet_baseline"), "ratchet_baseline")
+    ceilings = required_mapping(
+        baseline.get("phase_bc_selected_production_reachable_ceiling"),
+        "ratchet_baseline.phase_bc_selected_production_reachable_ceiling",
+    )
+    if set(ceilings) != maximum_names or not all(
+        type(value) is int and value >= 0 for value in ceilings.values()
+    ):
+        raise RatchetError("architecture manifest Phase-B/C reachable ceilings are incomplete")
+    floors = required_mapping(
+        baseline.get("phase_bc_selected_production_reachable_floor_per_pattern"),
+        "ratchet_baseline.phase_bc_selected_production_reachable_floor_per_pattern",
+    )
+    if set(floors) != minimum_names:
+        raise RatchetError("architecture manifest Phase-B/C reachable floors are incomplete")
+    for name in minimum_names:
+        ratchet = required_mapping(ratchets[name], f"phase_bc_call_graph.ratchets.{name}")
+        floor = required_mapping(
+            floors[name],
+            f"ratchet_baseline.phase_bc_selected_production_reachable_floor_per_pattern.{name}",
+        )
+        patterns = required_mapping(
+            ratchet["patterns"], f"phase_bc_call_graph.ratchets.{name}.patterns"
+        )
+        if set(floor) != set(patterns) or not all(
+            type(value) is int and value >= 0 for value in floor.values()
+        ):
+            raise RatchetError(f"architecture manifest Phase-B/C reachable floor {name} is incomplete")
+
+
 def validate_manifest(manifest: Mapping[str, Any]) -> None:
     if manifest.get("format") != 1:
         raise RatchetError("unsupported architecture gate format")
@@ -335,6 +683,7 @@ def validate_manifest(manifest: Mapping[str, Any]) -> None:
         raise RatchetError("architecture manifest ratchet baseline must cover every static metric")
     if not all(type(value) is int and value >= 0 for value in static_ceiling.values()):
         raise RatchetError("architecture manifest static signal ceilings must be non-negative integers")
+    validate_phase_bc_manifest(manifest, metrics, set(sources))
 
 
 def collect_static_signals(root: Path, manifest: Mapping[str, Any]) -> dict[str, list[SourceMatch]]:
@@ -492,6 +841,274 @@ def caller_identity_first_free_dispatch(
     }
 
 
+RUST_CALL_SITE = re.compile(
+    r"\b(?P<name>[A-Za-z_][A-Za-z0-9_]*)\s*"
+    r"(?:::\s*<[^(){};]*>)?\s*\(",
+    re.MULTILINE,
+)
+
+
+def resolve_phase_bc_entry_points(
+    functions: list[RustFunction], raw_entries: object, name: str
+) -> list[RustFunction]:
+    entries = validate_entry_points(raw_entries, name)
+    resolved: list[RustFunction] = []
+    for entry in entries:
+        candidates = [
+            function
+            for function in functions
+            if function.path == entry["path"]
+            and function.name == entry["function"]
+            and function.public is entry["public"]
+        ]
+        if len(candidates) != 1:
+            raise RatchetError(
+                f"selected Phase-B/C entry {entry['path']}::{entry['function']} resolves to "
+                f"{len(candidates)} functions"
+            )
+        function = candidates[0]
+        resolved.append(function)
+    return resolved
+
+
+def phase_bc_call_edges(functions: list[RustFunction]) -> dict[str, set[str]]:
+    """Build a deliberately conservative, name-resolved syntactic call graph.
+
+    A method call may resolve to more than one same-named selected function;
+    all such definitions are therefore may-reachable.  That over-approximation
+    can retain an architecture warning, but it cannot incorrectly hide a
+    forbidden call site.  Definitions outside the selected source set remain
+    outside this bounded source witness and require the independent artifact
+    evidence demanded by the manifest.
+    """
+
+    functions_by_name: dict[str, set[str]] = {}
+    for function in functions:
+        functions_by_name.setdefault(function.name, set()).add(function.node)
+    return {
+        function.node: {
+            target
+            for match in RUST_CALL_SITE.finditer(function.body)
+            for target in functions_by_name.get(match.group("name"), set())
+        }
+        for function in functions
+    }
+
+
+def phase_bc_reachable_functions(
+    entries: list[RustFunction],
+    functions_by_node: Mapping[str, RustFunction],
+    edges: Mapping[str, set[str]],
+) -> tuple[set[str], dict[str, str | None]]:
+    queue = [entry.node for entry in entries]
+    reachable = set(queue)
+    predecessor: dict[str, str | None] = {entry.node: None for entry in entries}
+    while queue:
+        current = queue.pop(0)
+        for target in sorted(edges.get(current, set())):
+            if target not in functions_by_node or target in reachable:
+                continue
+            reachable.add(target)
+            predecessor[target] = current
+            queue.append(target)
+    return reachable, predecessor
+
+
+def phase_bc_call_chain(
+    node: str,
+    predecessor: Mapping[str, str | None],
+    functions_by_node: Mapping[str, RustFunction],
+) -> list[dict[str, object]]:
+    nodes: list[str] = []
+    current: str | None = node
+    while current is not None:
+        nodes.append(current)
+        current = predecessor[current]
+    return [functions_by_node[item].identity() for item in reversed(nodes)]
+
+
+def phase_bc_ratchet_matches(
+    ratchet_name: str,
+    ratchet: Mapping[str, Any],
+    default_entries: object,
+    functions: list[RustFunction],
+    functions_by_node: Mapping[str, RustFunction],
+    edges: Mapping[str, set[str]],
+) -> tuple[list[dict[str, object]], dict[str, int], list[RustFunction]]:
+    entries = resolve_phase_bc_entry_points(
+        functions,
+        ratchet.get("entry_points", default_entries),
+        f"phase_bc_call_graph.ratchets.{ratchet_name}.entry_points",
+    )
+    reachable, predecessor = phase_bc_reachable_functions(entries, functions_by_node, edges)
+    matches: list[dict[str, object]] = []
+    pattern_counts: dict[str, int] = {}
+    patterns = required_mapping(
+        ratchet["patterns"], f"phase_bc_call_graph.ratchets.{ratchet_name}.patterns"
+    )
+    for pattern_name, raw_pattern in patterns.items():
+        pattern = required_string(
+            raw_pattern, f"phase_bc_call_graph.ratchets.{ratchet_name}.patterns.{pattern_name}"
+        )
+        pattern_count = 0
+        for node in sorted(reachable):
+            function = functions_by_node[node]
+            for match in re.finditer(pattern, function.body, flags=re.MULTILINE):
+                pattern_count += 1
+                matches.append(
+                    {
+                        "call_chain": phase_bc_call_chain(node, predecessor, functions_by_node),
+                        "function": function.name,
+                        "line": function.body_line + function.body.count("\n", 0, match.start()),
+                        "path": function.path,
+                        "pattern": pattern,
+                        "pattern_name": pattern_name,
+                    }
+                )
+        pattern_counts[pattern_name] = pattern_count
+    matches.sort(key=lambda item: (item["path"], item["line"], item["pattern_name"]))
+    reachable_functions = sorted(
+        (functions_by_node[node] for node in reachable),
+        key=lambda function: (function.path, function.line, function.name),
+    )
+    return matches, pattern_counts, reachable_functions
+
+
+def phase_bc_selected_production_reachability(
+    root: Path, manifest: Mapping[str, Any]
+) -> dict[str, object]:
+    """Evaluate Phase-B/C source requirements without claiming runtime proof."""
+
+    policy = phase_bc_policy(manifest)
+    cfg_patterns = [
+        required_string(pattern, "phase_bc_call_graph.test_only_cfg_patterns[]")
+        for pattern in policy["test_only_cfg_patterns"]
+    ]
+    functions = [
+        function
+        for path in policy["sources"]
+        for function in selected_rust_functions(root, path, cfg_patterns)
+    ]
+    functions_by_node = {function.node: function for function in functions}
+    edges = phase_bc_call_edges(functions)
+    default_entries = policy["entry_points"]
+    entries = resolve_phase_bc_entry_points(
+        functions, default_entries, "phase_bc_call_graph.entry_points"
+    )
+    overall_reachable, _ = phase_bc_reachable_functions(entries, functions_by_node, edges)
+    baseline = required_mapping(manifest["ratchet_baseline"], "ratchet_baseline")
+    ceilings = required_mapping(
+        baseline["phase_bc_selected_production_reachable_ceiling"],
+        "ratchet_baseline.phase_bc_selected_production_reachable_ceiling",
+    )
+    floors = required_mapping(
+        baseline["phase_bc_selected_production_reachable_floor_per_pattern"],
+        "ratchet_baseline.phase_bc_selected_production_reachable_floor_per_pattern",
+    )
+    reports: dict[str, dict[str, object]] = {}
+    regressions: list[str] = []
+    for ratchet_name, raw_ratchet in required_mapping(
+        policy["ratchets"], "phase_bc_call_graph.ratchets"
+    ).items():
+        ratchet = required_mapping(raw_ratchet, f"phase_bc_call_graph.ratchets.{ratchet_name}")
+        matches, pattern_counts, ratchet_reachable = phase_bc_ratchet_matches(
+            ratchet_name,
+            ratchet,
+            default_entries,
+            functions,
+            functions_by_node,
+            edges,
+        )
+        count = len(matches)
+        direction = ratchet["direction"]
+        common: dict[str, object] = {
+            "covered_metrics": list(ratchet["covered_metrics"]),
+            "direction": direction,
+            "entry_points": [function.identity() for function in resolve_phase_bc_entry_points(
+                functions,
+                ratchet.get("entry_points", default_entries),
+                f"phase_bc_call_graph.ratchets.{ratchet_name}.entry_points",
+            )],
+            "final_acceptance": False,
+            "final_required": ratchet["final_required"],
+            "matches": matches,
+            "pattern_counts": pattern_counts,
+            "reachable_function_count": len(ratchet_reachable),
+            "reachable_indicator_count": count,
+        }
+        if direction == "maximum":
+            ceiling = ceilings[ratchet_name]
+            within_ceiling = count <= ceiling
+            static_requirement_met = count <= ratchet["final_required"]
+            common.update(
+                {
+                    "ratchet_ceiling": ceiling,
+                    "static_final_requirement_met": static_requirement_met,
+                    "status": (
+                        "static-absence-only"
+                        if static_requirement_met
+                        else "selected-production-reachable"
+                    ),
+                    "within_ratchet_ceiling": within_ceiling,
+                }
+            )
+            if not within_ceiling:
+                regressions.append(
+                    f"phase_bc {ratchet_name}: {count} selected-production-reachable "
+                    f"indicators exceed ratchet ceiling {ceiling}"
+                )
+        else:
+            floor = required_mapping(
+                floors[ratchet_name],
+                f"ratchet_baseline.phase_bc_selected_production_reachable_floor_per_pattern.{ratchet_name}",
+            )
+            below_floor = {
+                pattern_name: {"actual": pattern_counts[pattern_name], "floor": required}
+                for pattern_name, required in floor.items()
+                if pattern_counts[pattern_name] < required
+            }
+            common.update(
+                {
+                    "below_ratchet_floor": below_floor,
+                    "ratchet_floor_per_pattern": dict(floor),
+                    "static_projection_present": not below_floor,
+                    "status": "missing-static-projection" if below_floor else "static-projection-only",
+                    "within_ratchet_floor": not below_floor,
+                }
+            )
+            for pattern_name, values in sorted(below_floor.items()):
+                regressions.append(
+                    f"phase_bc {ratchet_name}.{pattern_name}: {values['actual']} "
+                    f"selected-production-reachable indicators fall below ratchet floor {values['floor']}"
+                )
+        reports[ratchet_name] = common
+    return {
+        "entry_points": [function.identity() for function in entries],
+        "evidence_kind": "syntactic selected-source may-reachability",
+        "final_acceptance": False,
+        "meaning": policy["meaning"],
+        "ratchets": reports,
+        "reachable_functions": [
+            functions_by_node[node].identity()
+            for node in sorted(
+                overall_reachable,
+                key=lambda node: (
+                    functions_by_node[node].path,
+                    functions_by_node[node].line,
+                    functions_by_node[node].name,
+                ),
+            )
+        ],
+        "regressions": sorted(regressions),
+        "runtime_evidence_required": policy["runtime_evidence_required"],
+        "warning": (
+            "Syntactic may-reachability can expose selected call sites or a missing source "
+            "projection. It cannot establish dynamic frequency, emitted-artifact behavior, "
+            "or production-general runtime completion."
+        ),
+    }
+
+
 def selected_source_metadata(root: Path, manifest: Mapping[str, Any]) -> dict[str, object]:
     selected = required_mapping(manifest["selected_production"], "selected_production")
     sources = [required_string(path, "selected_production.sources[]") for path in selected["sources"]]
@@ -621,7 +1238,46 @@ def upstream_stress_capability(root: Path, manifest: Mapping[str, Any]) -> dict[
     }
 
 
-def load_runtime_evidence(path: Path | None, selected: Mapping[str, object]) -> dict[str, object]:
+def required_evidence_shape(
+    actual: object, required: object, path: str
+) -> None:
+    """Require every checked-in Phase-B/C field without accepting omissions."""
+
+    if isinstance(required, Mapping):
+        if not isinstance(actual, Mapping):
+            raise RatchetError(f"runtime/artifact evidence is missing Phase-B/C object: {path}")
+        for name, required_value in required.items():
+            if name not in actual:
+                raise RatchetError(
+                    f"runtime/artifact evidence is missing Phase-B/C field: {path}.{name}"
+                )
+            required_evidence_shape(actual[name], required_value, f"{path}.{name}")
+        return
+    if type(actual) is not type(required):
+        raise RatchetError(f"runtime/artifact evidence Phase-B/C field has wrong type: {path}")
+
+
+def phase_bc_evidence_mismatches(
+    actual: object, required: object, path: str = "phase_bc"
+) -> list[str]:
+    if isinstance(required, Mapping):
+        if not isinstance(actual, Mapping):
+            return [path]
+        return [
+            mismatch
+            for name, required_value in required.items()
+            for mismatch in phase_bc_evidence_mismatches(
+                actual.get(name), required_value, f"{path}.{name}"
+            )
+        ]
+    return [] if actual == required else [path]
+
+
+def load_runtime_evidence(
+    path: Path | None,
+    selected: Mapping[str, object],
+    manifest: Mapping[str, Any] | None = None,
+) -> dict[str, object]:
     if path is None:
         return {
             "present": False,
@@ -648,9 +1304,18 @@ def load_runtime_evidence(path: Path | None, selected: Mapping[str, object]) -> 
     metrics = evidence.get("metrics")
     if not isinstance(metrics, Mapping):
         raise RatchetError("runtime/artifact evidence does not record metrics")
+    if manifest is None:
+        raise RatchetError("runtime/artifact evidence validation requires the architecture manifest")
+    required_phase_bc = required_mapping(
+        phase_bc_policy(manifest).get("runtime_evidence_required"),
+        "phase_bc_call_graph.runtime_evidence_required",
+    )
+    phase_bc = evidence.get("phase_bc")
+    required_evidence_shape(phase_bc, required_phase_bc, "phase_bc")
     return {
         "evidence": evidence,
         "present": True,
+        "required_phase_bc": required_phase_bc,
         "scope": scope,
         "status": "accepted-for-gate-comparison",
     }
@@ -703,6 +1368,12 @@ def gate_unmet(report: Mapping[str, Any]) -> list[str]:
     for name, metric in report["metrics"].items():
         if metric["source_indicator_count"]:
             unmet.append(f"{name} has selected-source indicators")
+    phase_bc = report["phase_bc_selected_production_reachability"]
+    for name, ratchet in phase_bc["ratchets"].items():
+        if ratchet["direction"] == "maximum" and not ratchet["static_final_requirement_met"]:
+            unmet.append(f"Phase B/C {name} has selected-production-reachable indicators")
+        elif ratchet["direction"] == "minimum_per_pattern" and not ratchet["static_projection_present"]:
+            unmet.append(f"Phase B/C {name} lacks its selected-production source projection")
     stress = report["unmodified_upstream_stress"]
     if stress["status"] != "verified":
         unmet.append("unmodified upstream stress capability")
@@ -721,6 +1392,11 @@ def gate_unmet(report: Mapping[str, Any]) -> list[str]:
             unmet.append("runtime evidence unmodified_upstream_stress_max_workers")
         if metrics.get("unmodified_upstream_stress_large_mode") is not True:
             unmet.append("runtime evidence unmodified_upstream_stress_large_mode")
+        required_phase_bc = runtime["required_phase_bc"]
+        for mismatch in phase_bc_evidence_mismatches(
+            evidence.get("phase_bc"), required_phase_bc
+        ):
+            unmet.append(f"runtime evidence {mismatch}")
     return sorted(set(unmet))
 
 
@@ -731,7 +1407,8 @@ def evaluate(root: Path, manifest_path: Path, runtime_evidence_path: Path | None
     signals = collect_static_signals(root, manifest)
     metrics = metric_statuses(manifest, signals)
     caller_dispatch = caller_identity_first_free_dispatch(root, manifest)
-    runtime = load_runtime_evidence(runtime_evidence_path, selected)
+    phase_bc = phase_bc_selected_production_reachability(root, manifest)
+    runtime = load_runtime_evidence(runtime_evidence_path, selected, manifest)
     report: dict[str, object] = {
         "format": 1,
         "schema": "crabc-mimalloc-architecture-ratchet-report",
@@ -739,10 +1416,15 @@ def evaluate(root: Path, manifest_path: Path, runtime_evidence_path: Path | None
         "selected_production": selected,
         "metrics": metrics,
         "caller_identity_first_free_dispatch": caller_dispatch,
+        "phase_bc_selected_production_reachability": phase_bc,
         "forbidden_scaffolding_compiled": collect_forbidden_scaffolding(root, manifest),
         "unmodified_upstream_stress": upstream_stress_capability(root, manifest),
         "runtime_artifact_evidence": runtime,
-        "ratchet": {"regressions": ratchet_regressions(manifest, signals)},
+        "ratchet": {
+            "regressions": sorted(
+                [*ratchet_regressions(manifest, signals), *phase_bc["regressions"]]
+            )
+        },
         "structural_violations": (
             ["caller-identity-first native_free dispatch"]
             if caller_dispatch["structural_violation"]

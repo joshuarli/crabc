@@ -27,6 +27,9 @@
       "libc/src/allocator_native_mimalloc.rs",
       "crabc-mimalloc/src/lib.rs",
       "crabc-mimalloc/src/runtime_lifecycle.rs",
+      "crabc-mimalloc/src/main_static_page.rs",
+      "crabc-mimalloc/src/main_heap_page.rs",
+      "crabc-mimalloc/src/process_arena.rs",
       "crabc-mimalloc/src/process_page_map.rs"
     ]
   },
@@ -47,6 +50,141 @@
       "source_anchor_pattern": "\\bRUNTIME_PROCESS\\.is_on_initial_thread\\s*\\(",
       "removal_condition": "Remove CRABC-MI-PHASE-A-CALLER-IDENTITY-FREE-BRIDGE when native_free derives owner and abandoned-state authority from pointer-to-page dispatch, before any caller-identity branch, under production_general evidence. Until then, the exact marker text must occur inside native_free before or at its sole caller-identity branch.",
       "final_acceptance": false
+    }
+  },
+  "phase_bc_call_graph": {
+    "meaning": "These Phase-B/C rules inspect only syntactic call-site may-reachability from the selected native allocator entries. They deliberately separate a callee definition, test-only code, and a production function that is not reachable from those entries. A selected-source graph can expose retained scaffolding or a missing source projection, but cannot prove dynamic call frequency, emitted-artifact behavior, or final runtime absence.",
+    "sources": [
+      "crabc-mimalloc/src/runtime_lifecycle.rs",
+      "crabc-mimalloc/src/main_static_page.rs",
+      "crabc-mimalloc/src/main_heap_page.rs",
+      "crabc-mimalloc/src/process_arena.rs",
+      "crabc-mimalloc/src/process_page_map.rs"
+    ],
+    "test_only_cfg_patterns": [
+      "\\btest\\b",
+      "native-runtime-test-audit",
+      "native-runtime-test-fault",
+      "native-runtime-test-published-source",
+      "\\bmiri\\b",
+      "test-adapter",
+      "\\bany\\s*\\(\\s*\\)"
+    ],
+    "entry_points": [
+      {
+        "path": "crabc-mimalloc/src/runtime_lifecycle.rs",
+        "function": "native_allocate_aligned",
+        "public": true
+      },
+      {
+        "path": "crabc-mimalloc/src/runtime_lifecycle.rs",
+        "function": "native_free",
+        "public": true
+      },
+      {
+        "path": "crabc-mimalloc/src/runtime_lifecycle.rs",
+        "function": "native_reallocate",
+        "public": true
+      },
+      {
+        "path": "crabc-mimalloc/src/runtime_lifecycle.rs",
+        "function": "native_usable_size",
+        "public": true
+      }
+    ],
+    "ratchets": {
+      "caller_identity_first_native_free": {
+        "entry_points": [
+          {
+            "path": "crabc-mimalloc/src/runtime_lifecycle.rs",
+            "function": "native_free",
+            "public": true
+          }
+        ],
+        "patterns": {
+          "caller_identity_branch": "\\bRUNTIME_PROCESS\\.is_on_initial_thread\\s*\\("
+        },
+        "direction": "maximum",
+        "final_required": 0,
+        "covered_metrics": []
+      },
+      "per_call_scheduler_park_resume": {
+        "patterns": {
+          "page_owner_state_access": "\\.page_owner_state\\b",
+          "park": "\\.suspend\\s*\\(",
+          "resume": "\\.resume\\s*\\("
+        },
+        "direction": "maximum",
+        "final_required": 0,
+        "covered_metrics": [
+          "local_hot_path_process_scheduler_ops",
+          "per_call_engine_park_resume"
+        ]
+      },
+      "long_pagemap_mutation_lease": {
+        "patterns": {
+          "begin_page_lifecycle": "\\.begin_page_lifecycle\\s*\\(",
+          "resume_mutation_lease": "\\.into_mutation_lease\\s*\\("
+        },
+        "direction": "maximum",
+        "final_required": 0,
+        "covered_metrics": [
+          "local_hot_path_global_pagemap_leases"
+        ]
+      },
+      "ledger_owner_registry_scans": {
+        "patterns": {
+          "live_owner_registry_access": "\\bNATIVE_LIVE_REMOTE_OWNER\\b",
+          "post_exit_route_registry_access": "\\bNATIVE_POST_EXIT_ROUTE\\b",
+          "client_ledger_access": "\\bclients\\.",
+          "current_slot_claim": "\\.claim_current_slot(?:_excluding_held_route|_while_holding_live_remote_owner)?\\s*\\(",
+          "exact_client_claim": "\\.claim_exact_client\\s*\\(",
+          "client_ledger_lookup": "\\.native_client_for_block\\s*\\("
+        },
+        "direction": "maximum",
+        "final_required": 0,
+        "covered_metrics": [
+          "local_operation_owner_registry_scans",
+          "local_operation_client_ledger_scans",
+          "remote_free_owner_registry_scans"
+        ]
+      },
+      "page_local_remote_free_projection": {
+        "entry_points": [
+          {
+            "path": "crabc-mimalloc/src/runtime_lifecycle.rs",
+            "function": "native_free",
+            "public": true
+          }
+        ],
+        "patterns": {
+          "live_page_lookup": "\\.lookup_page_for_live_client\\s*\\(",
+          "canonical_remote_block": "\\bPage::canonical_remote_block_for_live_client_at\\s*\\(",
+          "atomic_remote_push": "\\bremote_free::push\\s*\\("
+        },
+        "direction": "minimum_per_pattern",
+        "final_required": "runtime-proven page-local remote-free dispatch",
+        "covered_metrics": []
+      }
+    },
+    "runtime_evidence_required": {
+      "phase_b": {
+        "persistent_thread_local_owner": true,
+        "local_steady_state": {
+          "process_scheduler_ops": 0,
+          "global_pagemap_mutation_leases": 0,
+          "owner_registry_scans": 0,
+          "client_ledger_scans": 0,
+          "per_call_engine_park_resume": false
+        }
+      },
+      "phase_c": {
+        "native_free_pointer_first": true,
+        "pointer_to_page_lookup": true,
+        "canonical_block_recovery": true,
+        "page_local_remote_publication": true,
+        "owner_or_thread_count_dependent_lookup": false
+      }
     }
   },
   "metrics": {
@@ -161,6 +299,19 @@
       "four_thread_local_throughput_ratio": 0,
       "cross_thread_free_throughput_ratio": 0,
       "metadata_plateau_after_warmup": 0
+    },
+    "phase_bc_selected_production_reachable_ceiling": {
+      "caller_identity_first_native_free": 1,
+      "per_call_scheduler_park_resume": 41,
+      "long_pagemap_mutation_lease": 9,
+      "ledger_owner_registry_scans": 62
+    },
+    "phase_bc_selected_production_reachable_floor_per_pattern": {
+      "page_local_remote_free_projection": {
+        "live_page_lookup": 1,
+        "canonical_remote_block": 1,
+        "atomic_remote_push": 1
+      }
     }
   }
 }
