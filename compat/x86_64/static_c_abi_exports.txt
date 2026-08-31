@@ -827,6 +827,7 @@ tanl
 tcflow
 tcflush
 tcgetattr
+tcgetpgrp
 tcgetwinsize
 tcsendbreak
 tcsetattr

@@ -120,6 +120,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   ctermid-header-abi  compile the staged x86 C/C++ POSIX/XSI ctermid declaration
   gethostid-header-abi  compile the staged x86 C/C++ X/Open gethostid declaration
   isatty-header-abi  compile the staged x86 C/C++ isatty declaration
+  tcgetpgrp-header-abi  compile the staged x86 C/C++ tcgetpgrp declaration
   getpass-header-abi  compile the staged x86 C/C++ getpass declaration
   mkfifo-header-abi  verify selected x86 mkfifo C/C++ declarations
   mkfifoat-header-abi  verify selected x86 mkfifoat C/C++ declarations
@@ -272,6 +273,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-ctermid  run the static x86 crabc-libc ctermid spelling slice
   libc-gethostid  run the static x86 crabc-libc gethostid compatibility slice
   libc-isatty  run the static x86 crabc-libc descriptor-observation slice
+  libc-tcgetpgrp  run the static x86 crabc-libc foreground-group observation slice
   libc-getpass  run the static x86 crabc-libc getpass terminal slice
   libc-mkfifo  run the static x86 crabc-libc mkfifo leaf
   libc-mkfifoat  run the static x86 crabc-libc mkfifoat leaf
@@ -2370,6 +2372,10 @@ run_isatty_header_abi() {
     run_in_container bash /workspace/compat/x86_64/run_isatty_header_abi.sh
 }
 
+run_tcgetpgrp_header_abi() {
+    run_in_container bash /workspace/compat/x86_64/run_tcgetpgrp_header_abi.sh
+}
+
 run_getpass_header_abi() {
     run_in_container bash /workspace/compat/x86_64/run_getpass_header_abi.sh
 }
@@ -3255,6 +3261,10 @@ run_libc_isatty_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_isatty.sh
 }
 
+run_libc_tcgetpgrp_probe() {
+    run_in_container bash /workspace/compat/x86_64/run_libc_tcgetpgrp.sh
+}
+
 run_libc_getpass_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_getpass.sh
 }
@@ -3519,7 +3529,7 @@ shift
 case "$command" in
     timerfd-header-abi|signalfd-header-abi) ;;
     libc-timerfd|libc-signalfd|libc-sigpause|libc-sigisemptyset|libc-sigandset-sigorset) ;;
-    ctermid-header-abi|gethostid-header-abi|isatty-header-abi|getpass-header-abi|libc-ctermid|libc-gethostid|libc-isatty|libc-getpass|mkfifo-header-abi|mkfifoat-header-abi|libc-mkfifo|libc-mkfifoat|mktemp-header-abi|libc-mktemp) ;;
+    ctermid-header-abi|gethostid-header-abi|isatty-header-abi|tcgetpgrp-header-abi|getpass-header-abi|libc-ctermid|libc-gethostid|libc-isatty|libc-tcgetpgrp|libc-getpass|mkfifo-header-abi|mkfifoat-header-abi|libc-mkfifo|libc-mkfifoat|mktemp-header-abi|libc-mktemp) ;;
     stdio-permanent-line-io-header-abi|stdio-octal-hex-scan-header-abi) ;;
     math-complex-complete-header-abi|libc-math-complex-complete) ;;
     stdio-permanent-byte-io-header-abi) ;;
@@ -3999,6 +4009,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "isatty-header-abi takes no arguments"
         ensure_image
         run_isatty_header_abi
+        ;;
+    tcgetpgrp-header-abi)
+        [ "$#" -eq 0 ] || fail "tcgetpgrp-header-abi takes no arguments"
+        ensure_image
+        run_tcgetpgrp_header_abi
         ;;
     getpass-header-abi)
         [ "$#" -eq 0 ] || fail "getpass-header-abi takes no arguments"
@@ -4733,6 +4748,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "libc-isatty takes no arguments"
         ensure_image
         run_libc_isatty_probe
+        ;;
+    libc-tcgetpgrp)
+        [ "$#" -eq 0 ] || fail "libc-tcgetpgrp takes no arguments"
+        ensure_image
+        run_libc_tcgetpgrp_probe
         ;;
     libc-getpass)
         [ "$#" -eq 0 ] || fail "libc-getpass takes no arguments"

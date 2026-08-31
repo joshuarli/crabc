@@ -146,6 +146,18 @@ sysroot path. It does not promote Rust-subsumed `memory.bytes-basic`, general
 bulk-memory behavior, `mempcpy`/`explicit_bzero`, allocator
 lifecycle/interposition, family completion, promotion, or public x86 support.
 
+`./scripts/dev-x86_64.sh libc-tcgetpgrp` is a separate private
+`static-c-tcgetpgrp` artifact inside still-planned `libc.posix-runtime`. Its
+strict/POSIX/X/Open/GNU/BSD C/C++ declaration gate and pinned-musl/static C
+fixture select only `pid_t tcgetpgrp(int)` foreground-group observation:
+musl's fixed `ioctl=16`/`TIOCGPGRP=0x540f` private int scratch, a successful
+foreground pid with preserved errno, invalid-fd `EBADF`, and `/dev/null`
+`ENOTTY`. A child-only raw devpts `fork`/`setsid`/`TIOCSCTTY` setup merely
+establishes the kernel test precondition; it is not an archive API or
+session/process-control policy. The leaf excludes terminal discovery, termios
+mutation/control, PTY/session policy, `tcsetpgrp`, `tcgetsid`, `ttyname`,
+`getpass`, generic ioctl, family completion, promotion, and public x86 support.
+
 `./scripts/dev-x86_64.sh libc-getpass` is a separate private
 `static-c-getpass` artifact inside still-planned `libc.posix-runtime`. Its
 pinned-musl and freestanding-static routes select only the historical C

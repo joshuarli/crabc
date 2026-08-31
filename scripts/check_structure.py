@@ -235,6 +235,7 @@ X86_RUNTIME_FOUNDATION_LIBC_SOURCES = {
     Path("libc/src/c_abi/x86_64/strsignal.rs"),
     Path("libc/src/c_abi/x86_64/termios_control.rs"),
     Path("libc/src/c_abi/x86_64/isatty.rs"),
+    Path("libc/src/c_abi/x86_64/tcgetpgrp.rs"),
     Path("libc/src/c_abi/x86_64/getpass.rs"),
     Path("libc/src/c_abi/x86_64/thread_pointer.rs"),
     Path("libc/src/c_abi/x86_64/uts_identity.rs"),
@@ -3739,6 +3740,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         '#[path = "pthread_once.rs"]',
         '#[path = "termios_control.rs"]',
         '#[path = "isatty.rs"]',
+        '#[path = "tcgetpgrp.rs"]',
         '#[path = "getpass.rs"]',
         '#[path = "process_context.rs"]',
         '#[path = "login_name.rs"]',
@@ -5968,6 +5970,166 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         if required not in x86_runner:
             errors.append(
                 "scripts/dev-x86_64.sh: selected static isatty dispatcher is "
+                f"missing {required!r}"
+            )
+
+    tcgetpgrp_source = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "tcgetpgrp.rs"
+    )
+    tcgetpgrp_text = tcgetpgrp_source.read_text(errors="replace")
+    for required in (
+        "pinned musl 1.2.6 release commit",
+        "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+        "src/unistd/tcgetpgrp.c::tcgetpgrp",
+        "TIOCGPGRP: i64 = 0x540f",
+        "MaybeUninit::<c_int>::uninit()",
+        "raw_syscall::SYS_IOCTL",
+        "if c_status(result) < 0",
+        "neither creates a session",
+    ):
+        if required not in tcgetpgrp_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/tcgetpgrp.rs: selected static foreground "
+                f"group observation boundary is missing {required!r}"
+            )
+    tcgetpgrp_exports = set(
+        re.findall(
+            r'(?m)^pub\s+unsafe\s+extern\s+"C"\s+fn\s+(\w+)\s*\(',
+            tcgetpgrp_text,
+        )
+    )
+    if tcgetpgrp_exports != {"tcgetpgrp"}:
+        errors.append(
+            "libc/src/c_abi/x86_64/tcgetpgrp.rs: selected static foreground "
+            "group observation artifact must export only tcgetpgrp"
+        )
+    for forbidden in (
+        "termios_control::",
+        "raw_syscall::SYS_SETSID",
+        "raw_syscall::SYS_FORK",
+        "raw_syscall::SYS_OPEN",
+        "raw_syscall::SYS_OPENAT",
+        "TIOCSCTTY",
+        "TIOCSPGRP",
+        "TIOCGSID",
+        "crabc_core",
+        "crabc_mimalloc",
+    ):
+        if forbidden in tcgetpgrp_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/tcgetpgrp.rs: selected static foreground "
+                f"group observation boundary must not select {forbidden!r}"
+            )
+
+    tcgetpgrp_runner = (
+        ROOT / "compat" / "x86_64" / "run_libc_tcgetpgrp.sh"
+    ).read_text(errors="replace")
+    tcgetpgrp_header_runner = (
+        ROOT / "compat" / "x86_64" / "run_tcgetpgrp_header_abi.sh"
+    ).read_text(errors="replace")
+    tcgetpgrp_header_c = (
+        ROOT / "compat" / "x86_64" / "tcgetpgrp_header_abi_probe.c"
+    ).read_text(errors="replace")
+    tcgetpgrp_header_cxx = (
+        ROOT / "compat" / "x86_64" / "tcgetpgrp_header_abi_probe.cpp"
+    ).read_text(errors="replace")
+    tcgetpgrp_probe = (
+        ROOT / "compat" / "x86_64" / "libc_tcgetpgrp_probe.c"
+    ).read_text(errors="replace")
+    tcgetpgrp_start = (
+        ROOT / "compat" / "x86_64" / "libc_tcgetpgrp_start.S"
+    ).read_text(errors="replace")
+    for required in (
+        "run_musl_oracle.sh",
+        "run_tcgetpgrp_header_abi.sh",
+        "static_c_abi_exports.txt",
+        "-nostdlib -static",
+        "--no-undefined",
+        "for symbol in __errno_location tcgetpgrp",
+        "--disassemble=tcgetpgrp",
+        "project-header tcgetpgrp fixture contract drifted",
+        "fixture did not use the project",
+        "fixed TIOCGPGRP request",
+        "terminal-control request",
+        "candidate selects an excluded session or terminal helper",
+        'timeout "$EXECUTION_TIMEOUT"',
+        "candidate retains a dynamic TLS model",
+    ):
+        if required not in tcgetpgrp_runner:
+            errors.append(
+                "compat/x86_64/run_libc_tcgetpgrp.sh: selected static foreground "
+                f"group observation evidence is missing {required!r}"
+            )
+    for required in (
+        "tcgetpgrp_header_abi_probe.c",
+        "tcgetpgrp_header_abi_probe.cpp",
+        "Pinned musl 1.2.6",
+        "unconditional <unistd.h> declaration",
+        "retained a mangled tcgetpgrp reference",
+    ):
+        if required not in tcgetpgrp_header_runner:
+            errors.append(
+                "compat/x86_64/run_tcgetpgrp_header_abi.sh: selected foreground "
+                f"group observation declaration evidence is missing {required!r}"
+            )
+    for required in ("tcgetpgrp declaration", "tcgetpgrp_function = tcgetpgrp"):
+        if required not in tcgetpgrp_header_c or required not in tcgetpgrp_header_cxx:
+            errors.append(
+                "compat/x86_64/tcgetpgrp_header_abi_probe: selected foreground "
+                f"group observation declaration evidence is missing {required!r}"
+            )
+    for required in (
+        "FIXTURE_EBADF",
+        "FIXTURE_ENOTTY",
+        "FIXTURE_TIOCSCTTY",
+        "FIXTURE_TIOCGPGRP",
+        "FIXTURE_TIOCSPTLCK",
+        "FIXTURE_TIOCGPTPEER",
+        "__builtin_types_compatible_p(pid_t, int)",
+        "open_pty_pair",
+        "child_reads_foreground_group",
+        "check_foreground_group",
+        "tcgetpgrp(slave) != (pid_t)pid || errno != 313",
+        "tcgetpgrp(-1) != -1 || errno != FIXTURE_EBADF",
+        "tcgetpgrp(null_fd) != -1 || errno != FIXTURE_ENOTTY",
+    ):
+        if required not in tcgetpgrp_probe:
+            errors.append(
+                "compat/x86_64/libc_tcgetpgrp_probe.c: selected foreground "
+                f"group observation regression is missing {required!r}"
+            )
+    for forbidden in (
+        "tcsetpgrp(",
+        "tcgetsid(",
+        "tcgetattr(",
+        "tcsetattr(",
+        "ttyname(",
+        "getpass(",
+    ):
+        if forbidden in tcgetpgrp_probe:
+            errors.append(
+                "compat/x86_64/libc_tcgetpgrp_probe.c: selected foreground "
+                f"group observation fixture must not select {forbidden!r}"
+            )
+    for required in (
+        "ARCH_SET_FS",
+        "mov %rsi, %fs:0",
+        "crabc_x86_64_tcgetpgrp_probe",
+    ):
+        if required not in tcgetpgrp_start:
+            errors.append(
+                "compat/x86_64/libc_tcgetpgrp_start.S: selected foreground "
+                f"group observation TLS fixture is missing {required!r}"
+            )
+    for required in (
+        "tcgetpgrp-header-abi)",
+        "run_tcgetpgrp_header_abi",
+        "libc-tcgetpgrp)",
+        "run_libc_tcgetpgrp_probe",
+    ):
+        if required not in x86_runner:
+            errors.append(
+                "scripts/dev-x86_64.sh: selected static tcgetpgrp dispatcher is "
                 f"missing {required!r}"
             )
 
@@ -9137,6 +9299,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         ctermid_text,
         gethostid_text,
         isatty_text,
+        tcgetpgrp_text,
         process_context_text,
         login_name_text,
         child_reaping_text,
@@ -9433,6 +9596,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         "ctermid",
         "gethostid",
         "isatty",
+        "tcgetpgrp",
         "getpid",
         "getppid",
         "getuid",
@@ -9665,7 +9829,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         errors.append(
             "libc/src/c_abi/x86_64: selected static archive must export only its "
             "stat, credential, errno, bootstrap-memory/fenv/continuation, simple "
-            "signal-control, one pure GNU signal-set predicate and paired GNU binary set-operation leaf, bounded process-signal execution, and one legacy single-signal pause wait, bounded pthread create/exit/join/detach initial-TLS worker, its private selected-main/worker pthread-key/C11-TSS lifecycle, private process-normal pthread mutexes and their musl private condition-variable handoff, the complete selected rwlock/attribute family with private-or-shared futex operation, plus the distinct C11 plain-sync adapter and normal-return pthread/C11 once state machine, its typed C11 create/exit/join/detach sibling, and pthread/C11 identity aliases, named termios-control, direct terminal-descriptor observation, historical ctermid pathname spelling, constant historical gethostid compatibility, selected process-context, child-reaping, C11 immediate termination, callback algorithms, direct clock_gettime, caller-buffered fixed-UTC gmtime_r, fixed-UTC timegm, caller-owned mapping-core, no-cancellation mapping synchronization, direct anonymous-memory descriptor creation, nanosleep, and clock_nanosleep, selected "
+            "signal-control, one pure GNU signal-set predicate and paired GNU binary set-operation leaf, bounded process-signal execution, and one legacy single-signal pause wait, bounded pthread create/exit/join/detach initial-TLS worker, its private selected-main/worker pthread-key/C11-TSS lifecycle, private process-normal pthread mutexes and their musl private condition-variable handoff, the complete selected rwlock/attribute family with private-or-shared futex operation, plus the distinct C11 plain-sync adapter and normal-return pthread/C11 once state machine, its typed C11 create/exit/join/detach sibling, and pthread/C11 identity aliases, named termios-control, direct terminal-descriptor and foreground-group observations, historical ctermid pathname spelling, constant historical gethostid compatibility, selected process-context, child-reaping, C11 immediate termination, callback algorithms, direct clock_gettime, caller-buffered fixed-UTC gmtime_r, fixed-UTC timegm, caller-owned mapping-core, no-cancellation mapping synchronization, direct anonymous-memory descriptor creation, nanosleep, and clock_nanosleep, selected "
             "descriptor-entry, selected filesystem-access, bounded descriptor-control, timestamp updates, and descriptor-I/O, selected process-resources, selected readiness/signal-waits, "
             "selected socket transport and selected socket-message/options, selected system-observation, selected UTS-identity, "
             "selected numeric-address codecs and legacy classful IPv4 arithmetic, fixed-profile h_errno message text, byte-string, legacy-memory adapters, source-backed memccpy, random-entropy, memory-search, C-string-copy, immutable error-string, "
@@ -9712,6 +9876,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         ("termios_control.rs", termios_control_text),
         ("ctermid.rs", ctermid_text),
         ("isatty.rs", isatty_text),
+        ("tcgetpgrp.rs", tcgetpgrp_text),
         ("mktemp.rs", mktemp_text),
         ("process_context.rs", process_context_text),
         ("child_reaping.rs", child_reaping_text),
