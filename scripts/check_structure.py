@@ -135,7 +135,7 @@ X86_RUNTIME_FOUNDATION_LDSO_SOURCES = {
 # artifact, scalar integer arithmetic, complete integer parsing, intmax
 # arithmetic, and find-first-set, direct POSIX clock_gettime, direct rejected-
 # ID clock_adjtime, rejected-request clock_settime, and rejected-handle
-# timer_getoverrun error translation, bounded clock observation,
+# timer_getoverrun error translation, raw-error timer_delete, bounded clock observation,
 # no-cancellation mapping synchronization, direct anonymous-memory
 # descriptor creation, nanosleep, and clock_nanosleep, descriptor entry, selected
 # filesystem access, bounded fcntl
@@ -160,6 +160,7 @@ X86_RUNTIME_FOUNDATION_LIBC_SOURCES = {
     Path("libc/src/c_abi/x86_64/clock_adjtime.rs"),
     Path("libc/src/c_abi/x86_64/clock_settime.rs"),
     Path("libc/src/c_abi/x86_64/timer_getoverrun.rs"),
+    Path("libc/src/c_abi/x86_64/timer_delete.rs"),
     Path("libc/src/c_abi/x86_64/difftime.rs"),
     Path("libc/src/c_abi/x86_64/gmtime_r.rs"),
     Path("libc/src/c_abi/x86_64/timegm.rs"),
@@ -3802,6 +3803,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         '#[path = "clock_adjtime.rs"]',
         '#[path = "clock_settime.rs"]',
         '#[path = "timer_getoverrun.rs"]',
+        '#[path = "timer_delete.rs"]',
         '#[path = "difftime.rs"]',
         '#[path = "gmtime_r.rs"]',
         '#[path = "timegm.rs"]',
@@ -8291,6 +8293,67 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
                 f"timer_getoverrun error ABI must not select {forbidden!r}"
             )
 
+    timer_delete_source = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "timer_delete.rs"
+    )
+    timer_delete_text = timer_delete_source.read_text(errors="replace")
+    for required in (
+        "musl 1.2.6 release commit",
+        "src/time/timer_delete.c::timer_delete",
+        "SYS_TIMER_DELETE",
+        "raw_syscall::syscall1",
+        "raw -errno",
+        "does not touch errno",
+        "nonnegative opaque",
+        "pthread_impl",
+        "SIGTIMER",
+        "does not decode or dereference",
+        "valid POSIX timer",
+        "public x86 support",
+    ):
+        if required not in timer_delete_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/timer_delete.rs: selected static "
+                f"timer_delete raw-error ABI is missing {required!r}"
+            )
+    timer_delete_exports = set(
+        re.findall(
+            r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(',
+            timer_delete_text,
+        )
+    )
+    if timer_delete_exports != {"timer_delete"}:
+        errors.append(
+            "libc/src/c_abi/x86_64/timer_delete.rs: selected static artifact "
+            "must export only timer_delete"
+        )
+    if "c_status(" in timer_delete_text:
+        errors.append(
+            "libc/src/c_abi/x86_64/timer_delete.rs: selected static raw-error "
+            "ABI must not normalize its result"
+        )
+    for forbidden in (
+        "crabc_core",
+        "crabc_mimalloc",
+        "timer_create(",
+        "timer_getoverrun(",
+        "timer_gettime(",
+        "timer_settime(",
+        "clock_gettime(",
+        "clock_getres(",
+        "clock_settime(",
+        "clock_adjtime(",
+        "adjtimex(",
+        "getenv(",
+        "tzset(",
+        "__tls_get_addr",
+    ):
+        if forbidden in timer_delete_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/timer_delete.rs: selected static "
+                f"timer_delete raw-error ABI must not select {forbidden!r}"
+            )
+
     difftime_source = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "difftime.rs"
     difftime_text = difftime_source.read_text(errors="replace")
     for required in (
@@ -8627,6 +8690,11 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         errors.append(
             "libc/src/c_abi/x86_64/syscall.rs: selected static timer_getoverrun "
             "error ABI requires SYS_TIMER_GETOVERRUN=225"
+        )
+    if "pub(crate) const SYS_TIMER_DELETE: i64 = 226;" not in raw_syscall_text:
+        errors.append(
+            "libc/src/c_abi/x86_64/syscall.rs: selected static timer_delete "
+            "raw-error ABI requires SYS_TIMER_DELETE=226"
         )
 
     memory_mapping_source = (
@@ -11697,6 +11765,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         clock_adjtime_text,
         clock_settime_text,
         timer_getoverrun_text,
+        timer_delete_text,
         difftime_text,
         gmtime_r_text,
         timegm_text,
@@ -12027,6 +12096,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         "clock_adjtime",
         "clock_settime",
         "timer_getoverrun",
+        "timer_delete",
         "difftime",
         "gmtime_r",
         "timegm",
@@ -12336,6 +12406,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         ("clock_adjtime.rs", clock_adjtime_text),
         ("clock_settime.rs", clock_settime_text),
         ("timer_getoverrun.rs", timer_getoverrun_text),
+        ("timer_delete.rs", timer_delete_text),
         ("sched_cpucount.rs", sched_cpucount_text),
         ("sched_getcpu.rs", sched_getcpu_text),
         ("sched_priority_bounds.rs", sched_priority_bounds_text),

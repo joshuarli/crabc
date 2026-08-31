@@ -8620,6 +8620,50 @@ class X86ParityLedgerTests(unittest.TestCase):
             "libc/src/c_abi/x86_64/timer_getoverrun.rs",
             posix_runtime["source_owners"],
         )
+        timer_delete = artifacts_by_id["static-c-timer-delete-raw-error-abi"]
+        assert isinstance(timer_delete, dict)
+        self.assertNotIn("capabilities", timer_delete)
+        for owner in (
+            "compat/upstreams.toml",
+            "libc/src/c_abi/x86_64/static_c_abi.rs",
+            "libc/src/c_abi/x86_64/timer_delete.rs",
+            "libc/src/c_abi/x86_64/errno.rs",
+            "libc/src/c_abi/x86_64/syscall.rs",
+            "include/time.h",
+            "compat/x86_64/timer_delete_header_abi_probe.c",
+            "compat/x86_64/timer_delete_header_abi_probe.cpp",
+            "compat/x86_64/run_timer_delete_header_abi.sh",
+            "compat/x86_64/static_c_abi_exports.txt",
+            "compat/x86_64/libc_timer_delete_probe.c",
+            "compat/x86_64/libc_timer_delete_start.S",
+            "compat/x86_64/run_libc_timer_delete.sh",
+        ):
+            self.assertIn(owner, timer_delete["source_owners"])
+        self.assertEqual(
+            {evidence["command"] for evidence in timer_delete["native_evidence"]},
+            {"./scripts/dev-x86_64.sh libc-timer-delete"},
+        )
+        for phrase in (
+            "raw-error ABI artifact",
+            "src/time/timer_delete.c",
+            "timer_t 0",
+            "INT_MAX",
+            "raw `-EINVAL`",
+            "errno sentinel to remain unchanged",
+            "negative `timer_t`",
+            "pthread_impl",
+            "SIGTIMER",
+            "does not decode or dereference",
+            "family completion, promotion, or public x86 support",
+        ):
+            self.assertIn(phrase, timer_delete["description"])
+        self.assertIn(
+            "src/time/timer_delete.c", timer_delete["oracle"][0]["role"]
+        )
+        self.assertIn(
+            "libc/src/c_abi/x86_64/timer_delete.rs",
+            posix_runtime["source_owners"],
+        )
         system_configuration = artifacts_by_id["static-c-system-configuration"]
         assert isinstance(system_configuration, dict)
         self.assertNotIn("capabilities", system_configuration)
@@ -14801,6 +14845,41 @@ class X86ParityLedgerTests(unittest.TestCase):
         evidence[0]["command"] = "./scripts/dev-x86_64.sh advanced-time-reference"
         with self.assertRaisesRegex(
             ledger.LedgerError, "closed libc-timer-getoverrun command"
+        ):
+            ledger.validate_ledger(data)
+
+    def test_timer_delete_raw_error_abi_artifact_keeps_its_closed_mapping_contract(
+        self,
+    ) -> None:
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict)
+            and entry["id"] == "static-c-timer-delete-raw-error-abi"
+        )
+        artifact["description"] = artifact["description"].replace(
+            "raw `-EINVAL`", "normalized EINVAL"
+        )
+        with self.assertRaisesRegex(ledger.LedgerError, "raw `-EINVAL`"):
+            ledger.validate_ledger(data)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict)
+            and entry["id"] == "static-c-timer-delete-raw-error-abi"
+        )
+        evidence = artifact["native_evidence"]
+        assert isinstance(evidence, list) and isinstance(evidence[0], dict)
+        evidence[0]["command"] = "./scripts/dev-x86_64.sh advanced-time-reference"
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "closed libc-timer-delete command"
         ):
             ledger.validate_ledger(data)
 

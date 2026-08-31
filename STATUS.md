@@ -1521,6 +1521,22 @@ dereferences a timer handle. It does not claim timer ownership, overrun values,
 valid timer state, signal delivery, calendar/timezone behavior, C time-family
 completion, promotion, or public x86 support.
 
+The same archive has a separate private raw-error `timer_delete` artifact:
+`./scripts/dev-x86_64.sh timer-delete-header-abi` and
+`./scripts/dev-x86_64.sh libc-timer-delete` map exactly to pinned musl 1.2.6
+`src/time/timer_delete.c`'s nonnegative direct `timer_delete=226` branch. Its
+strict C11/C++17 `<time.h>` profiles hide the POSIX spelling;
+POSIX/XOPEN/GNU profiles prove the exact opaque C/C++ external-C declaration
+and linkage. In a fresh process that creates no POSIX timers, the shared
+musl/static fixture calls only nonnegative opaque `timer_t` values `0` and
+`INT_MAX`, requiring raw `-EINVAL` while the caller errno sentinel remains
+unchanged. Musl's negative tagged `timer_t` branch requires private
+`pthread_impl` state, atomic timer-ID marking, and `SIGTIMER`; it is explicitly
+excluded, so this leaf never decodes or dereferences a timer handle. It does
+not establish valid timer-deletion semantics, timer ownership/state, signal delivery,
+calendar/timezone behavior, C time-family completion, promotion, or public x86
+support.
+
 The same archive has a private direct time-observation artifact:
 `./scripts/dev-x86_64.sh libc-time-observation` proves only `clock`, `time`,
 C11 `timespec_get`, `clock_getres`, and `gettimeofday` through a pinned-musl

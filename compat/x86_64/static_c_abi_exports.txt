@@ -889,6 +889,7 @@ thrd_sleep
 thrd_yield
 time
 timegm
+timer_delete
 timer_getoverrun
 timerfd_create
 timerfd_gettime

@@ -396,6 +396,7 @@ pub(crate) const SYS_FUTEX: i64 = 202;
 pub(crate) const SYS_SCHED_SETAFFINITY: i64 = 203;
 pub(crate) const SYS_SCHED_GETAFFINITY: i64 = 204;
 pub(crate) const SYS_TIMER_GETOVERRUN: i64 = 225;
+pub(crate) const SYS_TIMER_DELETE: i64 = 226;
 pub(crate) const SYS_CLOCK_GETTIME: i64 = 228;
 pub(crate) const SYS_CLOCK_GETRES: i64 = 229;
 pub(crate) const SYS_CLOCK_NANOSLEEP: i64 = 230;
