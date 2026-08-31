@@ -506,6 +506,7 @@ nice
 nl_langinfo
 nl_langinfo_l
 ns_get16
+ns_get32
 ns_put16
 ntohl
 ntohs

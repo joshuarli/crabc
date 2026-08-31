@@ -114,8 +114,8 @@ sockets, complete the resolver family, promote x86, or claim public support.
 `static-c-dn-skipname` artifact inside still-planned `libc.resolver`. Its
 companion `./scripts/dev-x86_64.sh nameser-header-abi` gate proves the exact
 C/C++ `dn_skipname(const unsigned char *, const unsigned char *)` and
-`ns_get16(const unsigned char *)` and `ns_put16(unsigned, unsigned char *)`
-declarations, the
+`ns_get16(const unsigned char *)`, `ns_get32(const unsigned char *)`, and
+`ns_put16(unsigned, unsigned char *)` declarations, the
 `NS_CMPRSFLGS`/name-size constants, and unmangled C++ linkage. The static
 fixture then runs through pinned musl 1.2.6 and an archive-free
 `-nostdlib -static` candidate linked from exactly one extracted object, never
@@ -132,25 +132,41 @@ x86 support.
 artifact inside still-planned `libc.resolver`. The shared
 `./scripts/dev-x86_64.sh nameser-header-abi` gate proves the exact C/C++
 `ns_get16(const unsigned char *)` declaration and unmangled C++ linkage beside
-`dn_skipname` and `ns_put16`. Its static fixture then runs through pinned musl
-1.2.6 and an archive-free `-nostdlib -static` candidate linked from exactly one extracted
-object, never `libc.a`. It selects only the 11-byte call-free `ns_get16` text
-section in musl `src/network/ns_parse.c`: two caller-owned bytes form an
-unaligned network-order 16-bit unsigned value, while `NS_GET16` advances its
-caller-owned cursor by two. It has no resolver state, `h_errno`, `errno`, TLS,
-`/etc/hosts` or `/etc/resolv.conf` access, DNS packet I/O, socket,
-netdb/database, parser sibling, integer byte-order helper, allocation, syscall,
-interface, or Ethernet dependency; it is not resolver completion, promotion,
-or public x86 support.
+`dn_skipname`, `ns_get32`, and `ns_put16`. Its static fixture then runs through
+pinned musl 1.2.6 and an archive-free `-nostdlib -static` candidate linked from
+exactly one extracted object, never `libc.a`. It selects only the 11-byte
+call-free `ns_get16` text section in musl `src/network/ns_parse.c`: two
+caller-owned bytes form an unaligned network-order 16-bit unsigned value,
+while `NS_GET16` advances its caller-owned cursor by two. It has no resolver
+state, `h_errno`, `errno`, TLS, `/etc/hosts` or `/etc/resolv.conf` access, DNS
+packet I/O, socket, netdb/database, parser sibling, integer byte-order helper,
+allocation, syscall, interface, or Ethernet dependency; it is not resolver
+completion, promotion, or public x86 support.
+
+`./scripts/dev-x86_64.sh libc-ns-get32` is a private `static-c-ns-get32`
+artifact inside still-planned `libc.resolver`. The shared
+`./scripts/dev-x86_64.sh nameser-header-abi` gate proves the exact C/C++
+`ns_get32(const unsigned char *)` declaration and unmangled C++ linkage beside
+`dn_skipname`, `ns_get16`, and `ns_put16`. Its static fixture then runs through
+pinned musl 1.2.6 and an archive-free `-nostdlib -static` candidate linked from
+exactly one extracted object, never `libc.a`. It selects only the seven-byte
+call-free `ns_get32` text section in musl `src/network/ns_parse.c`: four
+caller-owned bytes form an unaligned network-order 32-bit value widened to
+LP64 C `unsigned long`, while `NS_GET32` advances its caller-owned cursor by
+four. It has no resolver state, `h_errno`, `errno`, TLS, `/etc/hosts` or
+`/etc/resolv.conf` access, DNS packet I/O, socket, netdb/database, parser
+sibling, integer byte-order helper, allocation, syscall, interface, or
+Ethernet dependency; it is not resolver completion, promotion, or public x86
+support.
 
 `./scripts/dev-x86_64.sh libc-ns-put16` is a private `static-c-ns-put16`
 artifact inside still-planned `libc.resolver`. The shared
 `./scripts/dev-x86_64.sh nameser-header-abi` gate proves the exact C/C++
 `ns_put16(unsigned, unsigned char *)` declaration and unmangled C++ linkage
-beside `dn_skipname` and `ns_get16`. Its static fixture then runs through
-pinned musl 1.2.6 and an archive-free `-nostdlib -static` candidate linked
-from exactly one extracted object, never `libc.a`. It selects only the 10-byte
-call-free `ns_put16` text section in musl `src/network/ns_parse.c`: C
+beside `dn_skipname`, `ns_get16`, and `ns_get32`. Its static fixture then runs
+through pinned musl 1.2.6 and an archive-free `-nostdlib -static` candidate
+linked from exactly one extracted object, never `libc.a`. It selects only the
+10-byte call-free `ns_put16` text section in musl `src/network/ns_parse.c`: C
 `unsigned`'s low 16 bits become two unaligned caller-owned network-order bytes,
 while `NS_PUT16` advances its caller-owned cursor by two. It has no resolver
 state, `h_errno`, `errno`, TLS, `/etc/hosts` or `/etc/resolv.conf` access, DNS
