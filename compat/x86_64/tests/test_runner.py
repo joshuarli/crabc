@@ -1382,7 +1382,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "stdio-permanent-fileno-unlocked-header-abi",
             "stdio-permanent-feof-unlocked-header-abi",
             "tee-header-abi",
-            "sync-file-range-header-abi",
+            "sync-file-range-header-abi|copy-file-range-header-abi",
             "image|musl-oracle|header-abi-reference|public-header-surface|header-abi-project|math-complex-header-abi|sys-reg-header-abi|types-header-abi|stat-header-abi|utime-header-abi|pthread-c11-header-abi|pthread-cancellation-header-abi|stdlib-header-abi|stdio-standard-header-abi|time-header-abi|poll-header-abi|select-header-abi|fcntl-header-abi|descriptor-advice-header-abi|filesystem-capacity-header-abi|flock-header-abi|sendfile-header-abi|ioctl-header-abi|unistd-header-abi|system-header-abi|syscall-header-abi|signal-header-abi|termios-header-abi|mman-header-abi|resource-header-abi|socket-header-abi|socket-messages-header-abi|random-entropy-header-abi|mm-abi-reference|mapping-reference|memory-vm-reference|pty-basic-reference|terminal-reference|mlock-reference|msync-reference|mincore-reference|fs-advice-reference|memfd-reference|ftruncate-reference|statfs-reference|timestamp-reference|path-lifecycle-reference|namespace-reference|path-core-reference|xattr-reference|directory-reference|temporary-object-reference|statx-reference|cwd-canonicalize-reference|root-change-reference|mount-reference|thread-kill-reference|ipc-reference|shm-reference|inotify-reference|socket-transport-reference|interface-device-reference|resolver-transport-reference|resolver-facade-reference|netdb-reference|users-databases-reference|posix-fallocate-reference|fallocate-reference|file-position-reference|sync-reference|syncfs-reference|sync-file-range-reference|rand-reference|time-abi-reference|time-observation-reference|calendar-time-reference|advanced-time-reference|relative-sleep-reference|clock-nanosleep-reference|getitimer-reference|setitimer-reference|timerfd-reference|pselect-reference|poll-reference|ppoll-reference|epoll-reference|process-identity-reference|child-ownership-reference|getgroups-reference|process-session-reference|pidfd-open-reference|fcntl-getlk-reference|fcntl-status-reference|flock-reference|sendfile-reference|copy-file-range-reference|scheduler-priority-bounds-reference|rr-interval-reference|sched-affinity-reference|sched-affinity-set-reference|priority-reference|setpriority-reference|rlimit-reference|rlimit-targeted-reference|setrlimit-reference|umask-reference|rusage-reference|times-reference|fstat-reference|statat-reference|getcwd-reference|readlinkat-reference|access-reference|system-reference|thread-reference|thread-credentials-reference|fs-credentials-reference|core|facade|facade-record-owning|libc-syscall|libc-errno-tls|libc-stat-compat|libc-credentials|libc-bootstrap-primitives|libc-signal-control|libc-signal-execution|libc-static-tls-v1|libc-crt-static-tls|libc-pthread-create-join-tls|libc-c11-lifecycle|libc-c11-plain-sync|libc-pthread-c11-once|libc-pthread-c11-tsd|libc-pthread-tls-aggregate|libc-pthread-cancel-deferred|libc-pthread-atfork|libc-thrd-sleep|libc-pthread-mutex-normal|libc-pthread-rwlock|libc-pthread-cond-private|libc-termios-control|libc-process-context|libc-environment|libc-descriptor-io|libc-descriptor-lifecycle|libc-timestamp-updates|libc-process-resources|libc-socket-transport|libc-socket-messages|libc-thread-pointer|libc-foundation|libc-fenv|libc-math-complex|libc-elementary-sqrt-fenv|libc-math-x87-extended|libc-memory|libc-setjmp|libc-atomic|libc-clone-raw|libc-signal-altstack|libc-signal-foundation|ldso-relocation|ldso-image|ldso-initial-graph|ldso-initial-tls|ldso-initial-exec-tls|ldso-owned-crt-handoff|ldso-fixed-graph-introspection|ldso-dynamic-admission",
             "math-elementary-long-double-header-abi|libc-math-elementary-long-double",
             "ldso-fixed-graph-dlfcn",
@@ -1468,7 +1468,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "libc-interface-discovery",
             "libc-posix-exit",
             "libc-tee",
-            "libc-sync-file-range",
+            "libc-sync-file-range|libc-copy-file-range",
             "libc-readiness-waits|libc-system-observation|libc-system-information|libc-fcntl-record-locks|libc-flock|libc-sendfile|libc-posix-fallocate|libc-descriptor-advice|libc-filesystem-capacity|libc-uts-identity|libc-ctype|libc-locale-profile|libc-locale-multibyte|libc-locale-wide-iconv|libc-wide-character|libc-locale-object-wide|libc-locale-narrow|libc-locale-ctype-locators|libc-locale-error-strings|libc-regex|libc-integer-arithmetic|libc-integer-parse|libc-float-parse|libc-getsubopt|libc-intmax-arithmetic|libc-credential-observation|libc-secure-environment|libc-login-name|libc-child-reaping|libc-immediate-termination|libc-bsearch|libc-linear-search|libc-qsort|libc-callback-algorithms|libc-search-tree-intrusive|libc-search-hash-table|libc-gettext-catalog|libc-access|libc-clock-gettime|libc-time-observation|libc-difftime|libc-timegm|libc-gmtime-r|libc-system-configuration|libc-mapping-core|libc-header-layouts-baseline|libc-nanosleep|libc-clock-nanosleep|libc-descriptor-entry|libc-fcntl-status-control|libc-ioctl|libc-ffs|libc-byte-strings|libc-in6addr-any|libc-in6addr-loopback|libc-process-globals-getopt|libc-auxv-observation|libc-inet-address|libc-inet-ntoa|libc-inet-classful|libc-hstrerror|libc-numeric-netdb|libc-random-entropy|libc-memory-search|libc-string-copy|libc-error-strings|libc-strsignal|libc-descriptor-pipeline",
             "libc-vector-io|libc-uio-cxx-linkage",
             "libc-sysv-semaphore|libc-posix-semaphore",
@@ -19826,6 +19826,143 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             runner,
         )
 
+    def test_libc_static_c_abi_copy_file_range_artifact_stays_narrow(self) -> None:
+        """GNU copy_file_range remains one six-word static copy leaf."""
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        syscall = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "syscall.rs"
+        ).read_text(encoding="utf-8")
+        implementation = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "copy_file_range.rs"
+        ).read_text(encoding="utf-8")
+        header_c = (
+            ROOT / "compat" / "x86_64" / "copy_file_range_header_abi_probe.c"
+        ).read_text(encoding="utf-8")
+        header_cpp = (
+            ROOT / "compat" / "x86_64" / "copy_file_range_header_abi_probe.cpp"
+        ).read_text(encoding="utf-8")
+        header_runner = (
+            ROOT / "compat" / "x86_64" / "run_copy_file_range_header_abi.sh"
+        ).read_text(encoding="utf-8")
+        probe = (
+            ROOT / "compat" / "x86_64" / "libc_copy_file_range_probe.c"
+        ).read_text(encoding="utf-8")
+        start = (
+            ROOT / "compat" / "x86_64" / "libc_copy_file_range_start.S"
+        ).read_text(encoding="utf-8")
+        artifact_runner = (
+            ROOT / "compat" / "x86_64" / "run_libc_copy_file_range.sh"
+        ).read_text(encoding="utf-8")
+        static_exports = (
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        ).read_text(encoding="utf-8")
+        static_export_names = {
+            line for line in static_exports.splitlines() if line and not line.startswith("#")
+        }
+        parity_ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        runner = RUNNER.read_text(encoding="utf-8")
+
+        self.assertIn('#[path = "copy_file_range.rs"]', static_root)
+        self.assertIn("SYS_COPY_FILE_RANGE: i64 = 326", syscall)
+        for required in (
+            "musl 1.2.6 release commit",
+            "src/linux/copy_file_range.c",
+            "#[no_mangle]",
+            'extern "C" fn copy_file_range',
+            "raw_syscall::SYS_COPY_FILE_RANGE",
+            "raw_syscall::syscall6(",
+            "c_ssize_status(result)",
+            "input_offset: *mut c_long",
+            "output_offset: *mut c_long",
+            "length: usize",
+            "flags: u32",
+            "rdi/rsi/rdx/r10/r8/r9",
+            "cancellation-point",
+        ):
+            self.assertIn(required, implementation)
+        for forbidden in ("fn sendfile(", "fn splice(", "crabc_core", "crabc_mimalloc"):
+            self.assertNotIn(forbidden, implementation)
+        for required in (
+            "#include <sys/types.h>",
+            "#include <unistd.h>",
+            "copy_file_range_signature",
+            "CRABC_EXPECT_COPY_FILE_RANGE",
+            "CRABC_REQUIRE_COPY_FILE_RANGE_HIDDEN",
+        ):
+            self.assertIn(required, header_c)
+        for required in (
+            "#include <sys/types.h>",
+            "#include <unistd.h>",
+            'extern "C" ssize_t copy_file_range',
+            "copy_file_range_signature",
+            "decltype(&copy_file_range)",
+        ):
+            self.assertIn(required, header_cpp)
+        for required in (
+            "copy_file_range_header_abi_probe.c",
+            "copy_file_range_header_abi_probe.cpp",
+            "C++ driver follows musl's extension-visible mode",
+            "copy_file_range is visible under ${label} C",
+            "compile_cxx_extension_profile strict",
+            "C++ ${label} probe does not retain C linkage",
+            "copy_file_range reference (${variant})",
+        ):
+            self.assertIn(required, header_runner)
+        for required in (
+            "SYS_copy_file_range == 326",
+            "raw_syscall6",
+            "TRANSFER_INPUT_OFFSET",
+            "TRANSFER_OUTPUT_OFFSET",
+            "raw_copy_file_range",
+            "raw_result != -EINVAL",
+            "raw_result != -EBADF",
+            "CRABC_COPY_FILE_RANGE_FREESTANDING",
+        ):
+            self.assertIn(required, probe)
+        for required in (
+            "ARCH_SET_FS",
+            "mov %rsi, %fs:0",
+            "crabc_x86_64_copy_file_range_probe",
+        ):
+            self.assertIn(required, start)
+        for required in (
+            "static_c_abi_exports.txt",
+            "run_copy_file_range_header_abi.sh",
+            "-nostdlib -static",
+            "-Wl,-e,_start",
+            "R_X86_64_TPOFF",
+            "assert_copy_file_range_syscall_path",
+            "copy_file_range lacks Linux syscall 326",
+            "assert_candidate_excludes_descriptor_policy",
+            "stable shared positions",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn("--whole-archive", artifact_runner)
+        self.assertIn("copy_file_range", static_export_names)
+        self.assertIn('id = "static-c-copy-file-range"', parity_ledger)
+        self.assertIn(
+            'command = "./scripts/dev-x86_64.sh libc-copy-file-range"',
+            parity_ledger,
+        )
+        self.assertIn("run_copy_file_range_header_abi()", runner)
+        self.assertIn("run_libc_copy_file_range_probe()", runner)
+        self.assertIn(
+            "    sync-file-range-header-abi|copy-file-range-header-abi) ;;", runner
+        )
+        self.assertIn("    libc-sync-file-range|libc-copy-file-range) ;;", runner)
+        self.assertIn(
+            "/workspace/compat/x86_64/run_libc_copy_file_range.sh", runner
+        )
+        self.assertIn(
+            "    libc-copy-file-range)\n"
+            "        [ \"$#\" -eq 0 ] || fail \"libc-copy-file-range takes no arguments\"",
+            runner,
+        )
+
     def test_libc_static_c_abi_sync_file_range_artifact_stays_narrow(self) -> None:
         """GNU sync_file_range remains one direct static range-request leaf."""
         static_root = (
@@ -19945,8 +20082,10 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         )
         self.assertIn("run_sync_file_range_header_abi()", runner)
         self.assertIn("run_libc_sync_file_range_probe()", runner)
-        self.assertIn("    sync-file-range-header-abi) ;;", runner)
-        self.assertIn("    libc-sync-file-range) ;;", runner)
+        self.assertIn(
+            "    sync-file-range-header-abi|copy-file-range-header-abi) ;;", runner
+        )
+        self.assertIn("    libc-sync-file-range|libc-copy-file-range) ;;", runner)
         self.assertIn("/workspace/compat/x86_64/run_libc_sync_file_range.sh", runner)
         self.assertIn(
             "    libc-sync-file-range)\n"

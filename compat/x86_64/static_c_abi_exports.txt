@@ -168,6 +168,7 @@ conj
 conjf
 conjl
 connect
+copy_file_range
 copysign
 copysignf
 copysignl

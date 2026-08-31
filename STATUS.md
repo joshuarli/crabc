@@ -1559,6 +1559,17 @@ not select pathname opening or descriptor ownership, cache/writeback policy or
 durability, `sync`/`syncfs`, `fallocate`, cancellation, family/platform parity,
 or public x86 support.
 
+`./scripts/dev-x86_64.sh libc-copy-file-range` is a separate private
+`static-c-copy-file-range` artifact inside planned `libc.posix-runtime`. Its
+GNU-only project-header C/C++ gate and pinned-musl/freestanding-static fixture
+prove only one same-filesystem regular-file explicit-offset
+`copy_file_range=326` request: wrapper/raw result and pointed-offset agreement,
+copied bytes, retained shared descriptor positions, stale `errno` on success,
+plus direct invalid-flags `EINVAL` and bad-input `EBADF`. It does not select
+pathname opening or descriptor ownership, copy fallback or cross-filesystem
+policy, `sendfile`/`splice`, durability, cancellation, family/platform parity,
+or public x86 support.
+
 `./scripts/dev-x86_64.sh libc-posix-fallocate` is a separate private
 `static-c-posix-fallocate` artifact inside planned `libc.posix-runtime`. Its
 strict and large-file-only project-header C/C++ profiles, plus its

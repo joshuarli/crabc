@@ -256,6 +256,7 @@ X86_RUNTIME_FOUNDATION_LIBC_SOURCES = {
     Path("libc/src/c_abi/x86_64/strsignal.rs"),
     Path("libc/src/c_abi/x86_64/termios_control.rs"),
     Path("libc/src/c_abi/x86_64/tee.rs"),
+    Path("libc/src/c_abi/x86_64/copy_file_range.rs"),
     Path("libc/src/c_abi/x86_64/sync_file_range.rs"),
     Path("libc/src/c_abi/x86_64/grantpt.rs"),
     Path("libc/src/c_abi/x86_64/unlockpt.rs"),
@@ -3774,6 +3775,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         '#[path = "pthread_once.rs"]',
         '#[path = "termios_control.rs"]',
         '#[path = "tee.rs"]',
+        '#[path = "copy_file_range.rs"]',
         '#[path = "sync_file_range.rs"]',
         '#[path = "grantpt.rs"]',
         '#[path = "unlockpt.rs"]',
@@ -6498,6 +6500,44 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
             errors.append(
                 "libc/src/c_abi/x86_64/tee.rs: selected static GNU pipe-buffer "
                 f"boundary must not select {forbidden!r}"
+            )
+
+    copy_file_range_source = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "copy_file_range.rs"
+    )
+    copy_file_range_text = copy_file_range_source.read_text(errors="replace")
+    for required in (
+        "musl 1.2.6 release commit",
+        "src/linux/copy_file_range.c",
+        "copy_file_range=326",
+        "rdi/rsi/rdx/r10/r8/r9",
+        "raw_syscall::SYS_COPY_FILE_RANGE",
+        "raw_syscall::syscall6(",
+        "c_ssize_status(result)",
+        'pub unsafe extern "C" fn copy_file_range',
+        "cancellation-point",
+    ):
+        if required not in copy_file_range_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/copy_file_range.rs: selected static GNU "
+                f"descriptor-copy boundary is missing {required!r}"
+            )
+    copy_file_range_exports = set(
+        re.findall(
+            r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(',
+            copy_file_range_text,
+        )
+    )
+    if copy_file_range_exports != {"copy_file_range"}:
+        errors.append(
+            "libc/src/c_abi/x86_64/copy_file_range.rs: selected static GNU "
+            "descriptor-copy artifact must export only copy_file_range"
+        )
+    for forbidden in ("crabc_core", "crabc_mimalloc", "fn sendfile(", "fn splice("):
+        if forbidden in copy_file_range_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/copy_file_range.rs: selected static GNU "
+                f"descriptor-copy boundary must not select {forbidden!r}"
             )
 
     sync_file_range_source = (
@@ -10989,6 +11029,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         ctermid_text,
         grantpt_text,
         unlockpt_text,
+        copy_file_range_text,
         tee_text,
         sync_file_range_text,
         gethostid_text,
@@ -11308,6 +11349,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         "ctermid",
         "grantpt",
         "unlockpt",
+        "copy_file_range",
         "tee",
         "sync_file_range",
         "gethostid",
@@ -11612,6 +11654,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         ("ctermid.rs", ctermid_text),
         ("grantpt.rs", grantpt_text),
         ("unlockpt.rs", unlockpt_text),
+        ("copy_file_range.rs", copy_file_range_text),
         ("tee.rs", tee_text),
         ("sync_file_range.rs", sync_file_range_text),
         ("gettid.rs", gettid_text),
