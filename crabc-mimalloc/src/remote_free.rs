@@ -1402,9 +1402,11 @@ mod tests {
             .reinitialize(generation)
             .expect("a closed page may begin its next source lifetime");
         assert_ne!(next_generation, generation);
-        assert_eq!(
-            state.begin_publication(generation),
-            Err(LiveRemoteFreePagePublicationError::StaleGeneration),
+        assert!(
+            matches!(
+                state.begin_publication(generation),
+                Err(LiveRemoteFreePagePublicationError::StaleGeneration)
+            ),
             "a stale PageMap observation cannot acquire the reused page's new lifetime"
         );
     }
