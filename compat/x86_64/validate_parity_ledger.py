@@ -1206,15 +1206,25 @@ SYSV_SEMAPHORE_NO_ARGUMENT_COMMANDS = (
 
 SYSV_SEMAPHORE_UNSELECTED_SYMBOLS = (
     "sem_close",
+    "sem_open",
+    "sem_timedwait",
+    "sem_unlink",
+)
+
+POSIX_SEMAPHORE_SYMBOLS = (
     "sem_destroy",
     "sem_getvalue",
     "sem_init",
-    "sem_open",
     "sem_post",
-    "sem_timedwait",
     "sem_trywait",
-    "sem_unlink",
     "sem_wait",
+)
+
+POSIX_SEMAPHORE_UNSELECTED_SYMBOLS = (
+    "sem_close",
+    "sem_open",
+    "sem_timedwait",
+    "sem_unlink",
 )
 
 SYSV_MESSAGE_SHARED_MEMORY_SYMBOLS = (
@@ -1241,15 +1251,9 @@ SYSV_MESSAGE_SHARED_MEMORY_UNSELECTED_SYMBOLS = (
     "mq_timedsend",
     "mq_unlink",
     "sem_close",
-    "sem_destroy",
-    "sem_getvalue",
-    "sem_init",
     "sem_open",
-    "sem_post",
     "sem_timedwait",
-    "sem_trywait",
     "sem_unlink",
-    "sem_wait",
 )
 
 EVENT_DESCRIPTOR_SYMBOLS = (
@@ -13740,7 +13744,7 @@ def require_sysv_semaphore_artifact(family: Mapping[str, Any]) -> None:
     )
     require(
         not (static_exports & set(SYSV_SEMAPHORE_UNSELECTED_SYMBOLS)),
-        "static-c-sysv-semaphore must not add unselected SysV IPC or POSIX semaphore exports",
+        "static-c-sysv-semaphore must not add unselected SysV IPC or named/timed POSIX semaphore exports",
     )
 
     oracle = artifact["oracle"]
@@ -13794,6 +13798,232 @@ def require_sysv_semaphore_artifact(family: Mapping[str, Any]) -> None:
             )
         ),
         "static-c-sysv-semaphore evidence must retain its exact variadic IPC_CMD runtime regression",
+    )
+
+
+def require_posix_semaphore_artifact(family: Mapping[str, Any]) -> None:
+    """Keep the selected unnamed POSIX-semaphore ABI boundary private and exact."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.posix-runtime].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [
+        entry for entry in artifacts if entry.get("id") == "static-c-posix-semaphore"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.posix-runtime must contain exactly one static-c-posix-semaphore artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-posix-semaphore must not promote libc.posix-runtime",
+    )
+    artifact = matching[0]
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for symbol in POSIX_SEMAPHORE_SYMBOLS:
+        require(
+            f"`{symbol}`" in description,
+            f"static-c-posix-semaphore description omits {symbol}",
+        )
+    for phrase in (
+        "unnamed POSIX semaphore block",
+        "32-byte `sem_t`",
+        "pshared",
+        "futex",
+        "sem_timedwait",
+        "named semaphore",
+        "cancellation",
+        "public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"static-c-posix-semaphore description omits {phrase}",
+        )
+
+    owners = set(
+        nonempty_strings(artifact["source_owners"], "static-c-posix-semaphore.source_owners")
+    )
+    for owner in (
+        "compat/upstreams.toml",
+        "libc/Cargo.toml",
+        "libc/src/lib.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/posix_semaphore.rs",
+        "libc/src/c_abi/x86_64/atomic.rs",
+        "libc/src/c_abi/x86_64/errno.rs",
+        "libc/src/c_abi/x86_64/syscall.rs",
+        "libc/src/c_abi/x86_64/static_tls.rs",
+        "include/errno.h",
+        "include/fcntl.h",
+        "include/semaphore.h",
+        "include/stdint.h",
+        "include/sys/mman.h",
+        "include/sys/syscall.h",
+        "include/bits/alltypes.h",
+        "include/bits/syscall.h",
+        "compat/x86_64/posix_semaphore_header_abi_probe.c",
+        "compat/x86_64/posix_semaphore_header_abi_probe.cpp",
+        "compat/x86_64/run_posix_semaphore_header_abi.sh",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/libc_posix_semaphore_probe.c",
+        "compat/x86_64/libc_posix_semaphore_start.S",
+        "compat/x86_64/run_libc_posix_semaphore.sh",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "scripts/dev-x86_64.sh",
+        "scripts/check_structure.py",
+    ):
+        require(owner in owners, f"static-c-posix-semaphore source owners omit {owner}")
+
+    prerequisites = nonempty_strings(
+        artifact["x86_abi_prerequisites"], "static-c-posix-semaphore.x86_abi_prerequisites"
+    )
+    require(
+        any(
+            "sem_init" in item
+            and "sem_destroy" in item
+            and "sem_getvalue" in item
+            and "sem_trywait" in item
+            and "sem_wait" in item
+            and "sem_post" in item
+            and "rdi" in item
+            and "rdx" in item
+            for item in prerequisites
+        ),
+        "static-c-posix-semaphore must record its C register ABI",
+    )
+    require(
+        any(
+            "32-byte" in item
+            and "align-4" in item
+            and "volatile int" in item
+            and "SEM_VALUE_MAX" in item
+            and "FUTEX_PRIVATE_FLAG=128" in item
+            for item in prerequisites
+        ),
+        "static-c-posix-semaphore must record its musl sem_t representation",
+    )
+    require(
+        any(
+            "futex=202" in item
+            and "FUTEX_WAIT" in item
+            and "FUTEX_WAKE" in item
+            and "pshared" in item
+            and "MAP_SHARED" in item
+            for item in prerequisites
+        ),
+        "static-c-posix-semaphore must record its private/shared futex handoff",
+    )
+    require(
+        any(
+            "sem_timedwait" in item
+            and "named semaphore" in item
+            and "cancellation" in item
+            and "signal-action restart" in item
+            for item in prerequisites
+        ),
+        "static-c-posix-semaphore must retain its unselected timed/named/cancellation boundary",
+    )
+
+    headers = nonempty_strings(
+        artifact["x86_header_prerequisites"],
+        "static-c-posix-semaphore.x86_header_prerequisites",
+    )
+    require(
+        any(
+            "run_posix_semaphore_header_abi.sh" in item
+            and "C/C++" in item
+            and "32-byte" in item
+            and "volatile int" in item
+            and "timespec" in item
+            and "unmangled C++" in item
+            for item in headers
+        ),
+        "static-c-posix-semaphore must record its direct semaphore header boundary",
+    )
+
+    static_exports = set(
+        static_c_abi_export_names(
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        )
+    )
+    require(
+        set(POSIX_SEMAPHORE_SYMBOLS) <= static_exports,
+        "static-c-posix-semaphore must retain its six selected exports",
+    )
+    require(
+        not (static_exports & set(POSIX_SEMAPHORE_UNSELECTED_SYMBOLS)),
+        "static-c-posix-semaphore must not add named or timed semaphore exports",
+    )
+
+    oracle = artifact["oracle"]
+    assert isinstance(oracle, list)
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "c-posix"
+            and isinstance(entry.get("role"), str)
+            and all(
+                source in entry["role"]
+                for source in (
+                    "src/thread/sem_init.c",
+                    "sem_destroy.c",
+                    "sem_getvalue.c",
+                    "sem_trywait.c",
+                    "sem_post.c",
+                    "sem_timedwait.c",
+                    "sem_wait.c",
+                )
+            )
+            for entry in oracle
+        ),
+        "static-c-posix-semaphore must retain its pinned-musl semaphore source mapping",
+    )
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "kernel-abi"
+            and isinstance(entry.get("role"), str)
+            and "futex=202" in entry["role"]
+            and "FUTEX_WAIT" in entry["role"]
+            and "FUTEX_WAKE" in entry["role"]
+            for entry in oracle
+        ),
+        "static-c-posix-semaphore must retain its Linux futex oracle",
+    )
+
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-posix-semaphore"},
+        "static-c-posix-semaphore must use the closed libc-posix-semaphore command",
+    )
+    scope = evidence[0].get("scope")
+    require(
+        isinstance(scope, str)
+        and all(
+            phrase in scope
+            for phrase in (
+                "Pinned-musl C reference",
+                "-nostdlib -static",
+                "sem_init",
+                "sem_trywait",
+                "sem_wait",
+                "sem_post",
+                "EOVERFLOW",
+                "MAP_SHARED",
+                "futex=202",
+                "named",
+                "timed",
+                "cancellation",
+                "public x86 support",
+            )
+        ),
+        "static-c-posix-semaphore evidence must retain its bounded runtime proof",
     )
 
 
@@ -13976,7 +14206,7 @@ def require_sysv_message_shared_memory_artifact(family: Mapping[str, Any]) -> No
     )
     require(
         not (static_exports & set(SYSV_MESSAGE_SHARED_MEMORY_UNSELECTED_SYMBOLS)),
-        "static-c-sysv-message-shared-memory must not add unselected POSIX IPC or semaphore exports",
+        "static-c-sysv-message-shared-memory must not add unselected POSIX IPC or named/timed semaphore exports",
     )
 
     oracle = artifact["oracle"]
@@ -21349,6 +21579,7 @@ def validate_ledger(
     require_generic_ioctl_artifact(by_id["libc.posix-runtime"])
     require_socket_messages_artifact(by_id["libc.posix-runtime"])
     require_sysv_semaphore_artifact(by_id["libc.posix-runtime"])
+    require_posix_semaphore_artifact(by_id["libc.posix-runtime"])
     require_sysv_message_shared_memory_artifact(by_id["libc.posix-runtime"])
     require_event_descriptors_artifact(by_id["libc.posix-runtime"])
     require_pathname_lifecycle_artifact(by_id["libc.posix-runtime"])

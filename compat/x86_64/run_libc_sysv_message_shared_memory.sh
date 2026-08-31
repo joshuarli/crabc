@@ -152,8 +152,8 @@ done
 grep -Eq 'GLOBAL +HIDDEN +.*__crabc_x86_static_tls_bootstrap$' "$archive_elf_symbols" ||
     fail "archive Static Initial TLS v1 bootstrap is not hidden"
 for unselected in mq_close mq_getattr mq_notify mq_open mq_receive mq_send mq_setattr \
-    mq_timedreceive mq_timedsend mq_unlink sem_close sem_destroy sem_init sem_open \
-    sem_post sem_unlink sem_wait sem_trywait sem_timedwait malloc free calloc realloc \
+    mq_timedreceive mq_timedsend mq_unlink sem_close sem_open sem_unlink sem_timedwait \
+    malloc free calloc realloc \
     __tls_get_addr; do
     if grep -Eq "[[:space:]][TW][[:space:]]${unselected}$" "$archive_symbols"; then
         fail "archive accidentally exports unselected $unselected"

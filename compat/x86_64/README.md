@@ -3192,9 +3192,23 @@ the `semget` oversized-count `EINVAL` precheck, operation/timeout forwarding,
 raw errors, stale errno on success, and `IPC_RMID` cleanup. It excludes SysV
 message queues and shared memory from this semaphore artifact itself; the
 separate `libc-sysv-message-shared-memory` artifact selects their bounded
-adjacent C routes. POSIX semaphores, `SEM_UNDO` and cross-process lifecycle
-policy, cancellation, dynamic runtime, family completion, full x86-64 parity,
-and public x86 support remain excluded.
+adjacent C routes. Named/timed POSIX semaphores, `SEM_UNDO` and cross-process
+lifecycle policy, cancellation, dynamic runtime, family completion, full
+x86-64 parity, and public x86 support remain excluded.
+
+`posix-semaphore-header-abi` is the paired C/C++ project-header/pinned-musl
+`semaphore.h` declaration/layout gate. It keeps musl's full declaration
+surface visible—including named and timed forms—while proving the x86 32-byte
+align-4 volatile-word `sem_t`, its `timespec` dependency, and C++ linkage.
+`libc-posix-semaphore` records the separate private
+`static-c-posix-semaphore` artifact: the same C body first executes through
+pinned musl, then through a `-nostdlib -static` archive candidate. It selects
+only unnamed `sem_init`, `sem_destroy`, `sem_getvalue`, `sem_trywait`,
+`sem_wait`, and `sem_post`; it proves their errno/stale-errno boundaries,
+the `SEM_VALUE_MAX` overflow check, and a caller-owned `MAP_SHARED` pshared
+parent/child futex handoff. `sem_timedwait`, named semaphores, cancellation
+cleanup, signal-action restart policy, destruction races, general POSIX IPC,
+and public x86 support remain outside this artifact.
 
 `libc-sysv-message-shared-memory` is a separately recorded private
 `static-c-sysv-message-shared-memory` `verified_artifact` gate over that

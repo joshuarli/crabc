@@ -3,8 +3,8 @@
 //! This leaf owns one complete, deliberately bounded SysV semaphore family:
 //! `semget`, `semop`, `semtimedop`, and variadic `semctl`. It composes only
 //! the raw Linux/x86-64 syscall register boundary and the selected initial-TLS
-//! C `errno` writer. It is not SysV message queues or shared memory, POSIX
-//! semaphores, a process-exit `SEM_UNDO` lifecycle policy, pthread
+//! C `errno` writer. It is not SysV message queues or shared memory, named or
+//! timed POSIX semaphores, a process-exit `SEM_UNDO` lifecycle policy, pthread
 //! cancellation, a general C/POSIX runtime, libc.so, CRT, dynamic TLS,
 //! loader, sysroot, allocator, or public x86 support.
 //!

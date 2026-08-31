@@ -50,7 +50,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 33)
-        self.assertEqual(report["verified_artifact_count"], 123)
+        self.assertEqual(report["verified_artifact_count"], 124)
         self.assertEqual(report["header_layout_probe_count"], 46)
         self.assertEqual(report["public_header_inventory_count"], 183)
         self.assertEqual(report["header_foundation_header_count"], 191)
@@ -11501,6 +11501,179 @@ class X86ParityLedgerTests(unittest.TestCase):
         with self.assertRaisesRegex(
             ledger.LedgerError, "closed libc-sysv-semaphore command"
         ):
+            ledger.validate_ledger(data)
+
+    def test_posix_semaphore_artifact_keeps_its_bounded_boundary(self) -> None:
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-posix-semaphore"
+        )
+        self.assertNotIn("capabilities", artifact)
+        for owner in (
+            "compat/upstreams.toml",
+            "libc/src/c_abi/x86_64/static_c_abi.rs",
+            "libc/src/c_abi/x86_64/posix_semaphore.rs",
+            "libc/src/c_abi/x86_64/atomic.rs",
+            "libc/src/c_abi/x86_64/errno.rs",
+            "libc/src/c_abi/x86_64/syscall.rs",
+            "libc/src/c_abi/x86_64/static_tls.rs",
+            "include/semaphore.h",
+            "compat/x86_64/posix_semaphore_header_abi_probe.c",
+            "compat/x86_64/posix_semaphore_header_abi_probe.cpp",
+            "compat/x86_64/run_posix_semaphore_header_abi.sh",
+            "compat/x86_64/static_c_abi_exports.txt",
+            "compat/x86_64/libc_posix_semaphore_probe.c",
+            "compat/x86_64/libc_posix_semaphore_start.S",
+            "compat/x86_64/run_libc_posix_semaphore.sh",
+        ):
+            self.assertIn(owner, artifact["source_owners"])
+        self.assertEqual(
+            {entry["command"] for entry in artifact["native_evidence"]},
+            {"./scripts/dev-x86_64.sh libc-posix-semaphore"},
+        )
+        for phrase in (
+            "unnamed POSIX semaphore block",
+            "`sem_init`",
+            "`sem_destroy`",
+            "`sem_getvalue`",
+            "`sem_trywait`",
+            "`sem_wait`",
+            "`sem_post`",
+            "32-byte `sem_t`",
+            "pshared",
+            "futex",
+            "sem_timedwait",
+            "named semaphore",
+            "cancellation",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, artifact["description"])
+
+        static_exports = (
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        ).read_text(encoding="utf-8").splitlines()
+        for symbol in (
+            "sem_destroy",
+            "sem_getvalue",
+            "sem_init",
+            "sem_post",
+            "sem_trywait",
+            "sem_wait",
+        ):
+            self.assertIn(symbol, static_exports)
+        for symbol in ("sem_close", "sem_open", "sem_timedwait", "sem_unlink"):
+            self.assertNotIn(symbol, static_exports)
+
+        prerequisites = artifact["x86_abi_prerequisites"]
+        assert isinstance(prerequisites, list)
+        c_abi = next(item for item in prerequisites if "sem_init" in item)
+        assert isinstance(c_abi, str)
+        for phrase in ("sem_destroy", "sem_getvalue", "sem_trywait", "sem_wait", "sem_post", "rdi", "rdx"):
+            self.assertIn(phrase, c_abi)
+        representation = next(item for item in prerequisites if "FUTEX_PRIVATE_FLAG=128" in item)
+        assert isinstance(representation, str)
+        for phrase in ("32-byte", "align-4", "volatile int", "SEM_VALUE_MAX"):
+            self.assertIn(phrase, representation)
+        handoff = next(item for item in prerequisites if "futex=202" in item)
+        assert isinstance(handoff, str)
+        for phrase in ("FUTEX_WAIT", "FUTEX_WAKE", "pshared", "MAP_SHARED"):
+            self.assertIn(phrase, handoff)
+        exclusions = next(item for item in prerequisites if "signal-action restart" in item)
+        assert isinstance(exclusions, str)
+        for phrase in ("sem_timedwait", "named semaphore", "cancellation"):
+            self.assertIn(phrase, exclusions)
+
+        headers = artifact["x86_header_prerequisites"]
+        assert isinstance(headers, list) and isinstance(headers[0], str)
+        for phrase in (
+            "run_posix_semaphore_header_abi.sh",
+            "C/C++",
+            "32-byte",
+            "volatile int",
+            "timespec",
+            "unmangled C++",
+        ):
+            self.assertIn(phrase, headers[0])
+        source_mapping = next(entry for entry in artifact["oracle"] if entry["kind"] == "c-posix")
+        for source in (
+            "src/thread/sem_init.c",
+            "sem_destroy.c",
+            "sem_getvalue.c",
+            "sem_trywait.c",
+            "sem_post.c",
+            "sem_timedwait.c",
+            "sem_wait.c",
+        ):
+            self.assertIn(source, source_mapping["role"])
+        scope = artifact["native_evidence"][0]["scope"]
+        assert isinstance(scope, str)
+        for phrase in ("-nostdlib -static", "EOVERFLOW", "MAP_SHARED", "futex=202", "named", "timed", "cancellation"):
+            self.assertIn(phrase, scope)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-posix-semaphore"
+        )
+        prerequisites = artifact["x86_abi_prerequisites"]
+        assert isinstance(prerequisites, list)
+        index = next(
+            index for index, item in enumerate(prerequisites) if "FUTEX_PRIVATE_FLAG=128" in item
+        )
+        prerequisites[index] = prerequisites[index].replace(
+            "FUTEX_PRIVATE_FLAG=128", "FUTEX_PRIVATE_FLAG=0"
+        )
+        with self.assertRaisesRegex(ledger.LedgerError, "musl sem_t representation"):
+            ledger.validate_ledger(data)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-posix-semaphore"
+        )
+        prerequisites = artifact["x86_abi_prerequisites"]
+        assert isinstance(prerequisites, list)
+        index = next(index for index, item in enumerate(prerequisites) if "futex=202" in item)
+        prerequisites[index] = prerequisites[index].replace("futex=202", "futex=999")
+        with self.assertRaisesRegex(ledger.LedgerError, "private/shared futex handoff"):
+            ledger.validate_ledger(data)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-posix-semaphore"
+        )
+        evidence = artifact["native_evidence"]
+        assert isinstance(evidence, list) and isinstance(evidence[0], dict)
+        evidence[0]["scope"] = evidence[0]["scope"].replace("MAP_SHARED", "MISSING_SHARED")
+        with self.assertRaisesRegex(ledger.LedgerError, "bounded runtime proof"):
+            ledger.validate_ledger(data)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-posix-semaphore"
+        )
+        evidence = artifact["native_evidence"]
+        assert isinstance(evidence, list) and isinstance(evidence[0], dict)
+        evidence[0]["command"] = "./scripts/dev-x86_64.sh ipc-reference"
+        with self.assertRaisesRegex(ledger.LedgerError, "closed libc-posix-semaphore command"):
             ledger.validate_ledger(data)
 
     def test_sysv_message_shared_memory_artifact_keeps_its_bounded_boundary(self) -> None:

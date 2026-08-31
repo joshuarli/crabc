@@ -1,24 +1,22 @@
 #ifndef _SEMAPHORE_H
 #define _SEMAPHORE_H
 
+#include <features.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-#include <stddef.h>
+#define __NEED_time_t
+#define __NEED_struct_timespec
+#include <bits/alltypes.h>
 
-#define O_CREAT 64
-#define O_EXCL 128
+#include <fcntl.h>
 
-#ifndef __DEFINED_struct_timespec
-#define __DEFINED_struct_timespec
-struct timespec {
-    long tv_sec;
-    long tv_nsec;
-};
-#endif
-
-typedef struct { int __val[8]; } sem_t;
+/* Match musl's public 32-byte x86 semaphore record.  The first three words
+ * are the selected unnamed-semaphore value, waiter count, and futex-sharing
+ * flag; consumers must not decode them. */
+typedef struct { volatile int __val[4 * sizeof(long) / sizeof(int)]; } sem_t;
 
 #define SEM_FAILED ((sem_t *)0)
 

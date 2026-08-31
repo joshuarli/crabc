@@ -58,8 +58,8 @@
 //! startup/ordinary-exit lifecycle, startup-published program-name globals
 //! and option parsing, callback-algorithms, POSIX `nanosleep`
 //! and `clock_nanosleep`, and direct clock-observation artifacts, plus one
-//! bounded System V
-//! message-queue/shared-memory artifact and one bounded event-descriptor
+//! bounded System V message-queue/shared-memory artifact, one bounded
+//! unnamed POSIX semaphore artifact, and one bounded event-descriptor
 //! artifact, one bounded pathname-mutation/lifecycle artifact, and one
 //! bounded directory-stream/raw-directory artifact.
 //! The independently selected extended-attribute leaf owns the complete
@@ -322,6 +322,8 @@ mod numeric_netdb;
 mod socket_messages;
 #[path = "sysv_semaphore.rs"]
 mod sysv_semaphore;
+#[path = "posix_semaphore.rs"]
+mod posix_semaphore;
 #[path = "sysv_message_shared_memory.rs"]
 mod sysv_message_shared_memory;
 

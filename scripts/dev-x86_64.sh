@@ -15,7 +15,7 @@
 # selected descriptor I/O, selected process resources, and selected readiness
 # and signal waits, system observation, UTS identity, base socket transport,
 # padded socket messages/options,
-# SysV semaphore operations,
+# SysV semaphore operations and unnamed POSIX semaphore operations,
 # byte strings, startup-published program names and option parsing, random
 # entropy, memory search, C-string copy, fixed-C-locale
 # ctype, named C/POSIX/C.UTF-8 locale/multibyte conversion, integer arithmetic, integer parsing, source-faithful C-locale binary32/binary64/x87 floating parsing, intmax arithmetic, credential
@@ -114,6 +114,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   inet-address-header-abi  verify selected x86 arpa/inet C/C++ numeric-address declarations
   socket-messages-header-abi  verify staged x86 socket-message/options C/C++ declarations/layouts
   sysv-semaphore-header-abi  verify staged x86 SysV semaphore C/C++ declarations/layouts
+  posix-semaphore-header-abi  verify staged x86 POSIX semaphore C/C++ declarations/layouts
   sysv-message-shared-memory-header-abi  verify staged x86 SysV message/shared-memory C/C++ declarations/layouts
   libc-event-descriptors  run the static x86 crabc-libc epoll/eventfd/inotify slice
   libc-extended-attributes  run the static x86 crabc-libc extended-attribute slice
@@ -275,6 +276,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-vector-io  run the static x86 crabc-libc vector-I/O slice
   libc-ioctl  run the static x86 crabc-libc generic ioctl slice
   libc-sysv-semaphore  run the static x86 crabc-libc SysV semaphore slice
+  libc-posix-semaphore  run the static x86 crabc-libc unnamed POSIX semaphore slice
   libc-sysv-message-shared-memory  run the static x86 crabc-libc SysV message/shared-memory slice
   libc-descriptor-io  run the static x86 crabc-libc selected descriptor-I/O slice
   libc-process-resources  run the static x86 crabc-libc selected resource slice
@@ -1894,6 +1896,10 @@ run_libc_sysv_semaphore() {
     run_in_container bash /workspace/compat/x86_64/run_libc_sysv_semaphore.sh
 }
 
+run_libc_posix_semaphore() {
+    run_in_container bash /workspace/compat/x86_64/run_libc_posix_semaphore.sh
+}
+
 run_libc_sysv_message_shared_memory() {
     run_in_container bash /workspace/compat/x86_64/run_libc_sysv_message_shared_memory.sh
 }
@@ -2020,6 +2026,10 @@ run_socket_messages_header_abi() {
 
 run_sysv_semaphore_header_abi() {
     run_in_container bash /workspace/compat/x86_64/run_sysv_semaphore_header_abi.sh
+}
+
+run_posix_semaphore_header_abi() {
+    run_in_container bash /workspace/compat/x86_64/run_posix_semaphore_header_abi.sh
 }
 
 run_sysv_message_shared_memory_header_abi() {
@@ -3066,7 +3076,7 @@ case "$command" in
     string-copy-header-abi) ;;
     error-strings-header-abi) ;;
     random-entropy-header-abi) ;;
-    sysv-semaphore-header-abi) ;;
+    sysv-semaphore-header-abi|posix-semaphore-header-abi) ;;
     sysv-message-shared-memory-header-abi) ;;
     libc-event-descriptors) ;;
     libc-extended-attributes) ;;
@@ -3084,7 +3094,7 @@ case "$command" in
     libc-static-c-abi-same-object-differential|qualification-posix-abi-admission) ;;
     libc-readiness-waits|libc-system-observation|libc-system-information|libc-fcntl-record-locks|libc-flock|libc-sendfile|libc-posix-fallocate|libc-descriptor-advice|libc-filesystem-capacity|libc-uts-identity|libc-ctype|libc-locale-multibyte|libc-locale-wide-iconv|libc-wide-character|libc-locale-object-wide|libc-locale-narrow|libc-regex|libc-integer-arithmetic|libc-integer-parse|libc-float-parse|libc-intmax-arithmetic|libc-credential-observation|libc-login-name|libc-child-reaping|libc-immediate-termination|libc-callback-algorithms|libc-access|libc-clock-gettime|libc-time-observation|libc-system-configuration|libc-mapping-core|libc-header-layouts-baseline|libc-nanosleep|libc-clock-nanosleep|libc-descriptor-entry|libc-fcntl-status-control|libc-ioctl|libc-ffs|libc-byte-strings|libc-process-globals-getopt|libc-inet-address|libc-numeric-netdb|libc-random-entropy|libc-memory-search|libc-string-copy|libc-error-strings|libc-descriptor-pipeline) ;;
     libc-vector-io|libc-uio-cxx-linkage) ;;
-    libc-sysv-semaphore) ;;
+    libc-sysv-semaphore|libc-posix-semaphore) ;;
     libc-sysv-message-shared-memory) ;;
     *)
         usage >&2
@@ -3453,6 +3463,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "sysv-semaphore-header-abi takes no arguments"
         ensure_image
         run_sysv_semaphore_header_abi
+        ;;
+    posix-semaphore-header-abi)
+        [ "$#" -eq 0 ] || fail "posix-semaphore-header-abi takes no arguments"
+        ensure_image
+        run_posix_semaphore_header_abi
         ;;
     sysv-message-shared-memory-header-abi)
         [ "$#" -eq 0 ] || fail "sysv-message-shared-memory-header-abi takes no arguments"
@@ -4397,6 +4412,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "libc-sysv-semaphore takes no arguments"
         ensure_image
         run_libc_sysv_semaphore
+        ;;
+    libc-posix-semaphore)
+        [ "$#" -eq 0 ] || fail "libc-posix-semaphore takes no arguments"
+        ensure_image
+        run_libc_posix_semaphore
         ;;
     libc-sysv-message-shared-memory)
         [ "$#" -eq 0 ] || fail "libc-sysv-message-shared-memory takes no arguments"

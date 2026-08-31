@@ -792,6 +792,17 @@ pinned-musl and freestanding-static C fixture selects exactly `semget`,
 precheck, direct syscall/errno behavior, and the x86 fourth-argument route.
 It is a bounded semaphore ABI/archive vertical, not closure of
 `libc.headers-layouts` or `libc.posix-runtime`. The paired
+`./scripts/dev-x86_64.sh posix-semaphore-header-abi` gate compares the
+project/pinned-musl `semaphore.h` C/C++ declaration surface, its 32-byte
+align-4 volatile-word `sem_t`, LP64 `timespec` dependency, and C linkage.
+`./scripts/dev-x86_64.sh libc-posix-semaphore` records the separate private
+`static-c-posix-semaphore` artifact: its pinned-musl and freestanding-static C
+fixture selects exactly unnamed `sem_init`, `sem_destroy`, `sem_getvalue`,
+`sem_trywait`, `sem_wait`, and `sem_post`, including stale errno/error
+translation, the `SEM_VALUE_MAX` overflow boundary, and one caller-owned
+`MAP_SHARED` pshared futex handoff. It deliberately does not select
+`sem_timedwait`, named semaphores, cancellation cleanup, signal-action restart
+policy, destruction races, or general POSIX IPC. The paired
 `./scripts/dev-x86_64.sh sysv-message-shared-memory-header-abi` gate now
 compares selected `sys/ipc.h`/`sys/msg.h`/`sys/shm.h` declarations,
 feature-visible member spellings, x86 LP64 layouts and constants, and C++
@@ -805,9 +816,9 @@ message-queue lifecycle, one local shared-memory attach/status/detach/remove
 lifecycle, raw errors and stale `errno`, the x86 `r10`/`r8` message argument
 paths, musl's oversized-`shmget` rewrite, and `shmat`'s `(void *)-1` failure
 sentinel. The direct `msgsnd`/`msgrcv` leaves intentionally omit musl's
-pthread cancellation machinery. These are two bounded private ABI/archive
+pthread cancellation machinery. These are three bounded private ABI/archive
 verticals, not complete SysV IPC or closure of either planned family: POSIX
-message queues/shared memory/semaphores, broader SysV operations and
+message queues/shared memory and named/timed semaphores, broader SysV operations and
 namespace/permission policy, `SEM_UNDO` lifecycle, cancellation, libc.so,
 CRT, loader, sysroot, family or platform parity, promotion, full x86-64
 parity, and public x86 support remain unselected.

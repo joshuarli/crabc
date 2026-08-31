@@ -1122,7 +1122,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "string-copy-header-abi",
             "error-strings-header-abi",
             "random-entropy-header-abi",
-            "sysv-semaphore-header-abi",
+            "sysv-semaphore-header-abi|posix-semaphore-header-abi",
             "sysv-message-shared-memory-header-abi",
             "libc-event-descriptors",
             "libc-extended-attributes",
@@ -1140,7 +1140,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "libc-static-c-abi-same-object-differential|qualification-posix-abi-admission",
             "libc-readiness-waits|libc-system-observation|libc-system-information|libc-fcntl-record-locks|libc-flock|libc-sendfile|libc-posix-fallocate|libc-descriptor-advice|libc-filesystem-capacity|libc-uts-identity|libc-ctype|libc-locale-multibyte|libc-locale-wide-iconv|libc-wide-character|libc-locale-object-wide|libc-locale-narrow|libc-regex|libc-integer-arithmetic|libc-integer-parse|libc-float-parse|libc-intmax-arithmetic|libc-credential-observation|libc-login-name|libc-child-reaping|libc-immediate-termination|libc-callback-algorithms|libc-access|libc-clock-gettime|libc-time-observation|libc-system-configuration|libc-mapping-core|libc-header-layouts-baseline|libc-nanosleep|libc-clock-nanosleep|libc-descriptor-entry|libc-fcntl-status-control|libc-ioctl|libc-ffs|libc-byte-strings|libc-process-globals-getopt|libc-inet-address|libc-numeric-netdb|libc-random-entropy|libc-memory-search|libc-string-copy|libc-error-strings|libc-descriptor-pipeline",
             "libc-vector-io|libc-uio-cxx-linkage",
-            "libc-sysv-semaphore",
+            "libc-sysv-semaphore|libc-posix-semaphore",
             "libc-sysv-message-shared-memory",
         )
         self.assertEqual(actual_groups, expected_groups)
@@ -12767,6 +12767,180 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             runner,
         )
 
+    def test_libc_static_c_abi_posix_semaphore_artifact_stays_bounded(self) -> None:
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        implementation = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "posix_semaphore.rs"
+        ).read_text(encoding="utf-8")
+        header_c_probe = (
+            ROOT / "compat" / "x86_64" / "posix_semaphore_header_abi_probe.c"
+        ).read_text(encoding="utf-8")
+        header_cxx_probe = (
+            ROOT / "compat" / "x86_64" / "posix_semaphore_header_abi_probe.cpp"
+        ).read_text(encoding="utf-8")
+        header_runner = (
+            ROOT / "compat" / "x86_64" / "run_posix_semaphore_header_abi.sh"
+        ).read_text(encoding="utf-8")
+        probe = (
+            ROOT / "compat" / "x86_64" / "libc_posix_semaphore_probe.c"
+        ).read_text(encoding="utf-8")
+        start = (
+            ROOT / "compat" / "x86_64" / "libc_posix_semaphore_start.S"
+        ).read_text(encoding="utf-8")
+        artifact_runner = (
+            ROOT / "compat" / "x86_64" / "run_libc_posix_semaphore.sh"
+        ).read_text(encoding="utf-8")
+        static_export_names = {
+            line
+            for line in (
+                ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+            ).read_text(encoding="utf-8").splitlines()
+            if line and not line.startswith("#")
+        }
+        parity_ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        runner = RUNNER.read_text(encoding="utf-8")
+
+        self.assertIn('#[path = "posix_semaphore.rs"]', static_root)
+        for required in (
+            "Selected static Linux/x86-64 unnamed POSIX semaphore boundary",
+            "musl 1.2.6 release commit",
+            "src/thread/sem_init.c",
+            "sem_destroy.c",
+            "sem_getvalue.c",
+            "sem_trywait.c",
+            "sem_post.c",
+            "sem_timedwait.c",
+            "sem_wait.c",
+            "PublicSemaphore",
+            "SEM_VALUE_MAX",
+            "SEM_WAITER_BIT",
+            "FUTEX_PRIVATE_FLAG",
+            "raw_syscall::SYS_FUTEX",
+            "FUTEX_WAIT",
+            "FUTEX_WAKE",
+            "futex_privilege",
+            "trywait_raw",
+            "signal-action restart",
+        ):
+            self.assertIn(required, implementation)
+        for symbol in (
+            "sem_init",
+            "sem_destroy",
+            "sem_getvalue",
+            "sem_trywait",
+            "sem_wait",
+            "sem_post",
+        ):
+            self.assertIn(f"fn {symbol}(", implementation)
+        for forbidden in (
+            "fn sem_timedwait(",
+            "fn sem_open(",
+            "fn sem_close(",
+            "fn sem_unlink(",
+            "crabc_core",
+            "crabc_mimalloc",
+            "pthread_",
+        ):
+            self.assertNotIn(forbidden, implementation)
+
+        for header_probe in (header_c_probe, header_cxx_probe):
+            for required in (
+                "semaphore.h",
+                "sizeof(sem_t) == 32",
+                "volatile int",
+                "timespec",
+                "sem_timedwait",
+                "sem_open",
+            ):
+                self.assertIn(required, header_probe)
+        self.assertIn("_Alignof(sem_t) == 4", header_c_probe)
+        self.assertIn("alignof(sem_t) == 4", header_cxx_probe)
+        for required in (
+            "ORACLE_CC",
+            "semaphore.h",
+            "posix_semaphore_header_abi_probe.c",
+            "posix_semaphore_header_abi_probe.cpp",
+            "mangled POSIX semaphore reference",
+        ):
+            self.assertIn(required, header_runner)
+
+        for required in (
+            "#include <semaphore.h>",
+            "sizeof(sem_t) == 32",
+            "volatile int",
+            "sem_init(&semaphore, 0, 2)",
+            "EAGAIN",
+            "EOVERFLOW",
+            "MAP_SHARED | MAP_ANONYMOUS",
+            "SYS_mmap",
+            "SYS_fork",
+            "SYS_wait4",
+            "CRABC_POSIX_SEMAPHORE_FREESTANDING",
+        ):
+            self.assertIn(required, probe)
+        for required in (
+            "call __crabc_x86_static_tls_bootstrap",
+            "crabc_x86_64_posix_semaphore_probe",
+            "exit_group",
+        ):
+            self.assertIn(required, start)
+        self.assertNotIn("arch_prctl", start)
+        self.assertNotIn("mov %rsi, %fs:0", start)
+
+        for required in (
+            "static_c_abi_exports.txt",
+            "run_posix_semaphore_header_abi.sh",
+            "-nostdlib -static",
+            "-Wl,-e,_start",
+            "R_X86_64_TPOFF",
+            "__errno_location",
+            "futex=202",
+            "sem_wait-disassembly",
+            "sem_post-disassembly",
+            "MAP_SHARED",
+            "unowned runtime dependency",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn("--whole-archive", artifact_runner)
+        selected = {
+            "sem_destroy",
+            "sem_getvalue",
+            "sem_init",
+            "sem_post",
+            "sem_trywait",
+            "sem_wait",
+        }
+        self.assertTrue(selected <= static_export_names)
+        self.assertFalse(
+            static_export_names
+            & {"sem_close", "sem_open", "sem_timedwait", "sem_unlink"}
+        )
+        self.assertIn('id = "static-c-posix-semaphore"', parity_ledger)
+        self.assertIn(
+            'command = "./scripts/dev-x86_64.sh libc-posix-semaphore"',
+            parity_ledger,
+        )
+        self.assertIn("run_posix_semaphore_header_abi()", runner)
+        self.assertIn(
+            "/workspace/compat/x86_64/run_posix_semaphore_header_abi.sh", runner
+        )
+        self.assertIn("run_libc_posix_semaphore()", runner)
+        self.assertIn(
+            "/workspace/compat/x86_64/run_libc_posix_semaphore.sh", runner
+        )
+        self.assertIn(
+            '    posix-semaphore-header-abi)\n        [ "$#" -eq 0 ] || fail "posix-semaphore-header-abi takes no arguments"',
+            runner,
+        )
+        self.assertIn(
+            '    libc-posix-semaphore)\n        [ "$#" -eq 0 ] || fail "libc-posix-semaphore takes no arguments"',
+            runner,
+        )
+
     def test_libc_static_c_abi_sysv_semaphore_artifact_stays_narrow(self) -> None:
         static_root = (
             ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
@@ -12929,11 +13103,9 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             static_export_names
             & {
                 "sem_close",
-                "sem_destroy",
-                "sem_init",
                 "sem_open",
-                "sem_post",
-                "sem_wait",
+                "sem_timedwait",
+                "sem_unlink",
             }
         )
         self.assertIn('id = "static-c-sysv-semaphore"', parity_ledger)

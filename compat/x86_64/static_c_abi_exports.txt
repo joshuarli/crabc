@@ -560,6 +560,12 @@ scalbnf
 scalbnl
 seekdir
 select
+sem_destroy
+sem_getvalue
+sem_init
+sem_post
+sem_trywait
+sem_wait
 semctl
 semget
 semop
