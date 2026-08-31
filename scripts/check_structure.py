@@ -135,7 +135,8 @@ X86_RUNTIME_FOUNDATION_LDSO_SOURCES = {
 # artifact, scalar integer arithmetic, complete integer parsing, intmax
 # arithmetic, and find-first-set, direct POSIX clock_gettime, bounded clock
 # observation, no-cancellation mapping synchronization, direct anonymous-memory
-# descriptor creation, nanosleep, and clock_nanosleep, descriptor entry, selected
+# descriptor creation, nanosleep, one microsecond usleep adapter, and
+# clock_nanosleep, descriptor entry, selected
 # filesystem access, bounded fcntl
 # status control, bounded generic ioctl, and the basic x87 classification/sign,
 # complex accessor/conjugation plus the complete private math.complex
@@ -161,6 +162,7 @@ X86_RUNTIME_FOUNDATION_LIBC_SOURCES = {
     Path("libc/src/c_abi/x86_64/time_observation.rs"),
     Path("libc/src/c_abi/x86_64/clock_nanosleep.rs"),
     Path("libc/src/c_abi/x86_64/nanosleep.rs"),
+    Path("libc/src/c_abi/x86_64/usleep.rs"),
     Path("libc/src/c_abi/x86_64/descriptor_entry.rs"),
     Path("libc/src/c_abi/x86_64/filesystem_access.rs"),
     Path("libc/src/c_abi/x86_64/mktemp.rs"),
@@ -3801,6 +3803,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         '#[path = "sched_yield.rs"]',
         '#[path = "clock_nanosleep.rs"]',
         '#[path = "nanosleep.rs"]',
+        '#[path = "usleep.rs"]',
         '#[path = "descriptor_entry.rs"]',
         '#[path = "filesystem_access.rs"]',
         '#[path = "mktemp.rs"]',
@@ -8774,6 +8777,54 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
             "must export only nanosleep"
         )
 
+    usleep_source = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "usleep.rs"
+    usleep_text = usleep_source.read_text(errors="replace")
+    for required in (
+        "musl 1.2.6 release revision",
+        "src/unistd/usleep.c",
+        "nanosleep(&tv, &tv)",
+        "MICROSECONDS_PER_SECOND",
+        "NANOSECONDS_PER_MICROSECOND",
+        "super::nanosleep::nanosleep(",
+        'pub extern "C" fn usleep',
+        "initial TLS",
+        "cancellation",
+    ):
+        if required not in usleep_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/usleep.rs: selected static usleep "
+                f"adapter is missing {required!r}"
+            )
+    usleep_exports = set(
+        re.findall(
+            r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(',
+            usleep_text,
+        )
+    )
+    if usleep_exports != {"usleep"}:
+        errors.append(
+            "libc/src/c_abi/x86_64/usleep.rs: selected static artifact must export "
+            "only usleep"
+        )
+    for forbidden in (
+        "crabc_core",
+        "crabc_mimalloc",
+        "raw_syscall",
+        "set_errno",
+        "sigaction",
+        "sigprocmask",
+        "timerfd",
+        "pthread_",
+        "fn sleep(",
+        "fn alarm(",
+        "fn ualarm(",
+    ):
+        if forbidden in usleep_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/usleep.rs: selected static usleep adapter "
+                f"must not select {forbidden!r}"
+            )
+
     descriptor_entry_source = (
         ROOT / "libc" / "src" / "c_abi" / "x86_64" / "descriptor_entry.rs"
     )
@@ -11434,6 +11485,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         memory_locking_text,
         memfd_create_text,
         nanosleep_text,
+        usleep_text,
         descriptor_entry_text,
         filesystem_access_text,
         mktemp_text,
@@ -11766,6 +11818,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         "mlock2",
         "memfd_create",
         "nanosleep",
+        "usleep",
         "open",
         "openat",
         "creat",
@@ -12059,6 +12112,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         ("memory_locking.rs", memory_locking_text),
         ("memfd_create.rs", memfd_create_text),
         ("nanosleep.rs", nanosleep_text),
+        ("usleep.rs", usleep_text),
         ("descriptor_entry.rs", descriptor_entry_text),
         ("filesystem_access.rs", filesystem_access_text),
         ("descriptor_control.rs", descriptor_control_text),

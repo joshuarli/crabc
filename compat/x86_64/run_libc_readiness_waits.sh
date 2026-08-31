@@ -132,7 +132,7 @@ for symbol in __errno_location close read write pipe sigaction sigemptyset \
         || fail "archive does not define ${symbol}"
 done
 for unselected in splice vmsplice tee copy_file_range _Fork \
-    vfork clone execve tgkill alarm sleep usleep \
+    vfork clone execve tgkill sleep \
     pthread_sigmask syscall malloc free calloc realloc; do
     if grep -Eq "[[:space:]][TW][[:space:]]${unselected}$" "$archive_symbols"; then
         fail "archive accidentally exports unselected ${unselected}"

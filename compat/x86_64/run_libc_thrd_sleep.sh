@@ -159,9 +159,9 @@ for unselected in pthread_mutexattr_init pthread_mutexattr_destroy \
     pthread_condattr_init pthread_condattr_destroy pthread_condattr_setclock \
     pthread_condattr_getclock pthread_condattr_setpshared pthread_condattr_getpshared \
     pthread_cond_timedwait \
-    sleep usleep clock_settime clock_getcpuclockid \
+    sleep clock_settime clock_getcpuclockid \
     timer_create timer_delete timer_getoverrun timer_gettime timer_settime \
-    setitimer alarm ualarm malloc free calloc realloc; do
+    setitimer ualarm malloc free calloc realloc; do
     if grep -Eq "[[:space:]][TW][[:space:]]${unselected}$" "$archive_symbols"; then
         fail "archive accidentally exports unselected ${unselected}"
     fi

@@ -50,7 +50,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 41)
-        self.assertEqual(report["verified_artifact_count"], 213)
+        self.assertEqual(report["verified_artifact_count"], 214)
         self.assertEqual(report["header_layout_probe_count"], 47)
         self.assertEqual(report["public_header_inventory_count"], 183)
         self.assertEqual(report["header_foundation_header_count"], 191)
@@ -16272,6 +16272,107 @@ class X86ParityLedgerTests(unittest.TestCase):
         assert isinstance(evidence, list) and isinstance(evidence[0], dict)
         evidence[0]["command"] = "./scripts/dev-x86_64.sh signal-reference"
         with self.assertRaisesRegex(ledger.LedgerError, "closed libc-alarm command"):
+            ledger.validate_ledger(data)
+
+    def test_usleep_artifact_keeps_its_closed_static_contract(self) -> None:
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-usleep"
+        )
+        self.assertNotIn("capabilities", artifact)
+        for owner in (
+            "libc/src/c_abi/x86_64/usleep.rs",
+            "libc/src/c_abi/x86_64/nanosleep.rs",
+            "include/unistd.h",
+            "compat/x86_64/usleep_header_abi_probe.c",
+            "compat/x86_64/usleep_header_abi_probe.cpp",
+            "compat/x86_64/run_usleep_header_abi.sh",
+            "compat/x86_64/libc_usleep_probe.c",
+            "compat/x86_64/libc_usleep_start.S",
+            "compat/x86_64/run_libc_usleep.sh",
+            "compat/x86_64/aarch64_parity_inventory.json",
+            "scripts/check_structure.py",
+        ):
+            self.assertIn(owner, artifact["source_owners"])
+        self.assertEqual(
+            {evidence["command"] for evidence in artifact["native_evidence"]},
+            {"./scripts/dev-x86_64.sh libc-usleep"},
+        )
+        for phrase in (
+            "one-symbol historical microsecond nanosleep adapter artifact",
+            "planned `libc.posix-runtime`",
+            "exactly `usleep`",
+            "`src/unistd/usleep.c`",
+            "`nanosleep(&tv, &tv)`",
+            "`UINT_MAX`",
+            "GNU/BSD/XOPEN<700",
+            "default/strict/POSIX/XOPEN=700",
+            "Raw `rt_sigaction=13`",
+            "`setitimer=38`",
+            "`sleep`, `alarm`, `ualarm`",
+            "handlers/actions",
+            "signal masks",
+            "process signaling",
+            "waits, queues, descriptors, timers",
+            "pthread policy",
+            "signal-family/timer-family completion, promotion, or public x86 support",
+        ):
+            self.assertIn(phrase, artifact["description"])
+        prerequisites = artifact["x86_abi_prerequisites"]
+        self.assertTrue(
+            any(
+                "int usleep(unsigned int)" in prerequisite
+                and "edi" in prerequisite
+                and "eax" in prerequisite
+                and "UINT_MAX=4294967295" in prerequisite
+                and "4294" in prerequisite
+                and "967295000" in prerequisite
+                and "nanosleep=35" in prerequisite
+                and "rdi/rsi" in prerequisite
+                for prerequisite in prerequisites
+            )
+        )
+        self.assertTrue(
+            any(
+                "src/unistd/usleep.c" in prerequisite
+                and "nanosleep(&tv, &tv)" in prerequisite
+                and "separately selected static nanosleep boundary" in prerequisite
+                and "cancellation" in prerequisite
+                and "inline" in prerequisite
+                for prerequisite in prerequisites
+            )
+        )
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-usleep"
+        )
+        artifact["description"] = "private microsecond helper"
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "static-c-usleep description omits"
+        ):
+            ledger.validate_ledger(data)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-usleep"
+        )
+        evidence = artifact["native_evidence"]
+        assert isinstance(evidence, list) and isinstance(evidence[0], dict)
+        evidence[0]["command"] = "./scripts/dev-x86_64.sh relative-sleep-reference"
+        with self.assertRaisesRegex(ledger.LedgerError, "closed libc-usleep command"):
             ledger.validate_ledger(data)
 
     def test_sigset_mutation_artifact_keeps_its_closed_static_contract(self) -> None:

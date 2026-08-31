@@ -1378,7 +1378,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "getloadavg-header-abi",
             "libc-getloadavg",
             "timerfd-header-abi|signalfd-header-abi",
-            "libc-timerfd|libc-signalfd|libc-sigpause|libc-sigisemptyset|libc-sigandset-sigorset|libc-sigpending|libc-sigrtmax|libc-sigrtmin|libc-sched-getscheduler|libc-alarm|libc-sigaddset-sigdelset-sigfillset",
+            "usleep-header-abi|libc-timerfd|libc-signalfd|libc-sigpause|libc-sigisemptyset|libc-sigandset-sigorset|libc-sigpending|libc-sigrtmax|libc-sigrtmin|libc-sched-getscheduler|libc-alarm|libc-usleep|libc-sigaddset-sigdelset-sigfillset",
             "libc-sched-getcpu|libc-sched-yield",
             "sched-getscheduler-header-abi",
             "ctermid-header-abi|gethostid-header-abi|getpagesize-header-abi|gettid-header-abi|isatty-header-abi|ttyname-r-header-abi|tcgetpgrp-header-abi|tcsetpgrp-header-abi|getpass-header-abi|libc-ctermid|libc-gethostid|libc-getpagesize|libc-gettid|libc-isatty|libc-ttyname-r|libc-tcgetpgrp|libc-tcsetpgrp|libc-getpass|mkfifo-header-abi|mkfifoat-header-abi|libc-mkfifo|libc-mkfifoat|mktemp-header-abi|libc-mktemp",
@@ -19821,6 +19821,125 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         )
         self.assertIn(
             '    libc-clock-nanosleep)\n        [ "$#" -eq 0 ] || fail "libc-clock-nanosleep takes no arguments"',
+            runner,
+        )
+
+    def test_libc_static_c_abi_usleep_artifact_stays_narrow(self) -> None:
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        usleep = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "usleep.rs"
+        ).read_text(encoding="utf-8")
+        header_c = (
+            ROOT / "compat" / "x86_64" / "usleep_header_abi_probe.c"
+        ).read_text(encoding="utf-8")
+        header_cpp = (
+            ROOT / "compat" / "x86_64" / "usleep_header_abi_probe.cpp"
+        ).read_text(encoding="utf-8")
+        header_runner = (
+            ROOT / "compat" / "x86_64" / "run_usleep_header_abi.sh"
+        ).read_text(encoding="utf-8")
+        probe = (ROOT / "compat" / "x86_64" / "libc_usleep_probe.c").read_text(
+            encoding="utf-8"
+        )
+        start = (ROOT / "compat" / "x86_64" / "libc_usleep_start.S").read_text(
+            encoding="utf-8"
+        )
+        artifact_runner = (
+            ROOT / "compat" / "x86_64" / "run_libc_usleep.sh"
+        ).read_text(encoding="utf-8")
+        static_exports = (
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        ).read_text(encoding="utf-8")
+        static_export_names = {
+            line for line in static_exports.splitlines() if line and not line.startswith("#")
+        }
+        parity_ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        runner = RUNNER.read_text(encoding="utf-8")
+
+        self.assertIn('#[path = "usleep.rs"]', static_root)
+        for required in (
+            "Selected static Linux/x86-64 `usleep` C boundary",
+            "musl 1.2.6 release revision",
+            "src/unistd/usleep.c",
+            "nanosleep(&tv, &tv)",
+            "MICROSECONDS_PER_SECOND",
+            "NANOSECONDS_PER_MICROSECOND",
+            "super::nanosleep::nanosleep(",
+            'pub extern "C" fn usleep(microseconds: c_uint) -> c_int',
+            "initial TLS",
+            "cancellation",
+        ):
+            self.assertIn(required, usleep)
+        for forbidden in (
+            "crabc_core",
+            "crabc_mimalloc",
+            "raw_syscall",
+            "set_errno",
+            "sigaction",
+            "sigprocmask",
+            "timerfd",
+            "pthread_",
+            "fn sleep(",
+            "fn alarm(",
+            "fn ualarm(",
+        ):
+            self.assertNotIn(forbidden, usleep)
+        for header in (header_c, header_cpp):
+            self.assertIn("CRABC_EXPECT_USLEEP", header)
+            self.assertIn("CRABC_REQUIRE_USLEEP_HIDDEN", header)
+            self.assertIn("usleep_signature", header)
+        for required in (
+            "xopen_600_definitions",
+            "xopen_700_definitions",
+            "-U_GNU_SOURCE",
+            "nm --undefined-only",
+            "mangled usleep",
+        ):
+            self.assertIn(required, header_runner)
+        for required in (
+            "raw_replace_action",
+            "raw_replace_mask",
+            "UINT_MAX",
+            "1000000U",
+            "1000001U",
+            "CRABC_USLEEP_FREESTANDING",
+        ):
+            self.assertIn(required, probe)
+        for required in (
+            "__crabc_x86_static_tls_bootstrap",
+            "crabc_x86_64_usleep_probe",
+            "crabc_x86_64_usleep_restorer",
+            "exit_group",
+        ):
+            self.assertIn(required, start)
+        self.assertNotIn("arch_prctl", start)
+        for required in (
+            "run_musl_oracle.sh",
+            "run_usleep_header_abi.sh",
+            "-nostdlib -static",
+            "R_X86_64_TPOFF",
+            "assert_usleep_delegation",
+            "assert_named_syscall nanosleep 23",
+            "candidate unexpectedly pulls",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn("--whole-archive", artifact_runner)
+        self.assertIn("usleep", static_export_names)
+        self.assertIn('id = "static-c-usleep"', parity_ledger)
+        self.assertIn(
+            'command = "./scripts/dev-x86_64.sh libc-usleep"', parity_ledger
+        )
+        self.assertIn("run_usleep_header_abi()", runner)
+        self.assertIn("run_libc_usleep_probe()", runner)
+        self.assertIn(
+            "/workspace/compat/x86_64/run_libc_usleep.sh", runner
+        )
+        self.assertIn(
+            '    libc-usleep)\n        [ "$#" -eq 0 ] || fail "libc-usleep takes no arguments"',
             runner,
         )
 

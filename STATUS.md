@@ -1949,6 +1949,18 @@ signal masks, waits, delivery policy, timer-family completion, pthread policy,
 libc.so, CRT, loader, sysroot, family/platform parity, promotion, or public x86
 support.
 
+`./scripts/dev-x86_64.sh libc-usleep` is a separate private `static-c-usleep`
+artifact inside planned `libc.posix-runtime`. Its one-symbol pinned-musl and
+freestanding-static C proof maps only musl 1.2.6 `src/unistd/usleep.c`: an
+unsigned microsecond argument normalizes to one LP64 `timespec`, then reaches
+the separately selected `nanosleep(&tv, &tv)` seam. The project-first/pinned-
+musl C/C++ matrix proves GNU/BSD/XOPEN<700 declaration visibility and
+unmangled linkage. The shared fixture proves zero/short stale-errno completion
+plus fixture-only raw-SIGALRM `EINTR` for 1000000, 1000001, and `UINT_MAX`.
+It does not select `sleep`, alarms, timer control, signal actions/masks,
+process signaling, waits, descriptors, pthread policy, libc.so, CRT, loader,
+sysroot, family/platform parity, promotion, or public x86 support.
+
 `./scripts/dev-x86_64.sh libc-sigaddset-sigdelset-sigfillset` is a separate
 private `static-c-sigset-mutation` artifact inside planned
 `libc.posix-runtime`. Its three-symbol pinned-musl/freestanding-static C proof
