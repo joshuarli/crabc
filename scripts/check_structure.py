@@ -3745,6 +3745,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         '#[path = "readiness_waits.rs"]',
         '#[path = "socket_transport.rs"]',
         '#[path = "inet_address.rs"]',
+        '#[path = "hstrerror.rs"]',
         '#[path = "socket_messages.rs"]',
         '#[path = "posix_semaphore.rs"]',
         '#[path = "byte_strings.rs"]',
@@ -7323,6 +7324,117 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
             "address-codec evidence must not force-link the whole archive"
         )
 
+    hstrerror_probe_source = ROOT / "compat" / "x86_64" / "libc_hstrerror_probe.c"
+    hstrerror_start_source = ROOT / "compat" / "x86_64" / "libc_hstrerror_start.S"
+    hstrerror_runner_source = ROOT / "compat" / "x86_64" / "run_libc_hstrerror.sh"
+    for path in (
+        hstrerror_probe_source,
+        hstrerror_start_source,
+        hstrerror_runner_source,
+    ):
+        if not path.is_file():
+            errors.append(
+                f"x86 static hstrerror artifact is missing {path.relative_to(ROOT)}"
+            )
+            return
+
+    hstrerror_source = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "hstrerror.rs"
+    hstrerror_text = hstrerror_source.read_text(errors="replace")
+    hstrerror_probe = hstrerror_probe_source.read_text(errors="replace")
+    hstrerror_start = hstrerror_start_source.read_text(errors="replace")
+    hstrerror_runner = hstrerror_runner_source.read_text(errors="replace")
+    for required in (
+        "musl 1.2.6 release commit",
+        "src/network/hstrerror.c",
+        "LCTRANS_CUR",
+        "static MESSAGES",
+        "UNKNOWN_OFFSET",
+        "read_volatile",
+        'pub extern "C" fn hstrerror',
+    ):
+        if required not in hstrerror_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/hstrerror.rs: selected static "
+                f"fixed-profile message boundary is missing {required!r}"
+            )
+    for forbidden in (
+        "static mut",
+        "raw_syscall",
+        "errno::",
+        "gethostby",
+        "getaddrinfo",
+        "getnameinfo",
+        "crabc_core",
+        "crabc_mimalloc",
+        "fn herror",
+    ):
+        if forbidden in hstrerror_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/hstrerror.rs: selected static "
+                f"fixed-profile message boundary must not select {forbidden!r}"
+            )
+    hstrerror_exports = set(
+        re.findall(
+            r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(',
+            hstrerror_text,
+        )
+    )
+    if hstrerror_exports != {"hstrerror"}:
+        errors.append(
+            "libc/src/c_abi/x86_64/hstrerror.rs: selected static artifact "
+            "must export only hstrerror"
+        )
+    for required in (
+        "#include <netdb.h>",
+        "hstrerror_signature",
+        "HOST_NOT_FOUND == 1",
+        'check_message(-1, "Unknown error")',
+        'check_message(NO_DATA, "Address not available")',
+        "errno = E2BIG",
+        "CRABC_HSTRERROR_FREESTANDING",
+    ):
+        if required not in hstrerror_probe:
+            errors.append(
+                "compat/x86_64/libc_hstrerror_probe.c: static fixed-profile "
+                f"message regression is missing {required!r}"
+            )
+    for required in (
+        "crabc_x86_64_hstrerror_probe",
+        "mov $231, %eax",
+    ):
+        if required not in hstrerror_start:
+            errors.append(
+                "compat/x86_64/libc_hstrerror_start.S: static fixed-profile "
+                f"message entry is missing {required!r}"
+            )
+    if "ARCH_SET_FS" in hstrerror_start:
+        errors.append(
+            "compat/x86_64/libc_hstrerror_start.S: fixed-profile message entry "
+            "must not bootstrap TLS"
+        )
+    for required in (
+        "hstrerror.lo",
+        "static_c_abi_exports.txt",
+        "-nostdlib -static",
+        "-Wl,--no-undefined",
+        "candidate unexpectedly selects TLS",
+        "__h_errno_location",
+        "gethostbyname",
+        "getaddrinfo",
+        "call|syscall",
+        "for locale_name in C POSIX C.UTF-8",
+    ):
+        if required not in hstrerror_runner:
+            errors.append(
+                "compat/x86_64/run_libc_hstrerror.sh: static fixed-profile "
+                f"message evidence is missing {required!r}"
+            )
+    if "--whole-archive" in hstrerror_runner:
+        errors.append(
+            "compat/x86_64/run_libc_hstrerror.sh: static fixed-profile "
+            "message evidence must not force-link the whole archive"
+        )
+
     byte_strings_source = (
         ROOT / "libc" / "src" / "c_abi" / "x86_64" / "byte_strings.rs"
     )
@@ -8053,6 +8165,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         socket_transport_text,
         socket_messages_text,
         inet_address_text,
+        hstrerror_text,
         byte_strings_text,
         random_entropy_text,
         memory_search_text,
@@ -8380,6 +8493,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         "__inet_aton",
         "inet_aton",
         "inet_addr",
+        "hstrerror",
         "uname",
         "sysinfo",
         "gethostname",
@@ -8517,7 +8631,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
             "signal-control, bounded process-signal execution, and one legacy single-signal pause wait, bounded pthread create/exit/join/detach initial-TLS worker, its private selected-main/worker pthread-key/C11-TSS lifecycle, private process-normal pthread mutexes and their musl private condition-variable handoff, the complete selected rwlock/attribute family with private-or-shared futex operation, plus the distinct C11 plain-sync adapter and normal-return pthread/C11 once state machine, its typed C11 create/exit/join/detach sibling, and pthread/C11 identity aliases, named termios-control, selected process-context, child-reaping, C11 immediate termination, callback algorithms, direct clock_gettime, caller-owned mapping-core, no-cancellation mapping synchronization, direct anonymous-memory descriptor creation, nanosleep, and clock_nanosleep, selected "
             "descriptor-entry, selected filesystem-access, bounded descriptor-control, timestamp updates, and descriptor-I/O, selected process-resources, selected readiness/signal-waits, "
             "selected socket transport and selected socket-message/options, selected system-observation, selected UTS-identity, "
-            "selected byte-string, random-entropy, memory-search, C-string-copy, immutable error-string, "
+            "selected numeric-address codecs, fixed-profile h_errno message text, byte-string, random-entropy, memory-search, C-string-copy, immutable error-string, "
             "fixed-C-locale ctype, integer-arithmetic, integer-parsing, intmax-arithmetic, credential-observation, and "
             "environment-backed login-name observation, find-first-set, startup-published program names, short/GNU-long "
             "getopt state and aliases, callback-tree/hash-table search, and the "
@@ -8577,6 +8691,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         ("socket_transport.rs", socket_transport_text),
         ("socket_messages.rs", socket_messages_text),
         ("inet_address.rs", inet_address_text),
+        ("hstrerror.rs", hstrerror_text),
         ("random_entropy.rs", random_entropy_text),
         ("memory_search.rs", memory_search_text),
         ("string_copy.rs", string_copy_text),

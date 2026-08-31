@@ -461,6 +461,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-process-globals-getopt
 ./scripts/dev-x86_64.sh libc-auxv-observation
 ./scripts/dev-x86_64.sh libc-inet-address
+./scripts/dev-x86_64.sh libc-hstrerror
 ./scripts/dev-x86_64.sh libc-numeric-netdb
 ./scripts/dev-x86_64.sh libc-interface-discovery
 ./scripts/dev-x86_64.sh libc-random-entropy
@@ -1288,6 +1289,17 @@ different short-buffer behavior for AF_INET and AF_INET6 `inet_ntop`. It does
 not select DNS/resolver state, netdb, interface lookup, `inet_ntoa` scratch
 storage, allocation, stdio, libc.so, CRT, loader, sysroot, resolver-network
 behavior, family promotion, or public x86 support.
+
+`libc-hstrerror` is a separate private static C message leaf under
+still-planned `libc.resolver`. Its project-header C body first executes through
+pinned musl 1.2.6 and then through a true `-nostdlib -static` candidate. It
+selects only `hstrerror`'s four conventional h_errno messages and the unknown
+fallback, with immutable stable pointers. In the selected C/POSIX/C.UTF-8
+profiles musl's `LCTRANS_CUR` hook is identity-only. It neither reads nor
+writes `h_errno` or `errno`, nor selects h_errno storage, TLS, locale catalogs,
+allocation, stdio, syscalls, `/etc/hosts`, `/etc/resolv.conf`, resolver
+configuration, DNS, network-database/NSS, interface, socket, libc.so, CRT,
+loader, sysroot, resolver completion, family promotion, or public x86 support.
 
 `libc-numeric-netdb` is a separate private static C `netdb.h` result-record
 artifact under still-planned `libc.resolver`. Its project-header C body first

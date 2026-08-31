@@ -50,7 +50,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 40)
-        self.assertEqual(report["verified_artifact_count"], 150)
+        self.assertEqual(report["verified_artifact_count"], 151)
         self.assertEqual(report["header_layout_probe_count"], 46)
         self.assertEqual(report["public_header_inventory_count"], 183)
         self.assertEqual(report["header_foundation_header_count"], 191)
@@ -14452,6 +14452,110 @@ class X86ParityLedgerTests(unittest.TestCase):
         with self.assertRaisesRegex(
             ledger.LedgerError, "exact static numeric-address regression"
         ):
+            ledger.validate_ledger(data)
+
+    def test_hstrerror_artifact_keeps_its_fixed_profile_boundary(self) -> None:
+        data = self.data()
+        family = self.family(data, "libc.resolver")
+        self.assertEqual(family["status"], "planned")
+        artifacts = family["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-hstrerror"
+        )
+        self.assertNotIn("capabilities", artifact)
+        for owner in (
+            "libc/src/c_abi/x86_64/hstrerror.rs",
+            "include/netdb.h",
+            "compat/x86_64/static_c_abi_exports.txt",
+            "compat/x86_64/libc_hstrerror_probe.c",
+            "compat/x86_64/libc_hstrerror_start.S",
+            "compat/x86_64/run_libc_hstrerror.sh",
+            "compat/x86_64/validate_parity_ledger.py",
+            "scripts/dev-x86_64.sh",
+        ):
+            self.assertIn(owner, artifact["source_owners"])
+        self.assertEqual(
+            {entry["command"] for entry in artifact["native_evidence"]},
+            {"./scripts/dev-x86_64.sh libc-hstrerror"},
+        )
+        for phrase in (
+            "Private native x86 static `hstrerror`",
+            "still-planned `libc.resolver`",
+            "C/POSIX/C.UTF-8",
+            "`h_errno`",
+            "`LCTRANS_CUR`",
+            "Unknown error",
+            "resolver configuration",
+            "DNS",
+            "network database",
+            "TLS",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, artifact["description"])
+
+        exports = set(
+            (ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt")
+            .read_text(encoding="utf-8")
+            .splitlines()
+        )
+        self.assertIn("hstrerror", exports)
+        self.assertFalse(
+            exports
+            & {
+                "h_errno",
+                "__h_errno_location",
+                "herror",
+                "gethostbyaddr",
+                "gethostbyname",
+                "gethostbyname2",
+            }
+        )
+
+        prerequisites = artifact["x86_abi_prerequisites"]
+        assert isinstance(prerequisites, list)
+        source_mapping = next(
+            item for item in prerequisites if "src/network/hstrerror.c" in item
+        )
+        assert isinstance(source_mapping, str)
+        for phrase in (
+            "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+            "LCTRANS_CUR",
+            "locale catalogs",
+            "Host not found",
+            "Address not available",
+            "Unknown error",
+        ):
+            self.assertIn(phrase, source_mapping)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.resolver")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-hstrerror"
+        )
+        artifact["description"] = artifact["description"].replace(
+            "`LCTRANS_CUR`", "implicit locale translation"
+        )
+        with self.assertRaisesRegex(ledger.LedgerError, "LCTRANS_CUR"):
+            ledger.validate_ledger(data)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.resolver")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-hstrerror"
+        )
+        evidence = artifact["native_evidence"]
+        assert isinstance(evidence, list) and isinstance(evidence[0], dict)
+        evidence[0]["scope"] = "static h_errno strings"
+        with self.assertRaisesRegex(ledger.LedgerError, "fixed-profile hstrerror regression"):
             ledger.validate_ledger(data)
 
     def test_extended_attributes_artifact_keeps_its_bounded_boundary(self) -> None:

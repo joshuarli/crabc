@@ -380,6 +380,8 @@ mod socket_transport;
 mod network_byte_order;
 #[path = "inet_address.rs"]
 mod inet_address;
+#[path = "hstrerror.rs"]
+mod hstrerror;
 #[path = "numeric_netdb.rs"]
 mod numeric_netdb;
 #[path = "interface_discovery.rs"]

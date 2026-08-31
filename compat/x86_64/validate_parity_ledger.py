@@ -1396,6 +1396,8 @@ NUMERIC_NETDB_SYMBOLS = (
     "getnameinfo",
 )
 
+HSTRERROR_SYMBOLS = ("hstrerror",)
+
 INET_ADDRESS_UNSELECTED_SYMBOLS = (
     "calloc",
     "free",
@@ -18020,6 +18022,261 @@ def require_numeric_netdb_artifact(family: Mapping[str, Any]) -> None:
     )
 
 
+def require_hstrerror_artifact(family: Mapping[str, Any]) -> None:
+    """Keep the fixed-profile h_errno message leaf static and resolver-free."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.resolver].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [entry for entry in artifacts if entry.get("id") == "static-c-hstrerror"]
+    require(
+        len(matching) == 1,
+        "libc.resolver must contain exactly one static-c-hstrerror artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-hstrerror must not promote libc.resolver",
+    )
+    artifact = matching[0]
+    description = artifact.get("description")
+    require(isinstance(description, str), "static-c-hstrerror needs a description")
+    for phrase in (
+        "Private native x86 static `hstrerror`",
+        "still-planned `libc.resolver`",
+        "C/POSIX/C.UTF-8",
+        "`h_errno`",
+        "`LCTRANS_CUR`",
+        "Host not found",
+        "Address not available",
+        "Unknown error",
+        "resolver configuration",
+        "DNS",
+        "network database",
+        "errno",
+        "TLS",
+        "public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"static-c-hstrerror description omits {phrase}",
+        )
+
+    owners = set(
+        nonempty_strings(
+            artifact.get("source_owners"), "static-c-hstrerror.source_owners"
+        )
+    )
+    for owner in (
+        "compat/upstreams.toml",
+        "libc/Cargo.toml",
+        "libc/src/lib.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/hstrerror.rs",
+        "include/errno.h",
+        "include/netdb.h",
+        "include/stddef.h",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/libc_hstrerror_probe.c",
+        "compat/x86_64/libc_hstrerror_start.S",
+        "compat/x86_64/run_libc_hstrerror.sh",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/README.md",
+        "STATUS.md",
+        "x86-64.md",
+        "scripts/dev-x86_64.sh",
+        "scripts/check_structure.py",
+    ):
+        require(owner in owners, f"static-c-hstrerror source owners omit {owner}")
+
+    prerequisites = nonempty_strings(
+        artifact.get("x86_abi_prerequisites"),
+        "static-c-hstrerror.x86_abi_prerequisites",
+    )
+    require(
+        any(
+            "SysV AMD64 LP64" in item
+            and "int" in item
+            and "const char *" in item
+            and "HOST_NOT_FOUND=1" in item
+            and "NO_DATA=4" in item
+            for item in prerequisites
+        ),
+        "static-c-hstrerror must record its x86 C and h_errno ABI",
+    )
+    require(
+        any(
+            "9fa28ece75d8a2191de7c5bb53bed224c5947417" in item
+            and "src/network/hstrerror.c" in item
+            and "LCTRANS_CUR" in item
+            and "locale catalogs" in item
+            and "Host not found" in item
+            and "Address not available" in item
+            and "Unknown error" in item
+            for item in prerequisites
+        ),
+        "static-c-hstrerror must retain its pinned-musl source and fixed-profile mapping",
+    )
+    require(
+        any(
+            "h_errno" in item
+            and "errno" in item
+            and "TLS" in item
+            and "resolver configuration" in item
+            and "DNS" in item
+            and "network database" in item
+            for item in prerequisites
+        ),
+        "static-c-hstrerror must retain its resolver-free state boundary",
+    )
+
+    headers = nonempty_strings(
+        artifact.get("x86_header_prerequisites"),
+        "static-c-hstrerror.x86_header_prerequisites",
+    )
+    require(
+        any(
+            "netdb.h" in item
+            and "_GNU_SOURCE" in item
+            and "hstrerror" in item
+            and "h_errno" in item
+            and "feature-gated" in item
+            for item in headers
+        ),
+        "static-c-hstrerror must record its feature-gated netdb header boundary",
+    )
+
+    exports = set(
+        static_c_abi_export_names(
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        )
+    )
+    require(
+        set(HSTRERROR_SYMBOLS) <= exports,
+        "static-c-hstrerror must retain its selected export",
+    )
+    require(
+        not (exports & {"h_errno", "__h_errno_location", "herror"}),
+        "static-c-hstrerror must not add h_errno storage or herror",
+    )
+
+    static_root = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+    ).read_text(encoding="utf-8")
+    require(
+        '#[path = "hstrerror.rs"]\nmod hstrerror;' in static_root,
+        "x86 static C ABI must compose the hstrerror leaf",
+    )
+    implementation = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "hstrerror.rs"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "src/network/hstrerror.c",
+        "LCTRANS_CUR",
+        "static MESSAGES",
+        "UNKNOWN_OFFSET",
+        "read_volatile",
+        "fn message_offset",
+        'pub extern "C" fn hstrerror',
+    ):
+        require(
+            snippet in implementation,
+            f"hstrerror leaf omits {snippet}",
+        )
+    for forbidden in (
+        "static mut",
+        "raw_syscall",
+        "errno::",
+        "gethostby",
+        "getaddrinfo",
+        "getnameinfo",
+        "crabc_core",
+        "crabc_mimalloc",
+        "fn herror",
+    ):
+        require(
+            forbidden not in implementation,
+            f"hstrerror leaf widens into {forbidden}",
+        )
+
+    evidence = artifact.get("native_evidence")
+    require(isinstance(evidence, list), "static-c-hstrerror needs evidence")
+    require(
+        {entry.get("command") for entry in evidence if isinstance(entry, Mapping)}
+        == {"./scripts/dev-x86_64.sh libc-hstrerror"},
+        "static-c-hstrerror must use the closed libc-hstrerror command",
+    )
+    scope = evidence[0].get("scope")
+    require(isinstance(scope, str), "static-c-hstrerror evidence needs a scope")
+    for phrase in (
+        "fixed-profile hstrerror regression",
+        "Pinned-musl project-header C execution",
+        "`-nostdlib -static` candidate",
+        "`hstrerror`",
+        "Host not found",
+        "Address not available",
+        "Unknown error",
+        "no interpreter/DT_NEEDED/unresolved",
+        "no TLS",
+        "resolver configuration",
+        "DNS",
+        "network database",
+        "public x86 support",
+    ):
+        require(
+            phrase in scope,
+            f"static-c-hstrerror evidence omits {phrase}",
+        )
+
+    fixture = (
+        ROOT / "compat" / "x86_64" / "libc_hstrerror_probe.c"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "#define _GNU_SOURCE 1",
+        "hstrerror_signature",
+        "HOST_NOT_FOUND == 1",
+        'check_message(-1, "Unknown error")',
+        'check_message(NO_DATA, "Address not available")',
+        "errno = E2BIG",
+        "CRABC_HSTRERROR_FREESTANDING",
+        "host_not_found != hstrerror(HOST_NOT_FOUND)",
+    ):
+        require(
+            snippet in fixture,
+            f"hstrerror fixture omits {snippet}",
+        )
+    runner = (
+        ROOT / "compat" / "x86_64" / "run_libc_hstrerror.sh"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "hstrerror.lo",
+        "Host not found",
+        "Address not available",
+        "Unknown error",
+        "static_c_abi_exports.txt",
+        "-nostdlib -static",
+        "--no-undefined",
+        "candidate unexpectedly selects TLS",
+        "__h_errno_location",
+        "gethostbyname",
+        "getaddrinfo",
+        "call|syscall",
+        "for locale_name in C POSIX C.UTF-8",
+        'env -i LC_ALL="$locale_name" TZ=UTC',
+    ):
+        require(
+            snippet in runner,
+            f"hstrerror runner omits {snippet}",
+        )
+    dispatch = (ROOT / "scripts" / "dev-x86_64.sh").read_text(encoding="utf-8")
+    require(
+        "libc-hstrerror)" in dispatch and "run_libc_hstrerror.sh" in dispatch,
+        "hstrerror dispatcher binding is missing",
+    )
+
+
 
 def require_auxv_observation_artifact(family: Mapping[str, Any]) -> None:
     """Keep direct initial-vector lookup bounded, static, and private."""
@@ -28015,6 +28272,7 @@ def validate_ledger(
     require_extended_attributes_artifact(by_id["libc.posix-runtime"])
     require_inet_address_artifact(by_id["libc.resolver"])
     require_numeric_netdb_artifact(by_id["libc.resolver"])
+    require_hstrerror_artifact(by_id["libc.resolver"])
     require_auxv_observation_artifact(by_id["libc.c-abi-compat"])
     require_process_globals_getopt_artifact(by_id["libc.c-abi-compat"])
     require_search_tree_intrusive_slice(by_id["libc.c-abi-compat"])

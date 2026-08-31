@@ -311,6 +311,7 @@ hdestroy
 hdestroy_r
 hsearch
 hsearch_r
+hstrerror
 htonl
 htons
 hypotl

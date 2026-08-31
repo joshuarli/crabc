@@ -7817,6 +7817,45 @@ x86_header_prerequisites = [
 native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-numeric-netdb", scope = "Pinned-musl project-header C execution followed by a true x86 `-nostdlib -static` candidate. The gate ratchets the aggregate static C export surface; direct project netdb/socket header provenance and SysV AMD64 addrinfo layout/types; exact `getaddrinfo`/`freeaddrinfo`/`getnameinfo`/`gai_strerror` candidate linkage; no interpreter/DT_NEEDED/unresolved or dynamic TLS; private mmap=9 result allocation and munmap=11 release; numeric IPv4/IPv6/v4-mapped/passive address and numeric host/service result behavior; selected EAI outcomes and strings; and absence of host/service/resolver state. It excludes hosts/resolv.conf, DNS UDP/TCP/retry/failover, NSS/plugins, reverse lookup, caches, general allocation, libc.so, CRT, loader, sysroot, family completion, promotion, and public x86 support." }]
 oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source and C/POSIX oracle for src/network/getaddrinfo.c, freeaddrinfo.c, getnameinfo.c, and gai_strerror.c, restricted to deterministic numeric/local-only result and error behavior; DNS and conventional-file resolver behavior remain unselected." }, { kind = "kernel-abi", source = "Linux 5.10 x86-64 ABI", role = "Anonymous private mmap=9/munmap=11 page lifetime for opaque selected C result nodes." }, { kind = "elf-abi", source = "System V AMD64 psABI", role = "LP64 addrinfo/socket record and C-call ABI used by the freestanding static candidate." }]
 
+[[family.verified_artifact]]
+id = "static-c-hstrerror"
+description = "Private native x86 static `hstrerror` message artifact inside still-planned `libc.resolver`, not resolver-network behavior or a complete C runtime. One project-header C fixture first executes through pinned musl 1.2.6 and then through a true `-nostdlib -static` candidate linked only with the selected crabc archive. It exposes exactly `hstrerror`: the immutable Host not found, Try again, Non-recoverable error, Address not available, and Unknown error messages for `HOST_NOT_FOUND`, `TRY_AGAIN`, `NO_RECOVERY`, and `NO_DATA`, with stable process-static pointers. For the selected C/POSIX/C.UTF-8 profiles, musl's `LCTRANS_CUR` catalog hook is identity-only; that explicit fixed-profile boundary neither reads nor writes `h_errno` or `errno`, nor admits h_errno storage, TLS, locale catalogs, allocation, stdio, or syscalls. It performs no `/etc/hosts` or `/etc/resolv.conf` access, resolver configuration, DNS, conventional network database, interface, socket, cache, NSS/plugin, libc.so, CRT, loader, sysroot, family promotion, or public x86 support."
+source_owners = [
+  "compat/upstreams.toml",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/hstrerror.rs",
+  "include/errno.h",
+  "include/netdb.h",
+  "include/stddef.h",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/libc_hstrerror_probe.c",
+  "compat/x86_64/libc_hstrerror_start.S",
+  "compat/x86_64/run_libc_hstrerror.sh",
+  "compat/x86_64/aarch64_parity_inventory.py",
+  "compat/x86_64/aarch64_parity_inventory.json",
+  "compat/x86_64/tests/test_aarch64_parity_inventory.py",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "compat/x86_64/README.md",
+  "STATUS.md",
+  "x86-64.md",
+  "scripts/dev-x86_64.sh",
+  "scripts/check_structure.py",
+]
+x86_abi_prerequisites = [
+  "The selected public GNU/BSD C boundary is SysV AMD64 LP64: `hstrerror(int)` receives one four-byte int code in edi and returns one immutable `const char *` in rax. The selected public h_errno constants are HOST_NOT_FOUND=1, TRY_AGAIN=2, NO_RECOVERY=3, NO_DATA=4, and NO_ADDRESS=NO_DATA; no `struct hostent`, socket, or caller-owned result record crosses this leaf.",
+  "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417 maps `src/network/hstrerror.c` to the packed source-order messages Host not found, Try again, Non-recoverable error, Address not available, and Unknown error. Musl's `LCTRANS_CUR` hook is identity-only for the selected C/POSIX/C.UTF-8 profiles; locale catalogs and arbitrary locale translation remain unselected.",
+  "The one immutable message sequence implements only the h_errno-to-text query: it neither reads nor writes `h_errno` or `errno`, touches TLS, allocation, or mutable state, nor parses resolver configuration, DNS, `/etc/hosts`, `/etc/resolv.conf`, or any conventional network database. The fixed empty-sentinel fallback returns Unknown error for nonpositive and nonstandard codes without an ambient runtime dependency.",
+]
+x86_header_prerequisites = [
+  "The shared project-header C fixture preprocesses `netdb.h`, `errno.h`, and `stddef.h` under `_GNU_SOURCE`, static-asserts the feature-gated `hstrerror` declaration and HOST_NOT_FOUND/TRY_AGAIN/NO_RECOVERY/NO_DATA values, and compiles the same body against pinned musl before the candidate. It proves only this GNU/BSD feature-gated C boundary, not installed-header completion, C++ linkage, h_errno storage, resolver behavior, or public x86 support.",
+]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-hstrerror", scope = "Pinned-musl project-header C execution followed by a true x86 `-nostdlib -static` candidate. The fixed-profile hstrerror regression ratchets the aggregate selected archive export surface, the pinned hstrerror.lo message sequence, GNU/BSD h_errno constants and `hstrerror` type, C/POSIX/C.UTF-8 Host not found/Try again/Non-recoverable error/Address not available/Unknown error output, stable pointer identity, and reference-only stale errno preservation. The final candidate has no interpreter/DT_NEEDED/unresolved dependency, no TLS, no errno/h_errno storage, no calls or syscalls in `hstrerror`, and no resolver configuration, DNS, `/etc/hosts`, `/etc/resolv.conf`, conventional network database, NSS/plugin, allocator, stdio, libc.so, CRT, loader, sysroot, family promotion, or public x86 support." }]
+oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source and C/POSIX oracle for src/network/hstrerror.c's packed h_errno message order, empty-sentinel unknown fallback, and C/POSIX/C.UTF-8 LCTRANS_CUR identity; hosts/resolver/DNS/network-database behavior and locale catalogs remain unselected." }, { kind = "elf-abi", source = "System V AMD64 psABI and pinned musl x86 headers", role = "LP64 int argument and immutable char-pointer return convention for the GNU/BSD hstrerror C boundary used by the freestanding candidate." }]
+
 [[family]]
 id = "libc.c-abi-compat"
 order = 110

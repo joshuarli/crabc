@@ -16,6 +16,17 @@ netdb/database, Ethernet/interface, address-codec, or socket-transport path;
 it is not resolver/network completion, family promotion, or public x86
 support.
 
+`./scripts/dev-x86_64.sh libc-hstrerror` is a private `static-c-hstrerror`
+artifact inside still-planned `libc.resolver`. Its project-header C fixture
+first executes through pinned musl 1.2.6 and then through a true static
+candidate, selecting only musl's immutable `hstrerror` messages and stable
+process-static pointers. The selected C/POSIX/C.UTF-8 profiles make
+`LCTRANS_CUR` identity-only; the leaf neither reads nor writes `h_errno` or
+`errno` and has no h_errno storage, TLS, locale catalogs, allocation, stdio,
+or syscall path. It does not inspect `/etc/hosts` or `/etc/resolv.conf`,
+configure or send DNS, consult a network database/NSS, touch interfaces or
+sockets, complete the resolver family, promote x86, or claim public support.
+
 `./scripts/dev-x86_64.sh libc-login-name` is a private
 `static-c-login-name` artifact inside planned `libc.posix-runtime`. Its
 pinned-musl and freestanding-static routes compose the selected bounded
