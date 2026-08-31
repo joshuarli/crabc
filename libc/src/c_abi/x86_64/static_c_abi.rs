@@ -511,6 +511,8 @@ mod res_init;
 mod posix_spawnattr_destroy;
 #[path = "posix_spawnattr_getflags.rs"]
 mod posix_spawnattr_getflags;
+#[path = "posix_spawn_file_actions_init.rs"]
+mod posix_spawn_file_actions_init;
 #[path = "numeric_netdb.rs"]
 mod numeric_netdb;
 #[path = "interface_discovery.rs"]

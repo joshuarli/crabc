@@ -273,6 +273,23 @@ initialization/mutation or other queries, child lifecycle, signal or scheduler
 behavior, generic process control, family completion, promotion, or public x86
 support.
 
+`./scripts/dev-x86_64.sh libc-posix-spawn-file-actions-init` is a separate
+private `static-c-posix-spawn-file-actions-init` artifact inside still-planned
+`libc.c-abi-compat`. Its pinned-musl/project `<spawn.h>` C/C++ matrix proves
+unconditional `int posix_spawn_file_actions_init(posix_spawn_file_actions_t *)`,
+its exact pointer type, the public 80-byte/align-8/offset-8 `__actions` layout,
+and unmangled linkage under strict, POSIX, X/Open, and GNU profiles. Pinned musl
+1.2.6 `src/process/posix_spawn_file_actions_init.c::posix_spawn_file_actions_init`
+is exactly `fa->__actions = 0; return 0;`; the true-static `--gc-sections`
+fixture proves direct/function-pointer success, a byte-filled caller record
+with only its `__actions` pointer cleared, every other byte unchanged, and
+stale-errno preservation on the musl reference route. Valid non-null
+caller-owned record storage is a source precondition; null and invalid inputs
+remain outside this leaf. It does not select spawn execution, file-action
+addition/destruction, attribute initialization/mutation/query, child lifecycle,
+signal or scheduler behavior, generic process control, family completion,
+promotion, or public x86 support.
+
 `./scripts/dev-x86_64.sh libc-isatty` is a separate private `static-c-isatty`
 artifact inside still-planned `libc.posix-runtime`. Its strict/POSIX/X/Open/GNU/
 BSD C/C++ declaration gate and pinned-musl/static C fixture select only

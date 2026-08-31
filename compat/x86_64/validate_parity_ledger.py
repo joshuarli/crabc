@@ -1443,10 +1443,10 @@ ETHER_LINE_SYMBOLS = ("ether_line",)
 RES_INIT_SYMBOLS = ("res_init",)
 POSIX_SPAWNATTR_DESTROY_SYMBOLS = ("posix_spawnattr_destroy",)
 POSIX_SPAWNATTR_GETFLAGS_SYMBOLS = ("posix_spawnattr_getflags",)
-POSIX_SPAWNATTR_SELECTED_SYMBOLS = (
-    *POSIX_SPAWNATTR_DESTROY_SYMBOLS,
-    *POSIX_SPAWNATTR_GETFLAGS_SYMBOLS,
-)
+POSIX_SPAWN_FILE_ACTIONS_INIT_SYMBOLS = ("posix_spawn_file_actions_init",)
+# `static_c_abi_exports.txt` is archive-wide. Each selected spawn artifact
+# ratchets its own exact final-link closure, so a family-local validator must
+# not claim exclusive ownership of every separately recorded posix_spawn* name.
 
 INET_CLASSFUL_SYMBOLS = ("inet_lnaof", "inet_makeaddr")
 
@@ -29250,12 +29250,6 @@ def require_posix_spawnattr_destroy_artifact(family: Mapping[str, Any]) -> None:
         set(POSIX_SPAWNATTR_DESTROY_SYMBOLS) <= exports,
         "static-c-posix-spawnattr-destroy must retain its selected export",
     )
-    require(
-        {symbol for symbol in exports if symbol.startswith("posix_spawn")}
-        == set(POSIX_SPAWNATTR_SELECTED_SYMBOLS),
-        "selected spawn-attribute artifacts must expose only recorded spawn spellings",
-    )
-
     static_root = (
         ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
     ).read_text(encoding="utf-8")
@@ -29606,12 +29600,6 @@ def require_posix_spawnattr_getflags_artifact(family: Mapping[str, Any]) -> None
         set(POSIX_SPAWNATTR_GETFLAGS_SYMBOLS) <= exports,
         "static-c-posix-spawnattr-getflags must retain its selected export",
     )
-    require(
-        {symbol for symbol in exports if symbol.startswith("posix_spawn")}
-        == set(POSIX_SPAWNATTR_SELECTED_SYMBOLS),
-        "selected spawn-attribute artifacts must expose only recorded spawn spellings",
-    )
-
     static_root = (
         ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
     ).read_text(encoding="utf-8")
@@ -29758,6 +29746,373 @@ def require_posix_spawnattr_getflags_artifact(family: Mapping[str, Any]) -> None
         require(
             snippet in dispatcher,
             f"posix_spawnattr_getflags dispatcher omits {snippet}",
+        )
+
+
+def require_posix_spawn_file_actions_init_artifact(
+    family: Mapping[str, Any],
+) -> None:
+    """Keep one caller-record empty-list store out of spawn behavior."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.c-abi-compat].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [
+        entry
+        for entry in artifacts
+        if entry.get("id") == "static-c-posix-spawn-file-actions-init"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.c-abi-compat needs exactly one static-c-posix-spawn-file-actions-init artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-posix-spawn-file-actions-init must not promote libc.c-abi-compat",
+    )
+    artifact = matching[0]
+    require(
+        "capabilities" not in artifact,
+        "static-c-posix-spawn-file-actions-init must not promote spawn or process behavior",
+    )
+
+    description = artifact.get("description")
+    require(
+        isinstance(description, str),
+        "static-c-posix-spawn-file-actions-init needs a description",
+    )
+    for phrase in (
+        "POSIX spawn file-actions initialization C ABI artifact",
+        "still-planned `libc.c-abi-compat`",
+        "`int posix_spawn_file_actions_init(posix_spawn_file_actions_t *)`",
+        "`src/process/posix_spawn_file_actions_init.c::posix_spawn_file_actions_init`",
+        "exactly `fa->__actions = 0; return 0;`",
+        "all-byte-filled caller record",
+        "offset-eight field",
+        "every other byte",
+        "stale errno preservation",
+        "valid non-null caller-owned file-actions record",
+        "global mutable state, errno/TLS, allocation, syscall",
+        "file-action execution",
+        "`posix_spawn`",
+        "`posix_spawnp`",
+        "action addition",
+        "`posix_spawn_file_actions_destroy`",
+        "family completion",
+        "promotion",
+        "public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"static-c-posix-spawn-file-actions-init description omits {phrase}",
+        )
+
+    owners = set(
+        nonempty_strings(
+            artifact.get("source_owners"),
+            "static-c-posix-spawn-file-actions-init.source_owners",
+        )
+    )
+    for owner in (
+        "compat/upstreams.toml",
+        "libc/Cargo.toml",
+        "libc/src/lib.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/posix_spawn_file_actions_init.rs",
+        "include/features.h",
+        "include/bits/alltypes.h",
+        "include/sys/types.h",
+        "include/spawn.h",
+        "compat/x86_64/posix_spawn_file_actions_init_header_abi_probe.c",
+        "compat/x86_64/posix_spawn_file_actions_init_header_abi_probe.cpp",
+        "compat/x86_64/run_posix_spawn_file_actions_init_header_abi.sh",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/libc_posix_spawn_file_actions_init_probe.c",
+        "compat/x86_64/libc_posix_spawn_file_actions_init_start.S",
+        "compat/x86_64/run_libc_posix_spawn_file_actions_init.sh",
+        "compat/x86_64/aarch64_parity_inventory.py",
+        "compat/x86_64/aarch64_parity_inventory.json",
+        "compat/x86_64/tests/test_aarch64_parity_inventory.py",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/README.md",
+        "STATUS.md",
+        "x86-64.md",
+        "scripts/dev-x86_64.sh",
+        "scripts/check_structure.py",
+    ):
+        require(
+            owner in owners,
+            f"static-c-posix-spawn-file-actions-init source owners omit {owner}",
+        )
+
+    prerequisites = nonempty_strings(
+        artifact.get("x86_abi_prerequisites"),
+        "static-c-posix-spawn-file-actions-init.x86_abi_prerequisites",
+    )
+    require(
+        any(
+            "SysV AMD64" in item
+            and "int posix_spawn_file_actions_init(posix_spawn_file_actions_t *)"
+            in item
+            and "rdi" in item
+            and "eax" in item
+            and "80-byte" in item
+            and "byte offset eight" in item
+            and "valid non-null caller storage" in item
+            for item in prerequisites
+        ),
+        "static-c-posix-spawn-file-actions-init must retain its one-pointer layout ABI",
+    )
+    require(
+        any(
+            "9fa28ece75d8a2191de7c5bb53bed224c5947417" in item
+            and "src/process/posix_spawn_file_actions_init.c::posix_spawn_file_actions_init"
+            in item
+            and "fa->__actions = 0; return 0;" in item
+            and "action addition and destruction" in item
+            and "child lifecycle" in item
+            and "scheduler" in item
+            for item in prerequisites
+        ),
+        "static-c-posix-spawn-file-actions-init must retain its pinned-musl source mapping",
+    )
+    require(
+        any(
+            "`-nostdlib -static --gc-sections`" in item
+            and "no interpreter" in item
+            and "PT_TLS" in item
+            and "dynamic-TLS model" in item
+            and "helper call" in item
+            and "peer spawn exports" in item
+            for item in prerequisites
+        ),
+        "static-c-posix-spawn-file-actions-init must retain its closed static boundary",
+    )
+
+    headers = nonempty_strings(
+        artifact.get("x86_header_prerequisites"),
+        "static-c-posix-spawn-file-actions-init.x86_header_prerequisites",
+    )
+    require(
+        any(
+            "unconditional `int posix_spawn_file_actions_init(posix_spawn_file_actions_t *)`"
+            in item
+            and "strict, POSIX, X/Open, and GNU" in item
+            and "80-byte/align-8/offset-8 public record layout" in item
+            and "unmangled C++ linkage" in item
+            and '`extern "C"` guards' in item
+            for item in headers
+        ),
+        "static-c-posix-spawn-file-actions-init must retain its unconditional C/C++ header ABI",
+    )
+
+    evidence = artifact.get("native_evidence")
+    require(
+        isinstance(evidence, list),
+        "static-c-posix-spawn-file-actions-init needs evidence",
+    )
+    require(
+        {entry.get("command") for entry in evidence if isinstance(entry, Mapping)}
+        == {"./scripts/dev-x86_64.sh libc-posix-spawn-file-actions-init"},
+        "static-c-posix-spawn-file-actions-init must use the closed libc-posix-spawn-file-actions-init command",
+    )
+    scope = evidence[0].get("scope")
+    require(
+        isinstance(scope, str)
+        and all(
+            phrase in scope
+            for phrase in (
+                "Pinned-musl/project C/C++ header",
+                "true dependency-free x86 crabc-libc `-nostdlib -static --gc-sections` candidate",
+                "direct and function-pointer fixed zero returns",
+                "byte-filled caller-owned posix_spawn_file_actions_t record",
+                "offset-eight __actions pointer cleared",
+                "every other byte unchanged",
+                "stale errno preservation",
+                "posix_spawn_file_actions_init.lo/AArch64 ownership",
+                "no interpreter/DT_NEEDED/unresolved symbol/PT_TLS/errno/dynamic-TLS model/allocator/helper-call/syscall",
+                "peer spawn extraction",
+                "spawn execution",
+                "file-action addition/destruction",
+                "attribute initialization/mutation or queries",
+                "child lifecycle",
+                "signal or scheduler behavior",
+                "family completion",
+                "promotion",
+                "public x86 support",
+            )
+        ),
+        "static-c-posix-spawn-file-actions-init evidence must retain its bounded static closure",
+    )
+
+    exports = set(
+        static_c_abi_export_names(
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        )
+    )
+    require(
+        set(POSIX_SPAWN_FILE_ACTIONS_INIT_SYMBOLS) <= exports,
+        "static-c-posix-spawn-file-actions-init must retain its selected export",
+    )
+    static_root = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+    ).read_text(encoding="utf-8")
+    require(
+        '#[path = "posix_spawn_file_actions_init.rs"]\nmod posix_spawn_file_actions_init;'
+        in static_root,
+        "x86 static C ABI must compose the posix_spawn_file_actions_init leaf",
+    )
+    source = (
+        ROOT
+        / "libc"
+        / "src"
+        / "c_abi"
+        / "x86_64"
+        / "posix_spawn_file_actions_init.rs"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "Selected static Linux/x86-64 POSIX spawn file-actions initialization C ABI",
+        "pinned musl 1.2.6 release commit",
+        "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+        "src/process/posix_spawn_file_actions_init.c::posix_spawn_file_actions_init",
+        "fa->__actions = 0; return 0;",
+        "System V AMD64 ABI",
+        "PosixSpawnFileActionsPrefix",
+        'pub unsafe extern "C" fn posix_spawn_file_actions_init(',
+        "addr_of_mut!",
+        "write_unaligned",
+    ):
+        require(
+            snippet in source,
+            f"posix_spawn_file_actions_init implementation omits {snippet}",
+        )
+    for forbidden in (
+        "raw_syscall::",
+        "errno::",
+        "static_tls::",
+        "crabc_core",
+        "crabc_mimalloc",
+    ):
+        require(
+            forbidden not in source,
+            f"posix_spawn_file_actions_init leaf widens into {forbidden}",
+        )
+
+    runner = (
+        ROOT / "compat" / "x86_64" / "run_libc_posix_spawn_file_actions_init.sh"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "run_musl_oracle.sh",
+        "run_posix_spawn_file_actions_init_header_abi.sh",
+        "posix_spawn_file_actions_init.lo",
+        "static_c_abi_exports.txt",
+        "-nostdlib -static",
+        "--gc-sections",
+        "--no-undefined",
+        "archive does not define posix_spawn_file_actions_init",
+        "candidate exports an unselected spawn entry",
+        "posix_spawn_file_actions_init unexpectedly performs a call or syscall",
+    ):
+        require(
+            snippet in runner,
+            f"posix_spawn_file_actions_init runner omits {snippet}",
+        )
+
+    probe = (
+        ROOT / "compat" / "x86_64" / "libc_posix_spawn_file_actions_init_probe.c"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "#include <spawn.h>",
+        "typedef int (*posix_spawn_file_actions_init_signature)(",
+        "const posix_spawn_file_actions_init_signature function =",
+        "sizeof(posix_spawn_file_actions_t) == 80",
+        "__builtin_offsetof(posix_spawn_file_actions_t, __actions) == 8",
+        "reset_actions",
+        "bytes_match",
+        "errno = E2BIG",
+        "CRABC_POSIX_SPAWN_FILE_ACTIONS_INIT_FREESTANDING",
+    ):
+        require(
+            snippet in probe,
+            f"posix_spawn_file_actions_init probe omits {snippet}",
+        )
+
+    header_c = (
+        ROOT
+        / "compat"
+        / "x86_64"
+        / "posix_spawn_file_actions_init_header_abi_probe.c"
+    ).read_text(encoding="utf-8")
+    header_cxx = (
+        ROOT
+        / "compat"
+        / "x86_64"
+        / "posix_spawn_file_actions_init_header_abi_probe.cpp"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "posix_spawn_file_actions_init declaration",
+        "posix_spawn_file_actions_init_signature",
+        "posix_spawn_file_actions_init_function",
+        "posix_spawn_file_actions_t size",
+        "actions offset",
+    ):
+        require(
+            snippet in header_c,
+            f"posix_spawn_file_actions_init C header probe omits {snippet}",
+        )
+    for snippet in (
+        "C++ posix_spawn_file_actions_init declaration",
+        "posix_spawn_file_actions_init_signature",
+        "posix_spawn_file_actions_init_function",
+        "C++ posix_spawn_file_actions_t size",
+        "actions offset",
+    ):
+        require(
+            snippet in header_cxx,
+            f"posix_spawn_file_actions_init C++ header probe omits {snippet}",
+        )
+
+    header_runner = (
+        ROOT / "compat" / "x86_64" / "run_posix_spawn_file_actions_init_header_abi.sh"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "posix_spawn_file_actions_init_header_abi_probe.c",
+        "posix_spawn_file_actions_init_header_abi_probe.cpp",
+        "Pinned musl 1.2.6",
+        "unconditional declaration",
+        "features.h",
+        "bits/alltypes.h",
+        "c11-strict",
+        "cxx17-gnu",
+        "retained a mangled posix_spawn_file_actions_init reference",
+    ):
+        require(
+            snippet in header_runner,
+            f"posix_spawn_file_actions_init header runner omits {snippet}",
+        )
+
+    spawn_header = (ROOT / "include" / "spawn.h").read_text(encoding="utf-8")
+    require(
+        "int posix_spawn_file_actions_init(posix_spawn_file_actions_t *);"
+        in spawn_header
+        and '#ifdef __cplusplus\nextern "C" {' in spawn_header
+        and '#ifdef __cplusplus\n}\n#endif' in spawn_header,
+        "installed spawn.h must retain the selected C/C++ ABI",
+    )
+
+    dispatcher = (ROOT / "scripts" / "dev-x86_64.sh").read_text(encoding="utf-8")
+    for snippet in (
+        "posix-spawn-file-actions-init-header-abi)",
+        "run_posix_spawn_file_actions_init_header_abi",
+        "libc-posix-spawn-file-actions-init)",
+        "run_libc_posix_spawn_file_actions_init_probe",
+    ):
+        require(
+            snippet in dispatcher,
+            f"posix_spawn_file_actions_init dispatcher omits {snippet}",
         )
 
 
@@ -44741,6 +45096,9 @@ def validate_ledger(
     require_res_init_artifact(by_id["libc.c-abi-compat"])
     require_posix_spawnattr_destroy_artifact(by_id["libc.c-abi-compat"])
     require_posix_spawnattr_getflags_artifact(by_id["libc.c-abi-compat"])
+    require_posix_spawn_file_actions_init_artifact(
+        by_id["libc.c-abi-compat"]
+    )
     require_qsort_artifact(by_id["libc.c-abi-compat"])
     require_bsearch_artifact(by_id["libc.c-abi-compat"])
     require_linear_search_artifact(by_id["libc.c-abi-compat"])

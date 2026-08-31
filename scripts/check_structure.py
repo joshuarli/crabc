@@ -6701,6 +6701,57 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
                 f"static spawn-attribute flag-readback boundary must not select {forbidden!r}"
             )
 
+    posix_spawn_file_actions_init_source = (
+        ROOT
+        / "libc"
+        / "src"
+        / "c_abi"
+        / "x86_64"
+        / "posix_spawn_file_actions_init.rs"
+    )
+    posix_spawn_file_actions_init_text = (
+        posix_spawn_file_actions_init_source.read_text(errors="replace")
+    )
+    for required in (
+        "pinned musl 1.2.6 release commit",
+        "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+        "src/process/posix_spawn_file_actions_init.c::posix_spawn_file_actions_init",
+        "fa->__actions = 0; return 0;",
+        "System V AMD64 ABI",
+        "PosixSpawnFileActionsPrefix",
+        'pub unsafe extern "C" fn posix_spawn_file_actions_init(',
+        "addr_of_mut!",
+        "write_unaligned",
+    ):
+        if required not in posix_spawn_file_actions_init_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/posix_spawn_file_actions_init.rs: selected "
+                f"static spawn file-actions initializer boundary is missing {required!r}"
+            )
+    posix_spawn_file_actions_init_exports = set(
+        re.findall(
+            r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(',
+            posix_spawn_file_actions_init_text,
+        )
+    )
+    if posix_spawn_file_actions_init_exports != {"posix_spawn_file_actions_init"}:
+        errors.append(
+            "libc/src/c_abi/x86_64/posix_spawn_file_actions_init.rs: selected "
+            "static artifact must export only posix_spawn_file_actions_init"
+        )
+    for forbidden in (
+        "raw_syscall::",
+        "errno::",
+        "static_tls::",
+        "crabc_core",
+        "crabc_mimalloc",
+    ):
+        if forbidden in posix_spawn_file_actions_init_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/posix_spawn_file_actions_init.rs: selected "
+                f"static spawn file-actions initializer boundary must not select {forbidden!r}"
+            )
+
     isatty_source = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "isatty.rs"
     isatty_text = isatty_source.read_text(errors="replace")
     for required in (
@@ -11306,6 +11357,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         res_init_text,
         posix_spawnattr_destroy_text,
         posix_spawnattr_getflags_text,
+        posix_spawn_file_actions_init_text,
         isatty_text,
         tcgetpgrp_text,
         tcsetpgrp_text,
@@ -11643,6 +11695,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         "res_init",
         "posix_spawnattr_destroy",
         "posix_spawnattr_getflags",
+        "posix_spawn_file_actions_init",
         "isatty",
         "tcgetpgrp",
         "tcsetpgrp",
@@ -11950,6 +12003,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         ("res_init.rs", res_init_text),
         ("posix_spawnattr_destroy.rs", posix_spawnattr_destroy_text),
         ("posix_spawnattr_getflags.rs", posix_spawnattr_getflags_text),
+        ("posix_spawn_file_actions_init.rs", posix_spawn_file_actions_init_text),
         ("isatty.rs", isatty_text),
         ("tcgetpgrp.rs", tcgetpgrp_text),
         ("tcsetpgrp.rs", tcsetpgrp_text),

@@ -3610,6 +3610,28 @@ file actions, attribute initialization/mutation or other queries, child
 lifecycle, signal or scheduler behavior, generic process control, libc.so,
 CRT, loader, sysroot, family completion, promotion, or public x86 support.
 
+`posix-spawn-file-actions-init-header-abi` and
+`libc-posix-spawn-file-actions-init` record a separate private
+`static-c-posix-spawn-file-actions-init` artifact inside still-planned
+`libc.c-abi-compat`, not a spawn or process capability. The pinned-musl/project
+`<spawn.h>` C/C++ matrix proves unconditional
+`int posix_spawn_file_actions_init(posix_spawn_file_actions_t *)` under strict,
+POSIX, X/Open, and GNU profiles, its exact pointer function type, the public
+80-byte/align-8/offset-8 `__actions` record layout, and unmangled C++ linkage
+through the header's C-linkage guards. The shared C body then executes through
+pinned musl and one true dependency-free `-nostdlib -static --gc-sections`
+candidate. Musl 1.2.6
+`src/process/posix_spawn_file_actions_init.c::posix_spawn_file_actions_init`
+is exactly `fa->__actions = 0; return 0;`; the fixture proves direct/function-
+pointer success, a byte-filled caller record with only the `__actions` pointer
+cleared, every other byte unchanged, and stale-errno preservation on the
+ordinary musl route. Valid non-null caller record storage is a C source
+precondition; null and invalid inputs remain outside this slice. The candidate
+rejects peer spawn extraction. It does not select spawn execution, file-action
+addition/destruction, attribute initialization/mutation/query, child lifecycle,
+signal or scheduler behavior, generic process control, libc.so, CRT, loader,
+sysroot, family completion, promotion, or public x86 support.
+
 `libc-isatty` is a separately recorded static `static-c-isatty`
 `verified_artifact` gate over that archive, not a terminal capability. Its
 strict/POSIX/X/Open/GNU/BSD C/C++ `unistd.h` declaration gate and one
