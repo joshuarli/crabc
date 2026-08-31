@@ -14,7 +14,7 @@ fn current_page_size() -> usize {
 }
 
 #[test]
-fn native_sole_mapped_regular_route_keeps_the_dormant_pair_busy_while_b_continues_until_b_finishes() {
+fn native_sole_post_exit_replacement_releases_the_dormant_pair_while_b_remains_attached() {
     assert!(
         initialize_process(current_page_size()),
         "the native runtime initializes before its shadow owner-exit witness"
@@ -89,16 +89,28 @@ fn native_sole_mapped_regular_route_keeps_the_dormant_pair_busy_while_b_continue
         assert_eq!(unsafe { medium.as_ptr().read() }, 0x52);
         assert_eq!(unsafe { medium.as_ptr().add(4095).read() }, 0x53);
         assert_eq!(unsafe { medium.as_ptr().add(64 * 1024 - 1).read() }, 0x54);
-        assert!(
-            matches!(
-                unsafe { native_reallocate(Some(medium), 4096) },
-                NativePageAllocationResult::Unavailable
-            ),
-            "the detached source cannot enter B's current-owner realloc engine"
+        // This sole route is detached from A's TLS, but its surviving page
+        // has the source abandoned-mapped identity. It is not the special
+        // `Detached` PageMap state with no nonlocal-free producer.
+        let replacement = match unsafe { native_reallocate(Some(medium), 4096) } {
+            NativePageAllocationResult::Allocated(block) => block,
+            NativePageAllocationResult::Unavailable => {
+                panic!("B finds A's sole abandoned-mapped source through PageMap facts")
+            }
+            NativePageAllocationResult::AllocationFailed => {
+                panic!("B creates its sole-route replacement through its persistent owner")
+            }
+            NativePageAllocationResult::Retained => {
+                panic!("the source-valid sole abandoned-mapped tail consumes A's old client")
+            }
+        };
+        assert_eq!(unsafe { replacement.as_ptr().read() }, 0x52);
+        assert_eq!(unsafe { replacement.as_ptr().add(4095).read() }, 0x53);
+        assert_eq!(
+            unsafe { native_free(replacement) },
+            NativePageFreeResult::Freed,
+            "B releases its successful replacement without touching A's consumed source"
         );
-        assert_eq!(unsafe { medium.as_ptr().read() }, 0x52);
-        assert_eq!(unsafe { medium.as_ptr().add(4095).read() }, 0x53);
-        assert_eq!(unsafe { medium.as_ptr().add(64 * 1024 - 1).read() }, 0x54);
         let continued = match native_allocate_aligned(73, 16, false) {
             NativePageAllocationResult::Allocated(block) => block,
             _ => panic!(
@@ -118,11 +130,6 @@ fn native_sole_mapped_regular_route_keeps_the_dormant_pair_busy_while_b_continue
             NativePageFreeResult::Freed,
             "B can free its continued local client before its normal finish"
         );
-        assert_eq!(
-            unsafe { native_free(medium) },
-            NativePageFreeResult::Freed,
-            "the original detached medium releases through generic pointer-first free"
-        );
         terminal_sender
             .send(())
             .expect("B reports its terminal sole-route free before finish");
@@ -137,9 +144,25 @@ fn native_sole_mapped_regular_route_keeps_the_dormant_pair_busy_while_b_continue
     terminal_receiver
         .recv()
         .expect("B reaches the sole-route-terminal pre-finish state");
-    assert!(
-        matches!(ticket_zero_allocate(73, false), TicketZeroPageAllocationResult::Unavailable),
-        "the dormant pair stays unavailable after the sole route releases until B finishes"
+    // The source-valid sole replacement consumed A's PageMap source before
+    // this point. B remains attached with its own persistent target owner,
+    // while ticket zero can independently resume its dormant pair.
+    let while_b_attached = match ticket_zero_allocate(73, false) {
+        TicketZeroPageAllocationResult::Allocated(block) => block,
+        TicketZeroPageAllocationResult::Unavailable => {
+            panic!("the consumed sole source no longer blocks ticket zero while B is attached")
+        }
+        TicketZeroPageAllocationResult::AllocationFailed => {
+            panic!("the fixed small ticket-zero request remains allocatable")
+        }
+        TicketZeroPageAllocationResult::Retained => {
+            panic!("the successful sole replacement leaves the process owner usable")
+        }
+    };
+    assert_eq!(
+        unsafe { ticket_zero_free(while_b_attached) },
+        TicketZeroPageFreeResult::Freed,
+        "ticket zero returns its independent client while B remains attached"
     );
     release_b.wait();
     releaser

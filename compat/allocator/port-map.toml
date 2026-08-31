@@ -2393,7 +2393,7 @@ name = "ordinary-reallocation-decision-and-extents"
 source_region = "mimalloc v3.5.0 src/alloc.c:344-417 mi_theap_realloc_zero_ex/_mi_theap_realloc_zero/mi_theap_realloc pointer validation, source usable-size derivation, same-target-Heap reuse predicate, replacement allocation, min(old usable,new size) copy, successful old-pointer free, allocation-failure preservation, and zero-size compatibility byte; src/alloc.c:447-449 mi_realloc current-default-Theap entry"
 rust_module = "crabc_mimalloc::alloc, crabc_mimalloc::single_thread, crabc_mimalloc::main_static_page, crabc_mimalloc::main_heap_page, crabc_mimalloc::process_page_map, and crabc_mimalloc::runtime_lifecycle"
 rust_item = "ReallocationPlan/reallocation_plan/replacement_zero_range/replacement_zeros_first_byte; SingleThreadAllocator::reallocate/reallocate_zeroed; bounded MainStaticProcessPageAllocator/MainStaticFirstArenaPageAllocator/MainHeapThreadProcessPageAllocator reallocate delegates; ProcessPageMapLease::lookup_live_allocation and LiveAllocationPointer; runtime_lifecycle::{native_reallocate_prepare_caller_persistent_owner,native_live_allocation_for_pointer_reallocation,native_reallocate_pointer_first_local,native_reallocate_pointer_first_nonlocal,native_reallocate_release_unpublished_replacement,native_reallocate,native_free_pointer_first_nonlocal}"
-intentional_difference = "The private native-shadow path accepts an exact live native client. As pinned mi_realloc supplies the current default Theap before mi_theap_realloc_zero_ex examines the source, Rust first establishes the caller's persistent target owner without inspecting the source pointer; setup failure leaves the old allocation untouched. It then derives one coherent PageMap allocation observation. A source page associated with the caller may take the existing same-target local reuse/replacement path. Every nonmatching live-associated, abandoned, abandoned-mapped, or detached observation instead allocates through the caller's persistent native owner, copies min(source usable size, requested size), and consumes the old observation through the general pointer-first nonlocal free path; it never borrows or reconstructs the source owner. Allocation failure leaves the old allocation untouched. If the old-source continuation does not return Freed after replacement allocation, the unescaped caller-local replacement is returned directly to its current owner; a rollback failure retains that owner, and the realloc operation fails closed so no replacement result escapes beside the old source. The bounded evidence is one focused Rust live-foreign replacement, one selected pinned-musl live-foreign C-ABI trace, and four serialized post-owner-exit C-ABI rounds covering normal return, pthread_exit, deferred cancellation, 4 KiB, 128 KiB, and source zero-size behavior. This is not aligned-realloc, zeroing-realloc, invalid-pointer, simultaneous access, general differential/stress evidence, M5 completion, backend promotion, or full allocator parity."
+intentional_difference = "The private native-shadow path accepts an exact live native client. As pinned mi_realloc supplies the current default Theap before mi_theap_realloc_zero_ex examines the source, Rust first establishes the caller's persistent target owner without inspecting the source pointer; setup failure leaves the old allocation untouched. It then derives one coherent PageMap allocation observation. A source page associated with the caller may take the existing same-target local reuse/replacement path. Every nonmatching live-associated, abandoned, or abandoned-mapped observation instead allocates through the caller's persistent native owner, copies min(source usable size, requested size), and consumes the old observation through the general pointer-first nonlocal free path; it never borrows or reconstructs the source owner. A true PageMap `Detached` observation is not a successfully consumable replacement case: its source has no W03 nonlocal-free producer, so the generic tail rejects it before a source claim and the unpublished replacement follows the existing rollback/terminal-retention discipline; `native_reallocate` fails closed as `Retained`. Allocation failure leaves the old allocation untouched. If an old-source continuation does not return Freed after replacement allocation, the unescaped caller-local replacement is returned directly to its current owner; a rollback failure retains that owner, and the realloc operation fails closed so no replacement result escapes beside the old source. The bounded evidence is one focused Rust live-foreign replacement, one selected pinned-musl live-foreign C-ABI trace, and four serialized post-owner-exit C-ABI rounds covering normal return, pthread_exit, deferred cancellation, 4 KiB, 128 KiB, and source zero-size behavior. This is not aligned-realloc, zeroing-realloc, invalid-pointer, simultaneous access, general differential/stress evidence, M5 completion, backend promotion, or full allocator parity."
 tests = ["crabc-mimalloc/src/alloc.rs", "crabc-mimalloc/src/single_thread.rs", "crabc-mimalloc/src/main_static_page.rs", "crabc-mimalloc/src/main_heap_page.rs", "crabc-mimalloc/src/process_init.rs", "crabc-mimalloc/src/process_page_map.rs", "crabc-mimalloc/src/runtime_lifecycle.rs", "crabc-mimalloc/tests/native_pointer_first_nonlocal_reallocate.rs", "tests/fixtures/native_mimalloc_shadow_foreign_realloc_test.c", "tests/native_mimalloc_shadow_abi.rs", "tests/fixtures/native_mimalloc_owner_exit_realloc_test.c", "tests/native_mimalloc_owner_exit_realloc.rs", "compat/allocator/run.py", "compat/allocator/tests/test_port_map_nonlocal_realloc.py"]
 exported = false
 implemented = true
@@ -2840,20 +2840,26 @@ never compares or accesses that stale address. The same process retains B's
 existing local replacement and cleanup/TSD ordering
 coverage across normal return, `pthread_exit`, and deferred cancellation
 before B's native all-free finish settles A's proof.
-For any nonmatching live-associated, abandoned, abandoned-mapped, or detached
-`realloc` input, `native_reallocate` first establishes B's persistent target
-without inspecting the source pointer, then captures one coherent PageMap
-observation, then allocates the replacement through the caller's persistent
-native owner rather than borrowing the source owner. It copies the smaller of
-the source usable extent and requested size before passing that same non-Copy
-observation to generic pointer-first nonlocal free. Allocation failure leaves
-the source live and unchanged. If that old-source continuation does not return
-`Freed`, the unescaped caller-local replacement is returned directly to its
-current owner; rollback failure retains that owner, and realloc returns its
-fail-closed retained result without publishing the replacement. Only `Freed`
-publishes the replacement. `native_usable_size` still returns the captured PageMap extent
-directly for an exact live client. This is never source in-place reuse or a
-borrow of A's allocator.
+For a nonmatching live-associated, abandoned, or abandoned-mapped `realloc`
+input, `native_reallocate` first establishes B's persistent target without
+inspecting the source pointer, then captures one coherent PageMap observation,
+then allocates the replacement through the caller's persistent native owner
+rather than borrowing the source owner. It copies the smaller of the source
+usable extent and requested size before passing that same non-Copy observation
+to generic pointer-first nonlocal free. Allocation failure leaves the source
+live and unchanged. If that old-source continuation does not return `Freed`,
+the unescaped caller-local replacement is returned directly to its current
+owner; rollback failure retains that owner, and realloc returns its fail-closed
+retained result without publishing the replacement. Only `Freed` publishes the
+replacement. A true PageMap `Detached` input is deliberately not grouped with
+those successfully consumable states: it has no W03 source producer, so its
+generic nonlocal-free tail rejects before claim and the operation fails closed
+as `Retained` after the same unpublished-replacement rollback discipline. The
+selected post-exit replacement fixtures use `AbandonedMapped` page state; their
+route's English "detached" label describes A's exited TLS lifecycle, not
+`MI_THREADID_DETACHED`. `native_usable_size` still returns the captured PageMap
+extent directly for an exact live client. This is never source in-place reuse
+or a borrow of A's allocator.
 The selected pinned-musl differential
 `native_mimalloc_shadow_foreign_realloc_test.c` keeps A live under a pthread
 handshake while B first rejects `SIZE_MAX` with `ENOMEM` and an unchanged

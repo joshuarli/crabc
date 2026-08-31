@@ -17,7 +17,7 @@ fn current_page_size() -> usize {
 }
 
 #[test]
-fn native_post_exit_route_keeps_the_dormant_pair_busy_while_b_continues_until_b_finishes() {
+fn native_post_exit_replacement_releases_the_dormant_pair_while_b_remains_attached() {
     assert!(
         initialize_process(current_page_size()),
         "the native runtime initializes before its shadow owner-exit witness"
@@ -59,8 +59,9 @@ fn native_post_exit_route_keeps_the_dormant_pair_busy_while_b_continues_until_b_
             0,
             "the mixed aggregate keeps its OS-singleton alignment before owner exit"
         );
-        // A rejected post-exit realloc must preserve this exact original
-        // client until the generic pointer-first free consumes it.
+        // A failed post-exit replacement must preserve this exact original
+        // client. A later successful replacement consumes it, so B must not
+        // observe this source address again after that success.
         unsafe {
             direct_small.as_ptr().write(0x41);
             direct_small.as_ptr().add(36).write(0x42);
@@ -158,7 +159,7 @@ fn native_post_exit_route_keeps_the_dormant_pair_busy_while_b_continues_until_b_
                 unsafe { native_reallocate(Some(medium), usize::MAX) },
                 NativePageAllocationResult::AllocationFailed
             ),
-            "an invalid request preserves the detached mixed-route client"
+            "an impossible request preserves the post-exit mapped source client"
         );
         assert_eq!(unsafe { direct_small.as_ptr().read() }, 0x41);
         assert_eq!(unsafe { direct_small.as_ptr().add(36).read() }, 0x42);
@@ -167,20 +168,28 @@ fn native_post_exit_route_keeps_the_dormant_pair_busy_while_b_continues_until_b_
         assert_eq!(unsafe { medium.as_ptr().read() }, 0x45);
         assert_eq!(unsafe { medium.as_ptr().add(4095).read() }, 0x46);
         assert_eq!(unsafe { medium.as_ptr().add(64 * 1024 - 1).read() }, 0x46);
-        assert!(
-            matches!(
-                unsafe { native_reallocate(Some(medium), 4096) },
-                NativePageAllocationResult::Unavailable
-            ),
-            "a detached source cannot enter B's current-owner realloc engine"
-        );
-        assert_eq!(unsafe { medium.as_ptr().read() }, 0x45);
-        assert_eq!(unsafe { medium.as_ptr().add(4095).read() }, 0x46);
-        assert_eq!(unsafe { medium.as_ptr().add(64 * 1024 - 1).read() }, 0x46);
+        // The owner-exit route is detached from A's TLS, but this exact
+        // PageMap source is `AbandonedMapped`, not `Detached`. Pinned
+        // `mi_realloc` therefore makes B's replacement first and consumes
+        // A's old source through the generic nonlocal free path.
+        let replacement = match unsafe { native_reallocate(Some(medium), 4096) } {
+            NativePageAllocationResult::Allocated(block) => block,
+            NativePageAllocationResult::Unavailable => {
+                panic!("B finds A's abandoned-mapped source through PageMap facts")
+            }
+            NativePageAllocationResult::AllocationFailed => {
+                panic!("B creates its 4 KiB replacement through its persistent owner")
+            }
+            NativePageAllocationResult::Retained => {
+                panic!("the source-valid abandoned-mapped tail consumes A's old client")
+            }
+        };
+        assert_eq!(unsafe { replacement.as_ptr().read() }, 0x45);
+        assert_eq!(unsafe { replacement.as_ptr().add(4095).read() }, 0x46);
         assert_eq!(
-            unsafe { native_free(medium) },
+            unsafe { native_free(replacement) },
             NativePageFreeResult::Freed,
-            "the original detached medium releases through generic pointer-first free"
+            "B releases its successful replacement without touching A's consumed source"
         );
         assert_eq!(unsafe { large.as_ptr().read() }, 0x47);
         assert_eq!(unsafe { large.as_ptr().add(128 * 1024 - 1).read() }, 0x48);
@@ -239,9 +248,26 @@ fn native_post_exit_route_keeps_the_dormant_pair_busy_while_b_continues_until_b_
     terminal_receiver
         .recv()
         .expect("B reaches the route-terminal, pre-finish state");
-    assert!(
-        matches!(ticket_zero_allocate(73, false), TicketZeroPageAllocationResult::Unavailable),
-        "the dormant pair stays unavailable after route release until B's normal finish"
+    // The successful pointer-first replacement has already consumed A's
+    // PageMap source. B remains attached and still owns its separate
+    // persistent target owner, but that does not keep ticket zero from its
+    // own serialized dormant-pair operation.
+    let while_b_attached = match ticket_zero_allocate(73, false) {
+        TicketZeroPageAllocationResult::Allocated(block) => block,
+        TicketZeroPageAllocationResult::Unavailable => {
+            panic!("the consumed post-exit source no longer blocks ticket zero while B is attached")
+        }
+        TicketZeroPageAllocationResult::AllocationFailed => {
+            panic!("the fixed small ticket-zero request remains allocatable")
+        }
+        TicketZeroPageAllocationResult::Retained => {
+            panic!("the successful replacement leaves the process owner usable")
+        }
+    };
+    assert_eq!(
+        unsafe { ticket_zero_free(while_b_attached) },
+        TicketZeroPageFreeResult::Freed,
+        "ticket zero returns its independent client while B remains attached"
     );
     release_b.wait();
     releaser

@@ -59,6 +59,8 @@ class NonlocalReallocPortMapTests(unittest.TestCase):
             "without inspecting the source pointer",
             "then derives one coherent PageMap allocation observation",
             "allocates through the caller's persistent native owner",
+            "A true PageMap `Detached` observation is not a successfully consumable replacement case",
+            "`native_reallocate` fails closed as `Retained`",
             "Allocation failure leaves the old allocation untouched",
             "unescaped caller-local replacement is returned directly",
             "a rollback failure retains that owner",
