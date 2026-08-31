@@ -3762,6 +3762,22 @@ allocation/refcounts, gettext, localized numeric parsing, wide
 stdio/format/time conversion, general text/locale completion, `libc.so`, CRT,
 loader, sysroot, promotion, and public x86 support remain unselected.
 
+`libc-locale-ctype-locators` records the separate private
+`static-c-locale-ctype-locators` ABI artifact. It deliberately leaves the
+three musl glibc-compatibility locators out of installed `<ctype.h>`: a C
+consumer that needs `__ctype_b_loc`, `__ctype_tolower_loc`, or
+`__ctype_toupper_loc` declares it locally. The shared pinned-musl/static
+fixture proves each stable pointer-to-pointer shape, its immutable 384-entry
+table biased by 128, little-endian storage of musl's network-order class
+words, and the complete `-128..255` signed/unsigned-byte table domain. It
+compares a raw eight-byte fingerprint from a true `-nostdlib -static`
+candidate that has no PT_TLS, errno, locale-object, allocator, or ambient
+runtime dependency. The data remain fixed for `C`, `POSIX`, and `C.UTF-8`;
+this ABI-only slice neither selects `locale.core` nor adds a locale database,
+locale/environment selection, Unicode narrow classification, localized
+text/numeric/time formatting, wide I/O, a dynamic runtime, family completion,
+promotion, or public x86 support.
+
 `libc-memory` compiles only `libc/src/c_abi/x86_64/memory.rs`, then runs one C
 fixture against pinned musl and the isolated x86 object with project
 `<string.h>` first. It proves the fixed `memcpy`, `memmove`, and `memset`

@@ -160,6 +160,7 @@ X86_RUNTIME_FOUNDATION_LIBC_SOURCES = {
     Path("libc/src/c_abi/x86_64/immediate_termination.rs"),
     Path("libc/src/c_abi/x86_64/callback_algorithms.rs"),
     Path("libc/src/c_abi/x86_64/ctype.rs"),
+    Path("libc/src/c_abi/x86_64/locale_ctype.rs"),
     Path("libc/src/c_abi/x86_64/locale_multibyte.rs"),
     Path("libc/src/c_abi/x86_64/locale_objects.rs"),
     Path("libc/src/c_abi/x86_64/locale_narrow.rs"),
@@ -3731,6 +3732,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         '#[path = "string_copy.rs"]',
         '#[path = "error_strings.rs"]',
         '#[path = "ctype.rs"]',
+        '#[path = "locale_ctype.rs"]',
         '#[path = "locale_multibyte.rs"]',
         '#[path = "locale_objects.rs"]',
         '#[path = "integer_arithmetic.rs"]',
@@ -6983,6 +6985,42 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
             "must export only its named fixed-C-locale symbols"
         )
 
+    locale_ctype_source = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "locale_ctype.rs"
+    locale_ctype_text = locale_ctype_source.read_text(errors="replace")
+    for required in (
+        "musl 1.2.6 release commit",
+        "src/ctype/__ctype_b_loc.c",
+        "src/ctype/__ctype_tolower_loc.c",
+        "src/ctype/__ctype_toupper_loc.c",
+        "384-entry table",
+        "network-byte-order",
+        "-128..=255",
+        "not public `<ctype.h>`",
+        "locale database",
+        "public x86 support",
+    ):
+        if required not in locale_ctype_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/locale_ctype.rs: musl-compatible ctype "
+                f"locator boundary is missing {required!r}"
+            )
+    locale_ctype_exports = set(
+        re.findall(
+            r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(',
+            locale_ctype_text,
+        )
+    )
+    expected_locale_ctype_exports = {
+        "__ctype_b_loc",
+        "__ctype_tolower_loc",
+        "__ctype_toupper_loc",
+    }
+    if locale_ctype_exports != expected_locale_ctype_exports:
+        errors.append(
+            "libc/src/c_abi/x86_64/locale_ctype.rs: musl-compatible ctype "
+            "locator artifact must export only its named ABI locators"
+        )
+
     integer_arithmetic_source = (
         ROOT / "libc" / "src" / "c_abi" / "x86_64" / "integer_arithmetic.rs"
     )
@@ -7846,6 +7884,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         ("string_copy.rs", string_copy_text),
         ("error_strings.rs", error_strings_text),
         ("ctype.rs", ctype_text),
+        ("locale_ctype.rs", locale_ctype_text),
         ("integer_arithmetic.rs", integer_arithmetic_text),
         ("integer_parse.rs", integer_parse_text),
         ("intmax_arithmetic.rs", intmax_arithmetic_text),

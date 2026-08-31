@@ -541,6 +541,20 @@ the weak compiler-builtins fallback. `fdiml`, `exp10*`/`pow10*`,
 current/integer-result rounding, special/binary80 math, category/family
 completion, promotion, and public x86 support remain unselected.
 
+The adjacent private x86 ABI-only ctype locator artifact is verified by
+`./scripts/dev-x86_64.sh libc-locale-ctype-locators`. It provides exactly
+`__ctype_b_loc`, `__ctype_tolower_loc`, and `__ctype_toupper_loc`: stable
+pointer-to-pointer locators over immutable 384-entry tables biased by 128.
+The shared pinned-musl/static fixture checks every `-128..255` index, the
+little-endian representation of musl's network-order class bits, and one
+eight-byte table fingerprint while a true static candidate rejects PT_TLS,
+errno, allocation, locale-object, and ambient-runtime dependencies. Those
+symbols intentionally remain outside installed `ctype.h`; they are an
+ABI-compatibility sub-slice toward, but not a selection of, `locale.core`.
+It does not add locale selection/maps, legacy encodings, Unicode narrow
+classification, localized string or numeric formatting, wide I/O/time
+conversion, family completion, promotion, or public x86 support.
+
 The x86 static C archive also has one private caller-owned mapping-core
 artifact: `./scripts/dev-x86_64.sh libc-mapping-core` runs the project-header
 C/C++ `sys/mman.h` gate and then one pinned-musl/freestanding-static proof for

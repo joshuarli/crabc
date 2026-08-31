@@ -6713,6 +6713,47 @@ native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc
 oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT declaration and exact fixed-locale behavior oracle for the selected src/ctype localized wrappers, src/string case comparisons, and src/locale byte collation/transformation leaves." }, { kind = "project-contract", source = "AArch64 crabc-libc narrow locale implementation in libc/src/locale_exports.rs plus checked AArch64 ABI/export inventory", role = "Existing project ownership and 22-symbol/header availability oracle. The x86 implementation follows pinned musl's no-write strxfrm boundary where the current AArch64 helper instead emits a truncated NUL-terminated prefix." }, { kind = "elf-abi", source = "System V AMD64 psABI and pinned musl x86 headers", role = "locale_t pointer, int/size_t/pointer calling conventions, unmangled C linkage, and local-exec TLS composition." }]
 
 [[family.verified_artifact]]
+id = "static-c-locale-ctype-locators"
+description = "Private native x86 musl-compatible ctype table-locator artifact inside still-planned `libc.text-math-locale-stdio`. One dependency-free `crabc-libc` archive exposes exactly `__ctype_b_loc`, `__ctype_tolower_loc`, and `__ctype_toupper_loc`. These ABI-only, deliberately uninstalled locators each return the stable address of an immutable pointer object whose target is a 384-entry table biased by 128, covering every direct index from signed-char `-128` through unsigned-byte `255`. `__ctype_b_loc` preserves musl's network-byte-order 16-bit class words on little-endian x86; the two signed-32-bit conversion tables preserve fixed ASCII lower/upper mapping and zero outside the ASCII byte domain. One shared project-header fixture runs through pinned musl 1.2.6 and a true dependency-free `-nostdlib -static` candidate, checks outer-pointer and target-pointer stability, pins endian-sensitive boundary words, and byte-compares an eight-byte fingerprint over all three complete tables. The fixture uses a raw test-only write syscall only to emit that fingerprint, so the final candidate proves no PT_TLS, errno, allocator, locale-object, or ambient runtime dependency. The installed `ctype.h` intentionally remains free of these compatibility declarations. The immutable tables are the same fixed data for the bounded `C`, `POSIX`, and `C.UTF-8` profiles. This is one ABI sub-slice toward `locale.core`, not `locale.core` capability selection, family completion, promotion, or public x86 support. General locale or legacy-encoding databases, locale/environment selection, Unicode narrow classification, locale objects, localized ctype/string APIs, numeric parsing/formatting, wide text/stdio/time conversion, libc.so, CRT, loader, and sysroot remain excluded."
+source_owners = [
+  "compat/upstreams.toml",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "libc/src/c_abi.rs",
+  "libc/src/locale_ctype.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/locale_ctype.rs",
+  "include/bits/alltypes.h",
+  "include/ctype.h",
+  "include/features.h",
+  "include/stdint.h",
+  "include/unistd.h",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/libc_locale_ctype_locators_probe.c",
+  "compat/x86_64/libc_locale_ctype_locators_start.S",
+  "compat/x86_64/run_libc_locale_ctype_locators.sh",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "compat/x86_64/README.md",
+  "docs/evidence/x86-aarch64-parity-inventory.md",
+  "STATUS.md",
+  "x86-64.md",
+  "scripts/check_structure.py",
+  "scripts/dev-x86_64.sh",
+]
+x86_abi_prerequisites = [
+  "System V AMD64 returns each outer pointer in rax; `unsigned short` is a 16-bit word, `int32_t` is a signed 32-bit word, and normal pointer indexing reaches the 384-entry backing tables through their fixed +128 bias. The outer pointer object and its immutable target survive for the process lifetime, matching musl's `static const T *const ptable` shape.",
+  "Pinned musl 1.2.6 src/ctype/__ctype_b_loc.c, __ctype_tolower_loc.c, and __ctype_toupper_loc.c are the MIT source and behavior oracle. On little-endian x86 the classification table's public compatibility bits are byte-swapped network-order words; the conversion tables map ASCII letters and preserve/zero the exact remaining index domain.",
+  "The fixture's direct Linux x86-64 `write=1` syscall emits only its fixed eight-byte fingerprint. The selected locator leaf itself has no syscall, errno, TLS, allocator, mutable locale state, cancellation, dynamic TLS, or ambient runtime seam.",
+]
+x86_header_prerequisites = [
+  "The shared fixture preprocesses project ctype.h, stdint.h, unistd.h, features.h, and bits/alltypes.h before either pinned-musl or candidate execution. It declares the three intentionally ABI-only locators locally, because neither musl nor the project installs them in ctype.h; this adds no public header declaration or C++ linkage claim.",
+]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-locale-ctype-locators", scope = "Pinned-musl project-header C reference plus one dependency-free selected x86 archive and true `-nostdlib -static` candidate. The runner ratchets the complete static export contract, requires exactly the three locator exports, rejects the adjacent unselected locale aliases/formatters and allocator, verifies project-header provenance while preserving the intentional no-declaration boundary, and rejects unresolved symbols, interpreter/DT_NEEDED, PT_TLS, dynamic TLS, and ambient runtime dependencies. The shared fixture validates stable pointer-to-pointer/table addresses, endian-sensitive sentinel entries, all 384 values in each table, and one byte-identical eight-byte fingerprint. It is one verified ABI artifact inside a still-planned family, not locale.core selection, family completion, promotion, or public x86 support." }]
+oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source, table-layout, endian-encoding, pointer-bias, and fixed-C-locale behavior oracle for src/ctype/__ctype_b_loc.c, __ctype_tolower_loc.c, and __ctype_toupper_loc.c." }, { kind = "project-contract", source = "AArch64 crabc-libc ctype locator implementation in libc/src/locale_ctype.rs plus checked AArch64 ABI/export inventory", role = "Existing project ownership and AArch64 symbol-availability oracle. The x86 leaf preserves the same 384-entry pointer-table ABI and musl class-word encoding without importing a mutable locale framework." }, { kind = "elf-abi", source = "System V AMD64 psABI and pinned musl x86 headers", role = "LP64 outer-pointer return ABI, unsigned-short/int32_t table element widths, and direct signed/unsigned byte-index representation." }, { kind = "kernel-abi", source = "Linux 5.10 x86-64 ABI", role = "The fixture-only raw write=1 syscall emits its differential fingerprint and does not select a libc descriptor-I/O or locale runtime boundary." }]
+
+[[family.verified_artifact]]
 id = "static-c-text-math-locale-stdio-composition"
 description = "Private native x86 selected-static C composition artifact inside still-planned `libc.text-math-locale-stdio`. One project-header fixture first executes through pinned musl 1.2.6 and then a dependency-free `-nostdlib -static` crabc-libc archive. It crosses only existing `setlocale`/`localeconv`/`mbrtowc` named C.UTF-8 state, `strtod` C-locale parsing, `__fpclassify` binary64 classification, direct initial-exec errno TLS, and permanent `stdout` `fputc`/`fflush` behavior: valid UTF-8 leaves stale errno, an invalid lead sets EILSEQ, a successful parse preserves that errno, and a pipe-observed explicit stream flush preserves it again. The runner requires all four existing math/complex, float-parse, locale/multibyte, and permanent-standard-stream C/C++ header matrices; ratchets the complete selected archive export list; rejects interpreter/DT_NEEDED/unresolved symbols, dynamic TLS, formatter/wide streams, scalar libm, allocation, and ambient runtime dependencies; and reaches archive-owned Static Initial TLS v1 from the untouched entry stack. The archive may contain the separate locale-object, iconv, and wide-character leaves, which this composition neither invokes nor establishes. It does not exercise the independently selected `_l` parser wrappers. The fixture does not reference or exercise the separately owned byte-format/scanner or pathname lifecycle, although the shared permanent-`fflush` target leaf may materialize selected path symbols. It is a cross-surface regression only, not another C wrapper or a claim of general text, math, locale, stdio, CRT, loader, sysroot, family completion, promotion, or public x86 support."
 source_owners = [

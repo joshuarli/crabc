@@ -1036,6 +1036,67 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn("locale-narrow-header-abi)", dispatcher)
         self.assertIn("libc-locale-narrow)", dispatcher)
 
+    def test_locale_ctype_locator_artifact_stays_abi_only_and_non_promoting(
+        self,
+    ) -> None:
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        implementation = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "locale_ctype.rs"
+        ).read_text(encoding="utf-8")
+        probe = (
+            ROOT / "compat" / "x86_64" / "libc_locale_ctype_locators_probe.c"
+        ).read_text(encoding="utf-8")
+        artifact_runner = (
+            ROOT / "compat" / "x86_64" / "run_libc_locale_ctype_locators.sh"
+        ).read_text(encoding="utf-8")
+        ctype_header = (ROOT / "include" / "ctype.h").read_text(encoding="utf-8")
+        static_exports = {
+            line
+            for line in (
+                ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+            ).read_text(encoding="utf-8").splitlines()
+            if line and not line.startswith("#")
+        }
+        parity = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        dispatcher = RUNNER.read_text(encoding="utf-8")
+        symbols = (
+            "__ctype_b_loc",
+            "__ctype_tolower_loc",
+            "__ctype_toupper_loc",
+        )
+        self.assertIn('#[path = "locale_ctype.rs"]', static_root)
+        for symbol in symbols:
+            self.assertIn(f"fn {symbol}(", implementation)
+            self.assertIn(symbol, static_exports)
+            self.assertNotIn(symbol, ctype_header)
+        for required in (
+            "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+            "384-entry table", "network-byte-order", "not public `<ctype.h>`",
+        ):
+            self.assertIn(required, implementation)
+        for required in (
+            "extern const unsigned short **__ctype_b_loc(void);",
+            "character = -128; character != 256", "UINT16_C(0xd508)",
+            "raw_write_stdout", "fingerprint",
+        ):
+            self.assertIn(required, probe)
+        for required in (
+            "static_c_abi_exports.txt", "-nostdlib -static", "--no-undefined",
+            "reference-fingerprint", "candidate-fingerprint",
+            "[[:space:]]TLS[[:space:]]", "__newlocale", "strxfrm",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertIn('id = "static-c-locale-ctype-locators"', parity)
+        self.assertIn(
+            'command = "./scripts/dev-x86_64.sh libc-locale-ctype-locators"',
+            parity,
+        )
+        self.assertIn("libc-locale-ctype-locators)", dispatcher)
+
     def test_script_is_valid_and_has_a_closed_command_set(self) -> None:
         syntax = subprocess.run(
             ["bash", "-n", str(RUNNER)],
@@ -1140,7 +1201,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "libc-memfd-create",
             "libc-static-c-abi-differential",
             "libc-static-c-abi-same-object-differential|qualification-posix-abi-admission",
-            "libc-readiness-waits|libc-system-observation|libc-system-information|libc-fcntl-record-locks|libc-flock|libc-sendfile|libc-posix-fallocate|libc-descriptor-advice|libc-filesystem-capacity|libc-uts-identity|libc-ctype|libc-locale-multibyte|libc-locale-wide-iconv|libc-wide-character|libc-locale-object-wide|libc-locale-narrow|libc-regex|libc-integer-arithmetic|libc-integer-parse|libc-float-parse|libc-intmax-arithmetic|libc-credential-observation|libc-login-name|libc-child-reaping|libc-immediate-termination|libc-callback-algorithms|libc-access|libc-clock-gettime|libc-time-observation|libc-system-configuration|libc-mapping-core|libc-header-layouts-baseline|libc-nanosleep|libc-clock-nanosleep|libc-descriptor-entry|libc-fcntl-status-control|libc-ioctl|libc-ffs|libc-byte-strings|libc-process-globals-getopt|libc-inet-address|libc-numeric-netdb|libc-random-entropy|libc-memory-search|libc-string-copy|libc-error-strings|libc-descriptor-pipeline",
+            "libc-readiness-waits|libc-system-observation|libc-system-information|libc-fcntl-record-locks|libc-flock|libc-sendfile|libc-posix-fallocate|libc-descriptor-advice|libc-filesystem-capacity|libc-uts-identity|libc-ctype|libc-locale-multibyte|libc-locale-wide-iconv|libc-wide-character|libc-locale-object-wide|libc-locale-narrow|libc-locale-ctype-locators|libc-regex|libc-integer-arithmetic|libc-integer-parse|libc-float-parse|libc-intmax-arithmetic|libc-credential-observation|libc-login-name|libc-child-reaping|libc-immediate-termination|libc-callback-algorithms|libc-access|libc-clock-gettime|libc-time-observation|libc-system-configuration|libc-mapping-core|libc-header-layouts-baseline|libc-nanosleep|libc-clock-nanosleep|libc-descriptor-entry|libc-fcntl-status-control|libc-ioctl|libc-ffs|libc-byte-strings|libc-process-globals-getopt|libc-inet-address|libc-numeric-netdb|libc-random-entropy|libc-memory-search|libc-string-copy|libc-error-strings|libc-descriptor-pipeline",
             "libc-vector-io|libc-uio-cxx-linkage",
             "libc-sysv-semaphore|libc-posix-semaphore",
             "libc-sysv-message-shared-memory",

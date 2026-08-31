@@ -9,7 +9,10 @@
 _Exit
 ___environ
 __crabc_x86_static_tls_bootstrap
+__ctype_b_loc
 __ctype_get_mb_cur_max
+__ctype_tolower_loc
+__ctype_toupper_loc
 __cxa_atexit
 __cxa_finalize
 __environ

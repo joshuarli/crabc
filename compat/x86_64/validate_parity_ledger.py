@@ -1589,6 +1589,11 @@ LOCALE_NARROW_SYMBOLS = (
     "strcasecmp_l", "strncasecmp", "strncasecmp_l", "strcoll",
     "strcoll_l", "strxfrm", "strxfrm_l",
 )
+LOCALE_CTYPE_LOCATOR_SYMBOLS = (
+    "__ctype_b_loc",
+    "__ctype_tolower_loc",
+    "__ctype_toupper_loc",
+)
 
 
 class LedgerError(ValueError):
@@ -20218,8 +20223,8 @@ def require_locale_wide_iconv_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 17,
-        "libc.text-math-locale-stdio must retain exactly seventeen private verified artifacts",
+        len(artifacts) == 18,
+        "libc.text-math-locale-stdio must retain exactly eighteen private verified artifacts",
     )
     matching = [
         entry for entry in artifacts if entry.get("id") == "static-c-locale-wide-iconv"
@@ -20881,6 +20886,159 @@ def require_locale_narrow_artifact(family: Mapping[str, Any]) -> None:
         "run_locale_narrow_header_abi()",
     ):
         require(snippet in dispatcher, f"x86 dispatcher omits {snippet}")
+
+
+def require_locale_ctype_locator_artifact(family: Mapping[str, Any]) -> None:
+    """Keep musl's internal ctype locator ABI exact and non-promoting."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.text-math-locale-stdio].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [
+        entry for entry in artifacts
+        if entry.get("id") == "static-c-locale-ctype-locators"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.text-math-locale-stdio must contain exactly one static-c-locale-ctype-locators artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-locale-ctype-locators must not promote its family",
+    )
+    artifact = matching[0]
+    require(
+        "capabilities" not in artifact,
+        "locale-ctype-locators artifact must not promote capabilities",
+    )
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for symbol in LOCALE_CTYPE_LOCATOR_SYMBOLS:
+        require(
+            symbol in description,
+            f"locale-ctype-locators artifact description omits {symbol}",
+        )
+    for phrase in (
+        "musl-compatible ctype table-locator artifact",
+        "384-entry table biased by 128",
+        "network-byte-order 16-bit class words",
+        "bounded `C`, `POSIX`, and `C.UTF-8` profiles",
+        "not `locale.core` capability selection",
+        "The installed `ctype.h` intentionally remains free",
+        "no PT_TLS, errno, allocator, locale-object, or ambient runtime dependency",
+        "General locale or legacy-encoding databases",
+        "numeric parsing/formatting",
+        "wide text/stdio/time conversion",
+        "family completion, promotion, or public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"locale-ctype-locators artifact omits {phrase}",
+        )
+    owners = nonempty_strings(
+        artifact["source_owners"],
+        "static-c-locale-ctype-locators.source_owners",
+    )
+    for owner in (
+        "libc/src/c_abi.rs",
+        "libc/src/locale_ctype.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/locale_ctype.rs",
+        "include/ctype.h",
+        "include/stdint.h",
+        "include/unistd.h",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/libc_locale_ctype_locators_probe.c",
+        "compat/x86_64/libc_locale_ctype_locators_start.S",
+        "compat/x86_64/run_libc_locale_ctype_locators.sh",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "scripts/check_structure.py",
+        "scripts/dev-x86_64.sh",
+    ):
+        require(owner in owners, f"locale-ctype-locators artifact omits {owner}")
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-locale-ctype-locators"},
+        "locale-ctype-locators artifact must use the closed libc-locale-ctype-locators command",
+    )
+    oracles = artifact["oracle"]
+    assert isinstance(oracles, list)
+    require(
+        any(
+            entry.get("kind") == "project-contract"
+            and "AArch64" in str(entry.get("source"))
+            and "384-entry pointer-table ABI" in str(entry.get("role"))
+            for entry in oracles
+        ),
+        "locale-ctype-locators artifact must record its exact AArch64 table contract",
+    )
+    static_root = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+    ).read_text(encoding="utf-8")
+    require(
+        '#[path = "locale_ctype.rs"]\nmod locale_ctype;' in static_root,
+        "x86 static C ABI must compose locale_ctype",
+    )
+    implementation = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "locale_ctype.rs"
+    ).read_text(encoding="utf-8")
+    exports = static_c_abi_export_names(
+        ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+    )
+    for symbol in LOCALE_CTYPE_LOCATOR_SYMBOLS:
+        require(
+            f"fn {symbol}(" in implementation,
+            f"locale_ctype leaf omits {symbol}",
+        )
+        require(symbol in exports, f"static C ABI export contract omits {symbol}")
+    for snippet in (
+        "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+        "384-entry table",
+        "network-byte-order",
+        "-128..=255",
+        "not public `<ctype.h>`",
+    ):
+        require(snippet in implementation, f"locale_ctype leaf omits {snippet}")
+    fixture = (
+        ROOT / "compat" / "x86_64" / "libc_locale_ctype_locators_probe.c"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "extern const unsigned short **__ctype_b_loc(void);",
+        "character = -128; character != 256",
+        "UINT16_C(0xd508)",
+        "raw_write_stdout",
+        "fingerprint",
+    ):
+        require(
+            snippet in fixture,
+            f"locale-ctype-locators fixture omits {snippet}",
+        )
+    runner = (
+        ROOT / "compat" / "x86_64" / "run_libc_locale_ctype_locators.sh"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "internal musl locator ABI",
+        "-nostdlib -static",
+        "--no-undefined",
+        "reference-fingerprint",
+        "candidate-fingerprint",
+        "[[:space:]]TLS[[:space:]]",
+        "__newlocale",
+    ):
+        require(
+            snippet in runner,
+            f"locale-ctype-locators runner omits {snippet}",
+        )
+    dispatcher = (ROOT / "scripts" / "dev-x86_64.sh").read_text(encoding="utf-8")
+    require(
+        "libc-locale-ctype-locators)" in dispatcher,
+        "x86 dispatcher omits libc-locale-ctype-locators",
+    )
 
 
 def baseline_capability_ids(path: Path) -> set[str]:
@@ -21724,6 +21882,7 @@ def validate_ledger(
     require_wide_character_artifact(by_id["libc.text-math-locale-stdio"])
     require_locale_object_wide_artifact(by_id["libc.text-math-locale-stdio"])
     require_locale_narrow_artifact(by_id["libc.text-math-locale-stdio"])
+    require_locale_ctype_locator_artifact(by_id["libc.text-math-locale-stdio"])
 
     musl_oracle = by_id["oracle.musl-toolchain"]
     require(musl_oracle["status"] == "foundation-verified", "musl oracle must remain foundation-verified")

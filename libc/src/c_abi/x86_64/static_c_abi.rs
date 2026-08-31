@@ -51,8 +51,9 @@
 //! plus one fixed regular-file pathname stream/position-buffering slot and
 //! one bounded immediately-unlinked `tmpfile` route over that same slot,
 //! intmax-arithmetic,
-//! fixed-locale narrow ctype/case/collation, immutable built-in locale objects,
-//! fixed langinfo, selected-thread locale overrides, and localized wide
+//! fixed-locale narrow ctype/case/collation, musl-compatible immutable ctype
+//! table locators, immutable built-in locale objects, fixed langinfo,
+//! selected-thread locale overrides, and localized wide
 //! classification/case/collation wrappers,
 //! find-first-set, immutable C-locale error strings, C11 immediate-termination,
 //! a bounded private static
@@ -151,6 +152,8 @@ mod string_copy;
 mod error_strings;
 #[path = "ctype.rs"]
 mod ctype;
+#[path = "locale_ctype.rs"]
+mod locale_ctype;
 #[path = "locale_multibyte.rs"]
 mod locale_multibyte;
 #[path = "locale_objects.rs"]
