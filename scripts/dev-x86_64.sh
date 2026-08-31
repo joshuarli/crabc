@@ -435,6 +435,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-math-log2  run the static x86 log2/log2f scalar slice
   libc-math-exp  run the static x86 exp/expf scalar slice
   libc-math-cos  run the static x86 cos/cosf scalar slice
+  libc-math-cosh  run the static x86 cosh/coshf scalar slice
   libc-math-sinh  run the static x86 sinh/sinhf scalar slice
   libc-math-elementary-long-double  run the complete static x86 math.elementary-long-double capability
   libc-math-x87-extended  run the static x86 x87 long-double math/remainder block
@@ -1842,6 +1843,18 @@ infinities, quiet/signaling NaNs, exception flags, and requested versus
 observed direction in all four MXCSR modes. It excludes `cosl`, public
 sin/tan surface, fenv API/policy, special/complex and binary80 math, family
 completion, promotion, and public x86 support.
+`libc-math-cosh` is the separate selected binary32/binary64 scalar slice for
+`cosh` and `coshf`. It compares parenthesized C calls and default-SSE/
+`-mfpmath=387` C++ declarations with pinned musl, then runs one freestanding
+static candidate. The checked GCC 15.2.0 translation of musl 1.2.6
+`cosh.c`/`coshf.c` with its exact local expm1/overflow-reconstruction closure
+retains exact tiny-input one results, stable expm1 reconstruction, reciprocal
+exponential reconstruction, and overflow scaling. Its raw records cover
+signed zero, finite normal/subnormal and threshold bounds, large finite
+values, infinities, quiet/signaling NaNs, exception flags, and requested
+versus observed direction in all four MXCSR modes. It excludes `coshl`, other
+hyperbolic surface, public exp/expm1 ABI, fenv API/policy, special/complex and
+binary80 math, family completion, promotion, and public x86 support.
 `libc-math-sinh` is the separate selected binary32/binary64 scalar slice for
 `sinh` and `sinhf`. It compares parenthesized C calls and default-SSE/
 `-mfpmath=387` C++ declarations with pinned musl, then runs one freestanding
@@ -3808,6 +3821,10 @@ run_libc_math_cos_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_math_cos.sh
 }
 
+run_libc_math_cosh_probe() {
+    run_in_container bash /workspace/compat/x86_64/run_libc_math_cosh.sh
+}
+
 run_libc_math_sinh_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_math_sinh.sh
 }
@@ -3948,6 +3965,7 @@ case "$command" in
     libc-math-log2) ;;
     libc-math-exp) ;;
     libc-math-cos) ;;
+    libc-math-cosh) ;;
     libc-math-sinh) ;;
     libc-fdim) ;;
     machine-context-header-abi) ;;
@@ -6061,6 +6079,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "libc-math-cos takes no arguments"
         ensure_image
         run_libc_math_cos_probe
+        ;;
+    libc-math-cosh)
+        [ "$#" -eq 0 ] || fail "libc-math-cosh takes no arguments"
+        ensure_image
+        run_libc_math_cosh_probe
         ;;
     libc-math-sinh)
         [ "$#" -eq 0 ] || fail "libc-math-sinh takes no arguments"

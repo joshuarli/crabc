@@ -8530,6 +8530,54 @@ native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc
 oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "FreeBSD/Sun msun source, preserved permissive notices, exact IEEE payload/exception/directed-rounding behavior, and public C ABI oracle for exactly src/math/cos.c, cosf.c, __sin.c, __cos.c, __sindf.c, __cosdf.c, __rem_pio2.c, __rem_pio2f.c, __rem_pio2_large.c, floor.c, and scalbn.c." }, { kind = "aarch64-contract", source = "SCOPE.md, COMPATIBILITY-PROFILE.md, and libc/src/math_compat.rs", role = "The active AArch64 product contract supplies no selected public cos/cosf mapping; this x86-only evidence remains selected-private and does not import, imply, or promote an AArch64 capability." }, { kind = "elf-abi", source = "System V AMD64 psABI", role = "xmm0 binary32/binary64 unary argument and return ABI plus caller-visible MXCSR scalar-SSE arithmetic boundary for the selected static C entries." }]
 
 [[family.verified_artifact]]
+id = "static-c-math-cosh"
+description = "Private native x86 selected-static binary32/binary64 hyperbolic-cosine artifact inside still-planned `libc.text-math-locale-stdio`. One dependency-free `crabc-libc` archive resolves exactly `cosh` and `coshf` into a freestanding project-header C fixture after equivalent pinned-musl execution. A checked GCC 15.2.0 assembly translation of musl's `cosh.c`/`coshf.c` plus the exact sixteen-source closure retains raw magnitude classification, exact tiny-input one behavior with inexact evaluation, stable expm1 reconstruction, the fixed expm1 polynomial/reduction, reciprocal exponential reconstruction, and overflow-safe exponential scaling without ambient libm or selected `math.special` state. The localized exponent closure includes private exp/expm1, `__expo2`, tables, and error-expression providers, has no undefined callable symbols, and exports neither implementation helpers nor public exp/expm1 spellings. The record stream covers signed zero, tiny/subnormal and normal bounds, expm1/reconstruction and overflow thresholds, high finite values, infinities, quiet/signaling NaNs, raw results, requested/observed rounding directions, and exception flags. Strong target-owned definitions reject weak compiler-builtins fallback. Existing fenv entries only reset and observe MXCSR; this artifact does not select fenv API/policy. It excludes binary80 `coshl`, public sinh/tanh and direct/inverse trigonometry, public exp/expm1/log/pow functions, fmod/remainder/modf, special and complex functions, binary80/x87 math, errno policy, general libm, libc.so, CRT/TLS lifecycle, loader, sysroot, `math.elementary` family completion, promotion, full x86-64 parity, and public x86 support. The localized `exp_data.c` and `exp2f_data.c` tables are implementation details, not selection of public exp/exp2 entries."
+source_owners = [
+  "compat/upstreams.toml",
+  "docker/Dockerfile.x86_64",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/fenv.rs",
+  "libc/src/c_abi/x86_64/math_cosh.rs",
+  "libc/src/c_abi/x86_64/math_cosh_musl_x86_64.S",
+  "include/fenv.h",
+  "include/float.h",
+  "include/math.h",
+  "compat/x86_64/generate_libc_math_cosh.py",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/math_cosh_header_abi_probe.cpp",
+  "compat/x86_64/libc_math_cosh_probe.c",
+  "compat/x86_64/libc_math_cosh_start.S",
+  "compat/x86_64/run_libc_math_cosh.sh",
+  "compat/x86_64/aarch64_parity_inventory.py",
+  "compat/x86_64/aarch64_parity_inventory.json",
+  "compat/x86_64/tests/test_aarch64_parity_inventory.py",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "compat/x86_64/README.md",
+  "SCOPE.md",
+  "COMPATIBILITY-PROFILE.md",
+  "STATUS.md",
+  "x86-64.md",
+  "scripts/check_structure.py",
+  "scripts/dev-x86_64.sh",
+]
+x86_abi_prerequisites = [
+  "Pinned musl 1.2.6 src/math/cosh.c and coshf.c plus expm1.c, expm1f.c, __expo2.c, __expo2f.c, exp.c, expf.c, exp_data.c, exp2f_data.c, __math_oflow{,f}.c, __math_uflow{,f}.c, and __math_xflow{,f}.c are the exact sixteen-source closure: their normalized 1.2.6 source-tree digest, GCC 15.2.0 input, retained Sun and Arm notices, musl's MIT license, `-frounding-math`, `-ffp-contract=off`, and `-fexcess-precision=standard` translation preserve exact tiny-input one behavior, expm1/reciprocal reconstruction, and overflow-safe exponential scaling without an ambient libm call.",
+  "The bounded sixteen-source closure links with no undefined callable symbols. Its expm1, __expo2, exp tables, and error-expression providers are renamed and localized to local `crabc_x86_math_cosh_*` assembly symbols, so only the public hyperbolic-cosine C names remain global rather than exporting a source-closure implementation detail or public exp/expm1 ABI.",
+  "System V AMD64 with FLT_EVAL_METHOD=0 passes and returns binary64/binary32 in xmm0. Scalar SSE addsd/subsd/mulsd/divsd and addss/subss/mulss/divss paths preserve fixed polynomial and reconstruction arithmetic; the provider path uses cvtss2sd/cvtsd2ss only where musl's binary32 source does. Binary80 `coshl` is representation- and ABI-distinct and remains excluded.",
+  "The fixture composes only existing selected static fegetenv/fesetenv/fesetround/fegetround/feclearexcept/fetestexcept entries to reset and observe MXCSR, including tiny-input and overflow exception behavior across all caller directions, without selecting fenv API or policy as part of this artifact.",
+]
+x86_header_prerequisites = [
+  "The focused C fixture preprocesses project fenv.h, float.h, math.h, stddef.h, stdint.h, features.h, and bits/alltypes.h, then calls parenthesized cosh/coshf function pointers so compiler builtins cannot substitute for the named C ABI.",
+  "Dedicated C++17 objects compiled with default SSE and -mfpmath=387 pin exact binary64/binary32 unary function-pointer signatures and unmangled C references from the project header against pinned musl.",
+]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-math-cosh", scope = "Pinned-musl/project-header C and C++ ABI execution plus one dependency-free `-nostdlib -static --no-undefined --gc-sections` candidate. The C fixture compares 256 exact 32-byte records across all four rounding directions: binary32/binary64 signed zero, raw tiny/subnormal and normal bounds, expm1/reconstruction and overflow thresholds, high finite values, infinities, quiet/signaling NaNs, raw results, requested/observed MXCSR direction, and exception flags. ELF proof requires strong global target-owned cosh/coshf definitions, exact archive surface, a sixteen-source localized exponent closure with no public `expm1`, `__expo2`, exp table, or error helper, and addsd/addss/subsd/subss/mulsd/mulss/divsd/divss/cvtss2sd/cvtsd2ss scalar source arithmetic; it rejects weak compiler-builtins fallback, coshl, sinh/tanh, public exp/expm1/log/pow, direct/inverse trigonometry, fmod/remainder/modf, fenv API/policy, special and complex math, unresolved symbols, dynamic linkage, TLS, ambient libm, packed-SIMD/FMA ISA, and unowned runtime dependencies. It excludes category/family completion, promotion, full x86-64 parity, and public x86 support." }]
+oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "FreeBSD/Sun msun and Arm MIT source, preserved permissive notices, exact IEEE payload/exception/directed-rounding behavior, and public C ABI oracle for exactly src/math/cosh.c, coshf.c, expm1.c, expm1f.c, __expo2.c, __expo2f.c, exp.c, expf.c, exp_data.c, exp2f_data.c, __math_oflow{,f}.c, __math_uflow{,f}.c, and __math_xflow{,f}.c." }, { kind = "aarch64-contract", source = "SCOPE.md, COMPATIBILITY-PROFILE.md, and libc/src/math_hyperbolic.rs", role = "The active AArch64 product contract supplies no selected public cosh/coshf mapping; this x86-only evidence remains selected-private and does not import, imply, or promote an AArch64 capability." }, { kind = "elf-abi", source = "System V AMD64 psABI", role = "xmm0 binary32/binary64 unary argument and return ABI plus caller-visible MXCSR scalar-SSE arithmetic boundary for the selected static C entries." }]
+
+[[family.verified_artifact]]
 id = "static-c-math-sinh"
 description = "Private native x86 selected-static binary32/binary64 hyperbolic-sine artifact inside still-planned `libc.text-math-locale-stdio`. One dependency-free `crabc-libc` archive resolves exactly `sinh` and `sinhf` into a freestanding project-header C fixture after equivalent pinned-musl execution. A checked GCC 15.2.0 assembly translation of musl's `sinh.c`/`sinhf.c` plus the exact sixteen-source closure retains raw sign/magnitude classification, signed tiny-input behavior, stable expm1 reconstruction, the fixed expm1 polynomial/reduction, and overflow-safe exponential scaling without ambient libm or selected `math.special` state. The localized exponent closure includes private exp/expm1, `__expo2`, tables, and error-expression providers, has no undefined callable symbols, and exports neither implementation helpers nor public exp/expm1 spellings. The record stream covers signed zero, tiny/subnormal and normal bounds, expm1/reconstruction and overflow thresholds, high finite values, infinities, quiet/signaling NaNs, raw results, requested/observed rounding directions, and exception flags. Strong target-owned definitions reject weak compiler-builtins fallback. Existing fenv entries only reset and observe MXCSR; this artifact does not select fenv API/policy. It excludes binary80 `sinhl`, public cosh/tanh and direct/inverse trigonometry, public exp/expm1/log/pow functions, fmod/remainder/modf, special and complex functions, binary80/x87 math, errno policy, general libm, libc.so, CRT/TLS lifecycle, loader, sysroot, `math.elementary` family completion, promotion, full x86-64 parity, and public x86 support. The localized `exp_data.c` and `exp2f_data.c` tables are implementation details, not selection of public exp/exp2 entries."
 source_owners = [

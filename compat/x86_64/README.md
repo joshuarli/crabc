@@ -4955,6 +4955,27 @@ rejecting weak compiler-builtins fallback, `cosl`, public sin/tan surface,
 fenv API/policy, special/complex/binary80 math, dynamic linkage, TLS, and
 ambient-libm surface. Family completion, promotion, full x86-64 parity, and
 public x86 support remain unselected.
+`libc-math-cosh` is the separate non-promoting `static-c-math-cosh` artifact
+for binary64/binary32 `cosh`/`coshf`. Its project-header C fixture and
+default-SSE/`-mfpmath=387` C++ signature probes run first through pinned musl
+and then through one garbage-collected `-nostdlib -static` candidate. The
+checked GCC 15.2.0 assembly translation of musl 1.2.6 `cosh.c`/`coshf.c`
+preserves raw magnitude classification, exact tiny-input one behavior, stable
+expm1 reconstruction, reciprocal exponential reconstruction, and
+overflow-safe scaling through its exact sixteen-source local exponent closure.
+That closure retains expm1, `__expo2`, private exp tables, and
+overflow/underflow error helpers, but exports neither public exp/expm1 ABI nor
+an implementation helper. The 256-record raw differential compares signed
+zero, tiny/normal/subnormal and reconstruction/overflow bounds, high finite
+values, infinities, quiet/signaling NaNs, exception flags, and requested
+versus observed MXCSR direction in all four modes. Final-link proof requires
+strong crabc-owned definitions, local closure providers, and scalar
+`addsd`/`addss`/`subsd`/`subss`/`mulsd`/`mulss`/`divsd`/`divss`/
+`cvtss2sd`/`cvtsd2ss`, while rejecting weak compiler-builtins fallback,
+`coshl`, other public hyperbolic surface, public exp/expm1 ABI, fenv
+API/policy, special/complex/binary80 math, dynamic linkage, TLS, and
+ambient-libm surface. Family completion, promotion, full x86-64 parity, and
+public x86 support remain unselected.
 `libc-math-sinh` is the separate non-promoting `static-c-math-sinh` artifact
 for binary64/binary32 `sinh`/`sinhf`. Its project-header C fixture and
 default-SSE/`-mfpmath=387` C++ signature probes run first through pinned musl
