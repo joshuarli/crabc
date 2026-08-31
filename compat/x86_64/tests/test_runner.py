@@ -13631,6 +13631,160 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn("posix-spawnattr-init-header-abi", runner)
         self.assertIn("libc-posix-spawnattr-init", runner)
 
+    def test_libc_static_c_abi_posix_spawnattr_getpgroup_artifact_stays_narrow(
+        self,
+    ) -> None:
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        implementation = (
+            ROOT
+            / "libc"
+            / "src"
+            / "c_abi"
+            / "x86_64"
+            / "posix_spawnattr_getpgroup.rs"
+        ).read_text(encoding="utf-8")
+        probe = (
+            ROOT / "compat" / "x86_64" / "libc_posix_spawnattr_getpgroup_probe.c"
+        ).read_text(encoding="utf-8")
+        start = (
+            ROOT / "compat" / "x86_64" / "libc_posix_spawnattr_getpgroup_start.S"
+        ).read_text(encoding="utf-8")
+        artifact_runner = (
+            ROOT / "compat" / "x86_64" / "run_libc_posix_spawnattr_getpgroup.sh"
+        ).read_text(encoding="utf-8")
+        header_runner = (
+            ROOT
+            / "compat"
+            / "x86_64"
+            / "run_posix_spawnattr_getpgroup_header_abi.sh"
+        ).read_text(encoding="utf-8")
+        header_c = (
+            ROOT
+            / "compat"
+            / "x86_64"
+            / "posix_spawnattr_getpgroup_header_abi_probe.c"
+        ).read_text(encoding="utf-8")
+        header_cxx = (
+            ROOT
+            / "compat"
+            / "x86_64"
+            / "posix_spawnattr_getpgroup_header_abi_probe.cpp"
+        ).read_text(encoding="utf-8")
+        spawn_header = (ROOT / "include" / "spawn.h").read_text(encoding="utf-8")
+        static_exports = {
+            line
+            for line in (
+                ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+            ).read_text(encoding="utf-8").splitlines()
+            if line and not line.startswith("#")
+        }
+        parity_ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        runner = RUNNER.read_text(encoding="utf-8")
+
+        self.assertIn(
+            '#[path = "posix_spawnattr_getpgroup.rs"]\nmod posix_spawnattr_getpgroup;',
+            static_root,
+        )
+        for required in (
+            "Selected static Linux/x86-64 POSIX spawn-attribute process-group readback C ABI",
+            "musl 1.2.6 release commit",
+            "src/process/posix_spawnattr_getpgroup.c::posix_spawnattr_getpgroup",
+            "POSIX_SPAWNATTR_PROCESS_GROUP_OFFSET",
+            "read_unaligned",
+            "write_unaligned",
+            'pub unsafe extern "C" fn posix_spawnattr_getpgroup',
+            "generic AArch64 export\n//! and behavior exactly unchanged",
+        ):
+            self.assertIn(required, implementation)
+        for forbidden in (
+            "raw_syscall::",
+            "errno::",
+            "static_tls::",
+            "crabc_core",
+            "crabc_mimalloc",
+            "fork(",
+            "execve",
+        ):
+            self.assertNotIn(forbidden, implementation)
+
+        for required in (
+            "#include <spawn.h>",
+            "posix_spawnattr_getpgroup_signature",
+            "struct guarded_attributes",
+            "struct guarded_pgroup",
+            "copy_bytes",
+            "bytes_match_value",
+            "check_readback",
+            "(pid_t)-321",
+            "errno = E2BIG",
+            "CRABC_POSIX_SPAWNATTR_GETPGROUP_FREESTANDING",
+        ):
+            self.assertIn(required, probe)
+        for required in (
+            "crabc_x86_64_posix_spawnattr_getpgroup_probe",
+            "mov $60, %eax",
+        ):
+            self.assertIn(required, start)
+
+        for header in (header_c, header_cxx):
+            for required in (
+                "posix_spawnattr_getpgroup_signature",
+                "posix_spawnattr_getpgroup_function",
+                "pid_t",
+                "__pgrp",
+                "4",
+            ):
+                self.assertIn(required, header)
+        self.assertIn(
+            "int posix_spawnattr_getpgroup(const posix_spawnattr_t *__restrict, pid_t *__restrict);",
+            spawn_header,
+        )
+        self.assertIn('#ifdef __cplusplus\nextern "C" {', spawn_header)
+        self.assertIn('#ifdef __cplusplus\n}\n#endif', spawn_header)
+        for required in (
+            "posix_spawnattr_getpgroup_header_abi_probe.c",
+            "posix_spawnattr_getpgroup_header_abi_probe.cpp",
+            "c11-strict",
+            "c11-posix-2008",
+            "c11-xopen-700",
+            "c11-gnu",
+            "cxx17-strict",
+            "cxx17-gnu",
+            "-nostdinc",
+            "-nostdinc++",
+            "project trace omitted $root/sys/types.h",
+            "retained a mangled posix_spawnattr_getpgroup reference",
+        ):
+            self.assertIn(required, header_runner)
+
+        for required in (
+            "run_posix_spawnattr_getpgroup_header_abi.sh",
+            "posix_spawnattr_getpgroup.lo",
+            "static_c_abi_exports.txt",
+            "archive_member_for_symbol",
+            "posix_spawnattr_getpgroup object export surface drifted",
+            "posix_spawnattr_getpgroup object unexpectedly depends on another symbol",
+            "posix_spawnattr_getpgroup object unexpectedly performs a call or syscall",
+            "-nostdlib -static",
+            "--no-undefined",
+            "for unselected in posix_spawn",
+            "fork vfork clone execve wait4",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn("--whole-archive", artifact_runner)
+        self.assertIn("posix_spawnattr_getpgroup", static_exports)
+        self.assertIn('id = "static-c-posix-spawnattr-getpgroup"', parity_ledger)
+        self.assertIn(
+            'command = "./scripts/dev-x86_64.sh libc-posix-spawnattr-getpgroup"',
+            parity_ledger,
+        )
+        self.assertIn("posix-spawnattr-getpgroup-header-abi", runner)
+        self.assertIn("libc-posix-spawnattr-getpgroup", runner)
+
     def test_libc_static_c_abi_memory_search_artifact_stays_narrow(self) -> None:
         static_root = (
             ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"

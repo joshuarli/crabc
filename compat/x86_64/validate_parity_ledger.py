@@ -7744,6 +7744,361 @@ def require_posix_spawnattr_init_artifact(family: Mapping[str, Any]) -> None:
         )
 
 
+def require_posix_spawnattr_getpgroup_artifact(family: Mapping[str, Any]) -> None:
+    """Keep one spawn-record field readback below process/spawn completion."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.posix-runtime].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [
+        entry
+        for entry in artifacts
+        if entry.get("id") == "static-c-posix-spawnattr-getpgroup"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.posix-runtime needs exactly one static-c-posix-spawnattr-getpgroup artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-posix-spawnattr-getpgroup must not promote libc.posix-runtime",
+    )
+    artifact = matching[0]
+    require(
+        "capabilities" not in artifact,
+        "static-c-posix-spawnattr-getpgroup must not promote a spawn or process capability",
+    )
+
+    description = artifact.get("description")
+    require(
+        isinstance(description, str),
+        "static-c-posix-spawnattr-getpgroup needs a description",
+    )
+    for phrase in (
+        "POSIX spawn-attribute process-group readback leaf",
+        "still-planned `libc.posix-runtime`",
+        "exactly one Rust object exporting only `posix_spawnattr_getpgroup`",
+        "no undefined symbol, helper call, syscall, errno/TLS, allocator",
+        "`src/process/posix_spawnattr_getpgroup.c::posix_spawnattr_getpgroup`",
+        "positive and negative four-byte process-group values",
+        "byte-exact input-record preservation",
+        "adjacent input/output guards",
+        "stale errno",
+        "byte offset four",
+        "Null, misaligned, aliased, invalid, or concurrently accessed",
+        "`posix_spawn`",
+        "`posix_spawnp`",
+        "attribute initialization/destruction/mutation or other queries",
+        "file actions",
+        "fork/vfork/clone",
+        "exec",
+        "child lifecycle",
+        "signal delivery",
+        "scheduler policy",
+        "family completion",
+        "promotion",
+        "public x86 support",
+        "generic AArch64 `posix_spawnattr_getpgroup` export remains unchanged",
+    ):
+        require(
+            phrase in description,
+            f"static-c-posix-spawnattr-getpgroup description omits {phrase}",
+        )
+
+    owners = set(
+        nonempty_strings(
+            artifact.get("source_owners"),
+            "static-c-posix-spawnattr-getpgroup.source_owners",
+        )
+    )
+    for owner in (
+        "compat/upstreams.toml",
+        "compat/abi/musl-1.2.6/aarch64/libc.a.static.tsv",
+        "libc/Cargo.toml",
+        "libc/src/lib.rs",
+        "libc/src/c_abi.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/posix_spawnattr_getpgroup.rs",
+        "include/features.h",
+        "include/sys/types.h",
+        "include/bits/alltypes.h",
+        "include/spawn.h",
+        "include/errno.h",
+        "compat/x86_64/posix_spawnattr_getpgroup_header_abi_probe.c",
+        "compat/x86_64/posix_spawnattr_getpgroup_header_abi_probe.cpp",
+        "compat/x86_64/run_posix_spawnattr_getpgroup_header_abi.sh",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/libc_posix_spawnattr_getpgroup_probe.c",
+        "compat/x86_64/libc_posix_spawnattr_getpgroup_start.S",
+        "compat/x86_64/run_libc_posix_spawnattr_getpgroup.sh",
+        "compat/x86_64/aarch64_parity_inventory.py",
+        "compat/x86_64/aarch64_parity_inventory.json",
+        "compat/x86_64/tests/test_aarch64_parity_inventory.py",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/README.md",
+        "STATUS.md",
+        "x86-64.md",
+        "scripts/dev-x86_64.sh",
+        "scripts/check_structure.py",
+    ):
+        require(
+            owner in owners,
+            f"static-c-posix-spawnattr-getpgroup source owners omit {owner}",
+        )
+
+    prerequisites = nonempty_strings(
+        artifact.get("x86_abi_prerequisites"),
+        "static-c-posix-spawnattr-getpgroup.x86_abi_prerequisites",
+    )
+    require(
+        any(
+            "System V AMD64" in item
+            and "int posix_spawnattr_getpgroup(const posix_spawnattr_t *, pid_t *)" in item
+            and "rdi" in item
+            and "rsi" in item
+            and "eax" in item
+            and "byte offset four" in item
+            and "concurrent access" in item
+            for item in prerequisites
+        ),
+        "static-c-posix-spawnattr-getpgroup must retain its two-pointer ABI",
+    )
+    require(
+        any(
+            "9fa28ece75d8a2191de7c5bb53bed224c5947417" in item
+            and "src/process/posix_spawnattr_getpgroup.c::posix_spawnattr_getpgroup" in item
+            and "*pgrp = attr->__pgrp; return 0;" in item
+            and "posix_spawnattr_getpgroup.lo" in item
+            and "generic AArch64 export remains unchanged" in item
+            and "file actions" in item
+            and "child lifecycle" in item
+            and "scheduler" in item
+            for item in prerequisites
+        ),
+        "static-c-posix-spawnattr-getpgroup must retain its pinned-musl source mapping",
+    )
+    require(
+        any(
+            "`-nostdlib -static`" in item
+            and "exactly one Rust object exporting only posix_spawnattr_getpgroup" in item
+            and "no undefined symbols" in item
+            and "helper call" in item
+            and "PT_TLS" in item
+            and "fixed offset-four load and output-word store" in item
+            and "peer spawn/process export" in item
+            for item in prerequisites
+        ),
+        "static-c-posix-spawnattr-getpgroup must retain its closed static boundary",
+    )
+
+    headers = nonempty_strings(
+        artifact.get("x86_header_prerequisites"),
+        "static-c-posix-spawnattr-getpgroup.x86_header_prerequisites",
+    )
+    require(
+        any(
+            "unconditional `int posix_spawnattr_getpgroup(const posix_spawnattr_t *, pid_t *)`" in item
+            and "strict, POSIX, X/Open, and GNU" in item
+            and "exact function-pointer ABI" in item
+            and "offset-four `__pgrp` member" in item
+            and "unmangled C++ linkage" in item
+            and '`extern "C"` guards' in item
+            for item in headers
+        ),
+        "static-c-posix-spawnattr-getpgroup must retain its unconditional C/C++ header ABI",
+    )
+
+    evidence = artifact.get("native_evidence")
+    require(
+        isinstance(evidence, list),
+        "static-c-posix-spawnattr-getpgroup needs evidence",
+    )
+    require(
+        {entry.get("command") for entry in evidence if isinstance(entry, Mapping)}
+        == {"./scripts/dev-x86_64.sh libc-posix-spawnattr-getpgroup"},
+        "static-c-posix-spawnattr-getpgroup must use the closed libc-posix-spawnattr-getpgroup command",
+    )
+    scope = evidence[0].get("scope")
+    require(
+        isinstance(scope, str)
+        and all(
+            phrase in scope
+            for phrase in (
+                "Pinned-musl/project C/C++ header",
+                "true dependency-free x86 crabc-libc `-nostdlib -static` candidate",
+                "direct and function-pointer process-group readback",
+                "positive and negative pid_t values",
+                "byte-filled 336-byte caller-owned posix_spawnattr_t records",
+                "byte-exact input preservation",
+                "intact input/output guards",
+                "stale errno preservation",
+                "posix_spawnattr_getpgroup.lo/AArch64 ownership",
+                "no interpreter/DT_NEEDED/unresolved symbol/PT_TLS/errno/dynamic-TLS model/allocator/helper-call/syscall",
+                "fixed offset-four no-call/no-syscall object",
+                "peer spawn and process extraction",
+                "attribute initialization/destruction/mutation or other queries",
+                "fork/vfork/clone",
+                "child lifecycle",
+                "signal or scheduler behavior",
+                "family completion",
+                "promotion",
+                "public x86 support",
+            )
+        ),
+        "static-c-posix-spawnattr-getpgroup evidence must retain its bounded static closure",
+    )
+
+    exports = set(
+        static_c_abi_export_names(
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        )
+    )
+    require(
+        "posix_spawnattr_getpgroup" in exports,
+        "static C ABI export contract omits posix_spawnattr_getpgroup",
+    )
+    static_root = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+    ).read_text(encoding="utf-8")
+    require(
+        '#[path = "posix_spawnattr_getpgroup.rs"]\nmod posix_spawnattr_getpgroup;'
+        in static_root,
+        "x86 static C ABI must compose the posix_spawnattr_getpgroup leaf",
+    )
+    source = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "posix_spawnattr_getpgroup.rs"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "Selected static Linux/x86-64 POSIX spawn-attribute process-group readback C ABI",
+        "musl 1.2.6 release commit",
+        "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+        "src/process/posix_spawnattr_getpgroup.c::posix_spawnattr_getpgroup",
+        "attr->__pgrp",
+        "POSIX_SPAWNATTR_PROCESS_GROUP_OFFSET",
+        "read_unaligned",
+        "write_unaligned",
+        'pub unsafe extern "C" fn posix_spawnattr_getpgroup',
+        "generic AArch64 export\n//! and behavior exactly unchanged",
+    ):
+        require(snippet in source, f"posix_spawnattr_getpgroup implementation omits {snippet}")
+    for forbidden in (
+        "raw_syscall::",
+        "errno::",
+        "static_tls::",
+        "crabc_core",
+        "crabc_mimalloc",
+        "fork(",
+        "execve",
+    ):
+        require(
+            forbidden not in source,
+            f"posix_spawnattr_getpgroup leaf widens into {forbidden}",
+        )
+
+    runner = (
+        ROOT / "compat" / "x86_64" / "run_libc_posix_spawnattr_getpgroup.sh"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "run_musl_oracle.sh",
+        "run_posix_spawnattr_getpgroup_header_abi.sh",
+        "posix_spawnattr_getpgroup.lo",
+        "static_c_abi_exports.txt",
+        "archive_member_for_symbol",
+        "posix_spawnattr_getpgroup object export surface drifted",
+        "posix_spawnattr_getpgroup object unexpectedly depends on another symbol",
+        "posix_spawnattr_getpgroup object unexpectedly performs a call or syscall",
+        "-nostdlib -static",
+        "--no-undefined",
+        "candidate retains a PLT",
+        "for unselected in posix_spawn",
+        "fork vfork clone execve wait4",
+    ):
+        require(snippet in runner, f"posix_spawnattr_getpgroup runner omits {snippet}")
+    require(
+        "--whole-archive" not in runner,
+        "posix_spawnattr_getpgroup runner must not force-link the archive",
+    )
+
+    probe = (
+        ROOT / "compat" / "x86_64" / "libc_posix_spawnattr_getpgroup_probe.c"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "posix_spawnattr_getpgroup_signature",
+        "struct guarded_attributes",
+        "struct guarded_pgroup",
+        "copy_bytes",
+        "bytes_match_value",
+        "check_readback",
+        "(pid_t)-321",
+        "CRABC_POSIX_SPAWNATTR_GETPGROUP_FREESTANDING",
+        "errno = E2BIG",
+    ):
+        require(snippet in probe, f"posix_spawnattr_getpgroup probe omits {snippet}")
+    start = (
+        ROOT / "compat" / "x86_64" / "libc_posix_spawnattr_getpgroup_start.S"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "crabc_x86_64_posix_spawnattr_getpgroup_probe",
+        "mov $60, %eax",
+    ):
+        require(snippet in start, f"posix_spawnattr_getpgroup start shim omits {snippet}")
+
+    header_c = (
+        ROOT / "compat" / "x86_64" / "posix_spawnattr_getpgroup_header_abi_probe.c"
+    ).read_text(encoding="utf-8")
+    header_cxx = (
+        ROOT / "compat" / "x86_64" / "posix_spawnattr_getpgroup_header_abi_probe.cpp"
+    ).read_text(encoding="utf-8")
+    header_runner = (
+        ROOT / "compat" / "x86_64" / "run_posix_spawnattr_getpgroup_header_abi.sh"
+    ).read_text(encoding="utf-8")
+    for header in (header_c, header_cxx):
+        for snippet in (
+            "posix_spawnattr_getpgroup_signature",
+            "posix_spawnattr_getpgroup_function",
+            "pid_t",
+            "__pgrp",
+            "4",
+        ):
+            require(
+                snippet in header,
+                f"posix_spawnattr_getpgroup header evidence omits {snippet}",
+            )
+    for snippet in (
+        "c11-strict",
+        "c11-posix-2008",
+        "c11-xopen-700",
+        "c11-gnu",
+        "cxx17-strict",
+        "cxx17-gnu",
+        "-nostdinc",
+        "-nostdinc++",
+        "retained a mangled posix_spawnattr_getpgroup reference",
+        "project trace omitted $root/sys/types.h",
+    ):
+        require(
+            snippet in header_runner,
+            f"posix_spawnattr_getpgroup header runner omits {snippet}",
+        )
+
+    dispatcher = (ROOT / "scripts" / "dev-x86_64.sh").read_text(encoding="utf-8")
+    for snippet in (
+        "posix-spawnattr-getpgroup-header-abi)",
+        "run_posix_spawnattr_getpgroup_header_abi()",
+        "run_posix_spawnattr_getpgroup_header_abi",
+        "libc-posix-spawnattr-getpgroup)",
+        "run_libc_posix_spawnattr_getpgroup()",
+        "run_libc_posix_spawnattr_getpgroup",
+    ):
+        require(
+            snippet in dispatcher,
+            f"posix_spawnattr_getpgroup dispatcher omits {snippet}",
+        )
+
+
 def require_ldso_initial_graph_artifact(family: Mapping[str, Any]) -> None:
     """Ratchet the one private ET_DYN graph without promoting the loader family."""
     artifacts = require_verified_artifacts(
@@ -41845,6 +42200,7 @@ def validate_ledger(
     require_strsep_artifact(by_id["libc.posix-runtime"])
     require_strtok_artifact(by_id["libc.posix-runtime"])
     require_posix_spawnattr_init_artifact(by_id["libc.posix-runtime"])
+    require_posix_spawnattr_getpgroup_artifact(by_id["libc.posix-runtime"])
     require_random_entropy_artifact(by_id["libc.posix-runtime"])
     require_memory_search_artifact(by_id["libc.posix-runtime"])
     require_string_copy_artifact(by_id["libc.posix-runtime"])

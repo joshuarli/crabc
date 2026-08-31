@@ -377,6 +377,8 @@ mod immediate_termination;
 mod posix_exit;
 #[path = "posix_spawnattr_init.rs"]
 mod posix_spawnattr_init;
+#[path = "posix_spawnattr_getpgroup.rs"]
+mod posix_spawnattr_getpgroup;
 #[path = "static_startup.rs"]
 mod static_startup;
 #[path = "process_globals.rs"]

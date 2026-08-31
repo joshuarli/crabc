@@ -263,6 +263,25 @@ other attribute APIs, file actions, fork/vfork/clone, exec, child lifecycle,
 signals, scheduler policy, family completion, promotion, or public x86
 support; the generic AArch64 export remains unchanged.
 
+`./scripts/dev-x86_64.sh libc-posix-spawnattr-getpgroup` is a separate private
+`static-c-posix-spawnattr-getpgroup` artifact inside still-planned
+`libc.posix-runtime`, not a process-spawn or process-control capability. Its
+pinned-musl/project C/C++ `<spawn.h>` gate proves the unconditional
+`int posix_spawnattr_getpgroup(const posix_spawnattr_t *, pid_t *)` ABI,
+unmangled C++ linkage, signed four-byte `pid_t` output, and the x86
+offset-four `__pgrp` member. The shared fixture first executes musl 1.2.6
+`src/process/posix_spawnattr_getpgroup.c`, then a true `-nostdlib -static`
+candidate extracted from exactly one Rust object. It proves direct and
+function-pointer positive/negative process-group readback from byte-filled
+336-byte caller records, byte-exact input preservation, intact input/output
+guards, and stale `errno` preservation on the ordinary musl route. The
+candidate has only a fixed offset-four load and output-word store, with no
+undefined helper, call, syscall, errno/TLS, allocator, dynamic runtime, CRT,
+loader, or sysroot path. It does not select `posix_spawn`/`posix_spawnp`, other
+attribute APIs, file actions, fork/vfork/clone, exec, child lifecycle, signals,
+scheduler policy, family completion, promotion, or public x86 support; the
+generic AArch64 export remains unchanged.
+
 `./scripts/dev-x86_64.sh libc-bsearch` is a separate private `static-c-bsearch`
 artifact inside still-planned `libc.c-abi-compat`. Its pinned-musl/project
 C/C++ `<stdlib.h>` matrix proves the unconditional five-argument declaration

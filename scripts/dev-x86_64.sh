@@ -94,6 +94,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   immediate-termination-header-abi  compile the staged x86 C/C++ stdlib immediate-termination declaration
   posix-exit-header-abi  compile the staged x86 C/C++ unistd POSIX _exit declaration
   posix-spawnattr-init-header-abi  verify x86 C/C++ spawn-attribute initialization ABI
+  posix-spawnattr-getpgroup-header-abi  verify x86 C/C++ spawn-attribute process-group ABI
   bsearch-header-abi  verify staged x86 C/C++ stdlib bsearch declaration and linkage
   linear-search-header-abi  verify staged x86 C/C++ search.h lfind/lsearch declarations and linkage
   qsort-header-abi  verify staged x86 C/C++ stdlib qsort declaration and linkage
@@ -317,6 +318,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-immediate-termination  run the static x86 crabc-libc C11 immediate-termination slice
   libc-posix-exit  run the static x86 crabc-libc POSIX _exit forwarding slice
   libc-posix-spawnattr-init  run the static x86 crabc-libc spawn-attribute initialization slice
+  libc-posix-spawnattr-getpgroup  run the static x86 crabc-libc spawn-attribute process-group readback slice
   libc-bsearch  run the static x86 crabc-libc standalone bsearch slice
   libc-linear-search  run the static x86 crabc-libc standalone lfind/lsearch slice
   libc-qsort  run the static x86 crabc-libc standalone qsort slice
@@ -2300,6 +2302,10 @@ run_posix_spawnattr_init_header_abi() {
     run_in_container bash /workspace/compat/x86_64/run_posix_spawnattr_init_header_abi.sh
 }
 
+run_posix_spawnattr_getpgroup_header_abi() {
+    run_in_container bash /workspace/compat/x86_64/run_posix_spawnattr_getpgroup_header_abi.sh
+}
+
 run_bsearch_header_abi() {
     run_in_container bash /workspace/compat/x86_64/run_bsearch_header_abi.sh
 }
@@ -2334,6 +2340,10 @@ run_libc_posix_exit() {
 
 run_libc_posix_spawnattr_init() {
     run_in_container bash /workspace/compat/x86_64/run_libc_posix_spawnattr_init.sh
+}
+
+run_libc_posix_spawnattr_getpgroup() {
+    run_in_container bash /workspace/compat/x86_64/run_libc_posix_spawnattr_getpgroup.sh
 }
 
 run_libc_bsearch() {
@@ -3949,7 +3959,7 @@ case "$command" in
     madvise-reference) ;;
     ctype-header-abi|locale-profile-header-abi|locale-multibyte-header-abi|iconv-header-abi|wide-character-header-abi|locale-object-wide-header-abi|locale-narrow-header-abi) ;;
     integer-arithmetic-header-abi|integer-parse-header-abi|float-parse-header-abi|getsubopt-header-abi|intmax-arithmetic-header-abi|credential-observation-header-abi|login-name-header-abi|child-reaping-header-abi|immediate-termination-header-abi|bsearch-header-abi|linear-search-header-abi|qsort-header-abi|callback-algorithms-header-abi) ;;
-    posix-exit-header-abi|posix-spawnattr-init-header-abi) ;;
+    posix-exit-header-abi|posix-spawnattr-init-header-abi|posix-spawnattr-getpgroup-header-abi) ;;
     ffs-header-abi) ;;
     byte-strings-header-abi) ;;
     memory-search-header-abi) ;;
@@ -3990,7 +4000,7 @@ case "$command" in
     libc-static-c-abi-differential) ;;
     libc-static-c-abi-same-object-differential|qualification-posix-abi-admission) ;;
     libc-interface-discovery) ;;
-    libc-posix-exit|libc-posix-spawnattr-init) ;;
+    libc-posix-exit|libc-posix-spawnattr-init|libc-posix-spawnattr-getpgroup) ;;
     libc-readiness-waits|libc-system-observation|libc-system-information|libc-fcntl-record-locks|libc-flock|libc-sendfile|libc-posix-fallocate|libc-descriptor-advice|libc-filesystem-capacity|libc-uts-identity|libc-ctype|libc-locale-profile|libc-locale-multibyte|libc-locale-wide-iconv|libc-wide-character|libc-locale-object-wide|libc-locale-narrow|libc-locale-ctype-locators|libc-locale-error-strings|libc-regex|libc-integer-arithmetic|libc-integer-parse|libc-float-parse|libc-getsubopt|libc-intmax-arithmetic|libc-credential-observation|libc-secure-environment|libc-login-name|libc-child-reaping|libc-immediate-termination|libc-bsearch|libc-linear-search|libc-qsort|libc-callback-algorithms|libc-search-tree-intrusive|libc-search-hash-table|libc-gettext-catalog|libc-access|libc-clock-gettime|libc-time-observation|libc-difftime|libc-timegm|libc-gmtime-r|libc-system-configuration|libc-mapping-core|libc-header-layouts-baseline|libc-nanosleep|libc-clock-nanosleep|libc-descriptor-entry|libc-fcntl-status-control|libc-ioctl|libc-ffs|libc-byte-strings|libc-in6addr-any|libc-in6addr-loopback|libc-process-globals-getopt|libc-auxv-observation|libc-inet-address|libc-inet-ntoa|libc-inet-classful|libc-hstrerror|libc-numeric-netdb|libc-random-entropy|libc-memory-search|libc-string-copy|libc-error-strings|libc-strsignal|libc-descriptor-pipeline) ;;
     libc-vector-io|libc-uio-cxx-linkage) ;;
     libc-sysv-semaphore|libc-posix-semaphore) ;;
@@ -4287,6 +4297,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "posix-spawnattr-init-header-abi takes no arguments"
         ensure_image
         run_posix_spawnattr_init_header_abi
+        ;;
+    posix-spawnattr-getpgroup-header-abi)
+        [ "$#" -eq 0 ] || fail "posix-spawnattr-getpgroup-header-abi takes no arguments"
+        ensure_image
+        run_posix_spawnattr_getpgroup_header_abi
         ;;
     bsearch-header-abi)
         [ "$#" -eq 0 ] || fail "bsearch-header-abi takes no arguments"
@@ -5557,6 +5572,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "libc-posix-spawnattr-init takes no arguments"
         ensure_image
         run_libc_posix_spawnattr_init
+        ;;
+    libc-posix-spawnattr-getpgroup)
+        [ "$#" -eq 0 ] || fail "libc-posix-spawnattr-getpgroup takes no arguments"
+        ensure_image
+        run_libc_posix_spawnattr_getpgroup
         ;;
     libc-bsearch)
         [ "$#" -eq 0 ] || fail "libc-bsearch takes no arguments"

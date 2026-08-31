@@ -172,6 +172,7 @@ X86_RUNTIME_FOUNDATION_LIBC_SOURCES = {
     Path("libc/src/c_abi/x86_64/immediate_termination.rs"),
     Path("libc/src/c_abi/x86_64/posix_exit.rs"),
     Path("libc/src/c_abi/x86_64/posix_spawnattr_init.rs"),
+    Path("libc/src/c_abi/x86_64/posix_spawnattr_getpgroup.rs"),
     Path("libc/src/c_abi/x86_64/bsearch.rs"),
     Path("libc/src/c_abi/x86_64/linear_search.rs"),
     Path("libc/src/c_abi/x86_64/qsort.rs"),
@@ -3790,6 +3791,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         '#[path = "immediate_termination.rs"]',
         '#[path = "posix_exit.rs"]',
         '#[path = "posix_spawnattr_init.rs"]',
+        '#[path = "posix_spawnattr_getpgroup.rs"]',
         '#[path = "bsearch.rs"]',
         '#[path = "linear_search.rs"]',
         '#[path = "qsort.rs"]',
@@ -7579,6 +7581,83 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
             "evidence must not force-link the archive"
         )
 
+    posix_spawnattr_getpgroup_source = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "posix_spawnattr_getpgroup.rs"
+    )
+    posix_spawnattr_getpgroup_text = posix_spawnattr_getpgroup_source.read_text(
+        errors="replace"
+    )
+    for required in (
+        "Selected static Linux/x86-64 POSIX spawn-attribute process-group readback C ABI",
+        "musl 1.2.6 release commit",
+        "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+        "src/process/posix_spawnattr_getpgroup.c::posix_spawnattr_getpgroup",
+        "attr->__pgrp",
+        "POSIX_SPAWNATTR_PROCESS_GROUP_OFFSET",
+        "read_unaligned",
+        "write_unaligned",
+        "pub unsafe extern \"C\" fn posix_spawnattr_getpgroup",
+    ):
+        if required not in posix_spawnattr_getpgroup_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/posix_spawnattr_getpgroup.rs: selected static "
+                f"boundary is missing {required!r}"
+            )
+    posix_spawnattr_getpgroup_exports = set(
+        re.findall(
+            r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(',
+            posix_spawnattr_getpgroup_text,
+        )
+    )
+    if posix_spawnattr_getpgroup_exports != {"posix_spawnattr_getpgroup"}:
+        errors.append(
+            "libc/src/c_abi/x86_64/posix_spawnattr_getpgroup.rs: selected static "
+            "artifact must export only posix_spawnattr_getpgroup"
+        )
+    for forbidden in (
+        "raw_syscall::",
+        "errno::",
+        "static_tls::",
+        "crabc_core",
+        "crabc_mimalloc",
+        "fork(",
+        "execve",
+    ):
+        if forbidden in posix_spawnattr_getpgroup_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/posix_spawnattr_getpgroup.rs: selected static "
+                f"leaf must not select {forbidden!r}"
+            )
+    posix_spawnattr_getpgroup_runner = (
+        ROOT / "compat" / "x86_64" / "run_libc_posix_spawnattr_getpgroup.sh"
+    )
+    posix_spawnattr_getpgroup_runner_text = posix_spawnattr_getpgroup_runner.read_text(
+        errors="replace"
+    )
+    for required in (
+        "run_musl_oracle.sh",
+        "run_posix_spawnattr_getpgroup_header_abi.sh",
+        "posix_spawnattr_getpgroup.lo",
+        "archive_member_for_symbol",
+        "posix_spawnattr_getpgroup object export surface drifted",
+        "posix_spawnattr_getpgroup object unexpectedly depends on another symbol",
+        "posix_spawnattr_getpgroup object unexpectedly performs a call or syscall",
+        "-nostdlib -static",
+        "--no-undefined",
+        "candidate retains a PLT",
+        "fork vfork clone execve wait4",
+    ):
+        if required not in posix_spawnattr_getpgroup_runner_text:
+            errors.append(
+                "compat/x86_64/run_libc_posix_spawnattr_getpgroup.sh: selected static "
+                f"evidence is missing {required!r}"
+            )
+    if "--whole-archive" in posix_spawnattr_getpgroup_runner_text:
+        errors.append(
+            "compat/x86_64/run_libc_posix_spawnattr_getpgroup.sh: selected static "
+            "evidence must not force-link the archive"
+        )
+
     bsearch_source = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "bsearch.rs"
     bsearch_text = bsearch_source.read_text(errors="replace")
     for required in (
@@ -10728,6 +10807,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         immediate_termination_text,
         posix_exit_text,
         posix_spawnattr_init_text,
+        posix_spawnattr_getpgroup_text,
         bsearch_text,
         linear_search_text,
         qsort_text,
@@ -11227,6 +11307,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         "__cxa_finalize",
         "_exit",
         "posix_spawnattr_init",
+        "posix_spawnattr_getpgroup",
         "exit",
         "__libc_start_main",
         "__optpos",
@@ -11348,6 +11429,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         ("immediate_termination.rs", immediate_termination_text),
         ("posix_exit.rs", posix_exit_text),
         ("posix_spawnattr_init.rs", posix_spawnattr_init_text),
+        ("posix_spawnattr_getpgroup.rs", posix_spawnattr_getpgroup_text),
         ("bsearch.rs", bsearch_text),
         ("linear_search.rs", linear_search_text),
         ("qsort.rs", qsort_text),

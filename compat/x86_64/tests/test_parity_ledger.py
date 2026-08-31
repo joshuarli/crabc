@@ -13450,6 +13450,106 @@ class X86ParityLedgerTests(unittest.TestCase):
         ):
             ledger.validate_ledger(data)
 
+    def test_posix_spawnattr_getpgroup_artifact_stays_private_and_nonpromoting(
+        self,
+    ) -> None:
+        data = self.data()
+        family = self.family(data, "libc.posix-runtime")
+        self.assertEqual(family["status"], "planned")
+        artifacts = family["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict)
+            and entry["id"] == "static-c-posix-spawnattr-getpgroup"
+        )
+        self.assertNotIn("capabilities", artifact)
+        for phrase in (
+            "POSIX spawn-attribute process-group readback leaf",
+            "`src/process/posix_spawnattr_getpgroup.c::posix_spawnattr_getpgroup`",
+            "positive and negative four-byte process-group values",
+            "byte-exact input-record preservation",
+            "adjacent input/output guards",
+            "byte offset four",
+            "`posix_spawn`",
+            "`posix_spawnp`",
+            "attribute initialization/destruction/mutation or other queries",
+            "fork/vfork/clone",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, artifact["description"])
+
+        owners = artifact["source_owners"]
+        assert isinstance(owners, list)
+        for owner in (
+            "compat/abi/musl-1.2.6/aarch64/libc.a.static.tsv",
+            "libc/src/c_abi.rs",
+            "libc/src/c_abi/x86_64/posix_spawnattr_getpgroup.rs",
+            "include/spawn.h",
+            "include/errno.h",
+            "compat/x86_64/posix_spawnattr_getpgroup_header_abi_probe.c",
+            "compat/x86_64/posix_spawnattr_getpgroup_header_abi_probe.cpp",
+            "compat/x86_64/run_posix_spawnattr_getpgroup_header_abi.sh",
+            "compat/x86_64/libc_posix_spawnattr_getpgroup_probe.c",
+            "compat/x86_64/libc_posix_spawnattr_getpgroup_start.S",
+            "compat/x86_64/run_libc_posix_spawnattr_getpgroup.sh",
+            "compat/x86_64/static_c_abi_exports.txt",
+        ):
+            self.assertIn(owner, owners)
+
+        prerequisites = artifact["x86_abi_prerequisites"]
+        assert isinstance(prerequisites, list)
+        self.assertTrue(
+            any(
+                "System V AMD64" in item
+                and "int posix_spawnattr_getpgroup(const posix_spawnattr_t *, pid_t *)"
+                in item
+                and "rdi" in item
+                and "rsi" in item
+                and "eax" in item
+                and "byte offset four" in item
+                for item in prerequisites
+            )
+        )
+        self.assertTrue(
+            any(
+                "src/process/posix_spawnattr_getpgroup.c::posix_spawnattr_getpgroup"
+                in item
+                and "*pgrp = attr->__pgrp; return 0;" in item
+                and "posix_spawnattr_getpgroup.lo" in item
+                and "generic AArch64 export remains unchanged" in item
+                for item in prerequisites
+            )
+        )
+
+        evidence = artifact["native_evidence"]
+        assert isinstance(evidence, list) and isinstance(evidence[0], dict)
+        self.assertEqual(
+            evidence[0]["command"],
+            "./scripts/dev-x86_64.sh libc-posix-spawnattr-getpgroup",
+        )
+        for phrase in (
+            "direct and function-pointer process-group readback",
+            "positive and negative pid_t values",
+            "byte-filled 336-byte caller-owned posix_spawnattr_t records",
+            "byte-exact input preservation",
+            "intact input/output guards",
+            "posix_spawnattr_getpgroup.lo/AArch64 ownership",
+            "fixed offset-four no-call/no-syscall object",
+            "peer spawn and process extraction",
+        ):
+            self.assertIn(phrase, evidence[0]["scope"])
+
+        prerequisites[1] = prerequisites[1].replace(
+            "*pgrp = attr->__pgrp; return 0;", "launch a child"
+        )
+        with self.assertRaisesRegex(
+            ledger.LedgerError,
+            "static-c-posix-spawnattr-getpgroup must retain its pinned-musl source mapping",
+        ):
+            ledger.validate_ledger(data)
+
     def test_integer_parse_artifact_keeps_its_closed_mapping_contract(self) -> None:
         data = self.data()
         artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
