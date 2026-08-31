@@ -163,16 +163,16 @@ only after B consumes the typed completion. Disabling the test injection
 cannot retry the retained route. The test hook exposes no route, client,
 PageMap, or allocator capability outside that direct evidence build. While an A session is
 still parked and live, independently attached fresh no-page B/C publishers may
-query exact source-recorded usable extents or return their exact native C
-clients through a private `NativeLiveRemoteOwnerRegistry` entry. A B that has
-already parked its own local session may return one explicitly handed exact A
-client, but cannot use that parked-session route to query A or gain any other
-client identity. Stable
-metadata-backed entries contain only an A compiler-TLS slot and generation;
-empty storage is reused and a new node is appended only when every entry is
-live. An exact-address scan restores every foreign entry before considering the
-next. The read-only query claims and restores its matching entry without
-acquiring A's page engine or scheduler; the free path instead proves the raw
+return explicitly handed exact native C clients through a private
+`NativeLiveRemoteOwnerRegistry` entry. `native_usable_size` instead derives an
+exact live client's usable extent directly from immutable PageMap facts; it
+does not scan or claim either the live-owner registry or a private ledger. A B
+that has already parked its own local session may return one explicitly handed
+exact A client, but cannot use that parked-session route to query A or gain any
+other client identity. Stable metadata-backed entries contain only an A
+compiler-TLS slot and generation; empty storage is reused and a new node is
+appended only when every entry is live. An exact-address free scan restores
+every foreign entry before considering the next. The free path proves the raw
 address against A's private ledger, performs one complete source-shaped
 `PARKED -> BUSY -> PARKED` operation, atomically pushes the canonical block to
 A's remote head, and only then marks that ledger member

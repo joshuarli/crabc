@@ -14,14 +14,14 @@
 // page engine, scheduler claim, or stored client capability. A worker with its
 // own fully parked local session may use that same exact live-owner path; it
 // briefly resumes and re-parks only its own session for that source
-// publication. One detached
-// multi-page regular route may later accept exact frees and read one exact
-// usable extent from a fresh no-page worker while keeping its ledger and
-// admission private. While A remains parked and live, a fresh no-page B may
-// likewise read one exact source-recorded usable extent before
-// source-publishing an exact free. Other
-// cross-thread routing remains outside this early M5 shadow slice rather than
-// silently handing a native pointer to libmimalloc.
+// publication. One detached multi-page regular route may later accept exact
+// frees while keeping its ledger and admission private. `native_usable_size`
+// never claims either that route or a live-owner registry entry: it returns
+// the exact usable extent captured from immutable PageMap facts for an exact
+// live native client. While A remains parked and live, a fresh no-page B may
+// source-publish an exact free, but receives no registry- or ledger-derived
+// query capability. Other cross-thread routing remains outside this early M5
+// shadow slice rather than silently handing a native pointer to libmimalloc.
 
 use crabc_mimalloc::__crabc_runtime::{
     NativePageAllocationResult, NativePageFreeResult, native_allocate_aligned, native_free,

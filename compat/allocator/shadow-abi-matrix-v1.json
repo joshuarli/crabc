@@ -150,7 +150,7 @@
     {
       "id": "foreign-worker-free-or-realloc",
       "status": "blocked",
-      "reason": "The native shadow admits separately proved exact live-client free, while a detached or foreign reallocation is deliberately refused after its PageMap facts are captured; the ordinary C backend is not a semantic oracle for those bounded native-only routes."
+      "reason": "The candidate-only `native_mimalloc_shadow_foreign_realloc_test.c` witness keeps a foreign owner live, requires its reallocation to fail with ENOMEM while preserving the source prefix, then releases that exact source through generic pointer-first free. Pinned musl permits the live cross-thread reallocation, so this intentionally divergent native-only route is excluded from the paired local ABI comparison."
     },
     {
       "id": "owner-exit-and-post-exit-routing",

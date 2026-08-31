@@ -5,8 +5,9 @@
  * the session is still page-bearing, force-collect B's remote head through
  * the typed all-free drain, and release its admission only after the page and
  * attachment teardown complete.  This is a lifecycle witness, not a general
- * cross-thread pointer route: B receives the one C address only to query and
- * free it, and no allocator or page capability crosses the boundary.
+ * cross-thread pointer route: B receives the one C address only to read its
+ * captured PageMap extent and free it, and no allocator or page capability
+ * crosses the boundary.
  */
 #include <malloc.h>
 #include <pthread.h>

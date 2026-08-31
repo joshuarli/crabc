@@ -63,12 +63,12 @@ fn spawn_parked_owner(
 fn release_exact_live_client(address: usize, request: usize) {
     std::thread::spawn(move || {
         assert_eq!(attach_current_thread(), ThreadAttachResult::Attached);
-        // SAFETY: the paired A remains parked with this exact client in its
-        // private ledger until this source-shaped B operation finishes.
+        // SAFETY: the paired A remains parked with this exact client live
+        // until this source-shaped B operation finishes.
         let block = unsafe { core::ptr::NonNull::new_unchecked(address as *mut u8) };
         assert!(
             unsafe { native_usable_size(block) }.is_some_and(|size| size >= request),
-            "B sees only the matching A ledger's scalar usable extent"
+            "B reads the matching A client's captured PageMap usable extent"
         );
         assert_eq!(
             unsafe { native_free(block) },

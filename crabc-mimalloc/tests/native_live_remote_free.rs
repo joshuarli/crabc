@@ -88,14 +88,14 @@ fn native_live_owner_remote_free_returns_a_parked_worker_to_its_owner() {
         let remote = unsafe { core::ptr::NonNull::new_unchecked(remote as *mut u8) };
         assert!(
             unsafe { native_usable_size(remote) }.is_some_and(|size| size >= 37),
-            "B reads only A's source-recorded usable extent before it publishes the exact remote free"
+            "B reads A's captured PageMap usable extent before it publishes the exact remote free"
         );
         query_sender
             .send(())
             .expect("A may resume before B takes the separate source publication operation");
         free_receiver
             .recv()
-            .expect("B waits for A to restore its live parked session after the read-only query");
+            .expect("B waits for A to restore its live parked session before the source publication");
         assert_eq!(
             unsafe { native_free(remote) },
             NativePageFreeResult::Freed,
@@ -222,7 +222,7 @@ fn native_live_owner_serializes_two_exact_remote_publishers_before_collection() 
             }
             assert!(
                 unsafe { native_usable_size(remote) }.is_some_and(|size| size >= request),
-                "each publisher reads only its exact source-recorded usable extent"
+                "each publisher reads its exact captured PageMap usable extent"
             );
             start.wait();
             assert_eq!(

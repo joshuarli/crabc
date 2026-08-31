@@ -192,8 +192,8 @@ static void *release_worker(void *opaque)
         return (void *)(uintptr_t)5;
 
     /* B may inspect only its exact C inputs. This happens after B has
-     * established its own parked session: the selected route answers from
-     * A's private recorded extents without lending B a page, ledger, or route
+     * established its own parked session: each usable-size result is captured
+     * from immutable PageMap facts, without lending B a page, ledger, or route
      * capability before the later frees. */
     if (malloc_usable_size(shared_blocks.small) < 37
             || malloc_usable_size(shared_blocks.non_direct_small) < 1025

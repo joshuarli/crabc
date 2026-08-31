@@ -90,7 +90,8 @@ static void *proof_holder_worker(void *opaque)
         return (void *)(uintptr_t)6;
 
     /* D now owns B's only local client through B's source remote head. B
-     * can query and terminally free only A's exact routed client. */
+     * can read A's captured PageMap extent and terminally free only A's exact
+     * routed client. */
     if (first_medium[0] != 0x41 || first_medium[64 * 1024 - 1] != 0x42
             || malloc_usable_size(first_medium) < 64 * 1024)
         return (void *)(uintptr_t)7;

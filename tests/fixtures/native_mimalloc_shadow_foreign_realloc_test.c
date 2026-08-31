@@ -1,9 +1,10 @@
 /*
  * One live pthread owns the source allocation while the initial thread uses
- * the standard realloc ABI.  Failure must preserve A's exact client and
- * contents; success may replace it through B's current native owner while
- * preserving the requested prefix.  No aligned-realloc extension is used or
- * implied here.
+ * the standard realloc ABI. The native shadow must reject this foreign
+ * request with ENOMEM, preserving A's exact client and contents. The initial
+ * thread then consumes that original client through generic pointer-first
+ * free while A remains live and synchronized. No aligned-realloc extension
+ * is used or implied here.
  */
 #include <errno.h>
 #include <pthread.h>
@@ -13,10 +14,10 @@
 
 static pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t ready = PTHREAD_COND_INITIALIZER;
-static pthread_cond_t consumed = PTHREAD_COND_INITIALIZER;
+static pthread_cond_t source_freed = PTHREAD_COND_INITIALIZER;
 static unsigned char *foreign_allocation;
 static int owner_ready;
-static int source_consumed;
+static int source_was_freed;
 
 static void *owner_worker(void *opaque)
 {
@@ -38,8 +39,8 @@ static void *owner_worker(void *opaque)
         (void)pthread_mutex_unlock(&lock);
         return (void *)(uintptr_t)3;
     }
-    while (!source_consumed) {
-        if (pthread_cond_wait(&consumed, &lock) != 0) {
+    while (!source_was_freed) {
+        if (pthread_cond_wait(&source_freed, &lock) != 0) {
             (void)pthread_mutex_unlock(&lock);
             return (void *)(uintptr_t)4;
         }
@@ -64,7 +65,7 @@ int main(void)
 {
     pthread_t owner;
     unsigned char *source;
-    unsigned char *replacement;
+    unsigned char *foreign_reallocation;
     void *owner_result = (void *)(uintptr_t)6;
 
     if (pthread_create(&owner, NULL, owner_worker, NULL) != 0)
@@ -84,36 +85,33 @@ int main(void)
     if (source == NULL || !prefix_is_preserved(source))
         return 5;
     errno = 0;
-    replacement = realloc(source, SIZE_MAX);
-    if (replacement != NULL || errno != ENOMEM
+    foreign_reallocation = realloc(source, SIZE_MAX);
+    if (foreign_reallocation != NULL || errno != ENOMEM
             || !prefix_is_preserved(source))
         return 6;
 
     errno = EAGAIN;
-    replacement = realloc(source, 8192);
-    if (replacement == NULL)
+    foreign_reallocation = realloc(source, 8192);
+    if (foreign_reallocation != NULL || errno != ENOMEM
+            || !prefix_is_preserved(source))
         return 7;
-    if (!prefix_is_preserved(replacement))
-        return 13;
-    if (errno != EAGAIN)
-        return 14;
-    replacement[8191] = 0x7d;
-    if (replacement[8191] != 0x7d)
-        return 8;
+
+    /* A is still waiting on `source_freed`, so this is a live-owner generic
+     * pointer-first free rather than a detached-owner cleanup path. */
+    free(source);
 
     if (pthread_mutex_lock(&lock) != 0)
-        return 9;
-    source_consumed = 1;
-    if (pthread_cond_signal(&consumed) != 0) {
+        return 8;
+    source_was_freed = 1;
+    if (pthread_cond_signal(&source_freed) != 0) {
         (void)pthread_mutex_unlock(&lock);
-        return 10;
+        return 9;
     }
     if (pthread_mutex_unlock(&lock) != 0)
-        return 11;
+        return 10;
     if (pthread_join(owner, &owner_result) != 0 || owner_result != NULL)
-        return 12;
+        return 11;
 
-    free(replacement);
-    puts("native mimalloc shadow foreign realloc ok");
+    puts("native mimalloc shadow rejects live foreign realloc ok");
     return 0;
 }

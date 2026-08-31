@@ -73,6 +73,24 @@ fn assert_musl_differential(source_name: &str, expected_stdout: &[u8]) {
     assert_eq!(candidate_output.stderr, reference_output.stderr);
 }
 
+fn assert_native_shadow_contract(source_name: &str, expected_stdout: &[u8]) {
+    let root = Path::new(test_support::REPOSITORY_ROOT);
+    let source = root.join("tests/fixtures").join(source_name);
+    let candidate = test_support::TempArtifact::new(&format!("{source_name}-candidate"));
+
+    compile_malloc_fixture(&source, &candidate, true);
+    let output = run_malloc_fixture(&candidate, true);
+
+    assert!(
+        output.status.success(),
+        "selected native shadow fixture {source_name} failed with {:?}: {}",
+        output.status.code(),
+        String::from_utf8_lossy(&output.stderr),
+    );
+    assert_eq!(output.stdout, expected_stdout);
+    assert_eq!(output.stderr, b"");
+}
+
 fn defined_symbol(output: &str, symbol: &str) -> Vec<(String, String)> {
     output
         .lines()
@@ -119,10 +137,13 @@ fn native_mimalloc_shadow_completes_missing_local_abi_contracts() {
 }
 
 #[test]
-fn native_mimalloc_shadow_reallocates_one_live_foreign_client() {
-    assert_musl_differential(
+fn native_mimalloc_shadow_rejects_one_live_foreign_reallocation() {
+    // This is an intentionally divergent native-only contract: pinned musl
+    // permits a live cross-thread realloc, while the shadow keeps the source
+    // live for the generic pointer-first free boundary instead.
+    assert_native_shadow_contract(
         "native_mimalloc_shadow_foreign_realloc_test.c",
-        b"native mimalloc shadow foreign realloc ok\n",
+        b"native mimalloc shadow rejects live foreign realloc ok\n",
     );
 }
 

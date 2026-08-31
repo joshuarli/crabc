@@ -145,7 +145,7 @@ fn two_parked_native_owners_accept_independent_remote_frees() {
         }
         assert!(
             unsafe { native_usable_size(block) }.is_some_and(|size| size >= request),
-            "B1 queries only A1's private exact client"
+            "B1 reads A1's captured PageMap usable extent"
         );
         assert_eq!(
             unsafe { native_free(block) },
@@ -172,7 +172,7 @@ fn two_parked_native_owners_accept_independent_remote_frees() {
         }
         assert!(
             unsafe { native_usable_size(block) }.is_some_and(|size| size >= request),
-            "B2 queries only A2's private exact client"
+            "B2 reads A2's captured PageMap usable extent"
         );
         assert_eq!(
             unsafe { native_free(block) },

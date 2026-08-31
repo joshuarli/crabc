@@ -2318,6 +2318,14 @@ general single-page adoption/reclaim exits, any foreign-worker successful
 `realloc`, general concurrent owner-exit traversal, or arbitrary worker
 allocation beyond the bounded live-entry witnesses, and is not a Gate 5E or
 promotion pass.
+`tests/native_mimalloc_shadow_abi.rs` runs
+`tests/fixtures/native_mimalloc_shadow_foreign_realloc_test.c`, which keeps A
+live under an explicit pthread handshake while the initial thread presents A's
+client to `realloc`. The native-shadow-only witness requires `NULL`/`ENOMEM`
+and a preserved prefix, then calls generic pointer-first `free(source)` before
+it releases A. Pinned musl permits this live cross-thread reallocation, so this
+is a documented native-contract divergence rather than a musl differential
+result.
 The same command ends with the separately reviewed
 `native-shadow-stress-v3.5.0.json` witness. It applies a behavior-named patch
 to pinned upstream `test/test-stress.c`, routes standard C allocation calls
