@@ -3898,6 +3898,56 @@ oracle = [
 ]
 
 [[family.verified_artifact]]
+id = "static-c-sched-getscheduler"
+description = "Private native x86 selected-static-archive one-symbol POSIX scheduler-policy observation compatibility artifact inside planned `libc.posix-runtime`. One dependency-free `crabc-libc` archive exposes exactly `sched_getscheduler`; its freestanding C body first runs through pinned musl 1.2.6 and then through a true `-nostdlib -static` candidate. Pinned musl's `src/sched/sched_getscheduler.c` deliberately returns `__syscall_ret(-ENOSYS)`: every pid-shaped input returns `-1` and writes `ENOSYS=38` through initial-TLS errno, rather than forwarding Linux's thread-scoped raw x86 syscall 145 as the POSIX process-facing API. The common body proves raw current-task observation succeeds without changing stale errno and raw `-1` returns `-EINVAL`, then proves the musl C ABI result for 0, -1, and INT_MAX. The strict/POSIX/X/Open/GNU C and C++17 feature matrix keeps `int sched_getscheduler(pid_t)` and its unmangled C linkage, without claiming a scheduler-header rewrite. Its selected leaf makes no raw syscall and leaves the separate C11 `thrd_yield` route and priority-bounds reference outside the candidate. It does not select scheduler policy mutation, parameter APIs, priority bounds, POSIX `sched_yield`, affinity, pthread scheduling attributes, thread/process lifecycle, libc.so, CRT, dynamic TLS lifecycle, loader, sysroot, scheduler-family completion, promotion, or public x86 support."
+source_owners = [
+  "compat/upstreams.toml",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/sched_getscheduler.rs",
+  "libc/src/c_abi/x86_64/errno.rs",
+  "libc/src/c_abi/x86_64/static_tls.rs",
+  "include/errno.h",
+  "include/sched.h",
+  "include/sys/types.h",
+  "include/time.h",
+  "include/sys/syscall.h",
+  "include/bits/syscall.h",
+  "compat/x86_64/sched_getscheduler_header_abi_probe.c",
+  "compat/x86_64/sched_getscheduler_header_abi_probe.cpp",
+  "compat/x86_64/run_sched_getscheduler_header_abi.sh",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/libc_sched_getscheduler_probe.c",
+  "compat/x86_64/libc_sched_getscheduler_start.S",
+  "compat/x86_64/run_libc_sched_getscheduler.sh",
+  "compat/x86_64/run_libc_process_resources.sh",
+  "compat/x86_64/aarch64_parity_inventory.py",
+  "compat/x86_64/aarch64_parity_inventory.json",
+  "compat/x86_64/tests/test_aarch64_parity_inventory.py",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "compat/x86_64/README.md",
+  "STATUS.md",
+  "x86-64.md",
+  "scripts/dev-x86_64.sh",
+  "scripts/check_structure.py",
+]
+x86_abi_prerequisites = [
+  "System V AMD64 passes `pid_t` as a signed four-byte value in edi and receives int sched_getscheduler(pid_t)'s signed four-byte result in eax. Linux x86 syscall 145 instead consumes a thread selector in rdi and returns its policy directly; this selected POSIX bridge deliberately does not issue that syscall.",
+  "Pinned musl 1.2.6 `src/sched/sched_getscheduler.c` is the complete MIT source mapping: sched_getscheduler(pid_t) returns __syscall_ret(-ENOSYS). Musl declines Linux's thread-scoped scheduler syscall under this process-facing POSIX name, so the closure contains neither sched_getparam/sched_setparam/sched_setscheduler nor scheduler-policy logic.",
+  "The common pinned-musl/candidate C body observes raw 145 current-task success with stale ERANGE, raw -1 as -EINVAL with stale ERANGE, and C ABI -1/ENOSYS for 0, -1, and INT_MAX. Its start delegates only archive Static Initial TLS v1 bootstrap required for errno; it does not claim CRT or general TLS lifecycle.",
+]
+x86_header_prerequisites = ["The project-first/pinned-musl strict/POSIX/X/Open/GNU C and C++17 header matrix proves exact `int sched_getscheduler(pid_t)` declaration, LP64 four-byte pid_t, scheduler constants, and unmangled C++ C linkage. The project trace proves sched.h, sys/types.h, and time.h provenance. The static fixture additionally preprocesses project errno.h, sys/syscall.h, and bits/syscall.h to prove raw Linux 145 only as an oracle contrast. This is a bounded C ABI/header proof, not scheduler-family, installed-header, or public-support completion."]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-sched-getscheduler", scope = "Pinned-musl 1.2.6 C reference plus strict/POSIX/X/Open/GNU C/C++ header matrix and a true dependency-free x86 crabc-libc archive with a `-nostdlib -static` candidate. The gate checks project-header provenance and exact crate-owned C-object export closure separately from compiler-builtins; rejects interpreter/DT_NEEDED/unresolved symbols/dynamic TLS/unowned runtime, scheduler mutation/parameters, priority bounds, POSIX sched_yield, affinity, pthread scheduling, lifecycle, allocator, auxv, and sysconf paths; proves direct initial-TLS errno plus sched_getscheduler disassembly that materializes ENOSYS=38 and cannot issue raw syscall 145; and executes raw-current/raw-invalid contrast with C ABI -1/ENOSYS for current, invalid, and missing pid-shaped inputs. It leaves C11 thrd_yield and priority-bounds work out of this candidate and adds no scheduler-family completion, dynamic libc, CRT, loader, sysroot, promotion, or public x86 support." }]
+oracle = [
+  { kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source, public declaration, and behavior oracle for src/sched/sched_getscheduler.c: the POSIX process-facing spelling always returns -1 with ENOSYS rather than forwarding a thread syscall." },
+  { kind = "linux-uapi", source = "Linux 5.10 x86-64 syscall ABI", role = "Raw sched_getscheduler syscall 145 is a thread-scoped kernel observation used only by the differential fixture to demonstrate why musl's process API remains ENOSYS." },
+  { kind = "elf-abi", source = "System V AMD64 psABI", role = "pid_t/int register ABI, C++ unmangled C linkage, and static initial-exec TLS fixture contract." },
+]
+
+[[family.verified_artifact]]
 id = "static-c-sigset-mutation"
 description = "Private native x86 selected-static-archive three-symbol POSIX signal-set mutation artifact inside planned `libc.posix-runtime`. One dependency-free `crabc-libc` archive exposes exactly `sigaddset`, `sigdelset`, and `sigfillset`; its freestanding project-header C fixture first runs through pinned musl 1.2.6 and then through a true `-nostdlib -static` candidate. Musl's x86 `_NSIG=65` and eight-byte unsigned-long layout make `SST_SIZE=1`: `sigfillset` writes only `0xfffffffc7fffffff`, while `sigaddset`/`sigdelset` modify only the first public word and leave all fifteen public tail words caller-resident. Add/delete return `-1` plus `EINVAL` before dereferencing for 0, musl-reserved 32 through 34, or 65; success returns zero with stale errno. The shared C GNU/POSIX gate and paired C++17 POSIX/GNU feature matrix retain exact pointer signatures and unmangled C linkage. This pure mutation leaf is disjoint from handlers/actions, signal masks, process signaling, waits, queues, descriptors, timers, pthread policy, libc.so, CRT, dynamic TLS lifecycle, loader, sysroot, signal-family completion, promotion, and public x86 support."
 source_owners = [

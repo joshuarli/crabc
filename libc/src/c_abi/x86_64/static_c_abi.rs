@@ -26,7 +26,8 @@
 //! creation/query/control and direct signal-descriptor creation/update, one default-attribute
 //! create/explicit-exit/join/detach worker and its typed C11
 //! `thrd_create`/`thrd_exit`/`thrd_join`/`thrd_detach`/`thrd_sleep` sibling, a
-//! direct C11 `thrd_yield` leaf, a
+//! direct C11 `thrd_yield` leaf, one-symbol POSIX scheduler-policy observation
+//! compatibility failure, a
 //! process-private normal `pthread_mutex_*` block and its paired private
 //! process-private condition-variable handoff, a complete selected
 //! `pthread_rwlock_*`/`pthread_rwlockattr_*` block with private and
@@ -320,6 +321,8 @@ mod pthread_rwlock;
 mod c11_thread_lifecycle;
 #[path = "thrd_yield.rs"]
 mod thrd_yield;
+#[path = "sched_getscheduler.rs"]
+mod sched_getscheduler;
 #[path = "c11_sync.rs"]
 mod c11_sync;
 #[path = "pthread_once.rs"]

@@ -133,8 +133,8 @@ for symbol in __errno_location getrlimit setrlimit prlimit getrusage getpriority
     grep -Eq "[[:space:]][TW][[:space:]]${symbol}$" "$archive_symbols" \
         || fail "archive does not define ${symbol}"
 done
-for unselected in getrlimit64 setrlimit64 prlimit64 times sched_getscheduler \
-    sched_setscheduler sched_getparam sched_setparam sched_yield setfsuid \
+for unselected in getrlimit64 setrlimit64 prlimit64 times sched_setscheduler \
+    sched_getparam sched_setparam sched_yield setfsuid \
     setfsgid _Fork vfork clone execve syscall malloc free calloc \
     realloc; do
     if grep -Eq "[[:space:]][TW][[:space:]]${unselected}$" "$archive_symbols"; then

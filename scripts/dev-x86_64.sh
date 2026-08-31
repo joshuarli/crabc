@@ -125,6 +125,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   system-header-abi  compile the staged x86 C/C++ system header layouts
   syscall-header-abi  compare the staged x86 syscall macro surface with musl
   signal-header-abi  compile the staged x86 GNU/POSIX signal-header layouts
+  sched-getscheduler-header-abi  compile x86 sched_getscheduler C/C++ declarations
   termios-header-abi  compile the staged x86 C/C++ GNU termios-header layouts
   ctermid-header-abi  compile the staged x86 C/C++ POSIX/XSI ctermid declaration
   gethostid-header-abi  compile the staged x86 C/C++ X/Open gethostid declaration
@@ -155,6 +156,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-sigpending  run the static x86 crabc-libc POSIX pending-signal slice
   libc-sigrtmax  run the static x86 crabc-libc realtime-maximum ABI bridge slice
   libc-sigrtmin  run the static x86 crabc-libc realtime-minimum ABI bridge slice
+  libc-sched-getscheduler  run the static x86 musl-ENOSYS scheduler observation slice
   libc-sigaddset-sigdelset-sigfillset  run the static x86 crabc-libc POSIX signal-set mutation slice
   libc-extended-attributes  run the static x86 crabc-libc extended-attribute slice
   libc-pathname-lifecycle  run the static x86 crabc-libc pathname-lifecycle slice
@@ -513,6 +515,15 @@ pre-existing public `SIGRTMIN` value; it leaves the separately selected
 realtime-maximum bridge out of its candidate and does not select delivery,
 actions, masks, waits, descriptors, timers, pthread behavior, dynamic libc,
 or application startup.
+`libc-sched-getscheduler` is a separate one-entry POSIX scheduler-observation
+compatibility boundary. Pinned musl deliberately returns `-1` with `ENOSYS`
+for every `sched_getscheduler(pid_t)` input instead of exposing Linux's
+thread-scoped raw syscall 145 as a process API. The common reference/candidate
+fixture proves raw-current success and raw-invalid `EINVAL`, then proves the
+musl `ENOSYS` result for current, invalid, and missing pid-shaped inputs. It
+does not select scheduler policy mutation or parameters, priority bounds,
+affinity, lifecycle, pthread scheduling attributes, dynamic libc, or
+application startup.
 `libc-sigaddset-sigdelset-sigfillset` is a separate three-entry POSIX
 signal-set mutation boundary. It follows musl's one-word x86 helpers: fill
 writes `0xfffffffc7fffffff`, while add/delete reject 0, 32--34, and 65 with
@@ -2435,6 +2446,10 @@ run_libc_sigrtmin_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_sigrtmin.sh
 }
 
+run_libc_sched_getscheduler_probe() {
+    run_in_container bash /workspace/compat/x86_64/run_libc_sched_getscheduler.sh
+}
+
 run_libc_sigset_mutation_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_sigaddset_sigdelset_sigfillset.sh
 }
@@ -2549,6 +2564,10 @@ run_syscall_header_abi() {
 
 run_signal_header_abi() {
     run_in_container bash /workspace/compat/x86_64/run_signal_header_abi.sh
+}
+
+run_sched_getscheduler_header_abi() {
+    run_in_container bash /workspace/compat/x86_64/run_sched_getscheduler_header_abi.sh
 }
 
 run_termios_header_abi() {
@@ -3743,7 +3762,8 @@ shift
 
 case "$command" in
     timerfd-header-abi|signalfd-header-abi) ;;
-    libc-timerfd|libc-signalfd|libc-sigpause|libc-sigisemptyset|libc-sigandset-sigorset|libc-sigpending|libc-sigrtmax|libc-sigrtmin|libc-sigaddset-sigdelset-sigfillset) ;;
+    libc-timerfd|libc-signalfd|libc-sigpause|libc-sigisemptyset|libc-sigandset-sigorset|libc-sigpending|libc-sigrtmax|libc-sigrtmin|libc-sched-getscheduler|libc-sigaddset-sigdelset-sigfillset) ;;
+    sched-getscheduler-header-abi) ;;
     ctermid-header-abi|gethostid-header-abi|isatty-header-abi|tcgetpgrp-header-abi|tcsetpgrp-header-abi|getpass-header-abi|libc-ctermid|libc-gethostid|libc-isatty|libc-tcgetpgrp|libc-tcsetpgrp|libc-getpass|mkfifo-header-abi|mkfifoat-header-abi|libc-mkfifo|libc-mkfifoat|mktemp-header-abi|libc-mktemp) ;;
     stdio-permanent-line-io-header-abi|stdio-octal-hex-scan-header-abi) ;;
     math-complex-complete-header-abi|libc-math-complex-complete) ;;
@@ -4261,6 +4281,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "signal-header-abi takes no arguments"
         ensure_image
         run_signal_header_abi
+        ;;
+    sched-getscheduler-header-abi)
+        [ "$#" -eq 0 ] || fail "sched-getscheduler-header-abi takes no arguments"
+        ensure_image
+        run_sched_getscheduler_header_abi
         ;;
     termios-header-abi)
         [ "$#" -eq 0 ] || fail "termios-header-abi takes no arguments"
@@ -5566,6 +5591,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "libc-sigrtmin takes no arguments"
         ensure_image
         run_libc_sigrtmin_probe
+        ;;
+    libc-sched-getscheduler)
+        [ "$#" -eq 0 ] || fail "libc-sched-getscheduler takes no arguments"
+        ensure_image
+        run_libc_sched_getscheduler_probe
         ;;
     libc-sigaddset-sigdelset-sigfillset)
         [ "$#" -eq 0 ] || fail "libc-sigaddset-sigdelset-sigfillset takes no arguments"
