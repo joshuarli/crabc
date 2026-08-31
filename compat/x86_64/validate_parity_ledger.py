@@ -16252,6 +16252,235 @@ def require_time_observation_artifact(family: Mapping[str, Any]) -> None:
     )
 
 
+def require_ftime_artifact(family: Mapping[str, Any]) -> None:
+    """Keep musl's one-record legacy adapter below time/signal promotion."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.posix-runtime].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [entry for entry in artifacts if entry.get("id") == "static-c-ftime"]
+    require(
+        len(matching) == 1,
+        "libc.posix-runtime must contain exactly one static-c-ftime artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-ftime must not promote libc.posix-runtime",
+    )
+    artifact = matching[0]
+    require(
+        "capabilities" not in artifact,
+        "static-c-ftime must remain a private artifact without capabilities",
+    )
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for phrase in (
+        "one-symbol legacy realtime snapshot adapter artifact",
+        "planned `libc.posix-runtime`",
+        "exactly `ftime`",
+        "`src/time/ftime.c`",
+        "`clock_gettime(CLOCK_REALTIME, &ts)`",
+        "`struct timeb`",
+        "zero `timezone`/`dstflag`",
+        "valid caller record",
+        "stale errno",
+        "otherwise unobservable failed realtime query",
+        "`time`, `clock`, `gettimeofday`",
+        "clock mutation",
+        "`sleep`/`usleep`",
+        "alarms",
+        "interval/POSIX timers",
+        "handlers/actions",
+        "signal masks",
+        "signal delivery",
+        "pthread policy",
+        "signal-family/timer-family completion, promotion, or public x86 support",
+    ):
+        require(phrase in description, f"static-c-ftime description omits {phrase}")
+    owners = set(
+        nonempty_strings(artifact["source_owners"], "static-c-ftime.source_owners")
+    )
+    for owner in (
+        "compat/upstreams.toml",
+        "libc/Cargo.toml",
+        "libc/src/lib.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/ftime.rs",
+        "libc/src/c_abi/x86_64/clock_gettime.rs",
+        "libc/src/c_abi/x86_64/errno.rs",
+        "libc/src/c_abi/x86_64/static_tls.rs",
+        "libc/src/c_abi/x86_64/syscall.rs",
+        "include/errno.h",
+        "include/features.h",
+        "include/stddef.h",
+        "include/stdint.h",
+        "include/sys/timeb.h",
+        "include/sys/types.h",
+        "include/time.h",
+        "compat/x86_64/ftime_header_abi_probe.c",
+        "compat/x86_64/ftime_header_abi_probe.cpp",
+        "compat/x86_64/run_ftime_header_abi.sh",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/libc_ftime_probe.c",
+        "compat/x86_64/libc_ftime_start.S",
+        "compat/x86_64/run_libc_ftime.sh",
+        "compat/x86_64/aarch64_parity_inventory.py",
+        "compat/x86_64/aarch64_parity_inventory.json",
+        "compat/x86_64/tests/test_aarch64_parity_inventory.py",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/README.md",
+        "STATUS.md",
+        "x86-64.md",
+        "scripts/dev-x86_64.sh",
+        "scripts/check_structure.py",
+    ):
+        require(owner in owners, f"static-c-ftime source owners omit {owner}")
+    prerequisites = nonempty_strings(
+        artifact["x86_abi_prerequisites"], "static-c-ftime.x86_abi_prerequisites"
+    )
+    require(
+        any(
+            "int ftime(struct timeb *)" in item
+            and "rdi" in item
+            and "eax" in item
+            and "16-byte align-eight" in item
+            and "millitm" in item
+            and "timezone" in item
+            and "dstflag" in item
+            and "time_t" in item
+            for item in prerequisites
+        ),
+        "static-c-ftime must record its x86 pointer/int and timeb ABI",
+    )
+    require(
+        any(
+            "src/time/ftime.c" in item
+            and "clock_gettime(CLOCK_REALTIME, &ts)" in item
+            and "ts.tv_nsec/1000000" in item
+            and "separately selected static `clock_gettime` boundary" in item
+            and "clock_gettime=228" in item
+            and "inline" in item
+            for item in prerequisites
+        ),
+        "static-c-ftime must retain its pinned-musl source closure",
+    )
+    require(
+        any(
+            "before/after millisecond window" in item
+            and "stale ERANGE" in item
+            and "Static Initial TLS v1" in item
+            and "does not claim CRT" in item
+            and "Invalid output" in item
+            for item in prerequisites
+        ),
+        "static-c-ftime must retain its bounded static differential and TLS boundary",
+    )
+    headers = nonempty_strings(
+        artifact["x86_header_prerequisites"], "static-c-ftime.x86_header_prerequisites"
+    )
+    require(
+        any(
+            "C11/C++17 ftime matrix" in item
+            and "default, strict, POSIX.1-2008, XOPEN=700, and GNU" in item
+            and "int ftime(struct timeb *)" in item
+            and "unmangled C++ linkage" in item
+            and "-U_GNU_SOURCE" in item
+            and "sys/timeb.h" in item
+            and "sys/types.h" in item
+            for item in headers
+        ),
+        "static-c-ftime must retain its exact C/C++ header ABI matrix",
+    )
+    static_exports = set(
+        static_c_abi_export_names(
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        )
+    )
+    require(
+        "ftime" in static_exports,
+        "static-c-ftime must expose its exact legacy adapter spelling",
+    )
+    implementation = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "ftime.rs"
+    ).read_text(encoding="utf-8")
+    for required in (
+        "src/time/ftime.c",
+        "clock_gettime(CLOCK_REALTIME, &ts)",
+        "super::clock_gettime::clock_gettime(",
+        "NANOSECONDS_PER_MILLISECOND",
+        'pub unsafe extern "C" fn ftime',
+    ):
+        require(
+            required in implementation,
+            f"static-c-ftime implementation omits {required}",
+        )
+    for forbidden in (
+        "raw_syscall",
+        "c_status(",
+        "set_errno",
+        "fn clock(",
+        "fn time(",
+        "clock_getres(",
+        "clock_settime(",
+        "timer_create",
+        "sigaction",
+        "sigprocmask",
+        "pthread_",
+    ):
+        require(
+            forbidden not in implementation,
+            f"static-c-ftime implementation must not select {forbidden}",
+        )
+    oracle = artifact["oracle"]
+    assert isinstance(oracle, list)
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "c-posix"
+            and isinstance(entry.get("role"), str)
+            and "src/time/ftime.c" in entry["role"]
+            and "CLOCK_REALTIME" in entry["role"]
+            and "millisecond truncation" in entry["role"]
+            for entry in oracle
+        ),
+        "static-c-ftime must retain its pinned-musl ftime oracle",
+    )
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-ftime"},
+        "static-c-ftime must use the closed libc-ftime command",
+    )
+    scope = evidence[0].get("scope")
+    require(
+        isinstance(scope, str)
+        and all(
+            phrase in scope
+            for phrase in (
+                "Pinned-musl 1.2.6",
+                "C/C++ ftime feature/header matrix",
+                "`-nostdlib -static` candidate",
+                "`time`/`clock`",
+                "sleep/usleep",
+                "alarms",
+                "interval/POSIX timers",
+                "handlers/actions",
+                "signal masks",
+                "signal delivery",
+                "pthreads",
+                "selected clock_gettime call or its exact inlined clock_gettime=228 codegen",
+                "stale errno",
+                "signal-family/timer-family completion, promotion, or public x86 support",
+            )
+        ),
+        "static-c-ftime evidence must retain its exact bounded static regression",
+    )
+
+
 def require_difftime_binary64_artifact(family: Mapping[str, Any]) -> None:
     """Keep the C scalar separate from clock and calendar/timezone ownership."""
     artifacts = require_verified_artifacts(
@@ -42994,6 +43223,7 @@ def validate_ledger(
     require_callback_algorithms_artifact(by_id["libc.posix-runtime"])
     require_clock_gettime_artifact(by_id["libc.posix-runtime"])
     require_time_observation_artifact(by_id["libc.posix-runtime"])
+    require_ftime_artifact(by_id["libc.posix-runtime"])
     require_difftime_binary64_artifact(by_id["libc.posix-runtime"])
     require_timegm_utc_artifact(by_id["libc.posix-runtime"])
     require_gmtime_r_utc_artifact(by_id["libc.posix-runtime"])

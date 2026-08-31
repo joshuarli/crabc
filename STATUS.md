@@ -1861,6 +1861,19 @@ It does not select `sleep`, alarms, timer control, signal actions/masks,
 process signaling, waits, descriptors, pthread policy, libc.so, CRT, loader,
 sysroot, family/platform parity, promotion, or public x86 support.
 
+`./scripts/dev-x86_64.sh libc-ftime` is a separate private `static-c-ftime`
+artifact inside planned `libc.posix-runtime`. Its one-symbol pinned-musl and
+freestanding-static C proof maps only musl 1.2.6 `src/time/ftime.c`:
+`clock_gettime(CLOCK_REALTIME, &ts)` fills one caller-owned LP64 `struct timeb`
+with whole seconds, truncated milliseconds, and zero timezone/dst fields
+through the separately selected static `clock_gettime` seam. The dedicated
+project-first/pinned-musl C/C++ `<sys/timeb.h>` matrix proves the unconditional
+declaration, exact layout, and unmangled linkage; the shared fixture proves a
+realtime millisecond window and stale errno. It does not select C time,
+calendar/timezone, or clock-mutation policy; sleep, alarms/timers, signal
+actions/masks/delivery, pthread policy, libc.so, CRT, loader, sysroot,
+family/platform parity, promotion, or public x86 support.
+
 `./scripts/dev-x86_64.sh libc-sigaddset-sigdelset-sigfillset` is a separate
 private `static-c-sigset-mutation` artifact inside planned
 `libc.posix-runtime`. Its three-symbol pinned-musl/freestanding-static C proof

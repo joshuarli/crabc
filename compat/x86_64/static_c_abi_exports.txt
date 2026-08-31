@@ -320,6 +320,7 @@ fstatvfs
 fsync
 ftell
 ftello
+ftime
 ftok
 ftruncate
 futimens

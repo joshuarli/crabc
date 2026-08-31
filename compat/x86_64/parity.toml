@@ -3064,6 +3064,58 @@ oracle = [
 ]
 
 [[family.verified_artifact]]
+id = "static-c-ftime"
+description = "Private native x86 selected-static-archive one-symbol legacy realtime snapshot adapter artifact inside planned `libc.posix-runtime`. One dependency-free `crabc-libc` archive exposes exactly `ftime`; its freestanding project-header C fixture first runs through pinned musl 1.2.6 and then through a true `-nostdlib -static` candidate. Pinned musl's `src/time/ftime.c` calls `clock_gettime(CLOCK_REALTIME, &ts)`, ignores that status, and writes whole seconds plus `tv_nsec / 1000000` milliseconds and zero `timezone`/`dstflag` into one caller-owned `struct timeb`. The selected x86 LP64 translation uses fixed `CLOCK_REALTIME=0` through the separately selected static `clock_gettime` boundary; final codegen may retain that call or inline its exact `clock_gettime=228` body. The dedicated project-first/pinned-musl C11/C++17 matrix proves the unconditional `int ftime(struct timeb *)` declaration, unmangled C++ linkage, and the 16-byte align-eight `struct timeb` layout with `time`/`millitm`/`timezone`/`dstflag` offsets 0/8/10/12. The shared fixture proves a valid caller record lies within a realtime before/after millisecond window, retains zero `timezone`/`dstflag`, returns zero, and preserves stale errno. A null/invalid caller record and an otherwise unobservable failed realtime query are outside this source-faithful boundary; Rust initializes its local record only to make that unselected failed-query path defined. It does not select `time`, `clock`, `gettimeofday`, calendar/timezone conversion, clock mutation, `sleep`/`usleep`, alarms, interval/POSIX timers, handlers/actions, signal masks, signal delivery, pthread policy, signal-family/timer-family completion, promotion, or public x86 support."
+source_owners = [
+  "compat/upstreams.toml",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/ftime.rs",
+  "libc/src/c_abi/x86_64/clock_gettime.rs",
+  "libc/src/c_abi/x86_64/errno.rs",
+  "libc/src/c_abi/x86_64/static_tls.rs",
+  "libc/src/c_abi/x86_64/syscall.rs",
+  "include/errno.h",
+  "include/features.h",
+  "include/stddef.h",
+  "include/stdint.h",
+  "include/sys/timeb.h",
+  "include/sys/types.h",
+  "include/time.h",
+  "compat/x86_64/ftime_header_abi_probe.c",
+  "compat/x86_64/ftime_header_abi_probe.cpp",
+  "compat/x86_64/run_ftime_header_abi.sh",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/libc_ftime_probe.c",
+  "compat/x86_64/libc_ftime_start.S",
+  "compat/x86_64/run_libc_ftime.sh",
+  "compat/x86_64/aarch64_parity_inventory.py",
+  "compat/x86_64/aarch64_parity_inventory.json",
+  "compat/x86_64/tests/test_aarch64_parity_inventory.py",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "compat/x86_64/README.md",
+  "STATUS.md",
+  "x86-64.md",
+  "scripts/dev-x86_64.sh",
+  "scripts/check_structure.py",
+]
+x86_abi_prerequisites = [
+  "System V AMD64 passes `int ftime(struct timeb *)`'s one caller-owned pointer in rdi and returns signed int status in eax. The public x86 LP64 `struct timeb` is 16-byte align-eight storage: signed-long `time` at 0, unsigned-short `millitm` at 8, signed-short `timezone` at 10, and signed-short `dstflag` at 12; `time_t` is an eight-byte long.",
+  "Pinned musl 1.2.6 `src/time/ftime.c` is the complete source closure: `clock_gettime(CLOCK_REALTIME, &ts)`, ignored status, `ts.tv_nsec/1000000`, and fixed legacy zero fields. The Rust adapter calls the separately selected static `clock_gettime` boundary instead of owning a raw ftime syscall, errno convention, vDSO resolver, or clock policy; optimized final code may inline the selected `clock_gettime=228` rdi/rsi path.",
+  "The pinned-musl and true-static candidate body uses only a valid caller record, a realtime before/after millisecond window, zero timezone/dstflag, zero return, and stale ERANGE preservation. Static Initial TLS v1 exists only for the selected clock_gettime errno boundary; the fixture start asks libc to bootstrap it and does not claim CRT or TLS lifecycle. Invalid output and failed realtime-query behavior are deliberately unselected.",
+]
+x86_header_prerequisites = ["The dedicated project-first/pinned-musl C11/C++17 ftime matrix compiles default, strict, POSIX.1-2008, XOPEN=700, and GNU profiles. It proves unconditional `int ftime(struct timeb *)`, the exact LP64 timeb field layout and widths, and unmangled C++ linkage with `-U_GNU_SOURCE`; project provenance is only sys/timeb.h and its sys/types.h type owner. This is header ABI evidence only, not C time/runtime completion."]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-ftime", scope = "Pinned-musl 1.2.6 project-header C reference plus a C/C++ ftime feature/header matrix and a true dependency-free x86 crabc-libc archive with a `-nostdlib -static` candidate. The gate checks closed crate-owned C-object export accounting; rejects an interpreter, DT_NEEDED, unresolved symbols, dynamic TLS, unowned runtime, `time`/`clock`/calendar/conversion/clock-mutation paths, sleep/usleep, alarms, interval/POSIX timers, handlers/actions, signal masks, signal delivery, pthreads, allocator, auxv, and sysconf paths; proves direct initial-TLS errno and either the selected clock_gettime call or its exact inlined clock_gettime=228 codegen; then executes a valid-record realtime millisecond window, fixed timezone/dst fields, zero return, and stale errno. It does not select invalid-pointer/failed-clock behavior, C time policy, signal-family/timer-family completion, promotion, or public x86 support." }]
+oracle = [
+  { kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source, unconditional sys/timeb.h declaration, and behavior oracle for src/time/ftime.c: clock_gettime(CLOCK_REALTIME, &ts), millisecond truncation, and fixed zero legacy fields." },
+  { kind = "kernel-abi", source = "Linux 5.10 x86-64 ABI", role = "CLOCK_REALTIME=0 and the selected clock_gettime=228 rdi/rsi realtime-record query used beneath the otherwise source-level ftime adapter." },
+  { kind = "elf-abi", source = "System V AMD64 psABI and pinned musl x86 headers", role = "LP64 pointer/int calling convention, exact timeb layout, static initial-TLS errno boundary, and freestanding final-ELF proof." },
+]
+
+[[family.verified_artifact]]
 id = "static-c-difftime-binary64"
 description = "Private native x86 static binary64 `difftime` scalar block inside still-planned `libc.posix-runtime`. One dependency-free `crabc-libc` archive resolves exactly `difftime(time_t, time_t)` for a freestanding C fixture after equivalent pinned-musl execution. Pinned musl's one-expression `t1-t0` source subtracts signed LP64 `time_t` before converting once to binary64; the fixture covers ordinary positive, negative, and zero results, INT64_MAX/INT64_MIN against zero, endpoint-adjacent unit differences, and the 2047 near-endpoint result that distinguishes subtraction-before-conversion from independently rounded operands. The C source supplies no integer-overflow C source contract for cross-endpoint pairs, so those inputs are not promoted by this artifact. The candidate makes no kernel syscall and has no errno/TLS, environment, timezone, calendar policy, clock observation, timer, formatting/parsing, or floating-environment policy. It does not select a C time capability, libc.so, CRT, dynamic TLS lifecycle, loader, sysroot, allocator, family completion, promotion, or public x86 support."
 source_owners = [

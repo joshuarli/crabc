@@ -50,7 +50,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 41)
-        self.assertEqual(report["verified_artifact_count"], 205)
+        self.assertEqual(report["verified_artifact_count"], 206)
         self.assertEqual(report["header_layout_probe_count"], 47)
         self.assertEqual(report["public_header_inventory_count"], 183)
         self.assertEqual(report["header_foundation_header_count"], 191)
@@ -15807,6 +15807,113 @@ class X86ParityLedgerTests(unittest.TestCase):
         assert isinstance(evidence, list) and isinstance(evidence[0], dict)
         evidence[0]["command"] = "./scripts/dev-x86_64.sh relative-sleep-reference"
         with self.assertRaisesRegex(ledger.LedgerError, "closed libc-usleep command"):
+            ledger.validate_ledger(data)
+
+    def test_ftime_artifact_keeps_its_closed_static_contract(self) -> None:
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-ftime"
+        )
+        self.assertNotIn("capabilities", artifact)
+        for owner in (
+            "libc/src/c_abi/x86_64/ftime.rs",
+            "libc/src/c_abi/x86_64/clock_gettime.rs",
+            "include/sys/timeb.h",
+            "include/sys/types.h",
+            "compat/x86_64/ftime_header_abi_probe.c",
+            "compat/x86_64/ftime_header_abi_probe.cpp",
+            "compat/x86_64/run_ftime_header_abi.sh",
+            "compat/x86_64/libc_ftime_probe.c",
+            "compat/x86_64/libc_ftime_start.S",
+            "compat/x86_64/run_libc_ftime.sh",
+            "compat/x86_64/aarch64_parity_inventory.json",
+            "scripts/check_structure.py",
+        ):
+            self.assertIn(owner, artifact["source_owners"])
+        self.assertEqual(
+            {evidence["command"] for evidence in artifact["native_evidence"]},
+            {"./scripts/dev-x86_64.sh libc-ftime"},
+        )
+        for phrase in (
+            "one-symbol legacy realtime snapshot adapter artifact",
+            "planned `libc.posix-runtime`",
+            "exactly `ftime`",
+            "`src/time/ftime.c`",
+            "`clock_gettime(CLOCK_REALTIME, &ts)`",
+            "`struct timeb`",
+            "zero `timezone`/`dstflag`",
+            "valid caller record",
+            "stale errno",
+            "otherwise unobservable failed realtime query",
+            "`time`, `clock`, `gettimeofday`",
+            "clock mutation",
+            "`sleep`/`usleep`",
+            "alarms",
+            "interval/POSIX timers",
+            "handlers/actions",
+            "signal masks",
+            "signal delivery",
+            "pthread policy",
+            "signal-family/timer-family completion, promotion, or public x86 support",
+        ):
+            self.assertIn(phrase, artifact["description"])
+        prerequisites = artifact["x86_abi_prerequisites"]
+        self.assertTrue(
+            any(
+                "int ftime(struct timeb *)" in prerequisite
+                and "rdi" in prerequisite
+                and "eax" in prerequisite
+                and "16-byte align-eight" in prerequisite
+                and "millitm" in prerequisite
+                and "timezone" in prerequisite
+                and "dstflag" in prerequisite
+                and "time_t" in prerequisite
+                for prerequisite in prerequisites
+            )
+        )
+        self.assertTrue(
+            any(
+                "src/time/ftime.c" in prerequisite
+                and "clock_gettime(CLOCK_REALTIME, &ts)" in prerequisite
+                and "ts.tv_nsec/1000000" in prerequisite
+                and "separately selected static `clock_gettime` boundary"
+                in prerequisite
+                and "clock_gettime=228" in prerequisite
+                and "inline" in prerequisite
+                for prerequisite in prerequisites
+            )
+        )
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-ftime"
+        )
+        artifact["description"] = "private realtime helper"
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "static-c-ftime description omits"
+        ):
+            ledger.validate_ledger(data)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-ftime"
+        )
+        evidence = artifact["native_evidence"]
+        assert isinstance(evidence, list) and isinstance(evidence[0], dict)
+        evidence[0]["command"] = "./scripts/dev-x86_64.sh time-observation-reference"
+        with self.assertRaisesRegex(ledger.LedgerError, "closed libc-ftime command"):
             ledger.validate_ledger(data)
 
     def test_sigset_mutation_artifact_keeps_its_closed_static_contract(self) -> None:

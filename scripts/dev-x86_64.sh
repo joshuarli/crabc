@@ -166,6 +166,8 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-alarm  run the static x86 crabc-libc historical SIGALRM timer slice
   usleep-header-abi  run the x86 musl/project usleep C/C++ declaration matrix
   libc-usleep  run the static x86 crabc-libc usleep nanosleep-adapter slice
+  ftime-header-abi  run the x86 musl/project ftime C/C++ declaration matrix
+  libc-ftime  run the static x86 crabc-libc ftime clock-snapshot slice
   libc-sigaddset-sigdelset-sigfillset  run the static x86 crabc-libc POSIX signal-set mutation slice
   libc-extended-attributes  run the static x86 crabc-libc extended-attribute slice
   libc-pathname-lifecycle  run the static x86 crabc-libc pathname-lifecycle slice
@@ -2513,6 +2515,14 @@ run_libc_usleep_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_usleep.sh
 }
 
+run_ftime_header_abi() {
+    run_in_container bash /workspace/compat/x86_64/run_ftime_header_abi.sh
+}
+
+run_libc_ftime_probe() {
+    run_in_container bash /workspace/compat/x86_64/run_libc_ftime.sh
+}
+
 run_libc_sigset_mutation_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_sigaddset_sigdelset_sigfillset.sh
 }
@@ -3859,7 +3869,7 @@ shift
 
 case "$command" in
     timerfd-header-abi|signalfd-header-abi) ;;
-    usleep-header-abi|libc-timerfd|libc-signalfd|libc-sigpause|libc-sigisemptyset|libc-sigandset-sigorset|libc-sigpending|libc-sigrtmax|libc-sigrtmin|libc-sched-getscheduler|libc-alarm|libc-usleep|libc-sigaddset-sigdelset-sigfillset) ;;
+    usleep-header-abi|ftime-header-abi|libc-timerfd|libc-signalfd|libc-sigpause|libc-sigisemptyset|libc-sigandset-sigorset|libc-sigpending|libc-sigrtmax|libc-sigrtmin|libc-sched-getscheduler|libc-alarm|libc-usleep|libc-ftime|libc-sigaddset-sigdelset-sigfillset) ;;
     libc-sched-getcpu|libc-sched-yield) ;;
     sched-getscheduler-header-abi) ;;
     ctermid-header-abi|gethostid-header-abi|getpagesize-header-abi|gettid-header-abi|isatty-header-abi|tcgetpgrp-header-abi|tcsetpgrp-header-abi|getpass-header-abi|libc-ctermid|libc-gethostid|libc-getpagesize|libc-gettid|libc-isatty|libc-tcgetpgrp|libc-tcsetpgrp|libc-getpass|mkfifo-header-abi|mkfifoat-header-abi|libc-mkfifo|libc-mkfifoat|mktemp-header-abi|libc-mktemp) ;;
@@ -5771,6 +5781,16 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "libc-usleep takes no arguments"
         ensure_image
         run_libc_usleep_probe
+        ;;
+    ftime-header-abi)
+        [ "$#" -eq 0 ] || fail "ftime-header-abi takes no arguments"
+        ensure_image
+        run_ftime_header_abi
+        ;;
+    libc-ftime)
+        [ "$#" -eq 0 ] || fail "libc-ftime takes no arguments"
+        ensure_image
+        run_libc_ftime_probe
         ;;
     libc-sigaddset-sigdelset-sigfillset)
         [ "$#" -eq 0 ] || fail "libc-sigaddset-sigdelset-sigfillset takes no arguments"

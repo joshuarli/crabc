@@ -93,7 +93,8 @@
 //! allocator-export-free hash-table search, a bounded no-catalog
 //! gettext/message-catalog ABI profile, POSIX `nanosleep`, one historical
 //! microsecond `usleep` adapter, and `clock_nanosleep`, direct
-//! clock-observation artifacts, one binary64
+//! clock-observation artifacts, one historical `ftime` realtime-snapshot
+//! adapter, and one binary64
 //! scalar `difftime` artifact, one caller-buffered fixed-UTC `gmtime_r`
 //! conversion artifact, and one fixed-UTC `timegm` conversion artifact, plus one
 //! bounded System V message-queue/shared-memory artifact, one bounded
@@ -409,6 +410,8 @@ mod gmtime_r;
 mod timegm;
 #[path = "time_observation.rs"]
 mod time_observation;
+#[path = "ftime.rs"]
+mod ftime;
 #[path = "nanosleep.rs"]
 mod nanosleep;
 #[path = "usleep.rs"]

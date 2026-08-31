@@ -135,8 +135,8 @@ X86_RUNTIME_FOUNDATION_LDSO_SOURCES = {
 # artifact, scalar integer arithmetic, complete integer parsing, intmax
 # arithmetic, and find-first-set, direct POSIX clock_gettime, bounded clock
 # observation, no-cancellation mapping synchronization, direct anonymous-memory
-# descriptor creation, nanosleep, one microsecond usleep adapter, and
-# clock_nanosleep, descriptor entry, selected
+# descriptor creation, nanosleep, one microsecond usleep adapter, one legacy
+# ftime snapshot adapter, and clock_nanosleep, descriptor entry, selected
 # filesystem access, bounded fcntl
 # status control, bounded generic ioctl, and the basic x87 classification/sign,
 # complex accessor/conjugation plus the complete private math.complex
@@ -160,6 +160,7 @@ X86_RUNTIME_FOUNDATION_LIBC_SOURCES = {
     Path("libc/src/c_abi/x86_64/gmtime_r.rs"),
     Path("libc/src/c_abi/x86_64/timegm.rs"),
     Path("libc/src/c_abi/x86_64/time_observation.rs"),
+    Path("libc/src/c_abi/x86_64/ftime.rs"),
     Path("libc/src/c_abi/x86_64/clock_nanosleep.rs"),
     Path("libc/src/c_abi/x86_64/nanosleep.rs"),
     Path("libc/src/c_abi/x86_64/usleep.rs"),
@@ -3793,6 +3794,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         '#[path = "timegm.rs"]',
         '#[path = "sched_getcpu.rs"]',
         '#[path = "sched_yield.rs"]',
+        '#[path = "ftime.rs"]',
         '#[path = "clock_nanosleep.rs"]',
         '#[path = "nanosleep.rs"]',
         '#[path = "usleep.rs"]',
@@ -7928,6 +7930,55 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
             "must export only clock_gettime"
         )
 
+    ftime_source = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "ftime.rs"
+    ftime_text = ftime_source.read_text(errors="replace")
+    for required in (
+        "musl 1.2.6 release revision",
+        "src/time/ftime.c",
+        "clock_gettime(CLOCK_REALTIME, &ts)",
+        "super::clock_gettime::clock_gettime(",
+        "NANOSECONDS_PER_MILLISECOND",
+        'pub unsafe extern "C" fn ftime',
+        "valid-local-record",
+        "otherwise unobservable failed-query",
+    ):
+        if required not in ftime_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/ftime.rs: selected static ftime "
+                f"adapter is missing {required!r}"
+            )
+    ftime_exports = set(
+        re.findall(
+            r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(',
+            ftime_text,
+        )
+    )
+    if ftime_exports != {"ftime"}:
+        errors.append(
+            "libc/src/c_abi/x86_64/ftime.rs: selected static artifact must export "
+            "only ftime"
+        )
+    for forbidden in (
+        "crabc_core",
+        "crabc_mimalloc",
+        "raw_syscall",
+        "c_status(",
+        "set_errno",
+        "fn clock(",
+        "fn time(",
+        "clock_getres(",
+        "clock_settime(",
+        "timer_create",
+        "sigaction",
+        "sigprocmask",
+        "pthread_",
+    ):
+        if forbidden in ftime_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/ftime.rs: selected static ftime adapter "
+                f"must not select {forbidden!r}"
+            )
+
     difftime_source = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "difftime.rs"
     difftime_text = difftime_source.read_text(errors="replace")
     for required in (
@@ -11099,6 +11150,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         search_hash_table_text,
         gettext_catalog_text,
         clock_gettime_text,
+        ftime_text,
         difftime_text,
         gmtime_r_text,
         timegm_text,
@@ -11422,6 +11474,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         "waitpid",
         "waitid",
         "clock_gettime",
+        "ftime",
         "difftime",
         "gmtime_r",
         "timegm",
@@ -11720,6 +11773,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         ("search_hash_table.rs", search_hash_table_text),
         ("gettext_catalog.rs", gettext_catalog_text),
         ("clock_gettime.rs", clock_gettime_text),
+        ("ftime.rs", ftime_text),
         ("sched_getcpu.rs", sched_getcpu_text),
         ("sched_yield.rs", sched_yield_text),
         ("clock_nanosleep.rs", clock_nanosleep_text),
