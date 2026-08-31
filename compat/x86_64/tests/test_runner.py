@@ -8105,6 +8105,10 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "__cxa_atexit",
             "__cxa_finalize",
             "__funcs_on_exit",
+            "fn __stdio_exit()",
+            "weak_alias(dummy, __stdio_exit)",
+            "does not flush streams",
+            "stdio finalization",
             "pub unsafe extern \"C\" fn exit",
             "immediate_termination::_Exit(127)",
         ):
@@ -8121,6 +8125,9 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "pthread_join",
             "CRABC_CRT_STATIC_TLS_MUSL_REFERENCE",
             "CRABC_CRT_STATIC_TLS_CANDIDATE",
+            "CRABC_STATIC_STDIO_EXIT_OVERRIDE",
+            "check_static_stdio_exit_override",
+            "__builtin_trap",
             "atexit",
             "__cxa_atexit",
             "__cxa_finalize",
@@ -8147,6 +8154,10 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "RELATIVE TLS-bootstrap slot",
             "expect_bootstrap_rejection",
             "CRABC_CRT_STATIC_TLS_CANDIDATE",
+            "CRABC_STATIC_STDIO_EXIT_OVERRIDE",
+            "candidate_stdio_exit_override",
+            "archive lost musl weak __stdio_exit binding",
+            "caller strong __stdio_exit did not override the archive weak binding",
         ):
             self.assertIn(required, artifact_runner)
         self.assertNotIn("--whole-archive", artifact_runner)

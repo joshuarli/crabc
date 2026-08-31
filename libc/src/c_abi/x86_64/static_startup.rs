@@ -233,6 +233,23 @@ fn startup_reject() -> ! {
 #[linkage = "weak"]
 pub unsafe extern "C" fn __init_ssp(_entropy: *mut c_void) {}
 
+/// Static-archive fallback for musl's unselected stdio-exit hook.
+///
+/// Musl 1.2.6 `src/exit/exit.c` exposes its inert `dummy()` through
+/// `weak_alias(dummy, __stdio_exit)`. Its separate `src/stdio/__stdio_exit.c`
+/// object supplies the strong stream-finalization body only when that stdio
+/// support is linked. Preserve the weak static binding next to this selected
+/// startup/ordinary-exit owner so a stronger application or runtime spelling
+/// can replace it.
+///
+/// This x86 static startup leaf never calls the fallback: it does not flush streams,
+/// inspect `FILE` state, take stdio locks, or select stdio finalization, allocator,
+/// loader, or a general process-exit policy.
+#[inline(never)]
+#[no_mangle]
+#[linkage = "weak"]
+pub unsafe extern "C" fn __stdio_exit() {}
+
 /// Enter a selected static C application after the real x86 CRT installed TLS.
 ///
 /// This has musl's six-argument binary ABI. Nullable callbacks use Rust's

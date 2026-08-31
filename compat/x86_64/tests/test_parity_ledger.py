@@ -9457,9 +9457,13 @@ class X86ParityLedgerTests(unittest.TestCase):
             self.assertNotIn("capabilities", artifact)
         for phrase in (
             "private weak `__init_ssp` fallback",
+            "private weak `__stdio_exit` fallback",
             "default-visible `STB_WEAK` binding",
             "caller `STB_GLOBAL` private override",
             "does not initialize a canary",
+            "selected ordinary exit does not dispatch the fallback",
+            "does not flush streams",
+            "stdio finalization",
             "stack-protector startup",
             "public x86 support",
         ):
@@ -9470,6 +9474,11 @@ class X86ParityLedgerTests(unittest.TestCase):
             "caller STB_GLOBAL private override runs after real CRT extracts the archive static-startup owner",
             "does not initialize a canary",
             "stack-protector or loader behavior",
+            "default-visible STB_WEAK `__stdio_exit`",
+            "traps on any later dispatch",
+            "selected ordinary exit does not dispatch it",
+            "stream flush, FILE inspection, stdio lock/finalization",
+            "general process-exit behavior",
             "public x86 support",
         ):
             self.assertIn(phrase, crt_handoff_scope)
@@ -9491,8 +9500,33 @@ class X86ParityLedgerTests(unittest.TestCase):
                 for entry in crt_handoff_oracles
             )
         )
+        self.assertTrue(
+            any(
+                entry["kind"] == "c-posix"
+                and "weak_alias(dummy, __stdio_exit)" in entry["role"]
+                and "src/stdio/__stdio_exit.c::__stdio_exit" in entry["role"]
+                and "not stream flushing" in entry["role"]
+                for entry in crt_handoff_oracles
+            )
+        )
+        self.assertTrue(
+            any(
+                entry["kind"] == "aarch64-contract"
+                and entry["source"] == "compat/abi/musl-1.2.6/aarch64/libc.a.static.tsv"
+                and "__stdio_exit exit.lo W WEAK" in entry["role"]
+                and "__stdio_exit __stdio_exit.lo T GLOBAL" in entry["role"]
+                and "not stream flushing" in entry["role"]
+                for entry in crt_handoff_oracles
+            )
+        )
         self.assertIn(
             "__init_ssp",
+            (ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt")
+            .read_text(encoding="utf-8")
+            .splitlines(),
+        )
+        self.assertIn(
+            "__stdio_exit",
             (ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt")
             .read_text(encoding="utf-8")
             .splitlines(),

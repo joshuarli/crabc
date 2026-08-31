@@ -684,6 +684,17 @@ the selected startup never dispatches it, so it does not initialize a canary,
 consume `AT_RANDOM`, select stack-protector startup, or add loader/process
 state.
 
+The same static-startup/ordinary-exit owner also retains musl 1.2.6
+`src/exit/exit.c`'s private `weak_alias(dummy, __stdio_exit)` fallback. The
+pinned AArch64 static manifest records it as weak in `exit.lo` and the separate
+strong stream-finalization body in `__stdio_exit.lo`; the staged archive and
+static-PIE candidate retain the weak binding, while a caller-owned private
+strong spelling wins after real CRT startup extracts the owner. That override
+traps on any later dispatch while the full PIMBCAF lifecycle completes, proving
+selected ordinary exit never invokes it. This is archive-binding evidence only:
+no stream flush, `FILE` inspection, stdio lock/finalization, allocator, loader,
+or general process-exit policy is selected.
+
 `./scripts/dev-x86_64.sh libc-crt1-static-tls` is the companion private
 ordinary-static composition artifact. It links real Rust
 `crt1.o`/`crti.o`/`crtn.o` into an `ET_EXEC` final executable, proves the

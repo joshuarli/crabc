@@ -57,6 +57,7 @@ __signbitf
 __signbitl
 __signgam
 __sigsetjmp
+__stdio_exit
 __strerror_l
 __strtod_l
 __strtof_l

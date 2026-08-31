@@ -7941,9 +7941,13 @@ def require_static_crt_initial_tls_handoff_artifact(family: Mapping[str, Any]) -
         "32-registration",
         "atexit",
         "private weak `__init_ssp` fallback",
+        "private weak `__stdio_exit` fallback",
         "default-visible `STB_WEAK` binding",
         "caller `STB_GLOBAL` private override",
         "does not initialize a canary",
+        "selected ordinary exit does not dispatch the fallback",
+        "does not flush streams",
+        "stdio finalization",
         "PT_TLS.p_filesz",
         "general CRT/startup",
         "public x86 support",
@@ -7991,6 +7995,13 @@ def require_static_crt_initial_tls_handoff_artifact(family: Mapping[str, Any]) -
         "__init_ssp __libc_start_main.lo W WEAK",
         "caller STB_GLOBAL private definition overrides it",
         "does not initialize a canary",
+        "weak_alias(dummy, __stdio_exit)",
+        "src/stdio/__stdio_exit.c::__stdio_exit",
+        "__stdio_exit exit.lo W WEAK",
+        "__stdio_exit __stdio_exit.lo T GLOBAL",
+        "caller override traps on any later dispatch",
+        "selected ordinary exit never dispatches it",
+        "stdio finalization",
         "32-registration",
         "__cxa_finalize",
         "fresh Static Initial TLS v1 image",
@@ -8019,6 +8030,11 @@ def require_static_crt_initial_tls_handoff_artifact(family: Mapping[str, Any]) -
         "default-visible STB_WEAK `__init_ssp`",
         "caller STB_GLOBAL private override runs after real CRT extracts the archive static-startup owner",
         "does not initialize a canary",
+        "default-visible STB_WEAK `__stdio_exit`",
+        "traps on any later dispatch",
+        "selected ordinary exit does not dispatch it",
+        "stream flush, FILE inspection, stdio lock/finalization",
+        "general process-exit behavior",
         "PT_TLS p_filesz mutation",
         "exit 127",
         "general CRT",
@@ -8046,6 +8062,20 @@ def require_static_crt_initial_tls_handoff_artifact(family: Mapping[str, Any]) -
     require(
         any(
             isinstance(entry, Mapping)
+            and entry.get("kind") == "c-posix"
+            and entry.get("source")
+            == "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417"
+            and isinstance(entry.get("role"), str)
+            and "weak_alias(dummy, __stdio_exit)" in entry["role"]
+            and "src/stdio/__stdio_exit.c::__stdio_exit" in entry["role"]
+            and "not stream flushing" in entry["role"]
+            for entry in oracle_entries
+        ),
+        "static-c-crt-initial-tls-handoff must retain its pinned weak __stdio_exit source oracle",
+    )
+    require(
+        any(
+            isinstance(entry, Mapping)
             and entry.get("kind") == "aarch64-contract"
             and entry.get("source")
             == "compat/abi/musl-1.2.6/aarch64/libc.a.static.tsv"
@@ -8057,6 +8087,21 @@ def require_static_crt_initial_tls_handoff_artifact(family: Mapping[str, Any]) -
         ),
         "static-c-crt-initial-tls-handoff must retain its pinned weak __init_ssp static-manifest oracle",
     )
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "aarch64-contract"
+            and entry.get("source")
+            == "compat/abi/musl-1.2.6/aarch64/libc.a.static.tsv"
+            and isinstance(entry.get("role"), str)
+            and "__stdio_exit exit.lo W WEAK" in entry["role"]
+            and "__stdio_exit __stdio_exit.lo T GLOBAL" in entry["role"]
+            and "private static archive-binding evidence only" in entry["role"]
+            and "not stream flushing" in entry["role"]
+            for entry in oracle_entries
+        ),
+        "static-c-crt-initial-tls-handoff must retain its pinned weak __stdio_exit static-manifest oracle",
+    )
     static_exports = set(
         static_c_abi_export_names(
             ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
@@ -8066,6 +8111,23 @@ def require_static_crt_initial_tls_handoff_artifact(family: Mapping[str, Any]) -
         "__init_ssp" in static_exports,
         "static-c-crt-initial-tls-handoff must expose the selected weak __init_ssp fallback",
     )
+    require(
+        "__stdio_exit" in static_exports,
+        "static-c-crt-initial-tls-handoff must expose the selected weak __stdio_exit fallback",
+    )
+    implementation = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_startup.rs"
+    ).read_text(encoding="utf-8")
+    for phrase in (
+        "fn __stdio_exit()",
+        "weak_alias(dummy, __stdio_exit)",
+        "does not flush streams",
+        "stdio finalization",
+    ):
+        require(
+            phrase in implementation,
+            f"static-c-crt-initial-tls-handoff implementation omits {phrase}",
+        )
     runner_source = (ROOT / "compat" / "x86_64" / "run_libc_crt_static_tls.sh").read_text(
         encoding="utf-8"
     )
@@ -8076,6 +8138,12 @@ def require_static_crt_initial_tls_handoff_artifact(family: Mapping[str, Any]) -
         "archive static-startup member lost musl weak __init_ssp binding",
         "caller override did not extract the archive static-startup member",
         "caller strong __init_ssp did not override the archive weak binding",
+        "__stdio_exit",
+        "CRABC_STATIC_STDIO_EXIT_OVERRIDE",
+        "archive lost musl weak __stdio_exit binding",
+        "archive static-startup member lost musl weak __stdio_exit binding",
+        "stdio-exit caller override did not extract the archive static-startup member",
+        "caller strong __stdio_exit did not override the archive weak binding",
     ):
         require(
             phrase in runner_source,
