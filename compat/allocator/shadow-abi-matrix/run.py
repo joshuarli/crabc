@@ -34,6 +34,9 @@ LEGACY_ATTESTATION = SNAPSHOT_ROOT / "ordinary-c-mimalloc/attestation.json"
 OUTPUT_ROOT = SNAPSHOT_ROOT / "runs"
 REPORT_PATH = ROOT / "compat/reports/allocator/shadow-abi-matrix/latest.json"
 CANONICAL_LOADER = Path("/lib/ld-crabc-aarch64.so.1")
+SELECTED_LIBC_LINK_FLAG = "-l:libc.so"
+LINKER_TRACE_FLAG = "-Wl,--trace"
+OWNED_BUILTINS_RELATIVE_PATH = Path("usr/lib/libcrabc-builtins.a")
 
 
 class MatrixError(RuntimeError):
@@ -167,7 +170,7 @@ def load_contract() -> dict[str, Any]:
         or fixture["language"] != "C11"
         or fixture["compile_flags"] != ["-fPIE", "-pie", "-fno-builtin"]
         or fixture["link_flags"] != ["-Wl,--allow-shlib-undefined"]
-        or fixture["link_libraries"] != ["-lc"]
+        or fixture["link_libraries"] != [SELECTED_LIBC_LINK_FLAG]
         or fixture["sha256"] != sha256_file(FIXTURE_PATH)
     ):
         raise MatrixError("shadow ABI matrix fixture contract drifted")
@@ -313,6 +316,7 @@ def load_contract() -> dict[str, Any]:
             "process_attempts_per_backend",
             "watchdog_seconds",
             "runtime_library_selection",
+            "link_provenance",
             "artifact_snapshot",
         },
         "shadow ABI matrix execution",
@@ -327,6 +331,30 @@ def load_contract() -> dict[str, Any]:
     ):
         raise MatrixError("shadow ABI matrix execution contract drifted")
     require_string(execution["runtime_library_selection"], "shadow ABI matrix runtime selection")
+    link_provenance = execution["link_provenance"]
+    if not isinstance(link_provenance, dict):
+        raise MatrixError("shadow ABI matrix link provenance is invalid")
+    require_exact_keys(
+        link_provenance,
+        {
+            "driver_default_libraries",
+            "driver_opt_out",
+            "selected_library_flag",
+            "linker_trace_flag",
+            "owned_builtins_path",
+            "reason",
+        },
+        "shadow ABI matrix link provenance",
+    )
+    if (
+        link_provenance["driver_default_libraries"] != []
+        or link_provenance["driver_opt_out"] != "-nodefaultlibs"
+        or link_provenance["selected_library_flag"] != SELECTED_LIBC_LINK_FLAG
+        or link_provenance["linker_trace_flag"] != LINKER_TRACE_FLAG
+        or link_provenance["owned_builtins_path"] != str(OWNED_BUILTINS_RELATIVE_PATH)
+    ):
+        raise MatrixError("shadow ABI matrix link provenance contract drifted")
+    require_string(link_provenance["reason"], "shadow ABI matrix link provenance reason")
     require_string(execution["artifact_snapshot"], "shadow ABI matrix artifact snapshot")
 
     report = contract["report"]
@@ -391,6 +419,16 @@ def command_text(record: Mapping[str, Any], subject: str) -> str:
         return bytes.fromhex(str(stdout["hex"])).decode("utf-8", errors="strict")
     except (KeyError, ValueError, UnicodeDecodeError) as error:
         raise MatrixError(f"{subject} did not produce UTF-8 text") from error
+
+
+def command_stream_bytes(record: Mapping[str, Any], stream_name: str, subject: str) -> bytes:
+    stream = record.get(stream_name)
+    if not isinstance(stream, dict):
+        raise MatrixError(f"{subject} lacks {stream_name}")
+    try:
+        return bytes.fromhex(str(stream["hex"]))
+    except (KeyError, ValueError) as error:
+        raise MatrixError(f"{subject} has malformed {stream_name}") from error
 
 
 def cargo_fingerprint_features(path: Path) -> list[str]:
@@ -539,7 +577,7 @@ def load_ordinary_snapshot(contract: Mapping[str, Any], path: Path) -> dict[str,
     return snapshot
 
 
-def require_runtime_inputs() -> tuple[Path, Path]:
+def require_runtime_inputs() -> tuple[Path, Path, Path]:
     raw_sysroot = os.environ.get("CRABC_TEST_SYSROOT")
     if not raw_sysroot:
         raise MatrixError(
@@ -548,11 +586,144 @@ def require_runtime_inputs() -> tuple[Path, Path]:
     sysroot = Path(raw_sysroot).expanduser().resolve()
     compiler = sysroot / "bin/crabc-cc"
     manifest = sysroot / "share/crabc/manifest.json"
-    if not compiler.is_file() or not manifest.is_file():
+    builtins = sysroot / OWNED_BUILTINS_RELATIVE_PATH
+    if not compiler.is_file() or not manifest.is_file() or not builtins.is_file():
         raise MatrixError("shadow ABI matrix requires a complete owned crabc sysroot")
     if not CANONICAL_LOADER.is_file() or CANONICAL_LOADER.is_symlink():
         raise MatrixError("shadow ABI matrix requires the staged canonical owned loader")
-    return sysroot, compiler
+    return sysroot, compiler, builtins
+
+
+def matrix_link_command(
+    contract: Mapping[str, Any], compiler: Path, libc: Path, builtins: Path, binary: Path
+) -> list[str]:
+    """Build one fixture through an explicitly selected dynamic libc input.
+
+    The sealed driver normally owns its library search root and appends ``-lc``.
+    That is correct for ordinary applications but intentionally unsuitable for a
+    paired-artifact test: an application ``-L`` cannot precede that owned root.
+    ``-nodefaultlibs`` makes the opt-out explicit; the only remaining library
+    root is the selected artifact directory, and the exact-name input retains
+    the public ``DT_NEEDED=libc.so`` spelling even though these test artifacts
+    do not carry a DSO SONAME. The owned builtins archive remains explicit and
+    follows libc, while CRT/interpreter ownership stays with ``crabc-cc``.
+    """
+
+    fixture = contract["fixture"]
+    execution = contract["execution"]
+    assert isinstance(fixture, dict) and isinstance(execution, dict)
+    provenance = execution["link_provenance"]
+    assert isinstance(provenance, dict)
+    return [
+        str(compiler),
+        "-std=c11",
+        *[str(flag) for flag in fixture["compile_flags"]],
+        str(provenance["driver_opt_out"]),
+        "-I",
+        str(ROOT / "include"),
+        "-L",
+        str(libc.parent),
+        *[str(flag) for flag in fixture["link_flags"]],
+        str(FIXTURE_PATH),
+        *[str(library) for library in fixture["link_libraries"]],
+        str(builtins),
+        str(provenance["linker_trace_flag"]),
+        "-o",
+        str(binary),
+    ]
+
+
+def printed_driver_link_plan(compiler: Path, command: Sequence[str]) -> dict[str, Any]:
+    record = command_record((str(compiler), "--crabc-print-link-plan", *command[1:]))
+    text = command_text(record, "matrix fixture driver link-plan inspection")
+    try:
+        plan = json.loads(text)
+    except json.JSONDecodeError as error:
+        raise MatrixError("matrix fixture driver did not emit a JSON link plan") from error
+    if not isinstance(plan, dict):
+        raise MatrixError("matrix fixture driver link plan is not an object")
+    return plan
+
+
+def link_plan_search_paths(command: Sequence[str]) -> list[str]:
+    paths: list[str] = []
+    index = 0
+    while index < len(command):
+        argument = command[index]
+        if argument == "-L":
+            if index + 1 == len(command):
+                raise MatrixError("matrix fixture driver link plan has a dangling -L")
+            paths.append(command[index + 1])
+            index += 2
+            continue
+        if argument.startswith("-L") and len(argument) > 2:
+            paths.append(argument[2:])
+        index += 1
+    return paths
+
+
+def audit_selected_link_plan(
+    plan: Mapping[str, Any], sysroot: Path, libc: Path, builtins: Path
+) -> dict[str, Any]:
+    """Require the sealed driver's plan to preserve exact selected-libc input."""
+
+    command_value = plan.get("command")
+    if not isinstance(command_value, list) or not all(isinstance(item, str) for item in command_value):
+        raise MatrixError("matrix fixture driver link plan has an invalid command")
+    command = list(command_value)
+    if plan.get("default_libraries") != []:
+        raise MatrixError("matrix fixture driver retained default libraries")
+    if plan.get("interpreter") != str(CANONICAL_LOADER):
+        raise MatrixError("matrix fixture driver link plan lost the canonical interpreter")
+    if command.count("-nodefaultlibs") != 1:
+        raise MatrixError("matrix fixture driver link plan lacks exactly one -nodefaultlibs")
+    if "-lc" in command:
+        raise MatrixError("matrix fixture driver link plan contains generic -lc")
+    if command.count(SELECTED_LIBC_LINK_FLAG) != 1:
+        raise MatrixError("matrix fixture driver link plan lacks the exact selected libc name")
+    if link_plan_search_paths(command) != [str(libc.parent)]:
+        raise MatrixError("matrix fixture driver link plan has an ambiguous libc search root")
+    if libc.parent.resolve() == (sysroot / "usr/lib").resolve():
+        raise MatrixError("matrix fixture selected libc root aliases the owned sysroot libc")
+    if command.count(str(builtins)) != 1:
+        raise MatrixError("matrix fixture driver link plan lacks exactly one owned builtins archive")
+    if command.index(SELECTED_LIBC_LINK_FLAG) >= command.index(str(builtins)):
+        raise MatrixError("matrix fixture driver link plan orders builtins before selected libc")
+    return {
+        "default_libraries": [],
+        "driver_opt_out": "-nodefaultlibs",
+        "selected_library_root": relative_path(libc.parent),
+        "selected_library_flag": SELECTED_LIBC_LINK_FLAG,
+        "owned_builtins": file_record(builtins),
+        "interpreter": str(CANONICAL_LOADER),
+    }
+
+
+def audit_selected_linker_trace(
+    build: Mapping[str, Any], libc: Path, sysroot: Path
+) -> dict[str, Any]:
+    """Bind the actual lld resolution to the one selected backend artifact."""
+
+    trace = command_stream_bytes(build, "stdout", "matrix fixture linker trace")
+    trace += b"\n" + command_stream_bytes(build, "stderr", "matrix fixture linker trace")
+    trace_lines = []
+    for line in trace.decode("utf-8", errors="replace").splitlines():
+        normalized = line.strip()
+        if normalized.startswith("ld.lld: "):
+            normalized = normalized[len("ld.lld: ") :].strip()
+        if normalized:
+            trace_lines.append(normalized)
+    selected = str(libc.resolve())
+    sysroot_libc = str((sysroot / "usr/lib/libc.so").resolve())
+    if selected not in trace_lines:
+        raise MatrixError("matrix fixture linker trace did not resolve the selected libc artifact")
+    if sysroot_libc in trace_lines:
+        raise MatrixError("matrix fixture linker trace resolved the owned sysroot libc")
+    return {
+        "selected_libc": file_record(libc),
+        "selected_libc_seen": True,
+        "sysroot_libc_seen": False,
+    }
 
 
 def parse_dynamic_dependencies(output: str) -> list[str]:
@@ -645,31 +816,26 @@ def validate_backend_trace(
 
 
 def run_backend(
-    contract: Mapping[str, Any], backend: Mapping[str, Any], libc: Path, compiler: Path, output_root: Path
+    contract: Mapping[str, Any],
+    backend: Mapping[str, Any],
+    libc: Path,
+    sysroot: Path,
+    compiler: Path,
+    builtins: Path,
+    output_root: Path,
 ) -> dict[str, Any]:
-    fixture = contract["fixture"]
     execution = contract["execution"]
-    assert isinstance(fixture, dict) and isinstance(execution, dict)
+    assert isinstance(execution, dict)
     backend_root = output_root / str(backend["id"])
     backend_root.mkdir(parents=True, exist_ok=True)
     binary = backend_root / "native-mimalloc-shadow-backend-matrix"
-    command = [
-        str(compiler),
-        "-std=c11",
-        *[str(flag) for flag in fixture["compile_flags"]],
-        "-I",
-        str(ROOT / "include"),
-        "-L",
-        str(libc.parent),
-        *[str(flag) for flag in fixture["link_flags"]],
-        str(FIXTURE_PATH),
-        *[str(library) for library in fixture["link_libraries"]],
-        "-o",
-        str(binary),
-    ]
+    command = matrix_link_command(contract, compiler, libc, builtins, binary)
+    driver_plan = printed_driver_link_plan(compiler, command)
+    link_plan = audit_selected_link_plan(driver_plan, sysroot, libc, builtins)
     build = command_record(command)
     if build["kind"] != "process" or build["status"] != 0:
         raise MatrixError(f"{backend['id']} matrix fixture compilation failed")
+    linker_trace = audit_selected_linker_trace(build, libc, sysroot)
     elf = audit_fixture(binary, contract)
     environment = dict(os.environ)
     for key in ("LD_AUDIT", "LD_LIBRARY_PATH", "LD_PRELOAD"):
@@ -691,7 +857,12 @@ def run_backend(
         "backend": backend["id"],
         "binary": file_record(binary),
         "build": build,
+        "driver_link_plan": driver_plan,
         "elf": elf,
+        "link_provenance": {
+            "driver_plan": link_plan,
+            "linker_trace": linker_trace,
+        },
         "run": run,
         "semantic_trace": trace,
         "selected_runtime_library": file_record(libc),
@@ -714,14 +885,14 @@ def report_base(contract: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def execute_matrix(contract: Mapping[str, Any], target_dir: Path, output_root: Path) -> dict[str, Any]:
-    sysroot, compiler = require_runtime_inputs()
+    sysroot, compiler, builtins = require_runtime_inputs()
     legacy_snapshot = load_ordinary_snapshot(contract, LEGACY_LIBC)
     native_backend = backend_contract(contract, "native-rust-mimalloc-shadow")
     native_libc = target_dir / "libc.so"
     native_attestation = attest_backend(native_libc, target_dir, native_backend)
     legacy_backend = backend_contract(contract, "ordinary-c-mimalloc")
-    legacy_run = run_backend(contract, legacy_backend, LEGACY_LIBC, compiler, output_root)
-    native_run = run_backend(contract, native_backend, native_libc, compiler, output_root)
+    legacy_run = run_backend(contract, legacy_backend, LEGACY_LIBC, sysroot, compiler, builtins, output_root)
+    native_run = run_backend(contract, native_backend, native_libc, sysroot, compiler, builtins, output_root)
     legacy_trace = legacy_run["semantic_trace"]
     native_trace = native_run["semantic_trace"]
     assert isinstance(legacy_trace, list) and isinstance(native_trace, list)

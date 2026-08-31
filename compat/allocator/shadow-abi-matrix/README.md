@@ -12,8 +12,13 @@ it builds the ordinary workspace/sysroot, runs `run.py capture`, builds the
 selected native libc, and invokes `run.py run` through the owned-loader test
 launcher. The capture records the ordinary artifact and its exact Cargo feature
 fingerprint before `target/debug/libc.so` is replaced. The run phase independently
-attests each exported `free` branch, links one C executable against each
-artifact, rejects an embedded `RPATH`/`RUNPATH`, and runs it with
+attests each exported `free` branch, asks the sealed driver for
+`-nodefaultlibs`, and links the selected directory's exact `-l:libc.so` input
+plus the owned `libcrabc-builtins.a`. The printed driver plan and permitted lld
+trace prove that no injected default `-lc` or sysroot `libc.so` won the link.
+The exact-name route is necessary because these test artifacts have no DSO
+SONAME: a direct filesystem input would encode its backend path in `DT_NEEDED`.
+The runner also rejects an embedded `RPATH`/`RUNPATH` and runs with
 `LD_LIBRARY_PATH` containing only that artifact's directory.
 
 The fixture writes a normalized ordered trace rather than pointer values,

@@ -22,7 +22,7 @@
       "-Wl,--allow-shlib-undefined"
     ],
     "link_libraries": [
-      "-lc"
+      "-l:libc.so"
     ]
   },
   "backends": [
@@ -178,6 +178,14 @@
     "process_attempts_per_backend": 1,
     "watchdog_seconds": 15,
     "runtime_library_selection": "LD_LIBRARY_PATH contains exactly the directory holding the selected backend libc.so after inherited loader overrides are removed, and the fixture carries no RPATH or RUNPATH that could select another libc.so",
+    "link_provenance": {
+      "driver_default_libraries": [],
+      "driver_opt_out": "-nodefaultlibs",
+      "selected_library_flag": "-l:libc.so",
+      "linker_trace_flag": "-Wl,--trace",
+      "owned_builtins_path": "usr/lib/libcrabc-builtins.a",
+      "reason": "The selected libc.so has no DSO SONAME, so a direct filesystem input would encode its path in DT_NEEDED. The matrix instead disables sealed-driver defaults, supplies exactly one selected -L directory with -l:libc.so, and proves the resolved input through the permitted linker trace."
+    },
     "artifact_snapshot": "The ordinary C-backed libc.so and its Cargo feature attestation are copied before the native feature build; the native artifact is attested from target/debug after that build."
   },
   "report": {

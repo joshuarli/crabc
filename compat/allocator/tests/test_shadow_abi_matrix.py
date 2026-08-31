@@ -137,6 +137,71 @@ class ShadowAbiMatrixContractTests(unittest.TestCase):
         )
         self.assertTrue(all("not an accepted" in row["reason"] for row in rows))
 
+    def test_selected_libc_link_plan_rejects_the_sealed_default_libc_shape(self) -> None:
+        contract = RUNNER.load_contract()
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            sysroot = root / "sysroot"
+            selected_root = root / "selected"
+            selected_libc = selected_root / "libc.so"
+            builtins = sysroot / RUNNER.OWNED_BUILTINS_RELATIVE_PATH
+            selected_root.mkdir()
+            builtins.parent.mkdir(parents=True)
+            selected_libc.write_bytes(b"selected")
+            builtins.write_bytes(b"builtins")
+            command = RUNNER.matrix_link_command(
+                contract,
+                sysroot / "bin/crabc-cc",
+                selected_libc,
+                builtins,
+                root / "matrix",
+            )
+            self.assertIn("-nodefaultlibs", command)
+            self.assertIn(RUNNER.SELECTED_LIBC_LINK_FLAG, command)
+            self.assertIn(str(builtins), command)
+            self.assertEqual(RUNNER.link_plan_search_paths(command), [str(selected_root)])
+
+            plan = {
+                "command": command,
+                "default_libraries": [],
+                "interpreter": str(RUNNER.CANONICAL_LOADER),
+            }
+            provenance = RUNNER.audit_selected_link_plan(plan, sysroot, selected_libc, builtins)
+            self.assertEqual(provenance["selected_library_root"], str(selected_root.resolve()))
+            self.assertEqual(provenance["selected_library_flag"], "-l:libc.so")
+
+            old_driver_shape = copy.deepcopy(plan)
+            old_driver_shape["command"] = [
+                "clang",
+                "-L",
+                str(sysroot / "usr/lib"),
+                "fixture.c",
+                "-lc",
+            ]
+            old_driver_shape["default_libraries"] = ["-L", str(sysroot / "usr/lib"), "-lc"]
+            with self.assertRaisesRegex(RUNNER.MatrixError, "retained default libraries"):
+                RUNNER.audit_selected_link_plan(old_driver_shape, sysroot, selected_libc, builtins)
+
+            missing_opt_out = copy.deepcopy(plan)
+            missing_opt_out["command"].remove("-nodefaultlibs")
+            with self.assertRaisesRegex(RUNNER.MatrixError, "exactly one -nodefaultlibs"):
+                RUNNER.audit_selected_link_plan(missing_opt_out, sysroot, selected_libc, builtins)
+
+            trace = {
+                "stdout": RUNNER.bytes_record(f"{selected_libc.resolve()}\n".encode("utf-8")),
+                "stderr": RUNNER.bytes_record(b""),
+            }
+            trace_provenance = RUNNER.audit_selected_linker_trace(trace, selected_libc, sysroot)
+            self.assertTrue(trace_provenance["selected_libc_seen"])
+            contaminated_trace = {
+                "stdout": RUNNER.bytes_record(
+                    f"{selected_libc.resolve()}\n{(sysroot / 'usr/lib/libc.so').resolve()}\n".encode("utf-8")
+                ),
+                "stderr": RUNNER.bytes_record(b""),
+            }
+            with self.assertRaisesRegex(RUNNER.MatrixError, "owned sysroot libc"):
+                RUNNER.audit_selected_linker_trace(contaminated_trace, selected_libc, sysroot)
+
     def test_retained_matching_cargo_fingerprints_do_not_make_artifact_attestation_ambiguous(self) -> None:
         contract = RUNNER.load_contract()
         backend = RUNNER.backend_contract(contract, "native-rust-mimalloc-shadow")
