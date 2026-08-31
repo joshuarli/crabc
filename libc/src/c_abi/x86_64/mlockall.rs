@@ -15,8 +15,9 @@
 //!
 //! The focused static fixture runs in a disposable process and uses a private
 //! raw `munlockall=152` cleanup syscall only after a success. That cleanup is
-//! fixture containment—not an exported C artifact. This module does not select
-//! `munlockall`, per-range `mlock`/`munlock`/`mlock2`, mapping or allocator
+//! fixture containment—not this module's C export; the separately recorded
+//! `munlockall` artifact owns that public spelling. This module does not select
+//! that separate implementation, per-range `mlock`/`munlock`/`mlock2`, mapping or allocator
 //! policy, process lifecycle, pthread cancellation, signals, libc.so, CRT,
 //! loader, sysroot, promotion, or public x86 support.
 

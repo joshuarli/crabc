@@ -1415,11 +1415,25 @@ and one pinned-musl/freestanding-static candidate. It maps musl 1.2.6
 `MCL_CURRENT=1` request's stale errno or Linux's environment-dependent
 `EPERM`/`EAGAIN`/`ENOMEM` outcome, plus zero/unknown-flag `EINVAL`. A
 fixture-private raw `munlockall=152` cleanup contains any success and does not
-export `munlockall`. This bounded `static-c-mlockall` artifact inside planned
+create this lock artifact's C export; the separately recorded
+`static-c-munlockall` artifact owns that spelling. This bounded
+`static-c-mlockall` artifact inside planned
 `libc.posix-runtime` is not full `<sys/mman.h>`, C-runtime, family/platform
 parity, promotion, or public x86 support; per-range locking, mapping/allocator
 policy, process lifecycle, pthread cancellation, and signals remain
 unselected.
+
+The same archive separately has a private whole-process unlock-request
+artifact: `./scripts/dev-x86_64.sh munlockall-header-abi` and
+`./scripts/dev-x86_64.sh libc-munlockall` prove only `munlockall(void)` through
+a six-profile project-header/pinned-musl C/C++ `<sys/mman.h>` declaration
+matrix and one pinned-musl/freestanding-static candidate. It maps musl 1.2.6
+`src/mman/munlockall.c` directly to x86 `munlockall=152`; two idempotent
+releases preserve stale `EDOM` then `ERANGE`. This bounded
+`static-c-munlockall` artifact inside planned `libc.posix-runtime` does not
+select `mlockall`, per-range locking, lock acquisition/limits/MCL flags,
+mapping/allocator policy, process lifecycle, pthread cancellation, signals,
+C-runtime/family/platform parity, promotion, or public x86 support.
 
 The same archive also has a private planned GNU memory-file-descriptor
 creation evidence artifact: `./scripts/dev-x86_64.sh memfd-create-header-abi`

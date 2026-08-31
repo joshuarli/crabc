@@ -14489,7 +14489,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             "`MCL_CURRENT=1`",
             "`EPERM`/`EAGAIN`/`ENOMEM`",
             "`munlockall=152` cleanup",
-            "not an exported `munlockall` ABI",
+            "`static-c-munlockall` artifact owns the public spelling",
             "`MCL_CURRENT/MCL_FUTURE=1/2`",
             "`MCL_ONFAULT` header availability",
             "per-range `mlock`/`munlock`/`mlock2`",
@@ -14558,6 +14558,112 @@ class X86ParityLedgerTests(unittest.TestCase):
         evidence[0]["command"] = "./scripts/dev-x86_64.sh memory-vm-reference"
         with self.assertRaisesRegex(
             ledger.LedgerError, "closed libc-mlockall command"
+        ):
+            ledger.validate_ledger(data)
+
+    def test_munlockall_artifact_keeps_its_closed_static_contract(self) -> None:
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-munlockall"
+        )
+        self.assertNotIn("capabilities", artifact)
+        for owner in (
+            "libc/src/c_abi/x86_64/munlockall.rs",
+            "compat/x86_64/munlockall_header_abi_probe.c",
+            "compat/x86_64/munlockall_header_abi_probe.cpp",
+            "compat/x86_64/run_munlockall_header_abi.sh",
+            "compat/x86_64/libc_munlockall_probe.c",
+            "compat/x86_64/libc_munlockall_start.S",
+            "compat/x86_64/run_libc_munlockall.sh",
+            "compat/x86_64/aarch64_parity_inventory.json",
+            "scripts/check_structure.py",
+        ):
+            self.assertIn(owner, artifact["source_owners"])
+        self.assertEqual(
+            {evidence["command"] for evidence in artifact["native_evidence"]},
+            {"./scripts/dev-x86_64.sh libc-munlockall"},
+        )
+        for phrase in (
+            "one-symbol whole-process unlock-request artifact",
+            "planned `libc.posix-runtime`",
+            "exactly `munlockall(void)`",
+            "`src/mman/munlockall.c`",
+            "`munlockall=152`",
+            "stale `EDOM` and `ERANGE`",
+            "idempotent releases",
+            "unconditional `int munlockall(void)` declaration",
+            "unmangled C++ linkage",
+            "excludes `mlockall`",
+            "per-range `mlock`/`munlock`/`mlock2`",
+            "pthread cancellation, signals",
+            "family completion, promotion, and public x86 support",
+        ):
+            self.assertIn(phrase, artifact["description"])
+        prerequisites = artifact["x86_abi_prerequisites"]
+        self.assertTrue(
+            any(
+                "int munlockall(void)" in prerequisite
+                and "no C argument registers" in prerequisite
+                and "munlockall=152" in prerequisite
+                and "rax" in prerequisite
+                and "-4095 through -1" in prerequisite
+                and "mlockall=151" in prerequisite
+                for prerequisite in prerequisites
+            )
+        )
+        self.assertTrue(
+            any(
+                "src/mman/munlockall.c" in prerequisite
+                and "syscall(SYS_munlockall)" in prerequisite
+                and "no flag, pointer, validation, cancellation-point route, or state bookkeeping"
+                in prerequisite
+                and "mlockall and per-range locking remain outside this source closure"
+                in prerequisite
+                for prerequisite in prerequisites
+            )
+        )
+        self.assertTrue(
+            any(
+                "two idempotent successful munlockall=152" in prerequisite
+                and "stale `EDOM`" in prerequisite
+                and "`ERANGE`" in prerequisite
+                and "lock-limit behavior" in prerequisite
+                and "MCL flags" in prerequisite
+                for prerequisite in prerequisites
+            )
+        )
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-munlockall"
+        )
+        artifact["description"] = "private munlockall helper"
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "static-c-munlockall description omits"
+        ):
+            ledger.validate_ledger(data)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-munlockall"
+        )
+        evidence = artifact["native_evidence"]
+        assert isinstance(evidence, list) and isinstance(evidence[0], dict)
+        evidence[0]["command"] = "./scripts/dev-x86_64.sh memory-vm-reference"
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "closed libc-munlockall command"
         ):
             ledger.validate_ledger(data)
 

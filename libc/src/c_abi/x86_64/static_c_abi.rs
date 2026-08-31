@@ -462,6 +462,8 @@ mod memory_mapping;
 mod memory_locking;
 #[path = "mlockall.rs"]
 mod mlockall;
+#[path = "munlockall.rs"]
+mod munlockall;
 #[path = "memory_sync.rs"]
 mod memory_sync;
 #[path = "memfd_create.rs"]

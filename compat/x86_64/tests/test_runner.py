@@ -1375,7 +1375,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         )
         expected_groups = (
             "timerfd-header-abi|signalfd-header-abi",
-            "siginterrupt-header-abi|mlockall-header-abi|usleep-header-abi|ftime-header-abi|clock-getcpuclockid-header-abi|libc-timerfd|libc-signalfd|libc-sigpause|libc-siginterrupt|libc-mlockall|libc-sigisemptyset|libc-sigandset-sigorset|libc-sigpending|libc-sigrtmax|libc-sigrtmin|libc-sched-getscheduler|libc-alarm|libc-usleep|libc-ftime|libc-clock-getcpuclockid|libc-sigaddset-sigdelset-sigfillset",
+            "siginterrupt-header-abi|mlockall-header-abi|munlockall-header-abi|usleep-header-abi|ftime-header-abi|clock-getcpuclockid-header-abi|libc-timerfd|libc-signalfd|libc-sigpause|libc-siginterrupt|libc-mlockall|libc-munlockall|libc-sigisemptyset|libc-sigandset-sigorset|libc-sigpending|libc-sigrtmax|libc-sigrtmin|libc-sched-getscheduler|libc-alarm|libc-usleep|libc-ftime|libc-clock-getcpuclockid|libc-sigaddset-sigdelset-sigfillset",
             "libc-sched-getcpu|libc-sched-yield",
             "sched-getscheduler-header-abi",
             "ctermid-header-abi|gethostid-header-abi|getpagesize-header-abi|gettid-header-abi|isatty-header-abi|tcgetpgrp-header-abi|tcsetpgrp-header-abi|getpass-header-abi|libc-ctermid|libc-gethostid|libc-getpagesize|libc-gettid|libc-isatty|libc-tcgetpgrp|libc-tcsetpgrp|libc-getpass|mkfifo-header-abi|mkfifoat-header-abi|libc-mkfifo|libc-mkfifoat|mktemp-header-abi|libc-mktemp",
@@ -18926,7 +18926,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             self.assertIn(required, artifact_runner)
         self.assertNotIn("--whole-archive", artifact_runner)
         self.assertIn("mlockall", static_export_names)
-        self.assertNotIn("munlockall", static_export_names)
+        self.assertIn("munlockall", static_export_names)
         self.assertIn("./scripts/dev-x86_64.sh libc-mlockall", parity_ledger)
         for required in (
             "run_mlockall_header_abi()",
@@ -18935,6 +18935,141 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "/workspace/compat/x86_64/run_libc_mlockall.sh",
             '    mlockall-header-abi)\n        [ "$#" -eq 0 ] || fail "mlockall-header-abi takes no arguments"',
             '    libc-mlockall)\n        [ "$#" -eq 0 ] || fail "libc-mlockall takes no arguments"',
+        ):
+            self.assertIn(required, runner)
+
+    def test_libc_static_c_abi_munlockall_artifact_stays_bounded(self) -> None:
+        """The whole-process release request remains one private static ABI leaf."""
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        syscall = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "syscall.rs"
+        ).read_text(encoding="utf-8")
+        implementation_path = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "munlockall.rs"
+        )
+        header_c_path = (
+            ROOT / "compat" / "x86_64" / "munlockall_header_abi_probe.c"
+        )
+        header_cpp_path = (
+            ROOT / "compat" / "x86_64" / "munlockall_header_abi_probe.cpp"
+        )
+        header_runner_path = (
+            ROOT / "compat" / "x86_64" / "run_munlockall_header_abi.sh"
+        )
+        fixture_path = ROOT / "compat" / "x86_64" / "libc_munlockall_probe.c"
+        start_path = ROOT / "compat" / "x86_64" / "libc_munlockall_start.S"
+        artifact_runner_path = (
+            ROOT / "compat" / "x86_64" / "run_libc_munlockall.sh"
+        )
+        for path in (
+            implementation_path,
+            header_c_path,
+            header_cpp_path,
+            header_runner_path,
+            fixture_path,
+            start_path,
+            artifact_runner_path,
+        ):
+            self.assertTrue(path.is_file(), f"missing munlockall artifact input: {path}")
+        self.assertTrue(header_runner_path.stat().st_mode & 0o111)
+        self.assertTrue(artifact_runner_path.stat().st_mode & 0o111)
+
+        implementation = implementation_path.read_text(encoding="utf-8")
+        header_c = header_c_path.read_text(encoding="utf-8")
+        header_cpp = header_cpp_path.read_text(encoding="utf-8")
+        header_runner = header_runner_path.read_text(encoding="utf-8")
+        fixture = fixture_path.read_text(encoding="utf-8")
+        start = start_path.read_text(encoding="utf-8")
+        artifact_runner = artifact_runner_path.read_text(encoding="utf-8")
+        static_exports = (
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        ).read_text(encoding="utf-8")
+        static_export_names = {
+            line
+            for line in static_exports.splitlines()
+            if line and not line.startswith("#")
+        }
+        parity_ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        runner = RUNNER.read_text(encoding="utf-8")
+
+        self.assertIn('#[path = "munlockall.rs"]', static_root)
+        self.assertIn("SYS_MUNLOCKALL: i64 = 152", syscall)
+        for required in (
+            "Selected static Linux/x86-64 C `munlockall` release boundary",
+            "src/mman/munlockall.c",
+            "munlockall=152",
+            "raw_syscall::SYS_MUNLOCKALL",
+            "raw_syscall::syscall0(",
+            "c_status(result)",
+            'pub extern "C" fn munlockall',
+        ):
+            self.assertIn(required, implementation)
+        for forbidden in (
+            "crabc_core",
+            "crabc_mimalloc",
+            "fn mlockall(",
+            "fn mlock(",
+            "fn munlock(",
+            "fn mlock2(",
+            "fn mmap(",
+            "pthread_",
+            "__tls_get_addr",
+        ):
+            self.assertNotIn(forbidden, implementation)
+        for probe in (header_c, header_cpp):
+            for required in ("sys/mman.h", "munlockall"):
+                self.assertIn(required, probe)
+        for required in (
+            "compile_profile",
+            "strict",
+            "posix",
+            "xopen700",
+            "gnu",
+            "bsd",
+            "default-source",
+            "nm --undefined-only",
+            "mangled munlockall",
+            "sys/mman.h",
+        ):
+            self.assertIn(required, header_runner)
+        for required in (
+            "SYS_munlockall == 152",
+            "EDOM",
+            "ERANGE",
+            "CRABC_MUNLOCKALL_FREESTANDING",
+        ):
+            self.assertIn(required, fixture)
+        for required in (
+            "call __crabc_x86_static_tls_bootstrap",
+            "crabc_x86_64_munlockall_probe",
+            "mov $231, %eax",
+        ):
+            self.assertIn(required, start)
+        self.assertNotIn("arch_prctl", start)
+        for required in (
+            "run_munlockall_header_abi.sh",
+            "-nostdlib -static",
+            "static_c_abi_exports.txt",
+            "assert_named_syscall munlockall 98",
+            "mlock mlock2 mlockall munlock",
+            "direct initial TLS",
+            "--no-undefined",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn("--whole-archive", artifact_runner)
+        self.assertIn("munlockall", static_export_names)
+        self.assertIn("./scripts/dev-x86_64.sh libc-munlockall", parity_ledger)
+        for required in (
+            "run_munlockall_header_abi()",
+            "run_libc_munlockall_probe()",
+            "/workspace/compat/x86_64/run_munlockall_header_abi.sh",
+            "/workspace/compat/x86_64/run_libc_munlockall.sh",
+            '    munlockall-header-abi)\n        [ "$#" -eq 0 ] || fail "munlockall-header-abi takes no arguments"',
+            '    libc-munlockall)\n        [ "$#" -eq 0 ] || fail "libc-munlockall takes no arguments"',
         ):
             self.assertIn(required, runner)
 

@@ -566,6 +566,7 @@ mtx_lock
 mtx_trylock
 mtx_unlock
 munlock
+munlockall
 munmap
 nan
 nanf

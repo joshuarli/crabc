@@ -250,6 +250,7 @@ X86_RUNTIME_FOUNDATION_LIBC_SOURCES = {
     Path("libc/src/c_abi/x86_64/signal_pause.rs"),
     Path("libc/src/c_abi/x86_64/siginterrupt.rs"),
     Path("libc/src/c_abi/x86_64/mlockall.rs"),
+    Path("libc/src/c_abi/x86_64/munlockall.rs"),
     Path("libc/src/c_abi/x86_64/signal_foundation.rs"),
     Path("libc/src/c_abi/x86_64/static_c_abi.rs"),
     Path("libc/src/c_abi/x86_64/static_startup.rs"),
@@ -3815,6 +3816,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         '#[path = "memory_sync.rs"]',
         '#[path = "memory_locking.rs"]',
         '#[path = "mlockall.rs"]',
+        '#[path = "munlockall.rs"]',
         '#[path = "memfd_create.rs"]',
         '#[path = "readiness_waits.rs"]',
         '#[path = "socket_transport.rs"]',
@@ -8441,6 +8443,43 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
             "locking boundary requires SYS_MLOCKALL=151"
         )
 
+    munlockall_source = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "munlockall.rs"
+    munlockall_text = munlockall_source.read_text(errors="replace")
+    for required in (
+        "Selected static Linux/x86-64 C `munlockall` release boundary",
+        "musl 1.2.6 release commit",
+        "src/mman/munlockall.c",
+        "munlockall=152",
+        "raw_syscall::SYS_MUNLOCKALL",
+        "raw_syscall::syscall0(",
+        "c_status(result)",
+        'pub extern "C" fn munlockall',
+        "does not select `mlockall`",
+        "per-range `mlock`/`munlock`/`mlock2`",
+        "pthread cancellation",
+    ):
+        if required not in munlockall_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/munlockall.rs: selected static "
+                f"whole-process unlock boundary is missing {required!r}"
+            )
+    munlockall_exports = set(
+        re.findall(
+            r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(',
+            munlockall_text,
+        )
+    )
+    if munlockall_exports != {"munlockall"}:
+        errors.append(
+            "libc/src/c_abi/x86_64/munlockall.rs: selected static artifact "
+            "must export only munlockall"
+        )
+    if "pub(crate) const SYS_MUNLOCKALL: i64 = 152;" not in raw_syscall_text:
+        errors.append(
+            "libc/src/c_abi/x86_64/syscall.rs: selected static whole-process "
+            "unlock boundary requires SYS_MUNLOCKALL=152"
+        )
+
     memfd_create_source = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "memfd_create.rs"
     memfd_create_text = memfd_create_source.read_text(errors="replace")
     for required in (
@@ -11301,6 +11340,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         memory_sync_text,
         memory_locking_text,
         mlockall_text,
+        munlockall_text,
         memfd_create_text,
         nanosleep_text,
         usleep_text,
@@ -11634,6 +11674,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         "munlock",
         "mlock2",
         "mlockall",
+        "munlockall",
         "memfd_create",
         "nanosleep",
         "usleep",
@@ -11844,7 +11885,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         errors.append(
             "libc/src/c_abi/x86_64: selected static archive must export only its "
             "stat, credential, errno, bootstrap-memory/fenv/continuation, simple "
-            "signal-control, separate realtime-minimum/realtime-maximum bridges, one pure GNU signal-set predicate, paired GNU binary set-operation leaf, and a three-symbol POSIX signal-set mutation leaf, bounded process-signal execution, and one legacy single-signal pause wait, bounded pthread create/exit/join/detach initial-TLS worker, its private selected-main/worker pthread-key/C11-TSS lifecycle, private process-normal pthread mutexes and their musl private condition-variable handoff, the complete selected rwlock/attribute family with private-or-shared futex operation, plus the distinct C11 plain-sync adapter and normal-return pthread/C11 once state machine, its typed C11 create/exit/join/detach sibling, and pthread/C11 identity aliases, named termios-control, direct terminal-descriptor and foreground-group observations plus one named foreground-group assignment, historical ctermid pathname spelling, constant historical gethostid compatibility, direct GNU gettid observation, selected process-context, child-reaping, C11 immediate termination, callback algorithms, direct clock_gettime, binary64 difftime, caller-buffered fixed-UTC gmtime_r, fixed-UTC timegm, a GNU current-CPU raw-fallback observation leaf, a status-returning POSIX scheduler-yield leaf, caller-owned mapping-core, no-cancellation mapping synchronization, one direct whole-process lock request, direct anonymous-memory descriptor creation, nanosleep, and clock_nanosleep, selected "
+            "signal-control, separate realtime-minimum/realtime-maximum bridges, one pure GNU signal-set predicate, paired GNU binary set-operation leaf, and a three-symbol POSIX signal-set mutation leaf, bounded process-signal execution, and one legacy single-signal pause wait, bounded pthread create/exit/join/detach initial-TLS worker, its private selected-main/worker pthread-key/C11-TSS lifecycle, private process-normal pthread mutexes and their musl private condition-variable handoff, the complete selected rwlock/attribute family with private-or-shared futex operation, plus the distinct C11 plain-sync adapter and normal-return pthread/C11 once state machine, its typed C11 create/exit/join/detach sibling, and pthread/C11 identity aliases, named termios-control, direct terminal-descriptor and foreground-group observations plus one named foreground-group assignment, historical ctermid pathname spelling, constant historical gethostid compatibility, direct GNU gettid observation, selected process-context, child-reaping, C11 immediate termination, callback algorithms, direct clock_gettime, binary64 difftime, caller-buffered fixed-UTC gmtime_r, fixed-UTC timegm, a GNU current-CPU raw-fallback observation leaf, a status-returning POSIX scheduler-yield leaf, caller-owned mapping-core, no-cancellation mapping synchronization, separate direct whole-process lock and release requests, direct anonymous-memory descriptor creation, nanosleep, and clock_nanosleep, selected "
             "signal-control, separate realtime-minimum/realtime-maximum bridges, one historical SIGALRM interval-timer adapter leaf, one pure GNU signal-set predicate, paired GNU binary set-operation leaf, and a three-symbol POSIX signal-set mutation leaf, bounded process-signal execution, and one legacy single-signal pause wait, bounded pthread create/exit/join/detach initial-TLS worker, its private selected-main/worker pthread-key/C11-TSS lifecycle, private process-normal pthread mutexes and their musl private condition-variable handoff, the complete selected rwlock/attribute family with private-or-shared futex operation, plus the distinct C11 plain-sync adapter and normal-return pthread/C11 once state machine, its typed C11 create/exit/join/detach sibling, and pthread/C11 identity aliases, named termios-control, direct terminal-descriptor and foreground-group observations plus one named foreground-group assignment, historical ctermid pathname spelling, constant historical gethostid compatibility, selected process-context, child-reaping, C11 immediate termination, callback algorithms, direct clock_gettime, binary64 difftime, caller-buffered fixed-UTC gmtime_r, fixed-UTC timegm, a status-returning POSIX scheduler-yield leaf, caller-owned mapping-core, no-cancellation mapping synchronization, direct anonymous-memory descriptor creation, nanosleep, and clock_nanosleep, selected "
             "POSIX _exit forwarding, descriptor-entry, selected filesystem-access, bounded descriptor-control, timestamp updates, and descriptor-I/O, selected process-resources, selected readiness/signal-waits, "
             "selected socket transport and selected socket-message/options, selected system-observation, selected UTS-identity, "
@@ -11926,6 +11967,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         ("memory_sync.rs", memory_sync_text),
         ("memory_locking.rs", memory_locking_text),
         ("mlockall.rs", mlockall_text),
+        ("munlockall.rs", munlockall_text),
         ("memfd_create.rs", memfd_create_text),
         ("nanosleep.rs", nanosleep_text),
         ("usleep.rs", usleep_text),
