@@ -866,6 +866,25 @@ argument, matching musl. This is a non-promoting ABI sub-slice toward
 `strfmon`, numeric/wide/iconv text behavior, diagnostic family, general
 locale completion, promotion, or public x86 support.
 
+The distinct x86 `locale-profile-header-abi` and `libc-locale-profile` gates
+now select the private fixed-profile `locale.core` seam, and only that seam:
+`setlocale` and `localeconv`. A strict C11/C++17 pinned-musl/project-header
+matrix fixes the unconditional category constants, the 96-byte `struct lconv`
+layout, both declarations, and C++ linkage. Its shared C fixture then runs
+against pinned musl 1.2.6 and a true `-nostdlib -static --gc-sections`
+candidate, proving initial C state, `C`/`POSIX`/`C.UTF-8` queries and
+selection, exact `C.UTF-8;C;C;C;C;C` LC_ALL serialization, and the stable
+POSIX `lconv` record (`.`/empty text fields/fourteen `CHAR_MAX` monetary
+fields). Candidate-only checks reject empty environment selection, arbitrary
+map names, and unreturned mixed forms without state mutation. The AArch64
+source/export manifests establish existing project ownership of the two C ABI
+spellings; pinned musl remains the exact behavior oracle. The candidate rejects
+TLS, conversion, locale objects, allocation, environment lookup, gettext,
+numeric/time/stdio, and ambient runtime dependencies. This changes only the
+inventory state of `locale.core` to selected-private: general locale or
+legacy-encoding databases, all other broad locale-core compatibility entries,
+family completion, promotion, and public x86 support remain excluded.
+
 The x86 static C archive also has one private caller-owned mapping-core
 artifact: `./scripts/dev-x86_64.sh libc-mapping-core` runs the project-header
 C/C++ `sys/mman.h` gate and then one pinned-musl/freestanding-static proof for

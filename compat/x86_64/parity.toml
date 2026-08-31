@@ -7233,6 +7233,57 @@ x86_header_prerequisites = [
 native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-locale-multibyte", scope = "Pinned-musl project-header C reference plus one true dependency-free x86 crabc-libc archive and -nostdlib/static candidate. The gate requires the separate C/C++ named-locale/multibyte header ABI/linkage matrix; the sixteen selected entry points alongside the aggregate static C ABI export ratchet; archive and final-ELF purity; direct fs initial-TLS errno with no dynamic TLS resolver; no interpreter, DT_NEEDED, unresolved symbols, wide-stream, allocator, or ambient runtime dependency; and matching C/POSIX/C.UTF-8 named-state with CTYPE-only built-in UTF-8, lconv, UTF-8/code-unit, error/reset, initial-state string-conversion behavior, and one caller-owned positive-capacity UTF-8 mbsrtowcs resume. Its candidate-only parser regression enforces the narrower returned-mixed-form input boundary. The archive may contain the separately verified locale-object, iconv, and wide-character leaves, which this fixture neither invokes nor establishes. It is one verified artifact inside still-planned libc.text-math-locale-stdio, not locale/text/stdio family completion, promotion, or public x86 support." }]
 oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source mapping and C/POSIX behavior oracle for src/locale/setlocale.c, locale_map.c, localeconv.c, src/ctype/__ctype_get_mb_cur_max.c, and the selected src/multibyte internal/state/conversion leaves." }, { kind = "elf-abi", source = "System V AMD64 psABI and pinned musl x86 headers", role = "LP64 pointer/size_t convention plus wchar_t, wint_t, mbstate_t, lconv, C/C++ linkage, and initial-exec errno TLS fixture contract." }]
 
+[[family.verified_slice]]
+id = "locale.core-fixed-profile"
+description = "Private native x86 selected-private `locale.core` fixed-profile slice inside still-planned `libc.text-math-locale-stdio`. It consumes that capability only at the `setlocale`/`localeconv` seam: one dependency-free `crabc-libc` archive resolves exactly those two entries into a strict C11/C++17 header matrix and a shared project-header fixture which first executes through pinned musl 1.2.6 and then a true `-nostdlib -static --gc-sections` candidate. The fixed global profile accepts only `C`, `POSIX`, and `C.UTF-8`; musl's built-in C.UTF-8 map changes `LC_CTYPE` alone, so direct `LC_ALL` C.UTF-8 and a mixed-state query serialize exactly as `C.UTF-8;C;C;C;C;C`, while non-CTYPE C.UTF-8 and POSIX normalize to C. `localeconv` returns the stable immutable POSIX record with decimal point `.`, empty text fields, and all fourteen monetary char fields `CHAR_MAX`. Candidate-only negative checks reject `setlocale(category, \"\")`, arbitrary map names, and non-returned LC_ALL forms without changing state. The candidate has no TLS, environment lookup, allocation, locale object, conversion, collation, iconv, gettext, numeric, time, or stdio dependency. This selected-private accounting does not claim every broader legacy `locale.core` spelling, family completion, promotion, or public x86 support; general locale or legacy-encoding databases, libc.so, CRT, loader, and sysroot remain excluded."
+capabilities = ["locale.core"]
+source_owners = [
+  "SCOPE.md",
+  "COMPATIBILITY-PROFILE.md",
+  "compat/upstreams.toml",
+  "compat/crabc-rs/coverage.toml",
+  "compat/abi/musl-1.2.6/aarch64/libc.a.static.tsv",
+  "compat/ratchet/aarch64-dynamic.json",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "libc/src/c_abi.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/locale_multibyte.rs",
+  "include/features.h",
+  "include/limits.h",
+  "include/locale.h",
+  "include/stddef.h",
+  "include/stdint.h",
+  "compat/x86_64/locale_profile_header_abi_probe.c",
+  "compat/x86_64/locale_profile_header_abi_probe.cpp",
+  "compat/x86_64/run_locale_profile_header_abi.sh",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/libc_locale_profile_probe.c",
+  "compat/x86_64/libc_locale_profile_start.S",
+  "compat/x86_64/run_libc_locale_profile.sh",
+  "compat/x86_64/aarch64_parity_inventory.py",
+  "compat/x86_64/aarch64_parity_inventory.json",
+  "compat/x86_64/tests/test_aarch64_parity_inventory.py",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "compat/x86_64/README.md",
+  "STATUS.md",
+  "x86-64.md",
+  "scripts/dev-x86_64.sh",
+]
+x86_abi_prerequisites = [
+  "System V AMD64 passes the signed 32-bit locale category and char-pointer request in general-purpose registers, returns the char * result in rax, and returns the `struct lconv *` in rax. The strict x86 public record is 96-byte/align-8 LP64 storage: ten pointers followed by fourteen one-byte char fields.",
+  "Pinned musl 1.2.6 src/locale/setlocale.c serializes the process-global six categories and src/locale/locale_map.c makes built-in C.UTF-8 effective only for LC_CTYPE; src/locale/localeconv.c supplies the immutable POSIX record with `.`/empty strings and CHAR_MAX monetary fields. The candidate keeps only those built-ins and intentionally does not translate musl's environment/map allocator path.",
+  "The selected x86 leaf owns only atomically locked fixed global category state and a reusable LC_ALL buffer. Its true static candidate uses no TLS, syscall, errno, allocator, locale object, locale database, environment, or ambient-runtime seam; the fixture's raw write=1 exists solely to emit a comparable digest.",
+]
+x86_header_prerequisites = [
+  "The dedicated strict project-first/pinned-musl C11/C++17 matrix proves only unconditional locale.h declarations: the six category values, 96-byte lconv offsets/types, setlocale char *(*)(int, const char *), localeconv struct lconv *(*)(void), and unmangled C++ references. Feature-gated locale_t, locale objects, `_l` APIs, collation, conversion, and monetary formatting remain outside this header proof.",
+  "The shared C runtime fixture preprocesses project limits.h, locale.h, stddef.h, stdint.h, and features.h before both pinned-musl and candidate links. It differentially covers C/POSIX/C.UTF-8 queries/selections, CTYPE-only mixed serialization, the complete immutable lconv record, invalid categories, and candidate-only rejection of environment/arbitrary-map/non-returned mixed forms without state mutation.",
+]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-locale-profile", scope = "Pinned-musl 1.2.6 project-header C execution and strict C11/C++17 declaration/linkage oracle plus one dependency-free x86 crabc-libc archive and true `-nostdlib -static --gc-sections` candidate. The common digest proves initial C state, each LC query, C/POSIX/C.UTF-8 selection, exact C.UTF-8;C;C;C;C;C serialization, immutable 96-byte lconv contents, and invalid-category rejection. The candidate alone rejects empty environment selection, arbitrary map names, and unreturned mixed forms without state mutation; that intentional fixed-profile difference is not attributed to musl's general map path. The archive's aggregate export ratchet and final-ELF checks require setlocale/localeconv at the selected boundary and reject unresolved symbols, interpreter/DT_NEEDED, PT_TLS/dynamic TLS, conversion, locale-object, allocation, environment, gettext, numeric, time, stdio, and ambient runtime dependencies. It selects only this fixed locale.core seam, not general locale behavior, family completion, promotion, or public x86 support." }]
+oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT declaration/source/behavior oracle for src/locale/setlocale.c, locale_map.c, and localeconv.c: category serialization, CTYPE-only built-in C.UTF-8, and immutable POSIX lconv. The candidate deliberately excludes locale_map.c's environment lookup, arbitrary-name map loading, and allocation paths." }, { kind = "aarch64-contract", source = "libc/src/c_abi.rs plus compat/abi/musl-1.2.6/aarch64/libc.a.static.tsv and compat/ratchet/aarch64-dynamic.json", role = "Existing AArch64 project ownership and global export evidence for setlocale/localeconv only. It establishes the current project C ABI seam but is not a behavioral fallback for the x86 fixed-profile rejection boundary." }, { kind = "elf-abi", source = "System V AMD64 psABI and pinned musl x86 headers", role = "LP64 int/pointer return and argument ABI, 96-byte align-8 lconv layout, unconditional C/C++ linkage, and a static candidate without a TLS requirement." }]
+
 [[family.verified_artifact]]
 id = "static-c-locale-wide-iconv"
 description = "Private native x86 selected-static C composition inside still-planned `libc.text-math-locale-stdio`. One dependency-free `crabc-libc` archive first runs a project-header fixture through pinned musl 1.2.6 and then a true `-nostdlib -static` candidate. It composes the separately selected direct named `C`/`POSIX`/`C.UTF-8` locale and ordinary `mbstate_t` UTF-8 boundary with exactly `iconv_open`, `iconv`, and `iconv_close`. The descriptor is a non-null allocation-free token for ASCII, UTF-8, UTF-16LE/BE, UTF-32LE/BE, and native little-endian 32-bit `WCHAR_T`; C++ references retain unmangled C spellings. The runtime differential proves musl's exact fuzzy name normalization boundary, UTF-8 to/from fixed-endian UTF-16 and UTF-32 byte order, `WCHAR_T` UTF-8 conversion, musl-shaped ASCII `'*'` substitution counting, direct named C.UTF-8 multibyte state, EINVAL unknown/incomplete UTF-8 or UTF-16 input, EILSEQ malformed UTF-8/UTF-16/UTF-32 progress, E2BIG no-progress, stale errno on successful conversion/reset, and close. The candidate-only negative edge rejects generic BOM/stateful UTF-16 and UCS-2 spellings alongside legacy codepages without changing the descriptor boundary. It intentionally excludes general locale state, environment lookup, locale objects and `_l` APIs, collation, arbitrary or stateful iconv encodings/BOM forms, all legacy codepage maps, wide streams/stdio, general text or Unicode normalization, allocation, libc.so, CRT, loader, sysroot, family completion, promotion, and public x86 support."

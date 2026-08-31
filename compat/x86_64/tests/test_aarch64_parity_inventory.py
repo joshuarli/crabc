@@ -54,6 +54,17 @@ class AArch64ParityInventoryTests(unittest.TestCase):
         self.assertEqual(sum(report["capability_state_counts"].values()), 223)
         self.assertEqual(len(report["families"]), 26)
         self.assertEqual(len(report["capabilities"]), 223)
+        locale_core = next(
+            row for row in report["capabilities"] if row["id"] == "locale.core"
+        )
+        self.assertEqual(locale_core["x86_family"], "libc.text-math-locale-stdio")
+        self.assertEqual(locale_core["contract_state"], "selected-private")
+        text_math = next(
+            row for row in report["families"]
+            if row["id"] == "libc.text-math-locale-stdio"
+        )
+        self.assertEqual(text_math["verified_slice_count"], 4)
+        self.assertEqual(text_math["verified_artifact_count"], 22)
         self.assertEqual(
             {row["contract_state"] for row in report["capabilities"]},
             {"implemented-foundation", "selected-private", "missing"},

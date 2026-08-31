@@ -71,6 +71,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   stdio-standard-header-abi  compare selected x86 <stdio.h> standard-stream C/C++ profiles with musl
   stdio-permanent-line-io-header-abi  verify x86 <stdio.h> permanent line-I/O C/C++ declarations and linkage
   ctype-header-abi  compile the staged x86 C/C++ ctype declarations
+  locale-profile-header-abi  verify x86 fixed setlocale/localeconv C/C++ declarations and linkage
   locale-multibyte-header-abi  verify x86 named-locale/multibyte C/C++ declarations and linkage
   iconv-header-abi  verify x86 selected UTF/ASCII iconv C/C++ declarations and linkage
   wide-character-header-abi  verify x86 selected wide-character C/C++ declarations and linkage
@@ -306,6 +307,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-system-information  run the static x86 crabc-libc processor/page slice
   libc-uts-identity  run the static x86 crabc-libc hostname/domain identity slice
   libc-ctype  run the static x86 crabc-libc C-locale ctype slice
+  libc-locale-profile  run the static x86 fixed setlocale/localeconv profile slice
   libc-locale-multibyte  run the static x86 crabc-libc named locale/multibyte slice
   libc-regex  run the bounded static x86 crabc-libc POSIX regex slice
   libc-locale-wide-iconv  run the static x86 crabc-libc locale/wide/iconv composition slice
@@ -1895,6 +1897,10 @@ run_ctype_header_abi() {
     run_in_container bash /workspace/compat/x86_64/run_ctype_header_abi.sh
 }
 
+run_locale_profile_header_abi() {
+    run_in_container bash /workspace/compat/x86_64/run_locale_profile_header_abi.sh
+}
+
 run_locale_multibyte_header_abi() {
     run_in_container bash /workspace/compat/x86_64/run_locale_multibyte_header_abi.sh
 }
@@ -3325,7 +3331,7 @@ case "$command" in
     access-header-abi) ;;
     xattr-header-abi) ;;
     madvise-reference) ;;
-    ctype-header-abi|locale-multibyte-header-abi|iconv-header-abi|wide-character-header-abi|locale-object-wide-header-abi|locale-narrow-header-abi) ;;
+    ctype-header-abi|locale-profile-header-abi|locale-multibyte-header-abi|iconv-header-abi|wide-character-header-abi|locale-object-wide-header-abi|locale-narrow-header-abi) ;;
     integer-arithmetic-header-abi|integer-parse-header-abi|float-parse-header-abi|intmax-arithmetic-header-abi|credential-observation-header-abi|login-name-header-abi|child-reaping-header-abi|immediate-termination-header-abi|callback-algorithms-header-abi) ;;
     ffs-header-abi) ;;
     byte-strings-header-abi) ;;
@@ -3357,7 +3363,7 @@ case "$command" in
     libc-static-c-abi-differential) ;;
     libc-static-c-abi-same-object-differential|qualification-posix-abi-admission) ;;
     libc-interface-discovery) ;;
-    libc-readiness-waits|libc-system-observation|libc-system-information|libc-fcntl-record-locks|libc-flock|libc-sendfile|libc-posix-fallocate|libc-descriptor-advice|libc-filesystem-capacity|libc-uts-identity|libc-ctype|libc-locale-multibyte|libc-locale-wide-iconv|libc-wide-character|libc-locale-object-wide|libc-locale-narrow|libc-locale-ctype-locators|libc-locale-error-strings|libc-regex|libc-integer-arithmetic|libc-integer-parse|libc-float-parse|libc-intmax-arithmetic|libc-credential-observation|libc-login-name|libc-child-reaping|libc-immediate-termination|libc-callback-algorithms|libc-search-tree-intrusive|libc-search-hash-table|libc-gettext-catalog|libc-access|libc-clock-gettime|libc-time-observation|libc-system-configuration|libc-mapping-core|libc-header-layouts-baseline|libc-nanosleep|libc-clock-nanosleep|libc-descriptor-entry|libc-fcntl-status-control|libc-ioctl|libc-ffs|libc-byte-strings|libc-process-globals-getopt|libc-auxv-observation|libc-inet-address|libc-numeric-netdb|libc-random-entropy|libc-memory-search|libc-string-copy|libc-error-strings|libc-strsignal|libc-descriptor-pipeline) ;;
+    libc-readiness-waits|libc-system-observation|libc-system-information|libc-fcntl-record-locks|libc-flock|libc-sendfile|libc-posix-fallocate|libc-descriptor-advice|libc-filesystem-capacity|libc-uts-identity|libc-ctype|libc-locale-profile|libc-locale-multibyte|libc-locale-wide-iconv|libc-wide-character|libc-locale-object-wide|libc-locale-narrow|libc-locale-ctype-locators|libc-locale-error-strings|libc-regex|libc-integer-arithmetic|libc-integer-parse|libc-float-parse|libc-intmax-arithmetic|libc-credential-observation|libc-login-name|libc-child-reaping|libc-immediate-termination|libc-callback-algorithms|libc-search-tree-intrusive|libc-search-hash-table|libc-gettext-catalog|libc-access|libc-clock-gettime|libc-time-observation|libc-system-configuration|libc-mapping-core|libc-header-layouts-baseline|libc-nanosleep|libc-clock-nanosleep|libc-descriptor-entry|libc-fcntl-status-control|libc-ioctl|libc-ffs|libc-byte-strings|libc-process-globals-getopt|libc-auxv-observation|libc-inet-address|libc-numeric-netdb|libc-random-entropy|libc-memory-search|libc-string-copy|libc-error-strings|libc-strsignal|libc-descriptor-pipeline) ;;
     libc-vector-io|libc-uio-cxx-linkage) ;;
     libc-sysv-semaphore|libc-posix-semaphore) ;;
     libc-sysv-message-shared-memory) ;;
@@ -3528,6 +3534,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "ctype-header-abi takes no arguments"
         ensure_image
         run_ctype_header_abi
+        ;;
+    locale-profile-header-abi)
+        [ "$#" -eq 0 ] || fail "locale-profile-header-abi takes no arguments"
+        ensure_image
+        run_locale_profile_header_abi
         ;;
     locale-multibyte-header-abi)
         [ "$#" -eq 0 ] || fail "locale-multibyte-header-abi takes no arguments"
@@ -4557,6 +4568,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "libc-ctype takes no arguments"
         ensure_image
         run_in_container bash /workspace/compat/x86_64/run_libc_ctype.sh
+        ;;
+    libc-locale-profile)
+        [ "$#" -eq 0 ] || fail "libc-locale-profile takes no arguments"
+        ensure_image
+        run_in_container bash /workspace/compat/x86_64/run_libc_locale_profile.sh
         ;;
     libc-locale-multibyte)
         [ "$#" -eq 0 ] || fail "libc-locale-multibyte takes no arguments"

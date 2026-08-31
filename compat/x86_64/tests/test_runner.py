@@ -375,6 +375,96 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn("#if '\\xff' > 0", limits)
         self.assertIn("#define CHAR_MAX 127", limits)
 
+    def test_fixed_locale_profile_capability_slice_stays_narrow(self) -> None:
+        """Selected locale.core proof stays at setlocale/localeconv only."""
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        implementation = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "locale_multibyte.rs"
+        ).read_text(encoding="utf-8")
+        c_probe = (
+            ROOT / "compat" / "x86_64" / "locale_profile_header_abi_probe.c"
+        ).read_text(encoding="utf-8")
+        cpp_probe = (
+            ROOT / "compat" / "x86_64" / "locale_profile_header_abi_probe.cpp"
+        ).read_text(encoding="utf-8")
+        header_runner = (
+            ROOT / "compat" / "x86_64" / "run_locale_profile_header_abi.sh"
+        ).read_text(encoding="utf-8")
+        fixture = (
+            ROOT / "compat" / "x86_64" / "libc_locale_profile_probe.c"
+        ).read_text(encoding="utf-8")
+        artifact_runner = (
+            ROOT / "compat" / "x86_64" / "run_libc_locale_profile.sh"
+        ).read_text(encoding="utf-8")
+        parity = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        dispatcher = RUNNER.read_text(encoding="utf-8")
+
+        self.assertIn('#[path = "locale_multibyte.rs"]', static_root)
+        for required in (
+            "src/locale/setlocale.c",
+            "src/locale/locale_map.c",
+            "src/locale/localeconv.c",
+            "LC_ALL_RESULT",
+            "POSIX_LCONV",
+            "run_libc_locale_profile.sh",
+            "fn setlocale(",
+            "fn localeconv(",
+        ):
+            self.assertIn(required, implementation)
+        for probe in (c_probe, cpp_probe):
+            for required in (
+                "#include <limits.h>",
+                "#include <locale.h>",
+                "LC_CTYPE == 0",
+                "sizeof(struct lconv) == 96",
+                "setlocale",
+                "localeconv",
+            ):
+                self.assertIn(required, probe)
+        for required in (
+            "C11/C++17",
+            "CXX_SYMBOLS=(setlocale localeconv)",
+            "-nostdinc",
+            "check_cxx_c_linkage",
+            "no locale objects, `_l` APIs, conversion, collation",
+        ):
+            self.assertIn(required, header_runner)
+        for required in (
+            "locale-profile-fnv1a64",
+            "C.UTF-8;C;C;C;C;C",
+            "CHAR_MAX",
+            "CRABC_LOCALE_PROFILE_FREESTANDING",
+            'setlocale(LC_ALL, "")',
+            "en_US.UTF-8",
+            "C;C;C;C;C;C",
+            "C;C.UTF-8;C;C;C;C",
+        ):
+            self.assertIn(required, fixture)
+        for required in (
+            "run_locale_profile_header_abi.sh",
+            "-nostdlib -static",
+            "--gc-sections",
+            "candidate retains TLS",
+            "__ctype_get_mb_cur_max",
+            "locale-object",
+            "getenv",
+            "setlocale-disassembly",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn("--whole-archive", artifact_runner)
+        self.assertIn('id = "locale.core-fixed-profile"', parity)
+        self.assertIn('capabilities = ["locale.core"]', parity)
+        self.assertIn(
+            'command = "./scripts/dev-x86_64.sh libc-locale-profile"', parity
+        )
+        self.assertIn("locale-profile-header-abi)", dispatcher)
+        self.assertIn("libc-locale-profile)", dispatcher)
+        self.assertIn("run_locale_profile_header_abi()", dispatcher)
+
     def test_filesystem_capacity_header_and_static_c_abi_stay_explicit(
         self,
     ) -> None:
@@ -1223,7 +1313,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn('readonly PLATFORM="linux/amd64"', source)
         self.assertIn("    madvise-reference) ;;", source)
         self.assertIn(
-            "    ctype-header-abi|locale-multibyte-header-abi|iconv-header-abi|wide-character-header-abi|locale-object-wide-header-abi|locale-narrow-header-abi) ;;",
+            "    ctype-header-abi|locale-profile-header-abi|locale-multibyte-header-abi|iconv-header-abi|wide-character-header-abi|locale-object-wide-header-abi|locale-narrow-header-abi) ;;",
             source,
         )
         self.assertIn("    ffs-header-abi) ;;", source)
@@ -1303,7 +1393,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "access-header-abi",
             "xattr-header-abi",
             "madvise-reference",
-            "ctype-header-abi|locale-multibyte-header-abi|iconv-header-abi|wide-character-header-abi|locale-object-wide-header-abi|locale-narrow-header-abi",
+            "ctype-header-abi|locale-profile-header-abi|locale-multibyte-header-abi|iconv-header-abi|wide-character-header-abi|locale-object-wide-header-abi|locale-narrow-header-abi",
             "integer-arithmetic-header-abi|integer-parse-header-abi|float-parse-header-abi|intmax-arithmetic-header-abi|credential-observation-header-abi|login-name-header-abi|child-reaping-header-abi|immediate-termination-header-abi|callback-algorithms-header-abi",
             "ffs-header-abi",
             "byte-strings-header-abi",
@@ -1335,7 +1425,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "libc-static-c-abi-differential",
             "libc-static-c-abi-same-object-differential|qualification-posix-abi-admission",
             "libc-interface-discovery",
-            "libc-readiness-waits|libc-system-observation|libc-system-information|libc-fcntl-record-locks|libc-flock|libc-sendfile|libc-posix-fallocate|libc-descriptor-advice|libc-filesystem-capacity|libc-uts-identity|libc-ctype|libc-locale-multibyte|libc-locale-wide-iconv|libc-wide-character|libc-locale-object-wide|libc-locale-narrow|libc-locale-ctype-locators|libc-locale-error-strings|libc-regex|libc-integer-arithmetic|libc-integer-parse|libc-float-parse|libc-intmax-arithmetic|libc-credential-observation|libc-login-name|libc-child-reaping|libc-immediate-termination|libc-callback-algorithms|libc-search-tree-intrusive|libc-search-hash-table|libc-gettext-catalog|libc-access|libc-clock-gettime|libc-time-observation|libc-system-configuration|libc-mapping-core|libc-header-layouts-baseline|libc-nanosleep|libc-clock-nanosleep|libc-descriptor-entry|libc-fcntl-status-control|libc-ioctl|libc-ffs|libc-byte-strings|libc-process-globals-getopt|libc-auxv-observation|libc-inet-address|libc-numeric-netdb|libc-random-entropy|libc-memory-search|libc-string-copy|libc-error-strings|libc-strsignal|libc-descriptor-pipeline",
+            "libc-readiness-waits|libc-system-observation|libc-system-information|libc-fcntl-record-locks|libc-flock|libc-sendfile|libc-posix-fallocate|libc-descriptor-advice|libc-filesystem-capacity|libc-uts-identity|libc-ctype|libc-locale-profile|libc-locale-multibyte|libc-locale-wide-iconv|libc-wide-character|libc-locale-object-wide|libc-locale-narrow|libc-locale-ctype-locators|libc-locale-error-strings|libc-regex|libc-integer-arithmetic|libc-integer-parse|libc-float-parse|libc-intmax-arithmetic|libc-credential-observation|libc-login-name|libc-child-reaping|libc-immediate-termination|libc-callback-algorithms|libc-search-tree-intrusive|libc-search-hash-table|libc-gettext-catalog|libc-access|libc-clock-gettime|libc-time-observation|libc-system-configuration|libc-mapping-core|libc-header-layouts-baseline|libc-nanosleep|libc-clock-nanosleep|libc-descriptor-entry|libc-fcntl-status-control|libc-ioctl|libc-ffs|libc-byte-strings|libc-process-globals-getopt|libc-auxv-observation|libc-inet-address|libc-numeric-netdb|libc-random-entropy|libc-memory-search|libc-string-copy|libc-error-strings|libc-strsignal|libc-descriptor-pipeline",
             "libc-vector-io|libc-uio-cxx-linkage",
             "libc-sysv-semaphore|libc-posix-semaphore",
             "libc-sysv-message-shared-memory",

@@ -49,7 +49,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["status_counts"], {"foundation-verified": 8, "planned": 18})
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
-        self.assertEqual(report["verified_slice_count"], 39)
+        self.assertEqual(report["verified_slice_count"], 40)
         self.assertEqual(report["verified_artifact_count"], 147)
         self.assertEqual(report["header_layout_probe_count"], 46)
         self.assertEqual(report["public_header_inventory_count"], 183)
@@ -2824,7 +2824,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         )
         self.assertNotIn("capabilities", artifact)
         slices = text_math["verified_slice"]
-        assert isinstance(slices, list) and len(slices) == 3
+        assert isinstance(slices, list) and len(slices) == 4
         capability = next(
             entry
             for entry in slices
@@ -4478,6 +4478,96 @@ class X86ParityLedgerTests(unittest.TestCase):
             ledger.LedgerError, "closed libc-locale-multibyte command"
         ):
             ledger.validate_ledger(data)
+
+    def test_locale_core_fixed_profile_is_selected_private(self) -> None:
+        data = self.data()
+        text_math = self.family(data, "libc.text-math-locale-stdio")
+        self.assertEqual(text_math["status"], "planned")
+        slices = text_math["verified_slice"]
+        assert isinstance(slices, list) and len(slices) == 4
+        selected = next(
+            entry
+            for entry in slices
+            if isinstance(entry, dict) and entry["id"] == "locale.core-fixed-profile"
+        )
+        self.assertEqual(selected["capabilities"], ["locale.core"])
+        for owner in (
+            "compat/crabc-rs/coverage.toml",
+            "compat/abi/musl-1.2.6/aarch64/libc.a.static.tsv",
+            "compat/ratchet/aarch64-dynamic.json",
+            "libc/src/c_abi.rs",
+            "libc/src/c_abi/x86_64/locale_multibyte.rs",
+            "include/locale.h",
+            "compat/x86_64/locale_profile_header_abi_probe.c",
+            "compat/x86_64/locale_profile_header_abi_probe.cpp",
+            "compat/x86_64/run_locale_profile_header_abi.sh",
+            "compat/x86_64/libc_locale_profile_probe.c",
+            "compat/x86_64/libc_locale_profile_start.S",
+            "compat/x86_64/run_libc_locale_profile.sh",
+            "compat/x86_64/aarch64_parity_inventory.json",
+            "scripts/dev-x86_64.sh",
+        ):
+            self.assertIn(owner, selected["source_owners"])
+        self.assertEqual(
+            {evidence["command"] for evidence in selected["native_evidence"]},
+            {"./scripts/dev-x86_64.sh libc-locale-profile"},
+        )
+        for phrase in (
+            "selected-private `locale.core` fixed-profile slice",
+            "only at the `setlocale`/`localeconv` seam",
+            "C.UTF-8;C;C;C;C;C",
+            "immutable POSIX record",
+            "CHAR_MAX",
+            "Candidate-only negative checks",
+            "no TLS, environment lookup, allocation",
+            "does not claim every broader legacy `locale.core` spelling",
+            "family completion, promotion, or public x86 support",
+        ):
+            self.assertIn(phrase, selected["description"])
+        self.assertTrue(
+            any(
+                oracle["kind"] == "aarch64-contract"
+                and "libc/src/c_abi.rs" in oracle["source"]
+                and "not a behavioral fallback" in oracle["role"]
+                for oracle in selected["oracle"]
+            )
+        )
+
+        changed = self.data()
+        changed_slices = self.family(
+            changed, "libc.text-math-locale-stdio"
+        )["verified_slice"]
+        assert isinstance(changed_slices, list)
+        changed_selected = next(
+            entry
+            for entry in changed_slices
+            if isinstance(entry, dict) and entry["id"] == "locale.core-fixed-profile"
+        )
+        changed_selected["capabilities"] = ["math.complex"]
+        with self.assertRaisesRegex(
+            ledger.LedgerError,
+            "locale.core-fixed-profile must select exactly locale.core",
+        ):
+            ledger.validate_ledger(changed)
+
+        changed = self.data()
+        changed_slices = self.family(
+            changed, "libc.text-math-locale-stdio"
+        )["verified_slice"]
+        assert isinstance(changed_slices, list)
+        changed_selected = next(
+            entry
+            for entry in changed_slices
+            if isinstance(entry, dict) and entry["id"] == "locale.core-fixed-profile"
+        )
+        evidence = changed_selected["native_evidence"]
+        assert isinstance(evidence, list) and isinstance(evidence[0], dict)
+        evidence[0]["command"] = "./scripts/dev-x86_64.sh libc-locale-multibyte"
+        with self.assertRaisesRegex(
+            ledger.LedgerError,
+            "closed libc-locale-profile command",
+        ):
+            ledger.validate_ledger(changed)
 
     def test_locale_wide_iconv_remains_a_closed_non_capability_artifact(
         self,

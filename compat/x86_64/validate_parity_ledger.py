@@ -1604,6 +1604,7 @@ NAMED_LOCALE_MULTIBYTE_SYMBOLS = (
     "wctob",
     "wctomb",
 )
+LOCALE_PROFILE_SYMBOLS = ("setlocale", "localeconv")
 
 BOUNDED_REGEX_SYMBOLS = (
     "regcomp",
@@ -24517,6 +24518,292 @@ def require_named_locale_multibyte_artifact(family: Mapping[str, Any]) -> None:
         )
 
 
+def require_locale_profile_slice(family: Mapping[str, Any]) -> None:
+    """Keep the selected fixed profile distinct from broad locale completion.
+
+    `locale.core` has a deliberately broad historical compatibility symbol
+    inventory. This selected-private record owns only the global fixed-profile
+    `setlocale`/`localeconv` seam, so both the evidence and its exclusions
+    must remain explicit rather than silently inheriting neighboring locale,
+    multibyte, or locale-object artifacts.
+    """
+    slices = require_verified_slices(
+        family.get("verified_slice"),
+        "family[libc.text-math-locale-stdio].verified_slice",
+        family.get("status", ""),
+        list(family.get("capabilities", [])),
+    )
+    matching = [entry for entry in slices if entry.get("id") == "locale.core-fixed-profile"]
+    require(
+        len(matching) == 1,
+        "libc.text-math-locale-stdio must contain exactly one locale.core-fixed-profile slice",
+    )
+    selected = matching[0]
+    require(
+        selected.get("capabilities") == ["locale.core"],
+        "locale.core-fixed-profile must select exactly locale.core",
+    )
+    require(
+        family.get("status") == "planned",
+        "locale.core-fixed-profile must not promote libc.text-math-locale-stdio",
+    )
+
+    description = selected["description"]
+    assert isinstance(description, str)
+    for phrase in (
+        "selected-private `locale.core` fixed-profile slice",
+        "only at the `setlocale`/`localeconv` seam",
+        "C.UTF-8;C;C;C;C;C",
+        "immutable POSIX record",
+        "CHAR_MAX",
+        "Candidate-only negative checks",
+        "no TLS, environment lookup, allocation",
+        "does not claim every broader legacy `locale.core` spelling",
+        "family completion, promotion, or public x86 support",
+        "general locale or legacy-encoding databases",
+    ):
+        require(phrase in description, f"locale.core-fixed-profile description omits {phrase}")
+
+    owners = set(nonempty_strings(
+        selected["source_owners"], "locale.core-fixed-profile.source_owners"
+    ))
+    for owner in (
+        "SCOPE.md",
+        "COMPATIBILITY-PROFILE.md",
+        "compat/upstreams.toml",
+        "compat/crabc-rs/coverage.toml",
+        "compat/abi/musl-1.2.6/aarch64/libc.a.static.tsv",
+        "compat/ratchet/aarch64-dynamic.json",
+        "libc/src/c_abi.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/locale_multibyte.rs",
+        "include/limits.h",
+        "include/locale.h",
+        "include/stddef.h",
+        "include/stdint.h",
+        "compat/x86_64/locale_profile_header_abi_probe.c",
+        "compat/x86_64/locale_profile_header_abi_probe.cpp",
+        "compat/x86_64/run_locale_profile_header_abi.sh",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/libc_locale_profile_probe.c",
+        "compat/x86_64/libc_locale_profile_start.S",
+        "compat/x86_64/run_libc_locale_profile.sh",
+        "compat/x86_64/aarch64_parity_inventory.py",
+        "compat/x86_64/aarch64_parity_inventory.json",
+        "compat/x86_64/tests/test_aarch64_parity_inventory.py",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/README.md",
+        "STATUS.md",
+        "x86-64.md",
+        "scripts/dev-x86_64.sh",
+    ):
+        require(owner in owners, f"locale.core-fixed-profile source owners omit {owner}")
+
+    abi_prerequisites = "\n".join(nonempty_strings(
+        selected["x86_abi_prerequisites"],
+        "locale.core-fixed-profile.x86_abi_prerequisites",
+    ))
+    for phrase in (
+        "signed 32-bit locale category",
+        "96-byte/align-8",
+        "src/locale/setlocale.c",
+        "src/locale/locale_map.c",
+        "src/locale/localeconv.c",
+        "LC_CTYPE",
+        "CHAR_MAX",
+        "atomically locked fixed global category state",
+        "no TLS, syscall, errno, allocator, locale object, locale database, environment",
+        "raw write=1",
+    ):
+        require(phrase in abi_prerequisites, f"locale.core-fixed-profile ABI map omits {phrase}")
+
+    header_prerequisites = "\n".join(nonempty_strings(
+        selected["x86_header_prerequisites"],
+        "locale.core-fixed-profile.x86_header_prerequisites",
+    ))
+    for phrase in (
+        "strict project-first/pinned-musl C11/C++17 matrix",
+        "six category values",
+        "96-byte lconv offsets/types",
+        "setlocale char *(*)(int, const char *)",
+        "localeconv struct lconv *(*)(void)",
+        "unmangled C++ references",
+        "locale_t, locale objects, `_l` APIs",
+        "candidate-only rejection",
+        "without state mutation",
+    ):
+        require(phrase in header_prerequisites, f"locale.core-fixed-profile header map omits {phrase}")
+
+    exports = static_c_abi_export_names(
+        ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+    )
+    for symbol in LOCALE_PROFILE_SYMBOLS:
+        require(symbol in exports, f"locale.core fixed-profile export contract omits {symbol}")
+
+    static_root = (ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs").read_text(
+        encoding="utf-8"
+    )
+    require(
+        '#[path = "locale_multibyte.rs"]\nmod locale_multibyte;' in static_root,
+        "x86 static C ABI must compose the fixed locale-profile leaf",
+    )
+    implementation = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "locale_multibyte.rs"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+        "src/locale/setlocale.c",
+        "src/locale/locale_map.c",
+        "src/locale/localeconv.c",
+        "LC_ALL_RESULT",
+        "POSIX_LCONV",
+        "setlocale(category, \"\")",
+        "run_libc_locale_profile.sh",
+    ):
+        require(snippet in implementation, f"locale_multibyte fixed-profile leaf omits {snippet}")
+    for symbol in LOCALE_PROFILE_SYMBOLS:
+        require(
+            f"fn {symbol}(" in implementation,
+            f"locale_multibyte fixed-profile leaf omits {symbol}",
+        )
+
+    aarch64_source = (ROOT / "libc" / "src" / "c_abi.rs").read_text(encoding="utf-8")
+    for symbol in LOCALE_PROFILE_SYMBOLS:
+        require(
+            f'extern "C" fn {symbol}(' in aarch64_source,
+            f"AArch64 C ABI owner omits {symbol}",
+        )
+    aarch64_static = (
+        ROOT / "compat" / "abi" / "musl-1.2.6" / "aarch64" / "libc.a.static.tsv"
+    ).read_text(encoding="utf-8")
+    aarch64_dynamic = (
+        ROOT / "compat" / "ratchet" / "aarch64-dynamic.json"
+    ).read_text(encoding="utf-8")
+    for symbol in LOCALE_PROFILE_SYMBOLS:
+        require(
+            f"\n{symbol}\t" in aarch64_static,
+            f"pinned AArch64 musl static manifest omits {symbol}",
+        )
+        require(
+            f'"{symbol}": {{' in aarch64_dynamic,
+            f"AArch64 dynamic export ratchet omits {symbol}",
+        )
+
+    header_runner = (
+        ROOT / "compat" / "x86_64" / "run_locale_profile_header_abi.sh"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "C11/C++17",
+        "CXX_SYMBOLS=(setlocale localeconv)",
+        "-nostdinc",
+        "check_cxx_c_linkage",
+        "C-linkage",
+        "no locale objects, `_l` APIs, conversion, collation",
+    ):
+        require(snippet in header_runner, f"locale-profile header runner omits {snippet}")
+    runtime_runner = (
+        ROOT / "compat" / "x86_64" / "run_libc_locale_profile.sh"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "run_locale_profile_header_abi.sh",
+        "-nostdlib -static",
+        "--gc-sections",
+        "candidate retains TLS",
+        "CRABC_LOCALE_PROFILE_FREESTANDING",
+        "__ctype_get_mb_cur_max",
+        "locale-object",
+        "getenv",
+        "setlocale-disassembly",
+    ):
+        require(snippet in runtime_runner, f"libc-locale-profile runner omits {snippet}")
+    fixture = (
+        ROOT / "compat" / "x86_64" / "libc_locale_profile_probe.c"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "locale-profile-fnv1a64",
+        "C.UTF-8;C;C;C;C;C",
+        "CHAR_MAX",
+        "CRABC_LOCALE_PROFILE_FREESTANDING",
+        "setlocale(LC_ALL, \"\")",
+        "en_US.UTF-8",
+        "C;C;C;C;C;C",
+        "C;C.UTF-8;C;C;C;C",
+    ):
+        require(snippet in fixture, f"locale-profile fixture omits closed boundary {snippet}")
+
+    evidence = selected["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-locale-profile"},
+        "locale.core-fixed-profile must use the closed libc-locale-profile command",
+    )
+    scope = evidence[0].get("scope")
+    require(
+        isinstance(scope, str)
+        and all(
+            phrase in scope
+            for phrase in (
+                "strict C11/C++17 declaration/linkage oracle",
+                "C.UTF-8;C;C;C;C;C",
+                "immutable 96-byte lconv contents",
+                "empty environment selection",
+                "unreturned mixed forms",
+                "PT_TLS/dynamic TLS",
+                "conversion, locale-object, allocation, environment, gettext, numeric, time, stdio",
+                "family completion, promotion, or public x86 support",
+            )
+        ),
+        "locale.core-fixed-profile evidence omits its fixed-profile non-promotion boundary",
+    )
+
+    oracle = selected["oracle"]
+    assert isinstance(oracle, list)
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "c-posix"
+            and isinstance(entry.get("role"), str)
+            and all(
+                snippet in entry["role"]
+                for snippet in (
+                    "src/locale/setlocale.c",
+                    "locale_map.c",
+                    "localeconv.c",
+                    "environment lookup",
+                    "allocation paths",
+                )
+            )
+            for entry in oracle
+        ),
+        "locale.core-fixed-profile must retain its pinned musl boundary oracle",
+    )
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "aarch64-contract"
+            and isinstance(entry.get("source"), str)
+            and "libc/src/c_abi.rs" in entry["source"]
+            and "aarch64/libc.a.static.tsv" in entry["source"]
+            and isinstance(entry.get("role"), str)
+            and "not a behavioral fallback" in entry["role"]
+            for entry in oracle
+        ),
+        "locale.core-fixed-profile must retain its bounded AArch64 ownership oracle",
+    )
+
+    dispatcher = (ROOT / "scripts" / "dev-x86_64.sh").read_text(encoding="utf-8")
+    for snippet in (
+        "locale-profile-header-abi)",
+        "libc-locale-profile)",
+        "run_locale_profile_header_abi()",
+        "/workspace/compat/x86_64/run_libc_locale_profile.sh",
+    ):
+        require(snippet in dispatcher, f"x86 dispatcher omits {snippet}")
+
+
 def require_bounded_regex_artifact(family: Mapping[str, Any]) -> None:
     """Keep the bounded C matcher as evidence, not regex-family promotion."""
 
@@ -27234,6 +27521,7 @@ def validate_ledger(
     require_math_special_slice(by_id["libc.text-math-locale-stdio"])
     require_math_elementary_long_double_slice(by_id["libc.text-math-locale-stdio"])
     require_named_locale_multibyte_artifact(by_id["libc.text-math-locale-stdio"])
+    require_locale_profile_slice(by_id["libc.text-math-locale-stdio"])
     require_same_object_static_c_abi_artifact(by_id["compat.abi-differential"])
     require_posix_process_abi_admission_artifact(by_id["compat.posix-process"])
     require_bounded_regex_artifact(by_id["libc.text-math-locale-stdio"])

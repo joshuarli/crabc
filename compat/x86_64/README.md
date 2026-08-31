@@ -238,6 +238,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh utime-header-abi
 ./scripts/dev-x86_64.sh pthread-c11-header-abi
 ./scripts/dev-x86_64.sh ctype-header-abi
+./scripts/dev-x86_64.sh locale-profile-header-abi
 ./scripts/dev-x86_64.sh locale-multibyte-header-abi
 ./scripts/dev-x86_64.sh iconv-header-abi
 ./scripts/dev-x86_64.sh wide-character-header-abi
@@ -482,6 +483,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-math-bit-sign
 ./scripts/dev-x86_64.sh libc-math-elementary-long-double
 ./scripts/dev-x86_64.sh libc-fdim
+./scripts/dev-x86_64.sh libc-locale-profile
 ./scripts/dev-x86_64.sh libc-locale-multibyte
 ./scripts/dev-x86_64.sh libc-locale-wide-iconv
 ./scripts/dev-x86_64.sh libc-wide-character
@@ -4044,6 +4046,26 @@ deliberately not selected. Locale objects,
 environment lookup, collation, iconv, wide streams/stdio, general locale/text
 completion, `libc.so`, CRT, loader, sysroot, promotion, and public x86 support
 remain outside this artifact.
+
+`locale-profile-header-abi` and `libc-locale-profile` are the separate
+selected-private `locale.core` fixed-profile vertical. Unlike the adjacent
+multibyte artifact, it invokes exactly `setlocale` and `localeconv`: a strict
+C11/C++17 project-versus-pinned-musl header proof fixes the six category
+values, the 96-byte `struct lconv` layout, the two function signatures, and
+unmangled C++ references. The shared C fixture then runs first against pinned
+musl 1.2.6 and then a true `-nostdlib -static --gc-sections` candidate. It
+observes initial C state, direct `C`/`POSIX`/`C.UTF-8` selection, every
+category query, the exact CTYPE-only global serialization
+`C.UTF-8;C;C;C;C;C`, and musl's stable immutable POSIX `lconv` record: `.`
+for `decimal_point`, empty remaining text fields, and fourteen `CHAR_MAX`
+monetary char fields. Candidate-only checks reject `setlocale(category, "")`,
+arbitrary map names, and unreturned mixed forms without changing state. The
+final ELF must have no unresolved or dynamic dependency, PT_TLS, multibyte or
+wide conversion, locale object, allocator, environment, gettext, numeric,
+time, stdio, or ambient-runtime boundary. This marks only the fixed
+`setlocale`/`localeconv` seam as selected-private `locale.core`; it does not
+claim every legacy locale spelling, general locale/encoding data, family
+completion, promotion, or public x86 support.
 
 `libc-regex` is a separately recorded `static-c-bounded-regex` artifact, not
 completion of the `pattern.regex` capability. Its project-header C fixture

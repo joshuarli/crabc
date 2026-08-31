@@ -36,6 +36,13 @@
 //! static words; callers requiring one logical conversion must supply a
 //! caller-owned `mbstate_t`. `setlocale` is not async-signal-safe, so a signal
 //! handler must not re-enter it while the interrupted call owns its lock.
+//!
+//! `compat/x86_64/run_libc_locale_profile.sh` is the intentionally narrower
+//! selected-private proof for this leaf's `setlocale`/`localeconv` subset. It
+//! uses no TLS, locale object, conversion, numeric, time, or stdio entry and
+//! must keep the fixed-profile state independent of environment lookup and
+//! allocation. The wider named-locale/multibyte runner remains separate
+//! evidence rather than an implicit expansion of that capability slice.
 
 #[cfg(not(all(
     target_os = "linux",
