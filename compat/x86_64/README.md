@@ -2420,6 +2420,20 @@ unresolved symbols. This selects only
 atfork, full libc/pthread/runtime closure, the fixed mimalloc v3.5.0 Rust port,
 promotion, and public x86 support remain unselected.
 
+`libc-alloca` is deliberately not another allocator wrapper or lifecycle
+claim. It byte-matches project `alloca.h` to pinned musl 1.2.6, including the
+`#define alloca __builtin_alloca` macro and `bits/alltypes.h` size_t request,
+then verifies C/C++ macro use has no callable alloca reference. One
+positive-size dynamic/nested-frame C fixture executes through pinned musl and
+an archive-free `-nostdlib -static` candidate containing only the fixture and
+an exit syscall shim. The candidate proves compiler-emitted aligned stack
+storage and rejects callable alloca, allocator/runtime symbols, PT_TLS,
+interpreter/DT_NEEDED, PLT, unresolved, dynamic-TLS, and backend paths. It
+selects neither `memory.allocator-basic` nor
+`memory.allocator-observability`; alloca zero-size, stack exhaustion/guards,
+VLA/unwind/escaping-pointer behavior, heap allocation/lifecycle/interposition,
+CRT/sysroot, promotion, and public x86 support remain excluded.
+
 `libc-stat-compat` and `libc-credentials` are two private static
 `crabc-libc` semantic-vertical gates over one dependency-free `libc.a`. The
 stat fixture resolves only `stat`, `lstat`, `fstat`, `fstatat`, their

@@ -158,6 +158,17 @@ allocator, observer, startup/TLS, pthread, mapping, clock, and wait owners.
 closure, fixed-mimalloc-port promotion, and public x86 support remain
 unselected.
 
+`./scripts/dev-x86_64.sh libc-alloca` is a separate private
+allocation-adjacent compiler-builtin/header artifact. It byte-matches pinned
+musl 1.2.6's `alloca.h`, checks its C/C++ `__builtin_alloca` macro expansion,
+and runs one positive-size/nested-frame fixture through pinned musl and an
+archive-free `-nostdlib -static` candidate. The candidate permits only its
+fixture and exit syscall shim, proving dynamic stack storage while rejecting a
+callable `alloca` symbol, allocator/runtime symbols, TLS, dynamic linkage, and
+PLT use. It does not select either allocator capability, heap lifecycle or
+interposition, alloca zero-size/VLA/unwind/stack-guard behavior, CRT/sysroot,
+promotion, or public x86 support.
+
 The x86 lane has five private ET_DYN interpreter artifacts inside still-planned
 `ldso.dynamic-runtime`. `ldso-initial-graph` is limited to
 one main PIE -> mid.so -> leaf.so graph, RELATIVE/GLOB_DAT/JUMP_SLOT ELF64

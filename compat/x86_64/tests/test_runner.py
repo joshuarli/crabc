@@ -1424,6 +1424,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "libc-allocator-runtime",
             "libc-allocator-string-duplication",
             "libc-allocator-observability",
+            "libc-alloca",
             "libc-static-c-abi-differential",
             "libc-static-c-abi-same-object-differential|qualification-posix-abi-admission",
             "libc-interface-discovery",

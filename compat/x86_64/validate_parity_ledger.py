@@ -20001,6 +20001,151 @@ def require_allocator_observability_slice(family: Mapping[str, Any]) -> None:
     )
 
 
+def require_alloca_builtin_artifact(family: Mapping[str, Any]) -> None:
+    """Keep compiler-builtin stack evidence below allocator-capability selection."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.c-abi-compat].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [
+        entry for entry in artifacts if entry.get("id") == "static-c-alloca-builtin"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.c-abi-compat must contain exactly one static-c-alloca-builtin artifact",
+    )
+    artifact = matching[0]
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for phrase in (
+        "allocation-adjacent compiler-builtin",
+        "byte-matches pinned musl 1.2.6",
+        "`__builtin_alloca`",
+        "positive-size dynamic-request/nested-frame",
+        "true `-nostdlib -static`",
+        "no crabc archive",
+        "`memory.allocator-basic`",
+        "`memory.allocator-observability`",
+        "callable linkage for the declared alloca spelling",
+        "alloca(0)",
+        "public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"static-c-alloca-builtin description omits {phrase}",
+        )
+
+    owners = set(
+        nonempty_strings(
+            artifact["source_owners"], "static-c-alloca-builtin.source_owners"
+        )
+    )
+    for owner in (
+        "compat/upstreams.toml",
+        "include/alloca.h",
+        "include/bits/alltypes.h",
+        "compat/x86_64/alloca_header_abi_probe.c",
+        "compat/x86_64/alloca_header_abi_probe.cpp",
+        "compat/x86_64/libc_alloca_probe.c",
+        "compat/x86_64/libc_alloca_start.S",
+        "compat/x86_64/run_libc_alloca.sh",
+        "compat/x86_64/tests/test_libc_alloca.py",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/aarch64_parity_inventory.py",
+        "compat/x86_64/aarch64_parity_inventory.json",
+        "compat/x86_64/README.md",
+        "STATUS.md",
+        "x86-64.md",
+        "scripts/dev-x86_64.sh",
+    ):
+        require(owner in owners, f"static-c-alloca-builtin source owners omit {owner}")
+
+    prerequisites = nonempty_strings(
+        artifact["x86_abi_prerequisites"],
+        "static-c-alloca-builtin.x86_abi_prerequisites",
+    )
+    require(
+        any(
+            "include/alloca.h" in item
+            and "bits/alltypes.h" in item
+            and "__builtin_alloca" in item
+            for item in prerequisites
+        ),
+        "static-c-alloca-builtin must retain its musl header/builtin boundary",
+    )
+    require(
+        any(
+            "AArch64 musl header inventory" in item
+            and "219 bytes" in item
+            and "8768404d7cf4af5fb135b1a2ca91765bd2be311ac072e0ec8b68f5cb3e6e0f3e"
+            in item
+            for item in prerequisites
+        ),
+        "static-c-alloca-builtin must retain its AArch64 header-oracle identity",
+    )
+    require(
+        any(
+            "positive runtime request sizes" in item
+            and "16-byte alignment" in item
+            and "function-return boundary" in item
+            for item in prerequisites
+        ),
+        "static-c-alloca-builtin must retain its bounded stack-lifetime evidence",
+    )
+    require(
+        any(
+            "no crabc archive" in item
+            and "TLS image" in item
+            and "dynamic stack-subtraction" in item
+            for item in prerequisites
+        ),
+        "static-c-alloca-builtin must retain its archive-free static boundary",
+    )
+
+    headers = nonempty_strings(
+        artifact["x86_header_prerequisites"],
+        "static-c-alloca-builtin.x86_header_prerequisites",
+    )
+    require(
+        any(
+            "C11 and C++17" in item
+            and "exact builtin macro" in item
+            and "callable C linkage promise" in item
+            for item in headers
+        ),
+        "static-c-alloca-builtin must retain its non-linkage header boundary",
+    )
+
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-alloca"},
+        "static-c-alloca-builtin must use the closed libc-alloca command",
+    )
+    scope = evidence[0].get("scope")
+    require(
+        isinstance(scope, str)
+        and all(
+            phrase in scope
+            for phrase in (
+                "byte-match alloca.h",
+                "C/C++ macro checks",
+                "true no-crabc-archive `-nostdlib -static` candidate",
+                "dynamic stack storage",
+                "public allocator/runtime symbols",
+                "neither memory.allocator-basic nor memory.allocator-observability",
+                "alloca(0)",
+                "public x86 support",
+            )
+        ),
+        "static-c-alloca-builtin evidence must retain its non-promoting boundary",
+    )
+
+
 def require_float_parse_artifact(family: Mapping[str, Any]) -> None:
     """Keep the source-faithful x87 parser below text/math family completion.
 
@@ -27883,6 +28028,7 @@ def validate_ledger(
     require_allocator_wrapper_artifact(by_id["libc.posix-runtime"])
     require_allocator_string_duplication_artifact(by_id["libc.posix-runtime"])
     require_allocator_observability_slice(by_id["libc.c-abi-compat"])
+    require_alloca_builtin_artifact(by_id["libc.c-abi-compat"])
     require_float_parse_artifact(by_id["libc.text-math-locale-stdio"])
     require_float_parse_locale_slice(by_id["libc.text-math-locale-stdio"])
     require_stdio_standard_streams_artifact(by_id["libc.text-math-locale-stdio"])

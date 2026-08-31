@@ -1,18 +1,19 @@
-#ifndef _CRABC_ALLOCA_H
-#define _CRABC_ALLOCA_H
-
-#include <stddef.h>
+#ifndef	_ALLOCA_H
+#define	_ALLOCA_H
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
+#define	__NEED_size_t
+#include <bits/alltypes.h>
+
 void *alloca(size_t);
+
+#define alloca __builtin_alloca
 
 #ifdef __cplusplus
 }
 #endif
-
-#define alloca __builtin_alloca
 
 #endif

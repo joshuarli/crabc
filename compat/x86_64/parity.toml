@@ -7979,6 +7979,42 @@ oracle = [
   { kind = "elf-abi", source = "System V AMD64 psABI", role = "LP64 pointer/size/scalar C calling convention plus strong/weak same-address static ELF symbol contract." },
 ]
 
+[[family.verified_artifact]]
+id = "static-c-alloca-builtin"
+description = "Private native x86 allocation-adjacent compiler-builtin artifact within still-planned `libc.c-abi-compat`. The project `alloca.h` byte-matches pinned musl 1.2.6: it requests size_t from bits/alltypes.h, declares the legacy spelling, and maps `alloca` exactly to `__builtin_alloca`. Pinned-musl and project-header C/C++ compile probes retain that macro with no callable alloca reference. One positive-size dynamic-request/nested-frame C fixture then executes first through pinned musl and then as a true `-nostdlib -static` candidate made with no crabc archive, only the fixture and an exit syscall shim. The candidate proves 16-byte-aligned stack storage and preserved outer-frame bytes while rejecting a callable alloca symbol, public allocator/runtime symbols, PT_TLS, interpreter, DT_NEEDED, PLT, unresolved, dynamic-TLS, and ambient-backend paths. It is not a crabc-libc archive or runtime artifact and does not select `memory.allocator-basic`, `memory.allocator-observability`, callable linkage for the declared alloca spelling, heap allocation/lifecycle/interposition, alloca(0), stack-overflow/guard policy, VLA/unwind behavior, CRT/sysroot, family promotion, or public x86 support."
+source_owners = [
+  "compat/upstreams.toml",
+  "include/alloca.h",
+  "include/bits/alltypes.h",
+  "compat/x86_64/alloca_header_abi_probe.c",
+  "compat/x86_64/alloca_header_abi_probe.cpp",
+  "compat/x86_64/libc_alloca_probe.c",
+  "compat/x86_64/libc_alloca_start.S",
+  "compat/x86_64/run_libc_alloca.sh",
+  "compat/x86_64/tests/test_libc_alloca.py",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "compat/x86_64/aarch64_parity_inventory.py",
+  "compat/x86_64/aarch64_parity_inventory.json",
+  "compat/x86_64/README.md",
+  "STATUS.md",
+  "x86-64.md",
+  "scripts/dev-x86_64.sh",
+]
+x86_abi_prerequisites = [
+  "Pinned musl 1.2.6 include/alloca.h is a macro/header contract, not a callable implementation: it asks bits/alltypes.h for LP64 size_t, retains the legacy void *alloca(size_t) declaration, and expands every ordinary alloca use to __builtin_alloca.",
+  "The tracked AArch64 musl header inventory records the same public alloca.h identity: 219 bytes, 19 lines, and SHA-256 8768404d7cf4af5fb135b1a2ca91765bd2be311ac072e0ec8b68f5cb3e6e0f3e. The native runner requires that oracle row before comparing the project header to the x86 pinned-musl source file.",
+  "The focused Linux/x86-64 SysV probe uses only positive runtime request sizes through 1024 and one nested active outer frame. Its compiler-emitted builtin storage is checked for 16-byte alignment and is read/written only before its allocating function returns; no storage pointer crosses a function-return boundary.",
+  "The true candidate consists solely of one C object and a fixture-local _start exit syscall shim. It has no crabc archive, allocator/backend object, libc startup, TLS image, loader, PLT, or unresolved-symbol dependency; the dynamic stack-subtraction instruction is evidence of the builtin expansion, not a public allocation ABI.",
+]
+x86_header_prerequisites = ["The pinned-musl/project C11 and C++17 probes compare only <alloca.h>'s exact builtin macro, LP64 size_t availability, and void * result type. They intentionally do not turn this one header into installed-header closure, a callable C linkage promise, general allocator API coverage, or public x86 support."]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-alloca", scope = "Pinned-musl/project C/C++ macro checks byte-match alloca.h and reject a callable alloca reference. The same bounded positive-size/nested-frame fixture executes through pinned musl and a true no-crabc-archive `-nostdlib -static` candidate; it proves compiler-emitted dynamic stack storage while rejecting public allocator/runtime symbols, TLS, interpreter/DT_NEEDED, PLT, unresolved, dynamic-TLS, and ambient-backend paths. It selects neither memory.allocator-basic nor memory.allocator-observability, any allocator lifecycle/interposition claim, alloca(0), VLA/unwind/stack-guard behavior, CRT/sysroot, promotion, or public x86 support." }]
+oracle = [
+  { kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "The exact public include/alloca.h macro/declaration shape plus native positive-size/nested-frame compiler-builtin behavior oracle; musl does not make a standalone allocator call selected here." },
+  { kind = "elf-abi", source = "System V AMD64 psABI", role = "LP64 size_t/pointer width, 16-byte stack-alignment observation, static ET_EXEC shape, and syscall-exit register contract for the fixture-only candidate." },
+]
+
 [[family.verified_slice]]
 id = "error.strsignal"
 description = "Private native x86 selected-static-archive slice selecting the bounded AArch64 `error.reporting-termination` capability inside still-planned `libc.c-abi-compat`. This independent musl-compatible leaf supplies exactly strong `strsignal`: immutable process-static C/POSIX/C.UTF-8 descriptions for Linux x86 signal numbers 1 through 64, with `SIGHUP..SIGSYS == 1..31`, `_NSIG == 65`, exact `RT32` through `RT64`, and one shared `Unknown signal` pointer for zero, negative, or out-of-domain values. Musl's `LCTRANS_CUR` step is deliberately fixed to this admitted profile; no locale or message-catalog translation is selected. This selects only the static signal-description sub-boundary, not the broader error-reporting or termination surface: it excludes `strerror`/`strerror_l`, `psignal`, perror/err/warn printing, signal delivery/disposition, process termination, errno, TLS, locks, allocation, syscalls, general diagnostics, libc.so, CRT, loader, sysroot, family completion, or public support. `libc.c-abi-compat` remains planned, promotion/public_support=false is unchanged, and public x86 support remains outside the slice."
