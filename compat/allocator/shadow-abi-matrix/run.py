@@ -4,9 +4,12 @@
 The matrix is intentionally narrow. It snapshots the ordinary C-backed
 ``libc.so`` before the ``native-mimalloc-shadow`` feature rebuild, attests the
 two public ``free`` routes, and runs one deterministic initial-thread C trace
-through each artifact. It is neither a runtime selector nor an allocator
-promotion gate. Lifecycle, cross-owner, DSO, and allocator-layout claims stay
-with their separately bounded evidence.
+through each artifact. Two separately named nonlocal ``realloc`` cases may
+only become accepted after their source-faithful fixtures run against pinned
+musl and the selected shadow artifact with exactly matching streams. It is
+neither a runtime selector nor an allocator promotion gate. General lifecycle,
+cross-owner, DSO, and allocator-layout claims stay with their separately
+bounded evidence.
 """
 
 from __future__ import annotations
@@ -37,10 +40,39 @@ CANONICAL_LOADER = Path("/lib/ld-crabc-aarch64.so.1")
 SELECTED_LIBC_LINK_FLAG = "-l:libc.so"
 LINKER_TRACE_FLAG = "-Wl,--trace"
 OWNED_BUILTINS_RELATIVE_PATH = Path("usr/lib/libcrabc-builtins.a")
+MUSL_ORACLE_COMPILER = "musl-gcc"
+MUSL_ORACLE_VERSION = "1.2.6"
+MUSL_ORACLE_LIBRARY_ROOT = Path("/opt/musl-1.2.6/lib")
+
+
+# These are the only nonlocal realloc cases that may enter this ABI matrix.
+# Their source fixtures are being converted by the paired core/C-test work;
+# until their manifest activation flips to ``required``, the runner refuses to
+# publish a successful matrix report.  Keeping the expected source digest and
+# normal success stream here prevents a later manifest-only edit from relabeling
+# a candidate-only refusal witness as a musl differential.
+EXPECTED_MUSL_DIFFERENTIAL_CASES: tuple[dict[str, object], ...] = (
+    {
+        "id": "foreign-worker-realloc",
+        "fixture_path": "tests/fixtures/native_mimalloc_shadow_foreign_realloc_test.c",
+        "fixture_sha256": "21de25f80f6743c3422c68fc09d452eed24e23b74b00aa49adf9f57c91fe414a",
+        "expected_stdout": "native mimalloc shadow foreign realloc ok\n",
+    },
+    {
+        "id": "post-owner-exit-realloc",
+        "fixture_path": "tests/fixtures/native_mimalloc_owner_exit_realloc_test.c",
+        "fixture_sha256": "9e65b7bfaa7689ed4d8fffecebc9ea6d8bcff5935bad4eca82e24f6d581f83ee",
+        "expected_stdout": "native mimalloc owner exit realloc ok\n",
+    },
+)
 
 
 class MatrixError(RuntimeError):
     """A checked artifact or observable comparison contradicted the contract."""
+
+
+class DeferredMuslDifferentialError(MatrixError):
+    """A required source-faithful row has no runtime evidence yet."""
 
 
 def sha256_file(path: Path) -> str:
@@ -123,6 +155,7 @@ def load_contract() -> dict[str, Any]:
             "fixture",
             "backends",
             "semantic_cases",
+            "musl_differential_required_cases",
             "intentionally_blocked_cases",
             "execution",
             "report",
@@ -143,6 +176,8 @@ def load_contract() -> dict[str, Any]:
             "kernel_baseline",
             "not_a_promotion_gate",
             "not_a_runtime_selector",
+            "not_a_general_lifecycle_claim",
+            "nonlocal_musl_differentials_are_required",
             "purpose",
         },
         "shadow ABI matrix scope",
@@ -152,6 +187,8 @@ def load_contract() -> dict[str, Any]:
         or scope["kernel_baseline"] != "5.10"
         or scope["not_a_promotion_gate"] is not True
         or scope["not_a_runtime_selector"] is not True
+        or scope["not_a_general_lifecycle_claim"] is not True
+        or scope["nonlocal_musl_differentials_are_required"] is not True
     ):
         raise MatrixError("shadow ABI matrix scope drifted")
     require_string(scope["claim"], "shadow ABI matrix scope claim")
@@ -283,10 +320,87 @@ def load_contract() -> dict[str, Any]:
         if comparison == "known-red":
             require_string(case["reason"], "shadow ABI matrix known-red reason")
 
+    musl_differential_cases = contract["musl_differential_required_cases"]
+    if (
+        not isinstance(musl_differential_cases, list)
+        or len(musl_differential_cases) != len(EXPECTED_MUSL_DIFFERENTIAL_CASES)
+    ):
+        raise MatrixError("shadow ABI matrix musl differential case count drifted")
+    seen_musl_differential_cases: set[str] = set()
+    for case, expected_case in zip(musl_differential_cases, EXPECTED_MUSL_DIFFERENTIAL_CASES):
+        if not isinstance(case, dict):
+            raise MatrixError("shadow ABI matrix musl differential case is invalid")
+        require_exact_keys(
+            case,
+            {"id", "fixture", "operations", "classification", "activation", "expected", "reason"},
+            "shadow ABI matrix musl differential case",
+        )
+        case_id = require_string(case["id"], "shadow ABI matrix musl differential case id")
+        expected_id = str(expected_case["id"])
+        if case_id != expected_id or case_id in seen_musl_differential_cases:
+            raise MatrixError("shadow ABI matrix musl differential case inventory drifted")
+        seen_musl_differential_cases.add(case_id)
+        if case["operations"] != ["realloc"]:
+            raise MatrixError("shadow ABI matrix musl differential operations drifted")
+        if case["classification"] != "musl-differential-required":
+            raise MatrixError("shadow ABI matrix musl differential classification drifted")
+        if case["activation"] not in {"deferred", "required"}:
+            raise MatrixError("shadow ABI matrix musl differential activation drifted")
+        require_string(case["reason"], "shadow ABI matrix musl differential reason")
+
+        fixture = case["fixture"]
+        if not isinstance(fixture, dict):
+            raise MatrixError("shadow ABI matrix musl differential fixture is invalid")
+        require_exact_keys(
+            fixture,
+            {
+                "path",
+                "sha256",
+                "language",
+                "compile_flags",
+                "selected_link_flags",
+                "selected_link_libraries",
+                "musl_link_flags",
+                "musl_link_libraries",
+            },
+            "shadow ABI matrix musl differential fixture",
+        )
+        if (
+            fixture["path"] != expected_case["fixture_path"]
+            or fixture["sha256"] != expected_case["fixture_sha256"]
+            or fixture["language"] != "C11"
+            or fixture["compile_flags"] != ["-fPIE", "-pie", "-fno-builtin"]
+            or fixture["selected_link_flags"] != ["-Wl,--allow-shlib-undefined"]
+            or fixture["selected_link_libraries"] != [SELECTED_LIBC_LINK_FLAG]
+            or fixture["musl_link_flags"] != []
+            or fixture["musl_link_libraries"] != ["-lc"]
+        ):
+            raise MatrixError("shadow ABI matrix musl differential fixture provenance drifted")
+        source = ROOT / str(fixture["path"])
+        if not source.is_file():
+            raise MatrixError("shadow ABI matrix musl differential fixture is absent")
+        if case["activation"] == "required" and sha256_file(source) != fixture["sha256"]:
+            raise MatrixError("shadow ABI matrix musl differential fixture provenance drifted")
+
+        expected_streams = case["expected"]
+        if not isinstance(expected_streams, dict):
+            raise MatrixError("shadow ABI matrix musl differential expected streams are invalid")
+        require_exact_keys(
+            expected_streams,
+            {"status", "stdout", "stderr"},
+            "shadow ABI matrix musl differential expected streams",
+        )
+        if expected_streams != {
+            "status": 0,
+            "stdout": expected_case["expected_stdout"],
+            "stderr": "",
+        }:
+            raise MatrixError("shadow ABI matrix musl differential expected stream drifted")
+
     blocked = contract["intentionally_blocked_cases"]
     expected_blocked = {
-        "foreign-worker-free-or-realloc",
-        "owner-exit-and-post-exit-routing",
+        "foreign-worker-free-routing",
+        "owner-exit-routing-outside-selected-realloc",
         "dso-interposition-and-static-linking",
         "address-reuse-usable-size-and-page-layout",
     }
@@ -300,6 +414,8 @@ def load_contract() -> dict[str, Any]:
         case_id = require_string(case["id"], "shadow ABI matrix blocked case id")
         if case_id not in expected_blocked or case_id in observed_blocked or case["status"] != "blocked":
             raise MatrixError("shadow ABI matrix blocked case inventory drifted")
+        if case_id in seen_musl_differential_cases:
+            raise MatrixError("shadow ABI matrix required musl differential was classified as blocked")
         observed_blocked.add(case_id)
         require_string(case["reason"], "shadow ABI matrix blocked case reason")
 
@@ -316,6 +432,7 @@ def load_contract() -> dict[str, Any]:
             "process_attempts_per_backend",
             "watchdog_seconds",
             "runtime_library_selection",
+            "pinned_musl_oracle",
             "link_provenance",
             "artifact_snapshot",
         },
@@ -331,6 +448,21 @@ def load_contract() -> dict[str, Any]:
     ):
         raise MatrixError("shadow ABI matrix execution contract drifted")
     require_string(execution["runtime_library_selection"], "shadow ABI matrix runtime selection")
+    musl_oracle = execution["pinned_musl_oracle"]
+    if not isinstance(musl_oracle, dict):
+        raise MatrixError("shadow ABI matrix musl oracle is invalid")
+    require_exact_keys(
+        musl_oracle,
+        {"compiler", "version", "library_root", "provenance"},
+        "shadow ABI matrix musl oracle",
+    )
+    if (
+        musl_oracle["compiler"] != MUSL_ORACLE_COMPILER
+        or musl_oracle["version"] != MUSL_ORACLE_VERSION
+        or musl_oracle["library_root"] != str(MUSL_ORACLE_LIBRARY_ROOT)
+    ):
+        raise MatrixError("shadow ABI matrix musl oracle contract drifted")
+    require_string(musl_oracle["provenance"], "shadow ABI matrix musl oracle provenance")
     link_provenance = execution["link_provenance"]
     if not isinstance(link_provenance, dict):
         raise MatrixError("shadow ABI matrix link provenance is invalid")
@@ -376,6 +508,25 @@ def load_contract() -> dict[str, Any]:
         raise MatrixError("shadow ABI matrix report contract drifted")
 
     return contract
+
+
+def musl_differential_required_cases(contract: Mapping[str, Any]) -> list[dict[str, Any]]:
+    cases = contract["musl_differential_required_cases"]
+    assert isinstance(cases, list)
+    return [dict(case) for case in cases if isinstance(case, dict)]
+
+
+def active_musl_differential_cases(contract: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """Refuse a passing report while a required nonlocal case remains deferred."""
+
+    cases = musl_differential_required_cases(contract)
+    deferred = [str(case["id"]) for case in cases if case["activation"] == "deferred"]
+    if deferred:
+        raise DeferredMuslDifferentialError(
+            "musl differential required cases are deferred pending source-faithful siblings: "
+            + ", ".join(deferred)
+        )
+    return cases
 
 
 def command_record(
@@ -429,6 +580,40 @@ def command_stream_bytes(record: Mapping[str, Any], stream_name: str, subject: s
         return bytes.fromhex(str(stream["hex"]))
     except (KeyError, ValueError) as error:
         raise MatrixError(f"{subject} has malformed {stream_name}") from error
+
+
+def validate_musl_differential_execution(
+    case: Mapping[str, Any], oracle: Mapping[str, Any], selected: Mapping[str, Any]
+) -> dict[str, Any]:
+    """Require the pinned musl and selected-shadow executions to agree exactly."""
+
+    expected = case["expected"]
+    assert isinstance(expected, dict)
+    expected_status = expected["status"]
+    expected_stdout = str(expected["stdout"]).encode("utf-8")
+    expected_stderr = str(expected["stderr"]).encode("utf-8")
+
+    if oracle.get("kind") != "process" or oracle.get("status") != expected_status:
+        raise MatrixError("pinned musl oracle status differs from the required result")
+    oracle_stdout = command_stream_bytes(oracle, "stdout", "pinned musl oracle")
+    oracle_stderr = command_stream_bytes(oracle, "stderr", "pinned musl oracle")
+    if oracle_stdout != expected_stdout or oracle_stderr != expected_stderr:
+        raise MatrixError("pinned musl oracle stream differs from the required result")
+
+    if selected.get("kind") != "process" or selected.get("status") != oracle.get("status"):
+        raise MatrixError("selected shadow status diverges from pinned musl")
+    selected_stdout = command_stream_bytes(selected, "stdout", "selected shadow")
+    selected_stderr = command_stream_bytes(selected, "stderr", "selected shadow")
+    if selected_stdout != oracle_stdout or selected_stderr != oracle_stderr:
+        raise MatrixError("selected stream diverges from pinned musl")
+
+    return {
+        "id": case["id"],
+        "classification": case["classification"],
+        "expected_status": expected_status,
+        "expected_stdout": expected["stdout"],
+        "expected_stderr": expected["stderr"],
+    }
 
 
 def cargo_fingerprint_features(path: Path) -> list[str]:
@@ -594,6 +779,24 @@ def require_runtime_inputs() -> tuple[Path, Path, Path]:
     return sysroot, compiler, builtins
 
 
+def require_pinned_musl_oracle(contract: Mapping[str, Any]) -> tuple[Path, Path]:
+    """Return only the Docker-pinned musl 1.2.6 compiler and library root."""
+
+    execution = contract["execution"]
+    assert isinstance(execution, dict)
+    oracle = execution["pinned_musl_oracle"]
+    assert isinstance(oracle, dict)
+    compiler_name = str(oracle["compiler"])
+    compiler = shutil.which(compiler_name)
+    if compiler is None:
+        raise MatrixError(f"shadow ABI matrix requires the pinned musl oracle compiler: {compiler_name}")
+    configured_library_root = Path(str(oracle["library_root"])).resolve()
+    observed_library_root = os.environ.get("MUSL_REFERENCE_LIBDIR")
+    if observed_library_root is None or Path(observed_library_root).resolve() != configured_library_root:
+        raise MatrixError("shadow ABI matrix requires the pinned musl 1.2.6 library root")
+    return Path(compiler).resolve(), configured_library_root
+
+
 def matrix_link_command(
     contract: Mapping[str, Any], compiler: Path, libc: Path, builtins: Path, binary: Path
 ) -> list[str]:
@@ -628,6 +831,58 @@ def matrix_link_command(
         *[str(library) for library in fixture["link_libraries"]],
         str(builtins),
         str(provenance["linker_trace_flag"]),
+        "-o",
+        str(binary),
+    ]
+
+
+def case_fixture_path(case: Mapping[str, Any]) -> Path:
+    fixture = case["fixture"]
+    assert isinstance(fixture, dict)
+    return ROOT / str(fixture["path"])
+
+
+def musl_differential_selected_link_command(
+    case: Mapping[str, Any], compiler: Path, libc: Path, builtins: Path, binary: Path
+) -> list[str]:
+    """Build one required case through the attested selected-shadow libc."""
+
+    fixture = case["fixture"]
+    assert isinstance(fixture, dict)
+    source = case_fixture_path(case)
+    return [
+        str(compiler),
+        "-std=c11",
+        *[str(flag) for flag in fixture["compile_flags"]],
+        "-nodefaultlibs",
+        "-I",
+        str(ROOT / "include"),
+        "-L",
+        str(libc.parent),
+        *[str(flag) for flag in fixture["selected_link_flags"]],
+        str(source),
+        *[str(library) for library in fixture["selected_link_libraries"]],
+        str(builtins),
+        LINKER_TRACE_FLAG,
+        "-o",
+        str(binary),
+    ]
+
+
+def musl_differential_oracle_link_command(
+    case: Mapping[str, Any], compiler: Path, binary: Path
+) -> list[str]:
+    """Build the same source with the pinned musl oracle, never crabc headers."""
+
+    fixture = case["fixture"]
+    assert isinstance(fixture, dict)
+    return [
+        str(compiler),
+        "-std=c11",
+        *[str(flag) for flag in fixture["compile_flags"]],
+        *[str(flag) for flag in fixture["musl_link_flags"]],
+        str(case_fixture_path(case)),
+        *[str(library) for library in fixture["musl_link_libraries"]],
         "-o",
         str(binary),
     ]
@@ -869,6 +1124,92 @@ def run_backend(
     }
 
 
+def scrubbed_loader_environment() -> dict[str, str]:
+    environment = dict(os.environ)
+    for key in ("LD_AUDIT", "LD_LIBRARY_PATH", "LD_PRELOAD"):
+        environment.pop(key, None)
+    return environment
+
+
+def run_musl_differential_case(
+    contract: Mapping[str, Any],
+    case: Mapping[str, Any],
+    musl_compiler: Path,
+    musl_library_root: Path,
+    native_libc: Path,
+    sysroot: Path,
+    compiler: Path,
+    builtins: Path,
+    output_root: Path,
+) -> dict[str, Any]:
+    """Run one activated source-faithful fixture against musl and selected shadow."""
+
+    execution = contract["execution"]
+    assert isinstance(execution, dict)
+    case_root = output_root / "musl-differentials" / str(case["id"])
+    case_root.mkdir(parents=True, exist_ok=True)
+
+    oracle_binary = case_root / "pinned-musl"
+    oracle_command = musl_differential_oracle_link_command(case, musl_compiler, oracle_binary)
+    oracle_build = command_record(oracle_command)
+    if oracle_build["kind"] != "process" or oracle_build["status"] != 0:
+        raise MatrixError(f"{case['id']} pinned musl fixture compilation failed")
+    oracle_run = command_record(
+        (str(oracle_binary),),
+        env=scrubbed_loader_environment(),
+        timeout_seconds=int(execution["watchdog_seconds"]),
+    )
+    # Check the oracle against the manifest before an equivalent candidate
+    # stream can hide a changed test fixture.
+    validate_musl_differential_execution(case, oracle_run, oracle_run)
+
+    selected_binary = case_root / "selected-shadow"
+    selected_command = musl_differential_selected_link_command(
+        case, compiler, native_libc, builtins, selected_binary
+    )
+    driver_plan = printed_driver_link_plan(compiler, selected_command)
+    link_plan = audit_selected_link_plan(driver_plan, sysroot, native_libc, builtins)
+    selected_build = command_record(selected_command)
+    if selected_build["kind"] != "process" or selected_build["status"] != 0:
+        raise MatrixError(f"{case['id']} selected shadow fixture compilation failed")
+    linker_trace = audit_selected_linker_trace(selected_build, native_libc, sysroot)
+    selected_elf = audit_fixture(selected_binary, contract)
+    selected_environment = scrubbed_loader_environment()
+    selected_environment["LD_LIBRARY_PATH"] = str(native_libc.parent)
+    selected_run = command_record(
+        (str(selected_binary),),
+        env=selected_environment,
+        timeout_seconds=int(execution["watchdog_seconds"]),
+    )
+    comparison = validate_musl_differential_execution(case, oracle_run, selected_run)
+
+    return {
+        **comparison,
+        "fixture": file_record(case_fixture_path(case)),
+        "pinned_musl": {
+            "compiler": relative_path(musl_compiler),
+            "library_root": relative_path(musl_library_root),
+            "command": oracle_command,
+            "binary": file_record(oracle_binary),
+            "build": oracle_build,
+            "run": oracle_run,
+        },
+        "selected_shadow": {
+            "command": selected_command,
+            "binary": file_record(selected_binary),
+            "build": selected_build,
+            "driver_link_plan": driver_plan,
+            "elf": selected_elf,
+            "link_provenance": {
+                "driver_plan": link_plan,
+                "linker_trace": linker_trace,
+            },
+            "run": selected_run,
+            "runtime_library": file_record(native_libc),
+        },
+    }
+
+
 def report_base(contract: Mapping[str, Any]) -> dict[str, Any]:
     report = contract["report"]
     assert isinstance(report, dict)
@@ -879,13 +1220,17 @@ def report_base(contract: Mapping[str, Any]) -> dict[str, Any]:
         "contract": file_record(CONTRACT_PATH),
         "fixture": file_record(FIXTURE_PATH),
         "intentionally_blocked_cases": contract["intentionally_blocked_cases"],
+        "musl_differential_required_cases": contract["musl_differential_required_cases"],
         "backends": [],
         "semantic_comparisons": [],
+        "musl_differential_cases": [],
     }
 
 
 def execute_matrix(contract: Mapping[str, Any], target_dir: Path, output_root: Path) -> dict[str, Any]:
+    musl_differential_cases = active_musl_differential_cases(contract)
     sysroot, compiler, builtins = require_runtime_inputs()
+    musl_compiler, musl_library_root = require_pinned_musl_oracle(contract)
     legacy_snapshot = load_ordinary_snapshot(contract, LEGACY_LIBC)
     native_backend = backend_contract(contract, "native-rust-mimalloc-shadow")
     native_libc = target_dir / "libc.so"
@@ -925,6 +1270,20 @@ def execute_matrix(contract: Mapping[str, Any], target_dir: Path, output_root: P
         if comparison == "known-red":
             record["reason"] = case["reason"]
         comparisons.append(record)
+    musl_differentials = [
+        run_musl_differential_case(
+            contract,
+            case,
+            musl_compiler,
+            musl_library_root,
+            native_libc,
+            sysroot,
+            compiler,
+            builtins,
+            output_root,
+        )
+        for case in musl_differential_cases
+    ]
     return {
         "runtime": {
             "sysroot": relative_path(sysroot),
@@ -942,8 +1301,10 @@ def execute_matrix(contract: Mapping[str, Any], target_dir: Path, output_root: P
         "comparison_summary": {
             "known_red_case_count": known_red_case_count,
             "matched_case_count": len(comparisons) - known_red_case_count,
+            "musl_differential_required_case_count": len(musl_differentials),
         },
         "semantic_comparisons": comparisons,
+        "musl_differential_cases": musl_differentials,
     }
 
 
@@ -972,7 +1333,14 @@ def main(arguments: Sequence[str] | None = None) -> int:
                     {
                         "contract": relative_path(CONTRACT_PATH),
                         "fixture": relative_path(FIXTURE_PATH),
-                        "status": "passed",
+                        "status": "contract-valid",
+                        "musl_differential_activations": [
+                            {
+                                "id": case["id"],
+                                "activation": case["activation"],
+                            }
+                            for case in musl_differential_required_cases(contract)
+                        ],
                     },
                     sort_keys=True,
                 )
@@ -1005,7 +1373,11 @@ def main(arguments: Sequence[str] | None = None) -> int:
         except MatrixError as error:
             report["first_fact"] = {
                 "kind": "first-failure",
-                "stage": "harness-or-execution",
+                "stage": (
+                    "required-musl-differential"
+                    if isinstance(error, DeferredMuslDifferentialError)
+                    else "harness-or-execution"
+                ),
                 "message": str(error),
             }
         write_json(args.report, report)

@@ -22,7 +22,7 @@ SPEC.loader.exec_module(RUNNER)
 
 
 class ShadowAbiMatrixContractTests(unittest.TestCase):
-    def test_checked_in_contract_has_the_closed_local_trace_and_explicit_blocks(self) -> None:
+    def test_checked_in_contract_has_the_closed_local_trace_and_deferred_required_nonlocal_cases(self) -> None:
         contract = RUNNER.load_contract()
         self.assertEqual(
             RUNNER.expected_trace(contract),
@@ -37,11 +37,38 @@ class ShadowAbiMatrixContractTests(unittest.TestCase):
                 "free-local-preserves-errno",
             ],
         )
+        required = {
+            case["id"]: case for case in contract["musl_differential_required_cases"]
+        }
+        self.assertEqual(
+            set(required),
+            {"foreign-worker-realloc", "post-owner-exit-realloc"},
+        )
+        self.assertEqual(
+            required["foreign-worker-realloc"]["fixture"]["path"],
+            "tests/fixtures/native_mimalloc_shadow_foreign_realloc_test.c",
+        )
+        self.assertEqual(
+            required["foreign-worker-realloc"]["expected"]["stdout"],
+            "native mimalloc shadow foreign realloc ok\n",
+        )
+        self.assertEqual(
+            required["post-owner-exit-realloc"]["fixture"]["path"],
+            "tests/fixtures/native_mimalloc_owner_exit_realloc_test.c",
+        )
+        self.assertEqual(
+            required["post-owner-exit-realloc"]["expected"]["stdout"],
+            "native mimalloc owner exit realloc ok\n",
+        )
+        self.assertTrue(
+            all(case["classification"] == "musl-differential-required" for case in required.values())
+        )
+        self.assertTrue(all(case["activation"] == "deferred" for case in required.values()))
         self.assertEqual(
             {case["id"] for case in contract["intentionally_blocked_cases"]},
             {
-                "foreign-worker-free-or-realloc",
-                "owner-exit-and-post-exit-routing",
+                "foreign-worker-free-routing",
+                "owner-exit-routing-outside-selected-realloc",
                 "dso-interposition-and-static-linking",
                 "address-reuse-usable-size-and-page-layout",
             },
@@ -105,13 +132,165 @@ class ShadowAbiMatrixContractTests(unittest.TestCase):
             ["/unexpected"],
         )
 
-    def test_report_base_carries_the_blocked_cases_without_turning_them_into_passes(self) -> None:
+    def test_nonlocal_realloc_cases_cannot_be_classified_as_intentional_divergences(self) -> None:
+        contract = RUNNER.load_contract()
+        changed_classification = copy.deepcopy(contract)
+        changed_classification["musl_differential_required_cases"][0]["classification"] = "known-red"
+        with mock.patch.object(RUNNER, "read_json", return_value=changed_classification), self.assertRaisesRegex(
+            RUNNER.MatrixError, "musl differential classification drifted"
+        ):
+            RUNNER.load_contract()
+
+        hidden_as_blocked = copy.deepcopy(contract)
+        hidden_as_blocked["intentionally_blocked_cases"][0]["id"] = "foreign-worker-realloc"
+        with mock.patch.object(RUNNER, "read_json", return_value=hidden_as_blocked), self.assertRaisesRegex(
+            RUNNER.MatrixError, "blocked case inventory drifted"
+        ):
+            RUNNER.load_contract()
+
+        changed_output = copy.deepcopy(contract)
+        changed_output["musl_differential_required_cases"][1]["expected"]["stdout"] = "accepted\n"
+        with mock.patch.object(RUNNER, "read_json", return_value=changed_output), self.assertRaisesRegex(
+            RUNNER.MatrixError, "musl differential expected stream drifted"
+        ):
+            RUNNER.load_contract()
+
+    def test_deferred_nonlocal_cases_block_runtime_acceptance_and_activation_requires_fixture_provenance(self) -> None:
+        contract = RUNNER.load_contract()
+        with self.assertRaisesRegex(RUNNER.MatrixError, "deferred pending source-faithful siblings"):
+            RUNNER.active_musl_differential_cases(contract)
+
+        activated = copy.deepcopy(contract)
+        activated["musl_differential_required_cases"][0]["activation"] = "required"
+        original_sha256_file = RUNNER.sha256_file
+
+        def wrong_source_sha256(path: Path) -> str:
+            if path == RUNNER.case_fixture_path(activated["musl_differential_required_cases"][0]):
+                return "0" * 64
+            return original_sha256_file(path)
+
+        with mock.patch.object(RUNNER, "read_json", return_value=activated), mock.patch.object(
+            RUNNER, "sha256_file", side_effect=wrong_source_sha256
+        ), self.assertRaisesRegex(RUNNER.MatrixError, "fixture provenance drifted"):
+            RUNNER.load_contract()
+
+        def source_faithful_sha256(path: Path) -> str:
+            for case in activated["musl_differential_required_cases"]:
+                fixture = case["fixture"]
+                if path == RUNNER.ROOT / fixture["path"]:
+                    return fixture["sha256"]
+            return original_sha256_file(path)
+
+        for case in activated["musl_differential_required_cases"]:
+            case["activation"] = "required"
+        with mock.patch.object(RUNNER, "read_json", return_value=activated), mock.patch.object(
+            RUNNER, "sha256_file", side_effect=source_faithful_sha256
+        ):
+            activated_contract = RUNNER.load_contract()
+        self.assertEqual(
+            [case["id"] for case in RUNNER.active_musl_differential_cases(activated_contract)],
+            ["foreign-worker-realloc", "post-owner-exit-realloc"],
+        )
+
+    def test_musl_differential_requires_the_expected_oracle_and_selected_streams(self) -> None:
+        contract = RUNNER.load_contract()
+        case = contract["musl_differential_required_cases"][0]
+        expected_stdout = case["expected"]["stdout"].encode("utf-8")
+        reference = {
+            "kind": "process",
+            "status": 0,
+            "stdout": RUNNER.bytes_record(expected_stdout),
+            "stderr": RUNNER.bytes_record(b""),
+        }
+        selected = copy.deepcopy(reference)
+        result = RUNNER.validate_musl_differential_execution(case, reference, selected)
+        self.assertEqual(result["classification"], "musl-differential-required")
+        self.assertEqual(result["expected_stdout"], expected_stdout.decode("utf-8"))
+
+        selected["stdout"] = RUNNER.bytes_record(b"different\n")
+        with self.assertRaisesRegex(RUNNER.MatrixError, "selected stream diverges"):
+            RUNNER.validate_musl_differential_execution(case, reference, selected)
+
+        wrong_reference = copy.deepcopy(reference)
+        wrong_reference["stdout"] = RUNNER.bytes_record(b"wrong oracle\n")
+        with self.assertRaisesRegex(RUNNER.MatrixError, "oracle stream differs"):
+            RUNNER.validate_musl_differential_execution(case, wrong_reference, reference)
+
+    def test_nonlocal_differential_build_commands_select_only_the_case_fixture_and_oracle(self) -> None:
+        contract = RUNNER.load_contract()
+        case = contract["musl_differential_required_cases"][0]
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            selected_root = root / "selected"
+            selected_libc = selected_root / "libc.so"
+            builtins = root / "sysroot/usr/lib/libcrabc-builtins.a"
+            selected_root.mkdir()
+            builtins.parent.mkdir(parents=True)
+            selected_libc.write_bytes(b"selected")
+            builtins.write_bytes(b"builtins")
+            selected = RUNNER.musl_differential_selected_link_command(
+                case,
+                root / "sysroot/bin/crabc-cc",
+                selected_libc,
+                builtins,
+                root / "selected-case",
+            )
+            self.assertIn(str(RUNNER.case_fixture_path(case)), selected)
+            self.assertNotIn(str(RUNNER.FIXTURE_PATH), selected)
+            self.assertIn("-nodefaultlibs", selected)
+            self.assertIn(RUNNER.SELECTED_LIBC_LINK_FLAG, selected)
+            self.assertEqual(RUNNER.link_plan_search_paths(selected), [str(selected_root)])
+
+            oracle = RUNNER.musl_differential_oracle_link_command(
+                case, Path("/opt/musl-1.2.6/bin/musl-gcc"), root / "oracle-case"
+            )
+            self.assertEqual(oracle[0], "/opt/musl-1.2.6/bin/musl-gcc")
+            self.assertIn(str(RUNNER.case_fixture_path(case)), oracle)
+            self.assertNotIn("-nodefaultlibs", oracle)
+            self.assertNotIn(RUNNER.SELECTED_LIBC_LINK_FLAG, oracle)
+            self.assertIn("-lc", oracle)
+
+    def test_required_nonlocal_differentials_reject_an_unpinned_musl_environment(self) -> None:
+        contract = RUNNER.load_contract()
+        with mock.patch.object(RUNNER.shutil, "which", return_value="/opt/musl-1.2.6/bin/musl-gcc"), mock.patch.dict(
+            RUNNER.os.environ, {"MUSL_REFERENCE_LIBDIR": "/opt/musl-1.2.6/lib"}, clear=False
+        ):
+            compiler, library_root = RUNNER.require_pinned_musl_oracle(contract)
+        self.assertEqual(compiler, Path("/opt/musl-1.2.6/bin/musl-gcc"))
+        self.assertEqual(library_root, Path("/opt/musl-1.2.6/lib"))
+
+        with mock.patch.object(RUNNER.shutil, "which", return_value="/usr/bin/musl-gcc"), mock.patch.dict(
+            RUNNER.os.environ, {"MUSL_REFERENCE_LIBDIR": "/usr/lib"}, clear=False
+        ), self.assertRaisesRegex(RUNNER.MatrixError, "pinned musl 1.2.6 library root"):
+            RUNNER.require_pinned_musl_oracle(contract)
+
+    def test_deferred_nonlocal_requirements_make_run_report_failed_without_runtime_inputs(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            report_path = Path(temporary) / "shadow-matrix.json"
+            with mock.patch.object(RUNNER, "require_runtime_inputs") as runtime_inputs:
+                self.assertEqual(RUNNER.main(["run", "--report", str(report_path)]), 1)
+            runtime_inputs.assert_not_called()
+            report = json.loads(report_path.read_text(encoding="utf-8"))
+        self.assertEqual(report["status"], "failed")
+        self.assertEqual(report["first_fact"]["kind"], "first-failure")
+        self.assertEqual(report["first_fact"]["stage"], "required-musl-differential")
+        self.assertIn("deferred pending source-faithful siblings", report["first_fact"]["message"])
+        self.assertEqual(report["musl_differential_cases"], [])
+
+    def test_report_base_carries_blocked_and_deferred_required_cases_without_turning_them_into_passes(self) -> None:
         contract = RUNNER.load_contract()
         report = RUNNER.report_base(contract)
         self.assertEqual(report["status"], "failed")
         self.assertEqual(report["semantic_comparisons"], [])
         self.assertEqual(report["intentionally_blocked_cases"], contract["intentionally_blocked_cases"])
         self.assertTrue(all(case["status"] == "blocked" for case in report["intentionally_blocked_cases"]))
+        self.assertEqual(
+            report["musl_differential_required_cases"], contract["musl_differential_required_cases"]
+        )
+        self.assertEqual(report["musl_differential_cases"], [])
+        self.assertTrue(
+            all(case["activation"] == "deferred" for case in report["musl_differential_required_cases"])
+        )
 
     def test_known_reds_are_recorded_as_differences_not_matching_passes(self) -> None:
         contract = RUNNER.load_contract()

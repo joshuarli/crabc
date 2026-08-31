@@ -2,12 +2,14 @@
   "format": 1,
   "schema": "crabc-libc-native-mimalloc-shadow-abi-matrix",
   "scope": {
-    "claim": "one deterministic local C malloc/free/realloc semantic comparison between separately attested ordinary C-backed and nondefault Rust-native libc artifacts",
+    "claim": "one deterministic local C malloc/free/realloc semantic comparison between separately attested ordinary C-backed and nondefault Rust-native libc artifacts, plus two source-faithful nonlocal realloc requirements that can become musl differentials only after their exact fixtures and runtime evidence are activated",
     "target": "linux-aarch64-little-endian",
     "kernel_baseline": "5.10",
     "not_a_promotion_gate": true,
     "not_a_runtime_selector": true,
-    "purpose": "Preserve the ordinary libc artifact before native-mimalloc-shadow selection, then run the same normalized public C trace through both explicitly selected dynamic libc artifacts and record exact semantic matches or named known reds."
+    "not_a_general_lifecycle_claim": true,
+    "nonlocal_musl_differentials_are_required": true,
+    "purpose": "Preserve the ordinary libc artifact before native-mimalloc-shadow selection, then run the same normalized public C trace through both explicitly selected dynamic libc artifacts and record exact semantic matches or named known reds. The two named nonlocal realloc cases remain failed/deferred until their exact source-faithful fixtures run through pinned musl 1.2.6 and the selected native artifact with identical required streams."
   },
   "fixture": {
     "path": "tests/fixtures/native_mimalloc_shadow_backend_matrix_test.c",
@@ -146,16 +148,86 @@
       "comparison": "match"
     }
   ],
-  "intentionally_blocked_cases": [
+  "musl_differential_required_cases": [
     {
-      "id": "foreign-worker-free-or-realloc",
-      "status": "blocked",
-      "reason": "The candidate-only `native_mimalloc_shadow_foreign_realloc_test.c` witness keeps a foreign owner live, requires its reallocation to fail with ENOMEM while preserving the source prefix, then releases that exact source through generic pointer-first free. Pinned musl permits the live cross-thread reallocation, so this intentionally divergent native-only route is excluded from the paired local ABI comparison."
+      "id": "foreign-worker-realloc",
+      "fixture": {
+        "path": "tests/fixtures/native_mimalloc_shadow_foreign_realloc_test.c",
+        "sha256": "21de25f80f6743c3422c68fc09d452eed24e23b74b00aa49adf9f57c91fe414a",
+        "language": "C11",
+        "compile_flags": [
+          "-fPIE",
+          "-pie",
+          "-fno-builtin"
+        ],
+        "selected_link_flags": [
+          "-Wl,--allow-shlib-undefined"
+        ],
+        "selected_link_libraries": [
+          "-l:libc.so"
+        ],
+        "musl_link_flags": [],
+        "musl_link_libraries": [
+          "-lc"
+        ]
+      },
+      "operations": [
+        "realloc"
+      ],
+      "classification": "musl-differential-required",
+      "activation": "deferred",
+      "expected": {
+        "status": 0,
+        "stdout": "native mimalloc shadow foreign realloc ok\n",
+        "stderr": ""
+      },
+      "reason": "This one synchronized live-owner foreign realloc must remain a source-faithful pinned-musl differential. Its current activation is deferred until the paired core and fixture siblings land; an intentional-divergence or native-only acceptance is forbidden."
     },
     {
-      "id": "owner-exit-and-post-exit-routing",
+      "id": "post-owner-exit-realloc",
+      "fixture": {
+        "path": "tests/fixtures/native_mimalloc_owner_exit_realloc_test.c",
+        "sha256": "9e65b7bfaa7689ed4d8fffecebc9ea6d8bcff5935bad4eca82e24f6d581f83ee",
+        "language": "C11",
+        "compile_flags": [
+          "-fPIE",
+          "-pie",
+          "-fno-builtin"
+        ],
+        "selected_link_flags": [
+          "-Wl,--allow-shlib-undefined"
+        ],
+        "selected_link_libraries": [
+          "-l:libc.so"
+        ],
+        "musl_link_flags": [],
+        "musl_link_libraries": [
+          "-lc"
+        ]
+      },
+      "operations": [
+        "realloc"
+      ],
+      "classification": "musl-differential-required",
+      "activation": "deferred",
+      "expected": {
+        "status": 0,
+        "stdout": "native mimalloc owner exit realloc ok\n",
+        "stderr": ""
+      },
+      "reason": "This one serialized post-owner-exit realloc must remain a source-faithful pinned-musl differential. Its current activation is deferred until the paired core and fixture siblings land; an intentional-divergence or native-only acceptance is forbidden."
+    }
+  ],
+  "intentionally_blocked_cases": [
+    {
+      "id": "foreign-worker-free-routing",
       "status": "blocked",
-      "reason": "Owner exit and deferred release have their own typed lifecycle evidence; post-exit reallocation is deliberately refused rather than routed. This local ABI matrix must not manufacture a general lifecycle comparison."
+      "reason": "General foreign-worker free routing remains outside this bounded matrix. The named `foreign-worker-realloc` fixture above is not part of this block: it is a required pinned-musl differential once activated."
+    },
+    {
+      "id": "owner-exit-routing-outside-selected-realloc",
+      "status": "blocked",
+      "reason": "General owner-exit, deferred-release, and cross-owner routing remain outside this bounded matrix. The named `post-owner-exit-realloc` fixture above is not part of this block: it is a required pinned-musl differential once activated."
     },
     {
       "id": "dso-interposition-and-static-linking",
@@ -178,6 +250,12 @@
     "process_attempts_per_backend": 1,
     "watchdog_seconds": 15,
     "runtime_library_selection": "LD_LIBRARY_PATH contains exactly the directory holding the selected backend libc.so after inherited loader overrides are removed, and the fixture carries no RPATH or RUNPATH that could select another libc.so",
+    "pinned_musl_oracle": {
+      "compiler": "musl-gcc",
+      "version": "1.2.6",
+      "library_root": "/opt/musl-1.2.6/lib",
+      "provenance": "The pinned Docker image builds musl 1.2.6 from the SHA-256-verified upstream release under /opt/musl-1.2.6 and exposes its wrapper as musl-gcc; the host/system musl is not an oracle."
+    },
     "link_provenance": {
       "driver_default_libraries": [],
       "driver_opt_out": "-nodefaultlibs",
