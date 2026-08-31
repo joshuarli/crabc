@@ -119,8 +119,7 @@ grep -Eq 'GLOBAL +HIDDEN +.*__crabc_x86_static_tls_bootstrap$' "$archive_elf_sym
 # The shared archive's separately evidenced C11 plain synchronization and TSD
 # siblings own mtx/cnd and pthread-key/C11-TSS operations, so this lifecycle
 # runner deliberately does not reject those independently selected exports.
-for unselected in thrd_yield \
-    pthread_mutexattr_init pthread_mutexattr_destroy \
+for unselected in pthread_mutexattr_init pthread_mutexattr_destroy \
     pthread_mutexattr_settype pthread_mutex_timedlock pthread_mutex_consistent \
     pthread_condattr_init pthread_condattr_destroy pthread_condattr_setclock \
     pthread_condattr_getclock pthread_condattr_setpshared pthread_condattr_getpshared \

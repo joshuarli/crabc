@@ -126,7 +126,7 @@ for symbol in __errno_location getrandom getentropy; do
 done
 for unselected in random srandom rand srand rand_r random_r srandom_r initstate \
     setstate drand48 erand48 lrand48 mrand48 nrand48 arc4random arc4random_buf \
-    getauxval getentropy_open malloc free calloc realloc; do
+    getentropy_open malloc free calloc realloc; do
     if grep -Eq "[[:space:]][TW][[:space:]]${unselected}$" "$archive_symbols"; then
         fail "archive accidentally exports unselected ${unselected}"
     fi

@@ -6,7 +6,8 @@
 # crabc archive. It proves only thrd_sleep's zero/-1/-2 convention and its
 # direct clock_nanosleep=230 implementation or delegation without errno
 # mutation. Local raw timer calls merely trigger deterministic interruption.
-# It is not cancellation, thrd_yield, synchronization, TSS, lifecycle,
+# It does not prove the separately recorded thrd_yield adapter, cancellation,
+# synchronization, TSS, lifecycle,
 # libc.so, CRT, loader, sysroot, or public x86 support.
 set -euo pipefail
 
@@ -153,8 +154,7 @@ done
  # The shared archive's separately evidenced normal private pthread-mutex,
  # private condition, and TSD lifecycle blocks are deliberately outside this
  # direct sleep adapter.
-for unselected in thrd_yield \
-    pthread_mutexattr_init pthread_mutexattr_destroy \
+for unselected in pthread_mutexattr_init pthread_mutexattr_destroy \
     pthread_mutexattr_settype pthread_mutex_timedlock pthread_mutex_consistent \
     pthread_condattr_init pthread_condattr_destroy pthread_condattr_setclock \
     pthread_condattr_getclock pthread_condattr_setpshared pthread_condattr_getpshared \
