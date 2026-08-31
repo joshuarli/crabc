@@ -1112,6 +1112,394 @@ fn claim_after_stale_live_snapshot(
     (model, claim)
 }
 
+// The stale-snapshot witness above proves the one claimed continuation after
+// owner unown. This model adds the unresolved terminal-release race: a
+// producer observed a live owner before unown, but may not complete an
+// `allow_collect=true` source CAS after PageMap release has closed that page.
+const ALLOW_COLLECT_TERMINAL_RACE_GENERATION: u32 = 1;
+
+/// One foreign pointer-dispatch observation taken while the source page still
+/// names a live owner. It intentionally carries only the fixed address-free
+/// source block; PageMap lookup geometry remains outside this atomic model.
+struct AllowCollectTerminalRaceSnapshot {
+    block_index: usize,
+}
+
+/// The source outcome after a live observation races terminal retirement.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum AllowCollectTerminalProducerOutcome {
+    /// The producer pinned the live generation and claimed the unowned head.
+    /// Its claimed block must be recollected before terminal release retries.
+    ClaimedForRecollection,
+    /// Terminal retirement closed the observed generation before the producer
+    /// could enter `mi_free_block_mt`; no source publication occurred.
+    RejectedBeforePageMapRelease,
+}
+
+/// The terminal owner's first attempt after it released the empty source
+/// low-bit head.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum AllowCollectTerminalOwnerOutcome {
+    /// The terminal owner closed the generation and released PageMap state.
+    Released,
+    /// A producer had already pinned the generation. It must first publish
+    /// and then drive its claimed source head through recollection.
+    ProducerPinned,
+}
+
+/// Finite source-atomic model for one live observation, source unown, and
+/// terminal PageMap release race.
+///
+/// It uses the production lifetime admission/retirement helpers and the
+/// exact `mi_free_block_mt(..., allow_collect=true)` and owner-unown head
+/// transitions. The PageMap fields remain an external one-entry lifetime
+/// record: their only purpose is to prove that a successful source CAS occurs
+/// before, never after, terminal page release.
+struct AllowCollectTerminalRaceModel {
+    lifetime: AtomicUsize,
+    head: AtomicUsize,
+    blocks: ModelBlocks,
+    owner_identity: AtomicUsize,
+    live_snapshot_count: AtomicUsize,
+    owner_unown_count: AtomicUsize,
+    producer_admission_count: AtomicUsize,
+    producer_claim_count: AtomicUsize,
+    producer_rejection_count: AtomicUsize,
+    page_map_root: AtomicUsize,
+    page_map_entry: AtomicUsize,
+    metadata: AtomicUsize,
+    terminal_state: AtomicUsize,
+    terminal_release_count: AtomicUsize,
+}
+
+impl AllowCollectTerminalRaceModel {
+    fn new() -> Self {
+        Self {
+            lifetime: AtomicUsize::new(live_remote_page_word(
+                ALLOW_COLLECT_TERMINAL_RACE_GENERATION,
+                true,
+                0,
+            )),
+            head: AtomicUsize::new(OWNER_EMPTY_HEAD),
+            blocks: ModelBlocks::new(),
+            owner_identity: AtomicUsize::new(MODEL_OWNER_LIVE),
+            live_snapshot_count: AtomicUsize::new(0),
+            owner_unown_count: AtomicUsize::new(0),
+            producer_admission_count: AtomicUsize::new(0),
+            producer_claim_count: AtomicUsize::new(0),
+            producer_rejection_count: AtomicUsize::new(0),
+            page_map_root: AtomicUsize::new(MODEL_ROOT_PUBLISHED),
+            page_map_entry: AtomicUsize::new(MODEL_ENTRY_PUBLISHED),
+            metadata: AtomicUsize::new(MODEL_METADATA_LIVE),
+            terminal_state: AtomicUsize::new(MODEL_TERMINAL_READY),
+            terminal_release_count: AtomicUsize::new(0),
+        }
+    }
+
+    fn snapshot_live_owner(&self) -> AllowCollectTerminalRaceSnapshot {
+        assert_eq!(
+            self.owner_identity.load(Ordering::Acquire),
+            MODEL_OWNER_LIVE,
+            "the foreign producer observes the live source owner before exit"
+        );
+        assert_eq!(
+            self.page_map_root.load(Ordering::Acquire),
+            MODEL_ROOT_PUBLISHED,
+            "the live observation starts from the published PageMap root"
+        );
+        assert_eq!(
+            self.page_map_entry.load(Ordering::Acquire),
+            MODEL_ENTRY_PUBLISHED,
+            "the live observation starts from a registered source page"
+        );
+        assert_eq!(
+            self.metadata.load(Ordering::Acquire),
+            MODEL_METADATA_LIVE,
+            "the live observation starts before metadata release"
+        );
+        assert_eq!(
+            self.live_snapshot_count.fetch_add(1, Ordering::AcqRel),
+            0,
+            "the bounded model has one foreign live-owner observation"
+        );
+        AllowCollectTerminalRaceSnapshot { block_index: 0 }
+    }
+
+    /// The owner has started exit and reaches the source unown transition
+    /// before either terminal retirement or the stale producer's source CAS.
+    fn owner_unowns_empty_head_after_live_snapshot(&self) {
+        assert_eq!(
+            self.live_snapshot_count.load(Ordering::Acquire),
+            1,
+            "owner exit follows the foreign live observation"
+        );
+        assert_eq!(
+            self.owner_identity.compare_exchange(
+                MODEL_OWNER_LIVE,
+                MODEL_OWNER_ABANDONED,
+                Ordering::Release,
+                Ordering::Acquire,
+            ),
+            Ok(MODEL_OWNER_LIVE),
+            "owner exit publishes the abandoned identity once"
+        );
+        let mut no_before_unown_cas = None::<fn()>;
+        assert_eq!(
+            try_unown_abandoned_head_with(&self.head, &mut no_before_unown_cas),
+            AbandonedOwnerHeadTransition::Released,
+            "the source owner first transfers its owned empty head"
+        );
+        assert_eq!(self.head.load(Ordering::Acquire), 0);
+        assert_eq!(
+            self.owner_unown_count.fetch_add(1, Ordering::AcqRel),
+            0,
+            "the owner performs its initial source unown once"
+        );
+    }
+
+    /// Attempts to enter the exact observed live page generation. A terminal
+    /// winner has already closed that generation, so the producer returns
+    /// before it reads PageMap metadata or runs `mi_free_block_mt`.
+    fn begin_allow_collect_from_live_snapshot(
+        &self,
+        snapshot: &AllowCollectTerminalRaceSnapshot,
+    ) -> Result<(), AllowCollectTerminalProducerOutcome> {
+        assert_eq!(snapshot.block_index, 0);
+        match begin_live_remote_page_publication_with(
+            &self.lifetime,
+            ALLOW_COLLECT_TERMINAL_RACE_GENERATION,
+        ) {
+            Ok(()) => {
+                assert_eq!(
+                    self.owner_identity.load(Ordering::Acquire),
+                    MODEL_OWNER_ABANDONED,
+                    "a successful stale producer sees the source abandoned identity"
+                );
+                assert_eq!(self.head.load(Ordering::Acquire), 0);
+                assert_eq!(
+                    self.page_map_entry.load(Ordering::Acquire),
+                    MODEL_ENTRY_PUBLISHED,
+                    "an admitted producer accesses a still-registered page"
+                );
+                assert_eq!(
+                    self.metadata.load(Ordering::Acquire),
+                    MODEL_METADATA_LIVE,
+                    "an admitted producer accesses live metadata"
+                );
+                assert_eq!(
+                    self.terminal_release_count.load(Ordering::Acquire),
+                    0,
+                    "the old model would go red by admitting after terminal release"
+                );
+                assert_eq!(
+                    self.producer_admission_count.fetch_add(1, Ordering::AcqRel),
+                    0,
+                    "the source generation admits the producer once"
+                );
+                Ok(())
+            }
+            Err(LiveRemoteFreePagePublicationError::Retired) => {
+                assert_eq!(
+                    self.producer_rejection_count.fetch_add(1, Ordering::AcqRel),
+                    0,
+                    "a terminally closed generation rejects the stale producer once"
+                );
+                Err(AllowCollectTerminalProducerOutcome::RejectedBeforePageMapRelease)
+            }
+            Err(error) => {
+                panic!("the bounded generation has no other stale-producer outcome: {error:?}")
+            }
+        }
+    }
+
+    /// Completes the source `allow_collect=true` publication after the
+    /// producer's lifetime admission. The owner has already unowned its empty
+    /// head, so the successful CAS claims that head and requires recollection.
+    fn publish_claimed_allow_collect(
+        &self,
+        snapshot: &AllowCollectTerminalRaceSnapshot,
+    ) -> AllowCollectTerminalProducerOutcome {
+        assert_eq!(snapshot.block_index, 0);
+        assert_eq!(
+            self.terminal_release_count.load(Ordering::Acquire),
+            0,
+            "a successful source publication never follows PageMap release"
+        );
+        assert_eq!(
+            self.page_map_entry.load(Ordering::Acquire),
+            MODEL_ENTRY_PUBLISHED,
+            "the claimed producer publishes through the still-live source page"
+        );
+        assert_eq!(
+            self.metadata.load(Ordering::Acquire),
+            MODEL_METADATA_LIVE,
+            "the claimed producer never touches released metadata"
+        );
+        assert!(
+            !self.blocks.publish_abandoned(&self.head, snapshot.block_index),
+            "allow_collect claims the owner-released source head"
+        );
+        assert_eq!(
+            self.producer_claim_count.fetch_add(1, Ordering::AcqRel),
+            0,
+            "the successful source CAS creates one recollection obligation"
+        );
+        finish_live_remote_page_publication_with(
+            &self.lifetime,
+            ALLOW_COLLECT_TERMINAL_RACE_GENERATION,
+        );
+        AllowCollectTerminalProducerOutcome::ClaimedForRecollection
+    }
+
+    /// Starts terminal release after the owner has unowned its empty source
+    /// head. An admitted producer blocks the exact retirement CAS; a terminal
+    /// winner closes admission before it claims the low bit and releases
+    /// PageMap state.
+    fn try_terminal_release_after_owner_unown(&self) -> AllowCollectTerminalOwnerOutcome {
+        assert_eq!(
+            self.owner_identity.load(Ordering::Acquire),
+            MODEL_OWNER_ABANDONED,
+            "only the source abandoned identity reaches terminal release"
+        );
+        assert_eq!(self.head.load(Ordering::Acquire), 0);
+        match begin_live_remote_page_retirement_with(
+            &self.lifetime,
+            ALLOW_COLLECT_TERMINAL_RACE_GENERATION,
+        ) {
+            Ok(()) => {
+                assert_eq!(
+                    claim_abandoned_owner_with(&self.head),
+                    AbandonedOwnerClaim::ClaimedUnowned,
+                    "the terminal winner claims the source low bit after closing admission"
+                );
+                self.release_page_map_after_terminal_claim();
+                AllowCollectTerminalOwnerOutcome::Released
+            }
+            Err(LiveRemoteFreePageRetirementError::PublishersInFlight) => {
+                assert_eq!(
+                    self.terminal_release_count.load(Ordering::Acquire),
+                    0,
+                    "a pinned source producer blocks PageMap release"
+                );
+                AllowCollectTerminalOwnerOutcome::ProducerPinned
+            }
+            Err(error) => {
+                panic!("the bounded terminal owner has no other retirement outcome: {error:?}")
+            }
+        }
+    }
+
+    /// The producer that claimed the unowned low bit owns the bounded source
+    /// collection decision. It detaches its exact block, restores an unowned
+    /// empty head, and only then permits a terminal retry.
+    fn recollect_claimed_allow_collect(&self) {
+        assert_eq!(
+            self.producer_claim_count.load(Ordering::Acquire),
+            1,
+            "only the source CAS winner may drive recollection"
+        );
+        assert_eq!(
+            self.terminal_release_count.load(Ordering::Acquire),
+            0,
+            "recollection precedes every terminal PageMap transition"
+        );
+        assert_eq!(
+            self.head.load(Ordering::Acquire),
+            ModelBlocks::address(0) | THREAD_FREE_OWNED,
+            "the claimed source block remains reachable until collection"
+        );
+        assert_eq!(self.blocks.collect_once(&self.head), 1);
+        assert_eq!(self.head.load(Ordering::Acquire), OWNER_EMPTY_HEAD);
+        let mut no_before_unown_cas = None::<fn()>;
+        assert_eq!(
+            try_unown_abandoned_head_with(&self.head, &mut no_before_unown_cas),
+            AbandonedOwnerHeadTransition::Released,
+            "the claimed continuation restores an unowned empty source head"
+        );
+        assert_eq!(self.head.load(Ordering::Acquire), 0);
+    }
+
+    fn release_page_map_after_terminal_claim(&self) {
+        assert_eq!(
+            self.head.load(Ordering::Acquire),
+            OWNER_EMPTY_HEAD,
+            "the terminal owner retains the low-bit claim through PageMap release"
+        );
+        assert_eq!(
+            self.terminal_state.compare_exchange(
+                MODEL_TERMINAL_READY,
+                MODEL_TERMINAL_RELEASING,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            ),
+            Ok(MODEL_TERMINAL_READY),
+            "exactly one terminal source owner releases the page"
+        );
+        assert_eq!(
+            self.page_map_entry
+                .swap(MODEL_ENTRY_UNREGISTERED, Ordering::AcqRel),
+            MODEL_ENTRY_PUBLISHED,
+            "terminal release unregisters the page before metadata retirement"
+        );
+        assert_eq!(
+            self.page_map_root.swap(0, Ordering::AcqRel),
+            MODEL_ROOT_PUBLISHED,
+            "the one-page source model clears PageMap root after unregistration"
+        );
+        assert_eq!(
+            self.metadata
+                .swap(MODEL_METADATA_RELEASED, Ordering::AcqRel),
+            MODEL_METADATA_LIVE,
+            "metadata release follows PageMap removal"
+        );
+        assert_eq!(
+            self.terminal_release_count.fetch_add(1, Ordering::AcqRel),
+            0,
+            "the terminal owner releases PageMap state once"
+        );
+        self.terminal_state
+            .store(MODEL_TERMINAL_RELEASED, Ordering::Release);
+    }
+
+    fn assert_common_terminal_release(&self) {
+        assert_eq!(
+            self.lifetime.load(Ordering::Acquire),
+            live_remote_page_word(ALLOW_COLLECT_TERMINAL_RACE_GENERATION, false, 0)
+        );
+        assert_eq!(self.live_snapshot_count.load(Ordering::Acquire), 1);
+        assert_eq!(self.owner_unown_count.load(Ordering::Acquire), 1);
+        assert_eq!(self.head.load(Ordering::Acquire), OWNER_EMPTY_HEAD);
+        assert_eq!(self.page_map_entry.load(Ordering::Acquire), MODEL_ENTRY_UNREGISTERED);
+        assert_eq!(self.page_map_root.load(Ordering::Acquire), 0);
+        assert_eq!(self.metadata.load(Ordering::Acquire), MODEL_METADATA_RELEASED);
+        assert_eq!(self.terminal_state.load(Ordering::Acquire), MODEL_TERMINAL_RELEASED);
+        assert_eq!(self.terminal_release_count.load(Ordering::Acquire), 1);
+    }
+
+    fn assert_released_after_claimed_recollection(&self) {
+        self.assert_common_terminal_release();
+        assert_eq!(self.producer_admission_count.load(Ordering::Acquire), 1);
+        assert_eq!(self.producer_claim_count.load(Ordering::Acquire), 1);
+        assert_eq!(self.producer_rejection_count.load(Ordering::Acquire), 0);
+        self.blocks.assert_collected(0);
+    }
+
+    fn assert_released_after_producer_rejection(&self) {
+        self.assert_common_terminal_release();
+        assert_eq!(self.producer_admission_count.load(Ordering::Acquire), 0);
+        assert_eq!(self.producer_claim_count.load(Ordering::Acquire), 0);
+        assert_eq!(self.producer_rejection_count.load(Ordering::Acquire), 1);
+        assert!(
+            !self.blocks.published[0].load(Ordering::Acquire),
+            "a producer rejected by terminal close never publishes after PageMap release"
+        );
+        assert!(
+            !self.blocks.collected[0].load(Ordering::Acquire),
+            "there is no source list to recollect after terminal rejection"
+        );
+    }
+}
+
 // This is the atomic source tail of one hypothetical pointer-centered
 // replacement realloc, not a model of a supported nonlocal-realloc route.
 // Pinned `alloc.c:379-451` makes the replacement/copy decision before it
@@ -1527,6 +1915,100 @@ fn loom_claimed_abandoned_remote_free_fault_retains_the_exact_token_without_repu
             "the retained claim still names the stale-snapshot client"
         );
         model.assert_retained_after_detach();
+    });
+}
+
+#[test]
+fn loom_allow_collect_live_snapshot_racing_terminal_release_recollects_or_rejects_before_pagemap_release(
+) {
+    loom::model(|| {
+        // Regression for the prior modeled transition that allowed a stale
+        // live snapshot to call `publish_abandoned` even after terminal
+        // release. The terminal-winner schedule below now reaches `Retired`
+        // before that source CAS; the producer-winner schedule holds the
+        // production lifetime pin until its claimed head is recollected.
+        let model = Arc::new(AllowCollectTerminalRaceModel::new());
+        let producer_model = Arc::clone(&model);
+        let (snapshot_ready_send, snapshot_ready_receive) = mpsc::channel();
+        let (producer_start_send, producer_start_receive) = mpsc::channel();
+        let (producer_admitted_send, producer_admitted_receive) = mpsc::channel();
+        let (publish_permission_send, publish_permission_receive) = mpsc::channel();
+
+        let producer = thread::spawn(move || {
+            let snapshot = producer_model.snapshot_live_owner();
+            snapshot_ready_send
+                .send(())
+                .expect("owner exit retains the live-observation receiver");
+            producer_start_receive
+                .recv()
+                .expect("stale producer waits for owner unown");
+
+            match producer_model.begin_allow_collect_from_live_snapshot(&snapshot) {
+                Ok(()) => {
+                    producer_admitted_send
+                        .send(())
+                        .expect("a pinned producer retains the terminal admission receiver");
+                    publish_permission_receive
+                        .recv()
+                        .expect("the terminal owner releases the claimed source-CAS gate");
+                    producer_model.publish_claimed_allow_collect(&snapshot)
+                }
+                Err(outcome) => outcome,
+            }
+        });
+
+        snapshot_ready_receive
+            .recv()
+            .expect("owner exit waits for the foreign live-owner observation");
+        model.owner_unowns_empty_head_after_live_snapshot();
+        producer_start_send
+            .send(())
+            .expect("stale producer remains available after source unown");
+
+        let terminal_model = Arc::clone(&model);
+        let terminal = thread::spawn(move || {
+            match terminal_model.try_terminal_release_after_owner_unown() {
+                AllowCollectTerminalOwnerOutcome::Released => {
+                    AllowCollectTerminalOwnerOutcome::Released
+                }
+                AllowCollectTerminalOwnerOutcome::ProducerPinned => {
+                    producer_admitted_receive
+                        .recv()
+                        .expect("the admitted producer reports its lifetime pin");
+                    publish_permission_send
+                        .send(())
+                        .expect("the pinned producer remains available for its source CAS");
+                    AllowCollectTerminalOwnerOutcome::ProducerPinned
+                }
+            }
+        });
+
+        let terminal_outcome = terminal.join().expect("terminal owner completes its first race");
+        let producer_outcome = producer.join().expect("foreign producer completes its source path");
+
+        match (terminal_outcome, producer_outcome) {
+            (
+                AllowCollectTerminalOwnerOutcome::Released,
+                AllowCollectTerminalProducerOutcome::RejectedBeforePageMapRelease,
+            ) => model.assert_released_after_producer_rejection(),
+            (
+                AllowCollectTerminalOwnerOutcome::ProducerPinned,
+                AllowCollectTerminalProducerOutcome::ClaimedForRecollection,
+            ) => {
+                model.recollect_claimed_allow_collect();
+                assert_eq!(
+                    model.try_terminal_release_after_owner_unown(),
+                    AllowCollectTerminalOwnerOutcome::Released,
+                    "only the recollected last accepted source claim permits final PageMap release"
+                );
+                model.assert_released_after_claimed_recollection();
+            }
+            (terminal, producer) => {
+                panic!(
+                    "terminal close and stale allow-collect admission disagree: {terminal:?}, {producer:?}"
+                )
+            }
+        }
     });
 }
 
