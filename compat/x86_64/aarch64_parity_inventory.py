@@ -12,6 +12,8 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import re
+import shlex
 import tomllib
 from collections import Counter
 from pathlib import Path
@@ -26,6 +28,8 @@ AARCH64_ABI_MANIFEST_PATH = ROOT / "compat" / "abi" / "musl-1.2.6" / "aarch64" /
 AARCH64_HEADERS_PATH = ROOT / "compat" / "abi" / "musl-1.2.6" / "aarch64" / "headers.tsv"
 X86_PUBLIC_HEADERS_PATH = ROOT / "compat" / "x86_64" / "public_headers.txt"
 X86_STATIC_EXPORTS_PATH = ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+X86_EVIDENCE_DISPATCHER_PATH = ROOT / "scripts" / "dev-x86_64.sh"
+CRT_EVIDENCE_DISPATCHER_PATH = ROOT / "crt" / "run-x86_64.sh"
 
 SCHEMA = "crabc.x86_64-aarch64-parity-inventory/v1"
 STATE_IMPLEMENTED = "implemented-foundation"
@@ -89,7 +93,57 @@ def family_state(family: Mapping[str, Any]) -> str:
     return STATE_SELECTED if family.get("verified_slice") or family.get("verified_artifact") else STATE_MISSING
 
 
-def require_verified_native_evidence(record: Mapping[str, Any], location: str) -> None:
+def evidence_commands_from_dispatcher(path: Path, marker: str) -> set[str]:
+    """Return final-dispatch commands that run a native verifier."""
+    try:
+        source = path.read_text(encoding="utf-8")
+    except OSError as error:
+        raise InventoryError(
+            f"cannot read native evidence dispatcher {path.relative_to(ROOT)}: {error}"
+        ) from error
+    parts = source.split(marker, 1)
+    require(
+        len(parts) == 2,
+        f"native evidence dispatcher {path.relative_to(ROOT)} final command dispatch is missing",
+    )
+    handlers = parts[1]
+    handler_pattern = re.compile(
+        r"^    (?P<commands>[a-z0-9-]+(?:\|[a-z0-9-]+)*)\)\n"
+        r"(?P<body>.*?)(?=^        ;;\n)",
+        re.MULTILINE | re.DOTALL,
+    )
+    commands = {
+        command
+        for match in handler_pattern.finditer(handlers)
+        if re.search(r"(?m)^\s+run_[a-z0-9_]+(?:\s|$)", match["body"])
+        for command in match["commands"].split("|")
+    }
+    require(
+        commands,
+        f"native evidence dispatcher {path.relative_to(ROOT)} has no verifier commands",
+    )
+    return commands
+
+
+def registered_native_evidence_commands() -> dict[str, set[str]]:
+    """Bind inventory evidence to checked-in native verifier dispatchers."""
+    return {
+        "./scripts/dev-x86_64.sh": evidence_commands_from_dispatcher(
+            X86_EVIDENCE_DISPATCHER_PATH,
+            'require_native_linux_x86_64_host\n\ncase "$command" in\n',
+        ),
+        "./crt/run-x86_64.sh": evidence_commands_from_dispatcher(
+            CRT_EVIDENCE_DISPATCHER_PATH,
+            'require_native_x86_64_host\n\ncase "$1" in\n',
+        ),
+    }
+
+
+def require_verified_native_evidence(
+    record: Mapping[str, Any],
+    location: str,
+    registered_commands: Mapping[str, set[str]],
+) -> None:
     """Prevent an unproven record from entering the selected-private inventory."""
     evidence = record.get("native_evidence")
     require(
@@ -109,6 +163,21 @@ def require_verified_native_evidence(record: Mapping[str, Any], location: str) -
             isinstance(entry.get("command"), str) and entry["command"],
             f"{evidence_location}.command is empty",
         )
+        command = entry["command"]
+        assert isinstance(command, str)
+        try:
+            words = shlex.split(command)
+        except ValueError as error:
+            raise InventoryError(
+                f"{evidence_location}.command is not a registered native evidence command: {error}"
+            ) from error
+        require(
+            len(words) == 2
+            and command == " ".join(words)
+            and words[0] in registered_commands
+            and words[1] in registered_commands[words[0]],
+            f"{evidence_location}.command is not a registered native evidence command",
+        )
         require(
             isinstance(entry.get("scope"), str) and entry["scope"],
             f"{evidence_location}.scope is empty",
@@ -127,6 +196,7 @@ def build_inventory() -> dict[str, Any]:
     policy = x86.get("policy")
     require(isinstance(policy, Mapping), "x86 ledger policy is missing")
     require(policy.get("public_support") is False, "inventory cannot be produced from a public x86 ledger")
+    registered_commands = registered_native_evidence_commands()
 
     capability_entries = baseline.get("capability")
     require(isinstance(capability_entries, list), "AArch64 capability ledger has no capability list")
@@ -175,7 +245,7 @@ def build_inventory() -> dict[str, Any]:
             )
             verified_record_ids.add(record_id)
             require_verified_native_evidence(
-                record, f"x86 verified slice {record_id}"
+                record, f"x86 verified slice {record_id}", registered_commands
             )
             values = record.get("capabilities")
             require(
@@ -218,7 +288,7 @@ def build_inventory() -> dict[str, Any]:
                 f"x86 verified artifact {record_id} must not carry capabilities",
             )
             require_verified_native_evidence(
-                record, f"x86 verified artifact {record_id}"
+                record, f"x86 verified artifact {record_id}", registered_commands
             )
             selected_artifacts.append({"family": identifier, "id": record_id})
         family_rows.append(

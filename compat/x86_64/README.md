@@ -15,7 +15,9 @@ owning family, duplicate selected capabilities or record IDs, and any
 capability-bearing artifact. A selected slice or artifact also needs nonempty
 entirely-verified native evidence with a command and scope, so its
 `selected-private` rows remain accounting rather than an inferred support
-claim.
+claim. That command is a canonical checked-in x86/CRT dispatcher invocation
+whose final arm runs a verifier; image-building, stale, and arbitrary commands
+cannot stand in for native evidence.
 
 This lane runs the fixed `crabc-core` lib suite and the separately admitted
 direct `crabc-rs` subset for the `x86_64-unknown-linux-musl` target, including

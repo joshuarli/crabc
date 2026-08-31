@@ -2251,7 +2251,7 @@
     "aarch64_abi_manifest": "33dd504470f467caac7b149e747ee2b7ff8714c4fb23dfe5ad46e7f58bfe610c",
     "aarch64_capability_ledger": "128458dde00073bc0320b94972d864e66fa10d5f54e92b1b1c83081e2b4955e0",
     "aarch64_headers": "a0d35f0950abb3c060b978dfb5257cf50f70bed46ce91d371f43d65db7626b68",
-    "x86_parity_ledger": "c7641c9227d944844c44867272a0defb721cb810e01a1b8d0305e99214de514d",
+    "x86_parity_ledger": "e42cd8be078e61d39ed11b8903e24efe677a9fe1fed3a796b6ca1ae54958d6cb",
     "x86_public_headers": "2cdcd860a423d99afef8360b6376447cf17ae926f1cd47416be817d421fca80f",
     "x86_static_c_exports": "b7eb5fe01e894ccf289b750e075ef0995b8588b566fe11967b01d3d2b5578527"
   },

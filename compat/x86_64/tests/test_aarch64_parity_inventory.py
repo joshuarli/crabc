@@ -86,7 +86,7 @@ class AArch64ParityInventoryTests(unittest.TestCase):
                 "native_evidence": [
                     {
                         "state": "verified",
-                        "command": "fixture",
+                        "command": "./scripts/dev-x86_64.sh facade",
                         "scope": "fixture",
                     }
                 ],
@@ -110,7 +110,7 @@ class AArch64ParityInventoryTests(unittest.TestCase):
                 "native_evidence": [
                     {
                         "state": "verified",
-                        "command": "fixture",
+                        "command": "./scripts/dev-x86_64.sh facade",
                         "scope": "fixture",
                     }
                 ],
@@ -133,7 +133,7 @@ class AArch64ParityInventoryTests(unittest.TestCase):
                 "native_evidence": [
                     {
                         "state": "verified",
-                        "command": "fixture",
+                        "command": "./scripts/dev-x86_64.sh facade",
                         "scope": "fixture",
                     }
                 ],
@@ -198,6 +198,48 @@ class AArch64ParityInventoryTests(unittest.TestCase):
 
         with self.assertRaisesRegex(
             inventory.InventoryError, "must be entirely verified"
+        ):
+            self.build_with_x86_ledger(data)
+
+    def test_inventory_rejects_a_selected_slice_with_a_non_verifying_evidence_command(self) -> None:
+        data = inventory.load_toml(inventory.X86_LEDGER_PATH)
+        family = self.family(data, "libc.posix-runtime")
+        slices = family["verified_slice"]
+        assert isinstance(slices, list)
+        selected = next(
+            entry
+            for entry in slices
+            if entry["id"] == "filesystem.lchmod-unsupported"
+        )
+        assert isinstance(selected, dict)
+        evidence = selected["native_evidence"]
+        assert isinstance(evidence, list) and evidence
+        record = evidence[0]
+        assert isinstance(record, dict)
+        record["command"] = "./scripts/dev-x86_64.sh image"
+
+        with self.assertRaisesRegex(
+            inventory.InventoryError, "registered native evidence command"
+        ):
+            self.build_with_x86_ledger(data)
+
+    def test_inventory_rejects_a_selected_artifact_with_an_unregistered_evidence_command(self) -> None:
+        data = inventory.load_toml(inventory.X86_LEDGER_PATH)
+        family = self.family(data, "libc.c-abi-compat")
+        artifacts = family["verified_artifact"]
+        assert isinstance(artifacts, list)
+        selected = next(
+            entry for entry in artifacts if entry["id"] == "static-c-error-strings"
+        )
+        assert isinstance(selected, dict)
+        evidence = selected["native_evidence"]
+        assert isinstance(evidence, list) and evidence
+        record = evidence[0]
+        assert isinstance(record, dict)
+        record["command"] = "./crt/run-x86_64.sh invented-readiness-claim"
+
+        with self.assertRaisesRegex(
+            inventory.InventoryError, "registered native evidence command"
         ):
             self.build_with_x86_ledger(data)
 
