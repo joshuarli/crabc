@@ -1414,6 +1414,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "ffs-header-abi",
             "byte-strings-header-abi",
             "memory-search-header-abi",
+            "memccpy-header-abi",
             "string-copy-header-abi",
             "error-strings-header-abi|strsignal-header-abi|gettext-catalog-header-abi",
             "string-duplication-header-abi",
@@ -1436,6 +1437,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "libc-memory-locking",
             "libc-memfd-create",
             "libc-legacy-memory",
+            "libc-memccpy",
             "libc-allocator-runtime",
             "libc-allocator-string-duplication",
             "libc-allocator-observability",
@@ -1591,6 +1593,8 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn('compat/x86_64/run_byte_strings_header_abi.sh', source)
         self.assertIn('run_memory_search_header_abi()', source)
         self.assertIn('compat/x86_64/run_memory_search_header_abi.sh', source)
+        self.assertIn('run_memccpy_header_abi()', source)
+        self.assertIn('compat/x86_64/run_memccpy_header_abi.sh', source)
         self.assertIn('run_string_copy_header_abi()', source)
         self.assertIn('compat/x86_64/run_string_copy_header_abi.sh', source)
         self.assertIn('run_random_entropy_header_abi()', source)
@@ -3097,6 +3101,12 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         )
         self.assertIn(
             '    libc-legacy-memory)\n        [ "$#" -eq 0 ] || fail "libc-legacy-memory takes no arguments"',
+            source,
+        )
+        self.assertIn('run_libc_memccpy()', source)
+        self.assertIn('/workspace/compat/x86_64/run_libc_memccpy.sh', source)
+        self.assertIn(
+            '    libc-memccpy)\n        [ "$#" -eq 0 ] || fail "libc-memccpy takes no arguments"',
             source,
         )
         self.assertIn('libc-random-entropy', source)
@@ -11020,6 +11030,119 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             parity_ledger,
         )
         self.assertIn("libc-legacy-memory", runner)
+
+    def test_libc_static_c_abi_memccpy_artifact_stays_narrow(self) -> None:
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        implementation = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "memccpy.rs"
+        ).read_text(encoding="utf-8")
+        probe = (
+            ROOT / "compat" / "x86_64" / "libc_memccpy_probe.c"
+        ).read_text(encoding="utf-8")
+        start = (
+            ROOT / "compat" / "x86_64" / "libc_memccpy_start.S"
+        ).read_text(encoding="utf-8")
+        artifact_runner = (
+            ROOT / "compat" / "x86_64" / "run_libc_memccpy.sh"
+        ).read_text(encoding="utf-8")
+        header_c = (
+            ROOT / "compat" / "x86_64" / "memccpy_header_abi_probe.c"
+        ).read_text(encoding="utf-8")
+        header_cxx = (
+            ROOT / "compat" / "x86_64" / "memccpy_header_abi_probe.cpp"
+        ).read_text(encoding="utf-8")
+        header_runner = (
+            ROOT / "compat" / "x86_64" / "run_memccpy_header_abi.sh"
+        ).read_text(encoding="utf-8")
+        static_exports = (
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        ).read_text(encoding="utf-8")
+        static_export_names = {
+            line for line in static_exports.splitlines()
+            if line and not line.startswith("#")
+        }
+        parity_ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        runner = RUNNER.read_text(encoding="utf-8")
+
+        self.assertIn('#[path = "memccpy.rs"]', static_root)
+        for required in (
+            "musl 1.2.6",
+            "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+            "src/string/memccpy.c",
+            "const WORD_SIZE",
+            "const ALIGN",
+            "const ONES",
+            "const HIGHS",
+            "const fn has_zero_byte",
+            "wrapping_mul",
+            "pub unsafe extern \"C\" fn memccpy",
+            "restrict contract",
+        ):
+            self.assertIn(required, implementation)
+        for forbidden in (
+            "raw_syscall::",
+            "errno::",
+            "crabc_core",
+            "crabc_mimalloc",
+            "use super::memory",
+            "memory::",
+        ):
+            self.assertNotIn(forbidden, implementation)
+        for required in (
+            "memccpy_signature",
+            "_Static_assert",
+            "requested_targets",
+            "source_offset <= CRABC_MEMCCPY_MAX_OFFSET",
+            "destination_offset <= CRABC_MEMCCPY_MAX_OFFSET",
+            "0x100",
+            "0x1ff",
+            "CRABC_MEMCCPY_FREESTANDING",
+        ):
+            self.assertIn(required, probe)
+        for required in ("crabc_x86_64_memccpy_probe", "mov $60, %eax"):
+            self.assertIn(required, start)
+        for required in (
+            "run_musl_oracle.sh",
+            "run_memccpy_header_abi.sh",
+            "memccpy.lo",
+            "archive_member_for_symbol",
+            "memccpy object export surface drifted",
+            "memccpy object unexpectedly depends on another symbol",
+            "memccpy object unexpectedly performs a syscall",
+            "-nostdlib -static",
+            "-Wl,--no-undefined",
+            "candidate retains a PLT",
+            "unowned allocator, runtime, or memory utility",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn("--whole-archive", artifact_runner)
+        for required in (
+            "memccpy_signature",
+            "CRABC_EXPECT_MEMCCPY",
+            "CRABC_REQUIRE_MEMCCPY_HIDDEN",
+        ):
+            self.assertIn(required, header_c)
+        for required in ("memccpy_signature", "CRABC_EXPECT_MEMCCPY"):
+            self.assertIn(required, header_cxx)
+        for required in (
+            "xopen_definitions=(-D_XOPEN_SOURCE=700 -DCRABC_EXPECT_MEMCCPY)",
+            "gnu_definitions=(-D_GNU_SOURCE -DCRABC_EXPECT_MEMCCPY)",
+            "bsd_definitions=(-D_BSD_SOURCE -DCRABC_EXPECT_MEMCCPY)",
+            "strict/POSIX C",
+        ):
+            self.assertIn(required, header_runner)
+        self.assertIn("memccpy", static_export_names)
+        self.assertIn('id = "static-c-memccpy"', parity_ledger)
+        self.assertIn(
+            'command = "./scripts/dev-x86_64.sh libc-memccpy"',
+            parity_ledger,
+        )
+        self.assertIn("memccpy-header-abi", runner)
+        self.assertIn("libc-memccpy", runner)
 
     def test_libc_static_c_abi_memory_search_artifact_stays_narrow(self) -> None:
         static_root = (

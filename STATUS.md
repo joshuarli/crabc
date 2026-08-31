@@ -117,8 +117,21 @@ the already selected bulk-memory object, ratchets the direct
 copy and caller-buffer clearing. It has no errno/TLS, allocator, locale,
 syscall, dynamic-runtime, CRT, loader, or sysroot path. It does not promote
 Rust-subsumed `memory.bytes-basic`, general C memory behavior,
-`memccpy`/`mempcpy`/`explicit_bzero`, allocator lifecycle/interposition,
-family completion, promotion, or public x86 support.
+`mempcpy`/`explicit_bzero`, allocator lifecycle/interposition, family
+completion, promotion, or public x86 support.
+
+`./scripts/dev-x86_64.sh libc-memccpy` is a separate private
+`static-c-memccpy` artifact inside still-planned `libc.posix-runtime`. Its
+dedicated project-header/pinned-musl C/C++ gate proves XOPEN/GNU/BSD visibility,
+strict/POSIX hiding, the exact unmangled `memccpy` signature, and header
+provenance. Its pinned-musl and true `-nostdlib -static` routes then extract
+exactly one `memccpy` object with no runtime dependencies and prove
+copy-through-first-target behavior across source/destination alignments,
+length boundaries, and narrowed signed/wide `int c` values. It has no
+errno/TLS, allocator, locale, syscall, dynamic-runtime, CRT, loader, or
+sysroot path. It does not promote Rust-subsumed `memory.bytes-basic`, general
+bulk-memory behavior, `mempcpy`/`explicit_bzero`, allocator
+lifecycle/interposition, family completion, promotion, or public x86 support.
 
 `./scripts/dev-x86_64.sh libc-getpass` is a separate private
 `static-c-getpass` artifact inside still-planned `libc.posix-runtime`. Its

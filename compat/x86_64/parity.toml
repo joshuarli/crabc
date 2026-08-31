@@ -1865,6 +1865,7 @@ native_evidence = [
   { state = "required", command = "./scripts/dev-x86_64.sh ffs-header-abi", scope = "This compile-only C/C++ strings.h find-first-set declaration slice is partial evidence; XOPEN/GNU/BSD-gated ffs/ffsl/ffsll signatures, strict/POSIX hiding, and unmangled C++ linkage are checked against pinned musl and the project header." },
   { state = "required", command = "./scripts/dev-x86_64.sh byte-strings-header-abi", scope = "This compile-only C/C++ string.h/strings.h declaration slice is partial evidence; GNU-only strverscmp/strchrnul and GNU/BSD bcopy/bzero gates are checked against pinned musl and the project headers." },
   { state = "required", command = "./scripts/dev-x86_64.sh memory-search-header-abi", scope = "This compile-only C/C++ string.h memory-search declaration slice is partial evidence; unconditional memchr, POSIX memmem, and GNU memrchr feature gates are checked against pinned musl and the project header." },
+  { state = "required", command = "./scripts/dev-x86_64.sh memccpy-header-abi", scope = "This compile-only C/C++ string.h memccpy declaration slice is partial evidence; XOPEN/GNU/BSD visibility, strict/POSIX hiding, exact restricted-pointer signature, and unmangled C++ linkage are checked against pinned musl and the project header." },
   { state = "required", command = "./scripts/dev-x86_64.sh string-copy-header-abi", scope = "This compile-only C/C++ string.h C-string-copy declaration slice is partial evidence; unconditional strcpy/strncpy/strcat/strncat, POSIX/XOPEN/GNU/BSD-gated stpcpy/stpncpy, and GNU/BSD-gated strlcpy/strlcat feature gates are checked against pinned musl and the project header." },
   { state = "required", command = "./scripts/dev-x86_64.sh random-entropy-header-abi", scope = "This compile-only C/C++ sys/random.h and unistd.h declaration slice is partial evidence; getentropy's GNU/BSD feature gate is checked against pinned musl and the project header." },
   { state = "required", command = "./scripts/dev-x86_64.sh time-header-abi", scope = "This compile-only C/C++ time layout and declaration slice is partial evidence." },
@@ -2135,6 +2136,7 @@ source_owners = [
   "libc/src/c_abi.rs",
   "libc/src/c_abi/x86_64/static_c_abi.rs",
   "libc/src/c_abi/x86_64/legacy_memory.rs",
+  "libc/src/c_abi/x86_64/memccpy.rs",
   "libc/src/c_abi/x86_64/ffs.rs",
   "libc/src/c_abi/x86_64/intmax_arithmetic.rs",
   "libc/src/c_abi/x86_64/stat_compat.rs",
@@ -5204,6 +5206,44 @@ x86_abi_prerequisites = [
 x86_header_prerequisites = ["The existing byte-strings C/C++ header gate compares project-first and pinned-musl `strings.h` declarations for `void bcopy(const void *, void *, size_t)` and `void bzero(void *, size_t)`, their unmangled C++ spellings, GNU/BSD positive visibility, and strict-POSIX C hiding. The behavior fixture additionally traces project stddef.h, string.h, strings.h, features.h, and bits/alltypes.h; it does not select general header or C-memory ABI completion."]
 native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-legacy-memory", scope = "Pinned-musl C reference plus a true `-nostdlib -static` x86 candidate. The gate first runs the C/C++ byte-strings declaration matrix, traces project headers, and ratchets bcopy/bzero against the pinned AArch64 static-ABI rows and the complete selected static-export list. It extracts exactly the adapter and existing bulk-memory archive objects; the adapter exports only bcopy/bzero and has only direct memmove/memset dependencies. The freestanding matrix proves zero-length and 0..48-byte overlapping bcopy moves across both source/destination orderings plus 0..64-byte caller-buffer bzero ranges, with no interpreter, DT_NEEDED, unresolved symbol, PT_TLS, dynamic TLS model, PLT, ambient libc, allocator, errno, locale, or unowned memory utility. It does not select general bulk-memory or `memory.bytes-basic`, memccpy/mempcpy/explicit_bzero, allocator lifecycle/interposition, libc.so, general startup, CRT, loader, sysroot, family completion, promotion, or public x86 support." }]
 oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source mapping and behavior oracle for src/string/bcopy.c and src/string/bzero.c: the public wrappers forward respectively to memmove(destination, source, length) and memset(destination, 0, length). The pinned AArch64 libc.a static TSV fixes their public bcopy.lo/bzero.lo ownership only." }, { kind = "elf-abi", source = "System V AMD64 psABI", role = "LP64 size_t, C void-return, rdi/rsi/rdx argument placement, static linking, and no-dynamic-dependency fixture contract." }]
+
+[[family.verified_artifact]]
+id = "static-c-memccpy"
+description = "Private native x86 selected-static-archive `memccpy` leaf within still-planned `libc.posix-runtime`. The true static candidate extracts exactly one Rust object exporting only `memccpy`; it has no relocation or final-ELF dependency on the established bulk-memory owner or any other runtime surface. It executes the exact non-overlapping copy-through-first-target behavior through pinned musl and then through `-nostdlib -static`. The direct scalar/word implementation maps pinned musl 1.2.6 `src/string/memccpy.c`: same-alignment source/destination ranges reach its target-byte word scan, while mismatched alignment and the target-containing word use byte-exact copying, returning the destination byte immediately after the first copied target or null when none is copied. The leaf is stateless and allocation-free, with no errno, TLS, syscall, locale, mutable-runtime, allocator, or bulk-memory-wrapper dependency. It does not promote Rust-subsumed `memory.bytes-basic`, general bulk-memory behavior, `mempcpy`, `explicit_bzero`, allocator lifecycle/interposition, libc.so, CRT, loader, sysroot, family completion, promotion, or public x86 support."
+source_owners = [
+  "compat/upstreams.toml",
+  "compat/abi/musl-1.2.6/aarch64/libc.a.static.tsv",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/memccpy.rs",
+  "include/string.h",
+  "include/features.h",
+  "include/bits/alltypes.h",
+  "compat/x86_64/memccpy_header_abi_probe.c",
+  "compat/x86_64/memccpy_header_abi_probe.cpp",
+  "compat/x86_64/run_memccpy_header_abi.sh",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/libc_memccpy_probe.c",
+  "compat/x86_64/libc_memccpy_start.S",
+  "compat/x86_64/run_libc_memccpy.sh",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "compat/x86_64/README.md",
+  "STATUS.md",
+  "x86-64.md",
+  "scripts/dev-x86_64.sh",
+  "scripts/check_structure.py",
+]
+x86_abi_prerequisites = [
+  "The SysV AMD64 `memccpy` ABI passes destination/source/`int c`/LP64 `size_t n` in rdi/rsi/edx/rcx and returns the destination pointer or null in rax. The public C `restrict` ranges must not overlap, and `c` is narrowed to unsigned char before the first source byte equal to that target is copied and the one-past destination pointer is returned.",
+  "Pinned musl 1.2.6 `src/string/memccpy.c` defines the same-alignment `ALIGN`/`ONES`/`HIGHS` target-byte word scan, byte-exact target tail, and null-on-no-match behavior. The pinned AArch64 static ABI inventory records `memccpy memccpy.lo T GLOBAL 0 c4`, fixing only public object ownership and not an x86 implementation.",
+  "The selected Rust object exports exactly memccpy and has no undefined symbols, syscall, errno/TLS, allocator, or bulk-memory relocation. Its final `-nostdlib -static` candidate has no unresolved symbols, interpreter, DT_NEEDED entry, no PT_TLS, dynamic TLS model, PLT, ambient libc, allocator, or an unowned memory utility; its fixture-only _start exits directly and supplies no CRT or runtime contract.",
+]
+x86_header_prerequisites = ["The dedicated C/C++ `memccpy-header-abi` gate compares project-first and pinned-musl `string.h`: `void *memccpy(void *restrict, const void *restrict, int, size_t)` is visible under XOPEN/GNU/BSD, hidden by strict/POSIX C selectors, and retains unmangled C++ linkage. The behavior fixture additionally traces project string.h, features.h, and bits/alltypes.h; it does not select general header or C-memory ABI completion."]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-memccpy", scope = "Pinned-musl C reference plus a true `-nostdlib -static` x86 candidate. The gate runs the dedicated C/C++ memccpy declaration matrix, traces project headers, ratchets memccpy against the pinned AArch64 static-ABI row and the complete selected static-export list, and extracts exactly one object exporting only memccpy with no undefined closure or syscall. The freestanding matrix covers null-on-no-match and returned one-past-target pointers across source/destination residues 0..7, lengths 0..16 plus aligned/near-word boundaries through 64, first-target positions, and signed/wide `int c` narrowing values. The final candidate has no interpreter, DT_NEEDED, unresolved symbols, PT_TLS, dynamic TLS model, PLT, ambient libc, allocator, errno, locale, or unowned memory utilities. It does not select general bulk memory or `memory.bytes-basic`, mempcpy/explicit_bzero, allocator lifecycle/interposition, libc.so, general startup, CRT, loader, sysroot, family completion, promotion, or public x86 support." }]
+oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source mapping, declaration, and behavior oracle for src/string/memccpy.c: the same-alignment word-at-a-time target-byte scan, byte-exact tail, unsigned-char c conversion, copied-prefix/one-past return, and null-on-no-match contract. The pinned AArch64 libc.a static TSV fixes only memccpy.lo ownership." }, { kind = "elf-abi", source = "System V AMD64 psABI", role = "LP64 pointer/size_t, rdi/rsi/edx/rcx argument placement, rax pointer return, static linking, and no-dynamic-dependency fixture contract." }]
 
 [[family.verified_artifact]]
 id = "static-c-random-entropy"

@@ -92,6 +92,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   ffs-header-abi  compile the staged x86 C/C++ strings.h find-first-set declarations
   byte-strings-header-abi  compile the staged x86 C/C++ string.h byte-string declarations
   memory-search-header-abi  compile the staged x86 C/C++ memory-search declarations
+  memccpy-header-abi  compile the staged x86 C/C++ string.h memccpy declaration
   string-copy-header-abi  compile the staged x86 C/C++ C-string-copy declarations
   string-duplication-header-abi  compile the staged x86 C/C++ C-string-duplication declarations
   error-strings-header-abi  compile the staged x86 C/C++ error-string declarations
@@ -350,6 +351,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-ffs  run the static x86 crabc-libc find-first-set slice
   libc-byte-strings  run the static x86 crabc-libc byte-string slice
   libc-legacy-memory  run the static x86 crabc-libc bcopy/bzero adapter slice
+  libc-memccpy  run the static x86 crabc-libc memccpy slice
   libc-network-byte-order  run the static x86 crabc-libc network byte-order slice
   libc-process-globals-getopt  run the static x86 crabc-libc program-name/getopt slice
   libc-auxv-observation  run the static x86 crabc-libc initial aux-vector lookup slice
@@ -2128,6 +2130,10 @@ run_libc_legacy_memory() {
     run_in_container bash /workspace/compat/x86_64/run_libc_legacy_memory.sh
 }
 
+run_libc_memccpy() {
+    run_in_container bash /workspace/compat/x86_64/run_libc_memccpy.sh
+}
+
 run_libc_allocator_runtime() {
     run_in_container bash /workspace/compat/x86_64/run_libc_allocator_runtime.sh
 }
@@ -2242,6 +2248,10 @@ run_byte_strings_header_abi() {
 
 run_memory_search_header_abi() {
     run_in_container bash /workspace/compat/x86_64/run_memory_search_header_abi.sh
+}
+
+run_memccpy_header_abi() {
+    run_in_container bash /workspace/compat/x86_64/run_memccpy_header_abi.sh
 }
 
 run_string_copy_header_abi() {
@@ -3521,6 +3531,7 @@ case "$command" in
     ffs-header-abi) ;;
     byte-strings-header-abi) ;;
     memory-search-header-abi) ;;
+    memccpy-header-abi) ;;
     string-copy-header-abi) ;;
     error-strings-header-abi|strsignal-header-abi|gettext-catalog-header-abi) ;;
     string-duplication-header-abi) ;;
@@ -3543,6 +3554,7 @@ case "$command" in
     libc-memory-locking) ;;
     libc-memfd-create) ;;
     libc-legacy-memory) ;;
+    libc-memccpy) ;;
     libc-allocator-runtime) ;;
     libc-allocator-string-duplication) ;;
     libc-allocator-observability) ;;
@@ -3836,6 +3848,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "memory-search-header-abi takes no arguments"
         ensure_image
         run_memory_search_header_abi
+        ;;
+    memccpy-header-abi)
+        [ "$#" -eq 0 ] || fail "memccpy-header-abi takes no arguments"
+        ensure_image
+        run_memccpy_header_abi
         ;;
     string-copy-header-abi)
         [ "$#" -eq 0 ] || fail "string-copy-header-abi takes no arguments"
@@ -5161,6 +5178,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "libc-legacy-memory takes no arguments"
         ensure_image
         run_libc_legacy_memory
+        ;;
+    libc-memccpy)
+        [ "$#" -eq 0 ] || fail "libc-memccpy takes no arguments"
+        ensure_image
+        run_libc_memccpy
         ;;
     libc-network-byte-order)
         [ "$#" -eq 0 ] || fail "libc-network-byte-order takes no arguments"

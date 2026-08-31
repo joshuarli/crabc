@@ -104,10 +104,10 @@ for symbol in stpcpy stpncpy strcpy strncpy strcat strncat strlcpy strlcat; do
     grep -Eq "[[:space:]][TW][[:space:]]${symbol}$" "$archive_symbols" ||
         fail "archive does not define ${symbol}"
 done
-# Shared bootstrap memory/string-search and fixed-locale collation roots are
-# deliberate exports. Their materialization does not establish this copy
-# artifact's contract.
-for unselected in __stpcpy __stpncpy memccpy mempcpy strtok strtok_r strdup \
+# Shared bootstrap memory/string-search, independent memccpy, and fixed-locale
+# collation roots are deliberate exports. Their materialization does not
+# establish this copy artifact's contract.
+for unselected in __stpcpy __stpncpy mempcpy strtok strtok_r strdup \
     strndup malloc free calloc realloc; do
     if grep -Eq "[[:space:]][TW][[:space:]]${unselected}$" "$archive_symbols"; then
         fail "archive accidentally exports unselected ${unselected}"
