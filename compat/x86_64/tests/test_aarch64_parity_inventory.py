@@ -83,9 +83,23 @@ class AArch64ParityInventoryTests(unittest.TestCase):
             row for row in report["families"] if row["id"] == "libc.posix-runtime"
         )
         self.assertEqual(posix_runtime["contract_state"], "selected-private")
-        self.assertEqual(posix_runtime["verified_artifact_count"], 94)
+        self.assertEqual(posix_runtime["verified_artifact_count"], 95)
         self.assertIn(
             {"family": "libc.posix-runtime", "id": "static-c-sleep"},
+            report["selected_private_artifacts"],
+        )
+        self.assertFalse(report["x86_boundary"]["promotion_ready"])
+        self.assertFalse(report["x86_boundary"]["public_support"])
+
+    def test_fchdir_remains_a_private_posix_runtime_artifact(self) -> None:
+        report = inventory.validate_inventory()
+        posix_runtime = next(
+            row for row in report["families"] if row["id"] == "libc.posix-runtime"
+        )
+        self.assertEqual(posix_runtime["contract_state"], "selected-private")
+        self.assertEqual(posix_runtime["verified_artifact_count"], 95)
+        self.assertIn(
+            {"family": "libc.posix-runtime", "id": "static-c-fchdir"},
             report["selected_private_artifacts"],
         )
         self.assertFalse(report["x86_boundary"]["promotion_ready"])

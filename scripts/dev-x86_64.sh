@@ -132,6 +132,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   ctermid-header-abi  compile the staged x86 C/C++ POSIX/XSI ctermid declaration
   gethostid-header-abi  compile the staged x86 C/C++ X/Open gethostid declaration
   hasmntopt-header-abi  compile the staged x86 C/C++ mntent hasmntopt declaration
+  fchdir-header-abi  compile the staged x86 C/C++ unistd fchdir declaration
   sync-header-abi  compile the staged x86 C/C++ X/Open/GNU/BSD sync declaration
   isatty-header-abi  compile the staged x86 C/C++ isatty declaration
   tcgetpgrp-header-abi  compile the staged x86 C/C++ tcgetpgrp declaration
@@ -165,6 +166,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-pathname-lifecycle  run the static x86 crabc-libc pathname-lifecycle slice
   libc-directory-streams  run the static x86 crabc-libc directory-stream slice
   libc-lchmod-unsupported  run the static x86 crabc-libc lchmod unsupported slice
+  libc-fchdir  run the static x86 crabc-libc fchdir O_PATH fallback slice
   mm-abi-reference  verify pinned-musl x86 mapping syscall and flag constants
   mapping-reference  verify pinned-musl/raw x86 anonymous mapping lifecycle
   memory-vm-reference  verify pinned-musl/raw x86 raw-break and VM-policy seam
@@ -2514,6 +2516,10 @@ run_libc_lchmod_unsupported() {
     run_in_container bash /workspace/compat/x86_64/run_libc_lchmod_unsupported.sh
 }
 
+run_libc_fchdir() {
+    run_in_container bash /workspace/compat/x86_64/run_libc_fchdir.sh
+}
+
 run_ffs_header_abi() {
     run_in_container bash /workspace/compat/x86_64/run_ffs_header_abi.sh
 }
@@ -2632,6 +2638,10 @@ run_gethostid_header_abi() {
 
 run_hasmntopt_header_abi() {
     run_in_container bash /workspace/compat/x86_64/run_hasmntopt_header_abi.sh
+}
+
+run_fchdir_header_abi() {
+    run_in_container bash /workspace/compat/x86_64/run_fchdir_header_abi.sh
 }
 
 run_sync_header_abi() {
@@ -3840,7 +3850,7 @@ case "$command" in
     timerfd-header-abi|signalfd-header-abi) ;;
     libc-timerfd|libc-signalfd|libc-sigpause|libc-sigisemptyset|libc-sigandset-sigorset|libc-sigpending|libc-sigrtmax|libc-sigrtmin|libc-sigaddset-sigdelset-sigfillset) ;;
     libc-sched-yield) ;;
-    ctermid-header-abi|gethostid-header-abi|hasmntopt-header-abi|sync-header-abi|isatty-header-abi|tcgetpgrp-header-abi|tcsetpgrp-header-abi|getpass-header-abi|libc-ctermid|libc-gethostid|libc-hasmntopt|libc-sync|libc-isatty|libc-tcgetpgrp|libc-tcsetpgrp|libc-getpass|mkfifo-header-abi|mkfifoat-header-abi|libc-mkfifo|libc-mkfifoat|mktemp-header-abi|libc-mktemp) ;;
+    ctermid-header-abi|gethostid-header-abi|hasmntopt-header-abi|fchdir-header-abi|sync-header-abi|isatty-header-abi|tcgetpgrp-header-abi|tcsetpgrp-header-abi|getpass-header-abi|libc-ctermid|libc-gethostid|libc-hasmntopt|libc-fchdir|libc-sync|libc-isatty|libc-tcgetpgrp|libc-tcsetpgrp|libc-getpass|mkfifo-header-abi|mkfifoat-header-abi|libc-mkfifo|libc-mkfifoat|mktemp-header-abi|libc-mktemp) ;;
     stdio-permanent-line-io-header-abi|stdio-octal-hex-scan-header-abi) ;;
     math-complex-complete-header-abi|libc-math-complex-complete) ;;
     stdio-permanent-byte-io-header-abi) ;;
@@ -4392,6 +4402,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "hasmntopt-header-abi takes no arguments"
         ensure_image
         run_hasmntopt_header_abi
+        ;;
+    fchdir-header-abi)
+        [ "$#" -eq 0 ] || fail "fchdir-header-abi takes no arguments"
+        ensure_image
+        run_fchdir_header_abi
         ;;
     sync-header-abi)
         [ "$#" -eq 0 ] || fail "sync-header-abi takes no arguments"
@@ -5146,6 +5161,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "libc-hasmntopt takes no arguments"
         ensure_image
         run_libc_hasmntopt_probe
+        ;;
+    libc-fchdir)
+        [ "$#" -eq 0 ] || fail "libc-fchdir takes no arguments"
+        ensure_image
+        run_libc_fchdir
         ;;
     libc-sync)
         [ "$#" -eq 0 ] || fail "libc-sync takes no arguments"

@@ -245,6 +245,7 @@ fabs
 fabsf
 fabsl
 faccessat
+fchdir
 fchmod
 fclose
 fcntl

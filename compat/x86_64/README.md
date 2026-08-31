@@ -4313,6 +4313,20 @@ canonicalization, directory streams, xattr/ACL, mount/namespace policy,
 cancellation, dynamic runtime, header/runtime family completion, promotion,
 full x86-64 parity, and public x86 support.
 
+`fchdir-header-abi` and `libc-fchdir` are a separate private
+`static-c-fchdir` artifact in planned `libc.posix-runtime`, not an addition to
+the pathname-lifecycle block or the Rust CWD capability. The C11/C++17
+project-header/pinned-musl matrix proves unconditional `<unistd.h>`
+`int fchdir(int)` under default, strict, POSIX, X/Open, GNU, and BSD profiles.
+The same C body then runs through pinned musl and a true `-nostdlib -static`
+candidate: it proves only direct `fchdir=81`, then musl's live-O_PATH
+`EBADF`/`fcntl(F_GETFD)` fallback through the fixed
+`/proc/self/fd/<decimal>` path and `chdir=80`. The disposable processes restore
+their CWD and cover non-directory O_PATH `ENOTDIR`, invalid `EBADF`, and
+stale-errno success. Raw setup/observation does not select C
+`chdir`/`getcwd`/open/fcntl, a broader descriptor/procfs/pathname boundary,
+family completion, promotion, or public x86 support.
+
 `libc-byte-strings` is a separately recorded
 `static-c-byte-strings` `verified_artifact` gate over that archive, not a
 promotion of the Rust-subsumed text capabilities. Its project-header C body

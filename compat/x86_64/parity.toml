@@ -5769,6 +5769,62 @@ native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc
 oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source mapping: src/unistd/chdir.c, getcwd.c, link.c, readlink.c, rmdir.c, symlink.c, truncate.c, and unlink.c; src/stat/chmod.c, fchmod.c, and mkdir.c; src/stdio/remove.c and rename.c; and src/internal/procfdname.c define this selected pathname boundary. The allocator-requiring null-buffer getcwd extension is explicitly omitted from the static candidate." }, { kind = "kernel-abi", source = "Linux 5.10 x86-64 ABI", role = "chdir/getcwd/rename/mkdir/rmdir/link/unlink/symlink/readlink/chmod/fchmod/truncate/fcntl numbers, rdi/rsi/rdx order, raw errno, O_PATH descriptor, procfs, pathname, mode, and truncation behavior." }, { kind = "elf-abi", source = "System V AMD64 psABI", role = "LP64 pathname pointer, size/off/mode scalar, and static initial-exec TLS fixture contract." }]
 
 [[family.verified_artifact]]
+id = "static-c-fchdir"
+description = "Private native x86 selected-static-archive `fchdir` compatibility artifact inside still-planned `libc.posix-runtime`. One dedicated `crabc-libc` leaf resolves exactly `int fchdir(int)` through a project-header C fixture after equivalent pinned musl 1.2.6 execution. It first issues Linux `fchdir=81`; only direct `EBADF` with a successful `fcntl=72` `F_GETFD=1` liveness probe takes musl's fixed 27-byte `/proc/self/fd/<decimal>` fallback through Linux `chdir=80`. The child-contained fixture proves a live O_PATH `/proc` directory reaches that fallback and restores the saved ordinary directory descriptor, while a live O_PATH `/proc/cpuinfo` descriptor reports ENOTDIR and `-1` retains EBADF. Raw openat/getcwd/close operations are fixture setup and observation only. The CWD effect is process-global and remains caller-owned; this artifact does not select the public C `chdir`/`getcwd` entries, a general descriptor or procfs API, path parsing/canonicalization, filesystem policy, CWD capability completion, libc.so, CRT, loader, sysroot, family completion, promotion, or public x86 support."
+source_owners = [
+  "compat/upstreams.toml",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/fchdir.rs",
+  "libc/src/c_abi/x86_64/errno.rs",
+  "libc/src/c_abi/x86_64/syscall.rs",
+  "libc/src/c_abi/x86_64/static_tls.rs",
+  "include/errno.h",
+  "include/fcntl.h",
+  "include/stddef.h",
+  "include/sys/syscall.h",
+  "include/sys/types.h",
+  "include/unistd.h",
+  "include/features.h",
+  "include/bits/fcntl.h",
+  "include/bits/syscall.h",
+  "compat/x86_64/fchdir_header_abi_probe.c",
+  "compat/x86_64/fchdir_header_abi_probe.cpp",
+  "compat/x86_64/run_fchdir_header_abi.sh",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/libc_fchdir_probe.c",
+  "compat/x86_64/libc_fchdir_start.S",
+  "compat/x86_64/run_libc_fchdir.sh",
+  "compat/x86_64/aarch64_parity_inventory.py",
+  "compat/x86_64/aarch64_parity_inventory.json",
+  "compat/x86_64/tests/test_aarch64_parity_inventory.py",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "compat/x86_64/README.md",
+  "STATUS.md",
+  "x86-64.md",
+  "scripts/dev-x86_64.sh",
+  "scripts/check_structure.py",
+]
+x86_abi_prerequisites = [
+  "The SysV AMD64 ABI passes signed four-byte `int fchdir(int)` in edi and returns signed int in eax. Linux x86-64 `fchdir=81` receives the descriptor in rdi; its sole intermediate `fcntl=72` F_GETFD=1 liveness probe uses rdi/rsi; and fallback `chdir=80` receives the fixed pathname in rdi. Only raw Linux -4095 through -1 results publish selected initial-TLS errno.",
+  "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417 maps src/unistd/fchdir.c plus src/internal/procfdname.c exactly: after raw fchdir returns -EBADF and F_GETFD succeeds, it writes `/proc/self/fd/<decimal>` into `char buf[15+3*sizeof(int)]` (27 x86 bytes) and invokes chdir. Linux 5.10 supplies all three legacy x86 syscalls; no broader procfs or descriptor fallback is selected.",
+  "The common pinned-musl/candidate C body opens only fixture descriptors with raw openat, captures/restores its own CWD with raw getcwd/fchdir, and proves stale E2BIG survives both successful O_PATH `/proc` fallback and ordinary saved-directory direct fchdir. A live O_PATH `/proc/cpuinfo` descriptor reaches fallback and returns ENOTDIR, while fchdir(-1) remains -1/EBADF; CWD mutation stays inside each disposable reference/candidate process.",
+  "The final `-nostdlib -static` candidate has the selected PT_TLS errno datum with direct initial-exec TPOFF access, no interpreter, DT_NEEDED, unresolved symbol, dynamic TLS model, allocator, loader, or external C pathname/descriptor entry. Its fchdir disassembly retains direct fchdir=81, fcntl=72, and chdir=80 syscall instructions and the fixed procfd spelling.",
+]
+x86_header_prerequisites = [
+  "The focused pinned-musl/project-first C11/C++17 `<unistd.h>` matrix proves unconditional `int fchdir(int)` under default, strict, POSIX, X/Open, GNU, and BSD selectors, exact signed-int function-pointer shape, and unmangled C++ linkage. It is one declaration boundary, not general unistd, CWD, filesystem, installed-header, or public x86 support.",
+]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-fchdir", scope = "Pinned-musl/project default/strict/POSIX/X/Open/GNU/BSD C/C++ `<unistd.h>` compilation plus one project-header C body through pinned musl and a true x86 `-nostdlib -static` candidate. The gate ratchets the selected archive surface; rejects interpreter/DT_NEEDED, unresolved symbols, dynamic TLS, and unowned runtime dependencies; proves direct initial-TLS errno; disassembles fchdir=81, fcntl=72, and chdir=80 plus `/proc/self/fd/`; and differentially proves live O_PATH `/proc` fallback, ordinary descriptor restoration, O_PATH non-directory ENOTDIR, invalid EBADF, and stale-errno success in disposable processes. Raw setup/observation does not select C chdir/getcwd/open/fcntl or a broader descriptor/procfs/pathname API. It does not select filesystem/CWD capability completion, libc.so, CRT, loader, sysroot, family completion, promotion, or public x86 support." }]
+oracle = [
+  { kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source, unconditional `<unistd.h>` declaration, and behavior oracle for src/unistd/fchdir.c and src/internal/procfdname.c: raw fchdir first, only -EBADF plus successful F_GETFD fallback, fixed 15+3*sizeof(int) procfd bytes, then chdir." },
+  { kind = "kernel-abi", source = "Linux 5.10 x86-64 ABI", role = "fchdir=81, fcntl=72 F_GETFD=1, chdir=80, raw errno, O_PATH descriptor behavior, procfs descriptor symlink resolution, and process-global CWD transition contract." },
+  { kind = "elf-abi", source = "System V AMD64 psABI", role = "signed-int edi/eax call boundary, unmangled C++ linkage, and static initial-exec TLS fixture contract." },
+]
+
+[[family.verified_artifact]]
 id = "static-c-mkfifo"
 description = "Private native x86 selected-static-archive `mkfifo` leaf. One project-header C body runs first through pinned musl 1.2.6 and then through a true `-nostdlib -static` crabc-libc candidate. It resolves only `mkfifo(const char *, mode_t)`: musl's `mode | S_IFIFO` spelling reaches Linux x86-64 `mknodat=259` with `AT_FDCWD=-100` and dev 0. The fixture's child-local shell umask 000 makes FIFO type and requested mode observable, preserves stale errno on successful creation, checks duplicate `EEXIST`, and checks null-path `EFAULT`; raw newfstatat/unlinkat only observe and clean fixture-owned names. It does not select the wider `filesystem.special-nodes` capability, `mkfifoat`, `mknod`, `mknodat`, device-node or C umask policy, pathname/CWD policy, allocation, locale, terminal/environment/process state, libc.so, CRT, loader, sysroot, family completion, promotion, or public x86 support."
 source_owners = [

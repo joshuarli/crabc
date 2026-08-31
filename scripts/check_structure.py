@@ -3793,6 +3793,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         '#[path = "sleep.rs"]',
         '#[path = "descriptor_entry.rs"]',
         '#[path = "filesystem_access.rs"]',
+        '#[path = "fchdir.rs"]',
         '#[path = "mktemp.rs"]',
         '#[path = "descriptor_control.rs"]',
         '#[path = "ioctl.rs"]',
@@ -8439,6 +8440,54 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
             "artifact must retain eaccess as the musl same-address assembler alias"
         )
 
+    fchdir_source = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "fchdir.rs"
+    fchdir_text = fchdir_source.read_text(errors="replace")
+    for required in (
+        "Selected static Linux/x86-64 `fchdir` C ABI boundary",
+        "musl 1.2.6 release commit",
+        "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+        "src/unistd/fchdir.c",
+        "src/internal/procfdname.c",
+        "SYS_FCHDIR: i64 = 81",
+        "F_GETFD: i64 = 1",
+        "SYS_CHDIR: i64 = 80",
+        "PROC_FD_NAME_SIZE: usize = 15 + 3 * size_of::<c_int>()",
+        "fn procfdname",
+        "if direct != -EBADF",
+        "raw_syscall::SYS_FCNTL",
+        'pub extern "C" fn fchdir',
+    ):
+        if required not in fchdir_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/fchdir.rs: selected static descriptor-CWD "
+                f"boundary is missing {required!r}"
+            )
+    fchdir_exports = set(
+        re.findall(
+            r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(',
+            fchdir_text,
+        )
+    )
+    if fchdir_exports != {"fchdir"}:
+        errors.append(
+            "libc/src/c_abi/x86_64/fchdir.rs: selected static descriptor-CWD "
+            "artifact must export only fchdir"
+        )
+    for forbidden in (
+        "pathname_lifecycle::",
+        "raw_syscall::SYS_OPEN",
+        "raw_syscall::SYS_OPENAT",
+        "raw_syscall::SYS_GETCWD",
+        "alloc::",
+        "crabc_core",
+        "crabc_mimalloc",
+    ):
+        if forbidden in fchdir_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/fchdir.rs: selected static descriptor-CWD "
+                f"boundary must not select {forbidden!r}"
+            )
+
     descriptor_control_source = (
         ROOT / "libc" / "src" / "c_abi" / "x86_64" / "descriptor_control.rs"
     )
@@ -10525,6 +10574,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         sleep_text,
         descriptor_entry_text,
         filesystem_access_text,
+        fchdir_text,
         mktemp_text,
         descriptor_control_text,
         descriptor_io_text,
@@ -10854,6 +10904,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         "creat",
         "access",
         "faccessat",
+        "fchdir",
         "euidaccess",
         "eaccess",
         "mktemp",
@@ -11134,6 +11185,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         ("sleep.rs", sleep_text),
         ("descriptor_entry.rs", descriptor_entry_text),
         ("filesystem_access.rs", filesystem_access_text),
+        ("fchdir.rs", fchdir_text),
         ("descriptor_control.rs", descriptor_control_text),
         ("timestamp_updates.rs", timestamp_text),
         ("descriptor_io.rs", descriptor_io_text),

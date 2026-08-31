@@ -403,6 +403,8 @@ mod sleep;
 mod descriptor_entry;
 #[path = "filesystem_access.rs"]
 mod filesystem_access;
+#[path = "fchdir.rs"]
+mod fchdir;
 #[path = "mktemp.rs"]
 mod mktemp;
 #[path = "lchmod_unsupported.rs"]
