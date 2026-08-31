@@ -1477,6 +1477,20 @@ behavior, `memfd_secret`, huge-page resource/page-size policy, descriptor
 lifecycle or close ownership, broad filesystem behavior, C-runtime/family/
 platform parity, promotion, or public x86 support.
 
+The same archive has a private rejected-request clock-setting error-ABI
+artifact: `./scripts/dev-x86_64.sh clock-settime-header-abi` and
+`./scripts/dev-x86_64.sh libc-clock-settime` map exactly to pinned musl 1.2.6
+`src/time/clock_settime.c`'s direct `clock_settime=227` wrapper. The
+strict C/C++ `<time.h>` profile hides the POSIX spelling; POSIX/XOPEN/GNU
+profiles prove its exact C/C++ declaration and linkage. The shared musl/static
+fixture calls only rejected `-1` and `CLOCK_MONOTONIC` IDs with a readable zero
+timespec, accepting Linux's `EINVAL` or capability-first `EPERM` ordering and
+never issuing a valid `CLOCK_REALTIME` update. The exported direct wrapper has
+no added authority guard, so a valid caller remains outside this evidence;
+this does not claim clock-setting authority, successful state mutation,
+calendar/timezone/timer behavior, C time-family completion, promotion, or
+public x86 support.
+
 The same archive has a private direct time-observation artifact:
 `./scripts/dev-x86_64.sh libc-time-observation` proves only `clock`, `time`,
 C11 `timespec_get`, `clock_getres`, and `gettimeofday` through a pinned-musl

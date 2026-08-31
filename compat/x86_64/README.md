@@ -271,6 +271,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh string-duplication-header-abi
 ./scripts/dev-x86_64.sh random-entropy-header-abi
 ./scripts/dev-x86_64.sh time-header-abi
+./scripts/dev-x86_64.sh clock-settime-header-abi
 ./scripts/dev-x86_64.sh timerfd-header-abi
 ./scripts/dev-x86_64.sh signalfd-header-abi
 ./scripts/dev-x86_64.sh poll-header-abi
@@ -463,6 +464,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-search-tree-intrusive
 ./scripts/dev-x86_64.sh libc-search-hash-table
 ./scripts/dev-x86_64.sh libc-clock-gettime
+./scripts/dev-x86_64.sh libc-clock-settime
 ./scripts/dev-x86_64.sh libc-time-observation
 ./scripts/dev-x86_64.sh libc-difftime
 ./scripts/dev-x86_64.sh libc-timegm
@@ -3892,6 +3894,22 @@ this direct leaf intentionally owns no vDSO resolver or dynamic runtime state.
 It excludes `clock_getres`/`clock_settime`, `time`, calendar/timer state,
 pthread cancellation, dynamic runtime, and public x86 support.
 
+`libc-clock-settime` is a separately recorded
+`static-c-clock-settime-error-abi` `verified_artifact` gate over that archive,
+not clock-setting support. Its header gate proves that `<time.h>` hides the
+POSIX declaration under strict C11/C++17 and exposes the exact C and C++
+external-C signature under POSIX, X/Open, and GNU profiles. Its project-header
+C body first executes through pinned musl and then through a `-nostdlib -static`
+candidate, but only with rejected `clockid_t -1` and
+`CLOCK_MONOTONIC` requests. It therefore proves the direct `clock_settime=227`
+error convention, initial-TLS errno publication, and Linux's `EINVAL` or
+capability-first `EPERM` result without issuing a valid `CLOCK_REALTIME`
+update. The wrapper deliberately installs no authority guard: a valid caller
+can reach Linux outside this evidence. It excludes successful clock authority
+or state semantics, clock observation, calendar/time-zone policy, POSIX timers,
+cancellation, dynamic runtime, family completion, promotion, and public x86
+support.
+
 `libc-time-observation` is a separately recorded
 `static-c-time-observation` `verified_artifact` gate over that archive, not a
 C time-runtime capability. Its project-header C body first executes through
@@ -5874,6 +5892,7 @@ Apart from the narrowly named `libc-stat-compat`, `libc-credentials`,
 `libc-search-hash-table`,
 `libc-gettext-catalog`,
 `libc-clock-gettime`,
+`libc-clock-settime`,
 `libc-time-observation`,
 `libc-difftime`,
 `libc-timegm`,

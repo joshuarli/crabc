@@ -156,6 +156,7 @@ clock
 clock_getres
 clock_gettime
 clock_nanosleep
+clock_settime
 clog
 clogf
 clogl

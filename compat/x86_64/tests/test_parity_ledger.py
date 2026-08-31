@@ -8496,6 +8496,46 @@ class X86ParityLedgerTests(unittest.TestCase):
             "libc/src/c_abi/x86_64/clock_gettime.rs",
             posix_runtime["source_owners"],
         )
+        clock_settime = artifacts_by_id["static-c-clock-settime-error-abi"]
+        assert isinstance(clock_settime, dict)
+        self.assertNotIn("capabilities", clock_settime)
+        for owner in (
+            "compat/upstreams.toml",
+            "libc/src/c_abi/x86_64/static_c_abi.rs",
+            "libc/src/c_abi/x86_64/clock_settime.rs",
+            "libc/src/c_abi/x86_64/errno.rs",
+            "libc/src/c_abi/x86_64/syscall.rs",
+            "include/time.h",
+            "compat/x86_64/clock_settime_header_abi_probe.c",
+            "compat/x86_64/clock_settime_header_abi_probe.cpp",
+            "compat/x86_64/run_clock_settime_header_abi.sh",
+            "compat/x86_64/static_c_abi_exports.txt",
+            "compat/x86_64/libc_clock_settime_probe.c",
+            "compat/x86_64/libc_clock_settime_start.S",
+            "compat/x86_64/run_libc_clock_settime.sh",
+        ):
+            self.assertIn(owner, clock_settime["source_owners"])
+        self.assertEqual(
+            {evidence["command"] for evidence in clock_settime["native_evidence"]},
+            {"./scripts/dev-x86_64.sh libc-clock-settime"},
+        )
+        for phrase in (
+            "rejected-request error-ABI artifact",
+            "src/time/clock_settime.c",
+            "CLOCK_MONOTONIC",
+            "never calls valid `CLOCK_REALTIME`",
+            "`EINVAL` or `EPERM`",
+            "does not install an authority guard",
+            "family completion, promotion, or public x86 support",
+        ):
+            self.assertIn(phrase, clock_settime["description"])
+        self.assertIn(
+            "src/time/clock_settime.c", clock_settime["oracle"][0]["role"]
+        )
+        self.assertIn(
+            "libc/src/c_abi/x86_64/clock_settime.rs",
+            posix_runtime["source_owners"],
+        )
         system_configuration = artifacts_by_id["static-c-system-configuration"]
         assert isinstance(system_configuration, dict)
         self.assertNotIn("capabilities", system_configuration)
@@ -14572,6 +14612,41 @@ class X86ParityLedgerTests(unittest.TestCase):
         evidence[0]["command"] = "./scripts/dev-x86_64.sh time-abi-reference"
         with self.assertRaisesRegex(
             ledger.LedgerError, "closed libc-clock-gettime command"
+        ):
+            ledger.validate_ledger(data)
+
+    def test_clock_settime_error_abi_artifact_keeps_its_closed_mapping_contract(
+        self,
+    ) -> None:
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict)
+            and entry["id"] == "static-c-clock-settime-error-abi"
+        )
+        artifact["description"] = artifact["description"].replace(
+            "CLOCK_MONOTONIC", "CLOCK_UNSELECTED"
+        )
+        with self.assertRaisesRegex(ledger.LedgerError, "CLOCK_MONOTONIC"):
+            ledger.validate_ledger(data)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict)
+            and entry["id"] == "static-c-clock-settime-error-abi"
+        )
+        evidence = artifact["native_evidence"]
+        assert isinstance(evidence, list) and isinstance(evidence[0], dict)
+        evidence[0]["command"] = "./scripts/dev-x86_64.sh advanced-time-reference"
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "closed libc-clock-settime command"
         ):
             ledger.validate_ledger(data)
 

@@ -133,8 +133,9 @@ X86_RUNTIME_FOUNDATION_LDSO_SOURCES = {
 # copy/concatenation, fixed-C-
 # locale ctype and the separately bounded named-locale/multibyte conversion
 # artifact, scalar integer arithmetic, complete integer parsing, intmax
-# arithmetic, and find-first-set, direct POSIX clock_gettime, bounded clock
-# observation, no-cancellation mapping synchronization, direct anonymous-memory
+# arithmetic, and find-first-set, direct POSIX clock_gettime, direct rejected-
+# request clock_settime error translation, bounded clock observation,
+# no-cancellation mapping synchronization, direct anonymous-memory
 # descriptor creation, nanosleep, and clock_nanosleep, descriptor entry, selected
 # filesystem access, bounded fcntl
 # status control, bounded generic ioctl, and the basic x87 classification/sign,
@@ -155,6 +156,7 @@ X86_RUNTIME_FOUNDATION_LIBC_SOURCES = {
     Path("libc/src/c_abi/x86_64/credential_observation.rs"),
     Path("libc/src/c_abi/x86_64/child_reaping.rs"),
     Path("libc/src/c_abi/x86_64/clock_gettime.rs"),
+    Path("libc/src/c_abi/x86_64/clock_settime.rs"),
     Path("libc/src/c_abi/x86_64/difftime.rs"),
     Path("libc/src/c_abi/x86_64/gmtime_r.rs"),
     Path("libc/src/c_abi/x86_64/timegm.rs"),
@@ -3794,6 +3796,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         '#[path = "search_hash_table.rs"]',
         '#[path = "gettext_catalog.rs"]',
         '#[path = "clock_gettime.rs"]',
+        '#[path = "clock_settime.rs"]',
         '#[path = "difftime.rs"]',
         '#[path = "gmtime_r.rs"]',
         '#[path = "timegm.rs"]',
@@ -8137,6 +8140,51 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
             "must export only clock_gettime"
         )
 
+    clock_settime_source = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "clock_settime.rs"
+    clock_settime_text = clock_settime_source.read_text(errors="replace")
+    for required in (
+        "musl 1.2.6 release commit",
+        "src/time/clock_settime.c::clock_settime",
+        "raw_syscall::SYS_CLOCK_SETTIME",
+        "raw_syscall::syscall2(",
+        "c_status(result)",
+        "rejected-request C error",
+        "valid caller",
+        "successful mutation/state semantics",
+        "public x86 support",
+    ):
+        if required not in clock_settime_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/clock_settime.rs: selected static "
+                f"clock_settime error ABI is missing {required!r}"
+            )
+    clock_settime_exports = set(
+        re.findall(
+            r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(',
+            clock_settime_text,
+        )
+    )
+    if clock_settime_exports != {"clock_settime"}:
+        errors.append(
+            "libc/src/c_abi/x86_64/clock_settime.rs: selected static artifact "
+            "must export only clock_settime"
+        )
+    for forbidden in (
+        "crabc_core",
+        "crabc_mimalloc",
+        "clock_gettime(",
+        "clock_getres(",
+        "timer_create(",
+        "timer_delete(",
+        "nanosleep(",
+        "__tls_get_addr",
+    ):
+        if forbidden in clock_settime_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/clock_settime.rs: selected static "
+                f"clock_settime error ABI must not select {forbidden!r}"
+            )
+
     difftime_source = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "difftime.rs"
     difftime_text = difftime_source.read_text(errors="replace")
     for required in (
@@ -8458,6 +8506,11 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         errors.append(
             "libc/src/c_abi/x86_64/syscall.rs: selected static clock_gettime "
             "boundary requires SYS_CLOCK_GETTIME=228"
+        )
+    if "pub(crate) const SYS_CLOCK_SETTIME: i64 = 227;" not in raw_syscall_text:
+        errors.append(
+            "libc/src/c_abi/x86_64/syscall.rs: selected static clock_settime "
+            "error ABI requires SYS_CLOCK_SETTIME=227"
         )
 
     memory_mapping_source = (
@@ -11525,6 +11578,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         search_hash_table_text,
         gettext_catalog_text,
         clock_gettime_text,
+        clock_settime_text,
         difftime_text,
         gmtime_r_text,
         timegm_text,
@@ -11852,6 +11906,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         "waitpid",
         "waitid",
         "clock_gettime",
+        "clock_settime",
         "difftime",
         "gmtime_r",
         "timegm",
@@ -12158,6 +12213,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         ("search_hash_table.rs", search_hash_table_text),
         ("gettext_catalog.rs", gettext_catalog_text),
         ("clock_gettime.rs", clock_gettime_text),
+        ("clock_settime.rs", clock_settime_text),
         ("sched_cpucount.rs", sched_cpucount_text),
         ("sched_getcpu.rs", sched_getcpu_text),
         ("sched_priority_bounds.rs", sched_priority_bounds_text),
