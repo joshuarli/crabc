@@ -85,7 +85,8 @@
 //! startup/ordinary-exit lifecycle, startup-published program-name globals,
 //! raw initial auxiliary-vector observation, and option parsing,
 //! callback-algorithms, allocator-export-free AVL callback-tree search, and
-//! allocator-export-free hash-table search, a bounded no-catalog
+//! allocator-export-free hash-table search, a caller-owned intrusive queue
+//! rewiring pair, a bounded no-catalog
 //! gettext/message-catalog ABI profile, and POSIX `nanosleep`
 //! and `clock_nanosleep`, direct clock-observation artifacts, one binary64
 //! scalar `difftime` artifact, one caller-buffered fixed-UTC `gmtime_r`
@@ -370,6 +371,8 @@ mod stdio_format_scan;
 mod bsearch;
 #[path = "linear_search.rs"]
 mod linear_search;
+#[path = "intrusive_queue.rs"]
+mod intrusive_queue;
 #[path = "qsort.rs"]
 mod qsort;
 #[path = "callback_algorithms.rs"]

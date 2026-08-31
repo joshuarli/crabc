@@ -97,6 +97,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   posix-exit-header-abi  compile the staged x86 C/C++ unistd POSIX _exit declaration
   bsearch-header-abi  verify staged x86 C/C++ stdlib bsearch declaration and linkage
   linear-search-header-abi  verify staged x86 C/C++ search.h lfind/lsearch declarations and linkage
+  intrusive-queue-header-abi  verify staged x86 C/C++ search.h insque/remque declarations and linkage
   qsort-header-abi  verify staged x86 C/C++ stdlib qsort declaration and linkage
   callback-algorithms-header-abi  compile the staged x86 C/C++ stdlib callback-algorithm declarations
   ffs-header-abi  compile the staged x86 C/C++ strings.h find-first-set declarations
@@ -311,6 +312,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-posix-exit  run the static x86 crabc-libc POSIX _exit forwarding slice
   libc-bsearch  run the static x86 crabc-libc standalone bsearch slice
   libc-linear-search  run the static x86 crabc-libc standalone lfind/lsearch slice
+  libc-intrusive-queue  run the static x86 crabc-libc insque/remque slice
   libc-qsort  run the static x86 crabc-libc standalone qsort slice
   libc-callback-algorithms  run the static x86 crabc-libc callback-algorithms slice
   libc-search-tree-intrusive  run the static x86 crabc-libc search.h callback-tree slice
@@ -2244,6 +2246,10 @@ run_linear_search_header_abi() {
     run_in_container bash /workspace/compat/x86_64/run_linear_search_header_abi.sh
 }
 
+run_intrusive_queue_header_abi() {
+    run_in_container bash /workspace/compat/x86_64/run_intrusive_queue_header_abi.sh
+}
+
 run_qsort_header_abi() {
     run_in_container bash /workspace/compat/x86_64/run_qsort_header_abi.sh
 }
@@ -2273,6 +2279,10 @@ run_libc_bsearch() {
 
 run_libc_linear_search() {
     run_in_container bash /workspace/compat/x86_64/run_libc_linear_search.sh
+}
+
+run_libc_intrusive_queue() {
+    run_in_container bash /workspace/compat/x86_64/run_libc_intrusive_queue.sh
 }
 
 run_libc_qsort() {
@@ -3825,6 +3835,7 @@ case "$command" in
     stdio-permanent-fileno-unlocked-header-abi) ;;
     stdio-permanent-feof-unlocked-header-abi) ;;
     umask-header-abi|libc-umask) ;;
+    intrusive-queue-header-abi|libc-intrusive-queue) ;;
     image|musl-oracle|header-abi-reference|public-header-surface|header-abi-project|math-complex-header-abi|sys-reg-header-abi|types-header-abi|stat-header-abi|utime-header-abi|pthread-c11-header-abi|pthread-cancellation-header-abi|stdlib-header-abi|stdio-standard-header-abi|time-header-abi|poll-header-abi|select-header-abi|fcntl-header-abi|descriptor-advice-header-abi|filesystem-capacity-header-abi|flock-header-abi|sendfile-header-abi|ioctl-header-abi|unistd-header-abi|system-header-abi|syscall-header-abi|signal-header-abi|termios-header-abi|mman-header-abi|resource-header-abi|socket-header-abi|socket-messages-header-abi|random-entropy-header-abi|mm-abi-reference|mapping-reference|memory-vm-reference|pty-basic-reference|terminal-reference|mlock-reference|msync-reference|mincore-reference|fs-advice-reference|memfd-reference|ftruncate-reference|statfs-reference|timestamp-reference|path-lifecycle-reference|namespace-reference|path-core-reference|xattr-reference|directory-reference|temporary-object-reference|statx-reference|cwd-canonicalize-reference|root-change-reference|mount-reference|thread-kill-reference|ipc-reference|shm-reference|inotify-reference|socket-transport-reference|interface-device-reference|resolver-transport-reference|resolver-facade-reference|netdb-reference|users-databases-reference|posix-fallocate-reference|fallocate-reference|file-position-reference|sync-reference|syncfs-reference|sync-file-range-reference|rand-reference|time-abi-reference|time-observation-reference|calendar-time-reference|advanced-time-reference|relative-sleep-reference|clock-nanosleep-reference|getitimer-reference|setitimer-reference|timerfd-reference|pselect-reference|poll-reference|ppoll-reference|epoll-reference|process-identity-reference|child-ownership-reference|getgroups-reference|process-session-reference|pidfd-open-reference|fcntl-getlk-reference|fcntl-status-reference|flock-reference|sendfile-reference|copy-file-range-reference|scheduler-priority-bounds-reference|rr-interval-reference|sched-affinity-reference|sched-affinity-set-reference|priority-reference|setpriority-reference|rlimit-reference|rlimit-targeted-reference|setrlimit-reference|umask-reference|rusage-reference|times-reference|fstat-reference|statat-reference|getcwd-reference|readlinkat-reference|access-reference|system-reference|thread-reference|thread-credentials-reference|fs-credentials-reference|core|facade|facade-record-owning|libc-syscall|libc-errno-tls|libc-stat-compat|libc-credentials|libc-bootstrap-primitives|libc-signal-control|libc-signal-execution|libc-static-tls-v1|libc-crt-static-tls|libc-pthread-create-join-tls|libc-c11-lifecycle|libc-c11-plain-sync|libc-pthread-c11-once|libc-pthread-c11-tsd|libc-pthread-tls-aggregate|libc-pthread-cancel-deferred|libc-pthread-atfork|libc-thrd-sleep|libc-pthread-mutex-normal|libc-pthread-rwlock|libc-pthread-cond-private|libc-termios-control|libc-process-context|libc-environment|libc-descriptor-io|libc-descriptor-lifecycle|libc-timestamp-updates|libc-process-resources|libc-socket-transport|libc-socket-messages|libc-thread-pointer|libc-foundation|libc-fenv|libc-math-complex|libc-elementary-sqrt-fenv|libc-math-x87-extended|libc-memory|libc-setjmp|libc-atomic|libc-clone-raw|libc-signal-altstack|libc-signal-foundation|ldso-relocation|ldso-image|ldso-initial-graph|ldso-initial-tls|ldso-initial-exec-tls|ldso-owned-crt-handoff|ldso-fixed-graph-introspection|ldso-dynamic-admission) ;;
     math-elementary-long-double-header-abi|libc-math-elementary-long-double) ;;
     ldso-fixed-graph-dlfcn) ;;
@@ -3867,7 +3878,7 @@ case "$command" in
     xattr-header-abi) ;;
     madvise-reference) ;;
     ctype-header-abi|locale-profile-header-abi|locale-multibyte-header-abi|iconv-header-abi|wide-character-header-abi|locale-object-wide-header-abi|locale-narrow-header-abi) ;;
-    integer-arithmetic-header-abi|integer-parse-header-abi|float-parse-header-abi|getsubopt-header-abi|l64a-header-abi|intmax-arithmetic-header-abi|credential-observation-header-abi|login-name-header-abi|child-reaping-header-abi|immediate-termination-header-abi|bsearch-header-abi|linear-search-header-abi|qsort-header-abi|callback-algorithms-header-abi) ;;
+    integer-arithmetic-header-abi|integer-parse-header-abi|float-parse-header-abi|getsubopt-header-abi|l64a-header-abi|intmax-arithmetic-header-abi|credential-observation-header-abi|login-name-header-abi|child-reaping-header-abi|immediate-termination-header-abi|bsearch-header-abi|linear-search-header-abi|intrusive-queue-header-abi|qsort-header-abi|callback-algorithms-header-abi) ;;
     posix-exit-header-abi) ;;
     ffs-header-abi) ;;
     byte-strings-header-abi) ;;
@@ -4219,6 +4230,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "linear-search-header-abi takes no arguments"
         ensure_image
         run_linear_search_header_abi
+        ;;
+    intrusive-queue-header-abi)
+        [ "$#" -eq 0 ] || fail "intrusive-queue-header-abi takes no arguments"
+        ensure_image
+        run_intrusive_queue_header_abi
         ;;
     qsort-header-abi)
         [ "$#" -eq 0 ] || fail "qsort-header-abi takes no arguments"
@@ -5484,6 +5500,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "libc-linear-search takes no arguments"
         ensure_image
         run_libc_linear_search
+        ;;
+    libc-intrusive-queue)
+        [ "$#" -eq 0 ] || fail "libc-intrusive-queue takes no arguments"
+        ensure_image
+        run_libc_intrusive_queue
         ;;
     libc-qsort)
         [ "$#" -eq 0 ] || fail "libc-qsort takes no arguments"

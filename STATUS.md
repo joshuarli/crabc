@@ -266,6 +266,20 @@ helpers, TLS/errno, allocation, locale, syscall, or mutable runtime state. It
 does not select general sorting/searching or callback ownership, family
 completion, promotion, or public x86 support.
 
+`./scripts/dev-x86_64.sh libc-intrusive-queue` is a separate private
+`static-c-intrusive-queue` artifact inside still-planned `libc.c-abi-compat`.
+Its pinned-musl/project C/C++ `<search.h>` matrix proves unconditional exact
+`insque` and `remque` declarations from strict through BSD selection and
+unmangled C++ linkage. Equivalent pinned-musl and freestanding-static routes
+then prove caller-owned null-predecessor clearing, middle/tail splice,
+neighbor reconnection, and intentionally stale removed links. The selected
+candidate contains exactly the paired one-object rewiring leaf without
+bsearch/lfind/lsearch/qsort, tree/hash helpers, TLS/errno, allocation,
+byte/text helpers, callbacks, locks, syscalls, or mutable runtime state. It
+does not select a queue container, queue/search lifecycle, caller-node
+validation, callback ownership, concurrency policy, allocator/runtime
+behavior, family completion, promotion, or public x86 support.
+
 `./scripts/dev-x86_64.sh libc-qsort` is a separate private `static-c-qsort`
 artifact inside still-planned `libc.c-abi-compat`. Its pinned-musl/project
 C/C++ `<stdlib.h>` matrix proves the unconditional four-argument declaration

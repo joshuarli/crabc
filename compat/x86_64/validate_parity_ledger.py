@@ -1444,6 +1444,8 @@ BSEARCH_SYMBOLS = ("bsearch",)
 
 LINEAR_SEARCH_SYMBOLS = ("lfind", "lsearch")
 
+INTRUSIVE_QUEUE_SYMBOLS = ("insque", "remque")
+
 QSORT_SYMBOLS = ("qsort",)
 
 INET_ADDRESS_UNSELECTED_SYMBOLS = (
@@ -28193,6 +28195,331 @@ def require_bsearch_artifact(family: Mapping[str, Any]) -> None:
         require(snippet in dispatcher, f"bsearch dispatcher omits {snippet}")
 
 
+def require_intrusive_queue_artifact(family: Mapping[str, Any]) -> None:
+    """Keep musl's paired caller-owned queue rewiring below promotion."""
+
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.c-abi-compat].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [
+        entry for entry in artifacts if entry.get("id") == "static-c-intrusive-queue"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.c-abi-compat must contain exactly one static-c-intrusive-queue artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-intrusive-queue must not promote libc.c-abi-compat",
+    )
+    artifact = matching[0]
+    require(
+        "capabilities" not in artifact,
+        "static-c-intrusive-queue must remain capability-free",
+    )
+
+    description = artifact.get("description")
+    require(
+        isinstance(description, str), "static-c-intrusive-queue needs a description"
+    )
+    for phrase in (
+        "`insque`/`remque` compatibility artifact",
+        "still-planned `libc.c-abi-compat`",
+        "`src/search/insque.c`",
+        "first two pointer words",
+        "clears both links",
+        "directly after a non-null predecessor",
+        "leaves the removed element's link words stale",
+        "rejects bsearch/lfind/lsearch/qsort",
+        "tree/hash helpers",
+        "capability-free ABI artifact",
+        "queue container",
+        "queue/search lifecycle",
+        "allocator/runtime behavior",
+        "family completion",
+        "promotion",
+        "public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"static-c-intrusive-queue description omits {phrase}",
+        )
+
+    owners = set(
+        nonempty_strings(
+            artifact.get("source_owners"),
+            "static-c-intrusive-queue.source_owners",
+        )
+    )
+    for owner in (
+        "compat/upstreams.toml",
+        "compat/abi/musl-1.2.6/aarch64/libc.a.static.tsv",
+        "libc/Cargo.toml",
+        "libc/src/lib.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/intrusive_queue.rs",
+        "include/features.h",
+        "include/bits/alltypes.h",
+        "include/stddef.h",
+        "include/search.h",
+        "compat/x86_64/intrusive_queue_header_abi_probe.c",
+        "compat/x86_64/intrusive_queue_header_abi_probe.cpp",
+        "compat/x86_64/run_intrusive_queue_header_abi.sh",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/libc_intrusive_queue_probe.c",
+        "compat/x86_64/libc_intrusive_queue_start.S",
+        "compat/x86_64/run_libc_intrusive_queue.sh",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/aarch64_parity_inventory.py",
+        "compat/x86_64/aarch64_parity_inventory.json",
+        "compat/x86_64/README.md",
+        "STATUS.md",
+        "x86-64.md",
+        "scripts/dev-x86_64.sh",
+        "scripts/check_structure.py",
+    ):
+        require(
+            owner in owners,
+            f"static-c-intrusive-queue source owners omit {owner}",
+        )
+
+    prerequisites = nonempty_strings(
+        artifact.get("x86_abi_prerequisites"),
+        "static-c-intrusive-queue.x86_abi_prerequisites",
+    )
+    require(
+        any(
+            "SysV AMD64" in item
+            and "rdi/rsi" in item
+            and "remque" in item
+            and "returns no value" in item
+            and "offsets 0 and 8" in item
+            for item in prerequisites
+        ),
+        "static-c-intrusive-queue must retain its LP64 void-function ABI",
+    )
+    require(
+        any(
+            "9fa28ece75d8a2191de7c5bb53bed224c5947417" in item
+            and "src/search/insque.c::{insque,remque}" in item
+            and "insque.lo" in item
+            and "without clearing its element links" in item
+            for item in prerequisites
+        ),
+        "static-c-intrusive-queue must retain its bounded musl source closure",
+    )
+    require(
+        any(
+            "no interpreter" in item
+            and "PT_TLS" in item
+            and "bsearch" in item
+            and "tree/hash helpers" in item
+            and "one exit syscall" in item
+            for item in prerequisites
+        ),
+        "static-c-intrusive-queue must retain its standalone static closure",
+    )
+
+    headers = nonempty_strings(
+        artifact.get("x86_header_prerequisites"),
+        "static-c-intrusive-queue.x86_header_prerequisites",
+    )
+    require(
+        any(
+            "void insque(void *, void *)" in item
+            and "void remque(void *)" in item
+            and "<search.h>" in item
+            and "strict" in item
+            and "POSIX" in item
+            and "X/Open" in item
+            and "GNU" in item
+            and "BSD" in item
+            and "unmangled C++ linkage" in item
+            for item in headers
+        ),
+        "static-c-intrusive-queue must retain its unconditional C/C++ header ABI",
+    )
+
+    evidence = artifact.get("native_evidence")
+    require(isinstance(evidence, list), "static-c-intrusive-queue needs evidence")
+    require(
+        {entry.get("command") for entry in evidence if isinstance(entry, Mapping)}
+        == {"./scripts/dev-x86_64.sh libc-intrusive-queue"},
+        "static-c-intrusive-queue must use the closed libc-intrusive-queue command",
+    )
+    scope = evidence[0].get("scope")
+    require(
+        isinstance(scope, str)
+        and all(
+            phrase in scope
+            for phrase in (
+                "Pinned-musl/project C11/C++ header",
+                "`-nostdlib -static` candidate",
+                "null-predecessor link clearing",
+                "intentionally stale removed-node links",
+                "paired one-member archive owner",
+                "bsearch/lfind/lsearch/qsort",
+                "queue container",
+                "allocator/runtime behavior",
+                "family promotion",
+                "public x86 support",
+            )
+        ),
+        "static-c-intrusive-queue evidence must retain its standalone static closure",
+    )
+
+    exports = set(
+        static_c_abi_export_names(
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        )
+    )
+    require(
+        set(INTRUSIVE_QUEUE_SYMBOLS) <= exports,
+        "static-c-intrusive-queue must retain its selected exports",
+    )
+    require(
+        {symbol for symbol in exports if symbol in INTRUSIVE_QUEUE_SYMBOLS}
+        == set(INTRUSIVE_QUEUE_SYMBOLS),
+        "static-c-intrusive-queue must retain the complete paired export set",
+    )
+
+    static_root = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+    ).read_text(encoding="utf-8")
+    require(
+        '#[path = "intrusive_queue.rs"]\nmod intrusive_queue;' in static_root,
+        "x86 static C ABI must compose the standalone intrusive-queue leaf",
+    )
+    source = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "intrusive_queue.rs"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "pinned musl 1.2.6 release commit",
+        "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+        "src/search/insque.c",
+        "null; otherwise it inserts",
+        "own link words unchanged",
+        "ptr::read",
+        "ptr::write",
+        'pub unsafe extern "C" fn insque',
+        'pub unsafe extern "C" fn remque',
+    ):
+        require(snippet in source, f"intrusive-queue implementation omits {snippet}")
+    exports_in_source = set(
+        re.findall(
+            r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(', source
+        )
+    )
+    require(
+        exports_in_source == set(INTRUSIVE_QUEUE_SYMBOLS),
+        "intrusive-queue implementation must expose insque and remque only",
+    )
+    for forbidden in (
+        "raw_syscall::",
+        "errno::",
+        "crabc_core",
+        "crabc_mimalloc",
+        "global_asm!",
+    ):
+        require(
+            forbidden not in source,
+            f"intrusive-queue leaf widens into {forbidden}",
+        )
+
+    runner = (
+        ROOT / "compat" / "x86_64" / "run_libc_intrusive_queue.sh"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "run_musl_oracle.sh",
+        "run_intrusive_queue_header_abi.sh",
+        "static_c_abi_exports.txt",
+        "-nostdlib -static",
+        "--no-undefined",
+        "insque\\tinsque.lo",
+        "remque\\tinsque.lo",
+        "--disassemble=insque",
+        "--disassemble=remque",
+        "candidate queue implementation unexpectedly delegates",
+        "outside the test entry shim",
+        "bsearch|lfind|lsearch|qsort",
+        "tree/hash",
+    ):
+        require(snippet in runner, f"intrusive-queue runner omits {snippet}")
+    require(
+        "--whole-archive" not in runner,
+        "intrusive-queue runner must preserve archive-member extraction",
+    )
+
+    probe = (
+        ROOT / "compat" / "x86_64" / "libc_intrusive_queue_probe.c"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "insque_signature",
+        "remque_signature",
+        "check_null_predecessor",
+        "check_middle_splice_and_remove",
+        "check_tail_and_head_edges",
+        "stale links",
+        "CRABC_INTRUSIVE_QUEUE_FREESTANDING",
+    ):
+        require(snippet in probe, f"intrusive-queue probe omits {snippet}")
+
+    header_c = (
+        ROOT / "compat" / "x86_64" / "intrusive_queue_header_abi_probe.c"
+    ).read_text(encoding="utf-8")
+    header_cxx = (
+        ROOT / "compat" / "x86_64" / "intrusive_queue_header_abi_probe.cpp"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "insque declaration",
+        "remque declaration",
+        "insque_signature",
+        "remque_signature",
+        "insque_function",
+        "remque_function",
+    ):
+        require(snippet in header_c, f"intrusive-queue C header probe omits {snippet}")
+        require(
+            snippet in header_cxx,
+            f"intrusive-queue C++ header probe omits {snippet}",
+        )
+
+    header_runner = (
+        ROOT / "compat" / "x86_64" / "run_intrusive_queue_header_abi.sh"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "intrusive_queue_header_abi_probe.c",
+        "intrusive_queue_header_abi_probe.cpp",
+        "Pinned musl 1.2.6",
+        "-D__STRICT_ANSI__",
+        "-D_POSIX_C_SOURCE=200809L",
+        "-D_XOPEN_SOURCE=700",
+        "-D_GNU_SOURCE",
+        "-D_BSD_SOURCE",
+        "retained a mangled intrusive-queue reference",
+    ):
+        require(
+            snippet in header_runner,
+            f"intrusive-queue header runner omits {snippet}",
+        )
+
+    dispatcher = (ROOT / "scripts" / "dev-x86_64.sh").read_text(encoding="utf-8")
+    for snippet in (
+        "intrusive-queue-header-abi)",
+        "run_intrusive_queue_header_abi",
+        "libc-intrusive-queue)",
+        "run_libc_intrusive_queue",
+    ):
+        require(
+            snippet in dispatcher,
+            f"intrusive-queue dispatcher omits {snippet}",
+        )
+
+
 def require_linear_search_artifact(family: Mapping[str, Any]) -> None:
     """Keep musl's paired linear-search leaf capability-free and closed."""
 
@@ -42475,6 +42802,7 @@ def validate_ledger(
     require_qsort_artifact(by_id["libc.c-abi-compat"])
     require_bsearch_artifact(by_id["libc.c-abi-compat"])
     require_linear_search_artifact(by_id["libc.c-abi-compat"])
+    require_intrusive_queue_artifact(by_id["libc.c-abi-compat"])
     require_auxv_observation_artifact(by_id["libc.c-abi-compat"])
     require_process_globals_getopt_artifact(by_id["libc.c-abi-compat"])
     require_search_tree_intrusive_slice(by_id["libc.c-abi-compat"])

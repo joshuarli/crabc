@@ -440,6 +440,8 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-bsearch
 ./scripts/dev-x86_64.sh linear-search-header-abi
 ./scripts/dev-x86_64.sh libc-linear-search
+./scripts/dev-x86_64.sh intrusive-queue-header-abi
+./scripts/dev-x86_64.sh libc-intrusive-queue
 ./scripts/dev-x86_64.sh qsort-header-abi
 ./scripts/dev-x86_64.sh libc-qsort
 ./scripts/dev-x86_64.sh getpass-header-abi
@@ -3626,6 +3628,21 @@ helpers, TLS/errno, allocation, locale, syscall, and runtime state. It
 selects neither general sorting/searching nor callback ownership, libc.so,
 CRT, loader, sysroot, family completion, promotion, or public x86 support.
 
+`libc-intrusive-queue` is a separate capability-free
+`static-c-intrusive-queue` `verified_artifact` inside still-planned
+`libc.c-abi-compat`. Its strict, POSIX, X/Open, GNU, and BSD C/C++
+`<search.h>` matrix proves the unconditional paired `insque` and `remque`
+declarations and unmangled C++ linkage. One project-header C fixture then
+executes through pinned musl and a `-nostdlib -static` candidate. It pins only
+caller-owned first-two-pointer-word rewiring: null-predecessor clearing,
+middle/tail splice, neighbor reconnection, and intentionally stale removed
+links. The candidate contains only the paired one-object queue leaf and
+rejects bsearch/lfind/lsearch/qsort, tree/hash helpers, TLS/errno, allocation,
+byte/text helpers, callbacks, locks, syscalls, and runtime state. It selects
+neither a queue container nor queue/search lifecycle, caller-node validation,
+callback ownership, concurrency policy, allocator/runtime behavior, libc.so,
+CRT, loader, sysroot, family completion, promotion, or public x86 support.
+
 `libc-qsort` is a separate capability-free `static-c-qsort`
 `verified_artifact` inside still-planned `libc.c-abi-compat`. Its strict,
 POSIX, X/Open, GNU, and BSD C/C++ `<stdlib.h>` matrix proves the unconditional
@@ -5709,6 +5726,7 @@ Apart from the narrowly named `libc-stat-compat`, `libc-credentials`,
 `libc-tcsetpgrp`,
 `libc-bsearch`,
 `libc-linear-search`,
+`libc-intrusive-queue`,
 `libc-qsort`,
 `libc-getpass`,
 `libc-mktemp`,

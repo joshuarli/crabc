@@ -411,6 +411,7 @@ inotify_add_watch
 inotify_init
 inotify_init1
 inotify_rm_watch
+insque
 ioctl
 isalnum
 isalnum_l
@@ -679,6 +680,7 @@ remainderf
 remainderl
 remove
 removexattr
+remque
 remquo
 remquof
 remquol
