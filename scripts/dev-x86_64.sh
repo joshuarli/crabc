@@ -69,6 +69,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   pthread-c11-header-abi  verify staged x86 pthread/C11-thread C/C++ header ABI profiles
   pthread-cancellation-header-abi  verify staged x86 deferred pthread-cancellation C/C++ header ABI profiles
   stdlib-header-abi  compare x86 <stdlib.h> strict/POSIX/XOPEN/GNU/BSD/LFS profiles with musl
+  getloadavg-header-abi  verify x86 GNU/BSD <stdlib.h> getloadavg C/C++ declaration and linkage
   stdio-standard-header-abi  compare selected x86 <stdio.h> standard-stream C/C++ profiles with musl
   stdio-permanent-line-io-header-abi  verify x86 <stdio.h> permanent line-I/O C/C++ declarations and linkage
   stdio-permanent-byte-io-header-abi  verify x86 <stdio.h> permanent byte-I/O C/C++ declarations and linkage
@@ -369,6 +370,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-readiness-waits  run the static x86 crabc-libc readiness/signal-waits slice
   libc-system-observation  run the static x86 crabc-libc uname/sysinfo slice
   libc-system-information  run the static x86 crabc-libc processor/page slice
+  libc-getloadavg  run the static x86 crabc-libc historical load-average slice
   libc-uts-identity  run the static x86 crabc-libc hostname/domain identity slice
   libc-ctype  run the static x86 crabc-libc C-locale ctype slice
   libc-locale-profile  run the static x86 fixed setlocale/localeconv profile slice
@@ -778,6 +780,12 @@ fixture after its equivalent pinned-musl run. It selects only musl's fixed
 page calculations, including the child-local affinity-error CPU-zero fallback.
 It does not select load observation, affinity control, topology, general
 `sysconf`, dynamic libc, or application startup.
+`libc-getloadavg` exercises a separate GNU/BSD project-header C/C++ declaration
+gate and freestanding project-header C fixture after its equivalent pinned-musl
+run. It selects only historical `getloadavg`: count <= 0/no-output/stale-errno,
+the three-entry clamp, and caller output from an adjacent raw `sysinfo` snapshot.
+It does not select public sysinfo/uname, `/proc`, processor or topology policy,
+general `sysconf`, dynamic libc, or application startup.
 `libc-fcntl-record-locks` exercises a separate freestanding project-header C
 fixture after its equivalent pinned-musl run. It selects only pointer-bearing
 nonblocking `fcntl(F_GETLK)`/`fcntl(F_SETLK)` record locks: an unlocked query,
@@ -1640,6 +1648,13 @@ the fixed 128-byte `sched_getaffinity` processor count and the `sysinfo`
 physical/free-plus-buffer page calculations, preserving stale `errno` and the
 CPU-zero fallback in a child-local affinity-error regression. It does not
 provide load observation, affinity control, CPU topology, general `sysconf`,
+dynamic libc, CRT/TLS lifecycle, loader, sysroot, or public x86 support.
+`libc-getloadavg` links that archive into a separate GNU/BSD project-header
+C/C++ declaration gate and freestanding project-header C fixture after an
+equivalent pinned-musl run. It selects only historical `getloadavg`: count <=
+0/no-output/stale-errno, the three-entry clamp, and caller-owned binary64
+output from an adjacent raw `sysinfo` snapshot. It does not provide public
+sysinfo/uname, `/proc`, processor or topology policy, general `sysconf`,
 dynamic libc, CRT/TLS lifecycle, loader, sysroot, or public x86 support.
 `libc-fcntl-record-locks` links that archive into a separate freestanding
 project-header C fixture after an equivalent pinned-musl run. It selects only
@@ -2627,6 +2642,10 @@ run_getpagesize_header_abi() {
 
 run_system_header_abi() {
     run_in_container bash /workspace/compat/x86_64/run_system_header_abi.sh
+}
+
+run_getloadavg_header_abi() {
+    run_in_container bash /workspace/compat/x86_64/run_getloadavg_header_abi.sh
 }
 
 run_syscall_header_abi() {
@@ -3660,6 +3679,10 @@ run_libc_system_information_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_system_information.sh
 }
 
+run_libc_getloadavg_probe() {
+    run_in_container bash /workspace/compat/x86_64/run_libc_getloadavg.sh
+}
+
 run_libc_fcntl_record_locks_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_fcntl_record_locks.sh
 }
@@ -3870,6 +3893,8 @@ command="$1"
 shift
 
 case "$command" in
+    getloadavg-header-abi) ;;
+    libc-getloadavg) ;;
     timerfd-header-abi|signalfd-header-abi) ;;
     libc-timerfd|libc-signalfd|libc-sigpause|libc-sigisemptyset|libc-sigandset-sigorset|libc-sigpending|libc-sigrtmax|libc-sigrtmin|libc-sched-getscheduler|libc-alarm|libc-sigaddset-sigdelset-sigfillset) ;;
     libc-sched-getcpu|libc-sched-yield) ;;
@@ -4129,6 +4154,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "stdlib-header-abi takes no arguments"
         ensure_image
         run_stdlib_header_abi
+        ;;
+    getloadavg-header-abi)
+        [ "$#" -eq 0 ] || fail "getloadavg-header-abi takes no arguments"
+        ensure_image
+        run_getloadavg_header_abi
         ;;
     stdio-standard-header-abi)
         [ "$#" -eq 0 ] || fail "stdio-standard-header-abi takes no arguments"
@@ -5338,6 +5368,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "libc-system-information takes no arguments"
         ensure_image
         run_libc_system_information_probe
+        ;;
+    libc-getloadavg)
+        [ "$#" -eq 0 ] || fail "libc-getloadavg takes no arguments"
+        ensure_image
+        run_libc_getloadavg_probe
         ;;
     libc-fcntl-record-locks)
         [ "$#" -eq 0 ] || fail "libc-fcntl-record-locks takes no arguments"

@@ -127,7 +127,10 @@ for symbol in get_nprocs_conf get_nprocs get_phys_pages get_avphys_pages; do
     grep -Eq "[[:space:]][TW][[:space:]]${symbol}$" "$archive_symbols" \
         || fail "archive does not define ${symbol}"
 done
-for unselected in getloadavg gethostid sethostid \
+# `getloadavg` and `gethostid` have their own selected archive artifacts.
+# Keep them out of this older processor/page candidate below, but do not
+# misclassify their separately ratcheted archive exports as unselected here.
+for unselected in sethostid \
     _Fork vfork clone execve syscall \
     malloc free calloc realloc; do
     if grep -Eq "[[:space:]][TW][[:space:]]${unselected}$" "$archive_symbols"; then
@@ -156,6 +159,11 @@ objdump -d "$candidate" >"$candidate_disassembly"
 for symbol in __errno_location get_nprocs_conf get_nprocs get_phys_pages get_avphys_pages; do
     grep -Eq "[[:space:]]${symbol}$" "$candidate_symbols" \
         || fail "candidate does not define ${symbol}"
+done
+for separately_selected in getloadavg gethostid; do
+    if grep -Eq "[[:space:]]${separately_selected}$" "$candidate_symbols"; then
+        fail "processor/page candidate unexpectedly retains separately selected ${separately_selected}"
+    fi
 done
 unresolved_symbols="$(awk '$7 == "UND" && NF >= 8 { print }' "$candidate_symbols")"
 if [ -n "$unresolved_symbols" ]; then

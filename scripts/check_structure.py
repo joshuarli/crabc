@@ -263,6 +263,7 @@ X86_RUNTIME_FOUNDATION_LIBC_SOURCES = {
     Path("libc/src/c_abi/x86_64/getpass.rs"),
     Path("libc/src/c_abi/x86_64/thread_pointer.rs"),
     Path("libc/src/c_abi/x86_64/uts_identity.rs"),
+    Path("libc/src/c_abi/x86_64/getloadavg.rs"),
 }
 # The fixed-mimalloc evidence lane remains a separate, private program. Its
 # historical feature is retained for compatibility but no longer governs the
@@ -3837,6 +3838,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         '#[path = "intmax_arithmetic.rs"]',
         '#[path = "ffs.rs"]',
         '#[path = "system_observation.rs"]',
+        '#[path = "getloadavg.rs"]',
         '#[path = "uts_identity.rs"]',
         "fn c_status",
         "fn c_pointer_status",
@@ -11276,6 +11278,52 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
             "artifact must export only uname and sysinfo"
         )
 
+    getloadavg_source = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "getloadavg.rs"
+    getloadavg_text = getloadavg_source.read_text(errors="replace")
+    for required in (
+        "Selected static Linux/x86-64 `getloadavg` C ABI boundary",
+        "musl 1.2.6 release commit",
+        "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+        "src/legacy/getloadavg.c::getloadavg",
+        "MAX_LOAD_AVERAGES: c_int = 3",
+        "SI_LOAD_SCALE: f64 = 1.0 / 65_536.0",
+        "system_observation::sysinfo_raw",
+        "c_status(raw_result) != 0",
+        "count <= 0",
+        'pub unsafe extern "C" fn getloadavg(output: *mut f64, count: c_int) -> c_int',
+    ):
+        if required not in getloadavg_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/getloadavg.rs: selected static historical "
+                f"getloadavg boundary is missing {required!r}"
+            )
+    getloadavg_exports = set(
+        re.findall(
+            r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(',
+            getloadavg_text,
+        )
+    )
+    if getloadavg_exports != {"getloadavg"}:
+        errors.append(
+            "libc/src/c_abi/x86_64/getloadavg.rs: selected static historical "
+            "getloadavg artifact must export only getloadavg"
+        )
+    for forbidden in (
+        "raw_syscall::",
+        "system_configuration::",
+        "fn get_nprocs",
+        "pub unsafe extern \"C\" fn sysinfo",
+        "pub unsafe extern \"C\" fn uname",
+        "alloc::",
+        "crabc_core",
+        "crabc_mimalloc",
+    ):
+        if forbidden in getloadavg_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/getloadavg.rs: selected static historical "
+                f"getloadavg boundary must not select {forbidden!r}"
+            )
+
     uts_identity_source = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "uts_identity.rs"
     uts_identity_text = uts_identity_source.read_text(errors="replace")
     for required in (
@@ -11416,6 +11464,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         credential_observation_text,
         ffs_text,
         system_observation_text,
+        getloadavg_text,
         uts_identity_text,
         timestamp_text,
     )
@@ -11788,6 +11837,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         "ns_put16",
         "uname",
         "sysinfo",
+        "getloadavg",
         "gethostname",
         "sethostname",
         "getdomainname",
@@ -11927,7 +11977,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
             "signal-control, separate realtime-minimum/realtime-maximum bridges, one pure GNU signal-set predicate, paired GNU binary set-operation leaf, and a three-symbol POSIX signal-set mutation leaf, bounded process-signal execution, and one legacy single-signal pause wait, bounded pthread create/exit/join/detach initial-TLS worker, its private selected-main/worker pthread-key/C11-TSS lifecycle, private process-normal pthread mutexes and their musl private condition-variable handoff, the complete selected rwlock/attribute family with private-or-shared futex operation, plus the distinct C11 plain-sync adapter and normal-return pthread/C11 once state machine, its typed C11 create/exit/join/detach sibling, and pthread/C11 identity aliases, named termios-control, direct terminal-descriptor and foreground-group observations plus one named foreground-group assignment, caller-buffered terminal naming, historical ctermid pathname spelling, constant historical gethostid compatibility, direct GNU gettid observation, selected process-context, child-reaping, C11 immediate termination, callback algorithms, direct clock_gettime, binary64 difftime, caller-buffered fixed-UTC gmtime_r, fixed-UTC timegm, a GNU current-CPU raw-fallback observation leaf, a status-returning POSIX scheduler-yield leaf, caller-owned mapping-core, no-cancellation mapping synchronization, direct anonymous-memory descriptor creation, nanosleep, and clock_nanosleep, selected "
             "signal-control, separate realtime-minimum/realtime-maximum bridges, one historical SIGALRM interval-timer adapter leaf, one pure GNU signal-set predicate, paired GNU binary set-operation leaf, and a three-symbol POSIX signal-set mutation leaf, bounded process-signal execution, and one legacy single-signal pause wait, bounded pthread create/exit/join/detach initial-TLS worker, its private selected-main/worker pthread-key/C11-TSS lifecycle, private process-normal pthread mutexes and their musl private condition-variable handoff, the complete selected rwlock/attribute family with private-or-shared futex operation, plus the distinct C11 plain-sync adapter and normal-return pthread/C11 once state machine, its typed C11 create/exit/join/detach sibling, and pthread/C11 identity aliases, named termios-control, direct terminal-descriptor and foreground-group observations plus one named foreground-group assignment, caller-buffered terminal naming, historical ctermid pathname spelling, constant historical gethostid compatibility, selected process-context, child-reaping, C11 immediate termination, callback algorithms, direct clock_gettime, binary64 difftime, caller-buffered fixed-UTC gmtime_r, fixed-UTC timegm, a status-returning POSIX scheduler-yield leaf, caller-owned mapping-core, no-cancellation mapping synchronization, direct anonymous-memory descriptor creation, nanosleep, and clock_nanosleep, selected "
             "POSIX _exit forwarding, descriptor-entry, selected filesystem-access, bounded descriptor-control, timestamp updates, and descriptor-I/O, selected process-resources, selected readiness/signal-waits, "
-            "selected socket transport and selected socket-message/options, selected system-observation, selected UTS-identity, "
+            "selected socket transport and selected socket-message/options, selected system-observation, historical load snapshot, selected UTS-identity, "
             "selected numeric-address codecs, immutable IPv6 unspecified/loopback address data objects, and legacy classful IPv4 arithmetic, fixed-profile h_errno message text, byte-string, legacy-memory adapters, source-backed memccpy/mempcpy, caller-buffer strsep, random-entropy, memory-search, C-string-copy, immutable error-string, "
             "fixed-C-locale ctype, integer-arithmetic, integer-parsing, intmax-arithmetic, credential-observation, and "
             "raw auxiliary-vector observation, startup-derived secure-environment, and environment-backed login-name observation, find-first-set, startup-published program names, short/GNU-long "
@@ -12038,6 +12088,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         ("intmax_arithmetic.rs", intmax_arithmetic_text),
         ("ffs.rs", ffs_text),
         ("system_observation.rs", system_observation_text),
+        ("getloadavg.rs", getloadavg_text),
         ("uts_identity.rs", uts_identity_text),
     ):
         if re.search(

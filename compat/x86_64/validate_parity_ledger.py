@@ -1439,6 +1439,7 @@ INET_NTOA_SYMBOLS = ("inet_ntoa",)
 
 GETHOSTID_SYMBOLS = ("gethostid",)
 GETTID_SYMBOLS = ("gettid",)
+GETLOADAVG_SYMBOLS = ("getloadavg",)
 
 INET_CLASSFUL_SYMBOLS = ("inet_lnaof", "inet_makeaddr")
 
@@ -17699,6 +17700,363 @@ def require_system_information_artifact(family: Mapping[str, Any]) -> None:
             phrase in scope,
             f"static-c-system-information evidence scope omits {phrase}",
         )
+    runner = (
+        ROOT / "compat" / "x86_64" / "run_libc_system_information.sh"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "for separately_selected in getloadavg gethostid",
+        "processor/page candidate unexpectedly retains separately selected",
+    ):
+        require(
+            snippet in runner,
+            f"static-c-system-information must keep getloadavg outside its candidate: {snippet}",
+        )
+    require(
+        "for unselected in getloadavg" not in runner,
+        "static-c-system-information must not reject separately selected getloadavg from the archive",
+    )
+
+
+def require_getloadavg_artifact(family: Mapping[str, Any]) -> None:
+    """Keep the historical load snapshot below system-information promotion."""
+
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.posix-runtime].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [
+        entry for entry in artifacts if entry.get("id") == "static-c-getloadavg"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.posix-runtime must contain exactly one static-c-getloadavg artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-getloadavg must not promote libc.posix-runtime",
+    )
+    artifact = matching[0]
+    require(
+        "capabilities" not in artifact,
+        "static-c-getloadavg must not carry capabilities",
+    )
+
+    description = artifact.get("description")
+    require(isinstance(description, str), "static-c-getloadavg needs a description")
+    for phrase in (
+        "historical `getloadavg` compatibility artifact",
+        "still-planned `libc.posix-runtime`",
+        "pinned musl 1.2.6",
+        "`int getloadavg(double *, int)`",
+        "private Linux `sysinfo` snapshot",
+        "count <= 0",
+        "uninitialized local `struct sysinfo`",
+        "raw errno and returns `-1` without output",
+        "public `sysinfo` or `uname`",
+        "`/proc`",
+        "general `sysconf`",
+        "general system-information capability",
+        "family completion, promotion, or public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"static-c-getloadavg description omits {phrase}",
+        )
+
+    owners = set(
+        nonempty_strings(
+            artifact.get("source_owners"), "static-c-getloadavg.source_owners"
+        )
+    )
+    for owner in (
+        "compat/upstreams.toml",
+        "libc/Cargo.toml",
+        "libc/src/lib.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/errno.rs",
+        "libc/src/c_abi/x86_64/syscall.rs",
+        "libc/src/c_abi/x86_64/system_observation.rs",
+        "libc/src/c_abi/x86_64/getloadavg.rs",
+        "include/errno.h",
+        "include/features.h",
+        "include/bits/alltypes.h",
+        "include/stdlib.h",
+        "include/bits/syscall.h",
+        "include/sys/syscall.h",
+        "include/sys/sysinfo.h",
+        "include/sys/prctl.h",
+        "compat/x86_64/getloadavg_header_abi_probe.c",
+        "compat/x86_64/getloadavg_header_abi_probe.cpp",
+        "compat/x86_64/run_getloadavg_header_abi.sh",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/libc_getloadavg_probe.c",
+        "compat/x86_64/libc_getloadavg_start.S",
+        "compat/x86_64/run_libc_getloadavg.sh",
+        "compat/x86_64/run_libc_system_information.sh",
+        "compat/x86_64/aarch64_parity_inventory.json",
+        "compat/x86_64/tests/test_aarch64_parity_inventory.py",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/README.md",
+        "STATUS.md",
+        "x86-64.md",
+        "scripts/dev-x86_64.sh",
+        "scripts/check_structure.py",
+    ):
+        require(owner in owners, f"static-c-getloadavg source owners omit {owner}")
+
+    prerequisites = nonempty_strings(
+        artifact.get("x86_abi_prerequisites"),
+        "static-c-getloadavg.x86_abi_prerequisites",
+    )
+    require(
+        any(
+            "SysV AMD64" in item
+            and "rdi/rsi" in item
+            and "eax" in item
+            and "min(count, 3)" in item
+            and "negative count returns -1" in item
+            for item in prerequisites
+        ),
+        "static-c-getloadavg must retain its LP64 count/output ABI",
+    )
+    require(
+        any(
+            "9fa28ece75d8a2191de7c5bb53bed224c5947417" in item
+            and "src/legacy/getloadavg.c::getloadavg" in item
+            and "sysinfo=99" in item
+            and "SI_LOAD_SHIFT=16" in item
+            and "three" in item
+            for item in prerequisites
+        ),
+        "static-c-getloadavg must retain its exact musl sysinfo source mapping",
+    )
+    require(
+        any(
+            "uninitialized C local record" in item
+            and "returns -1 without output" in item
+            and "unselected failure path" in item
+            for item in prerequisites
+        ),
+        "static-c-getloadavg must retain the source-undefined error boundary",
+    )
+    require(
+        any(
+            "PR_SET_NO_NEW_PRIVS" in item
+            and "seccomp" in item
+            and "EPERM" in item
+            and "-1/errno/no-output" in item
+            and "pinned-musl arm deliberately does not execute" in item
+            for item in prerequisites
+        ),
+        "static-c-getloadavg must retain its candidate-only safe error regression",
+    )
+    require(
+        any(
+            "`-nostdlib -static`" in item
+            and "direct initial-exec errno TLS" in item
+            and "public sysinfo/uname" in item
+            and "Variant-II %fs:0" in item
+            for item in prerequisites
+        ),
+        "static-c-getloadavg must retain its standalone static closure",
+    )
+
+    headers = nonempty_strings(
+        artifact.get("x86_header_prerequisites"),
+        "static-c-getloadavg.x86_header_prerequisites",
+    )
+    require(
+        any(
+            "C11/C++17" in item
+            and "`<stdlib.h>`" in item
+            and "`int getloadavg(double *, int)`" in item
+            and "GNU and BSD" in item
+            and "strict, POSIX.1-2008, and X/Open 700" in item
+            and "unmangled C linkage" in item
+            and "sys/prctl.h" in item
+            for item in headers
+        ),
+        "static-c-getloadavg must retain its focused GNU/BSD C/C++ header ABI",
+    )
+
+    evidence = artifact.get("native_evidence")
+    require(isinstance(evidence, list), "static-c-getloadavg needs evidence")
+    require(
+        {entry.get("command") for entry in evidence if isinstance(entry, Mapping)}
+        == {"./scripts/dev-x86_64.sh libc-getloadavg"},
+        "static-c-getloadavg must use the closed libc-getloadavg command",
+    )
+    scope = evidence[0].get("scope")
+    require(
+        isinstance(scope, str)
+        and all(
+            phrase in scope
+            for phrase in (
+                "Pinned-musl/project GNU/BSD C/C++ header",
+                "`-nostdlib -static` candidate",
+                "count <= 0",
+                "four-request three-entry clamp",
+                "adjacent raw sysinfo=99 snapshot",
+                "PR_SET_NO_NEW_PRIVS/seccomp sysinfo=99 EPERM child",
+                "public sysinfo/uname",
+                "source-undefined failed-sysinfo output path",
+                "family completion",
+                "promotion",
+                "public x86 support",
+            )
+        ),
+        "static-c-getloadavg evidence must retain its standalone static closure",
+    )
+
+    oracle = artifact.get("oracle")
+    require(isinstance(oracle, list), "static-c-getloadavg needs an oracle")
+    oracle_text = " ".join(
+        str(entry.get("role", "")) for entry in oracle if isinstance(entry, Mapping)
+    )
+    require(
+        "src/legacy/getloadavg.c::getloadavg" in oracle_text
+        and "three-entry clamp" in oracle_text
+        and "failed uninitialized-record read" in oracle_text,
+        "static-c-getloadavg must retain its exact musl source oracle",
+    )
+
+    exports = set(
+        static_c_abi_export_names(
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        )
+    )
+    require(
+        set(GETLOADAVG_SYMBOLS) <= exports,
+        "static-c-getloadavg must retain its selected export",
+    )
+    require(
+        {symbol for symbol in exports if symbol.startswith("getloadavg")}
+        == set(GETLOADAVG_SYMBOLS),
+        "static-c-getloadavg must expose only getloadavg",
+    )
+
+    static_root = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+    ).read_text(encoding="utf-8")
+    require(
+        '#[path = "getloadavg.rs"]\nmod getloadavg;' in static_root,
+        "x86 static C ABI must compose the getloadavg leaf",
+    )
+    source = (ROOT / "libc" / "src" / "c_abi" / "x86_64" / "getloadavg.rs").read_text(
+        encoding="utf-8"
+    )
+    for snippet in (
+        "Selected static Linux/x86-64 `getloadavg` C ABI boundary",
+        "pinned musl 1.2.6 release commit",
+        "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+        "src/legacy/getloadavg.c::getloadavg",
+        "MAX_LOAD_AVERAGES: c_int = 3",
+        "SI_LOAD_SCALE: f64 = 1.0 / 65_536.0",
+        "system_observation::sysinfo_raw",
+        "if c_status(raw_result) != 0",
+        'pub unsafe extern "C" fn getloadavg(output: *mut f64, count: c_int) -> c_int',
+    ):
+        require(snippet in source, f"getloadavg implementation omits {snippet}")
+    source_exports = set(
+        re.findall(r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(', source)
+    )
+    require(
+        source_exports == set(GETLOADAVG_SYMBOLS),
+        "getloadavg leaf must export only getloadavg",
+    )
+    for forbidden in (
+        "raw_syscall::",
+        "system_configuration::",
+        "fn get_nprocs",
+        "pub unsafe extern \"C\" fn sysinfo",
+        "pub unsafe extern \"C\" fn uname",
+        "alloc::",
+        "crabc_core",
+        "crabc_mimalloc",
+    ):
+        require(
+            forbidden not in source,
+            f"getloadavg leaf widens into {forbidden}",
+        )
+
+    runner = (ROOT / "compat" / "x86_64" / "run_libc_getloadavg.sh").read_text(
+        encoding="utf-8"
+    )
+    for snippet in (
+        "run_musl_oracle.sh",
+        "run_getloadavg_header_abi.sh",
+        "static_c_abi_exports.txt",
+        "-nostdlib -static",
+        "--no-undefined",
+        "for symbol in __errno_location getloadavg",
+        "--disassemble=getloadavg",
+        "getloadavg candidate unexpectedly pulls",
+        "candidate errno does not use direct fs initial TLS",
+        "getloadavg lacks Linux sysinfo=99",
+        "sys/prctl.h",
+    ):
+        require(snippet in runner, f"getloadavg runner omits {snippet}")
+
+    probe = (ROOT / "compat" / "x86_64" / "libc_getloadavg_probe.c").read_text(
+        encoding="utf-8"
+    )
+    for snippet in (
+        "sizeof(double) == 8",
+        "getloadavg_signature",
+        "SI_LOAD_SHIFT == 16 && SYS_sysinfo == 99",
+        "snapshot_loads",
+        "matches_adjacent_snapshot",
+        "check_nonpositive_counts",
+        "check_three_loads_and_clamp",
+        "check_function_pointer_one_load",
+        "check_safe_sysinfo_error_in_child",
+        "PR_SET_NO_NEW_PRIVS",
+        "SYS_seccomp == 317",
+        "CRABC_GETLOADAVG_FREESTANDING",
+    ):
+        require(snippet in probe, f"getloadavg probe omits {snippet}")
+
+    header_c = (
+        ROOT / "compat" / "x86_64" / "getloadavg_header_abi_probe.c"
+    ).read_text(encoding="utf-8")
+    header_cxx = (
+        ROOT / "compat" / "x86_64" / "getloadavg_header_abi_probe.cpp"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "getloadavg declaration",
+        "CRABC_GETLOADAVG_EXPECT_HIDDEN",
+        "getloadavg_signature",
+    ):
+        require(snippet in header_c, f"getloadavg C header probe omits {snippet}")
+        require(snippet in header_cxx, f"getloadavg C++ header probe omits {snippet}")
+
+    header_runner = (
+        ROOT / "compat" / "x86_64" / "run_getloadavg_header_abi.sh"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "getloadavg_header_abi_probe.c",
+        "getloadavg_header_abi_probe.cpp",
+        "Pinned musl 1.2.6",
+        "-D__STRICT_ANSI__",
+        "-D_POSIX_C_SOURCE=200809L",
+        "-D_XOPEN_SOURCE=700",
+        "-D_GNU_SOURCE",
+        "-D_BSD_SOURCE",
+        "retained a mangled getloadavg reference",
+    ):
+        require(snippet in header_runner, f"getloadavg header runner omits {snippet}")
+
+    dispatcher = (ROOT / "scripts" / "dev-x86_64.sh").read_text(encoding="utf-8")
+    for snippet in (
+        "getloadavg-header-abi)",
+        "run_getloadavg_header_abi",
+        "libc-getloadavg)",
+        "run_libc_getloadavg_probe",
+    ):
+        require(snippet in dispatcher, f"getloadavg dispatcher omits {snippet}")
 
 
 def require_mapping_core_artifact(family: Mapping[str, Any]) -> None:
@@ -44131,6 +44489,7 @@ def validate_ledger(
     require_system_configuration_artifact(by_id["libc.posix-runtime"])
     require_getpagesize_artifact(by_id["libc.posix-runtime"])
     require_system_information_artifact(by_id["libc.posix-runtime"])
+    require_getloadavg_artifact(by_id["libc.posix-runtime"])
     require_mapping_core_artifact(by_id["libc.posix-runtime"])
     require_memory_sync_artifact(by_id["libc.posix-runtime"])
     require_memory_locking_artifact(by_id["libc.posix-runtime"])

@@ -350,6 +350,7 @@ getgroups
 gethostid
 gethostname
 getifaddrs
+getloadavg
 getlogin
 getlogin_r
 getnameinfo

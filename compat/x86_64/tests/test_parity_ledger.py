@@ -50,7 +50,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 41)
-        self.assertEqual(report["verified_artifact_count"], 208)
+        self.assertEqual(report["verified_artifact_count"], 209)
         self.assertEqual(report["header_layout_probe_count"], 47)
         self.assertEqual(report["public_header_inventory_count"], 183)
         self.assertEqual(report["header_foundation_header_count"], 191)
@@ -21141,6 +21141,57 @@ class X86ParityLedgerTests(unittest.TestCase):
         with self.assertRaisesRegex(
             ledger.LedgerError,
             "gettext slice must select exactly catalog.gettext",
+        ):
+            ledger.validate_ledger(data)
+
+    def test_getloadavg_artifact_stays_a_private_load_snapshot_leaf(self) -> None:
+        """`getloadavg` must not widen the selected system-information surface."""
+
+        data = self.data()
+        family = self.family(data, "libc.posix-runtime")
+        self.assertEqual(family["status"], "planned")
+        artifacts = family["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-getloadavg"
+        )
+        self.assertNotIn("capabilities", artifact)
+        self.assertEqual(
+            {entry["command"] for entry in artifact["native_evidence"]},
+            {"./scripts/dev-x86_64.sh libc-getloadavg"},
+        )
+        for phrase in (
+            "historical `getloadavg` compatibility artifact",
+            "pinned musl",
+            "`sysinfo`",
+            "count <= 0",
+            "no `/proc`",
+            "general `sysconf`",
+            "family completion",
+            "promotion",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, artifact["description"])
+
+        data = self.data()
+        family = self.family(data, "libc.posix-runtime")
+        artifacts = family["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-getloadavg"
+        )
+        evidence = artifact["native_evidence"]
+        assert isinstance(evidence, list) and isinstance(evidence[0], dict)
+        evidence[0]["scope"] = evidence[0]["scope"].replace(
+            "count <= 0", "nonpositive count"
+        )
+        with self.assertRaisesRegex(
+            ledger.LedgerError,
+            "static-c-getloadavg evidence must retain its standalone static closure",
         ):
             ledger.validate_ledger(data)
 

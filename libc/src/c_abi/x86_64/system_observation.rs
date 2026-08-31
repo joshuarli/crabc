@@ -56,7 +56,7 @@ pub(super) struct UtsName {
 #[repr(C)]
 pub(super) struct SysInfo {
     uptime: c_ulong,
-    loads: [c_ulong; 3],
+    pub(super) loads: [c_ulong; 3],
     pub(super) total_ram: c_ulong,
     pub(super) free_ram: c_ulong,
     shared_ram: c_ulong,
@@ -118,7 +118,7 @@ pub(super) unsafe fn uname_raw(output: *mut UtsName) -> i64 {
 ///
 /// `output` must designate writable storage for one complete public x86
 /// `struct sysinfo` for the raw syscall's duration.
-#[inline]
+#[inline(always)]
 pub(super) unsafe fn sysinfo_raw(output: *mut SysInfo) -> i64 {
     // SAFETY: the caller owns the complete writable public record contract;
     // Linux reads only the pointer word in x86 rdi and fills its ABI prefix.
