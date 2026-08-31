@@ -289,6 +289,8 @@ mod pthread_once;
 mod termios_control;
 #[path = "ctermid.rs"]
 mod ctermid;
+#[path = "gethostid.rs"]
+mod gethostid;
 #[path = "getpass.rs"]
 mod getpass;
 #[path = "process_context.rs"]

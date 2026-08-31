@@ -5680,6 +5680,46 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
                 f"ctermid boundary must not select {forbidden!r}"
             )
 
+    gethostid_source = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "gethostid.rs"
+    gethostid_text = gethostid_source.read_text(errors="replace")
+    for required in (
+        "pinned musl 1.2.6 release commit",
+        "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+        "src/misc/gethostid.c::gethostid",
+        "deterministic zero host identifier",
+        "System V AMD64 ABI",
+        'pub extern \"C\" fn gethostid() -> c_long',
+    ):
+        if required not in gethostid_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/gethostid.rs: selected static historical "
+                f"gethostid boundary is missing {required!r}"
+            )
+    gethostid_exports = set(
+        re.findall(
+            r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(',
+            gethostid_text,
+        )
+    )
+    if gethostid_exports != {"gethostid"}:
+        errors.append(
+            "libc/src/c_abi/x86_64/gethostid.rs: selected static historical "
+            "gethostid artifact must export only gethostid"
+        )
+    for forbidden in (
+        "raw_syscall::",
+        "errno::",
+        "uts_identity::",
+        "static_startup::",
+        "crabc_core",
+        "crabc_mimalloc",
+    ):
+        if forbidden in gethostid_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/gethostid.rs: selected static historical "
+                f"gethostid boundary must not select {forbidden!r}"
+            )
+
     getpass_source = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "getpass.rs"
     getpass_text = getpass_source.read_text(errors="replace")
     for required in (
@@ -8559,6 +8599,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         pthread_tsd_text,
         termios_control_text,
         ctermid_text,
+        gethostid_text,
         process_context_text,
         login_name_text,
         child_reaping_text,
@@ -8838,6 +8879,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         "tcgetwinsize",
         "tcsetwinsize",
         "ctermid",
+        "gethostid",
         "getpid",
         "getppid",
         "getuid",
@@ -9066,7 +9108,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         errors.append(
             "libc/src/c_abi/x86_64: selected static archive must export only its "
             "stat, credential, errno, bootstrap-memory/fenv/continuation, simple "
-            "signal-control, one pure GNU signal-set predicate, bounded process-signal execution, and one legacy single-signal pause wait, bounded pthread create/exit/join/detach initial-TLS worker, its private selected-main/worker pthread-key/C11-TSS lifecycle, private process-normal pthread mutexes and their musl private condition-variable handoff, the complete selected rwlock/attribute family with private-or-shared futex operation, plus the distinct C11 plain-sync adapter and normal-return pthread/C11 once state machine, its typed C11 create/exit/join/detach sibling, and pthread/C11 identity aliases, named termios-control, historical ctermid pathname spelling, selected process-context, child-reaping, C11 immediate termination, callback algorithms, direct clock_gettime, caller-owned mapping-core, no-cancellation mapping synchronization, direct anonymous-memory descriptor creation, nanosleep, and clock_nanosleep, selected "
+            "signal-control, one pure GNU signal-set predicate, bounded process-signal execution, and one legacy single-signal pause wait, bounded pthread create/exit/join/detach initial-TLS worker, its private selected-main/worker pthread-key/C11-TSS lifecycle, private process-normal pthread mutexes and their musl private condition-variable handoff, the complete selected rwlock/attribute family with private-or-shared futex operation, plus the distinct C11 plain-sync adapter and normal-return pthread/C11 once state machine, its typed C11 create/exit/join/detach sibling, and pthread/C11 identity aliases, named termios-control, historical ctermid pathname spelling, constant historical gethostid compatibility, selected process-context, child-reaping, C11 immediate termination, callback algorithms, direct clock_gettime, caller-owned mapping-core, no-cancellation mapping synchronization, direct anonymous-memory descriptor creation, nanosleep, and clock_nanosleep, selected "
             "descriptor-entry, selected filesystem-access, bounded descriptor-control, timestamp updates, and descriptor-I/O, selected process-resources, selected readiness/signal-waits, "
             "selected socket transport and selected socket-message/options, selected system-observation, selected UTS-identity, "
             "selected numeric-address codecs, fixed-profile h_errno message text, byte-string, random-entropy, memory-search, C-string-copy, immutable error-string, "

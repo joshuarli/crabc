@@ -407,6 +407,8 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-termios-control
 ./scripts/dev-x86_64.sh ctermid-header-abi
 ./scripts/dev-x86_64.sh libc-ctermid
+./scripts/dev-x86_64.sh gethostid-header-abi
+./scripts/dev-x86_64.sh libc-gethostid
 ./scripts/dev-x86_64.sh getpass-header-abi
 ./scripts/dev-x86_64.sh libc-getpass
 ./scripts/dev-x86_64.sh mktemp-header-abi
@@ -3058,6 +3060,18 @@ PTY/session/termios/tty discovery, getpass, generic filesystem behavior,
 temporary-file families, filesystem handles, dynamic runtime, family
 completion, promotion, and public x86 support.
 
+`libc-gethostid` is a separate static `verified_artifact` inside
+still-planned `libc.c-abi-compat`, not a `system.kernel-admin` capability. Its
+focused X/Open/GNU/BSD `<unistd.h>` C/C++ gate proves `long gethostid(void)`,
+strict/POSIX hiding, and unmangled linkage against pinned musl and project
+headers. One project-header C body then executes through pinned musl and a
+`-nostdlib -static` candidate. It proves musl's exact zero `long` result and
+rejects TLS/errno, dynamic linkage, unresolved symbols, runtime dependencies,
+external calls, and syscalls in the selected implementation. It neither reads
+host configuration nor selects hostname/domain-name state, host-identity or
+secure-execution policy, libc.so, CRT, loader, sysroot, family completion,
+promotion, or public x86 support.
+
 `libc-getpass` is a separately recorded static `verified_artifact` gate over
 that archive, not a terminal or password capability. Its GNU/BSD C/C++ header
 gate and one project-header C body first execute through pinned musl and then
@@ -4892,6 +4906,7 @@ Apart from the narrowly named `libc-stat-compat`, `libc-credentials`,
 `libc-pthread-c11-tsd`,
 `libc-termios-control`,
 `libc-ctermid`,
+`libc-gethostid`,
 `libc-getpass`,
 `libc-mktemp`,
 `libc-process-context`, `libc-environment`, `libc-secure-environment`, `libc-login-name`, `libc-child-reaping`, and

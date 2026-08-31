@@ -333,6 +333,7 @@ getenv
 geteuid
 getgid
 getgroups
+gethostid
 gethostname
 getifaddrs
 getlogin

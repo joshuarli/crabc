@@ -1402,6 +1402,8 @@ HSTRERROR_SYMBOLS = ("hstrerror",)
 
 INET_NTOA_SYMBOLS = ("inet_ntoa",)
 
+GETHOSTID_SYMBOLS = ("gethostid",)
+
 INET_ADDRESS_UNSELECTED_SYMBOLS = (
     "calloc",
     "free",
@@ -19329,6 +19331,257 @@ def require_hstrerror_artifact(family: Mapping[str, Any]) -> None:
 
 
 
+def require_gethostid_artifact(family: Mapping[str, Any]) -> None:
+    """Keep musl's constant historical host-ID spelling below promotion."""
+
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.c-abi-compat].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [entry for entry in artifacts if entry.get("id") == "static-c-gethostid"]
+    require(
+        len(matching) == 1,
+        "libc.c-abi-compat must contain exactly one static-c-gethostid artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-gethostid must not promote libc.c-abi-compat",
+    )
+    artifact = matching[0]
+    require(
+        "capabilities" not in artifact,
+        "static-c-gethostid must not promote system.kernel-admin",
+    )
+    description = artifact.get("description")
+    require(isinstance(description, str), "static-c-gethostid needs a description")
+    for phrase in (
+        "historical `gethostid` compatibility boundary",
+        "still-planned `libc.c-abi-compat`",
+        "`long gethostid(void)`",
+        "deterministic zero host identifier",
+        "no input, mutable state, syscall, errno, TLS, allocation",
+        "hostname/domain-name observation or mutation",
+        "host-identity policy",
+        "`system.kernel-admin`",
+        "family completion",
+        "promotion",
+        "public x86 support",
+    ):
+        require(phrase in description, f"static-c-gethostid description omits {phrase}")
+
+    owners = set(
+        nonempty_strings(artifact.get("source_owners"), "static-c-gethostid.source_owners")
+    )
+    for owner in (
+        "compat/upstreams.toml",
+        "libc/Cargo.toml",
+        "libc/src/lib.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/gethostid.rs",
+        "include/unistd.h",
+        "include/features.h",
+        "compat/x86_64/gethostid_header_abi_probe.c",
+        "compat/x86_64/gethostid_header_abi_probe.cpp",
+        "compat/x86_64/run_gethostid_header_abi.sh",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/libc_gethostid_probe.c",
+        "compat/x86_64/libc_gethostid_start.S",
+        "compat/x86_64/run_libc_gethostid.sh",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/README.md",
+        "STATUS.md",
+        "x86-64.md",
+        "scripts/dev-x86_64.sh",
+        "scripts/check_structure.py",
+    ):
+        require(owner in owners, f"static-c-gethostid source owners omit {owner}")
+
+    prerequisites = nonempty_strings(
+        artifact.get("x86_abi_prerequisites"),
+        "static-c-gethostid.x86_abi_prerequisites",
+    )
+    require(
+        any(
+            "SysV AMD64" in item
+            and "long" in item
+            and "rax" in item
+            and "no argument" in item
+            for item in prerequisites
+        ),
+        "static-c-gethostid must retain its no-argument LP64 result ABI",
+    )
+    require(
+        any(
+            "9fa28ece75d8a2191de7c5bb53bed224c5947417" in item
+            and "src/misc/gethostid.c" in item
+            and "return 0" in item
+            and "no syscall instruction" in item
+            for item in prerequisites
+        ),
+        "static-c-gethostid must retain musl's constant source closure",
+    )
+    require(
+        any("no PT_TLS" in item and "no errno" in item for item in prerequisites),
+        "static-c-gethostid must retain its stateless static closure",
+    )
+
+    headers = nonempty_strings(
+        artifact.get("x86_header_prerequisites"),
+        "static-c-gethostid.x86_header_prerequisites",
+    )
+    require(
+        any(
+            "long gethostid(void)" in item
+            and "X/Open" in item
+            and "GNU" in item
+            and "BSD" in item
+            and "strict/POSIX" in item
+            and "unmangled C++ linkage" in item
+            for item in headers
+        ),
+        "static-c-gethostid must retain its focused C/C++ header ABI",
+    )
+
+    evidence = artifact.get("native_evidence")
+    require(isinstance(evidence, list), "static-c-gethostid needs evidence")
+    require(
+        {entry.get("command") for entry in evidence if isinstance(entry, Mapping)}
+        == {"./scripts/dev-x86_64.sh libc-gethostid"},
+        "static-c-gethostid must use the closed libc-gethostid command",
+    )
+    scope = evidence[0].get("scope")
+    require(
+        isinstance(scope, str)
+        and all(
+            phrase in scope
+            for phrase in (
+                "Pinned-musl/project X/Open C/C++ header",
+                "`-nostdlib -static` candidate",
+                "exact zero long result",
+                "no TLS/errno path",
+                "no syscall instruction",
+                "system.kernel-admin",
+                "family promotion",
+                "public x86 support",
+            )
+        ),
+        "static-c-gethostid evidence must retain its constant static closure",
+    )
+
+    exports = set(
+        static_c_abi_export_names(
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        )
+    )
+    require(
+        set(GETHOSTID_SYMBOLS) <= exports,
+        "static-c-gethostid must retain its selected export",
+    )
+    require(
+        {symbol for symbol in exports if symbol.startswith("gethostid")}
+        == set(GETHOSTID_SYMBOLS),
+        "static-c-gethostid must expose only gethostid",
+    )
+
+    static_root = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+    ).read_text(encoding="utf-8")
+    require(
+        '#[path = "gethostid.rs"]\nmod gethostid;' in static_root,
+        "x86 static C ABI must compose the gethostid leaf",
+    )
+    source = (ROOT / "libc" / "src" / "c_abi" / "x86_64" / "gethostid.rs").read_text(
+        encoding="utf-8"
+    )
+    for snippet in (
+        "pinned musl 1.2.6 release commit",
+        "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+        "src/misc/gethostid.c::gethostid",
+        "deterministic zero host identifier",
+        "System V AMD64 ABI",
+        'pub extern \"C\" fn gethostid() -> c_long',
+        "    0",
+    ):
+        require(snippet in source, f"gethostid implementation omits {snippet}")
+    for forbidden in (
+        "raw_syscall::",
+        "errno::",
+        "uts_identity::",
+        "static_startup::",
+        "crabc_core",
+        "crabc_mimalloc",
+    ):
+        require(forbidden not in source, f"gethostid leaf widens into {forbidden}")
+
+    runner = (ROOT / "compat" / "x86_64" / "run_libc_gethostid.sh").read_text(
+        encoding="utf-8"
+    )
+    for snippet in (
+        "run_musl_oracle.sh",
+        "run_gethostid_header_abi.sh",
+        "static_c_abi_exports.txt",
+        "-nostdlib -static",
+        "--no-undefined",
+        "archive does not define gethostid",
+        "--disassemble=gethostid",
+        "gethostid candidate unexpectedly retains TLS",
+        "gethostid unexpectedly performs a call or syscall",
+        "candidate selects UTS, secure-execution, or system-configuration behavior",
+    ):
+        require(snippet in runner, f"gethostid runner omits {snippet}")
+
+    probe = (ROOT / "compat" / "x86_64" / "libc_gethostid_probe.c").read_text(
+        encoding="utf-8"
+    )
+    for snippet in (
+        "sizeof(long) == 8",
+        "long (*)(void)",
+        "const gethostid_signature function = gethostid",
+        "gethostid() != 0L",
+        "function() != 0L",
+        "CRABC_GETHOSTID_FREESTANDING",
+    ):
+        require(snippet in probe, f"gethostid probe omits {snippet}")
+
+    header_c = (
+        ROOT / "compat" / "x86_64" / "gethostid_header_abi_probe.c"
+    ).read_text(encoding="utf-8")
+    header_cxx = (
+        ROOT / "compat" / "x86_64" / "gethostid_header_abi_probe.cpp"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "gethostid declaration",
+        "gethostid_must_be_hidden",
+        "CRABC_REQUIRE_GETHOSTID_HIDDEN",
+    ):
+        require(snippet in header_c, f"gethostid C header probe omits {snippet}")
+        require(snippet in header_cxx, f"gethostid C++ header probe omits {snippet}")
+
+    header_runner = (
+        ROOT / "compat" / "x86_64" / "run_gethostid_header_abi.sh"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "gethostid_header_abi_probe.c",
+        "gethostid_header_abi_probe.cpp",
+        "Pinned musl 1.2.6",
+        "outside XOPEN/GNU/BSD selection",
+        "retained a mangled gethostid reference",
+    ):
+        require(snippet in header_runner, f"gethostid header runner omits {snippet}")
+
+    dispatcher = (ROOT / "scripts" / "dev-x86_64.sh").read_text(encoding="utf-8")
+    for snippet in (
+        "gethostid-header-abi)",
+        "run_gethostid_header_abi",
+        "libc-gethostid)",
+        "run_libc_gethostid_probe",
+    ):
+        require(snippet in dispatcher, f"gethostid dispatcher omits {snippet}")
+
+
 def require_auxv_observation_artifact(family: Mapping[str, Any]) -> None:
     """Keep direct initial-vector lookup bounded, static, and private."""
     artifacts = require_verified_artifacts(
@@ -30450,6 +30703,7 @@ def validate_ledger(
     require_inet_ntoa_artifact(by_id["libc.resolver"])
     require_numeric_netdb_artifact(by_id["libc.resolver"])
     require_hstrerror_artifact(by_id["libc.resolver"])
+    require_gethostid_artifact(by_id["libc.c-abi-compat"])
     require_auxv_observation_artifact(by_id["libc.c-abi-compat"])
     require_process_globals_getopt_artifact(by_id["libc.c-abi-compat"])
     require_search_tree_intrusive_slice(by_id["libc.c-abi-compat"])

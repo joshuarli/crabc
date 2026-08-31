@@ -69,6 +69,17 @@ select terminal policy, PTY/session/termios/tty discovery, getpass, generic
 filesystem behavior, temporary-file families, filesystem handles, family
 completion, promotion, or public x86 support.
 
+`./scripts/dev-x86_64.sh libc-gethostid` is a private `static-c-gethostid`
+artifact inside still-planned `libc.c-abi-compat`. Its pinned-musl/project
+X/Open C/C++ header gate proves `long gethostid(void)` visibility only under
+X/Open, GNU, and BSD selection, strict/POSIX hiding, and unmangled C++
+linkage. Its equivalent pinned-musl and freestanding-static routes prove the
+exact zero `long` result with no TLS/errno, syscall, allocation, hostname,
+domain-name, configuration-file, namespace, or authority path. It does not
+select host identity policy, secure-execution policy, the broad
+`system.kernel-admin` capability, family completion, promotion, or public x86
+support.
+
 `./scripts/dev-x86_64.sh libc-getpass` is a separate private
 `static-c-getpass` artifact inside still-planned `libc.posix-runtime`. Its
 pinned-musl and freestanding-static routes select only the historical C

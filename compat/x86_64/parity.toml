@@ -8281,6 +8281,44 @@ capabilities = [
 status = "planned"
 
 [[family.verified_artifact]]
+id = "static-c-gethostid"
+description = "Private native x86 selected-static-archive historical `gethostid` compatibility boundary inside still-planned `libc.c-abi-compat`. One dependency-free `crabc-libc` archive resolves exactly `long gethostid(void)` into a freestanding C fixture after an equivalent pinned-musl execution. Musl's complete Linux leaf returns the deterministic zero host identifier: it has no input, mutable state, syscall, errno, TLS, allocation, configuration-file, namespace, or authority boundary. It is not hostname/domain-name observation or mutation, a host-identity policy, secure-execution policy, or a system-information framework. This capability-free ABI artifact does not select the broad `system.kernel-admin` capability, libc.so, CRT, loader, sysroot, family completion, promotion, or public x86 support."
+source_owners = [
+  "compat/upstreams.toml",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/gethostid.rs",
+  "include/unistd.h",
+  "include/features.h",
+  "compat/x86_64/gethostid_header_abi_probe.c",
+  "compat/x86_64/gethostid_header_abi_probe.cpp",
+  "compat/x86_64/run_gethostid_header_abi.sh",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/libc_gethostid_probe.c",
+  "compat/x86_64/libc_gethostid_start.S",
+  "compat/x86_64/run_libc_gethostid.sh",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "compat/x86_64/README.md",
+  "STATUS.md",
+  "x86-64.md",
+  "scripts/dev-x86_64.sh",
+  "scripts/check_structure.py",
+]
+x86_abi_prerequisites = [
+  "The SysV AMD64 LP64 C ABI passes no argument to `gethostid` and returns its signed eight-byte `long` result in rax. The exact zero result is representable without a pointer, record, errno, TLS, or caller-owned storage boundary.",
+  "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417 maps `src/misc/gethostid.c` directly to this leaf: its complete Linux body is `return 0`, reads neither a host-specific file nor kernel/UTS state, and emits no syscall instruction.",
+  "The linked `-nostdlib -static` candidate has no PT_TLS, no errno path, no dynamic relocation or resolver, no external call, and no syscall instruction in `gethostid`; it therefore cannot become hostname/domain-name, secure-execution, or system-configuration behavior through an implicit runtime seam.",
+]
+x86_header_prerequisites = [
+  "The focused pinned-musl/project-first C11/C++17 `<unistd.h>` gate proves `long gethostid(void)` under X/Open, GNU, and BSD selection, strict/POSIX hiding, and unmangled C++ linkage. It selects no hostname/domain API, system policy, archive linkage, installed-header completion, or public x86 support.",
+]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-gethostid", scope = "Pinned-musl/project X/Open C/C++ header compilation plus equivalent pinned-musl C execution and one true dependency-free x86 crabc-libc `-nostdlib -static` candidate. The fixture proves the exact long declaration/LP64 result ABI, X/Open/GNU/BSD visibility with strict/POSIX hiding and unmangled C++ linkage, and the exact zero long result through direct and function-pointer calls. It audits exact crate-owned export closure, no interpreter/DT_NEEDED/unresolved symbol, no TLS/errno path, no dynamic relocation/resolver, no external call, and no syscall instruction in gethostid. It does not select hostname/domain-name state, host-identity or secure-execution policy, system.kernel-admin, libc.so, CRT, loader, sysroot, family promotion, or public x86 support." }]
+oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source and declaration oracle: src/misc/gethostid.c returns the fixed zero Linux host identifier; include/unistd.h provides the X/Open/GNU/BSD declaration boundary." }, { kind = "elf-abi", source = "System V AMD64 psABI", role = "No-argument LP64 long return, C++ C linkage, and true-static ET_EXEC closure contract." }]
+
+[[family.verified_artifact]]
 id = "static-c-process-globals-getopt"
 description = "Private native x86 selected-static-archive program-name/getopt artifact inside still-planned `libc.c-abi-compat`. One dependency-free `crabc-libc` archive publishes `__progname`, `__progname_full`, weak same-address `program_invocation_short_name`/`program_invocation_name`, `optarg`, `optind`, `opterr`, `optopt`, `__optpos`, `__optreset`, weak same-address `optreset`, `getopt`, `getopt_long`, `getopt_long_only`, and weak same-address `__posix_getopt`. Its bounded static `__libc_start_main` validates argc/argv/envp/auxv delimiters and publishes the empty-or-argv[0] program-name view before its init callback and main. The parser preserves the established AArch64 musl translation for short clusters, attached and separate arguments, both reset spellings, UTF-8 option code points under C.UTF-8, quiet unknown/missing-option results, GNU long required/optional/flag arguments, ambiguity, permutation, and long-only short-option precedence. The x86 leaf adds only target-local errno/stream adapters and exact musl ELF aliases. Environment storage and mutation, direct auxv observation beyond the separately qualified `static-c-auxv-observation` boundary, secure-execution policy, loader/dynamic startup, arbitrary locale selection, general stdio, libc.so, CRT family completion, sysroot, C ABI closure, family promotion, and public x86 support remain outside this artifact."
 source_owners = [

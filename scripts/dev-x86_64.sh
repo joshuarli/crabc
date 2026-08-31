@@ -115,6 +115,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   signal-header-abi  compile the staged x86 GNU/POSIX signal-header layouts
   termios-header-abi  compile the staged x86 C/C++ GNU termios-header layouts
   ctermid-header-abi  compile the staged x86 C/C++ POSIX/XSI ctermid declaration
+  gethostid-header-abi  compile the staged x86 C/C++ X/Open gethostid declaration
   getpass-header-abi  compile the staged x86 C/C++ getpass declaration
   mktemp-header-abi  compile the staged x86 C/C++ mktemp declaration
   mman-header-abi  compile the staged x86 C/C++ mapping-header declarations
@@ -262,6 +263,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-pthread-tls-aggregate  run the static x86 crabc-libc pthread/TLS composition slice
   libc-termios-control  run the static x86 crabc-libc termios-control slice
   libc-ctermid  run the static x86 crabc-libc ctermid spelling slice
+  libc-gethostid  run the static x86 crabc-libc gethostid compatibility slice
   libc-getpass  run the static x86 crabc-libc getpass terminal slice
   libc-mktemp  run the static x86 crabc-libc historical mktemp slice
   libc-process-context  run the static x86 crabc-libc selected process-context slice
@@ -2277,6 +2279,10 @@ run_ctermid_header_abi() {
     run_in_container bash /workspace/compat/x86_64/run_ctermid_header_abi.sh
 }
 
+run_gethostid_header_abi() {
+    run_in_container bash /workspace/compat/x86_64/run_gethostid_header_abi.sh
+}
+
 run_getpass_header_abi() {
     run_in_container bash /workspace/compat/x86_64/run_getpass_header_abi.sh
 }
@@ -3146,6 +3152,10 @@ run_libc_ctermid_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_ctermid.sh
 }
 
+run_libc_gethostid_probe() {
+    run_in_container bash /workspace/compat/x86_64/run_libc_gethostid.sh
+}
+
 run_libc_getpass_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_getpass.sh
 }
@@ -3394,7 +3404,7 @@ shift
 case "$command" in
     timerfd-header-abi|signalfd-header-abi) ;;
     libc-timerfd|libc-signalfd|libc-sigpause|libc-sigisemptyset) ;;
-    ctermid-header-abi|getpass-header-abi|libc-ctermid|libc-getpass|mktemp-header-abi|libc-mktemp) ;;
+    ctermid-header-abi|gethostid-header-abi|getpass-header-abi|libc-ctermid|libc-gethostid|libc-getpass|mktemp-header-abi|libc-mktemp) ;;
     stdio-permanent-line-io-header-abi|stdio-octal-hex-scan-header-abi) ;;
     math-complex-complete-header-abi|libc-math-complex-complete) ;;
     stdio-permanent-byte-io-header-abi) ;;
@@ -3844,6 +3854,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "ctermid-header-abi takes no arguments"
         ensure_image
         run_ctermid_header_abi
+        ;;
+    gethostid-header-abi)
+        [ "$#" -eq 0 ] || fail "gethostid-header-abi takes no arguments"
+        ensure_image
+        run_gethostid_header_abi
         ;;
     getpass-header-abi)
         [ "$#" -eq 0 ] || fail "getpass-header-abi takes no arguments"
@@ -4558,6 +4573,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "libc-ctermid takes no arguments"
         ensure_image
         run_libc_ctermid_probe
+        ;;
+    libc-gethostid)
+        [ "$#" -eq 0 ] || fail "libc-gethostid takes no arguments"
+        ensure_image
+        run_libc_gethostid_probe
         ;;
     libc-getpass)
         [ "$#" -eq 0 ] || fail "libc-getpass takes no arguments"

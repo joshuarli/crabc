@@ -1366,7 +1366,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         expected_groups = (
             "timerfd-header-abi|signalfd-header-abi",
             "libc-timerfd|libc-signalfd|libc-sigpause|libc-sigisemptyset",
-            "ctermid-header-abi|getpass-header-abi|libc-ctermid|libc-getpass|mktemp-header-abi|libc-mktemp",
+            "ctermid-header-abi|gethostid-header-abi|getpass-header-abi|libc-ctermid|libc-gethostid|libc-getpass|mktemp-header-abi|libc-mktemp",
             "stdio-permanent-line-io-header-abi|stdio-octal-hex-scan-header-abi",
             "math-complex-complete-header-abi|libc-math-complex-complete",
             "stdio-permanent-byte-io-header-abi",
@@ -17132,6 +17132,137 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn('id = "static-c-ffs"', parity_ledger)
         self.assertIn('command = "./scripts/dev-x86_64.sh libc-ffs"', parity_ledger)
         self.assertIn("libc-ffs", runner)
+
+    def test_libc_static_c_abi_gethostid_artifact_stays_narrow(self) -> None:
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        implementation = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "gethostid.rs"
+        ).read_text(encoding="utf-8")
+        probe = (
+            ROOT / "compat" / "x86_64" / "libc_gethostid_probe.c"
+        ).read_text(encoding="utf-8")
+        start = (
+            ROOT / "compat" / "x86_64" / "libc_gethostid_start.S"
+        ).read_text(encoding="utf-8")
+        artifact_runner = (
+            ROOT / "compat" / "x86_64" / "run_libc_gethostid.sh"
+        ).read_text(encoding="utf-8")
+        header_runner = (
+            ROOT / "compat" / "x86_64" / "run_gethostid_header_abi.sh"
+        ).read_text(encoding="utf-8")
+        header_c = (
+            ROOT / "compat" / "x86_64" / "gethostid_header_abi_probe.c"
+        ).read_text(encoding="utf-8")
+        header_cxx = (
+            ROOT / "compat" / "x86_64" / "gethostid_header_abi_probe.cpp"
+        ).read_text(encoding="utf-8")
+        static_exports = {
+            line
+            for line in (
+                ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+            ).read_text(encoding="utf-8").splitlines()
+            if line and not line.startswith("#")
+        }
+        parity_ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        runner = RUNNER.read_text(encoding="utf-8")
+
+        self.assertIn('#[path = "gethostid.rs"]', static_root)
+        for required in (
+            "Selected static Linux/x86-64 `gethostid` C ABI",
+            "musl 1.2.6 release commit",
+            "src/misc/gethostid.c::gethostid",
+            "deterministic zero host identifier",
+            "System V AMD64 ABI",
+            'pub extern "C" fn gethostid() -> c_long',
+        ):
+            self.assertIn(required, implementation)
+        for forbidden in (
+            "raw_syscall::",
+            "errno::",
+            "uts_identity::",
+            "crabc_core",
+            "crabc_mimalloc",
+        ):
+            self.assertNotIn(forbidden, implementation)
+        self.assertIn("gethostid", static_exports)
+        self.assertEqual(
+            {symbol for symbol in static_exports if symbol.startswith("gethostid")},
+            {"gethostid"},
+        )
+
+        for required in (
+            "#include <unistd.h>",
+            "sizeof(long) == 8",
+            "long (*)(void)",
+            "const gethostid_signature function = gethostid",
+            "gethostid() != 0L",
+            "function() != 0L",
+            "CRABC_GETHOSTID_FREESTANDING",
+        ):
+            self.assertIn(required, probe)
+        for required in (
+            "crabc_x86_64_gethostid_probe",
+            "mov $60, %eax",
+        ):
+            self.assertIn(required, start)
+
+        for header in (header_c, header_cxx):
+            for required in (
+                "gethostid declaration",
+                "gethostid_must_be_hidden",
+                "CRABC_REQUIRE_GETHOSTID_HIDDEN",
+            ):
+                self.assertIn(required, header)
+        for required in (
+            "gethostid_header_abi_probe.c",
+            "gethostid_header_abi_probe.cpp",
+            "-D_XOPEN_SOURCE=700",
+            "-D_GNU_SOURCE",
+            "-D_BSD_SOURCE",
+            "-D_POSIX_C_SOURCE=200809L",
+            "nm --undefined-only",
+            "retained a mangled gethostid reference",
+        ):
+            self.assertIn(required, header_runner)
+
+        for required in (
+            "run_gethostid_header_abi.sh",
+            "static_c_abi_exports.txt",
+            "-nostdlib -static",
+            "-Wl,-e,_start",
+            "-Wl,--no-undefined",
+            "--disassemble=gethostid",
+            "gethostid candidate unexpectedly retains TLS",
+            "gethostid unexpectedly performs a call or syscall",
+            "candidate selects UTS, secure-execution, or system-configuration behavior",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn("--whole-archive", artifact_runner)
+        self.assertIn('id = "static-c-gethostid"', parity_ledger)
+        self.assertIn(
+            'command = "./scripts/dev-x86_64.sh libc-gethostid"',
+            parity_ledger,
+        )
+        self.assertIn("run_gethostid_header_abi()", runner)
+        self.assertIn(
+            "/workspace/compat/x86_64/run_gethostid_header_abi.sh", runner
+        )
+        self.assertIn("run_libc_gethostid_probe()", runner)
+        self.assertIn(
+            "/workspace/compat/x86_64/run_libc_gethostid.sh", runner
+        )
+        self.assertIn(
+            '    gethostid-header-abi)\n        [ "$#" -eq 0 ] || fail "gethostid-header-abi takes no arguments"',
+            runner,
+        )
+        self.assertIn(
+            '    libc-gethostid)\n        [ "$#" -eq 0 ] || fail "libc-gethostid takes no arguments"',
+            runner,
+        )
 
     def test_libc_thread_pointer_probe_stays_a_private_opaque_fs_leaf(self) -> None:
         rust_probe = (
