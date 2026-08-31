@@ -20,6 +20,10 @@
 enum {
     LIVE_PRODUCER_COUNT = 2,
     LIVE_REMOTE_REQUEST = 37,
+    /* A 37-byte request selects the 48-byte direct-small source bin. Its
+     * initial 170 immediate blocks precede remote collection, so this exceeds
+     * that batch while keeping every probe simultaneously live. */
+    RESUMED_PROBE_COUNT = 256,
     RESUMED_BLOCK_COUNT = 2,
     MEDIUM_REQUEST = 64 * 1024,
     OWNER_EXIT_EPOCHS = 8,
@@ -87,6 +91,11 @@ static unsigned char resumed_seed(unsigned int index)
     return (unsigned char)(0x61 + index * 0x10U);
 }
 
+static unsigned char probe_seed(unsigned int index)
+{
+    return (unsigned char)(0x11 + index * 0x13U);
+}
+
 static int is_remote_source(
     const unsigned char *block,
     const uintptr_t remote_addresses[LIVE_PRODUCER_COUNT])
@@ -145,8 +154,10 @@ static void *owner_worker(void *opaque)
 {
     unsigned char *remote[LIVE_PRODUCER_COUNT];
     unsigned char *resumed[RESUMED_BLOCK_COUNT];
+    unsigned char *probe[RESUMED_PROBE_COUNT];
     uintptr_t remote_addresses[LIVE_PRODUCER_COUNT];
     unsigned char *medium;
+    unsigned int resumed_count = 0;
     unsigned int index;
 
     (void)opaque;
@@ -189,22 +200,45 @@ static void *owner_worker(void *opaque)
         return (void *)(uintptr_t)8;
 
     /* Both source remote heads are now eligible for A's normal collection.
-     * Keep two replacements live at once and require their address set to
-     * equal the source set: a lost head cannot be hidden by a fresh block and
-     * an accidental duplicate free cannot hand one address to both calls. */
-    for (index = 0; index < RESUMED_BLOCK_COUNT; index++) {
-        resumed[index] = malloc(LIVE_REMOTE_REQUEST);
-        if (resumed[index] == NULL)
+     * The direct fast path must consume its ordinary immediate list first;
+     * this complete live probe therefore requires the later generic fallback
+     * to collect both published heads. Every probe remains live until the
+     * address and full-byte checks finish, so a lost source or duplicate
+     * return cannot hide behind a subsequent local free. */
+    for (index = 0; index < RESUMED_PROBE_COUNT; index++) {
+        unsigned int earlier;
+
+        probe[index] = malloc(LIVE_REMOTE_REQUEST);
+        if (probe[index] == NULL)
             return (void *)(uintptr_t)9;
-        fill_pattern(resumed[index], LIVE_REMOTE_REQUEST, resumed_seed(index));
+        fill_pattern(probe[index], LIVE_REMOTE_REQUEST, probe_seed(index));
+        for (earlier = 0; earlier < index; earlier++) {
+            if (probe[index] == probe[earlier])
+                return (void *)(uintptr_t)10;
+        }
+        if (is_remote_source(probe[index], remote_addresses)) {
+            if (resumed_count == RESUMED_BLOCK_COUNT)
+                return (void *)(uintptr_t)10;
+            resumed[resumed_count++] = probe[index];
+        }
     }
-    if (resumed[0] == resumed[1]
-            || !is_remote_source(resumed[0], remote_addresses)
-            || !is_remote_source(resumed[1], remote_addresses)
-            || !pattern_matches(medium, MEDIUM_REQUEST, 0x51)
+    if (resumed_count != RESUMED_BLOCK_COUNT || resumed[0] == resumed[1])
+        return (void *)(uintptr_t)10;
+    for (index = 0; index < RESUMED_PROBE_COUNT; index++) {
+        if (!pattern_matches(probe[index], LIVE_REMOTE_REQUEST, probe_seed(index)))
+            return (void *)(uintptr_t)10;
+    }
+    for (index = 0; index < RESUMED_BLOCK_COUNT; index++)
+        fill_pattern(resumed[index], LIVE_REMOTE_REQUEST, resumed_seed(index));
+    if (!pattern_matches(medium, MEDIUM_REQUEST, 0x51)
             || !pattern_matches(resumed[0], LIVE_REMOTE_REQUEST, resumed_seed(0))
             || !pattern_matches(resumed[1], LIVE_REMOTE_REQUEST, resumed_seed(1)))
         return (void *)(uintptr_t)10;
+
+    for (index = 0; index < RESUMED_PROBE_COUNT; index++) {
+        if (probe[index] != resumed[0] && probe[index] != resumed[1])
+            free(probe[index]);
+    }
 
     if (pthread_mutex_lock(&state.lock) != 0)
         return (void *)(uintptr_t)11;
