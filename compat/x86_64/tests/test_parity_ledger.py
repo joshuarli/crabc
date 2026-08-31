@@ -14454,6 +14454,113 @@ class X86ParityLedgerTests(unittest.TestCase):
         ):
             ledger.validate_ledger(data)
 
+    def test_mlockall_artifact_keeps_its_closed_static_contract(self) -> None:
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-mlockall"
+        )
+        self.assertNotIn("capabilities", artifact)
+        for owner in (
+            "libc/src/c_abi/x86_64/mlockall.rs",
+            "compat/x86_64/mlockall_header_abi_probe.c",
+            "compat/x86_64/mlockall_header_abi_probe.cpp",
+            "compat/x86_64/run_mlockall_header_abi.sh",
+            "compat/x86_64/libc_mlockall_probe.c",
+            "compat/x86_64/libc_mlockall_start.S",
+            "compat/x86_64/run_libc_mlockall.sh",
+            "compat/x86_64/aarch64_parity_inventory.json",
+            "scripts/check_structure.py",
+        ):
+            self.assertIn(owner, artifact["source_owners"])
+        self.assertEqual(
+            {evidence["command"] for evidence in artifact["native_evidence"]},
+            {"./scripts/dev-x86_64.sh libc-mlockall"},
+        )
+        for phrase in (
+            "one-symbol whole-process lock-request artifact",
+            "planned `libc.posix-runtime`",
+            "exactly `mlockall(int)`",
+            "`src/mman/mlockall.c`",
+            "`mlockall=151`",
+            "`MCL_CURRENT=1`",
+            "`EPERM`/`EAGAIN`/`ENOMEM`",
+            "`munlockall=152` cleanup",
+            "not an exported `munlockall` ABI",
+            "`MCL_CURRENT/MCL_FUTURE=1/2`",
+            "`MCL_ONFAULT` header availability",
+            "per-range `mlock`/`munlock`/`mlock2`",
+            "pthread cancellation, signals",
+            "family completion, promotion, and public x86 support",
+        ):
+            self.assertIn(phrase, artifact["description"])
+        prerequisites = artifact["x86_abi_prerequisites"]
+        self.assertTrue(
+            any(
+                "int mlockall(int)" in prerequisite
+                and "edi" in prerequisite
+                and "rdi" in prerequisite
+                and "mlockall=151" in prerequisite
+                and "munlockall=152" in prerequisite
+                for prerequisite in prerequisites
+            )
+        )
+        self.assertTrue(
+            any(
+                "src/mman/mlockall.c" in prerequisite
+                and "syscall(SYS_mlockall, flags)" in prerequisite
+                and "no local validation" in prerequisite
+                and "MCL_CURRENT=1" in prerequisite
+                and "MCL_FUTURE=2" in prerequisite
+                for prerequisite in prerequisites
+            )
+        )
+        self.assertTrue(
+            any(
+                "stale `EDOM`" in prerequisite
+                and "EPERM" in prerequisite
+                and "EAGAIN" in prerequisite
+                and "ENOMEM" in prerequisite
+                and "flags=0" in prerequisite
+                and "EINVAL" in prerequisite
+                and "fixture-private raw `munlockall=152`" in prerequisite
+                for prerequisite in prerequisites
+            )
+        )
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-mlockall"
+        )
+        artifact["description"] = "private mlockall helper"
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "static-c-mlockall description omits"
+        ):
+            ledger.validate_ledger(data)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-mlockall"
+        )
+        evidence = artifact["native_evidence"]
+        assert isinstance(evidence, list) and isinstance(evidence[0], dict)
+        evidence[0]["command"] = "./scripts/dev-x86_64.sh memory-vm-reference"
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "closed libc-mlockall command"
+        ):
+            ledger.validate_ledger(data)
+
     def test_memory_sync_artifact_keeps_its_closed_mapping_contract(self) -> None:
         data = self.data()
         artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]

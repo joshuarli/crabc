@@ -40,10 +40,10 @@
 //! installs one final-executable TLS image before C TLS exists; its distinct
 //! private musl-shaped assembly boundary owns clone and normal-return child
 //! exit so this generic register module does not become a public clone API.
-//! The separately selected per-range memory-locking, no-cancellation mapping
-//! synchronization, and anonymous-memory-descriptor leaves use their named
-//! direct syscalls here. All other public C wrappers remain unintegrated until
-//! their own ABI
+//! The separately selected per-range memory-locking, one-symbol whole-process
+//! lock request, no-cancellation mapping synchronization, and
+//! anonymous-memory-descriptor leaves use their named direct syscalls here.
+//! All other public C wrappers remain unintegrated until their own ABI
 //! boundaries have evidence.
 //!
 //! Linux/x86-64 enters the kernel with `syscall`: `rax` holds the syscall
@@ -383,6 +383,7 @@ pub(crate) const SYS_GETPRIORITY: i64 = 140;
 pub(crate) const SYS_SETPRIORITY: i64 = 141;
 pub(crate) const SYS_MLOCK: i64 = 149;
 pub(crate) const SYS_MUNLOCK: i64 = 150;
+pub(crate) const SYS_MLOCKALL: i64 = 151;
 pub(crate) const SYS_PRCTL: i64 = 157;
 pub(crate) const SYS_SETRLIMIT: i64 = 160;
 pub(crate) const SYS_ARCH_PRCTL: i64 = 158;

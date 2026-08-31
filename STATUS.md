@@ -1406,6 +1406,21 @@ bounded `static-c-memory-locking` artifact inside planned
 or public x86 support; `mlockall`/`munlockall`, the separate direct `msync`
 sibling, `mremap`, cancellation, and mapping policy remain unselected here.
 
+The same archive separately has a private whole-process lock-request artifact:
+`./scripts/dev-x86_64.sh mlockall-header-abi` and
+`./scripts/dev-x86_64.sh libc-mlockall` prove only `mlockall(int)` through a
+six-profile project-header/pinned-musl C/C++ `<sys/mman.h>` declaration matrix
+and one pinned-musl/freestanding-static candidate. It maps musl 1.2.6
+`src/mman/mlockall.c` directly to x86 `mlockall=151`, preserving a successful
+`MCL_CURRENT=1` request's stale errno or Linux's environment-dependent
+`EPERM`/`EAGAIN`/`ENOMEM` outcome, plus zero/unknown-flag `EINVAL`. A
+fixture-private raw `munlockall=152` cleanup contains any success and does not
+export `munlockall`. This bounded `static-c-mlockall` artifact inside planned
+`libc.posix-runtime` is not full `<sys/mman.h>`, C-runtime, family/platform
+parity, promotion, or public x86 support; per-range locking, mapping/allocator
+policy, process lifecycle, pthread cancellation, and signals remain
+unselected.
+
 The same archive also has a private planned GNU memory-file-descriptor
 creation evidence artifact: `./scripts/dev-x86_64.sh memfd-create-header-abi`
 and `./scripts/dev-x86_64.sh libc-memfd-create` compare the GNU-only

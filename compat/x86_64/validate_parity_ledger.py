@@ -18444,6 +18444,240 @@ def require_memory_locking_artifact(family: Mapping[str, Any]) -> None:
     )
 
 
+def require_mlockall_artifact(family: Mapping[str, Any]) -> None:
+    """Keep one direct whole-process lock request below runtime promotion."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.posix-runtime].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [entry for entry in artifacts if entry.get("id") == "static-c-mlockall"]
+    require(
+        len(matching) == 1,
+        "libc.posix-runtime must contain exactly one static-c-mlockall artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-mlockall must not promote libc.posix-runtime",
+    )
+    artifact = matching[0]
+    require(
+        "capabilities" not in artifact,
+        "static-c-mlockall must remain a private artifact without capabilities",
+    )
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for phrase in (
+        "one-symbol whole-process lock-request artifact",
+        "planned `libc.posix-runtime`",
+        "exactly `mlockall(int)`",
+        "`src/mman/mlockall.c`",
+        "`mlockall=151`",
+        "`MCL_CURRENT=1`",
+        "`EPERM`/`EAGAIN`/`ENOMEM`",
+        "`munlockall=152` cleanup",
+        "not an exported `munlockall` ABI",
+        "`MCL_CURRENT/MCL_FUTURE=1/2`",
+        "`MCL_ONFAULT` header availability",
+        "per-range `mlock`/`munlock`/`mlock2`",
+        "pthread cancellation, signals",
+        "family completion, promotion, and public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"static-c-mlockall description omits {phrase}",
+        )
+    owners = set(
+        nonempty_strings(artifact["source_owners"], "static-c-mlockall.source_owners")
+    )
+    for owner in (
+        "compat/upstreams.toml",
+        "libc/Cargo.toml",
+        "libc/src/lib.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/mlockall.rs",
+        "libc/src/c_abi/x86_64/errno.rs",
+        "libc/src/c_abi/x86_64/static_tls.rs",
+        "libc/src/c_abi/x86_64/syscall.rs",
+        "include/errno.h",
+        "include/features.h",
+        "include/sys/mman.h",
+        "include/bits/mman.h",
+        "include/sys/types.h",
+        "include/sys/syscall.h",
+        "include/bits/syscall.h",
+        "compat/x86_64/mlockall_header_abi_probe.c",
+        "compat/x86_64/mlockall_header_abi_probe.cpp",
+        "compat/x86_64/run_mlockall_header_abi.sh",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/libc_mlockall_probe.c",
+        "compat/x86_64/libc_mlockall_start.S",
+        "compat/x86_64/run_libc_mlockall.sh",
+        "compat/x86_64/aarch64_parity_inventory.py",
+        "compat/x86_64/aarch64_parity_inventory.json",
+        "compat/x86_64/tests/test_aarch64_parity_inventory.py",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/README.md",
+        "STATUS.md",
+        "x86-64.md",
+        "scripts/dev-x86_64.sh",
+        "scripts/check_structure.py",
+    ):
+        require(owner in owners, f"static-c-mlockall source owners omit {owner}")
+    prerequisites = nonempty_strings(
+        artifact["x86_abi_prerequisites"], "static-c-mlockall.x86_abi_prerequisites"
+    )
+    require(
+        any(
+            "int mlockall(int)" in item
+            and "edi" in item
+            and "rdi" in item
+            and "mlockall=151" in item
+            and "-4095 through -1" in item
+            and "munlockall=152" in item
+            for item in prerequisites
+        ),
+        "static-c-mlockall must record its x86 C/syscall ABI",
+    )
+    require(
+        any(
+            "src/mman/mlockall.c" in item
+            and "syscall(SYS_mlockall, flags)" in item
+            and "no local validation" in item
+            and "cancellation-point route" in item
+            and "MCL_CURRENT=1" in item
+            and "MCL_FUTURE=2" in item
+            for item in prerequisites
+        ),
+        "static-c-mlockall must retain its direct pinned-musl source boundary",
+    )
+    require(
+        any(
+            "stale `EDOM`" in item
+            and "EPERM" in item
+            and "EAGAIN" in item
+            and "ENOMEM" in item
+            and "flags=0" in item
+            and "EINVAL" in item
+            and "fixture-private raw `munlockall=152`" in item
+            for item in prerequisites
+        ),
+        "static-c-mlockall must retain its environment-bound static differential",
+    )
+    require(
+        any(
+            "PT_TLS errno datum" in item
+            and "initial-exec TPOFF" in item
+            and "__tls_get_addr" in item
+            for item in prerequisites
+        ),
+        "static-c-mlockall must retain its static TLS boundary",
+    )
+    headers = nonempty_strings(
+        artifact["x86_header_prerequisites"], "static-c-mlockall.x86_header_prerequisites"
+    )
+    require(
+        any(
+            "six-profile C11/C++17 `<sys/mman.h>` matrix" in item
+            and "int mlockall(int)" in item
+            and "MCL_CURRENT=1" in item
+            and "MCL_FUTURE=2" in item
+            and "unmangled C++ reference" in item
+            and "MCL_ONFAULT" in item
+            and "errno.h, sys/mman.h, sys/types.h, bits/mman.h, sys/syscall.h, and bits/syscall.h" in item
+            for item in headers
+        ),
+        "static-c-mlockall must retain its bounded C/C++ header ABI",
+    )
+    static_exports = set(
+        static_c_abi_export_names(
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        )
+    )
+    require(
+        "mlockall" in static_exports and "munlockall" not in static_exports,
+        "static-c-mlockall must expose only the public mlockall spelling",
+    )
+    implementation = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "mlockall.rs"
+    ).read_text(encoding="utf-8")
+    for required in (
+        "src/mman/mlockall.c",
+        "raw_syscall::SYS_MLOCKALL",
+        "raw_syscall::syscall1(",
+        "c_status(result)",
+        'pub extern "C" fn mlockall',
+        "munlockall=152",
+    ):
+        require(
+            required in implementation,
+            f"static-c-mlockall implementation omits {required}",
+        )
+    implementation_exports = set(
+        re.findall(
+            r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(',
+            implementation,
+        )
+    )
+    require(
+        implementation_exports == {"mlockall"},
+        "static-c-mlockall implementation must export only mlockall",
+    )
+    oracle = artifact["oracle"]
+    assert isinstance(oracle, list)
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "c-posix"
+            and isinstance(entry.get("role"), str)
+            and "src/mman/mlockall.c" in entry["role"]
+            and "munlockall and per-range locking remain unselected" in entry["role"]
+            for entry in oracle
+        ),
+        "static-c-mlockall must retain its pinned-musl source mapping",
+    )
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "kernel-abi"
+            and isinstance(entry.get("role"), str)
+            and "mlockall=151" in entry["role"]
+            and "munlockall=152" in entry["role"]
+            for entry in oracle
+        ),
+        "static-c-mlockall must retain its Linux syscall oracle",
+    )
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-mlockall"},
+        "static-c-mlockall must use the closed libc-mlockall command",
+    )
+    scope = evidence[0].get("scope")
+    require(
+        isinstance(scope, str)
+        and all(
+            phrase in scope
+            for phrase in (
+                "Pinned-musl 1.2.6",
+                "C/C++ mlockall feature/header matrix",
+                "`-nostdlib -static` candidate",
+                "`mlockall=151`",
+                "EPERM/EAGAIN/ENOMEM",
+                "EINVAL",
+                "munlockall=152 cleanup",
+                "per-range locking",
+                "pthread cancellation, signals",
+                "public x86 support",
+            )
+        ),
+        "static-c-mlockall evidence must retain its bounded static regression",
+    )
+
+
 def require_memory_sync_header_evidence(family: Mapping[str, Any]) -> None:
     """Keep the artifact-local unconditional msync declaration gate explicit."""
     evidence = family.get("native_evidence")
@@ -43712,6 +43946,7 @@ def validate_ledger(
     require_mapping_core_artifact(by_id["libc.posix-runtime"])
     require_memory_sync_artifact(by_id["libc.posix-runtime"])
     require_memory_locking_artifact(by_id["libc.posix-runtime"])
+    require_mlockall_artifact(by_id["libc.posix-runtime"])
     require_memfd_create_artifact(by_id["libc.posix-runtime"])
     require_signal_altstack_artifact(by_id["libc.posix-runtime"])
     require_signal_execution_artifact(by_id["libc.posix-runtime"])

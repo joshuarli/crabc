@@ -143,6 +143,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   readlinkat-header-abi  verify selected x86 POSIX readlinkat C/C++ declarations
   mktemp-header-abi  compile the staged x86 C/C++ mktemp declaration
   mman-header-abi  compile the staged x86 C/C++ mapping-header declarations
+  mlockall-header-abi  verify selected x86 mlockall C/C++ declarations
   memory-sync-header-abi  verify selected x86 msync C/C++ declarations
   memory-locking-header-abi  verify selected x86 per-range mlock C/C++ declarations
   memfd-create-header-abi  verify selected x86 GNU memfd_create C/C++ declarations
@@ -172,6 +173,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-ftime  run the static x86 crabc-libc ftime clock-snapshot slice
   clock-getcpuclockid-header-abi  run the x86 musl/project clock_getcpuclockid C/C++ declaration matrix
   libc-clock-getcpuclockid  run the static x86 crabc-libc process CPU-clock-ID slice
+  libc-mlockall  run the static x86 crabc-libc whole-process lock request slice
   libc-sigaddset-sigdelset-sigfillset  run the static x86 crabc-libc POSIX signal-set mutation slice
   libc-extended-attributes  run the static x86 crabc-libc extended-attribute slice
   libc-pathname-lifecycle  run the static x86 crabc-libc pathname-lifecycle slice
@@ -994,10 +996,11 @@ pthread object layouts. `stat-header-abi`, `time-header-abi`, `poll-header-abi`,
 `system-header-abi` compile only their named C/C++ layout/declaration slices.
 `syscall-header-abi` compares only staged syscall number macros.
 `signal-header-abi`, `termios-header-abi`, `mman-header-abi`,
-`memory-sync-header-abi`, `memory-locking-header-abi`,
+`memory-sync-header-abi`, `memory-locking-header-abi`, `mlockall-header-abi`,
 `memfd-create-header-abi`, and `resource-header-abi` compile only their named
 staged signal-frame, GNU termios, mapping, no-cancellation msync, per-range
-memory-locking, GNU memfd_create, and strict/GNU/LFS resource declarations.
+memory-locking, one-symbol whole-process lock-request, GNU memfd_create, and
+strict/GNU/LFS resource declarations.
 `termios-header-abi` remains a header-only C/C++ layout/declaration gate, not
 a general C terminal/runtime claim. `resource-header-abi` is likewise
 header-only and does not select process-resource behavior or a C runtime.
@@ -1523,6 +1526,16 @@ overflow-range `EINVAL`. The direct musl-shaped wrappers deliberately omit a
 cancellation path. It does not select `mlockall`/`munlockall`, `msync`,
 `mremap`, mapping policy, allocator, dynamic libc, CRT/TLS lifecycle, loader,
 sysroot, or public x86 support.
+`libc-mlockall` separately links that archive into one freestanding
+project-header C fixture after an equivalent pinned-musl run, and runs the
+six-profile C/C++ declaration gate first. It selects only `mlockall(int)`:
+musl 1.2.6 `src/mman/mlockall.c`'s direct x86 `mlockall=151` flag-word request,
+stale-errno `MCL_CURRENT=1` success or the environment-dependent
+`EPERM`/`EAGAIN`/`ENOMEM` resource result, and zero/unknown-flag `EINVAL`.
+Any success is cleaned by a raw fixture-private `munlockall=152` request, not
+an exported C `munlockall` function. It does not select per-range locking,
+mapping/allocator policy, process lifecycle, pthread cancellation, signals,
+dynamic libc, CRT/TLS lifecycle, loader, sysroot, or public x86 support.
 `libc-memfd-create` separately links that archive into one freestanding
 project-header C fixture after an equivalent pinned-musl run, and runs the
 eight-profile GNU-only C/C++ declaration gate first. It selects only direct
@@ -2495,6 +2508,10 @@ run_libc_siginterrupt_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_siginterrupt.sh
 }
 
+run_libc_mlockall_probe() {
+    run_in_container bash /workspace/compat/x86_64/run_libc_mlockall.sh
+}
+
 run_libc_sigisemptyset_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_sigisemptyset.sh
 }
@@ -2669,6 +2686,10 @@ run_signal_header_abi() {
 
 run_siginterrupt_header_abi() {
     run_in_container bash /workspace/compat/x86_64/run_siginterrupt_header_abi.sh
+}
+
+run_mlockall_header_abi() {
+    run_in_container bash /workspace/compat/x86_64/run_mlockall_header_abi.sh
 }
 
 run_sched_getscheduler_header_abi() {
@@ -3897,7 +3918,7 @@ shift
 
 case "$command" in
     timerfd-header-abi|signalfd-header-abi) ;;
-    siginterrupt-header-abi|usleep-header-abi|ftime-header-abi|clock-getcpuclockid-header-abi|libc-timerfd|libc-signalfd|libc-sigpause|libc-siginterrupt|libc-sigisemptyset|libc-sigandset-sigorset|libc-sigpending|libc-sigrtmax|libc-sigrtmin|libc-sched-getscheduler|libc-alarm|libc-usleep|libc-ftime|libc-clock-getcpuclockid|libc-sigaddset-sigdelset-sigfillset) ;;
+    siginterrupt-header-abi|mlockall-header-abi|usleep-header-abi|ftime-header-abi|clock-getcpuclockid-header-abi|libc-timerfd|libc-signalfd|libc-sigpause|libc-siginterrupt|libc-mlockall|libc-sigisemptyset|libc-sigandset-sigorset|libc-sigpending|libc-sigrtmax|libc-sigrtmin|libc-sched-getscheduler|libc-alarm|libc-usleep|libc-ftime|libc-clock-getcpuclockid|libc-sigaddset-sigdelset-sigfillset) ;;
     libc-sched-getcpu|libc-sched-yield) ;;
     sched-getscheduler-header-abi) ;;
     ctermid-header-abi|gethostid-header-abi|getpagesize-header-abi|gettid-header-abi|isatty-header-abi|tcgetpgrp-header-abi|tcsetpgrp-header-abi|getpass-header-abi|libc-ctermid|libc-gethostid|libc-getpagesize|libc-gettid|libc-isatty|libc-tcgetpgrp|libc-tcsetpgrp|libc-getpass|mkfifo-header-abi|mkfifoat-header-abi|libc-mkfifo|libc-mkfifoat|mktemp-header-abi|libc-mktemp) ;;
@@ -4439,6 +4460,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "siginterrupt-header-abi takes no arguments"
         ensure_image
         run_siginterrupt_header_abi
+        ;;
+    mlockall-header-abi)
+        [ "$#" -eq 0 ] || fail "mlockall-header-abi takes no arguments"
+        ensure_image
+        run_mlockall_header_abi
         ;;
     sched-getscheduler-header-abi)
         [ "$#" -eq 0 ] || fail "sched-getscheduler-header-abi takes no arguments"
@@ -5664,6 +5690,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "libc-memory-locking takes no arguments"
         ensure_image
         run_libc_memory_locking
+        ;;
+    libc-mlockall)
+        [ "$#" -eq 0 ] || fail "libc-mlockall takes no arguments"
+        ensure_image
+        run_libc_mlockall_probe
         ;;
     libc-memfd-create)
         [ "$#" -eq 0 ] || fail "libc-memfd-create takes no arguments"

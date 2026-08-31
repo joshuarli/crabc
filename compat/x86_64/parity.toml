@@ -3603,6 +3603,58 @@ oracle = [
 ]
 
 [[family.verified_artifact]]
+id = "static-c-mlockall"
+description = "Private native x86 selected-static-archive one-symbol whole-process lock-request artifact inside planned `libc.posix-runtime`. One dependency-free `crabc-libc` archive resolves exactly `mlockall(int)` into a freestanding C fixture after equivalent pinned-musl execution. Pinned musl 1.2.6 `src/mman/mlockall.c` forwards the signed C flag word unchanged to Linux/x86 `mlockall=151`; `MCL_CURRENT=1` success preserves stale errno, Linux's environment-dependent `EPERM`/`EAGAIN`/`ENOMEM` resource outcome stays direct, and zero/unknown composite flags return `EINVAL`. Any success is contained in a disposable fixture process and a fixture-private raw `munlockall=152` cleanup request; that is not an exported `munlockall` ABI. The C/C++ header matrix covers the unconditional `int mlockall(int)` plus `MCL_CURRENT/MCL_FUTURE=1/2`, deliberately not `MCL_ONFAULT` header availability. It excludes `munlockall`, per-range `mlock`/`munlock`/`mlock2`, mapping/allocator policy, process lifecycle, pthread cancellation, signals, libc.so, CRT, dynamic TLS lifecycle, loader, sysroot, family completion, promotion, and public x86 support. This is one verified artifact within planned `libc.posix-runtime`, not C-runtime, header, or platform completion."
+source_owners = [
+  "compat/upstreams.toml",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/mlockall.rs",
+  "libc/src/c_abi/x86_64/errno.rs",
+  "libc/src/c_abi/x86_64/static_tls.rs",
+  "libc/src/c_abi/x86_64/syscall.rs",
+  "include/errno.h",
+  "include/features.h",
+  "include/sys/mman.h",
+  "include/bits/mman.h",
+  "include/sys/types.h",
+  "include/sys/syscall.h",
+  "include/bits/syscall.h",
+  "compat/x86_64/mlockall_header_abi_probe.c",
+  "compat/x86_64/mlockall_header_abi_probe.cpp",
+  "compat/x86_64/run_mlockall_header_abi.sh",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/libc_mlockall_probe.c",
+  "compat/x86_64/libc_mlockall_start.S",
+  "compat/x86_64/run_libc_mlockall.sh",
+  "compat/x86_64/aarch64_parity_inventory.py",
+  "compat/x86_64/aarch64_parity_inventory.json",
+  "compat/x86_64/tests/test_aarch64_parity_inventory.py",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "compat/x86_64/README.md",
+  "STATUS.md",
+  "x86-64.md",
+  "scripts/dev-x86_64.sh",
+  "scripts/check_structure.py",
+]
+x86_abi_prerequisites = [
+  "On Linux/x86-64, `int mlockall(int)` arrives with its signed C `int` in edi, sign-extended into the syscall rdi word; `mlockall=151` returns the normal Linux -4095 through -1 error range through the selected initial-TLS errno slot. The fixture-private raw cleanup uses `munlockall=152` only after candidate success and does not create a C ABI export.",
+  "Pinned musl 1.2.6 `src/mman/mlockall.c` is exactly `syscall(SYS_mlockall, flags)`: it does no local validation or cancellation-point route. Linux owns `MCL_CURRENT=1`, `MCL_FUTURE=2`, optional kernel flag handling, capability, RLIMIT_MEMLOCK, and all whole-process lock policy; this selected wrapper forwards the caller flag word unchanged.",
+  "The pinned-musl and true-static fixture both accept a successful `MCL_CURRENT=1` request with stale `EDOM` preserved or direct environment-dependent `EPERM`/`EAGAIN`/`ENOMEM`. It proves flags=0 and an unknown `MCL_CURRENT|MCL_FUTURE|(1<<30)` composite return `EINVAL`; any success is cleaned with the fixture-private raw `munlockall=152` request before the disposable process exits.",
+  "The final static candidate has a PT_TLS errno datum with direct initial-exec TPOFF access and no TLSGD/TLSLD/TLSDESC/GOTTPOFF/DTPMOD/DTPOFF model form or `__tls_get_addr`; fixture-local `_start` calls the archive first-thread TLS bootstrap without claiming CRT or dynamic TLS lifecycle.",
+]
+x86_header_prerequisites = ["The project-first/pinned-musl six-profile C11/C++17 `<sys/mman.h>` matrix proves unconditional `int mlockall(int)`, `MCL_CURRENT=1`, `MCL_FUTURE=2`, and an unmangled C++ reference across strict, POSIX.1-2008, XOPEN=700, GNU, BSD, and default-source profiles. It deliberately does not select `MCL_ONFAULT` header availability, `munlockall`, full sys/mman.h coverage, installed-header completion, or C ABI completion. The static fixture additionally preprocesses project errno.h, sys/mman.h, sys/types.h, bits/mman.h, sys/syscall.h, and bits/syscall.h."]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-mlockall", scope = "Pinned-musl 1.2.6 C reference plus a true dependency-free x86 crabc-libc `-nostdlib -static` candidate. The gate runs the six-profile C/C++ mlockall feature/header matrix, checks exact crate-owned C object-member export closure separately from compiler-builtins, rejects dynamic interpreter/DT_NEEDED/unresolved symbols/dynamic TLS/unowned runtime dependencies, proves direct initial-TLS errno access, disassembles `mlockall=151`, and executes MCL_CURRENT stale-errno success or Linux EPERM/EAGAIN/ENOMEM resource results plus zero/unknown-flag EINVAL behavior. A raw fixture-private munlockall=152 cleanup contains only a success; it does not export or select munlockall, per-range locking, mapping/allocator policy, process lifecycle, pthread cancellation, signals, libc.so, CRT, loader, sysroot, family completion, promotion, or public x86 support." }]
+oracle = [
+  { kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source mapping, declaration, and behavior oracle for src/mman/mlockall.c, the direct whole-process lock request; munlockall and per-range locking remain unselected." },
+  { kind = "kernel-abi", source = "Linux 5.10 x86-64 ABI", role = "mlockall=151 one signed flag word in rdi, raw errno, MCL_CURRENT/MCL_FUTURE, memlock capability/resource policy, and fixture-private munlockall=152 cleanup contract." },
+  { kind = "elf-abi", source = "System V AMD64 psABI", role = "LP64 int calling convention and static initial-TLS fixture contract." },
+]
+
+[[family.verified_artifact]]
 id = "static-c-signal-altstack"
 description = "Private native x86 selected-static-archive alternate signal-stack artifact inside still-planned `libc.posix-runtime`. One dependency-free `crabc-libc` archive exposes `sigaltstack` and a freestanding project-header C fixture first runs through pinned musl then through a `-nostdlib -static` candidate. It proves the x86 `stack_t` query/install/disable record, stale errno on successful query/install/disable, null query, musl's size-before-`SS_ONSTACK` error ordering, fixed-minimum `ENOMEM`/`EINVAL` prechecks, and Linux-owned in-handler `EPERM` while an existing `sigaction`/`raise` `SA_ONSTACK` delivery enters the registered stack and returns through the existing hidden syscall-15 restorer. Pinned musl 1.2.6's `sigaltstack.c` obtains its size floor from dynamic `_SC_MINSIGSTKSZ`/startup `AT_MINSIGSTKSZ`; this selected static leaf intentionally retains the existing AArch64-style fixed x86 header `MINSIGSTKSZ=2048` preflight because that auxv/sysconf selector is not selected. It does not select that dynamic minimum, alternate-stack allocation or ownership, generic signal disposition/delivery, waits/queues/signalfd, pthread signal policy or cancellation, libc.so, CRT, dynamic TLS, loader, sysroot, family completion, promotion, or public x86 support."
 source_owners = [

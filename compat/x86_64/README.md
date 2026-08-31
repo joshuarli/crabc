@@ -287,6 +287,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh syscall-header-abi
 ./scripts/dev-x86_64.sh signal-header-abi
 ./scripts/dev-x86_64.sh siginterrupt-header-abi
+./scripts/dev-x86_64.sh mlockall-header-abi
 ./scripts/dev-x86_64.sh mman-header-abi
 ./scripts/dev-x86_64.sh memory-sync-header-abi
 ./scripts/dev-x86_64.sh memory-locking-header-abi
@@ -397,6 +398,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-signalfd
 ./scripts/dev-x86_64.sh libc-sigpause
 ./scripts/dev-x86_64.sh libc-siginterrupt
+./scripts/dev-x86_64.sh libc-mlockall
 ./scripts/dev-x86_64.sh libc-sigisemptyset
 ./scripts/dev-x86_64.sh libc-sigandset-sigorset
 ./scripts/dev-x86_64.sh libc-sigpending
@@ -474,6 +476,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-mapping-core
 ./scripts/dev-x86_64.sh libc-memory-sync
 ./scripts/dev-x86_64.sh libc-memory-locking
+./scripts/dev-x86_64.sh libc-mlockall
 ./scripts/dev-x86_64.sh libc-memfd-create
 ./scripts/dev-x86_64.sh libc-allocator-runtime
 ./scripts/dev-x86_64.sh libc-allocator-string-duplication
@@ -1545,6 +1548,14 @@ strict/POSIX/GNU C/C++ `<sys/mman.h>` profiles for exactly `mlock`, `munlock`,
 and GNU `mlock2`/`MLOCK_ONFAULT`, including GNU hiding and unmangled C++
 linkage. It is compile-only evidence, not archive linkage, locking behavior,
 complete `sys/mman.h`, family completion, or public x86 support.
+
+`mlockall-header-abi` separately compares project-first and pinned-musl
+strict/POSIX/XOPEN/GNU/BSD/default C/C++ `<sys/mman.h>` profiles for exactly
+the unconditional `int mlockall(int)` declaration and
+`MCL_CURRENT`/`MCL_FUTURE=1/2`, including unmangled C++ linkage. It deliberately
+does not select `MCL_ONFAULT` header availability, `munlockall`, archive
+linkage, locking behavior, complete `sys/mman.h`, family completion, or public
+x86 support.
 
 `memfd-create-header-abi` separately compares project-first and pinned-musl
 eight-profile C/C++ `<sys/mman.h>` GNU visibility for exactly
@@ -4020,6 +4031,21 @@ policy, allocator, libc.so, CRT, loader, sysroot, and public x86 support. This
 is one artifact within planned `libc.posix-runtime`, not full `<sys/mman.h>`,
 family, C-runtime, or platform completion.
 
+`libc-mlockall` is a separately recorded `static-c-mlockall`
+`verified_artifact` gate over that archive, not a general C mapping or runtime
+capability. Its project-header C body first executes through pinned musl and
+then through a `-nostdlib -static` candidate, while the paired six-profile
+C/C++ `<sys/mman.h>` gate checks only `mlockall(int)` and
+`MCL_CURRENT`/`MCL_FUTURE`. It selects musl 1.2.6
+`src/mman/mlockall.c`'s direct x86 `mlockall=151` request, stale-errno
+`MCL_CURRENT` success or Linux's `EPERM`/`EAGAIN`/`ENOMEM` resource result, and
+zero/unknown-flag `EINVAL`. A fixture-private raw `munlockall=152` cleanup
+contains success without creating a C `munlockall` export. It excludes
+per-range locking, mapping/allocator policy, process lifecycle, pthread
+cancellation, signals, libc.so, CRT, loader, sysroot, and public x86 support.
+This is one artifact within planned `libc.posix-runtime`, not full
+`<sys/mman.h>`, family, C-runtime, or platform completion.
+
 `libc-memfd-create` is a separately recorded private planned
 `static-c-memfd-create` evidence artifact over that archive, not a descriptor,
 filesystem, or C-runtime capability. Its GNU project-header C body first
@@ -5796,7 +5822,7 @@ startup, loader TLS, sysroot, nor public x86 support.
 Apart from the narrowly named `libc-stat-compat`, `libc-credentials`,
 `libc-bootstrap-primitives`, `libc-signal-control`, `libc-signal-execution`,
 `libc-signal-altstack`, `libc-timerfd`, `libc-signalfd`, `libc-sigpause`,
-`libc-siginterrupt`, `libc-sigisemptyset`, `libc-sigandset-sigorset`, `libc-sigpending`, and
+`libc-siginterrupt`, `libc-mlockall`, `libc-sigisemptyset`, `libc-sigandset-sigorset`, `libc-sigpending`, and
 `libc-sigrtmax`, `libc-sigrtmin`, `libc-sched-getscheduler`,
 `libc-sigaddset-sigdelset-sigfillset`,
 `libc-sigrtmax`, `libc-sigrtmin`, `libc-alarm`, `libc-usleep`, `libc-ftime`,
@@ -5833,6 +5859,7 @@ Apart from the narrowly named `libc-stat-compat`, `libc-credentials`,
 `libc-mapping-core`,
 `libc-memory-sync`,
 `libc-memory-locking`,
+`libc-mlockall`,
 `libc-memfd-create`,
 `libc-header-layouts-baseline`,
 `libc-nanosleep`,

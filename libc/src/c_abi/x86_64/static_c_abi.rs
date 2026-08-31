@@ -460,6 +460,8 @@ mod system_configuration;
 mod memory_mapping;
 #[path = "memory_locking.rs"]
 mod memory_locking;
+#[path = "mlockall.rs"]
+mod mlockall;
 #[path = "memory_sync.rs"]
 mod memory_sync;
 #[path = "memfd_create.rs"]
