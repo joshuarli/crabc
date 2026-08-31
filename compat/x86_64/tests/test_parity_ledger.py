@@ -50,7 +50,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 41)
-        self.assertEqual(report["verified_artifact_count"], 222)
+        self.assertEqual(report["verified_artifact_count"], 223)
         self.assertEqual(report["header_layout_probe_count"], 47)
         self.assertEqual(report["public_header_inventory_count"], 183)
         self.assertEqual(report["header_foundation_header_count"], 191)
@@ -20610,6 +20610,149 @@ class X86ParityLedgerTests(unittest.TestCase):
         evidence = artifact["native_evidence"]
         assert isinstance(evidence, list) and isinstance(evidence[0], dict)
         evidence[0]["scope"] = "static name expansion"
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "Pinned-musl project-header C execution"
+        ):
+            ledger.validate_ledger(data)
+
+    def test_ns_flagdata_artifact_keeps_its_private_data_boundary(self) -> None:
+        data = self.data()
+        family = self.family(data, "libc.resolver")
+        self.assertEqual(family["status"], "planned")
+        self.assertIn("libc/src/c_abi/x86_64/ns_flagdata.rs", family["source_owners"])
+        artifacts = family["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-ns-flagdata"
+        )
+        self.assertNotIn("capabilities", artifact)
+        for owner in (
+            "libc/src/c_abi/x86_64/ns_flagdata.rs",
+            "include/resolv.h",
+            "include/arpa/nameser.h",
+            "compat/x86_64/nameser_header_abi_probe.c",
+            "compat/x86_64/nameser_header_abi_probe.cpp",
+            "compat/x86_64/run_nameser_header_abi.sh",
+            "compat/x86_64/static_c_abi_exports.txt",
+            "compat/x86_64/libc_ns_flagdata_probe.c",
+            "compat/x86_64/libc_ns_flagdata_start.S",
+            "compat/x86_64/run_libc_ns_flagdata.sh",
+            "compat/x86_64/validate_parity_ledger.py",
+            "scripts/dev-x86_64.sh",
+            "scripts/check_structure.py",
+        ):
+            self.assertIn(owner, artifact["source_owners"])
+        self.assertEqual(
+            {entry["command"] for entry in artifact["native_evidence"]},
+            {"./scripts/dev-x86_64.sh libc-ns-flagdata"},
+        )
+        for phrase in (
+            "Private native x86 static `_ns_flagdata` immutable nameserver flag-accessor data C ABI artifact",
+            "still-planned `libc.resolver`",
+            "archive-free true `-nostdlib -static` candidate",
+            "exactly one extracted crabc object",
+            "never `libc.a`",
+            "global default read-only 128-byte",
+            "`const struct _ns_flagdata[16]`",
+            "`ns_msg_getflag`",
+            "QR/opcode/AA/TC/RD/RA/Z/AD/CD/rcode",
+            "six reserved records are zero",
+            "`h_errno`",
+            "`errno`",
+            "TLS",
+            "`/etc/hosts`",
+            "`/etc/resolv.conf`",
+            "DNS packet I/O",
+            "netdb/database",
+            "`dn_expand`",
+            "`dn_skipname`",
+            "ns_get16/ns_get32/ns_put16/ns_put32",
+            "Ethernet",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, artifact["description"])
+
+        exports = set(
+            (ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt")
+            .read_text(encoding="utf-8")
+            .splitlines()
+        )
+        self.assertIn("_ns_flagdata", exports)
+        self.assertFalse(
+            exports & {"ns_initparse", "ns_parserr", "ns_skiprr", "ns_name_uncompress"}
+        )
+
+        prerequisites = artifact["x86_abi_prerequisites"]
+        assert isinstance(prerequisites, list)
+        c_abi = next(
+            item
+            for item in prerequisites
+            if "global default immutable `const struct _ns_flagdata _ns_flagdata[16]`"
+            in item
+        )
+        assert isinstance(c_abi, str)
+        for phrase in (
+            "two four-byte C int fields",
+            "128-byte align-4 storage",
+            "Array-to-pointer decay",
+            "unmangled `_ns_flagdata` data-symbol reference",
+            "caller-side macro only",
+        ):
+            self.assertIn(phrase, c_abi)
+        source_mapping = next(
+            item for item in prerequisites if "src/network/ns_parse.c" in item
+        )
+        assert isinstance(source_mapping, str)
+        for phrase in (
+            "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+            "ns_parse.lo",
+            "128-byte align-32 `.rodata._ns_flagdata` section",
+            "global default with no relocation",
+            "0x8000/15",
+            "six 0/0 records",
+            "Parser sections remain deliberately unselected",
+        ):
+            self.assertIn(phrase, source_mapping)
+
+        oracle = artifact["oracle"]
+        assert isinstance(oracle, list)
+        source_oracle = next(
+            entry
+            for entry in oracle
+            if isinstance(entry, dict) and entry.get("kind") == "c-posix"
+        )
+        self.assertIn("immutable `_ns_flagdata` sixteen-record mask/shift section", source_oracle["role"])
+        self.assertIn("co-resident-but-unselected parser/byte helpers", source_oracle["role"])
+
+        data = self.data()
+        artifacts = self.family(data, "libc.resolver")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-ns-flagdata"
+        )
+        artifact["description"] = artifact["description"].replace(
+            "six reserved records are zero", "reserved records are present"
+        )
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "omits six reserved records are zero"
+        ):
+            ledger.validate_ledger(data)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.resolver")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-ns-flagdata"
+        )
+        evidence = artifact["native_evidence"]
+        assert isinstance(evidence, list) and isinstance(evidence[0], dict)
+        evidence[0]["scope"] = "static nameserver flag table"
         with self.assertRaisesRegex(
             ledger.LedgerError, "Pinned-musl project-header C execution"
         ):

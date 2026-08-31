@@ -161,7 +161,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   memfd-create-header-abi  verify selected x86 GNU memfd_create C/C++ declarations
   resource-header-abi  compile the staged x86 C/C++ resource-header layouts
   socket-header-abi  verify staged x86 base socket C/C++ declarations/layouts and IPv6 macros
-  nameser-header-abi  verify staged x86 resolv.h C/C++ dn_skipname/dn_expand/ns_get16/ns_get32/ns_put16 declarations
+  nameser-header-abi  verify staged x86 resolv.h C/C++ dn_skipname/dn_expand/_ns_flagdata/ns_get16/ns_get32/ns_put16 declarations
   inet-address-header-abi  verify selected x86 arpa/inet C/C++ numeric-address declarations
   socket-messages-header-abi  verify staged x86 socket-message/options C/C++ declarations/layouts
   sysv-semaphore-header-abi  verify staged x86 SysV semaphore C/C++ declarations/layouts
@@ -427,6 +427,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-in6addr-loopback  run the archive-free static x86 crabc-libc IPv6 loopback-address object slice
   libc-dn-skipname  run the archive-free static x86 crabc-libc DNS wire-name span slice
   libc-dn-expand  run the archive-free static x86 crabc-libc DNS wire-name expansion slice
+  libc-ns-flagdata  run the archive-free static x86 crabc-libc nameserver flag-accessor data slice
   libc-ns-get16  run the archive-free static x86 crabc-libc DNS 16-bit wire-read slice
   libc-ns-get32  run the archive-free static x86 crabc-libc DNS 32-bit wire-read slice
   libc-ns-put16  run the archive-free static x86 crabc-libc DNS 16-bit wire-write slice
@@ -4088,7 +4089,7 @@ case "$command" in
     math-special-header-abi|libc-math-special) ;;
     math-exp2-header-abi|math-expm1-header-abi|math-log10-header-abi|libc-math-exp2|libc-math-expm1|libc-math-log10) ;;
     inet-address-header-abi|nameser-header-abi) ;;
-    libc-network-byte-order|libc-dn-skipname|libc-dn-expand|libc-ns-get16|libc-ns-get32|libc-ns-put16) ;;
+    libc-network-byte-order|libc-dn-skipname|libc-dn-expand|libc-ns-flagdata|libc-ns-get16|libc-ns-get32|libc-ns-put16) ;;
     ldso-target-root) ;;
     libc-fenv-rounding) ;;
     libc-math-minmax) ;;
@@ -6187,6 +6188,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "libc-dn-expand takes no arguments"
         ensure_image
         run_in_container bash /workspace/compat/x86_64/run_libc_dn_expand.sh
+        ;;
+    libc-ns-flagdata)
+        [ "$#" -eq 0 ] || fail "libc-ns-flagdata takes no arguments"
+        ensure_image
+        run_in_container bash /workspace/compat/x86_64/run_libc_ns_flagdata.sh
         ;;
     libc-ns-get16)
         [ "$#" -eq 0 ] || fail "libc-ns-get16 takes no arguments"

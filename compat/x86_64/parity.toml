@@ -10378,9 +10378,9 @@ id = "libc.resolver"
 order = 100
 depends_on = ["oracle.musl-toolchain", "libc.headers-layouts", "libc.posix-runtime", "libc.text-math-locale-stdio"]
 category = "c-abi"
-description = "Bounded /etc hosts/resolv.conf resolver profile with A/AAAA/CNAME UDP/TCP retry and failover behavior. Its separately verified numeric-address codec, shared inet_ntoa scratch-buffer, classful IPv4 arithmetic, hstrerror message, dependency-free dn_skipname wire-name span codec, dependency-free dn_expand wire-name expansion codec, dependency-free ns_get16 caller-owned 16-bit wire-read codec, dependency-free ns_get32 caller-owned 32-bit wire-read codec, dependency-free ns_put16 caller-owned 16-bit wire-write codec, and deterministic numeric netdb result-lifetime slices are private static C artifacts only; none promotes resolver-network behavior, this family, or public x86 support."
+description = "Bounded /etc hosts/resolv.conf resolver profile with A/AAAA/CNAME UDP/TCP retry and failover behavior. Its separately verified numeric-address codec, shared inet_ntoa scratch-buffer, classful IPv4 arithmetic, hstrerror message, dependency-free dn_skipname wire-name span codec, dependency-free dn_expand wire-name expansion codec, immutable _ns_flagdata nameserver flag-accessor table, dependency-free ns_get16 caller-owned 16-bit wire-read codec, dependency-free ns_get32 caller-owned 32-bit wire-read codec, dependency-free ns_put16 caller-owned 16-bit wire-write codec, and deterministic numeric netdb result-lifetime slices are private static C artifacts only; none promotes resolver-network behavior, this family, or public x86 support."
 aarch64_gates = ["resolver-network", "libc-test"]
-source_owners = ["libc/src/c_abi.rs", "libc/src/c_abi/x86_64/dn_skipname.rs", "libc/src/c_abi/x86_64/dn_expand.rs", "libc/src/c_abi/x86_64/ns_get16.rs", "libc/src/c_abi/x86_64/ns_get32.rs", "libc/src/c_abi/x86_64/ns_put16.rs", "compat/resolver-network"]
+source_owners = ["libc/src/c_abi.rs", "libc/src/c_abi/x86_64/dn_skipname.rs", "libc/src/c_abi/x86_64/dn_expand.rs", "libc/src/c_abi/x86_64/ns_flagdata.rs", "libc/src/c_abi/x86_64/ns_get16.rs", "libc/src/c_abi/x86_64/ns_get32.rs", "libc/src/c_abi/x86_64/ns_put16.rs", "compat/resolver-network"]
 x86_abi_prerequisites = ["socket and DNS wire I/O syscall boundary", "x86 socket/address record layouts"]
 x86_header_prerequisites = ["netdb.h, arpa/inet.h, resolv.h, arpa/nameser.h, sys/socket.h, and netinet/in.h selected contracts."]
 native_evidence = [{ state = "required", command = "Define a native x86 isolated resolver-network differential gate", scope = "Use the same local-only DNS environment; do not add NSS, DoH, DoT, or mDNS." }]
@@ -10728,6 +10728,57 @@ native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc
 oracle = [
   { kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source and C/POSIX behavior oracle for the exact `src/network/dn_expand.c` caller-owned decoder: root/label text, low- and high-offset 14-bit pointer following, initial-span return, 254-byte output cap, partial writes, and bounded pointer-loop failure. Resolver state/files, DNS packet I/O, socket, netdb, parser siblings, h_errno, and Ethernet behavior remain unselected." },
   { kind = "elf-abi", source = "System V AMD64 psABI and pinned musl x86 static object", role = "LP64 five-argument C-call ABI plus the 292-byte global-hidden __dn_expand/weak-default dn_expand same-address alias pair and archive-free static final-ELF boundary for exactly one dn_expand object." },
+]
+
+[[family.verified_artifact]]
+id = "static-c-ns-flagdata"
+description = "Private native x86 static `_ns_flagdata` immutable nameserver flag-accessor data C ABI artifact inside still-planned `libc.resolver`, not resolver-network behavior or a complete DNS parser. One project-header C fixture first executes through pinned musl 1.2.6 and then through an archive-free true `-nostdlib -static` candidate linked from exactly one extracted crabc object, never `libc.a`. It exposes exactly one global default read-only 128-byte `const struct _ns_flagdata[16]` table: sixteen immutable `(mask, shift)` records whose first ten drive `<arpa/nameser.h>` `ns_msg_getflag` QR/opcode/AA/TC/RD/RA/Z/AD/CD/rcode extraction and whose six reserved records are zero. It neither reads nor writes resolver state, `h_errno`, `errno`, or TLS, and admits no `/etc/hosts` or `/etc/resolv.conf` access, DNS packet I/O, socket, netdb/database, parser, `dn_expand`, `dn_skipname`, ns_get16/ns_get32/ns_put16/ns_put32, allocation, syscall, mutable state, numeric/address codec, interface, Ethernet, libc.so, CRT, loader, sysroot, family promotion, or public x86 support."
+source_owners = [
+  "compat/upstreams.toml",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/ns_flagdata.rs",
+  "include/resolv.h",
+  "include/arpa/nameser.h",
+  "include/netinet/in.h",
+  "include/stddef.h",
+  "include/stdint.h",
+  "include/sys/socket.h",
+  "include/sys/types.h",
+  "include/bits/alltypes.h",
+  "compat/x86_64/nameser_header_abi_probe.c",
+  "compat/x86_64/nameser_header_abi_probe.cpp",
+  "compat/x86_64/run_nameser_header_abi.sh",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/libc_ns_flagdata_probe.c",
+  "compat/x86_64/libc_ns_flagdata_start.S",
+  "compat/x86_64/run_libc_ns_flagdata.sh",
+  "compat/x86_64/aarch64_parity_inventory.py",
+  "compat/x86_64/aarch64_parity_inventory.json",
+  "compat/x86_64/tests/test_aarch64_parity_inventory.py",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "compat/x86_64/README.md",
+  "STATUS.md",
+  "x86-64.md",
+  "scripts/dev-x86_64.sh",
+  "scripts/check_structure.py",
+]
+x86_abi_prerequisites = [
+  "The selected x86 C data ABI is one global default immutable `const struct _ns_flagdata _ns_flagdata[16]` object: every record is two four-byte C int fields, `mask` at offset zero and `shift` at offset four, so the table is 128-byte align-4 storage. Array-to-pointer decay yields `const struct _ns_flagdata *`; project and pinned-musl C++ consumers retain one unmangled `_ns_flagdata` data-symbol reference. `<arpa/nameser.h>` `ns_msg_getflag` is a caller-side macro only, not selected parser code.",
+  "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417 maps `_ns_flagdata` to `src/network/ns_parse.c`. The pinned `ns_parse.lo` object contains parser and byte-helper siblings, but its separate dependency-free 128-byte align-32 `.rodata._ns_flagdata` section is global default with no relocation: the exact little-endian pairs are 0x8000/15, 0x7800/11, 0x0400/10, 0x0200/9, 0x0100/8, 0x0080/7, 0x0040/6, 0x0020/5, 0x0010/4, 0x000f/0, then six 0/0 records. Parser sections remain deliberately unselected.",
+  "The archive-free final link starts with exactly one extracted `_ns_flagdata` object, never `libc.a`, and retains one global default read-only 128-byte object with no interpreter, DT_NEEDED, unresolved symbol, TLS/errno/h_errno, dynamic TLS, resolver configuration, conventional-file, DNS packet I/O, socket, netdb/database, parser, nameser helper, allocation, syscall, interface, Ethernet, or mutable-state dependency. It is nameserver accessor data only, not a parser or resolver-state boundary.",
+]
+x86_header_prerequisites = [
+  "The shared project-first/pinned-musl C/C++ `<resolv.h>` declaration gate checks `struct _ns_flagdata` as eight-byte align-4 `{ int mask; int shift; }`, both member offsets, `const struct _ns_flagdata *` array-decay type, and one unmangled C++ `_ns_flagdata` data-symbol reference beside dn_skipname, dn_expand, ns_get16, ns_get32, and ns_put16. It proves no archive linkage, resolver state, DNS packet I/O, socket, netdb, installed-header completion, family promotion, or public x86 support.",
+  "The static fixture preprocesses only project `arpa/nameser.h`, `stddef.h`, and `stdint.h` before it compares all sixteen records and `ns_msg_getflag` extraction against pinned musl and the archive-free candidate. It selects no resolver-configuration, h_errno, network-database, parser, or byte-order-helper header state.",
+]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-ns-flagdata", scope = "Pinned-musl project-header C execution followed by an archive-free x86 `-nostdlib -static` candidate. The gate ratchets the aggregate static C export surface for `_ns_flagdata`, proves the pinned `ns_parse.lo` 128-byte `.rodata._ns_flagdata` source mapping and absence of a data-section relocation despite co-resident parser code, and links exactly one extracted object, never `libc.a`. The fixed nameserver data regression proves stable address, 8-byte align-4 record layout and all sixteen mask/shift records, all-zero reserved records, and `ns_msg_getflag` extraction for zero, all-one, and mixed QR/opcode/AA/TC/RD/RA/Z/AD/CD/rcode flags. The final ELF has one global default read-only 128-byte object with no interpreter/DT_NEEDED/unresolved symbol, TLS/errno/h_errno/dynamic TLS, resolver configuration, hosts/resolv.conf, DNS packet I/O, socket, netdb/database, parser siblings, selected name/byte helpers, address codecs, interfaces, Ethernet, allocation, libc.so, CRT, loader, sysroot, family promotion, or public x86 support." }]
+oracle = [
+  { kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source and C ABI oracle for the exact `src/network/ns_parse.c` immutable `_ns_flagdata` sixteen-record mask/shift section, its nameser macro extraction, and its co-resident-but-unselected parser/byte helpers. Resolver state/files, DNS packet I/O, socket, netdb, h_errno, and Ethernet behavior remain unselected." },
+  { kind = "elf-abi", source = "System V AMD64 psABI and pinned musl x86 static object", role = "Global default read-only 128-byte data-symbol identity, LP64 C/C++ array-decay reference, align-4 two-int record layout, and archive-free static final-ELF boundary for exactly one _ns_flagdata object." },
 ]
 
 [[family.verified_artifact]]

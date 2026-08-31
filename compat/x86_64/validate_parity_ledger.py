@@ -1436,6 +1436,8 @@ DN_SKIPNAME_SYMBOLS = ("dn_skipname",)
 
 DN_EXPAND_SYMBOLS = ("__dn_expand", "dn_expand")
 
+NS_FLAGDATA_SYMBOLS = ("_ns_flagdata",)
+
 NS_GET16_SYMBOLS = ("ns_get16",)
 
 NS_GET32_SYMBOLS = ("ns_get32",)
@@ -31145,6 +31147,389 @@ def require_dn_expand_artifact(family: Mapping[str, Any]) -> None:
     )
 
 
+def require_ns_flagdata_artifact(family: Mapping[str, Any]) -> None:
+    """Keep immutable nameserver flag data out of parser/resolver state."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.resolver].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [entry for entry in artifacts if entry.get("id") == "static-c-ns-flagdata"]
+    require(
+        len(matching) == 1,
+        "libc.resolver must contain exactly one static-c-ns-flagdata artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-ns-flagdata must not promote libc.resolver",
+    )
+    family_owners = set(
+        nonempty_strings(family.get("source_owners"), "family[libc.resolver].source_owners")
+    )
+    require(
+        "libc/src/c_abi/x86_64/ns_flagdata.rs" in family_owners,
+        "libc.resolver source owners must retain ns_flagdata",
+    )
+    artifact = matching[0]
+    description = artifact.get("description")
+    require(isinstance(description, str), "static-c-ns-flagdata needs a description")
+    for phrase in (
+        "Private native x86 static `_ns_flagdata` immutable nameserver flag-accessor data C ABI artifact",
+        "still-planned `libc.resolver`",
+        "archive-free true `-nostdlib -static` candidate",
+        "exactly one extracted crabc object",
+        "never `libc.a`",
+        "global default read-only 128-byte",
+        "`const struct _ns_flagdata[16]`",
+        "`ns_msg_getflag`",
+        "QR/opcode/AA/TC/RD/RA/Z/AD/CD/rcode",
+        "six reserved records are zero",
+        "`h_errno`",
+        "`errno`",
+        "TLS",
+        "`/etc/hosts`",
+        "`/etc/resolv.conf`",
+        "DNS packet I/O",
+        "netdb/database",
+        "`dn_expand`",
+        "`dn_skipname`",
+        "ns_get16/ns_get32/ns_put16/ns_put32",
+        "Ethernet",
+        "public x86 support",
+    ):
+        require(phrase in description, f"static-c-ns-flagdata description omits {phrase}")
+
+    owners = set(
+        nonempty_strings(artifact.get("source_owners"), "static-c-ns-flagdata.source_owners")
+    )
+    for owner in (
+        "compat/upstreams.toml",
+        "libc/Cargo.toml",
+        "libc/src/lib.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/ns_flagdata.rs",
+        "include/resolv.h",
+        "include/arpa/nameser.h",
+        "include/netinet/in.h",
+        "include/stddef.h",
+        "include/stdint.h",
+        "include/sys/socket.h",
+        "include/sys/types.h",
+        "include/bits/alltypes.h",
+        "compat/x86_64/nameser_header_abi_probe.c",
+        "compat/x86_64/nameser_header_abi_probe.cpp",
+        "compat/x86_64/run_nameser_header_abi.sh",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/libc_ns_flagdata_probe.c",
+        "compat/x86_64/libc_ns_flagdata_start.S",
+        "compat/x86_64/run_libc_ns_flagdata.sh",
+        "compat/x86_64/aarch64_parity_inventory.py",
+        "compat/x86_64/aarch64_parity_inventory.json",
+        "compat/x86_64/tests/test_aarch64_parity_inventory.py",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/README.md",
+        "STATUS.md",
+        "x86-64.md",
+        "scripts/dev-x86_64.sh",
+        "scripts/check_structure.py",
+    ):
+        require(owner in owners, f"static-c-ns-flagdata source owners omit {owner}")
+
+    prerequisites = nonempty_strings(
+        artifact.get("x86_abi_prerequisites"),
+        "static-c-ns-flagdata.x86_abi_prerequisites",
+    )
+    require(
+        any(
+            "global default immutable `const struct _ns_flagdata _ns_flagdata[16]`" in item
+            and "two four-byte C int fields" in item
+            and "128-byte align-4 storage" in item
+            and "Array-to-pointer decay" in item
+            and "unmangled `_ns_flagdata` data-symbol reference" in item
+            and "caller-side macro only" in item
+            for item in prerequisites
+        ),
+        "static-c-ns-flagdata must retain its data-layout ABI",
+    )
+    require(
+        any(
+            "9fa28ece75d8a2191de7c5bb53bed224c5947417" in item
+            and "src/network/ns_parse.c" in item
+            and "ns_parse.lo" in item
+            and "128-byte align-32 `.rodata._ns_flagdata` section" in item
+            and "global default with no relocation" in item
+            and "0x8000/15" in item
+            and "six 0/0 records" in item
+            and "Parser sections remain deliberately unselected" in item
+            for item in prerequisites
+        ),
+        "static-c-ns-flagdata must retain its pinned-musl data-section closure",
+    )
+    require(
+        any(
+            "exactly one extracted `_ns_flagdata` object" in item
+            and "never `libc.a`" in item
+            and "global default read-only 128-byte object" in item
+            and "TLS/errno/h_errno" in item
+            and "DNS packet I/O" in item
+            and "Ethernet" in item
+            for item in prerequisites
+        ),
+        "static-c-ns-flagdata must retain its archive-free non-resolver boundary",
+    )
+
+    headers = nonempty_strings(
+        artifact.get("x86_header_prerequisites"),
+        "static-c-ns-flagdata.x86_header_prerequisites",
+    )
+    require(
+        any(
+            "<resolv.h>" in item
+            and "struct _ns_flagdata" in item
+            and "eight-byte align-4" in item
+            and "const struct _ns_flagdata *" in item
+            and "unmangled C++ `_ns_flagdata` data-symbol reference" in item
+            and "dn_skipname, dn_expand, ns_get16, ns_get32, and ns_put16" in item
+            for item in headers
+        ),
+        "static-c-ns-flagdata must retain its C/C++ nameser header boundary",
+    )
+    require(
+        any(
+            "`arpa/nameser.h`" in item
+            and "all sixteen records" in item
+            and "`ns_msg_getflag` extraction" in item
+            and "parser" in item
+            for item in headers
+        ),
+        "static-c-ns-flagdata must retain its narrow static header fixture",
+    )
+
+    exports = set(
+        static_c_abi_export_names(ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt")
+    )
+    require(
+        set(NS_FLAGDATA_SYMBOLS) <= exports,
+        "static-c-ns-flagdata must retain _ns_flagdata export",
+    )
+    require(
+        not (exports & {"ns_initparse", "ns_parserr", "ns_skiprr", "ns_name_uncompress", "res_init"}),
+        "static-c-ns-flagdata must not add parser or resolver exports",
+    )
+
+    static_root = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+    ).read_text(encoding="utf-8")
+    require(
+        '#[path = "ns_flagdata.rs"]\nmod ns_flagdata;' in static_root,
+        "x86 static C ABI must compose the ns_flagdata leaf",
+    )
+    implementation = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "ns_flagdata.rs"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+        "src/network/ns_parse.c",
+        ".rodata._ns_flagdata",
+        "no relocations",
+        "#[repr(C)]",
+        "pub struct NsFlagData",
+        "pub static _ns_flagdata: [NsFlagData; 16]",
+        "mask: 0x8000, shift: 15",
+        "mask: 0x000f, shift: 0",
+        "NsFlagData { mask: 0, shift: 0 }",
+        "ns_msg_getflag",
+    ):
+        require(snippet in implementation, f"ns_flagdata leaf omits {snippet}")
+    require(
+        not re.findall(r'(?m)^pub\s+unsafe\s+extern\s+"C"\s+fn\s+(\w+)\s*\(', implementation),
+        "ns_flagdata leaf must export data and no C function",
+    )
+    for forbidden in (
+        "static mut",
+        "raw_syscall",
+        "__errno_location",
+        "__h_errno_location",
+        "getaddrinfo",
+        "gethostby",
+        "socket(",
+        "std::",
+        "alloc::",
+        "crabc_core",
+        "crabc_mimalloc",
+        "fn dn_expand",
+        "fn dn_skipname",
+        "fn ns_get16",
+        "fn ns_get32",
+        "fn ns_put16",
+        "fn ns_put32",
+    ):
+        require(forbidden not in implementation, f"ns_flagdata leaf widens into {forbidden}")
+
+    oracle = artifact.get("oracle")
+    require(isinstance(oracle, list), "static-c-ns-flagdata needs oracle evidence")
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "c-posix"
+            and isinstance(entry.get("role"), str)
+            and "src/network/ns_parse.c" in entry["role"]
+            and "immutable `_ns_flagdata` sixteen-record mask/shift section" in entry["role"]
+            and "nameser macro extraction" in entry["role"]
+            and "co-resident-but-unselected parser/byte helpers" in entry["role"]
+            and "Resolver state/files" in entry["role"]
+            and "Ethernet" in entry["role"]
+            for entry in oracle
+        ),
+        "static-c-ns-flagdata must retain its pinned-musl data oracle",
+    )
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "elf-abi"
+            and isinstance(entry.get("role"), str)
+            and "Global default read-only 128-byte data-symbol identity" in entry["role"]
+            and "align-4 two-int record layout" in entry["role"]
+            and "archive-free static final-ELF boundary" in entry["role"]
+            for entry in oracle
+        ),
+        "static-c-ns-flagdata must retain its static ELF data ABI oracle",
+    )
+
+    evidence = artifact.get("native_evidence")
+    require(isinstance(evidence, list), "static-c-ns-flagdata needs evidence")
+    require(
+        {entry.get("command") for entry in evidence if isinstance(entry, Mapping)}
+        == {"./scripts/dev-x86_64.sh libc-ns-flagdata"},
+        "static-c-ns-flagdata must use the closed libc-ns-flagdata command",
+    )
+    scope = evidence[0].get("scope")
+    require(isinstance(scope, str), "static-c-ns-flagdata evidence needs a scope")
+    for phrase in (
+        "Pinned-musl project-header C execution",
+        "archive-free x86 `-nostdlib -static` candidate",
+        "aggregate static C export surface for `_ns_flagdata`",
+        "`ns_parse.lo` 128-byte `.rodata._ns_flagdata` source mapping",
+        "absence of a data-section relocation",
+        "co-resident parser code",
+        "exactly one extracted object",
+        "never `libc.a`",
+        "all sixteen mask/shift records",
+        "all-zero reserved records",
+        "`ns_msg_getflag` extraction",
+        "QR/opcode/AA/TC/RD/RA/Z/AD/CD/rcode",
+        "global default read-only 128-byte object",
+        "no interpreter/DT_NEEDED/unresolved symbol",
+        "TLS/errno/h_errno/dynamic TLS",
+        "resolver configuration",
+        "hosts/resolv.conf",
+        "DNS packet I/O",
+        "netdb/database",
+        "parser siblings",
+        "selected name/byte helpers",
+        "Ethernet",
+        "public x86 support",
+    ):
+        require(phrase in scope, f"static-c-ns-flagdata evidence omits {phrase}")
+
+    header_c = (
+        ROOT / "compat" / "x86_64" / "nameser_header_abi_probe.c"
+    ).read_text(encoding="utf-8")
+    header_cpp = (
+        ROOT / "compat" / "x86_64" / "nameser_header_abi_probe.cpp"
+    ).read_text(encoding="utf-8")
+    header_runner = (
+        ROOT / "compat" / "x86_64" / "run_nameser_header_abi.sh"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "#include <resolv.h>",
+        "ns_flagdata_pointer",
+        "sizeof(struct _ns_flagdata) == 8",
+        "_Alignof(struct _ns_flagdata) == 4",
+        "offsetof(struct _ns_flagdata, mask) == 0",
+        "offsetof(struct _ns_flagdata, shift) == 4",
+        "_ns_flagdata + 0",
+    ):
+        require(snippet in header_c, f"nameser C header probe omits {snippet}")
+    for snippet in (
+        "#include <resolv.h>",
+        "ns_flagdata_pointer",
+        "sizeof(struct _ns_flagdata) == 8",
+        "alignof(struct _ns_flagdata) == 4",
+        "offsetof(struct _ns_flagdata, mask) == 0",
+        "offsetof(struct _ns_flagdata, shift) == 4",
+        "extern \"C\" const struct _ns_flagdata _ns_flagdata[];",
+    ):
+        require(snippet in header_cpp, f"nameser C++ header probe omits {snippet}")
+    for snippet in (
+        "check_cxx_c_linkage",
+        "nm --undefined-only",
+        "_ns_flagdata",
+        "_Z.*_ns_flagdata",
+        "DNS packet I/O",
+        "netdb",
+    ):
+        require(snippet in header_runner, f"nameser header runner omits {snippet}")
+
+    fixture = (
+        ROOT / "compat" / "x86_64" / "libc_ns_flagdata_probe.c"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "#include <arpa/nameser.h>",
+        "ns_flagdata_pointer",
+        "expected[16]",
+        "table_matches",
+        "flags_match",
+        "ns_msg_getflag",
+        "0xffff",
+        "0x2905",
+        "CRABC_NS_FLAGDATA_FREESTANDING",
+    ):
+        require(snippet in fixture, f"ns_flagdata fixture omits {snippet}")
+    start = (
+        ROOT / "compat" / "x86_64" / "libc_ns_flagdata_start.S"
+    ).read_text(encoding="utf-8")
+    for snippet in ("crabc_x86_64_ns_flagdata_probe", "mov $60, %eax"):
+        require(snippet in start, f"ns_flagdata static entry omits {snippet}")
+    require("ARCH_SET_FS" not in start, "ns_flagdata static entry must not bootstrap TLS")
+
+    runner = (
+        ROOT / "compat" / "x86_64" / "run_libc_ns_flagdata.sh"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "ns_parse.lo",
+        "ns_parse.c",
+        ".rodata._ns_flagdata",
+        "128",
+        "assert_selected_c_abi_surface",
+        "extract_selected_member",
+        "_ns_flagdata archive member also defines a resolver sibling",
+        "-nostdlib -static",
+        '"$selected_member" -o "$candidate"',
+        "does not retain its 128-byte ABI",
+        "candidate selects errno, h_errno, or TLS",
+        "dn_comp dn_expand dn_skipname ns_get16 ns_get32 ns_put16 ns_put32",
+        "res_query res_querydomain res_search",
+        "getaddrinfo freeaddrinfo",
+        "socket bind connect send recv",
+    ):
+        require(snippet in runner, f"ns_flagdata runner omits {snippet}")
+    require(
+        '"$archive" -o "$candidate"' not in runner,
+        "ns_flagdata final candidate must not link libc.a",
+    )
+    dispatch = (ROOT / "scripts" / "dev-x86_64.sh").read_text(encoding="utf-8")
+    require(
+        "nameser-header-abi)" in dispatch
+        and "run_nameser_header_abi.sh" in dispatch
+        and "libc-ns-flagdata)" in dispatch
+        and "run_libc_ns_flagdata.sh" in dispatch,
+        "ns_flagdata dispatcher bindings are missing",
+    )
+
+
 def require_ns_get16_artifact(family: Mapping[str, Any]) -> None:
     """Keep the dependency-free nameserver wire read out of resolver state."""
     artifacts = require_verified_artifacts(
@@ -48083,6 +48468,7 @@ def validate_ledger(
     require_intrusive_queue_artifact(by_id["libc.c-abi-compat"])
     require_dn_skipname_artifact(by_id["libc.resolver"])
     require_dn_expand_artifact(by_id["libc.resolver"])
+    require_ns_flagdata_artifact(by_id["libc.resolver"])
     require_ns_get16_artifact(by_id["libc.resolver"])
     require_ns_get32_artifact(by_id["libc.resolver"])
     require_ns_put16_artifact(by_id["libc.resolver"])
