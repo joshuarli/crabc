@@ -27,6 +27,10 @@
 //! Its separate GNU/BSD `fileno_unlocked` sibling preserves musl's weak,
 //! same-address alias solely for those three permanent pointers; it does not
 //! select a broader unlocked or lock-free stream API.
+//! The separate GNU `__freadable` access-query artifact reads only the
+//! process-lifetime `stdin` pointer. Musl's fixed stdin record lacks
+//! `F_NORD`, so its `!(F_NORD)` expression is exactly one without observing
+//! a general FILE access mode, read cursor, or input transition.
 //! The sibling pathname/tmpfile block admits only one active `fopen("r")`,
 //! `fopen("w+")`, or `tmpfile` stream at a time, its exact `fclose`, pre-I/O
 //! caller-buffered `_IOFBF` configuration, and its selected
@@ -60,6 +64,7 @@
 //! | `src/stdio/{fgets,fputs,puts}.c` | selected permanent-standard-stream line I/O |
 //! | `src/stdio/{feof,ferror,clearerr}.c` | selected permanent-status predicates and marker reset; focused evidence observes only stdin; `feof_unlocked` is musl's weak same-address alias of `feof` |
 //! | `src/stdio/fileno.c` | selected descriptor adapter plus musl-shaped weak `fileno_unlocked` alias; focused evidence observes only permanent stdin/stdout/stderr |
+//! | `src/stdio/ext.c` | one private `__freadable(stdin)` access-query observation; no general FILE or input contract |
 //! | `src/stdio/fflush.c` | selected explicit-flush entry |
 //! | `src/stdio/{fopen,fclose,setvbuf,fseek,ftell,fgetpos,fsetpos,rewind}.c` | one fixed pathname-stream lifecycle, caller-buffered full buffering, and logical-position routes |
 //! | `src/stdio/tmpfile.c`, `src/temp/__randname.c` | one exclusive pathname created below `/tmp` with requested mode `0600`, immediately unlinked, and adopted as a `w+` fixed stream; Linux `getrandom` plus hex encoding replaces musl's noncryptographic name generator without adding a PRNG |
@@ -735,6 +740,34 @@ pub unsafe extern "C" fn fileno(stream: *mut StandardStream) -> c_int {
     }
     // SAFETY: the selected public contract admits only the permanent pointers.
     unsafe { (*stream).file_descriptor }
+}
+
+/// Observe musl's fixed permanent-stdin readable-access predicate.
+///
+/// Musl 1.2.6 `src/stdio/ext.c` implements `__freadable` as
+/// `!(f->flags & F_NORD)`. The owned stdin object is permanently initialized
+/// without `F_NORD`, so this one private adapter has the exact
+/// process-lifetime result `1` without importing musl's general FILE access
+/// mode, read cursor, or input state. It intentionally rejects every pointer
+/// other than stdin; the result does not select output, another permanent
+/// stream, pathname state, input transitions, or any other stdio-extension
+/// helper.
+///
+/// # Safety
+///
+/// `stream` must be the exported process-lifetime `stdin` pointer. Its
+/// observation is externally serialized with the selected permanent stream.
+#[no_mangle]
+pub unsafe extern "C" fn __freadable(stream: *mut StandardStream) -> c_int {
+    // The static flags are complete before first use; this query must not
+    // trigger shared permanent-stream buffer initialization.
+    if stream != ptr::addr_of_mut!(STDIN_STREAM) {
+        // SAFETY: no caller stream was dereferenced on this closed boundary.
+        unsafe { reject_stream() };
+        return 0;
+    }
+    // SAFETY: pointer equality above proves this is the fixed stdin record.
+    unsafe { ((*stream).flags & F_NORD == 0) as c_int }
 }
 
 // Musl's `weak_alias(fileno, fileno_unlocked)` preserves both a weak archive

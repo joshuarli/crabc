@@ -9158,6 +9158,48 @@ native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc
 oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source and C/POSIX behavior oracle for src/stdio/{feof,ferror,clearerr}.c: zero/nonzero F_EOF/F_ERR predicates, exact F_EOF|F_ERR reset, internal numeric normalization, and unselected FLOCK/FUNLOCK plus status aliases other than separately selected feof_unlocked." }, { kind = "kernel-abi", source = "Linux 5.10 x86-64 ABI", role = "read=0 and pipe/dup/dup2/close descriptor transport used only to establish permanent stdin EOF and EBADF status markers." }, { kind = "elf-abi", source = "System V AMD64 psABI and pinned musl x86 headers", role = "LP64 FILE-pointer/int/void calling ABI, exact C/C++ declaration linkage, and Variant-II initial-exec errno TLS contract." }]
 
 [[family.verified_artifact]]
+id = "static-c-stdio-permanent-freadable-stdin"
+description = "Private native x86 permanent-standard-stream GNU `__freadable(stdin)` access-query artifact inside still-planned `libc.text-math-locale-stdio`. It adds exactly one static C ABI export but no capability: direct and function-pointer calls observe only the process-lifetime `stdin` pointer and return exact int `1` before, between, and after repeated read-only calls. Pinned musl 1.2.6 `src/stdio/ext.c` defines `__freadable` as `!(f->flags & F_NORD)`; its `src/stdio/stdin.c` permanent stdin record retains `F_PERM|F_NOWR` without `F_NORD`, so this selected fixed-address result is one without importing an access-mode transition, read cursor, or input operation. The candidate rejects every other pointer before dereference, but the fixture never supplies one; this does not claim arbitrary-FILE error behavior. Its dedicated pinned-musl/project strict C11/C++17 `stdio_ext.h` header gate proves unconditional exact `int (FILE *)` declaration/linkage and unmangled C++ spelling. The shared implementation independently selects pathname-stream state, but this fixture neither creates nor invokes a pathname `FILE *`. This externally serialized leaf makes no input, buffering, read cursor, FLOCK/FUNLOCK, lock-free, output, another permanent stream, general FILE access mode, `__fwriting`, `__freading`, `__fwritable`, `__flbf`, `__fbufsize`, `__fpending`, `__fpurge`, `__fsetlocking`, or `_flushlbf` claim. It does not select `stdio.stream-io`, FILE/path streams, descriptor adoption/reopen, `tmpfile`, LP64/LFS aliases, byte/block I/O, `fread`/`fwrite`, positions, status predicates, stream configuration, multiple streams, allocation/registry, line/formatted/wide I/O, memory/cookie/`fopencookie`/`popen` streams, ordinary-exit flushing, general stdio, libc.so, CRT lifecycle, loader, sysroot, capability or family completion, promotion, or public x86 support."
+source_owners = [
+  "compat/upstreams.toml",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/stdio_standard.rs",
+  "libc/src/c_abi/x86_64/errno.rs",
+  "libc/src/c_abi/x86_64/static_tls.rs",
+  "libc/src/c_abi/x86_64/syscall.rs",
+  "include/bits/alltypes.h",
+  "include/features.h",
+  "include/stdio.h",
+  "include/stdio_ext.h",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/stdio_permanent_freadable_stdin_header_abi_probe.c",
+  "compat/x86_64/stdio_permanent_freadable_stdin_header_abi_probe.cpp",
+  "compat/x86_64/run_stdio_permanent_freadable_stdin_header_abi.sh",
+  "compat/x86_64/libc_stdio_permanent_freadable_stdin_probe.c",
+  "compat/x86_64/libc_stdio_permanent_freadable_stdin_start.S",
+  "compat/x86_64/run_libc_stdio_permanent_freadable_stdin.sh",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "compat/x86_64/README.md",
+  "x86-64.md",
+  "scripts/dev-x86_64.sh",
+]
+x86_abi_prerequisites = [
+  "System V AMD64 passes the selected opaque FILE pointer in a general-purpose pointer register and returns __freadable's int result in eax. The public FILE remains opaque; the process-lifetime stdin record is target-private and not a caller-constructible layout.",
+  "Pinned musl 1.2.6 src/stdio/ext.c returns `!(f->flags & F_NORD)` from strong __freadable. Its src/stdio/stdin.c permanent record has F_PERM|F_NOWR without F_NORD, fixing the selected stdin result at int 1. The candidate preserves that exact fixed-address result only; general FILE access mode, FLOCK/FUNLOCK, locking, and the other stdio_ext helpers remain unselected.",
+  "The true-static fixture delegates its untouched entry stack to the existing Variant-II initial-exec errno TLS and Static Initial TLS v1 bootstrap. __freadable itself has no syscall path and the fixture neither performs stream I/O nor opens, closes, configures, or allocates a stream.",
+]
+x86_header_prerequisites = [
+  "The dedicated pinned-musl/project strict C11/C++17 matrix checks only unconditional stdio_ext.h `int __freadable(FILE *)`, its transitive stdio.h provenance, and unmangled C++ linkage. This compile-only gate selects no archive or runtime behavior.",
+  "The runtime fixture preprocesses only project stdio_ext.h, stdio.h, features.h, and bits/alltypes.h before both the pinned-musl reference and the static candidate. It calls only stdin through direct and function-pointer spelling, without making another stdio_ext helper or general stream API linkable evidence.",
+]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-stdio-permanent-freadable-stdin", scope = "Pinned-musl project-header C reference plus one dependency-free x86 crabc-libc archive and a true `-nostdlib -static` candidate. The gate first requires the strict C11/C++17 permanent-stdin __freadable stdio_ext.h declaration/linkage proof, ratchets the complete selected static C export contract, requires strong __freadable in pinned musl and candidate archives, and rejects unselected access/direction/buffer/configuration extensions. Direct and function-pointer calls only on permanent stdin prove exact int 1 across repeated read-only observations; they perform no stream I/O, configuration, descriptor operation, or state transition. It verifies the selected Static Initial TLS v1 bootstrap, rejects unresolved symbols/interpreter/DT_NEEDED/dynamic TLS, allocator, or ambient runtime, and confirms __freadable itself has no syscall path. It makes no arbitrary-FILE, FLOCK/FUNLOCK, lock-free, output, another stream, input/buffering/cursor, pathname, descriptor-reopen, tmpfile, LFS, byte/block, fread/fwrite, position, status, multiple-stream, general-stdio, capability or family completion, promotion, or public x86 support claim." }]
+oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source and GNU stdio-extension behavior oracle for src/stdio/ext.c: strong __freadable returns `!(F_NORD)`; src/stdio/stdin.c fixes permanent stdin F_PERM|F_NOWR without F_NORD, hence exact int 1. General access-mode/cursor behavior, FLOCK/FUNLOCK, locking, and all other ext.c helpers remain unselected." }, { kind = "elf-abi", source = "System V AMD64 psABI and pinned musl x86 headers", role = "LP64 FILE-pointer/int calling ABI, unconditional stdio_ext.h C/C++ declaration linkage, and Variant-II initial-exec errno TLS plus Static Initial TLS v1 freestanding fixture contract." }]
+
+[[family.verified_artifact]]
 id = "static-c-stdio-permanent-feof-unlocked"
 description = "Private native x86 GNU/BSD permanent-standard-stream weak-alias observation artifact inside still-planned `libc.text-math-locale-stdio`. It adds exactly one weak C ABI spelling, `feof_unlocked`, without a capability: musl's weak same-address alias targets existing strong `feof`. The pinned-musl project-header differential makes function-pointer calls only on the process-lifetime `stdin` object: it proves `feof_unlocked` and `feof` have equal addresses, both begin at zero, and both become nonzero after existing `fgetc(stdin)` observes an empty-pipe EOF. This is the C/POSIX zero-versus-nonzero predicate contract, not a claim about musl's internal numeric `1` normalization. It creates no `FILE *`, invokes no pathname stream, and uses pipe/dup/dup2/close only as fixture-local marker transport. Pinned musl `src/stdio/feof.c` uses FLOCK/FUNLOCK, returns `!!(flags & F_EOF)`, and uses weak_alias(feof, feof_unlocked), while its `_IO_feof_unlocked`, `ferror_unlocked`, and `clearerr_unlocked` aliases remain unselected. This externally serialized leaf retains only the GNU/BSD weak ELF alias and permanent stdin observation: despite its name, it makes no FLOCK/FUNLOCK, lock-free, arbitrary `FILE`, general status-state, or other unlocked-entry behavior claim. Its dedicated GNU/BSD C11/C++17 header gate proves exact `int (FILE *)` declaration/linkage and unmangled C++ spelling, while matching strict/POSIX C11/C++17 witnesses prove feof_unlocked stays hidden. The shared implementation independently selects pathname-stream state, but this fixture never creates or invokes a pathname `FILE *`. It does not select `stdio.stream-io`, FILE/path streams, descriptor adoption/reopen, `tmpfile`, LP64/LFS aliases, byte/block I/O beyond existing fgetc marker setup, `fread`/`fwrite`, output, buffering or positions, ferror/clearerr, locks, `_IO_feof_unlocked`, ferror_unlocked/clearerr_unlocked, all other unlocked entries, multiple streams, allocation/registry, line/formatted/wide I/O, memory/cookie/`fopencookie`/`popen` streams, ordinary-exit flushing, general stdio, libc.so, CRT lifecycle, loader, sysroot, capability or family completion, promotion, or public x86 support."
 source_owners = [

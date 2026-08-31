@@ -800,6 +800,21 @@ multiple streams,
 line/formatted/wide/memory/cookie/popen I/O, ordinary-exit flushing, general
 stdio, parity, promotion, and public x86 support.
 
+The separate `stdio-permanent-freadable-stdin-header-abi` and
+`libc-stdio-permanent-freadable-stdin` gates record one private
+`static-c-stdio-permanent-freadable-stdin` artifact. It adds only the GNU
+`__freadable` C ABI spelling, without promoting a capability. Its
+pinned-musl/static differential calls `__freadable(stdin)` directly and through
+a function pointer; the fixed permanent stdin flags omit `F_NORD`, so each
+read-only observation returns exact `int` `1`. The strict C11/C++17
+`stdio_ext.h` matrix proves its unconditional `int (FILE *)` declaration and
+unmangled C++ linkage. This is neither input behavior nor a general FILE
+access-mode claim: it excludes arbitrary FILEs, FLOCK/FUNLOCK or lock-free
+behavior, other permanent streams, every other `stdio_ext` helper,
+stdio.stream-io, path/descriptor-reopen/tmpfile/LFS behavior, byte/block I/O
+including `fread`/`fwrite`, positions/status/configuration/buffering, multiple
+streams, general stdio, parity, promotion, and public x86 support.
+
 The separate `stdio-permanent-feof-unlocked-header-abi` and
 `libc-stdio-permanent-feof-unlocked` gates record one private
 `static-c-stdio-permanent-feof-unlocked` artifact. It adds only musl's weak,

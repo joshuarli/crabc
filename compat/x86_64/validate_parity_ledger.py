@@ -31378,8 +31378,8 @@ def require_getsubopt_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 38,
-        "libc.text-math-locale-stdio must retain exactly thirty-eight private verified artifacts",
+        len(artifacts) == 39,
+        "libc.text-math-locale-stdio must retain exactly thirty-nine private verified artifacts",
     )
     matching = [
         entry for entry in artifacts if entry.get("id") == "static-c-getsubopt"
@@ -32835,8 +32835,8 @@ def require_stdio_integer_scan_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 38,
-        "libc.text-math-locale-stdio must retain exactly thirty-eight private verified artifacts",
+        len(artifacts) == 39,
+        "libc.text-math-locale-stdio must retain exactly thirty-nine private verified artifacts",
     )
     matching = [
         entry for entry in artifacts if entry.get("id") == "static-c-stdio-integer-scan"
@@ -33118,8 +33118,8 @@ def require_stdio_octal_hex_scan_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 38,
-        "libc.text-math-locale-stdio must retain exactly thirty-eight private verified artifacts",
+        len(artifacts) == 39,
+        "libc.text-math-locale-stdio must retain exactly thirty-nine private verified artifacts",
     )
     matching = [
         entry
@@ -33644,8 +33644,8 @@ def require_stdio_errno_output_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 38,
-        "libc.text-math-locale-stdio must retain exactly thirty-eight private verified artifacts",
+        len(artifacts) == 39,
+        "libc.text-math-locale-stdio must retain exactly thirty-nine private verified artifacts",
     )
     matching = [
         entry for entry in artifacts if entry.get("id") == "static-c-stdio-errno-output"
@@ -34165,8 +34165,8 @@ def require_stdio_permanent_byte_io_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 38,
-        "libc.text-math-locale-stdio must retain exactly thirty-eight private verified artifacts",
+        len(artifacts) == 39,
+        "libc.text-math-locale-stdio must retain exactly thirty-nine private verified artifacts",
     )
     matching = [
         entry
@@ -34492,8 +34492,8 @@ def require_stdio_permanent_status_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 38,
-        "libc.text-math-locale-stdio must retain exactly thirty-eight private verified artifacts",
+        len(artifacts) == 39,
+        "libc.text-math-locale-stdio must retain exactly thirty-nine private verified artifacts",
     )
     matching = [
         entry
@@ -34804,6 +34804,359 @@ def require_stdio_permanent_status_artifact(family: Mapping[str, Any]) -> None:
         )
 
 
+def require_stdio_permanent_freadable_stdin_artifact(
+    family: Mapping[str, Any],
+) -> None:
+    """Keep one fixed stdin extension query below general FILE access.
+
+    Pinned musl reads only F_NORD for __freadable. The permanent stdin
+    record fixes that flag absent, so the selected exact one result needs no
+    cursor, I/O, or access-mode transition. This must stay a private GNU
+    spelling rather than a general stdio-extension capability.
+    """
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.text-math-locale-stdio].verified_artifact",
+        family.get("status", ""),
+    )
+    require(
+        len(artifacts) == 39,
+        "libc.text-math-locale-stdio must retain exactly thirty-nine private verified artifacts",
+    )
+    matching = [
+        entry
+        for entry in artifacts
+        if entry.get("id") == "static-c-stdio-permanent-freadable-stdin"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.text-math-locale-stdio must contain exactly one static-c-stdio-permanent-freadable-stdin artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-stdio-permanent-freadable-stdin must not promote libc.text-math-locale-stdio",
+    )
+    artifact = matching[0]
+    require(
+        not artifact.get("capabilities"),
+        "static-c-stdio-permanent-freadable-stdin must not promote stdio.stream-io",
+    )
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for phrase in (
+        "still-planned `libc.text-math-locale-stdio`",
+        "__freadable(stdin)",
+        "adds exactly one static C ABI export but no capability",
+        "direct and function-pointer calls",
+        "process-lifetime `stdin` pointer",
+        "exact int `1`",
+        "src/stdio/ext.c",
+        "src/stdio/stdin.c",
+        "F_PERM|F_NOWR",
+        "F_NORD",
+        "before dereference",
+        "strict C11/C++17",
+        "stdio_ext.h",
+        "unmangled C++ spelling",
+        "externally serialized",
+        "FLOCK/FUNLOCK",
+        "lock-free",
+        "output, another permanent stream",
+        "general FILE access mode",
+        "__fwriting",
+        "__freading",
+        "__fwritable",
+        "__flbf",
+        "__fbufsize",
+        "__fpending",
+        "__fpurge",
+        "__fsetlocking",
+        "_flushlbf",
+        "does not select `stdio.stream-io`",
+        "FILE/path streams",
+        "descriptor adoption/reopen",
+        "`tmpfile`",
+        "LP64/LFS aliases",
+        "byte/block I/O",
+        "`fread`/`fwrite`",
+        "positions, status predicates",
+        "multiple streams",
+        "general stdio",
+        "capability or family completion",
+        "promotion",
+        "public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"static-c-stdio-permanent-freadable-stdin description omits {phrase}",
+        )
+
+    owners = nonempty_strings(
+        artifact["source_owners"],
+        "static-c-stdio-permanent-freadable-stdin.source_owners",
+    )
+    for owner in (
+        "compat/upstreams.toml",
+        "libc/Cargo.toml",
+        "libc/src/lib.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/stdio_standard.rs",
+        "libc/src/c_abi/x86_64/errno.rs",
+        "libc/src/c_abi/x86_64/static_tls.rs",
+        "libc/src/c_abi/x86_64/syscall.rs",
+        "include/bits/alltypes.h",
+        "include/features.h",
+        "include/stdio.h",
+        "include/stdio_ext.h",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/stdio_permanent_freadable_stdin_header_abi_probe.c",
+        "compat/x86_64/stdio_permanent_freadable_stdin_header_abi_probe.cpp",
+        "compat/x86_64/run_stdio_permanent_freadable_stdin_header_abi.sh",
+        "compat/x86_64/libc_stdio_permanent_freadable_stdin_probe.c",
+        "compat/x86_64/libc_stdio_permanent_freadable_stdin_start.S",
+        "compat/x86_64/run_libc_stdio_permanent_freadable_stdin.sh",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/README.md",
+        "x86-64.md",
+        "scripts/dev-x86_64.sh",
+    ):
+        require(
+            owner in owners,
+            f"static-c-stdio-permanent-freadable-stdin omits {owner}",
+        )
+
+    exports = static_c_abi_export_names(
+        ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+    )
+    require(
+        "__freadable" in exports,
+        "static C ABI export contract omits permanent stdin __freadable",
+    )
+    for unselected in (
+        "__fwriting",
+        "__freading",
+        "__fwritable",
+        "__flbf",
+        "__fbufsize",
+        "__fpending",
+        "__fpurge",
+        "__fsetlocking",
+        "_flushlbf",
+    ):
+        require(
+            unselected not in exports,
+            f"static-c-stdio-permanent-freadable-stdin accidentally selects {unselected}",
+        )
+
+    implementation = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "stdio_standard.rs"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "src/stdio/ext.c",
+        'pub unsafe extern "C" fn __freadable',
+        "!(f->flags & F_NORD)",
+        "stream != ptr::addr_of_mut!(STDIN_STREAM)",
+        "StandardStream::new(0, F_PERM | F_NOWR)",
+        "((*stream).flags & F_NORD == 0) as c_int",
+    ):
+        require(
+            snippet in implementation,
+            f"permanent stdin __freadable implementation omits {snippet}",
+        )
+
+    for probe_name in (
+        "stdio_permanent_freadable_stdin_header_abi_probe.c",
+        "stdio_permanent_freadable_stdin_header_abi_probe.cpp",
+    ):
+        probe = (ROOT / "compat" / "x86_64" / probe_name).read_text(
+            encoding="utf-8"
+        )
+        for snippet in ("stdio_ext.h", "__freadable", "FILE", "FREADABLE_STDIN"):
+            require(
+                snippet in probe,
+                f"permanent stdin __freadable header probe {probe_name} omits {snippet}",
+            )
+    header_runner = (
+        ROOT
+        / "compat"
+        / "x86_64"
+        / "run_stdio_permanent_freadable_stdin_header_abi.sh"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "CRABC_STDIO_PERMANENT_FREADABLE_STDIN_C11",
+        "CRABC_STDIO_PERMANENT_FREADABLE_STDIN_CXX17",
+        "stdio_ext.h stdio.h features.h bits/alltypes.h",
+        "-nostdinc",
+        "-nostdinc++",
+        "assert_cxx_c_linkage",
+        "run_musl_oracle.sh",
+    ):
+        require(
+            snippet in header_runner,
+            f"permanent stdin __freadable header runner omits {snippet}",
+        )
+
+    fixture = (
+        ROOT
+        / "compat"
+        / "x86_64"
+        / "libc_stdio_permanent_freadable_stdin_probe.c"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "freadable_entry(stdin) != 1",
+        "__freadable(stdin) != 1",
+        "CRABC_STDIO_PERMANENT_FREADABLE_STDIN_FREESTANDING",
+    ):
+        require(
+            snippet in fixture,
+            f"permanent stdin __freadable fixture omits {snippet}",
+        )
+    for forbidden in (
+        "fputc",
+        "fflush",
+        "fgetc",
+        "stdout",
+        "stderr",
+        "fopen",
+        "tmpfile",
+        "dup",
+        "close",
+        "setvbuf",
+        "__fwriting",
+    ):
+        require(
+            forbidden not in fixture,
+            f"permanent stdin __freadable fixture unexpectedly selects {forbidden}",
+        )
+    start = (
+        ROOT
+        / "compat"
+        / "x86_64"
+        / "libc_stdio_permanent_freadable_stdin_start.S"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "__crabc_x86_static_tls_bootstrap",
+        "crabc_x86_64_stdio_permanent_freadable_stdin_probe",
+        "mov $231, %eax",
+    ):
+        require(
+            snippet in start,
+            f"permanent stdin __freadable start shim omits {snippet}",
+        )
+    runner = (
+        ROOT
+        / "compat"
+        / "x86_64"
+        / "run_libc_stdio_permanent_freadable_stdin.sh"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "ORACLE_ARCHIVE",
+        "run_stdio_permanent_freadable_stdin_header_abi.sh",
+        "STATIC_C_ABI_EXPORTS",
+        "strong __freadable",
+        "__fwriting",
+        "-nostdlib -static",
+        "dynamic TLS model",
+        "unowned runtime dependency",
+        "__freadable unexpectedly contains a syscall path",
+        "__crabc_x86_static_tls_bootstrap",
+    ):
+        require(
+            snippet in runner,
+            f"permanent stdin __freadable runner omits {snippet}",
+        )
+
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-stdio-permanent-freadable-stdin"},
+        "static-c-stdio-permanent-freadable-stdin must use its closed native command",
+    )
+    scope = evidence[0].get("scope")
+    require(
+        isinstance(scope, str)
+        and all(
+            phrase in scope
+            for phrase in (
+                "Pinned-musl project-header C reference",
+                "dependency-free x86 crabc-libc archive",
+                "`-nostdlib -static` candidate",
+                "strict C11/C++17 permanent-stdin __freadable stdio_ext.h declaration/linkage proof",
+                "strong __freadable",
+                "unselected access/direction/buffer/configuration extensions",
+                "only on permanent stdin",
+                "exact int 1",
+                "no stream I/O, configuration, descriptor operation, or state transition",
+                "Static Initial TLS v1 bootstrap",
+                "__freadable itself has no syscall path",
+                "arbitrary-FILE",
+                "FLOCK/FUNLOCK",
+                "output, another stream, input/buffering/cursor",
+                "pathname, descriptor-reopen, tmpfile, LFS",
+                "byte/block, fread/fwrite, position, status",
+                "multiple-stream",
+                "general-stdio",
+                "capability or family completion",
+                "promotion",
+                "public x86 support",
+            )
+        ),
+        "static-c-stdio-permanent-freadable-stdin evidence must retain its closed native boundary",
+    )
+
+    oracle = artifact["oracle"]
+    assert isinstance(oracle, list)
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "c-posix"
+            and all(
+                phrase in str(entry.get("role"))
+                for phrase in (
+                    "src/stdio/ext.c",
+                    "strong __freadable",
+                    "F_NORD",
+                    "exact int 1",
+                    "other ext.c helpers",
+                )
+            )
+            for entry in oracle
+        ),
+        "static-c-stdio-permanent-freadable-stdin must retain its pinned-musl source oracle",
+    )
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "elf-abi"
+            and all(
+                phrase in str(entry.get("role"))
+                for phrase in (
+                    "FILE-pointer/int",
+                    "stdio_ext.h C/C++ declaration linkage",
+                    "Static Initial TLS v1",
+                )
+            )
+            for entry in oracle
+        ),
+        "static-c-stdio-permanent-freadable-stdin must retain its ABI/header oracle",
+    )
+
+    dispatcher = (ROOT / "scripts" / "dev-x86_64.sh").read_text(encoding="utf-8")
+    for snippet in (
+        "stdio-permanent-freadable-stdin-header-abi)",
+        "libc-stdio-permanent-freadable-stdin)",
+        "run_stdio_permanent_freadable_stdin_header_abi.sh",
+        "run_libc_stdio_permanent_freadable_stdin.sh",
+    ):
+        require(
+            snippet in dispatcher,
+            f"x86 dispatcher omits permanent stdin __freadable {snippet}",
+        )
+
+
 def require_stdio_permanent_feof_unlocked_artifact(
     family: Mapping[str, Any],
 ) -> None:
@@ -34820,8 +35173,8 @@ def require_stdio_permanent_feof_unlocked_artifact(
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 38,
-        "libc.text-math-locale-stdio must retain exactly thirty-eight private verified artifacts",
+        len(artifacts) == 39,
+        "libc.text-math-locale-stdio must retain exactly thirty-nine private verified artifacts",
     )
     matching = [
         entry
@@ -35188,8 +35541,8 @@ def require_stdio_permanent_fileno_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 38,
-        "libc.text-math-locale-stdio must retain exactly thirty-eight private verified artifacts",
+        len(artifacts) == 39,
+        "libc.text-math-locale-stdio must retain exactly thirty-nine private verified artifacts",
     )
     matching = [
         entry
@@ -35493,8 +35846,8 @@ def require_stdio_permanent_fileno_unlocked_artifact(
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 38,
-        "libc.text-math-locale-stdio must retain exactly thirty-eight private verified artifacts",
+        len(artifacts) == 39,
+        "libc.text-math-locale-stdio must retain exactly thirty-nine private verified artifacts",
     )
     matching = [
         entry
@@ -39030,8 +39383,8 @@ def require_math_ceil_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 38,
-        "libc.text-math-locale-stdio must retain exactly thirty-eight private verified artifacts",
+        len(artifacts) == 39,
+        "libc.text-math-locale-stdio must retain exactly thirty-nine private verified artifacts",
     )
     matching = [entry for entry in artifacts if entry.get("id") == "static-c-math-ceil"]
     require(
@@ -39255,8 +39608,8 @@ def require_math_floor_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 38,
-        "libc.text-math-locale-stdio must retain exactly thirty-eight private verified artifacts",
+        len(artifacts) == 39,
+        "libc.text-math-locale-stdio must retain exactly thirty-nine private verified artifacts",
     )
     matching = [entry for entry in artifacts if entry.get("id") == "static-c-math-floor"]
     require(
@@ -39481,8 +39834,8 @@ def require_math_round_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 38,
-        "libc.text-math-locale-stdio must retain exactly thirty-eight private verified artifacts",
+        len(artifacts) == 39,
+        "libc.text-math-locale-stdio must retain exactly thirty-nine private verified artifacts",
     )
     matching = [entry for entry in artifacts if entry.get("id") == "static-c-math-round"]
     require(
@@ -40434,8 +40787,8 @@ def require_locale_wide_iconv_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 38,
-        "libc.text-math-locale-stdio must retain exactly thirty-eight private verified artifacts",
+        len(artifacts) == 39,
+        "libc.text-math-locale-stdio must retain exactly thirty-nine private verified artifacts",
     )
     matching = [
         entry for entry in artifacts if entry.get("id") == "static-c-locale-wide-iconv"
@@ -41260,8 +41613,8 @@ def require_locale_error_strings_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 38,
-        "libc.text-math-locale-stdio must retain exactly thirty-eight private verified artifacts",
+        len(artifacts) == 39,
+        "libc.text-math-locale-stdio must retain exactly thirty-nine private verified artifacts",
     )
     matching = [
         entry for entry in artifacts if entry.get("id") == "static-c-locale-error-strings"
@@ -43173,6 +43526,9 @@ def validate_ledger(
     require_stdio_permanent_line_io_artifact(by_id["libc.text-math-locale-stdio"])
     require_stdio_permanent_byte_io_artifact(by_id["libc.text-math-locale-stdio"])
     require_stdio_permanent_status_artifact(by_id["libc.text-math-locale-stdio"])
+    require_stdio_permanent_freadable_stdin_artifact(
+        by_id["libc.text-math-locale-stdio"]
+    )
     require_stdio_permanent_feof_unlocked_artifact(
         by_id["libc.text-math-locale-stdio"]
     )

@@ -24,6 +24,7 @@ __fork_handler
 __fpclassify
 __fpclassifyf
 __fpclassifyl
+__freadable
 __funcs_on_exit
 __futimesat
 __fxstat
