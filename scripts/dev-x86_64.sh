@@ -242,6 +242,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-pthread-detach  run the static x86 crabc-libc bounded pthread/C11 detach slice
   libc-thrd-sleep  run the static x86 crabc-libc bounded C11 thrd_sleep slice
   libc-thrd-yield  run the static x86 crabc-libc bounded C11 thrd_yield slice
+  libc-pthread-cpuclock  run the static x86 crabc-libc bounded pthread CPU-clock slice
   libc-pthread-mutex-normal  run the static x86 crabc-libc normal pthread-mutex slice
   libc-pthread-rwlock  run the static x86 crabc-libc pthread read/write-lock slice
   libc-pthread-cond-private  run the static x86 crabc-libc private pthread-condition slice
@@ -452,6 +453,16 @@ or peer-progress guarantee, and does not select the POSIX sched_yield C API,
 scheduler policy/parameters, affinity or pthread scheduling attributes, C11
 lifecycle/synchronization/TSS/cancellation, dynamic TLS, CRT, loader, sysroot,
 C11-family completion, or public x86 support.
+`libc-pthread-cpuclock` is a separate static project-header fixture that first
+runs through pinned musl, then links only the selected archive. It selects
+only `pthread_getcpuclockid` for the bootstrapped process-main
+`pthread_self()` handle: direct `gettid=186` is encoded as Linux's thread CPU
+clock without dereferencing a TCB, and the fixture proves its exact result,
+clock_gettime acceptance, and errno preservation. Candidate-only null/non-self
+handles fail closed with `ESRCH` without touching output or errno. It does not
+select worker/foreign handles, `clock_getcpuclockid` or general C clocks,
+scheduler/affinity attributes, lifecycle/cancellation/synchronization/TSS, a
+TCB/thread list, dynamic TLS, CRT, loader, sysroot, or public x86 support.
 `libc-pthread-mutex-normal` is a separate static project-header fixture that
 first runs through pinned musl, then links only the selected archive. It
 selects only zero/NULL-attribute process-private `PTHREAD_MUTEX_NORMAL`
@@ -2872,6 +2883,10 @@ run_libc_pthread_affinity_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_pthread_affinity.sh
 }
 
+run_libc_pthread_cpuclock_probe() {
+    run_in_container bash /workspace/compat/x86_64/run_libc_pthread_cpuclock.sh
+}
+
 run_libc_pthread_detach_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_pthread_detach.sh
 }
@@ -3221,6 +3236,7 @@ case "$command" in
     libc-stdio-standard|libc-stdio-format-scan|libc-stdio-float-hex-output|libc-stdio-errno-output|libc-stdio-path-stream|libc-stdio-tmpfile|libc-text-math-locale-stdio-composition) ;;
     libc-pthread-identity) ;;
     libc-pthread-affinity) ;;
+    libc-pthread-cpuclock) ;;
     libc-pthread-detach) ;;
     libc-thrd-yield) ;;
     libc-memory-sync) ;;
@@ -4173,6 +4189,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "libc-pthread-affinity takes no arguments"
         ensure_image
         run_libc_pthread_affinity_probe
+        ;;
+    libc-pthread-cpuclock)
+        [ "$#" -eq 0 ] || fail "libc-pthread-cpuclock takes no arguments"
+        ensure_image
+        run_libc_pthread_cpuclock_probe
         ;;
     libc-pthread-detach)
         [ "$#" -eq 0 ] || fail "libc-pthread-detach takes no arguments"

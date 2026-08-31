@@ -1317,6 +1317,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "libc-stdio-standard|libc-stdio-format-scan|libc-stdio-float-hex-output|libc-stdio-errno-output|libc-stdio-path-stream|libc-stdio-tmpfile|libc-text-math-locale-stdio-composition",
             "libc-pthread-identity",
             "libc-pthread-affinity",
+            "libc-pthread-cpuclock",
             "libc-pthread-detach",
             "libc-thrd-yield",
             "libc-memory-sync",
@@ -1370,6 +1371,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn("pthread-cancellation-header-abi", source)
         self.assertIn("libc-pthread-cancel-deferred", source)
         self.assertIn("libc-pthread-atfork", source)
+        self.assertIn("libc-pthread-cpuclock", source)
         self.assertIn("libc-termios-control", source)
         self.assertIn("getpass-header-abi", source)
         self.assertIn("libc-getpass", source)
@@ -5660,6 +5662,136 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         )
         self.assertIn(
             '    libc-thrd-yield)\n        [ "$#" -eq 0 ] || fail "libc-thrd-yield takes no arguments"',
+            runner,
+        )
+
+    def test_libc_static_c_abi_pthread_cpuclock_artifact_stays_self_only(
+        self,
+    ) -> None:
+        """Keep the selected CPU clock apart from general pthread/clock behavior."""
+
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        pthread_cpuclock = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "pthread_cpuclock.rs"
+        ).read_text(encoding="utf-8")
+        probe_path = ROOT / "compat" / "x86_64" / "libc_pthread_cpuclock_probe.c"
+        start_path = ROOT / "compat" / "x86_64" / "libc_pthread_cpuclock_start.S"
+        artifact_runner_path = (
+            ROOT / "compat" / "x86_64" / "run_libc_pthread_cpuclock.sh"
+        )
+        c_header_probe = (
+            ROOT / "compat" / "x86_64" / "pthread_c11_header_abi_probe.c"
+        ).read_text(encoding="utf-8")
+        cxx_header_probe = (
+            ROOT / "compat" / "x86_64" / "pthread_c11_header_abi_probe.cpp"
+        ).read_text(encoding="utf-8")
+        header_runner = (
+            ROOT / "compat" / "x86_64" / "run_pthread_c11_header_abi.sh"
+        ).read_text(encoding="utf-8")
+        static_exports = {
+            line
+            for line in (
+                ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+            ).read_text(encoding="utf-8").splitlines()
+            if line and not line.startswith("#")
+        }
+        parity_ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        runner = RUNNER.read_text(encoding="utf-8")
+
+        for path in (probe_path, start_path, artifact_runner_path):
+            self.assertTrue(path.is_file(), f"missing pthread CPU-clock input: {path}")
+        probe = probe_path.read_text(encoding="utf-8")
+        start = start_path.read_text(encoding="utf-8")
+        artifact_runner = artifact_runner_path.read_text(encoding="utf-8")
+
+        self.assertIn('#[path = "pthread_cpuclock.rs"]', static_root)
+        for required in (
+            "src/thread/pthread_getcpuclockid.c::pthread_getcpuclockid",
+            "pthread_getcpuclockid",
+            "SYS_GETTID",
+            "gettid=186",
+            "current_thread_pointer",
+            "is_initial_thread_pointer",
+            "thread_cpu_clock_id",
+            "does not write C `errno`",
+            "clock_getcpuclockid",
+            "worker CPU clocks",
+            "affinity or scheduling attributes",
+            "public x86 support",
+        ):
+            self.assertIn(required, pthread_cpuclock)
+        for forbidden in (
+            "pthread_create_join",
+            "selected_worker_linux_thread_id",
+            "set_errno",
+            "c_status",
+            "crabc_core",
+            "crabc_mimalloc",
+        ):
+            self.assertNotIn(forbidden, pthread_cpuclock)
+
+        for required in (
+            "#include <errno.h>",
+            "#include <pthread.h>",
+            "#include <sys/syscall.h>",
+            "#include <time.h>",
+            "SYS_gettid == 186",
+            "expected_thread_cpu_clock",
+            "pthread_getcpuclockid",
+            "clock_gettime",
+            "CRABC_PTHREAD_CPUCLOCK_FREESTANDING",
+            "check_candidate_null_handle_rejection",
+            "ESRCH",
+        ):
+            self.assertIn(required, probe)
+        for required in (
+            "__crabc_x86_static_tls_bootstrap",
+            "crabc_x86_64_pthread_cpuclock_probe",
+            "mov $60, %eax",
+        ):
+            self.assertIn(required, start)
+        for required in (
+            "static_c_abi_exports.txt",
+            "run_pthread_c11_header_abi.sh",
+            "-nostdlib -static",
+            "-Wl,-e,_start",
+            "-Wl,--no-undefined",
+            "assert_pthread_cpuclock_path",
+            "gettid syscall 186",
+            "must not publish pthread status through errno",
+            "src/thread/pthread_getcpuclockid.c",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn("--whole-archive", artifact_runner)
+        self.assertIn("pthread_getcpuclockid", static_exports)
+        for header_probe in (c_header_probe, cxx_header_probe):
+            self.assertIn("crabc_pthread_getcpuclockid_signature", header_probe)
+            self.assertIn("pthread_getcpuclockid signature", header_probe)
+        self.assertIn("crabc_force_pthread_getcpuclockid", cxx_header_probe)
+        self.assertIn(
+            "pthread_create pthread_detach pthread_self pthread_equal pthread_getcpuclockid",
+            header_runner,
+        )
+        self.assertIn(
+            "pthread_create|pthread_detach|pthread_self|pthread_equal|pthread_getcpuclockid",
+            header_runner,
+        )
+        self.assertIn('id = "static-c-pthread-cpuclock"', parity_ledger)
+        self.assertIn(
+            'command = "./scripts/dev-x86_64.sh libc-pthread-cpuclock"',
+            parity_ledger,
+        )
+        self.assertIn("run_libc_pthread_cpuclock_probe()", runner)
+        self.assertIn(
+            "/workspace/compat/x86_64/run_libc_pthread_cpuclock.sh", runner
+        )
+        self.assertIn("    libc-pthread-cpuclock) ;;", runner)
+        self.assertIn(
+            '    libc-pthread-cpuclock)\n        [ "$#" -eq 0 ] || fail "libc-pthread-cpuclock takes no arguments"',
             runner,
         )
 

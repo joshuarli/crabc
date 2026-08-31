@@ -215,10 +215,11 @@ pub(super) fn is_ready() -> bool {
 
 /// Whether one `%fs:0`/Linux-TID identity is the bootstrapped process-main thread.
 ///
-/// This is a private selected-TSD discriminator only. The Static Initial TLS
-/// v1 owner still exposes no dereferenceable TCB or general thread registry.
-/// Requiring the task ID prevents a raw foreign task that inherits or copies
-/// the main FS base from accessing the selected main TSD table.
+/// This is a private selected-TSD and CPU-clock self discriminator only. The
+/// Static Initial TLS v1 owner still exposes no dereferenceable TCB or general
+/// thread registry. Requiring the task ID prevents a raw foreign task that
+/// inherits or copies the main FS base from accessing the selected main TSD
+/// table or obtaining the selected main CPU-clock ID.
 #[inline]
 pub(super) fn is_initial_thread_pointer(thread_pointer: *mut u8) -> bool {
     if thread_pointer.is_null()

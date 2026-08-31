@@ -377,6 +377,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-pthread-detach
 ./scripts/dev-x86_64.sh libc-thrd-sleep
 ./scripts/dev-x86_64.sh libc-thrd-yield
+./scripts/dev-x86_64.sh libc-pthread-cpuclock
 ./scripts/dev-x86_64.sh libc-pthread-mutex-normal
 ./scripts/dev-x86_64.sh libc-pthread-rwlock
 ./scripts/dev-x86_64.sh libc-pthread-cond-private
@@ -2514,6 +2515,22 @@ scheduling attributes, C11 lifecycle/synchronization/TSS/cancellation,
 dynamic/loader TLS, CRT, sysroot, full pthread/C11 or x86-64 parity,
 promotion, and public x86 support.
 
+`libc-pthread-cpuclock` is a twenty-first separately recorded private static
+`verified_artifact` under the same still-planned `libc.pthread-tls` family.
+Its project-header C body first runs against pinned musl and then through a
+`-nostdlib -static` candidate. It selects only `pthread_getcpuclockid` for the
+bootstrapped process-main task's own `pthread_self()` handle. Rather than
+dereference a full musl pthread TCB, the candidate validates its existing
+`%fs:0` plus Linux-TID main-task identity, reads direct `gettid=186`, and
+reproduces the exact 32-bit Linux per-thread CPU-clock encoding. The fixture
+proves that exact ID, acceptance by the separately selected `clock_gettime`,
+normalized observation, and preserved errno. Candidate-only null/non-self
+calls return `ESRCH` without changing the output sentinel or errno. It excludes
+worker, foreign, completed, or general handles; `clock_getcpuclockid` and
+general C clocks; scheduler or affinity attributes; lifecycle, cancellation,
+synchronization, TSS, a TCB/thread list, dynamic/loader TLS, CRT, sysroot,
+full pthread/TLS or x86-64 parity, promotion, and public x86 support.
+
 `libc-pthread-mutex-normal` is a tenth separately recorded private static
 `verified_artifact` under the same still-planned `libc.pthread-tls` family.
 Its project-header C body first runs against pinned musl and then through a
@@ -3582,7 +3599,7 @@ the byte-string, immediate-termination, and callback-algorithms candidates
 deliberately do neither because their selected functions do not observe errno.
 That older fixture setup does not describe `libc-static-tls-v1`,
 `libc-pthread-create-join-tls`, `libc-pthread-identity`, `libc-c11-lifecycle`,
-`libc-pthread-detach`, `libc-pthread-mutex-normal`,
+`libc-pthread-detach`, `libc-pthread-cpuclock`, `libc-pthread-mutex-normal`,
 `libc-pthread-rwlock`, `libc-pthread-cond-private`, `libc-c11-plain-sync`, or
 `libc-pthread-c11-once`, or `libc-pthread-c11-tsd`: their start shims
 delegate the untouched entry stack to the hidden libc Static Initial TLS v1
@@ -4406,7 +4423,7 @@ Apart from the narrowly named `libc-stat-compat`, `libc-credentials`,
 `libc-signal-altstack`, `libc-timerfd`, and
 `libc-static-tls-v1`, `libc-crt-static-tls`,
 `libc-pthread-create-join-tls`, `libc-pthread-identity`, `libc-c11-lifecycle`,
-`libc-pthread-detach`, `libc-thrd-sleep`, `libc-thrd-yield`, `libc-pthread-mutex-normal`,
+`libc-pthread-detach`, `libc-thrd-sleep`, `libc-thrd-yield`, `libc-pthread-cpuclock`, `libc-pthread-mutex-normal`,
 `libc-pthread-rwlock`, `libc-pthread-cond-private`, `libc-c11-plain-sync`, `libc-pthread-c11-once`,
 `libc-pthread-c11-tsd`,
 `libc-termios-control`,

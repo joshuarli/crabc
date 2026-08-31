@@ -223,7 +223,7 @@ x87/MXCSR exception state. This selects neither fenv-sensitive scalar math,
 numeric parsing, complex/general libm, family completion, x86 promotion, nor
 public support.
 
-The x86 lane now has sixteen private static artifacts inside still-planned
+The x86 lane now has twenty-one private static artifacts inside still-planned
 `libc.pthread-tls`. `./scripts/dev-x86_64.sh libc-static-tls-v1` passes a
 freestanding final-static-executable fixture's untouched Linux entry stack to
 a hidden libc hook. That hook validates the final executable's program-header
@@ -283,6 +283,21 @@ handoff, fairness, or peer progress. The POSIX `sched_yield` C API, scheduler
 policy/parameters, affinity and pthread scheduling attributes, C11
 lifecycle/synchronization/TSS/cancellation, dynamic/loader TLS, CRT, sysroot,
 family completion, promotion, and public x86 support remain excluded.
+
+The separate `./scripts/dev-x86_64.sh libc-pthread-cpuclock` artifact is a
+twenty-first private static artifact in that same still-planned family. It
+selects only `pthread_getcpuclockid` for the bootstrapped process-main task's
+own `pthread_self()` handle. Musl obtains its TID from a full pthread TCB;
+this static leaf instead verifies the existing `%fs:0` plus Linux-TID main-task
+identity, reads direct `gettid=186`, and uses the same 32-bit Linux CPU-clock
+encoding without dereferencing a public handle. The shared fixture proves the
+exact returned ID, its acceptance by the separately selected `clock_gettime`,
+and preserved errno. Candidate-only null or non-self handles return `ESRCH`
+without touching output or errno. Worker, foreign, completed, or general
+handles; `clock_getcpuclockid` and general C clocks; scheduling or affinity
+attributes; lifecycle, cancellation, synchronization, TSS, a TCB/thread list,
+dynamic/loader TLS, CRT, sysroot, family completion, promotion, and public x86
+support remain excluded.
 
 `./scripts/dev-x86_64.sh libc-pthread-mutex-normal` artifact is a tenth private static
 `verified_artifact` in the same still-planned `libc.pthread-tls` family. It admits only an all-zero or

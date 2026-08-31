@@ -50,7 +50,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 37)
-        self.assertEqual(report["verified_artifact_count"], 137)
+        self.assertEqual(report["verified_artifact_count"], 138)
         self.assertEqual(report["header_layout_probe_count"], 46)
         self.assertEqual(report["public_header_inventory_count"], 183)
         self.assertEqual(report["header_foundation_header_count"], 191)
@@ -8394,7 +8394,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             "libc/src/c_abi/x86_64/pthread_atfork.rs", pthread_tls["source_owners"]
         )
         self.assertIn(
-            "Twenty separately verified static artifacts", pthread_tls["description"]
+            "Twenty-one separately verified static artifacts", pthread_tls["description"]
         )
         self.assertIn(
             "sole delivery point is explicit `pthread_testcancel`",
@@ -8417,7 +8417,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         pthread_tls = self.family(data, "libc.pthread-tls")
         self.assertEqual(pthread_tls["status"], "planned")
         artifacts = pthread_tls["verified_artifact"]
-        self.assertEqual(len(artifacts), 20)
+        self.assertEqual(len(artifacts), 21)
         by_id = {artifact["id"]: artifact for artifact in artifacts}
         self.assertEqual(
             set(by_id),
@@ -8441,6 +8441,7 @@ class X86ParityLedgerTests(unittest.TestCase):
                 "static-c-pthread-tls-aggregate",
                 "static-c-pthread-atfork-fork",
                 "static-c-pthread-affinity",
+                "static-c-pthread-cpuclock",
                 "static-c-thrd-yield",
             },
         )
@@ -8463,6 +8464,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         aggregate = by_id["static-c-pthread-tls-aggregate"]
         atfork = by_id["static-c-pthread-atfork-fork"]
         affinity = by_id["static-c-pthread-affinity"]
+        cpuclock = by_id["static-c-pthread-cpuclock"]
         thrd_yield = by_id["static-c-thrd-yield"]
         for artifact in artifacts:
             self.assertNotIn("capabilities", artifact)
@@ -8524,6 +8526,38 @@ class X86ParityLedgerTests(unittest.TestCase):
             "public x86 support",
         ):
             self.assertIn(phrase, affinity["description"])
+        self.assertEqual(
+            cpuclock["native_evidence"][0]["command"],
+            "./scripts/dev-x86_64.sh libc-pthread-cpuclock",
+        )
+        for phrase in (
+            "still-planned `libc.pthread-tls`",
+            "calling bootstrapped process-main task's own `pthread_self()` handle",
+            "full pthread TCB",
+            "direct Linux `gettid=186`",
+            "same 32-bit encoding",
+            "separately selected `clock_gettime`",
+            "Null or non-self handles",
+            "candidate-only `ESRCH`",
+            "output and errno unchanged",
+            "worker, foreign, completed, or general handles",
+            "`clock_getcpuclockid` and general C clocks",
+            "scheduler or affinity attributes",
+            "general pthread/TLS or x86-64 parity",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, cpuclock["description"])
+        cpuclock_scope = cpuclock["native_evidence"][0]["scope"]
+        for phrase in (
+            "bootstrapped-main pthread_self getcpuclockid success",
+            "exact gettid-derived Linux clock-ID encoding",
+            "Candidate-only null-handle ESRCH",
+            "output sentinel and errno unchanged",
+            "direct gettid=186",
+            "worker/foreign/completed/general handles",
+            "family completion, promotion, and public x86 support",
+        ):
+            self.assertIn(phrase, cpuclock_scope)
         self.assertEqual(
             thrd_yield["native_evidence"][0]["command"],
             "./scripts/dev-x86_64.sh libc-thrd-yield",

@@ -522,6 +522,7 @@ pthread_detach
 pthread_equal
 pthread_exit
 pthread_getaffinity_np
+pthread_getcpuclockid
 pthread_getspecific
 pthread_join
 pthread_key_create

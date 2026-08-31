@@ -98,7 +98,10 @@
 //! selects only bootstrapped-main self handles and executing selected-worker
 //! handles through direct Linux syscalls; target completion, affinity
 //! attributes, `CPU_*` helper macros, and general thread handles remain
-//! unselected. The mutex
+//! unselected. The adjacent CPU-clock leaf admits only the bootstrapped
+//! process-main `pthread_self()` handle and encodes its direct `gettid` value;
+//! it owns no dereferenceable TCB, worker handle, or general C clock surface.
+//! The mutex
 //! block is limited to all-zero/NULL-attribute process-private normal mutexes
 //! and private futex contention. Its condition sibling retains musl's private
 //! waiter-list/barrier/requeue protocol only for all-zero/NULL-attribute
@@ -232,6 +235,8 @@ mod pthread_identity;
 mod pthread_create_join;
 #[path = "pthread_affinity.rs"]
 mod pthread_affinity;
+#[path = "pthread_cpuclock.rs"]
+mod pthread_cpuclock;
 #[path = "pthread_cancel.rs"]
 mod pthread_cancel;
 #[path = "pthread_atfork.rs"]

@@ -319,6 +319,8 @@ static crabc_pthread_self_signature const crabc_force_pthread_self
 	__attribute__((used)) = &pthread_self;
 static crabc_pthread_equal_signature const crabc_force_pthread_equal
 	__attribute__((used)) = &pthread_equal;
+static crabc_pthread_getcpuclockid_signature const crabc_force_pthread_getcpuclockid
+	__attribute__((used)) = &pthread_getcpuclockid;
 static crabc_pthread_key_create_signature const crabc_force_pthread_key_create
 	__attribute__((used)) = &pthread_key_create;
 static crabc_pthread_key_delete_signature const crabc_force_pthread_key_delete
