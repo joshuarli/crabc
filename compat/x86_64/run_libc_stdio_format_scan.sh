@@ -8,8 +8,9 @@
 # only musl's ULLONG_MAX source-overflow behavior for narrow `%d`/`%i`/`%u`/
 # `%x` scans through the existing `sscanf`/`vsscanf` boundary. The separately
 # closed `octal-hex-scan` profile owns only the matching `%o`/`%X` behavior,
-# `fixed-percent-scan` owns only vfscanf's literal `%%` parser state, and
+# `fixed-percent-scan` owns only vfscanf's literal `%%` parser state,
 # `fixed-format-whitespace-scan` owns only its top-level format-whitespace
+# parser state, and `fixed-literal-scan` owns only its non-percent raw-literal
 # parser state.
 # The sibling `float-hex-output` profile selects only binary64 `%a`/`%A`
 # output, while the closed `errno-output` profile adds only bare GNU/musl `%m` C-locale
@@ -62,6 +63,13 @@ fixed-format-whitespace-scan)
     readonly START_SOURCE=compat/x86_64/libc_stdio_fixed_format_whitespace_scan_start.S
     readonly FREESTANDING_DEFINE=CRABC_STDIO_FIXED_FORMAT_WHITESPACE_SCAN_FREESTANDING
     readonly EVIDENCE_LABEL="sealed stdio format-whitespace scan"
+    readonly -a REQUIRED_C_ABI_SYMBOLS=(sscanf vsscanf)
+    ;;
+fixed-literal-scan)
+    readonly FIXTURE_SOURCE=compat/x86_64/libc_stdio_fixed_literal_scan_probe.c
+    readonly START_SOURCE=compat/x86_64/libc_stdio_fixed_literal_scan_start.S
+    readonly FREESTANDING_DEFINE=CRABC_STDIO_FIXED_LITERAL_SCAN_FREESTANDING
+    readonly EVIDENCE_LABEL="sealed stdio raw-literal scan"
     readonly -a REQUIRED_C_ABI_SYMBOLS=(sscanf vsscanf)
     ;;
 float-hex-output)
@@ -274,6 +282,19 @@ if [ "$EVIDENCE_PROFILE" = fixed-format-whitespace-scan ]; then
         fail "format-whitespace scanner no longer consumes C-locale input space"
     grep -Fq 'zero input whitespace' "$ROOT_DIR/$FIXTURE_SOURCE" ||
         fail "format-whitespace fixture no longer records zero-input-space admission"
+fi
+if [ "$EVIDENCE_PROFILE" = fixed-literal-scan ]; then
+    grep -Fq "if format_byte != b'%'" \
+        "$ROOT_DIR/libc/src/c_abi/x86_64/stdio_format_scan.rs" ||
+        fail "raw-literal scanner branch is no longer selected"
+    grep -Fq 'if unsafe { read_byte(cursor) } == 0' \
+        "$ROOT_DIR/libc/src/c_abi/x86_64/stdio_format_scan.rs" ||
+        fail "raw-literal scanner no longer distinguishes input EOF"
+    grep -Fq 'if unsafe { read_byte(cursor) } != format_byte' \
+        "$ROOT_DIR/libc/src/c_abi/x86_64/stdio_format_scan.rs" ||
+        fail "raw-literal scanner no longer distinguishes matching failure"
+    grep -Fq 'zero-assignment raw literal' "$ROOT_DIR/$FIXTURE_SOURCE" ||
+        fail "raw-literal fixture no longer records its assignment boundary"
 fi
 if timeout --foreground "$EXECUTION_TIMEOUT" "$candidate"; then
     :

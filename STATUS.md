@@ -374,6 +374,22 @@ Literal-percent `%%` is owned by the separate fixed-percent artifact;
 conversion, FILE input, byte formatting, locale objects, a general scanner or
 stdio boundary, parity, promotion, and public x86 support remain excluded.
 
+The separate private `./scripts/dev-x86_64.sh libc-stdio-fixed-literal-scan`
+artifact adds no export or capability. It narrows a pinned-musl 1.2.6 versus
+true `-nostdlib -static` differential to `sscanf`/`vsscanf`'s top-level fixed
+non-percent, non-format-whitespace raw-literal parser state: one raw format
+byte matches one input byte without a variadic destination, assignment, or
+va_list advance. Its direct and `vsscanf` witnesses retain stale errno while
+covering complete literals, mismatch after a matched prefix, later-literal and
+initial EOF, and first-byte matching failure. Its independent C11/C++17 header
+gate proves only the existing declarations and unmangled C++ C spellings. This
+is pinned-musl parser-state evidence, not a general scanf-literal claim.
+Literal-percent `%%` and C-locale format whitespace remain owned by their
+separate fixed profiles; `%n`/`%hhn`, character/string/scanset/pointer/integer/
+floating/wide forms, conversions, FILE input, byte formatting, locale objects,
+a general scanner or stdio boundary, parity, promotion, and public x86 support
+remain excluded.
+
 The separate private `./scripts/dev-x86_64.sh libc-stdio-float-hex-output`
 artifact adds no export and selects only allocation-free C-locale binary64
 `%a`/`%A` byte-buffer output. It preserves musl's no-op `l` modifier,

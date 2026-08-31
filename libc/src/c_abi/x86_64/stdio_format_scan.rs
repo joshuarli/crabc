@@ -51,7 +51,7 @@
 //! | `src/stdio/vsnprintf.c`, `vsprintf.c`, `sprintf.c`, `snprintf.c` | byte-buffer count/truncation wrappers and C varargs entry boundary |
 //! | `src/stdio/vfprintf.c` (`printf_core`, `fmt_fp`) | selected integer/byte-string parser plus bare `%m` no-argument errno-message behavior and binary64 `%a`/`%A` spelling, flag, width, precision, and count-store behavior |
 //! | `src/errno/__strerror.h`; `src/errno/strerror.c` | selected immutable fixed-C-locale `%m` message lookup, shared directly with the existing `strerror` leaf |
-//! | `src/stdio/sscanf.c`, `vsscanf.c`, `vfscanf.c`; `src/internal/intscan.c` | NUL-terminated byte scanner, assignment/count discipline, prefix admission, selected integer/string conversions, and sealed `vfscanf` top-level `%%` and format-whitespace states: the former skips C-locale input whitespace before one literal percent, while the latter coalesces a format whitespace run and consumes zero or more input-space bytes without assignment |
+//! | `src/stdio/sscanf.c`, `vsscanf.c`, `vfscanf.c`; `src/internal/intscan.c` | NUL-terminated byte scanner, assignment/count discipline, prefix admission, selected integer/string conversions, and sealed `vfscanf` top-level raw-literal, `%%`, and format-whitespace states: the raw literal matches one non-`%`, non-whitespace format byte without assignment; `%%` skips C-locale input whitespace before one literal percent; and format whitespace coalesces its run while consuming zero or more input-space bytes without assignment |
 //!
 //! The full musl formatter/scanner also owns decimal and long-double
 //! conversion, locale, wide input, scansets, positional arguments, stream
@@ -1119,6 +1119,12 @@ unsafe fn scan_from_string(
             cursor = unsafe { skip_input_space(cursor) };
             continue;
         }
+        // After the top-level C-locale format-whitespace state above, musl
+        // vfscanf's raw-literal arm reads exactly one non-percent format byte,
+        // distinguishes input EOF from a mismatching byte, and neither reads
+        // va_list nor changes the assignment count. The private
+        // static-c-stdio-fixed-literal-scan artifact records only this sealed
+        // raw-byte parser state; it does not promote general literal scanning.
         if format_byte != b'%' {
             if unsafe { read_byte(cursor) } == 0 {
                 return if assignments == 0 { EOF } else { assignments };
