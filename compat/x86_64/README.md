@@ -829,6 +829,23 @@ multiple streams,
 line/formatted/wide/memory/cookie/popen I/O, ordinary-exit flushing, general
 stdio, parity, promotion, and public x86 support.
 
+The separate `stdio-permanent-freading-stdin-header-abi` and
+`libc-stdio-permanent-freading-stdin` gates record one private
+`static-c-stdio-permanent-freading-stdin` artifact. It adds only the GNU
+`__freading` C ABI spelling, without promoting a capability. Its pinned-musl/
+static differential calls `__freading(stdin)` directly and through a function
+pointer; musl evaluates `(f->flags & F_NOWR) || f->rend`, and the permanent
+stdin record fixes `F_NOWR`, so the first term makes every read-only
+observation exact `int` `1`. The strict C11/C++17 `stdio_ext.h` matrix proves
+its unconditional `int (FILE *)` declaration and unmangled C++ linkage. This
+is neither input behavior nor a general FILE direction/cursor claim: it
+excludes arbitrary FILEs, FLOCK/FUNLOCK or lock-free behavior, other permanent
+streams, every other `stdio_ext` helper except the separately selected fixed
+`__freadable(stdin)`, `__fwritable(stderr)`, `__fbufsize(stderr)`, and `__flbf(stderr)` siblings,
+stdio.stream-io, path/descriptor-reopen/tmpfile/LFS behavior, byte/block I/O
+including `fread`/`fwrite`, positions/status/configuration/buffering, multiple
+streams, general stdio, parity, promotion, and public x86 support.
+
 The separate `stdio-permanent-freadable-stdin-header-abi` and
 `libc-stdio-permanent-freadable-stdin` gates record one private
 `static-c-stdio-permanent-freadable-stdin` artifact. It adds only the GNU
@@ -840,8 +857,8 @@ read-only observation returns exact `int` `1`. The strict C11/C++17
 unmangled C++ linkage. This is neither input behavior nor a general FILE
 access-mode claim: it excludes arbitrary FILEs, FLOCK/FUNLOCK or lock-free
 behavior, other permanent streams, every other `stdio_ext` helper except the
-separately selected fixed `__fwritable(stderr)`, `__fbufsize(stderr)`, and
-`__flbf(stderr)` siblings,
+separately selected fixed `__freading(stdin)`, `__fwritable(stderr)`,
+`__fbufsize(stderr)`, and `__flbf(stderr)` siblings,
 stdio.stream-io, path/descriptor-reopen/tmpfile/LFS behavior, byte/block I/O
 including `fread`/`fwrite`, positions/status/configuration/buffering, multiple
 streams, general stdio, parity, promotion, and public x86 support.
@@ -857,7 +874,8 @@ so each read-only observation returns exact `int` `1`. The strict C11/C++17
 unmangled C++ linkage. This is neither output behavior nor a general FILE
 access-mode claim: it excludes arbitrary FILEs, FLOCK/FUNLOCK or lock-free
 behavior, other permanent streams, every other `stdio_ext` helper except the
-separately selected fixed `__fbufsize(stderr)` and `__flbf(stderr)` siblings,
+separately selected fixed `__freading(stdin)`, `__fbufsize(stderr)`, and
+`__flbf(stderr)` siblings,
 stdio.stream-io, path/descriptor-reopen/tmpfile/LFS behavior, byte/block I/O
 including `fread`/`fwrite`, positions/status/configuration/buffering, multiple
 streams, general stdio, parity, promotion, and public x86 support.
@@ -873,8 +891,9 @@ The strict C11/C++17 `stdio_ext.h` matrix proves its unconditional
 `size_t (FILE *)` declaration and unmangled C++ linkage. This is neither
 buffering setup nor a general FILE buffer-size claim: it excludes arbitrary
 FILEs, FLOCK/FUNLOCK or lock-free behavior, the separately selected
-`__freadable(stdin)` sibling, `__fwritable(stderr)` sibling, and
-`__flbf(stderr)` sibling, other permanent streams, every other unselected
+`__freading(stdin)` sibling, `__freadable(stdin)` sibling,
+`__fwritable(stderr)` sibling, and `__flbf(stderr)` sibling, other permanent
+streams, every other unselected
 `stdio_ext` helper, stdio.stream-io, path/descriptor-reopen/tmpfile/LFS
 behavior, byte/block I/O including `fread`/`fwrite`, positions/status/
 configuration, multiple streams, general stdio, parity, promotion, and public
@@ -891,8 +910,8 @@ permanent-stream configuration, so every read-only observation returns exact
 `int (FILE *)` declaration and unmangled C++ linkage. This is neither
 line-buffer setup nor a general FILE line-buffer claim: it excludes arbitrary
 FILEs, FLOCK/FUNLOCK or lock-free behavior, the separately selected
-`__freadable(stdin)`, `__fwritable(stderr)`, and `__fbufsize(stderr)`
-siblings, other permanent streams, every other unselected `stdio_ext` helper,
+`__freading(stdin)`, `__freadable(stdin)`, `__fwritable(stderr)`, and
+`__fbufsize(stderr)` siblings, other permanent streams, every other unselected `stdio_ext` helper,
 stdio.stream-io, path/descriptor-reopen/tmpfile/LFS behavior, byte/block I/O
 including `fread`/`fwrite`, positions/status/configuration, multiple streams,
 general stdio, parity, promotion, and public x86 support.

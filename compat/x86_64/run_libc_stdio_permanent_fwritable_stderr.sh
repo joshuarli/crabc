@@ -124,7 +124,7 @@ for source_name in 'src/stdio/ext.c' 'pub unsafe extern "C" fn __fwritable' \
     grep -Fq "$source_name" "$ROOT_DIR/libc/src/c_abi/x86_64/stdio_standard.rs" ||
         fail "permanent-stderr __fwritable implementation omits $source_name"
 done
-for unselected in __fwriting __freading \
+for unselected in __fwriting \
     __fpending __fpurge __fsetlocking _flushlbf; do
     if grep -Eq "[[:space:]][TW][[:space:]]${unselected}$" "$archive_symbols"; then
         fail "archive accidentally exports unselected ${unselected}"

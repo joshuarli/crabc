@@ -1392,6 +1392,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "math-complex-complete-header-abi|libc-math-complex-complete",
             "stdio-permanent-byte-io-header-abi",
             "stdio-permanent-status-header-abi",
+            "stdio-permanent-freading-stdin-header-abi",
             "stdio-permanent-freadable-stdin-header-abi",
             "stdio-permanent-fwritable-stderr-header-abi",
             "stdio-permanent-fbufsize-stderr-header-abi",
@@ -1462,7 +1463,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "libc-pathname-lifecycle",
             "libc-directory-streams",
             "libc-lchmod-unsupported",
-            "libc-stdio-standard|libc-stdio-format-scan|libc-stdio-integer-scan|libc-stdio-octal-hex-scan|libc-stdio-float-hex-output|libc-stdio-errno-output|libc-stdio-permanent-line-io|libc-stdio-permanent-byte-io|libc-stdio-permanent-status|libc-stdio-permanent-freadable-stdin|libc-stdio-permanent-fwritable-stderr|libc-stdio-permanent-fbufsize-stderr|libc-stdio-permanent-flbf-stderr|libc-stdio-permanent-fileno|libc-stdio-permanent-fileno-unlocked|libc-stdio-permanent-feof-unlocked|libc-stdio-path-stream|libc-stdio-tmpfile|libc-text-math-locale-stdio-composition",
+            "libc-stdio-standard|libc-stdio-format-scan|libc-stdio-integer-scan|libc-stdio-octal-hex-scan|libc-stdio-float-hex-output|libc-stdio-errno-output|libc-stdio-permanent-line-io|libc-stdio-permanent-byte-io|libc-stdio-permanent-status|libc-stdio-permanent-freading-stdin|libc-stdio-permanent-freadable-stdin|libc-stdio-permanent-fwritable-stderr|libc-stdio-permanent-fbufsize-stderr|libc-stdio-permanent-flbf-stderr|libc-stdio-permanent-fileno|libc-stdio-permanent-fileno-unlocked|libc-stdio-permanent-feof-unlocked|libc-stdio-path-stream|libc-stdio-tmpfile|libc-text-math-locale-stdio-composition",
             "libc-pthread-identity",
             "libc-pthread-affinity",
             "libc-pthread-cpuclock",
@@ -16784,6 +16785,149 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn("run_stdio_permanent_status_header_abi.sh", dispatcher)
         self.assertIn("run_libc_stdio_permanent_status.sh", dispatcher)
 
+    def test_libc_static_c_abi_stdio_permanent_freading_stdin_stays_bounded(
+        self,
+    ) -> None:
+        """__freading observes fixed stdin F_NOWR only, not general input."""
+        implementation = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "stdio_standard.rs"
+        ).read_text(encoding="utf-8")
+        c_header_probe = (
+            ROOT / "compat" / "x86_64" /
+            "stdio_permanent_freading_stdin_header_abi_probe.c"
+        ).read_text(encoding="utf-8")
+        cxx_header_probe = (
+            ROOT / "compat" / "x86_64" /
+            "stdio_permanent_freading_stdin_header_abi_probe.cpp"
+        ).read_text(encoding="utf-8")
+        header_runner = (
+            ROOT / "compat" / "x86_64" /
+            "run_stdio_permanent_freading_stdin_header_abi.sh"
+        ).read_text(encoding="utf-8")
+        fixture = (
+            ROOT / "compat" / "x86_64" /
+            "libc_stdio_permanent_freading_stdin_probe.c"
+        ).read_text(encoding="utf-8")
+        start = (
+            ROOT / "compat" / "x86_64" /
+            "libc_stdio_permanent_freading_stdin_start.S"
+        ).read_text(encoding="utf-8")
+        runner = (
+            ROOT / "compat" / "x86_64" /
+            "run_libc_stdio_permanent_freading_stdin.sh"
+        ).read_text(encoding="utf-8")
+        exports = {
+            line
+            for line in (
+                ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+            ).read_text(encoding="utf-8").splitlines()
+            if line and not line.startswith("#")
+        }
+        ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        dispatcher = RUNNER.read_text(encoding="utf-8")
+
+        for symbol in (
+            "__freading",
+            "__freadable",
+            "__fwritable",
+            "__fbufsize",
+            "__flbf",
+        ):
+            self.assertIn(symbol, exports)
+        for symbol in (
+            "__fwriting",
+            "__fpending",
+            "__fpurge",
+            "__fsetlocking",
+            "_flushlbf",
+        ):
+            self.assertNotIn(symbol, exports)
+        for required in (
+            "src/stdio/ext.c",
+            "src/stdio/stdin.c",
+            'pub unsafe extern "C" fn __freading',
+            "(f->flags & F_NOWR) || f->rend",
+            "stream != ptr::addr_of_mut!(STDIN_STREAM)",
+            "StandardStream::new(0, F_PERM | F_NOWR)",
+            "((*stream).flags & F_NOWR != 0) as c_int",
+            "this leaf never observes rend",
+        ):
+            self.assertIn(required, implementation)
+        for probe in (c_header_probe, cxx_header_probe):
+            for required in ("stdio_ext.h", "__freading", "FILE", "FREADING_STDIN"):
+                self.assertIn(required, probe)
+        for required in (
+            "CRABC_STDIO_PERMANENT_FREADING_STDIN_C11",
+            "CRABC_STDIO_PERMANENT_FREADING_STDIN_CXX17",
+            "stdio_ext.h stdio.h features.h bits/alltypes.h",
+            "-nostdinc",
+            "-nostdinc++",
+            "assert_cxx_c_linkage",
+            "run_musl_oracle.sh",
+        ):
+            self.assertIn(required, header_runner)
+        for required in (
+            "freading_entry(stdin) != 1",
+            "__freading(stdin) != 1",
+            "CRABC_STDIO_PERMANENT_FREADING_STDIN_FREESTANDING",
+        ):
+            self.assertIn(required, fixture)
+        for forbidden in (
+            "fputc",
+            "fflush",
+            "fgetc",
+            "stdout",
+            "stderr",
+            "fopen",
+            "tmpfile",
+            "dup",
+            "close",
+            "setvbuf",
+            "__freadable",
+            "__fwriting",
+        ):
+            self.assertNotIn(forbidden, fixture)
+        for required in (
+            "__crabc_x86_static_tls_bootstrap",
+            "crabc_x86_64_stdio_permanent_freading_stdin_probe",
+            "mov $231, %eax",
+        ):
+            self.assertIn(required, start)
+        for required in (
+            "ORACLE_ARCHIVE",
+            "run_stdio_permanent_freading_stdin_header_abi.sh",
+            "STATIC_C_ABI_EXPORTS",
+            "strong __freading",
+            "__fwriting",
+            "-nostdlib -static",
+            "dynamic TLS model",
+            "unowned runtime dependency",
+            "__freading unexpectedly contains a syscall path",
+            "__crabc_x86_static_tls_bootstrap",
+        ):
+            self.assertIn(required, runner)
+        self.assertNotIn("--whole-archive", runner)
+        self.assertIn('id = "static-c-stdio-permanent-freading-stdin"', ledger)
+        self.assertIn(
+            'command = "./scripts/dev-x86_64.sh libc-stdio-permanent-freading-stdin"',
+            ledger,
+        )
+        self.assertIn("does not select `stdio.stream-io`", ledger)
+        self.assertIn("stdio-permanent-freading-stdin-header-abi", dispatcher)
+        self.assertIn("libc-stdio-permanent-freading-stdin", dispatcher)
+        self.assertIn(
+            "stdio-permanent-freading-stdin-header-abi) ;;", dispatcher
+        )
+        self.assertIn(
+            "|libc-stdio-permanent-freading-stdin|", dispatcher
+        )
+        self.assertIn(
+            "run_stdio_permanent_freading_stdin_header_abi.sh", dispatcher
+        )
+        self.assertIn("run_libc_stdio_permanent_freading_stdin.sh", dispatcher)
+
     def test_libc_static_c_abi_stdio_permanent_freadable_stdin_stays_bounded(
         self,
     ) -> None:
@@ -16827,10 +16971,10 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         )
         dispatcher = RUNNER.read_text(encoding="utf-8")
 
-        self.assertIn("__freadable", exports)
+        for symbol in ("__freading", "__freadable"):
+            self.assertIn(symbol, exports)
         for symbol in (
             "__fwriting",
-            "__freading",
             "__fpending",
             "__fpurge",
             "__fsetlocking",
@@ -16955,12 +17099,10 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         )
         dispatcher = RUNNER.read_text(encoding="utf-8")
 
-        self.assertIn("__fbufsize", exports)
-        self.assertIn("__freadable", exports)
-        self.assertIn("__fwritable", exports)
+        for symbol in ("__freading", "__freadable", "__fwritable", "__fbufsize"):
+            self.assertIn(symbol, exports)
         for symbol in (
             "__fwriting",
-            "__freading",
             "__fpending",
             "__fpurge",
             "__fsetlocking",
@@ -17094,11 +17236,16 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         )
         dispatcher = RUNNER.read_text(encoding="utf-8")
 
-        for symbol in ("__freadable", "__fwritable", "__fbufsize", "__flbf"):
+        for symbol in (
+            "__freading",
+            "__freadable",
+            "__fwritable",
+            "__fbufsize",
+            "__flbf",
+        ):
             self.assertIn(symbol, exports)
         for symbol in (
             "__fwriting",
-            "__freading",
             "__fpending",
             "__fpurge",
             "__fsetlocking",
@@ -17228,10 +17375,10 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         )
         dispatcher = RUNNER.read_text(encoding="utf-8")
 
-        self.assertIn("__fwritable", exports)
+        for symbol in ("__freading", "__fwritable"):
+            self.assertIn(symbol, exports)
         for symbol in (
             "__fwriting",
-            "__freading",
             "__fpending",
             "__fpurge",
             "__fsetlocking",

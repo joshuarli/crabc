@@ -28,6 +28,7 @@ __fpclassify
 __fpclassifyf
 __fpclassifyl
 __freadable
+__freading
 __funcs_on_exit
 __futimesat
 __fwritable
