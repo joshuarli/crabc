@@ -6,7 +6,7 @@
 # archive. It selects inet_pton, inet_ntop, inet_aton, and inet_addr, with
 # musl's hidden __inet_aton/weak inet_aton same-address pair. It deliberately
 # excludes DNS/resolver state, netdb, the separate inet_ntoa scratch-buffer
-# candidate, allocation,
+# and classful IPv4 arithmetic/network-extraction candidates, allocation,
 # stdio, libc.so, CRT, loader, sysroot, and public x86 support.
 set -euo pipefail
 
@@ -140,7 +140,7 @@ for symbol in __errno_location __inet_aton inet_addr inet_aton inet_ntop inet_pt
     grep -Eq "[[:space:]][TW][[:space:]]${symbol}$" "$archive_symbols" ||
         fail "archive does not define ${symbol}"
 done
-for unselected in inet_network inet_netof \
+for unselected in inet_network \
     gethostbyname gethostbyaddr \
     malloc free calloc realloc; do
     if grep -Eq "[[:space:]][TW][[:space:]]${unselected}$" "$archive_symbols"; then
@@ -174,7 +174,7 @@ assert_musl_inet_aton_alias "$candidate_symbols" candidate
 if grep -Eq '[[:space:]]inet_ntoa$' "$candidate_symbols"; then
     fail "candidate accidentally selects separate inet_ntoa scratch storage"
 fi
-for unselected in inet_makeaddr inet_lnaof; do
+for unselected in inet_makeaddr inet_lnaof inet_netof; do
     if grep -Eq "[[:space:]]${unselected}$" "$candidate_symbols"; then
         fail "candidate accidentally selects separate classful IPv4 leaf"
     fi

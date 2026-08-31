@@ -6,7 +6,8 @@
 //! `inet_network`, `inet_makeaddr`, `inet_lnaof`, and `inet_netof`. This
 //! target-local leaf selects exactly the two self-contained arithmetic
 //! functions [`inet_makeaddr`] and [`inet_lnaof`]. It deliberately leaves
-//! `inet_network` (and its `inet_addr` call) and `inet_netof` unselected.
+//! `inet_network` (and its `inet_addr` call) unselected; the adjacent
+//! [`inet_netof`] extraction has its own private static artifact.
 //!
 //! `inet_makeaddr` ORs a raw caller-supplied host word with the network number
 //! shifted by 24, 16, or 8 bits for `n < 256`, `n < 65536`, or otherwise.

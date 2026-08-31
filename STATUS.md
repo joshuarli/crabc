@@ -36,12 +36,25 @@ through an archive-free true static candidate: an archive ratchet proves
 `inet_makeaddr` and `inet_lnaof`, while the final `-nostdlib -static` link
 takes only their one extracted object, never `libc.a`. Pinned musl keeps those
 two raw classful IPv4 arithmetic functions beside `inet_network` and
-`inet_netof` in `inet_legacy.c`; this slice explicitly leaves both neighbors
-and `inet_network`'s `inet_addr` dependency out. It covers the exact
+`inet_netof` in `inet_legacy.c`; this slice leaves `inet_network` and its
+`inet_addr` dependency out, while `inet_netof` is separately evidenced. It covers the exact
 `n < 256`/`n < 65536` construction shifts and the raw `s_addr` <128/<192/else
 local-part masks. It has no byte-order helper, `inet_ntoa` storage, h_errno or
 errno state, TLS, allocation, syscall, stdio, `/etc/hosts`, `/etc/resolv.conf`,
 resolver/DNS, netdb, interface, socket, promotion, or public x86 support.
+
+`./scripts/dev-x86_64.sh libc-inet-netof` is a separate private
+`static-c-inet-netof` artifact inside still-planned `libc.resolver`. Its
+project-header C fixture first executes through pinned musl 1.2.6 and then
+through an archive-free true static candidate: an archive ratchet proves
+`inet_netof`, while the final `-nostdlib -static` link takes only its one
+extracted object, never `libc.a`. Pinned musl places it beside
+`inet_network`, `inet_makeaddr`, and `inet_lnaof` in `inet_legacy.c`; this
+slice selects only raw `s_addr` classful network-part shifts for <128, <192,
+and the remaining class. It has no byte-order helper, `inet_ntoa` storage,
+h_errno or errno state, TLS, mutable state, allocation, syscall, stdio,
+`/etc/hosts`, `/etc/resolv.conf`, resolver/DNS, netdb, interface, socket,
+promotion, or public x86 support.
 
 `./scripts/dev-x86_64.sh libc-hstrerror` is a private `static-c-hstrerror`
 artifact inside still-planned `libc.resolver`. Its project-header C fixture

@@ -16,6 +16,7 @@ typedef in_addr_t (*inet_addr_signature)(const char *);
 typedef char *(*inet_ntoa_signature)(struct in_addr);
 typedef struct in_addr (*inet_makeaddr_signature)(in_addr_t, in_addr_t);
 typedef in_addr_t (*inet_lnaof_signature)(struct in_addr);
+typedef in_addr_t (*inet_netof_signature)(struct in_addr);
 
 _Static_assert(sizeof(in_addr_t) == 4 && _Alignof(in_addr_t) == 4,
     "x86 in_addr_t width/alignment");
@@ -41,6 +42,8 @@ _Static_assert(__builtin_types_compatible_p(__typeof__(&inet_makeaddr),
     inet_makeaddr_signature), "inet_makeaddr declaration");
 _Static_assert(__builtin_types_compatible_p(__typeof__(&inet_lnaof),
     inet_lnaof_signature), "inet_lnaof declaration");
+_Static_assert(__builtin_types_compatible_p(__typeof__(&inet_netof),
+    inet_netof_signature), "inet_netof declaration");
 
 static inet_pton_signature inet_pton_function = inet_pton;
 static inet_ntop_signature inet_ntop_function = inet_ntop;
@@ -49,6 +52,7 @@ static inet_addr_signature inet_addr_function = inet_addr;
 static inet_ntoa_signature inet_ntoa_function = inet_ntoa;
 static inet_makeaddr_signature inet_makeaddr_function = inet_makeaddr;
 static inet_lnaof_signature inet_lnaof_function = inet_lnaof;
+static inet_netof_signature inet_netof_function = inet_netof;
 
 int crabc_x86_64_inet_address_header_abi_probe(void)
 {
@@ -59,5 +63,6 @@ int crabc_x86_64_inet_address_header_abi_probe(void)
     (void)inet_ntoa_function;
     (void)inet_makeaddr_function;
     (void)inet_lnaof_function;
+    (void)inet_netof_function;
     return 0;
 }

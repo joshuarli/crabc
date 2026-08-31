@@ -43,7 +43,9 @@
 //! descriptor creation, system-observation,
 //! processor/page-count system-information, UTS-namespace identity, basic socket-transport,
 //! scalar network byte-order conversion, one isolated shared static IPv4
-//! presentation buffer with no resolver state, padded socket messages/options,
+//! presentation buffer with no resolver state, and selected classful raw-word
+//! IPv4 arithmetic/network-part extraction with no resolver state, padded
+//! socket messages/options,
 //! deterministic numeric `netdb.h` address/service translation and result
 //! ownership without resolver configuration, hosts, or DNS,
 //! Linux interface name/index and address snapshots with private output
@@ -385,6 +387,8 @@ mod inet_address;
 mod inet_ntoa;
 #[path = "inet_classful.rs"]
 mod inet_classful;
+#[path = "inet_netof.rs"]
+mod inet_netof;
 #[path = "hstrerror.rs"]
 mod hstrerror;
 #[path = "numeric_netdb.rs"]
