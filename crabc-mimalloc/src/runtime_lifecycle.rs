@@ -6356,16 +6356,21 @@ fn native_initial_thread_free_pointer_first_associated(
     }
 }
 
-/// Reallocates one documented current initial-thread client through the same
-/// direct owner. This preserves the existing helper's scope; it adds no W02
-/// cross-owner replacement policy.
-unsafe fn native_initial_thread_reallocate(
+/// Reallocates a PageMap-proven current initial-thread client through its
+/// direct owner without reopening initial-owner admission.
+///
+/// The caller already compared the source `xthread_id` snapshot with the
+/// current identity and established that it is the permanent initial owner.
+/// A live source page proves that the owner has installed its persistent TLS
+/// cell, so a missing or terminal cell is a source-state failure rather than
+/// an opportunity to promote, schedule, or select another target owner.
+unsafe fn native_initial_thread_reallocate_pointer_first_associated(
     block: core::ptr::NonNull<u8>,
     new_size: usize,
 ) -> NativePageAllocationResult {
-    let result = with_current_thread_native_initial_persistent_allocator(false, |owner| {
-        // SAFETY: forwarded from `native_reallocate`'s exact-current initial
-        // owner contract.
+    let result = with_pointer_associated_initial_persistent_owner(|owner| {
+        // SAFETY: `native_reallocate` forwarded its exact-current
+        // PageMap-derived initial-source-owner contract.
         let replacement = unsafe { owner.reallocate(block, new_size) };
         (replacement, owner.is_retained())
     });
@@ -6459,13 +6464,13 @@ pub fn native_allocate_aligned(
 
 /// Looks up one exact native client before a pointer-first reallocation.
 ///
-/// Once the caller's persistent target owner is established, pinned
-/// `mi_usable_size` and `mi_theap_realloc_zero_ex` derive the page and
-/// allocation geometry from the supplied client before consulting the target
-/// Heap. This boundary keeps that source order: PageMap facts first, then the
-/// caller compares the captured source owner with its own identity. The
-/// observation gives no owner, route, registry, scheduler, or
-/// lifetime-widening capability.
+/// Pinned `mi_usable_size` and `mi_theap_realloc_zero_ex` derive the page and
+/// allocation geometry from the supplied client before the native boundary
+/// decides whether its already-persistent current owner may operate locally
+/// or a noncurrent source needs a replacement target. This boundary keeps
+/// that source order: PageMap facts first, then the caller compares the
+/// captured source owner with its own identity. The observation gives no
+/// owner, route, registry, scheduler, or lifetime-widening capability.
 ///
 /// # Safety
 ///
@@ -6493,18 +6498,21 @@ unsafe fn native_live_allocation_for_pointer_reallocation(
     Ok(allocation)
 }
 
-/// Establishes the noninitial caller's persistent target owner before its
-/// non-null pointer reallocation selects source facts.
+/// Establishes a noninitial caller's persistent target owner after
+/// pointer-first dispatch selects a noncurrent source.
 ///
-/// A public `mi_realloc` reaches its current default Theap before the pinned
-/// `mi_theap_realloc_zero_ex` source operation. The native equivalent is the
-/// caller's continuously stored persistent owner. Establishing it here gives
-/// a first allocation-family operation on B the same target-owner basis as a
-/// later B operation, without allocating a client, borrowing A, opening a
-/// session, or creating a route. The subsequent PageMap lookup remains the
-/// first operation on the supplied source pointer.
-fn native_reallocate_prepare_caller_persistent_owner() -> Result<(), NativePageAllocationResult> {
-    if RUNTIME_PROCESS.is_on_initial_thread() {
+/// Pinned `mi_theap_realloc_zero_ex` takes its target Theap as an already
+/// current local fact, then derives source page/usable-size facts from `p`.
+/// A current native source has that persistent owner by construction and must
+/// never reopen its admission before the local source operation. A noncurrent
+/// source needs a target only for its replacement allocation, so this is the
+/// one place a fresh later caller may install its persistent owner after the
+/// PageMap/current-owner comparison. It neither allocates a client nor
+/// borrows a former owner, session, route, or scheduler.
+fn native_reallocate_prepare_caller_persistent_owner(
+    current: LiveThreadId,
+) -> Result<(), NativePageAllocationResult> {
+    if RUNTIME_PROCESS.initial_live_thread_identity() == Some(current) {
         return Ok(());
     }
 
@@ -6530,12 +6538,15 @@ fn native_reallocate_prepare_caller_persistent_owner() -> Result<(), NativePageA
 fn native_reallocate_pointer_first_local(
     allocation: LiveAllocationPointer,
     new_size: usize,
+    current: LiveThreadId,
 ) -> NativePageAllocationResult {
     let block = allocation.client();
-    if RUNTIME_PROCESS.is_on_initial_thread() {
+    if RUNTIME_PROCESS.initial_live_thread_identity() == Some(current) {
         // SAFETY: the preceding PageMap classification associated this exact
         // live client with the persistent current initial owner.
-        let result = unsafe { native_initial_thread_reallocate(block, new_size) };
+        let result = unsafe {
+            native_initial_thread_reallocate_pointer_first_associated(block, new_size)
+        };
         drop(allocation);
         return result;
     }
@@ -6693,11 +6704,6 @@ pub unsafe fn native_reallocate(
     let Some(block) = block else {
         return native_allocate_aligned(new_size, NATIVE_C_MALLOC_ALIGNMENT, false);
     };
-    if let Err(result) = native_reallocate_prepare_caller_persistent_owner() {
-        // The old source has not entered a lookup, copy, or consuming free
-        // path. A target-owner setup failure leaves it exactly live.
-        return result;
-    }
     // SAFETY: forwarded from this boundary's exact-live native-client
     // contract. The returned observation remains live through one local or
     // nonlocal source operation below.
@@ -6711,8 +6717,15 @@ pub unsafe fn native_reallocate(
         return NativePageAllocationResult::Retained;
     };
     if allocation.is_associated_with(current) {
-        native_reallocate_pointer_first_local(allocation, new_size)
+        native_reallocate_pointer_first_local(allocation, new_size, current)
     } else {
+        if let Err(result) = native_reallocate_prepare_caller_persistent_owner(current) {
+            // Source dispatch has not copied, replaced, or consumed the old
+            // client. Drop its immutable pointer facts before reporting that
+            // the nonlocal replacement target was unavailable or retained.
+            drop(allocation);
+            return result;
+        }
         native_reallocate_pointer_first_nonlocal(allocation, new_size)
     }
 }
