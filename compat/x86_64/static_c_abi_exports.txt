@@ -242,6 +242,7 @@ eventfd
 eventfd_read
 eventfd_write
 exit
+exp10
 exp2
 exp2f
 exp2l
@@ -611,6 +612,7 @@ posix_fallocate
 posix_getdents
 posix_madvise
 pow
+pow10
 powf
 powl
 ppoll

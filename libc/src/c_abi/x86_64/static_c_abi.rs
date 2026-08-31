@@ -10,7 +10,8 @@
 //! binary32/binary64 fixed-direction ceiling/floor, half-away rounding,
 //! truncation, remainder,
 //! and cube root, selected scalar binary32/binary64 base-two/minus-one
-//! exponential, natural/base-ten logarithms, power, and sine,
+//! exponential, one GNU binary64 decimal-exponential same-address alias,
+//! natural/base-ten logarithms, power, and sine,
 //! selected
 //! fenv-sensitive rounding,
 //! and one selected x87 binary80 extended-math block as real C bootstrap
@@ -258,6 +259,8 @@ mod math_fmod;
 mod math_cbrt;
 #[path = "math_exp2.rs"]
 mod math_exp2;
+#[path = "math_exp10.rs"]
+mod math_exp10;
 #[path = "math_expm1.rs"]
 mod math_expm1;
 #[path = "math_log.rs"]

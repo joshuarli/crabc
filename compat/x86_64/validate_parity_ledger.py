@@ -1639,6 +1639,8 @@ MATH_CBRT_SYMBOLS = ("cbrt", "cbrtf")
 
 MATH_EXP2_SYMBOLS = ("exp2", "exp2f")
 
+MATH_EXP10_SYMBOLS = ("exp10", "pow10")
+
 MATH_EXPM1_SYMBOLS = ("expm1", "expm1f")
 
 MATH_LOG_SYMBOLS = ("log", "logf")
@@ -28327,8 +28329,8 @@ def require_getsubopt_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 49,
-        "libc.text-math-locale-stdio must retain exactly forty-nine private verified artifacts",
+        len(artifacts) == 50,
+        "libc.text-math-locale-stdio must retain exactly fifty private verified artifacts",
     )
     matching = [
         entry for entry in artifacts if entry.get("id") == "static-c-getsubopt"
@@ -29784,8 +29786,8 @@ def require_stdio_integer_scan_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 49,
-        "libc.text-math-locale-stdio must retain exactly forty-nine private verified artifacts",
+        len(artifacts) == 50,
+        "libc.text-math-locale-stdio must retain exactly fifty private verified artifacts",
     )
     matching = [
         entry for entry in artifacts if entry.get("id") == "static-c-stdio-integer-scan"
@@ -30067,8 +30069,8 @@ def require_stdio_octal_hex_scan_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 49,
-        "libc.text-math-locale-stdio must retain exactly forty-nine private verified artifacts",
+        len(artifacts) == 50,
+        "libc.text-math-locale-stdio must retain exactly fifty private verified artifacts",
     )
     matching = [
         entry
@@ -30593,8 +30595,8 @@ def require_stdio_errno_output_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 49,
-        "libc.text-math-locale-stdio must retain exactly forty-nine private verified artifacts",
+        len(artifacts) == 50,
+        "libc.text-math-locale-stdio must retain exactly fifty private verified artifacts",
     )
     matching = [
         entry for entry in artifacts if entry.get("id") == "static-c-stdio-errno-output"
@@ -31114,8 +31116,8 @@ def require_stdio_permanent_byte_io_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 49,
-        "libc.text-math-locale-stdio must retain exactly forty-nine private verified artifacts",
+        len(artifacts) == 50,
+        "libc.text-math-locale-stdio must retain exactly fifty private verified artifacts",
     )
     matching = [
         entry
@@ -31441,8 +31443,8 @@ def require_stdio_permanent_status_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 49,
-        "libc.text-math-locale-stdio must retain exactly forty-nine private verified artifacts",
+        len(artifacts) == 50,
+        "libc.text-math-locale-stdio must retain exactly fifty private verified artifacts",
     )
     matching = [
         entry
@@ -31769,8 +31771,8 @@ def require_stdio_permanent_feof_unlocked_artifact(
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 49,
-        "libc.text-math-locale-stdio must retain exactly forty-nine private verified artifacts",
+        len(artifacts) == 50,
+        "libc.text-math-locale-stdio must retain exactly fifty private verified artifacts",
     )
     matching = [
         entry
@@ -32137,8 +32139,8 @@ def require_stdio_permanent_fileno_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 49,
-        "libc.text-math-locale-stdio must retain exactly forty-nine private verified artifacts",
+        len(artifacts) == 50,
+        "libc.text-math-locale-stdio must retain exactly fifty private verified artifacts",
     )
     matching = [
         entry
@@ -32442,8 +32444,8 @@ def require_stdio_permanent_fileno_unlocked_artifact(
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 49,
-        "libc.text-math-locale-stdio must retain exactly forty-nine private verified artifacts",
+        len(artifacts) == 50,
+        "libc.text-math-locale-stdio must retain exactly fifty private verified artifacts",
     )
     matching = [
         entry
@@ -35979,8 +35981,8 @@ def require_math_exp2_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 49,
-        "libc.text-math-locale-stdio must retain exactly forty-nine private verified artifacts",
+        len(artifacts) == 50,
+        "libc.text-math-locale-stdio must retain exactly fifty private verified artifacts",
     )
     matching = [entry for entry in artifacts if entry.get("id") == "static-c-math-exp2"]
     require(
@@ -36231,6 +36233,307 @@ def require_math_exp2_artifact(family: Mapping[str, Any]) -> None:
         require(snippet in dispatcher, f"x86 dispatcher omits {snippet}")
 
 
+def require_math_exp10_artifact(family: Mapping[str, Any]) -> None:
+    """Keep the GNU binary64 decimal-exponential alias leaf private."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.text-math-locale-stdio].verified_artifact",
+        family.get("status", ""),
+    )
+    require(
+        len(artifacts) == 50,
+        "libc.text-math-locale-stdio must retain exactly fifty private verified artifacts",
+    )
+    matching = [entry for entry in artifacts if entry.get("id") == "static-c-math-exp10"]
+    require(
+        len(matching) == 1,
+        "libc.text-math-locale-stdio must contain exactly one static-c-math-exp10 artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-math-exp10 must not promote libc.text-math-locale-stdio",
+    )
+    artifact = matching[0]
+    require(
+        "capabilities" not in artifact,
+        "static-c-math-exp10 must remain a non-capability artifact",
+    )
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for symbol in MATH_EXP10_SYMBOLS:
+        require(
+            f"`{symbol}`" in description,
+            f"static-c-math-exp10 description omits {symbol}",
+        )
+    for phrase in (
+        "GNU binary64 decimal-exponential alias artifact",
+        "weak same-address",
+        "GCC 15.2.0 assembly translation",
+        "raw integral/fractional splitting",
+        "exact `[-15, 15]` decimal table",
+        "fractional exp2 reconstruction",
+        "large-magnitude pow fallback",
+        "eleven-source closure",
+        "localized closure",
+        "no undefined callable symbols",
+        "requested/observed rounding directions",
+        "compiler-builtins",
+        "binary32 `exp10f`/`pow10f`",
+        "binary80 `exp10l`/`pow10l`",
+        "fenv API/policy",
+        "public modf/exp2/pow/fabs functions",
+        "special and complex functions",
+        "binary80/x87 math",
+        "family completion",
+        "promotion",
+        "public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"static-c-math-exp10 description omits {phrase}",
+        )
+
+    owners = nonempty_strings(
+        artifact["source_owners"], "static-c-math-exp10.source_owners"
+    )
+    for owner in (
+        "compat/upstreams.toml",
+        "docker/Dockerfile.x86_64",
+        "libc/Cargo.toml",
+        "libc/src/lib.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/fenv.rs",
+        "libc/src/c_abi/x86_64/math_exp10.rs",
+        "libc/src/c_abi/x86_64/math_exp10_musl_x86_64.S",
+        "include/fenv.h",
+        "include/float.h",
+        "include/math.h",
+        "compat/x86_64/generate_libc_math_exp10.py",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/math_exp10_header_abi_probe.cpp",
+        "compat/x86_64/run_math_exp10_header_abi.sh",
+        "compat/x86_64/libc_math_exp10_probe.c",
+        "compat/x86_64/libc_math_exp10_start.S",
+        "compat/x86_64/run_libc_math_exp10.sh",
+        "compat/x86_64/run_libc_text_math_locale_stdio_composition.sh",
+        "compat/x86_64/aarch64_parity_inventory.py",
+        "compat/x86_64/aarch64_parity_inventory.json",
+        "compat/x86_64/tests/test_aarch64_parity_inventory.py",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/README.md",
+        "SCOPE.md",
+        "COMPATIBILITY-PROFILE.md",
+        "STATUS.md",
+        "x86-64.md",
+        "scripts/check_structure.py",
+        "scripts/dev-x86_64.sh",
+    ):
+        require(owner in owners, f"static-c-math-exp10 omits {owner}")
+
+    prerequisites = " ".join(
+        nonempty_strings(
+            artifact["x86_abi_prerequisites"],
+            "static-c-math-exp10.x86_abi_prerequisites",
+        )
+    )
+    for phrase in (
+        "src/math/exp10.c",
+        "modf.c",
+        "exp2.c",
+        "pow.c",
+        "exp_data.c",
+        "pow_data.c",
+        "__math_invalid.c",
+        "__math_oflow.c",
+        "__math_uflow.c",
+        "__math_xflow.c",
+        "fabs.c",
+        "eleven-source closure",
+        "normalized 1.2.6 source-tree digest",
+        "GCC 15.2.0",
+        "Arm notices",
+        "musl's MIT license",
+        "-frounding-math",
+        "-ffp-contract=off",
+        "-fexcess-precision=standard",
+        "FLT_EVAL_METHOD=0",
+        "xmm0",
+        "addsd/subsd/mulsd/divsd",
+        "weak same-address",
+        "localized",
+        "`exp10f`/`pow10f`",
+        "no undefined callable symbols",
+        "existing selected static fegetenv",
+        "without selecting fenv API or policy",
+    ):
+        require(
+            phrase in prerequisites,
+            f"static-c-math-exp10 prerequisites omit {phrase}",
+        )
+    header_prerequisites = " ".join(
+        nonempty_strings(
+            artifact["x86_header_prerequisites"],
+            "static-c-math-exp10.x86_header_prerequisites",
+        )
+    )
+    for phrase in ("GNU C", "parenthesized", "C++17", "-mfpmath=387", "unmangled C"):
+        require(
+            phrase in header_prerequisites,
+            f"static-c-math-exp10 header prerequisites omit {phrase}",
+        )
+
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-math-exp10"},
+        "static-c-math-exp10 must use the closed libc-math-exp10 command",
+    )
+    scope = evidence[0]["scope"]
+    assert isinstance(scope, str)
+    for phrase in (
+        "256 exact 32-byte records",
+        "both aliases",
+        "requested/observed MXCSR direction",
+        "eleven-source localized modf/exp2/pow/fabs/table/error closure",
+        "weak same-address pow10 alias",
+        "addsd/subsd/mulsd/divsd",
+        "compiler-builtins",
+        "binary32 exp10f/pow10f",
+        "public x86 support",
+    ):
+        require(phrase in scope, f"static-c-math-exp10 evidence omits {phrase}")
+
+    static_root = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+    ).read_text(encoding="utf-8")
+    require(
+        '#[path = "math_exp10.rs"]\nmod math_exp10;' in static_root,
+        "x86 static C ABI must compose the math_exp10 leaf",
+    )
+    leaf = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "math_exp10.rs"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "Private static Linux/x86-64 GNU binary64 `exp10`/`pow10` C ABI leaf",
+        "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+        "d585fd3b613c66151fc3249e8ed44f77020cb5e6c1e635a616d3f9f82460512a",
+        "src/math/exp10.c",
+        "src/math/modf.c",
+        "src/math/exp2.c",
+        "src/math/pow.c",
+        "src/math/exp_data.c",
+        "src/math/pow_data.c",
+        "src/math/__math_xflow.c",
+        "weak same-address `pow10`",
+        "fenv API or policy",
+        'include_str!("math_exp10_musl_x86_64.S")',
+        "public x86 support",
+    ):
+        require(snippet in leaf, f"math_exp10 leaf omits {snippet}")
+
+    generator = (
+        ROOT / "compat" / "x86_64" / "generate_libc_math_exp10.py"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "2ebc86943f5cdac77729695b304a08f6308e7a218f9d484cec5675006b207d88",
+        '"src/math/exp10.c"',
+        '"src/math/modf.c"',
+        '"src/math/exp2.c"',
+        '"src/math/pow.c"',
+        '"src/math/exp_data.c"',
+        '"src/math/pow_data.c"',
+        '"src/math/__math_xflow.c"',
+        '"src/math/fabs.c"',
+        '"15.2.0"',
+        '"-frounding-math"',
+        '"-ffp-contract=off"',
+        '"-mfpmath=sse"',
+        "PRIVATE_RENAMES",
+        "retained_notices",
+    ):
+        require(snippet in generator, f"math-exp10 generator omits {snippet}")
+    assembly = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "math_exp10_musl_x86_64.S"
+    ).read_text(encoding="utf-8")
+    for notice in ("Arm Limited", "musl's MIT license"):
+        require(notice in assembly, f"generated math-exp10 assembly omits {notice}")
+    require("\t.globl\texp10\n" in assembly, "generated math-exp10 assembly omits exp10")
+    for snippet in ("\t.weak\tpow10\n", "\t.set\tpow10,exp10"):
+        require(snippet in assembly, f"generated math-exp10 assembly omits {snippet}")
+    for provider in (
+        "crabc_x86_math_exp10_provider_modf",
+        "crabc_x86_math_exp10_provider_exp2",
+        "crabc_x86_math_exp10_provider_pow",
+        "crabc_x86_math_exp10_data_exp",
+        "crabc_x86_math_exp10_data_pow_log",
+        "crabc_x86_math_exp10_helper_invalid",
+        "crabc_x86_math_exp10_helper_oflow",
+        "crabc_x86_math_exp10_helper_uflow",
+        "crabc_x86_math_exp10_helper_xflow",
+        "crabc_x86_math_exp10_provider_fabs",
+    ):
+        require(
+            f"\t.local {provider}" in assembly,
+            f"generated math-exp10 assembly does not keep {provider} local",
+        )
+    for instruction in ("addsd", "subsd", "mulsd", "divsd"):
+        require(
+            instruction in assembly,
+            f"generated math-exp10 assembly omits {instruction}",
+        )
+
+    exports = static_c_abi_export_names(
+        ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+    )
+    require(exports == sorted(exports), "static C ABI export contract must remain ASCII-sorted")
+    for symbol in MATH_EXP10_SYMBOLS:
+        require(symbol in exports, f"static C ABI export contract omits {symbol}")
+
+    runner = (ROOT / "compat" / "x86_64" / "run_libc_math_exp10.sh").read_text(
+        encoding="utf-8"
+    )
+    for snippet in (
+        "-nostdlib -static",
+        "--no-undefined",
+        "--gc-sections",
+        "run_math_exp10_header_abi.sh",
+        "strong crabc-owned exp10",
+        "weak pow10 alias",
+        "weak same-address exp10/pow10 alias",
+        "candidate accidentally retains unselected",
+        "candidate retains TLS",
+        "crabc_x86_math_exp10_provider_modf",
+        "crabc_x86_math_exp10_provider_exp2",
+        "addsd subsd mulsd divsd",
+        "exp10f exp10l pow10f pow10l",
+    ):
+        require(snippet in runner, f"libc-math-exp10 runner omits {snippet}")
+    header_runner = (
+        ROOT / "compat" / "x86_64" / "run_math_exp10_header_abi.sh"
+    ).read_text(encoding="utf-8")
+    for snippet in ("math_exp10_header_abi_probe.cpp", "-mfpmath=387", "unmangled"):
+        require(snippet in header_runner, f"math-exp10 header runner omits {snippet}")
+    composition = (
+        ROOT / "compat" / "x86_64" / "run_libc_text_math_locale_stdio_composition.sh"
+    ).read_text(encoding="utf-8")
+    require(
+        "run_math_exp10_header_abi.sh" in composition,
+        "text/math/locale/stdio composition omits math-exp10 header evidence",
+    )
+    dispatcher = (ROOT / "scripts" / "dev-x86_64.sh").read_text(encoding="utf-8")
+    for snippet in (
+        "math-exp10-header-abi)",
+        "run_math_exp10_header_abi()",
+        "libc-math-exp10)",
+        "run_libc_math_exp10_probe()",
+        "/workspace/compat/x86_64/run_libc_math_exp10.sh",
+    ):
+        require(snippet in dispatcher, f"x86 dispatcher omits {snippet}")
+
+
 def require_math_expm1_artifact(family: Mapping[str, Any]) -> None:
     """Keep the source-closed binary32/binary64 expm1 leaf below math parity."""
     artifacts = require_verified_artifacts(
@@ -36239,8 +36542,8 @@ def require_math_expm1_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 49,
-        "libc.text-math-locale-stdio must retain exactly forty-nine private verified artifacts",
+        len(artifacts) == 50,
+        "libc.text-math-locale-stdio must retain exactly fifty private verified artifacts",
     )
     matching = [entry for entry in artifacts if entry.get("id") == "static-c-math-expm1"]
     require(
@@ -36477,8 +36780,8 @@ def require_math_log_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 49,
-        "libc.text-math-locale-stdio must retain exactly forty-nine private verified artifacts",
+        len(artifacts) == 50,
+        "libc.text-math-locale-stdio must retain exactly fifty private verified artifacts",
     )
     matching = [entry for entry in artifacts if entry.get("id") == "static-c-math-log"]
     require(
@@ -36744,8 +37047,8 @@ def require_math_log10_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 49,
-        "libc.text-math-locale-stdio must retain exactly forty-nine private verified artifacts",
+        len(artifacts) == 50,
+        "libc.text-math-locale-stdio must retain exactly fifty private verified artifacts",
     )
     matching = [entry for entry in artifacts if entry.get("id") == "static-c-math-log10"]
     require(
@@ -36989,8 +37292,8 @@ def require_math_sin_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 49,
-        "libc.text-math-locale-stdio must retain exactly forty-nine private verified artifacts",
+        len(artifacts) == 50,
+        "libc.text-math-locale-stdio must retain exactly fifty private verified artifacts",
     )
     matching = [entry for entry in artifacts if entry.get("id") == "static-c-math-sin"]
     require(
@@ -37267,8 +37570,8 @@ def require_math_tan_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 49,
-        "libc.text-math-locale-stdio must retain exactly forty-nine private verified artifacts",
+        len(artifacts) == 50,
+        "libc.text-math-locale-stdio must retain exactly fifty private verified artifacts",
     )
     matching = [entry for entry in artifacts if entry.get("id") == "static-c-math-tan"]
     require(
@@ -37541,8 +37844,8 @@ def require_math_tanh_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 49,
-        "libc.text-math-locale-stdio must retain exactly forty-nine private verified artifacts",
+        len(artifacts) == 50,
+        "libc.text-math-locale-stdio must retain exactly fifty private verified artifacts",
     )
     matching = [entry for entry in artifacts if entry.get("id") == "static-c-math-tanh"]
     require(
@@ -37799,8 +38102,8 @@ def require_math_atanh_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 49,
-        "libc.text-math-locale-stdio must retain exactly forty-nine private verified artifacts",
+        len(artifacts) == 50,
+        "libc.text-math-locale-stdio must retain exactly fifty private verified artifacts",
     )
     matching = [entry for entry in artifacts if entry.get("id") == "static-c-math-atanh"]
     require(
@@ -38057,8 +38360,8 @@ def require_math_acosh_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 49,
-        "libc.text-math-locale-stdio must retain exactly forty-nine private verified artifacts",
+        len(artifacts) == 50,
+        "libc.text-math-locale-stdio must retain exactly fifty private verified artifacts",
     )
     matching = [entry for entry in artifacts if entry.get("id") == "static-c-math-acosh"]
     require(
@@ -38335,8 +38638,8 @@ def require_math_sincos_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 49,
-        "libc.text-math-locale-stdio must retain exactly forty-nine private verified artifacts",
+        len(artifacts) == 50,
+        "libc.text-math-locale-stdio must retain exactly fifty private verified artifacts",
     )
     matching = [entry for entry in artifacts if entry.get("id") == "static-c-math-sincos"]
     require(
@@ -38607,8 +38910,8 @@ def require_math_pow_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 49,
-        "libc.text-math-locale-stdio must retain exactly forty-nine private verified artifacts",
+        len(artifacts) == 50,
+        "libc.text-math-locale-stdio must retain exactly fifty private verified artifacts",
     )
     matching = [entry for entry in artifacts if entry.get("id") == "static-c-math-pow"]
     require(
@@ -38888,8 +39191,8 @@ def require_math_ceil_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 49,
-        "libc.text-math-locale-stdio must retain exactly forty-nine private verified artifacts",
+        len(artifacts) == 50,
+        "libc.text-math-locale-stdio must retain exactly fifty private verified artifacts",
     )
     matching = [entry for entry in artifacts if entry.get("id") == "static-c-math-ceil"]
     require(
@@ -39113,8 +39416,8 @@ def require_math_floor_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 49,
-        "libc.text-math-locale-stdio must retain exactly forty-nine private verified artifacts",
+        len(artifacts) == 50,
+        "libc.text-math-locale-stdio must retain exactly fifty private verified artifacts",
     )
     matching = [entry for entry in artifacts if entry.get("id") == "static-c-math-floor"]
     require(
@@ -39339,8 +39642,8 @@ def require_math_round_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 49,
-        "libc.text-math-locale-stdio must retain exactly forty-nine private verified artifacts",
+        len(artifacts) == 50,
+        "libc.text-math-locale-stdio must retain exactly fifty private verified artifacts",
     )
     matching = [entry for entry in artifacts if entry.get("id") == "static-c-math-round"]
     require(
@@ -40292,8 +40595,8 @@ def require_locale_wide_iconv_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 49,
-        "libc.text-math-locale-stdio must retain exactly forty-nine private verified artifacts",
+        len(artifacts) == 50,
+        "libc.text-math-locale-stdio must retain exactly fifty private verified artifacts",
     )
     matching = [
         entry for entry in artifacts if entry.get("id") == "static-c-locale-wide-iconv"
@@ -41118,8 +41421,8 @@ def require_locale_error_strings_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 49,
-        "libc.text-math-locale-stdio must retain exactly forty-nine private verified artifacts",
+        len(artifacts) == 50,
+        "libc.text-math-locale-stdio must retain exactly fifty private verified artifacts",
     )
     matching = [
         entry for entry in artifacts if entry.get("id") == "static-c-locale-error-strings"
@@ -42841,6 +43144,7 @@ def validate_ledger(
     require_math_fmod_artifact(by_id["libc.text-math-locale-stdio"])
     require_math_cbrt_artifact(by_id["libc.text-math-locale-stdio"])
     require_math_exp2_artifact(by_id["libc.text-math-locale-stdio"])
+    require_math_exp10_artifact(by_id["libc.text-math-locale-stdio"])
     require_math_expm1_artifact(by_id["libc.text-math-locale-stdio"])
     require_math_log_artifact(by_id["libc.text-math-locale-stdio"])
     require_math_log10_artifact(by_id["libc.text-math-locale-stdio"])

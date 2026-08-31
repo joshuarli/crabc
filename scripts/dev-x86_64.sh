@@ -62,6 +62,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   math-elementary-long-double-header-abi  verify complete x86 math.elementary-long-double C++ ABI/linkage
   math-special-header-abi  verify complete x86 math.special C++ ABI/linkage
   math-exp2-header-abi  verify x86 exp2/exp2f C++ ABI/linkage
+  math-exp10-header-abi verify x86 exp10/pow10 C++ ABI/linkage
   math-expm1-header-abi  verify x86 expm1/expm1f C++ ABI/linkage
   math-log-header-abi  verify x86 log/logf C++ ABI/linkage
   math-log10-header-abi  verify x86 log10/log10f C++ ABI/linkage
@@ -425,6 +426,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-math-fmod  run the static x86 fmod/fmodf scalar remainder slice
   libc-math-cbrt  run the static x86 cbrt/cbrtf scalar cube-root slice
   libc-math-exp2  run the static x86 exp2/exp2f scalar base-two exponential slice
+  libc-math-exp10 run the static x86 GNU exp10/pow10 decimal-exponential slice
   libc-math-expm1  run the static x86 expm1/expm1f scalar exponential-minus-one slice
   libc-math-log  run the static x86 log/logf scalar natural-logarithm slice
   libc-math-log10  run the static x86 log10/log10f scalar base-ten logarithm slice
@@ -1756,6 +1758,18 @@ quiet/signaling NaNs, IEEE flags, and requested versus observed direction in
 all four MXCSR modes. It excludes `exp2l`, adjacent exp/log/pow functions,
 fenv API/policy, special/complex/binary80 math, family completion, promotion,
 and public x86 support.
+`libc-math-exp10` is the separate selected GNU binary64 decimal-exponential
+slice for strong `exp10` and its weak same-address `pow10` alias. It compares
+both parenthesized C calls and default-SSE/`-mfpmath=387` C++ declarations with
+pinned musl, then runs one freestanding static candidate. The checked GCC
+15.2.0 translation of musl 1.2.6 `exp10.c` keeps its local `modf`/`exp2`/`pow`
+closure, tables, and exceptional helpers private rather than sharing public
+providers or ambient libm. Its 256 raw 32-byte records cover the integer-table,
+fractional-exp2, pow, overflow/underflow, signed-zero, infinity, quiet/signaling
+NaN, IEEE-flag, and all-four-MXCSR-direction paths through both aliases. It
+excludes `exp10f`/`pow10f`, `exp10l`/`pow10l`, public modf/exp2/pow/fabs, fenv
+API/policy, special/complex/binary80 math, family completion, promotion, and
+public x86 support.
 `libc-math-expm1` is the separate selected binary32/binary64
 exponential-minus-one slice for `expm1` and `expm1f`. It compares
 parenthesized C calls and default-SSE/`-mfpmath=387` C++ declarations with
@@ -2273,6 +2287,10 @@ run_math_special_header_abi() {
 
 run_math_exp2_header_abi() {
     run_in_container bash /workspace/compat/x86_64/run_math_exp2_header_abi.sh
+}
+
+run_math_exp10_header_abi() {
+    run_in_container bash /workspace/compat/x86_64/run_math_exp10_header_abi.sh
 }
 
 run_math_expm1_header_abi() {
@@ -3834,6 +3852,10 @@ run_libc_math_exp2_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_math_exp2.sh
 }
 
+run_libc_math_exp10_probe() {
+    run_in_container bash /workspace/compat/x86_64/run_libc_math_exp10.sh
+}
+
 run_libc_math_expm1_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_math_expm1.sh
 }
@@ -4004,7 +4026,7 @@ case "$command" in
     ldso-public-dlfcn|ldso-dladdr-symbol-bounds) ;;
     ldso-bounded-dlopen) ;;
     math-special-header-abi|libc-math-special) ;;
-    math-exp2-header-abi|math-expm1-header-abi|math-log-header-abi|math-log10-header-abi|math-sin-header-abi|math-tan-header-abi|math-tanh-header-abi|math-atanh-header-abi|math-acosh-header-abi|math-sincos-header-abi|math-pow-header-abi|libc-math-exp2|libc-math-expm1|libc-math-log|libc-math-log10|libc-math-sin|libc-math-tan|libc-math-tanh|libc-math-atanh|libc-math-acosh|libc-math-sincos|libc-math-pow) ;;
+    math-exp2-header-abi|math-exp10-header-abi|math-expm1-header-abi|math-log-header-abi|math-log10-header-abi|math-sin-header-abi|math-tan-header-abi|math-tanh-header-abi|math-atanh-header-abi|math-acosh-header-abi|math-sincos-header-abi|math-pow-header-abi|libc-math-exp2|libc-math-exp10|libc-math-expm1|libc-math-log|libc-math-log10|libc-math-sin|libc-math-tan|libc-math-tanh|libc-math-atanh|libc-math-acosh|libc-math-sincos|libc-math-pow) ;;
     inet-address-header-abi) ;;
     libc-network-byte-order) ;;
     ldso-target-root) ;;
@@ -4208,6 +4230,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "math-exp2-header-abi takes no arguments"
         ensure_image
         run_math_exp2_header_abi
+        ;;
+    math-exp10-header-abi)
+        [ "$#" -eq 0 ] || fail "math-exp10-header-abi takes no arguments"
+        ensure_image
+        run_math_exp10_header_abi
         ;;
     math-expm1-header-abi)
         [ "$#" -eq 0 ] || fail "math-expm1-header-abi takes no arguments"
@@ -6073,6 +6100,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "libc-math-exp2 takes no arguments"
         ensure_image
         run_libc_math_exp2_probe
+        ;;
+    libc-math-exp10)
+        [ "$#" -eq 0 ] || fail "libc-math-exp10 takes no arguments"
+        ensure_image
+        run_libc_math_exp10_probe
         ;;
     libc-math-expm1)
         [ "$#" -eq 0 ] || fail "libc-math-expm1 takes no arguments"

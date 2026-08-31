@@ -534,6 +534,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-math-trunc
 ./scripts/dev-x86_64.sh libc-math-fmod
 ./scripts/dev-x86_64.sh libc-math-exp2
+./scripts/dev-x86_64.sh libc-math-exp10
 ./scripts/dev-x86_64.sh libc-math-expm1
 ./scripts/dev-x86_64.sh libc-math-log
 ./scripts/dev-x86_64.sh libc-math-log10
@@ -4694,6 +4695,24 @@ compiler-builtins fallback, `exp2l`, adjacent exp/log/pow functions, fenv
 API/policy, special/complex/binary80 math, dynamic linkage, TLS, and ambient
 libm. Family completion, promotion, full x86-64 parity, and public x86 support
 remain unselected.
+`libc-math-exp10` is the separate non-promoting `static-c-math-exp10` artifact
+for GNU binary64 strong `exp10` and musl's weak same-address `pow10` alias.
+Its project-header GNU C fixture and default-SSE/`-mfpmath=387` C++ signature
+probes run first through pinned musl and then through one garbage-collected
+`-nostdlib -static` candidate. The checked GCC 15.2.0 assembly translation of
+musl 1.2.6 `exp10.c` preserves its integral table, fractional exp2
+reconstruction, and pow fallback through an exact eleven-source local
+modf/exp2/pow closure. That closure retains local scalar providers, two data
+tables, and four error helpers, but exports neither public provider ABI nor an
+implementation helper. The 256-record raw differential calls both aliases
+across all four rounding modes for signed zero, tiny/normal/subnormal and
+table/fallback thresholds, overflow/underflow, infinities, and quiet/signaling
+NaNs. Final-link proof requires strong `exp10`, weak same-address `pow10`,
+local closure providers, and scalar `addsd`/`subsd`/`mulsd`/`divsd`, while
+rejecting compiler-builtins fallback, binary32/long-double `exp10`/`pow10`,
+public modf/exp2/pow/fabs ABI, fenv API/policy, special/complex/binary80 math,
+dynamic linkage, TLS, and ambient-libm surface. Family completion, promotion,
+full x86-64 parity, and public x86 support remain unselected.
 `libc-math-expm1` is the separate non-promoting `static-c-math-expm1` artifact
 for binary64/binary32 `expm1`/`expm1f`. Its project-header C fixture and
 default-SSE/`-mfpmath=387` C++ signature probes run first through pinned musl

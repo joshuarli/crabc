@@ -7949,6 +7949,56 @@ native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc
 oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT/Arm MIT source, exact table/range-scaling/fenv behavior, and public C ABI oracle for exactly src/math/exp2.c and src/math/exp2f.c plus their private source closure." }, { kind = "elf-abi", source = "System V AMD64 psABI", role = "xmm0 binary32/binary64 unary argument and return ABI plus caller-visible MXCSR directed-SSE arithmetic boundary for the selected static C entries." }]
 
 [[family.verified_artifact]]
+id = "static-c-math-exp10"
+description = "Private native x86 selected-static GNU binary64 decimal-exponential alias artifact inside still-planned `libc.text-math-locale-stdio`. One dependency-free `crabc-libc` archive resolves strong `exp10` and musl's weak same-address `pow10` alias into a freestanding project-header C fixture after equivalent pinned-musl execution. A checked GCC 15.2.0 assembly translation of musl's `exp10.c` plus the exact eleven-source closure retains raw integral/fractional splitting, the exact `[-15, 15]` decimal table, fractional exp2 reconstruction, and large-magnitude pow fallback without ambient libm or selected `math.special` state. The localized closure includes private modf/exp2/pow/fabs providers, exp/pow tables, and IEEE error-expression helpers; it has no undefined callable symbols and exports neither implementation helpers nor public provider spellings. The record stream calls both aliases for signed zero, tiny/subnormal and normal bounds, table and fallback thresholds, overflow/underflow, infinities, quiet/signaling NaNs, raw results, requested/observed rounding directions, and exception flags. Strong target-owned `exp10` and the required weak alias reject compiler-builtins fallback. Existing fenv entries only reset and observe MXCSR; this artifact does not select fenv API/policy. It excludes binary32 `exp10f`/`pow10f`, binary80 `exp10l`/`pow10l`, public modf/exp2/pow/fabs functions, other elementary math, special and complex functions, binary80/x87 math, errno policy, general libm, libc.so, CRT/TLS lifecycle, loader, sysroot, `math.elementary` family completion, promotion, full x86-64 parity, and public x86 support. The localized data tables are implementation details, not selection of public exp2 or pow entries."
+source_owners = [
+  "compat/upstreams.toml",
+  "docker/Dockerfile.x86_64",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/fenv.rs",
+  "libc/src/c_abi/x86_64/math_exp10.rs",
+  "libc/src/c_abi/x86_64/math_exp10_musl_x86_64.S",
+  "include/fenv.h",
+  "include/float.h",
+  "include/math.h",
+  "compat/x86_64/generate_libc_math_exp10.py",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/math_exp10_header_abi_probe.cpp",
+  "compat/x86_64/run_math_exp10_header_abi.sh",
+  "compat/x86_64/libc_math_exp10_probe.c",
+  "compat/x86_64/libc_math_exp10_start.S",
+  "compat/x86_64/run_libc_math_exp10.sh",
+  "compat/x86_64/run_libc_text_math_locale_stdio_composition.sh",
+  "compat/x86_64/aarch64_parity_inventory.py",
+  "compat/x86_64/aarch64_parity_inventory.json",
+  "compat/x86_64/tests/test_aarch64_parity_inventory.py",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "compat/x86_64/README.md",
+  "SCOPE.md",
+  "COMPATIBILITY-PROFILE.md",
+  "STATUS.md",
+  "x86-64.md",
+  "scripts/check_structure.py",
+  "scripts/dev-x86_64.sh",
+]
+x86_abi_prerequisites = [
+  "Pinned musl 1.2.6 src/math/exp10.c plus modf.c, exp2.c, pow.c, exp_data.c, pow_data.c, __math_invalid.c, __math_oflow.c, __math_uflow.c, __math_xflow.c, and fabs.c are the exact eleven-source closure: their normalized 1.2.6 source-tree digest, GCC 15.2.0 input, retained Arm notices, musl's MIT license, `-frounding-math`, `-ffp-contract=off`, and `-fexcess-precision=standard` translation preserve the integral table, fractional exp2 reconstruction, pow fallback, and exceptional arithmetic without an ambient libm call.",
+  "The bounded eleven-source closure links with no undefined callable symbols. Its modf/exp2/pow/fabs providers, tables, and helpers are renamed and localized to local `crabc_x86_math_exp10_*` assembly symbols, so only strong exp10 and weak same-address pow10 remain global rather than exporting source-closure implementation details or public `exp2`/`pow` ABI.",
+  "System V AMD64 with FLT_EVAL_METHOD=0 passes and returns binary64 in xmm0. Scalar SSE addsd/subsd/mulsd/divsd source arithmetic retains caller-visible MXCSR-directed results and flags; no x87/binary80 promotion, FMA, AVX, or packed-SIMD path is selected. Binary32 `exp10f`/`pow10f` and binary80 `exp10l`/`pow10l` are representation- and ABI-distinct and remain excluded.",
+  "The fixture composes only existing selected static fegetenv/fesetenv/fesetround/fegetround/feclearexcept/fetestexcept entries to reset and observe MXCSR, including both aliases under every caller direction, without selecting fenv API or policy as part of this artifact.",
+]
+x86_header_prerequisites = [
+  "The focused GNU C fixture preprocesses project fenv.h, float.h, math.h, stddef.h, stdint.h, features.h, and bits/alltypes.h, then calls parenthesized exp10/pow10 function pointers so compiler builtins cannot substitute for the named C ABI.",
+  "Dedicated C++17 objects compiled with default SSE and -mfpmath=387 pin exact binary64 unary function-pointer signatures and unmangled C references from the project header against pinned musl.",
+]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-math-exp10", scope = "Pinned-musl/project-header GNU C and C++ ABI execution plus one dependency-free `-nostdlib -static --no-undefined --gc-sections` candidate. The C fixture compares 256 exact 32-byte records through both aliases across all four rounding directions: binary64 signed zero, raw tiny/subnormal and normal bounds, integral-table/fractional-exp2/pow boundaries, overflow/underflow, infinities, quiet/signaling NaNs, raw results, requested/observed MXCSR direction, and exception flags. ELF proof requires strong global target-owned exp10, weak same-address pow10 alias, exact archive surface, an eleven-source localized modf/exp2/pow/fabs/table/error closure with no public providers, and addsd/subsd/mulsd/divsd scalar source arithmetic; it rejects weak compiler-builtins fallback, binary32 exp10f/pow10f, binary80 exp10l/pow10l, public modf/exp2/pow/fabs ABI, fenv API/policy, special/complex/binary80 math, unresolved symbols, dynamic linkage, TLS, ambient libm, packed-SIMD/FMA ISA, and unowned runtime dependencies. It excludes category/family completion, promotion, full x86-64 parity, and public x86 support." }]
+oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT/Arm MIT source, GNU weak-alias, IEEE bit-level/fenv behavior, and public C ABI oracle for exactly src/math/exp10.c and its private source closure." }, { kind = "elf-abi", source = "System V AMD64 psABI", role = "xmm0 binary64 unary argument/return ABI plus caller-visible MXCSR scalar-SSE arithmetic boundary for the selected static C entries." }]
+
+[[family.verified_artifact]]
 id = "static-c-math-expm1"
 description = "Private native x86 selected-static binary32/binary64 exponential-minus-one artifact inside still-planned `libc.text-math-locale-stdio`. One dependency-free `crabc-libc` archive resolves exactly `expm1` and `expm1f` into a freestanding project-header C fixture after equivalent pinned-musl execution. A checked GCC 15.2.0 assembly translation of musl's `expm1.c`/`expm1f.c` is a direct no-call closure: it retains binary64/binary32 range reduction, polynomial reconstruction, raw-subnormal `FORCE_EVAL`, and overflow scaling without tables, ambient libm, or selected `math.special` state. The record stream covers signed zeros, tiny/subnormal and normal boundaries, reduction and overflow thresholds, infinities, quiet/signaling NaNs, results, and exception flags through all four MXCSR rounding modes. Strong target-owned definitions reject a weak compiler-builtins fallback. This artifact excludes `expm1l`, adjacent exp/log/pow functions, fenv API/policy, fmod/remainder/modf, special and complex functions, binary80/x87 math, errno policy, general libm, libc.so, CRT/TLS lifecycle, loader, sysroot, `math.elementary` family completion, promotion, full x86-64 parity, and public x86 support."
 source_owners = [

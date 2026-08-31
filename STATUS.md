@@ -1158,6 +1158,22 @@ fallback, `exp2l`, adjacent exp/log/pow functions, fenv API/policy,
 special/complex/binary80 math, family completion, promotion, and public x86
 support.
 
+The separate private `static-c-math-exp10` artifact records only GNU binary64
+strong `exp10` and musl's weak same-address `pow10` alias:
+`./scripts/dev-x86_64.sh libc-math-exp10` runs project-header GNU C and
+default-SSE/`-mfpmath=387` C++ function-pointer fixtures through pinned musl
+and one freestanding static candidate. Its checked GCC 15.2.0 translation of
+musl 1.2.6 `exp10.c` keeps the exact eleven-source modf/exp2/pow closure
+private: the scalar providers, two data tables, and four IEEE error helpers.
+The 256-record differential calls both aliases over signed zero,
+tiny/normal/subnormal and integral-table/fallback thresholds,
+overflow/underflow, infinities, quiet/signaling NaNs, all four
+requested-and-observed rounding directions, and exception flags. Final ELF
+checks require the strong/weak same-address alias pair and reject
+compiler-builtins fallback, public closure helpers, binary32/long-double
+`exp10`/`pow10`, fenv API/policy, special/complex/binary80 math, family
+completion, promotion, and public x86 support.
+
 The separate private `static-c-math-expm1` artifact records only binary64
 `expm1` and binary32 `expm1f`: `./scripts/dev-x86_64.sh libc-math-expm1` runs
 project-header C and default-SSE/`-mfpmath=387` C++ function-pointer fixtures
