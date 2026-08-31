@@ -45,6 +45,7 @@ class NonlocalReallocPortMapTests(unittest.TestCase):
             "crabc_mimalloc::runtime_lifecycle",
             "ProcessPageMapLease::lookup_live_allocation",
             "LiveAllocationPointer",
+            "native_reallocate_prepare_caller_persistent_owner",
             "native_live_allocation_for_pointer_reallocation",
             "native_reallocate_pointer_first_local",
             "native_reallocate_pointer_first_nonlocal",
@@ -55,7 +56,8 @@ class NonlocalReallocPortMapTests(unittest.TestCase):
 
         scope = record["intentional_difference"]
         for invariant in (
-            "first derives one coherent PageMap allocation observation",
+            "without inspecting the source pointer",
+            "then derives one coherent PageMap allocation observation",
             "allocates through the caller's persistent native owner",
             "Allocation failure leaves the old allocation untouched",
             "unescaped caller-local replacement is returned directly",
