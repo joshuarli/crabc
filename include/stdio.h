@@ -67,7 +67,6 @@ extern FILE *const stderr;
 #define FOPEN_MAX 1000
 #define TMP_MAX 10000
 #define L_tmpnam 20
-#define L_ctermid 20
 
 /* File access */
 FILE *fopen(const char *, const char *);
@@ -186,6 +185,7 @@ void perror(const char *);
 
 #if defined(_POSIX_SOURCE) || defined(_POSIX_C_SOURCE) \
  || defined(_XOPEN_SOURCE) || defined(_GNU_SOURCE) || defined(_BSD_SOURCE)
+#define L_ctermid 20
 char *ctermid(char *);
 #endif
 

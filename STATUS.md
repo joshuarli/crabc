@@ -42,6 +42,20 @@ secure-execution policy. Caller-coordinated environment writers, direct
 does not select process creation, exec/spawn inheritance, supervision,
 family completion, promotion, or public x86 support.
 
+`./scripts/dev-x86_64.sh libc-ctermid` is a separate private
+`static-c-ctermid` artifact inside still-planned `libc.posix-runtime`. Its
+pinned-musl/project-header C/C++ gate proves that `<stdio.h>` exposes
+`char *ctermid(char *)` and `L_ctermid == 20` only in POSIX/XSI-style profiles,
+with unmangled C++ linkage and strict-mode hiding. Its pinned-musl and
+freestanding-static routes then select only the fixed `/dev/tty` spelling:
+the null form returns a borrowed immutable literal, while a caller-owned
+`L_ctermid` buffer receives its nine bytes including NUL and retains its
+remaining tail. The leaf opens no pathname and has no syscall, terminal,
+errno/TLS, allocation, string-helper, or authority boundary. It does not
+select terminal policy, PTY/session/termios/tty discovery, getpass, generic
+filesystem behavior, temporary-file families, filesystem handles, family
+completion, promotion, or public x86 support.
+
 `./scripts/dev-x86_64.sh libc-getpass` is a separate private
 `static-c-getpass` artifact inside still-planned `libc.posix-runtime`. Its
 pinned-musl and freestanding-static routes select only the historical C

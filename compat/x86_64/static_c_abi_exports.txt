@@ -137,6 +137,7 @@ creal
 crealf
 creall
 creat
+ctermid
 dcgettext
 dcngettext
 dgettext

@@ -50,7 +50,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 40)
-        self.assertEqual(report["verified_artifact_count"], 151)
+        self.assertEqual(report["verified_artifact_count"], 152)
         self.assertEqual(report["header_layout_probe_count"], 46)
         self.assertEqual(report["public_header_inventory_count"], 183)
         self.assertEqual(report["header_foundation_header_count"], 191)
@@ -5296,7 +5296,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             "does not select libc.so", credentials["native_evidence"][0]["scope"]
         )
         posix_artifacts = posix_runtime["verified_artifact"]
-        assert isinstance(posix_artifacts, list) and len(posix_artifacts) == 67
+        assert isinstance(posix_artifacts, list) and len(posix_artifacts) == 68
         artifacts_by_id = {
             artifact["id"]: artifact
             for artifact in posix_artifacts
@@ -5420,6 +5420,57 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertIn("byte-preserved public tails", termios_control["native_evidence"][0]["scope"])
         self.assertIn(
             "libc/src/c_abi/x86_64/termios_control.rs",
+            posix_runtime["source_owners"],
+        )
+        ctermid = artifacts_by_id["static-c-ctermid"]
+        assert isinstance(ctermid, dict)
+        self.assertNotIn("capabilities", ctermid)
+        for owner in (
+            "libc/src/c_abi/x86_64/ctermid.rs",
+            "include/stdio.h",
+            "compat/x86_64/ctermid_header_abi_probe.c",
+            "compat/x86_64/ctermid_header_abi_probe.cpp",
+            "compat/x86_64/run_ctermid_header_abi.sh",
+            "compat/x86_64/libc_ctermid_probe.c",
+            "compat/x86_64/libc_ctermid_start.S",
+            "compat/x86_64/run_libc_ctermid.sh",
+            "compat/x86_64/validate_parity_ledger.py",
+            "scripts/check_structure.py",
+        ):
+            self.assertIn(owner, ctermid["source_owners"])
+        self.assertEqual(
+            {evidence["command"] for evidence in ctermid["native_evidence"]},
+            {"./scripts/dev-x86_64.sh libc-ctermid"},
+        )
+        for phrase in (
+            "historical `ctermid` pathname-spelling boundary",
+            "selected-private leaf",
+            "borrowed immutable `/dev/tty` spelling",
+            "`L_ctermid=20`",
+            "remaining eleven bytes caller-resident",
+            "no syscall, allocation, errno/TLS",
+            "terminal policy",
+            "temporary-file creation or pathname families",
+            "authority-bearing filesystem handle APIs",
+            "family completion",
+            "promotion",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, ctermid["description"])
+        ctermid_scope = ctermid["native_evidence"][0]["scope"]
+        for phrase in (
+            "L_ctermid=20",
+            "unmangled C++ reference",
+            "caller-buffer result-pointer identity",
+            "untouched caller tail",
+            "no TLS/errno path",
+            "no syscall instruction",
+            "mktemp/tempnam/tmpnam/mkstemp/mkdtemp/tmpfile",
+            "authority-bearing filesystem handles",
+        ):
+            self.assertIn(phrase, ctermid_scope)
+        self.assertIn(
+            "libc/src/c_abi/x86_64/ctermid.rs",
             posix_runtime["source_owners"],
         )
         getpass = artifacts_by_id["static-c-getpass"]
@@ -11277,6 +11328,49 @@ class X86ParityLedgerTests(unittest.TestCase):
         evidence[0]["command"] = "./scripts/dev-x86_64.sh libc-foundation"
         with self.assertRaisesRegex(
             ledger.LedgerError, "closed libc-environment command"
+        ):
+            ledger.validate_ledger(data)
+
+    def test_static_ctermid_artifact_keeps_its_historical_nonpromoting_contract(
+        self,
+    ) -> None:
+        data = self.data()
+        family = self.family(data, "libc.posix-runtime")
+        family["status"] = "foundation-verified"
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "static-c-ctermid must not promote"
+        ):
+            ledger.require_ctermid_artifact(family)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-ctermid"
+        )
+        artifact["description"] = artifact["description"].replace(
+            "selected-private leaf", "isolated leaf"
+        )
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "description omits selected-private leaf"
+        ):
+            ledger.validate_ledger(data)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-ctermid"
+        )
+        evidence = artifact["native_evidence"]
+        assert isinstance(evidence, list) and isinstance(evidence[0], dict)
+        evidence[0]["command"] = "./scripts/dev-x86_64.sh libc-termios-control"
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "closed libc-ctermid command"
         ):
             ledger.validate_ledger(data)
 

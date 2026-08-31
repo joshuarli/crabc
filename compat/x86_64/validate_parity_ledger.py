@@ -11407,6 +11407,233 @@ def require_credential_observation_artifact(family: Mapping[str, Any]) -> None:
     )
 
 
+def require_ctermid_artifact(family: Mapping[str, Any]) -> None:
+    """Keep the historical terminal spelling leaf below family promotion."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.posix-runtime].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [entry for entry in artifacts if entry.get("id") == "static-c-ctermid"]
+    require(
+        len(matching) == 1,
+        "libc.posix-runtime must contain exactly one static-c-ctermid artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-ctermid must not promote libc.posix-runtime",
+    )
+    artifact = matching[0]
+    require(
+        "capabilities" not in artifact,
+        "static-c-ctermid must not promote an existing capability",
+    )
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for phrase in (
+        "historical `ctermid` pathname-spelling boundary",
+        "still-planned `libc.posix-runtime`",
+        "selected-private leaf",
+        "borrowed immutable `/dev/tty` spelling",
+        "`L_ctermid=20`",
+        "nine `/dev/tty\\0` bytes",
+        "remaining eleven bytes caller-resident",
+        "no syscall, allocation, errno/TLS",
+        "terminal policy",
+        "C PTY/session/termios/tty-discovery APIs",
+        "generic filesystem behavior",
+        "`mktemp`, `tempnam`, `tmpnam`, `mkstemp`, `mkdtemp`, `tmpfile`",
+        "authority-bearing filesystem handle APIs",
+        "family completion",
+        "promotion",
+        "public x86 support",
+    ):
+        require(phrase in description, f"static-c-ctermid description omits {phrase}")
+
+    owners = set(
+        nonempty_strings(artifact["source_owners"], "static-c-ctermid.source_owners")
+    )
+    for owner in (
+        "compat/upstreams.toml",
+        "libc/Cargo.toml",
+        "libc/src/lib.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/ctermid.rs",
+        "include/stdio.h",
+        "include/features.h",
+        "include/bits/alltypes.h",
+        "compat/x86_64/ctermid_header_abi_probe.c",
+        "compat/x86_64/ctermid_header_abi_probe.cpp",
+        "compat/x86_64/run_ctermid_header_abi.sh",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/libc_ctermid_probe.c",
+        "compat/x86_64/libc_ctermid_start.S",
+        "compat/x86_64/run_libc_ctermid.sh",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/README.md",
+        "STATUS.md",
+        "x86-64.md",
+        "scripts/dev-x86_64.sh",
+        "scripts/check_structure.py",
+    ):
+        require(owner in owners, f"static-c-ctermid source owners omit {owner}")
+
+    prerequisites = nonempty_strings(
+        artifact["x86_abi_prerequisites"], "static-c-ctermid.x86_abi_prerequisites"
+    )
+    require(
+        any("rdi" in item and "rax" in item and "nine-byte" in item for item in prerequisites),
+        "static-c-ctermid must retain its SysV pointer ABI and fixed copy",
+    )
+    require(
+        any(
+            "L_ctermid" in item and "nine bytes" in item and "eleven bytes" in item
+            for item in prerequisites
+        ),
+        "static-c-ctermid must retain its caller-buffer boundary",
+    )
+    require(
+        any("no PT_TLS" in item and "no syscall instruction" in item for item in prerequisites),
+        "static-c-ctermid must retain its stateless static closure",
+    )
+    header_prerequisites = nonempty_strings(
+        artifact["x86_header_prerequisites"], "static-c-ctermid.x86_header_prerequisites"
+    )
+    require(
+        any(
+            "char *ctermid(char *)" in item
+            and "L_ctermid == 20" in item
+            and "strict C/C++ hiding" in item
+            and "unmangled C++ linkage" in item
+            for item in header_prerequisites
+        ),
+        "static-c-ctermid must retain its focused C/C++ header ABI",
+    )
+
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-ctermid"},
+        "static-c-ctermid must use the closed libc-ctermid command",
+    )
+    scope = evidence[0].get("scope")
+    require(
+        isinstance(scope, str)
+        and all(
+            phrase in scope
+            for phrase in (
+                "L_ctermid=20",
+                "unmangled C++ reference",
+                "caller-buffer result-pointer identity",
+                "untouched caller tail",
+                "no TLS/errno path",
+                "no syscall instruction",
+                "terminal policy",
+                "mktemp/tempnam/tmpnam/mkstemp/mkdtemp/tmpfile",
+                "authority-bearing filesystem handles",
+                "public x86 support",
+            )
+        ),
+        "static-c-ctermid evidence must retain its observable bounded contract",
+    )
+
+    exports = set(
+        static_c_abi_export_names(
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        )
+    )
+    require("ctermid" in exports, "static C ABI export contract omits ctermid")
+
+    static_root = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+    ).read_text(encoding="utf-8")
+    require(
+        '#[path = "ctermid.rs"]\nmod ctermid;' in static_root,
+        "x86 static C ABI must compose the ctermid leaf",
+    )
+    source = (ROOT / "libc" / "src" / "c_abi" / "x86_64" / "ctermid.rs").read_text(
+        encoding="utf-8"
+    )
+    for snippet in (
+        "pinned musl 1.2.6 release commit",
+        "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+        "src/unistd/ctermid.c",
+        "CTERMID_PATH: [u8; 9]",
+        "immutable static spelling",
+        "does not open",
+        "# Safety",
+        'pub unsafe extern "C" fn ctermid',
+        "destination.add(index).write(CTERMID_PATH[index])",
+    ):
+        require(snippet in source, f"ctermid implementation omits {snippet}")
+    for forbidden in (
+        "raw_syscall::",
+        "errno::",
+        "termios_control::",
+        "getpass::",
+        "crabc_core",
+        "crabc_mimalloc",
+    ):
+        require(forbidden not in source, f"ctermid implementation selects {forbidden}")
+
+    runner = (ROOT / "compat" / "x86_64" / "run_libc_ctermid.sh").read_text(
+        encoding="utf-8"
+    )
+    for snippet in (
+        "run_musl_oracle.sh",
+        "run_ctermid_header_abi.sh",
+        "static_c_abi_exports.txt",
+        "-nostdlib -static",
+        "--no-undefined",
+        "archive does not define ctermid",
+        "--disassemble=ctermid",
+        "ctermid candidate unexpectedly retains TLS",
+        "ctermid unexpectedly performs a syscall",
+        "candidate selects terminal, filesystem, or string helper behavior",
+    ):
+        require(snippet in runner, f"ctermid runner omits {snippet}")
+
+    probe = (ROOT / "compat" / "x86_64" / "libc_ctermid_probe.c").read_text(
+        encoding="utf-8"
+    )
+    for snippet in (
+        "L_ctermid == 20",
+        "expected_ctermid",
+        "ctermid((char *)0)",
+        "result != buffer",
+        "sizeof(expected_ctermid)",
+        "0x5aU",
+    ):
+        require(snippet in probe, f"ctermid probe omits {snippet}")
+
+    header_c = (
+        ROOT / "compat" / "x86_64" / "ctermid_header_abi_probe.c"
+    ).read_text(encoding="utf-8")
+    header_cxx = (
+        ROOT / "compat" / "x86_64" / "ctermid_header_abi_probe.cpp"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "ctermid declaration",
+        "ctermid_must_be_hidden",
+        "CRABC_REQUIRE_L_CTERMID_HIDDEN",
+        "L_ctermid",
+    ):
+        require(snippet in header_c, f"ctermid C header probe omits {snippet}")
+        require(snippet in header_cxx, f"ctermid C++ header probe omits {snippet}")
+
+    dispatcher = (ROOT / "scripts" / "dev-x86_64.sh").read_text(encoding="utf-8")
+    for snippet in (
+        "ctermid-header-abi)",
+        "libc-ctermid)",
+        "run_ctermid_header_abi()",
+        "run_libc_ctermid_probe()",
+    ):
+        require(snippet in dispatcher, f"x86 dispatcher omits {snippet}")
+
+
 def require_getpass_artifact(family: Mapping[str, Any]) -> None:
     """Keep historical terminal password input below family promotion."""
     artifacts = require_verified_artifacts(
@@ -28248,6 +28475,7 @@ def validate_ledger(
     require_credential_observation_artifact(by_id["libc.posix-runtime"])
     require_static_environment_artifact(by_id["libc.posix-runtime"])
     require_static_login_name_artifact(by_id["libc.posix-runtime"])
+    require_ctermid_artifact(by_id["libc.posix-runtime"])
     require_getpass_artifact(by_id["libc.posix-runtime"])
     require_mktemp_artifact(by_id["libc.posix-runtime"])
     require_child_reaping_artifact(by_id["libc.posix-runtime"])

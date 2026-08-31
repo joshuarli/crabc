@@ -5529,6 +5529,48 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
             "artifact must export only its named baud/raw/control symbols"
         )
 
+    ctermid_source = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "ctermid.rs"
+    ctermid_text = ctermid_source.read_text(errors="replace")
+    for required in (
+        "pinned musl 1.2.6 release commit",
+        "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+        "src/unistd/ctermid.c",
+        "CTERMID_PATH: [u8; 9]",
+        "does not open",
+        "# Safety",
+        "destination.add(index).write(CTERMID_PATH[index])",
+        "immutable literal pointer",
+    ):
+        if required not in ctermid_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/ctermid.rs: selected static historical "
+                f"ctermid boundary is missing {required!r}"
+            )
+    ctermid_exports = set(
+        re.findall(
+            r'(?m)^pub\s+unsafe\s+extern\s+"C"\s+fn\s+(\w+)\s*\(',
+            ctermid_text,
+        )
+    )
+    if ctermid_exports != {"ctermid"}:
+        errors.append(
+            "libc/src/c_abi/x86_64/ctermid.rs: selected static historical "
+            "ctermid artifact must export only ctermid"
+        )
+    for forbidden in (
+        "raw_syscall::",
+        "errno::",
+        "termios_control::",
+        "getpass::",
+        "crabc_core",
+        "crabc_mimalloc",
+    ):
+        if forbidden in ctermid_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/ctermid.rs: selected static historical "
+                f"ctermid boundary must not select {forbidden!r}"
+            )
+
     getpass_source = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "getpass.rs"
     getpass_text = getpass_source.read_text(errors="replace")
     for required in (
@@ -5609,6 +5651,94 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         ROOT / "compat" / "x86_64" / "libc_getpass_start.S"
     ).read_text(errors="replace")
     x86_runner = (ROOT / "scripts" / "dev-x86_64.sh").read_text(errors="replace")
+    ctermid_runner = (
+        ROOT / "compat" / "x86_64" / "run_libc_ctermid.sh"
+    ).read_text(errors="replace")
+    ctermid_header_runner = (
+        ROOT / "compat" / "x86_64" / "run_ctermid_header_abi.sh"
+    ).read_text(errors="replace")
+    ctermid_header_c = (
+        ROOT / "compat" / "x86_64" / "ctermid_header_abi_probe.c"
+    ).read_text(errors="replace")
+    ctermid_header_cxx = (
+        ROOT / "compat" / "x86_64" / "ctermid_header_abi_probe.cpp"
+    ).read_text(errors="replace")
+    ctermid_probe = (
+        ROOT / "compat" / "x86_64" / "libc_ctermid_probe.c"
+    ).read_text(errors="replace")
+    ctermid_start = (
+        ROOT / "compat" / "x86_64" / "libc_ctermid_start.S"
+    ).read_text(errors="replace")
+    for required in (
+        "run_musl_oracle.sh",
+        "run_ctermid_header_abi.sh",
+        "static_c_abi_exports.txt",
+        "-nostdlib -static",
+        "--no-undefined",
+        "archive does not define ctermid",
+        "--disassemble=ctermid",
+        "ctermid candidate unexpectedly retains TLS",
+        "ctermid unexpectedly performs a syscall",
+        "candidate selects terminal, filesystem, or string helper behavior",
+    ):
+        if required not in ctermid_runner:
+            errors.append(
+                "compat/x86_64/run_libc_ctermid.sh: selected static historical "
+                f"ctermid evidence is missing {required!r}"
+            )
+    for required in (
+        "ctermid_header_abi_probe.c",
+        "ctermid_header_abi_probe.cpp",
+        "Pinned musl 1.2.6",
+        "strict ${language}",
+        "retained a mangled ctermid reference",
+    ):
+        if required not in ctermid_header_runner:
+            errors.append(
+                "compat/x86_64/run_ctermid_header_abi.sh: selected static historical "
+                f"ctermid declaration evidence is missing {required!r}"
+            )
+    for required in (
+        "ctermid declaration",
+        "ctermid_must_be_hidden",
+        "CRABC_REQUIRE_L_CTERMID_HIDDEN",
+        "L_ctermid",
+    ):
+        if required not in ctermid_header_c or required not in ctermid_header_cxx:
+            errors.append(
+                "compat/x86_64/ctermid_header_abi_probe: selected static historical "
+                f"ctermid declaration evidence is missing {required!r}"
+            )
+    for required in (
+        "L_ctermid == 20",
+        "expected_ctermid",
+        "ctermid((char *)0)",
+        "result != buffer",
+        "sizeof(expected_ctermid)",
+        "0x5aU",
+    ):
+        if required not in ctermid_probe:
+            errors.append(
+                "compat/x86_64/libc_ctermid_probe.c: selected static historical "
+                f"ctermid regression is missing {required!r}"
+            )
+    for required in ("crabc_x86_64_ctermid_probe", "mov $60, %eax"):
+        if required not in ctermid_start:
+            errors.append(
+                "compat/x86_64/libc_ctermid_start.S: selected static historical "
+                f"ctermid fixture is missing {required!r}"
+            )
+    for required in (
+        "ctermid-header-abi)",
+        "run_ctermid_header_abi",
+        "libc-ctermid)",
+        "run_libc_ctermid_probe",
+    ):
+        if required not in x86_runner:
+            errors.append(
+                "scripts/dev-x86_64.sh: selected historical ctermid dispatcher is "
+                f"missing {required!r}"
+            )
     for required in (
         "run_musl_oracle.sh",
         "run_getpass_header_abi.sh",
@@ -8140,6 +8270,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         pthread_once_text,
         pthread_tsd_text,
         termios_control_text,
+        ctermid_text,
         process_context_text,
         login_name_text,
         child_reaping_text,
@@ -8401,6 +8532,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         "tcsendbreak",
         "tcgetwinsize",
         "tcsetwinsize",
+        "ctermid",
         "getpid",
         "getppid",
         "getuid",
@@ -8628,7 +8760,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         errors.append(
             "libc/src/c_abi/x86_64: selected static archive must export only its "
             "stat, credential, errno, bootstrap-memory/fenv/continuation, simple "
-            "signal-control, bounded process-signal execution, and one legacy single-signal pause wait, bounded pthread create/exit/join/detach initial-TLS worker, its private selected-main/worker pthread-key/C11-TSS lifecycle, private process-normal pthread mutexes and their musl private condition-variable handoff, the complete selected rwlock/attribute family with private-or-shared futex operation, plus the distinct C11 plain-sync adapter and normal-return pthread/C11 once state machine, its typed C11 create/exit/join/detach sibling, and pthread/C11 identity aliases, named termios-control, selected process-context, child-reaping, C11 immediate termination, callback algorithms, direct clock_gettime, caller-owned mapping-core, no-cancellation mapping synchronization, direct anonymous-memory descriptor creation, nanosleep, and clock_nanosleep, selected "
+            "signal-control, bounded process-signal execution, and one legacy single-signal pause wait, bounded pthread create/exit/join/detach initial-TLS worker, its private selected-main/worker pthread-key/C11-TSS lifecycle, private process-normal pthread mutexes and their musl private condition-variable handoff, the complete selected rwlock/attribute family with private-or-shared futex operation, plus the distinct C11 plain-sync adapter and normal-return pthread/C11 once state machine, its typed C11 create/exit/join/detach sibling, and pthread/C11 identity aliases, named termios-control, historical ctermid pathname spelling, selected process-context, child-reaping, C11 immediate termination, callback algorithms, direct clock_gettime, caller-owned mapping-core, no-cancellation mapping synchronization, direct anonymous-memory descriptor creation, nanosleep, and clock_nanosleep, selected "
             "descriptor-entry, selected filesystem-access, bounded descriptor-control, timestamp updates, and descriptor-I/O, selected process-resources, selected readiness/signal-waits, "
             "selected socket transport and selected socket-message/options, selected system-observation, selected UTS-identity, "
             "selected numeric-address codecs, fixed-profile h_errno message text, byte-string, random-entropy, memory-search, C-string-copy, immutable error-string, "
@@ -8666,6 +8798,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         ("pthread_once.rs", pthread_once_text),
         ("pthread_tsd.rs", pthread_tsd_text),
         ("termios_control.rs", termios_control_text),
+        ("ctermid.rs", ctermid_text),
         ("mktemp.rs", mktemp_text),
         ("process_context.rs", process_context_text),
         ("child_reaping.rs", child_reaping_text),

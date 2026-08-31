@@ -69,7 +69,7 @@ for symbol in getlogin getlogin_r; do
         fail "archive does not define $symbol"
 done
 for unselected in getusershell setusershell endusershell getpwnam getpwuid \
-    getutent ttyname ctermid secure_getenv malloc free calloc realloc; do
+    getutent ttyname secure_getenv malloc free calloc realloc; do
     if grep -Eq "[[:space:]][TW][[:space:]]${unselected}$" "$archive_symbols"; then
         fail "archive accidentally exports unselected $unselected"
     fi
@@ -100,7 +100,7 @@ if grep -Eq 'TLSGD|TLSLD|TLSDESC|GOTTPOFF|DTPMOD(64)?|DTPOFF(32|64)?|__tls_get_a
 if grep -Eq 'crabc_core|mimalloc|sha_crypt' "$symbols" "$disassembly"; then
     fail "candidate selects an unowned runtime dependency"
 fi
-if grep -Eq 'getpw[a-z_]*|getut[a-z_]*|utmp|ttyname|ctermid' "$symbols" "$disassembly"; then
+if grep -Eq 'getpw[a-z_]*|getut[a-z_]*|utmp|ttyname' "$symbols" "$disassembly"; then
     fail "candidate selects a passwd/utmp/terminal dependency"
 fi
 "$candidate" || fail "freestanding login-name fixture failed"

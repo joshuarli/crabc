@@ -403,6 +403,8 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-pthread-affinity
 ./scripts/dev-x86_64.sh termios-header-abi
 ./scripts/dev-x86_64.sh libc-termios-control
+./scripts/dev-x86_64.sh ctermid-header-abi
+./scripts/dev-x86_64.sh libc-ctermid
 ./scripts/dev-x86_64.sh getpass-header-abi
 ./scripts/dev-x86_64.sh libc-getpass
 ./scripts/dev-x86_64.sh mktemp-header-abi
@@ -2964,6 +2966,19 @@ the action/request words and third ioctl argument for named calls. It excludes
 generic ioctl, `tcdrain`/cancellation, C terminal/session/PTY policy, dynamic
 runtime, and public x86 support.
 
+`libc-ctermid` is a separately recorded static `verified_artifact` gate over
+that archive, not a terminal or filesystem capability. Its POSIX/XSI C/C++
+header gate first proves `char *ctermid(char *)`, `L_ctermid == 20`, strict
+hiding, and C linkage against pinned musl. One project-header C body then
+executes through pinned musl and a `-nostdlib -static` candidate. It selects
+only the fixed `/dev/tty` spelling: null returns a borrowed immutable literal;
+a caller-owned `L_ctermid` buffer receives the nine NUL-terminated bytes and
+keeps its remaining tail. The candidate has no syscall, TLS/errno, allocation,
+terminal I/O, or string-helper path. It excludes terminal policy,
+PTY/session/termios/tty discovery, getpass, generic filesystem behavior,
+temporary-file families, filesystem handles, dynamic runtime, family
+completion, promotion, and public x86 support.
+
 `libc-getpass` is a separately recorded static `verified_artifact` gate over
 that archive, not a terminal or password capability. Its GNU/BSD C/C++ header
 gate and one project-header C body first execute through pinned musl and then
@@ -4750,6 +4765,7 @@ Apart from the narrowly named `libc-stat-compat`, `libc-credentials`,
 `libc-pthread-rwlock`, `libc-pthread-cond-private`, `libc-c11-plain-sync`, `libc-pthread-c11-once`,
 `libc-pthread-c11-tsd`,
 `libc-termios-control`,
+`libc-ctermid`,
 `libc-getpass`,
 `libc-mktemp`,
 `libc-process-context`, `libc-environment`, `libc-login-name`, `libc-child-reaping`, and
