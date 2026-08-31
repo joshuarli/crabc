@@ -909,6 +909,7 @@ ungetc
 unlink
 unsetenv
 uselocale
+usleep
 utime
 utimensat
 utimes

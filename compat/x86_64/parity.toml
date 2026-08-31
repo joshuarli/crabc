@@ -4236,6 +4236,62 @@ oracle = [
 ]
 
 [[family.verified_artifact]]
+id = "static-c-usleep"
+description = "Private native x86 selected-static-archive one-symbol historical microsecond nanosleep adapter artifact inside planned `libc.posix-runtime`. One dependency-free `crabc-libc` archive exposes exactly `usleep`; its freestanding project-header C fixture first runs through pinned musl 1.2.6 and then through a true `-nostdlib -static` candidate. Pinned musl's `src/unistd/usleep.c` builds one local timespec from `useconds / 1000000` and `(useconds % 1000000) * 1000`, then calls `nanosleep(&tv, &tv)`. The selected x86 LP64 translation takes `unsigned int`, gives `UINT_MAX` the canonical 4294-second/967295000-nanosecond interval, and calls the separately selected static `nanosleep` seam; final codegen may retain that call or inline its exact `nanosleep=35` body. The project-first/pinned-musl C/C++ feature matrix proves `int usleep(unsigned int)` and unmangled C++ linkage only for GNU/BSD/XOPEN<700, with default/strict/POSIX/XOPEN=700 hiding. The shared fixture proves zero and short stale-errno completion plus fixture-local raw-SIGALRM `EINTR` across 1000000, 1000001, and UINT_MAX requests. Raw `rt_sigaction=13`, `rt_sigprocmask=14`, `setitimer=38`, and `rt_sigreturn=15` are fixture-only interruption plumbing, not C ABI selections. This is neither `sleep`, `alarm`, `ualarm`, interval/ POSIX timer control, nor a C sleep-policy runtime; it does not select handlers/actions, signal masks, process signaling, waits, queues, descriptors, timers, pthread policy, signal-family/timer-family completion, promotion, or public x86 support."
+source_owners = [
+  "compat/upstreams.toml",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/usleep.rs",
+  "libc/src/c_abi/x86_64/nanosleep.rs",
+  "libc/src/c_abi/x86_64/errno.rs",
+  "libc/src/c_abi/x86_64/static_tls.rs",
+  "libc/src/c_abi/x86_64/syscall.rs",
+  "include/errno.h",
+  "include/limits.h",
+  "include/signal.h",
+  "include/stddef.h",
+  "include/stdint.h",
+  "include/unistd.h",
+  "include/sys/time.h",
+  "include/sys/select.h",
+  "include/sys/syscall.h",
+  "include/bits/alltypes.h",
+  "include/bits/syscall.h",
+  "compat/x86_64/usleep_header_abi_probe.c",
+  "compat/x86_64/usleep_header_abi_probe.cpp",
+  "compat/x86_64/run_usleep_header_abi.sh",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/libc_usleep_probe.c",
+  "compat/x86_64/libc_usleep_start.S",
+  "compat/x86_64/run_libc_usleep.sh",
+  "compat/x86_64/aarch64_parity_inventory.py",
+  "compat/x86_64/aarch64_parity_inventory.json",
+  "compat/x86_64/tests/test_aarch64_parity_inventory.py",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "compat/x86_64/README.md",
+  "STATUS.md",
+  "x86-64.md",
+  "scripts/dev-x86_64.sh",
+  "scripts/check_structure.py",
+]
+x86_abi_prerequisites = [
+  "Linux/x86-64 SysV passes `int usleep(unsigned int)`'s four-byte unsigned microsecond value in edi and returns its signed int status in eax. Pinned musl's local timespec is 16-byte align-8 LP64 storage: `UINT_MAX=4294967295` maps to tv_sec=4294 and tv_nsec=967295000 before the selected nanosleep=35 request/remaining rdi/rsi ABI.",
+  "Pinned musl 1.2.6 `src/unistd/usleep.c` has the complete source closure: divide/remainder normalization followed by `nanosleep(&tv, &tv)`. The Rust adapter invokes the separately selected static nanosleep boundary rather than creating its own syscall, errno, cancellation, or timer implementation; an optimized final candidate may inline that sibling's nanosleep=35 body.",
+  "The common pinned-musl/candidate C body proves zero and 1000-microsecond completion with stale ERANGE, then fixture-only raw rt_sigaction=13/rt_sigprocmask=14/setitimer=38/rt_sigreturn=15 interruption makes 1000000, 1000001, and UINT_MAX return -1/EINTR. Static Initial TLS v1 exists only for ordinary errno observation; the fixture does not claim CRT, handler/action, mask, or timer ownership.",
+]
+x86_header_prerequisites = ["The dedicated project-first/pinned-musl C11/C++17 usleep matrix proves exact `int usleep(unsigned int)` and unmangled C++ linkage in the GNU, BSD, and XOPEN=600 visible profiles; default, strict, POSIX.1-2008, and XOPEN=700 fail the opt-in reference, with `-U_GNU_SOURCE` preventing ambient C++ widening. It is a declaration proof only, not sleep/timer/signal-family completion."]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-usleep", scope = "Pinned-musl 1.2.6 project-header C reference plus a C/C++ feature matrix and true dependency-free x86 crabc-libc archive with a `-nostdlib -static` candidate. The gate checks the closed crate-owned C-object export surface; rejects an interpreter, DT_NEEDED, unresolved symbols, dynamic TLS, unowned runtime, sleep/alarm/ualarm, public interval/POSIX timers, handlers/actions, signal masks, process signaling, waits, queues, descriptors, pthreads, allocator, auxv, and sysconf paths; proves direct initial-TLS errno and either the selected nanosleep call or its exact inlined nanosleep=35 codegen; and executes zero/short stale-errno completion plus raw-fixture SIGALRM EINTR for 1000000, 1000001, and UINT_MAX. Raw action/mask/timer/restorer syscalls are fixture-only and add no signal runtime. It does not select C sleep policy, signal-family/timer-family completion, promotion, or public x86 support." }]
+oracle = [
+  { kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source mapping, GNU/BSD/XOPEN<700 declaration, and ordinary behavior oracle for src/unistd/usleep.c: unsigned microsecond quotient/remainder normalization and nanosleep(&tv, &tv)." },
+  { kind = "kernel-abi", source = "Linux 5.10 x86-64 ABI", role = "nanosleep=35 request/remaining record ABI plus fixture-only rt_sigaction=13, rt_sigprocmask=14, setitimer=38, and rt_sigreturn=15 interruption plumbing." },
+  { kind = "elf-abi", source = "System V AMD64 psABI", role = "LP64 unsigned-int/int return calling convention, 16-byte timespec layout, static initial-TLS errno, and freestanding final-ELF boundary." },
+]
+
+[[family.verified_artifact]]
 id = "static-c-descriptor-entry"
 description = "Private native x86 selected-static-archive descriptor-entry block. One dependency-free `crabc-libc` archive resolves exactly `open`, `openat`, and `creat` into a freestanding C fixture after an equivalent pinned-musl execution. The block preserves musl's variadic-mode selection only for O_CREAT or complete O_TMPFILE, injects O_LARGEFILE, uses open=2 for `open` and openat=257 for `openat`, and retains musl's ignored-result private F_SETFD/FD_CLOEXEC fix-up after successful `open(O_CLOEXEC)`. The fixture uses only raw fcntl syscalls to observe descriptor state and owns a PID-specific temporary directory. This closes no filesystem capability and does not expand C fcntl beyond the separately recorded bounded status-control artifact, pathname normalization/policy, vector I/O, cancellation, libc.so, CRT, pthread/TLS lifecycle, dynamic TLS, loader, sysroot, allocator, or public x86 support."
 source_owners = [

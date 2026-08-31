@@ -91,8 +91,9 @@
 //! raw initial auxiliary-vector observation, and option parsing,
 //! callback-algorithms, allocator-export-free AVL callback-tree search, and
 //! allocator-export-free hash-table search, a bounded no-catalog
-//! gettext/message-catalog ABI profile, and POSIX `nanosleep`
-//! and `clock_nanosleep`, direct clock-observation artifacts, one binary64
+//! gettext/message-catalog ABI profile, POSIX `nanosleep`, one historical
+//! microsecond `usleep` adapter, and `clock_nanosleep`, direct
+//! clock-observation artifacts, one binary64
 //! scalar `difftime` artifact, one caller-buffered fixed-UTC `gmtime_r`
 //! conversion artifact, and one fixed-UTC `timegm` conversion artifact, plus one
 //! bounded System V message-queue/shared-memory artifact, one bounded
@@ -410,6 +411,8 @@ mod timegm;
 mod time_observation;
 #[path = "nanosleep.rs"]
 mod nanosleep;
+#[path = "usleep.rs"]
+mod usleep;
 #[path = "descriptor_entry.rs"]
 mod descriptor_entry;
 #[path = "filesystem_access.rs"]

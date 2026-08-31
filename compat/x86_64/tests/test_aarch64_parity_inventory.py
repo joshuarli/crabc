@@ -65,6 +65,14 @@ class AArch64ParityInventoryTests(unittest.TestCase):
         )
         self.assertEqual(text_math["verified_slice_count"], 5)
         self.assertEqual(text_math["verified_artifact_count"], 38)
+        posix_runtime = next(
+            row for row in report["families"] if row["id"] == "libc.posix-runtime"
+        )
+        self.assertEqual(posix_runtime["verified_artifact_count"], 97)
+        self.assertIn(
+            {"family": "libc.posix-runtime", "id": "static-c-usleep"},
+            report["selected_private_artifacts"],
+        )
         self.assertEqual(
             {row["contract_state"] for row in report["capabilities"]},
             {"implemented-foundation", "selected-private", "missing"},

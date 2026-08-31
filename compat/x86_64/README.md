@@ -281,6 +281,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh vector-io-header-abi
 ./scripts/dev-x86_64.sh unistd-header-abi
 ./scripts/dev-x86_64.sh getpagesize-header-abi
+./scripts/dev-x86_64.sh usleep-header-abi
 ./scripts/dev-x86_64.sh system-header-abi
 ./scripts/dev-x86_64.sh syscall-header-abi
 ./scripts/dev-x86_64.sh signal-header-abi
@@ -400,6 +401,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-sigrtmin
 ./scripts/dev-x86_64.sh libc-sched-getscheduler
 ./scripts/dev-x86_64.sh libc-alarm
+./scripts/dev-x86_64.sh libc-usleep
 ./scripts/dev-x86_64.sh libc-sigaddset-sigdelset-sigfillset
 ./scripts/dev-x86_64.sh libc-static-tls-v1
 ./scripts/dev-x86_64.sh libc-crt-static-tls
@@ -475,6 +477,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh qualification-posix-abi-admission
 ./scripts/dev-x86_64.sh libc-header-layouts-baseline
 ./scripts/dev-x86_64.sh libc-nanosleep
+./scripts/dev-x86_64.sh libc-usleep
 ./scripts/dev-x86_64.sh libc-clock-nanosleep
 ./scripts/dev-x86_64.sh libc-descriptor-entry
 ./scripts/dev-x86_64.sh libc-access
@@ -1483,6 +1486,13 @@ C++ linkage while proving default, strict, POSIX, and XOPEN hiding. It is
 header-only evidence; it does not select general page-size discovery,
 `sysconf`/path configuration behavior, archive linkage, C runtime, or public
 x86 support.
+
+`usleep-header-abi` is a separate project-first/pinned-musl C11/C++17
+`<unistd.h>` declaration matrix for only `int usleep(unsigned int)`. It proves
+GNU, BSD, and XOPEN=600 visibility with unmangled C++ linkage while default,
+strict, POSIX, and XOPEN=700 correctly hide the opt-in declaration. It is
+header-only evidence; it does not select sleep policy, timers, signals, archive
+linkage, C runtime, or public x86 support.
 
 `system-header-abi` compiles project and pinned-musl C/C++ `<sys/utsname.h>`
 and `<sys/sysinfo.h>` declarations, including the GNU 65-byte `nodename` and
@@ -3030,6 +3040,19 @@ select handlers/actions, signal masks, waits, delivery policy, POSIX timers,
 timer descriptors, pthread policy, signal/timer-family completion, AArch64
 parity, promotion, or public x86 support.
 
+`libc-usleep` is a separate `static-c-usleep` `verified_artifact` within
+planned `libc.posix-runtime`. Its one-symbol project-header C body first runs
+through pinned musl 1.2.6 and then through a true `-nostdlib -static`
+candidate. It maps only `src/unistd/usleep.c`: unsigned microseconds become a
+local LP64 `timespec` through quotient/remainder normalization and then pass to
+the separately selected `nanosleep(&tv, &tv)` seam. The C/C++ feature matrix
+proves GNU/BSD/XOPEN<700 declaration visibility, and the shared fixture proves
+zero/short stale-errno completion plus fixture-only raw-SIGALRM `EINTR` across
+1000000, 1000001, and `UINT_MAX`. It does not select `sleep`, `alarm`,
+`ualarm`, timer control, handlers/actions, masks, process signaling, waits,
+queues, descriptors, pthread policy, family completion, promotion, or public
+x86 support.
+
 `libc-sigaddset-sigdelset-sigfillset` is a separate
 `static-c-sigset-mutation` `verified_artifact` within planned
 `libc.posix-runtime`. Its project-header C body runs first through pinned musl
@@ -3981,6 +4004,17 @@ on error. Musl's `nanosleep` delegates through its relative realtime
 leaf intentionally omits pthread cancellation until the x86 pthread/TLS
 runtime exists. It excludes `sleep`/`usleep`, C clock/timer state, signal
 policy, dynamic runtime, and public x86 support.
+
+`libc-usleep` is a separately recorded `static-c-usleep` `verified_artifact`
+over that archive, not a C sleep or timer capability. Its project-header C
+body first executes through pinned musl and then through a `-nostdlib -static`
+candidate. It retains musl's whole source closure in `src/unistd/usleep.c`:
+`unsigned int` microseconds normalize to one local LP64 `timespec`, and the
+same record passes as both arguments to the selected `nanosleep(&tv, &tv)`
+seam. Completion preserves stale errno; fixture-only raw-SIGALRM interruption
+produces `-1`/`EINTR` at 1000000, 1000001, and `UINT_MAX`. It excludes
+`sleep`, `alarm`, `ualarm`, timer state, signal policy, pthread policy, dynamic
+runtime, and public x86 support.
 
 `libc-clock-nanosleep` is a separately recorded
 `static-c-clock-nanosleep` `verified_artifact` gate over that archive, not a C
@@ -5706,7 +5740,8 @@ Apart from the narrowly named `libc-stat-compat`, `libc-credentials`,
 `libc-sigisemptyset`, `libc-sigandset-sigorset`, `libc-sigpending`, and
 `libc-sigrtmax`, `libc-sigrtmin`, `libc-sched-getscheduler`,
 `libc-sigaddset-sigdelset-sigfillset`,
-`libc-sigrtmax`, `libc-sigrtmin`, `libc-alarm`, `libc-sigaddset-sigdelset-sigfillset`,
+`libc-sigrtmax`, `libc-sigrtmin`, `libc-alarm`, `libc-usleep`,
+`libc-sigaddset-sigdelset-sigfillset`,
 `libc-static-tls-v1`, `libc-crt-static-tls`,
 `libc-pthread-create-join-tls`, `libc-pthread-identity`, `libc-c11-lifecycle`,
 `libc-pthread-detach`, `libc-thrd-sleep`, `libc-thrd-yield`, `libc-pthread-cpuclock`, `libc-pthread-name`, `libc-pthread-barrierattr-pshared`, `libc-pthread-mutex-normal`,
@@ -5741,6 +5776,7 @@ Apart from the narrowly named `libc-stat-compat`, `libc-credentials`,
 `libc-memfd-create`,
 `libc-header-layouts-baseline`,
 `libc-nanosleep`,
+`libc-usleep`,
 `libc-clock-nanosleep`,
 `libc-descriptor-entry`,
 `libc-access`,

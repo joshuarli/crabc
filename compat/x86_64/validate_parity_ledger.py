@@ -20395,6 +20395,203 @@ def require_nanosleep_artifact(family: Mapping[str, Any]) -> None:
     )
 
 
+def require_usleep_artifact(family: Mapping[str, Any]) -> None:
+    """Keep musl's historical microsecond wrapper below timer promotion."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.posix-runtime].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [entry for entry in artifacts if entry.get("id") == "static-c-usleep"]
+    require(
+        len(matching) == 1,
+        "libc.posix-runtime must contain exactly one static-c-usleep artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-usleep must not promote libc.posix-runtime",
+    )
+    artifact = matching[0]
+    require(
+        "capabilities" not in artifact,
+        "static-c-usleep must remain a private artifact without capabilities",
+    )
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for phrase in (
+        "one-symbol historical microsecond nanosleep adapter artifact",
+        "planned `libc.posix-runtime`",
+        "exactly `usleep`",
+        "`src/unistd/usleep.c`",
+        "`nanosleep(&tv, &tv)`",
+        "`UINT_MAX`",
+        "GNU/BSD/XOPEN<700",
+        "default/strict/POSIX/XOPEN=700",
+        "Raw `rt_sigaction=13`",
+        "`setitimer=38`",
+        "`sleep`, `alarm`, `ualarm`",
+        "handlers/actions",
+        "signal masks",
+        "process signaling",
+        "waits, queues, descriptors, timers",
+        "pthread policy",
+        "signal-family/timer-family completion, promotion, or public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"static-c-usleep description omits {phrase}",
+        )
+    owners = set(
+        nonempty_strings(artifact["source_owners"], "static-c-usleep.source_owners")
+    )
+    for owner in (
+        "compat/upstreams.toml",
+        "libc/Cargo.toml",
+        "libc/src/lib.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/usleep.rs",
+        "libc/src/c_abi/x86_64/nanosleep.rs",
+        "libc/src/c_abi/x86_64/errno.rs",
+        "libc/src/c_abi/x86_64/static_tls.rs",
+        "libc/src/c_abi/x86_64/syscall.rs",
+        "include/errno.h",
+        "include/limits.h",
+        "include/signal.h",
+        "include/stddef.h",
+        "include/stdint.h",
+        "include/unistd.h",
+        "include/sys/time.h",
+        "include/sys/select.h",
+        "include/sys/syscall.h",
+        "include/bits/alltypes.h",
+        "include/bits/syscall.h",
+        "compat/x86_64/usleep_header_abi_probe.c",
+        "compat/x86_64/usleep_header_abi_probe.cpp",
+        "compat/x86_64/run_usleep_header_abi.sh",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/libc_usleep_probe.c",
+        "compat/x86_64/libc_usleep_start.S",
+        "compat/x86_64/run_libc_usleep.sh",
+        "compat/x86_64/aarch64_parity_inventory.py",
+        "compat/x86_64/aarch64_parity_inventory.json",
+        "compat/x86_64/tests/test_aarch64_parity_inventory.py",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/README.md",
+        "STATUS.md",
+        "x86-64.md",
+        "scripts/dev-x86_64.sh",
+        "scripts/check_structure.py",
+    ):
+        require(owner in owners, f"static-c-usleep source owners omit {owner}")
+    prerequisites = nonempty_strings(
+        artifact["x86_abi_prerequisites"], "static-c-usleep.x86_abi_prerequisites"
+    )
+    require(
+        any(
+            "int usleep(unsigned int)" in item
+            and "edi" in item
+            and "eax" in item
+            and "UINT_MAX=4294967295" in item
+            and "4294" in item
+            and "967295000" in item
+            and "nanosleep=35" in item
+            and "rdi/rsi" in item
+            for item in prerequisites
+        ),
+        "static-c-usleep must record its x86 scalar, timespec, and syscall ABI",
+    )
+    require(
+        any(
+            "src/unistd/usleep.c" in item
+            and "nanosleep(&tv, &tv)" in item
+            and "separately selected static nanosleep boundary" in item
+            and "cancellation" in item
+            and "inline" in item
+            for item in prerequisites
+        ),
+        "static-c-usleep must retain its pinned-musl source closure",
+    )
+    require(
+        any(
+            "1000000" in item
+            and "1000001" in item
+            and "UINT_MAX" in item
+            and "-1/EINTR" in item
+            and "Static Initial TLS v1" in item
+            and "does not claim CRT" in item
+            for item in prerequisites
+        ),
+        "static-c-usleep must retain its static differential and TLS boundary",
+    )
+    headers = nonempty_strings(
+        artifact["x86_header_prerequisites"], "static-c-usleep.x86_header_prerequisites"
+    )
+    require(
+        any(
+            "C11/C++17 usleep matrix" in item
+            and "int usleep(unsigned int)" in item
+            and "GNU, BSD, and XOPEN=600" in item
+            and "XOPEN=700" in item
+            and "unmangled C++ linkage" in item
+            and "-U_GNU_SOURCE" in item
+            for item in headers
+        ),
+        "static-c-usleep must retain its exact C/C++ feature matrix",
+    )
+    static_exports = set(
+        static_c_abi_export_names(
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        )
+    )
+    require(
+        "usleep" in static_exports,
+        "static-c-usleep must expose its exact historical adapter spelling",
+    )
+    oracle = artifact["oracle"]
+    assert isinstance(oracle, list)
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "c-posix"
+            and isinstance(entry.get("role"), str)
+            and "src/unistd/usleep.c" in entry["role"]
+            and "nanosleep(&tv, &tv)" in entry["role"]
+            for entry in oracle
+        ),
+        "static-c-usleep must retain its pinned-musl usleep oracle",
+    )
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-usleep"},
+        "static-c-usleep must use the closed libc-usleep command",
+    )
+    scope = evidence[0].get("scope")
+    require(
+        isinstance(scope, str)
+        and all(
+            phrase in scope
+            for phrase in (
+                "Pinned-musl 1.2.6",
+                "C/C++ feature matrix",
+                "`-nostdlib -static` candidate",
+                "sleep/alarm/ualarm",
+                "handlers/actions",
+                "signal masks",
+                "process signaling",
+                "waits, queues, descriptors",
+                "nanosleep call or its exact inlined nanosleep=35 codegen",
+                "raw-fixture SIGALRM EINTR",
+                "signal-family/timer-family completion, promotion, or public x86 support",
+            )
+        ),
+        "static-c-usleep evidence must retain its exact bounded static regression",
+    )
+
+
 def require_descriptor_entry_artifact(family: Mapping[str, Any]) -> None:
     """Keep the static C descriptor-entry artifact concrete and non-promoting."""
     artifacts = require_verified_artifacts(
@@ -42822,6 +43019,7 @@ def validate_ledger(
     require_sigset_mutation_artifact(by_id["libc.posix-runtime"])
     require_clock_nanosleep_artifact(by_id["libc.posix-runtime"])
     require_nanosleep_artifact(by_id["libc.posix-runtime"])
+    require_usleep_artifact(by_id["libc.posix-runtime"])
     require_descriptor_entry_artifact(by_id["libc.posix-runtime"])
     require_lchmod_unsupported_slice(by_id["libc.posix-runtime"])
     require_mkfifo_artifact(by_id["libc.posix-runtime"])
