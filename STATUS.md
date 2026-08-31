@@ -291,6 +291,23 @@ file actions, attribute initialization or any other mutation/query, child
 lifecycle, signal or scheduler behavior, generic process control, family
 completion, promotion, or public x86 support.
 
+`./scripts/dev-x86_64.sh libc-posix-spawnattr-setschedpolicy` is a separate
+private `static-c-posix-spawnattr-setschedpolicy` artifact inside still-planned
+`libc.c-abi-compat`. Its pinned-musl/project `<spawn.h>` C/C++ matrix proves
+unconditional `int posix_spawnattr_setschedpolicy(posix_spawnattr_t *, int)`,
+its exact opaque-pointer/value type, and unmangled linkage under strict, POSIX,
+X/Open, and GNU profiles. Pinned musl 1.2.6
+`src/process/posix_spawnattr_sched.c::posix_spawnattr_setschedpolicy` is
+exactly `return ENOSYS;`; the true-static `--gc-sections` fixture proves
+direct/function-pointer fixed `ENOSYS` returns for byte-filled caller storage
+and null pointers, leaves caller bytes unchanged, and preserves stale errno on
+the musl reference route. The source neither reads nor writes or retains
+attribute storage, so no record layout crosses this leaf. It does not select
+spawn execution, file actions, attribute initialization or other
+mutation/query, scheduler-policy/parameter behavior, child lifecycle, signal
+behavior, generic process control, family completion, promotion, or public x86
+support.
+
 `./scripts/dev-x86_64.sh libc-posix-spawn-file-actions-init` is a separate
 private `static-c-posix-spawn-file-actions-init` artifact inside still-planned
 `libc.c-abi-compat`. Its pinned-musl/project `<spawn.h>` C/C++ matrix proves

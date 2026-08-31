@@ -611,6 +611,7 @@ posix_spawn_file_actions_init
 posix_spawnattr_destroy
 posix_spawnattr_getflags
 posix_spawnattr_setpgroup
+posix_spawnattr_setschedpolicy
 powl
 ppoll
 pread

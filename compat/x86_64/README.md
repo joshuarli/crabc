@@ -3632,6 +3632,27 @@ child lifecycle, signal or scheduler behavior, generic process control,
 libc.so, CRT, loader, sysroot, family completion, promotion, or public x86
 support.
 
+`posix-spawnattr-setschedpolicy-header-abi` and
+`libc-posix-spawnattr-setschedpolicy` record a separate private
+`static-c-posix-spawnattr-setschedpolicy` artifact inside still-planned
+`libc.c-abi-compat`, not a spawn or process capability. The pinned-musl/project
+`<spawn.h>` C/C++ matrix proves unconditional
+`int posix_spawnattr_setschedpolicy(posix_spawnattr_t *, int)` under strict,
+POSIX, X/Open, and GNU profiles, its exact opaque-pointer/value function type,
+and unmangled C++ linkage through the header's C-linkage guards. The shared C
+body then executes through pinned musl and one true dependency-free `-nostdlib
+-static --gc-sections` candidate. Musl 1.2.6
+`src/process/posix_spawnattr_sched.c::posix_spawnattr_setschedpolicy` is
+exactly `return ENOSYS;`; the fixture proves direct/function-pointer fixed
+ENOSYS returns for a byte-filled caller record and a null pointer, unchanged
+caller bytes, and stale-errno preservation on the ordinary musl route. The
+source neither reads nor writes its pointer, so no caller-record layout crosses
+this slice. The candidate rejects peer spawn extraction. It does not select
+spawn execution, file actions, attribute initialization or other mutation/query,
+scheduler-policy/parameter behavior, child lifecycle, signal behavior, generic
+process control, libc.so, CRT, loader, sysroot, family completion, promotion,
+or public x86 support.
+
 `posix-spawn-file-actions-init-header-abi` and
 `libc-posix-spawn-file-actions-init` record a separate private
 `static-c-posix-spawn-file-actions-init` artifact inside still-planned
