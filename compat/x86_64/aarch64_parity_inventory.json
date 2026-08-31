@@ -1435,7 +1435,7 @@
       "capability_count": 9,
       "contract_state": "selected-private",
       "id": "libc.posix-runtime",
-      "verified_artifact_count": 123,
+      "verified_artifact_count": 133,
       "verified_slice_count": 3
     },
     {
@@ -2140,6 +2140,10 @@
     },
     {
       "family": "libc.posix-runtime",
+      "id": "static-c-personality"
+    },
+    {
+      "family": "libc.posix-runtime",
       "id": "static-c-posix-exit"
     },
     {
@@ -2149,6 +2153,18 @@
     {
       "family": "libc.posix-runtime",
       "id": "static-c-posix-semaphore"
+    },
+    {
+      "family": "libc.posix-runtime",
+      "id": "static-c-posix-spawnattr-getpgroup"
+    },
+    {
+      "family": "libc.posix-runtime",
+      "id": "static-c-posix-spawnattr-getschedpolicy"
+    },
+    {
+      "family": "libc.posix-runtime",
+      "id": "static-c-posix-spawnattr-init"
     },
     {
       "family": "libc.posix-runtime",
@@ -2180,7 +2196,15 @@
     },
     {
       "family": "libc.posix-runtime",
+      "id": "static-c-sched-getaffinity"
+    },
+    {
+      "family": "libc.posix-runtime",
       "id": "static-c-sched-getcpu"
+    },
+    {
+      "family": "libc.posix-runtime",
+      "id": "static-c-sched-getparam"
     },
     {
       "family": "libc.posix-runtime",
@@ -2189,6 +2213,10 @@
     {
       "family": "libc.posix-runtime",
       "id": "static-c-sched-priority-bounds"
+    },
+    {
+      "family": "libc.posix-runtime",
+      "id": "static-c-sched-setparam"
     },
     {
       "family": "libc.posix-runtime",
@@ -2201,6 +2229,14 @@
     {
       "family": "libc.posix-runtime",
       "id": "static-c-sendfile"
+    },
+    {
+      "family": "libc.posix-runtime",
+      "id": "static-c-setfsgid"
+    },
+    {
+      "family": "libc.posix-runtime",
+      "id": "static-c-setfsuid"
     },
     {
       "family": "libc.posix-runtime",
@@ -2265,6 +2301,10 @@
     {
       "family": "libc.posix-runtime",
       "id": "static-c-strsep"
+    },
+    {
+      "family": "libc.posix-runtime",
+      "id": "static-c-strtok"
     },
     {
       "family": "libc.posix-runtime",
@@ -2791,9 +2831,9 @@
     "aarch64_abi_manifest": "33dd504470f467caac7b149e747ee2b7ff8714c4fb23dfe5ad46e7f58bfe610c",
     "aarch64_capability_ledger": "128458dde00073bc0320b94972d864e66fa10d5f54e92b1b1c83081e2b4955e0",
     "aarch64_headers": "a0d35f0950abb3c060b978dfb5257cf50f70bed46ce91d371f43d65db7626b68",
-    "x86_parity_ledger": "bb1609ce49c65d642fce331dd2a14bd27ca46531ec4d4b7c34d0b1d7f8dbd64d",
+    "x86_parity_ledger": "ddc963e9087d398684b6f4ffd4882dc7d28ed9a5144db243ba4c63951c20621e",
     "x86_public_headers": "2cdcd860a423d99afef8360b6376447cf17ae926f1cd47416be817d421fca80f",
-    "x86_static_c_exports": "f9851dbb37efa59ca35e17ceb0ffc64dcbae54640acb386fcb6d977418a18858"
+    "x86_static_c_exports": "a63dd79fa08c279c17697c7b1c66f19ebd144cdec8ff51af8c1daa56c621c077"
   },
   "unsupported_contracts": [
     {
@@ -2805,7 +2845,7 @@
     "promotion_family_count": 26,
     "promotion_ready": false,
     "public_support": false,
-    "selected_static_export_count": 1073,
-    "selected_static_exports_in_aarch64_dynamic_candidate_set": 1052
+    "selected_static_export_count": 1083,
+    "selected_static_exports_in_aarch64_dynamic_candidate_set": 1062
   }
 }

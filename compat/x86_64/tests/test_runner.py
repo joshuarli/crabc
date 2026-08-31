@@ -1457,6 +1457,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "memccpy-header-abi",
             "mempcpy-header-abi",
             "strsep-header-abi",
+            "strtok-header-abi",
             "string-copy-header-abi",
             "error-strings-header-abi|strsignal-header-abi|gettext-catalog-header-abi",
             "string-duplication-header-abi",
@@ -1484,6 +1485,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "libc-memccpy",
             "libc-mempcpy",
             "libc-strsep",
+            "libc-strtok",
             "libc-allocator-runtime",
             "libc-allocator-string-duplication",
             "libc-allocator-observability",
@@ -14945,6 +14947,567 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         )
         self.assertIn("strsep-header-abi", runner)
         self.assertIn("libc-strsep", runner)
+
+    def test_libc_static_c_abi_strtok_artifact_keeps_shared_state_bounded(self) -> None:
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        implementation = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "strtok.rs"
+        ).read_text(encoding="utf-8")
+        fixture = (
+            ROOT / "compat" / "x86_64" / "libc_strtok_probe.c"
+        ).read_text(encoding="utf-8")
+        artifact_runner = (
+            ROOT / "compat" / "x86_64" / "run_libc_strtok.sh"
+        ).read_text(encoding="utf-8")
+        header_c = (
+            ROOT / "compat" / "x86_64" / "strtok_header_abi_probe.c"
+        ).read_text(encoding="utf-8")
+        header_cxx = (
+            ROOT / "compat" / "x86_64" / "strtok_header_abi_probe.cpp"
+        ).read_text(encoding="utf-8")
+        header_runner = (
+            ROOT / "compat" / "x86_64" / "run_strtok_header_abi.sh"
+        ).read_text(encoding="utf-8")
+        static_exports = (
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        ).read_text(encoding="utf-8")
+        parity_ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        runner = RUNNER.read_text(encoding="utf-8")
+
+        self.assertIn('#[path = "strtok.rs"]\nmod strtok;', static_root)
+        for required in (
+            "src/string/strtok.c",
+            "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+            "static mut CONTINUATION",
+            "shared\n//! non-TLS cursor",
+            "skip_separators",
+            "token_end",
+            'pub unsafe extern "C" fn strtok',
+            "concurrent\n//! unsynchronized calls",
+        ):
+            self.assertIn(required, implementation)
+        for forbidden in (
+            "errno::",
+            "raw_syscall",
+            "crabc_core",
+            "crabc_mimalloc",
+            "strtok_r",
+        ):
+            self.assertNotIn(forbidden, implementation)
+
+        for required in (
+            "CRABC_STRTOK_FREESTANDING",
+            "check_primary_sequence",
+            "check_empty_and_empty_separator",
+            "check_replacement_and_shared_cursor",
+            "check_high_byte_separator",
+            "errno = E2BIG",
+        ):
+            self.assertIn(required, fixture)
+        for required in (
+            "strtok.lo",
+            "run_strtok_header_abi.sh",
+            "-nostdlib -static",
+            "--no-undefined",
+            "strtok object unexpectedly depends on another symbol",
+            "call|syscall",
+            "strtok_r strsep strspn strcspn",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn("--whole-archive", artifact_runner)
+        for header_probe in (header_c, header_cxx):
+            for required in ("strtok_signature", "CRABC_EXPECT_STRTOK", "strtok declaration"):
+                self.assertIn(required, header_probe)
+        for required in (
+            "CANDIDATE_CC=/usr/bin/gcc",
+            "-nostdinc",
+            "-nostdinc++",
+            "strict_definitions=(-D__STRICT_ANSI__)",
+            "posix_definitions=(-D_POSIX_C_SOURCE=200809L)",
+            "xopen_definitions=(-D_XOPEN_SOURCE=700)",
+            "retain C linkage",
+            "escaped its declared roots",
+        ):
+            self.assertIn(required, header_runner)
+        self.assertIn("strtok", static_exports.splitlines())
+        self.assertIn('id = "static-c-strtok"', parity_ledger)
+        self.assertIn(
+            'command = "./scripts/dev-x86_64.sh libc-strtok"', parity_ledger
+        )
+        self.assertIn("strtok-header-abi", runner)
+        self.assertIn("libc-strtok", runner)
+
+    def test_libc_static_c_abi_posix_spawnattr_init_artifact_stays_narrow(
+        self,
+    ) -> None:
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        implementation = (
+            ROOT
+            / "libc"
+            / "src"
+            / "c_abi"
+            / "x86_64"
+            / "posix_spawnattr_init.rs"
+        ).read_text(encoding="utf-8")
+        probe = (
+            ROOT / "compat" / "x86_64" / "libc_posix_spawnattr_init_probe.c"
+        ).read_text(encoding="utf-8")
+        start = (
+            ROOT / "compat" / "x86_64" / "libc_posix_spawnattr_init_start.S"
+        ).read_text(encoding="utf-8")
+        artifact_runner = (
+            ROOT / "compat" / "x86_64" / "run_libc_posix_spawnattr_init.sh"
+        ).read_text(encoding="utf-8")
+        header_runner = (
+            ROOT
+            / "compat"
+            / "x86_64"
+            / "run_posix_spawnattr_init_header_abi.sh"
+        ).read_text(encoding="utf-8")
+        header_c = (
+            ROOT
+            / "compat"
+            / "x86_64"
+            / "posix_spawnattr_init_header_abi_probe.c"
+        ).read_text(encoding="utf-8")
+        header_cxx = (
+            ROOT
+            / "compat"
+            / "x86_64"
+            / "posix_spawnattr_init_header_abi_probe.cpp"
+        ).read_text(encoding="utf-8")
+        spawn_header = (ROOT / "include" / "spawn.h").read_text(encoding="utf-8")
+        static_exports = {
+            line
+            for line in (
+                ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+            ).read_text(encoding="utf-8").splitlines()
+            if line and not line.startswith("#")
+        }
+        parity_ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        runner = RUNNER.read_text(encoding="utf-8")
+
+        self.assertIn(
+            '#[path = "posix_spawnattr_init.rs"]\nmod posix_spawnattr_init;',
+            static_root,
+        )
+        for required in (
+            "Selected static Linux/x86-64 POSIX spawn-attribute initialization C ABI",
+            "musl 1.2.6 release commit",
+            "src/process/posix_spawnattr_init.c::posix_spawnattr_init",
+            "PosixSpawnAttr",
+            "const _: [(); 336]",
+            "const _: [(); 8]",
+            "POSIX_SPAWNATTR_INIT_WORDS",
+            "core::arch::asm!",
+            "mov qword ptr [{attributes} + rcx * 8 - 8], rax",
+            'pub unsafe extern "C" fn posix_spawnattr_init',
+            "generic AArch64 export\n//! and behavior exactly",
+        ):
+            self.assertIn(required, implementation)
+        for forbidden in (
+            "raw_syscall::",
+            "errno::",
+            "static_tls::",
+            "crabc_core",
+            "crabc_mimalloc",
+            "posix_spawnp",
+            "fork(",
+            "execve",
+        ):
+            self.assertNotIn(forbidden, implementation)
+
+        for required in (
+            "#include <spawn.h>",
+            "posix_spawnattr_init_signature",
+            "struct guarded_attributes",
+            "fill_bytes",
+            "attributes_are_zero",
+            "check_guarded_initialization",
+            "errno = E2BIG",
+            "CRABC_POSIX_SPAWNATTR_INIT_FREESTANDING",
+        ):
+            self.assertIn(required, probe)
+        for required in (
+            "crabc_x86_64_posix_spawnattr_init_probe",
+            "mov $60, %eax",
+        ):
+            self.assertIn(required, start)
+
+        for header in (header_c, header_cxx):
+            for required in (
+                "posix_spawnattr_init_signature",
+                "posix_spawnattr_init_function",
+                "336",
+                "280",
+            ):
+                self.assertIn(required, header)
+        self.assertIn("int posix_spawnattr_init(posix_spawnattr_t *);", spawn_header)
+        self.assertIn('#ifdef __cplusplus\nextern "C" {', spawn_header)
+        self.assertIn('#ifdef __cplusplus\n}\n#endif', spawn_header)
+        for required in (
+            "posix_spawnattr_init_header_abi_probe.c",
+            "posix_spawnattr_init_header_abi_probe.cpp",
+            "c11-strict",
+            "c11-posix-2008",
+            "c11-xopen-700",
+            "c11-gnu",
+            "cxx17-strict",
+            "cxx17-gnu",
+            "-nostdinc",
+            "-nostdinc++",
+            "project trace omitted $root/sys/types.h",
+            "retained a mangled posix_spawnattr_init reference",
+        ):
+            self.assertIn(required, header_runner)
+
+        for required in (
+            "run_posix_spawnattr_init_header_abi.sh",
+            "posix_spawnattr_init.lo",
+            "static_c_abi_exports.txt",
+            "archive_member_for_symbol",
+            "posix_spawnattr_init object export surface drifted",
+            "posix_spawnattr_init object unexpectedly depends on another symbol",
+            "posix_spawnattr_init object unexpectedly performs a call or syscall",
+            "-nostdlib -static",
+            "--no-undefined",
+            "for unselected in posix_spawn",
+            "fork vfork clone execve wait4",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn("--whole-archive", artifact_runner)
+        self.assertIn("posix_spawnattr_init", static_exports)
+        self.assertIn('id = "static-c-posix-spawnattr-init"', parity_ledger)
+        self.assertIn(
+            'command = "./scripts/dev-x86_64.sh libc-posix-spawnattr-init"',
+            parity_ledger,
+        )
+        self.assertIn("posix-spawnattr-init-header-abi", runner)
+        self.assertIn("libc-posix-spawnattr-init", runner)
+
+    def test_libc_static_c_abi_posix_spawnattr_getpgroup_artifact_stays_narrow(
+        self,
+    ) -> None:
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        implementation = (
+            ROOT
+            / "libc"
+            / "src"
+            / "c_abi"
+            / "x86_64"
+            / "posix_spawnattr_getpgroup.rs"
+        ).read_text(encoding="utf-8")
+        probe = (
+            ROOT / "compat" / "x86_64" / "libc_posix_spawnattr_getpgroup_probe.c"
+        ).read_text(encoding="utf-8")
+        start = (
+            ROOT / "compat" / "x86_64" / "libc_posix_spawnattr_getpgroup_start.S"
+        ).read_text(encoding="utf-8")
+        artifact_runner = (
+            ROOT / "compat" / "x86_64" / "run_libc_posix_spawnattr_getpgroup.sh"
+        ).read_text(encoding="utf-8")
+        header_runner = (
+            ROOT
+            / "compat"
+            / "x86_64"
+            / "run_posix_spawnattr_getpgroup_header_abi.sh"
+        ).read_text(encoding="utf-8")
+        header_c = (
+            ROOT
+            / "compat"
+            / "x86_64"
+            / "posix_spawnattr_getpgroup_header_abi_probe.c"
+        ).read_text(encoding="utf-8")
+        header_cxx = (
+            ROOT
+            / "compat"
+            / "x86_64"
+            / "posix_spawnattr_getpgroup_header_abi_probe.cpp"
+        ).read_text(encoding="utf-8")
+        spawn_header = (ROOT / "include" / "spawn.h").read_text(encoding="utf-8")
+        static_exports = {
+            line
+            for line in (
+                ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+            ).read_text(encoding="utf-8").splitlines()
+            if line and not line.startswith("#")
+        }
+        parity_ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        runner = RUNNER.read_text(encoding="utf-8")
+
+        self.assertIn(
+            '#[path = "posix_spawnattr_getpgroup.rs"]\nmod posix_spawnattr_getpgroup;',
+            static_root,
+        )
+        for required in (
+            "Selected static Linux/x86-64 POSIX spawn-attribute process-group readback C ABI",
+            "musl 1.2.6 release commit",
+            "src/process/posix_spawnattr_getpgroup.c::posix_spawnattr_getpgroup",
+            "POSIX_SPAWNATTR_PROCESS_GROUP_OFFSET",
+            "read_unaligned",
+            "write_unaligned",
+            'pub unsafe extern "C" fn posix_spawnattr_getpgroup',
+            "generic AArch64 export\n//! and behavior exactly unchanged",
+        ):
+            self.assertIn(required, implementation)
+        for forbidden in (
+            "raw_syscall::",
+            "errno::",
+            "static_tls::",
+            "crabc_core",
+            "crabc_mimalloc",
+            "fork(",
+            "execve",
+        ):
+            self.assertNotIn(forbidden, implementation)
+
+        for required in (
+            "#include <spawn.h>",
+            "posix_spawnattr_getpgroup_signature",
+            "struct guarded_attributes",
+            "struct guarded_pgroup",
+            "copy_bytes",
+            "bytes_match_value",
+            "check_readback",
+            "(pid_t)-321",
+            "errno = E2BIG",
+            "CRABC_POSIX_SPAWNATTR_GETPGROUP_FREESTANDING",
+        ):
+            self.assertIn(required, probe)
+        for required in (
+            "crabc_x86_64_posix_spawnattr_getpgroup_probe",
+            "mov $60, %eax",
+        ):
+            self.assertIn(required, start)
+
+        for header in (header_c, header_cxx):
+            for required in (
+                "posix_spawnattr_getpgroup_signature",
+                "posix_spawnattr_getpgroup_function",
+                "pid_t",
+                "__pgrp",
+                "4",
+            ):
+                self.assertIn(required, header)
+        self.assertIn(
+            "int posix_spawnattr_getpgroup(const posix_spawnattr_t *__restrict, pid_t *__restrict);",
+            spawn_header,
+        )
+        self.assertIn('#ifdef __cplusplus\nextern "C" {', spawn_header)
+        self.assertIn('#ifdef __cplusplus\n}\n#endif', spawn_header)
+        for required in (
+            "posix_spawnattr_getpgroup_header_abi_probe.c",
+            "posix_spawnattr_getpgroup_header_abi_probe.cpp",
+            "c11-strict",
+            "c11-posix-2008",
+            "c11-xopen-700",
+            "c11-gnu",
+            "cxx17-strict",
+            "cxx17-gnu",
+            "-nostdinc",
+            "-nostdinc++",
+            "project trace omitted $root/sys/types.h",
+            "retained a mangled posix_spawnattr_getpgroup reference",
+        ):
+            self.assertIn(required, header_runner)
+
+        for required in (
+            "run_posix_spawnattr_getpgroup_header_abi.sh",
+            "posix_spawnattr_getpgroup.lo",
+            "static_c_abi_exports.txt",
+            "archive_member_for_symbol",
+            "posix_spawnattr_getpgroup object export surface drifted",
+            "posix_spawnattr_getpgroup object unexpectedly depends on another symbol",
+            "posix_spawnattr_getpgroup object unexpectedly performs a call or syscall",
+            "-nostdlib -static",
+            "--no-undefined",
+            "for unselected in posix_spawn",
+            "fork vfork clone execve wait4",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn("--whole-archive", artifact_runner)
+        self.assertIn("posix_spawnattr_getpgroup", static_exports)
+        self.assertIn('id = "static-c-posix-spawnattr-getpgroup"', parity_ledger)
+        self.assertIn(
+            'command = "./scripts/dev-x86_64.sh libc-posix-spawnattr-getpgroup"',
+            parity_ledger,
+        )
+        self.assertIn("posix-spawnattr-getpgroup-header-abi", runner)
+        self.assertIn("libc-posix-spawnattr-getpgroup", runner)
+
+    def test_libc_static_c_abi_posix_spawnattr_getschedpolicy_artifact_stays_narrow(
+        self,
+    ) -> None:
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        implementation = (
+            ROOT
+            / "libc"
+            / "src"
+            / "c_abi"
+            / "x86_64"
+            / "posix_spawnattr_getschedpolicy.rs"
+        ).read_text(encoding="utf-8")
+        probe = (
+            ROOT
+            / "compat"
+            / "x86_64"
+            / "libc_posix_spawnattr_getschedpolicy_probe.c"
+        ).read_text(encoding="utf-8")
+        start = (
+            ROOT
+            / "compat"
+            / "x86_64"
+            / "libc_posix_spawnattr_getschedpolicy_start.S"
+        ).read_text(encoding="utf-8")
+        artifact_runner = (
+            ROOT
+            / "compat"
+            / "x86_64"
+            / "run_libc_posix_spawnattr_getschedpolicy.sh"
+        ).read_text(encoding="utf-8")
+        header_runner = (
+            ROOT
+            / "compat"
+            / "x86_64"
+            / "run_posix_spawnattr_getschedpolicy_header_abi.sh"
+        ).read_text(encoding="utf-8")
+        header_c = (
+            ROOT
+            / "compat"
+            / "x86_64"
+            / "posix_spawnattr_getschedpolicy_header_abi_probe.c"
+        ).read_text(encoding="utf-8")
+        header_cxx = (
+            ROOT
+            / "compat"
+            / "x86_64"
+            / "posix_spawnattr_getschedpolicy_header_abi_probe.cpp"
+        ).read_text(encoding="utf-8")
+        spawn_header = (ROOT / "include" / "spawn.h").read_text(encoding="utf-8")
+        static_exports = {
+            line
+            for line in (
+                ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+            ).read_text(encoding="utf-8").splitlines()
+            if line and not line.startswith("#")
+        }
+        parity_ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        runner = RUNNER.read_text(encoding="utf-8")
+
+        self.assertIn(
+            '#[path = "posix_spawnattr_getschedpolicy.rs"]\nmod posix_spawnattr_getschedpolicy;',
+            static_root,
+        )
+        for required in (
+            "Selected static Linux/x86-64 POSIX spawn-attribute scheduler-policy C ABI",
+            "musl 1.2.6 release commit",
+            "src/process/posix_spawnattr_sched.c::posix_spawnattr_getschedpolicy",
+            "return ENOSYS;",
+            "ENOSYS: c_int = 38",
+            'pub extern "C" fn posix_spawnattr_getschedpolicy',
+            "does not dereference either declared pointer",
+            "generic AArch64 export and behavior exactly unchanged",
+        ):
+            self.assertIn(required, implementation)
+        for forbidden in (
+            "raw_syscall::",
+            "errno::",
+            "static_tls::",
+            "crabc_core",
+            "crabc_mimalloc",
+            "fork(",
+            "execve",
+        ):
+            self.assertNotIn(forbidden, implementation)
+
+        for required in (
+            "#include <spawn.h>",
+            "posix_spawnattr_getschedpolicy_signature",
+            "struct guarded_attributes",
+            "struct guarded_policy",
+            "check_direct_nonnull",
+            "check_indirect_ignored_pointers",
+            "ENOSYS",
+            "errno = E2BIG",
+            "CRABC_POSIX_SPAWNATTR_GETSCHEDPOLICY_FREESTANDING",
+        ):
+            self.assertIn(required, probe)
+        for required in (
+            "crabc_x86_64_posix_spawnattr_getschedpolicy_probe",
+            "mov $60, %eax",
+        ):
+            self.assertIn(required, start)
+        for header in (header_c, header_cxx):
+            for required in (
+                "posix_spawnattr_getschedpolicy_signature",
+                "posix_spawnattr_getschedpolicy_function",
+                "336",
+                "8",
+            ):
+                self.assertIn(required, header)
+        self.assertIn(
+            "int posix_spawnattr_getschedpolicy(const posix_spawnattr_t *, int *);",
+            spawn_header,
+        )
+        self.assertIn('#ifdef __cplusplus\nextern "C" {', spawn_header)
+        self.assertIn('#ifdef __cplusplus\n}\n#endif', spawn_header)
+        for required in (
+            "posix_spawnattr_getschedpolicy_header_abi_probe.c",
+            "posix_spawnattr_getschedpolicy_header_abi_probe.cpp",
+            "c11-strict",
+            "c11-posix-2008",
+            "c11-xopen-700",
+            "c11-gnu",
+            "cxx17-strict",
+            "cxx17-gnu",
+            "-nostdinc",
+            "-nostdinc++",
+            "project trace omitted $root/sys/types.h",
+            "retained a mangled posix_spawnattr_getschedpolicy reference",
+        ):
+            self.assertIn(required, header_runner)
+        for required in (
+            "run_posix_spawnattr_getschedpolicy_header_abi.sh",
+            "posix_spawnattr_sched.lo",
+            "static_c_abi_exports.txt",
+            "archive_member_for_symbol",
+            "posix_spawnattr_getschedpolicy object export surface drifted",
+            "posix_spawnattr_getschedpolicy object unexpectedly depends on another symbol",
+            "posix_spawnattr_getschedpolicy object unexpectedly performs a call or syscall",
+            "assert_ignored_pointer_enosys_boundary",
+            "-nostdlib -static",
+            "--no-undefined",
+            "for unselected in posix_spawn",
+            "fork vfork clone execve wait4",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn("--whole-archive", artifact_runner)
+        self.assertIn("posix_spawnattr_getschedpolicy", static_exports)
+        self.assertIn(
+            'id = "static-c-posix-spawnattr-getschedpolicy"', parity_ledger
+        )
+        self.assertIn(
+            'command = "./scripts/dev-x86_64.sh libc-posix-spawnattr-getschedpolicy"',
+            parity_ledger,
+        )
+        self.assertIn("posix-spawnattr-getschedpolicy-header-abi", runner)
+        self.assertIn("libc-posix-spawnattr-getschedpolicy", runner)
 
     def test_libc_static_c_abi_memory_search_artifact_stays_narrow(self) -> None:
         static_root = (
@@ -29441,6 +30004,808 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         )
         self.assertIn("aio-error-header-abi", runner)
         self.assertIn("libc-aio-error", runner)
+
+
+    def test_libc_static_c_abi_sched_getparam_artifact_stays_musl_enosys(self) -> None:
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        source_path = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "sched_getparam.rs"
+        c_header_path = ROOT / "compat" / "x86_64" / "sched_getparam_header_abi_probe.c"
+        cxx_header_path = (
+            ROOT / "compat" / "x86_64" / "sched_getparam_header_abi_probe.cpp"
+        )
+        header_runner_path = (
+            ROOT / "compat" / "x86_64" / "run_sched_getparam_header_abi.sh"
+        )
+        probe_path = ROOT / "compat" / "x86_64" / "libc_sched_getparam_probe.c"
+        start_path = ROOT / "compat" / "x86_64" / "libc_sched_getparam_start.S"
+        artifact_runner_path = (
+            ROOT / "compat" / "x86_64" / "run_libc_sched_getparam.sh"
+        )
+        process_resources_runner_path = (
+            ROOT / "compat" / "x86_64" / "run_libc_process_resources.sh"
+        )
+        for path in (
+            source_path,
+            c_header_path,
+            cxx_header_path,
+            header_runner_path,
+            probe_path,
+            start_path,
+            artifact_runner_path,
+        ):
+            self.assertTrue(path.is_file(), f"missing sched_getparam input: {path}")
+        self.assertTrue(header_runner_path.stat().st_mode & 0o111)
+        self.assertTrue(artifact_runner_path.stat().st_mode & 0o111)
+
+        source = source_path.read_text(encoding="utf-8")
+        c_header = c_header_path.read_text(encoding="utf-8")
+        cxx_header = cxx_header_path.read_text(encoding="utf-8")
+        header_runner = header_runner_path.read_text(encoding="utf-8")
+        probe = probe_path.read_text(encoding="utf-8")
+        start = start_path.read_text(encoding="utf-8")
+        artifact_runner = artifact_runner_path.read_text(encoding="utf-8")
+        process_resources_runner = process_resources_runner_path.read_text(
+            encoding="utf-8"
+        )
+        static_exports = {
+            line
+            for line in (
+                ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+            ).read_text(encoding="utf-8").splitlines()
+            if line and not line.startswith("#")
+        }
+        parity_ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        dispatcher = RUNNER.read_text(encoding="utf-8")
+
+        self.assertIn('#[path = "sched_getparam.rs"]', static_root)
+        for required in (
+            "Bounded Linux/x86-64 static POSIX scheduler-parameter observation boundary",
+            "src/sched/sched_getparam.c::sched_getparam",
+            "__syscall_ret(-ENOSYS)",
+            "raw syscall `sched_getparam=143`",
+            "c_status(-ENOSYS)",
+            'pub extern "C" fn sched_getparam(_pid: c_int, _param: *mut c_void) -> c_int',
+        ):
+            self.assertIn(required, source)
+        for forbidden in ("raw_syscall::", "SYS_SCHED_GETPARAM", "sched_getscheduler"):
+            self.assertNotIn(forbidden, source)
+
+        for required in (
+            "__typeof__(&sched_getparam)",
+            "sched_getparam_signature)(pid_t, struct sched_param *)",
+            "sizeof(struct sched_param) == 48",
+            "offsetof(struct sched_param, __reserved3) == 40",
+        ):
+            self.assertIn(required, c_header)
+        for required in (
+            "decltype(&sched_getparam)",
+            "sched_getparam_signature",
+            "sizeof(sched_param) == 48",
+            'extern "C" void crabc_sched_getparam_linkage_witness',
+        ):
+            self.assertIn(required, cxx_header)
+        for required in (
+            "strict posix xopen gnu",
+            "sched_getparam_header_abi_probe.c",
+            "sched_getparam_header_abi_probe.cpp",
+            "unmangled sched_getparam",
+            "project trace omitted",
+        ):
+            self.assertIn(required, header_runner)
+
+        for required in (
+            "SYS_sched_getparam == 143",
+            "raw_sched_getparam",
+            "param_is_unchanged",
+            "check_musl_process_api",
+            "check_musl_null_parameter",
+            "errno != ENOSYS",
+            "CRABC_SCHED_GETPARAM_FREESTANDING",
+        ):
+            self.assertIn(required, probe)
+        for required in (
+            "call __crabc_x86_static_tls_bootstrap",
+            "crabc_x86_64_sched_getparam_probe",
+            "exit_group",
+        ):
+            self.assertIn(required, start)
+        self.assertNotIn("arch_prctl", start)
+
+        for required in (
+            "run_musl_oracle.sh",
+            "run_sched_getparam_header_abi.sh",
+            "static_c_abi_exports.txt",
+            "-nostdlib -static",
+            "-Wl,-e,_start",
+            "-Wl,--no-undefined",
+            "R_X86_64_TPOFF",
+            "assert_musl_enosys_boundary",
+            "sched_getparam forwarded raw Linux syscall 143",
+            "candidate unexpectedly pulls",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn("--whole-archive", artifact_runner)
+        self.assertIn("sched_getparam", static_exports)
+        self.assertNotIn("times sched_getparam", process_resources_runner)
+        self.assertIn("sched_setscheduler", process_resources_runner)
+        self.assertIn('id = "static-c-sched-getparam"', parity_ledger)
+        self.assertIn(
+            'command = "./scripts/dev-x86_64.sh libc-sched-getparam"', parity_ledger
+        )
+        self.assertIn("run_sched_getparam_header_abi()", dispatcher)
+        self.assertIn("run_libc_sched_getparam_probe()", dispatcher)
+        self.assertIn("sched-getparam-header-abi)", dispatcher)
+        self.assertIn("libc-sched-getparam)", dispatcher)
+
+
+    def test_libc_static_c_abi_sched_setparam_artifact_stays_musl_enosys(self) -> None:
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        source_path = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "sched_setparam.rs"
+        c_header_path = ROOT / "compat" / "x86_64" / "sched_setparam_header_abi_probe.c"
+        cxx_header_path = (
+            ROOT / "compat" / "x86_64" / "sched_setparam_header_abi_probe.cpp"
+        )
+        header_runner_path = (
+            ROOT / "compat" / "x86_64" / "run_sched_setparam_header_abi.sh"
+        )
+        probe_path = ROOT / "compat" / "x86_64" / "libc_sched_setparam_probe.c"
+        start_path = ROOT / "compat" / "x86_64" / "libc_sched_setparam_start.S"
+        artifact_runner_path = (
+            ROOT / "compat" / "x86_64" / "run_libc_sched_setparam.sh"
+        )
+        process_resources_runner_path = (
+            ROOT / "compat" / "x86_64" / "run_libc_process_resources.sh"
+        )
+        for path in (
+            source_path,
+            c_header_path,
+            cxx_header_path,
+            header_runner_path,
+            probe_path,
+            start_path,
+            artifact_runner_path,
+        ):
+            self.assertTrue(path.is_file(), f"missing sched_setparam input: {path}")
+        self.assertTrue(header_runner_path.stat().st_mode & 0o111)
+        self.assertTrue(artifact_runner_path.stat().st_mode & 0o111)
+
+        source = source_path.read_text(encoding="utf-8")
+        c_header = c_header_path.read_text(encoding="utf-8")
+        cxx_header = cxx_header_path.read_text(encoding="utf-8")
+        header_runner = header_runner_path.read_text(encoding="utf-8")
+        probe = probe_path.read_text(encoding="utf-8")
+        start = start_path.read_text(encoding="utf-8")
+        artifact_runner = artifact_runner_path.read_text(encoding="utf-8")
+        process_resources_runner = process_resources_runner_path.read_text(
+            encoding="utf-8"
+        )
+        static_exports = {
+            line
+            for line in (
+                ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+            ).read_text(encoding="utf-8").splitlines()
+            if line and not line.startswith("#")
+        }
+        parity_ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        dispatcher = RUNNER.read_text(encoding="utf-8")
+
+        self.assertIn('#[path = "sched_setparam.rs"]', static_root)
+        for required in (
+            "Bounded Linux/x86-64 static POSIX scheduler-parameter compatibility-failure boundary",
+            "src/sched/sched_setparam.c::sched_setparam",
+            "__syscall_ret(-ENOSYS)",
+            "raw syscall `sched_setparam=142`",
+            "c_status(-ENOSYS)",
+            'pub extern "C" fn sched_setparam(_pid: c_int, _param: *const c_void) -> c_int',
+        ):
+            self.assertIn(required, source)
+        for forbidden in ("raw_syscall::", "SYS_SCHED_SETPARAM", "sched_getparam"):
+            self.assertNotIn(forbidden, source)
+
+        for required in (
+            "__typeof__(&sched_setparam)",
+            "sched_setparam_signature)(pid_t, const struct sched_param *)",
+            "sizeof(struct sched_param) == 48",
+            "offsetof(struct sched_param, __reserved3) == 40",
+        ):
+            self.assertIn(required, c_header)
+        for required in (
+            "decltype(&sched_setparam)",
+            "sched_setparam_signature",
+            "sizeof(sched_param) == 48",
+            'extern "C" void crabc_sched_setparam_linkage_witness',
+        ):
+            self.assertIn(required, cxx_header)
+        for required in (
+            "strict posix xopen gnu",
+            "sched_setparam_header_abi_probe.c",
+            "sched_setparam_header_abi_probe.cpp",
+            "unmangled sched_setparam",
+            "project trace omitted",
+        ):
+            self.assertIn(required, header_runner)
+
+        for required in (
+            "SYS_sched_setparam == 142",
+            "raw_sched_setparam",
+            "param_is_unchanged",
+            "check_musl_process_api",
+            "check_musl_null_parameter",
+            "errno != ENOSYS",
+            "CRABC_SCHED_SETPARAM_FREESTANDING",
+        ):
+            self.assertIn(required, probe)
+        for required in (
+            "call __crabc_x86_static_tls_bootstrap",
+            "crabc_x86_64_sched_setparam_probe",
+            "exit_group",
+        ):
+            self.assertIn(required, start)
+        self.assertNotIn("arch_prctl", start)
+
+        for required in (
+            "run_musl_oracle.sh",
+            "run_sched_setparam_header_abi.sh",
+            "static_c_abi_exports.txt",
+            "-nostdlib -static",
+            "-Wl,-e,_start",
+            "-Wl,--no-undefined",
+            "R_X86_64_TPOFF",
+            "assert_musl_enosys_boundary",
+            "sched_setparam forwarded raw Linux syscall 142",
+            "candidate unexpectedly pulls",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn("--whole-archive", artifact_runner)
+        self.assertIn("sched_setparam", static_exports)
+        self.assertNotIn("sched_setparam", process_resources_runner)
+        self.assertIn('id = "static-c-sched-setparam"', parity_ledger)
+        self.assertIn(
+            'command = "./scripts/dev-x86_64.sh libc-sched-setparam"', parity_ledger
+        )
+        self.assertIn("run_sched_setparam_header_abi()", dispatcher)
+        self.assertIn("run_libc_sched_setparam_probe()", dispatcher)
+        self.assertIn("sched-setparam-header-abi)", dispatcher)
+        self.assertIn("libc-sched-setparam)", dispatcher)
+
+
+    def test_libc_static_c_abi_sched_getaffinity_artifact_stays_bounded(self) -> None:
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        source_path = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "sched_getaffinity.rs"
+        )
+        c_header_path = (
+            ROOT / "compat" / "x86_64" / "sched_getaffinity_header_abi_probe.c"
+        )
+        cxx_header_path = (
+            ROOT / "compat" / "x86_64" / "sched_getaffinity_header_abi_probe.cpp"
+        )
+        visibility_path = (
+            ROOT / "compat" / "x86_64" / "sched_getaffinity_header_visibility_probe.c"
+        )
+        header_runner_path = (
+            ROOT / "compat" / "x86_64" / "run_sched_getaffinity_header_abi.sh"
+        )
+        probe_path = ROOT / "compat" / "x86_64" / "libc_sched_getaffinity_probe.c"
+        start_path = ROOT / "compat" / "x86_64" / "libc_sched_getaffinity_start.S"
+        artifact_runner_path = (
+            ROOT / "compat" / "x86_64" / "run_libc_sched_getaffinity.sh"
+        )
+        for path in (
+            source_path,
+            c_header_path,
+            cxx_header_path,
+            visibility_path,
+            header_runner_path,
+            probe_path,
+            start_path,
+            artifact_runner_path,
+        ):
+            self.assertTrue(path.is_file(), f"missing sched_getaffinity input: {path}")
+        self.assertTrue(header_runner_path.stat().st_mode & 0o111)
+        self.assertTrue(artifact_runner_path.stat().st_mode & 0o111)
+
+        source = source_path.read_text(encoding="utf-8")
+        c_header = c_header_path.read_text(encoding="utf-8")
+        cxx_header = cxx_header_path.read_text(encoding="utf-8")
+        visibility = visibility_path.read_text(encoding="utf-8")
+        header_runner = header_runner_path.read_text(encoding="utf-8")
+        probe = probe_path.read_text(encoding="utf-8")
+        start = start_path.read_text(encoding="utf-8")
+        artifact_runner = artifact_runner_path.read_text(encoding="utf-8")
+        static_exports = {
+            line
+            for line in (
+                ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+            ).read_text(encoding="utf-8").splitlines()
+            if line and not line.startswith("#")
+        }
+        parity_ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        dispatcher = RUNNER.read_text(encoding="utf-8")
+
+        self.assertIn('#[path = "sched_getaffinity.rs"]', static_root)
+        for required in (
+            "Bounded Linux/x86-64 static GNU scheduler-affinity observation boundary",
+            "src/sched/affinity.c::do_getaffinity",
+            "SYS_SCHED_GETAFFINITY",
+            "c_status(result)",
+            'pub unsafe extern "C" fn sched_getaffinity',
+        ):
+            self.assertIn(required, source)
+        for forbidden in (
+            "SYS_SCHED_SETAFFINITY",
+            'pub unsafe extern "C" fn sched_setaffinity',
+            "pthread_",
+            "static_tls",
+        ):
+            self.assertNotIn(forbidden, source)
+
+        for required in (
+            "__typeof__(&sched_getaffinity)",
+            "sched_getaffinity_signature)(pid_t, size_t, cpu_set_t *)",
+            "sizeof(cpu_set_t) == 128",
+            "offsetof(cpu_set_t, __bits) == 0",
+        ):
+            self.assertIn(required, c_header)
+        for required in (
+            "decltype(&sched_getaffinity)",
+            "sched_getaffinity_signature",
+            "sizeof(cpu_set_t) == 128",
+            'extern "C" void crabc_sched_getaffinity_linkage_witness',
+        ):
+            self.assertIn(required, cxx_header)
+        self.assertIn("sched_getaffinity", visibility)
+        for required in (
+            "strict posix xopen",
+            "sched_getaffinity_header_visibility_probe.c",
+            "unexpectedly exposes sched_getaffinity",
+            "unmangled sched_getaffinity",
+            "project trace omitted",
+        ):
+            self.assertIn(required, header_runner)
+
+        for required in (
+            "SYS_sched_getaffinity == 204",
+            "raw_sched_getaffinity",
+            "raw_prefix_matches",
+            "tail_is_zero",
+            "check_invalid_capacity",
+            "check_missing_task",
+            "CRABC_SCHED_GETAFFINITY_FREESTANDING",
+        ):
+            self.assertIn(required, probe)
+        for required in (
+            "call __crabc_x86_static_tls_bootstrap",
+            "crabc_x86_64_sched_getaffinity_probe",
+            "exit_group",
+        ):
+            self.assertIn(required, start)
+        self.assertNotIn("arch_prctl", start)
+
+        for required in (
+            "run_musl_oracle.sh",
+            "run_sched_getaffinity_header_abi.sh",
+            "static_c_abi_exports.txt",
+            "-nostdlib -static",
+            "-Wl,-e,_start",
+            "-Wl,--no-undefined",
+            "R_X86_64_TPOFF",
+            "assert_affinity_boundary",
+            "sched_getaffinity does not issue syscall 204",
+            "candidate unexpectedly pulls",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn("--whole-archive", artifact_runner)
+        self.assertIn("sched_getaffinity", static_exports)
+        self.assertIn('id = "static-c-sched-getaffinity"', parity_ledger)
+        self.assertIn(
+            'command = "./scripts/dev-x86_64.sh libc-sched-getaffinity"',
+            parity_ledger,
+        )
+        self.assertIn("run_sched_getaffinity_header_abi()", dispatcher)
+        self.assertIn("run_libc_sched_getaffinity_probe()", dispatcher)
+        self.assertIn("sched-getaffinity-header-abi)", dispatcher)
+        self.assertIn("libc-sched-getaffinity)", dispatcher)
+
+
+    def test_libc_static_c_abi_setfsuid_artifact_stays_bounded(self) -> None:
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        source_path = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "setfsuid.rs"
+        c_header_path = ROOT / "compat" / "x86_64" / "setfsuid_header_abi_probe.c"
+        cxx_header_path = (
+            ROOT / "compat" / "x86_64" / "setfsuid_header_abi_probe.cpp"
+        )
+        header_runner_path = (
+            ROOT / "compat" / "x86_64" / "run_setfsuid_header_abi.sh"
+        )
+        probe_path = ROOT / "compat" / "x86_64" / "libc_setfsuid_probe.c"
+        start_path = ROOT / "compat" / "x86_64" / "libc_setfsuid_start.S"
+        artifact_runner_path = (
+            ROOT / "compat" / "x86_64" / "run_libc_setfsuid.sh"
+        )
+        for path in (
+            source_path,
+            c_header_path,
+            cxx_header_path,
+            header_runner_path,
+            probe_path,
+            start_path,
+            artifact_runner_path,
+        ):
+            self.assertTrue(path.is_file(), f"missing setfsuid input: {path}")
+        self.assertTrue(header_runner_path.stat().st_mode & 0o111)
+        self.assertTrue(artifact_runner_path.stat().st_mode & 0o111)
+
+        source = source_path.read_text(encoding="utf-8")
+        c_header = c_header_path.read_text(encoding="utf-8")
+        cxx_header = cxx_header_path.read_text(encoding="utf-8")
+        header_runner = header_runner_path.read_text(encoding="utf-8")
+        probe = probe_path.read_text(encoding="utf-8")
+        start = start_path.read_text(encoding="utf-8")
+        artifact_runner = artifact_runner_path.read_text(encoding="utf-8")
+        static_exports = {
+            line
+            for line in (
+                ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+            ).read_text(encoding="utf-8").splitlines()
+            if line and not line.startswith("#")
+        }
+        parity_ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        dispatcher = RUNNER.read_text(encoding="utf-8")
+
+        self.assertIn('#[path = "setfsuid.rs"]', static_root)
+        for required in (
+            "Bounded Linux/x86-64 static filesystem-credential setfsuid boundary",
+            "src/linux/setfsuid.c::setfsuid",
+            "SYS_SETFSUID",
+            "c_status(result)",
+            'pub unsafe extern "C" fn setfsuid',
+        ):
+            self.assertIn(required, source)
+        for forbidden in (
+            "SYS_SETFSGID",
+            'pub unsafe extern "C" fn setfsgid',
+            "pthread_",
+            "static_tls",
+        ):
+            self.assertNotIn(forbidden, source)
+
+        for required in (
+            "__typeof__(&setfsuid)",
+            "setfsuid_signature)(uid_t)",
+            "sizeof(uid_t) == 4",
+            "SYS_setfsuid == 122",
+        ):
+            self.assertIn(required, c_header)
+        for required in (
+            "decltype(&setfsuid)",
+            "setfsuid_signature",
+            "sizeof(uid_t) == 4",
+            'extern "C" void crabc_setfsuid_linkage_witness',
+        ):
+            self.assertIn(required, cxx_header)
+        for required in (
+            "strict posix xopen gnu",
+            "setfsuid_header_abi_probe.c",
+            "unmangled setfsuid",
+            "project trace omitted",
+        ):
+            self.assertIn(required, header_runner)
+
+        for required in (
+            "SYS_setfsuid == 122",
+            "raw_setfsuid",
+            "raw_geteuid",
+            "setfsuid((uid_t)-1)",
+            "CRABC_SETFSUID_FREESTANDING",
+        ):
+            self.assertIn(required, probe)
+        for required in (
+            "call __crabc_x86_static_tls_bootstrap",
+            "crabc_x86_64_setfsuid_probe",
+            "exit_group",
+        ):
+            self.assertIn(required, start)
+        self.assertNotIn("arch_prctl", start)
+
+        for required in (
+            "run_musl_oracle.sh",
+            "run_setfsuid_header_abi.sh",
+            "static_c_abi_exports.txt",
+            "-nostdlib -static",
+            "-Wl,-e,_start",
+            "-Wl,--no-undefined",
+            "R_X86_64_TPOFF",
+            "assert_setfsuid_boundary",
+            "setfsuid does not issue syscall 122",
+            "candidate unexpectedly pulls",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn("--whole-archive", artifact_runner)
+        self.assertIn("setfsuid", static_exports)
+        self.assertIn('id = "static-c-setfsuid"', parity_ledger)
+        self.assertIn(
+            'command = "./scripts/dev-x86_64.sh libc-setfsuid"', parity_ledger
+        )
+        self.assertIn("run_setfsuid_header_abi()", dispatcher)
+        self.assertIn("run_libc_setfsuid_probe()", dispatcher)
+        self.assertIn("setfsuid-header-abi)", dispatcher)
+        self.assertIn("libc-setfsuid)", dispatcher)
+
+
+    def test_libc_static_c_abi_setfsgid_artifact_stays_bounded(self) -> None:
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        source_path = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "setfsgid.rs"
+        c_header_path = ROOT / "compat" / "x86_64" / "setfsgid_header_abi_probe.c"
+        cxx_header_path = (
+            ROOT / "compat" / "x86_64" / "setfsgid_header_abi_probe.cpp"
+        )
+        header_runner_path = (
+            ROOT / "compat" / "x86_64" / "run_setfsgid_header_abi.sh"
+        )
+        probe_path = ROOT / "compat" / "x86_64" / "libc_setfsgid_probe.c"
+        start_path = ROOT / "compat" / "x86_64" / "libc_setfsgid_start.S"
+        artifact_runner_path = (
+            ROOT / "compat" / "x86_64" / "run_libc_setfsgid.sh"
+        )
+        for path in (
+            source_path,
+            c_header_path,
+            cxx_header_path,
+            header_runner_path,
+            probe_path,
+            start_path,
+            artifact_runner_path,
+        ):
+            self.assertTrue(path.is_file(), f"missing setfsgid input: {path}")
+        self.assertTrue(header_runner_path.stat().st_mode & 0o111)
+        self.assertTrue(artifact_runner_path.stat().st_mode & 0o111)
+
+        source = source_path.read_text(encoding="utf-8")
+        c_header = c_header_path.read_text(encoding="utf-8")
+        cxx_header = cxx_header_path.read_text(encoding="utf-8")
+        header_runner = header_runner_path.read_text(encoding="utf-8")
+        probe = probe_path.read_text(encoding="utf-8")
+        start = start_path.read_text(encoding="utf-8")
+        artifact_runner = artifact_runner_path.read_text(encoding="utf-8")
+        static_exports = {
+            line
+            for line in (
+                ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+            ).read_text(encoding="utf-8").splitlines()
+            if line and not line.startswith("#")
+        }
+        parity_ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        dispatcher = RUNNER.read_text(encoding="utf-8")
+
+        self.assertIn('#[path = "setfsgid.rs"]', static_root)
+        for required in (
+            "Bounded Linux/x86-64 static filesystem-credential setfsgid boundary",
+            "src/linux/setfsgid.c::setfsgid",
+            "SYS_SETFSGID",
+            "c_status(result)",
+            'pub unsafe extern "C" fn setfsgid',
+        ):
+            self.assertIn(required, source)
+        for forbidden in (
+            "SYS_SETFSUID",
+            'pub unsafe extern "C" fn setfsuid',
+            "pthread_",
+            "static_tls",
+        ):
+            self.assertNotIn(forbidden, source)
+
+        for required in (
+            "__typeof__(&setfsgid)",
+            "setfsgid_signature)(gid_t)",
+            "sizeof(gid_t) == 4",
+            "SYS_setfsgid == 123",
+        ):
+            self.assertIn(required, c_header)
+        for required in (
+            "decltype(&setfsgid)",
+            "setfsgid_signature",
+            "sizeof(gid_t) == 4",
+            'extern "C" void crabc_setfsgid_linkage_witness',
+        ):
+            self.assertIn(required, cxx_header)
+        for required in (
+            "strict posix xopen gnu",
+            "setfsgid_header_abi_probe.c",
+            "unmangled setfsgid",
+            "project trace omitted",
+        ):
+            self.assertIn(required, header_runner)
+
+        for required in (
+            "SYS_setfsgid == 123",
+            "raw_setfsgid",
+            "raw_getegid",
+            "setfsgid((gid_t)-1)",
+            "CRABC_SETFSGID_FREESTANDING",
+        ):
+            self.assertIn(required, probe)
+        for required in (
+            "call __crabc_x86_static_tls_bootstrap",
+            "crabc_x86_64_setfsgid_probe",
+            "exit_group",
+        ):
+            self.assertIn(required, start)
+        self.assertNotIn("arch_prctl", start)
+
+        for required in (
+            "run_musl_oracle.sh",
+            "run_setfsgid_header_abi.sh",
+            "static_c_abi_exports.txt",
+            "-nostdlib -static",
+            "-Wl,-e,_start",
+            "-Wl,--no-undefined",
+            "R_X86_64_TPOFF",
+            "assert_setfsgid_boundary",
+            "setfsgid does not issue syscall 123",
+            "candidate unexpectedly pulls",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn("--whole-archive", artifact_runner)
+        self.assertIn("setfsgid", static_exports)
+        self.assertIn('id = "static-c-setfsgid"', parity_ledger)
+        self.assertIn(
+            'command = "./scripts/dev-x86_64.sh libc-setfsgid"', parity_ledger
+        )
+        self.assertIn("run_setfsgid_header_abi()", dispatcher)
+        self.assertIn("run_libc_setfsgid_probe()", dispatcher)
+        self.assertIn("setfsgid-header-abi)", dispatcher)
+        self.assertIn("libc-setfsgid)", dispatcher)
+
+
+    def test_libc_static_c_abi_personality_artifact_stays_bounded(self) -> None:
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        source_path = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "personality.rs"
+        c_header_path = ROOT / "compat" / "x86_64" / "personality_header_abi_probe.c"
+        cxx_header_path = (
+            ROOT / "compat" / "x86_64" / "personality_header_abi_probe.cpp"
+        )
+        header_runner_path = (
+            ROOT / "compat" / "x86_64" / "run_personality_header_abi.sh"
+        )
+        probe_path = ROOT / "compat" / "x86_64" / "libc_personality_probe.c"
+        start_path = ROOT / "compat" / "x86_64" / "libc_personality_start.S"
+        artifact_runner_path = (
+            ROOT / "compat" / "x86_64" / "run_libc_personality.sh"
+        )
+        for path in (
+            source_path,
+            c_header_path,
+            cxx_header_path,
+            header_runner_path,
+            probe_path,
+            start_path,
+            artifact_runner_path,
+        ):
+            self.assertTrue(path.is_file(), f"missing personality input: {path}")
+        self.assertTrue(header_runner_path.stat().st_mode & 0o111)
+        self.assertTrue(artifact_runner_path.stat().st_mode & 0o111)
+
+        source = source_path.read_text(encoding="utf-8")
+        c_header = c_header_path.read_text(encoding="utf-8")
+        cxx_header = cxx_header_path.read_text(encoding="utf-8")
+        header_runner = header_runner_path.read_text(encoding="utf-8")
+        probe = probe_path.read_text(encoding="utf-8")
+        start = start_path.read_text(encoding="utf-8")
+        artifact_runner = artifact_runner_path.read_text(encoding="utf-8")
+        static_exports = {
+            line
+            for line in (
+                ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+            ).read_text(encoding="utf-8").splitlines()
+            if line and not line.startswith("#")
+        }
+        parity_ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        dispatcher = RUNNER.read_text(encoding="utf-8")
+
+        self.assertIn('#[path = "personality.rs"]', static_root)
+        for required in (
+            "Bounded Linux/x86-64 static process-personality boundary",
+            "src/linux/personality.c::personality",
+            "SYS_PERSONALITY",
+            "c_status(result)",
+            'pub unsafe extern "C" fn personality',
+        ):
+            self.assertIn(required, source)
+        for forbidden in (
+            "SYS_PRCTL",
+            "SYS_CAPGET",
+            "SYS_CAPSET",
+            "SYS_SETNS",
+            "SYS_UNSHARE",
+            "pthread_",
+        ):
+            self.assertNotIn(forbidden, source)
+
+        for required in (
+            "__typeof__(&personality)",
+            "personality_signature)(unsigned long)",
+            "sizeof(unsigned long) == 8",
+            "SYS_personality == 135",
+        ):
+            self.assertIn(required, c_header)
+        for required in (
+            "decltype(&personality)",
+            "personality_signature",
+            "sizeof(unsigned long) == 8",
+            'extern "C" void crabc_personality_linkage_witness',
+        ):
+            self.assertIn(required, cxx_header)
+        for required in (
+            "strict posix xopen gnu",
+            "personality_header_abi_probe.c",
+            "unmangled personality",
+            "project trace omitted",
+        ):
+            self.assertIn(required, header_runner)
+
+        for required in (
+            "SYS_personality == 135",
+            "raw_personality",
+            "0xffffffffUL",
+            "CRABC_PERSONALITY_FREESTANDING",
+        ):
+            self.assertIn(required, probe)
+        for required in (
+            "call __crabc_x86_static_tls_bootstrap",
+            "crabc_x86_64_personality_probe",
+            "exit_group",
+        ):
+            self.assertIn(required, start)
+        self.assertNotIn("arch_prctl", start)
+
+        for required in (
+            "run_musl_oracle.sh",
+            "run_personality_header_abi.sh",
+            "static_c_abi_exports.txt",
+            "-nostdlib -static",
+            "-Wl,-e,_start",
+            "-Wl,--no-undefined",
+            "R_X86_64_TPOFF",
+            "assert_personality_boundary",
+            "personality does not issue syscall 135",
+            "candidate unexpectedly pulls",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn("--whole-archive", artifact_runner)
+        self.assertIn("personality", static_exports)
+        self.assertIn('id = "static-c-personality"', parity_ledger)
+        self.assertIn(
+            'command = "./scripts/dev-x86_64.sh libc-personality"', parity_ledger
+        )
+        self.assertIn("run_personality_header_abi()", dispatcher)
+        self.assertIn("run_libc_personality_probe()", dispatcher)
+        self.assertIn("personality-header-abi)", dispatcher)
+        self.assertIn("libc-personality)", dispatcher)
 
 
 

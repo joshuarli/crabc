@@ -78,6 +78,7 @@ int __sched_cpucount(size_t, const cpu_set_t *);
 #define CLONE_IO            0x80000000
 
 int clone(int (*)(void *), void *, int, void *, ...);
+int sched_getaffinity(pid_t, size_t, cpu_set_t *);
 int sched_getcpu(void);
 #endif
 

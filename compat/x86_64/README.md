@@ -254,6 +254,9 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh getsubopt-header-abi
 ./scripts/dev-x86_64.sh l64a-header-abi
 ./scripts/dev-x86_64.sh intmax-arithmetic-header-abi
+./scripts/dev-x86_64.sh personality-header-abi
+./scripts/dev-x86_64.sh setfsgid-header-abi
+./scripts/dev-x86_64.sh setfsuid-header-abi
 ./scripts/dev-x86_64.sh credential-observation-header-abi
 ./scripts/dev-x86_64.sh login-name-header-abi
 ./scripts/dev-x86_64.sh child-reaping-header-abi
@@ -271,6 +274,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh memccpy-header-abi
 ./scripts/dev-x86_64.sh mempcpy-header-abi
 ./scripts/dev-x86_64.sh strsep-header-abi
+./scripts/dev-x86_64.sh strtok-header-abi
 ./scripts/dev-x86_64.sh string-copy-header-abi
 ./scripts/dev-x86_64.sh error-strings-header-abi
 ./scripts/dev-x86_64.sh string-duplication-header-abi
@@ -475,6 +479,8 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-child-reaping
 ./scripts/dev-x86_64.sh libc-immediate-termination
 ./scripts/dev-x86_64.sh libc-posix-exit
+./scripts/dev-x86_64.sh libc-posix-spawnattr-init
+./scripts/dev-x86_64.sh libc-posix-spawnattr-getpgroup
 ./scripts/dev-x86_64.sh libc-callback-algorithms
 ./scripts/dev-x86_64.sh libc-search-tree-intrusive
 ./scripts/dev-x86_64.sh libc-search-hash-table
@@ -551,6 +557,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-memccpy
 ./scripts/dev-x86_64.sh libc-mempcpy
 ./scripts/dev-x86_64.sh libc-strsep
+./scripts/dev-x86_64.sh libc-strtok
 ./scripts/dev-x86_64.sh libc-process-globals-getopt
 ./scripts/dev-x86_64.sh libc-auxv-observation
 ./scripts/dev-x86_64.sh libc-inet-address
@@ -572,6 +579,9 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-getsubopt
 ./scripts/dev-x86_64.sh libc-l64a
 ./scripts/dev-x86_64.sh libc-intmax-arithmetic
+./scripts/dev-x86_64.sh libc-personality
+./scripts/dev-x86_64.sh libc-setfsgid
+./scripts/dev-x86_64.sh libc-setfsuid
 ./scripts/dev-x86_64.sh libc-credential-observation
 ./scripts/dev-x86_64.sh libc-ffs
 ./scripts/dev-x86_64.sh libc-thread-pointer
@@ -1482,6 +1492,32 @@ evidence for the arithmetic forms only; it is distinct from the separately
 staged `strtoimax`/`strtoumax` declaration and archive evidence, and does not
 select `crabc-libc` or a general C runtime ABI.
 
+`personality-header-abi` separately compiles project-first and pinned-musl
+C/C++ `<sys/personality.h>` declarations for the unconditional Linux spelling
+`int personality(unsigned long)`. Strict, POSIX, X/Open, and GNU selections
+ratchet the eight-byte x86 unsigned-long word, `PER_LINUX=0`/`PER_MASK=0xff`,
+syscall macro 135, and unmangled C++ linkage. This is declaration-only
+evidence for the separately selected process-personality artifact; it does not
+select personality policy or executable transitions, prctl/capability/namespace
+controls, credential or identity/session families, scheduler state, or a
+general C-process ABI.
+
+`setfsuid-header-abi` compiles project-first and pinned-musl C/C++
+`<sys/fsuid.h>` declarations for the unconditional Linux extension
+`int setfsuid(uid_t)`. Strict, POSIX, X/Open, and GNU selections ratchet the
+four-byte unsigned x86 `uid_t`, syscall macro 122, and unmangled C++ linkage.
+This is declaration-only evidence for the separately selected filesystem-UID
+artifact; it does not select `setfsgid`, credential mutation policy, account
+data, process-wide synchronization, or a general C-process ABI.
+
+`setfsgid-header-abi` separately compiles project-first and pinned-musl C/C++
+`<sys/fsuid.h>` declarations for the unconditional Linux extension
+`int setfsgid(gid_t)`. Strict, POSIX, X/Open, and GNU selections ratchet the
+four-byte unsigned x86 `gid_t`, syscall macro 123, and unmangled C++ linkage.
+This is declaration-only evidence for the separately selected filesystem-GID
+artifact; it does not select `setfsuid`, credential mutation policy, account
+data, process-wide synchronization, or a general C-process ABI.
+
 `credential-observation-header-abi` compiles project-first and pinned-musl
 C/C++ `<unistd.h>` declarations for unconditional `getgroups` and GNU-only
 `getresuid`/`getresgid`. Strict, POSIX, and BSD selections must hide both
@@ -1609,6 +1645,13 @@ declarations for `char *strsep(char **, const char *)`. It verifies GNU/BSD
 visibility, default/strict/POSIX/XOPEN C hiding, exact signature, and
 unmangled C++ linkage. This is compile-only header evidence; it does not
 select C string behavior or `crabc-libc`.
+
+`strtok-header-abi` compiles project-first and pinned-musl C/C++ `<string.h>`
+declarations for unconditional `char *strtok(char *, const char *)`. It
+ratchets the exact function-pointer ABI under default, strict, POSIX, X/Open,
+GNU, and BSD selectors, project-header provenance, and unmangled C++ linkage.
+This is compile-only header evidence; it does not select C string/tokenizer
+behavior or `crabc-libc`.
 
 `string-copy-header-abi` compiles project-first and pinned-musl C/C++
 `<string.h>` declarations for the closed C-string-copy set: unconditional
@@ -4144,6 +4187,64 @@ raw syscall, errno, initial-TLS, callback, lock, allocator, or mutable
 lifecycle state. It excludes ordinary `exit`/`abort`/`atexit`,
 `at_quick_exit`/`quick_exit` hooks, stdio flushing/fini/destructors, fork
 coordination, pthread lifecycle, dynamic runtime, and public x86 support.
+
+`libc-posix-spawnattr-init` is a separately recorded
+`static-c-posix-spawnattr-init` `verified_artifact` inside still-planned
+`libc.posix-runtime`, not a spawn or process-control capability. Its focused
+pinned-musl/project C/C++ `<spawn.h>` matrix proves the unconditional
+`int posix_spawnattr_init(posix_spawnattr_t *)` signature, unmangled linkage,
+and the x86 336-byte/eight-byte-aligned record layout with its member offsets.
+The same project-header C fixture first executes musl 1.2.6
+`src/process/posix_spawnattr_init.c`, then a true `-nostdlib -static` candidate
+made from exactly one Rust object. Direct and function-pointer calls fully zero
+byte-filled caller records, retain adjacent guards, and preserve stale `errno`
+on the ordinary musl route. The candidate uses a fixed 42-word direct-store
+loop with no undefined helper, call, syscall, errno/TLS, allocator, dynamic
+runtime, CRT, loader, or sysroot dependency. It does not select
+`posix_spawn`/`posix_spawnp`, other attribute APIs, file actions,
+fork/vfork/clone, exec, child lifecycle, signal delivery, scheduler policy,
+family completion, promotion, or public x86 support; the generic AArch64
+export remains unchanged.
+
+`libc-posix-spawnattr-getpgroup` is a separately recorded
+`static-c-posix-spawnattr-getpgroup` `verified_artifact` inside still-planned
+`libc.posix-runtime`, not a process-spawn or process-control capability. Its
+pinned-musl/project C/C++ `<spawn.h>` matrix proves the unconditional
+`int posix_spawnattr_getpgroup(const posix_spawnattr_t *, pid_t *)` ABI,
+unmangled C++ linkage, signed four-byte `pid_t` storage, and the x86
+offset-four `__pgrp` record member. The shared fixture first executes musl
+1.2.6 `src/process/posix_spawnattr_getpgroup.c`, then a true
+`-nostdlib -static` candidate extracted from exactly one Rust object. Direct
+and function-pointer calls copy positive and negative process groups from
+byte-filled 336-byte caller records, retain every input byte and adjacent
+input/output guard, and leave stale `errno` unchanged on the ordinary musl
+route. The candidate is one fixed offset-four load and output-word store with
+no undefined helper, call, syscall, errno/TLS, allocator, dynamic runtime,
+CRT, loader, or sysroot path. It does not select `posix_spawn`/`posix_spawnp`,
+other attribute APIs, file actions, fork/vfork/clone, exec, child lifecycle,
+signals, scheduler policy, family completion, promotion, or public x86
+support; the generic AArch64 export remains unchanged.
+
+`libc-posix-spawnattr-getschedpolicy` is a separately recorded
+`static-c-posix-spawnattr-getschedpolicy` `verified_artifact` inside
+still-planned `libc.posix-runtime`, not a process-spawn, process-control, or
+scheduler capability. Its pinned-musl/project C/C++ `<spawn.h>` matrix proves
+the unconditional `int posix_spawnattr_getschedpolicy(const posix_spawnattr_t
+*, int *)` ABI, unmangled C++ linkage, and complete x86 336-byte/eight-byte-
+aligned attribute type. The shared fixture first executes musl 1.2.6
+`src/process/posix_spawnattr_sched.c::posix_spawnattr_getschedpolicy`, whose
+complete body is `return ENOSYS;`, then a true `-nostdlib -static` candidate
+extracted from exactly one Rust object. Direct and function-pointer calls over
+nonnull, null-attribute, null-output, and both-null pointer shapes all return
+the positive error number `ENOSYS=38`, retain byte-filled caller record and
+guarded output storage, and preserve stale `errno` on the ordinary musl route.
+The candidate materializes only that immediate result: no pointer dereference,
+helper call, syscall, errno/TLS, allocator, dynamic runtime, CRT, loader, or
+sysroot path. It does not select `posix_spawn`/`posix_spawnp`, other attribute
+APIs, file actions, fork/vfork/clone, exec, child lifecycle, signals,
+scheduler policy/parameter behavior, family completion, promotion, or public
+x86 support; the generic AArch64 export remains unchanged.
+
 `libc-bsearch` is a separate capability-free `static-c-bsearch`
 `verified_artifact` inside still-planned `libc.c-abi-compat`. Its strict,
 POSIX, X/Open, GNU, and BSD C/C++ `<stdlib.h>` matrix proves the unconditional
@@ -5064,6 +5165,23 @@ has no allocator, errno/TLS, locale, syscall, dynamic-runtime, CRT, loader, or
 sysroot path; it does not select general string/tokenization, `strtok`/
 `strtok_r`, memory-search, `mempcpy`, getsubopt, allocator
 lifecycle/interposition, family completion, promotion, or public x86 support.
+
+`libc-strtok` is a separately recorded `static-c-strtok`
+`verified_artifact`, not a `memory.bytes-basic`, general-string, reentrant, or
+thread-safe-text claim. Its dedicated C/C++ header gate proves the
+unconditional `<string.h>` ABI and C++ linkage across strict through BSD
+profiles. Its project-header C fixture first executes through pinned musl and
+then through a true `-nostdlib -static` candidate made from exactly one object
+exporting only `strtok`. It proves leading delimiter skipping, one-byte in-place
+NUL splitting, exhaustion, empty strings and delimiters, high-bit bytes,
+replacement input, and the single shared non-TLS continuation when sequences
+interleave. That cursor deliberately matches musl's historical `strtok` state,
+not a reentrant or thread-safe tokenizer; concurrent unsynchronized calls are
+outside its C contract. It has no allocator, errno/TLS, locale, syscall,
+dynamic-runtime, CRT, loader, or sysroot path; it does not select `strtok_r`,
+general string/tokenization, allocator lifecycle/interposition, family
+completion, promotion, or public x86 support. The generic AArch64 export is
+unchanged.
 
 `libc-random-entropy` is a separately recorded
 `static-c-random-entropy` `verified_artifact` gate over that archive, not a
@@ -6389,7 +6507,7 @@ Apart from the narrowly named `libc-stat-compat`, `libc-credentials`,
 `libc-getpass`,
 `libc-mktemp`,
 `libc-process-context`, `libc-environment`, `libc-secure-environment`, `libc-login-name`, `libc-child-reaping`, and
-`libc-immediate-termination`, `libc-posix-exit`, `libc-callback-algorithms`,
+`libc-immediate-termination`, `libc-posix-exit`, `libc-posix-spawnattr-init`, `libc-callback-algorithms`,
 `libc-search-hash-table`,
 `libc-gettext-catalog`,
 `libc-clock-gettime`,
@@ -6435,7 +6553,7 @@ Apart from the narrowly named `libc-stat-compat`, `libc-credentials`,
 `libc-process-resources`, `libc-readiness-waits`, and
 `libc-system-observation`, `libc-system-information`, `libc-uts-identity`, `libc-socket-transport`,
 `libc-socket-messages`,
-`libc-byte-strings`, `libc-legacy-memory`, `libc-memccpy`, `libc-mempcpy`, `libc-strsep`, `libc-random-entropy`, `libc-memory-search`,
+`libc-byte-strings`, `libc-legacy-memory`, `libc-memccpy`, `libc-mempcpy`, `libc-strsep`, `libc-strtok`, `libc-random-entropy`, `libc-memory-search`,
 `libc-string-copy`, `libc-allocator-string-duplication`, `libc-error-strings`,
 `libc-locale-error-strings`, `libc-ctype`, `libc-integer-arithmetic`,
 `libc-integer-parse`, `libc-float-parse`, `libc-getsubopt`, `libc-l64a`, `libc-intmax-arithmetic`, `libc-credential-observation`,

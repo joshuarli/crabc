@@ -2157,12 +2157,16 @@ source_owners = [
   "libc/src/c_abi/x86_64/legacy_memory.rs",
   "libc/src/c_abi/x86_64/memccpy.rs",
   "libc/src/c_abi/x86_64/strsep.rs",
+  "libc/src/c_abi/x86_64/strtok.rs",
   "libc/src/c_abi/x86_64/ffs.rs",
   "libc/src/c_abi/x86_64/intmax_arithmetic.rs",
   "libc/src/c_abi/x86_64/stat_compat.rs",
   "libc/src/c_abi/x86_64/timestamp_updates.rs",
   "libc/src/c_abi/x86_64/credentials.rs",
   "libc/src/c_abi/x86_64/credential_observation.rs",
+  "libc/src/c_abi/x86_64/personality.rs",
+  "libc/src/c_abi/x86_64/setfsgid.rs",
+  "libc/src/c_abi/x86_64/setfsuid.rs",
   "libc/src/c_abi/x86_64/process_context.rs",
   "libc/src/c_abi/x86_64/environment.rs",
   "libc/src/c_abi/x86_64/startup_security.rs",
@@ -3047,6 +3051,153 @@ oracle = [
   { kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source mapping for src/unistd/_exit.c: the complete POSIX `_exit` source forwards directly to `_Exit` after including unistd.h and stdlib.h." },
   { kind = "kernel-abi", source = "Linux 5.10 x86-64 ABI", role = "The selected C11 sibling's exit_group=231 and defensive exit=60 behavior, rdi status word, and child-status observation contract." },
   { kind = "elf-abi", source = "System V AMD64 psABI", role = "Freestanding C function, direct sibling-call, and raw child-status fixture ABI; no dynamic runtime is selected." },
+]
+
+[[family.verified_artifact]]
+id = "static-c-posix-spawnattr-init"
+description = "Private native x86 selected-static-archive POSIX spawn-attribute initialization leaf within still-planned `libc.posix-runtime`. The true static candidate extracts exactly one Rust object exporting only `posix_spawnattr_init`, with no undefined symbol, helper call, syscall, errno/TLS, allocator, or final-ELF runtime dependency. Pinned musl 1.2.6 `src/process/posix_spawnattr_init.c::posix_spawnattr_init` assigns `(posix_spawnattr_t){ 0 }` to one valid caller-owned complete attribute record and returns zero. Direct and function-pointer calls prove that exact all-zero result across all 336 x86 bytes, preserve adjacent caller guards, and retain stale errno on the ordinary musl route. The x86 private layout and fixed 42-word direct-store loop retain that source result without selecting a general memory helper. Null, misaligned, aliased, invalid, or concurrently accessed records remain outside the source C contract. This leaf does not select `posix_spawn`, `posix_spawnp`, attribute destruction/query/mutation, file actions, fork/vfork/clone, exec, child lifecycle, signal delivery, scheduler policy, libc.so, CRT, loader, sysroot, family completion, promotion, or public x86 support. The generic AArch64 `posix_spawnattr_init` export remains unchanged."
+source_owners = [
+  "compat/upstreams.toml",
+  "compat/abi/musl-1.2.6/aarch64/libc.a.static.tsv",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "libc/src/c_abi.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/posix_spawnattr_init.rs",
+  "include/features.h",
+  "include/sys/types.h",
+  "include/bits/alltypes.h",
+  "include/spawn.h",
+  "include/errno.h",
+  "compat/x86_64/posix_spawnattr_init_header_abi_probe.c",
+  "compat/x86_64/posix_spawnattr_init_header_abi_probe.cpp",
+  "compat/x86_64/run_posix_spawnattr_init_header_abi.sh",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/libc_posix_spawnattr_init_probe.c",
+  "compat/x86_64/libc_posix_spawnattr_init_start.S",
+  "compat/x86_64/run_libc_posix_spawnattr_init.sh",
+  "compat/x86_64/aarch64_parity_inventory.py",
+  "compat/x86_64/aarch64_parity_inventory.json",
+  "compat/x86_64/tests/test_aarch64_parity_inventory.py",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "compat/x86_64/README.md",
+  "STATUS.md",
+  "x86-64.md",
+  "scripts/dev-x86_64.sh",
+  "scripts/check_structure.py",
+]
+x86_abi_prerequisites = [
+  "The System V AMD64 ABI passes `int posix_spawnattr_init(posix_spawnattr_t *)`'s one caller-owned pointer in rdi and returns its signed result in eax. The selected x86 public record is a writable, eight-byte-aligned 336-byte object with fields at offsets 0, 4, 8, 136, 264, 268, 272, and 280; null, invalid, misaligned, aliased, and concurrent access remain outside the C source contract.",
+  "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417 `src/process/posix_spawnattr_init.c::posix_spawnattr_init` maps directly to complete zero initialization plus `return 0`; the pinned AArch64 static ABI row fixes only `posix_spawnattr_init.lo` ownership. This x86-only composition keeps that exact value/result while the generic AArch64 export remains unchanged, and does not select spawn execution, attributes beyond initialization, file actions, child lifecycle, signals, or scheduler behavior.",
+  "The true `-nostdlib -static` candidate extracts exactly one Rust object exporting only posix_spawnattr_init with no undefined symbols, helper call, syscall, errno/TLS, allocator, PT_TLS, dynamic-TLS model, PLT, interpreter, DT_NEEDED, or ambient runtime dependency. Its fixed 42-word direct-store loop owns only full-record zeroing and rejects every peer spawn/process export.",
+]
+x86_header_prerequisites = [
+  "The focused pinned-musl/project-first C11/C++17 `<spawn.h>` matrix proves unconditional `int posix_spawnattr_init(posix_spawnattr_t *)` under strict, POSIX, X/Open, and GNU profiles, its exact function-pointer ABI, 336-byte/eight-byte-aligned x86 record layout and member offsets, project-header provenance, and unmangled C++ linkage through the installed `extern \"C\"` guards. It selects no spawn execution, file action, attribute query/mutation, child-lifecycle, or public x86 support.",
+]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-posix-spawnattr-init", scope = "Pinned-musl/project C/C++ header compilation plus equivalent pinned-musl C execution and one true dependency-free x86 crabc-libc `-nostdlib -static` candidate. The shared fixture proves direct and function-pointer successful initialization of byte-filled 336-byte caller-owned posix_spawnattr_t records, full zeroing, intact adjacent guards, and stale errno preservation on the ordinary musl route. It ratchets pinned-musl posix_spawnattr_init.lo/AArch64 ownership, exact crate-owned export closure, no interpreter/DT_NEEDED/unresolved symbol/PT_TLS/errno/dynamic-TLS model/allocator/helper-call/syscall or ambient runtime, and a fixed direct-store no-call/no-syscall object while rejecting peer spawn and process extraction. It does not select spawn execution, file actions, attribute destruction/query/mutation, fork/vfork/clone, exec, child lifecycle, signal or scheduler behavior, generic process control, libc.so, CRT, loader, sysroot, family completion, promotion, or public x86 support." }]
+oracle = [
+  { kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source, unconditional spawn.h declaration, static-member, full-record zeroing, and stale-errno behavior oracle for src/process/posix_spawnattr_init.c::posix_spawnattr_init." },
+  { kind = "elf-abi", source = "System V AMD64 psABI and pinned musl x86 static object", role = "One caller-record pointer/signed-int C ABI, C++ C linkage, x86 record layout, and true-static ET_EXEC closure contract." },
+]
+
+[[family.verified_artifact]]
+id = "static-c-posix-spawnattr-getpgroup"
+description = "Private native x86 selected-static-archive POSIX spawn-attribute process-group readback leaf within still-planned `libc.posix-runtime`. The true static candidate extracts exactly one Rust object exporting only `posix_spawnattr_getpgroup`, with no undefined symbol, helper call, syscall, errno/TLS, allocator, or final-ELF runtime dependency. Pinned musl 1.2.6 `src/process/posix_spawnattr_getpgroup.c::posix_spawnattr_getpgroup` copies the signed `__pgrp` member from one valid caller-owned complete attribute record to one distinct valid caller-owned `pid_t` output and returns zero. Direct and function-pointer calls prove positive and negative four-byte process-group values, byte-exact input-record preservation, adjacent input/output guards, and stale errno on the ordinary musl route. The x86 private boundary loads byte offset four and stores only the supplied output word, without validating invalid C pointers. Null, misaligned, aliased, invalid, or concurrently accessed storage remains outside the source C contract. This leaf does not select `posix_spawn`, `posix_spawnp`, attribute initialization/destruction/mutation or other queries, file actions, fork/vfork/clone, exec, child lifecycle, signal delivery, scheduler policy, libc.so, CRT, loader, sysroot, family completion, promotion, or public x86 support. The generic AArch64 `posix_spawnattr_getpgroup` export remains unchanged."
+source_owners = [
+  "compat/upstreams.toml",
+  "compat/abi/musl-1.2.6/aarch64/libc.a.static.tsv",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "libc/src/c_abi.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/posix_spawnattr_getpgroup.rs",
+  "include/features.h",
+  "include/sys/types.h",
+  "include/bits/alltypes.h",
+  "include/spawn.h",
+  "include/errno.h",
+  "compat/x86_64/posix_spawnattr_getpgroup_header_abi_probe.c",
+  "compat/x86_64/posix_spawnattr_getpgroup_header_abi_probe.cpp",
+  "compat/x86_64/run_posix_spawnattr_getpgroup_header_abi.sh",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/libc_posix_spawnattr_getpgroup_probe.c",
+  "compat/x86_64/libc_posix_spawnattr_getpgroup_start.S",
+  "compat/x86_64/run_libc_posix_spawnattr_getpgroup.sh",
+  "compat/x86_64/aarch64_parity_inventory.py",
+  "compat/x86_64/aarch64_parity_inventory.json",
+  "compat/x86_64/tests/test_aarch64_parity_inventory.py",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "compat/x86_64/README.md",
+  "STATUS.md",
+  "x86-64.md",
+  "scripts/dev-x86_64.sh",
+  "scripts/check_structure.py",
+]
+x86_abi_prerequisites = [
+  "The System V AMD64 ABI passes `int posix_spawnattr_getpgroup(const posix_spawnattr_t *, pid_t *)`'s valid read-only record pointer in rdi and distinct writable pid_t pointer in rsi, then returns zero in eax. The selected x86 public record has a signed four-byte `__pgrp` at byte offset four; null, invalid, misaligned, aliased, and concurrent access remain outside the direct C source contract.",
+  "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417 `src/process/posix_spawnattr_getpgroup.c::posix_spawnattr_getpgroup` maps directly to `*pgrp = attr->__pgrp; return 0;`; the pinned AArch64 static ABI row fixes only `posix_spawnattr_getpgroup.lo` ownership. This x86-only composition keeps that exact valid-storage value/result while the generic AArch64 export remains unchanged, and does not select spawn execution, attributes beyond this readback, file actions, child lifecycle, signals, or scheduler behavior.",
+  "The true `-nostdlib -static` candidate extracts exactly one Rust object exporting only posix_spawnattr_getpgroup with no undefined symbols, helper call, syscall, errno/TLS, allocator, PT_TLS, dynamic-TLS model, PLT, interpreter, DT_NEEDED, or ambient runtime dependency. Its fixed offset-four load and output-word store own only process-group readback and reject every peer spawn/process export.",
+]
+x86_header_prerequisites = [
+  "The focused pinned-musl/project-first C11/C++17 `<spawn.h>` matrix proves unconditional `int posix_spawnattr_getpgroup(const posix_spawnattr_t *, pid_t *)` under strict, POSIX, X/Open, and GNU profiles, its exact function-pointer ABI, signed four-byte pid_t result storage, offset-four `__pgrp` member, project-header provenance, and unmangled C++ linkage through the installed `extern \"C\"` guards. It selects no spawn execution, file action, attribute initialization/mutation, child lifecycle, or public x86 support.",
+]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-posix-spawnattr-getpgroup", scope = "Pinned-musl/project C/C++ header compilation plus equivalent pinned-musl C execution and one true dependency-free x86 crabc-libc `-nostdlib -static` candidate. The shared fixture proves direct and function-pointer process-group readback of positive and negative pid_t values from byte-filled 336-byte caller-owned posix_spawnattr_t records, byte-exact input preservation, intact input/output guards, and stale errno preservation on the ordinary musl route. It ratchets pinned-musl posix_spawnattr_getpgroup.lo/AArch64 ownership, exact crate-owned export closure, no interpreter/DT_NEEDED/unresolved symbol/PT_TLS/errno/dynamic-TLS model/allocator/helper-call/syscall or ambient runtime, and a fixed offset-four no-call/no-syscall object while rejecting peer spawn and process extraction. It does not select spawn execution, file actions, attribute initialization/destruction/mutation or other queries, fork/vfork/clone, exec, child lifecycle, signal or scheduler behavior, generic process control, libc.so, CRT, loader, sysroot, family completion, promotion, or public x86 support." }]
+oracle = [
+  { kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source, unconditional spawn.h declaration, static-member, direct process-group readback, and stale-errno behavior oracle for src/process/posix_spawnattr_getpgroup.c::posix_spawnattr_getpgroup." },
+  { kind = "elf-abi", source = "System V AMD64 psABI and pinned musl x86 static object", role = "Two-pointer signed-int C ABI, C++ C linkage, x86 attribute-member layout, and true-static ET_EXEC closure contract." },
+]
+
+[[family.verified_artifact]]
+id = "static-c-posix-spawnattr-getschedpolicy"
+description = "Private native x86 selected-static-archive POSIX spawn-attribute scheduler-policy compatibility-return leaf within still-planned `libc.posix-runtime`. The true static candidate extracts exactly one Rust object exporting only `posix_spawnattr_getschedpolicy`, with no undefined symbol, helper call, syscall, errno/TLS, allocator, or final-ELF runtime dependency. Pinned musl 1.2.6 `src/process/posix_spawnattr_sched.c::posix_spawnattr_getschedpolicy` has the complete body `return ENOSYS;`: every selected direct and function-pointer call returns the positive error number `ENOSYS=38`, leaves stale errno unchanged, and neither reads nor writes a byte-filled 336-byte caller-owned `posix_spawnattr_t` record or an adjacent-guarded `int` output. The fixture covers nonnull arguments, null attribute, null output, and both-null pointers, preserving all supplied caller storage. The private x86 object materializes only that immediate result; it does not validate or dereference either pointer. This leaf does not select `posix_spawn`, `posix_spawnp`, attribute initialization/destruction/mutation or other queries, file actions, fork/vfork/clone, exec, child lifecycle, signal delivery, scheduler policy or parameter behavior, libc.so, CRT, loader, sysroot, family completion, promotion, or public x86 support. The generic AArch64 `posix_spawnattr_getschedpolicy` export remains unchanged."
+source_owners = [
+  "compat/upstreams.toml",
+  "compat/abi/musl-1.2.6/aarch64/libc.a.static.tsv",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "libc/src/c_abi.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/posix_spawnattr_getschedpolicy.rs",
+  "include/features.h",
+  "include/sys/types.h",
+  "include/bits/alltypes.h",
+  "include/spawn.h",
+  "include/errno.h",
+  "compat/x86_64/posix_spawnattr_getschedpolicy_header_abi_probe.c",
+  "compat/x86_64/posix_spawnattr_getschedpolicy_header_abi_probe.cpp",
+  "compat/x86_64/run_posix_spawnattr_getschedpolicy_header_abi.sh",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/libc_posix_spawnattr_getschedpolicy_probe.c",
+  "compat/x86_64/libc_posix_spawnattr_getschedpolicy_start.S",
+  "compat/x86_64/run_libc_posix_spawnattr_getschedpolicy.sh",
+  "compat/x86_64/aarch64_parity_inventory.py",
+  "compat/x86_64/aarch64_parity_inventory.json",
+  "compat/x86_64/tests/test_aarch64_parity_inventory.py",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "compat/x86_64/README.md",
+  "STATUS.md",
+  "x86-64.md",
+  "scripts/dev-x86_64.sh",
+  "scripts/check_structure.py",
+]
+x86_abi_prerequisites = [
+  "The System V AMD64 ABI passes `int posix_spawnattr_getschedpolicy(const posix_spawnattr_t *, int *)`'s declared pointer values in rdi/rsi and returns the direct positive `ENOSYS=38` signed int in eax. Musl deliberately dereferences neither pointer: a byte-filled x86 336-byte/eight-byte-aligned record and guarded int output remain untouched, while null attribute, null output, and both-null calls retain the same result and stale errno; no record layout or concurrent state is selected.",
+  "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417 `src/process/posix_spawnattr_sched.c::posix_spawnattr_getschedpolicy` maps directly to `return ENOSYS;`; the pinned AArch64 static ABI row fixes `posix_spawnattr_sched.lo` ownership. This x86-only composition keeps that exact non-dereferencing compatibility return while the generic AArch64 export remains unchanged, and does not select spawn execution, file actions, child lifecycle, signals, or scheduler behavior.",
+  "The true `-nostdlib -static` candidate extracts exactly one Rust object exporting only posix_spawnattr_getschedpolicy with no undefined symbols, helper call, syscall, errno/TLS, allocator, PT_TLS, dynamic-TLS model, PLT, interpreter, DT_NEEDED, or ambient runtime dependency. Its fixed ENOSYS immediate return does not load either argument and rejects every peer spawn/process export.",
+]
+x86_header_prerequisites = [
+  "The focused pinned-musl/project-first C11/C++17 `<spawn.h>` matrix proves unconditional `int posix_spawnattr_getschedpolicy(const posix_spawnattr_t *, int *)` under strict, POSIX, X/Open, and GNU profiles, its exact function-pointer ABI, four-byte int result storage, complete 336-byte/eight-byte-aligned attribute type, project-header provenance, and unmangled C++ linkage through the installed `extern \"C\"` guards. It selects no spawn execution, file action, attribute state, child lifecycle, scheduler operation, or public x86 support.",
+]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-posix-spawnattr-getschedpolicy", scope = "Pinned-musl/project C/C++ header compilation plus equivalent pinned-musl C execution and one true dependency-free x86 crabc-libc `-nostdlib -static` candidate. The shared fixture proves direct and function-pointer positive ENOSYS=38 returns for nonnull arguments, null attribute, null output, and both-null calls, with byte-filled 336-byte caller-owned posix_spawnattr_t storage, guarded int output, and stale errno preservation. It ratchets pinned-musl posix_spawnattr_sched.lo/AArch64 ownership, exact crate-owned export closure, no interpreter/DT_NEEDED/unresolved symbol/PT_TLS/errno/dynamic-TLS model/allocator/helper-call/syscall or ambient runtime, and a fixed ignored-pointer ENOSYS no-call/no-syscall object while rejecting peer spawn and process extraction. It does not select spawn execution, file actions, attribute initialization/destruction/mutation or other queries, fork/vfork/clone, exec, child lifecycle, signal or scheduler behavior, generic process control, libc.so, CRT, loader, sysroot, family completion, promotion, or public x86 support." }]
+oracle = [
+  { kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source, unconditional spawn.h declaration, static-member, direct ENOSYS return, ignored-pointer, and stale-errno behavior oracle for src/process/posix_spawnattr_sched.c::posix_spawnattr_getschedpolicy." },
+  { kind = "elf-abi", source = "System V AMD64 psABI and pinned musl x86 static object", role = "Two-pointer signed-int C ABI, C++ C linkage, header-record type, and true-static ET_EXEC closure contract." },
 ]
 
 [[family.verified_artifact]]
@@ -7206,6 +7357,47 @@ native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc
 oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source mapping, GNU/BSD declaration, and mutation-behavior oracle for src/string/strsep.c: null stored-state return, delimiter-set scan, in-place NUL replacement, one-byte state advance, and terminal-state clearing. The pinned AArch64 libc.a static TSV fixes only strsep.lo ownership." }, { kind = "elf-abi", source = "System V AMD64 psABI", role = "LP64 pointer arguments in rdi/rsi, rax pointer return, static linking, and no-dynamic-dependency fixture contract." }]
 
 [[family.verified_artifact]]
+id = "static-c-strtok"
+description = "Private native x86 selected-static-archive `strtok` leaf within still-planned `libc.posix-runtime`. The true static candidate extracts exactly one Rust object exporting only `strtok`, with no undefined symbol, relocation, or final-ELF dependency on the existing byte-string, reentrant-tokenizer, allocator, or generic runtime surface. It executes pinned musl 1.2.6 `src/string/strtok.c` behavior first through pinned musl and then through `-nostdlib -static`: a non-null caller-owned mutable C string begins or replaces the one shared process-global non-TLS continuation cursor, null input resumes it, leading delimiter runs are skipped, and one selected separator becomes NUL. A final token or delimiter-only/empty input clears the cursor. Interleaved sequences deliberately overwrite that one cursor; concurrent unsynchronized calls remain outside the historical C contract. Local scalar delimiter scans preserve the musl source closure without selecting `strspn`, `strcspn`, or the separately queued reentrant tokenizer API. The leaf has no errno, TLS, syscall, locale, allocator, or other mutable runtime state. It does not promote Rust-subsumed `memory.bytes-basic`, general string/tokenization or thread-safe text behavior, the reentrant tokenizer API, allocator lifecycle/interposition, libc.so, family completion, promotion, or public x86 support. The existing generic AArch64 `strtok` export remains unchanged."
+source_owners = [
+  "compat/upstreams.toml",
+  "compat/abi/musl-1.2.6/aarch64/libc.a.static.tsv",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "libc/src/c_abi.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/strtok.rs",
+  "include/string.h",
+  "include/features.h",
+  "include/bits/alltypes.h",
+  "compat/x86_64/strtok_header_abi_probe.c",
+  "compat/x86_64/strtok_header_abi_probe.cpp",
+  "compat/x86_64/run_strtok_header_abi.sh",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/libc_strtok_probe.c",
+  "compat/x86_64/libc_strtok_start.S",
+  "compat/x86_64/run_libc_strtok.sh",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "compat/x86_64/aarch64_parity_inventory.py",
+  "compat/x86_64/aarch64_parity_inventory.json",
+  "compat/x86_64/README.md",
+  "STATUS.md",
+  "x86-64.md",
+  "scripts/dev-x86_64.sh",
+  "scripts/check_structure.py",
+]
+x86_abi_prerequisites = [
+  "System V AMD64 passes `strtok(char *restrict, const char *restrict)` input and delimiter pointers in rdi/rsi and returns the token pointer or null in rax. A non-null input denotes a caller-owned mutable NUL-terminated C string and replaces the historical process-global continuation; null resumes it. The delimiter denotes a readable NUL-terminated C string. The C restrict and no-concurrent-unsynchronized-call obligations remain with the caller.",
+  "Pinned musl 1.2.6 `src/string/strtok.c` maps the public entry to its static `char *p`, leading delimiter span, token delimiter span, in-place one-byte NUL replacement, and exhaustion clearing. The pinned AArch64 static ABI inventory fixes only `strtok\\tstrtok.lo\\tT\\tGLOBAL\\t0\\t88` public object ownership; this x86 leaf retains that source closure locally while leaving the generic AArch64 export unchanged.",
+  "The selected Rust object exports exactly strtok and has no undefined symbols, call, syscall, errno/TLS, allocator, byte-string, reentrant-tokenizer, or span-helper relocation. Its final `-nostdlib -static` candidate has no unresolved symbols, interpreter, DT_NEEDED entry, no PT_TLS, dynamic TLS model, PLT, ambient libc, or unowned allocator, runtime, or string utility; its fixture-only _start exits directly and supplies no CRT or runtime contract.",
+]
+x86_header_prerequisites = ["The dedicated C/C++ `strtok-header-abi` gate compares project-first and pinned-musl `string.h`: the unconditional declaration has the exact `char *(char *, const char *)` ABI (musl's C spelling retains `restrict`) across default, strict, POSIX, X/Open, GNU, and BSD selectors, and retains unmangled C++ linkage. The behavior fixture additionally traces project string.h, features.h, bits/alltypes.h, and errno.h; it does not select general header, string, or C ABI completion."]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-strtok", scope = "Pinned-musl C reference plus a true `-nostdlib -static` x86 candidate. The gate runs the dedicated C/C++ strtok declaration matrix, traces project headers, ratchets strtok against the pinned AArch64 static-ABI row and complete selected static-export list, and extracts exactly one object exporting only strtok with no undefined symbols, call, or syscall. The freestanding matrix proves leading delimiter skipping, in-place NUL splitting, continuation-after-separator and null-after-final-token behavior, empty input and empty delimiters, high-bit delimiter matching, non-null replacement of a prior continuation, and musl's one shared cursor when sequences interleave. The final candidate has no interpreter, DT_NEEDED, unresolved symbols, PT_TLS, dynamic TLS model, PLT, ambient libc, allocator, errno, locale, or unowned string utilities. It does not select general string/tokenization or thread-safe text behavior, the reentrant tokenizer API, `memory.bytes-basic`, allocator lifecycle/interposition, libc.so, general startup, CRT, loader, sysroot, family completion, promotion, or public x86 support." }]
+oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source mapping, unconditional declaration, and one shared continuation-cursor behavior oracle for src/string/strtok.c: leading-span skip, token-span split, one delimiter NUL replacement, replacement-input state, and exhaustion clearing. The pinned AArch64 libc.a static TSV fixes only strtok.lo ownership." }, { kind = "elf-abi", source = "System V AMD64 psABI", role = "LP64 pointer arguments in rdi/rsi, rax pointer return, static linking, and no-dynamic-dependency fixture contract." }]
+
+[[family.verified_artifact]]
 id = "static-c-random-entropy"
 description = "Private native x86 selected-static-archive random-entropy block. One dependency-free `crabc-libc` archive resolves exactly `getrandom` and `getentropy` into a freestanding C fixture after an equivalent pinned-musl execution. Musl's `getrandom` wrapper is a pthread cancellation point through `syscall_cp`, while musl's bounded `getentropy` loop disables cancellation and rejects lengths above 256 bytes; the current direct leaf deliberately omits pthread cancellation because that boundary remains deferred. Both selected wrappers translate direct Linux status to initial-TLS errno. This artifact is deliberately narrower than C random-state or pthread support; it does not select libc.so, CRT, dynamic TLS, loader, sysroot, allocator, or public x86 support."
 source_owners = [
@@ -7435,6 +7627,155 @@ x86_abi_prerequisites = [
 x86_header_prerequisites = ["The candidate preprocesses project stddef.h, stdint.h, and inttypes.h. The separate C/C++ gate compares pinned musl's two unconditional intmax arithmetic declarations, imaxdiv_t LP64 layout, and unmangled C++ linkage; it selects no general installed-header, parsing, or C runtime ABI claim."]
 native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-intmax-arithmetic", scope = "Pinned-musl C reference plus a true dependency-free x86 crabc-libc static archive and freestanding C candidate. The gate proves project-header provenance; exact closed archive exports for imaxabs/imaxdiv; no interpreter/DT_NEEDED/unresolved symbol or TLS segment/dynamic TLS resolver; typed C function-pointer calls, LP64 imaxdiv_t aggregate return layout, defined-domain absolute values near signed minimum, positive/negative/zero numerators, truncating quotient, dividend-signed remainder, and reconstruction invariants. It deliberately does not invoke unrepresentable absolute values, zero divisors, or signed-minimum divided by -1. It does not select integer parsing, strtoimax/strtoumax, callbacks, floating-point math, libc.so, general startup, pthreads, allocator, loader, sysroot, or public x86 support." }]
 oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source mapping and declaration/behavior oracle for src/stdlib/imaxabs.c and src/stdlib/imaxdiv.c; their undefined arithmetic domains remain unselected." }, { kind = "elf-abi", source = "System V AMD64 psABI", role = "LP64 intmax_t and small imaxdiv_t aggregate return ABI." }]
+
+[[family.verified_artifact]]
+id = "static-c-personality"
+description = "Private native x86 selected-static-archive one-symbol process-personality compatibility artifact inside planned `libc.posix-runtime`. One dependency-free `crabc-libc` archive exposes exactly `personality(unsigned long)`; its freestanding C body first runs through pinned musl 1.2.6 and then through a true `-nostdlib -static` candidate. Pinned musl's `src/linux/personality.c::personality` forwards raw Linux x86 syscall 135 in rdi. The unsigned-long all-ones `0xffffffffUL` request is a non-mutating query, and Linux preserves its current prior-personality result in eax instead of inventing a zero-or-error status. The common raw/C body uses only that query twice and proves stale initial-TLS `errno` on ordinary returns. The strict/POSIX/X/Open/GNU C and C++17 matrix keeps the unconditional `int personality(unsigned long)` declaration, eight-byte unsigned long, `PER_LINUX=0`/`PER_MASK=0xff`, x86 syscall macro, and unmangled C linkage. It selects neither personality policy nor executable transition, prctl/capability/namespace controls, credential or identity/session families, scheduler state, pthread lifecycle, libc.so, CRT, dynamic TLS lifecycle, loader, sysroot, family completion, promotion, or public x86 support."
+source_owners = [
+  "compat/upstreams.toml",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/personality.rs",
+  "libc/src/c_abi/x86_64/errno.rs",
+  "libc/src/c_abi/x86_64/static_tls.rs",
+  "libc/src/c_abi/x86_64/syscall.rs",
+  "include/errno.h",
+  "include/stdint.h",
+  "include/sys/personality.h",
+  "include/sys/syscall.h",
+  "include/bits/syscall.h",
+  "compat/x86_64/personality_header_abi_probe.c",
+  "compat/x86_64/personality_header_abi_probe.cpp",
+  "compat/x86_64/run_personality_header_abi.sh",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/libc_personality_probe.c",
+  "compat/x86_64/libc_personality_start.S",
+  "compat/x86_64/run_libc_personality.sh",
+  "compat/x86_64/aarch64_parity_inventory.py",
+  "compat/x86_64/aarch64_parity_inventory.json",
+  "compat/x86_64/tests/test_aarch64_parity_inventory.py",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "compat/x86_64/README.md",
+  "STATUS.md",
+  "x86-64.md",
+  "scripts/dev-x86_64.sh",
+  "scripts/check_structure.py",
+]
+x86_abi_prerequisites = [
+  "System V AMD64 passes the eight-byte unsigned long argument for int personality(unsigned long) in rdi and receives its signed four-byte return in eax. Linux x86 raw syscall 135 consumes that same word and returns the current prior personality; the 0xffffffffUL query does not change the calling task's execution personality.",
+  "Pinned musl 1.2.6 `src/linux/personality.c::personality` is the complete MIT source mapping: its sole syscall(SYS_personality, persona) request preserves ordinary prior-personality results and translates only a reserved raw Linux error through __syscall_ret. The closed Rust leaf contains neither policy nor prctl, capability, namespace, credential, identity/session, or scheduler logic.",
+  "The common pinned-musl/candidate C body proves raw and C 0xffffffffUL query agreement, stale ERANGE on its first query, an unchanged second raw query, and a second C query with stale E2BIG. Its start delegates only archive Static Initial TLS v1 bootstrap required for the latent raw-error errno path; it does not claim CRT or general TLS lifecycle.",
+]
+x86_header_prerequisites = ["The project-first/pinned-musl strict/POSIX/X/Open/GNU C and C++17 matrix proves the unconditional `int personality(unsigned long)` spelling from sys/personality.h, eight-byte align-8 unsigned long, `PER_LINUX=0`/`PER_MASK=0xff`, x86 `SYS_personality=135`, and unmangled C++ C linkage. The project trace proves stdint.h, sys/personality.h, sys/syscall.h, and bits/syscall.h provenance. This is a bounded declaration and static C ABI proof, not installed-header, administrative-control, or public-support completion."]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-personality", scope = "Pinned-musl 1.2.6 C reference plus strict/POSIX/X/Open/GNU C/C++ header matrix and a true dependency-free x86 crabc-libc archive with a `-nostdlib -static` candidate. The gate checks project-header provenance and exact crate-owned C-object export closure separately from compiler-builtins; rejects interpreter/DT_NEEDED/unresolved symbols/dynamic TLS/unowned runtime, personality policy, executable transition, prctl/capability/namespace controls, credential or identity/session families, scheduler state, pthread lifecycle, allocator, auxv, and sysconf paths; proves direct initial-TLS errno plus personality disassembly with raw syscall 135 and no prctl; and executes raw/C 0xffffffffUL queries with stale errno. It adds no process-control completion, dynamic libc, CRT, loader, sysroot, promotion, or public x86 support." }]
+oracle = [
+  { kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source, unconditional sys/personality.h declaration, unsigned-long ABI, and behavior oracle for src/linux/personality.c::personality: syscall 135 returns the current personality for the all-ones query and leaves ordinary errno unchanged." },
+  { kind = "linux-uapi", source = "Linux 5.10 x86-64 syscall ABI", role = "Raw personality syscall 135 consumes the unsigned-long persona word in rdi; 0xffffffffUL is a non-mutating query that returns the current personality." },
+  { kind = "elf-abi", source = "System V AMD64 psABI", role = "unsigned-long/int scalar C register ABI, C++ unmangled C linkage, and static initial-exec TLS fixture contract." },
+]
+
+[[family.verified_artifact]]
+id = "static-c-setfsgid"
+description = "Private native x86 selected-static-archive one-symbol filesystem-credential compatibility artifact inside planned `libc.posix-runtime`. One dependency-free `crabc-libc` archive exposes exactly `setfsgid(gid_t)`; its freestanding C body first runs through pinned musl 1.2.6 and then through a true `-nostdlib -static` candidate. Pinned musl's `src/linux/setfsgid.c::setfsgid` forwards raw Linux x86 syscall 123 in rdi and preserves Linux's unusual prior-filesystem-GID result in eax instead of inventing a zero-or-error status. An ordinary kernel return does not report whether a requested identity took effect, so the common raw/C body uses all-ones query plus current-effective-ID requests and proves stale initial-TLS `errno` on those ordinary returns. The strict/POSIX/X/Open/GNU C and C++17 matrix keeps the unconditional `int setfsgid(gid_t)` declaration, four-byte unsigned gid_t, x86 syscall macro, and unmangled C linkage. It selects neither `setfsuid`, credential observation/setter families, account data, permission-detection policy, process-wide credential synchronization, process/session control, scheduler state, pthread lifecycle, libc.so, CRT, dynamic TLS lifecycle, loader, sysroot, family completion, promotion, or public x86 support."
+source_owners = [
+  "compat/upstreams.toml",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/setfsgid.rs",
+  "libc/src/c_abi/x86_64/errno.rs",
+  "libc/src/c_abi/x86_64/static_tls.rs",
+  "libc/src/c_abi/x86_64/syscall.rs",
+  "include/errno.h",
+  "include/stdint.h",
+  "include/sys/fsuid.h",
+  "include/sys/syscall.h",
+  "include/bits/syscall.h",
+  "include/sys/types.h",
+  "compat/x86_64/setfsgid_header_abi_probe.c",
+  "compat/x86_64/setfsgid_header_abi_probe.cpp",
+  "compat/x86_64/run_setfsgid_header_abi.sh",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/libc_setfsgid_probe.c",
+  "compat/x86_64/libc_setfsgid_start.S",
+  "compat/x86_64/run_libc_setfsgid.sh",
+  "compat/x86_64/aarch64_parity_inventory.py",
+  "compat/x86_64/aarch64_parity_inventory.json",
+  "compat/x86_64/tests/test_aarch64_parity_inventory.py",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "compat/x86_64/README.md",
+  "STATUS.md",
+  "x86-64.md",
+  "scripts/dev-x86_64.sh",
+  "scripts/check_structure.py",
+]
+x86_abi_prerequisites = [
+  "System V AMD64 passes the unsigned four-byte gid_t argument for int setfsgid(gid_t) in edi and receives its signed four-byte return in eax. Linux x86 raw syscall 123 consumes that same gid word in rdi and returns the prior filesystem GID rather than a zero success status or a detectable refused-change error.",
+  "Pinned musl 1.2.6 `src/linux/setfsgid.c::setfsgid` is the complete MIT source mapping: its sole syscall(SYS_setfsgid, gid) request preserves ordinary prior-GID results and translates only a reserved raw Linux error through __syscall_ret. The closed Rust leaf contains neither setfsuid nor credential observation/setter or synchronization logic.",
+  "The common pinned-musl/candidate C body proves raw and C all-ones gid_t query agreement, stale ERANGE on query, a current-effective-ID request returning the prior GID with stale E2BIG, and the subsequent current-GID query/second request. Its start delegates only archive Static Initial TLS v1 bootstrap required for the latent raw-error errno path; it does not claim CRT or general TLS lifecycle.",
+]
+x86_header_prerequisites = ["The project-first/pinned-musl strict/POSIX/X/Open/GNU C and C++17 matrix proves the unconditional `int setfsgid(gid_t)` spelling from sys/fsuid.h, four-byte align-4 unsigned gid_t, x86 `SYS_setfsgid=123`, and unmangled C++ C linkage. The project trace proves stdint.h, sys/fsuid.h, sys/types.h, sys/syscall.h, and bits/syscall.h provenance. This is a bounded declaration and static C ABI proof, not installed-header, credential-family, or public-support completion."]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-setfsgid", scope = "Pinned-musl 1.2.6 C reference plus strict/POSIX/X/Open/GNU C/C++ header matrix and a true dependency-free x86 crabc-libc archive with a `-nostdlib -static` candidate. The gate checks project-header provenance and exact crate-owned C-object export closure separately from compiler-builtins; rejects interpreter/DT_NEEDED/unresolved symbols/dynamic TLS/unowned runtime, setfsuid, credential observation/setter families, account data, credential synchronization, process/session control, scheduler state, pthread lifecycle, allocator, auxv, and sysconf paths; proves direct initial-TLS errno plus setfsgid disassembly with raw syscall 123 and no paired user syscall; and executes raw/C all-ones query and current-effective-ID contrast with stale errno. It adds no credential-family completion, dynamic libc, CRT, loader, sysroot, promotion, or public x86 support." }]
+oracle = [
+  { kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source, unconditional sys/fsuid.h declaration, gid_t ABI, and behavior oracle for src/linux/setfsgid.c::setfsgid: syscall 123 returns the previous filesystem GID and leaves ordinary errno unchanged." },
+  { kind = "linux-uapi", source = "Linux 5.10 x86-64 syscall ABI", role = "Raw setfsgid syscall 123 consumes the gid word in rdi, returns the prior filesystem GID, and does not provide conventional permission-failure reporting for the selected query/current-effective requests." },
+  { kind = "elf-abi", source = "System V AMD64 psABI", role = "gid_t/int scalar C register ABI, C++ unmangled C linkage, and static initial-exec TLS fixture contract." },
+]
+
+[[family.verified_artifact]]
+id = "static-c-setfsuid"
+description = "Private native x86 selected-static-archive one-symbol filesystem-credential compatibility artifact inside planned `libc.posix-runtime`. One dependency-free `crabc-libc` archive exposes exactly `setfsuid(uid_t)`; its freestanding C body first runs through pinned musl 1.2.6 and then through a true `-nostdlib -static` candidate. Pinned musl's `src/linux/setfsuid.c::setfsuid` forwards raw Linux x86 syscall 122 in rdi and preserves Linux's unusual prior-filesystem-UID result in eax instead of inventing a zero-or-error status. An ordinary kernel return does not report whether a requested identity took effect, so the common raw/C body uses all-ones query plus current-effective-ID requests and proves stale initial-TLS `errno` on those ordinary returns. The strict/POSIX/X/Open/GNU C and C++17 matrix keeps the unconditional `int setfsuid(uid_t)` declaration, four-byte unsigned uid_t, x86 syscall macro, and unmangled C linkage. It selects neither `setfsgid`, credential observation/setter families, account data, permission-detection policy, process-wide credential synchronization, process/session control, scheduler state, pthread lifecycle, libc.so, CRT, dynamic TLS lifecycle, loader, sysroot, family completion, promotion, or public x86 support."
+source_owners = [
+  "compat/upstreams.toml",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/setfsuid.rs",
+  "libc/src/c_abi/x86_64/errno.rs",
+  "libc/src/c_abi/x86_64/static_tls.rs",
+  "libc/src/c_abi/x86_64/syscall.rs",
+  "include/errno.h",
+  "include/stdint.h",
+  "include/sys/fsuid.h",
+  "include/sys/syscall.h",
+  "include/bits/syscall.h",
+  "include/sys/types.h",
+  "compat/x86_64/setfsuid_header_abi_probe.c",
+  "compat/x86_64/setfsuid_header_abi_probe.cpp",
+  "compat/x86_64/run_setfsuid_header_abi.sh",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/libc_setfsuid_probe.c",
+  "compat/x86_64/libc_setfsuid_start.S",
+  "compat/x86_64/run_libc_setfsuid.sh",
+  "compat/x86_64/aarch64_parity_inventory.py",
+  "compat/x86_64/aarch64_parity_inventory.json",
+  "compat/x86_64/tests/test_aarch64_parity_inventory.py",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "compat/x86_64/README.md",
+  "STATUS.md",
+  "x86-64.md",
+  "scripts/dev-x86_64.sh",
+  "scripts/check_structure.py",
+]
+x86_abi_prerequisites = [
+  "System V AMD64 passes the unsigned four-byte uid_t argument for int setfsuid(uid_t) in edi and receives its signed four-byte return in eax. Linux x86 raw syscall 122 consumes that same uid word in rdi and returns the prior filesystem UID rather than a zero success status or a detectable refused-change error.",
+  "Pinned musl 1.2.6 `src/linux/setfsuid.c::setfsuid` is the complete MIT source mapping: its sole syscall(SYS_setfsuid, uid) request preserves ordinary prior-UID results and translates only a reserved raw Linux error through __syscall_ret. The closed Rust leaf contains neither setfsgid nor credential observation/setter or synchronization logic.",
+  "The common pinned-musl/candidate C body proves raw and C all-ones uid_t query agreement, stale ERANGE on query, a current-effective-ID request returning the prior UID with stale E2BIG, and the subsequent current-UID query/second request. Its start delegates only archive Static Initial TLS v1 bootstrap required for the latent raw-error errno path; it does not claim CRT or general TLS lifecycle.",
+]
+x86_header_prerequisites = ["The project-first/pinned-musl strict/POSIX/X/Open/GNU C and C++17 matrix proves the unconditional `int setfsuid(uid_t)` spelling from sys/fsuid.h, four-byte align-4 unsigned uid_t, x86 `SYS_setfsuid=122`, and unmangled C++ C linkage. The project trace proves stdint.h, sys/fsuid.h, sys/types.h, sys/syscall.h, and bits/syscall.h provenance. This is a bounded declaration and static C ABI proof, not installed-header, credential-family, or public-support completion."]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-setfsuid", scope = "Pinned-musl 1.2.6 C reference plus strict/POSIX/X/Open/GNU C/C++ header matrix and a true dependency-free x86 crabc-libc archive with a `-nostdlib -static` candidate. The gate checks project-header provenance and exact crate-owned C-object export closure separately from compiler-builtins; rejects interpreter/DT_NEEDED/unresolved symbols/dynamic TLS/unowned runtime, setfsgid, credential observation/setter families, account data, credential synchronization, process/session control, scheduler state, pthread lifecycle, allocator, auxv, and sysconf paths; proves direct initial-TLS errno plus setfsuid disassembly with raw syscall 122 and no paired group syscall; and executes raw/C all-ones query and current-effective-ID contrast with stale errno. It adds no credential-family completion, dynamic libc, CRT, loader, sysroot, promotion, or public x86 support." }]
+oracle = [
+  { kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source, unconditional sys/fsuid.h declaration, uid_t ABI, and behavior oracle for src/linux/setfsuid.c::setfsuid: syscall 122 returns the previous filesystem UID and leaves ordinary errno unchanged." },
+  { kind = "linux-uapi", source = "Linux 5.10 x86-64 syscall ABI", role = "Raw setfsuid syscall 122 consumes the uid word in rdi, returns the prior filesystem UID, and does not provide conventional permission-failure reporting for the selected query/current-effective requests." },
+  { kind = "elf-abi", source = "System V AMD64 psABI", role = "uid_t/int scalar C register ABI, C++ unmangled C linkage, and static initial-exec TLS fixture contract." },
+]
 
 [[family.verified_artifact]]
 id = "static-c-credential-observation"
@@ -8038,6 +8379,157 @@ oracle = [
   { kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT declaration and source oracle for GNU include/fcntl.h `sync_file_range(int, off_t, off_t, unsigned)` and src/linux/sync_file_range.c::sync_file_range: x86 takes the direct SYS_sync_file_range branch, while the 32-bit sync_file_range2 and ENOSYS alternatives remain excluded." },
   { kind = "kernel-abi", source = "Linux 5.10 x86-64 ABI", role = "sync_file_range=277 receives fd/offset/nbytes/flags in rdi/rsi/rdx/r10 and returns raw Linux status; zero-length-through-EOF request, EINVAL, ESPIPE, and EBADF fixture observations establish no durability or writeback-scheduling policy." },
   { kind = "elf-abi", source = "System V AMD64 psABI", role = "LP64 int/off_t/off_t/unsigned C calling convention, unmangled GNU C++ linkage, initial-TLS errno bridge, and true static no-dynamic-TLS candidate contract." },
+]
+
+[[family.verified_artifact]]
+id = "static-c-sched-getparam"
+description = "Private native x86 selected-static-archive one-symbol POSIX scheduler-parameter observation compatibility artifact inside planned `libc.posix-runtime`. One dependency-free `crabc-libc` archive exposes exactly `sched_getparam`; its freestanding C body first runs through pinned musl 1.2.6 and then through a true `-nostdlib -static` candidate. Pinned musl's `src/sched/sched_getparam.c` deliberately returns `__syscall_ret(-ENOSYS)`: every pid-shaped input and every record pointer, including null, returns `-1` and writes `ENOSYS=38` through initial-TLS errno without changing caller-owned record bytes, rather than forwarding Linux's thread-scoped raw x86 syscall 143 as the POSIX process-facing API. The common body proves raw current-task observation succeeds without changing stale errno, then proves the musl C ABI result for 0, -1, and INT_MAX plus null pointers and an untouched 48-byte `struct sched_param`. The strict/POSIX/X/Open/GNU C and C++17 feature matrix keeps `int sched_getparam(pid_t, struct sched_param *)`, its LP64 record layout, and unmangled C linkage, without claiming a scheduler-header rewrite. Its selected leaf makes no raw syscall and leaves the separate `sched_getscheduler`, C11 `thrd_yield`, and priority-bounds routes outside the candidate. It does not select scheduler mutation or policy, parameter records, priority bounds, POSIX `sched_yield`, affinity, pthread scheduling attributes, thread/process lifecycle, libc.so, CRT, dynamic TLS lifecycle, loader, sysroot, scheduler-family completion, promotion, or public x86 support."
+source_owners = [
+  "compat/upstreams.toml",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/sched_getparam.rs",
+  "libc/src/c_abi/x86_64/errno.rs",
+  "libc/src/c_abi/x86_64/static_tls.rs",
+  "include/errno.h",
+  "include/sched.h",
+  "include/sys/types.h",
+  "include/time.h",
+  "include/sys/syscall.h",
+  "include/bits/syscall.h",
+  "compat/x86_64/sched_getparam_header_abi_probe.c",
+  "compat/x86_64/sched_getparam_header_abi_probe.cpp",
+  "compat/x86_64/run_sched_getparam_header_abi.sh",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/libc_sched_getparam_probe.c",
+  "compat/x86_64/libc_sched_getparam_start.S",
+  "compat/x86_64/run_libc_sched_getparam.sh",
+  "compat/x86_64/run_libc_process_resources.sh",
+  "compat/x86_64/aarch64_parity_inventory.py",
+  "compat/x86_64/aarch64_parity_inventory.json",
+  "compat/x86_64/tests/test_aarch64_parity_inventory.py",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "compat/x86_64/README.md",
+  "STATUS.md",
+  "x86-64.md",
+  "scripts/dev-x86_64.sh",
+  "scripts/check_structure.py",
+]
+x86_abi_prerequisites = [
+  "System V AMD64 passes `pid_t` as a signed four-byte value in edi and `struct sched_param *` in rsi, then receives int sched_getparam(pid_t, struct sched_param *)'s signed four-byte result in eax. Linux x86 syscall 143 instead consumes a thread selector and writable scheduler record; this selected POSIX bridge deliberately does not issue that syscall.",
+  "Pinned musl 1.2.6 `src/sched/sched_getparam.c` is the complete MIT source mapping: sched_getparam(pid_t, struct sched_param *) returns __syscall_ret(-ENOSYS) without dereferencing the record. Musl declines Linux's thread-scoped scheduler syscall under this process-facing POSIX name, so the closure contains neither sched_setparam/sched_setscheduler nor scheduler-policy logic.",
+  "The common pinned-musl/candidate C body observes raw 143 current-task success with stale ERANGE, then C ABI -1/ENOSYS for 0, -1, and INT_MAX with a byte-for-byte untouched 48-byte record plus null pointers. Its start delegates only archive Static Initial TLS v1 bootstrap required for errno; it does not claim CRT or general TLS lifecycle.",
+]
+x86_header_prerequisites = ["The project-first/pinned-musl strict/POSIX/X/Open/GNU C and C++17 header matrix proves exact `int sched_getparam(pid_t, struct sched_param *)` declaration, LP64 four-byte pid_t, 48-byte align-8 sched_param layout with offsets 0/4/8/40, scheduler constants, and unmangled C++ C linkage. The project trace proves sched.h, sys/types.h, and time.h provenance. The static fixture additionally preprocesses project errno.h, sys/syscall.h, and bits/syscall.h to prove raw Linux 143 only as an oracle contrast. This is a bounded C ABI/header proof, not scheduler-family, installed-header, or public-support completion."]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-sched-getparam", scope = "Pinned-musl 1.2.6 C reference plus strict/POSIX/X/Open/GNU C/C++ header matrix and a true dependency-free x86 crabc-libc archive with a `-nostdlib -static` candidate. The gate checks project-header provenance and exact crate-owned C-object export closure separately from compiler-builtins; rejects interpreter/DT_NEEDED/unresolved symbols/dynamic TLS/unowned runtime, scheduler mutation/policy/parameters, priority bounds, POSIX sched_yield, affinity, pthread scheduling, lifecycle, allocator, auxv, and sysconf paths; proves direct initial-TLS errno plus sched_getparam disassembly that materializes ENOSYS=38 and cannot issue raw syscall 143; and executes raw-current contrast with C ABI -1/ENOSYS for current, invalid, missing, and null record inputs while retaining an untouched record. It leaves sched_getscheduler, C11 thrd_yield, and priority-bounds work out of this candidate and adds no scheduler-family completion, dynamic libc, CRT, loader, sysroot, promotion, or public x86 support." }]
+oracle = [
+  { kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source, public declaration, record layout, and behavior oracle for src/sched/sched_getparam.c: the POSIX process-facing spelling always returns -1 with ENOSYS without dereferencing its record." },
+  { kind = "linux-uapi", source = "Linux 5.10 x86-64 syscall ABI", role = "Raw sched_getparam syscall 143 is a thread-scoped kernel record observation used only by the differential fixture to demonstrate why musl's process API remains ENOSYS." },
+  { kind = "elf-abi", source = "System V AMD64 psABI", role = "pid_t/record-pointer/int register ABI, C++ unmangled C linkage, and static initial-exec TLS fixture contract." },
+]
+
+[[family.verified_artifact]]
+id = "static-c-sched-setparam"
+description = "Private native x86 selected-static-archive one-symbol POSIX scheduler-parameter compatibility-failure artifact inside planned `libc.posix-runtime`. One dependency-free `crabc-libc` archive exposes exactly `sched_setparam`; its freestanding C body first runs through pinned musl 1.2.6 and then through a true `-nostdlib -static` candidate. Pinned musl's `src/sched/sched_setparam.c` deliberately returns `__syscall_ret(-ENOSYS)`: every pid-shaped input and every read-only record pointer, including null, returns `-1` and writes `ENOSYS=38` through initial-TLS errno without changing caller-owned record bytes, rather than forwarding Linux's thread-scoped raw x86 syscall 142 as the POSIX process-facing API. The common body only invokes raw 142 with an impossible INT_MAX task and a valid zero parameter, observing non-mutating `-ESRCH` with stale errno, then proves the musl C ABI result for 0, -1, and INT_MAX plus null pointers and an untouched 48-byte `struct sched_param`. The strict/POSIX/X/Open/GNU C and C++17 feature matrix keeps `int sched_setparam(pid_t, const struct sched_param *)`, its LP64 record layout, and unmangled C linkage, without claiming a scheduler-header rewrite. Its selected leaf makes no raw syscall and leaves the separate `sched_getparam`, `sched_getscheduler`, C11 `thrd_yield`, and priority-bounds routes outside the candidate. It does not select scheduler mutation or policy, parameter records, priority bounds, POSIX `sched_yield`, affinity, pthread scheduling attributes, thread/process lifecycle, libc.so, CRT, dynamic TLS lifecycle, loader, sysroot, scheduler-family completion, promotion, or public x86 support."
+source_owners = [
+  "compat/upstreams.toml",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/sched_setparam.rs",
+  "libc/src/c_abi/x86_64/errno.rs",
+  "libc/src/c_abi/x86_64/static_tls.rs",
+  "include/errno.h",
+  "include/sched.h",
+  "include/sys/types.h",
+  "include/time.h",
+  "include/sys/syscall.h",
+  "include/bits/syscall.h",
+  "compat/x86_64/sched_setparam_header_abi_probe.c",
+  "compat/x86_64/sched_setparam_header_abi_probe.cpp",
+  "compat/x86_64/run_sched_setparam_header_abi.sh",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/libc_sched_setparam_probe.c",
+  "compat/x86_64/libc_sched_setparam_start.S",
+  "compat/x86_64/run_libc_sched_setparam.sh",
+  "compat/x86_64/run_libc_process_resources.sh",
+  "compat/x86_64/aarch64_parity_inventory.py",
+  "compat/x86_64/aarch64_parity_inventory.json",
+  "compat/x86_64/tests/test_aarch64_parity_inventory.py",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "compat/x86_64/README.md",
+  "STATUS.md",
+  "x86-64.md",
+  "scripts/dev-x86_64.sh",
+  "scripts/check_structure.py",
+]
+x86_abi_prerequisites = [
+  "System V AMD64 passes `pid_t` as a signed four-byte value in edi and `const struct sched_param *` in rsi, then receives int sched_setparam(pid_t, const struct sched_param *)'s signed four-byte result in eax. Linux x86 syscall 142 instead consumes a thread selector and read-only scheduler record that can change thread state; this selected POSIX bridge deliberately does not issue that syscall.",
+  "Pinned musl 1.2.6 `src/sched/sched_setparam.c` is the complete MIT source mapping: sched_setparam(pid_t, const struct sched_param *) returns __syscall_ret(-ENOSYS) without dereferencing the record. Musl declines Linux's thread-scoped scheduler syscall under this process-facing POSIX name, so the closure contains neither sched_setscheduler nor scheduler-policy logic.",
+  "The common pinned-musl/candidate C body invokes raw 142 only for impossible INT_MAX with a valid zero parameter, observes non-mutating -ESRCH with stale ERANGE, then proves C ABI -1/ENOSYS for 0, -1, and INT_MAX with a byte-for-byte untouched 48-byte record plus null pointers. Its start delegates only archive Static Initial TLS v1 bootstrap required for errno; it does not claim CRT or general TLS lifecycle.",
+]
+x86_header_prerequisites = ["The project-first/pinned-musl strict/POSIX/X/Open/GNU C and C++17 header matrix proves exact `int sched_setparam(pid_t, const struct sched_param *)` declaration, LP64 four-byte pid_t, 48-byte align-8 sched_param layout with offsets 0/4/8/40, scheduler constants, and unmangled C++ C linkage. The project trace proves sched.h, sys/types.h, and time.h provenance. The static fixture additionally preprocesses project errno.h, sys/syscall.h, and bits/syscall.h to prove raw Linux 142 only as an oracle contrast. This is a bounded C ABI/header proof, not scheduler-family, installed-header, or public-support completion."]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-sched-setparam", scope = "Pinned-musl 1.2.6 C reference plus strict/POSIX/X/Open/GNU C/C++ header matrix and a true dependency-free x86 crabc-libc archive with a `-nostdlib -static` candidate. The gate checks project-header provenance and exact crate-owned C-object export closure separately from compiler-builtins; rejects interpreter/DT_NEEDED/unresolved symbols/dynamic TLS/unowned runtime, scheduler mutation/policy/parameters, priority bounds, POSIX sched_yield, affinity, pthread scheduling, lifecycle, allocator, auxv, and sysconf paths; proves direct initial-TLS errno plus sched_setparam disassembly that materializes ENOSYS=38 and cannot issue raw syscall 142; and executes the raw-impossible-task contrast with C ABI -1/ENOSYS for current, invalid, missing, and null record inputs while retaining an untouched record. It leaves sched_getparam, sched_getscheduler, C11 thrd_yield, and priority-bounds work out of this candidate and adds no scheduler-family completion, dynamic libc, CRT, loader, sysroot, promotion, or public x86 support." }]
+oracle = [
+  { kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source, public declaration, record layout, and behavior oracle for src/sched/sched_setparam.c: the POSIX process-facing spelling always returns -1 with ENOSYS without dereferencing its read-only record." },
+  { kind = "linux-uapi", source = "Linux 5.10 x86-64 syscall ABI", role = "Raw sched_setparam syscall 142 is a thread-scoped kernel mutation operation. The differential fixture uses only impossible INT_MAX with a valid zero parameter to observe non-mutating ESRCH and demonstrate why musl's process API remains ENOSYS." },
+  { kind = "elf-abi", source = "System V AMD64 psABI", role = "pid_t/const-record-pointer/int register ABI, C++ unmangled C linkage, and static initial-exec TLS fixture contract." },
+]
+
+[[family.verified_artifact]]
+id = "static-c-sched-getaffinity"
+description = "Private native x86 selected-static-archive one-symbol GNU scheduler-affinity observation compatibility artifact inside planned `libc.posix-runtime`. One dependency-free `crabc-libc` archive exposes exactly `sched_getaffinity`; its freestanding C body first runs through pinned musl 1.2.6 and then through a true `-nostdlib -static` candidate. Pinned musl's `src/sched/affinity.c::do_getaffinity` invokes Linux x86 raw syscall 204 with a thread selector, byte count, and writable mask: a successful positive initialized-prefix count becomes C return zero while the caller-owned tail is cleared, and a raw error becomes `-1` through initial-TLS errno with the buffer untouched. The Rust leaf maps musl's tail `memset` to direct x86 byte stores solely to retain the same byte values without selecting a memory C ABI leaf. The common body proves raw current-task prefix observation with stale errno, normalized C success with byte-identical prefix and zero tail, undersized `EINVAL`, missing `INT_MAX` `ESRCH`, and null-mask `EFAULT`. The strict/POSIX/X/Open profiles hide the GNU-only spelling, while GNU C and C++17 prove exact `int sched_getaffinity(pid_t, size_t, cpu_set_t *)`, the 128-byte align-8 LP64 mask layout, and unmangled C linkage. It selects neither `sched_setaffinity`, CPU allocation/count/macro helpers, scheduler policy or parameters, pthread affinity or lifecycle, libc.so, CRT, dynamic TLS lifecycle, loader, sysroot, scheduler-family completion, promotion, or public x86 support."
+source_owners = [
+  "compat/upstreams.toml",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/sched_getaffinity.rs",
+  "libc/src/c_abi/x86_64/errno.rs",
+  "libc/src/c_abi/x86_64/static_tls.rs",
+  "libc/src/c_abi/x86_64/syscall.rs",
+  "include/errno.h",
+  "include/sched.h",
+  "include/sys/types.h",
+  "include/time.h",
+  "include/sys/syscall.h",
+  "include/bits/syscall.h",
+  "compat/x86_64/sched_getaffinity_header_abi_probe.c",
+  "compat/x86_64/sched_getaffinity_header_abi_probe.cpp",
+  "compat/x86_64/sched_getaffinity_header_visibility_probe.c",
+  "compat/x86_64/run_sched_getaffinity_header_abi.sh",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/libc_sched_getaffinity_probe.c",
+  "compat/x86_64/libc_sched_getaffinity_start.S",
+  "compat/x86_64/run_libc_sched_getaffinity.sh",
+  "compat/x86_64/aarch64_parity_inventory.py",
+  "compat/x86_64/aarch64_parity_inventory.json",
+  "compat/x86_64/tests/test_aarch64_parity_inventory.py",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "compat/x86_64/README.md",
+  "STATUS.md",
+  "x86-64.md",
+  "scripts/dev-x86_64.sh",
+  "scripts/check_structure.py",
+]
+x86_abi_prerequisites = [
+  "System V AMD64 passes signed four-byte pid_t in edi, size_t in rsi, and cpu_set_t * in rdx, then receives int sched_getaffinity(pid_t, size_t, cpu_set_t *) in eax. Linux x86 raw syscall 204 uses the same three register values and returns either a positive initialized byte count or a negative errno; the selected C ABI turns only success into zero.",
+  "Pinned musl 1.2.6 `src/sched/affinity.c::do_getaffinity` and `src/sched/affinity.c::sched_getaffinity` are the complete MIT source mapping: direct raw 204 preserves its initialized prefix, clears only the caller-owned tail with memset when the prefix is short, then translates errors through __syscall_ret. The closed Rust leaf uses direct x86 byte stores for the same zero tail and contains neither sched_setaffinity nor CPU helper or scheduler-policy logic.",
+  "The common pinned-musl/candidate C body proves raw-current positive-prefix observation with stale ERANGE, C normalized zero with a byte-identical prefix and zero 128-byte cpu_set_t tail, then EINVAL for size one, ESRCH for INT_MAX, and EFAULT for a full-size null mask. Its start delegates only archive Static Initial TLS v1 bootstrap required for errno; it does not claim CRT or general TLS lifecycle.",
+]
+x86_header_prerequisites = ["The project-first/pinned-musl strict/POSIX/X/Open C and C++17 visibility matrix proves the GNU-only scheduler-affinity API is absent outside GNU. GNU C and C++17 then prove exact `int sched_getaffinity(pid_t, size_t, cpu_set_t *)`, four-byte pid_t, eight-byte size_t, 128-byte align-8 cpu_set_t with __bits at offset zero, and unmangled C++ C linkage. The project trace proves sched.h, sys/types.h, and time.h provenance; the static fixture additionally preprocesses errno.h, sys/syscall.h, and bits/syscall.h to prove Linux 204. This is a bounded C ABI/header proof, not CPU-helper, scheduler-family, installed-header, or public-support completion."]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-sched-getaffinity", scope = "Pinned-musl 1.2.6 C reference plus strict/POSIX/X/Open/GNU C/C++ header matrix and a true dependency-free x86 crabc-libc archive with a `-nostdlib -static` candidate. The gate checks project-header provenance and exact crate-owned C-object export closure separately from compiler-builtins; rejects interpreter/DT_NEEDED/unresolved symbols/dynamic TLS/unowned runtime, affinity mutation, CPU helpers, scheduler policy/parameters, pthread state/lifecycle, allocator, auxv, and sysconf paths; proves direct initial-TLS errno plus sched_getaffinity disassembly with raw syscall 204, no raw 203, and no direct memory C ABI call; and executes raw-current prefix/tail contrast with C normalized success plus EINVAL, ESRCH, and EFAULT errors. It adds no scheduler-family completion, dynamic libc, CRT, loader, sysroot, promotion, or public x86 support." }]
+oracle = [
+  { kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source, GNU declaration, cpu_set_t layout, and behavior oracle for src/sched/affinity.c::do_getaffinity and sched_getaffinity: raw initialized prefix, tail zeroing, normalized zero return, and errno translation." },
+  { kind = "linux-uapi", source = "Linux 5.10 x86-64 syscall ABI", role = "Raw sched_getaffinity syscall 204 observes a thread mask, returns its initialized byte count, and provides the EINVAL/ESRCH/EFAULT error behavior exercised by the differential fixture." },
+  { kind = "elf-abi", source = "System V AMD64 psABI", role = "pid_t/size_t/mask-pointer/int register ABI, C++ unmangled C linkage, and static initial-exec TLS fixture contract." },
 ]
 
 [[family]]

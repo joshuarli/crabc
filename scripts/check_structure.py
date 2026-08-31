@@ -154,6 +154,9 @@ X86_RUNTIME_FOUNDATION_LIBC_SOURCES = {
     Path("libc/src/c_abi/x86_64/clone.rs"),
     Path("libc/src/c_abi/x86_64/credentials.rs"),
     Path("libc/src/c_abi/x86_64/credential_observation.rs"),
+    Path("libc/src/c_abi/x86_64/personality.rs"),
+    Path("libc/src/c_abi/x86_64/setfsgid.rs"),
+    Path("libc/src/c_abi/x86_64/setfsuid.rs"),
     Path("libc/src/c_abi/x86_64/child_reaping.rs"),
     Path("libc/src/c_abi/x86_64/clock_gettime.rs"),
     Path("libc/src/c_abi/x86_64/difftime.rs"),
@@ -171,6 +174,9 @@ X86_RUNTIME_FOUNDATION_LIBC_SOURCES = {
     Path("libc/src/c_abi/x86_64/ioctl.rs"),
     Path("libc/src/c_abi/x86_64/immediate_termination.rs"),
     Path("libc/src/c_abi/x86_64/posix_exit.rs"),
+    Path("libc/src/c_abi/x86_64/posix_spawnattr_init.rs"),
+    Path("libc/src/c_abi/x86_64/posix_spawnattr_getpgroup.rs"),
+    Path("libc/src/c_abi/x86_64/posix_spawnattr_getschedpolicy.rs"),
     Path("libc/src/c_abi/x86_64/bsearch.rs"),
     Path("libc/src/c_abi/x86_64/linear_search.rs"),
     Path("libc/src/c_abi/x86_64/intrusive_queue.rs"),
@@ -3754,6 +3760,9 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         '#[path = "timestamp_updates.rs"]',
         '#[path = "credentials.rs"]',
         '#[path = "credential_observation.rs"]',
+        '#[path = "personality.rs"]',
+        '#[path = "setfsgid.rs"]',
+        '#[path = "setfsuid.rs"]',
         '#[path = "memory.rs"]',
         '#[path = "memccpy.rs"]',
         '#[path = "mempcpy.rs"]',
@@ -3796,6 +3805,8 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         '#[path = "child_reaping.rs"]',
         '#[path = "immediate_termination.rs"]',
         '#[path = "posix_exit.rs"]',
+        '#[path = "posix_spawnattr_init.rs"]',
+        '#[path = "posix_spawnattr_getpgroup.rs"]',
         '#[path = "bsearch.rs"]',
         '#[path = "linear_search.rs"]',
         '#[path = "intrusive_queue.rs"]',
@@ -7870,6 +7881,245 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
                 "libc/src/c_abi/x86_64/posix_exit.rs: selected static POSIX "
                 f"_exit boundary must not select {forbidden!r}"
             )
+
+    posix_spawnattr_init_source = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "posix_spawnattr_init.rs"
+    )
+    posix_spawnattr_init_text = posix_spawnattr_init_source.read_text(errors="replace")
+    for required in (
+        "Selected static Linux/x86-64 POSIX spawn-attribute initialization C ABI",
+        "musl 1.2.6 release commit",
+        "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+        "src/process/posix_spawnattr_init.c::posix_spawnattr_init",
+        "PosixSpawnAttr",
+        "const _: [(); 336]",
+        "const _: [(); 8]",
+        "POSIX_SPAWNATTR_INIT_WORDS",
+        "core::arch::asm!",
+        "mov qword ptr [{attributes} + rcx * 8 - 8], rax",
+        "pub unsafe extern \"C\" fn posix_spawnattr_init",
+    ):
+        if required not in posix_spawnattr_init_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/posix_spawnattr_init.rs: selected static "
+                f"boundary is missing {required!r}"
+            )
+    posix_spawnattr_init_exports = set(
+        re.findall(
+            r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(',
+            posix_spawnattr_init_text,
+        )
+    )
+    if posix_spawnattr_init_exports != {"posix_spawnattr_init"}:
+        errors.append(
+            "libc/src/c_abi/x86_64/posix_spawnattr_init.rs: selected static "
+            "artifact must export only posix_spawnattr_init"
+        )
+    for forbidden in (
+        "raw_syscall::",
+        "errno::",
+        "static_tls::",
+        "crabc_core",
+        "crabc_mimalloc",
+        "posix_spawnp",
+        "fork(",
+        "execve",
+    ):
+        if forbidden in posix_spawnattr_init_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/posix_spawnattr_init.rs: selected static "
+                f"leaf must not select {forbidden!r}"
+            )
+    posix_spawnattr_init_runner = (
+        ROOT / "compat" / "x86_64" / "run_libc_posix_spawnattr_init.sh"
+    )
+    posix_spawnattr_init_runner_text = posix_spawnattr_init_runner.read_text(
+        errors="replace"
+    )
+    for required in (
+        "run_musl_oracle.sh",
+        "run_posix_spawnattr_init_header_abi.sh",
+        "posix_spawnattr_init.lo",
+        "archive_member_for_symbol",
+        "posix_spawnattr_init object export surface drifted",
+        "posix_spawnattr_init object unexpectedly depends on another symbol",
+        "posix_spawnattr_init object unexpectedly performs a call or syscall",
+        "-nostdlib -static",
+        "--no-undefined",
+        "candidate retains a PLT",
+        "fork vfork clone execve wait4",
+    ):
+        if required not in posix_spawnattr_init_runner_text:
+            errors.append(
+                "compat/x86_64/run_libc_posix_spawnattr_init.sh: selected static "
+                f"evidence is missing {required!r}"
+            )
+    if "--whole-archive" in posix_spawnattr_init_runner_text:
+        errors.append(
+            "compat/x86_64/run_libc_posix_spawnattr_init.sh: selected static "
+            "evidence must not force-link the archive"
+        )
+
+    posix_spawnattr_getpgroup_source = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "posix_spawnattr_getpgroup.rs"
+    )
+    posix_spawnattr_getpgroup_text = posix_spawnattr_getpgroup_source.read_text(
+        errors="replace"
+    )
+    for required in (
+        "Selected static Linux/x86-64 POSIX spawn-attribute process-group readback C ABI",
+        "musl 1.2.6 release commit",
+        "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+        "src/process/posix_spawnattr_getpgroup.c::posix_spawnattr_getpgroup",
+        "attr->__pgrp",
+        "POSIX_SPAWNATTR_PROCESS_GROUP_OFFSET",
+        "read_unaligned",
+        "write_unaligned",
+        "pub unsafe extern \"C\" fn posix_spawnattr_getpgroup",
+    ):
+        if required not in posix_spawnattr_getpgroup_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/posix_spawnattr_getpgroup.rs: selected static "
+                f"boundary is missing {required!r}"
+            )
+    posix_spawnattr_getpgroup_exports = set(
+        re.findall(
+            r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(',
+            posix_spawnattr_getpgroup_text,
+        )
+    )
+    if posix_spawnattr_getpgroup_exports != {"posix_spawnattr_getpgroup"}:
+        errors.append(
+            "libc/src/c_abi/x86_64/posix_spawnattr_getpgroup.rs: selected static "
+            "artifact must export only posix_spawnattr_getpgroup"
+        )
+    for forbidden in (
+        "raw_syscall::",
+        "errno::",
+        "static_tls::",
+        "crabc_core",
+        "crabc_mimalloc",
+        "fork(",
+        "execve",
+    ):
+        if forbidden in posix_spawnattr_getpgroup_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/posix_spawnattr_getpgroup.rs: selected static "
+                f"leaf must not select {forbidden!r}"
+            )
+    posix_spawnattr_getpgroup_runner = (
+        ROOT / "compat" / "x86_64" / "run_libc_posix_spawnattr_getpgroup.sh"
+    )
+    posix_spawnattr_getpgroup_runner_text = posix_spawnattr_getpgroup_runner.read_text(
+        errors="replace"
+    )
+    for required in (
+        "run_musl_oracle.sh",
+        "run_posix_spawnattr_getpgroup_header_abi.sh",
+        "posix_spawnattr_getpgroup.lo",
+        "archive_member_for_symbol",
+        "posix_spawnattr_getpgroup object export surface drifted",
+        "posix_spawnattr_getpgroup object unexpectedly depends on another symbol",
+        "posix_spawnattr_getpgroup object unexpectedly performs a call or syscall",
+        "-nostdlib -static",
+        "--no-undefined",
+        "candidate retains a PLT",
+        "fork vfork clone execve wait4",
+    ):
+        if required not in posix_spawnattr_getpgroup_runner_text:
+            errors.append(
+                "compat/x86_64/run_libc_posix_spawnattr_getpgroup.sh: selected static "
+                f"evidence is missing {required!r}"
+            )
+    if "--whole-archive" in posix_spawnattr_getpgroup_runner_text:
+        errors.append(
+            "compat/x86_64/run_libc_posix_spawnattr_getpgroup.sh: selected static "
+            "evidence must not force-link the archive"
+        )
+
+    posix_spawnattr_getschedpolicy_source = (
+        ROOT
+        / "libc"
+        / "src"
+        / "c_abi"
+        / "x86_64"
+        / "posix_spawnattr_getschedpolicy.rs"
+    )
+    posix_spawnattr_getschedpolicy_text = (
+        posix_spawnattr_getschedpolicy_source.read_text(errors="replace")
+    )
+    for required in (
+        "Selected static Linux/x86-64 POSIX spawn-attribute scheduler-policy C ABI",
+        "musl 1.2.6 release commit",
+        "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+        "src/process/posix_spawnattr_sched.c::posix_spawnattr_getschedpolicy",
+        "return ENOSYS;",
+        "ENOSYS: c_int = 38",
+        "pub extern \"C\" fn posix_spawnattr_getschedpolicy",
+    ):
+        if required not in posix_spawnattr_getschedpolicy_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/posix_spawnattr_getschedpolicy.rs: "
+                f"selected static boundary is missing {required!r}"
+            )
+    posix_spawnattr_getschedpolicy_exports = set(
+        re.findall(
+            r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(',
+            posix_spawnattr_getschedpolicy_text,
+        )
+    )
+    if posix_spawnattr_getschedpolicy_exports != {
+        "posix_spawnattr_getschedpolicy"
+    }:
+        errors.append(
+            "libc/src/c_abi/x86_64/posix_spawnattr_getschedpolicy.rs: selected "
+            "static artifact must export only posix_spawnattr_getschedpolicy"
+        )
+    for forbidden in (
+        "raw_syscall::",
+        "errno::",
+        "static_tls::",
+        "crabc_core",
+        "crabc_mimalloc",
+        "fork(",
+        "execve",
+    ):
+        if forbidden in posix_spawnattr_getschedpolicy_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/posix_spawnattr_getschedpolicy.rs: "
+                f"selected static leaf must not select {forbidden!r}"
+            )
+    posix_spawnattr_getschedpolicy_runner = (
+        ROOT / "compat" / "x86_64" / "run_libc_posix_spawnattr_getschedpolicy.sh"
+    )
+    posix_spawnattr_getschedpolicy_runner_text = (
+        posix_spawnattr_getschedpolicy_runner.read_text(errors="replace")
+    )
+    for required in (
+        "run_musl_oracle.sh",
+        "run_posix_spawnattr_getschedpolicy_header_abi.sh",
+        "posix_spawnattr_sched.lo",
+        "archive_member_for_symbol",
+        "posix_spawnattr_getschedpolicy object export surface drifted",
+        "posix_spawnattr_getschedpolicy object unexpectedly depends on another symbol",
+        "posix_spawnattr_getschedpolicy object unexpectedly performs a call or syscall",
+        "assert_ignored_pointer_enosys_boundary",
+        "-nostdlib -static",
+        "--no-undefined",
+        "candidate retains a PLT",
+        "fork vfork clone execve wait4",
+    ):
+        if required not in posix_spawnattr_getschedpolicy_runner_text:
+            errors.append(
+                "compat/x86_64/run_libc_posix_spawnattr_getschedpolicy.sh: "
+                f"selected static evidence is missing {required!r}"
+            )
+    if "--whole-archive" in posix_spawnattr_getschedpolicy_runner_text:
+        errors.append(
+            "compat/x86_64/run_libc_posix_spawnattr_getschedpolicy.sh: selected "
+            "static evidence must not force-link the archive"
+        )
+
     bsearch_source = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "bsearch.rs"
     bsearch_text = bsearch_source.read_text(errors="replace")
     for required in (
@@ -12190,6 +12440,116 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
             "artifact must export only getgroups, getresuid, and getresgid"
         )
 
+    personality_source = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "personality.rs"
+    personality_text = personality_source.read_text(errors="replace")
+    for required in (
+        "Bounded Linux/x86-64 static process-personality boundary",
+        "src/linux/personality.c::personality",
+        "SYS_PERSONALITY",
+        "c_status(result)",
+    ):
+        if required not in personality_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/personality.rs: selected static "
+                f"process-personality boundary is missing {required!r}"
+            )
+    personality_exports = set(
+        re.findall(
+            r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(',
+            personality_text,
+        )
+    )
+    if personality_exports != {"personality"}:
+        errors.append(
+            "libc/src/c_abi/x86_64/personality.rs: selected static "
+            "artifact must export only personality"
+        )
+    for forbidden in (
+        "SYS_PRCTL",
+        "SYS_CAPGET",
+        "SYS_CAPSET",
+        "SYS_SETNS",
+        "SYS_UNSHARE",
+        "pthread_",
+    ):
+        if forbidden in personality_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/personality.rs: selected static "
+                f"process-personality boundary must not select {forbidden!r}"
+            )
+
+    setfsuid_source = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "setfsuid.rs"
+    setfsuid_text = setfsuid_source.read_text(errors="replace")
+    for required in (
+        "Bounded Linux/x86-64 static filesystem-credential setfsuid boundary",
+        "src/linux/setfsuid.c::setfsuid",
+        "SYS_SETFSUID",
+        "c_status(result)",
+    ):
+        if required not in setfsuid_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/setfsuid.rs: selected static "
+                f"filesystem-credential boundary is missing {required!r}"
+            )
+    setfsuid_exports = set(
+        re.findall(
+            r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(',
+            setfsuid_text,
+        )
+    )
+    if setfsuid_exports != {"setfsuid"}:
+        errors.append(
+            "libc/src/c_abi/x86_64/setfsuid.rs: selected static "
+            "artifact must export only setfsuid"
+        )
+    for forbidden in (
+        "SYS_SETFSGID",
+        'pub unsafe extern "C" fn setfsgid',
+        "pthread_",
+        "static_tls",
+    ):
+        if forbidden in setfsuid_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/setfsuid.rs: selected static "
+                f"filesystem-credential boundary must not select {forbidden!r}"
+            )
+
+    setfsgid_source = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "setfsgid.rs"
+    setfsgid_text = setfsgid_source.read_text(errors="replace")
+    for required in (
+        "Bounded Linux/x86-64 static filesystem-credential setfsgid boundary",
+        "src/linux/setfsgid.c::setfsgid",
+        "SYS_SETFSGID",
+        "c_status(result)",
+    ):
+        if required not in setfsgid_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/setfsgid.rs: selected static "
+                f"filesystem-credential boundary is missing {required!r}"
+            )
+    setfsgid_exports = set(
+        re.findall(
+            r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(',
+            setfsgid_text,
+        )
+    )
+    if setfsgid_exports != {"setfsgid"}:
+        errors.append(
+            "libc/src/c_abi/x86_64/setfsgid.rs: selected static "
+            "artifact must export only setfsgid"
+        )
+    for forbidden in (
+        "SYS_SETFSUID",
+        'pub unsafe extern "C" fn setfsuid',
+        "pthread_",
+        "static_tls",
+    ):
+        if forbidden in setfsgid_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/setfsgid.rs: selected static "
+                f"filesystem-credential boundary must not select {forbidden!r}"
+            )
+
     ffs_source = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "ffs.rs"
     ffs_text = ffs_source.read_text(errors="replace")
     for required in (
@@ -12432,6 +12792,9 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         child_reaping_text,
         immediate_termination_text,
         posix_exit_text,
+        posix_spawnattr_init_text,
+        posix_spawnattr_getpgroup_text,
+        posix_spawnattr_getschedpolicy_text,
         bsearch_text,
         linear_search_text,
         intrusive_queue_text,
@@ -12638,6 +13001,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         "memccpy",
         "mempcpy",
         "strsep",
+        "strtok",
         "memset",
         "memmove",
         "feclearexcept",
@@ -12976,6 +13340,9 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         "__funcs_on_exit",
         "__cxa_finalize",
         "_exit",
+        "posix_spawnattr_init",
+        "posix_spawnattr_getpgroup",
+        "posix_spawnattr_getschedpolicy",
         "exit",
         "__libc_start_main",
         "__optpos",
@@ -13048,6 +13415,9 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         ("stat_compat.rs", stat_text),
         ("credentials.rs", credentials_text),
         ("credential_observation.rs", credential_observation_text),
+        ("personality.rs", personality_text),
+        ("setfsgid.rs", setfsgid_text),
+        ("setfsuid.rs", setfsuid_text),
         ("auxv_observation.rs", auxv_observation_text),
         ("startup_security.rs", startup_security_text),
         ("secure_environment.rs", secure_environment_text),
@@ -13100,6 +13470,9 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         ("child_reaping.rs", child_reaping_text),
         ("immediate_termination.rs", immediate_termination_text),
         ("posix_exit.rs", posix_exit_text),
+        ("posix_spawnattr_init.rs", posix_spawnattr_init_text),
+        ("posix_spawnattr_getpgroup.rs", posix_spawnattr_getpgroup_text),
+        ("posix_spawnattr_getschedpolicy.rs", posix_spawnattr_getschedpolicy_text),
         ("bsearch.rs", bsearch_text),
         ("linear_search.rs", linear_search_text),
         ("intrusive_queue.rs", intrusive_queue_text),

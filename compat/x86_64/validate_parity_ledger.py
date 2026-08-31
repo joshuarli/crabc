@@ -1067,6 +1067,8 @@ MEMPCPY_SYMBOLS = ("mempcpy",)
 
 STRSEP_SYMBOLS = ("strsep",)
 
+STRTOK_SYMBOLS = ("strtok",)
+
 RANDOM_ENTROPY_SYMBOLS = ("getrandom", "getentropy")
 
 MEMORY_SEARCH_SYMBOLS = ("memchr", "memrchr", "memmem")
@@ -7239,6 +7241,1375 @@ def require_strsep_artifact(family: Mapping[str, Any]) -> None:
         "run_libc_strsep",
     ):
         require(snippet in dispatcher, f"x86 dispatcher omits {snippet}")
+
+
+def require_strtok_artifact(family: Mapping[str, Any]) -> None:
+    """Keep musl's one shared historical tokenizer cursor below promotion."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.posix-runtime].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [entry for entry in artifacts if entry.get("id") == "static-c-strtok"]
+    require(
+        len(matching) == 1,
+        "libc.posix-runtime must contain exactly one static-c-strtok artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-strtok must not promote libc.posix-runtime",
+    )
+    artifact = matching[0]
+    require(
+        "capabilities" not in artifact,
+        "static-c-strtok must not promote memory.bytes-basic",
+    )
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for symbol in STRTOK_SYMBOLS:
+        require(symbol in description, f"static-c-strtok description omits {symbol}")
+    for phrase in (
+        "still-planned `libc.posix-runtime`",
+        "exactly one Rust object exporting only `strtok`",
+        "no undefined symbol, relocation, or final-ELF dependency",
+        "one shared process-global non-TLS continuation cursor",
+        "Interleaved sequences deliberately overwrite that one cursor",
+        "concurrent unsynchronized calls remain outside the historical C contract",
+        "Local scalar delimiter scans",
+        "reentrant tokenizer API",
+        "Rust-subsumed `memory.bytes-basic`",
+        "general string/tokenization or thread-safe text behavior",
+        "allocator lifecycle/interposition",
+        "family completion",
+        "promotion",
+        "public x86 support",
+        "generic AArch64 `strtok` export remains unchanged",
+    ):
+        require(phrase in description, f"static-c-strtok description omits {phrase}")
+
+    owners = set(
+        nonempty_strings(artifact["source_owners"], "static-c-strtok.source_owners")
+    )
+    for owner in (
+        "compat/upstreams.toml",
+        "compat/abi/musl-1.2.6/aarch64/libc.a.static.tsv",
+        "libc/Cargo.toml",
+        "libc/src/lib.rs",
+        "libc/src/c_abi.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/strtok.rs",
+        "include/string.h",
+        "include/features.h",
+        "include/bits/alltypes.h",
+        "compat/x86_64/strtok_header_abi_probe.c",
+        "compat/x86_64/strtok_header_abi_probe.cpp",
+        "compat/x86_64/run_strtok_header_abi.sh",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/libc_strtok_probe.c",
+        "compat/x86_64/libc_strtok_start.S",
+        "compat/x86_64/run_libc_strtok.sh",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/aarch64_parity_inventory.py",
+        "compat/x86_64/aarch64_parity_inventory.json",
+        "compat/x86_64/README.md",
+        "STATUS.md",
+        "x86-64.md",
+        "scripts/dev-x86_64.sh",
+        "scripts/check_structure.py",
+    ):
+        require(owner in owners, f"static-c-strtok source owners omit {owner}")
+
+    prerequisites = nonempty_strings(
+        artifact["x86_abi_prerequisites"], "static-c-strtok.x86_abi_prerequisites"
+    )
+    require(
+        any(
+            "strtok(char *restrict, const char *restrict)" in item
+            and "rdi/rsi" in item
+            and "rax" in item
+            and "non-null input" in item
+            and "no-concurrent-unsynchronized-call" in item
+            for item in prerequisites
+        ),
+        "static-c-strtok must retain its SysV C ABI and shared-state contract",
+    )
+    require(
+        any(
+            "src/string/strtok.c" in item
+            and "strtok.lo" in item
+            and "generic AArch64 export unchanged" in item
+            for item in prerequisites
+        ),
+        "static-c-strtok must retain musl source and AArch64 boundary provenance",
+    )
+    require(
+        any(
+            "exactly strtok" in item
+            and "no undefined symbols" in item
+            and "no PT_TLS" in item
+            and "unowned allocator, runtime, or string utility" in item
+            for item in prerequisites
+        ),
+        "static-c-strtok must retain its closed static dependency boundary",
+    )
+
+    header_prerequisites = nonempty_strings(
+        artifact["x86_header_prerequisites"], "static-c-strtok.x86_header_prerequisites"
+    )
+    require(
+        any(
+            "string.h" in item
+            and "char *(char *, const char *)" in item
+            and "default, strict, POSIX, X/Open, GNU, and BSD" in item
+            and "unmangled C++ linkage" in item
+            for item in header_prerequisites
+        ),
+        "static-c-strtok must retain its focused C/C++ header ABI",
+    )
+
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-strtok"},
+        "static-c-strtok must use the closed libc-strtok command",
+    )
+    scope = evidence[0].get("scope")
+    require(
+        isinstance(scope, str)
+        and all(
+            phrase in scope
+            for phrase in (
+                "dedicated C/C++ strtok declaration matrix",
+                "pinned AArch64 static-ABI row",
+                "exactly one object exporting only strtok",
+                "no undefined symbols, call, or syscall",
+                "leading delimiter skipping",
+                "in-place NUL splitting",
+                "empty input and empty delimiters",
+                "high-bit delimiter matching",
+                "non-null replacement of a prior continuation",
+                "one shared cursor when sequences interleave",
+                "no interpreter, DT_NEEDED, unresolved symbols, PT_TLS",
+                "general string/tokenization or thread-safe text behavior",
+                "reentrant tokenizer API",
+                "memory.bytes-basic",
+                "allocator lifecycle/interposition",
+                "public x86 support",
+            )
+        ),
+        "static-c-strtok evidence must retain its bounded static contract",
+    )
+
+    exports = set(
+        static_c_abi_export_names(
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        )
+    )
+    for symbol in STRTOK_SYMBOLS:
+        require(symbol in exports, f"static C ABI export contract omits {symbol}")
+
+    static_root = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+    ).read_text(encoding="utf-8")
+    require(
+        '#[path = "strtok.rs"]\nmod strtok;' in static_root,
+        "x86 static C ABI must compose the strtok leaf",
+    )
+    source = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "strtok.rs"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "musl 1.2.6",
+        "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+        "src/string/strtok.c",
+        "static mut CONTINUATION",
+        "shared\n//! non-TLS cursor",
+        "skip_separators",
+        "token_end",
+        "pub unsafe extern \"C\" fn strtok",
+        "concurrent\n//! unsynchronized calls",
+    ):
+        require(snippet in source, f"strtok implementation omits {snippet}")
+    rust_exports = set(
+        re.findall(
+            r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(', source
+        )
+    )
+    require(rust_exports == {"strtok"}, "strtok implementation must export only strtok")
+    for forbidden in (
+        "raw_syscall::",
+        "errno::",
+        "crabc_core",
+        "crabc_mimalloc",
+        "malloc",
+        "strtok_r",
+        "use super::",
+    ):
+        require(forbidden not in source, f"strtok implementation selects {forbidden}")
+
+    runner = (ROOT / "compat" / "x86_64" / "run_libc_strtok.sh").read_text(
+        encoding="utf-8"
+    )
+    for snippet in (
+        "run_musl_oracle.sh",
+        "run_strtok_header_abi.sh",
+        "strtok.lo",
+        "static_c_abi_exports.txt",
+        "archive_member_for_symbol",
+        "strtok object export surface drifted",
+        "strtok object unexpectedly depends on another symbol",
+        "strtok object unexpectedly performs a call or syscall",
+        "-nostdlib -static",
+        "--no-undefined",
+        "candidate retains a PLT",
+        "unowned allocator, runtime, or string utility",
+    ):
+        require(snippet in runner, f"strtok runner omits {snippet}")
+    require("--whole-archive" not in runner, "strtok runner must not force-link the archive")
+
+    probe = (ROOT / "compat" / "x86_64" / "libc_strtok_probe.c").read_text(
+        encoding="utf-8"
+    )
+    for snippet in (
+        "strtok_signature",
+        "_Static_assert",
+        "check_primary_sequence",
+        "check_empty_and_empty_separator",
+        "check_replacement_and_shared_cursor",
+        "check_high_byte_separator",
+        "CRABC_STRTOK_FREESTANDING",
+        "errno = E2BIG",
+    ):
+        require(snippet in probe, f"strtok probe omits {snippet}")
+    start = (ROOT / "compat" / "x86_64" / "libc_strtok_start.S").read_text(
+        encoding="utf-8"
+    )
+    for snippet in ("crabc_x86_64_strtok_probe", "mov $60, %eax"):
+        require(snippet in start, f"strtok start shim omits {snippet}")
+
+    header_c = (
+        ROOT / "compat" / "x86_64" / "strtok_header_abi_probe.c"
+    ).read_text(encoding="utf-8")
+    header_cxx = (
+        ROOT / "compat" / "x86_64" / "strtok_header_abi_probe.cpp"
+    ).read_text(encoding="utf-8")
+    header_runner = (
+        ROOT / "compat" / "x86_64" / "run_strtok_header_abi.sh"
+    ).read_text(encoding="utf-8")
+    for snippet in ("strtok_signature", "CRABC_EXPECT_STRTOK", "strtok declaration"):
+        require(snippet in header_c, f"strtok C header evidence omits {snippet}")
+        require(snippet in header_cxx, f"strtok C++ header evidence omits {snippet}")
+    for snippet in (
+        "default_definitions=()",
+        "strict_definitions=(-D__STRICT_ANSI__)",
+        "posix_definitions=(-D_POSIX_C_SOURCE=200809L)",
+        "xopen_definitions=(-D_XOPEN_SOURCE=700)",
+        "gnu_definitions=(-D_GNU_SOURCE)",
+        "bsd_definitions=(-D_BSD_SOURCE)",
+        "retain C linkage",
+        "escaped its declared roots",
+    ):
+        require(snippet in header_runner, f"strtok header runner omits {snippet}")
+
+    dispatcher = (ROOT / "scripts" / "dev-x86_64.sh").read_text(encoding="utf-8")
+    for snippet in (
+        "strtok-header-abi)",
+        "run_strtok_header_abi()",
+        "run_strtok_header_abi",
+        "libc-strtok)",
+        "run_libc_strtok()",
+        "run_libc_strtok",
+    ):
+        require(snippet in dispatcher, f"x86 dispatcher omits {snippet}")
+
+
+def require_posix_spawnattr_init_artifact(family: Mapping[str, Any]) -> None:
+    """Keep one initialized spawn record below process/spawn completion."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.posix-runtime].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [
+        entry
+        for entry in artifacts
+        if entry.get("id") == "static-c-posix-spawnattr-init"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.posix-runtime needs exactly one static-c-posix-spawnattr-init artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-posix-spawnattr-init must not promote libc.posix-runtime",
+    )
+    artifact = matching[0]
+    require(
+        "capabilities" not in artifact,
+        "static-c-posix-spawnattr-init must not promote a spawn or process capability",
+    )
+
+    description = artifact.get("description")
+    require(
+        isinstance(description, str),
+        "static-c-posix-spawnattr-init needs a description",
+    )
+    for phrase in (
+        "POSIX spawn-attribute initialization leaf",
+        "still-planned `libc.posix-runtime`",
+        "exactly one Rust object exporting only `posix_spawnattr_init`",
+        "no undefined symbol, helper call, syscall, errno/TLS, allocator",
+        "`src/process/posix_spawnattr_init.c::posix_spawnattr_init`",
+        "`(posix_spawnattr_t){ 0 }`",
+        "all 336 x86 bytes",
+        "preserve adjacent caller guards",
+        "stale errno",
+        "fixed 42-word direct-store loop",
+        "Null, misaligned, aliased, invalid, or concurrently accessed",
+        "`posix_spawn`",
+        "`posix_spawnp`",
+        "attribute destruction/query/mutation",
+        "file actions",
+        "fork/vfork/clone",
+        "exec",
+        "child lifecycle",
+        "signal delivery",
+        "scheduler policy",
+        "family completion",
+        "promotion",
+        "public x86 support",
+        "generic AArch64 `posix_spawnattr_init` export remains unchanged",
+    ):
+        require(
+            phrase in description,
+            f"static-c-posix-spawnattr-init description omits {phrase}",
+        )
+
+    owners = set(
+        nonempty_strings(
+            artifact.get("source_owners"),
+            "static-c-posix-spawnattr-init.source_owners",
+        )
+    )
+    for owner in (
+        "compat/upstreams.toml",
+        "compat/abi/musl-1.2.6/aarch64/libc.a.static.tsv",
+        "libc/Cargo.toml",
+        "libc/src/lib.rs",
+        "libc/src/c_abi.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/posix_spawnattr_init.rs",
+        "include/features.h",
+        "include/sys/types.h",
+        "include/bits/alltypes.h",
+        "include/spawn.h",
+        "include/errno.h",
+        "compat/x86_64/posix_spawnattr_init_header_abi_probe.c",
+        "compat/x86_64/posix_spawnattr_init_header_abi_probe.cpp",
+        "compat/x86_64/run_posix_spawnattr_init_header_abi.sh",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/libc_posix_spawnattr_init_probe.c",
+        "compat/x86_64/libc_posix_spawnattr_init_start.S",
+        "compat/x86_64/run_libc_posix_spawnattr_init.sh",
+        "compat/x86_64/aarch64_parity_inventory.py",
+        "compat/x86_64/aarch64_parity_inventory.json",
+        "compat/x86_64/tests/test_aarch64_parity_inventory.py",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/README.md",
+        "STATUS.md",
+        "x86-64.md",
+        "scripts/dev-x86_64.sh",
+        "scripts/check_structure.py",
+    ):
+        require(
+            owner in owners,
+            f"static-c-posix-spawnattr-init source owners omit {owner}",
+        )
+
+    prerequisites = nonempty_strings(
+        artifact.get("x86_abi_prerequisites"),
+        "static-c-posix-spawnattr-init.x86_abi_prerequisites",
+    )
+    require(
+        any(
+            "System V AMD64" in item
+            and "int posix_spawnattr_init(posix_spawnattr_t *)" in item
+            and "rdi" in item
+            and "eax" in item
+            and "336-byte" in item
+            and "offsets 0, 4, 8, 136, 264, 268, 272, and 280" in item
+            and "concurrent access" in item
+            for item in prerequisites
+        ),
+        "static-c-posix-spawnattr-init must retain its caller-record ABI",
+    )
+    require(
+        any(
+            "9fa28ece75d8a2191de7c5bb53bed224c5947417" in item
+            and "src/process/posix_spawnattr_init.c::posix_spawnattr_init" in item
+            and "complete zero initialization plus `return 0`" in item
+            and "posix_spawnattr_init.lo" in item
+            and "generic AArch64 export remains unchanged" in item
+            and "file actions" in item
+            and "child lifecycle" in item
+            and "scheduler" in item
+            for item in prerequisites
+        ),
+        "static-c-posix-spawnattr-init must retain its pinned-musl source mapping",
+    )
+    require(
+        any(
+            "`-nostdlib -static`" in item
+            and "exactly one Rust object exporting only posix_spawnattr_init" in item
+            and "no undefined symbols" in item
+            and "helper call" in item
+            and "PT_TLS" in item
+            and "fixed 42-word direct-store loop" in item
+            and "peer spawn/process export" in item
+            for item in prerequisites
+        ),
+        "static-c-posix-spawnattr-init must retain its closed static boundary",
+    )
+
+    headers = nonempty_strings(
+        artifact.get("x86_header_prerequisites"),
+        "static-c-posix-spawnattr-init.x86_header_prerequisites",
+    )
+    require(
+        any(
+            "unconditional `int posix_spawnattr_init(posix_spawnattr_t *)`" in item
+            and "strict, POSIX, X/Open, and GNU" in item
+            and "exact function-pointer ABI" in item
+            and "336-byte/eight-byte-aligned x86 record layout" in item
+            and "unmangled C++ linkage" in item
+            and '`extern "C"` guards' in item
+            for item in headers
+        ),
+        "static-c-posix-spawnattr-init must retain its unconditional C/C++ header ABI",
+    )
+
+    evidence = artifact.get("native_evidence")
+    require(
+        isinstance(evidence, list),
+        "static-c-posix-spawnattr-init needs evidence",
+    )
+    require(
+        {entry.get("command") for entry in evidence if isinstance(entry, Mapping)}
+        == {"./scripts/dev-x86_64.sh libc-posix-spawnattr-init"},
+        "static-c-posix-spawnattr-init must use the closed libc-posix-spawnattr-init command",
+    )
+    scope = evidence[0].get("scope")
+    require(
+        isinstance(scope, str)
+        and all(
+            phrase in scope
+            for phrase in (
+                "Pinned-musl/project C/C++ header",
+                "true dependency-free x86 crabc-libc `-nostdlib -static` candidate",
+                "direct and function-pointer successful initialization",
+                "byte-filled 336-byte caller-owned posix_spawnattr_t records",
+                "full zeroing",
+                "intact adjacent guards",
+                "stale errno preservation",
+                "posix_spawnattr_init.lo/AArch64 ownership",
+                "no interpreter/DT_NEEDED/unresolved symbol/PT_TLS/errno/dynamic-TLS model/allocator/helper-call/syscall",
+                "fixed direct-store no-call/no-syscall object",
+                "peer spawn and process extraction",
+                "attribute destruction/query/mutation",
+                "fork/vfork/clone",
+                "child lifecycle",
+                "signal or scheduler behavior",
+                "family completion",
+                "promotion",
+                "public x86 support",
+            )
+        ),
+        "static-c-posix-spawnattr-init evidence must retain its bounded static closure",
+    )
+
+    exports = set(
+        static_c_abi_export_names(
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        )
+    )
+    require(
+        "posix_spawnattr_init" in exports,
+        "static C ABI export contract omits posix_spawnattr_init",
+    )
+
+    static_root = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+    ).read_text(encoding="utf-8")
+    require(
+        '#[path = "posix_spawnattr_init.rs"]\nmod posix_spawnattr_init;'
+        in static_root,
+        "x86 static C ABI must compose the posix_spawnattr_init leaf",
+    )
+    source = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "posix_spawnattr_init.rs"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "Selected static Linux/x86-64 POSIX spawn-attribute initialization C ABI",
+        "musl 1.2.6 release commit",
+        "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+        "src/process/posix_spawnattr_init.c::posix_spawnattr_init",
+        "PosixSpawnAttr",
+        "const _: [(); 336]",
+        "const _: [(); 8]",
+        "POSIX_SPAWNATTR_INIT_WORDS",
+        "core::arch::asm!",
+        "mov qword ptr [{attributes} + rcx * 8 - 8], rax",
+        'pub unsafe extern "C" fn posix_spawnattr_init',
+    ):
+        require(
+            snippet in source,
+            f"posix_spawnattr_init implementation omits {snippet}",
+        )
+    for forbidden in (
+        "raw_syscall::",
+        "errno::",
+        "static_tls::",
+        "crabc_core",
+        "crabc_mimalloc",
+        "posix_spawnp",
+        "fork(",
+        "execve",
+    ):
+        require(
+            forbidden not in source,
+            f"posix_spawnattr_init leaf widens into {forbidden}",
+        )
+
+    runner = (
+        ROOT / "compat" / "x86_64" / "run_libc_posix_spawnattr_init.sh"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "run_musl_oracle.sh",
+        "run_posix_spawnattr_init_header_abi.sh",
+        "posix_spawnattr_init.lo",
+        "static_c_abi_exports.txt",
+        "archive_member_for_symbol",
+        "posix_spawnattr_init object export surface drifted",
+        "posix_spawnattr_init object unexpectedly depends on another symbol",
+        "posix_spawnattr_init object unexpectedly performs a call or syscall",
+        "-nostdlib -static",
+        "--no-undefined",
+        "candidate retains a PLT",
+        "for unselected in posix_spawn",
+        "fork vfork clone execve wait4",
+    ):
+        require(
+            snippet in runner,
+            f"posix_spawnattr_init runner omits {snippet}",
+        )
+    require(
+        "--whole-archive" not in runner,
+        "posix_spawnattr_init runner must not force-link the archive",
+    )
+
+    probe = (
+        ROOT / "compat" / "x86_64" / "libc_posix_spawnattr_init_probe.c"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "posix_spawnattr_init_signature",
+        "struct guarded_attributes",
+        "fill_bytes",
+        "attributes_are_zero",
+        "check_guarded_initialization",
+        "CRABC_POSIX_SPAWNATTR_INIT_FREESTANDING",
+        "errno = E2BIG",
+    ):
+        require(snippet in probe, f"posix_spawnattr_init probe omits {snippet}")
+    start = (
+        ROOT / "compat" / "x86_64" / "libc_posix_spawnattr_init_start.S"
+    ).read_text(encoding="utf-8")
+    for snippet in ("crabc_x86_64_posix_spawnattr_init_probe", "mov $60, %eax"):
+        require(snippet in start, f"posix_spawnattr_init start shim omits {snippet}")
+
+    header_c = (
+        ROOT / "compat" / "x86_64" / "posix_spawnattr_init_header_abi_probe.c"
+    ).read_text(encoding="utf-8")
+    header_cxx = (
+        ROOT / "compat" / "x86_64" / "posix_spawnattr_init_header_abi_probe.cpp"
+    ).read_text(encoding="utf-8")
+    header_runner = (
+        ROOT / "compat" / "x86_64" / "run_posix_spawnattr_init_header_abi.sh"
+    ).read_text(encoding="utf-8")
+    for header in (header_c, header_cxx):
+        for snippet in (
+            "posix_spawnattr_init_signature",
+            "posix_spawnattr_init_function",
+            "336",
+            "280",
+        ):
+            require(
+                snippet in header,
+                f"posix_spawnattr_init header evidence omits {snippet}",
+            )
+    for snippet in (
+        "c11-strict",
+        "c11-posix-2008",
+        "c11-xopen-700",
+        "c11-gnu",
+        "cxx17-strict",
+        "cxx17-gnu",
+        "-nostdinc",
+        "-nostdinc++",
+        "retained a mangled posix_spawnattr_init reference",
+        "project trace omitted $root/sys/types.h",
+    ):
+        require(
+            snippet in header_runner,
+            f"posix_spawnattr_init header runner omits {snippet}",
+        )
+
+    dispatcher = (ROOT / "scripts" / "dev-x86_64.sh").read_text(encoding="utf-8")
+    for snippet in (
+        "posix-spawnattr-init-header-abi)",
+        "run_posix_spawnattr_init_header_abi()",
+        "run_posix_spawnattr_init_header_abi",
+        "libc-posix-spawnattr-init)",
+        "run_libc_posix_spawnattr_init()",
+        "run_libc_posix_spawnattr_init",
+    ):
+        require(
+            snippet in dispatcher,
+            f"posix_spawnattr_init dispatcher omits {snippet}",
+        )
+
+
+def require_posix_spawnattr_getpgroup_artifact(family: Mapping[str, Any]) -> None:
+    """Keep one spawn-record field readback below process/spawn completion."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.posix-runtime].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [
+        entry
+        for entry in artifacts
+        if entry.get("id") == "static-c-posix-spawnattr-getpgroup"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.posix-runtime needs exactly one static-c-posix-spawnattr-getpgroup artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-posix-spawnattr-getpgroup must not promote libc.posix-runtime",
+    )
+    artifact = matching[0]
+    require(
+        "capabilities" not in artifact,
+        "static-c-posix-spawnattr-getpgroup must not promote a spawn or process capability",
+    )
+
+    description = artifact.get("description")
+    require(
+        isinstance(description, str),
+        "static-c-posix-spawnattr-getpgroup needs a description",
+    )
+    for phrase in (
+        "POSIX spawn-attribute process-group readback leaf",
+        "still-planned `libc.posix-runtime`",
+        "exactly one Rust object exporting only `posix_spawnattr_getpgroup`",
+        "no undefined symbol, helper call, syscall, errno/TLS, allocator",
+        "`src/process/posix_spawnattr_getpgroup.c::posix_spawnattr_getpgroup`",
+        "positive and negative four-byte process-group values",
+        "byte-exact input-record preservation",
+        "adjacent input/output guards",
+        "stale errno",
+        "byte offset four",
+        "Null, misaligned, aliased, invalid, or concurrently accessed",
+        "`posix_spawn`",
+        "`posix_spawnp`",
+        "attribute initialization/destruction/mutation or other queries",
+        "file actions",
+        "fork/vfork/clone",
+        "exec",
+        "child lifecycle",
+        "signal delivery",
+        "scheduler policy",
+        "family completion",
+        "promotion",
+        "public x86 support",
+        "generic AArch64 `posix_spawnattr_getpgroup` export remains unchanged",
+    ):
+        require(
+            phrase in description,
+            f"static-c-posix-spawnattr-getpgroup description omits {phrase}",
+        )
+
+    owners = set(
+        nonempty_strings(
+            artifact.get("source_owners"),
+            "static-c-posix-spawnattr-getpgroup.source_owners",
+        )
+    )
+    for owner in (
+        "compat/upstreams.toml",
+        "compat/abi/musl-1.2.6/aarch64/libc.a.static.tsv",
+        "libc/Cargo.toml",
+        "libc/src/lib.rs",
+        "libc/src/c_abi.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/posix_spawnattr_getpgroup.rs",
+        "include/features.h",
+        "include/sys/types.h",
+        "include/bits/alltypes.h",
+        "include/spawn.h",
+        "include/errno.h",
+        "compat/x86_64/posix_spawnattr_getpgroup_header_abi_probe.c",
+        "compat/x86_64/posix_spawnattr_getpgroup_header_abi_probe.cpp",
+        "compat/x86_64/run_posix_spawnattr_getpgroup_header_abi.sh",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/libc_posix_spawnattr_getpgroup_probe.c",
+        "compat/x86_64/libc_posix_spawnattr_getpgroup_start.S",
+        "compat/x86_64/run_libc_posix_spawnattr_getpgroup.sh",
+        "compat/x86_64/aarch64_parity_inventory.py",
+        "compat/x86_64/aarch64_parity_inventory.json",
+        "compat/x86_64/tests/test_aarch64_parity_inventory.py",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/README.md",
+        "STATUS.md",
+        "x86-64.md",
+        "scripts/dev-x86_64.sh",
+        "scripts/check_structure.py",
+    ):
+        require(
+            owner in owners,
+            f"static-c-posix-spawnattr-getpgroup source owners omit {owner}",
+        )
+
+    prerequisites = nonempty_strings(
+        artifact.get("x86_abi_prerequisites"),
+        "static-c-posix-spawnattr-getpgroup.x86_abi_prerequisites",
+    )
+    require(
+        any(
+            "System V AMD64" in item
+            and "int posix_spawnattr_getpgroup(const posix_spawnattr_t *, pid_t *)" in item
+            and "rdi" in item
+            and "rsi" in item
+            and "eax" in item
+            and "byte offset four" in item
+            and "concurrent access" in item
+            for item in prerequisites
+        ),
+        "static-c-posix-spawnattr-getpgroup must retain its two-pointer ABI",
+    )
+    require(
+        any(
+            "9fa28ece75d8a2191de7c5bb53bed224c5947417" in item
+            and "src/process/posix_spawnattr_getpgroup.c::posix_spawnattr_getpgroup" in item
+            and "*pgrp = attr->__pgrp; return 0;" in item
+            and "posix_spawnattr_getpgroup.lo" in item
+            and "generic AArch64 export remains unchanged" in item
+            and "file actions" in item
+            and "child lifecycle" in item
+            and "scheduler" in item
+            for item in prerequisites
+        ),
+        "static-c-posix-spawnattr-getpgroup must retain its pinned-musl source mapping",
+    )
+    require(
+        any(
+            "`-nostdlib -static`" in item
+            and "exactly one Rust object exporting only posix_spawnattr_getpgroup" in item
+            and "no undefined symbols" in item
+            and "helper call" in item
+            and "PT_TLS" in item
+            and "fixed offset-four load and output-word store" in item
+            and "peer spawn/process export" in item
+            for item in prerequisites
+        ),
+        "static-c-posix-spawnattr-getpgroup must retain its closed static boundary",
+    )
+
+    headers = nonempty_strings(
+        artifact.get("x86_header_prerequisites"),
+        "static-c-posix-spawnattr-getpgroup.x86_header_prerequisites",
+    )
+    require(
+        any(
+            "unconditional `int posix_spawnattr_getpgroup(const posix_spawnattr_t *, pid_t *)`" in item
+            and "strict, POSIX, X/Open, and GNU" in item
+            and "exact function-pointer ABI" in item
+            and "offset-four `__pgrp` member" in item
+            and "unmangled C++ linkage" in item
+            and '`extern "C"` guards' in item
+            for item in headers
+        ),
+        "static-c-posix-spawnattr-getpgroup must retain its unconditional C/C++ header ABI",
+    )
+
+    evidence = artifact.get("native_evidence")
+    require(
+        isinstance(evidence, list),
+        "static-c-posix-spawnattr-getpgroup needs evidence",
+    )
+    require(
+        {entry.get("command") for entry in evidence if isinstance(entry, Mapping)}
+        == {"./scripts/dev-x86_64.sh libc-posix-spawnattr-getpgroup"},
+        "static-c-posix-spawnattr-getpgroup must use the closed libc-posix-spawnattr-getpgroup command",
+    )
+    scope = evidence[0].get("scope")
+    require(
+        isinstance(scope, str)
+        and all(
+            phrase in scope
+            for phrase in (
+                "Pinned-musl/project C/C++ header",
+                "true dependency-free x86 crabc-libc `-nostdlib -static` candidate",
+                "direct and function-pointer process-group readback",
+                "positive and negative pid_t values",
+                "byte-filled 336-byte caller-owned posix_spawnattr_t records",
+                "byte-exact input preservation",
+                "intact input/output guards",
+                "stale errno preservation",
+                "posix_spawnattr_getpgroup.lo/AArch64 ownership",
+                "no interpreter/DT_NEEDED/unresolved symbol/PT_TLS/errno/dynamic-TLS model/allocator/helper-call/syscall",
+                "fixed offset-four no-call/no-syscall object",
+                "peer spawn and process extraction",
+                "attribute initialization/destruction/mutation or other queries",
+                "fork/vfork/clone",
+                "child lifecycle",
+                "signal or scheduler behavior",
+                "family completion",
+                "promotion",
+                "public x86 support",
+            )
+        ),
+        "static-c-posix-spawnattr-getpgroup evidence must retain its bounded static closure",
+    )
+
+    exports = set(
+        static_c_abi_export_names(
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        )
+    )
+    require(
+        "posix_spawnattr_getpgroup" in exports,
+        "static C ABI export contract omits posix_spawnattr_getpgroup",
+    )
+    static_root = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+    ).read_text(encoding="utf-8")
+    require(
+        '#[path = "posix_spawnattr_getpgroup.rs"]\nmod posix_spawnattr_getpgroup;'
+        in static_root,
+        "x86 static C ABI must compose the posix_spawnattr_getpgroup leaf",
+    )
+    source = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "posix_spawnattr_getpgroup.rs"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "Selected static Linux/x86-64 POSIX spawn-attribute process-group readback C ABI",
+        "musl 1.2.6 release commit",
+        "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+        "src/process/posix_spawnattr_getpgroup.c::posix_spawnattr_getpgroup",
+        "attr->__pgrp",
+        "POSIX_SPAWNATTR_PROCESS_GROUP_OFFSET",
+        "read_unaligned",
+        "write_unaligned",
+        'pub unsafe extern "C" fn posix_spawnattr_getpgroup',
+        "generic AArch64 export\n//! and behavior exactly unchanged",
+    ):
+        require(snippet in source, f"posix_spawnattr_getpgroup implementation omits {snippet}")
+    for forbidden in (
+        "raw_syscall::",
+        "errno::",
+        "static_tls::",
+        "crabc_core",
+        "crabc_mimalloc",
+        "fork(",
+        "execve",
+    ):
+        require(
+            forbidden not in source,
+            f"posix_spawnattr_getpgroup leaf widens into {forbidden}",
+        )
+
+    runner = (
+        ROOT / "compat" / "x86_64" / "run_libc_posix_spawnattr_getpgroup.sh"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "run_musl_oracle.sh",
+        "run_posix_spawnattr_getpgroup_header_abi.sh",
+        "posix_spawnattr_getpgroup.lo",
+        "static_c_abi_exports.txt",
+        "archive_member_for_symbol",
+        "posix_spawnattr_getpgroup object export surface drifted",
+        "posix_spawnattr_getpgroup object unexpectedly depends on another symbol",
+        "posix_spawnattr_getpgroup object unexpectedly performs a call or syscall",
+        "-nostdlib -static",
+        "--no-undefined",
+        "candidate retains a PLT",
+        "for unselected in posix_spawn",
+        "fork vfork clone execve wait4",
+    ):
+        require(snippet in runner, f"posix_spawnattr_getpgroup runner omits {snippet}")
+    require(
+        "--whole-archive" not in runner,
+        "posix_spawnattr_getpgroup runner must not force-link the archive",
+    )
+
+    probe = (
+        ROOT / "compat" / "x86_64" / "libc_posix_spawnattr_getpgroup_probe.c"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "posix_spawnattr_getpgroup_signature",
+        "struct guarded_attributes",
+        "struct guarded_pgroup",
+        "copy_bytes",
+        "bytes_match_value",
+        "check_readback",
+        "(pid_t)-321",
+        "CRABC_POSIX_SPAWNATTR_GETPGROUP_FREESTANDING",
+        "errno = E2BIG",
+    ):
+        require(snippet in probe, f"posix_spawnattr_getpgroup probe omits {snippet}")
+    start = (
+        ROOT / "compat" / "x86_64" / "libc_posix_spawnattr_getpgroup_start.S"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "crabc_x86_64_posix_spawnattr_getpgroup_probe",
+        "mov $60, %eax",
+    ):
+        require(snippet in start, f"posix_spawnattr_getpgroup start shim omits {snippet}")
+
+    header_c = (
+        ROOT / "compat" / "x86_64" / "posix_spawnattr_getpgroup_header_abi_probe.c"
+    ).read_text(encoding="utf-8")
+    header_cxx = (
+        ROOT / "compat" / "x86_64" / "posix_spawnattr_getpgroup_header_abi_probe.cpp"
+    ).read_text(encoding="utf-8")
+    header_runner = (
+        ROOT / "compat" / "x86_64" / "run_posix_spawnattr_getpgroup_header_abi.sh"
+    ).read_text(encoding="utf-8")
+    for header in (header_c, header_cxx):
+        for snippet in (
+            "posix_spawnattr_getpgroup_signature",
+            "posix_spawnattr_getpgroup_function",
+            "pid_t",
+            "__pgrp",
+            "4",
+        ):
+            require(
+                snippet in header,
+                f"posix_spawnattr_getpgroup header evidence omits {snippet}",
+            )
+    for snippet in (
+        "c11-strict",
+        "c11-posix-2008",
+        "c11-xopen-700",
+        "c11-gnu",
+        "cxx17-strict",
+        "cxx17-gnu",
+        "-nostdinc",
+        "-nostdinc++",
+        "retained a mangled posix_spawnattr_getpgroup reference",
+        "project trace omitted $root/sys/types.h",
+    ):
+        require(
+            snippet in header_runner,
+            f"posix_spawnattr_getpgroup header runner omits {snippet}",
+        )
+
+    dispatcher = (ROOT / "scripts" / "dev-x86_64.sh").read_text(encoding="utf-8")
+    for snippet in (
+        "posix-spawnattr-getpgroup-header-abi)",
+        "run_posix_spawnattr_getpgroup_header_abi()",
+        "run_posix_spawnattr_getpgroup_header_abi",
+        "libc-posix-spawnattr-getpgroup)",
+        "run_libc_posix_spawnattr_getpgroup()",
+        "run_libc_posix_spawnattr_getpgroup",
+    ):
+        require(
+            snippet in dispatcher,
+            f"posix_spawnattr_getpgroup dispatcher omits {snippet}",
+        )
+
+
+def require_posix_spawnattr_getschedpolicy_artifact(
+    family: Mapping[str, Any],
+) -> None:
+    """Keep musl's one direct spawn-attribute ENOSYS return private."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.posix-runtime].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [
+        entry
+        for entry in artifacts
+        if entry.get("id") == "static-c-posix-spawnattr-getschedpolicy"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.posix-runtime needs exactly one static-c-posix-spawnattr-getschedpolicy artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-posix-spawnattr-getschedpolicy must not promote libc.posix-runtime",
+    )
+    artifact = matching[0]
+    require(
+        "capabilities" not in artifact,
+        "static-c-posix-spawnattr-getschedpolicy must not promote a spawn or scheduler capability",
+    )
+
+    description = artifact.get("description")
+    require(
+        isinstance(description, str),
+        "static-c-posix-spawnattr-getschedpolicy needs a description",
+    )
+    for phrase in (
+        "POSIX spawn-attribute scheduler-policy compatibility-return leaf",
+        "still-planned `libc.posix-runtime`",
+        "exactly one Rust object exporting only `posix_spawnattr_getschedpolicy`",
+        "no undefined symbol, helper call, syscall, errno/TLS, allocator",
+        "`src/process/posix_spawnattr_sched.c::posix_spawnattr_getschedpolicy`",
+        "`return ENOSYS;`",
+        "positive error number `ENOSYS=38`",
+        "nonnull arguments, null attribute, null output, and both-null",
+        "stale errno unchanged",
+        "neither reads nor writes",
+        "does not validate or dereference either pointer",
+        "`posix_spawn`",
+        "`posix_spawnp`",
+        "attribute initialization/destruction/mutation or other queries",
+        "file actions",
+        "fork/vfork/clone",
+        "exec",
+        "child lifecycle",
+        "signal delivery",
+        "scheduler policy or parameter behavior",
+        "family completion",
+        "promotion",
+        "public x86 support",
+        "generic AArch64 `posix_spawnattr_getschedpolicy` export remains unchanged",
+    ):
+        require(
+            phrase in description,
+            f"static-c-posix-spawnattr-getschedpolicy description omits {phrase}",
+        )
+
+    owners = set(
+        nonempty_strings(
+            artifact.get("source_owners"),
+            "static-c-posix-spawnattr-getschedpolicy.source_owners",
+        )
+    )
+    for owner in (
+        "compat/upstreams.toml",
+        "compat/abi/musl-1.2.6/aarch64/libc.a.static.tsv",
+        "libc/Cargo.toml",
+        "libc/src/lib.rs",
+        "libc/src/c_abi.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/posix_spawnattr_getschedpolicy.rs",
+        "include/features.h",
+        "include/sys/types.h",
+        "include/bits/alltypes.h",
+        "include/spawn.h",
+        "include/errno.h",
+        "compat/x86_64/posix_spawnattr_getschedpolicy_header_abi_probe.c",
+        "compat/x86_64/posix_spawnattr_getschedpolicy_header_abi_probe.cpp",
+        "compat/x86_64/run_posix_spawnattr_getschedpolicy_header_abi.sh",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/libc_posix_spawnattr_getschedpolicy_probe.c",
+        "compat/x86_64/libc_posix_spawnattr_getschedpolicy_start.S",
+        "compat/x86_64/run_libc_posix_spawnattr_getschedpolicy.sh",
+        "compat/x86_64/aarch64_parity_inventory.py",
+        "compat/x86_64/aarch64_parity_inventory.json",
+        "compat/x86_64/tests/test_aarch64_parity_inventory.py",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/README.md",
+        "STATUS.md",
+        "x86-64.md",
+        "scripts/dev-x86_64.sh",
+        "scripts/check_structure.py",
+    ):
+        require(
+            owner in owners,
+            f"static-c-posix-spawnattr-getschedpolicy source owners omit {owner}",
+        )
+
+    prerequisites = nonempty_strings(
+        artifact.get("x86_abi_prerequisites"),
+        "static-c-posix-spawnattr-getschedpolicy.x86_abi_prerequisites",
+    )
+    require(
+        any(
+            "System V AMD64" in item
+            and "int posix_spawnattr_getschedpolicy(const posix_spawnattr_t *, int *)" in item
+            and "rdi/rsi" in item
+            and "ENOSYS=38" in item
+            and "both-null" in item
+            and "stale errno" in item
+            for item in prerequisites
+        ),
+        "static-c-posix-spawnattr-getschedpolicy must retain its ignored-pointer ABI",
+    )
+    require(
+        any(
+            "9fa28ece75d8a2191de7c5bb53bed224c5947417" in item
+            and "src/process/posix_spawnattr_sched.c::posix_spawnattr_getschedpolicy" in item
+            and "return ENOSYS;" in item
+            and "posix_spawnattr_sched.lo" in item
+            and "generic AArch64 export remains unchanged" in item
+            and "scheduler behavior" in item
+            for item in prerequisites
+        ),
+        "static-c-posix-spawnattr-getschedpolicy must retain its pinned-musl source mapping",
+    )
+    require(
+        any(
+            "`-nostdlib -static`" in item
+            and "exactly one Rust object exporting only posix_spawnattr_getschedpolicy" in item
+            and "no undefined symbols" in item
+            and "PT_TLS" in item
+            and "fixed ENOSYS immediate return" in item
+            and "peer spawn/process export" in item
+            for item in prerequisites
+        ),
+        "static-c-posix-spawnattr-getschedpolicy must retain its closed static boundary",
+    )
+
+    headers = nonempty_strings(
+        artifact.get("x86_header_prerequisites"),
+        "static-c-posix-spawnattr-getschedpolicy.x86_header_prerequisites",
+    )
+    require(
+        any(
+            "unconditional `int posix_spawnattr_getschedpolicy(const posix_spawnattr_t *, int *)`" in item
+            and "strict, POSIX, X/Open, and GNU" in item
+            and "exact function-pointer ABI" in item
+            and "336-byte/eight-byte-aligned" in item
+            and "unmangled C++ linkage" in item
+            and '`extern "C"` guards' in item
+            for item in headers
+        ),
+        "static-c-posix-spawnattr-getschedpolicy must retain its unconditional C/C++ header ABI",
+    )
+
+    evidence = artifact.get("native_evidence")
+    require(
+        isinstance(evidence, list),
+        "static-c-posix-spawnattr-getschedpolicy needs evidence",
+    )
+    require(
+        {entry.get("command") for entry in evidence if isinstance(entry, Mapping)}
+        == {"./scripts/dev-x86_64.sh libc-posix-spawnattr-getschedpolicy"},
+        "static-c-posix-spawnattr-getschedpolicy must use its closed command",
+    )
+    scope = evidence[0].get("scope")
+    require(
+        isinstance(scope, str)
+        and all(
+            phrase in scope
+            for phrase in (
+                "Pinned-musl/project C/C++ header",
+                "true dependency-free x86 crabc-libc `-nostdlib -static` candidate",
+                "direct and function-pointer positive ENOSYS=38 returns",
+                "nonnull arguments, null attribute, null output, and both-null",
+                "byte-filled 336-byte caller-owned posix_spawnattr_t storage",
+                "guarded int output",
+                "stale errno preservation",
+                "posix_spawnattr_sched.lo/AArch64 ownership",
+                "no interpreter/DT_NEEDED/unresolved symbol/PT_TLS/errno/dynamic-TLS model/allocator/helper-call/syscall",
+                "fixed ignored-pointer ENOSYS no-call/no-syscall object",
+                "peer spawn and process extraction",
+                "attribute initialization/destruction/mutation or other queries",
+                "fork/vfork/clone",
+                "child lifecycle",
+                "signal or scheduler behavior",
+                "family completion",
+                "promotion",
+                "public x86 support",
+            )
+        ),
+        "static-c-posix-spawnattr-getschedpolicy evidence must retain its bounded static closure",
+    )
+
+    exports = set(
+        static_c_abi_export_names(
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        )
+    )
+    require(
+        "posix_spawnattr_getschedpolicy" in exports,
+        "static C ABI export contract omits posix_spawnattr_getschedpolicy",
+    )
+    static_root = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+    ).read_text(encoding="utf-8")
+    require(
+        '#[path = "posix_spawnattr_getschedpolicy.rs"]\nmod posix_spawnattr_getschedpolicy;'
+        in static_root,
+        "x86 static C ABI must compose the posix_spawnattr_getschedpolicy leaf",
+    )
+    source = (
+        ROOT
+        / "libc"
+        / "src"
+        / "c_abi"
+        / "x86_64"
+        / "posix_spawnattr_getschedpolicy.rs"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "Selected static Linux/x86-64 POSIX spawn-attribute scheduler-policy C ABI",
+        "musl 1.2.6 release commit",
+        "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+        "src/process/posix_spawnattr_sched.c::posix_spawnattr_getschedpolicy",
+        "return ENOSYS;",
+        "ENOSYS: c_int = 38",
+        'pub extern "C" fn posix_spawnattr_getschedpolicy',
+        "does not dereference either declared pointer",
+        "generic AArch64 export and behavior exactly unchanged",
+    ):
+        require(
+            snippet in source,
+            f"posix_spawnattr_getschedpolicy implementation omits {snippet}",
+        )
+    for forbidden in (
+        "raw_syscall::",
+        "errno::",
+        "static_tls::",
+        "crabc_core",
+        "crabc_mimalloc",
+        "fork(",
+        "execve",
+    ):
+        require(
+            forbidden not in source,
+            f"posix_spawnattr_getschedpolicy leaf widens into {forbidden}",
+        )
+
+    runner = (
+        ROOT / "compat" / "x86_64" / "run_libc_posix_spawnattr_getschedpolicy.sh"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "run_musl_oracle.sh",
+        "run_posix_spawnattr_getschedpolicy_header_abi.sh",
+        "posix_spawnattr_sched.lo",
+        "static_c_abi_exports.txt",
+        "archive_member_for_symbol",
+        "posix_spawnattr_getschedpolicy object export surface drifted",
+        "posix_spawnattr_getschedpolicy object unexpectedly depends on another symbol",
+        "posix_spawnattr_getschedpolicy object unexpectedly performs a call or syscall",
+        "assert_ignored_pointer_enosys_boundary",
+        "-nostdlib -static",
+        "--no-undefined",
+        "candidate retains a PLT",
+        "for unselected in posix_spawn",
+        "fork vfork clone execve wait4",
+    ):
+        require(
+            snippet in runner,
+            f"posix_spawnattr_getschedpolicy runner omits {snippet}",
+        )
+    require(
+        "--whole-archive" not in runner,
+        "posix_spawnattr_getschedpolicy runner must not force-link the archive",
+    )
+
+    probe = (
+        ROOT / "compat" / "x86_64" / "libc_posix_spawnattr_getschedpolicy_probe.c"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "posix_spawnattr_getschedpolicy_signature",
+        "struct guarded_attributes",
+        "struct guarded_policy",
+        "copy_bytes",
+        "check_direct_nonnull",
+        "check_indirect_ignored_pointers",
+        "ENOSYS",
+        "CRABC_POSIX_SPAWNATTR_GETSCHEDPOLICY_FREESTANDING",
+        "errno = E2BIG",
+    ):
+        require(
+            snippet in probe,
+            f"posix_spawnattr_getschedpolicy probe omits {snippet}",
+        )
+    start = (
+        ROOT / "compat" / "x86_64" / "libc_posix_spawnattr_getschedpolicy_start.S"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "crabc_x86_64_posix_spawnattr_getschedpolicy_probe",
+        "mov $60, %eax",
+    ):
+        require(
+            snippet in start,
+            f"posix_spawnattr_getschedpolicy start shim omits {snippet}",
+        )
+
+    header_c = (
+        ROOT
+        / "compat"
+        / "x86_64"
+        / "posix_spawnattr_getschedpolicy_header_abi_probe.c"
+    ).read_text(encoding="utf-8")
+    header_cxx = (
+        ROOT
+        / "compat"
+        / "x86_64"
+        / "posix_spawnattr_getschedpolicy_header_abi_probe.cpp"
+    ).read_text(encoding="utf-8")
+    header_runner = (
+        ROOT / "compat" / "x86_64" / "run_posix_spawnattr_getschedpolicy_header_abi.sh"
+    ).read_text(encoding="utf-8")
+    for header in (header_c, header_cxx):
+        for snippet in (
+            "posix_spawnattr_getschedpolicy_signature",
+            "posix_spawnattr_getschedpolicy_function",
+            "336",
+            "8",
+        ):
+            require(
+                snippet in header,
+                f"posix_spawnattr_getschedpolicy header evidence omits {snippet}",
+            )
+    for snippet in (
+        "c11-strict",
+        "c11-posix-2008",
+        "c11-xopen-700",
+        "c11-gnu",
+        "cxx17-strict",
+        "cxx17-gnu",
+        "-nostdinc",
+        "-nostdinc++",
+        "retained a mangled posix_spawnattr_getschedpolicy reference",
+        "project trace omitted $root/sys/types.h",
+    ):
+        require(
+            snippet in header_runner,
+            f"posix_spawnattr_getschedpolicy header runner omits {snippet}",
+        )
+
+    dispatcher = (ROOT / "scripts" / "dev-x86_64.sh").read_text(encoding="utf-8")
+    for snippet in (
+        "posix-spawnattr-getschedpolicy-header-abi)",
+        "run_posix_spawnattr_getschedpolicy_header_abi()",
+        "run_posix_spawnattr_getschedpolicy_header_abi",
+        "libc-posix-spawnattr-getschedpolicy)",
+        "run_libc_posix_spawnattr_getschedpolicy()",
+        "run_libc_posix_spawnattr_getschedpolicy",
+    ):
+        require(
+            snippet in dispatcher,
+            f"posix_spawnattr_getschedpolicy dispatcher omits {snippet}",
+        )
 
 
 def require_ldso_initial_graph_artifact(family: Mapping[str, Any]) -> None:
@@ -14010,6 +15381,610 @@ def require_intmax_arithmetic_artifact(family: Mapping[str, Any]) -> None:
         {entry["command"] for entry in evidence}
         == {"./scripts/dev-x86_64.sh libc-intmax-arithmetic"},
         "static-c-intmax-arithmetic must use the closed libc-intmax-arithmetic command",
+    )
+
+
+def require_personality_artifact(family: Mapping[str, Any]) -> None:
+    """Keep the one-symbol process-personality leaf below promotion."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.posix-runtime].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [entry for entry in artifacts if entry.get("id") == "static-c-personality"]
+    require(
+        len(matching) == 1,
+        "libc.posix-runtime must contain exactly one static-c-personality artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-personality must not promote libc.posix-runtime",
+    )
+    artifact = matching[0]
+    require(
+        "capabilities" not in artifact,
+        "static-c-personality must not promote an existing capability",
+    )
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for phrase in (
+        "one-symbol process-personality compatibility artifact",
+        "planned `libc.posix-runtime`",
+        "exactly `personality(unsigned long)`",
+        "`src/linux/personality.c::personality`",
+        "raw Linux x86 syscall 135",
+        "0xffffffffUL",
+        "non-mutating query",
+        "prior-personality",
+        "stale initial-TLS `errno`",
+        "strict/POSIX/X/Open/GNU C and C++17",
+        "unconditional `int personality(unsigned long)`",
+        "PER_LINUX=0",
+        "PER_MASK=0xff",
+        "neither personality policy nor executable transition",
+        "prctl/capability/namespace controls",
+        "credential or identity/session families",
+        "scheduler state",
+        "pthread lifecycle",
+        "family completion, promotion, or public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"static-c-personality description omits {phrase}",
+        )
+    owners = set(
+        nonempty_strings(artifact["source_owners"], "static-c-personality.source_owners")
+    )
+    for owner in (
+        "compat/upstreams.toml",
+        "libc/Cargo.toml",
+        "libc/src/lib.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/personality.rs",
+        "libc/src/c_abi/x86_64/errno.rs",
+        "libc/src/c_abi/x86_64/static_tls.rs",
+        "libc/src/c_abi/x86_64/syscall.rs",
+        "include/errno.h",
+        "include/stdint.h",
+        "include/sys/personality.h",
+        "include/sys/syscall.h",
+        "include/bits/syscall.h",
+        "compat/x86_64/personality_header_abi_probe.c",
+        "compat/x86_64/personality_header_abi_probe.cpp",
+        "compat/x86_64/run_personality_header_abi.sh",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/libc_personality_probe.c",
+        "compat/x86_64/libc_personality_start.S",
+        "compat/x86_64/run_libc_personality.sh",
+        "compat/x86_64/aarch64_parity_inventory.py",
+        "compat/x86_64/aarch64_parity_inventory.json",
+        "compat/x86_64/tests/test_aarch64_parity_inventory.py",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/README.md",
+        "STATUS.md",
+        "x86-64.md",
+        "scripts/dev-x86_64.sh",
+        "scripts/check_structure.py",
+    ):
+        require(owner in owners, f"static-c-personality source owners omit {owner}")
+    prerequisites = nonempty_strings(
+        artifact["x86_abi_prerequisites"], "static-c-personality.x86_abi_prerequisites"
+    )
+    require(
+        any(
+            "unsigned long" in item
+            and "rdi" in item
+            and "eax" in item
+            and "135" in item
+            and "prior personality" in item
+            and "0xffffffffUL" in item
+            for item in prerequisites
+        ),
+        "static-c-personality must retain its x86 scalar/query ABI",
+    )
+    require(
+        any(
+            "src/linux/personality.c::personality" in item
+            and "__syscall_ret" in item
+            and "prctl" in item
+            and "scheduler" in item
+            for item in prerequisites
+        ),
+        "static-c-personality must retain its pinned-musl source closure",
+    )
+    require(
+        any(
+            "raw and C 0xffffffffUL query agreement" in item
+            and "stale ERANGE" in item
+            and "unchanged second raw query" in item
+            and "stale E2BIG" in item
+            and "Static Initial TLS v1" in item
+            for item in prerequisites
+        ),
+        "static-c-personality must retain its raw/C differential",
+    )
+    headers = nonempty_strings(
+        artifact["x86_header_prerequisites"], "static-c-personality.x86_header_prerequisites"
+    )
+    require(
+        any(
+            "strict/POSIX/X/Open/GNU C and C++17" in item
+            and "int personality(unsigned long)" in item
+            and "SYS_personality=135" in item
+            and "PER_LINUX=0" in item
+            and "PER_MASK=0xff" in item
+            and "unmangled C++ C linkage" in item
+            and "sys/personality.h" in item
+            for item in headers
+        ),
+        "static-c-personality must retain its C/C++ header matrix",
+    )
+    static_exports = set(
+        static_c_abi_export_names(
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        )
+    )
+    require(
+        "personality" in static_exports,
+        "static-c-personality must expose its exact process-personality spelling",
+    )
+    oracle = artifact["oracle"]
+    assert isinstance(oracle, list)
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "c-posix"
+            and isinstance(entry.get("role"), str)
+            and "src/linux/personality.c::personality" in entry["role"]
+            and "ordinary errno unchanged" in entry["role"]
+            for entry in oracle
+        ),
+        "static-c-personality must retain its pinned-musl process-personality oracle",
+    )
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "linux-uapi"
+            and isinstance(entry.get("role"), str)
+            and "135" in entry["role"]
+            and "0xffffffffUL" in entry["role"]
+            and "non-mutating query" in entry["role"]
+            for entry in oracle
+        ),
+        "static-c-personality must retain its Linux raw-syscall oracle",
+    )
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-personality"},
+        "static-c-personality must use the closed libc-personality command",
+    )
+    scope = evidence[0].get("scope")
+    require(
+        isinstance(scope, str)
+        and all(
+            phrase in scope
+            for phrase in (
+                "Pinned-musl 1.2.6",
+                "strict/POSIX/X/Open/GNU C/C++ header matrix",
+                "`-nostdlib -static` candidate",
+                "personality policy",
+                "executable transition",
+                "prctl/capability/namespace controls",
+                "credential or identity/session families",
+                "scheduler state",
+                "pthread lifecycle",
+                "personality disassembly",
+                "raw syscall 135",
+                "0xffffffffUL",
+                "stale errno",
+                "process-control completion, dynamic libc, CRT, loader, sysroot, promotion, or public x86 support",
+            )
+        ),
+        "static-c-personality evidence must retain its closed static regression",
+    )
+
+
+def require_setfsgid_artifact(family: Mapping[str, Any]) -> None:
+    """Keep the one-symbol filesystem-credential leaf below promotion."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.posix-runtime].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [entry for entry in artifacts if entry.get("id") == "static-c-setfsgid"]
+    require(
+        len(matching) == 1,
+        "libc.posix-runtime must contain exactly one static-c-setfsgid artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-setfsgid must not promote libc.posix-runtime",
+    )
+    artifact = matching[0]
+    require(
+        "capabilities" not in artifact,
+        "static-c-setfsgid must not promote an existing capability",
+    )
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for phrase in (
+        "one-symbol filesystem-credential compatibility artifact",
+        "planned `libc.posix-runtime`",
+        "exactly `setfsgid(gid_t)`",
+        "`src/linux/setfsgid.c::setfsgid`",
+        "raw Linux x86 syscall 123",
+        "prior-filesystem-GID",
+        "all-ones query",
+        "current-effective-ID",
+        "stale initial-TLS `errno`",
+        "strict/POSIX/X/Open/GNU C and C++17",
+        "unconditional `int setfsgid(gid_t)`",
+        "neither `setfsuid`",
+        "credential observation/setter families",
+        "process-wide credential synchronization",
+        "process/session control",
+        "scheduler state",
+        "pthread lifecycle",
+        "family completion, promotion, or public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"static-c-setfsgid description omits {phrase}",
+        )
+    owners = set(
+        nonempty_strings(artifact["source_owners"], "static-c-setfsgid.source_owners")
+    )
+    for owner in (
+        "compat/upstreams.toml",
+        "libc/Cargo.toml",
+        "libc/src/lib.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/setfsgid.rs",
+        "libc/src/c_abi/x86_64/errno.rs",
+        "libc/src/c_abi/x86_64/static_tls.rs",
+        "libc/src/c_abi/x86_64/syscall.rs",
+        "include/errno.h",
+        "include/stdint.h",
+        "include/sys/fsuid.h",
+        "include/sys/syscall.h",
+        "include/bits/syscall.h",
+        "include/sys/types.h",
+        "compat/x86_64/setfsgid_header_abi_probe.c",
+        "compat/x86_64/setfsgid_header_abi_probe.cpp",
+        "compat/x86_64/run_setfsgid_header_abi.sh",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/libc_setfsgid_probe.c",
+        "compat/x86_64/libc_setfsgid_start.S",
+        "compat/x86_64/run_libc_setfsgid.sh",
+        "compat/x86_64/aarch64_parity_inventory.py",
+        "compat/x86_64/aarch64_parity_inventory.json",
+        "compat/x86_64/tests/test_aarch64_parity_inventory.py",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/README.md",
+        "STATUS.md",
+        "x86-64.md",
+        "scripts/dev-x86_64.sh",
+        "scripts/check_structure.py",
+    ):
+        require(owner in owners, f"static-c-setfsgid source owners omit {owner}")
+    prerequisites = nonempty_strings(
+        artifact["x86_abi_prerequisites"], "static-c-setfsgid.x86_abi_prerequisites"
+    )
+    require(
+        any(
+            "gid_t" in item
+            and "edi" in item
+            and "eax" in item
+            and "123" in item
+            and "prior filesystem GID" in item
+            for item in prerequisites
+        ),
+        "static-c-setfsgid must retain its x86 scalar/result ABI",
+    )
+    require(
+        any(
+            "src/linux/setfsgid.c::setfsgid" in item
+            and "__syscall_ret" in item
+            and "setfsuid" in item
+            for item in prerequisites
+        ),
+        "static-c-setfsgid must retain its pinned-musl source closure",
+    )
+    require(
+        any(
+            "all-ones gid_t query" in item
+            and "stale ERANGE" in item
+            and "current-effective-ID" in item
+            and "stale E2BIG" in item
+            and "Static Initial TLS v1" in item
+            for item in prerequisites
+        ),
+        "static-c-setfsgid must retain its raw/C differential",
+    )
+    headers = nonempty_strings(
+        artifact["x86_header_prerequisites"], "static-c-setfsgid.x86_header_prerequisites"
+    )
+    require(
+        any(
+            "strict/POSIX/X/Open/GNU C and C++17" in item
+            and "int setfsgid(gid_t)" in item
+            and "SYS_setfsgid=123" in item
+            and "unmangled C++ C linkage" in item
+            and "sys/fsuid.h" in item
+            for item in headers
+        ),
+        "static-c-setfsgid must retain its C/C++ header matrix",
+    )
+    static_exports = set(
+        static_c_abi_export_names(
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        )
+    )
+    require(
+        "setfsgid" in static_exports,
+        "static-c-setfsgid must expose its exact filesystem-credential spelling",
+    )
+    oracle = artifact["oracle"]
+    assert isinstance(oracle, list)
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "c-posix"
+            and isinstance(entry.get("role"), str)
+            and "src/linux/setfsgid.c::setfsgid" in entry["role"]
+            and "ordinary errno unchanged" in entry["role"]
+            for entry in oracle
+        ),
+        "static-c-setfsgid must retain its pinned-musl filesystem-credential oracle",
+    )
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "linux-uapi"
+            and isinstance(entry.get("role"), str)
+            and "123" in entry["role"]
+            and "prior filesystem GID" in entry["role"]
+            for entry in oracle
+        ),
+        "static-c-setfsgid must retain its Linux raw-syscall oracle",
+    )
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-setfsgid"},
+        "static-c-setfsgid must use the closed libc-setfsgid command",
+    )
+    scope = evidence[0].get("scope")
+    require(
+        isinstance(scope, str)
+        and all(
+            phrase in scope
+            for phrase in (
+                "Pinned-musl 1.2.6",
+                "strict/POSIX/X/Open/GNU C/C++ header matrix",
+                "`-nostdlib -static` candidate",
+                "setfsuid",
+                "credential observation/setter families",
+                "credential synchronization",
+                "process/session control",
+                "scheduler state",
+                "pthread lifecycle",
+                "setfsgid disassembly",
+                "raw syscall 123",
+                "all-ones query",
+                "current-effective-ID",
+                "stale errno",
+                "credential-family completion, dynamic libc, CRT, loader, sysroot, promotion, or public x86 support",
+            )
+        ),
+        "static-c-setfsgid evidence must retain its closed static regression",
+    )
+
+
+def require_setfsuid_artifact(family: Mapping[str, Any]) -> None:
+    """Keep the one-symbol filesystem-credential leaf below promotion."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.posix-runtime].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [entry for entry in artifacts if entry.get("id") == "static-c-setfsuid"]
+    require(
+        len(matching) == 1,
+        "libc.posix-runtime must contain exactly one static-c-setfsuid artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-setfsuid must not promote libc.posix-runtime",
+    )
+    artifact = matching[0]
+    require(
+        "capabilities" not in artifact,
+        "static-c-setfsuid must not promote an existing capability",
+    )
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for phrase in (
+        "one-symbol filesystem-credential compatibility artifact",
+        "planned `libc.posix-runtime`",
+        "exactly `setfsuid(uid_t)`",
+        "`src/linux/setfsuid.c::setfsuid`",
+        "raw Linux x86 syscall 122",
+        "prior-filesystem-UID",
+        "all-ones query",
+        "current-effective-ID",
+        "stale initial-TLS `errno`",
+        "strict/POSIX/X/Open/GNU C and C++17",
+        "unconditional `int setfsuid(uid_t)`",
+        "neither `setfsgid`",
+        "credential observation/setter families",
+        "process-wide credential synchronization",
+        "process/session control",
+        "scheduler state",
+        "pthread lifecycle",
+        "family completion, promotion, or public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"static-c-setfsuid description omits {phrase}",
+        )
+    owners = set(
+        nonempty_strings(artifact["source_owners"], "static-c-setfsuid.source_owners")
+    )
+    for owner in (
+        "compat/upstreams.toml",
+        "libc/Cargo.toml",
+        "libc/src/lib.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/setfsuid.rs",
+        "libc/src/c_abi/x86_64/errno.rs",
+        "libc/src/c_abi/x86_64/static_tls.rs",
+        "libc/src/c_abi/x86_64/syscall.rs",
+        "include/errno.h",
+        "include/stdint.h",
+        "include/sys/fsuid.h",
+        "include/sys/syscall.h",
+        "include/bits/syscall.h",
+        "include/sys/types.h",
+        "compat/x86_64/setfsuid_header_abi_probe.c",
+        "compat/x86_64/setfsuid_header_abi_probe.cpp",
+        "compat/x86_64/run_setfsuid_header_abi.sh",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/libc_setfsuid_probe.c",
+        "compat/x86_64/libc_setfsuid_start.S",
+        "compat/x86_64/run_libc_setfsuid.sh",
+        "compat/x86_64/aarch64_parity_inventory.py",
+        "compat/x86_64/aarch64_parity_inventory.json",
+        "compat/x86_64/tests/test_aarch64_parity_inventory.py",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/README.md",
+        "STATUS.md",
+        "x86-64.md",
+        "scripts/dev-x86_64.sh",
+        "scripts/check_structure.py",
+    ):
+        require(owner in owners, f"static-c-setfsuid source owners omit {owner}")
+    prerequisites = nonempty_strings(
+        artifact["x86_abi_prerequisites"], "static-c-setfsuid.x86_abi_prerequisites"
+    )
+    require(
+        any(
+            "uid_t" in item
+            and "edi" in item
+            and "eax" in item
+            and "122" in item
+            and "prior filesystem UID" in item
+            for item in prerequisites
+        ),
+        "static-c-setfsuid must retain its x86 scalar/result ABI",
+    )
+    require(
+        any(
+            "src/linux/setfsuid.c::setfsuid" in item
+            and "__syscall_ret" in item
+            and "setfsgid" in item
+            for item in prerequisites
+        ),
+        "static-c-setfsuid must retain its pinned-musl source closure",
+    )
+    require(
+        any(
+            "all-ones uid_t query" in item
+            and "stale ERANGE" in item
+            and "current-effective-ID" in item
+            and "stale E2BIG" in item
+            and "Static Initial TLS v1" in item
+            for item in prerequisites
+        ),
+        "static-c-setfsuid must retain its raw/C differential",
+    )
+    headers = nonempty_strings(
+        artifact["x86_header_prerequisites"], "static-c-setfsuid.x86_header_prerequisites"
+    )
+    require(
+        any(
+            "strict/POSIX/X/Open/GNU C and C++17" in item
+            and "int setfsuid(uid_t)" in item
+            and "SYS_setfsuid=122" in item
+            and "unmangled C++ C linkage" in item
+            and "sys/fsuid.h" in item
+            for item in headers
+        ),
+        "static-c-setfsuid must retain its C/C++ header matrix",
+    )
+    static_exports = set(
+        static_c_abi_export_names(
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        )
+    )
+    require(
+        "setfsuid" in static_exports,
+        "static-c-setfsuid must expose its exact filesystem-credential spelling",
+    )
+    oracle = artifact["oracle"]
+    assert isinstance(oracle, list)
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "c-posix"
+            and isinstance(entry.get("role"), str)
+            and "src/linux/setfsuid.c::setfsuid" in entry["role"]
+            and "ordinary errno unchanged" in entry["role"]
+            for entry in oracle
+        ),
+        "static-c-setfsuid must retain its pinned-musl filesystem-credential oracle",
+    )
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "linux-uapi"
+            and isinstance(entry.get("role"), str)
+            and "122" in entry["role"]
+            and "prior filesystem UID" in entry["role"]
+            for entry in oracle
+        ),
+        "static-c-setfsuid must retain its Linux raw-syscall oracle",
+    )
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-setfsuid"},
+        "static-c-setfsuid must use the closed libc-setfsuid command",
+    )
+    scope = evidence[0].get("scope")
+    require(
+        isinstance(scope, str)
+        and all(
+            phrase in scope
+            for phrase in (
+                "Pinned-musl 1.2.6",
+                "strict/POSIX/X/Open/GNU C/C++ header matrix",
+                "`-nostdlib -static` candidate",
+                "setfsgid",
+                "credential observation/setter families",
+                "credential synchronization",
+                "process/session control",
+                "scheduler state",
+                "pthread lifecycle",
+                "setfsuid disassembly",
+                "raw syscall 122",
+                "all-ones query",
+                "current-effective-ID",
+                "stale errno",
+                "credential-family completion, dynamic libc, CRT, loader, sysroot, promotion, or public x86 support",
+            )
+        ),
+        "static-c-setfsuid evidence must retain its closed static regression",
     )
 
 
@@ -51429,7 +53404,6 @@ def require_static_pthread_affinity_artifact(
     for unselected in (
         "pthread_attr_getaffinity_np",
         "pthread_attr_setaffinity_np",
-        "sched_getaffinity",
         "sched_setaffinity",
     ):
         require(
@@ -54141,6 +56115,626 @@ def require_ns_skiprr_artifact(family: Mapping[str, Any]) -> None:
 
 
 
+def require_sched_getparam_artifact(family: Mapping[str, Any]) -> None:
+    """Keep musl's scheduler-record process/thread mismatch below promotion."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.posix-runtime].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [
+        entry for entry in artifacts if entry.get("id") == "static-c-sched-getparam"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.posix-runtime must contain exactly one static-c-sched-getparam artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-sched-getparam must not promote libc.posix-runtime",
+    )
+    artifact = matching[0]
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for phrase in (
+        "one-symbol POSIX scheduler-parameter observation compatibility artifact",
+        "planned `libc.posix-runtime`",
+        "exactly `sched_getparam`",
+        "`src/sched/sched_getparam.c`",
+        "`__syscall_ret(-ENOSYS)`",
+        "`-1` and writes `ENOSYS=38`",
+        "thread-scoped raw x86 syscall 143",
+        "48-byte `struct sched_param`",
+        "strict/POSIX/X/Open/GNU C and C++17 feature matrix",
+        "makes no raw syscall",
+        "separate `sched_getscheduler`, C11 `thrd_yield`, and priority-bounds",
+        "scheduler mutation or policy, parameter records, priority bounds, POSIX `sched_yield`, affinity",
+        "pthread scheduling attributes",
+        "thread/process lifecycle",
+        "scheduler-family completion, promotion, or public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"static-c-sched-getparam description omits {phrase}",
+        )
+    owners = set(
+        nonempty_strings(
+            artifact["source_owners"], "static-c-sched-getparam.source_owners"
+        )
+    )
+    for owner in (
+        "compat/upstreams.toml",
+        "libc/Cargo.toml",
+        "libc/src/lib.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/sched_getparam.rs",
+        "libc/src/c_abi/x86_64/errno.rs",
+        "libc/src/c_abi/x86_64/static_tls.rs",
+        "include/errno.h",
+        "include/sched.h",
+        "include/sys/types.h",
+        "include/time.h",
+        "include/sys/syscall.h",
+        "include/bits/syscall.h",
+        "compat/x86_64/sched_getparam_header_abi_probe.c",
+        "compat/x86_64/sched_getparam_header_abi_probe.cpp",
+        "compat/x86_64/run_sched_getparam_header_abi.sh",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/libc_sched_getparam_probe.c",
+        "compat/x86_64/libc_sched_getparam_start.S",
+        "compat/x86_64/run_libc_sched_getparam.sh",
+        "compat/x86_64/run_libc_process_resources.sh",
+        "compat/x86_64/aarch64_parity_inventory.py",
+        "compat/x86_64/aarch64_parity_inventory.json",
+        "compat/x86_64/tests/test_aarch64_parity_inventory.py",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/README.md",
+        "STATUS.md",
+        "x86-64.md",
+        "scripts/dev-x86_64.sh",
+        "scripts/check_structure.py",
+    ):
+        require(owner in owners, f"static-c-sched-getparam source owners omit {owner}")
+    prerequisites = nonempty_strings(
+        artifact["x86_abi_prerequisites"],
+        "static-c-sched-getparam.x86_abi_prerequisites",
+    )
+    require(
+        any(
+            "pid_t" in item
+            and "edi" in item
+            and "rsi" in item
+            and "eax" in item
+            and "syscall 143" in item
+            and "does not issue" in item
+            for item in prerequisites
+        ),
+        "static-c-sched-getparam must retain its process API/x86 syscall boundary",
+    )
+    require(
+        any(
+            "src/sched/sched_getparam.c" in item
+            and "__syscall_ret(-ENOSYS)" in item
+            and "thread-scoped" in item
+            and "sched_setscheduler" in item
+            for item in prerequisites
+        ),
+        "static-c-sched-getparam must retain its pinned-musl source closure",
+    )
+    require(
+        any(
+            "raw 143 current-task success" in item
+            and "-1/ENOSYS" in item
+            and "untouched 48-byte record" in item
+            and "Static Initial TLS v1" in item
+            for item in prerequisites
+        ),
+        "static-c-sched-getparam must retain its raw/C ABI differential",
+    )
+    headers = nonempty_strings(
+        artifact["x86_header_prerequisites"],
+        "static-c-sched-getparam.x86_header_prerequisites",
+    )
+    require(
+        any(
+            "strict/POSIX/X/Open/GNU C and C++17" in item
+            and "int sched_getparam(pid_t, struct sched_param *)" in item
+            and "48-byte align-8" in item
+            and "unmangled C++ C linkage" in item
+            and "syscall.h" in item
+            for item in headers
+        ),
+        "static-c-sched-getparam must retain its C/C++ header matrix",
+    )
+    static_exports = set(
+        static_c_abi_export_names(
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        )
+    )
+    require(
+        "sched_getparam" in static_exports,
+        "static-c-sched-getparam must expose its exact scheduler spelling",
+    )
+    oracle = artifact["oracle"]
+    assert isinstance(oracle, list)
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "c-posix"
+            and isinstance(entry.get("role"), str)
+            and "src/sched/sched_getparam.c" in entry["role"]
+            and "ENOSYS" in entry["role"]
+            and "record" in entry["role"]
+            for entry in oracle
+        ),
+        "static-c-sched-getparam must retain its pinned-musl ENOSYS oracle",
+    )
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "linux-uapi"
+            and isinstance(entry.get("role"), str)
+            and "143" in entry["role"]
+            and "thread-scoped" in entry["role"]
+            for entry in oracle
+        ),
+        "static-c-sched-getparam must retain its Linux raw-syscall contrast",
+    )
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-sched-getparam"},
+        "static-c-sched-getparam must use the closed libc-sched-getparam command",
+    )
+    scope = evidence[0].get("scope")
+    require(
+        isinstance(scope, str)
+        and all(
+            phrase in scope
+            for phrase in (
+                "Pinned-musl 1.2.6",
+                "strict/POSIX/X/Open/GNU C/C++ header matrix",
+                "`-nostdlib -static` candidate",
+                "scheduler mutation/policy/parameters",
+                "priority bounds",
+                "POSIX sched_yield",
+                "affinity",
+                "pthread scheduling",
+                "sched_getparam disassembly",
+                "raw syscall 143",
+                "raw-current contrast",
+                "C ABI -1/ENOSYS",
+                "untouched record",
+                "sched_getscheduler, C11 thrd_yield, and priority-bounds",
+                "scheduler-family completion, dynamic libc, CRT, loader, sysroot, promotion, or public x86 support",
+            )
+        ),
+        "static-c-sched-getparam evidence must retain its musl ENOSYS regression",
+    )
+
+
+
+def require_sched_setparam_artifact(family: Mapping[str, Any]) -> None:
+    """Keep musl's scheduler-mutation process/thread mismatch below promotion."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.posix-runtime].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [
+        entry for entry in artifacts if entry.get("id") == "static-c-sched-setparam"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.posix-runtime must contain exactly one static-c-sched-setparam artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-sched-setparam must not promote libc.posix-runtime",
+    )
+    artifact = matching[0]
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for phrase in (
+        "one-symbol POSIX scheduler-parameter compatibility-failure artifact",
+        "planned `libc.posix-runtime`",
+        "exactly `sched_setparam`",
+        "`src/sched/sched_setparam.c`",
+        "`__syscall_ret(-ENOSYS)`",
+        "`-1` and writes `ENOSYS=38`",
+        "thread-scoped raw x86 syscall 142",
+        "non-mutating `-ESRCH`",
+        "48-byte `struct sched_param`",
+        "strict/POSIX/X/Open/GNU C and C++17 feature matrix",
+        "makes no raw syscall",
+        "separate `sched_getparam`, `sched_getscheduler`, C11 `thrd_yield`, and priority-bounds",
+        "scheduler mutation or policy, parameter records, priority bounds, POSIX `sched_yield`, affinity",
+        "pthread scheduling attributes",
+        "thread/process lifecycle",
+        "scheduler-family completion, promotion, or public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"static-c-sched-setparam description omits {phrase}",
+        )
+    owners = set(
+        nonempty_strings(
+            artifact["source_owners"], "static-c-sched-setparam.source_owners"
+        )
+    )
+    for owner in (
+        "compat/upstreams.toml",
+        "libc/Cargo.toml",
+        "libc/src/lib.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/sched_setparam.rs",
+        "libc/src/c_abi/x86_64/errno.rs",
+        "libc/src/c_abi/x86_64/static_tls.rs",
+        "include/errno.h",
+        "include/sched.h",
+        "include/sys/types.h",
+        "include/time.h",
+        "include/sys/syscall.h",
+        "include/bits/syscall.h",
+        "compat/x86_64/sched_setparam_header_abi_probe.c",
+        "compat/x86_64/sched_setparam_header_abi_probe.cpp",
+        "compat/x86_64/run_sched_setparam_header_abi.sh",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/libc_sched_setparam_probe.c",
+        "compat/x86_64/libc_sched_setparam_start.S",
+        "compat/x86_64/run_libc_sched_setparam.sh",
+        "compat/x86_64/run_libc_process_resources.sh",
+        "compat/x86_64/aarch64_parity_inventory.py",
+        "compat/x86_64/aarch64_parity_inventory.json",
+        "compat/x86_64/tests/test_aarch64_parity_inventory.py",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/README.md",
+        "STATUS.md",
+        "x86-64.md",
+        "scripts/dev-x86_64.sh",
+        "scripts/check_structure.py",
+    ):
+        require(owner in owners, f"static-c-sched-setparam source owners omit {owner}")
+    prerequisites = nonempty_strings(
+        artifact["x86_abi_prerequisites"],
+        "static-c-sched-setparam.x86_abi_prerequisites",
+    )
+    require(
+        any(
+            "pid_t" in item
+            and "edi" in item
+            and "rsi" in item
+            and "eax" in item
+            and "syscall 142" in item
+            and "does not issue" in item
+            for item in prerequisites
+        ),
+        "static-c-sched-setparam must retain its process API/x86 syscall boundary",
+    )
+    require(
+        any(
+            "src/sched/sched_setparam.c" in item
+            and "__syscall_ret(-ENOSYS)" in item
+            and "thread-scoped" in item
+            and "sched_setscheduler" in item
+            for item in prerequisites
+        ),
+        "static-c-sched-setparam must retain its pinned-musl source closure",
+    )
+    require(
+        any(
+            "raw 142 only" in item
+            and "non-mutating -ESRCH" in item
+            and "untouched 48-byte record" in item
+            and "Static Initial TLS v1" in item
+            for item in prerequisites
+        ),
+        "static-c-sched-setparam must retain its raw/C ABI differential",
+    )
+    headers = nonempty_strings(
+        artifact["x86_header_prerequisites"],
+        "static-c-sched-setparam.x86_header_prerequisites",
+    )
+    require(
+        any(
+            "strict/POSIX/X/Open/GNU C and C++17" in item
+            and "int sched_setparam(pid_t, const struct sched_param *)" in item
+            and "48-byte align-8" in item
+            and "unmangled C++ C linkage" in item
+            and "syscall.h" in item
+            for item in headers
+        ),
+        "static-c-sched-setparam must retain its C/C++ header matrix",
+    )
+    static_exports = set(
+        static_c_abi_export_names(
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        )
+    )
+    require(
+        "sched_setparam" in static_exports,
+        "static-c-sched-setparam must expose its exact scheduler spelling",
+    )
+    oracle = artifact["oracle"]
+    assert isinstance(oracle, list)
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "c-posix"
+            and isinstance(entry.get("role"), str)
+            and "src/sched/sched_setparam.c" in entry["role"]
+            and "ENOSYS" in entry["role"]
+            and "read-only record" in entry["role"]
+            for entry in oracle
+        ),
+        "static-c-sched-setparam must retain its pinned-musl ENOSYS oracle",
+    )
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "linux-uapi"
+            and isinstance(entry.get("role"), str)
+            and "142" in entry["role"]
+            and "thread-scoped" in entry["role"]
+            and "INT_MAX" in entry["role"]
+            for entry in oracle
+        ),
+        "static-c-sched-setparam must retain its Linux raw-syscall contrast",
+    )
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-sched-setparam"},
+        "static-c-sched-setparam must use the closed libc-sched-setparam command",
+    )
+    scope = evidence[0].get("scope")
+    require(
+        isinstance(scope, str)
+        and all(
+            phrase in scope
+            for phrase in (
+                "Pinned-musl 1.2.6",
+                "strict/POSIX/X/Open/GNU C/C++ header matrix",
+                "`-nostdlib -static` candidate",
+                "scheduler mutation/policy/parameters",
+                "priority bounds",
+                "POSIX sched_yield",
+                "affinity",
+                "pthread scheduling",
+                "sched_setparam disassembly",
+                "raw syscall 142",
+                "raw-impossible-task contrast",
+                "C ABI -1/ENOSYS",
+                "untouched record",
+                "sched_getparam, sched_getscheduler, C11 thrd_yield, and priority-bounds",
+                "scheduler-family completion, dynamic libc, CRT, loader, sysroot, promotion, or public x86 support",
+            )
+        ),
+        "static-c-sched-setparam evidence must retain its musl ENOSYS regression",
+    )
+
+
+
+def require_sched_getaffinity_artifact(family: Mapping[str, Any]) -> None:
+    """Keep the GNU affinity observation leaf below scheduler promotion."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.posix-runtime].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [
+        entry for entry in artifacts if entry.get("id") == "static-c-sched-getaffinity"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.posix-runtime must contain exactly one static-c-sched-getaffinity artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-sched-getaffinity must not promote libc.posix-runtime",
+    )
+    artifact = matching[0]
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for phrase in (
+        "one-symbol GNU scheduler-affinity observation compatibility artifact",
+        "planned `libc.posix-runtime`",
+        "exactly `sched_getaffinity`",
+        "`src/sched/affinity.c::do_getaffinity`",
+        "raw syscall 204",
+        "successful positive initialized-prefix count becomes C return zero",
+        "caller-owned tail is cleared",
+        "initial-TLS errno",
+        "direct x86 byte stores",
+        "undersized `EINVAL`",
+        "missing `INT_MAX` `ESRCH`",
+        "null-mask `EFAULT`",
+        "strict/POSIX/X/Open profiles hide the GNU-only spelling",
+        "GNU C and C++17",
+        "128-byte align-8",
+        "unmangled C linkage",
+        "`sched_setaffinity`, CPU allocation/count/macro helpers",
+        "scheduler policy or parameters",
+        "pthread affinity or lifecycle",
+        "scheduler-family completion, promotion, or public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"static-c-sched-getaffinity description omits {phrase}",
+        )
+    owners = set(
+        nonempty_strings(
+            artifact["source_owners"], "static-c-sched-getaffinity.source_owners"
+        )
+    )
+    for owner in (
+        "compat/upstreams.toml",
+        "libc/Cargo.toml",
+        "libc/src/lib.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/sched_getaffinity.rs",
+        "libc/src/c_abi/x86_64/errno.rs",
+        "libc/src/c_abi/x86_64/static_tls.rs",
+        "libc/src/c_abi/x86_64/syscall.rs",
+        "include/errno.h",
+        "include/sched.h",
+        "include/sys/types.h",
+        "include/time.h",
+        "include/sys/syscall.h",
+        "include/bits/syscall.h",
+        "compat/x86_64/sched_getaffinity_header_abi_probe.c",
+        "compat/x86_64/sched_getaffinity_header_abi_probe.cpp",
+        "compat/x86_64/sched_getaffinity_header_visibility_probe.c",
+        "compat/x86_64/run_sched_getaffinity_header_abi.sh",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/libc_sched_getaffinity_probe.c",
+        "compat/x86_64/libc_sched_getaffinity_start.S",
+        "compat/x86_64/run_libc_sched_getaffinity.sh",
+        "compat/x86_64/aarch64_parity_inventory.py",
+        "compat/x86_64/aarch64_parity_inventory.json",
+        "compat/x86_64/tests/test_aarch64_parity_inventory.py",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/README.md",
+        "STATUS.md",
+        "x86-64.md",
+        "scripts/dev-x86_64.sh",
+        "scripts/check_structure.py",
+    ):
+        require(
+            owner in owners,
+            f"static-c-sched-getaffinity source owners omit {owner}",
+        )
+    prerequisites = nonempty_strings(
+        artifact["x86_abi_prerequisites"],
+        "static-c-sched-getaffinity.x86_abi_prerequisites",
+    )
+    require(
+        any(
+            "pid_t" in item
+            and "edi" in item
+            and "rsi" in item
+            and "rdx" in item
+            and "eax" in item
+            and "raw syscall 204" in item
+            and "positive initialized byte count" in item
+            for item in prerequisites
+        ),
+        "static-c-sched-getaffinity must retain its x86 syscall/result ABI",
+    )
+    require(
+        any(
+            "src/sched/affinity.c::do_getaffinity" in item
+            and "sched_getaffinity" in item
+            and "memset" in item
+            and "direct x86 byte stores" in item
+            and "sched_setaffinity" in item
+            for item in prerequisites
+        ),
+        "static-c-sched-getaffinity must retain its pinned-musl source closure",
+    )
+    require(
+        any(
+            "raw-current positive-prefix" in item
+            and "byte-identical prefix" in item
+            and "EINVAL" in item
+            and "ESRCH" in item
+            and "EFAULT" in item
+            and "Static Initial TLS v1" in item
+            for item in prerequisites
+        ),
+        "static-c-sched-getaffinity must retain its raw/C ABI differential",
+    )
+    headers = nonempty_strings(
+        artifact["x86_header_prerequisites"],
+        "static-c-sched-getaffinity.x86_header_prerequisites",
+    )
+    require(
+        any(
+            "strict/POSIX/X/Open C and C++17 visibility matrix" in item
+            and "GNU-only" in item
+            and "int sched_getaffinity(pid_t, size_t, cpu_set_t *)" in item
+            and "128-byte align-8" in item
+            and "unmangled C++ C linkage" in item
+            and "syscall.h" in item
+            for item in headers
+        ),
+        "static-c-sched-getaffinity must retain its GNU C/C++ header matrix",
+    )
+    static_exports = set(
+        static_c_abi_export_names(
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        )
+    )
+    require(
+        "sched_getaffinity" in static_exports,
+        "static-c-sched-getaffinity must expose its exact scheduler spelling",
+    )
+    oracle = artifact["oracle"]
+    assert isinstance(oracle, list)
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "c-posix"
+            and isinstance(entry.get("role"), str)
+            and "src/sched/affinity.c::do_getaffinity" in entry["role"]
+            and "tail zeroing" in entry["role"]
+            for entry in oracle
+        ),
+        "static-c-sched-getaffinity must retain its pinned-musl affinity oracle",
+    )
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "linux-uapi"
+            and isinstance(entry.get("role"), str)
+            and "204" in entry["role"]
+            and "EINVAL/ESRCH/EFAULT" in entry["role"]
+            for entry in oracle
+        ),
+        "static-c-sched-getaffinity must retain its Linux raw-syscall oracle",
+    )
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-sched-getaffinity"},
+        "static-c-sched-getaffinity must use the closed libc-sched-getaffinity command",
+    )
+    scope = evidence[0].get("scope")
+    require(
+        isinstance(scope, str)
+        and all(
+            phrase in scope
+            for phrase in (
+                "Pinned-musl 1.2.6",
+                "strict/POSIX/X/Open/GNU C/C++ header matrix",
+                "`-nostdlib -static` candidate",
+                "affinity mutation",
+                "CPU helpers",
+                "scheduler policy/parameters",
+                "pthread state/lifecycle",
+                "sched_getaffinity disassembly",
+                "raw syscall 204",
+                "no raw 203",
+                "no direct memory C ABI call",
+                "raw-current prefix/tail contrast",
+                "EINVAL, ESRCH, and EFAULT",
+                "scheduler-family completion, dynamic libc, CRT, loader, sysroot, promotion, or public x86 support",
+            )
+        ),
+        "static-c-sched-getaffinity evidence must retain its static affinity regression",
+    )
+
+
+
 def validate_ledger(
     data: Mapping[str, Any],
     *,
@@ -54377,6 +56971,10 @@ def validate_ledger(
     require_memccpy_artifact(by_id["libc.posix-runtime"])
     require_mempcpy_artifact(by_id["libc.posix-runtime"])
     require_strsep_artifact(by_id["libc.posix-runtime"])
+    require_strtok_artifact(by_id["libc.posix-runtime"])
+    require_posix_spawnattr_init_artifact(by_id["libc.posix-runtime"])
+    require_posix_spawnattr_getpgroup_artifact(by_id["libc.posix-runtime"])
+    require_posix_spawnattr_getschedpolicy_artifact(by_id["libc.posix-runtime"])
     require_random_entropy_artifact(by_id["libc.posix-runtime"])
     require_memory_search_artifact(by_id["libc.posix-runtime"])
     require_aio_error_artifact(by_id["libc.posix-runtime"])
@@ -54388,6 +56986,9 @@ def validate_ledger(
     require_integer_arithmetic_artifact(by_id["libc.posix-runtime"])
     require_integer_parse_artifact(by_id["libc.posix-runtime"])
     require_intmax_arithmetic_artifact(by_id["libc.posix-runtime"])
+    require_personality_artifact(by_id["libc.posix-runtime"])
+    require_setfsgid_artifact(by_id["libc.posix-runtime"])
+    require_setfsuid_artifact(by_id["libc.posix-runtime"])
     require_credential_observation_artifact(by_id["libc.posix-runtime"])
     require_static_environment_artifact(by_id["libc.posix-runtime"])
     require_static_secure_environment_artifact(by_id["libc.posix-runtime"])
@@ -54435,6 +57036,9 @@ def validate_ledger(
     require_sigrtmax_artifact(by_id["libc.posix-runtime"])
     require_sigrtmin_artifact(by_id["libc.posix-runtime"])
     require_sched_getscheduler_artifact(by_id["libc.posix-runtime"])
+    require_sched_getparam_artifact(by_id["libc.posix-runtime"])
+    require_sched_setparam_artifact(by_id["libc.posix-runtime"])
+    require_sched_getaffinity_artifact(by_id["libc.posix-runtime"])
     require_alarm_artifact(by_id["libc.posix-runtime"])
     require_sigset_mutation_artifact(by_id["libc.posix-runtime"])
     require_clock_nanosleep_artifact(by_id["libc.posix-runtime"])

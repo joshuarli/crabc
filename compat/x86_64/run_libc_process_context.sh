@@ -120,7 +120,7 @@ for symbol in __errno_location getpid getppid getuid getgid geteuid getegid \
     grep -Eq "[[:space:]][TW][[:space:]]${symbol}$" "$archive_symbols" \
         || fail "archive does not define ${symbol}"
 done
-for unselected in _Fork vfork clone execve gettid syscall setfsuid setfsgid \
+for unselected in _Fork vfork clone execve gettid syscall \
     malloc free calloc realloc; do
     if grep -Eq "[[:space:]][TW][[:space:]]${unselected}$" "$archive_symbols"; then
         fail "archive accidentally exports unselected ${unselected}"

@@ -50,7 +50,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 41)
-        self.assertEqual(report["verified_artifact_count"], 283)
+        self.assertEqual(report["verified_artifact_count"], 292)
         self.assertEqual(report["header_layout_probe_count"], 47)
         self.assertEqual(report["public_header_inventory_count"], 183)
         self.assertEqual(report["header_foundation_header_count"], 191)
@@ -9202,6 +9202,59 @@ class X86ParityLedgerTests(unittest.TestCase):
             "libc/src/c_abi/x86_64/strsep.rs",
             posix_runtime["source_owners"],
         )
+        strtok = artifacts_by_id["static-c-strtok"]
+        assert isinstance(strtok, dict)
+        self.assertNotIn("capabilities", strtok)
+        for owner in (
+            "compat/upstreams.toml",
+            "compat/abi/musl-1.2.6/aarch64/libc.a.static.tsv",
+            "libc/src/c_abi.rs",
+            "libc/src/c_abi/x86_64/static_c_abi.rs",
+            "libc/src/c_abi/x86_64/strtok.rs",
+            "include/string.h",
+            "compat/x86_64/strtok_header_abi_probe.c",
+            "compat/x86_64/strtok_header_abi_probe.cpp",
+            "compat/x86_64/run_strtok_header_abi.sh",
+            "compat/x86_64/static_c_abi_exports.txt",
+            "compat/x86_64/libc_strtok_probe.c",
+            "compat/x86_64/libc_strtok_start.S",
+            "compat/x86_64/run_libc_strtok.sh",
+            "compat/x86_64/validate_parity_ledger.py",
+            "scripts/check_structure.py",
+        ):
+            self.assertIn(owner, strtok["source_owners"])
+        self.assertEqual(
+            {evidence["command"] for evidence in strtok["native_evidence"]},
+            {"./scripts/dev-x86_64.sh libc-strtok"},
+        )
+        for phrase in (
+            "exactly one Rust object exporting only `strtok`",
+            "one shared process-global non-TLS continuation cursor",
+            "Interleaved sequences deliberately overwrite that one cursor",
+            "concurrent unsynchronized calls remain outside the historical C contract",
+            "generic AArch64 `strtok` export remains unchanged",
+            "Rust-subsumed `memory.bytes-basic`",
+            "general string/tokenization or thread-safe text behavior",
+            "allocator lifecycle/interposition",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, strtok["description"])
+        self.assertIn("rdi/rsi", strtok["x86_abi_prerequisites"][0])
+        self.assertIn("src/string/strtok.c", strtok["x86_abi_prerequisites"][1])
+        strtok_scope = strtok["native_evidence"][0]["scope"]
+        for phrase in (
+            "leading delimiter skipping",
+            "in-place NUL splitting",
+            "empty input and empty delimiters",
+            "high-bit delimiter matching",
+            "non-null replacement of a prior continuation",
+            "one shared cursor when sequences interleave",
+        ):
+            self.assertIn(phrase, strtok_scope)
+        self.assertIn(
+            "libc/src/c_abi/x86_64/strtok.rs",
+            posix_runtime["source_owners"],
+        )
         random_entropy = artifacts_by_id["static-c-random-entropy"]
         assert isinstance(random_entropy, dict)
         self.assertNotIn("capabilities", random_entropy)
@@ -15086,6 +15139,357 @@ class X86ParityLedgerTests(unittest.TestCase):
         evidence[0]["command"] = "./scripts/dev-x86_64.sh libc-memory-search"
         with self.assertRaisesRegex(
             ledger.LedgerError, "closed libc-strsep command"
+        ):
+            ledger.validate_ledger(data)
+
+    def test_strtok_artifact_keeps_its_shared_cursor_nonpromoting_contract(self) -> None:
+        data = self.data()
+        family = self.family(data, "libc.posix-runtime")
+        family["status"] = "foundation-verified"
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "static-c-strtok must not promote"
+        ):
+            ledger.require_strtok_artifact(family)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-strtok"
+        )
+        artifact["description"] = artifact["description"].replace(
+            "Interleaved sequences deliberately overwrite that one cursor",
+            "Interleaved sequences use independent cursors",
+        )
+        with self.assertRaisesRegex(
+            ledger.LedgerError,
+            "description omits Interleaved sequences deliberately overwrite that one cursor",
+        ):
+            ledger.validate_ledger(data)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-strtok"
+        )
+        artifact["capabilities"] = ["memory.bytes-basic"]
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "must not carry capabilities; use verified_slice instead"
+        ):
+            ledger.validate_ledger(data)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-strtok"
+        )
+        evidence = artifact["native_evidence"]
+        assert isinstance(evidence, list) and isinstance(evidence[0], dict)
+        evidence[0]["command"] = "./scripts/dev-x86_64.sh libc-strsep"
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "closed libc-strtok command"
+        ):
+            ledger.validate_ledger(data)
+
+    def test_posix_spawnattr_init_artifact_stays_private_and_nonpromoting(
+        self,
+    ) -> None:
+        data = self.data()
+        family = self.family(data, "libc.posix-runtime")
+        self.assertEqual(family["status"], "planned")
+        artifacts = family["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict)
+            and entry["id"] == "static-c-posix-spawnattr-init"
+        )
+        self.assertNotIn("capabilities", artifact)
+        for phrase in (
+            "POSIX spawn-attribute initialization leaf",
+            "`src/process/posix_spawnattr_init.c::posix_spawnattr_init`",
+            "`(posix_spawnattr_t){ 0 }`",
+            "all 336 x86 bytes",
+            "preserve adjacent caller guards",
+            "fixed 42-word direct-store loop",
+            "`posix_spawn`",
+            "`posix_spawnp`",
+            "attribute destruction/query/mutation",
+            "fork/vfork/clone",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, artifact["description"])
+
+        owners = artifact["source_owners"]
+        assert isinstance(owners, list)
+        for owner in (
+            "compat/abi/musl-1.2.6/aarch64/libc.a.static.tsv",
+            "libc/src/c_abi.rs",
+            "libc/src/c_abi/x86_64/posix_spawnattr_init.rs",
+            "include/spawn.h",
+            "include/errno.h",
+            "compat/x86_64/posix_spawnattr_init_header_abi_probe.c",
+            "compat/x86_64/posix_spawnattr_init_header_abi_probe.cpp",
+            "compat/x86_64/run_posix_spawnattr_init_header_abi.sh",
+            "compat/x86_64/libc_posix_spawnattr_init_probe.c",
+            "compat/x86_64/libc_posix_spawnattr_init_start.S",
+            "compat/x86_64/run_libc_posix_spawnattr_init.sh",
+            "compat/x86_64/static_c_abi_exports.txt",
+        ):
+            self.assertIn(owner, owners)
+
+        prerequisites = artifact["x86_abi_prerequisites"]
+        assert isinstance(prerequisites, list)
+        self.assertTrue(
+            any(
+                "System V AMD64" in item
+                and "int posix_spawnattr_init(posix_spawnattr_t *)" in item
+                and "336-byte" in item
+                and "rdi" in item
+                and "eax" in item
+                for item in prerequisites
+            )
+        )
+        self.assertTrue(
+            any(
+                "src/process/posix_spawnattr_init.c::posix_spawnattr_init" in item
+                and "complete zero initialization plus `return 0`" in item
+                and "posix_spawnattr_init.lo" in item
+                and "generic AArch64 export remains unchanged" in item
+                for item in prerequisites
+            )
+        )
+
+        evidence = artifact["native_evidence"]
+        assert isinstance(evidence, list) and isinstance(evidence[0], dict)
+        self.assertEqual(
+            evidence[0]["command"],
+            "./scripts/dev-x86_64.sh libc-posix-spawnattr-init",
+        )
+        for phrase in (
+            "direct and function-pointer successful initialization",
+            "byte-filled 336-byte caller-owned posix_spawnattr_t records",
+            "full zeroing",
+            "intact adjacent guards",
+            "posix_spawnattr_init.lo/AArch64 ownership",
+            "fixed direct-store no-call/no-syscall object",
+            "peer spawn and process extraction",
+        ):
+            self.assertIn(phrase, evidence[0]["scope"])
+
+        prerequisites[1] = prerequisites[1].replace(
+            "complete zero initialization plus `return 0`", "launch a child"
+        )
+        with self.assertRaisesRegex(
+            ledger.LedgerError,
+            "static-c-posix-spawnattr-init must retain its pinned-musl source mapping",
+        ):
+            ledger.validate_ledger(data)
+
+    def test_posix_spawnattr_getpgroup_artifact_stays_private_and_nonpromoting(
+        self,
+    ) -> None:
+        data = self.data()
+        family = self.family(data, "libc.posix-runtime")
+        self.assertEqual(family["status"], "planned")
+        artifacts = family["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict)
+            and entry["id"] == "static-c-posix-spawnattr-getpgroup"
+        )
+        self.assertNotIn("capabilities", artifact)
+        for phrase in (
+            "POSIX spawn-attribute process-group readback leaf",
+            "`src/process/posix_spawnattr_getpgroup.c::posix_spawnattr_getpgroup`",
+            "positive and negative four-byte process-group values",
+            "byte-exact input-record preservation",
+            "adjacent input/output guards",
+            "byte offset four",
+            "`posix_spawn`",
+            "`posix_spawnp`",
+            "attribute initialization/destruction/mutation or other queries",
+            "fork/vfork/clone",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, artifact["description"])
+
+        owners = artifact["source_owners"]
+        assert isinstance(owners, list)
+        for owner in (
+            "compat/abi/musl-1.2.6/aarch64/libc.a.static.tsv",
+            "libc/src/c_abi.rs",
+            "libc/src/c_abi/x86_64/posix_spawnattr_getpgroup.rs",
+            "include/spawn.h",
+            "include/errno.h",
+            "compat/x86_64/posix_spawnattr_getpgroup_header_abi_probe.c",
+            "compat/x86_64/posix_spawnattr_getpgroup_header_abi_probe.cpp",
+            "compat/x86_64/run_posix_spawnattr_getpgroup_header_abi.sh",
+            "compat/x86_64/libc_posix_spawnattr_getpgroup_probe.c",
+            "compat/x86_64/libc_posix_spawnattr_getpgroup_start.S",
+            "compat/x86_64/run_libc_posix_spawnattr_getpgroup.sh",
+            "compat/x86_64/static_c_abi_exports.txt",
+        ):
+            self.assertIn(owner, owners)
+
+        prerequisites = artifact["x86_abi_prerequisites"]
+        assert isinstance(prerequisites, list)
+        self.assertTrue(
+            any(
+                "System V AMD64" in item
+                and "int posix_spawnattr_getpgroup(const posix_spawnattr_t *, pid_t *)"
+                in item
+                and "rdi" in item
+                and "rsi" in item
+                and "eax" in item
+                and "byte offset four" in item
+                for item in prerequisites
+            )
+        )
+        self.assertTrue(
+            any(
+                "src/process/posix_spawnattr_getpgroup.c::posix_spawnattr_getpgroup"
+                in item
+                and "*pgrp = attr->__pgrp; return 0;" in item
+                and "posix_spawnattr_getpgroup.lo" in item
+                and "generic AArch64 export remains unchanged" in item
+                for item in prerequisites
+            )
+        )
+
+        evidence = artifact["native_evidence"]
+        assert isinstance(evidence, list) and isinstance(evidence[0], dict)
+        self.assertEqual(
+            evidence[0]["command"],
+            "./scripts/dev-x86_64.sh libc-posix-spawnattr-getpgroup",
+        )
+        for phrase in (
+            "direct and function-pointer process-group readback",
+            "positive and negative pid_t values",
+            "byte-filled 336-byte caller-owned posix_spawnattr_t records",
+            "byte-exact input preservation",
+            "intact input/output guards",
+            "posix_spawnattr_getpgroup.lo/AArch64 ownership",
+            "fixed offset-four no-call/no-syscall object",
+            "peer spawn and process extraction",
+        ):
+            self.assertIn(phrase, evidence[0]["scope"])
+
+        prerequisites[1] = prerequisites[1].replace(
+            "*pgrp = attr->__pgrp; return 0;", "launch a child"
+        )
+        with self.assertRaisesRegex(
+            ledger.LedgerError,
+            "static-c-posix-spawnattr-getpgroup must retain its pinned-musl source mapping",
+        ):
+            ledger.validate_ledger(data)
+
+    def test_posix_spawnattr_getschedpolicy_artifact_stays_private_and_nonpromoting(
+        self,
+    ) -> None:
+        data = self.data()
+        family = self.family(data, "libc.posix-runtime")
+        self.assertEqual(family["status"], "planned")
+        artifacts = family["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict)
+            and entry["id"] == "static-c-posix-spawnattr-getschedpolicy"
+        )
+        self.assertNotIn("capabilities", artifact)
+        for phrase in (
+            "POSIX spawn-attribute scheduler-policy compatibility-return leaf",
+            "`src/process/posix_spawnattr_sched.c::posix_spawnattr_getschedpolicy`",
+            "`return ENOSYS;`",
+            "positive error number `ENOSYS=38`",
+            "nonnull arguments, null attribute, null output, and both-null",
+            "neither reads nor writes",
+            "does not validate or dereference either pointer",
+            "`posix_spawn`",
+            "`posix_spawnp`",
+            "scheduler policy or parameter behavior",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, artifact["description"])
+
+        owners = artifact["source_owners"]
+        assert isinstance(owners, list)
+        for owner in (
+            "compat/abi/musl-1.2.6/aarch64/libc.a.static.tsv",
+            "libc/src/c_abi.rs",
+            "libc/src/c_abi/x86_64/posix_spawnattr_getschedpolicy.rs",
+            "include/spawn.h",
+            "include/errno.h",
+            "compat/x86_64/posix_spawnattr_getschedpolicy_header_abi_probe.c",
+            "compat/x86_64/posix_spawnattr_getschedpolicy_header_abi_probe.cpp",
+            "compat/x86_64/run_posix_spawnattr_getschedpolicy_header_abi.sh",
+            "compat/x86_64/libc_posix_spawnattr_getschedpolicy_probe.c",
+            "compat/x86_64/libc_posix_spawnattr_getschedpolicy_start.S",
+            "compat/x86_64/run_libc_posix_spawnattr_getschedpolicy.sh",
+            "compat/x86_64/static_c_abi_exports.txt",
+        ):
+            self.assertIn(owner, owners)
+
+        prerequisites = artifact["x86_abi_prerequisites"]
+        assert isinstance(prerequisites, list)
+        self.assertTrue(
+            any(
+                "System V AMD64" in item
+                and "int posix_spawnattr_getschedpolicy(const posix_spawnattr_t *, int *)"
+                in item
+                and "rdi/rsi" in item
+                and "ENOSYS=38" in item
+                and "both-null" in item
+                for item in prerequisites
+            )
+        )
+        self.assertTrue(
+            any(
+                "src/process/posix_spawnattr_sched.c::posix_spawnattr_getschedpolicy"
+                in item
+                and "return ENOSYS;" in item
+                and "posix_spawnattr_sched.lo" in item
+                and "generic AArch64 export remains unchanged" in item
+                for item in prerequisites
+            )
+        )
+
+        evidence = artifact["native_evidence"]
+        assert isinstance(evidence, list) and isinstance(evidence[0], dict)
+        self.assertEqual(
+            evidence[0]["command"],
+            "./scripts/dev-x86_64.sh libc-posix-spawnattr-getschedpolicy",
+        )
+        for phrase in (
+            "direct and function-pointer positive ENOSYS=38 returns",
+            "nonnull arguments, null attribute, null output, and both-null",
+            "byte-filled 336-byte caller-owned posix_spawnattr_t storage",
+            "guarded int output",
+            "posix_spawnattr_sched.lo/AArch64 ownership",
+            "fixed ignored-pointer ENOSYS no-call/no-syscall object",
+            "peer spawn and process extraction",
+        ):
+            self.assertIn(phrase, evidence[0]["scope"])
+
+        prerequisites[1] = prerequisites[1].replace(
+            "return ENOSYS;", "launch a child"
+        )
+        with self.assertRaisesRegex(
+            ledger.LedgerError,
+            "static-c-posix-spawnattr-getschedpolicy must retain its pinned-musl source mapping",
         ):
             ledger.validate_ledger(data)
 
@@ -24455,6 +24859,346 @@ class X86ParityLedgerTests(unittest.TestCase):
         evidence[0]["scope"] = "static parser span helper"
         with self.assertRaisesRegex(
             ledger.LedgerError, "Pinned-musl/project C/C\\+\\+ nameser header proof"
+        ):
+            ledger.validate_ledger(data)
+
+
+    def test_personality_artifact_keeps_its_musl_static_contract(self) -> None:
+        data = self.data()
+        family = self.family(data, "libc.posix-runtime")
+        self.assertEqual(family["status"], "planned")
+        artifacts = family["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-personality"
+        )
+        self.assertNotIn("capabilities", artifact)
+        for owner in (
+            "libc/src/c_abi/x86_64/personality.rs",
+            "include/sys/personality.h",
+            "compat/x86_64/personality_header_abi_probe.c",
+            "compat/x86_64/personality_header_abi_probe.cpp",
+            "compat/x86_64/run_personality_header_abi.sh",
+            "compat/x86_64/libc_personality_probe.c",
+            "compat/x86_64/libc_personality_start.S",
+            "compat/x86_64/run_libc_personality.sh",
+        ):
+            self.assertIn(owner, artifact["source_owners"])
+        self.assertEqual(
+            {evidence["command"] for evidence in artifact["native_evidence"]},
+            {"./scripts/dev-x86_64.sh libc-personality"},
+        )
+        for phrase in (
+            "one-symbol process-personality compatibility artifact",
+            "planned `libc.posix-runtime`",
+            "exactly `personality(unsigned long)`",
+            "`src/linux/personality.c::personality`",
+            "raw Linux x86 syscall 135",
+            "0xffffffffUL",
+            "non-mutating query",
+            "prior-personality",
+            "stale initial-TLS `errno`",
+            "strict/POSIX/X/Open/GNU C and C++17",
+            "unconditional `int personality(unsigned long)`",
+            "PER_LINUX=0",
+            "PER_MASK=0xff",
+            "neither personality policy nor executable transition",
+            "prctl/capability/namespace controls",
+            "credential or identity/session families",
+            "scheduler state",
+            "pthread lifecycle",
+            "family completion, promotion, or public x86 support",
+        ):
+            self.assertIn(phrase, artifact["description"])
+        prerequisites = artifact["x86_abi_prerequisites"]
+        self.assertTrue(
+            any(
+                "unsigned long" in prerequisite
+                and "rdi" in prerequisite
+                and "eax" in prerequisite
+                and "135" in prerequisite
+                and "prior personality" in prerequisite
+                and "0xffffffffUL" in prerequisite
+                for prerequisite in prerequisites
+            )
+        )
+        self.assertTrue(
+            any(
+                "src/linux/personality.c::personality" in prerequisite
+                and "__syscall_ret" in prerequisite
+                and "prctl" in prerequisite
+                and "scheduler" in prerequisite
+                for prerequisite in prerequisites
+            )
+        )
+        self.assertTrue(
+            any(
+                "raw and C 0xffffffffUL query agreement" in prerequisite
+                and "stale ERANGE" in prerequisite
+                and "unchanged second raw query" in prerequisite
+                and "stale E2BIG" in prerequisite
+                for prerequisite in prerequisites
+            )
+        )
+        self.assertIn("sys/personality.h", artifact["x86_header_prerequisites"][0])
+        self.assertIn("SYS_personality=135", artifact["x86_header_prerequisites"][0])
+        self.assertIn(
+            "libc/src/c_abi/x86_64/personality.rs", family["source_owners"]
+        )
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-personality"
+        )
+        artifact["description"] = "private process helper"
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "static-c-personality description omits"
+        ):
+            ledger.validate_ledger(data)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-personality"
+        )
+        evidence = artifact["native_evidence"]
+        assert isinstance(evidence, list) and isinstance(evidence[0], dict)
+        evidence[0]["command"] = "./scripts/dev-x86_64.sh personality-reference"
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "closed libc-personality command"
+        ):
+            ledger.validate_ledger(data)
+
+
+    def test_setfsgid_artifact_keeps_its_musl_static_contract(self) -> None:
+        data = self.data()
+        family = self.family(data, "libc.posix-runtime")
+        self.assertEqual(family["status"], "planned")
+        artifacts = family["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-setfsgid"
+        )
+        self.assertNotIn("capabilities", artifact)
+        for owner in (
+            "libc/src/c_abi/x86_64/setfsgid.rs",
+            "include/sys/fsuid.h",
+            "compat/x86_64/setfsgid_header_abi_probe.c",
+            "compat/x86_64/setfsgid_header_abi_probe.cpp",
+            "compat/x86_64/run_setfsgid_header_abi.sh",
+            "compat/x86_64/libc_setfsgid_probe.c",
+            "compat/x86_64/libc_setfsgid_start.S",
+            "compat/x86_64/run_libc_setfsgid.sh",
+        ):
+            self.assertIn(owner, artifact["source_owners"])
+        self.assertEqual(
+            {evidence["command"] for evidence in artifact["native_evidence"]},
+            {"./scripts/dev-x86_64.sh libc-setfsgid"},
+        )
+        for phrase in (
+            "one-symbol filesystem-credential compatibility artifact",
+            "planned `libc.posix-runtime`",
+            "exactly `setfsgid(gid_t)`",
+            "`src/linux/setfsgid.c::setfsgid`",
+            "prior-filesystem-GID",
+            "all-ones query",
+            "current-effective-ID",
+            "stale initial-TLS `errno`",
+            "strict/POSIX/X/Open/GNU C and C++17",
+            "unconditional `int setfsgid(gid_t)`",
+            "neither `setfsuid`",
+            "credential observation/setter families",
+            "process-wide credential synchronization",
+            "process/session control",
+            "scheduler state",
+            "pthread lifecycle",
+            "family completion, promotion, or public x86 support",
+        ):
+            self.assertIn(phrase, artifact["description"])
+        prerequisites = artifact["x86_abi_prerequisites"]
+        self.assertTrue(
+            any(
+                "gid_t" in prerequisite
+                and "edi" in prerequisite
+                and "eax" in prerequisite
+                and "123" in prerequisite
+                and "prior filesystem GID" in prerequisite
+                for prerequisite in prerequisites
+            )
+        )
+        self.assertTrue(
+            any(
+                "src/linux/setfsgid.c::setfsgid" in prerequisite
+                and "__syscall_ret" in prerequisite
+                and "setfsuid" in prerequisite
+                for prerequisite in prerequisites
+            )
+        )
+        self.assertTrue(
+            any(
+                "all-ones gid_t query" in prerequisite
+                and "stale ERANGE" in prerequisite
+                and "current-effective-ID" in prerequisite
+                and "stale E2BIG" in prerequisite
+                for prerequisite in prerequisites
+            )
+        )
+        self.assertIn("sys/fsuid.h", artifact["x86_header_prerequisites"][0])
+        self.assertIn("SYS_setfsgid=123", artifact["x86_header_prerequisites"][0])
+        self.assertIn(
+            "libc/src/c_abi/x86_64/setfsgid.rs", family["source_owners"]
+        )
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-setfsgid"
+        )
+        artifact["description"] = "private filesystem helper"
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "static-c-setfsgid description omits"
+        ):
+            ledger.validate_ledger(data)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-setfsgid"
+        )
+        evidence = artifact["native_evidence"]
+        assert isinstance(evidence, list) and isinstance(evidence[0], dict)
+        evidence[0]["command"] = "./scripts/dev-x86_64.sh fs-credentials-reference"
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "closed libc-setfsgid command"
+        ):
+            ledger.validate_ledger(data)
+
+
+    def test_setfsuid_artifact_keeps_its_musl_static_contract(self) -> None:
+        data = self.data()
+        family = self.family(data, "libc.posix-runtime")
+        self.assertEqual(family["status"], "planned")
+        artifacts = family["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-setfsuid"
+        )
+        self.assertNotIn("capabilities", artifact)
+        for owner in (
+            "libc/src/c_abi/x86_64/setfsuid.rs",
+            "include/sys/fsuid.h",
+            "compat/x86_64/setfsuid_header_abi_probe.c",
+            "compat/x86_64/setfsuid_header_abi_probe.cpp",
+            "compat/x86_64/run_setfsuid_header_abi.sh",
+            "compat/x86_64/libc_setfsuid_probe.c",
+            "compat/x86_64/libc_setfsuid_start.S",
+            "compat/x86_64/run_libc_setfsuid.sh",
+        ):
+            self.assertIn(owner, artifact["source_owners"])
+        self.assertEqual(
+            {evidence["command"] for evidence in artifact["native_evidence"]},
+            {"./scripts/dev-x86_64.sh libc-setfsuid"},
+        )
+        for phrase in (
+            "one-symbol filesystem-credential compatibility artifact",
+            "planned `libc.posix-runtime`",
+            "exactly `setfsuid(uid_t)`",
+            "`src/linux/setfsuid.c::setfsuid`",
+            "prior-filesystem-UID",
+            "all-ones query",
+            "current-effective-ID",
+            "stale initial-TLS `errno`",
+            "strict/POSIX/X/Open/GNU C and C++17",
+            "unconditional `int setfsuid(uid_t)`",
+            "neither `setfsgid`",
+            "credential observation/setter families",
+            "process-wide credential synchronization",
+            "process/session control",
+            "scheduler state",
+            "pthread lifecycle",
+            "family completion, promotion, or public x86 support",
+        ):
+            self.assertIn(phrase, artifact["description"])
+        prerequisites = artifact["x86_abi_prerequisites"]
+        self.assertTrue(
+            any(
+                "uid_t" in prerequisite
+                and "edi" in prerequisite
+                and "eax" in prerequisite
+                and "122" in prerequisite
+                and "prior filesystem UID" in prerequisite
+                for prerequisite in prerequisites
+            )
+        )
+        self.assertTrue(
+            any(
+                "src/linux/setfsuid.c::setfsuid" in prerequisite
+                and "__syscall_ret" in prerequisite
+                and "setfsgid" in prerequisite
+                for prerequisite in prerequisites
+            )
+        )
+        self.assertTrue(
+            any(
+                "all-ones uid_t query" in prerequisite
+                and "stale ERANGE" in prerequisite
+                and "current-effective-ID" in prerequisite
+                and "stale E2BIG" in prerequisite
+                for prerequisite in prerequisites
+            )
+        )
+        self.assertIn("sys/fsuid.h", artifact["x86_header_prerequisites"][0])
+        self.assertIn("SYS_setfsuid=122", artifact["x86_header_prerequisites"][0])
+        self.assertIn(
+            "libc/src/c_abi/x86_64/setfsuid.rs", family["source_owners"]
+        )
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-setfsuid"
+        )
+        artifact["description"] = "private filesystem helper"
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "static-c-setfsuid description omits"
+        ):
+            ledger.validate_ledger(data)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-setfsuid"
+        )
+        evidence = artifact["native_evidence"]
+        assert isinstance(evidence, list) and isinstance(evidence[0], dict)
+        evidence[0]["command"] = "./scripts/dev-x86_64.sh fs-credentials-reference"
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "closed libc-setfsuid command"
         ):
             ledger.validate_ledger(data)
 

@@ -402,6 +402,80 @@ sysroot path. It does not promote Rust-subsumed `memory.bytes-basic`, general
 string/tokenization, `strtok`/`strtok_r`, memory-search, `mempcpy`, getsubopt,
 allocator lifecycle/interposition, family completion, promotion, or public x86
 support.
+
+`./scripts/dev-x86_64.sh libc-strtok` is a separate private
+`static-c-strtok` artifact inside still-planned `libc.posix-runtime`. Its
+project-first/pinned-musl C/C++ `<string.h>` gate proves the unconditional
+unmangled `char *(char *, const char *)` ABI under strict, POSIX, X/Open, GNU,
+and BSD selectors. Its pinned-musl and true `-nostdlib -static` routes extract
+one `strtok` object from musl `src/string/strtok.c`, with no undefined closure.
+They prove leading-delimiter skipping, in-place NUL splitting, empty input and
+empty delimiter behavior, high-bit delimiters, replacement of a previous
+continuation by new input, and musl's one shared non-TLS cursor across
+interleaved sequences. That cursor is intentionally historical and
+non-thread-safe: concurrent unsynchronized calls are outside the C contract.
+The leaf has no errno/TLS, allocator, locale, syscall, dynamic-runtime, CRT,
+loader, or sysroot path. It does not select `strtok_r`, general
+string/tokenization or thread-safe text behavior, `memory.bytes-basic`, family
+completion, promotion, or public x86 support; the generic AArch64 export is
+unchanged.
+
+`./scripts/dev-x86_64.sh libc-posix-spawnattr-init` is a separate private
+`static-c-posix-spawnattr-init` artifact inside still-planned
+`libc.posix-runtime`, not a process-spawn or process-control capability. Its
+pinned-musl/project C/C++ `<spawn.h>` gate proves the unconditional
+`int posix_spawnattr_init(posix_spawnattr_t *)` ABI, unmangled C++ linkage,
+and the x86 336-byte/eight-byte-aligned record layout. The shared fixture first
+executes musl 1.2.6 `src/process/posix_spawnattr_init.c`, then a true
+`-nostdlib -static` candidate extracted from exactly one Rust object. It proves
+that direct and function-pointer calls fully zero byte-filled caller-owned
+records, preserve adjacent guards, and leave stale `errno` unchanged on the
+ordinary musl route. The candidate is a fixed 42-word direct-store loop with
+no undefined helper, call, syscall, errno/TLS, allocator, dynamic runtime,
+CRT, loader, or sysroot path. It does not select `posix_spawn`/`posix_spawnp`,
+other attribute APIs, file actions, fork/vfork/clone, exec, child lifecycle,
+signals, scheduler policy, family completion, promotion, or public x86
+support; the generic AArch64 export remains unchanged.
+
+`./scripts/dev-x86_64.sh libc-posix-spawnattr-getpgroup` is a separate private
+`static-c-posix-spawnattr-getpgroup` artifact inside still-planned
+`libc.posix-runtime`, not a process-spawn or process-control capability. Its
+pinned-musl/project C/C++ `<spawn.h>` gate proves the unconditional
+`int posix_spawnattr_getpgroup(const posix_spawnattr_t *, pid_t *)` ABI,
+unmangled C++ linkage, signed four-byte `pid_t` output, and the x86
+offset-four `__pgrp` member. The shared fixture first executes musl 1.2.6
+`src/process/posix_spawnattr_getpgroup.c`, then a true `-nostdlib -static`
+candidate extracted from exactly one Rust object. It proves direct and
+function-pointer positive/negative process-group readback from byte-filled
+336-byte caller records, byte-exact input preservation, intact input/output
+guards, and stale `errno` preservation on the ordinary musl route. The
+candidate has only a fixed offset-four load and output-word store, with no
+undefined helper, call, syscall, errno/TLS, allocator, dynamic runtime, CRT,
+loader, or sysroot path. It does not select `posix_spawn`/`posix_spawnp`, other
+attribute APIs, file actions, fork/vfork/clone, exec, child lifecycle, signals,
+scheduler policy, family completion, promotion, or public x86 support; the
+generic AArch64 export remains unchanged.
+
+`./scripts/dev-x86_64.sh libc-posix-spawnattr-getschedpolicy` is a separate
+private `static-c-posix-spawnattr-getschedpolicy` artifact inside still-planned
+`libc.posix-runtime`, not a process-spawn, process-control, or scheduler
+capability. Its pinned-musl/project C/C++ `<spawn.h>` gate proves the
+unconditional `int posix_spawnattr_getschedpolicy(const posix_spawnattr_t *,
+int *)` ABI, unmangled C++ linkage, and the complete x86 336-byte/eight-byte-
+aligned attribute type. Musl 1.2.6 `src/process/posix_spawnattr_sched.c`
+returns the positive error number `ENOSYS=38` directly: it does not dereference
+either pointer or set `errno`. The shared fixture first executes that musl
+route, then a true `-nostdlib -static` candidate extracted from exactly one
+Rust object. Direct and function-pointer calls cover nonnull, null-attribute,
+null-output, and both-null arguments; they retain byte-filled caller records,
+guarded output storage, and stale `errno`. The candidate is only an immediate
+ENOSYS return with no helper, call, syscall, errno/TLS, allocator, dynamic
+runtime, CRT, loader, or sysroot path. It does not select `posix_spawn`/
+`posix_spawnp`, other attribute APIs, file actions, fork/vfork/clone, exec,
+child lifecycle, signals, scheduler policy/parameter behavior, family
+completion, promotion, or public x86 support; the generic AArch64 export
+remains unchanged.
+
 `./scripts/dev-x86_64.sh libc-bsearch` is a separate private `static-c-bsearch`
 artifact inside still-planned `libc.c-abi-compat`. Its pinned-musl/project
 C/C++ `<stdlib.h>` matrix proves the unconditional five-argument declaration

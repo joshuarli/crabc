@@ -202,6 +202,12 @@ mod timestamp_updates;
 mod credentials;
 #[path = "credential_observation.rs"]
 mod credential_observation;
+#[path = "personality.rs"]
+mod personality;
+#[path = "setfsgid.rs"]
+mod setfsgid;
+#[path = "setfsuid.rs"]
+mod setfsuid;
 #[path = "memory.rs"]
 mod memory;
 #[path = "memccpy.rs"]
@@ -218,6 +224,8 @@ mod byte_strings;
 mod string_copy;
 #[path = "strsep.rs"]
 mod strsep;
+#[path = "strtok.rs"]
+mod strtok;
 #[path = "error_strings.rs"]
 mod error_strings;
 #[path = "locale_error_strings.rs"]
@@ -416,6 +424,12 @@ mod child_reaping;
 mod immediate_termination;
 #[path = "posix_exit.rs"]
 mod posix_exit;
+#[path = "posix_spawnattr_init.rs"]
+mod posix_spawnattr_init;
+#[path = "posix_spawnattr_getpgroup.rs"]
+mod posix_spawnattr_getpgroup;
+#[path = "posix_spawnattr_getschedpolicy.rs"]
+mod posix_spawnattr_getschedpolicy;
 #[path = "static_startup.rs"]
 mod static_startup;
 #[path = "stack_chk_fail.rs"]
@@ -708,6 +722,12 @@ mod ns_skiprr;
 mod inet_netof;
 #[path = "inet_network.rs"]
 mod inet_network;
+#[path = "sched_getparam.rs"]
+mod sched_getparam;
+#[path = "sched_setparam.rs"]
+mod sched_setparam;
+#[path = "sched_getaffinity.rs"]
+mod sched_getaffinity;
 
 // The sole AArch64 allocator-observability capability is a separate strong
 // C entry, not part of the weak allocation family. Its private witness keeps

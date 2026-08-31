@@ -110,7 +110,7 @@ for symbol in stat lstat fstat fstatat __xstat __lxstat __fxstat __fxstatat \
     grep -Eq "[[:space:]][TW][[:space:]]${symbol}$" "$archive_symbols" \
         || fail "archive does not define ${symbol}"
 done
-for unselected in syscall setfsuid setfsgid malloc free calloc realloc; do
+for unselected in syscall malloc free calloc realloc; do
     if grep -Eq "[[:space:]][TW][[:space:]]${unselected}$" "$archive_symbols"; then
         fail "archive accidentally exports unselected ${unselected}"
     fi
