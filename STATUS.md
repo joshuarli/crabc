@@ -157,7 +157,12 @@ single appended basename: it returns the existing opaque token without a path
 lookup, mapping, constructor, or graph change; an unpresent name, `NULL`, and
 named initial main/mid/leaf objects fail closed. The candidate's copied
 `dlpi_adds` remains a graph-mutation counter across that reference, while pinned
-musl exposes its reference through a changed `dlpi_adds` observation. PT_TLS,
+musl exposes its reference through a changed `dlpi_adds` observation.
+`RTLD_NODELETE` is accepted only for that same fourth identity, including its
+initial map and later no-load references. Because that mapping is already
+process-lifetime owned, it changes neither close/stale-token behavior nor the
+absence of an unload path; `NULL` and named initial identities fail closed.
+PT_TLS,
 RELR, recursive mapping,
 scope promotion, finalization/unload, and all general dlfcn/loader behavior
 remain excluded, so `ldso.dynamic-runtime` and public x86 support remain

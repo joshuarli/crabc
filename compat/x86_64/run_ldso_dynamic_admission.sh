@@ -109,6 +109,7 @@ require_runner_contract "$BOUNDED_DLOPEN_RUNNER" \
     'libbounded-plugin.so' \
     'libbounded-tls.so' \
     'RTLD_NOLOAD' \
+    'RTLD_NODELETE' \
     'PT_TLS' \
     'main-musl-bounded-dlopen' \
     'env -i PATH=/usr/bin:/bin'

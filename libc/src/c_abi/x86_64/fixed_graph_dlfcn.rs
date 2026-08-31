@@ -10,9 +10,10 @@
 //! Linux TID. Dead entries are reclaimed lazily with `tgkill(pid, tid, 0)`.
 //! Calls from more than 32 simultaneously live threads fail closed with a
 //! stable exhaustion diagnostic. The loader may append one contract-bounded
-//! no-TLS DSO, and its sibling may `RTLD_NOLOAD`-acquire only that appended
-//! identity, so copied snapshots carry a runtime count and generation. This
-//! diagnostic bound, RTLD_NEXT, general filesystem search/graph mutation,
+//! no-TLS DSO. Its sibling may `RTLD_NOLOAD`-acquire that identity and accept
+//! `RTLD_NODELETE` only there, where process-lifetime mapping makes it a
+//! lifecycle-neutral compatibility flag; copied snapshots carry a runtime
+//! count and generation. This diagnostic bound, RTLD_NEXT, general filesystem search/graph mutation,
 //! global promotion, finalization, and unload remain explicit reasons this
 //! staged leaf does not select the public dlfcn capabilities.
 

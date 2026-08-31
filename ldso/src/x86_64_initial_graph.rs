@@ -274,6 +274,16 @@ const FIXED_GRAPH_RTLD_NOW: i32 = 2;
 const FIXED_GRAPH_RTLD_NOLOAD: i32 = 4;
 #[cfg(crabc_fixed_graph_dlfcn)]
 const FIXED_GRAPH_RTLD_GLOBAL: i32 = 0x100;
+#[cfg(crabc_fixed_graph_dlfcn)]
+const FIXED_GRAPH_RTLD_NODELETE: i32 = 4096;
+#[cfg(all(crabc_fixed_graph_dlfcn, crabc_bounded_runtime_dlopen))]
+const FIXED_GRAPH_ALLOWED_OPEN_FLAGS: i32 = FIXED_GRAPH_RTLD_LAZY
+    | FIXED_GRAPH_RTLD_NOW
+    | FIXED_GRAPH_RTLD_NOLOAD
+    | FIXED_GRAPH_RTLD_NODELETE;
+#[cfg(all(crabc_fixed_graph_dlfcn, not(crabc_bounded_runtime_dlopen)))]
+const FIXED_GRAPH_ALLOWED_OPEN_FLAGS: i32 =
+    FIXED_GRAPH_RTLD_LAZY | FIXED_GRAPH_RTLD_NOW | FIXED_GRAPH_RTLD_NOLOAD;
 
 /// Caller-owned bounded text on the fixed-graph introspection wire.
 ///
@@ -2534,10 +2544,12 @@ unsafe extern "C" fn fixed_graph_open(
     }
     let binding = flags & (FIXED_GRAPH_RTLD_LAZY | FIXED_GRAPH_RTLD_NOW);
     let no_load = flags & FIXED_GRAPH_RTLD_NOLOAD != 0;
+    // The one-slot mapping is process-lifetime owned, so this bounded sibling
+    // can accept NODELETE only for that fourth identity. It neither changes
+    // the permanent mapping nor widens initial-object or general unload rules.
+    let no_delete = flags & FIXED_GRAPH_RTLD_NODELETE != 0;
     if (binding != FIXED_GRAPH_RTLD_LAZY && binding != FIXED_GRAPH_RTLD_NOW)
-        || flags
-            & !(FIXED_GRAPH_RTLD_LAZY | FIXED_GRAPH_RTLD_NOW | FIXED_GRAPH_RTLD_NOLOAD)
-            != 0
+        || flags & !FIXED_GRAPH_ALLOWED_OPEN_FLAGS != 0
     {
         if flags & FIXED_GRAPH_RTLD_GLOBAL != 0 {
             fixed_graph_set_error(error, b"fixed graph cannot promote global scope");
@@ -2551,6 +2563,10 @@ unsafe extern "C" fn fixed_graph_open(
             fixed_graph_set_error(error, b"RTLD_NOLOAD is limited to the runtime object");
             return -1;
         }
+        if no_delete {
+            fixed_graph_set_error(error, b"RTLD_NODELETE is limited to the runtime object");
+            return -1;
+        }
         core::ptr::write(handle, fixed_graph_handle(0));
         return 0;
     }
@@ -2559,6 +2575,10 @@ unsafe extern "C" fn fixed_graph_open(
         if fixed_graph_name_matches(index, path) {
             if no_load && index < INITIAL_OBJECT_COUNT {
                 fixed_graph_set_error(error, b"RTLD_NOLOAD is limited to the runtime object");
+                return -1;
+            }
+            if no_delete && index < INITIAL_OBJECT_COUNT {
+                fixed_graph_set_error(error, b"RTLD_NODELETE is limited to the runtime object");
                 return -1;
             }
             if !fixed_graph_acquire(index) {

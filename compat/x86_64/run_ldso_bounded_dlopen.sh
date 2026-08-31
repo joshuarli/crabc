@@ -95,6 +95,10 @@ grep -Fq 'RTLD_NOLOAD' "$PROBE" ||
     fail 'runtime probe lacks RTLD_NOLOAD presence evidence'
 grep -Fq 'RTLD_LAZY | RTLD_NOLOAD' "$PROBE" ||
     fail 'runtime probe lacks lazy RTLD_NOLOAD reference evidence'
+grep -Fq 'RTLD_NODELETE' "$PROBE" ||
+    fail 'runtime probe lacks bounded RTLD_NODELETE evidence'
+grep -Fq 'RTLD_LAZY | RTLD_NOLOAD | RTLD_NODELETE' "$PROBE" ||
+    fail 'runtime probe lacks lazy RTLD_NOLOAD|RTLD_NODELETE reference evidence'
 grep -Fq 'libleaf-bounded-dlopen.so' "$PROBE" ||
     fail 'runtime probe lacks initial-object RTLD_NOLOAD rejection evidence'
 

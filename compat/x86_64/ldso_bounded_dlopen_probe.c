@@ -10,6 +10,8 @@
 
 extern int mid_value(void);
 
+_Static_assert(RTLD_NODELETE == 4096, "RTLD_NODELETE x86 ABI");
+
 struct graph_observation {
     int visits;
     int plugin_seen;
@@ -49,7 +51,8 @@ struct open_worker {
 static void *open_worker_main(void *opaque) {
     struct open_worker *worker = opaque;
     while (!__atomic_load_n(&worker->go, __ATOMIC_ACQUIRE)) { }
-    worker->handle = dlopen("libbounded-plugin.so", RTLD_NOW | RTLD_LOCAL);
+    worker->handle = dlopen(
+        "libbounded-plugin.so", RTLD_NOW | RTLD_NODELETE | RTLD_LOCAL);
     __atomic_store_n(&worker->done, 1, __ATOMIC_RELEASE);
     return NULL;
 }
@@ -105,77 +108,109 @@ int main(void) {
     if (dlopen("libbounded-plugin.so", RTLD_NOW | RTLD_NOLOAD | RTLD_LOCAL) != NULL
         || dlerror() == NULL || dlerror() != NULL) return 46;
 #ifdef CRABC_BOUNDED_DLFCN_FREESTANDING
+    if (dlopen("libbounded-plugin.so",
+               RTLD_NOW | RTLD_NOLOAD | RTLD_NODELETE | RTLD_LOCAL) != NULL) return 47;
+    char *noload_nodelete_error = dlerror();
+    if (!contains(noload_nodelete_error, "RTLD_NOLOAD object is not loaded")
+        || dlerror() != NULL) return 47;
     struct graph_observation after_noload = {0, 0, 0};
     if (dl_iterate_phdr(observe_graph, &after_noload) != 0
         || after_noload.visits != 3 || after_noload.plugin_seen
-        || after_noload.nonzero_additions) return 47;
+        || after_noload.nonzero_additions) return 48;
     if (dlopen(NULL, RTLD_NOW | RTLD_NOLOAD | RTLD_LOCAL) != NULL
-        || dlerror() == NULL || dlerror() != NULL) return 48;
+        || dlerror() == NULL || dlerror() != NULL) return 49;
     if (dlopen("libmid-bounded-dlopen.so", RTLD_NOW | RTLD_NOLOAD | RTLD_LOCAL) != NULL
-        || dlerror() == NULL || dlerror() != NULL) return 48;
+        || dlerror() == NULL || dlerror() != NULL) return 49;
     if (dlopen("libleaf-bounded-dlopen.so", RTLD_NOW | RTLD_NOLOAD | RTLD_LOCAL) != NULL
-        || dlerror() == NULL || dlerror() != NULL) return 48;
+        || dlerror() == NULL || dlerror() != NULL) return 49;
+    if (dlopen(NULL, RTLD_NOW | RTLD_NODELETE | RTLD_LOCAL) != NULL) return 50;
+    char *null_nodelete_error = dlerror();
+    if (!contains(null_nodelete_error, "RTLD_NODELETE is limited to the runtime object")
+        || dlerror() != NULL) return 50;
+    if (dlopen("libmid-bounded-dlopen.so", RTLD_NOW | RTLD_NODELETE | RTLD_LOCAL) != NULL)
+        return 51;
+    char *initial_nodelete_error = dlerror();
+    if (!contains(initial_nodelete_error, "RTLD_NODELETE is limited to the runtime object")
+        || dlerror() != NULL) return 51;
 #endif
 
     struct open_worker workers[2] = {{0, 0, NULL}, {0, 0, NULL}};
     if (!run_concurrent_open(workers) || workers[0].handle == NULL
-        || workers[0].handle != workers[1].handle) return 49;
+        || workers[0].handle != workers[1].handle) return 52;
     void *handle = workers[0].handle;
     struct graph_observation before_noload = {0, 0, 0, 0};
     if (dl_iterate_phdr(observe_graph, &before_noload) != 0
         || !before_noload.plugin_seen) return 65;
     void *noload_handle = dlopen("libbounded-plugin.so", RTLD_NOW | RTLD_NOLOAD | RTLD_LOCAL);
-    if (noload_handle != handle) return 50;
+    if (noload_handle != handle) return 53;
     void *lazy_noload_handle =
         dlopen("libbounded-plugin.so", RTLD_LAZY | RTLD_NOLOAD | RTLD_LOCAL);
     if (lazy_noload_handle != handle) return 67;
+    void *nodelete_noload_handle = dlopen(
+        "libbounded-plugin.so", RTLD_NOW | RTLD_NOLOAD | RTLD_NODELETE | RTLD_LOCAL);
+    if (nodelete_noload_handle != handle) return 68;
+    void *lazy_nodelete_noload_handle = dlopen(
+        "libbounded-plugin.so", RTLD_LAZY | RTLD_NOLOAD | RTLD_NODELETE | RTLD_LOCAL);
+    if (lazy_nodelete_noload_handle != handle) return 69;
     int (*plugin_value)(void) = (int (*)(void))dlsym(handle, "bounded_plugin_value");
     int *constructor_runs = dlsym(handle, "bounded_plugin_constructor_runs");
     int *dependency_data = dlsym(handle, "leaf_data");
     if (plugin_value == NULL || constructor_runs == NULL || dependency_data == NULL
-        || plugin_value() != 77 || *constructor_runs != 1 || *dependency_data != 40) return 51;
+        || plugin_value() != 77 || *constructor_runs != 1 || *dependency_data != 40) return 54;
 
     Dl_info address = {0};
     if (dladdr((const void *)plugin_value, &address) != 1
         || !contains(address.dli_fname, "libbounded-plugin.so")
         || !contains(address.dli_sname, "bounded_plugin_value")
-        || address.dli_saddr != (void *)plugin_value) return 52;
+        || address.dli_saddr != (void *)plugin_value) return 55;
     struct link_map *map = NULL;
     if (dlinfo(handle, RTLD_DI_LINKMAP, &map) != 0 || map == NULL
-        || !contains(map->l_name, "libbounded-plugin.so") || map->l_ld == NULL) return 53;
+        || !contains(map->l_name, "libbounded-plugin.so") || map->l_ld == NULL) return 56;
 
     struct graph_observation after = {0, 0, 0};
-    if (dl_iterate_phdr(observe_graph, &after) != 0 || !after.plugin_seen) return 54;
+    if (dl_iterate_phdr(observe_graph, &after) != 0 || !after.plugin_seen) return 57;
 #ifdef CRABC_BOUNDED_DLFCN_FREESTANDING
     /* The bounded copied snapshot records graph mutations, not references. */
     if (after.visits != before_noload.visits
-        || after.additions != before_noload.additions) return 54;
+        || after.additions != before_noload.additions) return 57;
 #else
     /* Pinned musl reports its RTLD_NOLOAD reference through dlpi_adds. */
     if (after.additions == before_noload.additions) return 66;
 #endif
 #ifdef CRABC_BOUNDED_DLFCN_FREESTANDING
     if (after.visits != 4 || !after.nonzero_additions || map->l_next != NULL
-        || map->l_prev == NULL) return 55;
+        || map->l_prev == NULL) return 58;
     dlerror();
-    if (dlsym(RTLD_DEFAULT, "bounded_plugin_value") != NULL || dlerror() == NULL) return 56;
+    if (dlsym(RTLD_DEFAULT, "bounded_plugin_value") != NULL || dlerror() == NULL) return 59;
 #endif
 
-    if (dlclose(workers[0].handle) != 0 || dlclose(workers[1].handle) != 0) return 57;
-    if (dlsym(noload_handle, "bounded_plugin_value") != (void *)plugin_value) return 58;
-    if (dlclose(noload_handle) != 0) return 59;
-    if (dlsym(lazy_noload_handle, "bounded_plugin_value") != (void *)plugin_value) return 68;
-    if (dlclose(lazy_noload_handle) != 0) return 69;
+    if (dlclose(workers[0].handle) != 0 || dlclose(workers[1].handle) != 0) return 60;
+    if (dlsym(noload_handle, "bounded_plugin_value") != (void *)plugin_value) return 61;
+    if (dlclose(noload_handle) != 0) return 62;
+    if (dlsym(lazy_noload_handle, "bounded_plugin_value") != (void *)plugin_value) return 67;
+    if (dlclose(lazy_noload_handle) != 0) return 70;
+    if (dlsym(nodelete_noload_handle, "bounded_plugin_value") != (void *)plugin_value) return 71;
+    if (dlclose(nodelete_noload_handle) != 0) return 72;
+    if (dlsym(lazy_nodelete_noload_handle, "bounded_plugin_value") != (void *)plugin_value)
+        return 73;
+    if (dlclose(lazy_nodelete_noload_handle) != 0) return 74;
+    void *nodelete_reopen =
+        dlopen("libbounded-plugin.so", RTLD_LAZY | RTLD_NODELETE | RTLD_LOCAL);
+    if (nodelete_reopen == NULL) return 75;
+    int *reopen_constructor_runs = dlsym(nodelete_reopen, "bounded_plugin_constructor_runs");
+    if (dlsym(nodelete_reopen, "bounded_plugin_value") != (void *)plugin_value
+        || reopen_constructor_runs == NULL || *reopen_constructor_runs != 1) return 75;
+    if (dlclose(nodelete_reopen) != 0) return 76;
 #ifdef CRABC_BOUNDED_DLFCN_FREESTANDING
-    if (dlsym(handle, "bounded_plugin_value") != NULL || dlerror() == NULL) return 60;
-    handle = dlopen("libbounded-plugin.so", RTLD_LAZY | RTLD_LOCAL);
-    if (handle == NULL || dlsym(handle, "bounded_plugin_value") != (void *)plugin_value) return 61;
+    if (dlsym(handle, "bounded_plugin_value") != NULL || dlerror() == NULL) return 77;
+    handle = dlopen("libbounded-plugin.so", RTLD_LAZY | RTLD_NODELETE | RTLD_LOCAL);
+    if (handle == NULL || dlsym(handle, "bounded_plugin_value") != (void *)plugin_value) return 78;
     if (dlopen("libbounded-extra.so", RTLD_NOW | RTLD_LOCAL) != NULL
-        || dlerror() == NULL) return 62;
+        || dlerror() == NULL) return 79;
     struct graph_observation final = {0, 0, 0};
     if (dl_iterate_phdr(observe_graph, &final) != 0 || final.visits != 4
-        || !final.plugin_seen || !final.nonzero_additions) return 63;
-    if (dlclose(handle) != 0) return 64;
+        || !final.plugin_seen || !final.nonzero_additions) return 80;
+    if (dlclose(handle) != 0) return 81;
 #endif
     return 0;
 }

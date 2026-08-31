@@ -552,6 +552,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             "fixed-graph dlfcn runtime graph",
             "public C dlfcn bridge",
             "one serialized RUNPATH mapping",
+            "RTLD_NODELETE",
             "status 127",
             "general loader",
             "public x86 support",
@@ -736,6 +737,8 @@ class X86ParityLedgerTests(unittest.TestCase):
             "Two concurrent raw-clone callers",
             "RTLD_NOLOAD=4",
             "without a path lookup",
+            "RTLD_NODELETE=4096",
+            "lifecycle-neutral flag",
             "PT_TLS",
             "a second runtime object",
             "neither `loader.dlfcn-basic` nor `loader.dlfcn-introspection` is selected",
@@ -754,6 +757,13 @@ class X86ParityLedgerTests(unittest.TestCase):
             "both RTLD_NOW and RTLD_LAZY",
             artifact["native_evidence"][0]["scope"],
         )
+        for phrase in (
+            "NULL RTLD_NODELETE",
+            "named-initial-object RTLD_NODELETE",
+            "RTLD_NOLOAD|RTLD_NODELETE",
+            "RTLD_NODELETE close/reopen residency",
+        ):
+            self.assertIn(phrase, artifact["native_evidence"][0]["scope"])
         self.assertEqual(
             set(artifact["source_owners"]),
             {

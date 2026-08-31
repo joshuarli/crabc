@@ -4143,7 +4143,10 @@ path lookup, mapping, constructor execution, or snapshot change; unpresent
 names, `NULL`, and named initial-graph objects fail closed. The candidate's
 copied `dlpi_adds` remains unchanged for that reference, whereas pinned musl's
 observation changes; musl remains the oracle here for presence/reference
-semantics. General search/mutation, TLS growth, RTLD_NEXT, global promotion,
+semantics. `RTLD_NODELETE` is accepted only with LAZY/NOW for that same
+fourth object, including a no-load reference. Its process-lifetime mapping
+already supplies residency, so explicit handles still become stale on close
+and no generic unload lifecycle is selected. General search/mutation, TLS growth, RTLD_NEXT, global promotion,
 finalization/unload, both dlfcn
 capability selections, and public x86 support remain excluded.
 

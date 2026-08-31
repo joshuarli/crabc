@@ -1536,13 +1536,15 @@ open, one constructor execution, retained dependencies, copied four-image
 introspection, and bounded `RTLD_NOLOAD` acquisitions of only that published runtime
 basename. Before publication, `NULL`, and named initial-graph identities fail
 closed without mapping; PT_TLS/malformed rejection and a hard one-object
-capacity remain enforced. It does not provide general search, recursive
+capacity remain enforced. `RTLD_NODELETE` is a lifecycle-neutral accepted flag
+only for the same appended object: process-lifetime mapping already retains it,
+while closed explicit tokens still go stale. It does not provide general search, recursive
 dependency mapping, TLS growth, global promotion, RTLD_NEXT, finalization/
 unload, general already-loaded-object queries, capability selection, or public
 x86 support.
 `ldso-dynamic-admission` executes the initial no-TLS, GNU-Dynamic TLS, owned-
 CRT, copied-introspection, retained-object-dlfcn, public-C-bridge fixed-graph,
-and bounded runtime-mapping/RTLD_NOLOAD fixtures as
+and bounded runtime-mapping/RTLD_NOLOAD/RTLD_NODELETE fixtures as
 one consumed admission gate. Their fresh candidate ELF inspection and negative
 launches retain only the explicit accepted shapes and rejected metadata,
 relocation, record, handle, and scope forms. It is not a general x86 ldso,
