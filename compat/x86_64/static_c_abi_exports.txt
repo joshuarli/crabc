@@ -58,7 +58,11 @@ abs
 accept
 accept4
 access
+acosl
 alphasort
+asinl
+atan2l
+atanl
 atexit
 atof
 atoi
@@ -69,6 +73,7 @@ bind
 bsearch
 btowc
 call_once
+ceill
 cfgetispeed
 cfgetospeed
 cfmakeraw
@@ -123,6 +128,10 @@ eventfd
 eventfd_read
 eventfd_write
 exit
+exp2l
+expl
+expm1l
+fabsl
 faccessat
 fchmod
 fclose
@@ -152,6 +161,8 @@ fgetxattr
 fileno
 flistxattr
 flock
+floorl
+fmodl
 fopen
 fork
 fpathconf
@@ -257,9 +268,15 @@ listxattr
 llabs
 lldiv
 llistxattr
+llrintl
 localeconv
+log10l
+log1pl
+log2l
+logl
 longjmp
 lremovexattr
+lrintl
 lseek
 lsetxattr
 lstat
@@ -388,8 +405,10 @@ regcomp
 regerror
 regexec
 regfree
+remainderl
 remove
 removexattr
+remquol
 rename
 rewind
 rewinddir
@@ -522,6 +541,7 @@ toascii
 tolower
 toupper
 truncate
+truncl
 tss_create
 tss_delete
 tss_get

@@ -88,11 +88,13 @@ for mode in sse x87; do
 		undefined="$(nm --undefined-only "$object")"
 		for symbol in __fpclassify __fpclassifyf __fpclassifyl __signbit \
 			__signbitf __signbitl creal crealf creall cimag cimagf cimagl \
-			conj conjf conjl; do
+			conj conjf conjl acosl asinl atanl atan2l ceill exp2l expl expm1l \
+			fabsl floorl fmodl log10l log1pl log2l logl lrintl llrintl rintl \
+			remainderl remquol sqrtl truncl; do
 			printf '%s\n' "$undefined" | grep -Eq "[[:space:]]${symbol}$" ||
 				fail "C++ ${mode} probe does not retain unmangled ${symbol}"
 		done
-		if printf '%s\n' "$undefined" | grep -Eq '_Z.*(creal|cimag|conj|fpclassifyl|signbitl)'; then
+		if printf '%s\n' "$undefined" | grep -Eq '_Z.*(creal|cimag|conj|fpclassifyl|signbitl|acosl|exp2l|remquol|sqrtl)'; then
 			fail "C++ ${mode} probe retained a mangled math/complex reference"
 		fi
 	done

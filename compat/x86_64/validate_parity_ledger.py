@@ -1408,6 +1408,36 @@ FENV_SENSITIVE_ROUNDING_SYMBOLS = (
     "rintl",
 )
 
+MATH_X87_EXTENDED_SYMBOLS = (
+    "acosl",
+    "asinl",
+    "atanl",
+    "atan2l",
+    "ceill",
+    "exp2l",
+    "expl",
+    "expm1l",
+    "fabsl",
+    "floorl",
+    "fmodl",
+    "log10l",
+    "log1pl",
+    "log2l",
+    "logl",
+    "lrintl",
+    "llrintl",
+    "rintl",
+    "remainderl",
+    "remquol",
+    "sqrtl",
+    "truncl",
+)
+
+MATH_X87_EXTENDED_LOCAL_SYMBOLS = tuple(
+    symbol for symbol in MATH_X87_EXTENDED_SYMBOLS
+    if symbol not in ("rintl", "sqrtl")
+)
+
 NAMED_LOCALE_MULTIBYTE_SYMBOLS = (
     "__ctype_get_mb_cur_max",
     "btowc",
@@ -17493,6 +17523,254 @@ def require_fenv_sensitive_rounding_artifact(family: Mapping[str, Any]) -> None:
     ):
         require(snippet in dispatcher, f"x86 dispatcher omits {snippet}")
 
+def require_math_x87_extended_artifact(family: Mapping[str, Any]) -> None:
+    """Keep the selected binary80 block below long-double math completion."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.text-math-locale-stdio].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [
+        entry for entry in artifacts if entry.get("id") == "static-c-math-x87-extended"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.text-math-locale-stdio must contain exactly one static-c-math-x87-extended artifact",
+    )
+    artifact = matching[0]
+    require(
+        "capabilities" not in artifact,
+        "static-c-math-x87-extended must remain a non-capability artifact",
+    )
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for symbol in MATH_X87_EXTENDED_SYMBOLS:
+        require(
+            f"`{symbol}`" in description,
+            f"static-c-math-x87-extended description omits {symbol}",
+        )
+    for phrase in (
+        "x87 elementary long-double artifact",
+        "without promotion or narrowing through binary64",
+        "separately selected fenv-rounding and elementary-square-root leaves",
+        "1,260 complete records",
+        "deliberately narrower than `math.elementary-long-double`",
+        "does not select `math.special`",
+        "family completion",
+        "promotion",
+        "full x86-64 parity",
+        "public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"static-c-math-x87-extended description omits {phrase}",
+        )
+
+    owners = nonempty_strings(
+        artifact["source_owners"], "static-c-math-x87-extended.source_owners"
+    )
+    for owner in (
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/math_x87_extended.rs",
+        "libc/src/c_abi/x86_64/elementary_sqrt.rs",
+        "libc/src/c_abi/x86_64/fenv_rounding.rs",
+        "include/fenv.h",
+        "include/float.h",
+        "include/math.h",
+        "compat/x86_64/math_complex_header_abi_probe.c",
+        "compat/x86_64/math_complex_header_abi_probe.cpp",
+        "compat/x86_64/run_math_complex_header_abi.sh",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/libc_math_x87_extended_probe.c",
+        "compat/x86_64/libc_math_x87_extended_start.S",
+        "compat/x86_64/run_libc_math_x87_extended.sh",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/README.md",
+        "STATUS.md",
+        "x86-64.md",
+        "scripts/check_structure.py",
+        "scripts/dev-x86_64.sh",
+    ):
+        require(owner in owners, f"static-c-math-x87-extended omits {owner}")
+
+    abi_prerequisites = nonempty_strings(
+        artifact["x86_abi_prerequisites"],
+        "static-c-math-x87-extended.x86_abi_prerequisites",
+    )
+    require(
+        any(
+            "16-byte align-16" in item
+            and "ten payload bytes" in item
+            and "st0" in item
+            and "rdi" in item
+            for item in abi_prerequisites
+        ),
+        "static-c-math-x87-extended must record the binary80 SysV ABI",
+    )
+    require(
+        any(
+            "src/math/x86_64/" in item
+            and "exp2l" in item
+            and "remquol" in item
+            and "fenv_rounding.rs" in item
+            and "elementary_sqrt.rs" in item
+            and "rintl.c" in item
+            and "sqrtl.c" in item
+            and "AArch64 binary128" in item
+            and "f64" in item
+            for item in abi_prerequisites
+        ),
+        "static-c-math-x87-extended must record its musl source map and no-promotion boundary",
+    )
+    require(
+        any(
+            "fpatan" in item
+            and "f2xm1" in item
+            and "fyl2x" in item
+            and "fprem1" in item
+            and "remquol" in item
+            for item in abi_prerequisites
+        ),
+        "static-c-math-x87-extended must record the selected x87 algorithms",
+    )
+
+    header_prerequisites = nonempty_strings(
+        artifact["x86_header_prerequisites"],
+        "static-c-math-x87-extended.x86_header_prerequisites",
+    )
+    require(
+        any(
+            "-mfpmath=387" in item
+            and "unmangled C++" in item
+            and "project fenv.h" in item
+            for item in header_prerequisites
+        ),
+        "static-c-math-x87-extended must record its header and ABI prerequisites",
+    )
+
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-math-x87-extended"},
+        "static-c-math-x87-extended must use the closed libc-math-x87-extended command",
+    )
+    scope = evidence[0]["scope"]
+    assert isinstance(scope, str)
+    for phrase in (
+        "all 22 named symbols",
+        "separately selected owners",
+        "1,260 exact records",
+        "ten-byte binary80",
+        "not math.elementary-long-double or math.special completion",
+        "public x86 support",
+    ):
+        require(
+            phrase in scope,
+            f"static-c-math-x87-extended evidence omits {phrase}",
+        )
+
+    static_root = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+    ).read_text(encoding="utf-8")
+    require(
+        '#[path = "math_x87_extended.rs"]\nmod math_x87_extended;' in static_root,
+        "x86 static C ABI must compose the math_x87_extended leaf",
+    )
+    implementation = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "math_x87_extended.rs"
+    ).read_text(encoding="utf-8")
+    for symbol in MATH_X87_EXTENDED_LOCAL_SYMBOLS:
+        require(
+            f".global {symbol}" in implementation,
+            f"math_x87_extended leaf omits {symbol}",
+        )
+    for symbol in ("rintl", "sqrtl"):
+        require(
+            f".global {symbol}" not in implementation,
+            f"math_x87_extended leaf must not duplicate the selected {symbol} owner",
+        )
+    fenv_rounding = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "fenv_rounding.rs"
+    ).read_text(encoding="utf-8")
+    require(
+        ".global rintl" in fenv_rounding,
+        "fenv_rounding leaf must remain the composed rintl owner",
+    )
+    elementary_sqrt = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "elementary_sqrt.rs"
+    ).read_text(encoding="utf-8")
+    require(
+        ".global sqrtl" in elementary_sqrt,
+        "elementary_sqrt leaf must remain the composed sqrtl owner",
+    )
+    for instruction in (
+        "fldt",
+        "fpatan",
+        "f2xm1",
+        "fyl2x",
+        "fprem",
+        "fprem1",
+        "frndint",
+        "fsqrt",
+    ):
+        require(
+            instruction in implementation,
+            f"math_x87_extended leaf omits its required {instruction} operation",
+        )
+
+    exports = [
+        line
+        for line in (ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt")
+        .read_text(encoding="utf-8")
+        .splitlines()
+        if line and not line.startswith("#")
+    ]
+    require(exports == sorted(exports), "static C ABI export contract must remain ASCII-sorted")
+    for symbol in MATH_X87_EXTENDED_SYMBOLS:
+        require(symbol in exports, f"static C ABI export contract omits {symbol}")
+
+    cxx_probe = (
+        ROOT / "compat" / "x86_64" / "math_complex_header_abi_probe.cpp"
+    ).read_text(encoding="utf-8")
+    header_runner = (
+        ROOT / "compat" / "x86_64" / "run_math_complex_header_abi.sh"
+    ).read_text(encoding="utf-8")
+    for symbol in MATH_X87_EXTENDED_SYMBOLS:
+        require(
+            f"direct_{symbol} = &{symbol};" in cxx_probe,
+            f"math-complex C++ header probe omits typed {symbol}",
+        )
+        require(
+            symbol in header_runner,
+            f"math-complex header runner omits unmangled {symbol}",
+        )
+
+    runner = (
+        ROOT / "compat" / "x86_64" / "run_libc_math_x87_extended.sh"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "-nostdlib -static",
+        "--gc-sections",
+        "EXPECTED_RECORDS=1260",
+        "1,80p",
+        "cosl sinl tanl powl",
+        "lgammal tgammal",
+        "fldt fpatan f2xm1 fyl2x fprem fprem1 frndint fsqrt",
+        "candidate binary80/fenv record stream differs from pinned musl",
+    ):
+        require(snippet in runner, f"libc-math-x87-extended runner omits {snippet}")
+
+    dispatcher = (ROOT / "scripts" / "dev-x86_64.sh").read_text(encoding="utf-8")
+    for snippet in (
+        "run_libc_math_x87_extended_probe()",
+        "/workspace/compat/x86_64/run_libc_math_x87_extended.sh",
+        "libc-math-x87-extended)",
+    ):
+        require(snippet in dispatcher, f"x86 dispatcher omits {snippet}")
+
 
 def require_named_locale_multibyte_artifact(family: Mapping[str, Any]) -> None:
     """Keep the named-locale/text archive slice below locale-family completion.
@@ -17941,8 +18219,8 @@ def require_locale_wide_iconv_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 11,
-        "libc.text-math-locale-stdio must retain exactly eleven private verified artifacts",
+        len(artifacts) == 12,
+        "libc.text-math-locale-stdio must retain exactly twelve private verified artifacts",
     )
     matching = [
         entry for entry in artifacts if entry.get("id") == "static-c-locale-wide-iconv"
@@ -18790,6 +19068,8 @@ def validate_ledger(
     require_math_complex_foundation_artifact(by_id["libc.text-math-locale-stdio"])
     require_elementary_sqrt_fenv_artifact(by_id["libc.text-math-locale-stdio"])
     require_fenv_sensitive_rounding_artifact(by_id["libc.text-math-locale-stdio"])
+
+    require_math_x87_extended_artifact(by_id["libc.text-math-locale-stdio"])
     require_named_locale_multibyte_artifact(by_id["libc.text-math-locale-stdio"])
     require_same_object_static_c_abi_artifact(by_id["compat.abi-differential"])
     require_posix_process_abi_admission_artifact(by_id["compat.posix-process"])

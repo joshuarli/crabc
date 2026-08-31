@@ -804,9 +804,10 @@ consumers in default SSE and `-mfpmath=387` modes. It proves the named x87
 `math_errhandling` and fast-FMA macro policy, GNU `HUGE`, C accessor macros,
 `tgmath` dispatch with single evaluation, relational-predicate single
 evaluation, classification/sign declarations, C/C++ project-header provenance,
-and unmangled C++ linkage. Its C executables intentionally link pinned musl's
-math runtime, so it is header semantics only—not general math, `crabc-libc`,
-or public x86 support.
+exact typed references for the selected 22-entry x87 long-double block, and
+unmangled C++ linkage for every named runtime symbol. Its C executables
+intentionally link pinned musl's math runtime, so it is header semantics
+only—not general math, `crabc-libc`, or public x86 support.
 
 `sys-reg-header-abi` places the project headers first and compile-checks the
 27 Linux/x86-64 ptrace register-index macros in `<sys/reg.h>`. It is another
@@ -3374,6 +3375,25 @@ target-private. ELF/disassembly gates reject dynamic/TLS dependencies,
 ambient libm, and unselected `sqrt*`, `cproj*`, `exp10*`/`pow10*`, and `fdim*`.
 It does not complete `math.elementary-fenv-sensitive`, the containing family,
 general math, promotion, full x86-64 parity, or public x86 support.
+
+`libc-math-x87-extended` is the separate
+`static-c-math-x87-extended` artifact. It carries pinned musl 1.2.6's
+target-specific x86 implementations of `acosl`, `asinl`, `atanl`, `atan2l`,
+`ceill`, `exp2l`, `expl`, `expm1l`, `fabsl`, `floorl`, `fmodl`, `log10l`,
+`log1pl`, `log2l`, `logl`, `lrintl`, `llrintl`, `rintl`, `remainderl`,
+`remquol`, `sqrtl`, and `truncl` across a target-private `global_asm!` leaf
+and the already selected single-owner `rintl`/`sqrtl` sibling leaves. No entry
+narrows through binary64: long-double operands remain in their SysV
+16-byte stack slots and results remain binary80 in `st0`. The project-header
+fixture takes each function address, runs the identical body against pinned
+musl and the freestanding static candidate, and compares 1,260 records over
+all four rounding modes: the defined ten binary80 bytes, exception flags,
+integer conversions, and signed `remquol` quotient bits. The final ELF rejects
+TLS, ambient `libm`, and unowned runtime dependencies and structurally requires
+the selected x87 instruction families. This remains a non-capability artifact:
+it does not complete `math.elementary-long-double`, select `math.special`,
+promote `libc.text-math-locale-stdio`, or establish general libc/libm, CRT,
+loader, sysroot, full x86-64 parity, or public x86 support.
 
 `locale-multibyte-header-abi` and `libc-locale-multibyte` are one separate,
 non-promoting named-locale/text artifact. The strict C11/C++17 header matrix

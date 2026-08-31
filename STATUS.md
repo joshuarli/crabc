@@ -83,6 +83,20 @@ status 127. It does not select public dlfcn, handles, graph mutation/unload,
 candidate libc, process RuntimeV1 publication, a general loader, dynamic
 CRT/sysroot, `ldso.dynamic-runtime` promotion, or public x86 support.
 
+The x86 static C archive also has a private
+`static-c-math-x87-extended` artifact inside still-planned
+`libc.text-math-locale-stdio`. It maps 22 pinned-musl x86 binary80 elementary,
+rounding, conversion, remainder, absolute-value, and square-root entries into
+one target-private assembly leaf without binary64 promotion. The native
+function-pointer differential compares 1,260 exact result/exception/quotient
+records across all four rounding modes and rejects ambient libm, TLS, dynamic
+linkage, and unowned runtime dependencies. It neither completes
+`math.elementary-long-double` nor selects `math.special`; the family, x86-64
+promotion, full parity, and public support all remain planned. Its `rintl` and
+`sqrtl` entries are composed from the separately selected fenv-rounding and
+elementary-square-root leaves, so the extended-math source owns the other 20
+entries without duplicating archive symbols.
+
 The x86 lane now has sixteen private static artifacts inside still-planned
 `libc.pthread-tls`. `./scripts/dev-x86_64.sh libc-static-tls-v1` passes a
 freestanding final-static-executable fixture's untouched Linux entry stack to

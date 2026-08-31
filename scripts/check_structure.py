@@ -134,9 +134,10 @@ X86_RUNTIME_FOUNDATION_LDSO_SOURCES = {
 # observation, no-cancellation mapping synchronization, direct anonymous-memory
 # descriptor creation, nanosleep, and clock_nanosleep, descriptor entry, selected
 # filesystem access, bounded fcntl
-# status control, bounded generic ioctl, and the
-# basic x87 classification/sign plus complex accessor/conjugation/projection
-# foundation and selected fenv-sensitive rounding.
+# status control, bounded generic ioctl, and the basic x87 classification/sign,
+# complex accessor/conjugation/projection, hardware square root, selected
+# fenv-sensitive rounding, and binary80 elementary/remainder/conversion
+# foundations.
 # The older leaves remain source-only. Keeping exact file boundaries makes
 # every later C-runtime admission deliberate rather than a directory-wide x86
 # exception.
@@ -169,6 +170,7 @@ X86_RUNTIME_FOUNDATION_LIBC_SOURCES = {
     Path("libc/src/c_abi/x86_64/complex_projection.rs"),
     Path("libc/src/c_abi/x86_64/elementary_sqrt.rs"),
     Path("libc/src/c_abi/x86_64/fenv_rounding.rs"),
+    Path("libc/src/c_abi/x86_64/math_x87_extended.rs"),
     Path("libc/src/c_abi/x86_64/memory_search.rs"),
     Path("libc/src/c_abi/x86_64/memory_sync.rs"),
     Path("libc/src/c_abi/x86_64/memfd_create.rs"),
