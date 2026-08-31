@@ -15,6 +15,9 @@ ROOT = Path(__file__).resolve().parents[3]
 PORT_MAP_PATH = ROOT / "compat/allocator/port-map.toml"
 RATCHET_PATH = ROOT / "compat/allocator/ratchet-v3.5.0.json"
 RUNNER_PATH = ROOT / "compat/allocator/run.py"
+RUNTIME_LIFECYCLE_PATH = ROOT / "crabc-mimalloc/src/runtime_lifecycle.rs"
+RUNTIME_EXPORTS_PATH = ROOT / "crabc-mimalloc/src/lib.rs"
+TICKET_ZERO_CONTRACT_PATH = ROOT / "compat/allocator/runtime-ticket-zero-test-v3.5.0.json"
 SPEC = importlib.util.spec_from_file_location("crabc_allocator_pointer_first_port_map", RUNNER_PATH)
 assert SPEC is not None and SPEC.loader is not None
 RUNNER = importlib.util.module_from_spec(SPEC)
@@ -27,11 +30,16 @@ class PointerFirstPostOwnerExitPortMapTests(unittest.TestCase):
         self.port_map = RUNNER.load_port_map()
 
     def record(self) -> dict[str, object]:
+        return self.item(
+            "src/free.c",
+            "page-owned-post-owner-exit-exact-remote-claim-terminal-tail",
+        )
+
+    def item(self, upstream: str, name: str) -> dict[str, object]:
         return next(
             item
             for item in self.port_map["item"]
-            if item["upstream"] == "src/free.c"
-            and item["name"] == "page-owned-post-owner-exit-exact-remote-claim-terminal-tail"
+            if item["upstream"] == upstream and item["name"] == name
         )
 
     def test_w03_mapping_separates_remote_publication_from_structural_page_map_serialization(
@@ -76,7 +84,8 @@ class PointerFirstPostOwnerExitPortMapTests(unittest.TestCase):
             "neither a route access nor a route/registry owner",
             "Detached is an explicit pre-CAS NotOwnerAssociated rejection",
             "does not own `NativePostExitRouteRegistry` or `NativePostExitFreeRoute`",
-            "production registry-deletion slice",
+            "`#[cfg(test)]` historical oracle code only",
+            "not a production mapping",
         ):
             self.assertIn(invariant, scope)
 
@@ -96,9 +105,113 @@ class PointerFirstPostOwnerExitPortMapTests(unittest.TestCase):
         self.assertFalse(record["stress_verified"])
         self.assertFalse(record["performance_qualified"])
 
+    def test_legacy_owner_exit_facades_are_retired_from_live_port_mappings(self) -> None:
+        stale_mapping_names = (
+            "NativePostExitRouteRegistry",
+            "NativePostExitFreeRoute",
+            "DetachedOwnerExitClientLedger",
+            "PreparedOwnerExitClients",
+            "TicketZeroOwnerExit",
+        )
+        historical_oracle_rows = (
+            ("src/init.c", "private-lazy-ticket-zero-runtime-first-arena-page-owner"),
+            ("src/theap.c", "runtime-active-session-retired-page-prepass-before-opaque-route"),
+            ("src/alloc.c", "private-ticket-zero-runtime-page-owner-prefixed-c-evidence-adapter"),
+            ("src/free.c", "later-main-bounded-post-exit-same-page-remote-publication"),
+            ("src/arena.c", "later-main-aggregate-last-mapped-regular-post-exit-allocation-adoption"),
+        )
+
+        for upstream, name in historical_oracle_rows:
+            record = self.item(upstream, name)
+            self.assertEqual(
+                record["implementation_scope"],
+                "test-only historical oracle; not a production mapping",
+            )
+            self.assertIn("#[cfg(test)]", record["historical_oracle_contract"])
+            self.assertIn("production", record["historical_oracle_contract"].lower())
+            self.assertNotIn(
+                "crabc-mimalloc/tests/native_post_exit_registry_high_water.rs",
+                record["tests"],
+            )
+
+        # Production `rust_module`/`rust_item` mappings must not preserve the
+        # legacy facade names. The scoped historical rows above retain that
+        # provenance without being selected as production behavior.
+        for record in self.port_map["item"]:
+            if record.get("implementation_scope") == (
+                "test-only historical oracle; not a production mapping"
+            ):
+                continue
+            mapping = record["rust_module"] + record["rust_item"]
+            for stale_mapping in stale_mapping_names:
+                self.assertNotIn(stale_mapping, mapping)
+
+        shadow = self.item(
+            "src/alloc.c",
+            "nondefault-crabc-libc-native-mimalloc-shadow-ordinary-boundary",
+        )
+        self.assertEqual(
+            shadow["implementation_scope"],
+            "production nondefault pointer-first PageMap boundary",
+        )
+        shadow_scope = shadow["production_contract"]
+        for production_fact in (
+            "compile-time, nondefault early-shadow lane",
+            "one coherent PageMap observation",
+            "only nonlocal free continuation",
+            "W03",
+            "B finishes only B's own owner",
+            "no route, registry, exact-client ledger scan",
+        ):
+            self.assertIn(production_fact, shadow_scope)
+        self.assertIn("#[cfg(test)]", shadow["historical_detail_scope"])
+        self.assertIn("not production behavior", shadow["historical_detail_scope"])
+        self.assertNotIn(
+            "crabc-mimalloc/tests/native_post_exit_registry_high_water.rs",
+            shadow["tests"],
+        )
+
+    def test_legacy_facade_is_cfg_test_only_and_the_adapter_oracle_is_nine_by_two(self) -> None:
+        lifecycle_source = RUNTIME_LIFECYCLE_PATH.read_text(encoding="utf-8")
+        for declaration in (
+            "enum NativePostExitFreeRoute {",
+            "struct NativePostExitRouteRegistry {",
+            "enum DetachedOwnerExitClientLedger {",
+            "struct PreparedOwnerExitClients {",
+            "pub struct TicketZeroOwnerExitFreeRoute",
+            "pub struct TicketZeroOwnerExitReclaimRoute",
+        ):
+            declaration_offset = lifecycle_source.index(declaration)
+            self.assertIn(
+                "#[cfg(test)]",
+                lifecycle_source[max(0, declaration_offset - 1_024) : declaration_offset],
+                declaration,
+            )
+
+        exports_source = RUNTIME_EXPORTS_PATH.read_text(encoding="utf-8")
+        runtime_module_start = exports_source.index("pub mod __crabc_runtime {")
+        test_only_exports_start = exports_source.index("    #[cfg(test)]", runtime_module_start)
+        self.assertNotIn(
+            "TicketZeroOwnerExit",
+            exports_source[runtime_module_start:test_only_exports_start],
+        )
+
+        ticket_zero_contract = json.loads(TICKET_ZERO_CONTRACT_PATH.read_text(encoding="utf-8"))
+        self.assertEqual(len(ticket_zero_contract["expected_adapter_symbols"]), 9)
+        self.assertEqual(ticket_zero_contract["fixture_invocation"]["worker_routes_per_cycle"], 2)
+        self.assertNotIn(
+            "crabc_ticket_zero_test_worker_owner_exit_roundtrip",
+            ticket_zero_contract["expected_adapter_symbols"],
+        )
+        self.assertNotIn(
+            "crabc_ticket_zero_test_worker_owner_exit_reclaim_roundtrip",
+            ticket_zero_contract["expected_adapter_symbols"],
+        )
+
     def test_w03_requires_the_concurrent_native_c_selection_and_reviewed_ratchet(self) -> None:
         record = self.record()
         required_evidence = {
+            "crabc-mimalloc/tests/native_post_exit_failed_os_release.rs",
             "tests/fixtures/native_mimalloc_concurrent_post_exit_release_test.c",
             "tests/native_mimalloc_concurrent_post_exit_release.rs",
         }
