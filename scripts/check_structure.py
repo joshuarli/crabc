@@ -3746,6 +3746,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         '#[path = "socket_transport.rs"]',
         '#[path = "in6addr_any.rs"]',
         '#[path = "in6addr_loopback.rs"]',
+        '#[path = "dn_skipname.rs"]',
         '#[path = "inet_address.rs"]',
         '#[path = "inet_ntoa.rs"]',
         '#[path = "inet_classful.rs"]',
@@ -8278,6 +8279,174 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
             "message evidence must not force-link the whole archive"
         )
 
+    dn_skipname_probe_source = (
+        ROOT / "compat" / "x86_64" / "libc_dn_skipname_probe.c"
+    )
+    dn_skipname_start_source = (
+        ROOT / "compat" / "x86_64" / "libc_dn_skipname_start.S"
+    )
+    dn_skipname_runner_source = (
+        ROOT / "compat" / "x86_64" / "run_libc_dn_skipname.sh"
+    )
+    nameser_header_c_source = (
+        ROOT / "compat" / "x86_64" / "nameser_header_abi_probe.c"
+    )
+    nameser_header_cpp_source = (
+        ROOT / "compat" / "x86_64" / "nameser_header_abi_probe.cpp"
+    )
+    nameser_header_runner_source = (
+        ROOT / "compat" / "x86_64" / "run_nameser_header_abi.sh"
+    )
+    for path in (
+        dn_skipname_probe_source,
+        dn_skipname_start_source,
+        dn_skipname_runner_source,
+        nameser_header_c_source,
+        nameser_header_cpp_source,
+        nameser_header_runner_source,
+    ):
+        if not path.is_file():
+            errors.append(
+                f"x86 static dn_skipname artifact is missing {path.relative_to(ROOT)}"
+            )
+            return
+
+    dn_skipname_source = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "dn_skipname.rs"
+    )
+    dn_skipname_text = dn_skipname_source.read_text(errors="replace")
+    dn_skipname_probe = dn_skipname_probe_source.read_text(errors="replace")
+    dn_skipname_start = dn_skipname_start_source.read_text(errors="replace")
+    dn_skipname_runner = dn_skipname_runner_source.read_text(errors="replace")
+    nameser_header_c = nameser_header_c_source.read_text(errors="replace")
+    nameser_header_cpp = nameser_header_cpp_source.read_text(errors="replace")
+    nameser_header_runner = nameser_header_runner_source.read_text(errors="replace")
+    for required in (
+        "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+        "src/network/dn_skipname.c",
+        "core::ptr::read",
+        "label >= 192",
+        "label as usize + 1",
+        'pub unsafe extern "C" fn dn_skipname',
+        "source..end",
+    ):
+        if required not in dn_skipname_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/dn_skipname.rs: selected static "
+                f"wire-span boundary is missing {required!r}"
+            )
+    for forbidden in (
+        "static mut",
+        "raw_syscall",
+        "__errno_location",
+        "__h_errno_location",
+        "getaddrinfo",
+        "gethostby",
+        "socket(",
+        "std::",
+        "alloc::",
+        "crabc_core",
+        "crabc_mimalloc",
+        "fn dn_expand",
+    ):
+        if forbidden in dn_skipname_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/dn_skipname.rs: selected static "
+                f"wire-span boundary must not select {forbidden!r}"
+            )
+    dn_skipname_exports = set(
+        re.findall(
+            r'(?m)^pub\s+unsafe\s+extern\s+"C"\s+fn\s+(\w+)\s*\(',
+            dn_skipname_text,
+        )
+    )
+    if dn_skipname_exports != {"dn_skipname"}:
+        errors.append(
+            "libc/src/c_abi/x86_64/dn_skipname.rs: selected static artifact "
+            "must export only dn_skipname"
+        )
+    for header_probe in (nameser_header_c, nameser_header_cpp):
+        for required in (
+            "#include <resolv.h>",
+            "dn_skipname_signature",
+            "NS_CMPRSFLGS == 0xc0",
+            "NS_MAXLABEL == 63",
+            "NS_MAXCDNAME == 255",
+            "NS_MAXDNAME == 1025",
+        ):
+            if required not in header_probe:
+                errors.append(
+                    "compat/x86_64 nameser C/C++ header probe: selected "
+                    f"dn_skipname ABI is missing {required!r}"
+                )
+    for required in (
+        "check_cxx_c_linkage",
+        "nm --undefined-only",
+        "_Z.*dn_skipname",
+        "resolv.h arpa/nameser.h netinet/in.h",
+        "DNS packet I/O",
+        "netdb",
+    ):
+        if required not in nameser_header_runner:
+            errors.append(
+                "compat/x86_64/run_nameser_header_abi.sh: C/C++ declaration "
+                f"evidence is missing {required!r}"
+            )
+    for required in (
+        "#include <resolv.h>",
+        "dn_skipname_signature",
+        "NS_CMPRSFLGS == 0xc0",
+        "static const unsigned char compressed",
+        "truncated_pointer",
+        "truncated_label",
+        "label_64",
+        "label_191",
+        "CRABC_DN_SKIPNAME_FREESTANDING",
+    ):
+        if required not in dn_skipname_probe:
+            errors.append(
+                "compat/x86_64/libc_dn_skipname_probe.c: static wire-span "
+                f"regression is missing {required!r}"
+            )
+    for required in ("crabc_x86_64_dn_skipname_probe", "mov $60, %eax"):
+        if required not in dn_skipname_start:
+            errors.append(
+                "compat/x86_64/libc_dn_skipname_start.S: static wire-span "
+                f"entry is missing {required!r}"
+            )
+    if "ARCH_SET_FS" in dn_skipname_start:
+        errors.append(
+            "compat/x86_64/libc_dn_skipname_start.S: wire-span entry must not "
+            "bootstrap TLS"
+        )
+    for required in (
+        "dn_skipname.lo",
+        "dn_skipname.c",
+        "83",
+        "assert_selected_c_abi_surface",
+        "extract_selected_member",
+        "dn_skipname archive member also defines a parser sibling",
+        "-nostdlib -static",
+        '"$selected_member" -o "$candidate"',
+        "candidate unexpectedly selects TLS",
+        "__h_errno_location",
+        "dn_expand ns_get16 ns_get32",
+        "res_query res_querydomain res_search",
+        "getaddrinfo freeaddrinfo",
+        "socket bind connect send recv",
+        "call|syscall",
+    ):
+        if required not in dn_skipname_runner:
+            errors.append(
+                "compat/x86_64/run_libc_dn_skipname.sh: archive-free static "
+                f"wire-span evidence is missing {required!r}"
+            )
+    if '"$archive" -o "$candidate"' in dn_skipname_runner:
+        errors.append(
+            "compat/x86_64/run_libc_dn_skipname.sh: final wire-span candidate "
+            "must not link libc.a"
+        )
+
     byte_strings_source = (
         ROOT / "libc" / "src" / "c_abi" / "x86_64" / "byte_strings.rs"
     )
@@ -9013,6 +9182,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         inet_netof_text,
         inet_network_text,
         hstrerror_text,
+        dn_skipname_text,
         byte_strings_text,
         random_entropy_text,
         memory_search_text,
@@ -9350,6 +9520,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         "inet_netof",
         "inet_network",
         "hstrerror",
+        "dn_skipname",
         "uname",
         "sysinfo",
         "gethostname",
@@ -9554,6 +9725,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         ("inet_netof.rs", inet_netof_text),
         ("inet_network.rs", inet_network_text),
         ("hstrerror.rs", hstrerror_text),
+        ("dn_skipname.rs", dn_skipname_text),
         ("random_entropy.rs", random_entropy_text),
         ("memory_search.rs", memory_search_text),
         ("string_copy.rs", string_copy_text),

@@ -120,6 +120,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   memfd-create-header-abi  verify selected x86 GNU memfd_create C/C++ declarations
   resource-header-abi  compile the staged x86 C/C++ resource-header layouts
   socket-header-abi  verify staged x86 base socket C/C++ declarations/layouts and IPv6 macros
+  nameser-header-abi  verify staged x86 resolv.h C/C++ dn_skipname declaration
   inet-address-header-abi  verify selected x86 arpa/inet C/C++ numeric-address declarations
   socket-messages-header-abi  verify staged x86 socket-message/options C/C++ declarations/layouts
   sysv-semaphore-header-abi  verify staged x86 SysV semaphore C/C++ declarations/layouts
@@ -336,6 +337,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-network-byte-order  run the static x86 crabc-libc network byte-order slice
   libc-in6addr-any  run the archive-free static x86 crabc-libc IPv6 unspecified-address object slice
   libc-in6addr-loopback  run the archive-free static x86 crabc-libc IPv6 loopback-address object slice
+  libc-dn-skipname  run the archive-free static x86 crabc-libc DNS wire-name span slice
   libc-process-globals-getopt  run the static x86 crabc-libc program-name/getopt slice
   libc-auxv-observation  run the static x86 crabc-libc initial aux-vector lookup slice
   libc-inet-address  run the static x86 crabc-libc numeric Internet-address codec slice
@@ -2263,6 +2265,10 @@ run_socket_header_abi() {
     run_in_container bash /workspace/compat/x86_64/run_socket_header_abi.sh
 }
 
+run_nameser_header_abi() {
+    run_in_container bash /workspace/compat/x86_64/run_nameser_header_abi.sh
+}
+
 run_inet_address_header_abi() {
     run_in_container bash /workspace/compat/x86_64/run_inet_address_header_abi.sh
 }
@@ -3340,8 +3346,8 @@ case "$command" in
     ldso-public-dlfcn) ;;
     ldso-bounded-dlopen) ;;
     math-special-header-abi|libc-math-special) ;;
-    inet-address-header-abi) ;;
-    libc-network-byte-order) ;;
+    inet-address-header-abi|nameser-header-abi) ;;
+    libc-network-byte-order|libc-dn-skipname) ;;
     ldso-target-root) ;;
     libc-fenv-rounding) ;;
     libc-math-minmax) ;;
@@ -3799,6 +3805,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "socket-header-abi takes no arguments"
         ensure_image
         run_socket_header_abi
+        ;;
+    nameser-header-abi)
+        [ "$#" -eq 0 ] || fail "nameser-header-abi takes no arguments"
+        ensure_image
+        run_nameser_header_abi
         ;;
     inet-address-header-abi)
         [ "$#" -eq 0 ] || fail "inet-address-header-abi takes no arguments"
@@ -4933,6 +4944,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "libc-in6addr-loopback takes no arguments"
         ensure_image
         run_in_container bash /workspace/compat/x86_64/run_libc_in6addr_loopback.sh
+        ;;
+    libc-dn-skipname)
+        [ "$#" -eq 0 ] || fail "libc-dn-skipname takes no arguments"
+        ensure_image
+        run_in_container bash /workspace/compat/x86_64/run_libc_dn_skipname.sh
         ;;
     libc-process-globals-getopt)
         [ "$#" -eq 0 ] || fail "libc-process-globals-getopt takes no arguments"

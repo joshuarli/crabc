@@ -712,6 +712,7 @@ EXPECTED_HEADER_LAYOUT_PROBES = {
     "mman": "./scripts/dev-x86_64.sh mman-header-abi",
     "resource": "./scripts/dev-x86_64.sh resource-header-abi",
     "socket": "./scripts/dev-x86_64.sh socket-header-abi",
+    "nameser": "./scripts/dev-x86_64.sh nameser-header-abi",
     "inet-address": "./scripts/dev-x86_64.sh inet-address-header-abi",
     "epoll": "./scripts/dev-x86_64.sh epoll-header-abi",
     "timeval-transitive": "./scripts/dev-x86_64.sh timeval-transitive-header-abi",
@@ -906,6 +907,11 @@ EXPECTED_HEADER_LAYOUT_SOURCES = {
         "compat/x86_64/socket_header_abi_probe.cpp",
         "compat/x86_64/socket_header_ipv6_macro_probe.c",
         "compat/x86_64/run_socket_header_abi.sh",
+    ),
+    "nameser": (
+        "compat/x86_64/nameser_header_abi_probe.c",
+        "compat/x86_64/nameser_header_abi_probe.cpp",
+        "compat/x86_64/run_nameser_header_abi.sh",
     ),
     "inet-address": (
         "compat/x86_64/inet_address_header_abi_probe.c",
@@ -1400,6 +1406,8 @@ NUMERIC_NETDB_SYMBOLS = (
 )
 
 HSTRERROR_SYMBOLS = ("hstrerror",)
+
+DN_SKIPNAME_SYMBOLS = ("dn_skipname",)
 
 INET_NTOA_SYMBOLS = ("inet_ntoa",)
 
@@ -5413,6 +5421,73 @@ def require_inet_address_header_evidence(family: Mapping[str, Any]) -> None:
         require(
             owner in owners,
             f"libc.headers-layouts inet-address-header-abi source owners omit {owner}",
+        )
+
+
+def require_nameser_header_evidence(family: Mapping[str, Any]) -> None:
+    """Keep the one wire-span declaration gate below resolver promotion."""
+    evidence = family.get("native_evidence")
+    require(
+        isinstance(evidence, list),
+        "libc.headers-layouts must retain native evidence",
+    )
+    matches = [
+        entry
+        for entry in evidence
+        if isinstance(entry, Mapping)
+        and entry.get("command") == "./scripts/dev-x86_64.sh nameser-header-abi"
+    ]
+    require(
+        len(matches) == 1,
+        "libc.headers-layouts must retain exactly one nameser-header-abi evidence command",
+    )
+    record = matches[0]
+    scope = record.get("scope")
+    require(
+        record.get("state") == "required"
+        and isinstance(scope, str)
+        and all(
+            phrase in scope
+            for phrase in (
+                "project-first/pinned-musl C/C++",
+                "<resolv.h>",
+                "`dn_skipname(const unsigned char *, const unsigned char *)`",
+                "NS_CMPRSFLGS/NS_MAXLABEL/NS_MAXCDNAME/NS_MAXDNAME",
+                "caller-owned DNS wire-name span",
+                "resolver state",
+                "/etc/resolv.conf",
+                "DNS packet I/O",
+                "sockets",
+                "netdb",
+                "archive linkage",
+                "installed-header completion",
+                "family completion",
+                "public x86 support",
+            )
+        ),
+        "libc.headers-layouts nameser-header-abi evidence must retain its narrow non-resolver boundary",
+    )
+    owners = set(
+        nonempty_strings(
+            family["source_owners"], "family[libc.headers-layouts].source_owners"
+        )
+    )
+    for owner in (
+        "compat/x86_64/nameser_header_abi_probe.c",
+        "compat/x86_64/nameser_header_abi_probe.cpp",
+        "compat/x86_64/run_nameser_header_abi.sh",
+        "include/resolv.h",
+        "include/arpa/nameser.h",
+        "include/netinet/in.h",
+        "include/stddef.h",
+        "include/stdint.h",
+        "include/sys/socket.h",
+        "include/sys/types.h",
+        "include/bits/alltypes.h",
+    ):
+        require(
+            owner in owners,
+            f"libc.headers-layouts nameser-header-abi source owners omit {owner}",
         )
 
 
@@ -20476,6 +20551,351 @@ def require_hstrerror_artifact(family: Mapping[str, Any]) -> None:
 
 
 
+def require_dn_skipname_artifact(family: Mapping[str, Any]) -> None:
+    """Keep the dependency-free DNS wire-span codec out of resolver state."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.resolver].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [entry for entry in artifacts if entry.get("id") == "static-c-dn-skipname"]
+    require(
+        len(matching) == 1,
+        "libc.resolver must contain exactly one static-c-dn-skipname artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-dn-skipname must not promote libc.resolver",
+    )
+    artifact = matching[0]
+    description = artifact.get("description")
+    require(isinstance(description, str), "static-c-dn-skipname needs a description")
+    for phrase in (
+        "Private native x86 static `dn_skipname` caller-owned DNS wire-name span C ABI artifact",
+        "still-planned `libc.resolver`",
+        "archive-free true `-nostdlib -static` candidate",
+        "exactly one extracted crabc object",
+        "never `libc.a`",
+        "exactly `dn_skipname`",
+        "root label",
+        "octet at least 192",
+        "64 through 191",
+        "`h_errno`",
+        "`errno`",
+        "TLS",
+        "`/etc/hosts`",
+        "`/etc/resolv.conf`",
+        "DNS packet I/O",
+        "netdb/database",
+        "Ethernet",
+        "public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"static-c-dn-skipname description omits {phrase}",
+        )
+
+    owners = set(
+        nonempty_strings(
+            artifact.get("source_owners"), "static-c-dn-skipname.source_owners"
+        )
+    )
+    for owner in (
+        "compat/upstreams.toml",
+        "libc/Cargo.toml",
+        "libc/src/lib.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/dn_skipname.rs",
+        "include/resolv.h",
+        "include/arpa/nameser.h",
+        "include/netinet/in.h",
+        "include/stddef.h",
+        "include/stdint.h",
+        "include/sys/socket.h",
+        "include/sys/types.h",
+        "include/bits/alltypes.h",
+        "compat/x86_64/nameser_header_abi_probe.c",
+        "compat/x86_64/nameser_header_abi_probe.cpp",
+        "compat/x86_64/run_nameser_header_abi.sh",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/libc_dn_skipname_probe.c",
+        "compat/x86_64/libc_dn_skipname_start.S",
+        "compat/x86_64/run_libc_dn_skipname.sh",
+        "compat/x86_64/aarch64_parity_inventory.py",
+        "compat/x86_64/aarch64_parity_inventory.json",
+        "compat/x86_64/tests/test_aarch64_parity_inventory.py",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/README.md",
+        "STATUS.md",
+        "x86-64.md",
+        "scripts/dev-x86_64.sh",
+        "scripts/check_structure.py",
+    ):
+        require(owner in owners, f"static-c-dn-skipname source owners omit {owner}")
+
+    prerequisites = nonempty_strings(
+        artifact.get("x86_abi_prerequisites"),
+        "static-c-dn-skipname.x86_abi_prerequisites",
+    )
+    require(
+        any(
+            "SysV AMD64 LP64" in item
+            and "rdi/rsi" in item
+            and "eax" in item
+            and "source..end byte range in one allocation" in item
+            for item in prerequisites
+        ),
+        "static-c-dn-skipname must retain its caller-owned pointer/int ABI",
+    )
+    require(
+        any(
+            "9fa28ece75d8a2191de7c5bb53bed224c5947417" in item
+            and "83-byte `dn_skipname.lo`" in item
+            and "src/network/dn_skipname.c" in item
+            and "no undefined references, calls, or syscalls" in item
+            and "64 through 191" in item
+            for item in prerequisites
+        ),
+        "static-c-dn-skipname must retain its pinned-musl source closure",
+    )
+    require(
+        any(
+            "exactly one extracted `dn_skipname` object" in item
+            and "never `libc.a`" in item
+            and "TLS/errno/h_errno" in item
+            and "DNS packet I/O" in item
+            and "Ethernet" in item
+            for item in prerequisites
+        ),
+        "static-c-dn-skipname must retain its archive-free non-resolver boundary",
+    )
+
+    headers = nonempty_strings(
+        artifact.get("x86_header_prerequisites"),
+        "static-c-dn-skipname.x86_header_prerequisites",
+    )
+    require(
+        any(
+            "<resolv.h>" in item
+            and "dn_skipname(const unsigned char *, const unsigned char *)" in item
+            and "NS_CMPRSFLGS=0xc0" in item
+            and "NS_MAXDNAME=1025" in item
+            and "unmangled C++ C linkage" in item
+            for item in headers
+        ),
+        "static-c-dn-skipname must retain its C/C++ resolv.h declaration boundary",
+    )
+
+    exports = set(
+        static_c_abi_export_names(
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        )
+    )
+    require(
+        set(DN_SKIPNAME_SYMBOLS) <= exports,
+        "static-c-dn-skipname must retain its selected export",
+    )
+    require(
+        not (exports & {"dn_expand", "ns_skiprr", "ns_name_uncompress", "res_init"}),
+        "static-c-dn-skipname must not add broader nameserver exports",
+    )
+
+    static_root = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+    ).read_text(encoding="utf-8")
+    require(
+        '#[path = "dn_skipname.rs"]\nmod dn_skipname;' in static_root,
+        "x86 static C ABI must compose the dn_skipname leaf",
+    )
+    implementation = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "dn_skipname.rs"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+        "src/network/dn_skipname.c",
+        "core::ptr::read",
+        "label >= 192",
+        "label as usize + 1",
+        'pub unsafe extern "C" fn dn_skipname',
+        "source..end",
+    ):
+        require(snippet in implementation, f"dn_skipname leaf omits {snippet}")
+    exported_functions = set(
+        re.findall(
+            r'(?m)^pub\s+unsafe\s+extern\s+"C"\s+fn\s+(\w+)\s*\(',
+            implementation,
+        )
+    )
+    require(
+        exported_functions == set(DN_SKIPNAME_SYMBOLS),
+        "dn_skipname leaf must export only dn_skipname",
+    )
+    for forbidden in (
+        "static mut",
+        "raw_syscall",
+        "__errno_location",
+        "__h_errno_location",
+        "getaddrinfo",
+        "gethostby",
+        "socket(",
+        "std::",
+        "alloc::",
+        "crabc_core",
+        "crabc_mimalloc",
+        "fn dn_expand",
+    ):
+        require(
+            forbidden not in implementation,
+            f"dn_skipname leaf widens into {forbidden}",
+        )
+
+    oracle = artifact.get("oracle")
+    require(isinstance(oracle, list), "static-c-dn-skipname needs oracle evidence")
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "c-posix"
+            and isinstance(entry.get("role"), str)
+            and "src/network/dn_skipname.c" in entry["role"]
+            and ">=192 two-byte pointer disposition" in entry["role"]
+            and "<192 including 64..191 label lengths" in entry["role"]
+            and "Resolver state/files" in entry["role"]
+            and "Ethernet" in entry["role"]
+            for entry in oracle
+        ),
+        "static-c-dn-skipname must retain its pinned-musl codec oracle",
+    )
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "elf-abi"
+            and isinstance(entry.get("role"), str)
+            and "rdi/rsi" in entry["role"]
+            and "eax" in entry["role"]
+            and "archive-free static final-ELF boundary" in entry["role"]
+            for entry in oracle
+        ),
+        "static-c-dn-skipname must retain its static ELF ABI oracle",
+    )
+
+    evidence = artifact.get("native_evidence")
+    require(isinstance(evidence, list), "static-c-dn-skipname needs evidence")
+    require(
+        {entry.get("command") for entry in evidence if isinstance(entry, Mapping)}
+        == {"./scripts/dev-x86_64.sh libc-dn-skipname"},
+        "static-c-dn-skipname must use the closed libc-dn-skipname command",
+    )
+    scope = evidence[0].get("scope")
+    require(isinstance(scope, str), "static-c-dn-skipname evidence needs a scope")
+    for phrase in (
+        "Pinned-musl project-header C execution",
+        "archive-free x86 `-nostdlib -static` candidate",
+        "`dn_skipname`",
+        "`dn_skipname.lo` 83-byte dependency-free source mapping",
+        "exactly one extracted object",
+        "never `libc.a`",
+        "compressed-pointer disposition without following",
+        "64-through-191 label-length behavior",
+        "no interpreter/DT_NEEDED/unresolved symbol",
+        "TLS/errno/h_errno/dynamic TLS",
+        "calls, syscalls",
+        "resolver configuration",
+        "hosts/resolv.conf",
+        "DNS packet I/O",
+        "netdb/database",
+        "Ethernet",
+        "public x86 support",
+    ):
+        require(phrase in scope, f"static-c-dn-skipname evidence omits {phrase}")
+
+    header_c = (
+        ROOT / "compat" / "x86_64" / "nameser_header_abi_probe.c"
+    ).read_text(encoding="utf-8")
+    header_cpp = (
+        ROOT / "compat" / "x86_64" / "nameser_header_abi_probe.cpp"
+    ).read_text(encoding="utf-8")
+    header_runner = (
+        ROOT / "compat" / "x86_64" / "run_nameser_header_abi.sh"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "#include <resolv.h>",
+        "dn_skipname_signature",
+        "NS_CMPRSFLGS == 0xc0",
+        "NS_MAXLABEL == 63",
+        "NS_MAXCDNAME == 255",
+        "NS_MAXDNAME == 1025",
+    ):
+        require(snippet in header_c, f"nameser C header probe omits {snippet}")
+        require(snippet in header_cpp, f"nameser C++ header probe omits {snippet}")
+    for snippet in (
+        "check_cxx_c_linkage",
+        "nm --undefined-only",
+        "_Z.*dn_skipname",
+        "resolv.h arpa/nameser.h netinet/in.h",
+        "DNS packet I/O",
+        "netdb",
+    ):
+        require(snippet in header_runner, f"nameser header runner omits {snippet}")
+
+    fixture = (
+        ROOT / "compat" / "x86_64" / "libc_dn_skipname_probe.c"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "#include <resolv.h>",
+        "dn_skipname_signature",
+        "NS_CMPRSFLGS == 0xc0",
+        "static const unsigned char compressed",
+        "truncated_pointer",
+        "truncated_label",
+        "label_64",
+        "label_191",
+        "CRABC_DN_SKIPNAME_FREESTANDING",
+    ):
+        require(snippet in fixture, f"dn_skipname fixture omits {snippet}")
+    start = (
+        ROOT / "compat" / "x86_64" / "libc_dn_skipname_start.S"
+    ).read_text(encoding="utf-8")
+    for snippet in ("crabc_x86_64_dn_skipname_probe", "mov $60, %eax"):
+        require(snippet in start, f"dn_skipname static entry omits {snippet}")
+    require("ARCH_SET_FS" not in start, "dn_skipname static entry must not bootstrap TLS")
+
+    runner = (
+        ROOT / "compat" / "x86_64" / "run_libc_dn_skipname.sh"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "dn_skipname.lo",
+        "dn_skipname.c",
+        "83",
+        "assert_selected_c_abi_surface",
+        "extract_selected_member",
+        "dn_skipname archive member also defines a parser sibling",
+        "-nostdlib -static",
+        '"$selected_member" -o "$candidate"',
+        "candidate unexpectedly selects TLS",
+        "__h_errno_location",
+        "dn_expand ns_get16 ns_get32",
+        "res_query res_querydomain res_search",
+        "getaddrinfo freeaddrinfo",
+        "socket bind connect send recv",
+        "call|syscall",
+    ):
+        require(snippet in runner, f"dn_skipname runner omits {snippet}")
+    require(
+        '"$archive" -o "$candidate"' not in runner,
+        "dn_skipname final candidate must not link libc.a",
+    )
+    dispatch = (ROOT / "scripts" / "dev-x86_64.sh").read_text(encoding="utf-8")
+    require(
+        "nameser-header-abi)" in dispatch
+        and "run_nameser_header_abi.sh" in dispatch
+        and "libc-dn-skipname)" in dispatch
+        and "run_libc_dn_skipname.sh" in dispatch,
+        "dn_skipname dispatcher bindings are missing",
+    )
+
+
 def require_auxv_observation_artifact(family: Mapping[str, Any]) -> None:
     """Keep direct initial-vector lookup bounded, static, and private."""
     artifacts = require_verified_artifacts(
@@ -30373,6 +30793,7 @@ def validate_ledger(
     require_memory_sync_header_evidence(by_id["libc.headers-layouts"])
     require_memory_locking_header_evidence(by_id["libc.headers-layouts"])
     require_memfd_create_header_evidence(by_id["libc.headers-layouts"])
+    require_nameser_header_evidence(by_id["libc.headers-layouts"])
     require_inet_address_header_evidence(by_id["libc.headers-layouts"])
 
     require_ldso_initial_graph_artifact(by_id["ldso.dynamic-runtime"])
@@ -30477,6 +30898,7 @@ def validate_ledger(
     require_inet_network_artifact(by_id["libc.resolver"])
     require_numeric_netdb_artifact(by_id["libc.resolver"])
     require_hstrerror_artifact(by_id["libc.resolver"])
+    require_dn_skipname_artifact(by_id["libc.resolver"])
     require_auxv_observation_artifact(by_id["libc.c-abi-compat"])
     require_process_globals_getopt_artifact(by_id["libc.c-abi-compat"])
     require_search_tree_intrusive_slice(by_id["libc.c-abi-compat"])

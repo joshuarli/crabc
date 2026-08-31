@@ -1325,8 +1325,8 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn("    candidate-header-closure) ;;", source)
         self.assertIn("    installed-header-tree-closure) ;;", source)
         self.assertIn("    dirent-header-abi) ;;", source)
-        self.assertIn("    inet-address-header-abi) ;;", source)
-        self.assertIn("    libc-network-byte-order) ;;", source)
+        self.assertIn("    inet-address-header-abi|nameser-header-abi) ;;", source)
+        self.assertIn("    libc-network-byte-order|libc-dn-skipname) ;;", source)
         self.assertIn("    libc-in6addr-any)", source)
         self.assertIn("    libc-in6addr-loopback)", source)
         self.assertIn("    libc-inet-ntoa)", source)
@@ -1334,6 +1334,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn("    libc-inet-netof)", source)
         self.assertIn("    libc-inet-network)", source)
         self.assertIn("    libc-hstrerror)", source)
+        self.assertIn("    libc-dn-skipname)", source)
         self.assertIn("    math-special-header-abi|libc-math-special) ;;", source)
         self.assertIn(
             "    math-elementary-long-double-header-abi|libc-math-elementary-long-double) ;;",
@@ -1372,8 +1373,8 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "ldso-public-dlfcn",
             "ldso-bounded-dlopen",
             "math-special-header-abi|libc-math-special",
-            "inet-address-header-abi",
-            "libc-network-byte-order",
+            "inet-address-header-abi|nameser-header-abi",
+            "libc-network-byte-order|libc-dn-skipname",
             "ldso-target-root",
             "libc-fenv-rounding",
             "libc-math-minmax",
@@ -9817,6 +9818,136 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             parity_ledger,
         )
         self.assertIn("libc-in6addr-loopback)", dispatcher)
+
+    def test_libc_static_c_abi_dn_skipname_artifact_stays_private(self) -> None:
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        leaf = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "dn_skipname.rs"
+        ).read_text(encoding="utf-8")
+        header_c = (
+            ROOT / "compat" / "x86_64" / "nameser_header_abi_probe.c"
+        ).read_text(encoding="utf-8")
+        header_cpp = (
+            ROOT / "compat" / "x86_64" / "nameser_header_abi_probe.cpp"
+        ).read_text(encoding="utf-8")
+        header_runner = (
+            ROOT / "compat" / "x86_64" / "run_nameser_header_abi.sh"
+        ).read_text(encoding="utf-8")
+        probe = (
+            ROOT / "compat" / "x86_64" / "libc_dn_skipname_probe.c"
+        ).read_text(encoding="utf-8")
+        start = (
+            ROOT / "compat" / "x86_64" / "libc_dn_skipname_start.S"
+        ).read_text(encoding="utf-8")
+        artifact_runner = (
+            ROOT / "compat" / "x86_64" / "run_libc_dn_skipname.sh"
+        ).read_text(encoding="utf-8")
+        static_exports = (
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        ).read_text(encoding="utf-8")
+        parity_ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        dispatcher = RUNNER.read_text(encoding="utf-8")
+
+        self.assertIn('#[path = "dn_skipname.rs"]', static_root)
+        for required in (
+            "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+            "src/network/dn_skipname.c",
+            "core::ptr::read",
+            "label >= 192",
+            "label as usize + 1",
+            'pub unsafe extern "C" fn dn_skipname',
+            "source..end",
+        ):
+            self.assertIn(required, leaf)
+        self.assertEqual(
+            re.findall(
+                r'(?m)^pub\s+unsafe\s+extern\s+"C"\s+fn\s+(\w+)\s*\(',
+                leaf,
+            ),
+            ["dn_skipname"],
+        )
+        for forbidden in (
+            "static mut",
+            "raw_syscall",
+            "__errno_location",
+            "__h_errno_location",
+            "getaddrinfo",
+            "gethostby",
+            "socket(",
+            "std::",
+            "alloc::",
+            "crabc_core",
+            "crabc_mimalloc",
+            "fn dn_expand",
+        ):
+            self.assertNotIn(forbidden, leaf)
+
+        for required in (
+            "#include <resolv.h>",
+            "dn_skipname_signature",
+            "NS_CMPRSFLGS == 0xc0",
+            "NS_MAXLABEL == 63",
+            "NS_MAXCDNAME == 255",
+            "NS_MAXDNAME == 1025",
+        ):
+            self.assertIn(required, header_c)
+            self.assertIn(required, header_cpp)
+        for required in (
+            "check_cxx_c_linkage",
+            "nm --undefined-only",
+            "_Z.*dn_skipname",
+            "resolv.h arpa/nameser.h netinet/in.h",
+            "DNS packet I/O",
+            "netdb",
+        ):
+            self.assertIn(required, header_runner)
+
+        for required in (
+            "#include <resolv.h>",
+            "dn_skipname_signature",
+            "NS_CMPRSFLGS == 0xc0",
+            "static const unsigned char compressed",
+            "truncated_pointer",
+            "truncated_label",
+            "label_64",
+            "label_191",
+            "CRABC_DN_SKIPNAME_FREESTANDING",
+        ):
+            self.assertIn(required, probe)
+        self.assertIn("crabc_x86_64_dn_skipname_probe", start)
+        self.assertIn("mov $60, %eax", start)
+        self.assertNotIn("ARCH_SET_FS", start)
+        for required in (
+            "dn_skipname.lo",
+            "dn_skipname.c",
+            "assert_selected_c_abi_surface",
+            "extract_selected_member",
+            "dn_skipname archive member also defines a parser sibling",
+            "-nostdlib -static",
+            '"$selected_member" -o "$candidate"',
+            "candidate unexpectedly selects TLS",
+            "__h_errno_location",
+            "dn_expand ns_get16 ns_get32",
+            "res_query res_querydomain res_search",
+            "getaddrinfo freeaddrinfo",
+            "socket bind connect send recv",
+            "call|syscall",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn('"$archive" -o "$candidate"', artifact_runner)
+        self.assertIn("dn_skipname", static_exports.splitlines())
+        self.assertNotIn("dn_expand", static_exports.splitlines())
+        self.assertIn('id = "static-c-dn-skipname"', parity_ledger)
+        self.assertIn(
+            'command = "./scripts/dev-x86_64.sh libc-dn-skipname"',
+            parity_ledger,
+        )
+        self.assertIn("nameser-header-abi)", dispatcher)
+        self.assertIn("libc-dn-skipname)", dispatcher)
 
     def test_libc_static_c_abi_socket_transport_artifact_stays_narrow(self) -> None:
         static_root = (

@@ -387,6 +387,8 @@ mod network_byte_order;
 mod in6addr_any;
 #[path = "in6addr_loopback.rs"]
 mod in6addr_loopback;
+#[path = "dn_skipname.rs"]
+mod dn_skipname;
 #[path = "inet_address.rs"]
 mod inet_address;
 #[path = "inet_ntoa.rs"]
