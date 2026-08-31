@@ -3,7 +3,9 @@
 //! This target root owns one dependency-free `libc.a` artifact containing the
 //! independently evidenced metadata and credential verticals alongside the x86
 //! bulk-memory, floating-environment, continuation, binary32/binary64/x87
-//! classification/sign, complex accessor/conjugation/projection, hardware
+//! classification/sign, complex accessor/conjugation, the complete private
+//! `math.complex` magnitude/phase/projection/power/root/transcendental block,
+//! hardware
 //! square root, binary32/binary64 bit-sign masks, binary32/binary64 extrema,
 //! binary32/binary64 truncation, selected fenv-sensitive rounding,
 //! and one selected x87 binary80 extended-math block as real C bootstrap
@@ -215,8 +217,8 @@ mod random_entropy;
 mod fenv;
 #[path = "math_complex.rs"]
 mod math_complex;
-#[path = "complex_projection.rs"]
-mod complex_projection;
+#[path = "math_complex_complete.rs"]
+mod math_complex_complete;
 #[path = "elementary_sqrt.rs"]
 mod elementary_sqrt;
 #[path = "fenv_rounding.rs"]

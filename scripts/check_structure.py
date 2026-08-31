@@ -135,7 +135,8 @@ X86_RUNTIME_FOUNDATION_LDSO_SOURCES = {
 # descriptor creation, nanosleep, and clock_nanosleep, descriptor entry, selected
 # filesystem access, bounded fcntl
 # status control, bounded generic ioctl, and the basic x87 classification/sign,
-# complex accessor/conjugation/projection, hardware square root, binary32/
+# complex accessor/conjugation plus the complete private math.complex
+# capability, hardware square root, binary32/
 # binary64 extrema, binary32/binary64 truncation, selected fenv-sensitive
 # rounding, and binary80
 # elementary/remainder/conversion foundations.
@@ -176,6 +177,7 @@ X86_RUNTIME_FOUNDATION_LIBC_SOURCES = {
     Path("libc/src/c_abi/x86_64/intmax_arithmetic.rs"),
     Path("libc/src/c_abi/x86_64/math_complex.rs"),
     Path("libc/src/c_abi/x86_64/complex_projection.rs"),
+    Path("libc/src/c_abi/x86_64/math_complex_complete.rs"),
     Path("libc/src/c_abi/x86_64/elementary_sqrt.rs"),
     Path("libc/src/c_abi/x86_64/fenv_rounding.rs"),
     Path("libc/src/c_abi/x86_64/math_bit_sign.rs"),

@@ -281,8 +281,9 @@ retains SysV binary80 rather than narrowing through binary64. The
 project-header gate proves every C++ function-pointer spelling in SSE and x87
 modes, while the native differential compares 5,544 exact 32-byte records over
 all four rounding modes and same-address `__signgam`/`signgam` state. It does
-not select numeric parsing, either remaining elementary capability, complex
-math, or a general libc/libm. The enclosing family, x86-64 promotion, full
+not itself select numeric parsing, either remaining elementary capability,
+the separately selected complex capability, or a general libc/libm. The
+enclosing family, x86-64 promotion, full
 parity, and public support all remain planned.
 
 The following non-promoting `ldso-public-dlfcn` artifact exposes the seven
@@ -337,8 +338,23 @@ binary80 storage, and GNU `sincosl` pointer boundary. Its freestanding static
 differential compares 2,764 exact 40-byte records with pinned musl across all
 four rounding modes, retaining only the ten defined binary80 bytes and the
 x87/MXCSR exception state. This selects neither fenv-sensitive scalar math,
-numeric parsing, complex/general libm, family completion, x86 promotion, nor
-public support.
+numeric parsing, the separately selected complex capability/general libm,
+family completion, x86 promotion, nor public support.
+
+The separate `static-c-math-complex-complete` verified slice completes the
+exact private 66-symbol `math.complex` capability: nine prior
+`creal*`/`cimag*`/`conj*` foundation entries plus 57 source-faithful pinned-musl
+1.2.6 magnitude, phase, projection, power, root, logarithm, exponential, and
+circular/hyperbolic/inverse-complex entries. Its C++ gate ratchets every
+function-pointer spelling in default SSE and x87 modes, including the SysV
+16-byte binary80 and 32-byte long-complex ABI. Its freestanding differential
+compares 5,712 exact 64-byte records across all rounding modes, retaining the
+defined ten bytes of each binary80 component and exception state. Local musl
+scalar and LLVM compiler-rt complex-multiply support remains non-public; musl's
+five FIXME-marked long-complex wrappers retain their source-oracle binary64
+internals without narrowing any public binary80 boundary. It selects no
+elementary/fenv-sensitive/numeric-parsing capability, general libc/libm,
+family completion, x86 promotion, or public support.
 
 The x86 lane now has twenty-two private static artifacts inside still-planned
 `libc.pthread-tls`. `./scripts/dev-x86_64.sh libc-static-tls-v1` passes a

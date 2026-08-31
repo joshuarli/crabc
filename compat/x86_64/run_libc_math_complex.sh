@@ -57,9 +57,11 @@ for symbol in __fpclassify __fpclassifyf __fpclassifyl __signbit __signbitf \
 	cproj cprojf cprojl; do
 	grep -Eq "[[:space:]][TW][[:space:]]${symbol}$" "$archive_symbols" || fail "archive does not define $symbol"
 done
-# `sinl` is a selected shared long-double archive root; this foundation runner
-# still excludes only the unselected complex and binary32/binary64 siblings.
-for unselected in cabs cabsf cabsl carg cargf cargl cpow cpowf cpowl cexp cexpf cexpl sin sinf csin csinf csinl; do
+# The adjacent complete math.complex slice now owns the wider complex surface.
+# `sinl` is public under the separately selected math.elementary-long-double
+# capability, so this foundation gate rejects only the still-unselected
+# binary32/binary64 scalar providers.
+for unselected in sin sinf; do
 	if grep -Eq "[[:space:]][TW][[:space:]]${unselected}$" "$archive_symbols"; then
 		fail "archive accidentally exports unselected ${unselected}"
 	fi

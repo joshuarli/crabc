@@ -1,11 +1,11 @@
-# Closed crate-owned C ABI and private static-link symbols in the selected x86
-# archive.
 #
 # Artifact runners inspect only `c.*.rcgu.o` members, so compiler-builtins
+# Closed crate-owned C ABI and private static-link symbols in the selected x86
 # archive support does not appear here. Keep this ASCII-sorted and update it
-# with every deliberate selected boundary; the runners fail on drift. The
-# hidden `__crabc_x86_static_tls_bootstrap` name is private fixture/runtime
+# archive.
 # glue, uninstalled and not a stable public C API.
+# hidden `__crabc_x86_static_tls_bootstrap` name is private fixture/runtime
+# with every deliberate selected boundary; the runners fail on drift. The
 _Exit
 ___environ
 __crabc_x86_fixed_graph_dlfcn_record
@@ -90,12 +90,45 @@ bind_textdomain_codeset
 bindtextdomain
 bsearch
 btowc
+cabs
+cabsf
+cabsl
+cacos
+cacosf
+cacosh
+cacoshf
+cacoshl
+cacosl
 call_once
+carg
+cargf
+cargl
+casin
+casinf
+casinh
+casinhf
+casinhl
+casinl
+catan
+catanf
+catanh
+catanhf
+catanhl
+catanl
 catclose
 catgets
 catopen
 cbrtl
+ccos
+ccosf
+ccosh
+ccoshf
+ccoshl
+ccosl
 ceill
+cexp
+cexpf
+cexpl
 cfgetispeed
 cfgetospeed
 cfmakeraw
@@ -113,6 +146,9 @@ clock
 clock_getres
 clock_gettime
 clock_nanosleep
+clog
+clogf
+clogl
 close
 closedir
 cnd_broadcast
@@ -130,6 +166,9 @@ copysignf
 copysignl
 coshl
 cosl
+cpow
+cpowf
+cpowl
 cproj
 cprojf
 cprojl
@@ -137,6 +176,21 @@ creal
 crealf
 creall
 creat
+csin
+csinf
+csinh
+csinhf
+csinhl
+csinl
+csqrt
+csqrtf
+csqrtl
+ctan
+ctanf
+ctanh
+ctanhf
+ctanhl
+ctanl
 ctermid
 dcgettext
 dcngettext

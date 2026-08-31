@@ -1564,6 +1564,20 @@ MATH_ELEMENTARY_LONG_DOUBLE_SYMBOLS = (
     "tanl",
     "truncl",
 )
+
+MATH_COMPLEX_COMPLETE_SYMBOLS = (
+    "cabs", "cabsf", "cabsl", "cacos", "cacosf", "cacosh", "cacoshf",
+    "cacoshl", "cacosl", "carg", "cargf", "cargl", "casin", "casinf",
+    "casinh", "casinhf", "casinhl", "casinl", "catan", "catanf",
+    "catanh", "catanhf", "catanhl", "catanl", "ccos", "ccosf", "ccosh",
+    "ccoshf", "ccoshl", "ccosl", "cexp", "cexpf", "cexpl", "cimag",
+    "cimagf", "cimagl", "clog", "clogf", "clogl", "conj", "conjf",
+    "conjl", "cpow", "cpowf", "cpowl", "cproj", "cprojf", "cprojl",
+    "creal", "crealf", "creall", "csin", "csinf", "csinh", "csinhf",
+    "csinhl", "csinl", "csqrt", "csqrtf", "csqrtl", "ctan", "ctanf",
+    "ctanh", "ctanhf", "ctanhl", "ctanl",
+)
+
 MATH_SPECIAL_SYMBOLS = (
     "__fpclassify", "__fpclassifyf", "__fpclassifyl", "__lgammal_r",
     "__signbit", "__signbitf", "__signbitl", "drem", "dremf", "erf",
@@ -23353,21 +23367,19 @@ def require_math_complex_foundation_artifact(family: Mapping[str, Any]) -> None:
     artifact = matching[0]
     description = artifact["description"]
     assert isinstance(description, str)
-    for symbol in MATH_COMPLEX_FOUNDATION_SYMBOLS + COMPLEX_PROJECTION_SYMBOLS:
+    for symbol in MATH_COMPLEX_FOUNDATION_SYMBOLS:
         require(
             symbol in description,
             f"static-c-math-complex-foundation description omits {symbol}",
         )
     for phrase in (
-        "long-double/complex projection foundation",
+        "long-double/complex foundation",
         "x87",
         "scalar math",
-        "cabs/carg",
-        "complex powers and transcendentals",
+        "adjacent complete capability slice",
+        "wider complex algorithms",
         "libm",
         "libc.so",
-        "family completion",
-        "promotion",
         "public x86 support",
     ):
         require(
@@ -23381,7 +23393,6 @@ def require_math_complex_foundation_artifact(family: Mapping[str, Any]) -> None:
     for owner in (
         "libc/src/c_abi/x86_64/static_c_abi.rs",
         "libc/src/c_abi/x86_64/math_complex.rs",
-        "libc/src/c_abi/x86_64/complex_projection.rs",
         "include/complex.h",
         "include/float.h",
         "include/math.h",
@@ -23426,8 +23437,7 @@ def require_math_complex_foundation_artifact(family: Mapping[str, Any]) -> None:
             and "__signbitf.c" in item
             and "__signbitl.c" in item
             and "src/complex/" in item
-            and "cprojf" in item
-            and "AArch64's complex_basic_exports.rs" in item
+            and "AArch64 binary128" in item
             for item in abi_prerequisites
         ),
         "static-c-math-complex-foundation must record its pinned-musl and target boundary",
@@ -23462,10 +23472,6 @@ def require_math_complex_foundation_artifact(family: Mapping[str, Any]) -> None:
         '#[path = "math_complex.rs"]\nmod math_complex;' in static_root,
         "x86 static C ABI must compose the math_complex leaf",
     )
-    require(
-        '#[path = "complex_projection.rs"]\nmod complex_projection;' in static_root,
-        "x86 static C ABI must compose the complex_projection leaf",
-    )
     implementation = (ROOT / "libc" / "src" / "c_abi" / "x86_64" / "math_complex.rs").read_text(
         encoding="utf-8"
     )
@@ -23479,16 +23485,6 @@ def require_math_complex_foundation_artifact(family: Mapping[str, Any]) -> None:
             instruction in implementation,
             f"math_complex leaf omits its required {instruction} ABI operation",
         )
-    projection = (
-        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "complex_projection.rs"
-    ).read_text(encoding="utf-8")
-    for symbol in COMPLEX_PROJECTION_SYMBOLS:
-        require(
-            f".global {symbol}" in projection,
-            f"complex_projection leaf omits {symbol}",
-        )
-    for snippet in ("complex_basic_exports.rs", "fldz", "fld tbyte ptr", "public x86 support"):
-        require(snippet in projection, f"complex_projection leaf omits {snippet}")
 
     exports = [
         line
@@ -23501,7 +23497,7 @@ def require_math_complex_foundation_artifact(family: Mapping[str, Any]) -> None:
         exports == sorted(exports),
         "static C ABI export contract must remain ASCII-sorted",
     )
-    for symbol in MATH_COMPLEX_FOUNDATION_SYMBOLS + COMPLEX_PROJECTION_SYMBOLS:
+    for symbol in MATH_COMPLEX_FOUNDATION_SYMBOLS:
         require(
             symbol in exports,
             f"static C ABI export contract omits {symbol}",
@@ -23513,13 +23509,11 @@ def require_math_complex_foundation_artifact(family: Mapping[str, Any]) -> None:
     for snippet in (
         "-nostdlib -static",
         "--no-undefined",
-        "--gc-sections",
         "fldt",
-        "fldz",
         "fchs",
-        "cabs",
-        "carg",
-        "cproj",
+        "for unselected in sin sinf",
+        "adjacent complete math.complex slice",
+        "`sinl` is public under the separately selected math.elementary-long-double",
         "libm",
     ):
         require(
@@ -24207,6 +24201,7 @@ def require_math_special_slice(family: Mapping[str, Any]) -> None:
         "5,544 exact 32-byte records",
         "defined ten binary80 bytes",
         "private local musl elementary providers",
+        "separately selected `powl`/`roundl`/`sinl`",
         "family completion",
         "public support remain false",
     ):
@@ -24300,6 +24295,294 @@ def require_math_special_slice(family: Mapping[str, Any]) -> None:
         "run_libc_math_special_probe()",
         "/workspace/compat/x86_64/run_libc_math_special.sh",
         "libc-math-special)",
+    ):
+        require(snippet in dispatcher, f"x86 dispatcher omits {snippet}")
+
+
+def require_math_complex_complete_slice(family: Mapping[str, Any]) -> None:
+    """Pin the complete selected math.complex source and evidence contract."""
+    slices = require_verified_slices(
+        family.get("verified_slice"),
+        "family[libc.text-math-locale-stdio].verified_slice",
+        family.get("status", ""),
+        family.get("capabilities", []),
+    )
+    matching = [
+        entry for entry in slices
+        if entry.get("id") == "static-c-math-complex-complete"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.text-math-locale-stdio must contain exactly one static-c-math-complex-complete slice",
+    )
+    artifact = matching[0]
+    require(
+        artifact.get("capabilities") == ["math.complex"],
+        "static-c-math-complex-complete must select exactly math.complex",
+    )
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for phrase in (
+        "Complete private native x86 `math.complex` capability",
+        "nine already evidenced",
+        "57 new pinned-musl entries",
+        "GCC 15.2.0 PIC source translation",
+        "16-byte binary80/32-byte complex ABI",
+        "internally narrow through binary64",
+        "does not select numeric parsing",
+        "family completion",
+        "promotion",
+        "public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"static-c-math-complex-complete description omits {phrase}",
+        )
+
+    owners = nonempty_strings(
+        artifact["source_owners"], "static-c-math-complex-complete.source_owners"
+    )
+    for owner in (
+        "compat/crabc-rs/coverage.toml",
+        "docker/Dockerfile.x86_64",
+        "builtins/UPSTREAM.md",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/math_complex.rs",
+        "libc/src/c_abi/x86_64/math_complex_complete.rs",
+        "libc/src/c_abi/x86_64/math_complex_complete_musl_x86_64.S",
+        "compat/x86_64/complex_mul_support.c",
+        "compat/x86_64/generate_libc_math_complex_complete.py",
+        "compat/x86_64/math_complex_complete_header_abi_probe.cpp",
+        "compat/x86_64/run_math_complex_complete_header_abi.sh",
+        "compat/x86_64/libc_math_complex_complete_probe.c",
+        "compat/x86_64/libc_math_complex_complete_start.S",
+        "compat/x86_64/run_libc_math_complex_complete.sh",
+        "compat/x86_64/run_libc_text_math_locale_stdio_composition.sh",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/README.md",
+        "STATUS.md",
+        "x86-64.md",
+        "scripts/check_structure.py",
+        "scripts/dev-x86_64.sh",
+    ):
+        require(owner in owners, f"static-c-math-complex-complete omits {owner}")
+
+    abi_prerequisites = nonempty_strings(
+        artifact["x86_abi_prerequisites"],
+        "static-c-math-complex-complete.x86_abi_prerequisites",
+    )
+    for snippets, message in (
+        (("66 symbols", "Nine", "57"), "closed capability surface"),
+        (("xmm0", "xmm1", "st0/st1", "32-byte"), "SysV complex ABI"),
+        (("normalized 1.2.6 source-tree digest", "GCC 15.2.0", "PIC"), "source translation"),
+        (("mulsc3.c", "muldc3.c", "mulxc3.c", "localized"), "compiler helpers"),
+        (("ccoshl", "cexpl", "csinhl", "csqrtl", "ctanhl", "binary64"), "musl long wrappers"),
+    ):
+        require(
+            any(all(snippet in item for snippet in snippets) for item in abi_prerequisites),
+            f"static-c-math-complex-complete must record its {message}",
+        )
+
+    header_prerequisites = nonempty_strings(
+        artifact["x86_header_prerequisites"],
+        "static-c-math-complex-complete.x86_header_prerequisites",
+    )
+    require(
+        any(
+            "C++17" in item and "all 66" in item and "-mfpmath=387" in item
+            and "32-byte" in item
+            for item in header_prerequisites
+        ),
+        "static-c-math-complex-complete must record its complete C++ ABI gate",
+    )
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-math-complex-complete"},
+        "static-c-math-complex-complete must use the closed libc-math-complex-complete command",
+    )
+    scope = evidence[0]["scope"]
+    assert isinstance(scope, str)
+    for phrase in (
+        "all 66 capability symbols",
+        "5,712 exact 64-byte records",
+        "defined ten bytes of each binary80 component",
+        "local musl scalar and LLVM complex-multiply providers",
+        "family completion",
+        "public support remain false",
+    ):
+        require(
+            phrase in scope,
+            f"static-c-math-complex-complete evidence omits {phrase}",
+        )
+
+    static_root = (ROOT / "libc/src/c_abi/x86_64/static_c_abi.rs").read_text(
+        encoding="utf-8"
+    )
+    require(
+        '#[path = "math_complex_complete.rs"]\nmod math_complex_complete;' in static_root,
+        "x86 static C ABI must compose the math_complex_complete leaf",
+    )
+    rust_leaf = (ROOT / "libc/src/c_abi/x86_64/math_complex_complete.rs").read_text(
+        encoding="utf-8"
+    )
+    for snippet in (
+        "Complete private static Linux/x86-64 `math.complex` C ABI leaf",
+        "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+        "d585fd3b613c66151fc3249e8ed44f77020cb5e6c1e635a616d3f9f82460512a",
+        'include_str!("math_complex_complete_musl_x86_64.S")',
+        "FIXME-marked wrappers",
+        "corresponding binary64 complex functions",
+        "LLVM compiler-rt",
+    ):
+        require(snippet in rust_leaf, f"math_complex_complete leaf omits {snippet}")
+
+    generator = (
+        ROOT / "compat/x86_64/generate_libc_math_complex_complete.py"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "2ebc86943f5cdac77729695b304a08f6308e7a218f9d484cec5675006b207d88",
+        '"src/complex/__cexp.c"',
+        '"src/complex/cacoshl.c"',
+        '"src/complex/cpowl.c"',
+        '"src/complex/ctanl.c"',
+        '"src/math/__rem_pio2_large.c"',
+        '"15.2.0"',
+        '"-fPIC"',
+        "retained_notices",
+        "crabc_x86_math_complex_elementary_",
+        "crabc_x86_math_complex_internal_",
+    ):
+        require(snippet in generator, f"math-complex-complete generator omits {snippet}")
+
+    support = (ROOT / "compat/x86_64/complex_mul_support.c").read_text(encoding="utf-8")
+    for snippet in (
+        "LLVM compiler-rt 22.1.3",
+        "SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception",
+        "DEFINE_COMPLEX_MULTIPLY(__mulsc3",
+        "DEFINE_COMPLEX_MULTIPLY(__muldc3",
+        "DEFINE_COMPLEX_MULTIPLY(__mulxc3",
+    ):
+        require(snippet in support, f"complex multiply support omits {snippet}")
+
+    builtins_upstream = (ROOT / "builtins/UPSTREAM.md").read_text(encoding="utf-8")
+    for snippet in (
+        "x86 private `math.complex` `__mulsc3`/`__muldc3`/`__mulxc3` support",
+        "lib/builtins/{mulsc3,muldc3,mulxc3}.c",
+        "does not link a compiler-runtime archive",
+    ):
+        require(
+            snippet in builtins_upstream,
+            f"math-complex-complete builtins provenance omits {snippet}",
+        )
+
+    assembly = (
+        ROOT / "libc/src/c_abi/x86_64/math_complex_complete_musl_x86_64.S"
+    ).read_text(encoding="utf-8")
+    for notice in (
+        "David Schultz",
+        "Stephen L. Moshier",
+        "Bruce D. Evans and Steven G. Kargl",
+        "Apache-2.0 WITH LLVM-exception",
+        "musl's MIT license",
+    ):
+        require(
+            notice in assembly,
+            f"generated math-complex-complete assembly omits {notice} provenance",
+        )
+    for symbol in set(MATH_COMPLEX_COMPLETE_SYMBOLS) - set(MATH_COMPLEX_FOUNDATION_SYMBOLS):
+        require(
+            f"\t.globl\t{symbol}\n" in assembly,
+            f"generated math-complex-complete assembly omits {symbol}",
+        )
+    for helper in (
+        "crabc_x86_math_complex_elementary_sin",
+        "crabc_x86_math_complex_elementary_scalbn",
+        "crabc_x86_math_complex_elementary_hypotl",
+        "crabc_x86_math_complex_internal_rem_pio2",
+        "crabc_x86_math_complex_internal_mulxc3",
+    ):
+        require(
+            f"\t.local\t{helper}\n" in assembly,
+            f"generated math-complex-complete assembly omits local {helper}",
+        )
+        require(
+            f"\t.globl\t{helper}\n" not in assembly,
+            f"generated math-complex-complete assembly exposes {helper}",
+        )
+
+    exports = [
+        line for line in (ROOT / "compat/x86_64/static_c_abi_exports.txt")
+        .read_text(encoding="utf-8").splitlines()
+        if line and not line.startswith("#")
+    ]
+    require(exports == sorted(exports), "static C ABI export contract must remain ASCII-sorted")
+    for symbol in MATH_COMPLEX_COMPLETE_SYMBOLS:
+        require(symbol in exports, f"static C ABI export contract omits {symbol}")
+
+    header_probe = (
+        ROOT / "compat/x86_64/math_complex_complete_header_abi_probe.cpp"
+    ).read_text(encoding="utf-8")
+    header_runner = (
+        ROOT / "compat/x86_64/run_math_complex_complete_header_abi.sh"
+    ).read_text(encoding="utf-8")
+    runtime_probe = (
+        ROOT / "compat/x86_64/libc_math_complex_complete_probe.c"
+    ).read_text(encoding="utf-8")
+    for symbol in MATH_COMPLEX_COMPLETE_SYMBOLS:
+        require(
+            f", {symbol});" in header_probe,
+            f"math-complex-complete C++ header probe omits typed {symbol}",
+        )
+        require(
+            symbol in header_runner,
+            f"math-complex-complete header runner omits {symbol}",
+        )
+        require(
+            f"direct_{symbol}" in runtime_probe,
+            f"math-complex-complete runtime probe omits direct {symbol}",
+        )
+
+    runner = (ROOT / "compat/x86_64/run_libc_math_complex_complete.sh").read_text(
+        encoding="utf-8"
+    )
+    for snippet in (
+        "EXPECTED_RECORDS=5712",
+        "RECORD_SIZE=64",
+        "--no-undefined",
+        "--gc-sections",
+        "run_math_complex_complete_header_abi.sh",
+        "elementary_sin elementary_scalbn elementary_hypotl internal_rem_pio2 internal_mulxc3",
+        "atan atan2 atan2f atanf cos cosf",
+        "math.elementary-long-double capability",
+        "`fabs`/`fabsf`/`copysign`/`copysignf`",
+        "`sqrt`/`sqrtf`",
+        "`copysignl`/`hypotl`",
+        "float_parse|math_special|libm",
+        "fldt fstpt fxch mulsd mulss",
+        "candidate complete math.complex record stream differs from pinned musl",
+    ):
+        require(snippet in runner, f"libc-math-complex-complete runner omits {snippet}")
+
+    composition = (
+        ROOT / "compat/x86_64/run_libc_text_math_locale_stdio_composition.sh"
+    ).read_text(encoding="utf-8")
+    require(
+        "run_math_complex_complete_header_abi.sh" in composition,
+        "text/math/locale/stdio composition omits complete math.complex header gate",
+    )
+    dispatcher = (ROOT / "scripts/dev-x86_64.sh").read_text(encoding="utf-8")
+    for snippet in (
+        "run_math_complex_complete_header_abi()",
+        "/workspace/compat/x86_64/run_math_complex_complete_header_abi.sh",
+        "math-complex-complete-header-abi)",
+        "run_libc_math_complex_complete_probe()",
+        "/workspace/compat/x86_64/run_libc_math_complex_complete.sh",
+        "libc-math-complex-complete)",
     ):
         require(snippet in dispatcher, f"x86 dispatcher omits {snippet}")
 
@@ -28552,6 +28835,7 @@ def validate_ledger(
     require_math_trunc_artifact(by_id["libc.text-math-locale-stdio"])
     require_math_x87_extended_artifact(by_id["libc.text-math-locale-stdio"])
     require_math_special_slice(by_id["libc.text-math-locale-stdio"])
+    require_math_complex_complete_slice(by_id["libc.text-math-locale-stdio"])
     require_math_elementary_long_double_slice(by_id["libc.text-math-locale-stdio"])
     require_named_locale_multibyte_artifact(by_id["libc.text-math-locale-stdio"])
     require_locale_profile_slice(by_id["libc.text-math-locale-stdio"])

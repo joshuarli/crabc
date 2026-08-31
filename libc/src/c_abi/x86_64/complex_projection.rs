@@ -1,4 +1,10 @@
-//! Selected static Linux/x86-64 C99 complex-projection ABI leaf.
+//! Legacy Linux/x86-64 C99 complex-projection ABI source.
+//!
+//! The active static root now obtains `cproj*` from the complete
+//! `math_complex_complete.rs` source-faithful musl translation. This retained
+//! narrow implementation documents the prior focused projection proof but is
+//! intentionally not compiled alongside that complete leaf, which would
+//! duplicate the public C ABI symbols.
 //!
 //! This target-private leaf maps pinned musl 1.2.6 commit
 //! `9fa28ece75d8a2191de7c5bb53bed224c5947417`

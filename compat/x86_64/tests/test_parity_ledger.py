@@ -3680,7 +3680,6 @@ class X86ParityLedgerTests(unittest.TestCase):
         for owner in (
             "libc/src/c_abi/x86_64/static_c_abi.rs",
             "libc/src/c_abi/x86_64/math_complex.rs",
-            "libc/src/c_abi/x86_64/complex_projection.rs",
             "include/complex.h",
             "include/float.h",
             "include/math.h",
@@ -3698,18 +3697,15 @@ class X86ParityLedgerTests(unittest.TestCase):
             {"./scripts/dev-x86_64.sh libc-math-complex"},
         )
         for phrase in (
-            "long-double/complex projection foundation",
+            "long-double/complex foundation",
             "__fpclassify",
             "__fpclassifyf",
             "__fpclassifyl",
             "__signbit",
             "__signbitf",
             "__signbitl",
-            "cproj",
-            "cprojf",
-            "cprojl",
-            "cabs/carg",
-            "complex powers and transcendentals",
+            "adjacent complete capability slice",
+            "wider complex algorithms",
             "public x86 support",
         ):
             self.assertIn(phrase, artifact["description"])
@@ -4030,6 +4026,11 @@ class X86ParityLedgerTests(unittest.TestCase):
             {evidence["command"] for evidence in artifact["native_evidence"]},
             {"./scripts/dev-x86_64.sh libc-math-special"},
         )
+        evidence = artifact["native_evidence"]
+        assert isinstance(evidence, list) and isinstance(evidence[0], dict)
+        self.assertIn(
+            "separately selected `powl`/`roundl`/`sinl`", evidence[0]["scope"]
+        )
         for owner in (
             "libc/src/c_abi/x86_64/math_special.rs",
             "libc/src/c_abi/x86_64/math_special_musl_x86_64.S",
@@ -4084,6 +4085,89 @@ class X86ParityLedgerTests(unittest.TestCase):
         )
         with self.assertRaisesRegex(ledger.LedgerError, "closed libc-math-special command"):
             ledger.validate_ledger(changed)
+
+    def test_math_complex_is_one_complete_private_capability_slice(self) -> None:
+        data = self.data()
+        text_math = self.family(data, "libc.text-math-locale-stdio")
+        self.assertEqual(text_math["status"], "planned")
+        slices = text_math["verified_slice"]
+        assert isinstance(slices, list)
+        artifact = next(
+            entry
+            for entry in slices
+            if isinstance(entry, dict)
+            and entry["id"] == "static-c-math-complex-complete"
+        )
+        self.assertEqual(artifact["capabilities"], ["math.complex"])
+        self.assertEqual(
+            {evidence["command"] for evidence in artifact["native_evidence"]},
+            {"./scripts/dev-x86_64.sh libc-math-complex-complete"},
+        )
+        for owner in (
+            "libc/src/c_abi/x86_64/math_complex_complete.rs",
+            "libc/src/c_abi/x86_64/math_complex_complete_musl_x86_64.S",
+            "compat/x86_64/complex_mul_support.c",
+            "compat/x86_64/generate_libc_math_complex_complete.py",
+            "compat/x86_64/math_complex_complete_header_abi_probe.cpp",
+            "compat/x86_64/run_math_complex_complete_header_abi.sh",
+            "compat/x86_64/libc_math_complex_complete_probe.c",
+            "compat/x86_64/libc_math_complex_complete_start.S",
+            "compat/x86_64/run_libc_math_complex_complete.sh",
+        ):
+            self.assertIn(owner, artifact["source_owners"])
+        for phrase in (
+            "Complete private native x86 `math.complex` capability",
+            "nine already evidenced",
+            "57 new pinned-musl entries",
+            "16-byte binary80/32-byte complex ABI",
+            "internally narrow through binary64",
+            "does not select numeric parsing",
+            "family completion",
+            "promotion",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, artifact["description"])
+
+        changed = self.data()
+        changed_slices = self.family(changed, "libc.text-math-locale-stdio")[
+            "verified_slice"
+        ]
+        assert isinstance(changed_slices, list)
+        changed_artifact = next(
+            entry
+            for entry in changed_slices
+            if isinstance(entry, dict)
+            and entry["id"] == "static-c-math-complex-complete"
+        )
+        changed_artifact["description"] = changed_artifact["description"].replace(
+            "16-byte binary80/32-byte complex ABI", "ordinary complex ABI"
+        )
+        with self.assertRaisesRegex(
+            ledger.LedgerError,
+            "static-c-math-complex-complete description omits 16-byte binary80/32-byte complex ABI",
+        ):
+            ledger.validate_ledger(changed)
+
+        changed = self.data()
+        changed_slices = self.family(changed, "libc.text-math-locale-stdio")[
+            "verified_slice"
+        ]
+        assert isinstance(changed_slices, list)
+        changed_artifact = next(
+            entry
+            for entry in changed_slices
+            if isinstance(entry, dict)
+            and entry["id"] == "static-c-math-complex-complete"
+        )
+        changed_artifact["native_evidence"][0]["command"] = (
+            "./scripts/dev-x86_64.sh libc-math-complex"
+        )
+        with self.assertRaisesRegex(
+            ledger.LedgerError,
+            "closed libc-math-complex-complete command",
+        ):
+            ledger.validate_ledger(changed)
+
 
     def test_math_elementary_long_double_is_one_complete_private_capability_slice(
         self,

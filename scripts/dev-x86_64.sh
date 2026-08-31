@@ -19,8 +19,8 @@
 # byte strings, startup-published program names and option parsing, random
 # entropy, memory search, C-string copy, fixed-C-locale
 # ctype, named C/POSIX/C.UTF-8 locale/multibyte conversion, integer arithmetic, integer parsing, source-faithful C-locale binary32/binary64/x87 floating parsing, intmax arithmetic, credential
-# observation, find-first-set, the x87 long-double/complex projection
-# foundation, exact square root and selected fenv-sensitive rounding, a
+# observation, find-first-set, the complete private math.complex capability,
+# exact square root and selected fenv-sensitive rounding, a
 # selected binary80 elementary/remainder/conversion block, and the complete
 # private math.special capability);
 # it does not select a general libc, ldso artifact, CRT, sysroot, or allocator
@@ -58,6 +58,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   xattr-header-abi  verify selected direct sys/xattr.h C/C++ ABI profiles and C linkage
   header-abi-project  compile the staged crabc x86 fenv/float header slice
   math-complex-header-abi  verify x86 math/complex/tgmath C/C++ header semantics
+  math-complex-complete-header-abi  verify complete x86 math.complex C++ ABI/linkage
   math-elementary-long-double-header-abi  verify complete x86 math.elementary-long-double C++ ABI/linkage
   math-special-header-abi  verify complete x86 math.special C++ ABI/linkage
   sys-reg-header-abi  compile the staged crabc x86 ptrace-register header slice
@@ -354,6 +355,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-foundation  run the source-only x86 C runtime primitive-composition probe
   libc-fenv  run the source-only x86 C x87/MXCSR floating-point-environment probe
   libc-math-complex  run the static x86 long-double/complex ABI foundation
+  libc-math-complex-complete  run the complete static x86 math.complex capability
   libc-elementary-sqrt-fenv  run the static x86 sqrt/sqrtf/sqrtl fenv-sensitive slice
   libc-fenv-rounding  run the static x86 rint/nearbyint fenv-sensitive slice
   libc-math-minmax  run the static x86 fmax/fmin minmax slice
@@ -803,6 +805,11 @@ type declarations and does not link an x86 libc artifact.
 consumers in SSE and x87 modes, then checks C++ references retain unmangled C
 linkage. It proves only the named math/complex/tgmath header semantics; both
 C consumers intentionally link pinned musl's math runtime, not crabc-libc.
+`math-complex-complete-header-abi` type-checks all 66 `math.complex` function
+addresses against project headers and pinned musl in SSE and x87 modes,
+including 16-byte binary80 and 32-byte complex-binary80 storage. It is a
+declaration/linkage gate; the separate complete static differential owns
+runtime behavior.
 `math-elementary-long-double-header-abi` type-checks all 35 exact
 `math.elementary-long-double` function addresses against project headers and
 pinned musl in SSE and x87 modes. It ratchets the SysV 16-byte binary80
@@ -1515,10 +1522,17 @@ selected archive use is limited to `libc-bootstrap-primitives`, not general
 x86 C support.
 `libc-math-complex` links one freestanding project-header C fixture against
 the selected static archive after an equivalent pinned-musl run. It selects
-only x87 long-double classification/sign and C99 real/imaginary accessor,
-conjugation, and projection ABI symbols; scalar math, cabs/carg, complex powers or
-transcendentals, libm, libc.so, CRT/TLS lifecycle, loader, sysroot, and public
-x86 support remain outside the artifact.
+only x87 long-double classification/sign and the nine C99 real/imaginary
+accessor plus conjugation foundation symbols. The adjacent
+`libc-math-complex-complete` capability gate composes those entries with the
+remaining 57 complex functions; this foundation still does not independently
+select scalar math, libm, libc.so, CRT/TLS lifecycle, loader, sysroot, or
+public x86 support.
+`libc-math-complex-complete` proves the exact 66-symbol `math.complex`
+capability through project headers, a closed static archive, and 5,712 exact
+pinned-musl differential records. Private scalar and compiler-complex helpers
+remain local, and every long-complex public boundary retains the SysV
+binary80 ABI. It does not select an elementary capability or public support.
 `libc-elementary-sqrt-fenv` links a separate freestanding project-header C
 fixture against that archive after an equivalent pinned-musl run. It selects
 exactly `sqrt`, `sqrtf`, and x87 binary80 `sqrtl`, including their distinct
@@ -1873,6 +1887,10 @@ run_header_abi_project() {
 
 run_math_complex_header_abi() {
     run_in_container bash /workspace/compat/x86_64/run_math_complex_header_abi.sh
+}
+
+run_math_complex_complete_header_abi() {
+    run_in_container bash /workspace/compat/x86_64/run_math_complex_complete_header_abi.sh
 }
 
 run_math_elementary_long_double_header_abi() {
@@ -3220,6 +3238,10 @@ run_libc_math_complex_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_math_complex.sh
 }
 
+run_libc_math_complex_complete_probe() {
+    run_in_container bash /workspace/compat/x86_64/run_libc_math_complex_complete.sh
+}
+
 run_libc_elementary_sqrt_fenv_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_elementary_sqrt_fenv.sh
 }
@@ -3342,6 +3364,7 @@ case "$command" in
     libc-timerfd|libc-signalfd|libc-sigpause) ;;
     ctermid-header-abi|getpass-header-abi|libc-ctermid|libc-getpass|mktemp-header-abi|libc-mktemp) ;;
     stdio-permanent-line-io-header-abi) ;;
+    math-complex-complete-header-abi|libc-math-complex-complete) ;;
     image|musl-oracle|header-abi-reference|public-header-surface|header-abi-project|math-complex-header-abi|sys-reg-header-abi|types-header-abi|stat-header-abi|utime-header-abi|pthread-c11-header-abi|pthread-cancellation-header-abi|stdlib-header-abi|stdio-standard-header-abi|time-header-abi|poll-header-abi|select-header-abi|fcntl-header-abi|descriptor-advice-header-abi|filesystem-capacity-header-abi|flock-header-abi|sendfile-header-abi|ioctl-header-abi|unistd-header-abi|system-header-abi|syscall-header-abi|signal-header-abi|termios-header-abi|mman-header-abi|resource-header-abi|socket-header-abi|socket-messages-header-abi|random-entropy-header-abi|mm-abi-reference|mapping-reference|memory-vm-reference|pty-basic-reference|terminal-reference|mlock-reference|msync-reference|mincore-reference|fs-advice-reference|memfd-reference|ftruncate-reference|statfs-reference|timestamp-reference|path-lifecycle-reference|namespace-reference|path-core-reference|xattr-reference|directory-reference|temporary-object-reference|statx-reference|cwd-canonicalize-reference|root-change-reference|mount-reference|thread-kill-reference|ipc-reference|shm-reference|inotify-reference|socket-transport-reference|interface-device-reference|resolver-transport-reference|resolver-facade-reference|netdb-reference|users-databases-reference|posix-fallocate-reference|fallocate-reference|file-position-reference|sync-reference|syncfs-reference|sync-file-range-reference|rand-reference|time-abi-reference|time-observation-reference|calendar-time-reference|advanced-time-reference|relative-sleep-reference|clock-nanosleep-reference|getitimer-reference|setitimer-reference|timerfd-reference|pselect-reference|poll-reference|ppoll-reference|epoll-reference|process-identity-reference|child-ownership-reference|getgroups-reference|process-session-reference|pidfd-open-reference|fcntl-getlk-reference|fcntl-status-reference|flock-reference|sendfile-reference|copy-file-range-reference|scheduler-priority-bounds-reference|rr-interval-reference|sched-affinity-reference|sched-affinity-set-reference|priority-reference|setpriority-reference|rlimit-reference|rlimit-targeted-reference|setrlimit-reference|umask-reference|rusage-reference|times-reference|fstat-reference|statat-reference|getcwd-reference|readlinkat-reference|access-reference|system-reference|thread-reference|thread-credentials-reference|fs-credentials-reference|core|facade|facade-record-owning|libc-syscall|libc-errno-tls|libc-stat-compat|libc-credentials|libc-bootstrap-primitives|libc-signal-control|libc-signal-execution|libc-static-tls-v1|libc-crt-static-tls|libc-pthread-create-join-tls|libc-c11-lifecycle|libc-c11-plain-sync|libc-pthread-c11-once|libc-pthread-c11-tsd|libc-pthread-tls-aggregate|libc-pthread-cancel-deferred|libc-pthread-atfork|libc-thrd-sleep|libc-pthread-mutex-normal|libc-pthread-rwlock|libc-pthread-cond-private|libc-termios-control|libc-process-context|libc-environment|libc-descriptor-io|libc-descriptor-lifecycle|libc-timestamp-updates|libc-process-resources|libc-socket-transport|libc-socket-messages|libc-thread-pointer|libc-foundation|libc-fenv|libc-math-complex|libc-elementary-sqrt-fenv|libc-math-x87-extended|libc-memory|libc-setjmp|libc-atomic|libc-clone-raw|libc-signal-altstack|libc-signal-foundation|ldso-relocation|ldso-image|ldso-initial-graph|ldso-initial-tls|ldso-initial-exec-tls|ldso-owned-crt-handoff|ldso-fixed-graph-introspection|ldso-dynamic-admission) ;;
     math-elementary-long-double-header-abi|libc-math-elementary-long-double) ;;
     ldso-fixed-graph-dlfcn) ;;
@@ -3517,6 +3540,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "math-complex-header-abi takes no arguments"
         ensure_image
         run_math_complex_header_abi
+        ;;
+    math-complex-complete-header-abi)
+        [ "$#" -eq 0 ] || fail "math-complex-complete-header-abi takes no arguments"
+        ensure_image
+        run_math_complex_complete_header_abi
         ;;
     math-elementary-long-double-header-abi)
         [ "$#" -eq 0 ] || fail "math-elementary-long-double-header-abi takes no arguments"
@@ -5021,6 +5049,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "libc-math-complex takes no arguments"
         ensure_image
         run_libc_math_complex_probe
+        ;;
+    libc-math-complex-complete)
+        [ "$#" -eq 0 ] || fail "libc-math-complex-complete takes no arguments"
+        ensure_image
+        run_libc_math_complex_complete_probe
         ;;
     libc-elementary-sqrt-fenv)
         [ "$#" -eq 0 ] || fail "libc-elementary-sqrt-fenv takes no arguments"

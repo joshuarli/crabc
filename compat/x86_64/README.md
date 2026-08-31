@@ -230,6 +230,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh installed-header-tree-closure
 ./scripts/dev-x86_64.sh header-abi-project
 ./scripts/dev-x86_64.sh math-complex-header-abi
+./scripts/dev-x86_64.sh math-complex-complete-header-abi
 ./scripts/dev-x86_64.sh math-elementary-long-double-header-abi
 ./scripts/dev-x86_64.sh sys-reg-header-abi
 ./scripts/dev-x86_64.sh machine-context-header-abi
@@ -481,6 +482,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-foundation
 ./scripts/dev-x86_64.sh libc-fenv
 ./scripts/dev-x86_64.sh libc-math-complex
+./scripts/dev-x86_64.sh libc-math-complex-complete
 ./scripts/dev-x86_64.sh libc-elementary-sqrt-fenv
 ./scripts/dev-x86_64.sh libc-fenv-rounding
 ./scripts/dev-x86_64.sh libc-math-minmax
@@ -947,6 +949,14 @@ exact typed references for the selected 22-entry x87 long-double block, and
 unmangled C++ linkage for every named runtime symbol. Its C executables
 intentionally link pinned musl's math runtime, so it is header semantics
 only—not general math, `crabc-libc`, or public x86 support.
+
+`math-complex-complete-header-abi` is the declaration/linkage ratchet for the
+complete private 66-symbol `math.complex` capability. Its project-first and
+pinned-musl C++17 probes take every typed address in default SSE and
+`-mfpmath=387` modes, require unmangled C references, and ratchet the SysV
+8-byte/16-byte binary32/binary64 complex forms plus 16-byte binary80 and
+32-byte long-complex storage. It is header evidence only; the separate static
+differential owns result, exception, and source-oracle behavior.
 
 `math-elementary-long-double-header-abi` is the declaration/linkage ratchet
 for the exact 35-symbol private `math.elementary-long-double` capability. Its
@@ -3936,17 +3946,35 @@ leaf evidence; the same implementation is selected only through
 `static-c-math-complex-foundation` artifact. Its freestanding project-header C
 fixture runs first through pinned musl and then through one `-nostdlib -static`
 candidate archive. It selects exactly binary32/binary64/x87
-`__fpclassify*`/`__signbit*` plus the
-`creal*`/`cimag*`/`conj*`/`cproj*` ABI entries,
+`__fpclassify*`/`__signbit*` plus the `creal*`/`cimag*`/`conj*` ABI entries,
 proving zero/subnormal/normal/infinity/NaN and signed-zero classification plus
-float/double/long-double complex access, conjugation, and projection for
-ordinary, either-infinite-component, signed-imaginary-zero, and NaN-only
-inputs. The semantic rule maps AArch64's binary128
-`complex_basic_exports.rs`, while the binary80 ABI stays target-private. The
-gate rejects ambient `libm`, unselected `cabs*`/`carg*`, powers, and
-transcendentals. It is only a classification/sign and x87 long-double/complex
-projection foundation, not scalar/complex math completion, `libc.so`,
-CRT/TLS lifecycle, loader, sysroot, promotion, or public x86 support.
+float/double/long-double complex access and conjugation. The adjacent complete
+capability owns the broader complex exports; this foundation gate rejects
+ambient `libm` and scalar providers it does not own rather than attributing
+that surface to this artifact. It is only a classification/sign and x87
+long-double/complex foundation, not itself scalar/complex math completion,
+`libc.so`, CRT/TLS lifecycle, loader, sysroot, or public x86 support.
+
+`libc-math-complex-complete` is the complete private
+`static-c-math-complex-complete` capability slice. It composes the nine
+foundation `creal*`/`cimag*`/`conj*` entries with 57 checked pinned-musl 1.2.6
+entries for magnitude, phase, projection, powers, roots, logarithms,
+exponentials, and circular/hyperbolic/inverse complex functions. The generator
+pins the normalized source-tree digest and GCC 15.2.0 PIC translation, retains
+source notices, and localizes musl scalar plus LLVM compiler-rt
+complex-multiply support so it cannot become a public elementary dependency.
+
+The runner invokes the complete C++ header gate, ratchets all 66 capability
+exports and provider locality, and links a freestanding `-nostdlib -static
+--gc-sections` candidate. It compares 5,712 exact 64-byte records with pinned
+musl across all rounding modes, including result components, exception flags,
+binary32/binary64 payloads, and only the defined ten bytes of each binary80
+component. Every public long-complex boundary retains the SysV 16-byte binary80
+and 32-byte complex ABI. Musl's `ccoshl`, `cexpl`, `csinhl`, `csqrtl`, and
+`ctanhl` preserve their source-oracle internal binary64 wrappers without
+narrowing any public boundary. This selects only `math.complex`; elementary,
+fenv-sensitive, numeric-parsing, general libc/libm, family completion,
+promotion, full parity, and public support remain unselected or false.
 
 `libc-elementary-sqrt-fenv` is the separate non-promoting
 `static-c-elementary-sqrt-fenv` artifact inside still-planned
@@ -4807,7 +4835,7 @@ Apart from the narrowly named `libc-stat-compat`, `libc-credentials`,
 `libc-string-copy`, `libc-allocator-string-duplication`, `libc-error-strings`,
 `libc-locale-error-strings`, `libc-ctype`, `libc-integer-arithmetic`,
 `libc-integer-parse`, `libc-float-parse`, `libc-intmax-arithmetic`, `libc-credential-observation`,
-`libc-ffs`, `libc-math-complex`, `libc-elementary-sqrt-fenv`, and
+`libc-ffs`, `libc-math-complex`, `libc-math-complex-complete`, `libc-elementary-sqrt-fenv`, and
 `libc-fenv-rounding` static archive harnesses, and the separately scoped
 `static-pie` CRT gate, and the bounded `owned-static-sysroot` installed
 artifact gate, the lane owns no
