@@ -1435,6 +1435,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "libc-memory-sync",
             "libc-memory-locking",
             "libc-memfd-create",
+            "libc-legacy-memory",
             "libc-allocator-runtime",
             "libc-allocator-string-duplication",
             "libc-allocator-observability",
@@ -3088,6 +3089,14 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn('/workspace/compat/x86_64/run_libc_byte_strings.sh', source)
         self.assertIn(
             '    libc-byte-strings)\n        [ "$#" -eq 0 ] || fail "libc-byte-strings takes no arguments"',
+            source,
+        )
+        self.assertIn('run_libc_legacy_memory()', source)
+        self.assertIn(
+            '/workspace/compat/x86_64/run_libc_legacy_memory.sh', source
+        )
+        self.assertIn(
+            '    libc-legacy-memory)\n        [ "$#" -eq 0 ] || fail "libc-legacy-memory takes no arguments"',
             source,
         )
         self.assertIn('libc-random-entropy', source)
@@ -10910,6 +10919,107 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             parity_ledger,
         )
         self.assertIn("libc-random-entropy", runner)
+
+    def test_libc_static_c_abi_legacy_memory_artifact_stays_bounded(self) -> None:
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        implementation = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "legacy_memory.rs"
+        ).read_text(encoding="utf-8")
+        probe = (
+            ROOT / "compat" / "x86_64" / "libc_legacy_memory_probe.c"
+        ).read_text(encoding="utf-8")
+        start = (
+            ROOT / "compat" / "x86_64" / "libc_legacy_memory_start.S"
+        ).read_text(encoding="utf-8")
+        artifact_runner = (
+            ROOT / "compat" / "x86_64" / "run_libc_legacy_memory.sh"
+        ).read_text(encoding="utf-8")
+        header_runner = (
+            ROOT / "compat" / "x86_64" / "run_byte_strings_header_abi.sh"
+        ).read_text(encoding="utf-8")
+        static_exports = (
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        ).read_text(encoding="utf-8")
+        static_export_names = {
+            line for line in static_exports.splitlines()
+            if line and not line.startswith("#")
+        }
+        parity_ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        runner = RUNNER.read_text(encoding="utf-8")
+
+        self.assertIn('#[path = "legacy_memory.rs"]', static_root)
+        for required in (
+            "musl 1.2.6",
+            "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+            "src/string/bcopy.c",
+            "src/string/bzero.c",
+            ".global bcopy",
+            ".global bzero",
+            "xchg rdi, rsi",
+            "mov rdx, rsi",
+            "xor esi, esi",
+            "jmp memmove",
+            "jmp memset",
+        ):
+            self.assertIn(required, implementation)
+        for forbidden in (
+            "raw_syscall::",
+            "errno::",
+            "crabc_core",
+            "crabc_mimalloc",
+            "memccpy",
+            "mempcpy",
+            "explicit_bzero",
+        ):
+            self.assertNotIn(forbidden, implementation)
+        for required in (
+            "bcopy_signature",
+            "bzero_signature",
+            "_Static_assert",
+            "check_bcopy_overlap",
+            "source += 5",
+            "destination += 3",
+            "check_bzero_ranges",
+            "CRABC_LEGACY_MEMORY_FREESTANDING",
+        ):
+            self.assertIn(required, probe)
+        for required in ("crabc_x86_64_legacy_memory_probe", "mov $60, %eax"):
+            self.assertIn(required, start)
+        for required in (
+            "run_musl_oracle.sh",
+            "run_byte_strings_header_abi.sh",
+            "bcopy.lo",
+            "bzero.lo",
+            "archive_member_for_symbol",
+            "legacy adapter object export surface drifted",
+            "legacy adapter unexpectedly performs a syscall",
+            "legacy adapter must tail-transfer into the bulk-memory owner",
+            "-nostdlib -static",
+            "-Wl,--no-undefined",
+            "candidate retains a PLT",
+            "unowned allocator or memory utility",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn("--whole-archive", artifact_runner)
+        for required in (
+            "CRABC_REQUIRE_BCOPY",
+            "CRABC_REQUIRE_BZERO",
+            "bsd_definitions=(-D_BSD_SOURCE -DCRABC_EXPECT_ALIASES)",
+            "BSD bcopy/bzero",
+        ):
+            self.assertIn(required, header_runner)
+        for symbol in ("bcopy", "bzero"):
+            self.assertIn(symbol, static_export_names)
+        self.assertIn('id = "static-c-legacy-memory"', parity_ledger)
+        self.assertIn(
+            'command = "./scripts/dev-x86_64.sh libc-legacy-memory"',
+            parity_ledger,
+        )
+        self.assertIn("libc-legacy-memory", runner)
 
     def test_libc_static_c_abi_memory_search_artifact_stays_narrow(self) -> None:
         static_root = (

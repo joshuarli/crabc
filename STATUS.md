@@ -105,6 +105,21 @@ does not select terminal discovery, termios mutation/control, PTY/session
 policy, `ttyname`, `getpass`, generic ioctl, family completion, promotion, or
 public x86 support.
 
+`./scripts/dev-x86_64.sh libc-legacy-memory` is a separate private
+`static-c-legacy-memory` artifact inside still-planned `libc.posix-runtime`.
+Its pinned-musl/project-header C fixture selects only the historical
+`bcopy`/`bzero` adapters: `bcopy(source, destination, length)` forwards to
+overlap-safe `memmove(destination, source, length)`, while
+`bzero(destination, length)` forwards to `memset(destination, 0, length)`.
+The true `-nostdlib -static` candidate extracts only that adapter object and
+the already selected bulk-memory object, ratchets the direct
+`memmove`/`memset` closure, and proves zero-length plus bounded overlapping
+copy and caller-buffer clearing. It has no errno/TLS, allocator, locale,
+syscall, dynamic-runtime, CRT, loader, or sysroot path. It does not promote
+Rust-subsumed `memory.bytes-basic`, general C memory behavior,
+`memccpy`/`mempcpy`/`explicit_bzero`, allocator lifecycle/interposition,
+family completion, promotion, or public x86 support.
+
 `./scripts/dev-x86_64.sh libc-getpass` is a separate private
 `static-c-getpass` artifact inside still-planned `libc.posix-runtime`. Its
 pinned-musl and freestanding-static routes select only the historical C

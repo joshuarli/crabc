@@ -16,6 +16,8 @@ using bounded_compare_signature = int (*)(const char *, const char *, size_t);
 using span_signature = size_t (*)(const char *, const char *);
 using length_signature = size_t (*)(const char *);
 using bounded_length_signature = size_t (*)(const char *, size_t);
+using bcopy_signature = void (*)(const void *, void *, size_t);
+using bzero_signature = void (*)(void *, size_t);
 
 static_assert(__is_same(decltype(&strchr), char_search_signature), "strchr declaration");
 static_assert(__is_same(decltype(&strrchr), char_search_signature), "strrchr declaration");
@@ -40,6 +42,8 @@ static_assert(__is_same(decltype(&strchrnul), char_search_signature),
 #if defined(CRABC_EXPECT_ALIASES)
 static_assert(__is_same(decltype(&index), char_search_signature), "index declaration");
 static_assert(__is_same(decltype(&rindex), char_search_signature), "rindex declaration");
+static_assert(__is_same(decltype(&bcopy), bcopy_signature), "bcopy declaration");
+static_assert(__is_same(decltype(&bzero), bzero_signature), "bzero declaration");
 #endif
 
 #if defined(CRABC_REQUIRE_STRCHRNUL)
@@ -48,6 +52,14 @@ static char_search_signature required_strchrnul_signature = strchrnul;
 
 #if defined(CRABC_REQUIRE_STRVERSCMP)
 static compare_signature required_strverscmp_signature = strverscmp;
+#endif
+
+#if defined(CRABC_REQUIRE_BCOPY)
+static bcopy_signature required_bcopy_signature = bcopy;
+#endif
+
+#if defined(CRABC_REQUIRE_BZERO)
+static bzero_signature required_bzero_signature = bzero;
 #endif
 
 int crabc_x86_64_byte_strings_header_abi_probe_cpp()

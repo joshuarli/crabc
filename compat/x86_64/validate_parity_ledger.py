@@ -1041,6 +1041,8 @@ BYTE_STRING_SYMBOLS = (
     "strstr",
 )
 
+LEGACY_MEMORY_SYMBOLS = ("bcopy", "bzero")
+
 RANDOM_ENTROPY_SYMBOLS = ("getrandom", "getentropy")
 
 MEMORY_SEARCH_SYMBOLS = ("memchr", "memrchr", "memmem")
@@ -5933,6 +5935,293 @@ def require_byte_string_artifact(family: Mapping[str, Any]) -> None:
         ),
         "static-c-byte-strings must retain strverscmp source provenance",
     )
+
+
+def require_legacy_memory_artifact(family: Mapping[str, Any]) -> None:
+    """Keep the selected bcopy/bzero adapter below memory-family promotion."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.posix-runtime].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [entry for entry in artifacts if entry.get("id") == "static-c-legacy-memory"]
+    require(
+        len(matching) == 1,
+        "libc.posix-runtime must contain exactly one static-c-legacy-memory artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-legacy-memory must not promote libc.posix-runtime",
+    )
+    artifact = matching[0]
+    require(
+        "capabilities" not in artifact,
+        "static-c-legacy-memory must not promote memory.bytes-basic",
+    )
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for symbol in LEGACY_MEMORY_SYMBOLS:
+        require(symbol in description, f"static-c-legacy-memory description omits {symbol}")
+    for phrase in (
+        "legacy-memory adapter",
+        "still-planned `libc.posix-runtime`",
+        "exactly one adapter object exporting only `bcopy` and `bzero`",
+        "`memmove` and `memset`",
+        "overlap-safe",
+        "stateless and allocation-free",
+        "no errno, TLS, syscall, locale, mutable-runtime, or allocator dependency",
+        "Rust-subsumed `memory.bytes-basic`",
+        "allocator lifecycle/interposition",
+        "family completion",
+        "promotion",
+        "public x86 support",
+    ):
+        require(phrase in description, f"static-c-legacy-memory description omits {phrase}")
+
+    owners = set(
+        nonempty_strings(
+            artifact["source_owners"], "static-c-legacy-memory.source_owners"
+        )
+    )
+    for owner in (
+        "compat/upstreams.toml",
+        "compat/abi/musl-1.2.6/aarch64/libc.a.static.tsv",
+        "libc/Cargo.toml",
+        "libc/src/lib.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/legacy_memory.rs",
+        "libc/src/c_abi/x86_64/memory.rs",
+        "include/stddef.h",
+        "include/string.h",
+        "include/strings.h",
+        "include/features.h",
+        "include/bits/alltypes.h",
+        "compat/x86_64/byte_strings_header_abi_probe.c",
+        "compat/x86_64/byte_strings_header_abi_probe.cpp",
+        "compat/x86_64/run_byte_strings_header_abi.sh",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/libc_legacy_memory_probe.c",
+        "compat/x86_64/libc_legacy_memory_start.S",
+        "compat/x86_64/run_libc_legacy_memory.sh",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/README.md",
+        "STATUS.md",
+        "x86-64.md",
+        "scripts/dev-x86_64.sh",
+        "scripts/check_structure.py",
+    ):
+        require(owner in owners, f"static-c-legacy-memory source owners omit {owner}")
+
+    prerequisites = nonempty_strings(
+        artifact["x86_abi_prerequisites"],
+        "static-c-legacy-memory.x86_abi_prerequisites",
+    )
+    require(
+        any(
+            "rdi/rsi/rdx" in item
+            and "swaps rdi/rsi" in item
+            and "return void" in item
+            for item in prerequisites
+        ),
+        "static-c-legacy-memory must retain bcopy's SysV adapter ABI",
+    )
+    require(
+        any(
+            "rsi to memset's rdx" in item and "clears esi" in item
+            for item in prerequisites
+        ),
+        "static-c-legacy-memory must retain bzero's argument remapping",
+    )
+    require(
+        any(
+            "src/string/bcopy.c" in item
+            and "src/string/bzero.c" in item
+            and "bcopy.lo" in item
+            and "bzero.lo" in item
+            for item in prerequisites
+        ),
+        "static-c-legacy-memory must retain musl source and ABI inventory provenance",
+    )
+    require(
+        any(
+            "exactly bcopy/bzero" in item
+            and "memmove/memset" in item
+            and "no PT_TLS" in item
+            and "syscall path" in item
+            for item in prerequisites
+        ),
+        "static-c-legacy-memory must retain its closed static dependency boundary",
+    )
+
+    header_prerequisites = nonempty_strings(
+        artifact["x86_header_prerequisites"],
+        "static-c-legacy-memory.x86_header_prerequisites",
+    )
+    require(
+        any(
+            "strings.h" in item
+            and "void bcopy(const void *, void *, size_t)" in item
+            and "void bzero(void *, size_t)" in item
+            and "unmangled C++ spellings" in item
+            and "strict-POSIX C hiding" in item
+            for item in header_prerequisites
+        ),
+        "static-c-legacy-memory must retain its focused C/C++ header ABI",
+    )
+
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-legacy-memory"},
+        "static-c-legacy-memory must use the closed libc-legacy-memory command",
+    )
+    scope = evidence[0].get("scope")
+    require(
+        isinstance(scope, str)
+        and all(
+            phrase in scope
+            for phrase in (
+                "pinned AArch64 static-ABI rows",
+                "adapter exports only bcopy/bzero",
+                "direct memmove/memset dependencies",
+                "0..48-byte overlapping bcopy",
+                "0..64-byte caller-buffer bzero",
+                "no interpreter, DT_NEEDED, unresolved symbol, PT_TLS",
+                "memory.bytes-basic",
+                "memccpy/mempcpy/explicit_bzero",
+                "allocator lifecycle/interposition",
+                "public x86 support",
+            )
+        ),
+        "static-c-legacy-memory evidence must retain its bounded static contract",
+    )
+
+    exports = set(
+        static_c_abi_export_names(
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        )
+    )
+    for symbol in LEGACY_MEMORY_SYMBOLS:
+        require(symbol in exports, f"static C ABI export contract omits {symbol}")
+
+    static_root = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+    ).read_text(encoding="utf-8")
+    require(
+        '#[path = "legacy_memory.rs"]\nmod legacy_memory;' in static_root,
+        "x86 static C ABI must compose the legacy-memory leaf",
+    )
+    source = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "legacy_memory.rs"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "musl 1.2.6",
+        "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+        "src/string/bcopy.c",
+        "src/string/bzero.c",
+        ".global bcopy",
+        ".global bzero",
+        "xchg rdi, rsi",
+        "mov rdx, rsi",
+        "xor esi, esi",
+        "jmp memmove",
+        "jmp memset",
+    ):
+        require(snippet in source, f"legacy-memory implementation omits {snippet}")
+    for forbidden in (
+        "raw_syscall::",
+        "errno::",
+        "crabc_core",
+        "crabc_mimalloc",
+        "malloc",
+        "memccpy",
+        "mempcpy",
+        "explicit_bzero",
+    ):
+        require(
+            forbidden not in source,
+            f"legacy-memory implementation selects {forbidden}",
+        )
+
+    runner = (ROOT / "compat" / "x86_64" / "run_libc_legacy_memory.sh").read_text(
+        encoding="utf-8"
+    )
+    for snippet in (
+        "run_musl_oracle.sh",
+        "run_byte_strings_header_abi.sh",
+        "bcopy.lo",
+        "bzero.lo",
+        "static_c_abi_exports.txt",
+        "archive_member_for_symbol",
+        "legacy adapter object export surface drifted",
+        "diff -u <(printf '%s\\n' memmove memset)",
+        "legacy adapter unexpectedly performs a syscall",
+        "legacy adapter must tail-transfer into the bulk-memory owner",
+        "-nostdlib -static",
+        "--no-undefined",
+        "candidate retains a PLT",
+        "unowned allocator or memory utility",
+    ):
+        require(snippet in runner, f"legacy-memory runner omits {snippet}")
+    require("--whole-archive" not in runner, "legacy-memory runner must not force-link the archive")
+
+    probe = (ROOT / "compat" / "x86_64" / "libc_legacy_memory_probe.c").read_text(
+        encoding="utf-8"
+    )
+    for snippet in (
+        "bcopy_signature",
+        "bzero_signature",
+        "_Static_assert",
+        "check_bcopy_overlap",
+        "source += 5",
+        "destination += 3",
+        "length <= 48",
+        "check_bzero_ranges",
+        "length <= 64",
+        "CRABC_LEGACY_MEMORY_FREESTANDING",
+    ):
+        require(snippet in probe, f"legacy-memory probe omits {snippet}")
+    start = (ROOT / "compat" / "x86_64" / "libc_legacy_memory_start.S").read_text(
+        encoding="utf-8"
+    )
+    for snippet in ("crabc_x86_64_legacy_memory_probe", "mov $60, %eax"):
+        require(snippet in start, f"legacy-memory start shim omits {snippet}")
+
+    header_c = (
+        ROOT / "compat" / "x86_64" / "byte_strings_header_abi_probe.c"
+    ).read_text(encoding="utf-8")
+    header_cxx = (
+        ROOT / "compat" / "x86_64" / "byte_strings_header_abi_probe.cpp"
+    ).read_text(encoding="utf-8")
+    header_runner = (
+        ROOT / "compat" / "x86_64" / "run_byte_strings_header_abi.sh"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "bcopy_signature",
+        "bzero_signature",
+        "CRABC_REQUIRE_BCOPY",
+        "CRABC_REQUIRE_BZERO",
+    ):
+        require(snippet in header_c, f"legacy-memory C header evidence omits {snippet}")
+        require(snippet in header_cxx, f"legacy-memory C++ header evidence omits {snippet}")
+    for snippet in (
+        "CRABC_REQUIRE_BCOPY",
+        "CRABC_REQUIRE_BZERO",
+        "bsd_definitions=(-D_BSD_SOURCE -DCRABC_EXPECT_ALIASES)",
+        "BSD bcopy/bzero",
+    ):
+        require(snippet in header_runner, f"legacy-memory header runner omits {snippet}")
+
+    dispatcher = (ROOT / "scripts" / "dev-x86_64.sh").read_text(encoding="utf-8")
+    for snippet in (
+        "libc-legacy-memory)",
+        "run_libc_legacy_memory()",
+        "run_libc_legacy_memory",
+    ):
+        require(snippet in dispatcher, f"x86 dispatcher omits {snippet}")
 
 
 def require_ldso_initial_graph_artifact(family: Mapping[str, Any]) -> None:
@@ -32381,6 +32670,7 @@ def validate_ledger(
     require_static_pthread_name_artifact(by_id["libc.pthread-tls"])
     require_static_thrd_yield_artifact(by_id["libc.pthread-tls"])
     require_byte_string_artifact(by_id["libc.posix-runtime"])
+    require_legacy_memory_artifact(by_id["libc.posix-runtime"])
     require_random_entropy_artifact(by_id["libc.posix-runtime"])
     require_memory_search_artifact(by_id["libc.posix-runtime"])
     require_string_copy_artifact(by_id["libc.posix-runtime"])

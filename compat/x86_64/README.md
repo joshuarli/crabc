@@ -470,6 +470,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-socket-transport
 ./scripts/dev-x86_64.sh libc-socket-messages
 ./scripts/dev-x86_64.sh libc-byte-strings
+./scripts/dev-x86_64.sh libc-legacy-memory
 ./scripts/dev-x86_64.sh libc-process-globals-getopt
 ./scripts/dev-x86_64.sh libc-auxv-observation
 ./scripts/dev-x86_64.sh libc-inet-address
@@ -1168,12 +1169,13 @@ references. This is compile-only header evidence; it does not select C text,
 general bit operations, or `crabc-libc`.
 
 `byte-strings-header-abi` compiles project-first and pinned-musl C/C++
-`<string.h>` declarations for the closed byte-string set: `index`, `rindex`,
+`<string.h>`/`<strings.h>` declarations for the closed byte-string set: `index`, `rindex`,
 `strchr`, GNU-gated `strchrnul`, `strcmp`, GNU `strverscmp`, `strcspn`,
-`strlen`, `strncmp`, `strnlen`, `strpbrk`, `strrchr`, `strspn`, and `strstr`.
-A strict POSIX C pass expects both GNU `strverscmp` and `strchrnul` to remain
-hidden, matching musl; C++ remains GNU-selected by its driver. This is compile-only
-header evidence; it does not select C string behavior or `crabc-libc`.
+`strlen`, `strncmp`, `strnlen`, `strpbrk`, `strrchr`, `strspn`, `strstr`, and
+GNU/BSD-gated `bcopy`/`bzero`. A strict POSIX C pass expects GNU
+`strverscmp`/`strchrnul` and BSD `bcopy`/`bzero` to remain hidden, matching
+musl; C++ remains GNU-selected by its driver. This is compile-only header
+evidence; it does not select C string behavior or `crabc-libc`.
 
 `memory-search-header-abi` compiles project-first and pinned-musl C/C++
 `<string.h>` declarations for the closed memory-search set: unconditional
@@ -3893,6 +3895,21 @@ fallback behavior as intentional implementation boundaries. The artifact
 excludes stateful string, locale, allocation, vectorized, dynamic-runtime,
 and public-x86-support claims.
 
+`libc-legacy-memory` is a separately recorded `static-c-legacy-memory`
+`verified_artifact`, not a `memory.bytes-basic` or allocator claim. Its
+project-header C fixture first executes through pinned musl and then through a
+true `-nostdlib -static` candidate made from exactly the one `bcopy`/`bzero`
+adapter object and the established bulk-memory object. Musl's two wrappers map
+`bcopy(source, destination, length)` to overlap-safe
+`memmove(destination, source, length)` and `bzero(destination, length)` to
+`memset(destination, 0, length)`. The candidate ratchets exact adapter exports
+and only its direct `memmove`/`memset` dependencies, then proves zero-length
+and overlapping copy plus bounded caller-buffer clearing. It has no allocator,
+errno/TLS, locale, syscall, dynamic-runtime, CRT, loader, or sysroot path; it
+does not select general bulk memory, `memccpy`, `mempcpy`, `explicit_bzero`,
+allocator lifecycle/interposition, family completion, promotion, or public x86
+support.
+
 `libc-random-entropy` is a separately recorded
 `static-c-random-entropy` `verified_artifact` gate over that archive, not a
 promotion of the Rust random-source or random-state capabilities. Its
@@ -5057,7 +5074,7 @@ Apart from the narrowly named `libc-stat-compat`, `libc-credentials`,
 `libc-process-resources`, `libc-readiness-waits`, and
 `libc-system-observation`, `libc-system-information`, `libc-uts-identity`, `libc-socket-transport`,
 `libc-socket-messages`,
-`libc-byte-strings`, `libc-random-entropy`, `libc-memory-search`,
+`libc-byte-strings`, `libc-legacy-memory`, `libc-random-entropy`, `libc-memory-search`,
 `libc-string-copy`, `libc-allocator-string-duplication`, `libc-error-strings`,
 `libc-locale-error-strings`, `libc-ctype`, `libc-integer-arithmetic`,
 `libc-integer-parse`, `libc-float-parse`, `libc-intmax-arithmetic`, `libc-credential-observation`,

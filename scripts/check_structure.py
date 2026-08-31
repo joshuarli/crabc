@@ -127,7 +127,7 @@ X86_RUNTIME_FOUNDATION_LDSO_SOURCES = {
 # selected descriptor I/O,
 # selected process resources,
 # selected readiness/signal waits, selected system observation, selected
-# UTS-namespace identity, selected C-string copy/concatenation, fixed-C-
+# UTS-namespace identity, selected legacy bcopy/bzero adapters, selected C-string copy/concatenation, fixed-C-
 # locale ctype and the separately bounded named-locale/multibyte conversion
 # artifact, scalar integer arithmetic, complete integer parsing, intmax
 # arithmetic, and find-first-set, direct POSIX clock_gettime, bounded clock
@@ -192,6 +192,7 @@ X86_RUNTIME_FOUNDATION_LIBC_SOURCES = {
     Path("libc/src/c_abi/x86_64/fenv.rs"),
     Path("libc/src/c_abi/x86_64/foundation.rs"),
     Path("libc/src/c_abi/x86_64/memory.rs"),
+    Path("libc/src/c_abi/x86_64/legacy_memory.rs"),
     Path("libc/src/c_abi/x86_64/process_context.rs"),
     Path("libc/src/c_abi/x86_64/environment.rs"),
     Path("libc/src/c_abi/x86_64/startup_security.rs"),
@@ -3711,6 +3712,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         '#[path = "credentials.rs"]',
         '#[path = "credential_observation.rs"]',
         '#[path = "memory.rs"]',
+        '#[path = "legacy_memory.rs"]',
         '#[path = "fenv.rs"]',
         '#[path = "setjmp.rs"]',
         '#[path = "signal_foundation.rs"]',
@@ -4247,6 +4249,51 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
             errors.append(
                 "libc/src/c_abi/x86_64/memory.rs: selected static memory "
                 f"boundary is missing {required!r}"
+            )
+
+    legacy_memory_source = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "legacy_memory.rs"
+    )
+    legacy_memory_text = legacy_memory_source.read_text(errors="replace")
+    for required in (
+        "musl 1.2.6",
+        "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+        "src/string/bcopy.c",
+        "src/string/bzero.c",
+        ".global bcopy",
+        ".global bzero",
+        "xchg rdi, rsi",
+        "mov rdx, rsi",
+        "xor esi, esi",
+        "jmp memmove",
+        "jmp memset",
+    ):
+        if required not in legacy_memory_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/legacy_memory.rs: selected static legacy "
+                f"memory adapter is missing {required!r}"
+            )
+    legacy_memory_exports = set(
+        re.findall(r"(?m)^\s*\.global\s+(\w+)\s*$", legacy_memory_text)
+    )
+    if legacy_memory_exports != {"bcopy", "bzero"}:
+        errors.append(
+            "libc/src/c_abi/x86_64/legacy_memory.rs: selected static legacy "
+            "memory adapter must export only bcopy and bzero"
+        )
+    for forbidden in (
+        "raw_syscall::",
+        "errno::",
+        "crabc_core",
+        "crabc_mimalloc",
+        "memccpy",
+        "mempcpy",
+        "explicit_bzero",
+    ):
+        if forbidden in legacy_memory_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/legacy_memory.rs: selected static legacy "
+                f"memory adapter must not select {forbidden!r}"
             )
 
     fenv_source = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "fenv.rs"
@@ -8998,7 +9045,13 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
     assembly_exports = set().union(
         *(
             set(re.findall(r"(?m)^\s*\.global\s+(\w+)\s*$", source))
-            for source in (memory_text, fenv_text, setjmp_text, descriptor_control_text)
+            for source in (
+                memory_text,
+                legacy_memory_text,
+                fenv_text,
+                setjmp_text,
+                descriptor_control_text,
+            )
         )
     )
     timestamp_aliases = set(
@@ -9097,6 +9150,8 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         "__memcpy_fwd",
         "memcmp",
         "bcmp",
+        "bcopy",
+        "bzero",
         "memset",
         "memmove",
         "feclearexcept",
@@ -9456,7 +9511,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
             "signal-control, one pure GNU signal-set predicate and paired GNU binary set-operation leaf, bounded process-signal execution, and one legacy single-signal pause wait, bounded pthread create/exit/join/detach initial-TLS worker, its private selected-main/worker pthread-key/C11-TSS lifecycle, private process-normal pthread mutexes and their musl private condition-variable handoff, the complete selected rwlock/attribute family with private-or-shared futex operation, plus the distinct C11 plain-sync adapter and normal-return pthread/C11 once state machine, its typed C11 create/exit/join/detach sibling, and pthread/C11 identity aliases, named termios-control, direct terminal-descriptor observation, historical ctermid pathname spelling, constant historical gethostid compatibility, selected process-context, child-reaping, C11 immediate termination, callback algorithms, direct clock_gettime, caller-owned mapping-core, no-cancellation mapping synchronization, direct anonymous-memory descriptor creation, nanosleep, and clock_nanosleep, selected "
             "descriptor-entry, selected filesystem-access, bounded descriptor-control, timestamp updates, and descriptor-I/O, selected process-resources, selected readiness/signal-waits, "
             "selected socket transport and selected socket-message/options, selected system-observation, selected UTS-identity, "
-            "selected numeric-address codecs and legacy classful IPv4 arithmetic, fixed-profile h_errno message text, byte-string, random-entropy, memory-search, C-string-copy, immutable error-string, "
+            "selected numeric-address codecs and legacy classful IPv4 arithmetic, fixed-profile h_errno message text, byte-string, legacy-memory adapters, random-entropy, memory-search, C-string-copy, immutable error-string, "
             "fixed-C-locale ctype, integer-arithmetic, integer-parsing, intmax-arithmetic, credential-observation, and "
             "raw auxiliary-vector observation, startup-derived secure-environment, and environment-backed login-name observation, find-first-set, startup-published program names, short/GNU-long "
             "getopt state and aliases, callback-tree/hash-table search, and the "
@@ -9477,6 +9532,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         ("process_globals.rs", process_globals_text),
         ("getopt_exports.rs", shared_getopt_text),
         ("memory.rs", memory_text),
+        ("legacy_memory.rs", legacy_memory_text),
         ("fenv.rs", fenv_text),
         ("setjmp.rs", setjmp_text),
         ("signal_foundation.rs", signal_foundation_text),

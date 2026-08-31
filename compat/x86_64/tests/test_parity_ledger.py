@@ -50,7 +50,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 41)
-        self.assertEqual(report["verified_artifact_count"], 166)
+        self.assertEqual(report["verified_artifact_count"], 167)
         self.assertEqual(report["header_layout_probe_count"], 46)
         self.assertEqual(report["public_header_inventory_count"], 183)
         self.assertEqual(report["header_foundation_header_count"], 191)
@@ -6573,6 +6573,62 @@ class X86ParityLedgerTests(unittest.TestCase):
             "libc/src/c_abi/x86_64/static_c_abi.rs",
             posix_runtime["source_owners"],
         )
+        legacy_memory = artifacts_by_id["static-c-legacy-memory"]
+        assert isinstance(legacy_memory, dict)
+        self.assertNotIn("capabilities", legacy_memory)
+        for owner in (
+            "compat/upstreams.toml",
+            "compat/abi/musl-1.2.6/aarch64/libc.a.static.tsv",
+            "libc/src/c_abi/x86_64/static_c_abi.rs",
+            "libc/src/c_abi/x86_64/legacy_memory.rs",
+            "libc/src/c_abi/x86_64/memory.rs",
+            "include/string.h",
+            "include/strings.h",
+            "compat/x86_64/byte_strings_header_abi_probe.c",
+            "compat/x86_64/byte_strings_header_abi_probe.cpp",
+            "compat/x86_64/run_byte_strings_header_abi.sh",
+            "compat/x86_64/static_c_abi_exports.txt",
+            "compat/x86_64/libc_legacy_memory_probe.c",
+            "compat/x86_64/libc_legacy_memory_start.S",
+            "compat/x86_64/run_libc_legacy_memory.sh",
+            "compat/x86_64/validate_parity_ledger.py",
+            "scripts/check_structure.py",
+        ):
+            self.assertIn(owner, legacy_memory["source_owners"])
+        self.assertEqual(
+            {evidence["command"] for evidence in legacy_memory["native_evidence"]},
+            {"./scripts/dev-x86_64.sh libc-legacy-memory"},
+        )
+        for phrase in (
+            "legacy-memory adapter",
+            "exactly one adapter object exporting only `bcopy` and `bzero`",
+            "overlap-safe",
+            "Rust-subsumed `memory.bytes-basic`",
+            "allocator lifecycle/interposition",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, legacy_memory["description"])
+        self.assertIn(
+            "rsi to memset's rdx", legacy_memory["x86_abi_prerequisites"][0]
+        )
+        self.assertIn(
+            "src/string/bcopy.c", legacy_memory["x86_abi_prerequisites"][1]
+        )
+        self.assertIn(
+            "src/string/bzero.c", legacy_memory["x86_abi_prerequisites"][1]
+        )
+        legacy_scope = legacy_memory["native_evidence"][0]["scope"]
+        for phrase in (
+            "adapter exports only bcopy/bzero",
+            "0..48-byte overlapping bcopy",
+            "0..64-byte caller-buffer bzero",
+            "memccpy/mempcpy/explicit_bzero",
+        ):
+            self.assertIn(phrase, legacy_scope)
+        self.assertIn(
+            "libc/src/c_abi/x86_64/legacy_memory.rs",
+            posix_runtime["source_owners"],
+        )
         random_entropy = artifacts_by_id["static-c-random-entropy"]
         assert isinstance(random_entropy, dict)
         self.assertNotIn("capabilities", random_entropy)
@@ -11857,6 +11913,61 @@ class X86ParityLedgerTests(unittest.TestCase):
         assert isinstance(evidence, list) and isinstance(evidence[0], dict)
         evidence[0]["command"] = "./scripts/dev-x86_64.sh libc-foundation"
         with self.assertRaisesRegex(ledger.LedgerError, "closed libc-byte-strings command"):
+            ledger.validate_ledger(data)
+
+    def test_legacy_memory_artifact_keeps_its_nonpromoting_adapter_contract(self) -> None:
+        data = self.data()
+        family = self.family(data, "libc.posix-runtime")
+        family["status"] = "foundation-verified"
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "static-c-legacy-memory must not promote"
+        ):
+            ledger.require_legacy_memory_artifact(family)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-legacy-memory"
+        )
+        artifact["description"] = artifact["description"].replace(
+            "Rust-subsumed `memory.bytes-basic`", "general memory behavior"
+        )
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "description omits Rust-subsumed `memory.bytes-basic`"
+        ):
+            ledger.validate_ledger(data)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-legacy-memory"
+        )
+        artifact["capabilities"] = ["memory.bytes-basic"]
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "must not carry capabilities; use verified_slice instead"
+        ):
+            ledger.validate_ledger(data)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-legacy-memory"
+        )
+        evidence = artifact["native_evidence"]
+        assert isinstance(evidence, list) and isinstance(evidence[0], dict)
+        evidence[0]["command"] = "./scripts/dev-x86_64.sh libc-memory-search"
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "closed libc-legacy-memory command"
+        ):
             ledger.validate_ledger(data)
 
     def test_integer_parse_artifact_keeps_its_closed_mapping_contract(self) -> None:

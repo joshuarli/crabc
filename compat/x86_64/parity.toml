@@ -1863,7 +1863,7 @@ native_evidence = [
   { state = "required", command = "./scripts/dev-x86_64.sh immediate-termination-header-abi", scope = "This compile-only C/C++ stdlib.h C11 _Exit declaration and linkage slice is partial evidence; it selects no exit-hook state." },
   { state = "required", command = "./scripts/dev-x86_64.sh callback-algorithms-header-abi", scope = "This compile-only C/C++ stdlib.h callback-algorithm declaration slice is partial evidence; bsearch/qsort are unconditional, qsort_r is GNU/BSD-only with final-context callback ABI, strict/POSIX/XOPEN hide qsort_r, and private __qsort_r stays hidden." },
   { state = "required", command = "./scripts/dev-x86_64.sh ffs-header-abi", scope = "This compile-only C/C++ strings.h find-first-set declaration slice is partial evidence; XOPEN/GNU/BSD-gated ffs/ffsl/ffsll signatures, strict/POSIX hiding, and unmangled C++ linkage are checked against pinned musl and the project header." },
-  { state = "required", command = "./scripts/dev-x86_64.sh byte-strings-header-abi", scope = "This compile-only C/C++ string.h declaration slice is partial evidence; the GNU-only strverscmp and strchrnul gates are checked against pinned musl and the project header." },
+  { state = "required", command = "./scripts/dev-x86_64.sh byte-strings-header-abi", scope = "This compile-only C/C++ string.h/strings.h declaration slice is partial evidence; GNU-only strverscmp/strchrnul and GNU/BSD bcopy/bzero gates are checked against pinned musl and the project headers." },
   { state = "required", command = "./scripts/dev-x86_64.sh memory-search-header-abi", scope = "This compile-only C/C++ string.h memory-search declaration slice is partial evidence; unconditional memchr, POSIX memmem, and GNU memrchr feature gates are checked against pinned musl and the project header." },
   { state = "required", command = "./scripts/dev-x86_64.sh string-copy-header-abi", scope = "This compile-only C/C++ string.h C-string-copy declaration slice is partial evidence; unconditional strcpy/strncpy/strcat/strncat, POSIX/XOPEN/GNU/BSD-gated stpcpy/stpncpy, and GNU/BSD-gated strlcpy/strlcat feature gates are checked against pinned musl and the project header." },
   { state = "required", command = "./scripts/dev-x86_64.sh random-entropy-header-abi", scope = "This compile-only C/C++ sys/random.h and unistd.h declaration slice is partial evidence; getentropy's GNU/BSD feature gate is checked against pinned musl and the project header." },
@@ -2134,6 +2134,7 @@ aarch64_gates = ["differential", "os-test", "signal-process", "libc-test"]
 source_owners = [
   "libc/src/c_abi.rs",
   "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/legacy_memory.rs",
   "libc/src/c_abi/x86_64/ffs.rs",
   "libc/src/c_abi/x86_64/intmax_arithmetic.rs",
   "libc/src/c_abi/x86_64/stat_compat.rs",
@@ -5162,6 +5163,47 @@ x86_abi_prerequisites = [
 x86_header_prerequisites = ["The candidate preprocesses project string.h and strings.h with the named declarations, GNU-gated `strverscmp`/`strchrnul`, and feature-selected index/rindex aliases; the separate C/C++ header gate compares these declarations with pinned musl and does not select a general installed-header or C text ABI claim."]
 native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-byte-strings", scope = "Pinned-musl C reference plus a true dependency-free x86 crabc-libc static archive and freestanding C candidate. The gate proves project-header provenance; the exact closed export set for index/rindex, strchr/strchrnul, strcmp, GNU strverscmp, strcspn, strlen, strncmp, strnlen, strpbrk, strrchr, strspn, and strstr; no interpreter/DT_NEEDED/unresolved symbol or dynamic TLS resolver; musl public-wrapper mappings for index/rindex, GNU strverscmp digit/leading-zero comparison behavior, and private __strchrnul/__memrchr helpers; scalar fallback behavior; and the named byte-string semantics. It does not select general string/locale/stateful text support, libc.so, general startup, pthread/TLS lifecycle, allocator, loader, sysroot, or public x86 support." }]
 oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source mapping and declaration/behavior oracle for src/string/index.c, src/string/rindex.c, src/string/strchr.c, src/string/strchrnul.c, src/string/strcmp.c, src/string/strverscmp.c, src/string/strcspn.c, src/string/strlen.c, src/string/strncmp.c, src/string/strnlen.c, src/string/strpbrk.c, src/string/strrchr.c, src/string/strspn.c, and src/string/strstr.c; public index/rindex forwarding wrappers, GNU strverscmp scalar digit/leading-zero comparison, and private __strchrnul/__memrchr helpers plus scalar fallback are intentional scope details." }]
+
+[[family.verified_artifact]]
+id = "static-c-legacy-memory"
+description = "Private native x86 selected-static-archive legacy-memory adapter within still-planned `libc.posix-runtime`. The true static candidate extracts exactly one adapter object exporting only `bcopy` and `bzero` together with the already selected bulk-memory object; its only adapter dependencies are `memmove` and `memset`. It executes the exact overlap-safe `bcopy(source, destination, length)` mapping and caller-owned `bzero(destination, length)` clearing matrix through pinned musl and then through `-nostdlib -static`. Musl 1.2.6 `bcopy` is a public `memmove(destination, source, length)` wrapper and `bzero` is a public `memset(destination, 0, length)` wrapper; the x86 assembly only performs that SysV argument adaptation. The leaf is stateless and allocation-free, with no errno, TLS, syscall, locale, mutable-runtime, or allocator dependency. It does not promote Rust-subsumed `memory.bytes-basic`, general bulk-memory behavior beyond the established owner, `memccpy`, `mempcpy`, `explicit_bzero`, allocator lifecycle/interposition, libc.so, CRT, loader, sysroot, family completion, promotion, or public x86 support."
+source_owners = [
+  "compat/upstreams.toml",
+  "compat/abi/musl-1.2.6/aarch64/libc.a.static.tsv",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/legacy_memory.rs",
+  "libc/src/c_abi/x86_64/memory.rs",
+  "include/stddef.h",
+  "include/string.h",
+  "include/strings.h",
+  "include/features.h",
+  "include/bits/alltypes.h",
+  "compat/x86_64/byte_strings_header_abi_probe.c",
+  "compat/x86_64/byte_strings_header_abi_probe.cpp",
+  "compat/x86_64/run_byte_strings_header_abi.sh",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/libc_legacy_memory_probe.c",
+  "compat/x86_64/libc_legacy_memory_start.S",
+  "compat/x86_64/run_libc_legacy_memory.sh",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "compat/x86_64/README.md",
+  "STATUS.md",
+  "x86-64.md",
+  "scripts/dev-x86_64.sh",
+  "scripts/check_structure.py",
+]
+x86_abi_prerequisites = [
+  "The SysV AMD64 `bcopy` ABI passes source, destination, and LP64 size_t length in rdi/rsi/rdx; its adapter swaps rdi/rsi before tail-transferring to the established overlap-safe memmove owner. `bzero` passes destination and LP64 size_t length in rdi/rsi; its adapter first moves rsi to memset's rdx length slot, then clears esi for memset's zero byte value before tail-transferring to the established memset owner. Both entries return void to their C caller",
+  "Pinned musl 1.2.6 src/string/bcopy.c maps `bcopy` to memmove(destination, source, length), and src/string/bzero.c maps `bzero` to memset(destination, 0, length). The pinned AArch64 static ABI inventory records `bcopy bcopy.lo T GLOBAL 0 10` and `bzero bzero.lo T GLOBAL 0 c`, fixing their public object ownership without using AArch64 code as an x86 implementation",
+  "The adapter object exports exactly bcopy/bzero and has exactly direct memmove/memset relocations into the preselected scalar bulk-memory object. The final `-nostdlib -static` candidate has no unresolved symbols, interpreter, DT_NEEDED entry, no PT_TLS segment, dynamic TLS model, PLT, allocator, errno, locale, or syscall path; its fixture-only _start exits directly and supplies no CRT or runtime contract",
+]
+x86_header_prerequisites = ["The existing byte-strings C/C++ header gate compares project-first and pinned-musl `strings.h` declarations for `void bcopy(const void *, void *, size_t)` and `void bzero(void *, size_t)`, their unmangled C++ spellings, GNU/BSD positive visibility, and strict-POSIX C hiding. The behavior fixture additionally traces project stddef.h, string.h, strings.h, features.h, and bits/alltypes.h; it does not select general header or C-memory ABI completion."]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-legacy-memory", scope = "Pinned-musl C reference plus a true `-nostdlib -static` x86 candidate. The gate first runs the C/C++ byte-strings declaration matrix, traces project headers, and ratchets bcopy/bzero against the pinned AArch64 static-ABI rows and the complete selected static-export list. It extracts exactly the adapter and existing bulk-memory archive objects; the adapter exports only bcopy/bzero and has only direct memmove/memset dependencies. The freestanding matrix proves zero-length and 0..48-byte overlapping bcopy moves across both source/destination orderings plus 0..64-byte caller-buffer bzero ranges, with no interpreter, DT_NEEDED, unresolved symbol, PT_TLS, dynamic TLS model, PLT, ambient libc, allocator, errno, locale, or unowned memory utility. It does not select general bulk-memory or `memory.bytes-basic`, memccpy/mempcpy/explicit_bzero, allocator lifecycle/interposition, libc.so, general startup, CRT, loader, sysroot, family completion, promotion, or public x86 support." }]
+oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source mapping and behavior oracle for src/string/bcopy.c and src/string/bzero.c: the public wrappers forward respectively to memmove(destination, source, length) and memset(destination, 0, length). The pinned AArch64 libc.a static TSV fixes their public bcopy.lo/bzero.lo ownership only." }, { kind = "elf-abi", source = "System V AMD64 psABI", role = "LP64 size_t, C void-return, rdi/rsi/rdx argument placement, static linking, and no-dynamic-dependency fixture contract." }]
 
 [[family.verified_artifact]]
 id = "static-c-random-entropy"

@@ -349,6 +349,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-credential-observation  run the static x86 crabc-libc credential-observation slice
   libc-ffs  run the static x86 crabc-libc find-first-set slice
   libc-byte-strings  run the static x86 crabc-libc byte-string slice
+  libc-legacy-memory  run the static x86 crabc-libc bcopy/bzero adapter slice
   libc-network-byte-order  run the static x86 crabc-libc network byte-order slice
   libc-process-globals-getopt  run the static x86 crabc-libc program-name/getopt slice
   libc-auxv-observation  run the static x86 crabc-libc initial aux-vector lookup slice
@@ -2123,6 +2124,10 @@ run_libc_memfd_create() {
     run_in_container bash /workspace/compat/x86_64/run_libc_memfd_create.sh
 }
 
+run_libc_legacy_memory() {
+    run_in_container bash /workspace/compat/x86_64/run_libc_legacy_memory.sh
+}
+
 run_libc_allocator_runtime() {
     run_in_container bash /workspace/compat/x86_64/run_libc_allocator_runtime.sh
 }
@@ -3537,6 +3542,7 @@ case "$command" in
     libc-memory-sync) ;;
     libc-memory-locking) ;;
     libc-memfd-create) ;;
+    libc-legacy-memory) ;;
     libc-allocator-runtime) ;;
     libc-allocator-string-duplication) ;;
     libc-allocator-observability) ;;
@@ -5150,6 +5156,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "libc-byte-strings takes no arguments"
         ensure_image
         run_in_container bash /workspace/compat/x86_64/run_libc_byte_strings.sh
+        ;;
+    libc-legacy-memory)
+        [ "$#" -eq 0 ] || fail "libc-legacy-memory takes no arguments"
+        ensure_image
+        run_libc_legacy_memory
         ;;
     libc-network-byte-order)
         [ "$#" -eq 0 ] || fail "libc-network-byte-order takes no arguments"

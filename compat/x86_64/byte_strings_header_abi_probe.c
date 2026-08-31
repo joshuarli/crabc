@@ -16,6 +16,8 @@ typedef int (*bounded_compare_signature)(const char *, const char *, size_t);
 typedef size_t (*span_signature)(const char *, const char *);
 typedef size_t (*length_signature)(const char *);
 typedef size_t (*bounded_length_signature)(const char *, size_t);
+typedef void (*bcopy_signature)(const void *, void *, size_t);
+typedef void (*bzero_signature)(void *, size_t);
 
 static char_search_signature strchr_signature = strchr;
 static char_search_signature strrchr_signature = strrchr;
@@ -36,6 +38,8 @@ static char_search_signature strchrnul_signature = strchrnul;
 #if defined(CRABC_EXPECT_ALIASES)
 static char_search_signature index_signature = index;
 static char_search_signature rindex_signature = rindex;
+static bcopy_signature bcopy_signature_value = bcopy;
+static bzero_signature bzero_signature_value = bzero;
 #endif
 
 /* This opt-in reference is expected to fail under strict POSIX selectors. */
@@ -46,6 +50,15 @@ static char_search_signature required_strchrnul_signature = strchrnul;
 /* This opt-in reference is expected to fail under strict POSIX selectors. */
 #if defined(CRABC_REQUIRE_STRVERSCMP)
 static compare_signature required_strverscmp_signature = strverscmp;
+#endif
+
+/* These BSD/legacy declarations are expected to fail under strict POSIX. */
+#if defined(CRABC_REQUIRE_BCOPY)
+static bcopy_signature required_bcopy_signature = bcopy;
+#endif
+
+#if defined(CRABC_REQUIRE_BZERO)
+static bzero_signature required_bzero_signature = bzero;
 #endif
 
 int crabc_x86_64_byte_strings_header_abi_probe(void)
@@ -67,12 +80,20 @@ int crabc_x86_64_byte_strings_header_abi_probe(void)
 #if defined(CRABC_EXPECT_ALIASES)
     (void)index_signature;
     (void)rindex_signature;
+    (void)bcopy_signature_value;
+    (void)bzero_signature_value;
 #endif
 #if defined(CRABC_REQUIRE_STRCHRNUL)
     (void)required_strchrnul_signature;
 #endif
 #if defined(CRABC_REQUIRE_STRVERSCMP)
     (void)required_strverscmp_signature;
+#endif
+#if defined(CRABC_REQUIRE_BCOPY)
+    (void)required_bcopy_signature;
+#endif
+#if defined(CRABC_REQUIRE_BZERO)
+    (void)required_bzero_signature;
 #endif
     return 0;
 }
