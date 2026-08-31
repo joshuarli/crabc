@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -39,35 +41,64 @@ class HostQualificationTests(unittest.TestCase):
 
 class ReportContractTests(unittest.TestCase):
     @staticmethod
-    def measured_friend_boundary_report() -> dict[str, object]:
+    def measured_selected_shadow_report() -> dict[str, object]:
         host = {
             "architecture": "aarch64",
             "final_promotion_qualified": False,
             "qualification": "linux-aarch64-development-smoke-only",
         }
         report = perf.empty_report(label="baseline", host_qualification=host)
+        worker_scales = {}
+        for worker_count in perf.WORKER_SCALES:
+            raw_sample = {
+                "batch_ns": [17, 19],
+                "elapsed_wall_ns": 31,
+                "operations_per_batch": worker_count * 10,
+                "sample_index": 0,
+                "worker_count": worker_count,
+            }
+            worker_scales[f"workers_{worker_count}"] = {
+                "lanes": {
+                    "pinned_c": {"raw_samples": [raw_sample]},
+                    "rust_native_shadow": {"raw_samples": [dict(raw_sample)]},
+                },
+                "throughput_ratio": {"median_rust_over_pinned_c": 1.0},
+                "warmup_processes_per_lane": 2,
+                "worker_count": worker_count,
+            }
         report.update(
             {
                 "lanes": {
                     "rust_native_shadow": {
                         "selected_artifact_attestation": {
                             "build_identity": {"algorithm": "sha256-canonical-json", "sha256": "a" * 64},
-                            "runtime": {"backend_identity": perf.RUST_SHADOW_BACKEND_IDENTITY, "free_route": perf.RUST_SHADOW_FREE_ROUTE},
-                            "symbol_attestation": {
-                                "required_rust_shadow_symbol_defined": True,
-                                "rejected_c_symbol_defined": False,
+                            "runtime": {
+                                "backend_identity": perf.RUST_SHADOW_BACKEND_IDENTITY,
+                                "free_route": perf.RUST_SHADOW_FREE_ROUTE,
+                            },
+                            "selected_shadow_libc": {
+                                "c_backend_relocations": [],
+                                "cargo_feature_attestation": {
+                                    "fingerprint": {"sha256": "b" * 64},
+                                    "required_feature": perf.RUST_SHADOW_FEATURE,
+                                },
+                                "public_malloc_free_direct_mimalloc_targets": {"free": [], "malloc": []},
                             },
                         }
                     }
                 },
-                "measurement_contract": {"timing": "batches", "warmup": "fresh processes"},
+                "measurement_contract": {
+                    "raw_samples": True,
+                    "timing": "batches",
+                    "warmup": "fresh processes",
+                    "worker_lifecycle": "ordinary pthread workers",
+                },
                 "reproducible_command": ["python3", "run.py", "--smoke"],
                 "status": "measured-architecture-pass",
                 "workloads": {
                     "alloc_free_64": {
                         "allocation_sizes_bytes": [64],
-                        "throughput_ratio": {"median_rust_over_pinned_c": 1.0},
-                        "warmup_processes_per_lane": 2,
+                        "worker_scales": worker_scales,
                     }
                 },
             }
@@ -94,7 +125,7 @@ class ReportContractTests(unittest.TestCase):
         with self.assertRaisesRegex(perf.HarnessError, "public or promotion"):
             perf.validate_report_contract(report)
 
-    def test_measured_report_requires_reproducible_command_sizes_warmup_and_ratio(self) -> None:
+    def test_measured_report_requires_reproducible_command_and_raw_worker_samples(self) -> None:
         host = {
             "architecture": "aarch64",
             "final_promotion_qualified": False,
@@ -105,8 +136,8 @@ class ReportContractTests(unittest.TestCase):
         with self.assertRaisesRegex(perf.HarnessError, "reproducible command"):
             perf.validate_report_contract(report)
 
-    def test_passing_direct_engine_friend_boundary_cannot_qualify_for_promotion(self) -> None:
-        report = self.measured_friend_boundary_report()
+    def test_selected_shadow_report_cannot_qualify_for_promotion(self) -> None:
+        report = self.measured_selected_shadow_report()
         perf.validate_report_contract(report)
         self.assertFalse(report["measurement_boundary"]["production_libc_measurement"])
         self.assertFalse(report["measurement_boundary"]["final_promotion_qualification_eligible"])
@@ -114,7 +145,14 @@ class ReportContractTests(unittest.TestCase):
         with self.assertRaisesRegex(perf.HarnessError, "cannot qualify for final promotion"):
             perf.validate_report_contract(report)
 
-    def test_friend_boundary_cannot_be_relabelled_as_production_libc_measurement(self) -> None:
+    def test_selected_shadow_report_rejects_c_fallback_route(self) -> None:
+        report = self.measured_selected_shadow_report()
+        selected = report["lanes"]["rust_native_shadow"]["selected_artifact_attestation"]["selected_shadow_libc"]
+        selected["public_malloc_free_direct_mimalloc_targets"]["free"] = ["mi_free"]
+        with self.assertRaisesRegex(perf.HarnessError, "selected native shadow routing"):
+            perf.validate_report_contract(report)
+
+    def test_selected_shadow_report_cannot_be_relabelled_as_production_libc_measurement(self) -> None:
         host = {
             "architecture": "aarch64",
             "final_promotion_qualified": False,
@@ -132,10 +170,10 @@ class MeasurementContractTests(unittest.TestCase):
         with self.assertRaisesRegex(perf.HarnessError, "unexpected"):
             perf.parse_batch_output("batch_ns=17\naddress=0x1\nok\n", expected_batches=1)
 
-    def test_selected_artifact_attestation_accepts_only_rust_shadow_identity_and_route(self) -> None:
+    def test_selected_artifact_attestation_accepts_only_selected_c_abi_identity_and_route(self) -> None:
         self.assertEqual(
             perf.parse_attestation_output(
-                "backend_identity=rust-native-shadow-crabc-test-free-v1\nfree_route=crabc_test_free\nok\n",
+                "backend_identity=rust-native-shadow-selected-c-abi-v1\nfree_route=free\nok\n",
                 expected_identity=perf.RUST_SHADOW_BACKEND_IDENTITY,
                 expected_free_route=perf.RUST_SHADOW_FREE_ROUTE,
             ),
@@ -148,36 +186,23 @@ class MeasurementContractTests(unittest.TestCase):
                 expected_free_route=perf.RUST_SHADOW_FREE_ROUTE,
             )
 
-    def test_selected_artifact_rejects_c_or_default_free_symbols(self) -> None:
-        self.assertEqual(
-            perf.verify_rust_shadow_free_symbols({"crabc_test_free", "other"}),
-            {
-                "required_rust_shadow_symbol": "crabc_test_free",
-                "required_rust_shadow_symbol_defined": True,
-                "rejected_c_symbol": "mi_free",
-                "rejected_c_symbol_defined": False,
-            },
-        )
-        with self.assertRaisesRegex(perf.HarnessError, "does not define crabc_test_free"):
-            perf.verify_rust_shadow_free_symbols({"free"})
-        with self.assertRaisesRegex(perf.HarnessError, "rejected pinned-C mi_free"):
-            perf.verify_rust_shadow_free_symbols({"crabc_test_free", "mi_free"})
-
-    def test_selected_artifact_build_identity_binds_source_archive_and_executable_hashes(self) -> None:
+    def test_selected_artifact_build_identity_binds_feature_artifact_and_executable_hashes(self) -> None:
         first = perf.selected_artifact_build_identity(
             backend_source={"sha256": "a" * 64},
-            static_archive={"sha256": "b" * 64},
-            executable={"sha256": "c" * 64},
+            selected_libc={"sha256": "b" * 64},
+            cargo_fingerprint={"sha256": "c" * 64},
+            executable={"sha256": "d" * 64},
         )
         second = perf.selected_artifact_build_identity(
             backend_source={"sha256": "a" * 64},
-            static_archive={"sha256": "b" * 64},
-            executable={"sha256": "d" * 64},
+            selected_libc={"sha256": "b" * 64},
+            cargo_fingerprint={"sha256": "c" * 64},
+            executable={"sha256": "e" * 64},
         )
         self.assertEqual(first["algorithm"], "sha256-canonical-json")
         self.assertNotEqual(first["sha256"], second["sha256"])
 
-    def test_c_backend_must_reject_rust_shadow_attestation(self) -> None:
+    def test_c_backend_must_reject_selected_shadow_attestation(self) -> None:
         with patch.object(
             perf,
             "run_fixture_attestation",
@@ -189,8 +214,8 @@ class MeasurementContractTests(unittest.TestCase):
                     "accepted_as_rust_shadow": False,
                     "observed_backend_identity": "pinned-c-mimalloc-v3.5.0",
                     "observed_free_route": "mi_free",
-                    "required_rust_shadow_identity": "rust-native-shadow-crabc-test-free-v1",
-                    "required_rust_shadow_free_route": "crabc_test_free",
+                    "required_rust_shadow_identity": perf.RUST_SHADOW_BACKEND_IDENTITY,
+                    "required_rust_shadow_free_route": perf.RUST_SHADOW_FREE_ROUTE,
                 },
             )
         with patch.object(
@@ -201,10 +226,12 @@ class MeasurementContractTests(unittest.TestCase):
             perf.assert_c_backend_rejects_rust_shadow_attestation(Path("/fixture/c"))
 
     def test_ratio_is_rust_throughput_over_pinned_c_throughput(self) -> None:
-        # C takes 20ns and Rust takes 40ns for the same one-pair workload.
         ratio = perf.throughput_ratio([50_000_000.0] * 5, [25_000_000.0] * 5, seed=3)
         self.assertEqual(ratio["median_rust_over_pinned_c"], 0.5)
         self.assertEqual(ratio["one_sided_95_lower_rust_over_pinned_c"], 0.5)
+
+    def test_throughput_counts_every_worker_local_operation(self) -> None:
+        self.assertEqual(perf.throughput_pairs_per_second(20, 10, 4), 2_000_000_000.0)
 
     def test_pair_plan_has_one_c_and_one_rust_sample_for_each_index(self) -> None:
         plan = perf.paired_sample_plan(5, seed=7)
@@ -214,30 +241,67 @@ class MeasurementContractTests(unittest.TestCase):
             sorted((lane, sample) for sample in range(5) for lane in ("pinned_c", "rust_native_shadow")),
         )
 
-    def test_musl_fixture_rejects_rust_host_link_hints(self) -> None:
-        self.assertEqual(perf.fixture_link_libraries(["-lgcc_s", "-lc"]), [])
-        with self.assertRaisesRegex(perf.HarnessError, "native static library contract"):
-            perf.fixture_link_libraries(["-lunwind", "-lc"])
+    def test_selected_shadow_link_command_has_no_default_c_library(self) -> None:
+        command = perf.rust_shadow_fixture_command(
+            Path("/sysroot/bin/crabc-cc"), Path("/build/selected/libc.so"), Path("/sysroot/libbuiltins.a"), Path("/build/fixture")
+        )
+        self.assertIn("-nodefaultlibs", command)
+        self.assertIn(perf.SELECTED_LIBC_LINK_FLAG, command)
+        self.assertNotIn("-lc", command)
+        self.assertTrue(all(flag not in command for flag in perf.PINNED_C_SOURCE_CONFIGURATION_FLAGS))
 
-    def test_fixture_release_flags_are_shared_but_c_configuration_is_not_applied_to_rust(self) -> None:
-        c_command = perf.pinned_c_fixture_command("musl-gcc", Path("/pinned"), Path("/build/c"))
-        rust_command = perf.rust_fixture_command(
-            "musl-gcc", Path("/build/libshadow.a"), "/rust/self-contained", [], Path("/build/rust")
-        )
-        self.assertEqual(
-            [flag for flag in c_command if flag in perf.FIXTURE_RELEASE_FLAGS],
-            list(perf.FIXTURE_RELEASE_FLAGS),
-        )
-        self.assertEqual(
-            [flag for flag in rust_command if flag in perf.FIXTURE_RELEASE_FLAGS],
-            list(perf.FIXTURE_RELEASE_FLAGS),
-        )
-        self.assertTrue(all(flag in c_command for flag in perf.PINNED_C_SOURCE_CONFIGURATION_FLAGS))
-        self.assertTrue(all(flag not in rust_command for flag in perf.PINNED_C_SOURCE_CONFIGURATION_FLAGS))
+    def test_selected_shadow_cargo_build_uses_release_profile(self) -> None:
+        command = perf.rust_shadow_cargo_command(Path("/build/target"))
+        self.assertIn("--release", command)
+        self.assertIn(perf.RUST_SHADOW_FEATURE, command)
 
-    def test_manifest_retains_sizes_and_warmup_contract(self) -> None:
+    def test_selected_shadow_cargo_fingerprint_requires_native_feature(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_name:
+            fingerprint = Path(temporary_name) / "release/.fingerprint/crabc-libc-a/lib-c.json"
+            fingerprint.parent.mkdir(parents=True)
+            fingerprint.write_text(
+                json.dumps({"features": json.dumps(["default", perf.RUST_SHADOW_FEATURE])}), encoding="utf-8"
+            )
+            observed = perf.selected_shadow_cargo_fingerprint(Path(temporary_name))
+        self.assertEqual(observed["required_feature"], perf.RUST_SHADOW_FEATURE)
+        self.assertEqual(observed["cargo_features"], ["default", perf.RUST_SHADOW_FEATURE])
+
+    def test_worker_scale_retains_machine_readable_raw_samples(self) -> None:
+        workload = perf.Workload("tiny", 64, 2, 3)
+        calls: list[tuple[Path, int]] = []
+
+        def fake_sample(binary: Path, _workload: perf.Workload, worker_count: int, **_: object) -> dict[str, object]:
+            calls.append((binary, worker_count))
+            return {
+                "batch_ns": [17, 19],
+                "elapsed_wall_ns": 31,
+                "operations_per_batch": worker_count * 3,
+                "worker_count": worker_count,
+            }
+
+        with patch.object(perf, "run_batch_sample", side_effect=fake_sample):
+            observed = perf.measure_worker_scale(
+                {
+                    "pinned_c": (Path("/fixture/c"), {"PATH": "/bin"}),
+                    "rust_native_shadow": (Path("/fixture/rust"), {"PATH": "/bin"}),
+                },
+                workload,
+                4,
+                samples=1,
+                warmup=1,
+                seed=7,
+                timeout=1.0,
+            )
+        self.assertEqual(observed["worker_count"], 4)
+        self.assertEqual(observed["local_allocation_free_pairs_per_batch"], 12)
+        self.assertEqual(observed["lanes"]["pinned_c"]["raw_samples"][0]["worker_count"], 4)
+        self.assertTrue(all(worker_count == 4 for _, worker_count in calls))
+
+    def test_manifest_retains_sizes_warmup_and_independent_local_worker_scales(self) -> None:
         manifest, workloads = perf.load_manifest()
-        self.assertEqual(manifest["mode"]["warmup_processes_per_lane_and_workload"], 2)
+        self.assertEqual(manifest["mode"]["warmup_processes_per_lane_and_workload_and_worker_scale"], 2)
+        self.assertEqual(manifest["fixture"]["local_worker_scales"], [1, 2, 4, 8])
+        self.assertFalse(manifest["fixture"]["single_thread_only"])
         self.assertEqual([workload.request_bytes for workload in workloads], [64, 4096])
 
 

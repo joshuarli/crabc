@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
-"""Linux/AArch64 local Rust-native versus pinned-C allocation/free smoke.
+"""Linux/AArch64 local-worker Rust-shadow versus pinned-C smoke.
 
-This is intentionally a development architecture ratchet, not a replacement
-for the qualified AArch64 final-promotion performance suite.  The two lanes
-execute one identical C fixture and differ only behind an opaque private
-init/malloc/free/shutdown boundary.
+This development architecture ratchet runs one source-shared C fixture at
+1, 2, 4, and 8 ordinary pthread workers. The pinned-C lane enters the pinned
+v3.5.0 source through a private shim. The Rust lane links one exact,
+compile-time-selected ``native-mimalloc-shadow`` libc.so and reaches it only
+through the same fixture-private malloc/free shim. It is never final
+performance qualification.
 """
 
 from __future__ import annotations
@@ -35,20 +37,22 @@ ROOT = Path(__file__).resolve().parents[3]
 FIXTURE_ROOT = Path(__file__).resolve().parent
 MANIFEST = FIXTURE_ROOT / "perf-local-aarch64-v3.5.0.json"
 UPSTREAMS = ROOT / "compat/upstreams.toml"
-TEST_ADAPTER_ROOT = ROOT / "compat/allocator/test-adapter"
-TEST_ADAPTER_HEADER = TEST_ADAPTER_ROOT / "crabc-mimalloc-test-adapter.h"
 CACHE = FIXTURE_ROOT / ".cache"
 
-SCHEMA = 1
+SCHEMA = 2
 KIND = "crabc-mimalloc-aarch64-local-allocation-performance-smoke"
 ARCHITECTURE = "aarch64"
 RUST_TARGET = "aarch64-unknown-linux-musl"
 MUSL_COMPILER = "musl-gcc"
-RUST_SHADOW_BACKEND_IDENTITY = "rust-native-shadow-crabc-test-free-v1"
-RUST_SHADOW_FREE_ROUTE = "crabc_test_free"
+RUST_SHADOW_BACKEND_IDENTITY = "rust-native-shadow-selected-c-abi-v1"
+RUST_SHADOW_FREE_ROUTE = "free"
+RUST_SHADOW_FEATURE = "native-mimalloc-shadow"
 PINNED_C_BACKEND_IDENTITY = "pinned-c-mimalloc-v3.5.0"
 REJECTED_C_FREE_ROUTE = "mi_free"
-MEASUREMENT_BOUNDARY_KIND = "direct-engine-friend-boundary"
+MEASUREMENT_BOUNDARY_KIND = "selected-native-shadow-c-abi"
+CANONICAL_LOADER = Path("/lib/ld-crabc-aarch64.so.1")
+SELECTED_LIBC_LINK_FLAG = "-l:libc.so"
+WORKER_SCALES = (1, 2, 4, 8)
 FIXTURE_RELEASE_FLAGS = ("-O3", "-DNDEBUG")
 PINNED_C_SOURCE_CONFIGURATION_FLAGS = (
     "-DMI_SHARED_LIB",
@@ -212,17 +216,20 @@ def load_manifest(path: Path = MANIFEST) -> tuple[dict[str, Any], tuple[Workload
         raise HarnessError(f"cannot read local AArch64 performance manifest: {error}") from error
     if not isinstance(raw, dict) or raw.get("schema") != SCHEMA or raw.get("kind") != KIND:
         raise HarnessError("local AArch64 performance manifest schema changed")
-    if raw.get("architecture") != ARCHITECTURE or raw.get("profile") != "linux-aarch64-local-private-shadow":
+    if raw.get("architecture") != ARCHITECTURE or raw.get("profile") != "linux-aarch64-local-selected-native-shadow":
         raise HarnessError("local AArch64 performance manifest target changed")
     upstream = raw.get("upstream")
     fixture = raw.get("fixture")
     if not isinstance(upstream, Mapping) or upstream.get("version") != "3.5.0" or upstream.get("revision") != "18b08671c9302247bfb682286e6bf3cc1773f801":
         raise HarnessError("local AArch64 performance manifest upstream changed")
-    if not isinstance(fixture, Mapping) or fixture.get("single_thread_only") is not True:
-        raise HarnessError("local AArch64 performance manifest no longer describes a single-thread fixture")
+    if not isinstance(fixture, Mapping) or fixture.get("single_thread_only") is not False:
+        raise HarnessError("local AArch64 performance manifest lost its multi-worker fixture")
+    if fixture.get("local_worker_scales") != list(WORKER_SCALES):
+        raise HarnessError("local AArch64 performance manifest worker scales changed")
     attestation = fixture.get("selected_artifact_attestation")
     if attestation != {
         "backend_identity": RUST_SHADOW_BACKEND_IDENTITY,
+        "cargo_feature": RUST_SHADOW_FEATURE,
         "free_route": RUST_SHADOW_FREE_ROUTE,
         "rejected_c_free_route": REJECTED_C_FREE_ROUTE,
     }:
@@ -232,7 +239,7 @@ def load_manifest(path: Path = MANIFEST) -> tuple[dict[str, Any], tuple[Workload
         "final_promotion_qualification_eligible": False,
         "kind": MEASUREMENT_BOUNDARY_KIND,
         "production_libc_measurement": False,
-        "reason": "The prefixed crabc_test_* adapter directly enters the Rust engine. It does not measure the production crabc-libc allocator ABI or backend selection.",
+        "reason": "The Rust lane links one compile-time-selected nondefault shadow libc.so. It does not measure the default production allocator selection or a qualified final-promotion environment.",
     }:
         raise HarnessError("local AArch64 performance manifest measurement boundary changed")
     scope = raw.get("scope")
@@ -246,7 +253,11 @@ def load_manifest(path: Path = MANIFEST) -> tuple[dict[str, Any], tuple[Workload
     workloads = raw.get("workloads")
     if not isinstance(smoke, Mapping) or smoke.get("minimum_rust_over_pinned_c_throughput_ratio") != 0.25:
         raise HarnessError("local AArch64 performance manifest lost the architecture smoke ratchet")
-    if not isinstance(mode, Mapping) or mode.get("samples_per_lane_and_workload") != 5 or mode.get("warmup_processes_per_lane_and_workload") != 2:
+    if (
+        not isinstance(mode, Mapping)
+        or mode.get("samples_per_lane_and_workload_and_worker_scale") != 5
+        or mode.get("warmup_processes_per_lane_and_workload_and_worker_scale") != 2
+    ):
         raise HarnessError("local AArch64 performance manifest mode changed")
     if not isinstance(workloads, list) or not workloads:
         raise HarnessError("local AArch64 performance manifest has no workloads")
@@ -337,61 +348,6 @@ def safe_extract(archive: Path, destination: Path, archive_root: str) -> Path:
     return source
 
 
-def parse_native_static_libraries(output: str) -> list[str]:
-    matches = re.findall(r"(?m)^\s*(?:note:\s*)?native-static-libs:\s*(.*?)\s*$", output)
-    if len(matches) != 1:
-        raise HarnessError("Rust shadow adapter native-static-libs output is absent or ambiguous")
-    libraries = matches[0].split()
-    if not libraries or not all(item.startswith("-") for item in libraries):
-        raise HarnessError("Rust shadow adapter native-static-libs output is invalid")
-    return libraries
-
-
-def fixture_link_libraries(native_static_libraries: Sequence[str]) -> list[str]:
-    """Keep Cargo's host-link hint out of the musl fixture's final link.
-
-    The pinned AArch64 Rust staticlib currently reports ``-lgcc_s -lc``.
-    Alpine's musl toolchain has no shared ``gcc_s`` archive, and its driver
-    already supplies the C and compiler runtime for the C fixture.  The
-    fixture has no additional Rust-native library requirement (the AArch64
-    staticlib includes its compiler-builtins/unwind support), as proved by
-    this exact closed input.  Fail closed if Cargo's requirement changes.
-    """
-
-    if list(native_static_libraries) != ["-lgcc_s", "-lc"]:
-        raise HarnessError("Rust shadow adapter native static library contract changed")
-    return []
-
-
-def adapter_header_symbols() -> list[str]:
-    header = TEST_ADAPTER_HEADER.read_text(encoding="utf-8")
-    names = re.findall(r"(?m)^[^#\n;]*\b(crabc_test_[A-Za-z0-9_]+)\s*\([^;{]*\)\s*;", header)
-    names = sorted(set(names))
-    if len(names) != 16:
-        raise HarnessError("private adapter header does not retain its 16-symbol boundary")
-    return names
-
-
-def archive_prefixed_symbols(nm: str, artifact: Path) -> list[str]:
-    record = command_record((nm, "-g", "--defined-only", str(artifact)), cwd=ROOT)
-    require_success(record, "Rust shadow archive symbol inspection")
-    names = {line.split()[-1] for line in str(record["stdout"]).splitlines() if len(line.split()) >= 2 and line.split()[-1].startswith("crabc_test_")}
-    return sorted(names)
-
-
-def rust_target_self_contained_search_path() -> str:
-    rustc = require_tool("rustc")
-    record = command_record((rustc, "--print", "sysroot"), cwd=ROOT)
-    require_success(record, "Rust sysroot discovery")
-    lines = [line.strip() for line in str(record["stdout"]).splitlines() if line.strip()]
-    if len(lines) != 1:
-        raise HarnessError("Rust sysroot discovery is absent or ambiguous")
-    path = Path(lines[0]) / "lib/rustlib" / RUST_TARGET / "lib/self-contained"
-    if not (path / "libunwind.a").is_file():
-        raise HarnessError(f"Rust target self-contained libunwind is absent: {path / 'libunwind.a'}")
-    return str(path)
-
-
 def fixture_compiler_prefix(compiler: str) -> list[str]:
     return [compiler, "-std=c11", "-fPIE", "-pie", "-fno-builtin", *FIXTURE_RELEASE_FLAGS]
 
@@ -406,20 +362,24 @@ def pinned_c_fixture_command(compiler: str, source: Path, binary: Path) -> list[
     ]
 
 
-def rust_adapter_cargo_command(cargo_target: Path) -> list[str]:
+def rust_shadow_cargo_command(cargo_target: Path) -> list[str]:
     return [
-        "cargo", "rustc", "--locked", "--package", "crabc-mimalloc-test-adapter", "--lib",
-        "--features", "test-adapter", "--target", RUST_TARGET, "--release", "--target-dir", str(cargo_target),
-        "--", "--print=native-static-libs",
+        "cargo", "build", "--locked", "--package", "crabc-libc",
+        "--features", RUST_SHADOW_FEATURE, "--release", "--target-dir", str(cargo_target),
     ]
 
 
-def rust_fixture_command(compiler: str, static_library: Path, native_search_path: str, native_libraries: Sequence[str], binary: Path) -> list[str]:
+def rust_shadow_fixture_command(
+    compiler: Path, selected_libc: Path, builtins: Path, binary: Path
+) -> list[str]:
     return [
-        *fixture_compiler_prefix(compiler),
-        "-I", str(FIXTURE_ROOT), "-I", str(TEST_ADAPTER_ROOT),
+        *fixture_compiler_prefix(str(compiler)),
+        "-nodefaultlibs",
+        "-I", str(ROOT / "include"), "-I", str(FIXTURE_ROOT),
+        "-L", str(selected_libc.parent),
+        "-Wl,--allow-shlib-undefined",
         str(FIXTURE_ROOT / "fixture.c"), str(FIXTURE_ROOT / "rust-native-shadow-backend.c"),
-        str(static_library), f"-L{native_search_path}", *native_libraries, "-pthread", "-o", str(binary),
+        SELECTED_LIBC_LINK_FLAG, str(builtins), "-Wl,--trace", "-o", str(binary),
     ]
 
 
@@ -438,28 +398,41 @@ def audit_executable(readelf: str, artifact: Path) -> dict[str, Any]:
     return {"artifact": artifact_record(artifact), "elf": parse_elf_identity(str(header["stdout"]))}
 
 
-def executable_defined_symbols(nm: str, artifact: Path) -> set[str]:
-    record = command_record((nm, "-g", "--defined-only", str(artifact)), cwd=ROOT)
-    require_success(record, "fixture executable symbol inspection")
+def parse_dynamic_dependencies(output: str) -> list[str]:
+    return re.findall(r"Shared library: \[([^\]]+)\]", output)
+
+
+def parse_dynamic_search_paths(output: str) -> list[str]:
+    return re.findall(r"\((?:RPATH|RUNPATH)\).*?\[([^\]]+)\]", output)
+
+
+def parse_interpreter(output: str) -> str:
+    interpreters = re.findall(r"Requesting program interpreter: ([^\]]+)", output)
+    if len(interpreters) != 1:
+        raise HarnessError("fixture has an ambiguous PT_INTERP")
+    return interpreters[0]
+
+
+def audit_selected_shadow_fixture(readelf: str, artifact: Path) -> dict[str, Any]:
+    """Prove this executable needs only the exact selected shadow libc name."""
+
+    executable = audit_executable(readelf, artifact)
+    dynamic = command_record((readelf, "--wide", "--dynamic", str(artifact)), cwd=ROOT)
+    require_success(dynamic, "selected Rust shadow fixture DT_NEEDED inspection")
+    dependencies = parse_dynamic_dependencies(str(dynamic["stdout"]))
+    search_paths = parse_dynamic_search_paths(str(dynamic["stdout"]))
+    if dependencies != ["libc.so"] or search_paths:
+        raise HarnessError("selected Rust shadow fixture has an ambiguous runtime library selection")
+    program_headers = command_record((readelf, "--wide", "--program-headers", str(artifact)), cwd=ROOT)
+    require_success(program_headers, "selected Rust shadow fixture PT_INTERP inspection")
+    interpreter = parse_interpreter(str(program_headers["stdout"]))
+    if interpreter != str(CANONICAL_LOADER):
+        raise HarnessError("selected Rust shadow fixture lost the canonical owned loader")
     return {
-        fields[-1]
-        for line in str(record["stdout"]).splitlines()
-        if (fields := line.split()) and not line.endswith(":")
-    }
-
-
-def verify_rust_shadow_free_symbols(symbols: set[str]) -> dict[str, Any]:
-    """Prove the selected executable retains Rust-shadow free, not C free."""
-
-    if RUST_SHADOW_FREE_ROUTE not in symbols:
-        raise HarnessError("Rust shadow executable does not define crabc_test_free")
-    if REJECTED_C_FREE_ROUTE in symbols:
-        raise HarnessError("Rust shadow executable defines the rejected pinned-C mi_free route")
-    return {
-        "required_rust_shadow_symbol": RUST_SHADOW_FREE_ROUTE,
-        "required_rust_shadow_symbol_defined": True,
-        "rejected_c_symbol": REJECTED_C_FREE_ROUTE,
-        "rejected_c_symbol_defined": False,
+        **executable,
+        "dynamic_dependencies": dependencies,
+        "dynamic_search_paths": search_paths,
+        "interpreter": interpreter,
     }
 
 
@@ -480,7 +453,12 @@ def parse_attestation_output(
 
 
 def run_fixture_attestation(
-    binary: Path, *, expected_identity: str, expected_free_route: str, timeout: float = 30.0
+    binary: Path,
+    *,
+    expected_identity: str,
+    expected_free_route: str,
+    environment: Mapping[str, str] | None = None,
+    timeout: float = 30.0,
 ) -> dict[str, str]:
     """Run the fixture's build-selected backend attestation at a fixed route."""
 
@@ -492,7 +470,7 @@ def run_fixture_attestation(
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
-            env=clean_environment(),
+            env=clean_environment() if environment is None else dict(environment),
             timeout=timeout,
         )
     except subprocess.TimeoutExpired as error:
@@ -509,49 +487,27 @@ def run_fixture_attestation(
     )
 
 
-def run_selected_artifact_attestation(binary: Path, *, timeout: float = 30.0) -> dict[str, str]:
-    """Reject an executable whose private boundary is not the Rust shadow."""
-
-    return run_fixture_attestation(
-        binary,
-        expected_identity=RUST_SHADOW_BACKEND_IDENTITY,
-        expected_free_route=RUST_SHADOW_FREE_ROUTE,
-        timeout=timeout,
-    )
-
-
 def selected_artifact_build_identity(
-    *, backend_source: Mapping[str, Any], static_archive: Mapping[str, Any], executable: Mapping[str, Any]
+    *,
+    backend_source: Mapping[str, Any],
+    selected_libc: Mapping[str, Any],
+    cargo_fingerprint: Mapping[str, Any],
+    executable: Mapping[str, Any],
 ) -> dict[str, Any]:
-    """Bind the attested route to the exact source/archive/executable hashes."""
+    """Bind the selected feature, shared object, shim, and executable hashes."""
 
     components = {
         "backend_identity": RUST_SHADOW_BACKEND_IDENTITY,
         "backend_source_sha256": backend_source.get("sha256"),
+        "cargo_fingerprint_sha256": cargo_fingerprint.get("sha256"),
         "executable_sha256": executable.get("sha256"),
         "free_route": RUST_SHADOW_FREE_ROUTE,
-        "static_archive_sha256": static_archive.get("sha256"),
+        "selected_libc_sha256": selected_libc.get("sha256"),
     }
     if not all(isinstance(value, str) and value for value in components.values()):
         raise HarnessError("Rust shadow selected-artifact identity lacks a component hash")
     canonical = json.dumps(components, separators=(",", ":"), sort_keys=True).encode("utf-8")
     return {"algorithm": "sha256-canonical-json", "components": components, "sha256": hashlib.sha256(canonical).hexdigest()}
-
-
-def attest_rust_shadow_artifact(
-    nm: str, binary: Path, *, backend_source: Mapping[str, Any], static_archive: Mapping[str, Any], executable: Mapping[str, Any]
-) -> dict[str, Any]:
-    """Perform all pre-timing checks for the selected Rust-shadow fixture."""
-
-    return {
-        "build_identity": selected_artifact_build_identity(
-            backend_source=backend_source,
-            static_archive=static_archive,
-            executable=executable,
-        ),
-        "runtime": run_selected_artifact_attestation(binary),
-        "symbol_attestation": verify_rust_shadow_free_symbols(executable_defined_symbols(nm, binary)),
-    }
 
 
 def assert_c_backend_rejects_rust_shadow_attestation(binary: Path) -> dict[str, Any]:
@@ -573,7 +529,159 @@ def assert_c_backend_rejects_rust_shadow_attestation(binary: Path) -> dict[str, 
     }
 
 
-def build_pinned_c_fixture(compiler: str, readelf: str, source: Path, build_root: Path) -> tuple[Path, dict[str, Any]]:
+def cargo_fingerprint_features(path: Path) -> list[str]:
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+        features = json.loads(str(raw["features"]))
+    except (OSError, KeyError, TypeError, json.JSONDecodeError) as error:
+        raise HarnessError("selected Rust shadow Cargo fingerprint is malformed") from error
+    if not isinstance(features, list) or not all(isinstance(feature, str) and feature for feature in features):
+        raise HarnessError("selected Rust shadow Cargo fingerprint feature list is invalid")
+    return features
+
+
+def selected_shadow_cargo_fingerprint(cargo_target: Path) -> dict[str, Any]:
+    candidates = sorted((cargo_target / "release/.fingerprint").glob("crabc-libc-*/lib-c.json"))
+    selected = [path for path in candidates if RUST_SHADOW_FEATURE in cargo_fingerprint_features(path)]
+    if len(selected) != 1:
+        raise HarnessError("selected Rust shadow Cargo build has an ambiguous feature fingerprint")
+    fingerprint = selected[0]
+    features = cargo_fingerprint_features(fingerprint)
+    if set(features) != {"default", RUST_SHADOW_FEATURE}:
+        raise HarnessError("selected Rust shadow Cargo features changed")
+    return {"cargo_features": features, "fingerprint": file_record(fingerprint), "required_feature": RUST_SHADOW_FEATURE}
+
+
+def dynamic_function_exports(readelf: str, artifact: Path) -> set[str]:
+    record = command_record((readelf, "-W", "--dyn-syms", str(artifact)), cwd=ROOT)
+    require_success(record, "selected Rust shadow dynamic-symbol inspection")
+    exports: set[str] = set()
+    for line in str(record["stdout"]).splitlines():
+        fields = line.split()
+        if len(fields) < 8 or fields[3] != "FUNC" or fields[6] == "UND":
+            continue
+        if fields[4] not in {"GLOBAL", "WEAK"} or fields[5] != "DEFAULT":
+            continue
+        exports.add(fields[-1].split("@", 1)[0])
+    return exports
+
+
+def direct_mimalloc_targets(objdump: str, artifact: Path, symbol: str) -> list[str]:
+    record = command_record((objdump, "-d", f"--disassemble={symbol}", str(artifact)), cwd=ROOT)
+    require_success(record, f"selected Rust shadow {symbol} transfer inspection")
+    return sorted(set(re.findall(r"<(mi_[^>]+)>", str(record["stdout"]))))
+
+
+def attest_selected_shadow_libc(
+    readelf: str, objdump: str, artifact: Path, cargo_target: Path
+) -> dict[str, Any]:
+    """Reject a selected artifact that can route timed malloc/free to C mimalloc."""
+
+    fingerprint = selected_shadow_cargo_fingerprint(cargo_target)
+    exports = dynamic_function_exports(readelf, artifact)
+    required_exports = {"malloc", "free"}
+    if not required_exports.issubset(exports):
+        raise HarnessError("selected Rust shadow libc lacks public malloc/free exports")
+    relocations = command_record((readelf, "-W", "--relocs", str(artifact)), cwd=ROOT)
+    require_success(relocations, "selected Rust shadow C-backend relocation inspection")
+    c_backend_relocations = sorted(set(re.findall(r"(?<![A-Za-z0-9_])(mi_[A-Za-z0-9_.$@]+)", str(relocations["stdout"]))))
+    if c_backend_relocations:
+        raise HarnessError("selected Rust shadow libc retains a C mimalloc relocation")
+    entrypoint_targets = {symbol: direct_mimalloc_targets(objdump, artifact, symbol) for symbol in sorted(required_exports)}
+    if any(entrypoint_targets.values()):
+        raise HarnessError("selected Rust shadow malloc/free transfers directly to C mimalloc")
+    return {
+        "artifact": file_record(artifact),
+        "cargo_feature_attestation": fingerprint,
+        "c_backend_relocations": c_backend_relocations,
+        "public_malloc_free_exports": sorted(required_exports),
+        "public_malloc_free_direct_mimalloc_targets": entrypoint_targets,
+    }
+
+
+def require_runtime_inputs() -> tuple[Path, Path, Path]:
+    raw_sysroot = os.environ.get("CRABC_TEST_SYSROOT")
+    if not raw_sysroot:
+        raise HarnessError("local multi-worker smoke requires CRABC_TEST_SYSROOT from scripts/run_owned_test_suite.py")
+    sysroot = Path(raw_sysroot).expanduser().resolve()
+    compiler = sysroot / "bin/crabc-cc"
+    builtins = sysroot / "usr/lib/libcrabc-builtins.a"
+    if not compiler.is_file() or not builtins.is_file():
+        raise HarnessError("local multi-worker smoke requires a complete owned crabc sysroot")
+    if not CANONICAL_LOADER.is_file() or CANONICAL_LOADER.is_symlink():
+        raise HarnessError("local multi-worker smoke requires the staged canonical owned loader")
+    return sysroot, compiler, builtins
+
+
+def printed_driver_link_plan(compiler: Path, command: Sequence[str]) -> dict[str, Any]:
+    record = command_record((str(compiler), "--crabc-print-link-plan", *command[1:]), cwd=ROOT)
+    require_success(record, "selected Rust shadow fixture driver link-plan inspection")
+    try:
+        plan = json.loads(str(record["stdout"]))
+    except json.JSONDecodeError as error:
+        raise HarnessError("selected Rust shadow fixture driver did not emit JSON") from error
+    if not isinstance(plan, dict):
+        raise HarnessError("selected Rust shadow fixture driver link plan is invalid")
+    return plan
+
+
+def link_plan_search_paths(command: Sequence[str]) -> list[str]:
+    paths: list[str] = []
+    index = 0
+    while index < len(command):
+        argument = command[index]
+        if argument == "-L":
+            if index + 1 == len(command):
+                raise HarnessError("selected Rust shadow fixture link plan has a dangling -L")
+            paths.append(command[index + 1])
+            index += 2
+            continue
+        if argument.startswith("-L") and len(argument) > 2:
+            paths.append(argument[2:])
+        index += 1
+    return paths
+
+
+def audit_selected_shadow_link_plan(
+    plan: Mapping[str, Any], sysroot: Path, selected_libc: Path, builtins: Path
+) -> dict[str, Any]:
+    command = plan.get("command")
+    if not isinstance(command, list) or not all(isinstance(item, str) for item in command):
+        raise HarnessError("selected Rust shadow fixture link plan command is invalid")
+    if plan.get("default_libraries") != [] or command.count("-nodefaultlibs") != 1 or "-lc" in command:
+        raise HarnessError("selected Rust shadow fixture link plan retained a default C library")
+    if command.count(SELECTED_LIBC_LINK_FLAG) != 1 or link_plan_search_paths(command) != [str(selected_libc.parent)]:
+        raise HarnessError("selected Rust shadow fixture link plan has an ambiguous libc search root")
+    if command.count(str(builtins)) != 1 or command.index(SELECTED_LIBC_LINK_FLAG) >= command.index(str(builtins)):
+        raise HarnessError("selected Rust shadow fixture link plan lost its selected libc/builtins ordering")
+    if selected_libc.parent.resolve() == (sysroot / "usr/lib").resolve():
+        raise HarnessError("selected Rust shadow libc aliases the ordinary sysroot libc")
+    return {
+        "default_libraries": [],
+        "driver_opt_out": "-nodefaultlibs",
+        "selected_library_flag": SELECTED_LIBC_LINK_FLAG,
+        "selected_library_root": relative(selected_libc.parent),
+        "owned_builtins": file_record(builtins),
+    }
+
+
+def audit_selected_shadow_linker_trace(
+    build: Mapping[str, Any], selected_libc: Path, sysroot: Path
+) -> dict[str, Any]:
+    trace = str(build.get("stdout", "")) + "\n" + str(build.get("stderr", ""))
+    selected = str(selected_libc.resolve())
+    ordinary = str((sysroot / "usr/lib/libc.so").resolve())
+    if selected not in trace or ordinary in trace:
+        raise HarnessError("selected Rust shadow fixture linker trace did not resolve only the selected libc")
+    return {
+        "selected_libc": file_record(selected_libc),
+        "selected_libc_seen": True,
+        "sysroot_libc_seen": False,
+        "trace_sha256": hashlib.sha256(trace.encode("utf-8")).hexdigest(),
+    }
+
+
+def build_pinned_c_fixture(compiler: str, readelf: str, source: Path, build_root: Path) -> tuple[Path, dict[str, Any], dict[str, str]]:
     binary = build_root / "pinned-c-fixture"
     command = pinned_c_fixture_command(compiler, source, binary)
     result = command_record(command, cwd=source)
@@ -582,50 +690,73 @@ def build_pinned_c_fixture(compiler: str, readelf: str, source: Path, build_root
         "build_command": command,
         "executable": audit_executable(readelf, binary),
         "rust_shadow_attestation_rejection": assert_c_backend_rejects_rust_shadow_attestation(binary),
-    }
+    }, clean_environment()
 
 
-def build_rust_fixture(compiler: str, readelf: str, nm: str, build_root: Path) -> tuple[Path, dict[str, Any]]:
-    cargo_target = build_root / "rust-target"
-    cargo_command = rust_adapter_cargo_command(cargo_target)
+def build_rust_fixture(
+    readelf: str,
+    objdump: str,
+    sysroot: Path,
+    compiler: Path,
+    builtins: Path,
+    build_root: Path,
+) -> tuple[Path, dict[str, Any], dict[str, str]]:
+    cargo_target = build_root / "rust-shadow-target"
+    cargo_command = rust_shadow_cargo_command(cargo_target)
     cargo = command_record(cargo_command, cwd=ROOT)
-    require_success(cargo, "Rust native shadow static library build")
-    native_libraries = parse_native_static_libraries(str(cargo["stdout"]) + "\n" + str(cargo["stderr"]))
-    fixture_libraries = fixture_link_libraries(native_libraries)
-    static_library = cargo_target / RUST_TARGET / "release/libcrabc_mimalloc_test_adapter.a"
-    expected_symbols = adapter_header_symbols()
-    observed_symbols = archive_prefixed_symbols(nm, static_library)
-    if observed_symbols != expected_symbols:
-        raise HarnessError("Rust shadow static archive no longer exposes exactly the private prefixed symbols")
+    require_success(cargo, "selected Rust native-shadow libc build")
+    selected_libc = cargo_target / "release/libc.so"
+    if not selected_libc.is_file():
+        raise HarnessError("selected Rust native-shadow Cargo build did not emit libc.so")
+    selected_libc_attestation = attest_selected_shadow_libc(readelf, objdump, selected_libc, cargo_target)
     binary = build_root / "rust-native-shadow-fixture"
-    search_path = rust_target_self_contained_search_path()
-    fixture_command = rust_fixture_command(compiler, static_library, search_path, fixture_libraries, binary)
+    fixture_command = rust_shadow_fixture_command(compiler, selected_libc, builtins, binary)
+    driver_plan = printed_driver_link_plan(compiler, fixture_command)
+    link_plan = audit_selected_shadow_link_plan(driver_plan, sysroot, selected_libc, builtins)
     fixture = command_record(fixture_command, cwd=ROOT)
-    require_success(fixture, "Rust native shadow fixture build")
+    require_success(fixture, "selected Rust native-shadow fixture build")
+    linker_trace = audit_selected_shadow_linker_trace(fixture, selected_libc, sysroot)
     backend_source = file_record(FIXTURE_ROOT / "rust-native-shadow-backend.c")
-    archive = artifact_record(static_library)
-    executable = audit_executable(readelf, binary)
+    executable = audit_selected_shadow_fixture(readelf, binary)
+    runtime_environment = clean_environment(runtime_library=selected_libc.parent)
+    runtime = run_fixture_attestation(
+        binary,
+        expected_identity=RUST_SHADOW_BACKEND_IDENTITY,
+        expected_free_route=RUST_SHADOW_FREE_ROUTE,
+        environment=runtime_environment,
+    )
+    build_identity = selected_artifact_build_identity(
+        backend_source=backend_source,
+        selected_libc=selected_libc_attestation["artifact"],
+        cargo_fingerprint=selected_libc_attestation["cargo_feature_attestation"]["fingerprint"],
+        executable=executable["artifact"],
+    )
     return binary, {
         "cargo_command": cargo_command,
         "executable": executable,
         "fixture_build_command": fixture_command,
-        "native_library_search_path": search_path,
-        "fixture_link_libraries": fixture_libraries,
-        "native_static_libraries_reported_by_rustc": native_libraries,
-        "selected_artifact_attestation": attest_rust_shadow_artifact(
-            nm,
-            binary,
-            backend_source=backend_source,
-            static_archive=archive,
-            executable=executable["artifact"],
-        ),
-        "static_archive": archive,
-        "static_archive_prefixed_symbols": observed_symbols,
+        "selected_artifact_attestation": {
+            "build_identity": build_identity,
+            "runtime": runtime,
+            "selected_shadow_libc": selected_libc_attestation,
+        },
+        "selected_link_provenance": {
+            "driver_plan": link_plan,
+            "linker_trace": linker_trace,
+        },
+    }, runtime_environment
+
+
+def clean_environment(*, runtime_library: Path | None = None) -> dict[str, str]:
+    environment = {
+        "LANG": "C",
+        "LC_ALL": "C",
+        "PATH": os.environ.get("PATH", "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"),
+        "TZ": "UTC",
     }
-
-
-def clean_environment() -> dict[str, str]:
-    return {"LANG": "C", "LC_ALL": "C", "PATH": os.environ.get("PATH", "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"), "TZ": "UTC"}
+    if runtime_library is not None:
+        environment["LD_LIBRARY_PATH"] = str(runtime_library)
+    return environment
 
 
 def parse_batch_output(output: str, *, expected_batches: int) -> list[int]:
@@ -643,13 +774,26 @@ def parse_batch_output(output: str, *, expected_batches: int) -> list[int]:
     return values
 
 
-def run_batch_sample(binary: Path, workload: Workload, *, timeout: float) -> dict[str, Any]:
+def run_batch_sample(
+    binary: Path,
+    workload: Workload,
+    worker_count: int,
+    *,
+    environment: Mapping[str, str],
+    timeout: float,
+) -> dict[str, Any]:
     started = time.monotonic_ns()
     try:
         child = subprocess.run(
-            [str(binary), str(workload.request_bytes), str(workload.batches_per_process), str(workload.iterations_per_batch)],
+            [
+                str(binary),
+                str(workload.request_bytes),
+                str(worker_count),
+                str(workload.batches_per_process),
+                str(workload.iterations_per_batch),
+            ],
             check=False, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            text=True, env=clean_environment(), timeout=timeout,
+            text=True, env=dict(environment), timeout=timeout,
         )
     except subprocess.TimeoutExpired as error:
         raise HarnessError(f"fixture batch child timed out after {timeout}s") from error
@@ -657,7 +801,12 @@ def run_batch_sample(binary: Path, workload: Workload, *, timeout: float) -> dic
     if child.returncode != 0 or child.stderr:
         raise HarnessError(f"fixture batch child failed: status={child.returncode} stderr={child.stderr[:512]!r} stdout={child.stdout[:512]!r}")
     batch_ns = parse_batch_output(child.stdout, expected_batches=workload.batches_per_process)
-    return {"batch_ns": batch_ns, "elapsed_wall_ns": elapsed_wall_ns}
+    return {
+        "batch_ns": batch_ns,
+        "elapsed_wall_ns": elapsed_wall_ns,
+        "operations_per_batch": worker_count * workload.iterations_per_batch,
+        "worker_count": worker_count,
+    }
 
 
 def paired_sample_plan(samples: int, *, seed: int) -> list[tuple[str, int]]:
@@ -688,10 +837,10 @@ def numeric_summary(values: Sequence[int]) -> dict[str, int]:
     return {"max": max(values), "median": round(statistics.median(values)), "min": min(values), "p95": percentile(values, 0.95)}
 
 
-def throughput_pairs_per_second(batch_ns: int, iterations_per_batch: int) -> float:
-    if batch_ns <= 0 or iterations_per_batch <= 0:
-        raise HarnessError("throughput requires a positive batch duration and iteration count")
-    return iterations_per_batch * 1_000_000_000 / batch_ns
+def throughput_pairs_per_second(batch_ns: int, iterations_per_worker_per_batch: int, worker_count: int) -> float:
+    if batch_ns <= 0 or iterations_per_worker_per_batch <= 0 or worker_count <= 0:
+        raise HarnessError("throughput requires positive batch duration, iteration count, and worker count")
+    return worker_count * iterations_per_worker_per_batch * 1_000_000_000 / batch_ns
 
 
 def throughput_ratio(pinned_c: Sequence[float], rust_native_shadow: Sequence[float], *, seed: int) -> dict[str, float | int]:
@@ -714,27 +863,41 @@ def throughput_ratio(pinned_c: Sequence[float], rust_native_shadow: Sequence[flo
     }
 
 
-def summarize_lane(samples: Sequence[Mapping[str, Any]], workload: Workload) -> dict[str, Any]:
+def summarize_lane(samples: Sequence[Mapping[str, Any]], workload: Workload, worker_count: int) -> dict[str, Any]:
     median_batch_ns = [round(statistics.median(record["batch_ns"])) for record in samples]
-    throughputs = [throughput_pairs_per_second(value, workload.iterations_per_batch) for value in median_batch_ns]
+    throughputs = [
+        throughput_pairs_per_second(value, workload.iterations_per_batch, worker_count)
+        for value in median_batch_ns
+    ]
     return {
         "per_process_batch_median_ns": numeric_summary(median_batch_ns),
-        "per_process_throughput_pairs_per_second": {
+        "per_process_throughput_all_workers_pairs_per_second": {
             "max": max(throughputs), "median": statistics.median(throughputs), "min": min(throughputs),
         },
         "sample_count": len(samples),
     }
 
 
-def measure_workload(binaries: Mapping[str, Path], workload: Workload, *, samples: int, warmup: int, seed: int, timeout: float) -> dict[str, Any]:
+def measure_worker_scale(
+    binaries: Mapping[str, tuple[Path, Mapping[str, str]]],
+    workload: Workload,
+    worker_count: int,
+    *,
+    samples: int,
+    warmup: int,
+    seed: int,
+    timeout: float,
+) -> dict[str, Any]:
     lanes = ("pinned_c", "rust_native_shadow")
     for lane in lanes:
         for _ in range(warmup):
-            run_batch_sample(binaries[lane], workload, timeout=timeout)
+            binary, environment = binaries[lane]
+            run_batch_sample(binary, workload, worker_count, environment=environment, timeout=timeout)
     by_lane: dict[str, list[dict[str, Any] | None]] = {lane: [None] * samples for lane in lanes}
     plan = paired_sample_plan(samples, seed=seed)
     for lane, sample_index in plan:
-        sample = run_batch_sample(binaries[lane], workload, timeout=timeout)
+        binary, environment = binaries[lane]
+        sample = run_batch_sample(binary, workload, worker_count, environment=environment, timeout=timeout)
         sample["sample_index"] = sample_index
         by_lane[lane][sample_index] = sample
     completed: dict[str, list[dict[str, Any]]] = {}
@@ -742,35 +905,73 @@ def measure_workload(binaries: Mapping[str, Path], workload: Workload, *, sample
         if any(record is None for record in records):
             raise HarnessError(f"measurement did not complete every {lane} sample")
         completed[lane] = [record for record in records if record is not None]
-    c_throughputs = [throughput_pairs_per_second(round(statistics.median(record["batch_ns"])), workload.iterations_per_batch) for record in completed["pinned_c"]]
-    rust_throughputs = [throughput_pairs_per_second(round(statistics.median(record["batch_ns"])), workload.iterations_per_batch) for record in completed["rust_native_shadow"]]
+    c_throughputs = [
+        throughput_pairs_per_second(
+            round(statistics.median(record["batch_ns"])), workload.iterations_per_batch, worker_count
+        )
+        for record in completed["pinned_c"]
+    ]
+    rust_throughputs = [
+        throughput_pairs_per_second(
+            round(statistics.median(record["batch_ns"])), workload.iterations_per_batch, worker_count
+        )
+        for record in completed["rust_native_shadow"]
+    ]
     return {
         "allocation_sizes_bytes": [workload.request_bytes],
         "batches_per_process": workload.batches_per_process,
-        "iterations_per_batch": workload.iterations_per_batch,
-        "lanes": {lane: {"samples": records, "summary": summarize_lane(records, workload)} for lane, records in completed.items()},
+        "iterations_per_worker_per_batch": workload.iterations_per_batch,
+        "local_allocation_free_pairs_per_batch": worker_count * workload.iterations_per_batch,
+        "lanes": {
+            lane: {"raw_samples": records, "summary": summarize_lane(records, workload, worker_count)}
+            for lane, records in completed.items()
+        },
         "sample_plan": [{"lane": lane, "sample_index": index} for lane, index in plan],
         "throughput_ratio": throughput_ratio(c_throughputs, rust_throughputs, seed=seed ^ 0xA64C_0001),
+        "worker_count": worker_count,
         "warmup_processes_per_lane": warmup,
     }
 
 
-def pin_benchmark_cpu(requested: int | None) -> int:
-    if not hasattr(os, "sched_getaffinity") or not hasattr(os, "sched_setaffinity"):
+def measure_workload(
+    binaries: Mapping[str, tuple[Path, Mapping[str, str]]],
+    workload: Workload,
+    *,
+    samples: int,
+    warmup: int,
+    seed: int,
+    timeout: float,
+) -> dict[str, Any]:
+    return {
+        "allocation_sizes_bytes": [workload.request_bytes],
+        "worker_scales": {
+            f"workers_{worker_count}": measure_worker_scale(
+                binaries,
+                workload,
+                worker_count,
+                samples=samples,
+                warmup=warmup,
+                seed=seed ^ worker_count,
+                timeout=timeout,
+            )
+            for worker_count in WORKER_SCALES
+        },
+    }
+
+
+def benchmark_affinity() -> dict[str, Any]:
+    if not hasattr(os, "sched_getaffinity"):
         raise HarnessError("Linux CPU affinity APIs are unavailable")
-    allowed = os.sched_getaffinity(0)
+    allowed = sorted(os.sched_getaffinity(0))
     if not allowed:
         raise HarnessError("performance runner has no allowed CPUs")
-    cpu = min(allowed) if requested is None else requested
-    if cpu not in allowed:
-        raise HarnessError(f"requested CPU {cpu} is not in allowed affinity {sorted(allowed)}")
-    try:
-        os.sched_setaffinity(0, {cpu})
-    except OSError as error:
-        raise HarnessError(f"cannot pin benchmark runner to CPU {cpu}: {error}") from error
-    if os.sched_getaffinity(0) != {cpu}:
-        raise HarnessError(f"benchmark runner affinity did not remain pinned to CPU {cpu}")
-    return cpu
+    return {
+        "allowed_cpu_ids": allowed,
+        "allowed_cpu_count": len(allowed),
+        "oversubscribed_worker_scales": [scale for scale in WORKER_SCALES if scale > len(allowed)],
+        "preserves_caller_affinity": True,
+        "single_cpu_pinning": False,
+    }
 
 
 def tool_version(tool: str) -> str:
@@ -785,7 +986,7 @@ def tool_version(tool: str) -> str:
 def empty_report(*, label: str, host_qualification: Mapping[str, Any]) -> dict[str, Any]:
     return {
         "architecture": ARCHITECTURE,
-        "comparison_scope": "same Linux/AArch64 host and shared fixture source; only opaque private backend shims vary",
+        "comparison_scope": "same Linux/AArch64 host, worker scales, and shared fixture source; only the pinned-C versus selected native-shadow allocation boundary varies",
         "host_qualification": dict(host_qualification),
         "kind": KIND,
         "label": validate_label(label),
@@ -793,14 +994,14 @@ def empty_report(*, label: str, host_qualification: Mapping[str, Any]) -> dict[s
             "final_promotion_qualification_eligible": False,
             "kind": MEASUREMENT_BOUNDARY_KIND,
             "production_libc_measurement": False,
-            "reason": "The prefixed crabc_test_* adapter directly enters the Rust engine. It does not measure the production crabc-libc allocator ABI or backend selection.",
+            "reason": "The Rust lane links one compile-time-selected nondefault shadow libc.so. It does not measure the default production allocator selection or a qualified final-promotion environment.",
         },
         "schema": SCHEMA,
         "scope": {
             "final_promotion_qualified": False,
             "public_crabc_allocator_integration": False,
             "public_mi_api": False,
-            "statement": "single-thread local architecture smoke only",
+            "statement": "multi-worker local selected-shadow architecture smoke only",
         },
         "status": "pending",
         "target": RUST_TARGET,
@@ -821,9 +1022,9 @@ def validate_report_contract(report: Mapping[str, Any]) -> None:
     if not isinstance(measurement_boundary, Mapping) or measurement_boundary.get("kind") != MEASUREMENT_BOUNDARY_KIND:
         raise HarnessError("local AArch64 performance report has an unexpected measurement boundary")
     if measurement_boundary.get("production_libc_measurement") is not False:
-        raise HarnessError("direct-engine friend-boundary report cannot claim production libc measurement")
+        raise HarnessError("selected native-shadow report cannot claim production libc measurement")
     if measurement_boundary.get("final_promotion_qualification_eligible") is not False:
-        raise HarnessError("direct-engine friend-boundary report cannot qualify for final promotion")
+        raise HarnessError("selected native-shadow report cannot qualify for final promotion")
     status = report.get("status")
     if status == "pending":
         return
@@ -835,8 +1036,14 @@ def validate_report_contract(report: Mapping[str, Any]) -> None:
     lanes = report.get("lanes")
     if not isinstance(command, list) or not command or not all(isinstance(item, str) and item for item in command):
         raise HarnessError("measured local AArch64 performance report lacks its reproducible command")
-    if not isinstance(measurement, Mapping) or not measurement.get("timing") or not measurement.get("warmup"):
-        raise HarnessError("measured local AArch64 performance report lacks its timing and warmup contract")
+    if (
+        not isinstance(measurement, Mapping)
+        or not measurement.get("timing")
+        or not measurement.get("warmup")
+        or not measurement.get("worker_lifecycle")
+        or measurement.get("raw_samples") is not True
+    ):
+        raise HarnessError("measured local AArch64 performance report lacks its worker/raw-sample contract")
     if not isinstance(workloads, Mapping) or not workloads:
         raise HarnessError("measured local AArch64 performance report lacks workloads")
     if not isinstance(lanes, Mapping) or not isinstance(lanes.get("rust_native_shadow"), Mapping):
@@ -845,33 +1052,67 @@ def validate_report_contract(report: Mapping[str, Any]) -> None:
     if not isinstance(attestation, Mapping):
         raise HarnessError("measured local AArch64 performance report lacks selected-artifact attestation")
     runtime = attestation.get("runtime")
-    symbols = attestation.get("symbol_attestation")
+    selected_libc = attestation.get("selected_shadow_libc")
     build_identity = attestation.get("build_identity")
     if runtime != {"backend_identity": RUST_SHADOW_BACKEND_IDENTITY, "free_route": RUST_SHADOW_FREE_ROUTE}:
         raise HarnessError("measured local AArch64 performance report selected an unexpected Rust shadow route")
-    if not isinstance(symbols, Mapping) or symbols.get("required_rust_shadow_symbol_defined") is not True or symbols.get("rejected_c_symbol_defined") is not False:
-        raise HarnessError("measured local AArch64 performance report did not prove the Rust shadow free symbol")
+    if not isinstance(selected_libc, Mapping):
+        raise HarnessError("measured local AArch64 performance report lacks selected shadow libc attestation")
+    feature = selected_libc.get("cargo_feature_attestation")
+    direct_targets = selected_libc.get("public_malloc_free_direct_mimalloc_targets")
+    if (
+        not isinstance(feature, Mapping)
+        or feature.get("required_feature") != RUST_SHADOW_FEATURE
+        or not isinstance(feature.get("fingerprint"), Mapping)
+        or not re.fullmatch(r"[0-9a-f]{64}", str(feature["fingerprint"].get("sha256", "")))
+        or not isinstance(direct_targets, Mapping)
+        or any(direct_targets.get(symbol) != [] for symbol in ("malloc", "free"))
+        or selected_libc.get("c_backend_relocations") != []
+    ):
+        raise HarnessError("measured local AArch64 performance report did not prove selected native shadow routing")
     if not isinstance(build_identity, Mapping) or build_identity.get("algorithm") != "sha256-canonical-json" or not re.fullmatch(r"[0-9a-f]{64}", str(build_identity.get("sha256", ""))):
         raise HarnessError("measured local AArch64 performance report lacks selected-artifact build identity")
     for workload in workloads.values():
         if not isinstance(workload, Mapping):
             raise HarnessError("measured local AArch64 workload is invalid")
         sizes = workload.get("allocation_sizes_bytes")
-        warmup = workload.get("warmup_processes_per_lane")
-        ratio = workload.get("throughput_ratio")
         if not isinstance(sizes, list) or not sizes or not all(type(size) is int and size > 0 for size in sizes):
             raise HarnessError("measured local AArch64 workload lacks allocation sizes")
-        if type(warmup) is not int or warmup <= 0:
-            raise HarnessError("measured local AArch64 workload lacks warmup")
-        if not isinstance(ratio, Mapping) or type(ratio.get("median_rust_over_pinned_c")) not in {int, float}:
-            raise HarnessError("measured local AArch64 workload lacks throughput ratio")
+        scales = workload.get("worker_scales")
+        if not isinstance(scales, Mapping) or set(scales) != {f"workers_{scale}" for scale in WORKER_SCALES}:
+            raise HarnessError("measured local AArch64 workload lacks required worker scales")
+        for worker_count in WORKER_SCALES:
+            scale = scales[f"workers_{worker_count}"]
+            if not isinstance(scale, Mapping) or scale.get("worker_count") != worker_count:
+                raise HarnessError("measured local AArch64 worker scale is invalid")
+            warmup = scale.get("warmup_processes_per_lane")
+            ratio = scale.get("throughput_ratio")
+            lanes_for_scale = scale.get("lanes")
+            if type(warmup) is not int or warmup <= 0:
+                raise HarnessError("measured local AArch64 worker scale lacks warmup")
+            if not isinstance(ratio, Mapping) or type(ratio.get("median_rust_over_pinned_c")) not in {int, float}:
+                raise HarnessError("measured local AArch64 worker scale lacks throughput ratio")
+            if not isinstance(lanes_for_scale, Mapping):
+                raise HarnessError("measured local AArch64 worker scale lacks lanes")
+            for lane in ("pinned_c", "rust_native_shadow"):
+                lane_record = lanes_for_scale.get(lane)
+                raw_samples = lane_record.get("raw_samples") if isinstance(lane_record, Mapping) else None
+                if not isinstance(raw_samples, list) or not raw_samples:
+                    raise HarnessError("measured local AArch64 worker scale lacks raw samples")
+                if any(
+                    not isinstance(sample, Mapping)
+                    or sample.get("worker_count") != worker_count
+                    or not isinstance(sample.get("batch_ns"), list)
+                    or not sample["batch_ns"]
+                    for sample in raw_samples
+                ):
+                    raise HarnessError("measured local AArch64 raw worker sample is invalid")
 
 
 def parse_arguments() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--smoke", action="store_true", help="run the fixed local architecture smoke")
     parser.add_argument("--label", default="local", help="namespaced output label")
-    parser.add_argument("--cpu", type=int, default=None, help="allowed Linux CPU to pin; defaults to the lowest")
     parser.add_argument("--offline", action="store_true", help="require the pinned archive in the local fixture cache")
     parser.add_argument("--timeout", type=float, default=30.0, help="per-process timeout in seconds")
     arguments = parser.parse_args()
@@ -890,21 +1131,24 @@ def run(arguments: argparse.Namespace) -> tuple[Path, bool]:
     report = empty_report(label=label, host_qualification=host_qualification)
     report_path = default_report_path(ROOT, label)
     report["mode"] = "smoke"
-    report["reproducible_command"] = ["python3", relative(Path(__file__)), "--smoke", "--label", label, "--timeout", str(arguments.timeout)] + ([] if arguments.cpu is None else ["--cpu", str(arguments.cpu)]) + ([] if not arguments.offline else ["--offline"])
+    report["reproducible_command"] = ["python3", relative(Path(__file__)), "--smoke", "--label", label, "--timeout", str(arguments.timeout)] + ([] if not arguments.offline else ["--offline"])
     report["measurement_contract"] = {
-        "comparison": "one shared fixture source; opaque direct-engine friend boundary varies only by pinned-C versus prefixed Rust-native shadow backend",
-        "measurement_boundary": "direct-engine-friend-boundary; never production crabc-libc allocator ABI or backend selection",
+        "comparison": "one shared fixture source and worker lifecycle; only pinned-C versus exact selected native-shadow C-ABI malloc/free boundary varies",
+        "measurement_boundary": "selected-native-shadow-c-abi; nondefault shadow only, never default allocator or final promotion evidence",
         "fresh_processes": True,
-        "timing": "one CLOCK_MONOTONIC pair around each fixed allocation/free batch; never a clock read per allocation",
+        "raw_samples": True,
+        "timing": "one CLOCK_MONOTONIC pair around each ready/start/finish all-worker allocation/free batch; never a clock read per allocation",
         "warmup": "unreported fresh fixture processes run before randomized paired samples",
+        "worker_lifecycle": "1/2/4/8 ordinary pthread workers allocate/free only their own blocks, return normally, and are joined before backend shutdown",
     }
     report["host"] = {
-        "benchmark_cpu": pin_benchmark_cpu(arguments.cpu),
+        "affinity": benchmark_affinity(),
         "cpuinfo_sha256": sha256_file(Path("/proc/cpuinfo")) if Path("/proc/cpuinfo").is_file() else None,
     }
     compiler = require_tool(MUSL_COMPILER)
     readelf = require_tool("readelf")
-    nm = require_tool("nm")
+    objdump = require_tool("objdump")
+    sysroot, selected_compiler, builtins = require_runtime_inputs()
     pin = load_pin()
     archive = fetch_archive(pin, offline=arguments.offline)
     report["inputs"] = {
@@ -916,30 +1160,43 @@ def run(arguments: argparse.Namespace) -> tuple[Path, bool]:
         "musl_compiler": {"path": compiler, "version": tool_version(compiler)},
         "pinned_c_source_configuration_flags": list(PINNED_C_SOURCE_CONFIGURATION_FLAGS),
         "rustc_version": tool_version("rustc"),
-        "test_adapter_header": file_record(TEST_ADAPTER_HEADER),
+        "selected_shadow_cargo_feature": RUST_SHADOW_FEATURE,
+        "selected_shadow_cargo_profile": "release",
+        "selected_shadow_runtime": {
+            "compiler": file_record(selected_compiler),
+            "owned_builtins": file_record(builtins),
+            "sysroot": relative(sysroot),
+        },
     }
-    samples = manifest["mode"]["samples_per_lane_and_workload"]
-    warmup = manifest["mode"]["warmup_processes_per_lane_and_workload"]
+    samples = manifest["mode"]["samples_per_lane_and_workload_and_worker_scale"]
+    warmup = manifest["mode"]["warmup_processes_per_lane_and_workload_and_worker_scale"]
     with tempfile.TemporaryDirectory(prefix="crabc-mimalloc-local-perf-aarch64-") as temporary_name:
         temporary = Path(temporary_name)
         source = safe_extract(archive, temporary / "source", pin["archive_root"])
         build_root = temporary / "build"
         build_root.mkdir()
-        c_binary, c_build = build_pinned_c_fixture(compiler, readelf, source, build_root)
-        rust_binary, rust_build = build_rust_fixture(compiler, readelf, nm, build_root)
+        c_binary, c_build, c_environment = build_pinned_c_fixture(compiler, readelf, source, build_root)
+        rust_binary, rust_build, rust_environment = build_rust_fixture(
+            readelf, objdump, sysroot, selected_compiler, builtins, build_root
+        )
         report["inputs"]["pinned_c_source_units"] = [file_record(source / item) for item in ORACLE_SOURCES]
         report["lanes"] = {"pinned_c": c_build, "rust_native_shadow": rust_build}
         report["workloads"] = {
             workload.name: measure_workload(
-                {"pinned_c": c_binary, "rust_native_shadow": rust_binary}, workload,
+                {
+                    "pinned_c": (c_binary, c_environment),
+                    "rust_native_shadow": (rust_binary, rust_environment),
+                }, workload,
                 samples=samples, warmup=warmup, seed=0x4352_4142 + index, timeout=arguments.timeout,
             )
             for index, workload in enumerate(workloads)
         }
     threshold = manifest["architecture_smoke"]["minimum_rust_over_pinned_c_throughput_ratio"]
     blocked = [
-        name for name, workload in report["workloads"].items()
-        if workload["throughput_ratio"]["median_rust_over_pinned_c"] < threshold
+        f"{name}/{scale_name}"
+        for name, workload in report["workloads"].items()
+        for scale_name, scale in workload["worker_scales"].items()
+        if scale["throughput_ratio"]["median_rust_over_pinned_c"] < threshold
     ]
     report["architecture_smoke_gate"] = {
         "blocked_workloads": blocked,

@@ -1,39 +1,41 @@
 /* SPDX-License-Identifier: MIT */
 /*
- * Rust-native shadow lane of the opaque local AArch64 performance boundary.
- * `crabc_test_*` is the existing prefixed test-only ABI: it is deliberately
- * not a public mi_* API or crabc-libc allocator selection mechanism.
+ * Selected native-shadow lane of the opaque local AArch64 performance
+ * boundary. The fixture reaches the compile-time-selected crabc-libc C ABI
+ * through normal malloc/free spellings; run.py proves the exact linked
+ * libc.so has native-mimalloc-shadow enabled and rejects a default C-backed
+ * libc link before this shim can be timed.
  */
 #include "perf-api.h"
 
-#include "crabc-mimalloc-test-adapter.h"
+#include <stdlib.h>
 
 int crabc_local_allocator_perf_init(void)
 {
-  return crabc_test_init();
+  return 0;
 }
 
 int crabc_local_allocator_perf_shutdown(void)
 {
-  return crabc_test_shutdown();
+  return 0;
 }
 
 void *crabc_local_allocator_perf_malloc(size_t size)
 {
-  return crabc_test_malloc(size);
+  return malloc(size);
 }
 
 void crabc_local_allocator_perf_free(void *block)
 {
-  crabc_test_free(block);
+  free(block);
 }
 
 const char *crabc_local_allocator_perf_backend_identity(void)
 {
-  return "rust-native-shadow-crabc-test-free-v1";
+  return "rust-native-shadow-selected-c-abi-v1";
 }
 
 const char *crabc_local_allocator_perf_free_route(void)
 {
-  return "crabc_test_free";
+  return "free";
 }
