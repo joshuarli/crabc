@@ -2179,6 +2179,7 @@ source_owners = [
   "libc/src/c_abi/x86_64/descriptor_io.rs",
   "libc/src/c_abi/x86_64/process_resources.rs",
   "libc/src/c_abi/x86_64/sched_yield.rs",
+  "libc/src/c_abi/x86_64/sched_priority_bounds.rs",
   "libc/src/c_abi/x86_64/system_configuration.rs",
   "libc/src/c_abi/x86_64/system_information.rs",
   "libc/src/c_abi/x86_64/memory_mapping.rs",
@@ -5257,6 +5258,60 @@ native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc
 oracle = [
   { kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source, GNU declaration, macro, and behavior oracle for src/sched/sched_cpucount.c::__sched_cpucount: bytewise const unsigned char iteration with eight positions per selected byte; CPU_COUNT_S(size,set) and CPU_COUNT(set) forward exactly to that helper." },
   { kind = "elf-abi", source = "System V AMD64 psABI and pinned musl x86 headers", role = "LP64 size_t/pointer rdi/rsi integer ABI, signed eax result, 128-byte align-8 cpu_set_t layout, and C/C++ external-C declaration/linkage proof." },
+]
+
+[[family.verified_artifact]]
+id = "static-c-sched-priority-bounds"
+description = "Private native x86 static `sched_get_priority_max` and `sched_get_priority_min` read-only scalar artifact inside still-planned `libc.posix-runtime`. One project-header C fixture first executes through pinned musl 1.2.6 and then through a true dependency-free `-nostdlib -static` candidate linked only with the selected `crabc-libc` archive. Pinned musl `src/sched/sched_get_priority_max.c` contains exactly the two direct syscall wrappers: SCHED_OTHER/FIFO/RR returns the selected minimum/maximum 0/0 and 1/99 values while invalid `-1` returns `-1` with `errno=EINVAL`; ordinary successes retain stale errno. The unconditional strict/POSIX/XOPEN/GNU C11/C++17 `<sched.h>` matrix proves both exact `int (*)(int)` declarations and external-C linkage. This artifact has no scheduler policy selection or mutation, current-policy or parameter query, affinity, scheduler progress/fairness, thread state, clocks/timers/calendar/timezone/environment, allocation, libc.so, CRT, loader, sysroot, family completion, promotion, or public x86 support. It neither proves arbitrary policy values nor selects scheduler capability semantics."
+source_owners = [
+  "compat/upstreams.toml",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/sched_priority_bounds.rs",
+  "libc/src/c_abi/x86_64/errno.rs",
+  "libc/src/c_abi/x86_64/syscall.rs",
+  "include/errno.h",
+  "include/features.h",
+  "include/sched.h",
+  "include/sys/types.h",
+  "include/time.h",
+  "include/sys/syscall.h",
+  "include/bits/alltypes.h",
+  "include/bits/syscall.h",
+  "compat/x86_64/sched_priority_bounds_header_abi_probe.c",
+  "compat/x86_64/sched_priority_bounds_header_abi_probe.cpp",
+  "compat/x86_64/run_sched_priority_bounds_header_abi.sh",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/libc_sched_priority_bounds_probe.c",
+  "compat/x86_64/libc_sched_priority_bounds_start.S",
+  "compat/x86_64/run_libc_sched_priority_bounds.sh",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "compat/x86_64/aarch64_parity_inventory.py",
+  "compat/x86_64/aarch64_parity_inventory.json",
+  "compat/x86_64/README.md",
+  "STATUS.md",
+  "x86-64.md",
+  "scripts/dev-x86_64.sh",
+  "scripts/check_structure.py",
+]
+x86_abi_prerequisites = [
+  "The System V AMD64 `int sched_get_priority_max(int)` and `int sched_get_priority_min(int)` C ABIs pass the signed four-byte policy in rdi and return the signed four-byte result in eax. Linux/x86-64 syscall 146 is sched_get_priority_max and 147 is sched_get_priority_min.",
+  "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417 maps src/sched/sched_get_priority_max.c exactly: sched_get_priority_max calls syscall(SYS_sched_get_priority_max, policy), and sched_get_priority_min calls syscall(SYS_sched_get_priority_min, policy). The selected Rust wrappers retain that one-scalar direct mapping rather than selecting vDSO, policy, parameter, affinity, or time seams.",
+  "Linux raw -4095 through -1 errors become C -1 plus the selected initial-TLS errno through c_status; success returns the scalar bound and preserves errno. The pinned-musl and true-static common fixture covers SCHED_OTHER/FIFO/RR 0/0 and 1/99 values plus invalid -1/EINVAL, not arbitrary policy or privilege behavior.",
+  "The final static candidate owns only direct initial-TLS errno access after fixture-local Variant-II %fs:0 setup, with no dynamic TLS resolver, allocation, environment, or runtime state. It is a bounded priority-bounds ABI artifact, not scheduler policy support.",
+]
+x86_header_prerequisites = [
+  "Pinned-musl/project strict/POSIX/XOPEN/GNU C11/C++17 sched.h probes require both unconditional `int (*)(int)` declarations for sched_get_priority_max and sched_get_priority_min, plus unmangled C++ external-C references. They select no scheduler policy constants, structures, or priority mutation API.",
+  "The fixture preprocesses project sched.h, sys/types.h, and time.h only for this declaration/linkage fact. This is a focused header ABI gate, not installed-header completion or scheduler capability evidence.",
+]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-sched-priority-bounds", scope = "Pinned-musl 1.2.6 project-header normal C execution plus the separate strict/POSIX/XOPEN/GNU C/C++ declaration gate precede a true `-nostdlib -static` candidate. The shared fixture proves SCHED_OTHER/FIFO/RR minima/maxima 0/0 and 1/99 with stale errno preservation, then invalid -1/EINVAL translation. Header/archive/final-ELF/source/disassembly checks require exactly the two selected exports, direct 146/147 syscall instructions, initial-TLS errno conversion, and an env -i closure with no interpreter/DT_NEEDED/unresolved symbol, dynamic TLS resolver, allocation, ambient runtime, policy selection or mutation, parameter/current-policy query, affinity, scheduler-progress guarantee, or clock/timer/calendar/timezone behavior. It excludes arbitrary policy/privilege behavior, family completion, promotion, and public x86 support." }]
+oracle = [
+  { kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT C declaration and behavior oracle for src/sched/sched_get_priority_max.c: sched_get_priority_max is syscall(SYS_sched_get_priority_max, policy), and sched_get_priority_min is syscall(SYS_sched_get_priority_min, policy)." },
+  { kind = "kernel-abi", source = "Linux 5.10 x86-64 ABI", role = "sched_get_priority_max=146 and sched_get_priority_min=147 one-scalar syscall register mapping, successful scalar bounds, and raw errno contract." },
+  { kind = "elf-abi", source = "System V AMD64 psABI", role = "One-int rdi/eax C ABI and true-static initial-TLS errno fixture boundary." },
 ]
 
 [[family.verified_artifact]]

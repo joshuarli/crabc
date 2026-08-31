@@ -98,6 +98,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   posix-exit-header-abi  compile the staged x86 C/C++ unistd POSIX _exit declaration
   sched-cpucount-header-abi  verify selected x86 GNU sched CPU-count C/C++ ABI profiles
   sched-getcpu-header-abi  verify selected x86 GNU sched_getcpu C/C++ ABI profiles
+  sched-priority-bounds-header-abi  verify selected x86 sched priority-bounds C/C++ ABI profiles
   sched-yield-header-abi  verify selected x86 sched_yield C/C++ ABI profiles
   bsearch-header-abi  verify staged x86 C/C++ stdlib bsearch declaration and linkage
   linear-search-header-abi  verify staged x86 C/C++ search.h lfind/lsearch declarations and linkage
@@ -369,6 +370,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-process-resources  run the static x86 crabc-libc selected resource slice
   libc-sched-cpucount  run the static x86 crabc-libc GNU CPU-count helper slice
   libc-sched-getcpu  run the static x86 crabc-libc GNU current-CPU observation slice
+  libc-sched-priority-bounds  run the static x86 crabc-libc scheduler priority-bounds slice
   libc-sched-yield  run the static x86 crabc-libc POSIX scheduler-yield slice
   libc-readiness-waits  run the static x86 crabc-libc readiness/signal-waits slice
   libc-system-observation  run the static x86 crabc-libc uname/sysinfo slice
@@ -2333,6 +2335,10 @@ run_sched_getcpu_header_abi() {
     run_in_container bash /workspace/compat/x86_64/run_sched_getcpu_header_abi.sh
 }
 
+run_sched_priority_bounds_header_abi() {
+    run_in_container bash /workspace/compat/x86_64/run_sched_priority_bounds_header_abi.sh
+}
+
 run_callback_algorithms_header_abi() {
     run_in_container bash /workspace/compat/x86_64/run_callback_algorithms_header_abi.sh
 }
@@ -3695,6 +3701,10 @@ run_libc_sched_getcpu_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_sched_getcpu.sh
 }
 
+run_libc_sched_priority_bounds_probe() {
+    run_in_container bash /workspace/compat/x86_64/run_libc_sched_priority_bounds.sh
+}
+
 run_libc_readiness_waits_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_readiness_waits.sh
 }
@@ -3929,8 +3939,8 @@ case "$command" in
     libc-getloadavg) ;;
     timerfd-header-abi|signalfd-header-abi) ;;
     libc-timerfd|libc-signalfd|libc-sigpause|libc-sigisemptyset|libc-sigandset-sigorset|libc-sigpending|libc-sigrtmax|libc-sigrtmin|libc-sched-getscheduler|libc-alarm|libc-sigaddset-sigdelset-sigfillset) ;;
-    libc-sched-cpucount|libc-sched-getcpu|libc-sched-yield) ;;
-    sched-cpucount-header-abi|sched-getscheduler-header-abi) ;;
+    libc-sched-cpucount|libc-sched-getcpu|libc-sched-priority-bounds|libc-sched-yield) ;;
+    sched-cpucount-header-abi|sched-getscheduler-header-abi|sched-priority-bounds-header-abi) ;;
     ctermid-header-abi|gethostid-header-abi|getpagesize-header-abi|gettid-header-abi|isatty-header-abi|ttyname-r-header-abi|tcgetpgrp-header-abi|tcsetpgrp-header-abi|getpass-header-abi|libc-ctermid|libc-gethostid|libc-getpagesize|libc-gettid|libc-isatty|libc-ttyname-r|libc-tcgetpgrp|libc-tcsetpgrp|libc-getpass|mkfifo-header-abi|mkfifoat-header-abi|libc-mkfifo|libc-mkfifoat|mktemp-header-abi|libc-mktemp) ;;
     readlinkat-header-abi|libc-readlinkat) ;;
     stdio-permanent-line-io-header-abi|stdio-octal-hex-scan-header-abi) ;;
@@ -4367,6 +4377,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "sched-getcpu-header-abi takes no arguments"
         ensure_image
         run_sched_getcpu_header_abi
+        ;;
+    sched-priority-bounds-header-abi)
+        [ "$#" -eq 0 ] || fail "sched-priority-bounds-header-abi takes no arguments"
+        ensure_image
+        run_sched_priority_bounds_header_abi
         ;;
     callback-algorithms-header-abi)
         [ "$#" -eq 0 ] || fail "callback-algorithms-header-abi takes no arguments"
@@ -5401,6 +5416,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "libc-sched-getcpu takes no arguments"
         ensure_image
         run_libc_sched_getcpu_probe
+        ;;
+    libc-sched-priority-bounds)
+        [ "$#" -eq 0 ] || fail "libc-sched-priority-bounds takes no arguments"
+        ensure_image
+        run_libc_sched_priority_bounds_probe
         ;;
     libc-readiness-waits)
         [ "$#" -eq 0 ] || fail "libc-readiness-waits takes no arguments"

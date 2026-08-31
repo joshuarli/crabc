@@ -7739,6 +7739,45 @@ class X86ParityLedgerTests(unittest.TestCase):
             "libc/src/c_abi/x86_64/sched_cpucount.rs",
             posix_runtime["source_owners"],
         )
+        sched_priority_bounds = artifacts_by_id["static-c-sched-priority-bounds"]
+        assert isinstance(sched_priority_bounds, dict)
+        self.assertNotIn("capabilities", sched_priority_bounds)
+        for owner in (
+            "compat/upstreams.toml",
+            "libc/src/c_abi/x86_64/static_c_abi.rs",
+            "libc/src/c_abi/x86_64/sched_priority_bounds.rs",
+            "libc/src/c_abi/x86_64/errno.rs",
+            "libc/src/c_abi/x86_64/syscall.rs",
+            "include/sched.h",
+            "compat/x86_64/sched_priority_bounds_header_abi_probe.c",
+            "compat/x86_64/sched_priority_bounds_header_abi_probe.cpp",
+            "compat/x86_64/run_sched_priority_bounds_header_abi.sh",
+            "compat/x86_64/static_c_abi_exports.txt",
+            "compat/x86_64/libc_sched_priority_bounds_probe.c",
+            "compat/x86_64/libc_sched_priority_bounds_start.S",
+            "compat/x86_64/run_libc_sched_priority_bounds.sh",
+        ):
+            self.assertIn(owner, sched_priority_bounds["source_owners"])
+        self.assertEqual(
+            {
+                evidence["command"]
+                for evidence in sched_priority_bounds["native_evidence"]
+            },
+            {"./scripts/dev-x86_64.sh libc-sched-priority-bounds"},
+        )
+        for phrase in (
+            "`sched_get_priority_max` and `sched_get_priority_min`",
+            "src/sched/sched_get_priority_max.c",
+            "SCHED_OTHER/FIFO/RR",
+            "`-1` with `errno=EINVAL`",
+            "strict/POSIX/XOPEN",
+            "family completion, promotion, or public x86 support",
+        ):
+            self.assertIn(phrase, sched_priority_bounds["description"])
+        self.assertIn(
+            "libc/src/c_abi/x86_64/sched_priority_bounds.rs",
+            posix_runtime["source_owners"],
+        )
         readiness_waits = artifacts_by_id["static-c-readiness-signal-waits"]
         assert isinstance(readiness_waits, dict)
         self.assertNotIn("capabilities", readiness_waits)
@@ -14397,6 +14436,39 @@ class X86ParityLedgerTests(unittest.TestCase):
         evidence[0]["command"] = "./scripts/dev-x86_64.sh libc-sched-getcpu"
         with self.assertRaisesRegex(
             ledger.LedgerError, "closed libc-sched-cpucount command"
+        ):
+            ledger.validate_ledger(data)
+
+    def test_sched_priority_bounds_artifact_keeps_its_closed_mapping(self) -> None:
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict)
+            and entry["id"] == "static-c-sched-priority-bounds"
+        )
+        artifact["description"] = artifact["description"].replace(
+            "SCHED_OTHER/FIFO/RR", "SCHED_UNSELECTED"
+        )
+        with self.assertRaisesRegex(ledger.LedgerError, "SCHED_OTHER/FIFO/RR"):
+            ledger.validate_ledger(data)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict)
+            and entry["id"] == "static-c-sched-priority-bounds"
+        )
+        evidence = artifact["native_evidence"]
+        assert isinstance(evidence, list) and isinstance(evidence[0], dict)
+        evidence[0]["command"] = "./scripts/dev-x86_64.sh libc-sched-yield"
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "closed libc-sched-priority-bounds command"
         ):
             ledger.validate_ledger(data)
 
