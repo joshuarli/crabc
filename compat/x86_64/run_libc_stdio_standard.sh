@@ -146,8 +146,8 @@ grep -Eq 'GLOBAL +HIDDEN +.*__crabc_x86_static_tls_bootstrap$' "$archive_elf_sym
     fail "archive Static Initial TLS v1 bootstrap is not hidden"
 for unselected in fopen fdopen freopen fclose setvbuf setbuf setbuffer setlinebuf \
     fseek fseeko ftell ftello rewind fgetpos fsetpos fgets gets fputs puts \
-    printf fprintf sprintf snprintf vprintf vfprintf vsprintf vsnprintf scanf \
-    fscanf sscanf vscanf vfscanf vsscanf flockfile ftrylockfile funlockfile \
+    printf fprintf vprintf vfprintf scanf fscanf vscanf vfscanf \
+    flockfile ftrylockfile funlockfile \
     getc_unlocked getchar_unlocked putc_unlocked putchar_unlocked fmemopen \
     open_memstream fopencookie popen pclose malloc calloc realloc free; do
     if grep -Eq "[[:space:]][TW][[:space:]]${unselected}$" "$archive_symbols"; then

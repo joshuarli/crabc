@@ -16510,6 +16510,144 @@ def require_stdio_standard_streams_artifact(family: Mapping[str, Any]) -> None:
         )
 
 
+def require_stdio_format_scan_artifact(family: Mapping[str, Any]) -> None:
+    """Ratchet the bounded no-FILE format/scan leaf below stdio completion."""
+
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.text-math-locale-stdio].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [
+        entry for entry in artifacts if entry.get("id") == "static-c-stdio-format-scan"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.text-math-locale-stdio must contain exactly one static-c-stdio-format-scan artifact",
+    )
+    artifact = matching[0]
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for phrase in (
+        "still-planned `libc.text-math-locale-stdio`",
+        "`snprintf`, `vsnprintf`, `sprintf`, `vsprintf`, `sscanf`, and `vsscanf`",
+        "C99 would-have-written count",
+        "zero-capacity null-destination behavior",
+        "`EOVERFLOW`",
+        "count-store `%n`",
+        "assignment and EOF/matching-failure boundaries",
+        "FILE streams",
+        "float or long-double conversion",
+        "scansets",
+        "positional arguments",
+        "integer scanner overflow",
+        "general stdio",
+        "family completion",
+        "promotion",
+        "public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"static-c-stdio-format-scan description omits {phrase}",
+        )
+    owners = set(
+        string_list(
+            artifact["source_owners"], "static-c-stdio-format-scan source owners"
+        )
+    )
+    for path in (
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/stdio_format_scan.rs",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/libc_stdio_format_scan_probe.c",
+        "compat/x86_64/libc_stdio_format_scan_start.S",
+        "compat/x86_64/run_libc_stdio_format_scan.sh",
+        "scripts/dev-x86_64.sh",
+    ):
+        require(path in owners, f"static-c-stdio-format-scan source owners omit {path}")
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-stdio-format-scan"},
+        "static-c-stdio-format-scan must use the closed libc-stdio-format-scan command",
+    )
+    implementation = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "stdio_format_scan.rs"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "src/stdio/vsnprintf.c",
+        "src/stdio/vfprintf.c",
+        "src/internal/intscan.c",
+        "src/stdio/sscanf.c",
+        "pub unsafe extern \"C\" fn snprintf",
+        "pub unsafe extern \"C\" fn vsnprintf",
+        "pub unsafe extern \"C\" fn sprintf",
+        "pub unsafe extern \"C\" fn vsprintf",
+        "pub unsafe extern \"C\" fn sscanf",
+        "pub unsafe extern \"C\" fn vsscanf",
+        "args.next_arg",
+        "zero-capacity",
+    ):
+        require(
+            snippet in implementation,
+            f"stdio format/scan leaf omits {snippet}",
+        )
+    require(
+        implementation.count("# Safety") == 6,
+        "stdio format/scan leaf must document all six unsafe entry obligations",
+    )
+    require(
+        "src/stdio/printf_core.c" not in implementation,
+        "stdio format/scan leaf names nonexistent musl src/stdio/printf_core.c",
+    )
+    exports = static_c_abi_export_names(
+        ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+    )
+    for symbol in ("snprintf", "vsnprintf", "sprintf", "vsprintf", "sscanf", "vsscanf"):
+        require(symbol in exports, f"static C ABI export contract omits {symbol}")
+    runner = (
+        ROOT / "compat" / "x86_64" / "run_libc_stdio_format_scan.sh"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "-nostdlib -static",
+        "--no-undefined",
+        "R_X86_64_TPOFF",
+        "__errno_location",
+        "CRABC_STDIO_FORMAT_SCAN_FREESTANDING",
+        "timeout --foreground",
+        "printf fprintf vprintf vfprintf",
+        "args.next_arg",
+    ):
+        require(
+            snippet in runner,
+            f"libc-stdio-format-scan runner omits {snippet}",
+        )
+    fixture = (
+        ROOT / "compat" / "x86_64" / "libc_stdio_format_scan_probe.c"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        '"%#x|%#.3o|%#.0o|%08.3d"',
+        '"ab%hhncd%ln"',
+        '"%2147483648d%n"',
+        '"0xg"',
+        '"0x1", "%2x"',
+        '" %Q", "%%%c"',
+        '"a", "%2c"',
+        "check_candidate_limitations",
+    ):
+        require(
+            snippet in fixture,
+            f"libc-stdio-format-scan fixture omits {snippet}",
+        )
+    dispatcher = (ROOT / "scripts" / "dev-x86_64.sh").read_text(encoding="utf-8")
+    require(
+        "libc-stdio-format-scan)" in dispatcher
+        and "run_libc_stdio_format_scan.sh" in dispatcher,
+        "stdio format/scan dispatcher binding is missing",
+    )
+
+
 def require_math_complex_foundation_artifact(family: Mapping[str, Any]) -> None:
     """Keep the x87-only math/complex foundation distinct from math parity.
 
@@ -17137,8 +17275,8 @@ def require_locale_wide_iconv_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 7,
-        "libc.text-math-locale-stdio must retain exactly seven private verified artifacts",
+        len(artifacts) == 8,
+        "libc.text-math-locale-stdio must retain exactly eight private verified artifacts",
     )
     matching = [
         entry for entry in artifacts if entry.get("id") == "static-c-locale-wide-iconv"
@@ -17981,6 +18119,7 @@ def validate_ledger(
     require_ffs_artifact(by_id["libc.posix-runtime"])
     require_float_parse_artifact(by_id["libc.text-math-locale-stdio"])
     require_stdio_standard_streams_artifact(by_id["libc.text-math-locale-stdio"])
+    require_stdio_format_scan_artifact(by_id["libc.text-math-locale-stdio"])
     require_math_complex_foundation_artifact(by_id["libc.text-math-locale-stdio"])
     require_named_locale_multibyte_artifact(by_id["libc.text-math-locale-stdio"])
     require_same_object_static_c_abi_artifact(by_id["compat.abi-differential"])

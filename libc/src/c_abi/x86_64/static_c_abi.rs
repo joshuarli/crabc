@@ -38,7 +38,8 @@
 //! credential-observation, integer-arithmetic, integer-parsing, selected
 //! C-locale binary32/binary64/x87-binary80 floating parsing, named
 //! C/POSIX/C.UTF-8 multibyte state and fixed UTF/ASCII `iconv` conversion,
-//! bounded permanent stdin/stdout/stderr byte/block I/O with explicit flushing,
+//! bounded permanent stdin/stdout/stderr byte/block I/O with explicit flushing, selected
+//! allocation-free byte-buffer formatting and NUL-string scanning,
 //! intmax-arithmetic,
 //! find-first-set, C11 immediate-termination, a bounded private static
 //! startup/ordinary-exit lifecycle, startup-published program-name globals
@@ -196,6 +197,8 @@ mod static_startup;
 mod process_globals;
 #[path = "stdio_standard.rs"]
 mod stdio_standard;
+#[path = "stdio_format_scan.rs"]
+mod stdio_format_scan;
 #[path = "callback_algorithms.rs"]
 mod callback_algorithms;
 #[path = "clock_nanosleep.rs"]

@@ -899,7 +899,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "libc-pathname-lifecycle",
             "libc-directory-streams",
             "libc-lchmod-unsupported",
-            "libc-stdio-standard|libc-text-math-locale-stdio-composition",
+            "libc-stdio-standard|libc-stdio-format-scan|libc-text-math-locale-stdio-composition",
             "libc-pthread-identity",
             "libc-pthread-detach",
             "libc-memory-sync",
@@ -9233,6 +9233,101 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn("stdio-standard-header-abi", dispatcher)
         self.assertIn("libc-stdio-standard", dispatcher)
         self.assertIn("run_stdio_standard_header_abi()", dispatcher)
+
+    def test_libc_static_c_abi_stdio_format_scan_artifact_stays_narrow(
+        self,
+    ) -> None:
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        implementation = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" /
+            "stdio_format_scan.rs"
+        ).read_text(encoding="utf-8")
+        fixture = (
+            ROOT / "compat" / "x86_64" / "libc_stdio_format_scan_probe.c"
+        ).read_text(encoding="utf-8")
+        start = (
+            ROOT / "compat" / "x86_64" / "libc_stdio_format_scan_start.S"
+        ).read_text(encoding="utf-8")
+        artifact_runner = (
+            ROOT / "compat" / "x86_64" / "run_libc_stdio_format_scan.sh"
+        ).read_text(encoding="utf-8")
+        static_exports = (
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        ).read_text(encoding="utf-8")
+        static_export_names = {
+            line
+            for line in static_exports.splitlines()
+            if line and not line.startswith("#")
+        }
+        parity_ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        dispatcher = RUNNER.read_text(encoding="utf-8")
+
+        symbols = (
+            "snprintf", "vsnprintf", "sprintf", "vsprintf", "sscanf", "vsscanf"
+        )
+        self.assertIn('#[path = "stdio_format_scan.rs"]', static_root)
+        for symbol in symbols:
+            self.assertIn(f'pub unsafe extern "C" fn {symbol}', implementation)
+            self.assertIn(symbol, static_export_names)
+            self.assertIn(symbol, fixture)
+        self.assertEqual(implementation.count("# Safety"), len(symbols))
+        for required in (
+            "musl 1.2.6 release commit",
+            "src/stdio/vfprintf.c",
+            "src/internal/intscan.c",
+            "The active Linux/AArch64 implementation remains the broader",
+            "args.next_arg",
+            "zero-capacity",
+            "pointer-valued `%p`",
+        ):
+            self.assertIn(required, implementation)
+        self.assertNotIn("src/stdio/printf_core.c", implementation)
+        for required in (
+            "CRABC_TYPE_IS(__typeof__(&snprintf)",
+            "call_vsnprintf",
+            "call_vsprintf",
+            "call_vsscanf",
+            '"%#x|%#.3o|%#.0o|%08.3d"',
+            '"ab%hhncd%ln"',
+            '"%2147483648d%n"',
+            '"0xg"',
+            '"0x1", "%2x"',
+            '" %Q", "%%%c"',
+            '"a", "%2c"',
+            "CRABC_STDIO_FORMAT_SCAN_FREESTANDING",
+            "check_candidate_limitations",
+        ):
+            self.assertIn(required, fixture)
+        for required in (
+            "arch_prctl(ARCH_SET_FS",
+            "%fs:0",
+            "mov $60, %eax",
+        ):
+            self.assertIn(required, start)
+        for required in (
+            "static_c_abi_exports.txt",
+            "-nostdlib -static",
+            "--no-undefined",
+            "R_X86_64_TPOFF",
+            "__errno_location",
+            "CRABC_STDIO_FORMAT_SCAN_FREESTANDING",
+            "timeout --foreground",
+            "printf fprintf vprintf vfprintf",
+            "args.next_arg",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn("--whole-archive", artifact_runner)
+        self.assertIn('id = "static-c-stdio-format-scan"', parity_ledger)
+        self.assertIn(
+            'command = "./scripts/dev-x86_64.sh libc-stdio-format-scan"',
+            parity_ledger,
+        )
+        self.assertIn("libc-stdio-format-scan", dispatcher)
+        self.assertIn("run_libc_stdio_format_scan.sh", dispatcher)
 
     def test_libc_static_c_abi_text_math_locale_stdio_composition_stays_cross_surface(
         self,

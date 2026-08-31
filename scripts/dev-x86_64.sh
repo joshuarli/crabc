@@ -277,6 +277,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-integer-parse  run the static x86 crabc-libc integer-parsing slice
   libc-float-parse  run the static x86 crabc-libc float/double/x87 parsing slice
   libc-stdio-standard  run the static x86 crabc-libc permanent standard-stream slice
+  libc-stdio-format-scan  run the static x86 crabc-libc byte-string format/scan slice
   libc-text-math-locale-stdio-composition  run the static x86 selected text/math/locale/stdio composition
   libc-intmax-arithmetic  run the static x86 crabc-libc intmax-arithmetic slice
   libc-credential-observation  run the static x86 crabc-libc credential-observation slice
@@ -2944,7 +2945,7 @@ case "$command" in
     libc-pathname-lifecycle) ;;
     libc-directory-streams) ;;
     libc-lchmod-unsupported) ;;
-    libc-stdio-standard|libc-text-math-locale-stdio-composition) ;;
+    libc-stdio-standard|libc-stdio-format-scan|libc-text-math-locale-stdio-composition) ;;
     libc-pthread-identity) ;;
     libc-pthread-detach) ;;
     libc-memory-sync) ;;
@@ -4072,6 +4073,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "libc-stdio-standard takes no arguments"
         ensure_image
         run_in_container bash /workspace/compat/x86_64/run_libc_stdio_standard.sh
+        ;;
+    libc-stdio-format-scan)
+        [ "$#" -eq 0 ] || fail "libc-stdio-format-scan takes no arguments"
+        ensure_image
+        run_in_container bash /workspace/compat/x86_64/run_libc_stdio_format_scan.sh
         ;;
     libc-text-math-locale-stdio-composition)
         [ "$#" -eq 0 ] || fail "libc-text-math-locale-stdio-composition takes no arguments"

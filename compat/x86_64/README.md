@@ -641,18 +641,40 @@ Run `./scripts/dev-x86_64.sh stdio-standard-header-abi` for the declaration
 matrix and `./scripts/dev-x86_64.sh libc-stdio-standard` for the static
 runtime fixture.
 
+The separate `libc-stdio-format-scan` gate
+(`./scripts/dev-x86_64.sh libc-stdio-format-scan`) records a fifth private
+`static-c-stdio-format-scan` artifact in the still-planned
+`libc.text-math-locale-stdio` family. Its project-header C fixture first runs
+against pinned musl and then a true `-nostdlib -static` candidate. It selects
+only allocation-free C-locale byte-buffer
+`snprintf`/`vsnprintf`/`sprintf`/`vsprintf` and NUL-string
+`sscanf`/`vsscanf`: literals/`%%`; integer flags, widths, precisions, and
+`hh`/`h`/`l`/`ll`/`j`/`z`/`t` length forms; byte/string and count-store
+conversions; and input suppression, widths, selected integer bases and prefix
+admission, `%c`, `%s`, `%n`, whitespace before literal `%%`, matching failure,
+and EOF. The fixture proves alternate-form zero/precision rules, C99
+would-have-written/truncation/NUL/one-byte/zero-capacity behavior,
+`EOVERFLOW` for a count beyond `int`, and native register-save/overflow-area
+`va_list` forwarding. A candidate-only section
+ratchets deterministic `EINVAL` rejection for selected unsupported grammar.
+It excludes `FILE` streams, `printf`/`fprintf`/`scanf`/`fscanf`, floating,
+wide, scanset, grouping/positional, and pointer-valued `%p` conversion,
+allocation, locale objects, integer scanner overflow, general stdio, parity,
+promotion, and public x86 support.
+
 The separate `libc-text-math-locale-stdio-composition` gate is one private
 cross-surface static artifact, not another implementation wrapper or a family
-completion claim. After all four existing math/complex, float-parse,
-locale/multibyte, and permanent-standard-stream header matrices, its one
-project-header C fixture runs against pinned musl and a closed static candidate.
+completion claim. Its one project-header C fixture runs against pinned musl
+and a closed static candidate while composing only the math/complex,
+float-parse, locale/multibyte, and permanent-standard-stream boundaries.
 It composes C.UTF-8 `mbrtowc`, C-locale `strtod`, `__fpclassify`, initial-exec
 errno, and pipe-observed `fputc`/`fflush(stdout)`: a valid UTF-8 conversion
 preserves stale errno, an invalid lead establishes EILSEQ, and successful
 parsing plus explicit stream output retain that datum. It rejects dynamic TLS,
-format/path/wide streams, locale objects, `_l` parsers, scalar libm, iconv,
-allocation, and ambient runtime dependencies. It does not establish general
-text/math/locale/stdio behavior, parity, promotion, or public x86 support.
+format/path/wide streams (including the separate format/scan artifact), locale
+objects, `_l` parsers, scalar libm, iconv, allocation, and ambient runtime
+dependencies. It does not establish general text/math/locale/stdio behavior,
+parity, promotion, or public x86 support.
 
 `libc-directory-streams` is the separate private static C runtime artifact
 that follows that compile-only header evidence. One project-header fixture runs

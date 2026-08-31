@@ -15,6 +15,21 @@ planned: ABI inventory/symbol closure, the dynamic canonical
 OS/libc/pthread/signal suites, their runtime/sysroot prerequisites, and all
 other promotion gates are still required.
 
+
+Within still-planned `libc.text-math-locale-stdio`, the separate private
+`./scripts/dev-x86_64.sh libc-stdio-format-scan` artifact selects only
+allocation-free C-locale byte-buffer `snprintf`/`vsnprintf`/`sprintf`/
+`vsprintf` and NUL-string `sscanf`/`vsscanf`. Its pinned-musl and true static
+candidate fixture proves selected integer/byte-string format and scan grammar,
+C99 would-have-written/truncation/NUL/zero-capacity and `EOVERFLOW` behavior,
+output and input count stores, integer-prefix admission, and x86 native
+`va_list` forwarding.
+`FILE` streams, `printf`/`fprintf`/`scanf`/`fscanf`, floating/wide/scanset/
+positional/pointer-valued `%p` conversion, allocation, locale objects, integer
+scanner overflow, general stdio, family/platform parity, promotion, and public
+x86 support remain excluded.
+
+
 The x86 lane has five private ET_DYN interpreter artifacts inside still-planned
 `ldso.dynamic-runtime`. `ldso-initial-graph` is limited to
 one main PIE -> mid.so -> leaf.so graph, RELATIVE/GLOB_DAT/JUMP_SLOT ELF64

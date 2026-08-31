@@ -5847,6 +5847,48 @@ native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc
 oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source mapping and C/POSIX behavior oracle for src/internal/stdio_impl.h, src/stdio/{stdin,stdout,stderr}.c, __stdio_read.c, __uflow.c, __toread.c, __stdio_write.c, __overflow.c, __towrite.c, fread.c, fwrite.c, fgetc.c, getc.c, getchar.c, fputc.c, putc.c, putchar.c, ungetc.c, fflush.c, feof.c, ferror.c, clearerr.c, and fileno.c; path streams, locks, allocation, cancellation, and __stdio_exit remain unselected." }, { kind = "kernel-abi", source = "Linux 5.10 x86-64 ABI", role = "read=0, write=1, and readv=19 raw Linux register calls beneath the bounded permanent-stream state machine." }, { kind = "elf-abi", source = "System V AMD64 psABI and pinned musl x86 headers", role = "LP64 FILE-pointer/data-symbol ABI, C99 one-byte opaque FILE placeholder, C11/C++ opaque FILE boundary, C++ C linkage, and Variant-II initial-exec errno TLS fixture contract." }]
 
 [[family.verified_artifact]]
+id = "static-c-stdio-format-scan"
+description = "Private native x86 selected-static byte-string format/scan artifact inside still-planned `libc.text-math-locale-stdio`. Its target-local leaf adds exactly `snprintf`, `vsnprintf`, `sprintf`, `vsprintf`, `sscanf`, and `vsscanf` to the dependency-free selected `crabc-libc` archive. Its allocation-free C-locale formatter accepts literals, `%%`, `-+ 0#`, numeric or `*` width/precision, integer `hh`/`h`/`l`/`ll`/`j`/`z`/`t` length forms, `%d`/`%i`/`%u`/`%o`/`%x`/`%X`/`%c`/`%s`, and count-store `%n`; `snprintf` retains C99 would-have-written count, truncation, NUL termination, one-byte-buffer behavior, zero-capacity null-destination behavior, and `EOVERFLOW` for a result beyond `int`. Its NUL-string scanner accepts literals/format whitespace, suppression/width, the same selected integer forms, plus `%c`, `%s`, and `%n`, preserving prefix admission and assignment and EOF/matching-failure boundaries. The pinned-musl/project-header C reference and true static candidate exercise alternate-form zero/precision rules, numeric or `*` width/precision, length-modifier register and stack varargs, output/input count stores, stale errno, truncation, `v*` forwarding, signed/unsigned/automatic/octal/hex scan, incomplete hexadecimal prefixes, suppression, width, fixed-width partial `%c` matching failure, `%s`, whitespace before literal `%%`, literal matching, and input EOF. Candidate-only checks ratchet deterministic `EINVAL` rejection of selected unsupported grammar. It excludes FILE streams, `printf`/`fprintf`/`scanf`/`fscanf`, float or long-double conversion, wide text, scansets, grouping and positional arguments, pointer-valued `%p`, allocation, locale objects, integer scanner overflow, general stdio, libc.so, CRT, loader, sysroot, family completion, promotion, and public x86 support."
+source_owners = [
+  "compat/upstreams.toml",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/stdio_format_scan.rs",
+  "libc/src/c_abi/x86_64/errno.rs",
+  "include/bits/alltypes.h",
+  "include/errno.h",
+  "include/features.h",
+  "include/limits.h",
+  "include/stdarg.h",
+  "include/stddef.h",
+  "include/stdint.h",
+  "include/stdio.h",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/libc_stdio_format_scan_probe.c",
+  "compat/x86_64/libc_stdio_format_scan_start.S",
+  "compat/x86_64/run_libc_stdio_format_scan.sh",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "compat/x86_64/README.md",
+  "STATUS.md",
+  "x86-64.md",
+  "scripts/dev-x86_64.sh",
+]
+x86_abi_prerequisites = [
+  "System V AMD64 variadic calls supply the fixed format/input pointer arguments in general-purpose registers and carry integer/pointer varargs through the ABI-owned register-save/overflow areas represented by C `va_list`. The selected Rust leaf consumes each chosen type only with core's target `VaList`; it does not reconstruct a variadic list or borrow a foreign libc formatter.",
+  "Pinned musl 1.2.6 src/stdio/{snprintf,vsnprintf,sprintf,vsprintf}.c and src/stdio/vfprintf.c's printf_core map the selected byte-buffer count, truncation, integer/byte-string flags, widths, precisions, count stores, and promoted integer varargs. src/stdio/{sscanf,vsscanf,vfscanf}.c plus src/internal/intscan.c map the selected NUL-string input, integer-prefix admission, assignment, matching-failure, and EOF rules. Floating, wide, scanset, positional, FILE/cancellation, and locale owners remain deliberately unselected.",
+  "The static candidate uses no syscall, allocator, stream, or mutable formatter state. Its only shared runtime edge is the existing x86 initial-exec errno slot, used only for deterministic EINVAL on unsupported/incomplete conversions and EOVERFLOW if a would-have-written result cannot fit C int.",
+]
+x86_header_prerequisites = [
+  "The project-header fixture statically ratchets exact C signatures for snprintf/vsnprintf/sprintf/vsprintf and sscanf/vsscanf under pinned-musl and candidate project-first C11 compilation, including compiler-owned va_list spelling. It is not a general stdio header, C++ linkage, or archive-wide header-closure claim.",
+  "The same reference/candidate fixture observes C99 snprintf zero-capacity and truncation rules, x86 integer/pointer varargs forwarding, selected scan destination representations, and explicit unsupported grammar exclusions without invoking an ambient formatter, scanner, allocator, or FILE runtime.",
+]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-stdio-format-scan", scope = "Pinned-musl project-header C reference plus a true dependency-free x86 crabc-libc archive and `-nostdlib -static` candidate. The shared fixture checks exact selected declarations; integer/byte-string formatting flags, alternate-form zero/precision, numeric and `*` width/precision, length-modifier register/stack varargs, output/input count stores, C99 count/truncation/NUL/one-byte/size-zero behavior, v* forwarding and stale errno; and NUL-string scanning of signed/unsigned/automatic/octal/hex values, prefix admission, suppression, width, fixed-width partial c failure, s/n, whitespace before literal `%%`, literal matching, mismatch and EOF. Candidate-only checks ratchet deterministic `EINVAL` rejection for floating, scanset, positional, and pointer-valued `%p` grammar. Archive/final-ELF checks ratchet the complete selected export contract and reject unresolved symbols, interpreter/DT_NEEDED, dynamic TLS resolver, allocation, streams, ambient runtime, and nonselected printf/fprintf/scanf/fscanf/wide exports while retaining direct initial-exec errno TLS. It excludes FILE streams, floating/wide/scanset/grouping/positional/pointer-valued `%p` conversion, integer scanner overflow, general stdio, family completion, promotion, and public x86 support." }]
+oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source and C/POSIX behavior oracle for src/stdio/snprintf.c, vsnprintf.c, sprintf.c, vsprintf.c, vfprintf.c (printf_core), sscanf.c, vsscanf.c, vfscanf.c, and src/internal/intscan.c on the selected byte-string integer/count/character grammar." }, { kind = "elf-abi", source = "System V AMD64 psABI", role = "LP64 integer/pointer C varargs register-save and overflow-area ABI plus direct initial-exec errno TLS used by the freestanding static candidate." }]
+
+[[family.verified_artifact]]
 id = "static-c-named-locale-multibyte"
 description = "Private native x86 selected-static-archive named C locale/multibyte core. One dependency-free `crabc-libc` archive lets its freestanding C fixture resolve the sixteen selected entries `setlocale`, `localeconv`, `__ctype_get_mb_cur_max`, `mbrtowc`, `mbrlen`, `mbsinit`, `wcrtomb`, `mblen`, `mbtowc`, `wctomb`, `mbsrtowcs`, `wcsrtombs`, `mbstowcs`, `wcstombs`, `btowc`, and `wctob` after equivalent pinned-musl execution; the archive-wide selected C ABI remains separately ratcheted. It admits only named global `C`, `POSIX`, and `C.UTF-8` category selection plus its exact six-component mixed `LC_ALL` serialization. Musl's built-in `C.UTF-8` map changes only `LC_CTYPE`, so global `C.UTF-8` and the returned mixed state are exactly `C.UTF-8;C;C;C;C;C`; direct `POSIX` and non-CTYPE `C.UTF-8` normalize to `C`. A candidate-only regression rejects POSIX components, non-CTYPE UTF-8 components, or redundant uniform six-component forms without changing state. `C`/`POSIX` retain musl's private C code units while CTYPE `C.UTF-8` retains the bounded UTF-8 state machine, split-state/error/reset behavior, legacy conversion results, initial-state C string source/destination updates, and one caller-owned positive-capacity UTF-8 resume. The immutable POSIX `lconv` record carries `CHAR_MAX` monetary fields, while EILSEQ uses the already selected x86 initial-TLS errno seam. The separate C/C++ header gate proves the six-category values, x86 `wchar_t`/`wint_t`/8-byte `mbstate_t` and 96-byte `lconv` layouts, selected signatures, MB_CUR_MAX type, and unmangled C++ names. This artifact intentionally excludes noninitial `mbsrtowcs` resume with zero output capacity, `setlocale(category, \"\")` environment lookup, arbitrary locale names/maps, locale objects and `_l` APIs, per-thread locale overrides, collation, iconv, wide streams, general stdio, libc.so, CRT, loader, sysroot, family completion, promotion, and public x86 support."
 source_owners = [

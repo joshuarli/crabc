@@ -435,9 +435,12 @@ sigsuspend
 sigtimedwait
 sigwait
 sigwaitinfo
+snprintf
 sockatmark
 socket
 socketpair
+sprintf
+sscanf
 stat
 statfs
 statvfs
@@ -510,6 +513,9 @@ utime
 utimensat
 utimes
 versionsort
+vsnprintf
+vsprintf
+vsscanf
 wait
 waitid
 waitpid
