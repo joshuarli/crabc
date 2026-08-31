@@ -9,6 +9,10 @@ use crabc_mimalloc::__crabc_runtime::{
 };
 
 const OWNER_LOCAL_CYCLES: usize = 6;
+// The anchor's allocation, reallocation, and free enter its retained local
+// owner. `native_usable_size` is deliberately absent: it copies immutable
+// PageMap facts without borrowing that owner.
+const OWNER_LOCAL_ANCHOR_OPERATIONS: usize = 3;
 const ANCHOR_REQUEST: usize = 37;
 const ANCHOR_REALLOC_REQUEST: usize = 193;
 const CYCLE_REQUEST: usize = 53;
@@ -100,8 +104,8 @@ fn attached_worker_reuses_its_owner_for_repeated_local_allocate_free_cycles() {
         after
             .native_owner_local_operation_count
             .saturating_sub(baseline.native_owner_local_operation_count)
-            >= OWNER_LOCAL_CYCLES * 2 + 4,
-        "allocate, usable-size, realloc, and every local free use the retained owner-local path"
+            >= OWNER_LOCAL_CYCLES * 2 + OWNER_LOCAL_ANCHOR_OPERATIONS,
+        "allocation, reallocation, and every local free use the retained owner-local path; usable-size is PageMap-only"
     );
     assert_eq!(
         after
