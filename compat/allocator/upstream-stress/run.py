@@ -47,6 +47,9 @@ DEFAULT_REPORT = ROOT / "compat/reports/allocator/upstream-stress/latest.json"
 DEFAULT_DIAGNOSTIC_REPORT = (
     ROOT / "compat/reports/allocator/upstream-stress/current-head.json"
 )
+DEFAULT_POST_OWNER_EXIT_CONCURRENT_FREE_REPORT = (
+    ROOT / "compat/reports/allocator/upstream-stress/post-owner-exit-concurrent-free.json"
+)
 DEFAULT_LIBC_BUILD_RECORD = DEFAULT_OUTPUT_DIR / "selected-libc-build.json"
 CANONICAL_LOADER = Path("/lib/ld-crabc-aarch64.so.1")
 CURRENT_HEAD_BUILD_RECORD_FORMAT = 1
@@ -55,6 +58,7 @@ DIAGNOSTIC_REPORT_FORMAT = 1
 DIAGNOSTIC_REPORT_SCHEMA = (
     "crabc-mimalloc-canonical-upstream-stress-current-head-diagnostic-report"
 )
+POST_OWNER_EXIT_CONCURRENT_FREE_CASE_ID = "workers-2-scale-1-iterations-1"
 FIXED_PIN = {
     "version": "3.5.0",
     "repository": "https://github.com/microsoft/mimalloc.git",
@@ -721,6 +725,16 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
         ),
     )
     parser.add_argument(
+        "--post-owner-exit-concurrent-free",
+        action="store_true",
+        help=(
+            "run only the closed matrix's smallest two-worker 2/1/1 source case; "
+            "the unchanged upstream workers may concurrently exchange/free transfer slots, "
+            "then its initial thread frees surviving transfers after both workers exit; "
+            "this is not a full-matrix capability pass"
+        ),
+    )
+    parser.add_argument(
         "--target-dir",
         type=Path,
         default=Path(os.environ.get("CRABC_TARGET_DIR", DEFAULT_TARGET_DIR)),
@@ -739,7 +753,10 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
         help=(
             "JSON report path (defaults to CRABC_UPSTREAM_STRESS_REPORT or "
             "compat/reports/allocator/upstream-stress/latest.json; --diagnose uses "
-            "CRABC_UPSTREAM_STRESS_DIAGNOSTIC_REPORT or current-head.json)"
+            "CRABC_UPSTREAM_STRESS_DIAGNOSTIC_REPORT or current-head.json; "
+            "--post-owner-exit-concurrent-free uses "
+            "CRABC_UPSTREAM_STRESS_POST_OWNER_EXIT_CONCURRENT_FREE_REPORT or "
+            "post-owner-exit-concurrent-free.json)"
         ),
     )
     parser.add_argument(
@@ -761,19 +778,29 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
         default=None,
         help=(
             "current-head companion to the selected Cargo build record; required by "
-            "--diagnose and written by --capture-selected-libc-build"
+            "one-case diagnostics and written by --capture-selected-libc-build"
         ),
     )
     parsed = parser.parse_args(arguments)
-    if parsed.check and parsed.diagnose:
-        parser.error("--check and --diagnose cannot be combined")
-    if parsed.capture_selected_libc_build is not None and parsed.diagnose:
-        parser.error("--capture-selected-libc-build and --diagnose are separate phases")
+    if parsed.diagnose and parsed.post_owner_exit_concurrent_free:
+        parser.error("--diagnose and --post-owner-exit-concurrent-free cannot be combined")
+    one_case_diagnostic = parsed.diagnose or parsed.post_owner_exit_concurrent_free
+    if parsed.check and one_case_diagnostic:
+        parser.error("--check and one-case diagnostics cannot be combined")
+    if parsed.capture_selected_libc_build is not None and one_case_diagnostic:
+        parser.error("--capture-selected-libc-build and one-case diagnostics are separate phases")
     if parsed.report is None:
         if parsed.diagnose:
             parsed.report = Path(
                 os.environ.get(
                     "CRABC_UPSTREAM_STRESS_DIAGNOSTIC_REPORT", DEFAULT_DIAGNOSTIC_REPORT
+                )
+            )
+        elif parsed.post_owner_exit_concurrent_free:
+            parsed.report = Path(
+                os.environ.get(
+                    "CRABC_UPSTREAM_STRESS_POST_OWNER_EXIT_CONCURRENT_FREE_REPORT",
+                    DEFAULT_POST_OWNER_EXIT_CONCURRENT_FREE_REPORT,
                 )
             )
         else:
@@ -791,7 +818,12 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
 def diagnostic_output_dir(args: argparse.Namespace) -> Path:
     """Avoid overwriting the canonical full-matrix fixture with one-case output."""
 
-    return args.output_dir.expanduser().resolve() / "current-head"
+    name = (
+        "post-owner-exit-concurrent-free"
+        if args.post_owner_exit_concurrent_free
+        else "current-head"
+    )
+    return args.output_dir.expanduser().resolve() / name
 
 
 def archive_path(pin: Mapping[str, str]) -> Path:
@@ -1885,6 +1917,70 @@ def diagnostic_case(contract: Mapping[str, Any]) -> dict[str, Any]:
     return cases[0]
 
 
+def post_owner_exit_concurrent_free_case(contract: Mapping[str, Any]) -> dict[str, Any]:
+    """Select the smallest existing two-worker source case by its closed identity.
+
+    The archived source starts two pthread workers, leaves its atomic transfer
+    exchange/free loop unchanged, joins both workers, and then has its original
+    initial-thread transfer cleanup free any surviving objects. This selector
+    does not assert that a particular pthread interleaving occurred.
+    """
+
+    expected = expected_matrix_case(2, 1, 1)
+    matches = [
+        case
+        for case in execution_cases(contract)
+        if case.get("id") == POST_OWNER_EXIT_CONCURRENT_FREE_CASE_ID
+    ]
+    if len(matches) != 1 or not exactly_matches(matches[0], expected):
+        raise EvidenceError(
+            "post-owner-exit concurrent-free diagnostic requires the canonical "
+            "workers=2 scale=1 iterations=1 matrix case"
+        )
+    return matches[0]
+
+
+def selected_diagnostic_case(
+    contract: Mapping[str, Any], args: argparse.Namespace
+) -> dict[str, Any]:
+    """Choose one explicit one-case invocation without changing the matrix."""
+
+    if args.post_owner_exit_concurrent_free:
+        return post_owner_exit_concurrent_free_case(contract)
+    return diagnostic_case(contract)
+
+
+def diagnostic_metadata(args: argparse.Namespace) -> dict[str, Any]:
+    """Keep the post-exit invocation's narrow evidence boundary explicit."""
+
+    if not args.post_owner_exit_concurrent_free:
+        return {
+            "id": "current-head-first-case",
+            "status": "not-run",
+            "classification": "diagnostic-only",
+            "native_execution_started": False,
+        }
+    return {
+        "id": "post-owner-exit-concurrent-free",
+        "status": "not-run",
+        "classification": "one-case-source-shaped-only",
+        "native_execution_started": False,
+        "scope": {
+            "source_unmodified": True,
+            "selected_closed_matrix_case": POST_OWNER_EXIT_CONCURRENT_FREE_CASE_ID,
+            "source_worker_count": 2,
+            "source_scheduler": "upstream pthread schedule remains nondeterministic",
+            "post_owner_exit_cleanup": (
+                "the unmodified upstream initial thread frees surviving transfer entries "
+                "after joining both source workers"
+            ),
+            "concurrent_free_overlap": "not-instrumented",
+            "canonical_matrix": "not-run",
+            "m5_accepted": False,
+        },
+    }
+
+
 def selected_target_contract(contract: Mapping[str, Any]) -> dict[str, Any]:
     inventory = contract.get("target_inventory")
     if not isinstance(inventory, dict) or not isinstance(inventory.get("selected"), str):
@@ -2029,7 +2125,7 @@ def diagnostic_report_base(
     adaptation = contract["source_adaptation"]
     execution = contract["execution"]
     assert isinstance(fixture, dict) and isinstance(adaptation, dict) and isinstance(execution, dict)
-    case = diagnostic_case(contract)
+    case = selected_diagnostic_case(contract, args)
     report_contract = contract["report"]
     assert isinstance(report_contract, dict)
     artifact_ids = report_contract["artifact_ids"]
@@ -2056,12 +2152,7 @@ def diagnostic_report_base(
                 "patches": list(adaptation["patches"]),
             },
         },
-        "diagnostic": {
-            "id": "current-head-first-case",
-            "status": "not-run",
-            "classification": "diagnostic-only",
-            "native_execution_started": False,
-        },
+        "diagnostic": diagnostic_metadata(args),
         "canonical_matrix": {
             "status": "not-run",
             "required_case_count": len(execution_cases(contract)),
@@ -2301,7 +2392,7 @@ def execute_diagnostic(
 ) -> None:
     """Run one attested current-head observation without reducing the full matrix."""
 
-    case = diagnostic_case(contract)
+    case = selected_diagnostic_case(contract, args)
     require_native_aarch64()
     archive = fetch_archive(pin, offline=args.offline)
     report["artifacts"]["upstream_archive"] = file_record(archive, root=ROOT)
@@ -2511,26 +2602,27 @@ def main(arguments: Sequence[str] | None = None) -> int:
                 )
             )
             return 0
+        one_case_diagnostic = args.diagnose or args.post_owner_exit_concurrent_free
         report = (
             diagnostic_report_base(contract, pin, args)
-            if args.diagnose
+            if one_case_diagnostic
             else report_base(contract, pin, args)
         )
         try:
-            if args.diagnose:
+            if one_case_diagnostic:
                 execute_diagnostic(contract, pin, args, report)
             else:
                 execute(contract, pin, args, report)
         except BlockedPrerequisite as error:
             report["status"] = "blocked"
             report["blocked"] = blocked_record(error)
-            if args.diagnose:
+            if one_case_diagnostic:
                 report["diagnostic"]["status"] = "blocked"
             else:
                 update_capability(report, contract, "blocked")
         except EvidenceError as error:
             report["status"] = "failed"
-            if args.diagnose:
+            if one_case_diagnostic:
                 report["diagnostic"]["status"] = "failed"
             else:
                 update_capability(report, contract, "failed")

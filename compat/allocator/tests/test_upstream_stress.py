@@ -203,6 +203,67 @@ class CanonicalUpstreamStressContractTests(unittest.TestCase):
             RUNNER.DEFAULT_OUTPUT_DIR / "current-head",
         )
 
+    def test_post_owner_exit_concurrent_free_selects_the_smallest_unmodified_two_worker_case(
+        self,
+    ) -> None:
+        contract, _ = RUNNER.load_contract()
+        args = RUNNER.parse_arguments(["--post-owner-exit-concurrent-free"])
+
+        case = RUNNER.post_owner_exit_concurrent_free_case(contract)
+        self.assertEqual(case, RUNNER.execution_cases(contract)[1])
+        self.assertEqual(
+            RUNNER.case_inventory(case),
+            {
+                "id": "workers-2-scale-1-iterations-1",
+                "workers": 2,
+                "scale": 1,
+                "iterations": 1,
+                "arguments": ["2", "1", "1"],
+            },
+        )
+        self.assertEqual(args.report, RUNNER.DEFAULT_POST_OWNER_EXIT_CONCURRENT_FREE_REPORT)
+        self.assertEqual(
+            RUNNER.diagnostic_output_dir(args),
+            RUNNER.DEFAULT_OUTPUT_DIR / "post-owner-exit-concurrent-free",
+        )
+        self.assertEqual(
+            RUNNER.run_command(Path("/tmp/canonical-upstream-test-stress"), case),
+            ["/tmp/canonical-upstream-test-stress", "2", "1", "1"],
+        )
+        self.assertNotIn("-DNTHREADS", " ".join(RUNNER.build_command(
+            Path("/sysroot/bin/crabc-cc"),
+            Path("/source/mimalloc-3.5.0"),
+            "test/test-stress.c",
+            Path("/target/debug"),
+            Path("/tmp/canonical-upstream-test-stress"),
+            contract,
+        )))
+
+        report = RUNNER.diagnostic_report_base(contract, RUNNER.FIXED_PIN, args)
+        self.assertEqual(report["execution"]["case"], RUNNER.case_inventory(case))
+        self.assertEqual(report["diagnostic"]["id"], "post-owner-exit-concurrent-free")
+        self.assertEqual(
+            report["diagnostic"]["classification"], "one-case-source-shaped-only"
+        )
+        self.assertEqual(
+            report["diagnostic"]["scope"],
+            {
+                "source_unmodified": True,
+                "selected_closed_matrix_case": "workers-2-scale-1-iterations-1",
+                "source_worker_count": 2,
+                "source_scheduler": "upstream pthread schedule remains nondeterministic",
+                "post_owner_exit_cleanup": (
+                    "the unmodified upstream initial thread frees surviving transfer entries "
+                    "after joining both source workers"
+                ),
+                "concurrent_free_overlap": "not-instrumented",
+                "canonical_matrix": "not-run",
+                "m5_accepted": False,
+            },
+        )
+        self.assertEqual(report["canonical_matrix"]["status"], "not-run")
+        self.assertFalse(report["canonical_matrix"]["m5_accepted"])
+
     def test_diagnostic_pass_is_not_a_full_matrix_or_m5_acceptance(self) -> None:
         contract, pin = RUNNER.load_contract()
         case = RUNNER.execution_cases(contract)[0]
