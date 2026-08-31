@@ -162,6 +162,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-sigrtmax  run the static x86 crabc-libc realtime-maximum ABI bridge slice
   libc-sigrtmin  run the static x86 crabc-libc realtime-minimum ABI bridge slice
   libc-sched-getscheduler  run the static x86 musl-ENOSYS scheduler observation slice
+  libc-alarm  run the static x86 crabc-libc historical SIGALRM timer slice
   libc-sigaddset-sigdelset-sigfillset  run the static x86 crabc-libc POSIX signal-set mutation slice
   libc-extended-attributes  run the static x86 crabc-libc extended-attribute slice
   libc-pathname-lifecycle  run the static x86 crabc-libc pathname-lifecycle slice
@@ -535,6 +536,15 @@ musl `ENOSYS` result for current, invalid, and missing pid-shaped inputs. It
 does not select scheduler policy mutation or parameters, priority bounds,
 affinity, lifecycle, pthread scheduling attributes, dynamic libc, or
 application startup.
+`libc-alarm` is a separate one-entry historical SIGALRM interval-timer adapter.
+It follows musl's direct x86 `setitimer(ITIMER_REAL)` closure: replace the
+one-shot real-time timer, discard the C return after its ordinary errno side
+effect, and return the prior whole seconds plus one for a fractional remainder.
+Its fixture seeds and inspects
+the kernel record through a private raw syscall, proving fractional rounding,
+one-shot state, disarm behavior, and stale errno. It exports neither public
+`setitimer` nor `ualarm`, and does not select handlers/actions, masks, waits,
+delivery policy, timer-family completion, dynamic libc, or application startup.
 `libc-sigaddset-sigdelset-sigfillset` is a separate three-entry POSIX
 signal-set mutation boundary. It follows musl's one-word x86 helpers: fill
 writes `0xfffffffc7fffffff`, while add/delete reject 0, 32--34, and 65 with
@@ -2485,6 +2495,10 @@ run_libc_sched_getscheduler_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_sched_getscheduler.sh
 }
 
+run_libc_alarm_probe() {
+    run_in_container bash /workspace/compat/x86_64/run_libc_alarm.sh
+}
+
 run_libc_sigset_mutation_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_sigaddset_sigdelset_sigfillset.sh
 }
@@ -3827,7 +3841,7 @@ shift
 
 case "$command" in
     timerfd-header-abi|signalfd-header-abi) ;;
-    libc-timerfd|libc-signalfd|libc-sigpause|libc-sigisemptyset|libc-sigandset-sigorset|libc-sigpending|libc-sigrtmax|libc-sigrtmin|libc-sched-getscheduler|libc-sigaddset-sigdelset-sigfillset) ;;
+    libc-timerfd|libc-signalfd|libc-sigpause|libc-sigisemptyset|libc-sigandset-sigorset|libc-sigpending|libc-sigrtmax|libc-sigrtmin|libc-sched-getscheduler|libc-alarm|libc-sigaddset-sigdelset-sigfillset) ;;
     libc-sched-getcpu|libc-sched-yield) ;;
     sched-getscheduler-header-abi) ;;
     ctermid-header-abi|gethostid-header-abi|getpagesize-header-abi|gettid-header-abi|isatty-header-abi|tcgetpgrp-header-abi|tcsetpgrp-header-abi|getpass-header-abi|libc-ctermid|libc-gethostid|libc-getpagesize|libc-gettid|libc-isatty|libc-tcgetpgrp|libc-tcsetpgrp|libc-getpass|mkfifo-header-abi|mkfifoat-header-abi|libc-mkfifo|libc-mkfifoat|mktemp-header-abi|libc-mktemp) ;;
@@ -5719,6 +5733,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "libc-sched-getscheduler takes no arguments"
         ensure_image
         run_libc_sched_getscheduler_probe
+        ;;
+    libc-alarm)
+        [ "$#" -eq 0 ] || fail "libc-alarm takes no arguments"
+        ensure_image
+        run_libc_alarm_probe
         ;;
     libc-sigaddset-sigdelset-sigfillset)
         [ "$#" -eq 0 ] || fail "libc-sigaddset-sigdelset-sigfillset takes no arguments"

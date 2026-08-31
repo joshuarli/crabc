@@ -19701,6 +19701,211 @@ def require_sched_getscheduler_artifact(family: Mapping[str, Any]) -> None:
         "static-c-sched-getscheduler evidence must retain its musl ENOSYS regression",
     )
 
+def require_alarm_artifact(family: Mapping[str, Any]) -> None:
+    """Keep the historical one-symbol timer adapter below signal/timer promotion."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.posix-runtime].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [entry for entry in artifacts if entry.get("id") == "static-c-alarm"]
+    require(
+        len(matching) == 1,
+        "libc.posix-runtime must contain exactly one static-c-alarm artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-alarm must not promote libc.posix-runtime",
+    )
+    artifact = matching[0]
+    require(
+        "capabilities" not in artifact,
+        "static-c-alarm must remain a private artifact without capabilities",
+    )
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for phrase in (
+        "one-symbol historical SIGALRM interval-timer adapter artifact",
+        "planned `libc.posix-runtime`",
+        "exactly `alarm`",
+        "`src/unistd/alarm.c`",
+        "`src/signal/setitimer.c`",
+        "time_t` and `long` are both eight bytes",
+        "`ITIMER_REAL`",
+        "Linux `setitimer=38` C return",
+        "old `tv_sec + !!tv_usec`",
+        "`604800.999999` to `604801` fractional ceiling",
+        "project-first/pinned-musl C11/C++17 unistd-header matrix",
+        "unconditional `unsigned int alarm(unsigned int)`",
+        "neither public `setitimer` nor `ualarm`",
+        "handlers/actions",
+        "signal masks",
+        "wait for signals",
+        "delivery policy",
+        "timer-family completion",
+        "signal-family/timer-family completion, promotion, or public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"static-c-alarm description omits {phrase}",
+        )
+    owners = set(nonempty_strings(artifact["source_owners"], "static-c-alarm.source_owners"))
+    for owner in (
+        "compat/upstreams.toml",
+        "libc/Cargo.toml",
+        "libc/src/lib.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/signal_alarm.rs",
+        "libc/src/c_abi/x86_64/errno.rs",
+        "libc/src/c_abi/x86_64/static_tls.rs",
+        "libc/src/c_abi/x86_64/syscall.rs",
+        "include/errno.h",
+        "include/stddef.h",
+        "include/unistd.h",
+        "include/sys/time.h",
+        "include/sys/select.h",
+        "include/sys/syscall.h",
+        "include/bits/alltypes.h",
+        "include/bits/syscall.h",
+        "compat/x86_64/unistd_header_abi_probe.c",
+        "compat/x86_64/unistd_header_abi_probe.cpp",
+        "compat/x86_64/run_unistd_header_abi.sh",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/libc_alarm_probe.c",
+        "compat/x86_64/libc_alarm_start.S",
+        "compat/x86_64/run_libc_alarm.sh",
+        "compat/x86_64/aarch64_parity_inventory.py",
+        "compat/x86_64/aarch64_parity_inventory.json",
+        "compat/x86_64/tests/test_aarch64_parity_inventory.py",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/README.md",
+        "STATUS.md",
+        "x86-64.md",
+        "scripts/dev-x86_64.sh",
+        "scripts/check_structure.py",
+    ):
+        require(owner in owners, f"static-c-alarm source owners omit {owner}")
+    prerequisites = nonempty_strings(
+        artifact["x86_abi_prerequisites"], "static-c-alarm.x86_abi_prerequisites"
+    )
+    require(
+        any(
+            "unsigned int alarm(unsigned int)" in item
+            and "edi" in item
+            and "eax" in item
+            and "setitimer=38" in item
+            and "ITIMER_REAL=0" in item
+            and "32-byte align-8 itimerval" in item
+            for item in prerequisites
+        ),
+        "static-c-alarm must retain its exact x86 syscall and record ABI",
+    )
+    require(
+        any(
+            "src/unistd/alarm.c" in item
+            and "src/signal/setitimer.c" in item
+            and "time_t and long are both eight bytes" in item
+            and "no 32-bit conversion path" in item
+            and "ordinary errno side effect" in item
+            and "old.tv_sec + !!old.tv_usec" in item
+            and "setitimer and ualarm remain outside" in item
+            for item in prerequisites
+        ),
+        "static-c-alarm must retain its pinned-musl LP64 source closure",
+    )
+    require(
+        any(
+            "604800.999999 rounds to 604801" in item
+            and "alarm(0)" in item
+            and "stale ERANGE" in item
+            and "Static Initial TLS v1" in item
+            and "does not claim CRT" in item
+            and "handler installation, mask changes, or signal delivery" in item
+            for item in prerequisites
+        ),
+        "static-c-alarm must retain its isolated static differential",
+    )
+    headers = nonempty_strings(
+        artifact["x86_header_prerequisites"], "static-c-alarm.x86_header_prerequisites"
+    )
+    require(
+        any(
+            "project-first/pinned-musl C11/C++17 unistd-header matrix" in item
+            and "unsigned int alarm(unsigned int)" in item
+            and "function-pointer type" in item
+            and "unmangled C++ reference" in item
+            and "sys/time.h" in item
+            for item in headers
+        ),
+        "static-c-alarm must retain its C/C++ unistd header matrix",
+    )
+    static_exports = set(
+        static_c_abi_export_names(
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        )
+    )
+    require(
+        "alarm" in static_exports,
+        "static-c-alarm must expose exactly its named historical adapter",
+    )
+    oracle = artifact["oracle"]
+    assert isinstance(oracle, list)
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "c-posix"
+            and isinstance(entry.get("role"), str)
+            and "src/unistd/alarm.c" in entry["role"]
+            and "src/signal/setitimer.c" in entry["role"]
+            and "old tv_sec + !!tv_usec" in entry["role"]
+            for entry in oracle
+        ),
+        "static-c-alarm must retain its pinned-musl alarm oracle",
+    )
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "kernel-abi"
+            and isinstance(entry.get("role"), str)
+            and "setitimer=38" in entry["role"]
+            and "ITIMER_REAL" in entry["role"]
+            for entry in oracle
+        ),
+        "static-c-alarm must retain its kernel timer-record oracle",
+    )
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-alarm"},
+        "static-c-alarm must use the closed libc-alarm command",
+    )
+    scope = evidence[0].get("scope")
+    require(
+        isinstance(scope, str)
+        and all(
+            phrase in scope
+            for phrase in (
+                "Pinned-musl 1.2.6",
+                "C11/C++17 unistd-header matrix",
+                "`-nostdlib -static` candidate",
+                "public setitimer/ualarm",
+                "handlers/actions",
+                "signal masks",
+                "waits",
+                "delivery policy",
+                "timer descriptors",
+                "alarm's setitimer=38 syscall",
+                "fractional 604801 rounding",
+                "stale-errno",
+                "signal-family/timer-family completion, promotion, or public x86 support",
+            )
+        ),
+        "static-c-alarm evidence must retain its exact bounded timer regression",
+    )
+
 
 def require_sigset_mutation_artifact(family: Mapping[str, Any]) -> None:
     """Keep pure POSIX signal-set mutation below signal-runtime promotion."""
@@ -41463,6 +41668,7 @@ def validate_ledger(
     require_sigrtmax_artifact(by_id["libc.posix-runtime"])
     require_sigrtmin_artifact(by_id["libc.posix-runtime"])
     require_sched_getscheduler_artifact(by_id["libc.posix-runtime"])
+    require_alarm_artifact(by_id["libc.posix-runtime"])
     require_sigset_mutation_artifact(by_id["libc.posix-runtime"])
     require_clock_nanosleep_artifact(by_id["libc.posix-runtime"])
     require_nanosleep_artifact(by_id["libc.posix-runtime"])

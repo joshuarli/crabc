@@ -83,6 +83,8 @@ _Static_assert(CRABC_TYPE_IS(&setdomainname, int (*)(const char *, size_t)),
     "GNU setdomainname declaration");
 _Static_assert(CRABC_TYPE_IS(&getcwd, char *(*)(char *, size_t)),
     "getcwd declaration");
+_Static_assert(CRABC_TYPE_IS(&alarm, unsigned int (*)(unsigned int)),
+    "alarm declaration");
 _Static_assert(CRABC_TYPE_IS(&sysconf, long (*)(int)), "sysconf declaration");
 _Static_assert(CRABC_TYPE_IS(&confstr, size_t (*)(int, char *, size_t)),
     "confstr declaration");

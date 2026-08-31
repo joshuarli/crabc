@@ -18,8 +18,8 @@
 //! signal action/mask and one direct pending-state observation, one three-symbol
 //! POSIX signal-set mutation leaf, one pure GNU signal-set predicate, one
 //! paired GNU signal-set binary-operation leaf, separate fixed realtime-
-//! maximum macro and realtime-minimum direct bridges, bounded process-signal
-//! execution, a direct
+//! maximum macro and realtime-minimum direct bridges, one historical SIGALRM
+//! interval-timer adapter, bounded process-signal execution, a direct
 //! legacy single-signal pause wait, and fixed-minimum
 //! alternate signal-stack behavior,
 //! plus direct timer-descriptor
@@ -284,6 +284,8 @@ mod signal_control;
 mod signal_realtime_max;
 #[path = "signal_realtime_min.rs"]
 mod signal_realtime_min;
+#[path = "signal_alarm.rs"]
+mod signal_alarm;
 #[path = "signal_pending.rs"]
 mod signal_pending;
 #[path = "signal_set_mutation.rs"]

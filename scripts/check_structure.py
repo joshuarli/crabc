@@ -236,6 +236,7 @@ X86_RUNTIME_FOUNDATION_LIBC_SOURCES = {
     Path("libc/src/c_abi/x86_64/signal_realtime_max.rs"),
     Path("libc/src/c_abi/x86_64/signal_realtime_min.rs"),
     Path("libc/src/c_abi/x86_64/sched_getscheduler.rs"),
+    Path("libc/src/c_abi/x86_64/signal_alarm.rs"),
     Path("libc/src/c_abi/x86_64/signal_pending.rs"),
     Path("libc/src/c_abi/x86_64/signal_set_mutation.rs"),
     Path("libc/src/c_abi/x86_64/signal_execution.rs"),
@@ -3749,6 +3750,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         '#[path = "signal_realtime_max.rs"]',
         '#[path = "signal_realtime_min.rs"]',
         '#[path = "sched_getscheduler.rs"]',
+        '#[path = "signal_alarm.rs"]',
         '#[path = "signal_pending.rs"]',
         '#[path = "signal_set_mutation.rs"]',
         '#[path = "signal_execution.rs"]',
@@ -4956,6 +4958,52 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
             errors.append(
                 "libc/src/c_abi/x86_64/sched_getscheduler.rs: selected static "
                 f"musl-ENOSYS scheduler boundary must not select {forbidden!r}"
+            )
+
+    signal_alarm_source = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "signal_alarm.rs"
+    )
+    signal_alarm_text = signal_alarm_source.read_text(errors="replace")
+    for required in (
+        "Selected static Linux/x86-64 alarm C boundary",
+        "src/unistd/alarm.c",
+        "src/signal/setitimer.c",
+        "raw_syscall::SYS_SETITIMER",
+        "raw_syscall::syscall3(",
+        "c_status(result)",
+        "ITIMER_REAL",
+        "old.value.seconds",
+        "old.value.microseconds",
+    ):
+        if required not in signal_alarm_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/signal_alarm.rs: selected static "
+                f"historical alarm boundary is missing {required!r}"
+            )
+    signal_alarm_exports = set(
+        re.findall(
+            r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(',
+            signal_alarm_text,
+        )
+    )
+    if signal_alarm_exports != {"alarm"}:
+        errors.append(
+            "libc/src/c_abi/x86_64/signal_alarm.rs: selected static artifact "
+            "must export only alarm"
+        )
+    for forbidden in (
+        'pub extern "C" fn setitimer',
+        'pub extern "C" fn ualarm',
+        "sigaction",
+        "sigprocmask",
+        "sigtimedwait",
+        "timerfd",
+        "pthread_",
+    ):
+        if forbidden in signal_alarm_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/signal_alarm.rs: selected static "
+                f"historical alarm boundary must not select {forbidden!r}"
             )
 
     signal_pending_source = (
@@ -10560,6 +10608,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         signal_control_text,
         signal_realtime_max_text,
         sched_getscheduler_text,
+        signal_alarm_text,
         signal_pending_text,
         signal_set_mutation_text,
         signal_execution_text,
@@ -10806,6 +10855,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         "__libc_current_sigrtmin",
         "__libc_current_sigrtmax",
         "sched_getscheduler",
+        "alarm",
         "kill",
         "killpg",
         "raise",
@@ -11136,6 +11186,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
             "libc/src/c_abi/x86_64: selected static archive must export only its "
             "stat, credential, errno, bootstrap-memory/fenv/continuation, simple "
             "signal-control, separate realtime-minimum/realtime-maximum bridges, one pure GNU signal-set predicate, paired GNU binary set-operation leaf, and a three-symbol POSIX signal-set mutation leaf, bounded process-signal execution, and one legacy single-signal pause wait, bounded pthread create/exit/join/detach initial-TLS worker, its private selected-main/worker pthread-key/C11-TSS lifecycle, private process-normal pthread mutexes and their musl private condition-variable handoff, the complete selected rwlock/attribute family with private-or-shared futex operation, plus the distinct C11 plain-sync adapter and normal-return pthread/C11 once state machine, its typed C11 create/exit/join/detach sibling, and pthread/C11 identity aliases, named termios-control, direct terminal-descriptor and foreground-group observations plus one named foreground-group assignment, historical ctermid pathname spelling, constant historical gethostid compatibility, direct GNU gettid observation, selected process-context, child-reaping, C11 immediate termination, callback algorithms, direct clock_gettime, binary64 difftime, caller-buffered fixed-UTC gmtime_r, fixed-UTC timegm, a GNU current-CPU raw-fallback observation leaf, a status-returning POSIX scheduler-yield leaf, caller-owned mapping-core, no-cancellation mapping synchronization, direct anonymous-memory descriptor creation, nanosleep, and clock_nanosleep, selected "
+            "signal-control, separate realtime-minimum/realtime-maximum bridges, one historical SIGALRM interval-timer adapter leaf, one pure GNU signal-set predicate, paired GNU binary set-operation leaf, and a three-symbol POSIX signal-set mutation leaf, bounded process-signal execution, and one legacy single-signal pause wait, bounded pthread create/exit/join/detach initial-TLS worker, its private selected-main/worker pthread-key/C11-TSS lifecycle, private process-normal pthread mutexes and their musl private condition-variable handoff, the complete selected rwlock/attribute family with private-or-shared futex operation, plus the distinct C11 plain-sync adapter and normal-return pthread/C11 once state machine, its typed C11 create/exit/join/detach sibling, and pthread/C11 identity aliases, named termios-control, direct terminal-descriptor and foreground-group observations plus one named foreground-group assignment, historical ctermid pathname spelling, constant historical gethostid compatibility, selected process-context, child-reaping, C11 immediate termination, callback algorithms, direct clock_gettime, binary64 difftime, caller-buffered fixed-UTC gmtime_r, fixed-UTC timegm, a status-returning POSIX scheduler-yield leaf, caller-owned mapping-core, no-cancellation mapping synchronization, direct anonymous-memory descriptor creation, nanosleep, and clock_nanosleep, selected "
             "POSIX _exit forwarding, descriptor-entry, selected filesystem-access, bounded descriptor-control, timestamp updates, and descriptor-I/O, selected process-resources, selected readiness/signal-waits, "
             "selected socket transport and selected socket-message/options, selected system-observation, selected UTS-identity, "
             "selected numeric-address codecs, immutable IPv6 unspecified/loopback address data objects, and legacy classful IPv4 arithmetic, fixed-profile h_errno message text, byte-string, legacy-memory adapters, source-backed memccpy/mempcpy, caller-buffer strsep, random-entropy, memory-search, C-string-copy, immutable error-string, "
@@ -11170,6 +11221,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         ("signal_realtime_max.rs", signal_realtime_max_text),
         ("signal_realtime_min.rs", signal_realtime_min_text),
         ("sched_getscheduler.rs", sched_getscheduler_text),
+        ("signal_alarm.rs", signal_alarm_text),
         ("signal_pending.rs", signal_pending_text),
         ("signal_set_mutation.rs", signal_set_mutation_text),
         ("signal_execution.rs", signal_execution_text),

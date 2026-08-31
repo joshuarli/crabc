@@ -399,6 +399,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-sigrtmax
 ./scripts/dev-x86_64.sh libc-sigrtmin
 ./scripts/dev-x86_64.sh libc-sched-getscheduler
+./scripts/dev-x86_64.sh libc-alarm
 ./scripts/dev-x86_64.sh libc-sigaddset-sigdelset-sigfillset
 ./scripts/dev-x86_64.sh libc-static-tls-v1
 ./scripts/dev-x86_64.sh libc-crt-static-tls
@@ -2951,6 +2952,22 @@ strict/POSIX/X/Open/GNU C/C++ matrix retains the exact unmangled declaration.
 It does not select scheduler mutation or parameters, priority bounds,
 `sched_yield`, affinity, pthread scheduling attributes, lifecycle,
 scheduler-family completion, AArch64 parity, promotion, or public x86 support.
+`libc-alarm` is a separate `static-c-alarm` `verified_artifact` within planned
+`libc.posix-runtime`. Its one-symbol project-header C body first runs through
+pinned musl 1.2.6 and then through a true `-nostdlib -static` candidate. It
+maps only musl's `src/unistd/alarm.c` and the x86 LP64 direct branch in
+`src/signal/setitimer.c`: with eight-byte `time_t` and `long`, `alarm` replaces
+`ITIMER_REAL` with a zero-interval whole-second record, discards the raw
+`setitimer=38` C return after its ordinary errno side effect, and returns the
+old `tv_sec + !!tv_usec`. Its
+fixture-private raw syscall seeds and inspects a far-future record to prove
+the `604800.999999` to `604801` ceiling, one-shot replacement, disarm return,
+and stale `errno`; the existing project-first/pinned-musl C11/C++17 unistd
+matrix proves unconditional `unsigned int alarm(unsigned int)` and unmangled
+C++ linkage. It exposes neither public `setitimer` nor `ualarm` and does not
+select handlers/actions, signal masks, waits, delivery policy, POSIX timers,
+timer descriptors, pthread policy, signal/timer-family completion, AArch64
+parity, promotion, or public x86 support.
 
 `libc-sigaddset-sigdelset-sigfillset` is a separate
 `static-c-sigset-mutation` `verified_artifact` within planned
@@ -5628,6 +5645,7 @@ Apart from the narrowly named `libc-stat-compat`, `libc-credentials`,
 `libc-sigisemptyset`, `libc-sigandset-sigorset`, `libc-sigpending`, and
 `libc-sigrtmax`, `libc-sigrtmin`, `libc-sched-getscheduler`,
 `libc-sigaddset-sigdelset-sigfillset`,
+`libc-sigrtmax`, `libc-sigrtmin`, `libc-alarm`, `libc-sigaddset-sigdelset-sigfillset`,
 `libc-static-tls-v1`, `libc-crt-static-tls`,
 `libc-pthread-create-join-tls`, `libc-pthread-identity`, `libc-c11-lifecycle`,
 `libc-pthread-detach`, `libc-thrd-sleep`, `libc-thrd-yield`, `libc-pthread-cpuclock`, `libc-pthread-name`, `libc-pthread-barrierattr-pshared`, `libc-pthread-mutex-normal`,

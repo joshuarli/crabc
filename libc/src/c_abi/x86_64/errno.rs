@@ -1,7 +1,8 @@
 //! Linux/x86-64 C `errno` storage boundary.
 //!
 //! The selected static x86 metadata, credential, bootstrap-primitives, simple
-//! signal-control, termios-control, selected process-context, selected
+//! signal-control, the historical `alarm` interval-timer adapter,
+//! termios-control, selected process-context, selected
 //! fcntl status-control/nonblocking record-lock, advisory flock, descriptor-I/O,
 //! selected process-resources, selected POSIX `sched_yield`, and selected readiness/signal-
 //! waits, selected system-configuration, selected system-observation, selected UTS-namespace identity, and

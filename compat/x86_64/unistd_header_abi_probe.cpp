@@ -48,6 +48,7 @@ using fpathconf_function = long (*)(int, int);
 using pathconf_function = long (*)(const char *, int);
 using getpagesize_function = int (*)(void);
 using getdtablesize_function = int (*)(void);
+using alarm_function = unsigned int (*)(unsigned int);
 using environ_object = char ***;
 
 static_assert(__is_same(decltype(&read), read_function), "C++ read declaration");
@@ -75,6 +76,8 @@ static_assert(__is_same(decltype(&fpathconf), fpathconf_function),
     "C++ fpathconf declaration");
 static_assert(__is_same(decltype(&pathconf), pathconf_function),
     "C++ pathconf declaration");
+static_assert(__is_same(decltype(&alarm), alarm_function),
+    "C++ alarm declaration");
 static_assert(__is_same(decltype(&getpagesize), getpagesize_function),
     "C++ GNU getpagesize declaration");
 static_assert(__is_same(decltype(&getdtablesize), getdtablesize_function),

@@ -1785,6 +1785,22 @@ unmangled declaration. This is not scheduler support: mutation, parameters,
 priority bounds, `sched_yield`, affinity, pthread scheduling attributes,
 lifecycle, family/platform parity, promotion, and public x86 support remain
 outside the artifact.
+`./scripts/dev-x86_64.sh libc-alarm` is a separate private `static-c-alarm`
+artifact inside planned `libc.posix-runtime`. Its one-symbol
+pinned-musl/freestanding-static C proof maps only musl 1.2.6
+`src/unistd/alarm.c` plus the x86 LP64 direct branch of
+`src/signal/setitimer.c`: `time_t` and `long` are both eight bytes, so it
+replaces `ITIMER_REAL` with a zero-interval whole-second record, ignores the
+raw `setitimer=38` C return after its ordinary errno side effect, and returns
+the old `tv_sec + !!tv_usec`. A
+fixture-private raw syscall seeds and inspects a far-future record to prove
+the `604800.999999` to `604801` ceiling, one-shot replacement, disarm return,
+and stale `errno`; the shared C11/C++17 unistd matrix retains the unconditional
+`unsigned int alarm(unsigned int)` declaration and C++ linkage. It exports
+neither public `setitimer` nor `ualarm` and does not select handlers/actions,
+signal masks, waits, delivery policy, timer-family completion, pthread policy,
+libc.so, CRT, loader, sysroot, family/platform parity, promotion, or public x86
+support.
 
 `./scripts/dev-x86_64.sh libc-sigaddset-sigdelset-sigfillset` is a separate
 private `static-c-sigset-mutation` artifact inside planned

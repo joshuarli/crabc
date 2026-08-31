@@ -1369,7 +1369,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         )
         expected_groups = (
             "timerfd-header-abi|signalfd-header-abi",
-            "libc-timerfd|libc-signalfd|libc-sigpause|libc-sigisemptyset|libc-sigandset-sigorset|libc-sigpending|libc-sigrtmax|libc-sigrtmin|libc-sched-getscheduler|libc-sigaddset-sigdelset-sigfillset",
+            "libc-timerfd|libc-signalfd|libc-sigpause|libc-sigisemptyset|libc-sigandset-sigorset|libc-sigpending|libc-sigrtmax|libc-sigrtmin|libc-sched-getscheduler|libc-alarm|libc-sigaddset-sigdelset-sigfillset",
             "libc-sched-getcpu|libc-sched-yield",
             "sched-getscheduler-header-abi",
             "ctermid-header-abi|gethostid-header-abi|getpagesize-header-abi|gettid-header-abi|isatty-header-abi|tcgetpgrp-header-abi|tcsetpgrp-header-abi|getpass-header-abi|libc-ctermid|libc-gethostid|libc-getpagesize|libc-gettid|libc-isatty|libc-tcgetpgrp|libc-tcsetpgrp|libc-getpass|mkfifo-header-abi|mkfifoat-header-abi|libc-mkfifo|libc-mkfifoat|mktemp-header-abi|libc-mktemp",
@@ -5667,6 +5667,112 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn("run_libc_sched_getscheduler_probe()", dispatcher)
         self.assertIn("sched-getscheduler-header-abi)", dispatcher)
         self.assertIn("libc-sched-getscheduler)", dispatcher)
+    def test_libc_static_c_abi_alarm_artifact_stays_bounded(self) -> None:
+        """Keep the historical SIGALRM timer adapter below timer promotion."""
+
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        source_path = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "signal_alarm.rs"
+        )
+        probe_path = ROOT / "compat" / "x86_64" / "libc_alarm_probe.c"
+        start_path = ROOT / "compat" / "x86_64" / "libc_alarm_start.S"
+        artifact_runner_path = ROOT / "compat" / "x86_64" / "run_libc_alarm.sh"
+        unistd_c_path = ROOT / "compat" / "x86_64" / "unistd_header_abi_probe.c"
+        unistd_cxx_path = ROOT / "compat" / "x86_64" / "unistd_header_abi_probe.cpp"
+        for path in (
+            source_path,
+            probe_path,
+            start_path,
+            artifact_runner_path,
+            unistd_c_path,
+            unistd_cxx_path,
+        ):
+            self.assertTrue(path.is_file(), f"missing alarm artifact input: {path}")
+        self.assertTrue(artifact_runner_path.stat().st_mode & 0o111)
+
+        source = source_path.read_text(encoding="utf-8")
+        probe = probe_path.read_text(encoding="utf-8")
+        start = start_path.read_text(encoding="utf-8")
+        artifact_runner = artifact_runner_path.read_text(encoding="utf-8")
+        unistd_c = unistd_c_path.read_text(encoding="utf-8")
+        unistd_cxx = unistd_cxx_path.read_text(encoding="utf-8")
+        static_exports = {
+            line
+            for line in (
+                ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+            ).read_text(encoding="utf-8").splitlines()
+            if line and not line.startswith("#")
+        }
+        parity_ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        dispatcher = RUNNER.read_text(encoding="utf-8")
+
+        self.assertIn('#[path = "signal_alarm.rs"]', static_root)
+        for required in (
+            "Selected static Linux/x86-64 alarm C boundary",
+            "src/unistd/alarm.c",
+            "src/signal/setitimer.c",
+            "raw_syscall::SYS_SETITIMER",
+            "raw_syscall::syscall3(",
+            "c_status(result)",
+            'pub extern "C" fn alarm(seconds: c_uint) -> c_uint',
+        ):
+            self.assertIn(required, source)
+        for forbidden in (
+            'pub extern "C" fn setitimer',
+            'pub extern "C" fn ualarm',
+            "sigaction",
+            "sigprocmask",
+            "sigtimedwait",
+            "timerfd",
+            "pthread_",
+        ):
+            self.assertNotIn(forbidden, source)
+
+        for required in (
+            "raw_setitimer_real",
+            "SYS_setitimer == 38",
+            "alarm(120U)",
+            "604801U",
+            "errno = ERANGE",
+            "CRABC_ALARM_FREESTANDING",
+        ):
+            self.assertIn(required, probe)
+        for required in (
+            "call __crabc_x86_static_tls_bootstrap",
+            "crabc_x86_64_alarm_probe",
+            "exit_group",
+        ):
+            self.assertIn(required, start)
+        self.assertNotIn("arch_prctl", start)
+        self.assertIn("&alarm", unistd_c)
+        self.assertIn("alarm declaration", unistd_c)
+        self.assertIn("decltype(&alarm)", unistd_cxx)
+        self.assertIn("C++ alarm declaration", unistd_cxx)
+
+        for required in (
+            "run_musl_oracle.sh",
+            "run_unistd_header_abi.sh",
+            "static_c_abi_exports.txt",
+            "-nostdlib -static",
+            "-Wl,-e,_start",
+            "-Wl,--no-undefined",
+            "R_X86_64_TPOFF",
+            "assert_named_syscall alarm 26",
+            "candidate unexpectedly pulls",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn("--whole-archive", artifact_runner)
+        self.assertIn("alarm", static_exports)
+        self.assertIn('id = "static-c-alarm"', parity_ledger)
+        self.assertIn(
+            'command = "./scripts/dev-x86_64.sh libc-alarm"', parity_ledger
+        )
+        self.assertIn("run_libc_alarm_probe()", dispatcher)
+        self.assertIn("libc-alarm)", dispatcher)
 
     def test_libc_static_c_abi_sigpending_artifact_stays_bounded(self) -> None:
         static_root = (

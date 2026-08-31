@@ -50,7 +50,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 41)
-        self.assertEqual(report["verified_artifact_count"], 200)
+        self.assertEqual(report["verified_artifact_count"], 201)
         self.assertEqual(report["header_layout_probe_count"], 46)
         self.assertEqual(report["public_header_inventory_count"], 183)
         self.assertEqual(report["header_foundation_header_count"], 191)
@@ -15587,6 +15587,113 @@ class X86ParityLedgerTests(unittest.TestCase):
         with self.assertRaisesRegex(
             ledger.LedgerError, "closed libc-sched-getscheduler command"
         ):
+            ledger.validate_ledger(data)
+
+    def test_alarm_artifact_keeps_its_closed_static_contract(self) -> None:
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-alarm"
+        )
+        self.assertNotIn("capabilities", artifact)
+        for owner in (
+            "libc/src/c_abi/x86_64/signal_alarm.rs",
+            "include/unistd.h",
+            "include/sys/time.h",
+            "compat/x86_64/unistd_header_abi_probe.c",
+            "compat/x86_64/unistd_header_abi_probe.cpp",
+            "compat/x86_64/run_unistd_header_abi.sh",
+            "compat/x86_64/libc_alarm_probe.c",
+            "compat/x86_64/libc_alarm_start.S",
+            "compat/x86_64/run_libc_alarm.sh",
+        ):
+            self.assertIn(owner, artifact["source_owners"])
+        self.assertEqual(
+            {evidence["command"] for evidence in artifact["native_evidence"]},
+            {"./scripts/dev-x86_64.sh libc-alarm"},
+        )
+        for phrase in (
+            "one-symbol historical SIGALRM interval-timer adapter artifact",
+            "planned `libc.posix-runtime`",
+            "exactly `alarm`",
+            "`src/unistd/alarm.c`",
+            "`src/signal/setitimer.c`",
+            "time_t` and `long` are both eight bytes",
+            "`ITIMER_REAL`",
+            "Linux `setitimer=38` C return",
+            "old `tv_sec + !!tv_usec`",
+            "`604800.999999` to `604801` fractional ceiling",
+            "project-first/pinned-musl C11/C++17 unistd-header matrix",
+            "unconditional `unsigned int alarm(unsigned int)`",
+            "neither public `setitimer` nor `ualarm`",
+            "handlers/actions",
+            "signal masks",
+            "wait for signals",
+            "delivery policy",
+            "timer-family completion",
+            "signal-family/timer-family completion, promotion, or public x86 support",
+        ):
+            self.assertIn(phrase, artifact["description"])
+        prerequisites = artifact["x86_abi_prerequisites"]
+        self.assertTrue(
+            any(
+                "unsigned int alarm(unsigned int)" in prerequisite
+                and "edi" in prerequisite
+                and "eax" in prerequisite
+                and "setitimer=38" in prerequisite
+                and "ITIMER_REAL=0" in prerequisite
+                for prerequisite in prerequisites
+            )
+        )
+        self.assertTrue(
+            any(
+                "src/unistd/alarm.c" in prerequisite
+                and "src/signal/setitimer.c" in prerequisite
+                and "time_t and long are both eight bytes" in prerequisite
+                and "no 32-bit conversion path" in prerequisite
+                and "ordinary errno side effect" in prerequisite
+                and "old.tv_sec + !!old.tv_usec" in prerequisite
+                for prerequisite in prerequisites
+            )
+        )
+        self.assertTrue(
+            any(
+                "604800.999999 rounds to 604801" in prerequisite
+                and "alarm(0)" in prerequisite
+                and "stale ERANGE" in prerequisite
+                for prerequisite in prerequisites
+            )
+        )
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-alarm"
+        )
+        artifact["description"] = "private timer helper"
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "static-c-alarm description omits"
+        ):
+            ledger.validate_ledger(data)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-alarm"
+        )
+        evidence = artifact["native_evidence"]
+        assert isinstance(evidence, list) and isinstance(evidence[0], dict)
+        evidence[0]["command"] = "./scripts/dev-x86_64.sh signal-reference"
+        with self.assertRaisesRegex(ledger.LedgerError, "closed libc-alarm command"):
             ledger.validate_ledger(data)
 
     def test_sigset_mutation_artifact_keeps_its_closed_static_contract(self) -> None:

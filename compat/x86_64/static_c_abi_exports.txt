@@ -74,6 +74,7 @@ accept4
 access
 acoshl
 acosl
+alarm
 alphasort
 asinhl
 asinl
