@@ -1710,6 +1710,21 @@ priority bounds, `sched_yield`, affinity, pthread scheduling attributes,
 lifecycle, family/platform parity, promotion, and public x86 support remain
 outside the artifact.
 
+`./scripts/dev-x86_64.sh libc-sched-getparam` is a separate private
+`static-c-sched-getparam` artifact inside planned `libc.posix-runtime`.
+Pinned musl 1.2.6's `src/sched/sched_getparam.c` intentionally turns the POSIX
+process-facing `sched_getparam(pid_t, struct sched_param *)` spelling into
+`-1`/`ENOSYS` for every PID-shaped input and every record pointer, including
+null, rather than forwarding Linux x86 raw syscall 143, whose target is a
+thread. Its true-static C body first proves raw current-task success, then
+proves the musl C ABI result for 0, -1, and INT_MAX with an untouched 48-byte
+record and null pointers. The strict/POSIX/X/Open/GNU C/C++ header matrix
+retains the exact unmangled declaration and LP64 record layout. This is not
+scheduler support: mutation or policy, parameter records, priority bounds,
+`sched_yield`, affinity, pthread scheduling attributes, lifecycle,
+family/platform parity, promotion, and public x86 support remain outside the
+artifact.
+
 `./scripts/dev-x86_64.sh libc-sigaddset-sigdelset-sigfillset` is a separate
 private `static-c-sigset-mutation` artifact inside planned
 `libc.posix-runtime`. Its three-symbol pinned-musl/freestanding-static C proof

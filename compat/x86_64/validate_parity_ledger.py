@@ -18736,6 +18736,207 @@ def require_sched_getscheduler_artifact(family: Mapping[str, Any]) -> None:
     )
 
 
+def require_sched_getparam_artifact(family: Mapping[str, Any]) -> None:
+    """Keep musl's scheduler-record process/thread mismatch below promotion."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.posix-runtime].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [
+        entry for entry in artifacts if entry.get("id") == "static-c-sched-getparam"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.posix-runtime must contain exactly one static-c-sched-getparam artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-sched-getparam must not promote libc.posix-runtime",
+    )
+    artifact = matching[0]
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for phrase in (
+        "one-symbol POSIX scheduler-parameter observation compatibility artifact",
+        "planned `libc.posix-runtime`",
+        "exactly `sched_getparam`",
+        "`src/sched/sched_getparam.c`",
+        "`__syscall_ret(-ENOSYS)`",
+        "`-1` and writes `ENOSYS=38`",
+        "thread-scoped raw x86 syscall 143",
+        "48-byte `struct sched_param`",
+        "strict/POSIX/X/Open/GNU C and C++17 feature matrix",
+        "makes no raw syscall",
+        "separate `sched_getscheduler`, C11 `thrd_yield`, and priority-bounds",
+        "scheduler mutation or policy, parameter records, priority bounds, POSIX `sched_yield`, affinity",
+        "pthread scheduling attributes",
+        "thread/process lifecycle",
+        "scheduler-family completion, promotion, or public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"static-c-sched-getparam description omits {phrase}",
+        )
+    owners = set(
+        nonempty_strings(
+            artifact["source_owners"], "static-c-sched-getparam.source_owners"
+        )
+    )
+    for owner in (
+        "compat/upstreams.toml",
+        "libc/Cargo.toml",
+        "libc/src/lib.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/sched_getparam.rs",
+        "libc/src/c_abi/x86_64/errno.rs",
+        "libc/src/c_abi/x86_64/static_tls.rs",
+        "include/errno.h",
+        "include/sched.h",
+        "include/sys/types.h",
+        "include/time.h",
+        "include/sys/syscall.h",
+        "include/bits/syscall.h",
+        "compat/x86_64/sched_getparam_header_abi_probe.c",
+        "compat/x86_64/sched_getparam_header_abi_probe.cpp",
+        "compat/x86_64/run_sched_getparam_header_abi.sh",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/libc_sched_getparam_probe.c",
+        "compat/x86_64/libc_sched_getparam_start.S",
+        "compat/x86_64/run_libc_sched_getparam.sh",
+        "compat/x86_64/run_libc_process_resources.sh",
+        "compat/x86_64/aarch64_parity_inventory.py",
+        "compat/x86_64/aarch64_parity_inventory.json",
+        "compat/x86_64/tests/test_aarch64_parity_inventory.py",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/README.md",
+        "STATUS.md",
+        "x86-64.md",
+        "scripts/dev-x86_64.sh",
+        "scripts/check_structure.py",
+    ):
+        require(owner in owners, f"static-c-sched-getparam source owners omit {owner}")
+    prerequisites = nonempty_strings(
+        artifact["x86_abi_prerequisites"],
+        "static-c-sched-getparam.x86_abi_prerequisites",
+    )
+    require(
+        any(
+            "pid_t" in item
+            and "edi" in item
+            and "rsi" in item
+            and "eax" in item
+            and "syscall 143" in item
+            and "does not issue" in item
+            for item in prerequisites
+        ),
+        "static-c-sched-getparam must retain its process API/x86 syscall boundary",
+    )
+    require(
+        any(
+            "src/sched/sched_getparam.c" in item
+            and "__syscall_ret(-ENOSYS)" in item
+            and "thread-scoped" in item
+            and "sched_setscheduler" in item
+            for item in prerequisites
+        ),
+        "static-c-sched-getparam must retain its pinned-musl source closure",
+    )
+    require(
+        any(
+            "raw 143 current-task success" in item
+            and "-1/ENOSYS" in item
+            and "untouched 48-byte record" in item
+            and "Static Initial TLS v1" in item
+            for item in prerequisites
+        ),
+        "static-c-sched-getparam must retain its raw/C ABI differential",
+    )
+    headers = nonempty_strings(
+        artifact["x86_header_prerequisites"],
+        "static-c-sched-getparam.x86_header_prerequisites",
+    )
+    require(
+        any(
+            "strict/POSIX/X/Open/GNU C and C++17" in item
+            and "int sched_getparam(pid_t, struct sched_param *)" in item
+            and "48-byte align-8" in item
+            and "unmangled C++ C linkage" in item
+            and "syscall.h" in item
+            for item in headers
+        ),
+        "static-c-sched-getparam must retain its C/C++ header matrix",
+    )
+    static_exports = set(
+        static_c_abi_export_names(
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        )
+    )
+    require(
+        "sched_getparam" in static_exports,
+        "static-c-sched-getparam must expose its exact scheduler spelling",
+    )
+    oracle = artifact["oracle"]
+    assert isinstance(oracle, list)
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "c-posix"
+            and isinstance(entry.get("role"), str)
+            and "src/sched/sched_getparam.c" in entry["role"]
+            and "ENOSYS" in entry["role"]
+            and "record" in entry["role"]
+            for entry in oracle
+        ),
+        "static-c-sched-getparam must retain its pinned-musl ENOSYS oracle",
+    )
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "linux-uapi"
+            and isinstance(entry.get("role"), str)
+            and "143" in entry["role"]
+            and "thread-scoped" in entry["role"]
+            for entry in oracle
+        ),
+        "static-c-sched-getparam must retain its Linux raw-syscall contrast",
+    )
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-sched-getparam"},
+        "static-c-sched-getparam must use the closed libc-sched-getparam command",
+    )
+    scope = evidence[0].get("scope")
+    require(
+        isinstance(scope, str)
+        and all(
+            phrase in scope
+            for phrase in (
+                "Pinned-musl 1.2.6",
+                "strict/POSIX/X/Open/GNU C/C++ header matrix",
+                "`-nostdlib -static` candidate",
+                "scheduler mutation/policy/parameters",
+                "priority bounds",
+                "POSIX sched_yield",
+                "affinity",
+                "pthread scheduling",
+                "sched_getparam disassembly",
+                "raw syscall 143",
+                "raw-current contrast",
+                "C ABI -1/ENOSYS",
+                "untouched record",
+                "sched_getscheduler, C11 thrd_yield, and priority-bounds",
+                "scheduler-family completion, dynamic libc, CRT, loader, sysroot, promotion, or public x86 support",
+            )
+        ),
+        "static-c-sched-getparam evidence must retain its musl ENOSYS regression",
+    )
+
+
 def require_sigset_mutation_artifact(family: Mapping[str, Any]) -> None:
     """Keep pure POSIX signal-set mutation below signal-runtime promotion."""
     artifacts = require_verified_artifacts(
@@ -40026,6 +40227,7 @@ def validate_ledger(
     require_sigrtmax_artifact(by_id["libc.posix-runtime"])
     require_sigrtmin_artifact(by_id["libc.posix-runtime"])
     require_sched_getscheduler_artifact(by_id["libc.posix-runtime"])
+    require_sched_getparam_artifact(by_id["libc.posix-runtime"])
     require_sigset_mutation_artifact(by_id["libc.posix-runtime"])
     require_clock_nanosleep_artifact(by_id["libc.posix-runtime"])
     require_nanosleep_artifact(by_id["libc.posix-runtime"])

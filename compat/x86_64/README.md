@@ -394,6 +394,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-sigpending
 ./scripts/dev-x86_64.sh libc-sigrtmax
 ./scripts/dev-x86_64.sh libc-sigrtmin
+./scripts/dev-x86_64.sh libc-sched-getparam
 ./scripts/dev-x86_64.sh libc-sched-getscheduler
 ./scripts/dev-x86_64.sh libc-sigaddset-sigdelset-sigfillset
 ./scripts/dev-x86_64.sh libc-static-tls-v1
@@ -2907,6 +2908,22 @@ strict/POSIX/X/Open/GNU C/C++ matrix retains the exact unmangled declaration.
 It does not select scheduler mutation or parameters, priority bounds,
 `sched_yield`, affinity, pthread scheduling attributes, lifecycle,
 scheduler-family completion, AArch64 parity, promotion, or public x86 support.
+
+`libc-sched-getparam` is a separate `static-c-sched-getparam`
+`verified_artifact` within planned `libc.posix-runtime`. Its one-symbol C body
+first runs through pinned musl 1.2.6 and then through a true
+`-nostdlib -static` candidate. It maps only musl's
+`src/sched/sched_getparam.c`, which deliberately returns `-1` with `ENOSYS`
+for every `sched_getparam(pid_t, struct sched_param *)` input, including a
+null record pointer, rather than exposing Linux's thread-scoped raw x86 syscall
+143 under the POSIX process-facing name. The common C body proves raw current-
+task success, then proves the C ABI ENOSYS result for current, invalid, and
+missing pid-shaped inputs with a byte-for-byte untouched 48-byte record and
+null pointer. The strict/POSIX/X/Open/GNU C/C++ matrix retains the exact
+unmangled declaration and LP64 record layout. It does not select scheduler
+mutation or policy, parameter records, priority bounds, `sched_yield`,
+affinity, pthread scheduling attributes, lifecycle, scheduler-family
+completion, AArch64 parity, promotion, or public x86 support.
 
 `libc-sigaddset-sigdelset-sigfillset` is a separate
 `static-c-sigset-mutation` `verified_artifact` within planned
@@ -5517,7 +5534,7 @@ Apart from the narrowly named `libc-stat-compat`, `libc-credentials`,
 `libc-bootstrap-primitives`, `libc-signal-control`, `libc-signal-execution`,
 `libc-signal-altstack`, `libc-timerfd`, `libc-signalfd`, `libc-sigpause`,
 `libc-sigisemptyset`, `libc-sigandset-sigorset`, `libc-sigpending`, and
-`libc-sigrtmax`, `libc-sigrtmin`, `libc-sched-getscheduler`,
+`libc-sigrtmax`, `libc-sigrtmin`, `libc-sched-getparam`, `libc-sched-getscheduler`,
 `libc-sigaddset-sigdelset-sigfillset`,
 `libc-static-tls-v1`, `libc-crt-static-tls`,
 `libc-pthread-create-join-tls`, `libc-pthread-identity`, `libc-c11-lifecycle`,

@@ -5655,6 +5655,141 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn("sched-getscheduler-header-abi)", dispatcher)
         self.assertIn("libc-sched-getscheduler)", dispatcher)
 
+    def test_libc_static_c_abi_sched_getparam_artifact_stays_musl_enosys(self) -> None:
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        source_path = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "sched_getparam.rs"
+        c_header_path = ROOT / "compat" / "x86_64" / "sched_getparam_header_abi_probe.c"
+        cxx_header_path = (
+            ROOT / "compat" / "x86_64" / "sched_getparam_header_abi_probe.cpp"
+        )
+        header_runner_path = (
+            ROOT / "compat" / "x86_64" / "run_sched_getparam_header_abi.sh"
+        )
+        probe_path = ROOT / "compat" / "x86_64" / "libc_sched_getparam_probe.c"
+        start_path = ROOT / "compat" / "x86_64" / "libc_sched_getparam_start.S"
+        artifact_runner_path = (
+            ROOT / "compat" / "x86_64" / "run_libc_sched_getparam.sh"
+        )
+        process_resources_runner_path = (
+            ROOT / "compat" / "x86_64" / "run_libc_process_resources.sh"
+        )
+        for path in (
+            source_path,
+            c_header_path,
+            cxx_header_path,
+            header_runner_path,
+            probe_path,
+            start_path,
+            artifact_runner_path,
+        ):
+            self.assertTrue(path.is_file(), f"missing sched_getparam input: {path}")
+        self.assertTrue(header_runner_path.stat().st_mode & 0o111)
+        self.assertTrue(artifact_runner_path.stat().st_mode & 0o111)
+
+        source = source_path.read_text(encoding="utf-8")
+        c_header = c_header_path.read_text(encoding="utf-8")
+        cxx_header = cxx_header_path.read_text(encoding="utf-8")
+        header_runner = header_runner_path.read_text(encoding="utf-8")
+        probe = probe_path.read_text(encoding="utf-8")
+        start = start_path.read_text(encoding="utf-8")
+        artifact_runner = artifact_runner_path.read_text(encoding="utf-8")
+        process_resources_runner = process_resources_runner_path.read_text(
+            encoding="utf-8"
+        )
+        static_exports = {
+            line
+            for line in (
+                ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+            ).read_text(encoding="utf-8").splitlines()
+            if line and not line.startswith("#")
+        }
+        parity_ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        dispatcher = RUNNER.read_text(encoding="utf-8")
+
+        self.assertIn('#[path = "sched_getparam.rs"]', static_root)
+        for required in (
+            "Bounded Linux/x86-64 static POSIX scheduler-parameter observation boundary",
+            "src/sched/sched_getparam.c::sched_getparam",
+            "__syscall_ret(-ENOSYS)",
+            "raw syscall `sched_getparam=143`",
+            "c_status(-ENOSYS)",
+            'pub extern "C" fn sched_getparam(_pid: c_int, _param: *mut c_void) -> c_int',
+        ):
+            self.assertIn(required, source)
+        for forbidden in ("raw_syscall::", "SYS_SCHED_GETPARAM", "sched_getscheduler"):
+            self.assertNotIn(forbidden, source)
+
+        for required in (
+            "__typeof__(&sched_getparam)",
+            "sched_getparam_signature)(pid_t, struct sched_param *)",
+            "sizeof(struct sched_param) == 48",
+            "offsetof(struct sched_param, __reserved3) == 40",
+        ):
+            self.assertIn(required, c_header)
+        for required in (
+            "decltype(&sched_getparam)",
+            "sched_getparam_signature",
+            "sizeof(sched_param) == 48",
+            'extern "C" void crabc_sched_getparam_linkage_witness',
+        ):
+            self.assertIn(required, cxx_header)
+        for required in (
+            "strict posix xopen gnu",
+            "sched_getparam_header_abi_probe.c",
+            "sched_getparam_header_abi_probe.cpp",
+            "unmangled sched_getparam",
+            "project trace omitted",
+        ):
+            self.assertIn(required, header_runner)
+
+        for required in (
+            "SYS_sched_getparam == 143",
+            "raw_sched_getparam",
+            "param_is_unchanged",
+            "check_musl_process_api",
+            "check_musl_null_parameter",
+            "errno != ENOSYS",
+            "CRABC_SCHED_GETPARAM_FREESTANDING",
+        ):
+            self.assertIn(required, probe)
+        for required in (
+            "call __crabc_x86_static_tls_bootstrap",
+            "crabc_x86_64_sched_getparam_probe",
+            "exit_group",
+        ):
+            self.assertIn(required, start)
+        self.assertNotIn("arch_prctl", start)
+
+        for required in (
+            "run_musl_oracle.sh",
+            "run_sched_getparam_header_abi.sh",
+            "static_c_abi_exports.txt",
+            "-nostdlib -static",
+            "-Wl,-e,_start",
+            "-Wl,--no-undefined",
+            "R_X86_64_TPOFF",
+            "assert_musl_enosys_boundary",
+            "sched_getparam forwarded raw Linux syscall 143",
+            "candidate unexpectedly pulls",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn("--whole-archive", artifact_runner)
+        self.assertIn("sched_getparam", static_exports)
+        self.assertNotIn("times sched_getparam", process_resources_runner)
+        self.assertIn("sched_setscheduler", process_resources_runner)
+        self.assertIn('id = "static-c-sched-getparam"', parity_ledger)
+        self.assertIn(
+            'command = "./scripts/dev-x86_64.sh libc-sched-getparam"', parity_ledger
+        )
+        self.assertIn("run_sched_getparam_header_abi()", dispatcher)
+        self.assertIn("run_libc_sched_getparam_probe()", dispatcher)
+        self.assertIn("sched-getparam-header-abi)", dispatcher)
+        self.assertIn("libc-sched-getparam)", dispatcher)
+
     def test_libc_static_c_abi_sigpending_artifact_stays_bounded(self) -> None:
         static_root = (
             ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
