@@ -1239,6 +1239,22 @@ fallback, `roundl`, fenv API/policy, `rint`/`nearbyint`, truncation, directed
 ceiling/floor, fma, fmod, cbrt, special/complex/binary80 math, family
 completion, promotion, and public x86 support.
 
+The separate private `static-c-math-log2` artifact records only binary64
+`log2` and binary32 `log2f`: `./scripts/dev-x86_64.sh libc-math-log2` runs
+project-header C and default-SSE/`-mfpmath=387` C++ function-pointer fixtures
+through pinned musl and one freestanding static candidate. Its checked GCC
+15.2.0 translation of musl 1.2.6 `log2.c`/`log2f.c`, their two tables, and
+four IEEE error helpers preserves close-to-one reconstruction, subnormal
+normalization, table reduction, exact powers of two, and zero/domain
+expressions. The eight-source closure is localized, so only `log2`/`log2f`
+remain public from that closure. The 216-record differential covers signed zero,
+normal and subnormal bounds, power-of-two neighbors, high finite values,
+infinities, quiet/signaling NaNs, all four requested-and-observed rounding
+directions, and exception flags. Strong target-owned definitions and final ELF
+checks reject weak compiler-builtins fallback, public source helpers, `log2l`,
+other log/exp families, fenv API/policy, special/complex/binary80 math,
+family completion, promotion, and public x86 support.
+
 The x86 static archive now also has one private allocation-free wide-character
 core: `./scripts/dev-x86_64.sh libc-wide-character` runs an exact
 `_XOPEN_SOURCE=700` C/C++ ABI gate and one shared pinned-musl/freestanding

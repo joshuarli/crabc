@@ -8385,6 +8385,54 @@ x86_header_prerequisites = [
 native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-math-round", scope = "Pinned-musl/project-header C and C++ ABI execution plus one dependency-free `-nostdlib -static --no-undefined --gc-sections` candidate. The C fixture compares 216 exact 32-byte records across all four rounding directions: binary32/binary64 signed zero, raw subnormal/normal bounds, positive/negative integral neighbors and exact halfway values, high finite boundaries, infinities, quiet/signaling NaNs, raw results, requested/observed MXCSR direction, and exception flags. ELF proof requires strong global target-owned round/roundf definitions, exact archive surface, addsd/subsd/addss/subss source arithmetic, and the half-away correction; it rejects weak compiler-builtins fallback, roundl, fenv API/policy, rint/nearbyint, truncation, directed ceiling/floor, fmod, cbrt, fma, bit-sign/minmax/fdim, sqrt, complex, unresolved symbols, dynamic linkage, TLS, ambient libm, and unowned runtime dependencies. It excludes category/family completion, promotion, full x86-64 parity, and public x86 support." }]
 oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source, IEEE bit-level/fenv behavior, and public C ABI oracle for exactly src/math/round.c and src/math/roundf.c." }, { kind = "aarch64-contract", source = "libc/src/math_bitmanip.rs", role = "Existing AArch64 source-level round/roundf mapping with matching sign-normalization and half-away source semantics; its target code and binary128 long-double sibling are not imported into the x86 archive." }, { kind = "elf-abi", source = "System V AMD64 psABI", role = "xmm0 binary32/binary64 unary argument and return ABI plus caller-visible MXCSR directed-SSE arithmetic boundary for the selected static C entries." }]
 
+[[family.verified_artifact]]
+id = "static-c-math-log2"
+description = "Private native x86 selected-static binary32/binary64 logarithm-base-two artifact inside still-planned `libc.text-math-locale-stdio`. One dependency-free `crabc-libc` archive resolves exactly `log2` and `log2f` into a freestanding project-header C fixture after equivalent pinned-musl execution. A checked GCC 15.2.0 assembly translation of musl's `log2.c`/`log2f.c`, two source tables, and four IEEE error-expression providers retains close-to-one reconstruction, subnormal normalization, table reduction, exact powers-of-two behavior, and sign-sensitive zero/domain expressions rather than a target-intrinsic rewrite. The localized data/error closure has no undefined callable symbols and exports neither its tables nor helpers. The record stream covers signed zero, finite normal/subnormal boundaries, power-of-two neighbors, high finite values, infinities, quiet/signaling NaNs, all four requested/observed rounding directions, and exception flags including musl's divide-by-zero/invalid behavior. Strong target-owned definitions reject weak compiler-builtins fallback. Existing fenv entries only reset and observe MXCSR; this artifact does not select fenv API/policy. It excludes binary80 `log2l`, log/log1p/log10 and exp/expm1 families, `exp2`, inverse trigonometry, fma, hypot, fmod/remainder, rounding/truncation/ceiling/floor, roots, special and complex functions, binary80/x87 math, errno policy, general libm, libc.so, CRT/TLS lifecycle, loader, sysroot, `math.elementary` family completion, promotion, full x86-64 parity, and public x86 support."
+source_owners = [
+  "compat/upstreams.toml",
+  "docker/Dockerfile.x86_64",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/fenv.rs",
+  "libc/src/c_abi/x86_64/math_log2.rs",
+  "libc/src/c_abi/x86_64/math_log2_musl_x86_64.S",
+  "include/fenv.h",
+  "include/float.h",
+  "include/math.h",
+  "compat/x86_64/generate_libc_math_log2.py",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/math_log2_header_abi_probe.cpp",
+  "compat/x86_64/libc_math_log2_probe.c",
+  "compat/x86_64/libc_math_log2_start.S",
+  "compat/x86_64/run_libc_math_log2.sh",
+  "compat/x86_64/aarch64_parity_inventory.py",
+  "compat/x86_64/aarch64_parity_inventory.json",
+  "compat/x86_64/tests/test_aarch64_parity_inventory.py",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "compat/x86_64/README.md",
+  "SCOPE.md",
+  "COMPATIBILITY-PROFILE.md",
+  "STATUS.md",
+  "x86-64.md",
+  "scripts/check_structure.py",
+  "scripts/dev-x86_64.sh",
+]
+x86_abi_prerequisites = [
+  "Pinned musl 1.2.6 src/math/log2.c and log2f.c plus log2_data.c, log2f_data.c, __math_divzero.c, __math_divzerof.c, __math_invalid.c, and __math_invalidf.c are the exact MIT source closure: their normalized 1.2.6 source-tree digest, GCC 15.2.0 input, retained Arm notices, `-frounding-math`, `-ffp-contract=off`, and `-fexcess-precision=standard` translation preserve close-to-one reconstruction, table reduction, subnormal normalization, exact powers-of-two handling, and exceptional arithmetic without an ambient libm call.",
+  "The bounded eight-source closure links with no undefined callable symbols. Its two named tables and four error helpers are renamed and localized to local `crabc_x86_math_log2_*` assembly symbols, so only the public C names remain global rather than exporting source closure implementation details.",
+  "System V AMD64 with FLT_EVAL_METHOD=0 passes and returns binary64/binary32 in xmm0. The scalar SSE divsd/mulsd/addsd/subsd paths retain binary64 reduction and helper arithmetic; log2f deliberately widens its finite polynomial to binary64 while retaining mulss/divss/subss input-normalization and exceptional behavior. Binary80 `log2l` is representation- and ABI-distinct and remains excluded.",
+  "The fixture composes only existing selected static fegetenv/fesetenv/fesetround/fegetround/feclearexcept/fetestexcept entries to reset and observe MXCSR, including all-direction exact-one sign and exception behavior, without selecting fenv API or policy as part of this artifact.",
+]
+x86_header_prerequisites = [
+  "The focused C fixture preprocesses project fenv.h, float.h, math.h, stddef.h, stdint.h, features.h, and bits/alltypes.h, then calls parenthesized log2/log2f function pointers so compiler builtins cannot substitute for the named C ABI.",
+  "Dedicated C++17 objects compiled with default SSE and -mfpmath=387 pin exact binary64/binary32 unary function-pointer signatures and unmangled C references from the project header against pinned musl.",
+]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-math-log2", scope = "Pinned-musl/project-header C and C++ ABI execution plus one dependency-free `-nostdlib -static --no-undefined --gc-sections` candidate. The C fixture compares 216 exact 32-byte records across all four rounding directions: binary32/binary64 signed zero, raw normal/subnormal boundaries, exact powers and their neighbors, table-range values, high finite values, infinities, quiet/signaling NaNs, raw results, requested/observed MXCSR direction, and exception flags. ELF proof requires strong global target-owned log2/log2f definitions, exact archive surface, an eight-source localized data/error closure with no public `__log2_data` or `__math_divzero` helpers, and divsd/mulsd/addsd/subsd/divss/mulss/subss scalar source arithmetic; it rejects weak compiler-builtins fallback, log2l, log/log1p/log10, exp/expm1, exp2, inverse trigonometry, fma, hypot, fmod/remainder, rounding/truncation/ceiling/floor, roots, fenv API/policy, special and complex math, unresolved symbols, dynamic linkage, TLS, ambient libm, packed-SIMD/FMA ISA, and unowned runtime dependencies. It excludes category/family completion, promotion, full x86-64 parity, and public x86 support." }]
+oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source, IEEE bit-level/fenv behavior, and public C ABI oracle for exactly src/math/log2.c, log2f.c, log2_data.c, log2f_data.c, __math_divzero{,f}.c, and __math_invalid{,f}.c." }, { kind = "aarch64-contract", source = "SCOPE.md, COMPATIBILITY-PROFILE.md, and libc/src/math_compat.rs", role = "The active AArch64 product contract supplies no selected public log2/log2f mapping; this x86-only evidence remains selected-private and does not import, imply, or promote an AArch64 capability." }, { kind = "elf-abi", source = "System V AMD64 psABI", role = "xmm0 binary32/binary64 unary argument and return ABI plus caller-visible MXCSR scalar-SSE arithmetic boundary for the selected static C entries." }]
+
 [[family.verified_slice]]
 id = "numeric.parse-float-locale"
 description = "Private native x86 completion of the AArch64 `numeric.parse-float-locale` capability. The selected static archive owns all twenty-three ledger symbols: narrow `atof`/`strto*`, ignored-locale public and weak-internal `_l` wrappers, arbitrary-length wide floating and integer conversions, musl-compatible static-buffer `ecvt`/`fcvt`, caller-buffered `gcvt`, and in-place `getsubopt`. C/POSIX/C.UTF-8 share the fixed decimal grammar; no arbitrary locale map, locale-dependent radix, public FILE, general printf, allocator, libc.so, CRT, loader, or sysroot is selected. The family stays planned and the repository retains promotion_ready=false and public_support=false."
