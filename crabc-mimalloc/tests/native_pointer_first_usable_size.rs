@@ -31,7 +31,9 @@ fn allocate_aligned_current(request: usize, alignment: usize) -> core::ptr::NonN
 /// returns that page's geometry. It neither selects the calling owner nor
 /// reopens a scheduler. Both persistent owner forms therefore expose an
 /// aligned live client to either the source owner or a foreign attached
-/// observer while the exact client remains live.
+/// observer while the exact client remains live. The initial owner's all-free
+/// page remains resident until an explicit collection or later-worker handoff,
+/// so the scalar PageMap baseline is its existing page rather than zero.
 #[test]
 fn native_usable_size_observes_aligned_initial_and_later_clients_from_foreign_threads() {
     assert!(
@@ -127,6 +129,13 @@ fn native_usable_size_observes_aligned_initial_and_later_clients_from_foreign_th
         ThreadFinishResult::Finished,
         "the later persistent owner completes its normal all-free lifecycle"
     );
+    let after_later_owner = native_runtime_lifecycle_test_audit()
+        .expect("the released later owner leaves the initial page audit readable");
+    assert_eq!(
+        after_later_owner.page_map_registered_entry_count,
+        before_initial_repeat.page_map_registered_entry_count,
+        "the later owner releases its source page while foreign usable-size observations add no PageMap registration"
+    );
 
     // SAFETY: the initial source remains its exact current live client until
     // this one matching local pointer-first free.
@@ -144,7 +153,8 @@ fn native_usable_size_observes_aligned_initial_and_later_clients_from_foreign_th
         "pointer-only usable-size observations do not enter the parked compatibility bridge"
     );
     assert_eq!(
-        after.page_map_registered_entry_count, 0,
-        "both exact clients release their PageMap registrations after their observers finish"
+        after.page_map_registered_entry_count,
+        before_initial_repeat.page_map_registered_entry_count,
+        "the initial all-free page stays resident while both pointer-only observers leave no extra PageMap registration"
     );
 }
