@@ -773,7 +773,27 @@ numeric `1` normalization or lock behavior. The strict C11/C++17 proof
 ratchets the two `int (FILE *)` predicates, `void clearerr(FILE *)`, and
 unmangled C++ spellings. It never creates a pathname `FILE *` and excludes
 `stdio.stream-io`, path/descriptor-reopen/tmpfile or LP64/LFS behavior,
-byte/block/output/buffering/position/lock/unlocked APIs, multiple streams,
+byte/block/output/buffering/position/lock and unselected unlocked APIs,
+multiple streams,
+line/formatted/wide/memory/cookie/popen I/O, ordinary-exit flushing, general
+stdio, parity, promotion, and public x86 support.
+
+The separate `stdio-permanent-feof-unlocked-header-abi` and
+`libc-stdio-permanent-feof-unlocked` gates record one private
+`static-c-stdio-permanent-feof-unlocked` artifact. It adds only musl's weak,
+same-address GNU/BSD `feof_unlocked` alias of strong `feof`, without promoting
+a capability. Its pinned-musl/static fixture compares both function-pointer
+addresses only on permanent `stdin`, then uses an empty pipe and existing
+`fgetc(stdin)` solely as EOF-marker setup: both predicates begin at zero and
+become nonzero. The C/POSIX contract is zero versus nonzero, so this does not
+claim musl's internal numeric `1` normalization. The C11/C++17 matrix proves
+GNU/BSD declaration visibility and unmangled C++ linkage while strict/POSIX
+profiles keep it hidden. `_unlocked` does not claim a lock-free call:
+FLOCK/FUNLOCK, arbitrary `FILE`, `_IO_feof_unlocked`, `ferror_unlocked`, and
+`clearerr_unlocked` remain outside this externally serialized leaf. It never
+creates a pathname `FILE *` and excludes `stdio.stream-io`, path/descriptor-
+reopen/tmpfile/LFS behavior, byte/block I/O beyond the marker setup,
+ferror/clearerr, buffering/position, other unlocked APIs, multiple streams,
 line/formatted/wide/memory/cookie/popen I/O, ordinary-exit flushing, general
 stdio, parity, promotion, and public x86 support.
 
@@ -807,7 +827,8 @@ remain negative. The conventional `_unlocked` spelling does not claim a
 lock-free operation: musl's FLOCK/FUNLOCK and negative-descriptor `EBADF`
 paths remain outside this externally serialized leaf. It excludes
 `stdio.stream-io`, FILE/path or descriptor-reopen/tmpfile/LFS behavior, all
-other unlocked APIs, byte/block/line/formatted/wide I/O, buffering/position or
+other unlocked APIs other than separately selected `feof_unlocked`,
+byte/block/line/formatted/wide I/O, buffering/position or
 status, multiple streams, memory/cookie/popen I/O, ordinary-exit flushing,
 general stdio, parity, promotion, and public x86 support.
 

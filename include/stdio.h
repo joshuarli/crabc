@@ -106,6 +106,7 @@ FILE *fmemopen(void *, size_t, const char *);
 void setbuffer(FILE *, char *, size_t);
 void setlinebuf(FILE *);
 char *fgetln(FILE *, size_t *);
+int feof_unlocked(FILE *);
 int fileno_unlocked(FILE *);
 #endif
 

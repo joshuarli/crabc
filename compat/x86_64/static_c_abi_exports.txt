@@ -256,6 +256,7 @@ fegetexceptflag
 fegetround
 feholdexcept
 feof
+feof_unlocked
 feraiseexcept
 ferror
 fesetenv

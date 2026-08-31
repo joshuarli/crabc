@@ -113,7 +113,7 @@ for symbol in __errno_location __crabc_x86_static_tls_bootstrap \
 done
 grep -Eq '[[:space:]][BDR][[:space:]]stdin$' "$archive_symbols" ||
     fail "archive does not define permanent stdin data"
-for unselected in feof_unlocked ferror_unlocked clearerr_unlocked \
+for unselected in ferror_unlocked clearerr_unlocked \
     fgetc_unlocked getc_unlocked getchar_unlocked fputc_unlocked \
     putc_unlocked putchar_unlocked fdopen freopen fopencookie popen pclose \
     fmemopen open_memstream; do
