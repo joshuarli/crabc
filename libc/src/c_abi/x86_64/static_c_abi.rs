@@ -379,6 +379,8 @@ mod posix_exit;
 mod posix_spawnattr_init;
 #[path = "posix_spawnattr_getpgroup.rs"]
 mod posix_spawnattr_getpgroup;
+#[path = "posix_spawnattr_getschedpolicy.rs"]
+mod posix_spawnattr_getschedpolicy;
 #[path = "static_startup.rs"]
 mod static_startup;
 #[path = "process_globals.rs"]

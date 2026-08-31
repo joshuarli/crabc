@@ -282,6 +282,26 @@ attribute APIs, file actions, fork/vfork/clone, exec, child lifecycle, signals,
 scheduler policy, family completion, promotion, or public x86 support; the
 generic AArch64 export remains unchanged.
 
+`./scripts/dev-x86_64.sh libc-posix-spawnattr-getschedpolicy` is a separate
+private `static-c-posix-spawnattr-getschedpolicy` artifact inside still-planned
+`libc.posix-runtime`, not a process-spawn, process-control, or scheduler
+capability. Its pinned-musl/project C/C++ `<spawn.h>` gate proves the
+unconditional `int posix_spawnattr_getschedpolicy(const posix_spawnattr_t *,
+int *)` ABI, unmangled C++ linkage, and the complete x86 336-byte/eight-byte-
+aligned attribute type. Musl 1.2.6 `src/process/posix_spawnattr_sched.c`
+returns the positive error number `ENOSYS=38` directly: it does not dereference
+either pointer or set `errno`. The shared fixture first executes that musl
+route, then a true `-nostdlib -static` candidate extracted from exactly one
+Rust object. Direct and function-pointer calls cover nonnull, null-attribute,
+null-output, and both-null arguments; they retain byte-filled caller records,
+guarded output storage, and stale `errno`. The candidate is only an immediate
+ENOSYS return with no helper, call, syscall, errno/TLS, allocator, dynamic
+runtime, CRT, loader, or sysroot path. It does not select `posix_spawn`/
+`posix_spawnp`, other attribute APIs, file actions, fork/vfork/clone, exec,
+child lifecycle, signals, scheduler policy/parameter behavior, family
+completion, promotion, or public x86 support; the generic AArch64 export
+remains unchanged.
+
 `./scripts/dev-x86_64.sh libc-bsearch` is a separate private `static-c-bsearch`
 artifact inside still-planned `libc.c-abi-compat`. Its pinned-musl/project
 C/C++ `<stdlib.h>` matrix proves the unconditional five-argument declaration

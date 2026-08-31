@@ -13550,6 +13550,104 @@ class X86ParityLedgerTests(unittest.TestCase):
         ):
             ledger.validate_ledger(data)
 
+    def test_posix_spawnattr_getschedpolicy_artifact_stays_private_and_nonpromoting(
+        self,
+    ) -> None:
+        data = self.data()
+        family = self.family(data, "libc.posix-runtime")
+        self.assertEqual(family["status"], "planned")
+        artifacts = family["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict)
+            and entry["id"] == "static-c-posix-spawnattr-getschedpolicy"
+        )
+        self.assertNotIn("capabilities", artifact)
+        for phrase in (
+            "POSIX spawn-attribute scheduler-policy compatibility-return leaf",
+            "`src/process/posix_spawnattr_sched.c::posix_spawnattr_getschedpolicy`",
+            "`return ENOSYS;`",
+            "positive error number `ENOSYS=38`",
+            "nonnull arguments, null attribute, null output, and both-null",
+            "neither reads nor writes",
+            "does not validate or dereference either pointer",
+            "`posix_spawn`",
+            "`posix_spawnp`",
+            "scheduler policy or parameter behavior",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, artifact["description"])
+
+        owners = artifact["source_owners"]
+        assert isinstance(owners, list)
+        for owner in (
+            "compat/abi/musl-1.2.6/aarch64/libc.a.static.tsv",
+            "libc/src/c_abi.rs",
+            "libc/src/c_abi/x86_64/posix_spawnattr_getschedpolicy.rs",
+            "include/spawn.h",
+            "include/errno.h",
+            "compat/x86_64/posix_spawnattr_getschedpolicy_header_abi_probe.c",
+            "compat/x86_64/posix_spawnattr_getschedpolicy_header_abi_probe.cpp",
+            "compat/x86_64/run_posix_spawnattr_getschedpolicy_header_abi.sh",
+            "compat/x86_64/libc_posix_spawnattr_getschedpolicy_probe.c",
+            "compat/x86_64/libc_posix_spawnattr_getschedpolicy_start.S",
+            "compat/x86_64/run_libc_posix_spawnattr_getschedpolicy.sh",
+            "compat/x86_64/static_c_abi_exports.txt",
+        ):
+            self.assertIn(owner, owners)
+
+        prerequisites = artifact["x86_abi_prerequisites"]
+        assert isinstance(prerequisites, list)
+        self.assertTrue(
+            any(
+                "System V AMD64" in item
+                and "int posix_spawnattr_getschedpolicy(const posix_spawnattr_t *, int *)"
+                in item
+                and "rdi/rsi" in item
+                and "ENOSYS=38" in item
+                and "both-null" in item
+                for item in prerequisites
+            )
+        )
+        self.assertTrue(
+            any(
+                "src/process/posix_spawnattr_sched.c::posix_spawnattr_getschedpolicy"
+                in item
+                and "return ENOSYS;" in item
+                and "posix_spawnattr_sched.lo" in item
+                and "generic AArch64 export remains unchanged" in item
+                for item in prerequisites
+            )
+        )
+
+        evidence = artifact["native_evidence"]
+        assert isinstance(evidence, list) and isinstance(evidence[0], dict)
+        self.assertEqual(
+            evidence[0]["command"],
+            "./scripts/dev-x86_64.sh libc-posix-spawnattr-getschedpolicy",
+        )
+        for phrase in (
+            "direct and function-pointer positive ENOSYS=38 returns",
+            "nonnull arguments, null attribute, null output, and both-null",
+            "byte-filled 336-byte caller-owned posix_spawnattr_t storage",
+            "guarded int output",
+            "posix_spawnattr_sched.lo/AArch64 ownership",
+            "fixed ignored-pointer ENOSYS no-call/no-syscall object",
+            "peer spawn and process extraction",
+        ):
+            self.assertIn(phrase, evidence[0]["scope"])
+
+        prerequisites[1] = prerequisites[1].replace(
+            "return ENOSYS;", "launch a child"
+        )
+        with self.assertRaisesRegex(
+            ledger.LedgerError,
+            "static-c-posix-spawnattr-getschedpolicy must retain its pinned-musl source mapping",
+        ):
+            ledger.validate_ledger(data)
+
     def test_integer_parse_artifact_keeps_its_closed_mapping_contract(self) -> None:
         data = self.data()
         artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]

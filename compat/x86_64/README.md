@@ -3705,6 +3705,26 @@ other attribute APIs, file actions, fork/vfork/clone, exec, child lifecycle,
 signals, scheduler policy, family completion, promotion, or public x86
 support; the generic AArch64 export remains unchanged.
 
+`libc-posix-spawnattr-getschedpolicy` is a separately recorded
+`static-c-posix-spawnattr-getschedpolicy` `verified_artifact` inside
+still-planned `libc.posix-runtime`, not a process-spawn, process-control, or
+scheduler capability. Its pinned-musl/project C/C++ `<spawn.h>` matrix proves
+the unconditional `int posix_spawnattr_getschedpolicy(const posix_spawnattr_t
+*, int *)` ABI, unmangled C++ linkage, and complete x86 336-byte/eight-byte-
+aligned attribute type. The shared fixture first executes musl 1.2.6
+`src/process/posix_spawnattr_sched.c::posix_spawnattr_getschedpolicy`, whose
+complete body is `return ENOSYS;`, then a true `-nostdlib -static` candidate
+extracted from exactly one Rust object. Direct and function-pointer calls over
+nonnull, null-attribute, null-output, and both-null pointer shapes all return
+the positive error number `ENOSYS=38`, retain byte-filled caller record and
+guarded output storage, and preserve stale `errno` on the ordinary musl route.
+The candidate materializes only that immediate result: no pointer dereference,
+helper call, syscall, errno/TLS, allocator, dynamic runtime, CRT, loader, or
+sysroot path. It does not select `posix_spawn`/`posix_spawnp`, other attribute
+APIs, file actions, fork/vfork/clone, exec, child lifecycle, signals,
+scheduler policy/parameter behavior, family completion, promotion, or public
+x86 support; the generic AArch64 export remains unchanged.
+
 `libc-bsearch` is a separate capability-free `static-c-bsearch`
 `verified_artifact` inside still-planned `libc.c-abi-compat`. Its strict,
 POSIX, X/Open, GNU, and BSD C/C++ `<stdlib.h>` matrix proves the unconditional

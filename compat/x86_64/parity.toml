@@ -3033,6 +3033,55 @@ oracle = [
 ]
 
 [[family.verified_artifact]]
+id = "static-c-posix-spawnattr-getschedpolicy"
+description = "Private native x86 selected-static-archive POSIX spawn-attribute scheduler-policy compatibility-return leaf within still-planned `libc.posix-runtime`. The true static candidate extracts exactly one Rust object exporting only `posix_spawnattr_getschedpolicy`, with no undefined symbol, helper call, syscall, errno/TLS, allocator, or final-ELF runtime dependency. Pinned musl 1.2.6 `src/process/posix_spawnattr_sched.c::posix_spawnattr_getschedpolicy` has the complete body `return ENOSYS;`: every selected direct and function-pointer call returns the positive error number `ENOSYS=38`, leaves stale errno unchanged, and neither reads nor writes a byte-filled 336-byte caller-owned `posix_spawnattr_t` record or an adjacent-guarded `int` output. The fixture covers nonnull arguments, null attribute, null output, and both-null pointers, preserving all supplied caller storage. The private x86 object materializes only that immediate result; it does not validate or dereference either pointer. This leaf does not select `posix_spawn`, `posix_spawnp`, attribute initialization/destruction/mutation or other queries, file actions, fork/vfork/clone, exec, child lifecycle, signal delivery, scheduler policy or parameter behavior, libc.so, CRT, loader, sysroot, family completion, promotion, or public x86 support. The generic AArch64 `posix_spawnattr_getschedpolicy` export remains unchanged."
+source_owners = [
+  "compat/upstreams.toml",
+  "compat/abi/musl-1.2.6/aarch64/libc.a.static.tsv",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "libc/src/c_abi.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/posix_spawnattr_getschedpolicy.rs",
+  "include/features.h",
+  "include/sys/types.h",
+  "include/bits/alltypes.h",
+  "include/spawn.h",
+  "include/errno.h",
+  "compat/x86_64/posix_spawnattr_getschedpolicy_header_abi_probe.c",
+  "compat/x86_64/posix_spawnattr_getschedpolicy_header_abi_probe.cpp",
+  "compat/x86_64/run_posix_spawnattr_getschedpolicy_header_abi.sh",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/libc_posix_spawnattr_getschedpolicy_probe.c",
+  "compat/x86_64/libc_posix_spawnattr_getschedpolicy_start.S",
+  "compat/x86_64/run_libc_posix_spawnattr_getschedpolicy.sh",
+  "compat/x86_64/aarch64_parity_inventory.py",
+  "compat/x86_64/aarch64_parity_inventory.json",
+  "compat/x86_64/tests/test_aarch64_parity_inventory.py",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "compat/x86_64/README.md",
+  "STATUS.md",
+  "x86-64.md",
+  "scripts/dev-x86_64.sh",
+  "scripts/check_structure.py",
+]
+x86_abi_prerequisites = [
+  "The System V AMD64 ABI passes `int posix_spawnattr_getschedpolicy(const posix_spawnattr_t *, int *)`'s declared pointer values in rdi/rsi and returns the direct positive `ENOSYS=38` signed int in eax. Musl deliberately dereferences neither pointer: a byte-filled x86 336-byte/eight-byte-aligned record and guarded int output remain untouched, while null attribute, null output, and both-null calls retain the same result and stale errno; no record layout or concurrent state is selected.",
+  "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417 `src/process/posix_spawnattr_sched.c::posix_spawnattr_getschedpolicy` maps directly to `return ENOSYS;`; the pinned AArch64 static ABI row fixes `posix_spawnattr_sched.lo` ownership. This x86-only composition keeps that exact non-dereferencing compatibility return while the generic AArch64 export remains unchanged, and does not select spawn execution, file actions, child lifecycle, signals, or scheduler behavior.",
+  "The true `-nostdlib -static` candidate extracts exactly one Rust object exporting only posix_spawnattr_getschedpolicy with no undefined symbols, helper call, syscall, errno/TLS, allocator, PT_TLS, dynamic-TLS model, PLT, interpreter, DT_NEEDED, or ambient runtime dependency. Its fixed ENOSYS immediate return does not load either argument and rejects every peer spawn/process export.",
+]
+x86_header_prerequisites = [
+  "The focused pinned-musl/project-first C11/C++17 `<spawn.h>` matrix proves unconditional `int posix_spawnattr_getschedpolicy(const posix_spawnattr_t *, int *)` under strict, POSIX, X/Open, and GNU profiles, its exact function-pointer ABI, four-byte int result storage, complete 336-byte/eight-byte-aligned attribute type, project-header provenance, and unmangled C++ linkage through the installed `extern \"C\"` guards. It selects no spawn execution, file action, attribute state, child lifecycle, scheduler operation, or public x86 support.",
+]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-posix-spawnattr-getschedpolicy", scope = "Pinned-musl/project C/C++ header compilation plus equivalent pinned-musl C execution and one true dependency-free x86 crabc-libc `-nostdlib -static` candidate. The shared fixture proves direct and function-pointer positive ENOSYS=38 returns for nonnull arguments, null attribute, null output, and both-null calls, with byte-filled 336-byte caller-owned posix_spawnattr_t storage, guarded int output, and stale errno preservation. It ratchets pinned-musl posix_spawnattr_sched.lo/AArch64 ownership, exact crate-owned export closure, no interpreter/DT_NEEDED/unresolved symbol/PT_TLS/errno/dynamic-TLS model/allocator/helper-call/syscall or ambient runtime, and a fixed ignored-pointer ENOSYS no-call/no-syscall object while rejecting peer spawn and process extraction. It does not select spawn execution, file actions, attribute initialization/destruction/mutation or other queries, fork/vfork/clone, exec, child lifecycle, signal or scheduler behavior, generic process control, libc.so, CRT, loader, sysroot, family completion, promotion, or public x86 support." }]
+oracle = [
+  { kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source, unconditional spawn.h declaration, static-member, direct ENOSYS return, ignored-pointer, and stale-errno behavior oracle for src/process/posix_spawnattr_sched.c::posix_spawnattr_getschedpolicy." },
+  { kind = "elf-abi", source = "System V AMD64 psABI and pinned musl x86 static object", role = "Two-pointer signed-int C ABI, C++ C linkage, header-record type, and true-static ET_EXEC closure contract." },
+]
+
+[[family.verified_artifact]]
 id = "static-c-callback-algorithms"
 description = "Private native x86 selected-static-archive callback-algorithms block. One dependency-free `crabc-libc` archive resolves separately owned `bsearch`, `__qsort_r`, `qsort`, and weak same-address `qsort_r` into a freestanding C fixture after an equivalent pinned-musl execution. The fixed musl smoothsort has its O(1) cycling buffer and unstable equal-key ordering; qsort's separate qsort_nr two-argument comparator adapter calls the same private worker, while GNU/BSD `qsort_r` keeps its (a,b,arg) final-context ABI. The fixture proves bsearch hit/miss/zero element, ordinary qsort, wide-record byte preservation, qsort_r context identity, private helper candidate behavior, ELF weak-alias equality, and strong caller qsort_r override. `__qsort_r` remains a private internal header name. This stateless allocation-free callback-algorithms block has no syscall, no errno, no initial-TLS, no allocator, locale, lock, callback registry, process state, C longjmp/C++ exception transport, libc.so, CRT, dynamic TLS, loader, sysroot, or public x86 support."
 source_owners = [

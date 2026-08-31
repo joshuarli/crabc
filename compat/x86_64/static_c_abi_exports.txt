@@ -600,6 +600,7 @@ posix_fallocate
 posix_getdents
 posix_madvise
 posix_spawnattr_getpgroup
+posix_spawnattr_getschedpolicy
 posix_spawnattr_init
 powl
 ppoll
