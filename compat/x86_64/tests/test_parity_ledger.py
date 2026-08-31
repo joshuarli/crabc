@@ -18000,6 +18000,227 @@ class X86ParityLedgerTests(unittest.TestCase):
         with self.assertRaisesRegex(ledger.LedgerError, "feature-visibility matrix"):
             ledger.validate_ledger(data)
 
+    def test_sync_file_range_artifact_keeps_its_direct_gnu_boundary(self) -> None:
+        data = self.data()
+        family = self.family(data, "libc.posix-runtime")
+        self.assertEqual(family["status"], "planned")
+        artifacts = family["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-sync-file-range"
+        )
+        self.assertNotIn("capabilities", artifact)
+        for owner in (
+            "libc/src/c_abi/x86_64/static_c_abi.rs",
+            "libc/src/c_abi/x86_64/errno.rs",
+            "libc/src/c_abi/x86_64/static_tls.rs",
+            "libc/src/c_abi/x86_64/syscall.rs",
+            "libc/src/c_abi/x86_64/sync_file_range.rs",
+            "include/fcntl.h",
+            "compat/x86_64/sync_file_range_header_abi_probe.c",
+            "compat/x86_64/sync_file_range_header_abi_probe.cpp",
+            "compat/x86_64/run_sync_file_range_header_abi.sh",
+            "compat/x86_64/libc_sync_file_range_probe.c",
+            "compat/x86_64/libc_sync_file_range_start.S",
+            "compat/x86_64/run_libc_sync_file_range.sh",
+            "compat/x86_64/aarch64_parity_inventory.json",
+            "compat/x86_64/validate_parity_ledger.py",
+            "scripts/dev-x86_64.sh",
+        ):
+            self.assertIn(owner, artifact["source_owners"])
+        for phrase in (
+            "selected-static-archive GNU `sync_file_range`",
+            "still-planned `libc.posix-runtime`",
+            "pinned musl 1.2.6",
+            "`-nostdlib -static`",
+            "src/linux/sync_file_range.c::sync_file_range",
+            "sync_file_range=277",
+            "zero-length-through-EOF",
+            "`EOPNOTSUPP`",
+            "`EINVAL`",
+            "`ESPIPE`",
+            "`EBADF`",
+            "initial-TLS errno",
+            "`sync`",
+            "`syncfs`",
+            "`fsync`",
+            "`fdatasync`",
+            "`copy_file_range`",
+            "writeback timing",
+            "power-loss durability",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, artifact["description"])
+        self.assertEqual(
+            {entry["command"] for entry in artifact["native_evidence"]},
+            {"./scripts/dev-x86_64.sh libc-sync-file-range"},
+        )
+
+        prerequisites = artifact["x86_abi_prerequisites"]
+        assert isinstance(prerequisites, list)
+        abi = next(item for item in prerequisites if "rdi/rsi/rdx/rcx" in item)
+        assert isinstance(abi, str)
+        for phrase in (
+            "rdi/rsi/rdx/r10",
+            "sync_file_range=277",
+            "-4095",
+            "initial-TLS errno",
+        ):
+            self.assertIn(phrase, abi)
+        source_mapping = next(
+            item
+            for item in prerequisites
+            if "src/linux/sync_file_range.c::sync_file_range" in item
+        )
+        assert isinstance(source_mapping, str)
+        for phrase in (
+            "SYS_sync_file_range",
+            "__SYSCALL_LL_O(pos)",
+            "SYS_sync_file_range2",
+            "__syscall_ret(-ENOSYS)",
+            "Linux 5.10",
+        ):
+            self.assertIn(phrase, source_mapping)
+        matrix = next(item for item in prerequisites if "five-profile" in item)
+        assert isinstance(matrix, str)
+        for phrase in (
+            "GNU C and GNU C++",
+            "strict, POSIX.1-2008, X/Open 700, and BSD",
+            "1/2/4",
+            "eight-byte `off_t`",
+        ):
+            self.assertIn(phrase, matrix)
+        fixture = next(item for item in prerequisites if "zero length reaches EOF" in item)
+        assert isinstance(fixture, str)
+        for phrase in ("EOPNOTSUPP", "EINVAL", "ESPIPE", "EBADF", "does not select opening"):
+            self.assertIn(phrase, fixture)
+
+        headers = artifact["x86_header_prerequisites"]
+        assert isinstance(headers, list) and isinstance(headers[0], str)
+        for phrase in (
+            "five-profile",
+            "<fcntl.h>",
+            "GNU-only",
+            "sync_file_range(int, off_t, off_t, unsigned)",
+            "one visible",
+            "four hidden",
+            "unmangled C++",
+        ):
+            self.assertIn(phrase, headers[0])
+
+        exports = set(
+            (ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt")
+            .read_text(encoding="utf-8")
+            .splitlines()
+        )
+        self.assertIn("sync_file_range", exports)
+        self.assertNotIn("syncfs", exports)
+
+        implementation = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "sync_file_range.rs"
+        ).read_text(encoding="utf-8")
+        for snippet in (
+            "Selected static Linux/x86-64 GNU `sync_file_range` C ABI leaf",
+            "src/linux/sync_file_range.c",
+            "SYS_sync_file_range2",
+            "ENOSYS",
+            "sync_file_range=277",
+            "raw_syscall::SYS_SYNC_FILE_RANGE",
+            "raw_syscall::syscall4",
+            "fn sync_file_range",
+            "c_status(result)",
+        ):
+            self.assertIn(snippet, implementation)
+        for forbidden in (
+            "fn sync(",
+            "fn syncfs(",
+            "fn fsync(",
+            "fn fdatasync(",
+            "fn copy_file_range(",
+            "raw_syscall::SYS_SYNC_FILE_RANGE2",
+            "alloc::",
+            "Vec<",
+            "__tls_get_addr",
+        ):
+            self.assertNotIn(forbidden, implementation)
+
+        header_runner = (
+            ROOT / "compat" / "x86_64" / "run_sync_file_range_header_abi.sh"
+        ).read_text(encoding="utf-8")
+        for snippet in (
+            "MUSL_ROOT=/opt/musl-1.2.6",
+            "EXPECTED_PROFILE_COUNT=5",
+            "EXPECTED_VISIBLE_PROFILE_COUNT=1",
+            "EXPECTED_HIDDEN_PROFILE_COUNT=4",
+            "CRABC_EXPECT_SYNC_FILE_RANGE",
+            "CRABC_REQUIRE_SYNC_FILE_RANGE_HIDDEN",
+            "unmangled",
+        ):
+            self.assertIn(snippet, header_runner)
+        probe = (
+            ROOT / "compat" / "x86_64" / "libc_sync_file_range_probe.c"
+        ).read_text(encoding="utf-8")
+        for snippet in (
+            "SYS_sync_file_range == 277",
+            "zero-length",
+            "EOPNOTSUPP",
+            "ESPIPE",
+            "EBADF",
+            "CRABC_SYNC_FILE_RANGE_FREESTANDING",
+        ):
+            self.assertIn(snippet, probe)
+        start = (
+            ROOT / "compat" / "x86_64" / "libc_sync_file_range_start.S"
+        ).read_text(encoding="utf-8")
+        for snippet in (
+            "__crabc_x86_static_tls_bootstrap",
+            "crabc_x86_64_sync_file_range_probe",
+            "exit_group",
+        ):
+            self.assertIn(snippet, start)
+        runner = (
+            ROOT / "compat" / "x86_64" / "run_libc_sync_file_range.sh"
+        ).read_text(encoding="utf-8")
+        for snippet in (
+            "run_musl_oracle.sh",
+            "run_sync_file_range_header_abi.sh",
+            "-nostdlib -static",
+            "--no-undefined",
+            "assert_selected_c_abi_surface",
+            "extract_selected_member",
+            "sync_file_range must have exactly one selected archive member",
+            "sync_file_range=277",
+            "candidate lacks the selected errno TLS segment",
+            "sync_file_range delegates to an unselected runtime boundary",
+            "sync syncfs fsync fdatasync copy_file_range",
+        ):
+            self.assertIn(snippet, runner)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-sync-file-range"
+        )
+        prerequisites = artifact["x86_abi_prerequisites"]
+        assert isinstance(prerequisites, list)
+        index = next(
+            index
+            for index, item in enumerate(prerequisites)
+            if "sync_file_range=277" in item and "rdi/rsi/rdx/r10" in item
+        )
+        prerequisites[index] = prerequisites[index].replace(
+            "sync_file_range=277", "sync_file_range=999"
+        )
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "C and Linux syscall register ABI"
+        ):
+            ledger.validate_ledger(data)
+
     def test_filesystem_access_artifact_keeps_its_closed_mapping_contract(self) -> None:
         data = self.data()
         artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]

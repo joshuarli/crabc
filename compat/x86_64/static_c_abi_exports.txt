@@ -849,6 +849,7 @@ strxfrm
 strxfrm_l
 symlink
 sync
+sync_file_range
 sysconf
 sysinfo
 tanhl

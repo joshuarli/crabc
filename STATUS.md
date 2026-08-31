@@ -1729,6 +1729,24 @@ unowned runtime closure. It does not select `syncfs`, `fsync`, `fdatasync`,
 timing, storage-cache or power-loss durability, family completion, promotion,
 or public x86 support.
 
+`./scripts/dev-x86_64.sh sync-file-range-header-abi` is a separate
+five-profile C11/C++17 project-header/pinned-musl `<fcntl.h>` matrix for the
+GNU-only `sync_file_range(int, off_t, off_t, unsigned)` declaration. GNU C/C++
+are visible, while strict, POSIX.1-2008, X/Open 700, and BSD C/C++ are hidden;
+the gate fixes signed eight-byte x86 LP64 `off_t`, flag values 1/2/4, and
+unmangled C++ linkage. Its paired private
+`./scripts/dev-x86_64.sh libc-sync-file-range` artifact maps only pinned musl
+1.2.6 `src/linux/sync_file_range.c::sync_file_range`'s direct Linux x86-64
+`sync_file_range=277` branch. A GNU project-header C fixture first runs with
+musl and then a true `-nostdlib -static` candidate, ratchets the archive export
+and AArch64 musl static member, rejects dynamic TLS/unowned closure, and
+compares a regular-file zero-length-through-EOF request, invalid-flag `EINVAL`,
+pipe `ESPIPE`, and invalid-descriptor `EBADF`. Regular-file success preserves
+stale `errno` and file position; direct filesystem `EOPNOTSUPP` is admitted.
+This selects neither `sync`, `syncfs`, `fsync`, `fdatasync`,
+`copy_file_range`, descriptor lifecycle/I/O, writeback timing, storage-cache
+or power-loss durability, family completion, promotion, nor public x86 support.
+
 `./scripts/dev-x86_64.sh libc-descriptor-lifecycle` is a separate private
 `static-c-descriptor-lifecycle` composition artifact inside that same planned
 family. It runs one project-header C body through pinned musl and then a

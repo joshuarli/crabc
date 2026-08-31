@@ -3802,6 +3802,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         '#[path = "ioctl.rs"]',
         '#[path = "descriptor_io.rs"]',
         '#[path = "sync.rs"]',
+        '#[path = "sync_file_range.rs"]',
         '#[path = "unlinkat.rs"]',
         '#[path = "process_resources.rs"]',
         '#[path = "memory_mapping.rs"]',
@@ -8299,6 +8300,59 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
             "requires SYS_SYNC=162"
         )
 
+    sync_file_range_source = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "sync_file_range.rs"
+    )
+    sync_file_range_text = sync_file_range_source.read_text(errors="replace")
+    for required in (
+        "Selected static Linux/x86-64 GNU `sync_file_range` C ABI leaf",
+        "src/linux/sync_file_range.c",
+        "SYS_sync_file_range2",
+        "ENOSYS",
+        "sync_file_range=277",
+        "raw_syscall::SYS_SYNC_FILE_RANGE",
+        "raw_syscall::syscall4",
+        'pub unsafe extern "C" fn sync_file_range',
+        "c_status(result)",
+    ):
+        if required not in sync_file_range_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/sync_file_range.rs: selected GNU "
+                f"descriptor-range writeback boundary is missing {required!r}"
+            )
+    sync_file_range_exports = set(
+        re.findall(
+            r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(',
+            sync_file_range_text,
+        )
+    )
+    if sync_file_range_exports != {"sync_file_range"}:
+        errors.append(
+            "libc/src/c_abi/x86_64/sync_file_range.rs: selected static artifact "
+            "must export only sync_file_range"
+        )
+    for forbidden in (
+        "fn sync(",
+        "fn syncfs(",
+        "fn fsync(",
+        "fn fdatasync(",
+        "fn copy_file_range(",
+        "raw_syscall::SYS_SYNC_FILE_RANGE2",
+        "alloc::",
+        "Vec<",
+        "__tls_get_addr",
+    ):
+        if forbidden in sync_file_range_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/sync_file_range.rs: selected GNU "
+                f"descriptor-range writeback boundary must not select {forbidden!r}"
+            )
+    if "pub(crate) const SYS_SYNC_FILE_RANGE: i64 = 277;" not in raw_syscall_text:
+        errors.append(
+            "libc/src/c_abi/x86_64/syscall.rs: selected static sync_file_range "
+            "boundary requires SYS_SYNC_FILE_RANGE=277"
+        )
+
     unlinkat_source = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "unlinkat.rs"
     unlinkat_text = unlinkat_source.read_text(errors="replace")
     for required in (
@@ -11086,6 +11140,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         memory_mapping_text,
         memory_sync_text,
         sync_text,
+        sync_file_range_text,
         unlinkat_text,
         memory_locking_text,
         memfd_create_text,
@@ -11436,6 +11491,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         "fsync",
         "fdatasync",
         "sync",
+        "sync_file_range",
         "unlinkat",
         "fcntl",
         "dup",
@@ -11628,7 +11684,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
             "stat, credential, errno, bootstrap-memory/fenv/continuation, simple "
             "signal-control, separate realtime-minimum/realtime-maximum bridges, one pure GNU signal-set predicate, paired GNU binary set-operation leaf, and a three-symbol POSIX signal-set mutation leaf, bounded process-signal execution, and one legacy single-signal pause wait, bounded pthread create/exit/join/detach initial-TLS worker, its private selected-main/worker pthread-key/C11-TSS lifecycle, private process-normal pthread mutexes and their musl private condition-variable handoff, the complete selected rwlock/attribute family with private-or-shared futex operation, plus the distinct C11 plain-sync adapter and normal-return pthread/C11 once state machine, its typed C11 create/exit/join/detach sibling, and pthread/C11 identity aliases, named termios-control, direct terminal-descriptor and foreground-group observations plus one named foreground-group assignment, historical ctermid pathname spelling, constant historical gethostid compatibility, direct GNU gettid observation, selected process-context, child-reaping, C11 immediate termination, callback algorithms, direct clock_gettime, binary64 difftime, caller-buffered fixed-UTC gmtime_r, fixed-UTC timegm, a GNU current-CPU raw-fallback observation leaf, a status-returning POSIX scheduler-yield leaf, caller-owned mapping-core, no-cancellation mapping synchronization, direct anonymous-memory descriptor creation, nanosleep, and clock_nanosleep, selected "
             "signal-control, separate realtime-minimum/realtime-maximum bridges, one historical SIGALRM interval-timer adapter leaf, one pure GNU signal-set predicate, paired GNU binary set-operation leaf, and a three-symbol POSIX signal-set mutation leaf, bounded process-signal execution, and one legacy single-signal pause wait, bounded pthread create/exit/join/detach initial-TLS worker, its private selected-main/worker pthread-key/C11-TSS lifecycle, private process-normal pthread mutexes and their musl private condition-variable handoff, the complete selected rwlock/attribute family with private-or-shared futex operation, plus the distinct C11 plain-sync adapter and normal-return pthread/C11 once state machine, its typed C11 create/exit/join/detach sibling, and pthread/C11 identity aliases, named termios-control, direct terminal-descriptor and foreground-group observations plus one named foreground-group assignment, historical ctermid pathname spelling, constant historical gethostid compatibility, selected process-context, child-reaping, C11 immediate termination, callback algorithms, direct clock_gettime, binary64 difftime, caller-buffered fixed-UTC gmtime_r, fixed-UTC timegm, a status-returning POSIX scheduler-yield leaf, caller-owned mapping-core, no-cancellation mapping synchronization, direct anonymous-memory descriptor creation, nanosleep, and clock_nanosleep, selected "
-            "POSIX _exit forwarding, descriptor-entry, selected filesystem-access, bounded descriptor-control, timestamp updates, descriptor-I/O, one direct void global-writeback request, and one caller-supplied-dirfd pathname-removal leaf, selected process-resources, selected readiness/signal-waits, "
+            "POSIX _exit forwarding, descriptor-entry, selected filesystem-access, bounded descriptor-control, timestamp updates, descriptor-I/O, one direct void global-writeback request, one direct GNU descriptor-range writeback leaf, and one caller-supplied-dirfd pathname-removal leaf, selected process-resources, selected readiness/signal-waits, "
             "selected socket transport and selected socket-message/options, selected system-observation, selected UTS-identity, "
             "selected numeric-address codecs, immutable IPv6 unspecified/loopback address data objects, and legacy classful IPv4 arithmetic, one caller-owned mntent option lookup, fixed-profile h_errno message text, byte-string, legacy-memory adapters, source-backed memccpy/mempcpy, caller-buffer strsep, random-entropy, memory-search, C-string-copy, immutable error-string, "
             "fixed-C-locale ctype, integer-arithmetic, integer-parsing, intmax-arithmetic, credential-observation, and "
@@ -11704,6 +11760,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         ("memory_mapping.rs", memory_mapping_text),
         ("memory_sync.rs", memory_sync_text),
         ("sync.rs", sync_text),
+        ("sync_file_range.rs", sync_file_range_text),
         ("unlinkat.rs", unlinkat_text),
         ("memory_locking.rs", memory_locking_text),
         ("memfd_create.rs", memfd_create_text),

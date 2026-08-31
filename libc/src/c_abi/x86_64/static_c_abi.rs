@@ -102,7 +102,8 @@
 //! ownership chown leaf, one bounded no-follow pathname-ownership lchown leaf,
 //! one caller-owned mntent
 //! option-string lookup leaf, one direct system-wide filesystem writeback
-//! request, and one bounded directory-stream/raw-directory artifact.
+//! request, one direct GNU descriptor-range writeback leaf, and one bounded
+//! directory-stream/raw-directory artifact.
 //! The fixed-graph dlfcn bridge is a separate public-C spelling over the
 //! loader-owned immutable RuntimeV1-prefix record. It owns only bounded
 //! per-thread diagnostics and borrowed C views of copied loader metadata; it
@@ -445,6 +446,8 @@ mod ioctl;
 mod descriptor_io;
 #[path = "sync.rs"]
 mod sync;
+#[path = "sync_file_range.rs"]
+mod sync_file_range;
 #[path = "vector_io.rs"]
 mod vector_io;
 #[path = "process_resources.rs"]

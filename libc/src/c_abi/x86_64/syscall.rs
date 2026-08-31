@@ -414,6 +414,7 @@ pub(crate) const SYS_FCHMODAT: i64 = 268;
 pub(crate) const SYS_PSELECT6: i64 = 270;
 pub(crate) const SYS_PPOLL: i64 = 271;
 pub(crate) const SYS_SET_ROBUST_LIST: i64 = 273;
+pub(crate) const SYS_SYNC_FILE_RANGE: i64 = 277;
 pub(crate) const SYS_UTIMENSAT: i64 = 280;
 pub(crate) const SYS_EPOLL_PWAIT: i64 = 281;
 pub(crate) const SYS_TIMERFD_CREATE: i64 = 283;

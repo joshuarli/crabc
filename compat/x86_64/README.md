@@ -305,6 +305,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh lchown-header-abi
 ./scripts/dev-x86_64.sh hasmntopt-header-abi
 ./scripts/dev-x86_64.sh sync-header-abi
+./scripts/dev-x86_64.sh sync-file-range-header-abi
 ./scripts/dev-x86_64.sh mm-abi-reference
 ./scripts/dev-x86_64.sh mlock-reference
 ./scripts/dev-x86_64.sh msync-reference
@@ -505,6 +506,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-lchown
 ./scripts/dev-x86_64.sh libc-hasmntopt
 ./scripts/dev-x86_64.sh libc-sync
+./scripts/dev-x86_64.sh libc-sync-file-range
 ./scripts/dev-x86_64.sh libc-extended-attributes
 ./scripts/dev-x86_64.sh libc-descriptor-io
 ./scripts/dev-x86_64.sh libc-descriptor-lifecycle
@@ -1174,6 +1176,25 @@ errno, and unowned runtime closure. It excludes `syncfs`, `fsync`, `fdatasync`,
 `sync_file_range`, descriptor/path behavior, filesystem policy, writeback
 timing, storage-cache or power-loss durability, family completion, promotion,
 and public x86 support.
+
+`sync-file-range-header-abi` is a separate five-profile C11/C++17
+project-header/pinned-musl `<fcntl.h>` matrix for GNU-only
+`sync_file_range(int, off_t, off_t, unsigned)`. GNU C/C++ are the visible
+profile; strict, POSIX.1-2008, X/Open 700, and BSD C/C++ are hidden. It fixes
+the signed eight-byte x86 LP64 `off_t`, the `WAIT_BEFORE`/`WRITE`/`WAIT_AFTER`
+1/2/4 values, and unmangled C++ linkage. Its paired private
+`libc-sync-file-range` static artifact maps only musl 1.2.6
+`src/linux/sync_file_range.c::sync_file_range`'s direct x86
+`sync_file_range=277` branch. One GNU project-header C fixture runs through
+musl and then a true `-nostdlib -static` crabc-libc candidate, verifies the
+musl AArch64 static member and direct syscall, and compares a regular-file
+zero-length-through-EOF request, invalid-flag `EINVAL`, pipe `ESPIPE`, and
+invalid-descriptor `EBADF`; regular-file success preserves stale `errno` and
+file position, while filesystem `EOPNOTSUPP` remains an admitted direct
+variation. The candidate admits only initial-TLS errno translation and rejects
+dynamic TLS and unowned runtime closure. It excludes `sync`, `syncfs`, `fsync`,
+`fdatasync`, `copy_file_range`, descriptor lifecycle/I/O, range or durability
+policy, filesystem capability completion, promotion, and public x86 support.
 
 `libc-extended-attributes` is the separate private static C runtime artifact
 paired with that header gate. Its project-header fixture first runs through

@@ -5399,6 +5399,64 @@ oracle = [
 ]
 
 [[family.verified_artifact]]
+id = "static-c-sync-file-range"
+description = "Private native x86 selected-static-archive GNU `sync_file_range` leaf within still-planned `libc.posix-runtime`. One GNU project-header C fixture first runs through pinned musl 1.2.6 and then through a true `-nostdlib -static` crabc-libc candidate. It resolves only `sync_file_range(int, off_t, off_t, unsigned)`: musl's `src/linux/sync_file_range.c::sync_file_range` direct x86 `SYS_sync_file_range` branch submits descriptor, signed position/length, and flags to Linux x86-64 `sync_file_range=277`. The fixture proves a regular-file zero-length-through-EOF request with preserved position and stale-errno success or the direct filesystem `EOPNOTSUPP` variation, then direct invalid-flag `EINVAL`, pipe `ESPIPE`, and invalid-descriptor `EBADF` results. The candidate uses only initial-TLS errno translation; it makes no writeback timing, storage-cache, or power-loss durability claim. It does not select `sync`, `syncfs`, `fsync`, `fdatasync`, `copy_file_range`, open/read/write/seek or descriptor lifecycle, cancellation, range/flag policy, filesystem capability completion, libc.so, CRT, loader, sysroot, Rust facade, promotion, or public x86 support."
+source_owners = [
+  "COMPATIBILITY-PROFILE.md",
+  "compat/upstreams.toml",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/errno.rs",
+  "libc/src/c_abi/x86_64/static_tls.rs",
+  "libc/src/c_abi/x86_64/syscall.rs",
+  "libc/src/c_abi/x86_64/sync_file_range.rs",
+  "include/errno.h",
+  "include/fcntl.h",
+  "include/features.h",
+  "include/stdint.h",
+  "include/sys/syscall.h",
+  "include/sys/types.h",
+  "include/unistd.h",
+  "include/bits/alltypes.h",
+  "include/bits/fcntl.h",
+  "include/bits/syscall.h",
+  "compat/abi/musl-1.2.6/aarch64/headers.tsv",
+  "compat/abi/musl-1.2.6/aarch64/libc.a.static.tsv",
+  "compat/x86_64/sync_file_range_header_abi_probe.c",
+  "compat/x86_64/sync_file_range_header_abi_probe.cpp",
+  "compat/x86_64/run_sync_file_range_header_abi.sh",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/libc_sync_file_range_probe.c",
+  "compat/x86_64/libc_sync_file_range_start.S",
+  "compat/x86_64/run_libc_sync_file_range.sh",
+  "compat/x86_64/aarch64_parity_inventory.py",
+  "compat/x86_64/aarch64_parity_inventory.json",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "compat/x86_64/README.md",
+  "STATUS.md",
+  "x86-64.md",
+  "scripts/dev-x86_64.sh",
+  "scripts/check_structure.py",
+]
+x86_abi_prerequisites = [
+  "The SysV AMD64 C entry receives `int fd`, signed 64-bit `off_t offset`, signed 64-bit `off_t nbytes`, and `unsigned flags` in rdi/rsi/rdx/rcx. Linux x86-64 `sync_file_range=277` receives the same scalar request in rdi/rsi/rdx/r10; the leaf forwards raw `-4095..=-1` results only through the selected initial-TLS errno translator. It owns neither descriptor lifetime nor range/flag validation.",
+  "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417 maps include/fcntl.h's GNU declaration plus src/linux/sync_file_range.c::sync_file_range exactly: Linux/x86 chooses `syscall(SYS_sync_file_range, fd, __SYSCALL_LL_O(pos), __SYSCALL_LL_E(len), flags)`. The 32-bit `SYS_sync_file_range2` argument rearrangement and the absent-syscall `__syscall_ret(-ENOSYS)` fallback are deliberately excluded under Linux 5.10 x86-64.",
+  "The five-profile C11/C++17 project-first/pinned-musl fcntl.h matrix exposes the exact unmangled `sync_file_range(int, off_t, off_t, unsigned)` declaration and `SYNC_FILE_RANGE_WAIT_BEFORE`/`WRITE`/`WAIT_AFTER` values 1/2/4 only for GNU C and GNU C++; strict, POSIX.1-2008, X/Open 700, and BSD C/C++ profiles hide it. The matrix fixes x86 LP64 signed eight-byte `off_t` and is declaration evidence only.",
+  "A raw-owned regular-file/pipe fixture compares the GNU C entry with the direct Linux request: zero length reaches EOF without changing file position and permits stale-errno success or filesystem `EOPNOTSUPP`; invalid flag bits yield EINVAL, a pipe yields ESPIPE, and -1 yields EBADF. Raw setup/cleanup is fixture-only and does not select opening, I/O, seek, descriptor lifecycle, or durability policy for the candidate.",
+  "The final full-archive candidate selects the `sync_file_range` entry and selected initial-TLS errno boundary only. It rejects interpreter/DT_NEEDED, unresolved symbols, dynamic TLS, `__tls_get_addr`, unowned runtime dependencies, and calls to sync/syncfs/fsync/fdatasync/copy_file_range/open/read/write/lseek/close/cancellation boundaries; selected disassembly contains direct Linux sync_file_range=277. Its test-only entry shim is not CRT or a filesystem runtime.",
+]
+x86_header_prerequisites = ["The five-profile C11/C++17 project-first/pinned-musl `<fcntl.h>` matrix proves GNU-only `sync_file_range(int, off_t, off_t, unsigned)`, signed eight-byte LP64 `off_t`, the three 1/2/4 flag constants, and unmangled C++ linkage. GNU C/C++ are the one visible feature profile while strict/POSIX.1-2008/X/Open 700/BSD C/C++ are four hidden profiles; this does not claim a general fcntl header, descriptor, filesystem, or public x86 support contract."]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-sync-file-range", scope = "Pinned-musl GNU project-header C reference plus a true full-archive x86 `-nostdlib -static` crabc-libc candidate. The gate runs the five-profile sync_file_range C/C++ header matrix with GNU visible and strict/POSIX/X/Open/BSD hidden; ratchets the exact crate-owned archive export; verifies the musl AArch64 static member; rejects interpreter/DT_NEEDED, unresolved symbols, dynamic TLS, `__tls_get_addr`, and unowned runtime dependencies; disassembles direct sync_file_range=277; and compares regular zero-length-through-EOF, invalid-flag EINVAL, pipe ESPIPE, and invalid-descriptor EBADF behavior. It does not select sync/syncfs/fsync/fdatasync/copy_file_range, descriptor lifecycle or I/O, writeback timing, storage-cache or power-loss durability, filesystem capability completion, promotion, or public x86 support." }]
+oracle = [
+  { kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT declaration and source oracle for GNU include/fcntl.h `sync_file_range(int, off_t, off_t, unsigned)` and src/linux/sync_file_range.c::sync_file_range: x86 takes the direct SYS_sync_file_range branch, while the 32-bit sync_file_range2 and ENOSYS alternatives remain excluded." },
+  { kind = "kernel-abi", source = "Linux 5.10 x86-64 ABI", role = "sync_file_range=277 receives fd/offset/nbytes/flags in rdi/rsi/rdx/r10 and returns raw Linux status; zero-length-through-EOF request, EINVAL, ESPIPE, and EBADF fixture observations establish no durability or writeback-scheduling policy." },
+  { kind = "elf-abi", source = "System V AMD64 psABI", role = "LP64 int/off_t/off_t/unsigned C calling convention, unmangled GNU C++ linkage, initial-TLS errno bridge, and true static no-dynamic-TLS candidate contract." },
+]
+
+[[family.verified_artifact]]
 id = "static-c-sched-yield"
 description = "Private native x86 selected-static-archive POSIX `sched_yield` leaf. One dependency-free `crabc-libc` archive resolves exactly `sched_yield(void)` into a freestanding C fixture after an equivalent pinned-musl execution. The separate strict/POSIX/XOPEN/GNU C/C++ header gate proves the unconditional no-argument signed-int declaration and unmangled C++ linkage. The static fixture proves a normal successful yield preserves stale errno, then uses fixture-local classic BPF only to force the raw Linux `-EPERM` result and prove musl's status bridge returns `-1` with `errno=EPERM`. It is distinct from the separate C11 `thrd_yield` artifact, whose void source intentionally discards that same raw result. This artifact establishes no scheduler handoff, fairness, peer-progress, scheduler policy/parameter API, affinity, C11 or pthread lifecycle, process lifecycle, libc.so, CRT, dynamic TLS, loader, sysroot, allocator, family completion, promotion, or public x86 support."
 source_owners = [

@@ -17313,7 +17313,7 @@ def require_static_sync_artifact(family: Mapping[str, Any]) -> None:
         static_c_abi_export_names(ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt")
     )
     require("sync" in static_exports, "static-c-sync must export sync")
-    for forbidden in ("syncfs", "sync_file_range"):
+    for forbidden in ("syncfs",):
         require(forbidden not in static_exports, f"static-c-sync must not add {forbidden}")
     static_root = (ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs").read_text(
         encoding="utf-8"
@@ -17449,6 +17449,349 @@ def require_static_sync_artifact(family: Mapping[str, Any]) -> None:
         "fsync fdatasync syncfs sync_file_range",
     ):
         require(snippet in runner, f"sync runner omits {snippet}")
+
+
+def require_static_sync_file_range_artifact(family: Mapping[str, Any]) -> None:
+    """Keep musl's direct GNU descriptor-range request self-contained."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.posix-runtime].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [
+        entry for entry in artifacts if entry.get("id") == "static-c-sync-file-range"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.posix-runtime must contain exactly one static-c-sync-file-range artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-sync-file-range must not promote libc.posix-runtime",
+    )
+    artifact = matching[0]
+    require(
+        "capabilities" not in artifact,
+        "static-c-sync-file-range must remain a private artifact rather than a capability",
+    )
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for phrase in (
+        "selected-static-archive GNU `sync_file_range`",
+        "still-planned `libc.posix-runtime`",
+        "pinned musl 1.2.6",
+        "`-nostdlib -static`",
+        "src/linux/sync_file_range.c::sync_file_range",
+        "sync_file_range=277",
+        "zero-length-through-EOF",
+        "`EOPNOTSUPP`",
+        "`EINVAL`",
+        "`ESPIPE`",
+        "`EBADF`",
+        "initial-TLS errno",
+        "`sync`",
+        "`syncfs`",
+        "`fsync`",
+        "`fdatasync`",
+        "`copy_file_range`",
+        "writeback timing",
+        "power-loss durability",
+        "public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"static-c-sync-file-range description omits {phrase}",
+        )
+
+    owners = set(
+        nonempty_strings(
+            artifact["source_owners"], "static-c-sync-file-range.source_owners"
+        )
+    )
+    for owner in (
+        "COMPATIBILITY-PROFILE.md",
+        "compat/upstreams.toml",
+        "libc/Cargo.toml",
+        "libc/src/lib.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/errno.rs",
+        "libc/src/c_abi/x86_64/static_tls.rs",
+        "libc/src/c_abi/x86_64/syscall.rs",
+        "libc/src/c_abi/x86_64/sync_file_range.rs",
+        "include/errno.h",
+        "include/fcntl.h",
+        "include/sys/syscall.h",
+        "include/sys/types.h",
+        "include/unistd.h",
+        "include/bits/alltypes.h",
+        "include/bits/fcntl.h",
+        "include/bits/syscall.h",
+        "compat/abi/musl-1.2.6/aarch64/headers.tsv",
+        "compat/abi/musl-1.2.6/aarch64/libc.a.static.tsv",
+        "compat/x86_64/sync_file_range_header_abi_probe.c",
+        "compat/x86_64/sync_file_range_header_abi_probe.cpp",
+        "compat/x86_64/run_sync_file_range_header_abi.sh",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/libc_sync_file_range_probe.c",
+        "compat/x86_64/libc_sync_file_range_start.S",
+        "compat/x86_64/run_libc_sync_file_range.sh",
+        "compat/x86_64/aarch64_parity_inventory.py",
+        "compat/x86_64/aarch64_parity_inventory.json",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/README.md",
+        "STATUS.md",
+        "x86-64.md",
+        "scripts/dev-x86_64.sh",
+        "scripts/check_structure.py",
+    ):
+        require(
+            owner in owners,
+            f"static-c-sync-file-range source owners omit {owner}",
+        )
+
+    prerequisites = nonempty_strings(
+        artifact["x86_abi_prerequisites"],
+        "static-c-sync-file-range.x86_abi_prerequisites",
+    )
+    require(
+        any(
+            "rdi/rsi/rdx/rcx" in item
+            and "rdi/rsi/rdx/r10" in item
+            and "sync_file_range=277" in item
+            and "-4095" in item
+            and "initial-TLS errno" in item
+            for item in prerequisites
+        ),
+        "static-c-sync-file-range must record its C and Linux syscall register ABI",
+    )
+    require(
+        any(
+            "src/linux/sync_file_range.c::sync_file_range" in item
+            and "SYS_sync_file_range" in item
+            and "__SYSCALL_LL_O(pos)" in item
+            and "SYS_sync_file_range2" in item
+            and "__syscall_ret(-ENOSYS)" in item
+            and "Linux 5.10" in item
+            for item in prerequisites
+        ),
+        "static-c-sync-file-range must retain the exact pinned-musl direct branch",
+    )
+    require(
+        any(
+            "five-profile" in item
+            and "GNU C and GNU C++" in item
+            and "strict, POSIX.1-2008, X/Open 700, and BSD" in item
+            and "1/2/4" in item
+            and "eight-byte `off_t`" in item
+            for item in prerequisites
+        ),
+        "static-c-sync-file-range must retain its GNU header feature matrix",
+    )
+    require(
+        any(
+            "zero length reaches EOF" in item
+            and "EOPNOTSUPP" in item
+            and "EINVAL" in item
+            and "ESPIPE" in item
+            and "EBADF" in item
+            and "does not select opening" in item
+            for item in prerequisites
+        ),
+        "static-c-sync-file-range must retain its bounded native fixture",
+    )
+    require(
+        any(
+            "full-archive candidate" in item
+            and "dynamic TLS" in item
+            and "__tls_get_addr" in item
+            and "sync/syncfs/fsync/fdatasync/copy_file_range" in item
+            and "sync_file_range=277" in item
+            for item in prerequisites
+        ),
+        "static-c-sync-file-range must retain its static closure boundary",
+    )
+
+    headers = nonempty_strings(
+        artifact["x86_header_prerequisites"],
+        "static-c-sync-file-range.x86_header_prerequisites",
+    )
+    require(
+        any(
+            "five-profile" in item
+            and "<fcntl.h>" in item
+            and "GNU-only" in item
+            and "sync_file_range(int, off_t, off_t, unsigned)" in item
+            and "one visible" in item
+            and "four hidden" in item
+            and "unmangled C++" in item
+            for item in headers
+        ),
+        "static-c-sync-file-range must retain its exact GNU header ABI boundary",
+    )
+
+    static_exports = set(
+        static_c_abi_export_names(ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt")
+    )
+    require(
+        "sync_file_range" in static_exports,
+        "static-c-sync-file-range must export sync_file_range",
+    )
+    require(
+        "syncfs" not in static_exports,
+        "static-c-sync-file-range must not add syncfs",
+    )
+    static_root = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+    ).read_text(encoding="utf-8")
+    require(
+        '#[path = "sync_file_range.rs"]\nmod sync_file_range;' in static_root,
+        "x86 static C ABI must compose the sync_file_range leaf",
+    )
+    implementation = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "sync_file_range.rs"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "Selected static Linux/x86-64 GNU `sync_file_range` C ABI leaf",
+        "src/linux/sync_file_range.c",
+        "SYS_sync_file_range2",
+        "ENOSYS",
+        "sync_file_range=277",
+        "raw_syscall::SYS_SYNC_FILE_RANGE",
+        "raw_syscall::syscall4",
+        "pub unsafe extern \"C\" fn sync_file_range",
+        "c_status(result)",
+    ):
+        require(
+            snippet in implementation,
+            f"sync_file_range leaf omits {snippet}",
+        )
+    implementation_exports = set(
+        re.findall(
+            r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(', implementation
+        )
+    )
+    require(
+        implementation_exports == {"sync_file_range"},
+        "sync_file_range implementation must expose only sync_file_range as a Rust C entry",
+    )
+    for forbidden in (
+        "fn sync(",
+        "fn syncfs(",
+        "fn fsync(",
+        "fn fdatasync(",
+        "fn copy_file_range(",
+        "raw_syscall::SYS_SYNC_FILE_RANGE2",
+        "alloc::",
+        "Vec<",
+        "__tls_get_addr",
+    ):
+        require(
+            forbidden not in implementation,
+            f"sync_file_range leaf unexpectedly contains {forbidden}",
+        )
+
+    oracle = artifact["oracle"]
+    assert isinstance(oracle, list)
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "c-posix"
+            and isinstance(entry.get("role"), str)
+            and "include/fcntl.h" in entry["role"]
+            and "src/linux/sync_file_range.c::sync_file_range" in entry["role"]
+            and "sync_file_range2" in entry["role"]
+            for entry in oracle
+        ),
+        "static-c-sync-file-range must retain its pinned-musl declaration and source mapping",
+    )
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "kernel-abi"
+            and isinstance(entry.get("role"), str)
+            and "sync_file_range=277" in entry["role"]
+            and "rdi/rsi/rdx/r10" in entry["role"]
+            and "durability" in entry["role"]
+            for entry in oracle
+        ),
+        "static-c-sync-file-range must retain its Linux 5.10 ABI oracle",
+    )
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "elf-abi"
+            and isinstance(entry.get("role"), str)
+            and "LP64 int/off_t/off_t/unsigned" in entry["role"]
+            and "no-dynamic-TLS" in entry["role"]
+            for entry in oracle
+        ),
+        "static-c-sync-file-range must retain its x86 static ABI oracle",
+    )
+
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-sync-file-range"},
+        "static-c-sync-file-range must use the dedicated native command",
+    )
+    scope = evidence[0].get("scope")
+    require(
+        isinstance(scope, str)
+        and all(
+            phrase in scope
+            for phrase in (
+                "full-archive",
+                "`-nostdlib -static`",
+                "GNU visible and strict/POSIX/X/Open/BSD hidden",
+                "sync_file_range=277",
+                "EINVAL",
+                "ESPIPE",
+                "EBADF",
+                "dynamic TLS",
+                "sync/syncfs/fsync/fdatasync/copy_file_range",
+                "public x86 support",
+            )
+        ),
+        "static-c-sync-file-range evidence must retain its exact static regression",
+    )
+    header_runner = (
+        ROOT / "compat" / "x86_64" / "run_sync_file_range_header_abi.sh"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "MUSL_ROOT=/opt/musl-1.2.6",
+        "EXPECTED_PROFILE_COUNT=5",
+        "EXPECTED_VISIBLE_PROFILE_COUNT=1",
+        "EXPECTED_HIDDEN_PROFILE_COUNT=4",
+        "CRABC_EXPECT_SYNC_FILE_RANGE",
+        "CRABC_REQUIRE_SYNC_FILE_RANGE_HIDDEN",
+        "unmangled",
+    ):
+        require(
+            snippet in header_runner,
+            f"sync_file_range header runner omits {snippet}",
+        )
+    runner = (
+        ROOT / "compat" / "x86_64" / "run_libc_sync_file_range.sh"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "run_musl_oracle.sh",
+        "run_sync_file_range_header_abi.sh",
+        "-nostdlib -static",
+        "--no-undefined",
+        "assert_selected_c_abi_surface",
+        "sync_file_range=277",
+        "sync_file_range must have exactly one selected archive member",
+        "candidate lacks the selected errno TLS segment",
+        "sync_file_range delegates to an unselected runtime boundary",
+        "sync syncfs fsync fdatasync copy_file_range",
+    ):
+        require(
+            snippet in runner,
+            f"sync_file_range runner omits {snippet}",
+        )
 
 
 def require_static_sched_yield_artifact(family: Mapping[str, Any]) -> None:
@@ -43833,6 +44176,7 @@ def validate_ledger(
     require_lchown_artifact(by_id["libc.posix-runtime"])
     require_hasmntopt_artifact(by_id["libc.posix-runtime"])
     require_static_sync_artifact(by_id["libc.posix-runtime"])
+    require_static_sync_file_range_artifact(by_id["libc.posix-runtime"])
     require_callback_algorithms_artifact(by_id["libc.posix-runtime"])
     require_clock_gettime_artifact(by_id["libc.posix-runtime"])
     require_time_observation_artifact(by_id["libc.posix-runtime"])

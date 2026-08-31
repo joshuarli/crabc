@@ -21721,7 +21721,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertNotIn("--whole-archive", artifact_runner)
 
         self.assertIn("sync", static_export_names)
-        self.assertFalse(static_export_names & {"syncfs", "sync_file_range"})
+        self.assertFalse(static_export_names & {"syncfs"})
         self.assertIn('id = "static-c-sync"', parity_ledger)
         self.assertIn('command = "./scripts/dev-x86_64.sh libc-sync"', parity_ledger)
         self.assertIn("run_sync_header_abi()", runner)
@@ -21737,6 +21737,158 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         )
         self.assertIn(
             '    libc-sync)\n        [ "$#" -eq 0 ] || fail "libc-sync takes no arguments"',
+            runner,
+        )
+
+    def test_libc_static_c_abi_sync_file_range_artifact_stays_bounded(self) -> None:
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        implementation = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "sync_file_range.rs"
+        ).read_text(encoding="utf-8")
+        header_c_probe = (
+            ROOT / "compat" / "x86_64" / "sync_file_range_header_abi_probe.c"
+        ).read_text(encoding="utf-8")
+        header_cxx_probe = (
+            ROOT / "compat" / "x86_64" / "sync_file_range_header_abi_probe.cpp"
+        ).read_text(encoding="utf-8")
+        header_runner = (
+            ROOT / "compat" / "x86_64" / "run_sync_file_range_header_abi.sh"
+        ).read_text(encoding="utf-8")
+        probe = (
+            ROOT / "compat" / "x86_64" / "libc_sync_file_range_probe.c"
+        ).read_text(encoding="utf-8")
+        start = (
+            ROOT / "compat" / "x86_64" / "libc_sync_file_range_start.S"
+        ).read_text(encoding="utf-8")
+        artifact_runner = (
+            ROOT / "compat" / "x86_64" / "run_libc_sync_file_range.sh"
+        ).read_text(encoding="utf-8")
+        static_export_names = {
+            line
+            for line in (
+                ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+            ).read_text(encoding="utf-8").splitlines()
+            if line and not line.startswith("#")
+        }
+        parity_ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        runner = RUNNER.read_text(encoding="utf-8")
+
+        self.assertIn('#[path = "sync_file_range.rs"]', static_root)
+        for required in (
+            "Selected static Linux/x86-64 GNU `sync_file_range` C ABI leaf",
+            "musl 1.2.6",
+            "src/linux/sync_file_range.c",
+            "SYS_sync_file_range2",
+            "ENOSYS",
+            "sync_file_range=277",
+            "raw_syscall::SYS_SYNC_FILE_RANGE",
+            "raw_syscall::syscall4",
+            "pub unsafe extern \"C\" fn sync_file_range",
+            "c_status(result)",
+        ):
+            self.assertIn(required, implementation)
+        for forbidden in (
+            "fn sync(",
+            "fn syncfs(",
+            "fn fsync(",
+            "fn fdatasync(",
+            "fn copy_file_range(",
+            "raw_syscall::SYS_SYNC_FILE_RANGE2",
+            "alloc::",
+            "Vec<",
+            "__tls_get_addr",
+        ):
+            self.assertNotIn(forbidden, implementation)
+
+        for header_probe in (header_c_probe, header_cxx_probe):
+            for required in (
+                "fcntl.h",
+                "sys/types.h",
+                "sync_file_range",
+                "off_t",
+                "CRABC_EXPECT_SYNC_FILE_RANGE",
+            ):
+                self.assertIn(required, header_probe)
+        self.assertIn("__builtin_types_compatible_p", header_c_probe)
+        self.assertIn("__is_same", header_cxx_probe)
+        for required in (
+            "EXPECTED_PROFILE_COUNT=5",
+            "EXPECTED_VISIBLE_PROFILE_COUNT=1",
+            "EXPECTED_HIDDEN_PROFILE_COUNT=4",
+            "CRABC_REQUIRE_SYNC_FILE_RANGE_HIDDEN",
+            "-nostdinc",
+            "-nostdinc++",
+            "run_musl_oracle.sh",
+            "unmangled",
+        ):
+            self.assertIn(required, header_runner)
+
+        for required in (
+            "#include <errno.h>",
+            "#include <fcntl.h>",
+            "#include <sys/syscall.h>",
+            "SYS_sync_file_range == 277",
+            "SYNC_FILE_RANGE_WAIT_BEFORE",
+            "zero-length",
+            "EOPNOTSUPP",
+            "ESPIPE",
+            "EBADF",
+            "raw_sync_file_range",
+            "CRABC_SYNC_FILE_RANGE_FREESTANDING",
+        ):
+            self.assertIn(required, probe)
+        for required in (
+            "call __crabc_x86_static_tls_bootstrap",
+            "crabc_x86_64_sync_file_range_probe",
+            "exit_group",
+        ):
+            self.assertIn(required, start)
+        self.assertNotIn("arch_prctl", start)
+
+        for required in (
+            "static_c_abi_exports.txt",
+            "run_sync_file_range_header_abi.sh",
+            "-nostdlib -static",
+            "-Wl,-e,_start",
+            "assert_selected_c_abi_surface",
+            "extract_selected_member",
+            "sync_file_range must have exactly one selected archive member",
+            "sync_file_range=277",
+            "candidate lacks the selected errno TLS segment",
+            "sync_file_range delegates to an unselected runtime boundary",
+            "sync syncfs fsync fdatasync copy_file_range",
+            "unowned runtime dependency",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn("--whole-archive", artifact_runner)
+
+        self.assertIn("sync_file_range", static_export_names)
+        self.assertNotIn("syncfs", static_export_names)
+        self.assertIn('id = "static-c-sync-file-range"', parity_ledger)
+        self.assertIn(
+            'command = "./scripts/dev-x86_64.sh libc-sync-file-range"',
+            parity_ledger,
+        )
+        self.assertIn("run_sync_file_range_header_abi()", runner)
+        self.assertIn(
+            "/workspace/compat/x86_64/run_sync_file_range_header_abi.sh",
+            runner,
+        )
+        self.assertIn("run_libc_sync_file_range_probe()", runner)
+        self.assertIn(
+            "/workspace/compat/x86_64/run_libc_sync_file_range.sh",
+            runner,
+        )
+        self.assertIn(
+            '    sync-file-range-header-abi)\n        [ "$#" -eq 0 ] || fail "sync-file-range-header-abi takes no arguments"',
+            runner,
+        )
+        self.assertIn(
+            '    libc-sync-file-range)\n        [ "$#" -eq 0 ] || fail "libc-sync-file-range takes no arguments"',
             runner,
         )
 
