@@ -1206,6 +1206,8 @@ FPATHCONF_SYMBOLS = ("fpathconf",)
 
 PATHCONF_SYMBOLS = ("pathconf",)
 
+SYSCONF_SYMBOLS = ("sysconf",)
+
 MEMORY_SYNC_SYMBOLS = ("msync",)
 
 MEMFD_CREATE_SYMBOLS = ("memfd_create",)
@@ -18145,6 +18147,350 @@ def require_pathconf_artifact(family: Mapping[str, Any]) -> None:
         "run_libc_pathconf",
     ):
         require(snippet in dispatcher, f"pathconf dispatcher omits {snippet}")
+
+
+def require_sysconf_artifact(family: Mapping[str, Any]) -> None:
+    """Keep one direct-table sysconf leaf below configuration promotion."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.posix-runtime].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [entry for entry in artifacts if entry.get("id") == "static-c-sysconf"]
+    require(
+        len(matching) == 1,
+        "libc.posix-runtime must contain exactly one static-c-sysconf artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-sysconf must not promote libc.posix-runtime",
+    )
+    artifact = matching[0]
+    require(
+        "capabilities" not in artifact,
+        "static-c-sysconf must not carry capabilities",
+    )
+
+    description = artifact.get("description")
+    require(isinstance(description, str), "static-c-sysconf needs a description")
+    for phrase in (
+        "Private native x86 selected-static-archive `sysconf` C ABI artifact",
+        "existing `system_configuration.rs` source owner",
+        "still-planned `libc.posix-runtime`",
+        "src/conf/sysconf.c",
+        "much wider static selector table",
+        "_SC_CLK_TCK=2",
+        "_SC_PAGE_SIZE=30",
+        "PAGE_SIZE=4096",
+        "far nonnegative-invalid `INT_MAX` route returning `-1` with EINVAL",
+        "negative signed selector without a source-defined result",
+        "negative selectors are explicitly outside this musl differential artifact",
+        "every other musl selector is also excluded",
+        "`--gc-sections`",
+        "only `sysconf` plus its required `__errno_location`",
+        "does not change or promote the broad `static-c-system-configuration` artifact",
+        "complete sysconf table",
+        "broad system configuration",
+        "rlimit, scheduler, system-information, auxv",
+        "negative-selector behavior",
+        "general text/memory helpers",
+        "allocator",
+        "C runtime",
+        "family completion",
+        "promotion",
+        "public x86 support",
+    ):
+        require(phrase in description, f"static-c-sysconf description omits {phrase}")
+
+    owners = set(
+        nonempty_strings(artifact.get("source_owners"), "static-c-sysconf.source_owners")
+    )
+    for owner in (
+        "compat/upstreams.toml",
+        "compat/abi/musl-1.2.6/aarch64/libc.a.static.tsv",
+        "libc/Cargo.toml",
+        "libc/src/lib.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/system_configuration.rs",
+        "libc/src/c_abi/x86_64/errno.rs",
+        "include/errno.h",
+        "include/features.h",
+        "include/limits.h",
+        "include/sys/types.h",
+        "include/unistd.h",
+        "compat/x86_64/sysconf_header_abi_probe.c",
+        "compat/x86_64/sysconf_header_abi_probe.cpp",
+        "compat/x86_64/run_sysconf_header_abi.sh",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/libc_sysconf_probe.c",
+        "compat/x86_64/libc_sysconf_start.S",
+        "compat/x86_64/run_libc_sysconf.sh",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/aarch64_parity_inventory.py",
+        "compat/x86_64/aarch64_parity_inventory.json",
+        "compat/x86_64/README.md",
+        "STATUS.md",
+        "x86-64.md",
+        "scripts/dev-x86_64.sh",
+        "scripts/check_structure.py",
+    ):
+        require(owner in owners, f"static-c-sysconf source owners omit {owner}")
+
+    prerequisites = nonempty_strings(
+        artifact.get("x86_abi_prerequisites"), "static-c-sysconf.x86_abi_prerequisites"
+    )
+    require(
+        any(
+            "System V AMD64" in item
+            and "int name" in item
+            and "rdi" in item
+            and "long sysconf(int)" in item
+            and "rax" in item
+            and "_SC_CLK_TCK=2" in item
+            and "_SC_PAGE_SIZE=30" in item
+            and "INT_MAX" in item
+            for item in prerequisites
+        ),
+        "static-c-sysconf must retain its C ABI and direct-selector boundary",
+    )
+    require(
+        any(
+            "9fa28ece75d8a2191de7c5bb53bed224c5947417" in item
+            and "src/conf/sysconf.c" in item
+            and "JT_PAGE_SIZE" in item
+            and "x86_64's 4096" in item
+            and "sysconf\tsysconf.lo\tT\tGLOBAL\t0\t21c" in item
+            and "negative names before its bounds check" in item
+            for item in prerequisites
+        ),
+        "static-c-sysconf must retain pinned-musl source and selector provenance",
+    )
+    require(
+        any(
+            "system-configuration archive member" in item
+            and "--gc-sections" in item
+            and "sysconf and __errno_location" in item
+            and "PT_TLS" in item
+            and "%fs TPOFF" in item
+            and "confstr/pathconf/fpathconf/getpagesize/getdtablesize" in item
+            and "getauxval/getrlimit/setrlimit/prlimit/getrusage/getpriority/setpriority/nice/get_nprocs_conf/get_nprocs/get_phys_pages/get_avphys_pages" in item
+            and "string/memory helpers, allocator" in item
+            and "Fixture-local arch_prctl" in item
+            for item in prerequisites
+        ),
+        "static-c-sysconf must retain its final-link isolation boundary",
+    )
+
+    headers = nonempty_strings(
+        artifact.get("x86_header_prerequisites"), "static-c-sysconf.x86_header_prerequisites"
+    )
+    require(
+        any(
+            "long sysconf(int)" in item
+            and "unconditional" in item
+            and "strict, POSIX.1-2008, X/Open 700, GNU, and BSD" in item
+            and "unmangled C++ linkage" in item
+            and "-nostdinc/-nostdinc++" in item
+            and "unistd.h, features.h, and sys/types.h" in item
+            for item in headers
+        ),
+        "static-c-sysconf must retain its focused C/C++ header ABI",
+    )
+
+    exports = set(
+        static_c_abi_export_names(
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        )
+    )
+    require(
+        set(SYSCONF_SYMBOLS) <= exports,
+        "static-c-sysconf must retain its selected export",
+    )
+    require(
+        {symbol for symbol in exports if symbol.startswith("sysconf")}
+        == set(SYSCONF_SYMBOLS),
+        "static-c-sysconf must expose only sysconf",
+    )
+
+    static_root = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+    ).read_text(encoding="utf-8")
+    require(
+        '#[path = "system_configuration.rs"]\nmod system_configuration;' in static_root,
+        "x86 static C ABI must retain the existing system-configuration source owner",
+    )
+    source = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "system_configuration.rs"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "src/conf/sysconf.c",
+        "_SC_CLK_TCK=2",
+        "_SC_PAGE_SIZE=30",
+        "rlimit, scheduler, system-information, and auxv",
+        "unchecked negative signed table index remains outside differential admission",
+        'pub extern "C" fn sysconf',
+        "direct `EINVAL`",
+    ):
+        require(snippet in source, f"existing sysconf source omits {snippet}")
+    sysconf_body = source[
+        source.index("/// Return one selected `sysconf` value.") : source.index(
+            "#[inline]\nfn confstr_value"
+        )
+    ]
+    for forbidden in (
+        "raw_syscall",
+        'pub extern "C" fn confstr',
+        "getauxval",
+        "alloc::",
+    ):
+        require(
+            forbidden not in sysconf_body,
+            f"sysconf source body must not select {forbidden}",
+        )
+
+    runner = (ROOT / "compat" / "x86_64" / "run_libc_sysconf.sh").read_text(
+        encoding="utf-8"
+    )
+    for snippet in (
+        "run_musl_oracle.sh",
+        "run_sysconf_header_abi.sh",
+        "sysconf.lo",
+        "archive_member_for_symbol",
+        "--gc-sections",
+        "-nostdlib -static",
+        "--no-undefined",
+        "candidate retained neighboring system-configuration or resource C ABI symbols",
+        "candidate retained an unselected text or allocator dependency",
+        "candidate lacks the required initial-TLS errno segment",
+        "candidate sysconf calls outside its explicit errno seam",
+        "candidate errno accessor does not use direct initial-TLS FS access",
+    ):
+        require(snippet in runner, f"sysconf runner omits {snippet}")
+    require("--whole-archive" not in runner, "sysconf runner must not force-link the archive")
+
+    probe = (ROOT / "compat" / "x86_64" / "libc_sysconf_probe.c").read_text(
+        encoding="utf-8"
+    )
+    for snippet in (
+        "sysconf_signature",
+        "check_direct_selected_values",
+        "check_indirect_selected_values",
+        "check_far_nonnegative_invalid",
+        "_SC_CLK_TCK",
+        "_SC_PAGE_SIZE",
+        "_SC_PAGESIZE",
+        "INT_MAX",
+        "E2BIG",
+        "EINVAL",
+        "negative inputs are excluded",
+        "CRABC_SYSCONF_FREESTANDING",
+    ):
+        require(snippet in probe, f"sysconf probe omits {snippet}")
+    start = (ROOT / "compat" / "x86_64" / "libc_sysconf_start.S").read_text(
+        encoding="utf-8"
+    )
+    for snippet in (
+        "crabc_x86_64_sysconf_probe",
+        "crabc_x86_64_sysconf_thread_pointer",
+        "mov %rsi, %fs:0",
+        "mov $60, %eax",
+    ):
+        require(snippet in start, f"sysconf start shim omits {snippet}")
+
+    header_c = (
+        ROOT / "compat" / "x86_64" / "sysconf_header_abi_probe.c"
+    ).read_text(encoding="utf-8")
+    header_cxx = (
+        ROOT / "compat" / "x86_64" / "sysconf_header_abi_probe.cpp"
+    ).read_text(encoding="utf-8")
+    for snippet in ("sysconf_signature", "sysconf", "int", "long"):
+        require(snippet in header_c, f"sysconf C header probe omits {snippet}")
+        require(snippet in header_cxx, f"sysconf C++ header probe omits {snippet}")
+    header_runner = (
+        ROOT / "compat" / "x86_64" / "run_sysconf_header_abi.sh"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "sysconf_header_abi_probe.c",
+        "sysconf_header_abi_probe.cpp",
+        "-nostdinc",
+        "-nostdinc++",
+        "compile_profile strict",
+        "compile_profile posix",
+        "compile_profile xopen",
+        "compile_profile gnu",
+        "compile_profile bsd",
+        "retained a mangled sysconf reference",
+        "escaped its declared roots",
+    ):
+        require(snippet in header_runner, f"sysconf header runner omits {snippet}")
+
+    evidence = artifact.get("native_evidence")
+    require(isinstance(evidence, list), "static-c-sysconf needs evidence")
+    require(
+        {entry.get("command") for entry in evidence if isinstance(entry, Mapping)}
+        == {"./scripts/dev-x86_64.sh libc-sysconf"},
+        "static-c-sysconf must use the closed libc-sysconf command",
+    )
+    scope = evidence[0].get("scope")
+    require(
+        isinstance(scope, str)
+        and all(
+            phrase in scope
+            for phrase in (
+                "Pinned-musl/project C/C++ unconditional header",
+                "`-nostdlib -static -Wl,--gc-sections` candidate",
+                "sysconf.lo",
+                "direct/function-pointer `_SC_CLK_TCK=100` and `_SC_PAGE_SIZE/_SC_PAGESIZE=4096` values with stale errno",
+                "far nonnegative INT_MAX EINVAL result",
+                "every other selector and the pinned source's unchecked negative selector",
+                "retains sysconf and __errno_location",
+                "rejecting confstr/pathconf/fpathconf/getpagesize/getdtablesize",
+                "getauxval/resource/system-information APIs",
+                "string/memory helpers, allocator",
+                "no interpreter, DT_NEEDED, unresolved symbols",
+                "PT_TLS and direct initial-TLS FS errno access",
+                "syscall in sysconf",
+                "C runtime",
+                "public x86 support",
+            )
+        ),
+        "static-c-sysconf evidence must retain its isolated static contract",
+    )
+    oracle = artifact.get("oracle")
+    require(isinstance(oracle, list), "static-c-sysconf needs an oracle")
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "c-posix"
+            and "src/conf/sysconf.c" in str(entry.get("role"))
+            and "_SC_CLK_TCK=100" in str(entry.get("role"))
+            and "JT_PAGE_SIZE" in str(entry.get("role"))
+            and "Negative selectors are intentionally excluded" in str(entry.get("role"))
+            for entry in oracle
+        ),
+        "static-c-sysconf must retain its musl behavior oracle",
+    )
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "elf-abi"
+            and "rdi" in str(entry.get("role"))
+            and "rax long" in str(entry.get("role"))
+            for entry in oracle
+        ),
+        "static-c-sysconf must retain its SysV ABI oracle",
+    )
+
+    dispatcher = (ROOT / "scripts" / "dev-x86_64.sh").read_text(encoding="utf-8")
+    for snippet in (
+        "sysconf-header-abi)",
+        "run_sysconf_header_abi",
+        "libc-sysconf)",
+        "run_libc_sysconf",
+    ):
+        require(snippet in dispatcher, f"sysconf dispatcher omits {snippet}")
 
 
 def require_system_information_artifact(family: Mapping[str, Any]) -> None:
@@ -41710,6 +42056,7 @@ def validate_ledger(
     require_confstr_artifact(by_id["libc.posix-runtime"])
     require_fpathconf_artifact(by_id["libc.posix-runtime"])
     require_pathconf_artifact(by_id["libc.posix-runtime"])
+    require_sysconf_artifact(by_id["libc.posix-runtime"])
     require_system_information_artifact(by_id["libc.posix-runtime"])
     require_mapping_core_artifact(by_id["libc.posix-runtime"])
     require_memory_sync_artifact(by_id["libc.posix-runtime"])

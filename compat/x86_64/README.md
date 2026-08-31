@@ -282,6 +282,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh confstr-header-abi
 ./scripts/dev-x86_64.sh fpathconf-header-abi
 ./scripts/dev-x86_64.sh pathconf-header-abi
+./scripts/dev-x86_64.sh sysconf-header-abi
 ./scripts/dev-x86_64.sh getpagesize-header-abi
 ./scripts/dev-x86_64.sh getdtablesize-header-abi
 ./scripts/dev-x86_64.sh system-header-abi
@@ -463,6 +464,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-confstr
 ./scripts/dev-x86_64.sh libc-fpathconf
 ./scripts/dev-x86_64.sh libc-pathconf
+./scripts/dev-x86_64.sh libc-sysconf
 ./scripts/dev-x86_64.sh libc-getpagesize
 ./scripts/dev-x86_64.sh libc-getdtablesize
 ./scripts/dev-x86_64.sh libc-mapping-core
@@ -1475,6 +1477,13 @@ proves an exact unconditional signature and unmangled C++ linkage in strict,
 POSIX, X/Open, GNU, and BSD profiles. It is header-only evidence; it does not
 select broad `unistd.h`, filesystem/configuration behavior, archive linkage,
 C runtime, or public x86 support.
+
+`sysconf-header-abi` is a separate project-first/pinned-musl C11/C++17
+`<unistd.h>` declaration gate for only `long sysconf(int)`. It proves an exact
+unconditional signature and unmangled C++ linkage in strict, POSIX, X/Open,
+GNU, and BSD profiles. It is header-only evidence; it does not select broad
+`unistd.h`, configuration behavior, archive linkage, C runtime, or public x86
+support.
 
 `getpagesize-header-abi` is a separate project-first/pinned-musl C11/C++17
 `<unistd.h>` declaration gate for only `int getpagesize(void)`. It proves
@@ -3826,6 +3835,23 @@ helpers, allocator, and runtime closure. This does not alter or promote
 `static-c-system-configuration`, broad system configuration, filesystem/path
 policy, C runtime, CRT, pthread/TLS lifecycle, or public x86 support.
 
+`libc-sysconf` is a separate private `static-c-sysconf`
+`verified_artifact`, derived from that same existing
+`system_configuration.rs` owner rather than a configuration subsystem. Pinned
+musl 1.2.6 `src/conf/sysconf.c` directly maps `_SC_CLK_TCK=2` to 100 and
+`_SC_PAGE_SIZE=30`/`_SC_PAGESIZE` to x86_64's fixed 4096-byte page before its
+wider rlimit, scheduler, system-information, and auxv paths. The fixture
+admits those two values with stale errno preservation plus only the defined
+far nonnegative `INT_MAX` `EINVAL` route; every other selector and the
+source's negative signed table index stay outside the differential contract.
+The unconditional C/C++ `<unistd.h>` gate is followed by equivalent
+pinned-musl execution and a true `-nostdlib -static -Wl,--gc-sections`
+candidate. Final-link collection retains only `sysconf` and its initial-TLS
+errno seam, rejecting sibling configuration APIs, resource/system-information
+APIs, text/memory helpers, allocator, and runtime closure. This does not alter
+or promote `static-c-system-configuration`, broad system configuration, C
+runtime, CRT, pthread/TLS lifecycle, or public x86 support.
+
 `libc-getdtablesize` is a separate private `static-c-getdtablesize`
 `verified_artifact`, derived from that same existing
 `system_configuration.rs` source owner rather than a new configuration or
@@ -5678,6 +5704,7 @@ Apart from the narrowly named `libc-stat-compat`, `libc-credentials`,
 `libc-confstr`,
 `libc-fpathconf`,
 `libc-pathconf`,
+`libc-sysconf`,
 `libc-getpagesize`,
 `libc-getdtablesize`,
 `libc-mapping-core`,

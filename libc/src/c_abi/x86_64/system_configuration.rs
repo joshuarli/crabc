@@ -11,8 +11,12 @@
 //! Translation provenance is pinned musl 1.2.6 release commit
 //! `9fa28ece75d8a2191de7c5bb53bed224c5947417`, under musl's MIT license:
 //!
-//! - `src/conf/sysconf.c` maps to the explicitly selected two-selector
-//!   [`sysconf`] surface.
+//! - `src/conf/sysconf.c` maps to the explicitly selected two direct-table
+//!   [`sysconf`] entries: `_SC_CLK_TCK=2` and `_SC_PAGE_SIZE=30`. The source's
+//!   wider table reaches rlimit, scheduler, system-information, and auxv
+//!   closures for other names, so those selectors remain outside admission.
+//!   Its defined far nonnegative-invalid route is `EINVAL`; the source's
+//!   unchecked negative signed table index remains outside differential admission.
 //! - `src/conf/confstr.c` maps to [`confstr`].
 //! - `src/conf/fpathconf.c` maps to [`fpathconf`]'s deliberate
 //!   fd-independent selector table. The selected positive selector boundary is
@@ -103,7 +107,10 @@ const _: () = {
 /// The public x86 selector namespace remains available in `<unistd.h>`, but
 /// this bounded static artifact admits only Linux's fixed `USER_HZ` value and
 /// the x86-64 base page size. Any other selector is a direct `EINVAL`, rather
-/// than a fabricated scheduler, system-information, or auxv fallback.
+/// than a fabricated scheduler, system-information, or auxv fallback. The
+/// pinned source directly indexes negative selectors without a source-defined
+/// result, so the selected differential boundary admits only the two direct
+/// values plus a far nonnegative-invalid `EINVAL` result.
 #[no_mangle]
 pub extern "C" fn sysconf(name: c_int) -> c_long {
     match name {

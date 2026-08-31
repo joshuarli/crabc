@@ -1370,7 +1370,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         expected_groups = (
             "timerfd-header-abi|signalfd-header-abi",
             "libc-timerfd|libc-signalfd|libc-sigpause|libc-sigisemptyset|libc-sigandset-sigorset|libc-sigpending|libc-sigrtmax|libc-sigrtmin|libc-sigaddset-sigdelset-sigfillset",
-            "ctermid-header-abi|gethostid-header-abi|getpagesize-header-abi|getdtablesize-header-abi|confstr-header-abi|fpathconf-header-abi|pathconf-header-abi|isatty-header-abi|tcgetpgrp-header-abi|tcsetpgrp-header-abi|getpass-header-abi|libc-ctermid|libc-gethostid|libc-getpagesize|libc-getdtablesize|libc-confstr|libc-fpathconf|libc-pathconf|libc-isatty|libc-tcgetpgrp|libc-tcsetpgrp|libc-getpass|mkfifo-header-abi|mkfifoat-header-abi|libc-mkfifo|libc-mkfifoat|mktemp-header-abi|libc-mktemp",
+            "ctermid-header-abi|gethostid-header-abi|getpagesize-header-abi|getdtablesize-header-abi|confstr-header-abi|fpathconf-header-abi|pathconf-header-abi|sysconf-header-abi|isatty-header-abi|tcgetpgrp-header-abi|tcsetpgrp-header-abi|getpass-header-abi|libc-ctermid|libc-gethostid|libc-getpagesize|libc-getdtablesize|libc-confstr|libc-fpathconf|libc-pathconf|libc-sysconf|libc-isatty|libc-tcgetpgrp|libc-tcsetpgrp|libc-getpass|mkfifo-header-abi|mkfifoat-header-abi|libc-mkfifo|libc-mkfifoat|mktemp-header-abi|libc-mktemp",
             "stdio-permanent-line-io-header-abi|stdio-octal-hex-scan-header-abi",
             "math-complex-complete-header-abi|libc-math-complex-complete",
             "stdio-permanent-byte-io-header-abi",
@@ -17929,6 +17929,152 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         )
         self.assertIn(
             '    libc-pathconf)\n        [ "$#" -eq 0 ] || fail "libc-pathconf takes no arguments"',
+            runner,
+        )
+
+    def test_libc_static_c_abi_sysconf_artifact_stays_section_isolated(self) -> None:
+        """The direct sysconf table entries must not promote configuration support."""
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        source_path = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "system_configuration.rs"
+        )
+        header_c_path = ROOT / "compat" / "x86_64" / "sysconf_header_abi_probe.c"
+        header_cxx_path = (
+            ROOT / "compat" / "x86_64" / "sysconf_header_abi_probe.cpp"
+        )
+        header_runner_path = (
+            ROOT / "compat" / "x86_64" / "run_sysconf_header_abi.sh"
+        )
+        probe_path = ROOT / "compat" / "x86_64" / "libc_sysconf_probe.c"
+        start_path = ROOT / "compat" / "x86_64" / "libc_sysconf_start.S"
+        artifact_runner_path = ROOT / "compat" / "x86_64" / "run_libc_sysconf.sh"
+        for path in (
+            source_path,
+            header_c_path,
+            header_cxx_path,
+            header_runner_path,
+            probe_path,
+            start_path,
+            artifact_runner_path,
+        ):
+            self.assertTrue(path.is_file(), f"missing sysconf artifact input: {path}")
+
+        source = source_path.read_text(encoding="utf-8")
+        header_c = header_c_path.read_text(encoding="utf-8")
+        header_cxx = header_cxx_path.read_text(encoding="utf-8")
+        header_runner = header_runner_path.read_text(encoding="utf-8")
+        probe = probe_path.read_text(encoding="utf-8")
+        start = start_path.read_text(encoding="utf-8")
+        artifact_runner = artifact_runner_path.read_text(encoding="utf-8")
+        static_exports = {
+            line
+            for line in (
+                ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+            ).read_text(encoding="utf-8").splitlines()
+            if line and not line.startswith("#")
+        }
+        parity_ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        runner = RUNNER.read_text(encoding="utf-8")
+
+        self.assertIn('#[path = "system_configuration.rs"]', static_root)
+        for required in (
+            "src/conf/sysconf.c",
+            "_SC_CLK_TCK=2",
+            "_SC_PAGE_SIZE=30",
+            "unchecked negative signed table index remains outside differential admission",
+            'pub extern "C" fn sysconf',
+            "direct `EINVAL`",
+        ):
+            self.assertIn(required, source)
+        sysconf_body = source[
+            source.index("/// Return one selected `sysconf` value.") : source.index(
+                "#[inline]\nfn confstr_value"
+            )
+        ]
+        for forbidden in (
+            "raw_syscall",
+            'pub extern "C" fn confstr',
+            "getauxval",
+            "alloc::",
+        ):
+            self.assertNotIn(forbidden, sysconf_body)
+
+        for header_probe in (header_c, header_cxx):
+            for required in ("sysconf_signature", "sysconf", "int", "long"):
+                self.assertIn(required, header_probe)
+        for required in (
+            "CANDIDATE_CC=/usr/bin/gcc",
+            "-nostdinc",
+            "-nostdinc++",
+            "compile_profile strict",
+            "compile_profile posix",
+            "compile_profile xopen",
+            "compile_profile gnu",
+            "compile_profile bsd",
+            "retained a mangled sysconf reference",
+            "escaped its declared roots",
+        ):
+            self.assertIn(required, header_runner)
+
+        for required in (
+            "sysconf_signature",
+            "check_direct_selected_values",
+            "check_indirect_selected_values",
+            "check_far_nonnegative_invalid",
+            "_SC_CLK_TCK",
+            "_SC_PAGE_SIZE",
+            "_SC_PAGESIZE",
+            "INT_MAX",
+            "E2BIG",
+            "EINVAL",
+            "negative inputs are excluded",
+            "CRABC_SYSCONF_FREESTANDING",
+        ):
+            self.assertIn(required, probe)
+        for required in (
+            "crabc_x86_64_sysconf_probe",
+            "crabc_x86_64_sysconf_thread_pointer",
+            "mov %rsi, %fs:0",
+            "mov $60, %eax",
+        ):
+            self.assertIn(required, start)
+        for required in (
+            "run_musl_oracle.sh",
+            "run_sysconf_header_abi.sh",
+            "sysconf.lo",
+            "archive_member_for_symbol",
+            "-nostdlib -static",
+            "--no-undefined",
+            "--gc-sections",
+            "candidate retained neighboring system-configuration or resource C ABI symbols",
+            "candidate retained an unselected text or allocator dependency",
+            "candidate lacks the required initial-TLS errno segment",
+            "candidate sysconf calls outside its explicit errno seam",
+            "candidate errno accessor does not use direct initial-TLS FS access",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn("--whole-archive", artifact_runner)
+        self.assertIn("sysconf", static_exports)
+        self.assertIn('id = "static-c-sysconf"', parity_ledger)
+        self.assertIn(
+            'command = "./scripts/dev-x86_64.sh libc-sysconf"', parity_ledger
+        )
+        self.assertIn("run_sysconf_header_abi()", runner)
+        self.assertIn("run_libc_sysconf()", runner)
+        self.assertIn(
+            "/workspace/compat/x86_64/run_sysconf_header_abi.sh", runner
+        )
+        self.assertIn("/workspace/compat/x86_64/run_libc_sysconf.sh", runner)
+        self.assertIn(
+            '    sysconf-header-abi)\n        [ "$#" -eq 0 ] || fail "sysconf-header-abi takes no arguments"',
+            runner,
+        )
+        self.assertIn(
+            '    libc-sysconf)\n        [ "$#" -eq 0 ] || fail "libc-sysconf takes no arguments"',
             runner,
         )
 

@@ -1496,6 +1496,24 @@ text/memory helpers, allocator, and C-runtime closure. This does not alter or
 promote `static-c-system-configuration`, filesystem/path policy, libc.so, CRT,
 pthread/TLS lifecycle, family completion, or public x86 support.
 
+`./scripts/dev-x86_64.sh libc-sysconf` is a separate private
+`static-c-sysconf` artifact in that same planned family. It maps pinned musl
+1.2.6 `src/conf/sysconf.c` to the existing `system_configuration.rs` owner:
+the direct `_SC_CLK_TCK=2` table entry returns 100, while
+`_SC_PAGE_SIZE=30`/`_SC_PAGESIZE` resolves to x86_64's fixed 4096-byte page.
+The fixture preserves stale `errno` across just those values and compares the
+defined far nonnegative `INT_MAX` `-1`/`EINVAL` route. Musl's wider
+rlimit/scheduler/system-information/auxv selector paths and its unchecked
+negative signed table index remain outside the differential. Its C/C++
+`<unistd.h>` matrix proves the exact unconditional declaration in strict,
+POSIX, X/Open, GNU, and BSD profiles. The true
+`-nostdlib -static -Wl,--gc-sections` candidate retains only `sysconf` and its
+initial-TLS errno seam, rejecting sibling configuration APIs,
+resource/system-information APIs, text/memory helpers, allocator, and C
+runtime closure. This does not alter or promote
+`static-c-system-configuration`, broad system configuration, libc.so, CRT,
+pthread/TLS lifecycle, family completion, or public x86 support.
+
 `./scripts/dev-x86_64.sh libc-fcntl-record-locks` is a separate private
 `static-c-fcntl-record-locks` artifact inside planned `libc.posix-runtime`.
 Its project-header C/C++ gate and pinned-musl/freestanding-static fixture prove
