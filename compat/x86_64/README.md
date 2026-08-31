@@ -385,6 +385,8 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-memory-sync
 ./scripts/dev-x86_64.sh libc-memory-locking
 ./scripts/dev-x86_64.sh libc-memfd-create
+./scripts/dev-x86_64.sh libc-static-c-abi-same-object-differential
+./scripts/dev-x86_64.sh qualification-posix-abi-admission
 ./scripts/dev-x86_64.sh libc-header-layouts-baseline
 ./scripts/dev-x86_64.sh libc-nanosleep
 ./scripts/dev-x86_64.sh libc-clock-nanosleep
@@ -478,6 +480,40 @@ empty stderr from both lanes, and fails on any difference. This is real
 selected-static-archive evidence for the narrow memfd/errno boundary, not an
 ABI inventory, same-object closure, dynamic-runtime test, family completion,
 promotion, or public x86 support.
+
+`libc-static-c-abi-same-object-differential` is the first true same-object
+artifact within that still-planned family. It compiles the bounded
+`memfd_create` workload exactly once against pinned musl 1.2.6 headers, hashes
+that relocatable object, then passes the same path to the pinned-musl link and
+to a freestanding link against one explicitly built selected `libc.a`. The
+candidate uses the archive-owned Static Initial TLS v1 bootstrap and must have
+`PT_TLS` but no interpreter, `DT_NEEDED`, unresolved symbol, dynamic-TLS
+resolver, or ambient libc/CRT input. The reference must name the pinned
+`/opt/musl-1.2.6/lib/ld-musl-x86_64.so.1` interpreter and `libc.so` soname and
+must not acquire a glibc or search-path dependency. Both executables run under
+`env -i` with fixed locale and timezone, require empty stderr and the exact
+semantic record, and admit only CRLF-to-LF normalization. The same transaction
+also runs the separate project-header `memfd_create` declaration gate;
+pinned-header object reuse is not presented as candidate-header closure. This
+remains a private static `memfd_create`/errno boundary, not the missing x86 ABI
+inventory, dynamic symbol ratchet, broader differential, owned sysroot, family
+completion, promotion, or public support.
+
+`qualification-posix-abi-admission` consumes that same-object transaction and
+four existing real selected-static-archive gates as the checked five-case
+inventory in `qualification_posix_abi.json`: process context, bounded
+process-signal execution, child reaping, and the two-worker pthread/TLS
+aggregate. The standard-library runner validates the exact ordered runner,
+owning-family, completion-marker, and timeout records; scrubs ambient compiler,
+header, linker, and runtime overrides; starts every child in a fresh process
+group; and kills the whole group on timeout. A child succeeds only with status
+zero and one exact final completion marker. Each child gate continues to own
+its pinned-musl comparison, selected candidate construction, ELF/TLS audit,
+and runtime assertions. This is executable admission evidence, not a generated
+report and not a substitute for the canonical dynamic x86 `os-test`,
+`libc-test`, `pthread-stress`, or `signal-process` gates. Their runtime/sysroot
+prerequisites, the remaining ABI contract, family completion, promotion, and
+public x86 support remain required.
 
 `headers-layouts.toml` is the checked-in contract for the forty-four selected
 native header gates. It names each dispatcher command, direct C/C++ probe and

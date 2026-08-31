@@ -901,6 +901,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "libc-memory-locking",
             "libc-memfd-create",
             "libc-static-c-abi-differential",
+            "libc-static-c-abi-same-object-differential|qualification-posix-abi-admission",
             "libc-readiness-waits|libc-system-observation|libc-system-information|libc-fcntl-record-locks|libc-flock|libc-sendfile|libc-posix-fallocate|libc-descriptor-advice|libc-filesystem-capacity|libc-uts-identity|libc-ctype|libc-locale-multibyte|libc-integer-arithmetic|libc-integer-parse|libc-float-parse|libc-intmax-arithmetic|libc-credential-observation|libc-child-reaping|libc-immediate-termination|libc-callback-algorithms|libc-access|libc-clock-gettime|libc-time-observation|libc-system-configuration|libc-mapping-core|libc-header-layouts-baseline|libc-nanosleep|libc-clock-nanosleep|libc-descriptor-entry|libc-fcntl-status-control|libc-ioctl|libc-ffs|libc-byte-strings|libc-inet-address|libc-numeric-netdb|libc-random-entropy|libc-memory-search|libc-string-copy|libc-descriptor-pipeline",
             "libc-vector-io|libc-uio-cxx-linkage",
             "libc-sysv-semaphore",
@@ -939,6 +940,8 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn("libc-pthread-rwlock", source)
         self.assertIn("libc-pthread-cond-private", source)
         self.assertIn("libc-pthread-tls-aggregate", source)
+        self.assertIn("libc-static-c-abi-same-object-differential", source)
+        self.assertIn("qualification-posix-abi-admission", source)
         self.assertIn("libc-pthread-c11-once", source)
         self.assertIn("libc-pthread-c11-tsd", source)
         self.assertIn("pthread-cancellation-header-abi", source)

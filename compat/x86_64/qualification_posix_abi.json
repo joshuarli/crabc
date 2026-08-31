@@ -1,0 +1,42 @@
+{
+  "schema": "crabc.x86_64-qualification-posix-abi-admission/v1",
+  "id": "qualification-posix-abi-admission",
+  "target": "Linux/x86-64 little-endian",
+  "cases": [
+    {
+      "id": "same-object-static-c-abi",
+      "family": "compat.abi-differential",
+      "runner": "compat/x86_64/run_libc_same_object_static_c_abi_differential.sh",
+      "expected_stdout_line": "x86 static C ABI same-object differential: PASS (libc.a; pinned musl 1.2.6)",
+      "timeout_seconds": 1200
+    },
+    {
+      "id": "static-process-context",
+      "family": "compat.posix-process",
+      "runner": "compat/x86_64/run_libc_process_context.sh",
+      "expected_stdout_line": "x86 static crabc-libc process context: PASS",
+      "timeout_seconds": 1200
+    },
+    {
+      "id": "static-signal-execution",
+      "family": "compat.posix-process",
+      "runner": "compat/x86_64/run_libc_signal_execution.sh",
+      "expected_stdout_line": "x86 static crabc-libc signal execution: PASS",
+      "timeout_seconds": 1200
+    },
+    {
+      "id": "static-child-reaping",
+      "family": "compat.posix-process",
+      "runner": "compat/x86_64/run_libc_child_reaping.sh",
+      "expected_stdout_line": "x86 static libc child reaping: PASS",
+      "timeout_seconds": 1200
+    },
+    {
+      "id": "static-pthread-tls-aggregate",
+      "family": "compat.posix-process",
+      "runner": "compat/x86_64/run_libc_pthread_tls_aggregate.sh",
+      "expected_stdout_line": "x86 static crabc-libc pthread/TLS aggregate: PASS",
+      "timeout_seconds": 1200
+    }
+  ]
+}

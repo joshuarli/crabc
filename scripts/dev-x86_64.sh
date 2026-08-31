@@ -235,6 +235,8 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-memory-locking  run the static x86 crabc-libc per-range memory-locking slice
   libc-memfd-create  run the static x86 crabc-libc memfd_create slice
   libc-static-c-abi-differential  run the private static-C ABI musl differential bootstrap
+  libc-static-c-abi-same-object-differential  run the private same-object static-C ABI differential
+  qualification-posix-abi-admission  run the closed non-promoting POSIX/ABI artifact admission inventory
   libc-header-layouts-baseline  run the static x86 crabc-libc C/C++ header/layout baseline
   libc-nanosleep  run the static x86 crabc-libc nanosleep slice
   libc-clock-nanosleep  run the static x86 crabc-libc clock_nanosleep slice
@@ -1737,6 +1739,14 @@ run_libc_static_c_abi_differential() {
     run_in_container bash /workspace/compat/x86_64/run_libc_static_c_abi_differential.sh
 }
 
+run_libc_same_object_static_c_abi_differential() {
+    run_in_container bash /workspace/compat/x86_64/run_libc_same_object_static_c_abi_differential.sh
+}
+
+run_qualification_posix_abi_admission() {
+    run_in_container python3 /workspace/compat/x86_64/run_qualification_posix_abi.py
+}
+
 run_libc_header_layouts_baseline() {
     run_in_container bash /workspace/compat/x86_64/run_libc_header_layouts_baseline.sh
 }
@@ -2876,6 +2886,7 @@ case "$command" in
     libc-memory-locking) ;;
     libc-memfd-create) ;;
     libc-static-c-abi-differential) ;;
+    libc-static-c-abi-same-object-differential|qualification-posix-abi-admission) ;;
     libc-readiness-waits|libc-system-observation|libc-system-information|libc-fcntl-record-locks|libc-flock|libc-sendfile|libc-posix-fallocate|libc-descriptor-advice|libc-filesystem-capacity|libc-uts-identity|libc-ctype|libc-locale-multibyte|libc-integer-arithmetic|libc-integer-parse|libc-float-parse|libc-intmax-arithmetic|libc-credential-observation|libc-child-reaping|libc-immediate-termination|libc-callback-algorithms|libc-access|libc-clock-gettime|libc-time-observation|libc-system-configuration|libc-mapping-core|libc-header-layouts-baseline|libc-nanosleep|libc-clock-nanosleep|libc-descriptor-entry|libc-fcntl-status-control|libc-ioctl|libc-ffs|libc-byte-strings|libc-inet-address|libc-numeric-netdb|libc-random-entropy|libc-memory-search|libc-string-copy|libc-descriptor-pipeline) ;;
     libc-vector-io|libc-uio-cxx-linkage) ;;
     libc-sysv-semaphore) ;;
@@ -4026,6 +4037,16 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "libc-static-c-abi-differential takes no arguments"
         ensure_image
         run_libc_static_c_abi_differential
+        ;;
+    libc-static-c-abi-same-object-differential)
+        [ "$#" -eq 0 ] || fail "libc-static-c-abi-same-object-differential takes no arguments"
+        ensure_image
+        run_libc_same_object_static_c_abi_differential
+        ;;
+    qualification-posix-abi-admission)
+        [ "$#" -eq 0 ] || fail "qualification-posix-abi-admission takes no arguments"
+        ensure_image
+        run_qualification_posix_abi_admission
         ;;
     libc-header-layouts-baseline)
         [ "$#" -eq 0 ] || fail "libc-header-layouts-baseline takes no arguments"

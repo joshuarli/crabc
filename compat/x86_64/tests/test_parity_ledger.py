@@ -50,7 +50,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 28)
-        self.assertEqual(report["verified_artifact_count"], 97)
+        self.assertEqual(report["verified_artifact_count"], 99)
         self.assertEqual(report["header_layout_probe_count"], 45)
         self.assertEqual(report["public_header_inventory_count"], 183)
         self.assertEqual(report["header_foundation_header_count"], 191)
@@ -7806,6 +7806,89 @@ class X86ParityLedgerTests(unittest.TestCase):
     def test_symbols_gate_is_accounted_for_by_the_abi_differential_family(self) -> None:
         data = self.data()
         self.assertIn("symbols", self.family(data, "compat.abi-differential")["aarch64_gates"])
+
+    def test_qualification_posix_abi_admission_is_real_and_non_promoting(self) -> None:
+        data = self.data()
+        abi_family = self.family(data, "compat.abi-differential")
+        posix_family = self.family(data, "compat.posix-process")
+        self.assertEqual(abi_family["status"], "planned")
+        self.assertEqual(posix_family["status"], "planned")
+
+        abi_artifact = next(
+            artifact
+            for artifact in abi_family["verified_artifact"]
+            if artifact["id"] == "static-c-abi-same-object-differential"
+        )
+        self.assertNotIn("capabilities", abi_artifact)
+        self.assertEqual(
+            {entry["command"] for entry in abi_artifact["native_evidence"]},
+            {"./scripts/dev-x86_64.sh libc-static-c-abi-same-object-differential"},
+        )
+        for phrase in (
+            "immutable workload object compiled only once",
+            "pinned-musl 1.2.6 headers",
+            "explicitly built selected `crabc-libc` archive",
+            "Static Initial TLS v1",
+            "pinned `/opt/musl-1.2.6/lib/ld-musl-x86_64.so.1` interpreter",
+            "ambient glibc or search-path dependency",
+            "ABI inventory",
+            "promotion",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, abi_artifact["description"])
+
+        posix_artifact = next(
+            artifact
+            for artifact in posix_family["verified_artifact"]
+            if artifact["id"] == "static-posix-process-abi-admission"
+        )
+        self.assertNotIn("capabilities", posix_artifact)
+        self.assertEqual(
+            {entry["command"] for entry in posix_artifact["native_evidence"]},
+            {"./scripts/dev-x86_64.sh qualification-posix-abi-admission"},
+        )
+        for phrase in (
+            "closed five-case inventory",
+            "process-context archive",
+            "process-signal execution",
+            "child reaping",
+            "pthread/TLS transaction",
+            "not a generated report",
+            "`os-test`, `libc-test`, `pthread-stress`, and `signal-process`",
+            "family completion",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, posix_artifact["description"])
+
+        changed = copy.deepcopy(data)
+        changed_abi_artifact = next(
+            artifact
+            for artifact in self.family(changed, "compat.abi-differential")[
+                "verified_artifact"
+            ]
+            if artifact["id"] == "static-c-abi-same-object-differential"
+        )
+        changed_abi_artifact["description"] = "same object"
+        with self.assertRaisesRegex(
+            ledger.LedgerError,
+            "static-c-abi-same-object-differential description omits",
+        ):
+            ledger.validate_ledger(changed)
+
+        changed = copy.deepcopy(data)
+        changed_posix_artifact = next(
+            artifact
+            for artifact in self.family(changed, "compat.posix-process")[
+                "verified_artifact"
+            ]
+            if artifact["id"] == "static-posix-process-abi-admission"
+        )
+        changed_posix_artifact["description"] = "aggregate"
+        with self.assertRaisesRegex(
+            ledger.LedgerError,
+            "static-posix-process-abi-admission description omits",
+        ):
+            ledger.validate_ledger(changed)
 
     def test_baseline_capabilities_are_read_from_the_baseline_toml(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

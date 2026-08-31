@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import importlib.util
+import json
 import tomllib
 from pathlib import Path
 from typing import Any, Mapping
@@ -51,6 +52,9 @@ SYS_TIME_DIRECT_HEADER_ABI_RUNNER_PATH = (
 ACCESS_HEADER_ABI_RUNNER_PATH = ROOT / "compat" / "x86_64" / "run_access_header_abi.sh"
 XATTR_HEADER_ABI_RUNNER_PATH = ROOT / "compat" / "x86_64" / "run_xattr_header_abi.sh"
 X86_64_EVIDENCE_DOCKERFILE_PATH = ROOT / "docker" / "Dockerfile.x86_64"
+QUALIFICATION_POSIX_ABI_CONTRACT_PATH = (
+    ROOT / "compat" / "x86_64" / "qualification_posix_abi.json"
+)
 AARCH64_PARITY_INVENTORY_VALIDATOR_PATH = (
     ROOT / "compat" / "x86_64" / "aarch64_parity_inventory.py"
 )
@@ -6124,6 +6128,288 @@ def require_ldso_dynamic_admission_artifact(family: Mapping[str, Any]) -> None:
     require(
         "run_ldso_dynamic_admission.sh" in (ROOT / "scripts" / "dev-x86_64.sh").read_text(),
         "ldso-dynamic-admission dispatcher binding is missing",
+    )
+
+
+def require_same_object_static_c_abi_artifact(family: Mapping[str, Any]) -> None:
+    """Keep the admitted same-object differential real and non-promoting."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[compat.abi-differential].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [
+        entry
+        for entry in artifacts
+        if entry.get("id") == "static-c-abi-same-object-differential"
+    ]
+    require(
+        len(matching) == 1,
+        "compat.abi-differential needs exactly one static-c-abi-same-object-differential artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-abi-same-object-differential must not promote compat.abi-differential",
+    )
+    artifact = matching[0]
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for phrase in (
+        "still-planned `compat.abi-differential`",
+        "immutable workload object compiled only once",
+        "pinned-musl 1.2.6 headers",
+        "explicitly built selected `crabc-libc` archive",
+        "Static Initial TLS v1",
+        "`env -i`",
+        "CRLF-to-LF",
+        "exact `memfd_create` success/stale-errno/invalid-flags/bad-pointer record",
+        "pinned `/opt/musl-1.2.6/lib/ld-musl-x86_64.so.1` interpreter and `libc.so` soname",
+        "ambient glibc or search-path dependency",
+        "no interpreter, DT_NEEDED, unresolved symbol, dynamic-TLS resolver, or ambient libc/CRT",
+        "separate project-header declaration gate",
+        "ABI inventory",
+        "owned sysroot",
+        "public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"static-c-abi-same-object-differential description omits {phrase}",
+        )
+    expected_sources = {
+        "compat/upstreams.toml",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/errno.rs",
+        "libc/src/c_abi/x86_64/static_tls.rs",
+        "libc/src/c_abi/x86_64/memfd_create.rs",
+        "compat/x86_64/static_c_abi_differential_memfd_probe.c",
+        "compat/x86_64/static_c_abi_differential_start.S",
+        "compat/x86_64/run_memfd_create_header_abi.sh",
+        "compat/x86_64/run_same_object_static_c_abi_differential.sh",
+        "compat/x86_64/run_libc_same_object_static_c_abi_differential.sh",
+        "compat/x86_64/tests/test_qualification_posix_abi.py",
+        "scripts/dev-x86_64.sh",
+    }
+    require(
+        set(string_list(artifact["source_owners"], "same-object ABI source owners"))
+        == expected_sources,
+        "static-c-abi-same-object-differential source owners drifted",
+    )
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-static-c-abi-same-object-differential"},
+        "static-c-abi-same-object-differential must use the dedicated native command",
+    )
+    comparator = (
+        ROOT / "compat" / "x86_64" / "run_same_object_static_c_abi_differential.sh"
+    ).read_text(encoding="utf-8")
+    for phrase in (
+        '"$ORACLE_CC" -std=c11 -D_GNU_SOURCE -nostdinc',
+        '-c "$FIXTURE" -o "$workload_object"',
+        '"$ORACLE_CC" "$workload_object" -o "$reference"',
+        '"$workload_object" "$start_object" "$archive" -o "$candidate"',
+        'sha256sum "$workload_object"',
+        "run_memfd_create_header_abi.sh",
+        "reference does not select the pinned musl interpreter",
+        "reference selected an ambient glibc or search-path runtime",
+        "env -i PATH=/usr/bin:/bin LC_ALL=C LANG=C TZ=UTC",
+        "Requesting program interpreter|INTERP",
+        "NEEDED",
+        'readelf --relocs --wide "$candidate"',
+        "__tls_get_addr",
+        "x86 static C ABI same-object differential: PASS",
+    ):
+        require(
+            phrase in comparator,
+            f"same-object ABI comparator omits {phrase}",
+        )
+    builder = (
+        ROOT
+        / "compat"
+        / "x86_64"
+        / "run_libc_same_object_static_c_abi_differential.sh"
+    ).read_text(encoding="utf-8")
+    for phrase in (
+        "cargo rustc --locked -p crabc-libc --lib",
+        "--target x86_64-unknown-linux-musl",
+        "run_same_object_static_c_abi_differential.sh",
+        '--archive "$archive"',
+    ):
+        require(phrase in builder, f"same-object ABI builder omits {phrase}")
+    dispatcher = (ROOT / "scripts" / "dev-x86_64.sh").read_text(encoding="utf-8")
+    require(
+        "libc-static-c-abi-same-object-differential)" in dispatcher,
+        "same-object ABI dispatcher binding is missing",
+    )
+
+
+def require_posix_process_abi_admission_artifact(family: Mapping[str, Any]) -> None:
+    """Ratchet the selected static qualification inventory below family completion."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[compat.posix-process].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [
+        entry
+        for entry in artifacts
+        if entry.get("id") == "static-posix-process-abi-admission"
+    ]
+    require(
+        len(matching) == 1,
+        "compat.posix-process needs exactly one static-posix-process-abi-admission artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-posix-process-abi-admission must not promote compat.posix-process",
+    )
+    artifact = matching[0]
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for phrase in (
+        "still-planned `compat.posix-process`",
+        "closed five-case inventory",
+        "same-object static `memfd_create` ABI/errno differential",
+        "selected process-context archive",
+        "bounded process-signal execution",
+        "child reaping",
+        "two-worker pthread/TLS transaction",
+        "fresh process group",
+        "kills the whole group on timeout",
+        "not a generated report",
+        "dynamic x86 `os-test`, `libc-test`, `pthread-stress`, and `signal-process` gates",
+        "family completion",
+        "public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"static-posix-process-abi-admission description omits {phrase}",
+        )
+    expected_sources = {
+        "compat/x86_64/qualification_posix_abi.json",
+        "compat/x86_64/run_qualification_posix_abi.py",
+        "compat/x86_64/run_libc_same_object_static_c_abi_differential.sh",
+        "compat/x86_64/run_same_object_static_c_abi_differential.sh",
+        "compat/x86_64/run_libc_process_context.sh",
+        "compat/x86_64/run_libc_signal_execution.sh",
+        "compat/x86_64/run_libc_child_reaping.sh",
+        "compat/x86_64/run_libc_pthread_tls_aggregate.sh",
+        "compat/x86_64/tests/test_qualification_posix_abi.py",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/tests/test_runner.py",
+        "scripts/dev-x86_64.sh",
+    }
+    require(
+        set(string_list(artifact["source_owners"], "POSIX/ABI admission source owners"))
+        == expected_sources,
+        "static-posix-process-abi-admission source owners drifted",
+    )
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh qualification-posix-abi-admission"},
+        "static-posix-process-abi-admission must use the dedicated native command",
+    )
+
+    expected_cases = (
+        (
+            "same-object-static-c-abi",
+            "compat.abi-differential",
+            "compat/x86_64/run_libc_same_object_static_c_abi_differential.sh",
+            "x86 static C ABI same-object differential: PASS (libc.a; pinned musl 1.2.6)",
+            1200,
+        ),
+        (
+            "static-process-context",
+            "compat.posix-process",
+            "compat/x86_64/run_libc_process_context.sh",
+            "x86 static crabc-libc process context: PASS",
+            1200,
+        ),
+        (
+            "static-signal-execution",
+            "compat.posix-process",
+            "compat/x86_64/run_libc_signal_execution.sh",
+            "x86 static crabc-libc signal execution: PASS",
+            1200,
+        ),
+        (
+            "static-child-reaping",
+            "compat.posix-process",
+            "compat/x86_64/run_libc_child_reaping.sh",
+            "x86 static libc child reaping: PASS",
+            1200,
+        ),
+        (
+            "static-pthread-tls-aggregate",
+            "compat.posix-process",
+            "compat/x86_64/run_libc_pthread_tls_aggregate.sh",
+            "x86 static crabc-libc pthread/TLS aggregate: PASS",
+            1200,
+        ),
+    )
+    try:
+        document = json.loads(
+            QUALIFICATION_POSIX_ABI_CONTRACT_PATH.read_text(encoding="utf-8")
+        )
+    except (OSError, json.JSONDecodeError) as error:
+        raise LedgerError(f"cannot read POSIX/ABI admission contract: {error}") from error
+    require(
+        isinstance(document, Mapping)
+        and document.get("schema")
+        == "crabc.x86_64-qualification-posix-abi-admission/v1"
+        and document.get("id") == "qualification-posix-abi-admission"
+        and document.get("target") == "Linux/x86-64 little-endian",
+        "POSIX/ABI admission contract identity drifted",
+    )
+    cases = document.get("cases")
+    require(isinstance(cases, list), "POSIX/ABI admission cases must be an array")
+    actual_cases = tuple(
+        (
+            entry.get("id"),
+            entry.get("family"),
+            entry.get("runner"),
+            entry.get("expected_stdout_line"),
+            entry.get("timeout_seconds"),
+        )
+        for entry in cases
+        if isinstance(entry, Mapping)
+    )
+    require(
+        len(actual_cases) == len(cases) and actual_cases == expected_cases,
+        "POSIX/ABI admission case inventory drifted",
+    )
+    aggregate = (
+        ROOT / "compat" / "x86_64" / "run_qualification_posix_abi.py"
+    ).read_text(encoding="utf-8")
+    for phrase in (
+        "EXPECTED_CASES",
+        "qualification case roster or order drifted",
+        "start_new_session=True",
+        "os.killpg(process.pid, signal.SIGKILL)",
+        "LC_ALL",
+        "LD_LIBRARY_PATH",
+        "LD_PRELOAD",
+        "C_INCLUDE_PATH",
+        "GCC_EXEC_PREFIX",
+        "COMPILER_PATH",
+        "CARGO_TARGET_DIR",
+        "CARGO_ENCODED_RUSTFLAGS",
+        "CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER",
+        "RUSTC_WRAPPER",
+        "RUSTC_WORKSPACE_WRAPPER",
+        "RUSTFLAGS",
+        "nonempty_lines.count(case.expected_stdout_line) != 1",
+        "nonempty_lines[-1] != case.expected_stdout_line",
+        "selected artifact transactions; non-promoting",
+    ):
+        require(phrase in aggregate, f"POSIX/ABI admission runner omits {phrase}")
+    dispatcher = (ROOT / "scripts" / "dev-x86_64.sh").read_text(encoding="utf-8")
+    require(
+        "qualification-posix-abi-admission)" in dispatcher,
+        "POSIX/ABI admission dispatcher binding is missing",
     )
 
 
@@ -15969,6 +16255,8 @@ def validate_ledger(
     require_stdio_standard_streams_artifact(by_id["libc.text-math-locale-stdio"])
     require_math_complex_foundation_artifact(by_id["libc.text-math-locale-stdio"])
     require_named_locale_multibyte_artifact(by_id["libc.text-math-locale-stdio"])
+    require_same_object_static_c_abi_artifact(by_id["compat.abi-differential"])
+    require_posix_process_abi_admission_artifact(by_id["compat.posix-process"])
 
     musl_oracle = by_id["oracle.musl-toolchain"]
     require(musl_oracle["status"] == "foundation-verified", "musl oracle must remain foundation-verified")

@@ -6,6 +6,15 @@ runtime parity, defined by [`x86-64.md`](x86-64.md). It covers `crabc-core`,
 with explicit target-specific foundations and native evidence. Public support
 remains Linux/AArch64 little-endian until every x86 promotion gate passes.
 
+The x86 qualification lane has one bounded same-object static
+`memfd_create`/errno differential and one consumed five-transaction POSIX/ABI
+admission inventory covering the selected process-context, process-signal,
+child-reaping, and pthread/TLS aggregate candidates. These are real native
+selected-artifact executions, but both owning compatibility families remain
+planned: ABI inventory/symbol closure, the dynamic canonical
+OS/libc/pthread/signal suites, their runtime/sysroot prerequisites, and all
+other promotion gates are still required.
+
 The x86 lane has four private ET_DYN interpreter artifacts inside still-planned
 `ldso.dynamic-runtime`. `ldso-initial-graph` is limited to
 one main PIE -> mid.so -> leaf.so graph, RELATIVE/GLOB_DAT/JUMP_SLOT ELF64

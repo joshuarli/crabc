@@ -1563,9 +1563,9 @@
         "differential"
       ],
       "capability_count": 0,
-      "contract_state": "missing",
+      "contract_state": "selected-private",
       "id": "compat.abi-differential",
-      "verified_artifact_count": 0,
+      "verified_artifact_count": 1,
       "verified_slice_count": 0
     },
     {
@@ -1576,9 +1576,9 @@
         "signal-process"
       ],
       "capability_count": 0,
-      "contract_state": "missing",
+      "contract_state": "selected-private",
       "id": "compat.posix-process",
-      "verified_artifact_count": 0,
+      "verified_artifact_count": 1,
       "verified_slice_count": 0
     },
     {
@@ -1652,12 +1652,20 @@
   ],
   "family_state_counts": {
     "implemented-foundation": 8,
-    "missing": 11,
-    "selected-private": 7
+    "missing": 9,
+    "selected-private": 9
   },
   "purpose": "Derived AArch64-to-x86 runtime contract inventory; evidence accounting only, never a promotion decision.",
   "schema": "crabc.x86_64-aarch64-parity-inventory/v1",
   "selected_private_artifacts": [
+    {
+      "family": "compat.abi-differential",
+      "id": "static-c-abi-same-object-differential"
+    },
+    {
+      "family": "compat.posix-process",
+      "id": "static-posix-process-abi-admission"
+    },
     {
       "family": "crt.dynamic-startup",
       "id": "dynamic-pie-link-contract"
@@ -2051,7 +2059,7 @@
     "aarch64_abi_manifest": "33dd504470f467caac7b149e747ee2b7ff8714c4fb23dfe5ad46e7f58bfe610c",
     "aarch64_capability_ledger": "128458dde00073bc0320b94972d864e66fa10d5f54e92b1b1c83081e2b4955e0",
     "aarch64_headers": "a0d35f0950abb3c060b978dfb5257cf50f70bed46ce91d371f43d65db7626b68",
-    "x86_parity_ledger": "dbd7b83b9ad22fe0bfc9f35aea01987e609ba320e66d0f9c43b151f84f2d3ea4",
+    "x86_parity_ledger": "b82b5988be8732e47e21404dac2db6d1d750937598548a6c838217990823247f",
     "x86_public_headers": "2cdcd860a423d99afef8360b6376447cf17ae926f1cd47416be817d421fca80f",
     "x86_static_c_exports": "f32d4672b2c6ea2d43bb7cef28463f600d25bb91530f0a788e5cc6342d11fd2a"
   },
