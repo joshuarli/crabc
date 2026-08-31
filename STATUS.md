@@ -1222,6 +1222,18 @@ public signal mask/action interface, generic delivery or process control,
 queues/signalfd, timers/readiness policy, pthread cancellation, libc.so, CRT,
 loader, sysroot, family/platform parity, promotion, or public x86 support.
 
+`./scripts/dev-x86_64.sh libc-sigisemptyset` is a separate private
+`static-c-sigisemptyset` artifact inside planned `libc.posix-runtime`. Its
+one-symbol pinned-musl/freestanding-static C proof follows musl 1.2.6's GNU
+`sigisemptyset`: x86 `_NSIG=65` yields one selected unsigned-long word, so it
+returns one iff the first eight-byte public `sigset_t` word is zero and ignores
+the remaining fifteen words. The fixture proves tail-only nonzero storage,
+first-word nonzero storage, no caller writes, and stale-`errno` preservation;
+the shared header gate proves GNU visibility and strict-POSIX hiding. It does
+not select `sigandset`/`sigorset`, handlers/actions, mask or process signaling,
+waits, queues, descriptors, timers, pthread policy, libc.so, CRT, loader,
+sysroot, family/platform parity, promotion, or public x86 support.
+
 `./scripts/dev-x86_64.sh libc-ioctl` is a private
 `static-c-generic-ioctl` artifact inside planned `libc.posix-runtime`. It
 proves the direct signed `int ioctl(int, int, ...)` C boundary through pinned

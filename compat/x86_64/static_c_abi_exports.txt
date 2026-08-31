@@ -722,6 +722,7 @@ sigaltstack
 sigdelset
 sigemptyset
 sigfillset
+sigisemptyset
 sigismember
 siglongjmp
 signal

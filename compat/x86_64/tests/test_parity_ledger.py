@@ -49,8 +49,8 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["status_counts"], {"foundation-verified": 8, "planned": 18})
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
-        self.assertEqual(report["verified_slice_count"], 40)
-        self.assertEqual(report["verified_artifact_count"], 153)
+        self.assertEqual(report["verified_slice_count"], 41)
+        self.assertEqual(report["verified_artifact_count"], 154)
         self.assertEqual(report["header_layout_probe_count"], 46)
         self.assertEqual(report["public_header_inventory_count"], 183)
         self.assertEqual(report["header_foundation_header_count"], 191)
@@ -12448,6 +12448,88 @@ class X86ParityLedgerTests(unittest.TestCase):
         assert isinstance(evidence, list) and isinstance(evidence[0], dict)
         evidence[0]["command"] = "./scripts/dev-x86_64.sh signal-reference"
         with self.assertRaisesRegex(ledger.LedgerError, "closed libc-sigpause command"):
+            ledger.validate_ledger(data)
+
+    def test_sigisemptyset_artifact_keeps_its_closed_static_contract(self) -> None:
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-sigisemptyset"
+        )
+        self.assertNotIn("capabilities", artifact)
+        for owner in (
+            "libc/src/c_abi/x86_64/signal_set_isempty.rs",
+            "compat/x86_64/signal_header_abi_probe.c",
+            "compat/x86_64/signal_header_posix_abi_probe.c",
+            "compat/x86_64/run_signal_header_abi.sh",
+            "compat/x86_64/libc_sigisemptyset_probe.c",
+            "compat/x86_64/libc_sigisemptyset_start.S",
+            "compat/x86_64/run_libc_sigisemptyset.sh",
+        ):
+            self.assertIn(owner, artifact["source_owners"])
+        self.assertEqual(
+            {evidence["command"] for evidence in artifact["native_evidence"]},
+            {"./scripts/dev-x86_64.sh libc-sigisemptyset"},
+        )
+        for phrase in (
+            "one-symbol GNU signal-set predicate artifact",
+            "planned `libc.posix-runtime`",
+            "`sigisemptyset`",
+            "first eight-byte",
+            "tail",
+            "sigandset`/`sigorset",
+            "handlers/actions",
+            "mask or process signaling",
+            "family completion, promotion, or public x86 support",
+        ):
+            self.assertIn(phrase, artifact["description"])
+        prerequisites = artifact["x86_abi_prerequisites"]
+        self.assertTrue(
+            any(
+                "_NSIG=65" in prerequisite
+                and "SST_SIZE=1" in prerequisite
+                and "first unsigned-long word" in prerequisite
+                for prerequisite in prerequisites
+            )
+        )
+        self.assertTrue(
+            any(
+                "src/signal/sigisemptyset.c" in prerequisite
+                and "_GNU_SOURCE" in prerequisite
+                and "sigandset" in prerequisite
+                for prerequisite in prerequisites
+            )
+        )
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-sigisemptyset"
+        )
+        artifact["description"] = "private predicate"
+        with self.assertRaisesRegex(ledger.LedgerError, "static-c-sigisemptyset description omits"):
+            ledger.validate_ledger(data)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-sigisemptyset"
+        )
+        evidence = artifact["native_evidence"]
+        assert isinstance(evidence, list) and isinstance(evidence[0], dict)
+        evidence[0]["command"] = "./scripts/dev-x86_64.sh signal-reference"
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "closed libc-sigisemptyset command"
+        ):
             ledger.validate_ledger(data)
 
     def test_signal_execution_artifact_keeps_its_closed_static_contract(self) -> None:

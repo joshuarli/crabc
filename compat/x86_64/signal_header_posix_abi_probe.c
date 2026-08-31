@@ -41,3 +41,11 @@ _Static_assert(__builtin_types_compatible_p(__typeof__(&sigwaitinfo),
     int (*)(const sigset_t *, siginfo_t *)), "POSIX sigwaitinfo declaration");
 _Static_assert(__builtin_types_compatible_p(__typeof__(&sigwait),
     int (*)(const sigset_t *, int *)), "POSIX sigwait declaration");
+
+/* Compiled only by the expected-failure GNU-extension visibility check. */
+#if defined(CRABC_REQUIRE_SIGISEMPTYSET_HIDDEN)
+int crabc_signal_header_sigisemptyset_must_be_hidden(const sigset_t *set)
+{
+    return sigisemptyset(set);
+}
+#endif

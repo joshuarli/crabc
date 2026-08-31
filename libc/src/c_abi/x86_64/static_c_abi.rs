@@ -12,8 +12,9 @@
 //! leaves, plus the complete private
 //! `math.special` error/Bessel/gamma/decomposition/stepping/scaling/conversion
 //! block with binary80 preserved end to end, plus deliberately narrow simple
-//! signal action/mask, bounded process-signal execution, a direct legacy
-//! single-signal pause wait, and fixed-minimum alternate signal-stack behavior,
+//! signal action/mask, one pure GNU signal-set predicate, bounded process-signal
+//! execution, a direct legacy single-signal pause wait, and fixed-minimum
+//! alternate signal-stack behavior,
 //! plus direct timer-descriptor
 //! creation/query/control and direct signal-descriptor creation/update, one default-attribute
 //! create/explicit-exit/join/detach worker and its typed C11
@@ -243,6 +244,8 @@ mod setjmp;
 mod signal_foundation;
 #[path = "signal_control.rs"]
 mod signal_control;
+#[path = "signal_set_isempty.rs"]
+mod signal_set_isempty;
 #[path = "signal_execution.rs"]
 mod signal_execution;
 #[path = "signal_pause.rs"]

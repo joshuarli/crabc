@@ -381,6 +381,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-timerfd
 ./scripts/dev-x86_64.sh libc-signalfd
 ./scripts/dev-x86_64.sh libc-sigpause
+./scripts/dev-x86_64.sh libc-sigisemptyset
 ./scripts/dev-x86_64.sh libc-static-tls-v1
 ./scripts/dev-x86_64.sh libc-crt-static-tls
 ./scripts/dev-x86_64.sh libc-crt1-static-tls
@@ -2588,6 +2589,19 @@ runner-owned FIFO queues blocked `SIGUSR1` before the call and proves
 API, generic delivery or process control, queues/signalfd, timers/readiness,
 pthread cancellation, signal-family completion, AArch64 parity, promotion, or
 public x86 support.
+
+`libc-sigisemptyset` is a separate `static-c-sigisemptyset`
+`verified_artifact` within planned `libc.posix-runtime`. Its project-header C
+body first runs through pinned musl 1.2.6 and then through a true
+`-nostdlib -static` candidate. It selects exactly the GNU
+`sigisemptyset` predicate: x86 musl's `_NSIG=65` makes its `SST_SIZE` one, so
+the predicate reads only the first eight-byte public `sigset_t` word, returns
+one iff that word is zero, ignores the fifteen-word tail, writes no caller
+storage, preserves stale `errno`, and makes no syscall. The shared signal-header
+gate proves the GNU pointer declaration and strict-POSIX hiding. It does not
+select `sigandset`/`sigorset`, handlers/actions, mask or process signaling,
+waits, queues, descriptors, timers, pthread policy, signal-family completion,
+AArch64 parity, promotion, or public x86 support.
 
 `libc-static-tls-v1` is a separately recorded private static
 `verified_artifact` inside still-planned `libc.pthread-tls`. Its freestanding
@@ -4803,7 +4817,8 @@ startup, loader TLS, sysroot, nor public x86 support.
 
 Apart from the narrowly named `libc-stat-compat`, `libc-credentials`,
 `libc-bootstrap-primitives`, `libc-signal-control`, `libc-signal-execution`,
-`libc-signal-altstack`, `libc-timerfd`, `libc-signalfd`, and `libc-sigpause`,
+`libc-signal-altstack`, `libc-timerfd`, `libc-signalfd`, `libc-sigpause`, and
+`libc-sigisemptyset`,
 `libc-static-tls-v1`, `libc-crt-static-tls`,
 `libc-pthread-create-join-tls`, `libc-pthread-identity`, `libc-c11-lifecycle`,
 `libc-pthread-detach`, `libc-thrd-sleep`, `libc-thrd-yield`, `libc-pthread-cpuclock`, `libc-pthread-name`, `libc-pthread-mutex-normal`,

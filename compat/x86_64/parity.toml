@@ -3252,6 +3252,51 @@ oracle = [
 ]
 
 [[family.verified_artifact]]
+id = "static-c-sigisemptyset"
+description = "Private native x86 selected-static-archive one-symbol GNU signal-set predicate artifact inside planned `libc.posix-runtime`. One dependency-free `crabc-libc` archive exposes exactly `sigisemptyset`; its freestanding project-header C fixture first runs through pinned musl 1.2.6 and then through a true `-nostdlib -static` candidate. The exact musl predicate returns one only when the first eight-byte public x86 signal-set word is zero, ignores the remaining public `sigset_t` tail, writes no caller storage, preserves stale errno, and makes no syscall. The shared GNU/POSIX signal-header gate proves its exact GNU signature and strict-POSIX hiding. This separate leaf does not select the adjacent `sigandset`/`sigorset` extensions, handlers/actions, mask or process signaling, waits, queues, descriptors, timers, pthread policy, libc.so, CRT, dynamic TLS lifecycle, loader, sysroot, family completion, promotion, or public x86 support."
+source_owners = [
+  "compat/upstreams.toml",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/signal_set_isempty.rs",
+  "libc/src/c_abi/x86_64/errno.rs",
+  "libc/src/c_abi/x86_64/static_tls.rs",
+  "include/errno.h",
+  "include/signal.h",
+  "include/bits/alltypes.h",
+  "compat/x86_64/signal_header_abi_probe.c",
+  "compat/x86_64/signal_header_posix_abi_probe.c",
+  "compat/x86_64/run_signal_header_abi.sh",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/libc_sigisemptyset_probe.c",
+  "compat/x86_64/libc_sigisemptyset_start.S",
+  "compat/x86_64/run_libc_sigisemptyset.sh",
+  "compat/x86_64/aarch64_parity_inventory.py",
+  "compat/x86_64/aarch64_parity_inventory.json",
+  "compat/x86_64/tests/test_aarch64_parity_inventory.py",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "compat/x86_64/README.md",
+  "STATUS.md",
+  "x86-64.md",
+  "scripts/dev-x86_64.sh",
+  "scripts/check_structure.py",
+]
+x86_abi_prerequisites = [
+  "Linux/x86-64 public sigset_t is 128-byte align-8 storage with sixteen unsigned-long words. Pinned musl has _NSIG=65 and unsigned long size eight, so src/signal/sigisemptyset.c derives SST_SIZE=1 and examines only the first unsigned-long word; tail words are neither read nor written. Its scalar pointer/result ABI returns 1 for a zero first word and 0 otherwise without an error-state or syscall path.",
+  "Pinned musl 1.2.6 src/signal/sigisemptyset.c is the complete MIT source mapping: its _GNU_SOURCE signal.h declaration is int sigisemptyset(const sigset_t *), and its only loop body reads each selected word then returns 0 on nonzero or 1 at completion. The adjacent GNU sigandset/sigorset source files remain deliberately unselected.",
+  "The common pinned-musl/candidate C body proves a tail-only nonzero set reports empty, a nonzero first word reports nonempty, both tail sentinels and first-word storage remain unchanged, and a prior ERANGE value stays unchanged. The static start delegates only the archive Static Initial TLS v1 bootstrap required to observe errno; it does not claim CRT or general TLS lifecycle.",
+]
+x86_header_prerequisites = ["The existing project-first/pinned-musl GNU/POSIX signal-header gate compiles the exact GNU sigisemptyset pointer signature and separately requires its implicit declaration to fail in strict POSIX C. The static fixture preprocesses project errno.h, signal.h, and bits/alltypes.h. This is a bounded GNU declaration plus static linkage proof, not installed-header, signal/runtime family, or public-support completion."]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-sigisemptyset", scope = "Pinned-musl 1.2.6 project-header C reference plus a true dependency-free x86 crabc-libc archive and `-nostdlib -static` candidate. The gate runs the GNU-visible/strict-POSIX-hidden signal-header proof; checks project-header provenance and exact crate-owned C-object export closure separately from compiler-builtins; rejects interpreter/DT_NEEDED/unresolved symbols/dynamic TLS/unowned runtime, handlers/actions, signal masks, process signaling, waits, queues, descriptors, timers, pthreads, allocator, auxv, and sysconf paths; proves direct initial-TLS errno and a sigisemptyset disassembly with no call or syscall; and executes tail-only-empty, first-word-nonempty, no-write, and stale-errno observations. It adds no sigandset/sigorset, general signal framework, dynamic libc, CRT, loader, sysroot, family completion, promotion, or public x86 support." }]
+oracle = [
+  { kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source, GNU declaration, and behavior oracle for src/signal/sigisemptyset.c: the x86 SST_SIZE=1 predicate reads only the first public word and returns 1 iff it is zero." },
+  { kind = "elf-abi", source = "System V AMD64 psABI", role = "LP64 sigset_t pointer/int result calling ABI and static initial-exec TLS fixture contract." },
+]
+
+[[family.verified_artifact]]
 id = "static-c-process-signal-execution"
 description = "Private native x86 selected-static-archive process-signal execution block. One dependency-free `crabc-libc` archive composes the existing simple action/set/mask/sigsuspend boundary with exactly `kill`, `killpg`, `raise`, `sigqueue`, `sigtimedwait`, `sigwaitinfo`, and `sigwait` into a freestanding C fixture after an equivalent pinned-musl execution. It preserves musl's one-word application-signal block/restore transaction around `raise` and `sigqueue`, exact queued `siginfo_t` sender/value initialization, stale errno on successful delivery/waits, `sigtimedwait` EINTR retry, and musl's `sigwait` `-1`/errno failure convention. A fixture-only raw clone/pipe/wait/exit route makes an interrupted wait followed by a queued wake deterministic; it is not a lifecycle API. The corrected baseline now uses this same pinned-musl sigwait result convention across the target contract. This artifact excludes `tgkill`, sigaltstack, signalfd, legacy signal APIs, pthread signal/cancellation policy, generic process lifecycle, allocator, libc.so, CRT, loader, sysroot, and public x86 support. It is one verified artifact within planned `libc.posix-runtime`, not process.signal, signal/header family, C-runtime, or platform completion."
 source_owners = [

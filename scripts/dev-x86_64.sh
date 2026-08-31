@@ -132,6 +132,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-timerfd  run the static x86 crabc-libc timer-descriptor slice
   libc-signalfd  run the static x86 crabc-libc signal-descriptor slice
   libc-sigpause  run the static x86 crabc-libc one-signal pause slice
+  libc-sigisemptyset  run the static x86 crabc-libc GNU signal-set predicate slice
   libc-extended-attributes  run the static x86 crabc-libc extended-attribute slice
   libc-pathname-lifecycle  run the static x86 crabc-libc pathname-lifecycle slice
   libc-directory-streams  run the static x86 crabc-libc directory-stream slice
@@ -427,6 +428,11 @@ application signal, and proves Linux restores the original mask after the
 interrupted wait. It does not select a public mask/action API, process control,
 signal queues/descriptors, timers, pthread behavior, dynamic libc, or
 application startup.
+`libc-sigisemptyset` is a separate one-entry GNU signal-set predicate boundary.
+It reads exactly musl's first public x86 signal-set word, ignores the remaining
+128-byte-record tail, preserves stale errno, and has no syscall path. It does
+not select signal actions/handlers, mask or process signaling, waits,
+descriptors, timers, pthread behavior, dynamic libc, or application startup.
 `libc-static-tls-v1` passes a real
 final static executable's untouched entry stack to a hidden libc owner, which
 validates and retains its one PT_TLS template, installs the main Variant-II
@@ -2146,6 +2152,10 @@ run_libc_sigpause_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_sigpause.sh
 }
 
+run_libc_sigisemptyset_probe() {
+    run_in_container bash /workspace/compat/x86_64/run_libc_sigisemptyset.sh
+}
+
 run_libc_extended_attributes() {
     run_in_container bash /workspace/compat/x86_64/run_libc_extended_attributes.sh
 }
@@ -3362,7 +3372,7 @@ shift
 
 case "$command" in
     timerfd-header-abi|signalfd-header-abi) ;;
-    libc-timerfd|libc-signalfd|libc-sigpause) ;;
+    libc-timerfd|libc-signalfd|libc-sigpause|libc-sigisemptyset) ;;
     ctermid-header-abi|getpass-header-abi|libc-ctermid|libc-getpass|mktemp-header-abi|libc-mktemp) ;;
     stdio-permanent-line-io-header-abi) ;;
     math-complex-complete-header-abi|libc-math-complex-complete) ;;
@@ -4946,6 +4956,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "libc-sigpause takes no arguments"
         ensure_image
         run_libc_sigpause_probe
+        ;;
+    libc-sigisemptyset)
+        [ "$#" -eq 0 ] || fail "libc-sigisemptyset takes no arguments"
+        ensure_image
+        run_libc_sigisemptyset_probe
         ;;
     libc-extended-attributes)
         [ "$#" -eq 0 ] || fail "libc-extended-attributes takes no arguments"

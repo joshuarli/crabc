@@ -48,4 +48,19 @@ grep -Fq "$ROOT_DIR/include/signal.h" "$header_trace" || {
 }
 "$ORACLE_CC" -std=c11 -I "$ROOT_DIR/include" -fsyntax-only "$posix_probe"
 
+# Pinned musl exposes sigisemptyset only in its GNU block. Keep the same
+# strict-POSIX negative witness for the project header; C++ is intentionally
+# excluded because its default GNU surface is different.
+if "$ORACLE_CC" -std=c11 -Werror=implicit-function-declaration \
+    -DCRABC_REQUIRE_SIGISEMPTYSET_HIDDEN -fsyntax-only "$posix_probe" \
+    >"$work_dir/oracle-sigisemptyset-hidden.out" 2>&1; then
+    fail "pinned musl exposes sigisemptyset outside _GNU_SOURCE"
+fi
+if "$ORACLE_CC" -std=c11 -Werror=implicit-function-declaration \
+    -I "$ROOT_DIR/include" -DCRABC_REQUIRE_SIGISEMPTYSET_HIDDEN \
+    -fsyntax-only "$posix_probe" >"$work_dir/project-sigisemptyset-hidden.out" \
+    2>&1; then
+    fail "project signal.h exposes sigisemptyset outside _GNU_SOURCE"
+fi
+
 printf 'x86 pinned-musl GNU/POSIX signal header ABI: PASS\n'
