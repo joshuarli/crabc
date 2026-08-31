@@ -52,8 +52,9 @@ fn allocate_owner_exit_aggregate() -> [usize; OWNER_EXIT_CLIENT_COUNT] {
         _ => panic!("the owner receives its OS-singleton native client"),
     };
 
-    // A rejected B-side foreign realloc must leave these source bytes intact
-    // until generic pointer-first free consumes this aggregate member.
+    // W01's B-side replacement must copy this exact bounded source prefix
+    // before generic pointer-first nonlocal free consumes the aggregate
+    // member. The old source address is stale after that successful return.
     unsafe {
         medium.as_ptr().write(0x61);
         medium.as_ptr().add(4095).write(0x62);
@@ -102,8 +103,8 @@ fn native_post_exit_free_keeps_a_preexisting_b_session_continuable() {
     #[cfg(feature = "native-runtime-test-audit")]
     assert_eq!(
         native_runtime_fork_admission_test_audit().active_later_thread_count,
-        1,
-        "A's detached aggregate keeps its admission while B has not attached"
+        0,
+        "A's completed persistent owner releases its admission before B attaches"
     );
 
     let (local_sender, local_receiver) = mpsc::sync_channel(0);
@@ -112,8 +113,8 @@ fn native_post_exit_free_keeps_a_preexisting_b_session_continuable() {
         #[cfg(feature = "native-runtime-test-audit")]
         assert_eq!(
             native_runtime_fork_admission_test_audit().active_later_thread_count,
-            2,
-            "B's parked local session attaches beside A's detached-route admission"
+            1,
+            "B's parked local session owns the only admission after A's owner completed"
         );
         let local = match native_allocate_aligned(53, 16, false) {
             NativePageAllocationResult::Allocated(block) => block,
@@ -127,26 +128,45 @@ fn native_post_exit_free_keeps_a_preexisting_b_session_continuable() {
         }
 
         // SAFETY: A supplied this exact still-live aggregate address before
-        // its typed route detached. B may read its PageMap facts and submit
-        // it to the direct realloc boundary, but cannot make it B-local.
+        // its typed route detached. This selected post-exit source remains
+        // `AbandonedMapped`, so W01 may establish B's persistent target,
+        // copy its bounded prefix, and consume the old source without
+        // borrowing A's local engine or route.
         let medium = unsafe { core::ptr::NonNull::new_unchecked(detached_clients[2] as *mut u8) };
         assert!(
             unsafe { native_usable_size(medium) }.is_some_and(|usable_size| usable_size >= 64 * 1024),
             "the PageMap pointer query reads A's detached source extent beside B's local session"
         );
-        assert!(
-            matches!(
-                unsafe { native_reallocate(Some(medium), 4096) },
-                NativePageAllocationResult::Unavailable
-            ),
-            "B's parked local session is not a replacement route for A's detached source"
+        let replacement = match unsafe { native_reallocate(Some(medium), 4096) } {
+            NativePageAllocationResult::Allocated(block) => block,
+            NativePageAllocationResult::Unavailable => {
+                panic!("B finds A's abandoned-mapped source through PageMap facts")
+            }
+            NativePageAllocationResult::AllocationFailed => {
+                panic!("B creates its replacement through its persistent owner")
+            }
+            NativePageAllocationResult::Retained => {
+                panic!("only a true Detached source is retained; this selected source is AbandonedMapped")
+            }
+        };
+        assert_ne!(
+            replacement, medium,
+            "the nonlocal source cannot use B's local in-place realloc path"
         );
-        assert_eq!(unsafe { medium.as_ptr().read() }, 0x61);
-        assert_eq!(unsafe { medium.as_ptr().add(4095).read() }, 0x62);
+        assert!(
+            unsafe { native_usable_size(replacement) }
+                .is_some_and(|usable_size| usable_size >= 4096),
+            "B's replacement covers its requested extent"
+        );
+        // SAFETY: successful W01 reallocation copied the bounded 4 KiB prefix
+        // before it consumed the old `medium` source. The old address must not
+        // be read or freed again after this point.
+        assert_eq!(unsafe { replacement.as_ptr().read() }, 0x61);
+        assert_eq!(unsafe { replacement.as_ptr().add(4095).read() }, 0x62);
         assert_eq!(
-            unsafe { native_free(medium) },
+            unsafe { native_free(replacement) },
             NativePageFreeResult::Freed,
-            "B releases A's unchanged medium through generic pointer-first free"
+            "B releases only its successful local replacement"
         );
 
         for (index, (address, request)) in detached_clients
@@ -155,8 +175,9 @@ fn native_post_exit_free_keeps_a_preexisting_b_session_continuable() {
             .enumerate()
         {
             if index == 2 {
-                // The exact medium client was consumed only by the generic
-                // pointer-first free above, so it must not be offered twice.
+                // W01 already consumed A's exact medium source while creating
+                // and copying B's replacement above, so it must not be offered
+                // to generic pointer-first free a second time.
                 continue;
             }
             // SAFETY: A supplied each exact still-live native address before
@@ -176,18 +197,18 @@ fn native_post_exit_free_keeps_a_preexisting_b_session_continuable() {
         #[cfg(feature = "native-runtime-test-audit")]
         assert_eq!(
             native_runtime_fork_admission_test_audit().active_later_thread_count,
-            2,
-            "A's terminal proof stays admitted beside B's parked local session before B exits"
+            1,
+            "source consumption leaves only B's parked local-session admission active before B exits"
         );
         let continued = match native_allocate_aligned(89, 16, false) {
             NativePageAllocationResult::Allocated(block) => block,
             _ => panic!(
-                "B resumes only its own parked session for a new local allocation after A's terminal proof"
+                "B resumes only its own parked session for a new local allocation after A's source consumption"
             ),
         };
         // SAFETY: `continued` is B's exact local client until the local free
         // immediately below. Its contents distinguish this ordinary resumed
-        // session operation from the opaque completed A route.
+        // session operation from A's already consumed source.
         unsafe {
             continued.as_ptr().write(0x73);
             continued.as_ptr().add(88).write(0x74);
@@ -211,7 +232,7 @@ fn native_post_exit_free_keeps_a_preexisting_b_session_continuable() {
         let successor = match unsafe { native_reallocate(Some(local), 4096) } {
             NativePageAllocationResult::Allocated(block) => block,
             _ => panic!(
-                "B resumes only its own parked session for a local replacement after A's terminal proof"
+                "B resumes only its own parked session for a local replacement after A's source consumption"
             ),
         };
         assert_eq!(
@@ -230,13 +251,13 @@ fn native_post_exit_free_keeps_a_preexisting_b_session_continuable() {
         assert_eq!(
             finish_current_thread_native_after_user_destructors(),
             ThreadFinishResult::Finished,
-            "B tears down its own live session into a separate typed route before it settles A's proof"
+            "B tears down its own live session into a separate typed route after A's source was consumed"
         );
         #[cfg(feature = "native-runtime-test-audit")]
         assert_eq!(
             native_runtime_fork_admission_test_audit().active_later_thread_count,
-            1,
-            "B's successor route retains B's admission after B's finish consumes only A's proof"
+            0,
+            "B's completed persistent owner releases its admission after its own session finishes"
         );
     });
     let local = local_receiver
@@ -244,13 +265,13 @@ fn native_post_exit_free_keeps_a_preexisting_b_session_continuable() {
         .expect("the coordinator receives B's exact local client before B exits");
     releaser
         .join()
-        .expect("B completes both its local and detached-route lifecycles");
+        .expect("B completes its local session and publishes its successor route");
 
     #[cfg(feature = "native-runtime-test-audit")]
     assert_eq!(
         native_runtime_fork_admission_test_audit().active_later_thread_count,
-        1,
-        "B's successor route remains the only later-worker admission after B joins"
+        0,
+        "B's successor route carries no worker-admission claim after B joins"
     );
 
     let final_releaser = std::thread::spawn(move || {
@@ -258,11 +279,11 @@ fn native_post_exit_free_keeps_a_preexisting_b_session_continuable() {
         #[cfg(feature = "native-runtime-test-audit")]
         assert_eq!(
             native_runtime_fork_admission_test_audit().active_later_thread_count,
-            2,
-            "C attaches beside B's successor-route admission"
+            1,
+            "C owns the only admission beside B's successor route"
         );
         // SAFETY: B detached this exact local address into its own typed
-        // native route after B had terminally released A's route.
+        // native route after B had consumed A's source.
         let local = unsafe { core::ptr::NonNull::new_unchecked(local as *mut u8) };
         assert_eq!(
             unsafe { native_free(local) },
@@ -278,7 +299,7 @@ fn native_post_exit_free_keeps_a_preexisting_b_session_continuable() {
         assert_eq!(
             native_runtime_fork_admission_test_audit().active_later_thread_count,
             0,
-            "C's normal finish releases B's successor proof only after its terminal route free"
+            "C's normal finish releases its admission after B's terminal route free"
         );
     });
     final_releaser
@@ -287,7 +308,7 @@ fn native_post_exit_free_keeps_a_preexisting_b_session_continuable() {
 
     let resumed = match ticket_zero_allocate(73, false) {
         TicketZeroPageAllocationResult::Allocated(block) => block,
-        _ => panic!("ticket zero reactivates after B settles both lifecycle claims"),
+        _ => panic!("ticket zero reactivates after C settles B's successor lifecycle claim"),
     };
     assert_eq!(
         unsafe { ticket_zero_free(resumed) },
