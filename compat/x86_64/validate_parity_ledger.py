@@ -19013,7 +19013,7 @@ def require_math_x87_extended_artifact(family: Mapping[str, Any]) -> None:
         "--gc-sections",
         "EXPECTED_RECORDS=1260",
         "1,80p",
-        "cosl sinl tanl powl",
+        "formerly neighboring binary80 roots are now selected",
         "fldt fpatan f2xm1 fyl2x fprem fprem1 frndint fsqrt",
         "candidate binary80/fenv record stream differs from pinned musl",
     ):
@@ -19199,7 +19199,7 @@ def require_math_special_slice(family: Mapping[str, Any]) -> None:
         "run_math_special_header_abi.sh",
         "elementary_sin elementary_powl internal_rem_pio2 internal_lgamma_r",
         "SELECTED_SIBLING_SYMBOLS=(rint rintf sqrt sqrtf)",
-        "cos cosf exp expf floor floorf log logf pow powl",
+        "selected shared long-double archive roots",
         "float_parse",
         "fldt fstpt fistpll mulsd mulss",
         "candidate math.special record stream differs from pinned musl",

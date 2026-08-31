@@ -115,8 +115,10 @@ for helper in elementary_sin elementary_powl internal_rem_pio2 internal_lgamma_r
 		fail "archive exposes private ${helper} provider"
 	fi
 done
-for unselected in cos cosf exp expf floor floorf log logf pow powl \
-	round roundf roundl sin sinf sinl; do
+# `powl`, `roundl`, and `sinl` are selected shared long-double archive roots;
+# this artifact keeps only its local binary32/binary64 provider exclusions.
+for unselected in cos cosf exp expf floor floorf log logf pow \
+	round roundf sin sinf; do
 	if grep -Fxq "$unselected" "$selected_symbols"; then
 		fail "archive accidentally exports private elementary provider ${unselected}"
 	fi

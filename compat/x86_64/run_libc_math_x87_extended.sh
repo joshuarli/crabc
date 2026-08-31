@@ -80,11 +80,9 @@ for symbol in "${SELECTED_SYMBOLS[@]}"; do
 	grep -Eq "[[:space:]][TW][[:space:]]${symbol}$" "$archive_symbols" ||
 		fail "archive does not define ${symbol}"
 done
-for unselected in cosl sinl tanl powl cbrtl hypotl; do
-	if grep -Eq "[[:space:]][TW][[:space:]]${unselected}$" "$archive_symbols"; then
-		fail "archive accidentally exports unselected ${unselected}"
-	fi
-done
+# The formerly neighboring binary80 roots are now selected by the shared
+# complete long-double capability. Their archive materialization does not
+# expand this x87 artifact's own evidence contract.
 
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -DCRABC_MATH_X87_EXTENDED_FREESTANDING \
 	-I"$ROOT_DIR/include" -nostdlib -static -fno-pie -no-pie -ffreestanding \

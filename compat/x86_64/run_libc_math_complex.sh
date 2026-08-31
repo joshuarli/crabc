@@ -57,7 +57,9 @@ for symbol in __fpclassify __fpclassifyf __fpclassifyl __signbit __signbitf \
 	cproj cprojf cprojl; do
 	grep -Eq "[[:space:]][TW][[:space:]]${symbol}$" "$archive_symbols" || fail "archive does not define $symbol"
 done
-for unselected in cabs cabsf cabsl carg cargf cargl cpow cpowf cpowl cexp cexpf cexpl sin sinf sinl csin csinf csinl; do
+# `sinl` is a selected shared long-double archive root; this foundation runner
+# still excludes only the unselected complex and binary32/binary64 siblings.
+for unselected in cabs cabsf cabsl carg cargf cargl cpow cpowf cpowl cexp cexpf cexpl sin sinf csin csinf csinl; do
 	if grep -Eq "[[:space:]][TW][[:space:]]${unselected}$" "$archive_symbols"; then
 		fail "archive accidentally exports unselected ${unselected}"
 	fi

@@ -2395,7 +2395,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         )
         self.assertNotIn("capabilities", artifact)
         slices = text_math["verified_slice"]
-        assert isinstance(slices, list) and len(slices) == 2
+        assert isinstance(slices, list) and len(slices) == 3
         capability = next(
             entry
             for entry in slices
@@ -3999,7 +3999,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             "does not select libc.so", credentials["native_evidence"][0]["scope"]
         )
         posix_artifacts = posix_runtime["verified_artifact"]
-        assert isinstance(posix_artifacts, list) and len(posix_artifacts) == 57
+        assert isinstance(posix_artifacts, list) and len(posix_artifacts) == 58
         artifacts_by_id = {
             artifact["id"]: artifact
             for artifact in posix_artifacts
