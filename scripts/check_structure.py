@@ -196,6 +196,7 @@ X86_RUNTIME_FOUNDATION_LIBC_SOURCES = {
     Path("libc/src/c_abi/x86_64/math_fmod.rs"),
     Path("libc/src/c_abi/x86_64/math_cbrt.rs"),
     Path("libc/src/c_abi/x86_64/math_exp2.rs"),
+    Path("libc/src/c_abi/x86_64/math_expm1.rs"),
     Path("libc/src/c_abi/x86_64/math_ceil.rs"),
     Path("libc/src/c_abi/x86_64/math_floor.rs"),
     Path("libc/src/c_abi/x86_64/math_round.rs"),

@@ -245,6 +245,8 @@ exp2
 exp2f
 exp2l
 expl
+expm1
+expm1f
 expm1l
 fabs
 fabsf

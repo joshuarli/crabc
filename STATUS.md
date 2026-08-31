@@ -1269,6 +1269,21 @@ fallback, `exp2l`, adjacent exp/log/pow functions, fenv API/policy,
 special/complex/binary80 math, family completion, promotion, and public x86
 support.
 
+The separate private `static-c-math-expm1` artifact records only binary64
+`expm1` and binary32 `expm1f`: `./scripts/dev-x86_64.sh libc-math-expm1` runs
+project-header C and default-SSE/`-mfpmath=387` C++ function-pointer fixtures
+through pinned musl and one freestanding static candidate. Its checked GCC
+15.2.0 translation of musl 1.2.6 `expm1.c`/`expm1f.c` is a direct no-call
+closure retaining binary64/binary32 range reduction, polynomial reconstruction,
+raw-subnormal `FORCE_EVAL`, and overflow scaling without tables, ambient libm,
+or selected `math.special` state. The 248-record differential covers signed
+zero, tiny/subnormal and normal bounds, reduction and overflow thresholds,
+infinities, quiet/signaling NaNs, results, flags, and all four requested-and-
+observed MXCSR rounding directions. Strong target-owned definitions and final
+ELF checks reject weak compiler-builtins fallback, `expm1l`, adjacent exp/log/
+pow functions, fenv API/policy, special/complex/binary80 math, family
+completion, promotion, and public x86 support.
+
 The separate private `static-c-math-ceil` artifact records only binary64
 `ceil` and binary32 `ceilf`: `./scripts/dev-x86_64.sh libc-math-ceil` runs
 project-header C and default-SSE/`-mfpmath=387` C++ function-pointer fixtures

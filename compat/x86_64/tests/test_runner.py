@@ -25353,6 +25353,104 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         ):
             self.assertIn(required, assembly)
 
+    def test_math_expm1_runner_keeps_the_binary32_binary64_static_boundary(self) -> None:
+        dispatcher = RUNNER.read_text(encoding="utf-8")
+        runner = (ROOT / "compat" / "x86_64" / "run_libc_math_expm1.sh").read_text(
+            encoding="utf-8"
+        )
+        probe = (ROOT / "compat" / "x86_64" / "libc_math_expm1_probe.c").read_text(
+            encoding="utf-8"
+        )
+        header = (
+            ROOT / "compat" / "x86_64" / "math_expm1_header_abi_probe.cpp"
+        ).read_text(encoding="utf-8")
+        header_runner = (
+            ROOT / "compat" / "x86_64" / "run_math_expm1_header_abi.sh"
+        ).read_text(encoding="utf-8")
+        leaf = (ROOT / "libc" / "src" / "c_abi" / "x86_64" / "math_expm1.rs").read_text(
+            encoding="utf-8"
+        )
+        assembly = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "math_expm1_musl_x86_64.S"
+        ).read_text(encoding="utf-8")
+        generator = (
+            ROOT / "compat" / "x86_64" / "generate_libc_math_expm1.py"
+        ).read_text(encoding="utf-8")
+
+        for required in (
+            "math-expm1-header-abi)",
+            "run_math_expm1_header_abi()",
+            "libc-math-expm1)",
+            "run_libc_math_expm1_probe()",
+            "/workspace/compat/x86_64/run_libc_math_expm1.sh",
+        ):
+            self.assertIn(required, dispatcher)
+        for required in (
+            "-nostdlib -static",
+            "--no-undefined",
+            "--gc-sections",
+            "run_math_expm1_header_abi.sh",
+            "strong crabc-owned",
+            "weak compiler-builtins",
+            "candidate accidentally retains unselected",
+            "candidate retains TLS",
+            "addsd addss subsd subss mulsd mulss divsd divss cvtsd2ss",
+            "expm1l exp expf",
+        ):
+            self.assertIn(required, runner)
+        for required in (
+            "direct_expm1",
+            "direct_expm1f",
+            "EXPM1_RECORD_WORDS 4",
+            "binary64_inputs",
+            "binary32_inputs",
+            "FE_TONEAREST",
+            "FE_DOWNWARD",
+            "FE_UPWARD",
+            "FE_TOWARDZERO",
+            "fegetround",
+            "fetestexcept",
+            "0x40862e42fefa39ef",
+            "0x42b17217",
+            "0x7ff0000000000042",
+            "0x7f800042",
+        ):
+            self.assertIn(required, probe)
+        for required in ("double_unary", "float_unary", "direct_expm1", "direct_expm1f"):
+            self.assertIn(required, header)
+        for required in ("math_expm1_header_abi_probe.cpp", "-mfpmath=387", "unmangled"):
+            self.assertIn(required, header_runner)
+        for required in (
+            "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+            "d585fd3b613c66151fc3249e8ed44f77020cb5e6c1e635a616d3f9f82460512a",
+            "src/math/expm1.c",
+            "src/math/expm1f.c",
+            "FORCE_EVAL",
+            "-ffp-contract=off",
+            'include_str!("math_expm1_musl_x86_64.S")',
+            "public x86 support",
+        ):
+            self.assertIn(required, leaf)
+        for required in (
+            "2ebc86943f5cdac77729695b304a08f6308e7a218f9d484cec5675006b207d88",
+            '"src/math/expm1.c"',
+            '"src/math/expm1f.c"',
+            '"15.2.0"',
+            '"-frounding-math"',
+            '"-ffp-contract=off"',
+            '"-mfpmath=sse"',
+            "retained_notices",
+        ):
+            self.assertIn(required, generator)
+        for required in (
+            "Sun Microsystems",
+            "musl's MIT license",
+            "\t.globl\texpm1\n",
+            "\t.globl\texpm1f\n",
+            "cvtsd2ss",
+        ):
+            self.assertIn(required, assembly)
+
     def test_math_ceil_runner_keeps_the_binary32_binary64_static_boundary(self) -> None:
         dispatcher = RUNNER.read_text(encoding="utf-8")
         runner = (ROOT / "compat" / "x86_64" / "run_libc_math_ceil.sh").read_text(
