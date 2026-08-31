@@ -272,6 +272,31 @@ fn secs_to_tm(seconds: i64, output: &mut Tm) -> bool {
     true
 }
 
+/// Build one complete UTC record for the two selected caller-buffered
+/// conversions. This is a private Rust helper, not a C ABI export.
+pub(super) fn secs_to_utc_tm(seconds: i64) -> Option<Tm> {
+    let mut output = Tm {
+        seconds: 0,
+        minutes: 0,
+        hours: 0,
+        month_day: 0,
+        month: 0,
+        year: 0,
+        week_day: 0,
+        year_day: 0,
+        daylight_saving: 0,
+        utc_offset: 0,
+        utc_name: core::ptr::null(),
+    };
+    if !secs_to_tm(seconds, &mut output) {
+        return None;
+    }
+    output.daylight_saving = 0;
+    output.utc_offset = 0;
+    output.utc_name = UTC.as_ptr().cast::<c_char>();
+    Some(output)
+}
+
 /// Normalize one caller-owned UTC `struct tm` and return its Unix seconds.
 ///
 /// # Safety
@@ -286,27 +311,11 @@ pub unsafe extern "C" fn timegm(value: *mut Tm) -> c_long {
     // SAFETY: the C caller supplies initialized exact `struct tm` storage.
     let input = unsafe { value.read() };
     let seconds = tm_to_secs(&input);
-    let mut normalized = Tm {
-        seconds: 0,
-        minutes: 0,
-        hours: 0,
-        month_day: 0,
-        month: 0,
-        year: 0,
-        week_day: 0,
-        year_day: 0,
-        daylight_saving: 0,
-        utc_offset: 0,
-        utc_name: core::ptr::null(),
-    };
-    if !secs_to_tm(seconds, &mut normalized) {
+    let Some(normalized) = secs_to_utc_tm(seconds) else {
         // SAFETY: this C error boundary owns the selected initial-TLS errno.
         unsafe { set_errno(EOVERFLOW) };
         return -1;
-    }
-    normalized.daylight_saving = 0;
-    normalized.utc_offset = 0;
-    normalized.utc_name = UTC.as_ptr().cast::<c_char>();
+    };
     // SAFETY: the C caller supplied writable exact `struct tm` storage.
     unsafe { value.write(normalized) };
     seconds

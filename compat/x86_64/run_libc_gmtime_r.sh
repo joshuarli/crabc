@@ -1,19 +1,19 @@
 #!/usr/bin/env bash
-# Native Linux/x86-64 selected static crabc-libc fixed-UTC timegm evidence.
+# Native Linux/x86-64 selected static crabc-libc caller-buffered UTC gmtime_r evidence.
 #
 # The same project-header C fixture first executes through pinned musl, then
 # as a `-nostdlib -static` candidate linked solely through the selected crabc
-# archive. It proves only caller-owned UTC struct-tm normalization; it is not
-# timezone/environment state, local civil conversion, formatting/parsing,
-# clock observation or mutation, timers, libc.so, CRT, loader, sysroot, or
-# public x86 support.
+# archive. It proves only caller-owned UTC struct-tm conversion; it is not
+# non-reentrant storage, local conversion, timezone/environment state,
+# formatting/parsing, clocks, timers, libc.so, CRT, loader, sysroot, or public
+# x86 support.
 set -euo pipefail
 
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
 readonly STATIC_C_ABI_EXPORTS="$ROOT_DIR/compat/x86_64/static_c_abi_exports.txt"
 
-fail() { printf 'ERROR: x86 static libc timegm: %s\n' "$*" >&2; exit 1; }
+fail() { printf 'ERROR: x86 static libc gmtime_r: %s\n' "$*" >&2; exit 1; }
 
 require_native_linux_x86_64() {
     [ "$(uname -s)" = Linux ] || fail "requires native Linux"
@@ -39,11 +39,11 @@ assert_selected_c_abi_surface() {
     }
 }
 
-assert_pure_fixed_utc_code() {
-    local disassembly="$work_dir/timegm-disassembly"
-    objdump -d --disassemble=timegm "$candidate" >"$disassembly"
+assert_pure_utc_code() {
+    local disassembly="$work_dir/gmtime-r-disassembly"
+    objdump -d --disassemble=gmtime_r "$candidate" >"$disassembly"
     if grep -Eq '[[:space:]]syscall([[:space:]]|$)' "$disassembly"; then
-        fail "timegm unexpectedly enters the kernel"
+        fail "gmtime_r unexpectedly enters the kernel"
     fi
     if grep -Eq 'getenv|tzset|localtime|mktime|strftime|strptime' \
         "$candidate_symbols" "$candidate_disassembly"; then
@@ -57,12 +57,12 @@ for tool in ar cargo cmp diff env grep nm objdump readelf rustup sort; do requir
 bash "$ROOT_DIR/compat/x86_64/run_musl_oracle.sh" >/dev/null
 bash "$ROOT_DIR/compat/x86_64/run_time_header_abi.sh" >/dev/null
 
-work_dir="$(mktemp -d /tmp/crabc-x86-64-libc-timegm.XXXXXX)"
+work_dir="$(mktemp -d /tmp/crabc-x86-64-libc-gmtime-r.XXXXXX)"
 trap 'rm -rf -- "$work_dir"' EXIT
 cargo_target="$work_dir/cargo-target"
 archive="$cargo_target/x86_64-unknown-linux-musl/debug/libc.a"
-reference="$work_dir/musl-timegm-reference"
-candidate="$work_dir/crabc-static-timegm-candidate"
+reference="$work_dir/musl-gmtime-r-reference"
+candidate="$work_dir/crabc-static-gmtime-r-candidate"
 header_trace="$work_dir/header-trace"
 archive_symbols="$work_dir/archive-symbols"
 archive_relocations="$work_dir/archive-relocations"
@@ -74,14 +74,14 @@ candidate_disassembly="$work_dir/candidate-disassembly"
 
 cd "$ROOT_DIR"
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -I"$ROOT_DIR/include" -E -H \
-    compat/x86_64/libc_timegm_probe.c >/dev/null 2>"$header_trace"
+    compat/x86_64/libc_gmtime_r_probe.c >/dev/null 2>"$header_trace"
 for header in errno.h limits.h stdint.h time.h features.h bits/alltypes.h; do
     grep -Fq "$ROOT_DIR/include/$header" "$header_trace" ||
         fail "fixture did not use project $header"
 done
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -fno-builtin -fno-stack-protector \
-    -I"$ROOT_DIR/include" compat/x86_64/libc_timegm_probe.c -o "$reference"
-"$reference" || fail "pinned-musl timegm fixture failed"
+    -I"$ROOT_DIR/include" compat/x86_64/libc_gmtime_r_probe.c -o "$reference"
+"$reference" || fail "pinned-musl gmtime_r fixture failed"
 
 CARGO_TARGET_DIR="$cargo_target" cargo rustc --locked -p crabc-libc --lib \
     --target x86_64-unknown-linux-musl -- \
@@ -89,12 +89,12 @@ CARGO_TARGET_DIR="$cargo_target" cargo rustc --locked -p crabc-libc --lib \
 [ -f "$archive" ] || fail "cargo did not emit x86 static libc archive"
 nm -A --defined-only "$archive" >"$archive_symbols"
 assert_selected_c_abi_surface "$archive" "$work_dir/selected-symbols" "$work_dir/expected-symbols"
-for symbol in __errno_location timegm; do
+for symbol in __errno_location gmtime_r; do
     grep -Eq "[[:space:]][TW][[:space:]]${symbol}$" "$archive_symbols" ||
         fail "archive does not define ${symbol}"
 done
-for unselected in asctime asctime_r ctime ctime_r gmtime localtime \
-    localtime_r mktime strftime strptime tzset; do
+for unselected in asctime asctime_r ctime ctime_r gmtime localtime localtime_r \
+    mktime strftime strptime tzset; do
     if grep -Eq "[[:space:]][TW][[:space:]]${unselected}$" "$archive_symbols"; then
         fail "archive accidentally exports unselected ${unselected}"
     fi
@@ -107,17 +107,17 @@ if grep -Eq 'TLSGD|TLSLD|TLSDESC|GOTTPOFF|DTPMOD(64)?|__tls_get_addr|crabc_core|
     fail "archive selects dynamic TLS or unowned dependency"
 fi
 
-"$ORACLE_CC" -std=c11 -D_GNU_SOURCE -DCRABC_TIMEGM_FREESTANDING \
+"$ORACLE_CC" -std=c11 -D_GNU_SOURCE -DCRABC_GMTIME_R_FREESTANDING \
     -I"$ROOT_DIR/include" -nostdlib -static -fno-pie -no-pie -ffreestanding \
     -fno-builtin -fno-stack-protector -Wl,-e,_start -Wl,--no-undefined \
-    compat/x86_64/libc_timegm_probe.c compat/x86_64/libc_timegm_start.S \
+    compat/x86_64/libc_gmtime_r_probe.c compat/x86_64/libc_gmtime_r_start.S \
     "$archive" -o "$candidate"
 readelf --symbols --wide "$candidate" >"$candidate_symbols"
 readelf --program-headers --wide "$candidate" >"$candidate_program_headers"
 readelf --dynamic --wide "$candidate" >"$candidate_dynamic" || true
 readelf --relocs --wide "$candidate" >"$candidate_relocations"
 objdump -d "$candidate" >"$candidate_disassembly"
-for symbol in __errno_location timegm; do
+for symbol in __errno_location gmtime_r; do
     grep -Eq "[[:space:]]${symbol}$" "$candidate_symbols" ||
         fail "candidate does not define ${symbol}"
 done
@@ -136,6 +136,6 @@ fi
 objdump -d --disassemble=__errno_location "$candidate" >"$work_dir/errno-disassembly"
 grep -Eq '%fs:0x0|%fs:-' "$work_dir/errno-disassembly" ||
     fail "candidate errno lacks direct fs initial TLS"
-assert_pure_fixed_utc_code
-env -i "$candidate" || fail "freestanding fixed-UTC timegm fixture failed"
-printf 'x86 static crabc-libc fixed-UTC timegm: PASS\n'
+assert_pure_utc_code
+env -i "$candidate" || fail "freestanding fixed-UTC gmtime_r fixture failed"
+printf 'x86 static crabc-libc caller-buffered UTC gmtime_r: PASS\n'

@@ -367,6 +367,7 @@ gettext
 gettimeofday
 getuid
 getxattr
+gmtime_r
 hcreate
 hcreate_r
 hdestroy

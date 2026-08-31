@@ -80,7 +80,8 @@
 //! callback-algorithms, allocator-export-free AVL callback-tree search, and
 //! allocator-export-free hash-table search, a bounded no-catalog
 //! gettext/message-catalog ABI profile, and POSIX `nanosleep`
-//! and `clock_nanosleep`, direct clock-observation artifacts, and one fixed-UTC
+//! and `clock_nanosleep`, direct clock-observation artifacts, one
+//! caller-buffered fixed-UTC `gmtime_r` conversion artifact, and one fixed-UTC
 //! `timegm` conversion artifact, plus one
 //! bounded System V message-queue/shared-memory artifact, one bounded
 //! unnamed POSIX semaphore artifact, and one bounded event-descriptor
@@ -342,6 +343,8 @@ mod gettext_catalog;
 mod clock_nanosleep;
 #[path = "clock_gettime.rs"]
 mod clock_gettime;
+#[path = "gmtime_r.rs"]
+mod gmtime_r;
 #[path = "timegm.rs"]
 mod timegm;
 #[path = "time_observation.rs"]

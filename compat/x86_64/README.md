@@ -431,6 +431,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-clock-gettime
 ./scripts/dev-x86_64.sh libc-time-observation
 ./scripts/dev-x86_64.sh libc-timegm
+./scripts/dev-x86_64.sh libc-gmtime-r
 ./scripts/dev-x86_64.sh libc-system-configuration
 ./scripts/dev-x86_64.sh libc-mapping-core
 ./scripts/dev-x86_64.sh libc-memory-sync
@@ -3394,6 +3395,19 @@ no `TZ`, environment, timezone global, or zoneinfo. It excludes
 observation/mutation, POSIX timers, cancellation, dynamic runtime, and public
 x86 support.
 
+`libc-gmtime-r` is a separately recorded `static-c-gmtime-r-utc`
+`verified_artifact` gate over that archive, not C calendar or time-family
+completion. Its POSIX project-header C body first executes through pinned musl
+and then through a `-nostdlib -static` candidate. It selects only the
+caller-buffered UTC `gmtime_r` conversion: epoch, pre-epoch, and leap-day
+records with stale errno preserved, plus null/`EOVERFLOW` with the complete
+caller output record unchanged. A success returns the caller's output pointer and
+writes `tm_isdst=0`, `tm_gmtoff=0`, and immutable `UTC`; the candidate makes
+no syscall and reads no `TZ`, environment, timezone global, or zoneinfo. It
+excludes non-reentrant storage, local/inverse conversion, calendar
+formatting/parsing, clock observation/mutation, POSIX timers, cancellation,
+dynamic runtime, and public x86 support.
+
 `libc-system-configuration` is a separately recorded
 `static-c-system-configuration` `verified_artifact` gate over that archive,
 not a general system-information, filesystem, or runtime capability. Its
@@ -5080,6 +5094,7 @@ Apart from the narrowly named `libc-stat-compat`, `libc-credentials`,
 `libc-clock-gettime`,
 `libc-time-observation`,
 `libc-timegm`,
+`libc-gmtime-r`,
 `libc-system-configuration`,
 `libc-mapping-core`,
 `libc-memory-sync`,

@@ -1186,6 +1186,8 @@ TIME_OBSERVATION_SYMBOLS = (
 
 TIMEGM_UTC_SYMBOLS = ("timegm",)
 
+GMTIME_R_UTC_SYMBOLS = ("gmtime_r",)
+
 MEMORY_SYNC_SYMBOLS = ("msync",)
 
 MEMFD_CREATE_SYMBOLS = ("memfd_create",)
@@ -14126,7 +14128,7 @@ def require_timegm_utc_artifact(family: Mapping[str, Any]) -> None:
         "static-c-timegm-utc must retain its selected export",
     )
     require(
-        not (exports & {"mktime", "gmtime", "gmtime_r", "localtime", "localtime_r", "strftime", "strptime", "tzset"}),
+        not (exports & {"mktime", "gmtime", "localtime", "localtime_r", "strftime", "strptime", "tzset"}),
         "static-c-timegm-utc must not widen into C timezone/calendar siblings",
     )
 
@@ -14201,6 +14203,254 @@ def require_timegm_utc_artifact(family: Mapping[str, Any]) -> None:
         require(
             phrase in scope,
             f"static-c-timegm-utc evidence omits {phrase}",
+        )
+
+
+def require_gmtime_r_utc_artifact(family: Mapping[str, Any]) -> None:
+    """Keep caller-buffered UTC conversion distinct from ambient C time state."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.posix-runtime].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [
+        entry for entry in artifacts if entry.get("id") == "static-c-gmtime-r-utc"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.posix-runtime must contain exactly one static-c-gmtime-r-utc artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-gmtime-r-utc must not promote libc.posix-runtime",
+    )
+    artifact = matching[0]
+    description = artifact.get("description")
+    require(
+        isinstance(description, str),
+        "static-c-gmtime-r-utc needs a description",
+    )
+    for phrase in (
+        "Private native x86 static caller-buffered UTC `gmtime_r`",
+        "still-planned `libc.posix-runtime`",
+        "pre-epoch",
+        "leap-day",
+        "`EOVERFLOW`",
+        "unchanged caller record",
+        "no kernel syscall",
+        "`TZ`",
+        "environment",
+        "timezone global",
+        "non-reentrant storage",
+        "local conversion",
+        "calendar formatting/parsing",
+        "POSIX timers",
+        "public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"static-c-gmtime-r-utc description omits {phrase}",
+        )
+
+    owners = set(
+        nonempty_strings(
+            artifact.get("source_owners"), "static-c-gmtime-r-utc.source_owners"
+        )
+    )
+    for owner in (
+        "compat/upstreams.toml",
+        "libc/Cargo.toml",
+        "libc/src/lib.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/timegm.rs",
+        "libc/src/c_abi/x86_64/gmtime_r.rs",
+        "libc/src/c_abi/x86_64/errno.rs",
+        "include/errno.h",
+        "include/limits.h",
+        "include/time.h",
+        "compat/x86_64/time_header_abi_probe.c",
+        "compat/x86_64/time_header_abi_probe.cpp",
+        "compat/x86_64/run_time_header_abi.sh",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/libc_gmtime_r_probe.c",
+        "compat/x86_64/libc_gmtime_r_start.S",
+        "compat/x86_64/run_libc_gmtime_r.sh",
+        "compat/x86_64/run_libc_timegm.sh",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/README.md",
+        "STATUS.md",
+        "x86-64.md",
+        "scripts/dev-x86_64.sh",
+        "scripts/check_structure.py",
+    ):
+        require(owner in owners, f"static-c-gmtime-r-utc source owners omit {owner}")
+
+    prerequisites = nonempty_strings(
+        artifact.get("x86_abi_prerequisites"),
+        "static-c-gmtime-r-utc.x86_abi_prerequisites",
+    )
+    require(
+        any(
+            "System V AMD64" in item
+            and "rdi" in item
+            and "rsi" in item
+            and "rax" in item
+            and "56-byte" in item
+            and "tm_gmtoff" in item
+            and "tm_zone" in item
+            for item in prerequisites
+        ),
+        "static-c-gmtime-r-utc must record its x86 C record and calling ABI",
+    )
+    require(
+        any(
+            "9fa28ece75d8a2191de7c5bb53bed224c5947417" in item
+            and "src/time/gmtime_r.c" in item
+            and "__secs_to_tm.c" in item
+            and "private __gmtime_r" in item
+            and "tm_isdst=0" in item
+            and "tm_gmtoff=0" in item
+            for item in prerequisites
+        ),
+        "static-c-gmtime-r-utc must retain its exact pinned-musl UTC mapping",
+    )
+    require(
+        any(
+            "pre-epoch" in item
+            and "initial-TLS errno EOVERFLOW" in item
+            and "complete caller record unchanged" in item
+            for item in prerequisites
+        ),
+        "static-c-gmtime-r-utc must retain its errno and overflow boundary",
+    )
+    require(
+        any(
+            "no Linux syscall" in item
+            and "no vDSO path" in item
+            and "no environment/TZ read" in item
+            and "timezone global" in item
+            and "zoneinfo" in item
+            for item in prerequisites
+        ),
+        "static-c-gmtime-r-utc must retain its fixed-UTC state exclusion",
+    )
+
+    headers = nonempty_strings(
+        artifact.get("x86_header_prerequisites"),
+        "static-c-gmtime-r-utc.x86_header_prerequisites",
+    )
+    require(
+        any(
+            "POSIX" in item
+            and "struct tm *gmtime_r(const time_t *, struct tm *)" in item
+            and "C and C++" in item
+            and "56-byte" in item
+            and "tm_gmtoff/tm_zone" in item
+            for item in headers
+        ),
+        "static-c-gmtime-r-utc must retain its feature-gated public header ABI",
+    )
+
+    exports = set(
+        static_c_abi_export_names(
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        )
+    )
+    require(
+        set(GMTIME_R_UTC_SYMBOLS) <= exports,
+        "static-c-gmtime-r-utc must retain its selected export",
+    )
+    require(
+        not (
+            exports
+            & {
+                "__gmtime_r",
+                "gmtime",
+                "localtime",
+                "localtime_r",
+                "mktime",
+                "strftime",
+                "strptime",
+                "tzset",
+            }
+        ),
+        "static-c-gmtime-r-utc must not widen into C timezone/calendar siblings",
+    )
+
+    static_root = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+    ).read_text(encoding="utf-8")
+    require(
+        '#[path = "gmtime_r.rs"]\nmod gmtime_r;' in static_root,
+        "x86 static C ABI must compose the caller-buffered UTC gmtime_r leaf",
+    )
+    implementation = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "gmtime_r.rs"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "src/time/gmtime_r.c",
+        "src/time/__secs_to_tm.c",
+        "fn gmtime_r(",
+        "secs_to_utc_tm",
+        "EOVERFLOW",
+        "UTC",
+        "initial-TLS errno",
+        "__gmtime_r",
+    ):
+        require(
+            snippet in implementation,
+            f"gmtime_r leaf omits {snippet}",
+        )
+    for forbidden in (
+        "crabc_core",
+        "crabc_mimalloc",
+        "raw_syscall",
+        "getenv",
+        "tzset",
+        "localtime",
+        "mktime",
+        "strftime",
+        "strptime",
+        "__tls_get_addr",
+    ):
+        require(
+            forbidden not in implementation,
+            f"gmtime_r leaf widens into {forbidden}",
+        )
+
+    evidence = artifact.get("native_evidence")
+    require(isinstance(evidence, list), "static-c-gmtime-r-utc needs evidence")
+    require(
+        {entry.get("command") for entry in evidence if isinstance(entry, Mapping)}
+        == {"./scripts/dev-x86_64.sh libc-gmtime-r"},
+        "static-c-gmtime-r-utc must use the closed libc-gmtime-r command",
+    )
+    scope = evidence[0].get("scope")
+    require(
+        isinstance(scope, str), "static-c-gmtime-r-utc evidence needs a scope"
+    )
+    for phrase in (
+        "caller-buffered UTC gmtime_r regression",
+        "pre-epoch",
+        "leap-day",
+        "EOVERFLOW",
+        "unchanged record",
+        "Pinned-musl project-header C execution",
+        "`-nostdlib -static` candidate",
+        "no interpreter/DT_NEEDED/unresolved",
+        "direct initial-TLS errno",
+        "no kernel syscall",
+        "env -i candidate",
+        "environment/TZ/timezone state",
+        "non-reentrant storage",
+        "promotion",
+        "public x86 support",
+    ):
+        require(
+            phrase in scope,
+            f"static-c-gmtime-r-utc evidence omits {phrase}",
         )
 
 
@@ -33216,6 +33466,7 @@ def validate_ledger(
     require_clock_gettime_artifact(by_id["libc.posix-runtime"])
     require_time_observation_artifact(by_id["libc.posix-runtime"])
     require_timegm_utc_artifact(by_id["libc.posix-runtime"])
+    require_gmtime_r_utc_artifact(by_id["libc.posix-runtime"])
     require_system_configuration_artifact(by_id["libc.posix-runtime"])
     require_system_information_artifact(by_id["libc.posix-runtime"])
     require_mapping_core_artifact(by_id["libc.posix-runtime"])

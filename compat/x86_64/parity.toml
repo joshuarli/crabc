@@ -2954,6 +2954,54 @@ oracle = [
 ]
 
 [[family.verified_artifact]]
+id = "static-c-gmtime-r-utc"
+description = "Private native x86 static caller-buffered UTC `gmtime_r` block inside still-planned `libc.posix-runtime`. One dependency-free `crabc-libc` archive resolves only the POSIX `gmtime_r(const time_t *, struct tm *)` conversion for a freestanding C fixture after equivalent pinned-musl execution. It maps one signed 64-bit `time_t` into the caller-owned 56-byte LP64 `struct tm`, returns that same output pointer, and writes `tm_isdst=0`, `tm_gmtoff=0`, and immutable `UTC`. The fixture proves epoch, pre-epoch, and leap-day conversion with stale errno preserved, plus null/`EOVERFLOW` with an unchanged caller record outside the int year range. The candidate issues no kernel syscall and reads no `TZ`, environment, timezone global, or zoneinfo; it exports public `gmtime_r` rather than musl's private `__gmtime_r` weak alias. It does not select non-reentrant storage, local conversion, an inverse calendar API, calendar formatting/parsing, clock observation/mutation, POSIX timers, libc.so, CRT, dynamic TLS lifecycle, loader, sysroot, allocator, family completion, promotion, or public x86 support."
+source_owners = [
+  "compat/upstreams.toml",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/timegm.rs",
+  "libc/src/c_abi/x86_64/gmtime_r.rs",
+  "libc/src/c_abi/x86_64/errno.rs",
+  "include/errno.h",
+  "include/features.h",
+  "include/limits.h",
+  "include/stddef.h",
+  "include/stdint.h",
+  "include/time.h",
+  "include/bits/alltypes.h",
+  "compat/x86_64/time_header_abi_probe.c",
+  "compat/x86_64/time_header_abi_probe.cpp",
+  "compat/x86_64/run_time_header_abi.sh",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/libc_gmtime_r_probe.c",
+  "compat/x86_64/libc_gmtime_r_start.S",
+  "compat/x86_64/run_libc_gmtime_r.sh",
+  "compat/x86_64/run_libc_timegm.sh",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "compat/x86_64/README.md",
+  "STATUS.md",
+  "x86-64.md",
+  "scripts/dev-x86_64.sh",
+  "scripts/check_structure.py",
+]
+x86_abi_prerequisites = [
+  "System V AMD64 passes the const LP64 time_t input pointer in rdi and the caller-owned mutable struct tm output pointer in rsi, then returns that pointer or null in rax. Linux/x86-64 GNU struct tm is 56-byte align-eight storage: nine signed int fields at offsets 0 through 32, tm_gmtoff signed long at 40, and tm_zone pointer at 48.",
+  "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417 maps src/time/gmtime_r.c through __secs_to_tm.c. The public gmtime_r spelling is musl's weak alias of private __gmtime_r; this selected archive intentionally exports only the public ABI. Successful conversion restores tm_isdst=0/tm_gmtoff=0/tm_zone=UTC and returns the caller output pointer.",
+  "Epoch, pre-epoch, and leap-day results preserve incoming errno. An unrepresentable int tm_year returns null, writes initial-TLS errno EOVERFLOW, and leaves the complete caller record unchanged; C callers must provide initialized input and writable, non-overlapping output storage and no null-pointer fallback is invented.",
+  "This leaf has no Linux syscall, no vDSO path, no environment/TZ read, no timezone global or zoneinfo dependency, and no mutable state beyond the selected initial-TLS errno write on overflow. Fixture-local startup supplies one Variant-II thread pointer only and does not claim CRT or TLS lifecycle.",
+]
+x86_header_prerequisites = ["The project/pinned-musl C and C++ time header gate compiles the POSIX feature-gated `struct tm *gmtime_r(const time_t *, struct tm *)` spelling plus the exact 56-byte x86 LP64 struct tm layout and GNU tm_gmtoff/tm_zone fields. This focused declaration proof does not select non-reentrant gmtime, local conversion, or the remainder of C calendar/timezone headers."]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-gmtime-r", scope = "Pinned-musl project-header C execution plus a true `-nostdlib -static` candidate proves the caller-buffered UTC gmtime_r regression: epoch, pre-epoch, leap-day, stale-errno preservation, and null/EOVERFLOW with an unchanged record. It ratchets exact crate-owned export closure, public C/C++ header ABI, no interpreter/DT_NEEDED/unresolved symbol/dynamic TLS/unowned dependency, direct initial-TLS errno, no kernel syscall, and an env -i candidate. It reads no environment/TZ/timezone state and selects no non-reentrant storage, local conversion, formatting/parsing, clock/timer behavior, promotion, or public x86 support." }]
+oracle = [
+  { kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source and behavior oracle for src/time/gmtime_r.c and __secs_to_tm.c, including the private weak-alias provenance." },
+  { kind = "elf-abi", source = "System V AMD64 psABI and pinned musl x86 headers", role = "LP64 pointer calling convention, time_t input, caller-owned struct tm record layout, and static initial-TLS fixture contract." },
+]
+
+[[family.verified_artifact]]
 id = "static-c-system-configuration"
 description = "Private native x86 selected-static-archive system-configuration block. One dependency-free `crabc-libc` archive resolves exactly `sysconf`, `confstr`, `pathconf`, `fpathconf`, `getpagesize`, and `getdtablesize` into a freestanding C fixture after an equivalent pinned-musl execution. It admits only `_SC_CLK_TCK=100` and `_SC_PAGE_SIZE/_SC_PAGESIZE=4096` from the much broader `sysconf` namespace; every other selector is `-1/EINVAL`. It matches musl's bounded `confstr` string/copy/truncation contract and its path- and fd-independent `pathconf`/`fpathconf` table, including valid indeterminate `-1` values that preserve errno. The corresponding AArch64 implementation follows the same table, and its focused dynamic fixture compares the selected C behavior to pinned musl without filesystem access. That agreement resolves only this configuration boundary. `getpagesize` is the fixed x86 Linux 4096-byte base page, and `getdtablesize` queries `RLIMIT_NOFILE` through `prlimit64` and clamps it to `INT_MAX`. It does not select a full musl sysconf table, statfs/statvfs, filesystem capacity or path policy, `/proc` parsing, auxv-derived sysconf selectors beyond the separate direct `getauxval` lookup, libc.so, CRT, dynamic TLS lifecycle, pthread/TLS lifecycle, loader, sysroot, allocator, or public x86 support."
 source_owners = [

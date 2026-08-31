@@ -1169,6 +1169,17 @@ the environment, timezone globals, nor zoneinfo. It does not select
 observation or mutation, POSIX timers, C time-family completion, promotion, or
 public x86 support.
 
+`./scripts/dev-x86_64.sh libc-gmtime-r` is a separate private
+`static-c-gmtime-r-utc` artifact in the same still-planned family. Its
+pinned-musl and true-static C fixture selects only caller-buffered POSIX
+`gmtime_r`: epoch, pre-epoch, and leap-day UTC record conversion with stale
+errno preserved, plus null/`EOVERFLOW` with the original record unchanged. It
+writes only the fixed `UTC` offset/name result, makes no syscall, and reads
+neither `TZ`, the environment, timezone globals, nor zoneinfo. It does not
+select non-reentrant storage, local conversion, inverse conversion, calendar
+formatting/parsing, clock observation or mutation, POSIX timers, C
+time-family completion, promotion, or public x86 support.
+
 `./scripts/dev-x86_64.sh libc-system-information` is a separate private
 `static-c-system-information` artifact inside planned `libc.posix-runtime`.
 Its project-header C/C++ gate and pinned-musl/freestanding-static fixture prove
