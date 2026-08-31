@@ -41,7 +41,7 @@ compatibility engineering, not allocator research.
    refactor: write or preserve a failing test, observe the expected failure,
    implement the smallest source-faithful change, then rerun the focused and
    relevant aggregate gates.
-5. Use all fifteen available Terra `max` implementation subagents in
+5. Use at most eight concurrent Terra `max` implementation subagents in
    isolated git worktrees for every substantial implementation wave. Do not
    substitute Sol or another model tier unless the user explicitly changes
    this rule. The parallel-worktree protocol in this file is mandatory.
@@ -813,7 +813,7 @@ invalid-pointer or double-free behavior:
 
 ---
 
-# 6. Mandatory fifteen-worktree Terra max execution
+# 6. Mandatory eight-worker Terra max execution
 
 This project must use the available parallelism aggressively and safely.
 
@@ -821,7 +821,7 @@ This project must use the available parallelism aggressively and safely.
 
 For every substantial implementation wave, the primary/root agent must:
 
-- launch **15 Terra `max` subagents**;
+- launch no more than **8 Terra `max` subagents**;
 - give each subagent its own isolated git worktree and branch;
 - assign each subagent an implementation deliverable;
 - keep the root slot for architecture, integration, review, conflict
@@ -842,11 +842,12 @@ Every subagent must produce one of:
 Documentation-only assignments do not count. If a worker finishes early or is
 blocked, immediately reassign that slot to another implementation slice.
 
-Use all fifteen worktrees whenever a substantial phase is active. Dependency
-ordering is not a reason to leave capacity idle: workers not yet able to land
-a dependent production change must implement independent tests, harnesses,
-models, benchmarks, or preparatory module boundaries that are mergeable in the
-same wave.
+Use no more than eight worktrees whenever a substantial phase is active.
+Choose only independently mergeable slices; dependency ordering and constrained
+build resources are reasons to leave a slot idle rather than create competing
+or low-value work. Workers not yet able to land a dependent production change
+may implement independent tests, harnesses, models, benchmarks, or preparatory
+module boundaries that are mergeable in the same wave.
 
 ## 6.2 Worktree layout
 
@@ -898,7 +899,7 @@ The root agent is the sole integrator. It must:
 10. delete merged worktrees and create the next wave from the new integrated
     head.
 
-Parallelism is a throughput requirement, not permission for fifteen competing
+Parallelism is a throughput aid, not permission for competing
 allocator designs.
 
 ## 6.4 File-ownership discipline
@@ -940,10 +941,11 @@ A subagent must leave a clean worktree with a coherent commit. The root agent
 must not accept uncommitted patches, unexplained generated files, or claims
 without command output.
 
-## 6.6 Recommended first fifteen implementation slices
+## 6.6 Recommended implementation-slice queue
 
-Re-evaluate paths against current head, but begin with this decomposition
-unless the repository has already completed a slice:
+Re-evaluate paths against current head, but choose up to eight independent
+slices at a time from this queue unless the repository has already completed a
+slice:
 
 1. add the initial-thread-free-after-worker-exit C regression and owned-suite
    wrapper;
@@ -970,9 +972,9 @@ unless the repository has already completed a slice:
 15. implement machine-enforced architecture/gate ratchets, including explicit
     evidence scope and forbidden-production-scaffolding checks.
 
-Not all first-wave commits will be independent at final integration. The root
+Not all queued commits will be independent at final integration. The root
 agent must define interfaces, select merge order, and rebase follow-on
-worktrees as dependencies land. Every slot nevertheless performs
+worktrees as dependencies land. Every occupied slot nevertheless performs
 implementation work.
 
 ---
@@ -2329,10 +2331,10 @@ there: continue until the missing gate is actually closed.
 
 # 25. Immediate next actions from the audited checkpoint
 
-Execute these actions now, using the mandatory fifteen-worktree wave:
+Execute these actions now, using the mandatory up-to-eight-worktree wave:
 
 1. commit this replacement execution contract by itself;
-2. create fifteen Terra `max` implementation worktrees;
+2. create up to eight Terra `max` implementation worktrees;
 3. add and observe the initial-thread post-exit free regression;
 4. add the canonical unmodified upstream stress lane and preserve its first
    failure;
@@ -2352,5 +2354,5 @@ Execute these actions now, using the mandatory fifteen-worktree wave:
 
 At each point, use the first failing objective gate to select the next
 implementation wave. Do not ask for another page-shape assignment. Do not
-append another checkpoint narrative. Keep all fifteen implementation
-worktrees productive until the active wave is integrated and verified.
+append another checkpoint narrative. Keep each active implementation worktree
+productive until the active wave is integrated and verified.
