@@ -440,6 +440,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-search-hash-table
 ./scripts/dev-x86_64.sh libc-clock-gettime
 ./scripts/dev-x86_64.sh libc-time-observation
+./scripts/dev-x86_64.sh libc-difftime
 ./scripts/dev-x86_64.sh libc-timegm
 ./scripts/dev-x86_64.sh libc-gmtime-r
 ./scripts/dev-x86_64.sh libc-system-configuration
@@ -3520,14 +3521,26 @@ pthread cancellation, dynamic runtime, and public x86 support.
 `static-c-time-observation` `verified_artifact` gate over that archive, not a
 C time-runtime capability. Its project-header C body first executes through
 pinned musl and then through a `-nostdlib -static` candidate. It selects only
-`clock`, `time`, `difftime`, C11 `timespec_get`, `clock_getres`, and
-`gettimeofday`: normalized realtime/CPU records, integer-second/window
-consistency, `TIME_UTC` and unsupported-base behavior, invalid-clock errors,
-and stale errno preservation. The candidate emits direct
+`clock`, `time`, C11 `timespec_get`, `clock_getres`, and `gettimeofday`:
+normalized realtime/CPU records, integer-second/window consistency, `TIME_UTC`
+and unsupported-base behavior, invalid-clock errors, and stale errno
+preservation. The candidate emits direct
 `clock_gettime=228`, `clock_getres=229`, and `gettimeofday=96` rdi/rsi paths;
 it deliberately ignores obsolete timezone output and owns no vDSO resolver or
 dynamic runtime state. It excludes calendar/timezone state, clock mutation,
 POSIX timers, cancellation, dynamic runtime, and public x86 support.
+
+`libc-difftime` is a separately recorded `static-c-difftime-binary64`
+`verified_artifact` gate over that archive, not C time-family completion. Its
+project-header C body first executes through pinned musl and then through a
+`-nostdlib -static` candidate; a C++ header object keeps the same unmangled
+declaration. It selects only scalar `difftime`: ordinary positive, negative,
+and zero results, INT64_MAX/INT64_MIN endpoint values, and the 2047
+subtract-before-binary64-conversion case. Cross-endpoint signed overflow has no
+C-source contract and remains unselected. The candidate has no syscall,
+errno/TLS, clock observation, timezone/calendar policy, formatting, timer, or
+floating-environment policy; it excludes dynamic runtime and public x86
+support.
 
 `libc-timegm` is a separately recorded `static-c-timegm-utc`
 `verified_artifact` gate over that archive, not C calendar or time-family
@@ -5255,6 +5268,7 @@ Apart from the narrowly named `libc-stat-compat`, `libc-credentials`,
 `libc-gettext-catalog`,
 `libc-clock-gettime`,
 `libc-time-observation`,
+`libc-difftime`,
 `libc-timegm`,
 `libc-gmtime-r`,
 `libc-system-configuration`,

@@ -78,7 +78,7 @@ CARGO_TARGET_DIR="$cargo_target" cargo rustc --locked -p crabc-libc --lib \
 [ -f "$archive" ] || fail "cargo did not emit x86 static libc archive"
 nm -A --defined-only "$archive" >"$work_dir/archive-symbols"
 assert_selected_c_abi_surface "$archive" "$work_dir/selected-symbols" "$work_dir/expected-symbols"
-for symbol in __errno_location clock clock_getres difftime gettimeofday time timespec_get; do
+for symbol in __errno_location clock clock_getres gettimeofday time timespec_get; do
     grep -Eq "[[:space:]][TW][[:space:]]${symbol}$" "$work_dir/archive-symbols" ||
         fail "archive does not define ${symbol}"
 done
@@ -106,7 +106,7 @@ readelf --program-headers --wide "$candidate" >"$work_dir/candidate-program-head
 readelf --dynamic --wide "$candidate" >"$work_dir/candidate-dynamic" || true
 readelf --relocs --wide "$candidate" >"$work_dir/candidate-relocations"
 objdump -d "$candidate" >"$work_dir/candidate-disassembly"
-for symbol in __errno_location clock clock_getres difftime gettimeofday time timespec_get; do
+for symbol in __errno_location clock clock_getres gettimeofday time timespec_get; do
     grep -Eq "[[:space:]]${symbol}$" "$work_dir/candidate-symbols" ||
         fail "candidate does not define ${symbol}"
 done

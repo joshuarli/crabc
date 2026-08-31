@@ -50,7 +50,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 41)
-        self.assertEqual(report["verified_artifact_count"], 179)
+        self.assertEqual(report["verified_artifact_count"], 180)
         self.assertEqual(report["header_layout_probe_count"], 46)
         self.assertEqual(report["public_header_inventory_count"], 183)
         self.assertEqual(report["header_foundation_header_count"], 191)
@@ -6215,7 +6215,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             "does not select libc.so", credentials["native_evidence"][0]["scope"]
         )
         posix_artifacts = posix_runtime["verified_artifact"]
-        assert isinstance(posix_artifacts, list) and len(posix_artifacts) == 77
+        assert isinstance(posix_artifacts, list) and len(posix_artifacts) == 78
         artifacts_by_id = {
             artifact["id"]: artifact
             for artifact in posix_artifacts
@@ -13273,6 +13273,79 @@ class X86ParityLedgerTests(unittest.TestCase):
         with self.assertRaisesRegex(
             ledger.LedgerError, "closed libc-time-observation command"
         ):
+            ledger.validate_ledger(data)
+
+    def test_difftime_binary64_artifact_keeps_its_scalar_boundary(self) -> None:
+        data = self.data()
+        family = self.family(data, "libc.posix-runtime")
+        self.assertEqual(family["status"], "planned")
+        artifacts = family["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict)
+            and entry["id"] == "static-c-difftime-binary64"
+        )
+        self.assertNotIn("capabilities", artifact)
+        for owner in (
+            "libc/src/c_abi/x86_64/difftime.rs",
+            "include/time.h",
+            "compat/x86_64/time_header_abi_probe.c",
+            "compat/x86_64/time_header_abi_probe.cpp",
+            "compat/x86_64/libc_difftime_probe.c",
+            "compat/x86_64/libc_difftime_start.S",
+            "compat/x86_64/run_libc_difftime.sh",
+            "compat/x86_64/validate_parity_ledger.py",
+            "scripts/dev-x86_64.sh",
+        ):
+            self.assertIn(owner, artifact["source_owners"])
+        self.assertEqual(
+            {entry["command"] for entry in artifact["native_evidence"]},
+            {"./scripts/dev-x86_64.sh libc-difftime"},
+        )
+        for phrase in (
+            "Private native x86 static binary64 `difftime`",
+            "still-planned `libc.posix-runtime`",
+            "ordinary",
+            "INT64_MAX",
+            "INT64_MIN",
+            "no integer-overflow C source contract",
+            "no kernel syscall",
+            "timezone",
+            "calendar policy",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, artifact["description"])
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict)
+            and entry["id"] == "static-c-difftime-binary64"
+        )
+        artifact["description"] = artifact["description"].replace(
+            "binary64 `difftime`", "scalar `difftime`"
+        )
+        with self.assertRaisesRegex(ledger.LedgerError, "binary64 `difftime`"):
+            ledger.validate_ledger(data)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict)
+            and entry["id"] == "static-c-difftime-binary64"
+        )
+        evidence = artifact["native_evidence"]
+        assert isinstance(evidence, list) and isinstance(evidence[0], dict)
+        evidence[0]["command"] = "./scripts/dev-x86_64.sh time-observation-reference"
+        with self.assertRaisesRegex(ledger.LedgerError, "closed libc-difftime command"):
             ledger.validate_ledger(data)
 
     def test_timegm_utc_artifact_keeps_its_fixed_state_boundary(self) -> None:

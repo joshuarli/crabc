@@ -1451,7 +1451,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "libc-static-c-abi-same-object-differential|qualification-posix-abi-admission",
             "libc-interface-discovery",
             "libc-posix-exit",
-            "libc-readiness-waits|libc-system-observation|libc-system-information|libc-fcntl-record-locks|libc-flock|libc-sendfile|libc-posix-fallocate|libc-descriptor-advice|libc-filesystem-capacity|libc-uts-identity|libc-ctype|libc-locale-profile|libc-locale-multibyte|libc-locale-wide-iconv|libc-wide-character|libc-locale-object-wide|libc-locale-narrow|libc-locale-ctype-locators|libc-locale-error-strings|libc-regex|libc-integer-arithmetic|libc-integer-parse|libc-float-parse|libc-getsubopt|libc-intmax-arithmetic|libc-credential-observation|libc-secure-environment|libc-login-name|libc-child-reaping|libc-immediate-termination|libc-callback-algorithms|libc-search-tree-intrusive|libc-search-hash-table|libc-gettext-catalog|libc-access|libc-clock-gettime|libc-time-observation|libc-timegm|libc-gmtime-r|libc-system-configuration|libc-mapping-core|libc-header-layouts-baseline|libc-nanosleep|libc-clock-nanosleep|libc-descriptor-entry|libc-fcntl-status-control|libc-ioctl|libc-ffs|libc-byte-strings|libc-process-globals-getopt|libc-auxv-observation|libc-inet-address|libc-inet-ntoa|libc-inet-classful|libc-hstrerror|libc-numeric-netdb|libc-random-entropy|libc-memory-search|libc-string-copy|libc-error-strings|libc-strsignal|libc-descriptor-pipeline",
+            "libc-readiness-waits|libc-system-observation|libc-system-information|libc-fcntl-record-locks|libc-flock|libc-sendfile|libc-posix-fallocate|libc-descriptor-advice|libc-filesystem-capacity|libc-uts-identity|libc-ctype|libc-locale-profile|libc-locale-multibyte|libc-locale-wide-iconv|libc-wide-character|libc-locale-object-wide|libc-locale-narrow|libc-locale-ctype-locators|libc-locale-error-strings|libc-regex|libc-integer-arithmetic|libc-integer-parse|libc-float-parse|libc-getsubopt|libc-intmax-arithmetic|libc-credential-observation|libc-secure-environment|libc-login-name|libc-child-reaping|libc-immediate-termination|libc-callback-algorithms|libc-search-tree-intrusive|libc-search-hash-table|libc-gettext-catalog|libc-access|libc-clock-gettime|libc-time-observation|libc-difftime|libc-timegm|libc-gmtime-r|libc-system-configuration|libc-mapping-core|libc-header-layouts-baseline|libc-nanosleep|libc-clock-nanosleep|libc-descriptor-entry|libc-fcntl-status-control|libc-ioctl|libc-ffs|libc-byte-strings|libc-process-globals-getopt|libc-auxv-observation|libc-inet-address|libc-inet-ntoa|libc-inet-classful|libc-hstrerror|libc-numeric-netdb|libc-random-entropy|libc-memory-search|libc-string-copy|libc-error-strings|libc-strsignal|libc-descriptor-pipeline",
             "libc-vector-io|libc-uio-cxx-linkage",
             "libc-sysv-semaphore|libc-posix-semaphore",
             "libc-sysv-message-shared-memory",
@@ -15357,7 +15357,6 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         for symbol in (
             "clock",
             "time",
-            "difftime",
             "timespec_get",
             "clock_getres",
             "gettimeofday",
@@ -15368,7 +15367,6 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "musl 1.2.6 release commit",
             "src/time/clock.c",
             "src/time/time.c",
-            "src/time/difftime.c",
             "src/time/timespec_get.c",
             "src/time/clock_getres.c",
             "src/time/gettimeofday.c",
@@ -15387,16 +15385,19 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "__tls_get_addr",
         ):
             self.assertNotIn(forbidden, time_observation)
+        self.assertNotIn("fn difftime(", time_observation)
+        self.assertNotIn("src/time/difftime.c", time_observation)
         for required in (
             "#include <sys/time.h>",
             "SYS_gettimeofday == 96",
             "SYS_clock_getres == 229",
             "check_wall_clock_and_errno",
-            "check_cpu_clock_and_pure_conversion",
+            "check_cpu_clock",
             "check_error_conventions",
             "CRABC_TIME_OBSERVATION_FREESTANDING",
         ):
             self.assertIn(required, probe)
+        self.assertNotIn("difftime(", probe)
         for required in (
             "ARCH_SET_FS",
             "mov %rsi, %fs:0",
@@ -15427,6 +15428,100 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         )
         self.assertIn(
             '    libc-time-observation)\n        [ "$#" -eq 0 ] || fail "libc-time-observation takes no arguments"',
+            runner,
+        )
+
+    def test_libc_static_c_abi_difftime_artifact_stays_binary64_only(self) -> None:
+        """The C scalar stays separate from clock and calendar policy."""
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        difftime_path = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "difftime.rs"
+        probe_path = ROOT / "compat" / "x86_64" / "libc_difftime_probe.c"
+        start_path = ROOT / "compat" / "x86_64" / "libc_difftime_start.S"
+        artifact_runner_path = ROOT / "compat" / "x86_64" / "run_libc_difftime.sh"
+        for path in (difftime_path, probe_path, start_path, artifact_runner_path):
+            self.assertTrue(path.is_file(), f"missing binary64 difftime input: {path}")
+
+        difftime = difftime_path.read_text(encoding="utf-8")
+        probe = probe_path.read_text(encoding="utf-8")
+        start = start_path.read_text(encoding="utf-8")
+        artifact_runner = artifact_runner_path.read_text(encoding="utf-8")
+        header_c = (
+            ROOT / "compat" / "x86_64" / "time_header_abi_probe.c"
+        ).read_text(encoding="utf-8")
+        header_cxx = (
+            ROOT / "compat" / "x86_64" / "time_header_abi_probe.cpp"
+        ).read_text(encoding="utf-8")
+        static_exports = (
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        ).read_text(encoding="utf-8")
+        static_export_names = {
+            line for line in static_exports.splitlines()
+            if line and not line.startswith("#")
+        }
+        parity_ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        runner = RUNNER.read_text(encoding="utf-8")
+
+        self.assertIn('#[path = "difftime.rs"]', static_root)
+        self.assertIn("fn difftime(", difftime)
+        self.assertIn("difftime", static_export_names)
+        for required in (
+            "musl 1.2.6 release commit",
+            "src/time/difftime.c",
+            "wrapping_sub",
+            "binary64",
+            "xmm0",
+        ):
+            self.assertIn(required, difftime)
+        for forbidden in (
+            "crabc_core",
+            "crabc_mimalloc",
+            "raw_syscall",
+            "set_errno",
+            "getenv",
+            "tzset",
+            "__tls_get_addr",
+        ):
+            self.assertNotIn(forbidden, difftime)
+        for required in (
+            "#include <time.h>",
+            "difftime declaration",
+            "direct_difftime",
+            "INT64_MAX",
+            "INT64_MIN",
+            "2047",
+            "CRABC_DIFFTIME_FREESTANDING",
+        ):
+            self.assertIn(required, probe)
+        self.assertIn("crabc_x86_64_difftime_probe", start)
+        self.assertNotIn("ARCH_SET_FS", start)
+        for required in (
+            "static_c_abi_exports.txt",
+            "run_time_header_abi.sh",
+            "-nostdlib -static",
+            "-Wl,-e,_start",
+            "cvtsi2sd",
+            "env -i",
+            "candidate retains TLS",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn("--whole-archive", artifact_runner)
+        for header_probe in (header_c, header_cxx):
+            self.assertIn("difftime_signature", header_probe)
+        self.assertIn('id = "static-c-difftime-binary64"', parity_ledger)
+        self.assertIn(
+            'command = "./scripts/dev-x86_64.sh libc-difftime"',
+            parity_ledger,
+        )
+        self.assertIn("run_libc_difftime()", runner)
+        self.assertIn(
+            "/workspace/compat/x86_64/run_libc_difftime.sh", runner
+        )
+        self.assertIn(
+            '    libc-difftime)\n        [ "$#" -eq 0 ] || fail "libc-difftime takes no arguments"',
             runner,
         )
 

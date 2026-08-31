@@ -1189,13 +1189,23 @@ platform parity, promotion, or public x86 support.
 
 The same archive has a private direct time-observation artifact:
 `./scripts/dev-x86_64.sh libc-time-observation` proves only `clock`, `time`,
-`difftime`, C11 `timespec_get`, `clock_getres`, and `gettimeofday` through a
-pinned-musl/reference plus freestanding-static candidate. It records the
-direct x86 `clock_gettime=228`, `clock_getres=229`, and `gettimeofday=96`
-paths, normalized outputs, stale-errno behavior, invalid-clock handling, and
-the `TIME_UTC`/unsupported-base boundary. It has no vDSO resolver, calendar or
+C11 `timespec_get`, `clock_getres`, and `gettimeofday` through a pinned-musl
+reference plus freestanding-static candidate. It records the direct x86
+`clock_gettime=228`, `clock_getres=229`, and `gettimeofday=96` paths,
+normalized outputs, stale-errno behavior, invalid-clock handling, and the
+`TIME_UTC`/unsupported-base boundary. It has no vDSO resolver, calendar or
 timezone state, clock mutation, POSIX timer, cancellation, libc.so, CRT,
 loader, sysroot, family/platform parity, or public-x86-support claim.
+
+`./scripts/dev-x86_64.sh libc-difftime` is a separate private
+`static-c-difftime-binary64` artifact in still-planned `libc.posix-runtime`.
+Its pinned-musl and true-static C fixture selects only scalar `difftime`:
+ordinary positive/negative/zero results, INT64_MAX/INT64_MIN endpoint values,
+and the 2047 subtract-before-binary64-conversion boundary. Musl's signed C
+subtraction has no cross-endpoint integer-overflow contract, so that case is
+not promoted. The leaf has no syscall, errno/TLS, clock observation,
+timezone/calendar policy, formatting, timer, or floating-environment policy;
+it does not complete the C time family, promote x86, or claim public support.
 
 `./scripts/dev-x86_64.sh libc-timegm` is a distinct private
 `static-c-timegm-utc` artifact in still-planned `libc.posix-runtime`. Its

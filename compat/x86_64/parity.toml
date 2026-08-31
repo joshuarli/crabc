@@ -3006,7 +3006,7 @@ oracle = [
 
 [[family.verified_artifact]]
 id = "static-c-time-observation"
-description = "Private native x86 selected-static-archive direct time-observation block. One dependency-free `crabc-libc` archive resolves only `clock`, `time`, `difftime`, `timespec_get`, `clock_getres`, and `gettimeofday` for a freestanding C fixture after equivalent pinned-musl execution; the separately recorded `clock_gettime` artifact remains its own boundary. `clock` reports process CPU microseconds, `time` stores an optional LP64 whole-second realtime value, `difftime` avoids integer subtraction overflow, and C11 `timespec_get` accepts only `TIME_UTC`. `clock_getres` has the ordinary zero-or-`-1`/initial-TLS-errno convention, while `gettimeofday` writes an optional normalized LP64 timeval and deliberately ignores the obsolete timezone output. The candidate issues Linux x86-64 clock_gettime=228, clock_getres=229, and gettimeofday=96 directly; pinned musl may use a vDSO resolver before a syscall fallback, but this bounded static leaf owns no vDSO or dynamic process-lifetime state. The fixture proves realtime/window consistency, normalized output, process-CPU progress, stale errno preservation, unsupported C11-base preservation, invalid-clock EINVAL, and static-artifact purity. It does not select calendar/timezone state, clock_settime or other clock mutation, POSIX timers, cancellation, libc.so, CRT, dynamic TLS lifecycle, loader, sysroot, allocator, family completion, promotion, or public x86 support."
+description = "Private native x86 selected-static-archive direct time-observation block. One dependency-free `crabc-libc` archive resolves only `clock`, `time`, C11 `timespec_get`, `clock_getres`, and `gettimeofday` for a freestanding C fixture after equivalent pinned-musl execution; the separately recorded `clock_gettime` and binary64 `difftime` artifacts remain their own boundaries. `clock` reports process CPU microseconds, `time` stores an optional LP64 whole-second realtime value, and C11 `timespec_get` accepts only `TIME_UTC`. `clock_getres` has the ordinary zero-or-`-1`/initial-TLS-errno convention, while `gettimeofday` writes an optional normalized LP64 timeval and deliberately ignores the obsolete timezone output. The candidate issues Linux x86-64 clock_gettime=228, clock_getres=229, and gettimeofday=96 directly; pinned musl may use a vDSO resolver before a syscall fallback, but this bounded static leaf owns no vDSO or dynamic process-lifetime state. The fixture proves realtime/window consistency, normalized output, process-CPU progress, stale errno preservation, unsupported C11-base preservation, invalid-clock EINVAL, and static-artifact purity. It does not select calendar/timezone state, clock_settime or other clock mutation, POSIX timers, cancellation, libc.so, CRT, dynamic TLS lifecycle, loader, sysroot, allocator, family completion, promotion, or public x86 support."
 source_owners = [
   "compat/upstreams.toml",
   "libc/Cargo.toml",
@@ -3038,15 +3038,56 @@ source_owners = [
 x86_abi_prerequisites = [
   "Linux/x86-64 clock_gettime=228 and clock_getres=229 take a signed four-byte clockid_t plus a timespec pointer in rdi/rsi, while gettimeofday=96 receives the optional timeval pointer and a null obsolete-timezone word in rdi/rsi. Public LP64 timespec and timeval records are 16-byte align-eight signed-long pairs.",
   "clock uses CLOCK_PROCESS_CPUTIME_ID=2 and CLOCKS_PER_SEC=1000000; time and timespec_get use CLOCK_REALTIME=0; timespec_get accepts only TIME_UTC=1. Raw Linux errors alone publish initial-TLS errno, except unsupported timespec_get bases return zero without changing errno. Successful values preserve errno.",
-  "Pinned musl 1.2.6 src/time/clock.c, time.c, difftime.c, timespec_get.c, clock_getres.c, and gettimeofday.c define the selected C behavior. Musl may enter a private vDSO resolver before its syscall fallback; this direct static leaf intentionally contains no vDSO resolver or dynamic process-lifetime state.",
+  "Pinned musl 1.2.6 src/time/clock.c, time.c, timespec_get.c, clock_getres.c, and gettimeofday.c define the selected C behavior. Musl may enter a private vDSO resolver before its syscall fallback; this direct static leaf intentionally contains no vDSO resolver or dynamic process-lifetime state.",
   "The final static candidate has a PT_TLS errno datum with direct initial-exec TPOFF access and no TLSGD/TLSLD/TLSDESC/GOTTPOFF/DTPMOD/DTPOFF model form or __tls_get_addr; fixture-local startup writes one Variant-II thread-pointer self word at %fs:0 without claiming CRT or TLS lifecycle.",
 ]
 x86_header_prerequisites = ["The fixture preprocesses project errno.h, time.h, sys/time.h, sys/syscall.h, bits/alltypes.h, and bits/syscall.h. The existing time C/C++ header gate proves the selected LP64 time/timespec declarations; this artifact adds no installed-header completion claim."]
-native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-time-observation", scope = "Pinned-musl C reference plus a true dependency-free x86 crabc-libc static archive and freestanding C candidate. The gate runs the project/pinned-musl time-header ABI proof; checks exact crate-owned C object-member export closure separately from compiler-builtins; rejects dynamic interpreter/DT_NEEDED/unresolved symbols/dynamic TLS/unowned runtime dependencies; proves direct initial-TLS errno; disassembles clock_gettime=228 through clock, clock_getres=229, and gettimeofday=96; and executes realtime/window consistency, normalized outputs, CPU-clock progress, pure difftime, valid/unsupported C11 bases, invalid-clock EINVAL, and stale-errno preservation. It deliberately has no vDSO resolver, calendar/timezone state, clock mutation, timer, cancellation, libc.so, CRT, loader, sysroot, family-completion, promotion, or public-support claim." }]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-time-observation", scope = "Pinned-musl C reference plus a true dependency-free x86 crabc-libc static archive and freestanding C candidate. The gate runs the project/pinned-musl time-header ABI proof; checks exact crate-owned C object-member export closure separately from compiler-builtins; rejects dynamic interpreter/DT_NEEDED/unresolved symbols/dynamic TLS/unowned runtime dependencies; proves direct initial-TLS errno; disassembles clock_gettime=228 through clock, clock_getres=229, and gettimeofday=96; and executes realtime/window consistency, normalized outputs, CPU-clock progress, valid/unsupported C11 bases, invalid-clock EINVAL, and stale-errno preservation. It deliberately has no vDSO resolver, calendar/timezone state, clock mutation, timer, cancellation, libc.so, CRT, loader, sysroot, family-completion, promotion, or public-support claim." }]
 oracle = [
-  { kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source mapping and behavior oracle for src/time/clock.c, time.c, difftime.c, timespec_get.c, clock_getres.c, and gettimeofday.c, including its possible internal vDSO route." },
+  { kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source mapping and behavior oracle for src/time/clock.c, time.c, timespec_get.c, clock_getres.c, and gettimeofday.c, including its possible internal vDSO route." },
   { kind = "kernel-abi", source = "Linux 5.10 x86-64 ABI", role = "clock_gettime=228, clock_getres=229, gettimeofday=96, rdi/rsi argument order, clock records, and raw negative errno contract." },
   { kind = "elf-abi", source = "System V AMD64 psABI", role = "LP64 scalar/pointer calling convention and static initial-TLS fixture contract." },
+]
+
+[[family.verified_artifact]]
+id = "static-c-difftime-binary64"
+description = "Private native x86 static binary64 `difftime` scalar block inside still-planned `libc.posix-runtime`. One dependency-free `crabc-libc` archive resolves exactly `difftime(time_t, time_t)` for a freestanding C fixture after equivalent pinned-musl execution. Pinned musl's one-expression `t1-t0` source subtracts signed LP64 `time_t` before converting once to binary64; the fixture covers ordinary positive, negative, and zero results, INT64_MAX/INT64_MIN against zero, endpoint-adjacent unit differences, and the 2047 near-endpoint result that distinguishes subtraction-before-conversion from independently rounded operands. The C source supplies no integer-overflow C source contract for cross-endpoint pairs, so those inputs are not promoted by this artifact. The candidate makes no kernel syscall and has no errno/TLS, environment, timezone, calendar policy, clock observation, timer, formatting/parsing, or floating-environment policy. It does not select a C time capability, libc.so, CRT, dynamic TLS lifecycle, loader, sysroot, allocator, family completion, promotion, or public x86 support."
+source_owners = [
+  "compat/upstreams.toml",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/difftime.rs",
+  "include/features.h",
+  "include/stdint.h",
+  "include/time.h",
+  "include/bits/alltypes.h",
+  "compat/x86_64/time_header_abi_probe.c",
+  "compat/x86_64/time_header_abi_probe.cpp",
+  "compat/x86_64/run_time_header_abi.sh",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/libc_difftime_probe.c",
+  "compat/x86_64/libc_difftime_start.S",
+  "compat/x86_64/run_libc_difftime.sh",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "compat/x86_64/README.md",
+  "STATUS.md",
+  "x86-64.md",
+  "scripts/dev-x86_64.sh",
+  "scripts/check_structure.py",
+]
+x86_abi_prerequisites = [
+  "System V AMD64 passes the two signed LP64 time_t values in rdi/rsi and returns the IEEE-754 binary64 double result in xmm0. The x86 project/pinned-musl headers and fixture fix both time_t and double at eight bytes.",
+  "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417 maps src/time/difftime.c's `return t1-t0;`: subtraction occurs in signed time_t before one binary64 conversion. The static fixture proves ordinary values plus INT64_MAX/INT64_MIN endpoint and 2047 subtract-before-conversion cases. Musl's expression has no integer-overflow C source contract for cross-endpoint pairs, so that behavior is deliberately not selected.",
+  "This leaf has no Linux syscall, no errno, no TLS, no allocation, no environment/TZ read, no timezone state, no calendar conversion, and no floating-environment policy. The freestanding candidate needs no thread-pointer bootstrap, and no clock/timer, local-time, formatting, parsing, or C time-family policy is claimed.",
+]
+x86_header_prerequisites = ["The project/pinned-musl C and C++ time header gate compiles the unconditional `double difftime(time_t, time_t)` declaration. Its C++ object retains an unmangled difftime reference, while the x86 fixture fixes the binary64 result width; this does not select the rest of C time/calendar headers."]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-difftime", scope = "Pinned-musl project-header C execution and C++ header object proof precede a true `-nostdlib -static` candidate. The fixture calls the C ABI through a function pointer for ordinary positive/negative/zero values, INT64_MAX and INT64_MIN endpoint values, and the 2047 subtract-before-conversion boundary. The gate ratchets exact crate-owned export closure, unmangled C++ header ABI, no interpreter/DT_NEEDED/unresolved symbol, no TLS, no kernel syscall, no runtime call path, and an env -i candidate. It selects no clock observation, timezone, calendar policy, timer, formatting/parsing, floating-environment policy, promotion, or public x86 support." }]
+oracle = [
+  { kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source and behavior oracle for the scalar src/time/difftime.c expression and its ordinary/non-overflow endpoint execution." },
+  { kind = "elf-abi", source = "System V AMD64 psABI and pinned musl x86 headers", role = "Two LP64 integer arguments in rdi/rsi, binary64 return in xmm0, and C/C++ external-C declaration proof." },
 ]
 
 [[family.verified_artifact]]

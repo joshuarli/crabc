@@ -299,6 +299,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-access  run the static x86 crabc-libc access/faccessat slice
   libc-clock-gettime  run the static x86 crabc-libc clock_gettime slice
   libc-time-observation  run the static x86 crabc-libc clock-observation slice
+  libc-difftime  run the static x86 crabc-libc binary64 difftime slice
   libc-timegm  run the static x86 crabc-libc fixed-UTC timegm slice
   libc-gmtime-r  run the static x86 crabc-libc caller-buffered UTC gmtime_r slice
   libc-system-configuration  run the static x86 crabc-libc system-configuration slice
@@ -1376,6 +1377,13 @@ leap-day, and unchanged-overflow-record behavior. It neither reads
 environment/TZ state nor selects non-reentrant storage, local conversion,
 calendar formatting/parsing, clock observation/mutation, timer state, dynamic
 libc, CRT/TLS lifecycle, loader, sysroot, or public x86 support.
+`libc-difftime` links the same archive into a separate freestanding
+project-header C fixture after an equivalent pinned-musl run. It selects only
+the scalar signed-time_t subtraction followed by a binary64 return: ordinary
+and endpoint-adjacent values preserve subtraction-before-conversion rounding.
+It has no clock observation, timezone/calendar state, formatting, timer, or
+floating-environment policy, dynamic libc, CRT/TLS lifecycle, loader, sysroot,
+or public x86 support.
 `libc-system-configuration` links that archive into a separate freestanding
 project-header C fixture after an equivalent pinned-musl run. It selects only
 the bounded page/tick `sysconf`, `confstr`, table-based `pathconf`/`fpathconf`,
@@ -2169,6 +2177,10 @@ run_libc_clock_gettime() {
 
 run_libc_time_observation() {
     run_in_container bash /workspace/compat/x86_64/run_libc_time_observation.sh
+}
+
+run_libc_difftime() {
+    run_in_container bash /workspace/compat/x86_64/run_libc_difftime.sh
 }
 
 run_libc_timegm() {
@@ -3671,7 +3683,7 @@ case "$command" in
     libc-static-c-abi-same-object-differential|qualification-posix-abi-admission) ;;
     libc-interface-discovery) ;;
     libc-posix-exit) ;;
-    libc-readiness-waits|libc-system-observation|libc-system-information|libc-fcntl-record-locks|libc-flock|libc-sendfile|libc-posix-fallocate|libc-descriptor-advice|libc-filesystem-capacity|libc-uts-identity|libc-ctype|libc-locale-profile|libc-locale-multibyte|libc-locale-wide-iconv|libc-wide-character|libc-locale-object-wide|libc-locale-narrow|libc-locale-ctype-locators|libc-locale-error-strings|libc-regex|libc-integer-arithmetic|libc-integer-parse|libc-float-parse|libc-getsubopt|libc-intmax-arithmetic|libc-credential-observation|libc-secure-environment|libc-login-name|libc-child-reaping|libc-immediate-termination|libc-callback-algorithms|libc-search-tree-intrusive|libc-search-hash-table|libc-gettext-catalog|libc-access|libc-clock-gettime|libc-time-observation|libc-timegm|libc-gmtime-r|libc-system-configuration|libc-mapping-core|libc-header-layouts-baseline|libc-nanosleep|libc-clock-nanosleep|libc-descriptor-entry|libc-fcntl-status-control|libc-ioctl|libc-ffs|libc-byte-strings|libc-process-globals-getopt|libc-auxv-observation|libc-inet-address|libc-inet-ntoa|libc-inet-classful|libc-hstrerror|libc-numeric-netdb|libc-random-entropy|libc-memory-search|libc-string-copy|libc-error-strings|libc-strsignal|libc-descriptor-pipeline) ;;
+    libc-readiness-waits|libc-system-observation|libc-system-information|libc-fcntl-record-locks|libc-flock|libc-sendfile|libc-posix-fallocate|libc-descriptor-advice|libc-filesystem-capacity|libc-uts-identity|libc-ctype|libc-locale-profile|libc-locale-multibyte|libc-locale-wide-iconv|libc-wide-character|libc-locale-object-wide|libc-locale-narrow|libc-locale-ctype-locators|libc-locale-error-strings|libc-regex|libc-integer-arithmetic|libc-integer-parse|libc-float-parse|libc-getsubopt|libc-intmax-arithmetic|libc-credential-observation|libc-secure-environment|libc-login-name|libc-child-reaping|libc-immediate-termination|libc-callback-algorithms|libc-search-tree-intrusive|libc-search-hash-table|libc-gettext-catalog|libc-access|libc-clock-gettime|libc-time-observation|libc-difftime|libc-timegm|libc-gmtime-r|libc-system-configuration|libc-mapping-core|libc-header-layouts-baseline|libc-nanosleep|libc-clock-nanosleep|libc-descriptor-entry|libc-fcntl-status-control|libc-ioctl|libc-ffs|libc-byte-strings|libc-process-globals-getopt|libc-auxv-observation|libc-inet-address|libc-inet-ntoa|libc-inet-classful|libc-hstrerror|libc-numeric-netdb|libc-random-entropy|libc-memory-search|libc-string-copy|libc-error-strings|libc-strsignal|libc-descriptor-pipeline) ;;
     libc-vector-io|libc-uio-cxx-linkage) ;;
     libc-sysv-semaphore|libc-posix-semaphore) ;;
     libc-sysv-message-shared-memory) ;;
@@ -5187,6 +5199,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "libc-time-observation takes no arguments"
         ensure_image
         run_libc_time_observation
+        ;;
+    libc-difftime)
+        [ "$#" -eq 0 ] || fail "libc-difftime takes no arguments"
+        ensure_image
+        run_libc_difftime
         ;;
     libc-timegm)
         [ "$#" -eq 0 ] || fail "libc-timegm takes no arguments"

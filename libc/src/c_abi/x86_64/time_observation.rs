@@ -1,9 +1,10 @@
 //! Selected static Linux/x86-64 C clock-observation boundary.
 //!
-//! This leaf owns one bounded direct C time-query block: `clock`, `time`,
-//! `difftime`, C11 `timespec_get`, `clock_getres`, and `gettimeofday`. It
-//! composes only the raw Linux x86-64 syscall ABI and the selected initial-TLS
-//! `errno` writer. It is not calendar or timezone state, clock mutation,
+//! This leaf owns one bounded direct C time-query block: `clock`, `time`, C11
+//! `timespec_get`, `clock_getres`, and `gettimeofday`. It composes only the
+//! raw Linux x86-64 syscall ABI and the selected initial-TLS `errno` writer.
+//! The separate scalar `difftime` artifact has no syscall or clock-state
+//! dependency. This leaf is not calendar or timezone state, clock mutation,
 //! POSIX timers, pthread cancellation, a vDSO resolver, libc.so, CRT,
 //! dynamic TLS, loader, sysroot, allocator, or public x86 support.
 //!
@@ -12,7 +13,6 @@
 //!
 //! - `src/time/clock.c` maps to [`clock`].
 //! - `src/time/time.c` maps to [`time`].
-//! - `src/time/difftime.c` maps to [`difftime`].
 //! - `src/time/timespec_get.c` maps to [`timespec_get`].
 //! - `src/time/clock_getres.c` maps to [`clock_getres`].
 //! - `src/time/gettimeofday.c` maps to [`gettimeofday`].
@@ -119,12 +119,6 @@ pub unsafe extern "C" fn time(output: *mut c_long) -> c_long {
         unsafe { output.write(value.seconds) };
     }
     value.seconds
-}
-
-/// Compute a `double` difference without integer subtraction overflow.
-#[no_mangle]
-pub extern "C" fn difftime(left: c_long, right: c_long) -> f64 {
-    (left as f64) - (right as f64)
 }
 
 /// Read realtime into one C11 `timespec_get` output record.

@@ -3,10 +3,11 @@
  * The same project-header C body is intended to execute first through pinned
  * musl 1.2.6 and then through a freestanding executable linked solely with
  * the selected crabc libc.a.  It specifies a deliberately bounded direct
- * clock-observation block: clock(3), time(3), difftime(3), timespec_get(3),
- * clock_getres(3), and gettimeofday(3).  It does not select calendar or
- * timezone state, clock mutation, POSIX timers, cancellation, CRT, loader,
- * sysroot, or public x86 support.
+ * clock-observation block: clock(3), time(3), timespec_get(3),
+ * clock_getres(3), and gettimeofday(3). The separate scalar difftime
+ * fixture owns the binary64 conversion. This artifact does not select
+ * calendar or timezone state, clock mutation, POSIX timers, cancellation,
+ * CRT, loader, sysroot, or public x86 support.
  */
 
 #ifndef _GNU_SOURCE
@@ -50,8 +51,6 @@ _Static_assert(__builtin_types_compatible_p(__typeof__(&clock),
     clock_t (*)(void)), "clock declaration");
 _Static_assert(__builtin_types_compatible_p(__typeof__(&time),
     time_t (*)(time_t *)), "time declaration");
-_Static_assert(__builtin_types_compatible_p(__typeof__(&difftime),
-    double (*)(time_t, time_t)), "difftime declaration");
 _Static_assert(__builtin_types_compatible_p(__typeof__(&timespec_get),
     int (*)(struct timespec *, int)), "timespec_get declaration");
 _Static_assert(__builtin_types_compatible_p(__typeof__(&clock_getres),
@@ -121,7 +120,7 @@ static int check_wall_clock_and_errno(void)
     return 0;
 }
 
-static int check_cpu_clock_and_pure_conversion(void)
+static int check_cpu_clock(void)
 {
     clock_t before;
     clock_t after;
@@ -134,8 +133,7 @@ static int check_cpu_clock_and_pure_conversion(void)
         checksum += value << (value & 15);
     after = clock();
     if (before < 0 || after < before || checksum == 0 ||
-        difftime((time_t)7, (time_t)3) != 4.0 ||
-        difftime((time_t)-3, (time_t)7) != -10.0 || errno != preserved_errno)
+        errno != preserved_errno)
         return 1;
     return 0;
 }
@@ -159,7 +157,7 @@ int crabc_x86_64_time_observation_probe(void)
 
     if (status != 0)
         return 10 + status;
-    status = check_cpu_clock_and_pure_conversion();
+    status = check_cpu_clock();
     if (status != 0)
         return 30 + status;
     status = check_error_conventions();

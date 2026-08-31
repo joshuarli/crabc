@@ -1179,11 +1179,12 @@ CALLBACK_ALGORITHM_SYMBOLS = ("bsearch", "__qsort_r", "qsort", "qsort_r")
 TIME_OBSERVATION_SYMBOLS = (
     "clock",
     "time",
-    "difftime",
     "timespec_get",
     "clock_getres",
     "gettimeofday",
 )
+
+DIFFTIME_BINARY64_SYMBOLS = ("difftime",)
 
 TIMEGM_UTC_SYMBOLS = ("timegm",)
 
@@ -14665,6 +14666,230 @@ def require_time_observation_artifact(family: Mapping[str, Any]) -> None:
         == {"./scripts/dev-x86_64.sh libc-time-observation"},
         "static-c-time-observation must use the closed libc-time-observation command",
     )
+
+    implementation = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "time_observation.rs"
+    ).read_text(encoding="utf-8")
+    require(
+        "fn difftime(" not in implementation and "src/time/difftime.c" not in implementation,
+        "static-c-time-observation must not retain the separate scalar difftime leaf",
+    )
+
+
+def require_difftime_binary64_artifact(family: Mapping[str, Any]) -> None:
+    """Keep the C scalar separate from clock and calendar/timezone ownership."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.posix-runtime].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [
+        entry for entry in artifacts if entry.get("id") == "static-c-difftime-binary64"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.posix-runtime must contain exactly one static-c-difftime-binary64 artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-difftime-binary64 must not promote libc.posix-runtime",
+    )
+    artifact = matching[0]
+    description = artifact.get("description")
+    require(
+        isinstance(description, str),
+        "static-c-difftime-binary64 needs a description",
+    )
+    for phrase in (
+        "Private native x86 static binary64 `difftime`",
+        "still-planned `libc.posix-runtime`",
+        "ordinary",
+        "INT64_MAX",
+        "INT64_MIN",
+        "no integer-overflow C source contract",
+        "no kernel syscall",
+        "timezone",
+        "calendar policy",
+        "floating-environment policy",
+        "public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"static-c-difftime-binary64 description omits {phrase}",
+        )
+
+    owners = set(
+        nonempty_strings(
+            artifact.get("source_owners"),
+            "static-c-difftime-binary64.source_owners",
+        )
+    )
+    for owner in (
+        "compat/upstreams.toml",
+        "libc/Cargo.toml",
+        "libc/src/lib.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/difftime.rs",
+        "include/time.h",
+        "include/stdint.h",
+        "include/bits/alltypes.h",
+        "compat/x86_64/time_header_abi_probe.c",
+        "compat/x86_64/time_header_abi_probe.cpp",
+        "compat/x86_64/run_time_header_abi.sh",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/libc_difftime_probe.c",
+        "compat/x86_64/libc_difftime_start.S",
+        "compat/x86_64/run_libc_difftime.sh",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/README.md",
+        "STATUS.md",
+        "x86-64.md",
+        "scripts/dev-x86_64.sh",
+        "scripts/check_structure.py",
+    ):
+        require(owner in owners, f"static-c-difftime-binary64 source owners omit {owner}")
+
+    prerequisites = nonempty_strings(
+        artifact.get("x86_abi_prerequisites"),
+        "static-c-difftime-binary64.x86_abi_prerequisites",
+    )
+    require(
+        any(
+            "System V AMD64" in item
+            and "rdi" in item
+            and "rsi" in item
+            and "xmm0" in item
+            and "binary64" in item
+            for item in prerequisites
+        ),
+        "static-c-difftime-binary64 must record its scalar AMD64/binary64 ABI",
+    )
+    require(
+        any(
+            "9fa28ece75d8a2191de7c5bb53bed224c5947417" in item
+            and "src/time/difftime.c" in item
+            and "t1-t0" in item
+            and "subtract-before-conversion" in item
+            for item in prerequisites
+        ),
+        "static-c-difftime-binary64 must retain its exact pinned-musl mapping",
+    )
+    require(
+        any(
+            "INT64_MAX" in item
+            and "INT64_MIN" in item
+            and "2047" in item
+            and "no integer-overflow C source contract" in item
+            for item in prerequisites
+        ),
+        "static-c-difftime-binary64 must retain its endpoint and overflow boundary",
+    )
+    require(
+        any(
+            "no Linux syscall" in item
+            and "no errno" in item
+            and "no TLS" in item
+            and "no timezone" in item
+            and "no calendar" in item
+            for item in prerequisites
+        ),
+        "static-c-difftime-binary64 must retain its pure scalar boundary",
+    )
+
+    headers = nonempty_strings(
+        artifact.get("x86_header_prerequisites"),
+        "static-c-difftime-binary64.x86_header_prerequisites",
+    )
+    require(
+        any(
+            "C and C++" in item
+            and "double difftime(time_t, time_t)" in item
+            and "unmangled" in item
+            and "binary64" in item
+            for item in headers
+        ),
+        "static-c-difftime-binary64 must retain its exact C/C++ header ABI",
+    )
+
+    exports = set(
+        static_c_abi_export_names(
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        )
+    )
+    require(
+        set(DIFFTIME_BINARY64_SYMBOLS) <= exports,
+        "static-c-difftime-binary64 must retain its selected export",
+    )
+
+    static_root = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+    ).read_text(encoding="utf-8")
+    require(
+        '#[path = "difftime.rs"]\nmod difftime;' in static_root,
+        "x86 static C ABI must compose the binary64 difftime leaf",
+    )
+    implementation = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "difftime.rs"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "src/time/difftime.c",
+        "fn difftime(",
+        "wrapping_sub",
+        "binary64",
+        "xmm0",
+    ):
+        require(
+            snippet in implementation,
+            f"difftime leaf omits {snippet}",
+        )
+    for forbidden in (
+        "crabc_core",
+        "crabc_mimalloc",
+        "raw_syscall",
+        "set_errno",
+        "getenv",
+        "tzset",
+        "__tls_get_addr",
+    ):
+        require(
+            forbidden not in implementation,
+            f"difftime leaf widens into {forbidden}",
+        )
+
+    evidence = artifact.get("native_evidence")
+    require(isinstance(evidence, list), "static-c-difftime-binary64 needs evidence")
+    require(
+        {entry.get("command") for entry in evidence if isinstance(entry, Mapping)}
+        == {"./scripts/dev-x86_64.sh libc-difftime"},
+        "static-c-difftime-binary64 must use the closed libc-difftime command",
+    )
+    scope = evidence[0].get("scope")
+    require(
+        isinstance(scope, str),
+        "static-c-difftime-binary64 evidence needs a scope",
+    )
+    for phrase in (
+        "Pinned-musl project-header C execution",
+        "C++ header object",
+        "`-nostdlib -static` candidate",
+        "ordinary",
+        "INT64_MAX",
+        "INT64_MIN",
+        "2047",
+        "no interpreter/DT_NEEDED/unresolved",
+        "no TLS",
+        "no kernel syscall",
+        "env -i candidate",
+        "timezone",
+        "calendar policy",
+        "public x86 support",
+    ):
+        require(
+            phrase in scope,
+            f"static-c-difftime-binary64 evidence omits {phrase}",
+        )
 
 
 def require_timegm_utc_artifact(family: Mapping[str, Any]) -> None:
@@ -35731,6 +35956,7 @@ def validate_ledger(
     require_callback_algorithms_artifact(by_id["libc.posix-runtime"])
     require_clock_gettime_artifact(by_id["libc.posix-runtime"])
     require_time_observation_artifact(by_id["libc.posix-runtime"])
+    require_difftime_binary64_artifact(by_id["libc.posix-runtime"])
     require_timegm_utc_artifact(by_id["libc.posix-runtime"])
     require_gmtime_r_utc_artifact(by_id["libc.posix-runtime"])
     require_system_configuration_artifact(by_id["libc.posix-runtime"])

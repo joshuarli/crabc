@@ -26,6 +26,7 @@ static_assert(TIMER_ABSTIME == 1, "TIMER_ABSTIME");
 static_assert(TIME_UTC == 1, "TIME_UTC");
 
 static clock_t (*clock_signature)(void) = clock;
+static double (*difftime_signature)(time_t, time_t) = difftime;
 static time_t (*timegm_signature)(struct tm *) = timegm;
 static struct tm *(*gmtime_r_signature)(const time_t *, struct tm *) = gmtime_r;
 static int (*clock_gettime_signature)(clockid_t, struct timespec *) = clock_gettime;
@@ -39,6 +40,7 @@ int main()
     calendar.tm_gmtoff = 0;
     calendar.tm_zone = NULL;
     (void)clock_signature;
+    (void)difftime_signature;
     (void)timegm_signature;
     (void)gmtime_r_signature;
     (void)clock_gettime_signature;

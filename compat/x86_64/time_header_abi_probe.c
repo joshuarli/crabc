@@ -52,6 +52,7 @@ _Static_assert(TIME_UTC == 1, "TIME_UTC");
 
 static clock_t (*clock_signature)(void) = clock;
 static time_t (*time_signature)(time_t *) = time;
+static double (*difftime_signature)(time_t, time_t) = difftime;
 static time_t (*mktime_signature)(struct tm *) = mktime;
 static time_t (*timegm_signature)(struct tm *) = timegm;
 static size_t (*strftime_signature)(char *, size_t, const char *,
@@ -77,6 +78,7 @@ int main(void)
     calendar.tm_zone = NULL;
     (void)clock_signature;
     (void)time_signature;
+    (void)difftime_signature;
     (void)mktime_signature;
     (void)timegm_signature;
     (void)strftime_signature;
