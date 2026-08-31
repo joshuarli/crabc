@@ -503,6 +503,7 @@ llround
 llroundf
 llroundl
 localeconv
+log
 log10
 log10f
 log10l
@@ -511,6 +512,7 @@ log2l
 logb
 logbf
 logbl
+logf
 logl
 longjmp
 lremovexattr

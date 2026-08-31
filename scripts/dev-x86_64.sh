@@ -63,6 +63,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   math-special-header-abi  verify complete x86 math.special C++ ABI/linkage
   math-exp2-header-abi  verify x86 exp2/exp2f C++ ABI/linkage
   math-expm1-header-abi  verify x86 expm1/expm1f C++ ABI/linkage
+  math-log-header-abi  verify x86 log/logf C++ ABI/linkage
   math-log10-header-abi  verify x86 log10/log10f C++ ABI/linkage
   sys-reg-header-abi  compile the staged crabc x86 ptrace-register header slice
   machine-context-header-abi  verify staged x86 machine/context C/C++ header ABI profiles
@@ -418,6 +419,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-math-cbrt  run the static x86 cbrt/cbrtf scalar cube-root slice
   libc-math-exp2  run the static x86 exp2/exp2f scalar base-two exponential slice
   libc-math-expm1  run the static x86 expm1/expm1f scalar exponential-minus-one slice
+  libc-math-log  run the static x86 log/logf scalar natural-logarithm slice
   libc-math-log10  run the static x86 log10/log10f scalar base-ten logarithm slice
   libc-math-ceil  run the static x86 ceil/ceilf fixed-direction slice
   libc-math-floor  run the static x86 floor/floorf fixed-direction slice
@@ -1753,6 +1755,18 @@ infinities, quiet/signaling NaNs, IEEE flags, and requested versus observed
 direction in all four MXCSR modes. It excludes `expm1l`, adjacent exp/log/pow
 functions, fenv API/policy, special/complex/binary80 math, family completion,
 promotion, and public x86 support.
+`libc-math-log` is the separate selected binary32/binary64 natural-logarithm
+slice for `log` and `logf`. It compares parenthesized C calls and default-SSE/
+`-mfpmath=387` C++ declarations with pinned musl, then runs one freestanding
+static candidate. The checked GCC 15.2.0 translation of musl 1.2.6
+`log.c`/`logf.c` carries private binary64/binary32 Arm tables and local domain
+helpers rather than sharing `math.special` state. Its 224 raw 32-byte records
+cover signed zero divide-by-zero, negative-domain invalid, raw subnormal and
+normal bounds, close-to-one directed-zero behavior, finite extrema,
+infinities, quiet/signaling NaNs, IEEE flags, and requested versus observed
+direction in all four MXCSR modes. It excludes `logl`, adjacent
+log1p/log2/log10/exp/pow functions, fenv API/policy, special/complex/binary80
+math, family completion, promotion, and public x86 support.
 `libc-math-log10` is the separate selected binary32/binary64 base-ten
 logarithm slice for `log10` and `log10f`. It compares parenthesized C calls
 and default-SSE/`-mfpmath=387` C++ declarations with pinned musl, then runs
@@ -2164,6 +2178,10 @@ run_math_exp2_header_abi() {
 
 run_math_expm1_header_abi() {
     run_in_container bash /workspace/compat/x86_64/run_math_expm1_header_abi.sh
+}
+
+run_math_log_header_abi() {
+    run_in_container bash /workspace/compat/x86_64/run_math_log_header_abi.sh
 }
 
 run_math_log10_header_abi() {
@@ -3693,6 +3711,10 @@ run_libc_math_expm1_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_math_expm1.sh
 }
 
+run_libc_math_log_probe() {
+    run_in_container bash /workspace/compat/x86_64/run_libc_math_log.sh
+}
+
 run_libc_math_log10_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_math_log10.sh
 }
@@ -3827,7 +3849,7 @@ case "$command" in
     ldso-public-dlfcn|ldso-dladdr-symbol-bounds) ;;
     ldso-bounded-dlopen) ;;
     math-special-header-abi|libc-math-special) ;;
-    math-exp2-header-abi|math-expm1-header-abi|math-log10-header-abi|libc-math-exp2|libc-math-expm1|libc-math-log10) ;;
+    math-exp2-header-abi|math-expm1-header-abi|math-log-header-abi|math-log10-header-abi|libc-math-exp2|libc-math-expm1|libc-math-log|libc-math-log10) ;;
     inet-address-header-abi) ;;
     libc-network-byte-order) ;;
     ldso-target-root) ;;
@@ -4036,6 +4058,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "math-expm1-header-abi takes no arguments"
         ensure_image
         run_math_expm1_header_abi
+        ;;
+    math-log-header-abi)
+        [ "$#" -eq 0 ] || fail "math-log-header-abi takes no arguments"
+        ensure_image
+        run_math_log_header_abi
         ;;
     math-log10-header-abi)
         [ "$#" -eq 0 ] || fail "math-log10-header-abi takes no arguments"
@@ -5861,6 +5888,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "libc-math-expm1 takes no arguments"
         ensure_image
         run_libc_math_expm1_probe
+        ;;
+    libc-math-log)
+        [ "$#" -eq 0 ] || fail "libc-math-log takes no arguments"
+        ensure_image
+        run_libc_math_log_probe
         ;;
     libc-math-log10)
         [ "$#" -eq 0 ] || fail "libc-math-log10 takes no arguments"
