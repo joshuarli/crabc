@@ -10748,6 +10748,53 @@ native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc
 oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source, GNU declaration, static member, and ordinary current-task behavior oracle for src/linux/gettid.c::gettid: its full TCB source reads the current thread's tid." }, { kind = "kernel-abi", source = "Linux 5.10 x86-64 ABI", role = "gettid=186 takes no arguments and returns the calling task's kernel TID; the direct static adaptation is limited to that ordinary syscall route." }, { kind = "elf-abi", source = "System V AMD64 psABI", role = "No-argument signed 32-bit pid_t result ABI, C++ C linkage, and true-static ET_EXEC closure contract." }]
 
 [[family.verified_artifact]]
+id = "static-c-posix-close"
+description = "Private native x86 selected-static-archive POSIX `posix_close` flag-ignored compatibility boundary inside still-planned `libc.c-abi-compat`. One static `crabc-libc` archive resolves exactly `int posix_close(int, int)` into a freestanding C fixture after equivalent pinned-musl execution. Musl's complete `src/unistd/posix_close.c::posix_close` leaf delegates to `close(fd)` and ignores its flags word; the adjacent musl close source maps a raw EINTR close result to success without retry. The isolated x86 direct `close=3` adapter retains those observable success/error rules without importing musl cancellation or AIO hooks. Direct and function-pointer calls close fixture-owned descriptors with arbitrary flags, preserve stale errno on success, and return -1/EBADF for invalid descriptors. This one-symbol ABI artifact does not select `close`, generic descriptor I/O, descriptor lifetime or ownership policy, cancellation/AIO coordination, filesystem policy, libc.so, CRT, loader, sysroot, family completion, promotion, or public x86 support."
+source_owners = [
+  "compat/upstreams.toml",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/posix_close.rs",
+  "libc/src/c_abi/x86_64/errno.rs",
+  "libc/src/c_abi/x86_64/static_tls.rs",
+  "libc/src/c_abi/x86_64/syscall.rs",
+  "include/errno.h",
+  "include/features.h",
+  "include/stdint.h",
+  "include/sys/syscall.h",
+  "include/unistd.h",
+  "compat/x86_64/posix_close_header_abi_probe.c",
+  "compat/x86_64/posix_close_header_abi_probe.cpp",
+  "compat/x86_64/run_posix_close_header_abi.sh",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/libc_posix_close_probe.c",
+  "compat/x86_64/libc_posix_close_start.S",
+  "compat/x86_64/run_libc_posix_close.sh",
+  "compat/x86_64/aarch64_parity_inventory.py",
+  "compat/x86_64/aarch64_parity_inventory.json",
+  "compat/x86_64/tests/test_aarch64_parity_inventory.py",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "compat/x86_64/README.md",
+  "STATUS.md",
+  "x86-64.md",
+  "scripts/dev-x86_64.sh",
+  "scripts/check_structure.py",
+]
+x86_abi_prerequisites = [
+  "The SysV AMD64 LP64 C ABI passes `int posix_close(int, int)`'s signed descriptor and flags words in edi and esi and receives its signed status in eax. Linux close=3 consumes only the descriptor word in rdi; the second C int is deliberately ignored without reading a vararg, pointer, or caller-owned record.",
+  "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417 maps `src/unistd/posix_close.c::posix_close` to `close(fd)` with ignored flags. Its adjacent `src/unistd/close.c::close` maps raw EINTR to zero without retry after its cancellation/AIO hooks; this isolated direct close=3 adaptation retains only that source-shaped descriptor/error mapping and leaves those hooks unselected.",
+  "The true `-nostdlib -static` candidate has no interpreter, DT_NEEDED, unresolved symbol, dynamic TLS model, allocator, or ambient runtime dependency. It contains only direct initial-TLS errno support plus one close=3 syscall in posix_close, rejects `close` and generic descriptor-I/O exports, and makes no descriptor-lifetime, cancellation, AIO, or filesystem-policy claim.",
+]
+x86_header_prerequisites = [
+  "The focused pinned-musl/project-first C11/C++17 `<unistd.h>` matrix proves unconditional `int posix_close(int, int)` visibility under strict, POSIX, X/Open, and GNU profiles, its two-int function-pointer type, project-header provenance, and unmangled C++ linkage. It selects no `close` declaration behavior, descriptor API family, archive completion, or public x86 support.",
+]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-posix-close", scope = "Pinned-musl/project C/C++ header compilation plus equivalent pinned-musl C execution and one true x86 crabc-libc `-nostdlib -static` candidate. The shared fixture proves direct and function-pointer close of fixture-owned pipe descriptors with arbitrary ignored flags, preserved stale errno on success, and direct/function-pointer -1/EBADF failure. It ratchets pinned-musl posix_close.lo/AArch64 ownership, exact crate-owned export closure, the selected initial-TLS errno path, no interpreter/DT_NEEDED/unresolved symbol/dynamic-TLS model/allocator or ambient runtime, and posix_close disassembly with only direct close=3 while rejecting `close` and generic descriptor-I/O extraction. It does not select descriptor lifetime/ownership policy, cancellation/AIO coordination, filesystem policy, libc.so, CRT, loader, sysroot, family completion, promotion, or public x86 support." }]
+oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT declaration, static-member, and behavior oracle: src/unistd/posix_close.c::posix_close ignores flags and delegates to close; src/unistd/close.c records the raw EINTR success mapping whose cancellation/AIO hooks remain unselected." }, { kind = "kernel-abi", source = "Linux 5.10 x86-64 ABI", role = "close=3 consumes the signed descriptor in rdi and returns raw status; the selected fixture's pipe2=293 and close operations are harness-only descriptor setup and observation." }, { kind = "elf-abi", source = "System V AMD64 psABI", role = "Two signed 32-bit C argument registers, signed int result ABI, C++ C linkage, and true-static ET_EXEC with direct initial-TLS errno closure." }]
+
+[[family.verified_artifact]]
 id = "static-c-bsearch"
 description = "Private native x86 selected-static-archive `bsearch` compatibility artifact inside still-planned `libc.c-abi-compat`. One dependency-free `crabc-libc` archive resolves exactly `bsearch` into a freestanding C fixture after an equivalent pinned-musl execution. Musl's complete `src/stdlib/bsearch.c` leaf retains its midpoint and signed comparator branches for caller-owned valid contiguous records: direct and function-pointer calls cover first/last/miss, a duplicate-key midpoint return, a wide record, and zero elements without a callback. The checked multiplication guard applies only outside the valid C array domain, where musl's source pointer expression is already undefined. The final candidate rejects `qsort`, `qsort_r`, `__qsort_r`, search-container helpers, TLS/errno, allocation, locale, locks, syscalls, and runtime state. This capability-free ABI artifact does not change the existing qsort/qsort_r behavior or select general sorting/searching, callback ownership, C longjmp/C++ exception transport, libc.so, CRT, loader, sysroot, family completion, promotion, or public x86 support."
 source_owners = [

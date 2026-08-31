@@ -1383,7 +1383,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "usleep-header-abi|libc-timerfd|libc-signalfd|libc-sigpause|libc-sigisemptyset|libc-sigandset-sigorset|libc-sigpending|libc-sigrtmax|libc-sigrtmin|libc-sched-getscheduler|libc-alarm|libc-usleep|libc-sigaddset-sigdelset-sigfillset",
             "libc-sched-getcpu|libc-sched-yield",
             "sched-getscheduler-header-abi",
-            "ctermid-header-abi|gethostid-header-abi|getpagesize-header-abi|gettid-header-abi|isatty-header-abi|ttyname-r-header-abi|tcgetpgrp-header-abi|tcsetpgrp-header-abi|getpass-header-abi|libc-ctermid|libc-gethostid|libc-getpagesize|libc-gettid|libc-isatty|libc-ttyname-r|libc-tcgetpgrp|libc-tcsetpgrp|libc-getpass|mkfifo-header-abi|mkfifoat-header-abi|libc-mkfifo|libc-mkfifoat|mktemp-header-abi|libc-mktemp",
+            "ctermid-header-abi|gethostid-header-abi|getpagesize-header-abi|gettid-header-abi|posix-close-header-abi|isatty-header-abi|ttyname-r-header-abi|tcgetpgrp-header-abi|tcsetpgrp-header-abi|getpass-header-abi|libc-ctermid|libc-gethostid|libc-getpagesize|libc-gettid|libc-posix-close|libc-isatty|libc-ttyname-r|libc-tcgetpgrp|libc-tcsetpgrp|libc-getpass|mkfifo-header-abi|mkfifoat-header-abi|libc-mkfifo|libc-mkfifoat|mktemp-header-abi|libc-mktemp",
             "readlinkat-header-abi|libc-readlinkat",
             "stdio-permanent-line-io-header-abi|stdio-octal-hex-scan-header-abi",
             "math-complex-complete-header-abi|libc-math-complex-complete",
@@ -23066,6 +23066,142 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         )
         self.assertIn(
             '    libc-gettid)\n        [ "$#" -eq 0 ] || fail "libc-gettid takes no arguments"',
+            runner,
+        )
+
+    def test_libc_static_c_abi_posix_close_artifact_stays_narrow(self) -> None:
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        implementation = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "posix_close.rs"
+        ).read_text(encoding="utf-8")
+        probe = (
+            ROOT / "compat" / "x86_64" / "libc_posix_close_probe.c"
+        ).read_text(encoding="utf-8")
+        start = (
+            ROOT / "compat" / "x86_64" / "libc_posix_close_start.S"
+        ).read_text(encoding="utf-8")
+        artifact_runner = (
+            ROOT / "compat" / "x86_64" / "run_libc_posix_close.sh"
+        ).read_text(encoding="utf-8")
+        header_runner = (
+            ROOT / "compat" / "x86_64" / "run_posix_close_header_abi.sh"
+        ).read_text(encoding="utf-8")
+        header_c = (
+            ROOT / "compat" / "x86_64" / "posix_close_header_abi_probe.c"
+        ).read_text(encoding="utf-8")
+        header_cxx = (
+            ROOT / "compat" / "x86_64" / "posix_close_header_abi_probe.cpp"
+        ).read_text(encoding="utf-8")
+        static_exports = {
+            line
+            for line in (
+                ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+            ).read_text(encoding="utf-8").splitlines()
+            if line and not line.startswith("#")
+        }
+        parity_ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        runner = RUNNER.read_text(encoding="utf-8")
+
+        self.assertIn('#[path = "posix_close.rs"]', static_root)
+        for required in (
+            "Selected static Linux/x86-64 `posix_close` C ABI boundary",
+            "musl 1.2.6 release commit",
+            "src/unistd/posix_close.c::posix_close",
+            "src/unistd/close.c::close",
+            "System V AMD64 ABI",
+            'pub extern "C" fn posix_close(file_descriptor: c_int, _flags: c_int) -> c_int',
+            "raw_syscall::syscall1(raw_syscall::SYS_CLOSE",
+            "if result == -EINTR",
+            "c_status(result)",
+        ):
+            self.assertIn(required, implementation)
+        for forbidden in (
+            "descriptor_io::",
+            "static_tls::",
+            "raw_syscall::SYS_OPEN",
+            "crabc_core",
+            "crabc_mimalloc",
+        ):
+            self.assertNotIn(forbidden, implementation)
+        self.assertIn("posix_close", static_exports)
+        self.assertEqual(
+            {symbol for symbol in static_exports if symbol.startswith("posix_close")},
+            {"posix_close"},
+        )
+
+        for required in (
+            "#include <unistd.h>",
+            "typedef int (*posix_close_signature)(int, int)",
+            "const posix_close_signature function = posix_close",
+            "posix_close(descriptors[0], 0x7fffffff)",
+            "function(descriptors[1], -1)",
+            "CRABC_POSIX_CLOSE_FREESTANDING",
+        ):
+            self.assertIn(required, probe)
+        for required in (
+            "__crabc_x86_static_tls_bootstrap",
+            "crabc_x86_64_posix_close_probe",
+            "mov $231, %eax",
+        ):
+            self.assertIn(required, start)
+
+        for header in (header_c, header_cxx):
+            for required in (
+                "posix_close_signature",
+                "posix_close declaration",
+                "posix_close_function",
+            ):
+                self.assertIn(required, header)
+        for required in (
+            "posix_close_header_abi_probe.c",
+            "posix_close_header_abi_probe.cpp",
+            "c11-strict",
+            "c11-posix-2008",
+            "c11-xopen-700",
+            "c11-gnu",
+            "cxx17-strict",
+            "cxx17-gnu",
+            "nm --undefined-only",
+            "retained a mangled posix_close reference",
+        ):
+            self.assertIn(required, header_runner)
+
+        for required in (
+            "run_posix_close_header_abi.sh",
+            "posix_close.lo",
+            "static_c_abi_exports.txt",
+            "-nostdlib -static",
+            "-Wl,--no-undefined",
+            "archive does not define $symbol",
+            "candidate exports an unselected descriptor entry",
+            "posix_close lacks Linux x86-64 close=3",
+            "posix_close delegates to an unselected descriptor entry",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn("--whole-archive", artifact_runner)
+        self.assertIn('id = "static-c-posix-close"', parity_ledger)
+        self.assertIn(
+            'command = "./scripts/dev-x86_64.sh libc-posix-close"',
+            parity_ledger,
+        )
+        self.assertIn("run_posix_close_header_abi()", runner)
+        self.assertIn(
+            "/workspace/compat/x86_64/run_posix_close_header_abi.sh", runner
+        )
+        self.assertIn("run_libc_posix_close_probe()", runner)
+        self.assertIn(
+            "/workspace/compat/x86_64/run_libc_posix_close.sh", runner
+        )
+        self.assertIn(
+            '    posix-close-header-abi)\n        [ "$#" -eq 0 ] || fail "posix-close-header-abi takes no arguments"',
+            runner,
+        )
+        self.assertIn(
+            '    libc-posix-close)\n        [ "$#" -eq 0 ] || fail "libc-posix-close takes no arguments"',
             runner,
         )
 

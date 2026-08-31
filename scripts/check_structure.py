@@ -6448,6 +6448,50 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
                 f"boundary must not select {forbidden!r}"
             )
 
+    posix_close_source = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "posix_close.rs"
+    )
+    posix_close_text = posix_close_source.read_text(errors="replace")
+    for required in (
+        "pinned musl 1.2.6 release commit",
+        "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+        "src/unistd/posix_close.c::posix_close",
+        "src/unistd/close.c::close",
+        "System V AMD64 ABI",
+        'pub extern "C" fn posix_close(file_descriptor: c_int, _flags: c_int) -> c_int',
+        "raw_syscall::syscall1(raw_syscall::SYS_CLOSE",
+        "if result == -EINTR",
+        "c_status(result)",
+    ):
+        if required not in posix_close_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/posix_close.rs: selected static POSIX "
+                f"close boundary is missing {required!r}"
+            )
+    posix_close_exports = set(
+        re.findall(
+            r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(',
+            posix_close_text,
+        )
+    )
+    if posix_close_exports != {"posix_close"}:
+        errors.append(
+            "libc/src/c_abi/x86_64/posix_close.rs: selected static POSIX "
+            "close artifact must export only posix_close"
+        )
+    for forbidden in (
+        "descriptor_io::",
+        "static_tls::",
+        "raw_syscall::SYS_OPEN",
+        "crabc_core",
+        "crabc_mimalloc",
+    ):
+        if forbidden in posix_close_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/posix_close.rs: selected static POSIX "
+                f"close boundary must not select {forbidden!r}"
+            )
+
     isatty_source = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "isatty.rs"
     isatty_text = isatty_source.read_text(errors="replace")
     for required in (
@@ -11500,6 +11544,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         ctermid_text,
         gethostid_text,
         gettid_text,
+        posix_close_text,
         isatty_text,
         ttyname_r_text,
         tcgetpgrp_text,
@@ -11824,6 +11869,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         "ctermid",
         "gethostid",
         "gettid",
+        "posix_close",
         "isatty",
         "ttyname_r",
         "tcgetpgrp",
@@ -12131,6 +12177,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         ("termios_control.rs", termios_control_text),
         ("ctermid.rs", ctermid_text),
         ("gettid.rs", gettid_text),
+        ("posix_close.rs", posix_close_text),
         ("isatty.rs", isatty_text),
         ("ttyname_r.rs", ttyname_r_text),
         ("tcgetpgrp.rs", tcgetpgrp_text),

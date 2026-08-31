@@ -52,7 +52,8 @@
 //! pathname-selection leaf, fixed Linux `lchmod`
 //! unsupported compatibility, bounded fcntl status-control
 //! and nonblocking record-lock boundaries, advisory whole-file flock, bounded
-//! regular-file sendfile transfer, mode-zero POSIX range allocation,
+//! regular-file sendfile transfer, mode-zero POSIX range allocation, one
+//! flag-ignored POSIX close compatibility spelling,
 //! descriptor advice, timestamp updates, descriptor-I/O, vector-I/O, and
 //! selected process-resources, selected readiness/signal-waits, and selected
 //! system-configuration, caller-owned mapping-core, per-range memory locking,
@@ -457,6 +458,8 @@ mod descriptor_advice;
 mod ioctl;
 #[path = "descriptor_io.rs"]
 mod descriptor_io;
+#[path = "posix_close.rs"]
+mod posix_close;
 #[path = "vector_io.rs"]
 mod vector_io;
 #[path = "process_resources.rs"]
