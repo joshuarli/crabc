@@ -6215,6 +6215,51 @@ x86_header_prerequisites = [
 ]
 native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-fdim", scope = "Pinned-musl/project-header C and C++ ABI execution plus one dependency-free `-nostdlib -static --no-undefined --gc-sections` candidate. Function pointers prove binary32/binary64 ordinary, zero, infinity, raw quiet/signaling-NaN, all-four-mode half-ULP, and overflow behavior; ELF proof requires strong global target-owned fdim/fdimf definitions, SSE comparisons/subtractions, exact archive surface, and rejects weak compiler-builtins fallback, fdiml, exp10*/pow10*, rint*/nearbyint*, unresolved symbols, dynamic linkage, TLS, ambient libm, and unowned runtime dependencies. It excludes category/family completion, promotion, full x86-64 parity, and public x86 support." }]
 oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source, IEEE NaN-selection, C/fenv behavior, and public ABI oracle for exactly src/math/fdim.c and src/math/fdimf.c." }, { kind = "aarch64-contract", source = "libc/src/math_compat.rs", role = "Existing AArch64 source-level fdim/fdimf semantic mapping; its target code and binary128 long-double sibling remain distinct." }, { kind = "elf-abi", source = "System V AMD64 psABI", role = "xmm0/xmm1 binary32/binary64 argument and xmm0 return ABI for the selected static C entries." }]
+
+[[family.verified_artifact]]
+id = "static-c-math-minmax"
+description = "Private native x86 selected-static binary32/binary64 extrema artifact inside still-planned `libc.text-math-locale-stdio`. One dependency-free `crabc-libc` archive resolves exactly binary64 `fmax`/`fmin` and binary32 `fmaxf`/`fminf` into a freestanding project-header C fixture after equivalent pinned-musl execution. The fixture proves ordinary and infinite operands, Annex-F opposing signed-zero selection (+0 for fmax*, -0 for fmin*), left-to-right quiet/signaling-NaN operand return without `FE_INVALID`, all four MXCSR rounding modes, and preservation of preexisting `FE_DIVBYZERO`; integer raw-bit classification ensures signaling NaNs never reach SSE UCOMIS. Strong target-owned definitions reject a weak compiler-builtins fallback. This artifact excludes `fmaxl`/`fminl`, `fdim*`, bit-sign functions, current/integer-result rounding, special and complex functions, binary80/x87 math, errno policy, general libm, libc.so, CRT/TLS lifecycle, loader, sysroot, `math.elementary` family completion, promotion, full x86-64 parity, and public x86 support."
+source_owners = [
+  "compat/upstreams.toml",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "libc/src/math_compat.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/math_minmax.rs",
+  "include/fenv.h",
+  "include/float.h",
+  "include/math.h",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/math_minmax_header_abi_probe.cpp",
+  "compat/x86_64/libc_math_minmax_probe.c",
+  "compat/x86_64/libc_math_minmax_start.S",
+  "compat/x86_64/run_libc_math_minmax.sh",
+  "compat/x86_64/aarch64_parity_inventory.py",
+  "compat/x86_64/aarch64_parity_inventory.json",
+  "compat/x86_64/tests/test_aarch64_parity_inventory.py",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "compat/x86_64/README.md",
+  "SCOPE.md",
+  "COMPATIBILITY-PROFILE.md",
+  "STATUS.md",
+  "x86-64.md",
+  "scripts/dev-x86_64.sh",
+  "scripts/check_structure.py",
+]
+x86_abi_prerequisites = [
+  "Pinned musl 1.2.6 src/math/fmax.c, fmaxf.c, fmin.c, and fminf.c define the exact `isnan` return-y/return-x sequence, sign-bit selection for opposed signs, then x < y selection. The target leaf uses raw IEEE exponent/fraction classification before UCOMIS, so quiet and signaling NaNs take musl's selected operand path without FE_INVALID.",
+  "System V AMD64 with FLT_EVAL_METHOD=0 passes binary64/binary32 x in xmm0 and y in xmm1 and returns in xmm0. After both operands are proven non-NaN, SSE `ucomisd`/`ucomiss` selects the ordered result without changing MXCSR. x87 binary80 `fmaxl`/`fminl` stays representation- and ABI-distinct and excluded.",
+  "AArch64 retains the same public binary32/binary64 source-level rule in libc/src/math_compat.rs, but its target implementation and binary128 long-double siblings are not imported into the x86 archive.",
+]
+x86_header_prerequisites = [
+  "The focused C fixture preprocesses project fenv.h, float.h, math.h, stdint.h, features.h, and bits/alltypes.h, then takes parenthesized `fmax`/`fmaxf`/`fmin`/`fminf` function addresses so compiler builtins cannot replace the C ABI calls.",
+  "Dedicated C++17 objects compiled with the default SSE mode and `-mfpmath=387` pin exact binary64/binary32 function-pointer signatures and unmangled C references from the project header against pinned musl.",
+]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-math-minmax", scope = "Pinned-musl/project-header C and C++ ABI execution plus one dependency-free `-nostdlib -static --no-undefined --gc-sections` candidate. Function pointers prove binary32/binary64 ordinary, infinity, signed-zero, raw quiet/signaling-NaN, all-four-mode, and preexisting-FE_DIVBYZERO behavior; ELF proof requires strong global target-owned fmax/fmaxf/fmin/fminf definitions, raw integer classification and SSE comparisons, exact archive surface, and rejects weak compiler-builtins fallback, fmaxl/fminl, fdim*, bit-sign, rint*/nearbyint*, sqrt*, unresolved symbols, dynamic linkage, TLS, ambient libm, and unowned runtime dependencies. It excludes category/family completion, promotion, full x86-64 parity, and public x86 support." }]
+oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source, IEEE NaN-selection, signed-zero, C/fenv behavior, and public ABI oracle for exactly src/math/fmax.c, fmaxf.c, fmin.c, and fminf.c." }, { kind = "aarch64-contract", source = "libc/src/math_compat.rs", role = "Existing AArch64 source-level fmax/fmaxf/fmin/fminf semantic mapping; its target code and binary128 long-double siblings remain distinct." }, { kind = "elf-abi", source = "System V AMD64 psABI", role = "xmm0/xmm1 binary32/binary64 argument and xmm0 return ABI for the selected static C entries." }]
+
 [[family.verified_slice]]
 id = "numeric.parse-float-locale"
 description = "Private native x86 completion of the AArch64 `numeric.parse-float-locale` capability. The selected static archive owns all twenty-three ledger symbols: narrow `atof`/`strto*`, ignored-locale public and weak-internal `_l` wrappers, arbitrary-length wide floating and integer conversions, musl-compatible static-buffer `ecvt`/`fcvt`, caller-buffered `gcvt`, and in-place `getsubopt`. C/POSIX/C.UTF-8 share the fixed decimal grammar; no arbitrary locale map, locale-dependent radix, public FILE, general printf, allocator, libc.so, CRT, loader, or sysroot is selected. The family stays planned and the repository retains promotion_ready=false and public_support=false."

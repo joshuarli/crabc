@@ -667,6 +667,18 @@ the weak compiler-builtins fallback. `fdiml`, `exp10*`/`pow10*`,
 current/integer-result rounding, special/binary80 math, category/family
 completion, promotion, and public x86 support remain unselected.
 
+The adjacent private `static-c-math-minmax` artifact is a distinct
+binary64/binary32 extrema proof inside the same still-planned math family:
+`./scripts/dev-x86_64.sh libc-math-minmax` runs parenthesized
+`fmax`/`fmaxf`/`fmin`/`fminf` C calls and default-SSE/`-mfpmath=387` C++ ABI
+probes against pinned musl and one freestanding static candidate. It proves
+ordinary/infinite values, Annex-F +0/-0 selection for opposing signs,
+left-to-right quiet/signaling-NaN operand return without `FE_INVALID`, all
+four MXCSR modes, and preservation of preexisting `FE_DIVBYZERO`. The
+target-private leaf classifies raw IEEE bits before SSE comparison; `fmaxl`,
+`fminl`, fdim, bit-sign, fenv-rounding, binary80/x87, special/complex math,
+family completion, promotion, and public x86 support remain excluded.
+
 The adjacent private x86 ABI-only ctype locator artifact is verified by
 `./scripts/dev-x86_64.sh libc-locale-ctype-locators`. It provides exactly
 `__ctype_b_loc`, `__ctype_tolower_loc`, and `__ctype_toupper_loc`: stable

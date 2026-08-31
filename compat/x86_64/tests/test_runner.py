@@ -1152,6 +1152,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn("    libc-math-complex)", source)
         self.assertIn("    libc-elementary-sqrt-fenv)", source)
         self.assertIn("    libc-fenv-rounding) ;;", source)
+        self.assertIn("    libc-math-minmax) ;;", source)
         self.assertIn("    libc-math-x87-extended)", source)
         self.assertIn("    libc-math-special)", source)
         self.assertIn("    libc-fdim) ;;", source)
@@ -1177,6 +1178,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "libc-network-byte-order",
             "ldso-target-root",
             "libc-fenv-rounding",
+            "libc-math-minmax",
             "libc-fdim",
             "machine-context-header-abi",
             "memory-sync-header-abi",
@@ -17192,6 +17194,79 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             self.assertIn(required, artifact_runner)
         self.assertIn("libc-auxv-observation)", dispatcher)
         self.assertIn("run_libc_auxv_observation.sh", dispatcher)
+
+    def test_math_minmax_runner_keeps_the_binary32_binary64_static_boundary(self) -> None:
+        dispatcher = RUNNER.read_text(encoding="utf-8")
+        runner = (ROOT / "compat" / "x86_64" / "run_libc_math_minmax.sh").read_text(
+            encoding="utf-8"
+        )
+        probe = (ROOT / "compat" / "x86_64" / "libc_math_minmax_probe.c").read_text(
+            encoding="utf-8"
+        )
+        header = (
+            ROOT / "compat" / "x86_64" / "math_minmax_header_abi_probe.cpp"
+        ).read_text(encoding="utf-8")
+        leaf = (ROOT / "libc" / "src" / "c_abi" / "x86_64" / "math_minmax.rs").read_text(
+            encoding="utf-8"
+        )
+        for required in (
+            "libc-math-minmax)",
+            "run_libc_math_minmax_probe()",
+            "/workspace/compat/x86_64/run_libc_math_minmax.sh",
+        ):
+            self.assertIn(required, dispatcher)
+        for required in (
+            "-nostdlib -static",
+            "--no-undefined",
+            "--gc-sections",
+            "math_minmax_header_abi_probe.cpp",
+            "strong crabc-owned",
+            "weak compiler-builtins",
+            "candidate retains TLS",
+            "ucomisd",
+            "ucomiss",
+            "movq",
+            "movd",
+            "fmaxl fminl",
+        ):
+            self.assertIn(required, runner)
+        for required in (
+            "check_binary64_values",
+            "check_binary32_values",
+            "signaling_nan_x",
+            "FE_INVALID",
+            "check_fenv_preservation",
+            "FE_DIVBYZERO",
+            "direct_fmax",
+            "direct_fmaxf",
+            "direct_fmin",
+            "direct_fminf",
+        ):
+            self.assertIn(required, probe)
+        for required in (
+            "double_binary_signature",
+            "float_binary_signature",
+            "direct_fmax",
+            "direct_fmaxf",
+            "direct_fmin",
+            "direct_fminf",
+        ):
+            self.assertIn(required, header)
+        for required in (
+            "src/math/fmax.c",
+            "src/math/fmaxf.c",
+            "src/math/fmin.c",
+            "src/math/fminf.c",
+            ".global fmax",
+            ".global fmaxf",
+            ".global fmin",
+            ".global fminf",
+            "ucomisd",
+            "ucomiss",
+            "FE_INVALID",
+            "fmaxl`/`fminl",
+        ):
+            self.assertIn(required, leaf)
 
     def test_facade_keeps_native_pattern_archives_checked(self) -> None:
         source = RUNNER.read_text(encoding="utf-8")

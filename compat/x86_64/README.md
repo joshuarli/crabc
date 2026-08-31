@@ -459,6 +459,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-math-complex
 ./scripts/dev-x86_64.sh libc-elementary-sqrt-fenv
 ./scripts/dev-x86_64.sh libc-fenv-rounding
+./scripts/dev-x86_64.sh libc-math-minmax
 ./scripts/dev-x86_64.sh libc-math-elementary-long-double
 ./scripts/dev-x86_64.sh libc-fdim
 ./scripts/dev-x86_64.sh libc-locale-multibyte
@@ -3627,6 +3628,19 @@ target-private. ELF/disassembly gates reject dynamic/TLS dependencies,
 ambient libm, and unselected `sqrt*`, `cproj*`, `exp10*`/`pow10*`, and `fdim*`.
 It does not complete `math.elementary-fenv-sensitive`, the containing family,
 general math, promotion, full x86-64 parity, or public x86 support.
+`libc-math-minmax` is the separate non-promoting `static-c-math-minmax`
+artifact for binary64/binary32 `fmax`/`fmin` and `fmaxf`/`fminf`. Its
+project-header C fixture and default-SSE/`-mfpmath=387` C++ signature probes
+run first through pinned musl and then through one garbage-collected
+`-nostdlib -static` candidate. They prove ordinary and infinite values,
+Annex-F +0/-0 selection for opposing signs, raw quiet/signaling-NaN
+left-to-right operand selection without `FE_INVALID`, all four MXCSR modes,
+and preservation of preexisting `FE_DIVBYZERO`. The target leaf uses raw
+integer IEEE classification before `ucomisd`/`ucomiss`, and final-link proof
+requires strong crabc-owned definitions rather than compiler-builtins weak
+fallbacks. `fmaxl`/`fminl`, `fdim*`, bit-sign functions, fenv rounding,
+special/complex and binary80/x87 math, family completion, promotion, full
+x86-64 parity, and public x86 support remain unselected.
 `libc-fdim` is a separate non-promoting `static-c-fdim` artifact for the
 binary64/binary32 positive-difference pair. Its project-header C fixture and
 default-SSE/`-mfpmath=387` C++ signature probes run first through pinned musl

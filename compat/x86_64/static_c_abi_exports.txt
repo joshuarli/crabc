@@ -204,7 +204,11 @@ flistxattr
 flock
 floorl
 fmal
+fmax
+fmaxf
 fmaxl
+fmin
+fminf
 fminl
 fmodl
 fopen

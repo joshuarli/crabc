@@ -1564,6 +1564,8 @@ MATH_SPECIAL_SYMBOLS = (
 
 FDIM_SYMBOLS = ("fdim", "fdimf")
 
+MATH_MINMAX_SYMBOLS = ("fmax", "fmaxf", "fmin", "fminf")
+
 NAMED_LOCALE_MULTIBYTE_SYMBOLS = (
     "__ctype_get_mb_cur_max",
     "btowc",
@@ -21600,6 +21602,199 @@ def require_fdim_artifact(family: Mapping[str, Any]) -> None:
         require(snippet in dispatcher, f"x86 dispatcher omits {snippet}")
 
 
+def require_math_minmax_artifact(family: Mapping[str, Any]) -> None:
+    """Keep the binary32/binary64 extrema proof below math promotion."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.text-math-locale-stdio].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [
+        entry for entry in artifacts if entry.get("id") == "static-c-math-minmax"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.text-math-locale-stdio must contain exactly one static-c-math-minmax artifact",
+    )
+    artifact = matching[0]
+    require(
+        "capabilities" not in artifact,
+        "static-c-math-minmax must remain a non-capability artifact",
+    )
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for symbol in MATH_MINMAX_SYMBOLS:
+        require(
+            f"`{symbol}`" in description,
+            f"static-c-math-minmax description omits {symbol}",
+        )
+    for phrase in (
+        "binary32/binary64 extrema artifact",
+        "signed-zero",
+        "quiet/signaling-NaN",
+        "FE_INVALID",
+        "all four MXCSR rounding modes",
+        "FE_DIVBYZERO",
+        "raw-bit classification",
+        "compiler-builtins",
+        "`fmaxl`/`fminl`",
+        "`fdim*`",
+        "bit-sign functions",
+        "binary80/x87",
+        "family completion",
+        "promotion",
+        "public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"static-c-math-minmax description omits {phrase}",
+        )
+
+    owners = nonempty_strings(
+        artifact["source_owners"], "static-c-math-minmax.source_owners"
+    )
+    for owner in (
+        "libc/src/math_compat.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/math_minmax.rs",
+        "include/fenv.h",
+        "include/float.h",
+        "include/math.h",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/math_minmax_header_abi_probe.cpp",
+        "compat/x86_64/libc_math_minmax_probe.c",
+        "compat/x86_64/libc_math_minmax_start.S",
+        "compat/x86_64/run_libc_math_minmax.sh",
+        "compat/x86_64/aarch64_parity_inventory.py",
+        "compat/x86_64/aarch64_parity_inventory.json",
+        "compat/x86_64/tests/test_aarch64_parity_inventory.py",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/README.md",
+        "STATUS.md",
+        "x86-64.md",
+        "scripts/dev-x86_64.sh",
+        "scripts/check_structure.py",
+    ):
+        require(owner in owners, f"static-c-math-minmax omits {owner}")
+
+    prerequisites = " ".join(
+        nonempty_strings(
+            artifact["x86_abi_prerequisites"],
+            "static-c-math-minmax.x86_abi_prerequisites",
+        )
+    )
+    for phrase in (
+        "src/math/fmax.c",
+        "fmaxf.c",
+        "fmin.c",
+        "fminf.c",
+        "raw IEEE",
+        "UCOMIS",
+        "FE_INVALID",
+        "FLT_EVAL_METHOD=0",
+        "xmm0",
+        "xmm1",
+        "MXCSR",
+        "fmaxl",
+        "math_compat.rs",
+    ):
+        require(
+            phrase in prerequisites,
+            f"static-c-math-minmax prerequisites omit {phrase}",
+        )
+    header_prerequisites = " ".join(
+        nonempty_strings(
+            artifact["x86_header_prerequisites"],
+            "static-c-math-minmax.x86_header_prerequisites",
+        )
+    )
+    for phrase in ("parenthesized", "C++17", "-mfpmath=387", "unmangled"):
+        require(
+            phrase in header_prerequisites,
+            f"static-c-math-minmax header prerequisites omit {phrase}",
+        )
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-math-minmax"},
+        "static-c-math-minmax must use the closed libc-math-minmax command",
+    )
+
+    static_root = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+    ).read_text(encoding="utf-8")
+    require(
+        '#[path = "math_minmax.rs"]\nmod math_minmax;' in static_root,
+        "x86 static C ABI must compose the math_minmax leaf",
+    )
+    implementation = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "math_minmax.rs"
+    ).read_text(encoding="utf-8")
+    for symbol in MATH_MINMAX_SYMBOLS:
+        require(
+            f".global {symbol}" in implementation,
+            f"math_minmax leaf omits {symbol}",
+        )
+    for snippet in (
+        "musl 1.2.6",
+        "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+        "src/math/fmax.c",
+        "src/math/fmaxf.c",
+        "src/math/fmin.c",
+        "src/math/fminf.c",
+        "raw IEEE exponent/fraction",
+        "UCOMIS",
+        "FE_INVALID",
+        "ucomisd",
+        "ucomiss",
+        "movq",
+        "movd",
+        "fmaxl",
+        "public x86 support",
+    ):
+        require(snippet in implementation, f"math_minmax leaf omits {snippet}")
+
+    exports = [
+        line
+        for line in (ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt")
+        .read_text(encoding="utf-8")
+        .splitlines()
+        if line and not line.startswith("#")
+    ]
+    require(exports == sorted(exports), "static C ABI export contract must remain ASCII-sorted")
+    for symbol in MATH_MINMAX_SYMBOLS:
+        require(symbol in exports, f"static C ABI export contract omits {symbol}")
+
+    runner = (ROOT / "compat" / "x86_64" / "run_libc_math_minmax.sh").read_text(
+        encoding="utf-8"
+    )
+    for snippet in (
+        "-nostdlib -static",
+        "--no-undefined",
+        "--gc-sections",
+        "math_minmax_header_abi_probe.cpp",
+        "strong crabc-owned",
+        "weak compiler-builtins",
+        "candidate retains TLS",
+        "ucomisd",
+        "ucomiss",
+        "movq",
+        "movd",
+        "fmaxl fminl",
+    ):
+        require(snippet in runner, f"libc-math-minmax runner omits {snippet}")
+    dispatcher = (ROOT / "scripts" / "dev-x86_64.sh").read_text(encoding="utf-8")
+    for snippet in (
+        "libc-math-minmax)",
+        "run_libc_math_minmax_probe()",
+        "/workspace/compat/x86_64/run_libc_math_minmax.sh",
+    ):
+        require(snippet in dispatcher, f"x86 dispatcher omits {snippet}")
+
+
 def require_named_locale_multibyte_artifact(family: Mapping[str, Any]) -> None:
     """Keep the named-locale/text archive slice below locale-family completion.
 
@@ -22047,8 +22242,8 @@ def require_locale_wide_iconv_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 18,
-        "libc.text-math-locale-stdio must retain exactly eighteen private verified artifacts",
+        len(artifacts) == 19,
+        "libc.text-math-locale-stdio must retain exactly nineteen private verified artifacts",
     )
     matching = [
         entry for entry in artifacts if entry.get("id") == "static-c-locale-wide-iconv"
@@ -23883,6 +24078,7 @@ def validate_ledger(
     require_elementary_sqrt_fenv_artifact(by_id["libc.text-math-locale-stdio"])
     require_fenv_sensitive_rounding_artifact(by_id["libc.text-math-locale-stdio"])
     require_fdim_artifact(by_id["libc.text-math-locale-stdio"])
+    require_math_minmax_artifact(by_id["libc.text-math-locale-stdio"])
     require_math_x87_extended_artifact(by_id["libc.text-math-locale-stdio"])
     require_math_special_slice(by_id["libc.text-math-locale-stdio"])
     require_math_elementary_long_double_slice(by_id["libc.text-math-locale-stdio"])
