@@ -85,6 +85,13 @@ path = "tests/native_source_published_live_owner_exit.rs"
 # This direct-only lifecycle witness uses ordinary persistent-owner allocation,
 # source publication, collect-abandon, and pointer-first post-exit free paths.
 
+[[test]]
+name = "native_concurrent_post_exit_page_release"
+path = "tests/native_concurrent_post_exit_page_release.rs"
+# Sixteen fresh releasers begin distinct terminal pointer-first post-owner-exit
+# frees together. The direct witness proves structural lifecycle contention
+# serializes valid source clients without selecting libc shadow ABI machinery.
+
 [features]
 default = []
 # Private, allocation-backed process context used only by the standalone
