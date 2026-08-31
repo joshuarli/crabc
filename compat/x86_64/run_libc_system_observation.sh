@@ -126,7 +126,7 @@ assert_selected_c_abi_surface "$archive" "$selected_c_abi_symbols" "$expected_c_
 # and get_nprocs* exports in this shared archive. They remain outside this
 # fixture's uname/sysinfo source and runtime surface.
 for unselected in getloadavg \
-    fork _Fork vfork clone execve syscall \
+    _Fork vfork clone execve syscall \
     malloc free calloc realloc; do
     if grep -Eq "[[:space:]][TW][[:space:]]${unselected}$" "$archive_symbols"; then
         fail "archive accidentally exports unselected ${unselected}"

@@ -480,6 +480,22 @@ fn unlock_selected_worker_registry() {
     SELECTED_WORKER_REGISTRY_LOCK.store(0, Ordering::Release);
 }
 
+/// Whether any selected worker reservation or live mapping exists.
+///
+/// The single-threaded atfork leaf uses this as a fail-closed admission check
+/// before it copies process state. A reservation is conservatively live too:
+/// a concurrent creator has not yet established a child mapping, but fork
+/// cannot safely race the registry publication transition. This is not a
+/// general all-thread-list query and says nothing about foreign threads.
+pub(super) fn has_live_selected_workers() -> bool {
+    lock_selected_worker_registry();
+    let live = SELECTED_WORKER_REGISTRY.iter().any(|slot| {
+        slot.control.load(Ordering::Acquire) != 0
+    });
+    unlock_selected_worker_registry();
+    live
+}
+
 /// Reserve one private selected-worker registry slot before cloning.
 fn reserve_selected_worker() -> Option<usize> {
     lock_selected_worker_registry();

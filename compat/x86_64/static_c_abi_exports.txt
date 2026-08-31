@@ -14,6 +14,7 @@ __cxa_finalize
 __errno_location
 __fesetround
 __flt_rounds
+__fork_handler
 __fpclassify
 __fpclassifyf
 __fpclassifyl
@@ -136,6 +137,7 @@ fgetxattr
 fileno
 flistxattr
 flock
+fork
 fpathconf
 fputc
 fread
@@ -287,6 +289,7 @@ pread
 preadv
 prlimit
 pselect
+pthread_atfork
 pthread_cancel
 pthread_cond_broadcast
 pthread_cond_destroy

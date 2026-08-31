@@ -257,6 +257,21 @@ deferred-cancellation route, and adds no attributes, timed/shared
 synchronization, C11 adapter, detached/foreign-thread, dynamic/loader TLS,
 CRT/sysroot, parity, promotion, or public-support claim.
 
+`./scripts/dev-x86_64.sh libc-pthread-atfork` is an eighteenth private static
+artifact in that same still-planned family. It selects only one fixed-capacity,
+single-threaded 32-record `pthread_atfork`/`fork` route: reverse prepare,
+forward parent/child callbacks after raw Linux `fork=57`, and the parent route
+before errno publication on a deterministic `EPERM` raw-fork failure. The
+child-only proof composes one bounded ordinary-exit callback after child hooks.
+A selected-worker reservation or live mapping fails closed with `EAGAIN`
+before callbacks; successful join reopens admission for another complete
+fork/child-exit lifecycle. Recursive callbacks and callback-driven worker
+creation; foreign/concurrent threads, registration/fork callers, and
+selected-worker lifecycle callers; signal
+masks/safety; allocator, TSD, cancellation, synchronization, or loader reset;
+dynamic TLS; CRT/sysroot integration; general fork/atfork/process-exit/pthread
+behavior; family completion; promotion; and public x86 support remain excluded.
+
 The CRT-composition artifact,
 `./scripts/dev-x86_64.sh libc-crt-static-tls`, composes
 the real `rcrt1.o`/`crti.o`/`crtn.o` with that hidden libc owner: after checked

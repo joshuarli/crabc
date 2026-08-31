@@ -812,7 +812,7 @@
     },
     {
       "aarch64_classification": "abi-only",
-      "contract_state": "missing",
+      "contract_state": "selected-private",
       "id": "process.atfork-exit-hooks",
       "x86_family": "libc.pthread-tls"
     },
@@ -1347,8 +1347,8 @@
   ],
   "capability_state_counts": {
     "implemented-foundation": 180,
-    "missing": 40,
-    "selected-private": 3
+    "missing": 39,
+    "selected-private": 4
   },
   "families": [
     {
@@ -1448,8 +1448,8 @@
       "capability_count": 3,
       "contract_state": "selected-private",
       "id": "libc.pthread-tls",
-      "verified_artifact_count": 17,
-      "verified_slice_count": 0
+      "verified_artifact_count": 18,
+      "verified_slice_count": 1
     },
     {
       "aarch64_gates": [
@@ -1984,6 +1984,10 @@
     },
     {
       "family": "libc.pthread-tls",
+      "id": "static-c-pthread-atfork-fork"
+    },
+    {
+      "family": "libc.pthread-tls",
       "id": "static-c-pthread-c11-detach"
     },
     {
@@ -2075,9 +2079,9 @@
     "aarch64_abi_manifest": "33dd504470f467caac7b149e747ee2b7ff8714c4fb23dfe5ad46e7f58bfe610c",
     "aarch64_capability_ledger": "128458dde00073bc0320b94972d864e66fa10d5f54e92b1b1c83081e2b4955e0",
     "aarch64_headers": "a0d35f0950abb3c060b978dfb5257cf50f70bed46ce91d371f43d65db7626b68",
-    "x86_parity_ledger": "c19da9b2948c12a27309a43e44b68260b8a4c63267b1f1214cf0ba278f91441c",
+    "x86_parity_ledger": "fb40a89ab419f5f59eb1492f3c069a46169dfa1095e488fe725a8a8fa5298b00",
     "x86_public_headers": "2cdcd860a423d99afef8360b6376447cf17ae926f1cd47416be817d421fca80f",
-    "x86_static_c_exports": "2cdee464b5981241f16fcfc16608ccb386f0aeacda1e22889d6ebd897fdf34ca"
+    "x86_static_c_exports": "a030e6eae73cf02a8fb056add65746cb672256e69c0dde7fca9028c595fd0cc6"
   },
   "unsupported_contracts": [
     {
@@ -2089,7 +2093,7 @@
     "promotion_family_count": 26,
     "promotion_ready": false,
     "public_support": false,
-    "selected_static_export_count": 483,
-    "selected_static_exports_in_aarch64_dynamic_candidate_set": 471
+    "selected_static_export_count": 486,
+    "selected_static_exports_in_aarch64_dynamic_candidate_set": 474
   }
 }

@@ -128,7 +128,7 @@ for symbol in get_nprocs_conf get_nprocs get_phys_pages get_avphys_pages; do
         || fail "archive does not define ${symbol}"
 done
 for unselected in getloadavg gethostid sethostid \
-    fork _Fork vfork clone execve syscall \
+    _Fork vfork clone execve syscall \
     malloc free calloc realloc; do
     if grep -Eq "[[:space:]][TW][[:space:]]${unselected}$" "$archive_symbols"; then
         fail "archive accidentally exports unselected ${unselected}"

@@ -857,7 +857,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             if line.strip().endswith(") ;;")
         )
         expected_groups = (
-            "image|musl-oracle|header-abi-reference|public-header-surface|header-abi-project|math-complex-header-abi|sys-reg-header-abi|types-header-abi|stat-header-abi|utime-header-abi|pthread-c11-header-abi|pthread-cancellation-header-abi|stdlib-header-abi|stdio-standard-header-abi|time-header-abi|poll-header-abi|select-header-abi|fcntl-header-abi|descriptor-advice-header-abi|filesystem-capacity-header-abi|flock-header-abi|sendfile-header-abi|ioctl-header-abi|unistd-header-abi|system-header-abi|syscall-header-abi|signal-header-abi|termios-header-abi|mman-header-abi|resource-header-abi|socket-header-abi|socket-messages-header-abi|random-entropy-header-abi|mm-abi-reference|mapping-reference|memory-vm-reference|pty-basic-reference|terminal-reference|mlock-reference|msync-reference|mincore-reference|fs-advice-reference|memfd-reference|ftruncate-reference|statfs-reference|timestamp-reference|path-lifecycle-reference|namespace-reference|path-core-reference|xattr-reference|directory-reference|temporary-object-reference|statx-reference|cwd-canonicalize-reference|root-change-reference|mount-reference|thread-kill-reference|ipc-reference|shm-reference|inotify-reference|socket-transport-reference|interface-device-reference|resolver-transport-reference|resolver-facade-reference|netdb-reference|users-databases-reference|posix-fallocate-reference|fallocate-reference|file-position-reference|sync-reference|syncfs-reference|sync-file-range-reference|rand-reference|time-abi-reference|time-observation-reference|calendar-time-reference|advanced-time-reference|relative-sleep-reference|clock-nanosleep-reference|getitimer-reference|setitimer-reference|timerfd-reference|pselect-reference|poll-reference|ppoll-reference|epoll-reference|process-identity-reference|child-ownership-reference|getgroups-reference|process-session-reference|pidfd-open-reference|fcntl-getlk-reference|fcntl-status-reference|flock-reference|sendfile-reference|copy-file-range-reference|scheduler-priority-bounds-reference|rr-interval-reference|sched-affinity-reference|sched-affinity-set-reference|priority-reference|setpriority-reference|rlimit-reference|rlimit-targeted-reference|setrlimit-reference|umask-reference|rusage-reference|times-reference|fstat-reference|statat-reference|getcwd-reference|readlinkat-reference|access-reference|system-reference|thread-reference|thread-credentials-reference|fs-credentials-reference|core|facade|facade-record-owning|libc-syscall|libc-errno-tls|libc-stat-compat|libc-credentials|libc-bootstrap-primitives|libc-signal-control|libc-signal-execution|libc-static-tls-v1|libc-crt-static-tls|libc-pthread-create-join-tls|libc-c11-lifecycle|libc-c11-plain-sync|libc-pthread-c11-once|libc-pthread-c11-tsd|libc-pthread-tls-aggregate|libc-pthread-cancel-deferred|libc-thrd-sleep|libc-pthread-mutex-normal|libc-pthread-rwlock|libc-pthread-cond-private|libc-termios-control|libc-process-context|libc-descriptor-io|libc-descriptor-lifecycle|libc-timestamp-updates|libc-process-resources|libc-socket-transport|libc-socket-messages|libc-thread-pointer|libc-foundation|libc-fenv|libc-math-complex|libc-memory|libc-setjmp|libc-atomic|libc-clone-raw|libc-signal-foundation|ldso-relocation|ldso-image|ldso-initial-graph|ldso-initial-tls|ldso-initial-exec-tls|ldso-owned-crt-handoff|ldso-dynamic-admission",
+            "image|musl-oracle|header-abi-reference|public-header-surface|header-abi-project|math-complex-header-abi|sys-reg-header-abi|types-header-abi|stat-header-abi|utime-header-abi|pthread-c11-header-abi|pthread-cancellation-header-abi|stdlib-header-abi|stdio-standard-header-abi|time-header-abi|poll-header-abi|select-header-abi|fcntl-header-abi|descriptor-advice-header-abi|filesystem-capacity-header-abi|flock-header-abi|sendfile-header-abi|ioctl-header-abi|unistd-header-abi|system-header-abi|syscall-header-abi|signal-header-abi|termios-header-abi|mman-header-abi|resource-header-abi|socket-header-abi|socket-messages-header-abi|random-entropy-header-abi|mm-abi-reference|mapping-reference|memory-vm-reference|pty-basic-reference|terminal-reference|mlock-reference|msync-reference|mincore-reference|fs-advice-reference|memfd-reference|ftruncate-reference|statfs-reference|timestamp-reference|path-lifecycle-reference|namespace-reference|path-core-reference|xattr-reference|directory-reference|temporary-object-reference|statx-reference|cwd-canonicalize-reference|root-change-reference|mount-reference|thread-kill-reference|ipc-reference|shm-reference|inotify-reference|socket-transport-reference|interface-device-reference|resolver-transport-reference|resolver-facade-reference|netdb-reference|users-databases-reference|posix-fallocate-reference|fallocate-reference|file-position-reference|sync-reference|syncfs-reference|sync-file-range-reference|rand-reference|time-abi-reference|time-observation-reference|calendar-time-reference|advanced-time-reference|relative-sleep-reference|clock-nanosleep-reference|getitimer-reference|setitimer-reference|timerfd-reference|pselect-reference|poll-reference|ppoll-reference|epoll-reference|process-identity-reference|child-ownership-reference|getgroups-reference|process-session-reference|pidfd-open-reference|fcntl-getlk-reference|fcntl-status-reference|flock-reference|sendfile-reference|copy-file-range-reference|scheduler-priority-bounds-reference|rr-interval-reference|sched-affinity-reference|sched-affinity-set-reference|priority-reference|setpriority-reference|rlimit-reference|rlimit-targeted-reference|setrlimit-reference|umask-reference|rusage-reference|times-reference|fstat-reference|statat-reference|getcwd-reference|readlinkat-reference|access-reference|system-reference|thread-reference|thread-credentials-reference|fs-credentials-reference|core|facade|facade-record-owning|libc-syscall|libc-errno-tls|libc-stat-compat|libc-credentials|libc-bootstrap-primitives|libc-signal-control|libc-signal-execution|libc-static-tls-v1|libc-crt-static-tls|libc-pthread-create-join-tls|libc-c11-lifecycle|libc-c11-plain-sync|libc-pthread-c11-once|libc-pthread-c11-tsd|libc-pthread-tls-aggregate|libc-pthread-cancel-deferred|libc-pthread-atfork|libc-thrd-sleep|libc-pthread-mutex-normal|libc-pthread-rwlock|libc-pthread-cond-private|libc-termios-control|libc-process-context|libc-descriptor-io|libc-descriptor-lifecycle|libc-timestamp-updates|libc-process-resources|libc-socket-transport|libc-socket-messages|libc-thread-pointer|libc-foundation|libc-fenv|libc-math-complex|libc-memory|libc-setjmp|libc-atomic|libc-clone-raw|libc-signal-foundation|ldso-relocation|ldso-image|ldso-initial-graph|ldso-initial-tls|ldso-initial-exec-tls|ldso-owned-crt-handoff|ldso-fixed-graph-introspection|ldso-dynamic-admission",
             "inet-address-header-abi",
             "ldso-target-root",
             "machine-context-header-abi",
@@ -948,6 +948,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn("libc-pthread-c11-tsd", source)
         self.assertIn("pthread-cancellation-header-abi", source)
         self.assertIn("libc-pthread-cancel-deferred", source)
+        self.assertIn("libc-pthread-atfork", source)
         self.assertIn("libc-termios-control", source)
         self.assertIn("libc-process-context", source)
         self.assertIn("libc-descriptor-io", source)
@@ -4119,6 +4120,132 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         )
         self.assertIn(
             '    libc-pthread-cancel-deferred)\n        [ "$#" -eq 0 ] || fail "libc-pthread-cancel-deferred takes no arguments"',
+            runner,
+        )
+
+    def test_libc_static_c_abi_pthread_atfork_artifact_stays_bounded(self) -> None:
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        atfork = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "pthread_atfork.rs"
+        ).read_text(encoding="utf-8")
+        pthread_create_join = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "pthread_create_join.rs"
+        ).read_text(encoding="utf-8")
+        static_startup = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_startup.rs"
+        ).read_text(encoding="utf-8")
+        probe = (
+            ROOT / "compat" / "x86_64" / "libc_pthread_atfork_probe.c"
+        ).read_text(encoding="utf-8")
+        start = (
+            ROOT / "compat" / "x86_64" / "libc_pthread_atfork_start.S"
+        ).read_text(encoding="utf-8")
+        artifact_runner = (
+            ROOT / "compat" / "x86_64" / "run_libc_pthread_atfork.sh"
+        ).read_text(encoding="utf-8")
+        static_exports = {
+            line
+            for line in (
+                ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+            ).read_text(encoding="utf-8").splitlines()
+            if line and not line.startswith("#")
+        }
+        runner = RUNNER.read_text(encoding="utf-8")
+
+        self.assertIn('#[path = "pthread_atfork.rs"]', static_root)
+        for required in (
+            "pinned musl 1.2.6 release commit",
+            "src/thread/pthread_atfork.c",
+            "src/process/fork.c",
+            "const ATFORK_CAPACITY: usize = 32",
+            "fn __fork_handler",
+            "fn pthread_atfork",
+            "fn fork",
+            "ENOMEM",
+            "EAGAIN",
+            "callbacks must not create, join, or detach",
+            "Concurrent selected-worker lifecycle calls",
+        ):
+            self.assertIn(required, atfork)
+        fork_body = atfork.split('pub unsafe extern "C" fn fork()', 1)[1]
+        self.assertLess(
+            fork_body.index("has_live_selected_workers"),
+            fork_body.index("__fork_handler(-1)"),
+        )
+        self.assertLess(
+            fork_body.index("__fork_handler(-1)"),
+            fork_body.index("syscall0(LINUX_X86_64_SYS_FORK)"),
+        )
+        self.assertLess(
+            fork_body.index("syscall0(LINUX_X86_64_SYS_FORK)"),
+            fork_body.index("__fork_handler(if result == 0"),
+        )
+        self.assertLess(
+            fork_body.index("__fork_handler(if result == 0"),
+            fork_body.index("c_status(result)"),
+        )
+        for required in (
+            "SELECTED_WORKER_REGISTRY_RESERVING",
+            "has_live_selected_workers",
+            "slot.control.load(Ordering::Acquire) != 0",
+        ):
+            self.assertIn(required, pthread_create_join)
+        for required in ("fn atexit", "fn __funcs_on_exit", "fn exit"):
+            self.assertIn(required, static_startup)
+
+        for required in (
+            "check_parent_child_and_exit_order",
+            "check_live_selected_worker_rejection",
+            "check_fixed_capacity_rejection",
+            "check_raw_fork_error_parent_order",
+            "install_fork_error_filter",
+            "SYS_clone",
+            "SYS_fork",
+            "SYS_seccomp",
+            "CRABC_SECCOMP_RET_ERRNO | EPERM",
+            "pthread_join(worker, &result)",
+            "recovery = check_parent_child_and_exit_order()",
+            "atexit(child_exit_callback)",
+        ):
+            self.assertIn(required, probe)
+        self.assertLess(
+            probe.index("result = check_live_selected_worker_rejection();"),
+            probe.index("result = check_raw_fork_error_parent_order();"),
+        )
+        for required in (
+            "__crabc_x86_static_tls_bootstrap",
+            "crabc_x86_64_pthread_atfork_probe",
+        ):
+            self.assertIn(required, start)
+        self.assertNotIn("arch_prctl", start.lower())
+
+        for required in (
+            "run_musl_oracle.sh",
+            "sys/prctl.h",
+            "-pthread",
+            "-nostdlib -static",
+            "-DCRABC_ATFORK_FREESTANDING",
+            "candidate does not define ${symbol}",
+            "fork does not route through the private atfork dispatcher",
+            "exit does not route through the bounded ordinary-exit dispatcher",
+            "candidate selected dynamic interpreter",
+            "candidate selected dynamic dependency",
+            "candidate retains unresolved symbol",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn("--whole-archive", artifact_runner)
+        self.assertTrue(
+            {"pthread_atfork", "fork", "__fork_handler", "atexit", "exit", "__funcs_on_exit"}
+            <= static_exports
+        )
+        self.assertIn("run_libc_pthread_atfork_probe()", runner)
+        self.assertIn(
+            "/workspace/compat/x86_64/run_libc_pthread_atfork.sh", runner
+        )
+        self.assertIn(
+            '    libc-pthread-atfork)\n        [ "$#" -eq 0 ] || fail "libc-pthread-atfork takes no arguments"',
             runner,
         )
 

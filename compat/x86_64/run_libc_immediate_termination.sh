@@ -73,8 +73,8 @@ nm -A --defined-only "$archive" >"$archive_symbols"
 assert_selected_c_abi_surface "$archive" "$selected_symbols" "$expected_symbols"
 grep -Eq '[[:space:]][TW][[:space:]]_Exit$' "$archive_symbols" \
     || fail "archive does not define _Exit"
-for unselected in abort at_quick_exit quick_exit fork vfork clone \
-    execve pthread_atfork malloc free; do
+for unselected in abort at_quick_exit quick_exit vfork clone \
+    execve malloc free; do
     if grep -Eq "[[:space:]][TW][[:space:]]${unselected}$" "$archive_symbols"; then
         fail "archive accidentally exports unselected $unselected"
     fi

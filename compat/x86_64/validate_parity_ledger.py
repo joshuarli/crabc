@@ -7956,8 +7956,8 @@ def require_static_pthread_rwlock_artifact(family: Mapping[str, Any]) -> None:
         "libc.pthread-tls must contain exactly one static-c-pthread-rwlock artifact",
     )
     require(
-        len(artifacts) == 17,
-        "libc.pthread-tls must retain exactly seventeen private verified artifacts",
+        len(artifacts) == 18,
+        "libc.pthread-tls must retain exactly eighteen private verified artifacts",
     )
     require(
         family.get("status") == "planned",
@@ -7967,7 +7967,7 @@ def require_static_pthread_rwlock_artifact(family: Mapping[str, Any]) -> None:
     family_description = family["description"]
     assert isinstance(family_description, str)
     for phrase in (
-        "Seventeen separately verified static artifacts",
+        "Eighteen separately verified static artifacts",
         "complete private rwlock/rwlockattr block with private and process-shared futex waits",
         "not pthread/TLS parity",
     ):
@@ -8700,8 +8700,8 @@ def require_static_pthread_c11_once_artifact(family: Mapping[str, Any]) -> None:
         "libc.pthread-tls must contain exactly one static-c-pthread-c11-once artifact",
     )
     require(
-        len(artifacts) == 17,
-        "libc.pthread-tls must retain exactly seventeen private verified artifacts",
+        len(artifacts) == 18,
+        "libc.pthread-tls must retain exactly eighteen private verified artifacts",
     )
     require(
         family.get("status") == "planned",
@@ -8711,7 +8711,7 @@ def require_static_pthread_c11_once_artifact(family: Mapping[str, Any]) -> None:
     family_description = family["description"]
     assert isinstance(family_description, str)
     for phrase in (
-        "Seventeen separately verified static artifacts",
+        "Eighteen separately verified static artifacts",
         "private normal-return pthread/C11 once state machine",
         "not pthread/TLS parity",
     ):
@@ -9027,8 +9027,8 @@ def require_static_pthread_c11_tsd_artifact(family: Mapping[str, Any]) -> None:
         "libc.pthread-tls must contain exactly one static-c-pthread-c11-tsd artifact",
     )
     require(
-        len(artifacts) == 17,
-        "libc.pthread-tls must retain exactly seventeen private verified artifacts",
+        len(artifacts) == 18,
+        "libc.pthread-tls must retain exactly eighteen private verified artifacts",
     )
     require(
         family.get("status") == "planned",
@@ -9038,7 +9038,7 @@ def require_static_pthread_c11_tsd_artifact(family: Mapping[str, Any]) -> None:
     family_description = family["description"]
     assert isinstance(family_description, str)
     for phrase in (
-        "Seventeen separately verified static artifacts",
+        "Eighteen separately verified static artifacts",
         "bounded private pthread-key/C11-TSS lifecycle table",
         "not pthread/TLS parity",
     ):
@@ -9398,8 +9398,8 @@ def require_static_pthread_cancel_deferred_artifact(
         "libc.pthread-tls must contain exactly one static-c-pthread-cancel-deferred artifact",
     )
     require(
-        len(artifacts) == 17,
-        "libc.pthread-tls must retain exactly seventeen private verified artifacts",
+        len(artifacts) == 18,
+        "libc.pthread-tls must retain exactly eighteen private verified artifacts",
     )
     require(
         family.get("status") == "planned",
@@ -9409,7 +9409,7 @@ def require_static_pthread_cancel_deferred_artifact(
     family_description = family["description"]
     assert isinstance(family_description, str)
     for phrase in (
-        "Seventeen separately verified static artifacts",
+        "Eighteen separately verified static artifacts",
         "selected-worker deferred-cancellation route",
         "sole delivery point is explicit `pthread_testcancel`",
         "not pthread/TLS parity",
@@ -16609,6 +16609,251 @@ def require_static_pthread_tls_aggregate_artifact(family: Mapping[str, Any]) -> 
     )
 
 
+def require_static_pthread_atfork_artifact(family: Mapping[str, Any]) -> None:
+    """Ratchet one selected atfork/ordinary-exit composition without promotion."""
+
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.pthread-tls].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [
+        entry for entry in artifacts if entry.get("id") == "static-c-pthread-atfork-fork"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.pthread-tls must contain exactly one static-c-pthread-atfork-fork artifact",
+    )
+    require(
+        len(artifacts) == 18,
+        "libc.pthread-tls must retain exactly eighteen private verified artifacts",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-pthread-atfork-fork must not promote libc.pthread-tls",
+    )
+
+    family_description = family["description"]
+    assert isinstance(family_description, str)
+    for phrase in (
+        "Eighteen separately verified static artifacts",
+        "single-threaded fixed-capacity pthread_atfork/fork route",
+        "child-only bounded ordinary-exit callback dispatch",
+        "not pthread/TLS parity",
+    ):
+        require(
+            phrase in family_description,
+            f"libc.pthread-tls description omits {phrase} after atfork artifact",
+        )
+
+    slices = require_verified_slices(
+        family.get("verified_slice"),
+        "family[libc.pthread-tls].verified_slice",
+        family.get("status", ""),
+        string_list(family["capabilities"], "libc.pthread-tls capabilities"),
+    )
+    slice_matching = [entry for entry in slices if entry.get("id") == "process.atfork-exit-hooks"]
+    require(
+        len(slice_matching) == 1,
+        "libc.pthread-tls must contain exactly one process.atfork-exit-hooks verified slice",
+    )
+    selected_slice = slice_matching[0]
+    require(
+        selected_slice.get("capabilities") == ["process.atfork-exit-hooks"],
+        "process.atfork-exit-hooks must consume only its own capability",
+    )
+    slice_description = selected_slice["description"]
+    assert isinstance(slice_description, str)
+    for phrase in (
+        "still-planned `libc.pthread-tls`",
+        "pthread_atfork`/`fork`",
+        "child ordinary-exit callback dispatch",
+        "successful join reopens the route",
+        "concurrent selected-worker lifecycle calls remain excluded",
+        "general process, fork, exit, or pthread runtime",
+    ):
+        require(
+            phrase in slice_description,
+            f"process.atfork-exit-hooks verified slice omits {phrase}",
+        )
+
+    artifact = matching[0]
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for phrase in (
+        "still-planned `libc.pthread-tls`",
+        "pthread_atfork",
+        "__fork_handler",
+        "atexit`/`exit`/`__funcs_on_exit",
+        "32 no-allocation hook triples",
+        "reverse registration order",
+        "raw Linux fork=57",
+        "parent route before errno publication",
+        "selected-worker reservation or live mapping",
+        "EAGAIN before any hook runs",
+        "successful join reopens admission",
+        "recursive callbacks",
+        "callback-driven worker creation",
+        "foreign or concurrent threads",
+        "selected-worker lifecycle calls",
+        "signal masks/safety",
+        "general fork, atfork, process-exit, or pthread runtime",
+        "full pthread/TLS or x86-64 parity",
+        "promotion",
+        "public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"static-c-pthread-atfork-fork description omits {phrase}",
+        )
+
+    owners = set(
+        string_list(
+            artifact["source_owners"], "static-c-pthread-atfork-fork source owners"
+        )
+    )
+    for path in (
+        "libc/src/c_abi/x86_64/pthread_atfork.rs",
+        "libc/src/c_abi/x86_64/pthread_create_join.rs",
+        "libc/src/c_abi/x86_64/static_startup.rs",
+        "compat/x86_64/libc_pthread_atfork_probe.c",
+        "compat/x86_64/libc_pthread_atfork_start.S",
+        "compat/x86_64/run_libc_pthread_atfork.sh",
+        "include/sys/prctl.h",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "scripts/dev-x86_64.sh",
+    ):
+        require(path in owners, f"static-c-pthread-atfork-fork source owners omit {path}")
+
+    prerequisites = " ".join(
+        string_list(
+            artifact["x86_abi_prerequisites"],
+            "static-c-pthread-atfork-fork ABI prerequisites",
+        )
+    )
+    for phrase in (
+        "pthread_atfork.c::{__fork_handler,pthread_atfork}",
+        "src/process/fork.c::fork",
+        "32 optional SysV AMD64 no-argument callback triples",
+        "raw fork=57",
+        "ENOMEM without changing C errno",
+        "-1/EAGAIN before it invokes prepare",
+        "successful join removes the mapping and reopens admission",
+        "callback-driven worker creation",
+        "concurrent pthread_atfork/fork or selected-worker lifecycle callers",
+        "PR_SET_NO_NEW_PRIVS classic-BPF filter",
+        "EPERM",
+        "clone=56",
+        "atexit/exit/__funcs_on_exit",
+        "exit_group=231",
+    ):
+        require(
+            phrase in prerequisites,
+            f"static-c-pthread-atfork-fork ABI prerequisites omit {phrase}",
+        )
+
+    header_prerequisites = " ".join(
+        string_list(
+            artifact["x86_header_prerequisites"],
+            "static-c-pthread-atfork-fork header prerequisites",
+        )
+    )
+    for phrase in (
+        "pthread.h",
+        "errno.h",
+        "stdatomic.h",
+        "stdint.h",
+        "stdlib.h",
+        "sys/prctl.h",
+        "sys/syscall.h",
+        "sys/types.h",
+        "sys/wait.h",
+        "unistd.h",
+        "pthread_atfork, fork, atexit, and exit function-pointer declarations",
+        "fork=57/clone=56/prctl=157/seccomp=317/wait4=61/exit=60/exit_group=231",
+    ):
+        require(
+            phrase in header_prerequisites,
+            f"static-c-pthread-atfork-fork header prerequisites omit {phrase}",
+        )
+
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-pthread-atfork"},
+        "static-c-pthread-atfork-fork must use the closed libc-pthread-atfork command",
+    )
+    scope = evidence[0]["scope"]
+    assert isinstance(scope, str)
+    for phrase in (
+        "Pinned-musl project-header C reference",
+        "`-nostdlib -static` candidate",
+        "reverse prepare, forward parent/child callback order",
+        "deterministic EPERM raw-fork failure with the parent route before errno publication",
+        "child atexit/exit callback dispatch after atfork hooks",
+        "32 private hook records then ENOMEM",
+        "live selected worker with EAGAIN before any callback",
+        "successful fork after joining that worker",
+        "pthread_atfork, fork, __fork_handler",
+        "raw fork=57",
+        "direct errno TPOFF",
+        "no interpreter/DT_NEEDED/unresolved symbol",
+        "dynamic TLS resolver, allocator, or ambient runtime",
+        "recursive callbacks, callback-driven worker creation",
+        "foreign/concurrent threads and selected-worker lifecycle calls",
+        "general fork/atfork/process-exit/pthread behavior",
+        "family completion, promotion, and public x86 support",
+    ):
+        require(
+            phrase in scope,
+            f"static-c-pthread-atfork-fork evidence scope omits {phrase}",
+        )
+
+    oracle_entries = artifact["oracle"]
+    assert isinstance(oracle_entries, list)
+    source_oracles = [
+        entry
+        for entry in oracle_entries
+        if isinstance(entry, Mapping) and entry.get("kind") == "c-posix"
+    ]
+    require(
+        len(source_oracles) == 1
+        and source_oracles[0].get("source")
+        == "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417",
+        "static-c-pthread-atfork-fork must retain its pinned musl C/POSIX oracle",
+    )
+    role = source_oracles[0].get("role")
+    require(
+        isinstance(role, str)
+        and "src/thread/pthread_atfork.c" in role
+        and "src/process/fork.c" in role,
+        "static-c-pthread-atfork-fork musl source mapping omits atfork/fork provenance",
+    )
+
+    static_exports = set(
+        static_c_abi_export_names(
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        )
+    )
+    require(
+        {"pthread_atfork", "fork", "__fork_handler"} <= static_exports,
+        "static-c-pthread-atfork-fork must expose its selected atfork/fork surface",
+    )
+    for unselected in ("_Fork", "vfork", "clone", "execve", "posix_spawn"):
+        require(
+            unselected not in static_exports,
+            f"static-c-pthread-atfork-fork must not expose unselected {unselected}",
+        )
+    dispatcher_source = (ROOT / "scripts" / "dev-x86_64.sh").read_text(
+        encoding="utf-8"
+    )
+    require(
+        "run_libc_pthread_atfork.sh" in dispatcher_source,
+        "static-c-pthread-atfork-fork dispatcher binding is missing",
+    )
+
+
 def validate_ledger(
     data: Mapping[str, Any],
     *,
@@ -16823,6 +17068,7 @@ def validate_ledger(
     require_static_pthread_c11_tsd_artifact(by_id["libc.pthread-tls"])
     require_static_pthread_cancel_deferred_artifact(by_id["libc.pthread-tls"])
     require_static_pthread_tls_aggregate_artifact(by_id["libc.pthread-tls"])
+    require_static_pthread_atfork_artifact(by_id["libc.pthread-tls"])
     require_byte_string_artifact(by_id["libc.posix-runtime"])
     require_random_entropy_artifact(by_id["libc.posix-runtime"])
     require_memory_search_artifact(by_id["libc.posix-runtime"])

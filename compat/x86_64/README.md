@@ -373,6 +373,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-pthread-c11-once
 ./scripts/dev-x86_64.sh libc-pthread-c11-tsd
 ./scripts/dev-x86_64.sh libc-pthread-tls-aggregate
+./scripts/dev-x86_64.sh libc-pthread-atfork
 ./scripts/dev-x86_64.sh termios-header-abi
 ./scripts/dev-x86_64.sh libc-termios-control
 ./scripts/dev-x86_64.sh libc-process-context
@@ -2455,6 +2456,23 @@ It neither exercises nor extends the separate deferred-cancellation route, and
 adds no attributes, timed/process-shared synchronization, C11 adapter,
 detached/foreign-thread, dynamic/loader TLS, CRT/sysroot, pthread/TLS-parity,
 promotion, or public-x86 claim.
+
+`libc-pthread-atfork` is an eighteenth private static `verified_artifact`
+under that same still-planned family. Its project-header C fixture first runs
+against pinned musl, then against the dependency-free `-nostdlib -static`
+candidate. It selects one fixed-capacity, single-threaded 32-record
+`pthread_atfork`/`fork` route only: reverse prepare, forward parent/child hooks
+after raw Linux `fork=57`, and the parent route before errno publication on
+deterministic `EPERM` failure through a fixture-local seccomp filter. The child
+then registers and dispatches one bounded ordinary-exit callback after its
+child hooks. A selected-worker reservation or live mapping instead returns
+`EAGAIN` before callbacks; successful join reopens admission for another
+complete fork/child-exit lifecycle. It excludes recursive callbacks and
+callback-driven worker creation; foreign/concurrent threads,
+registration/fork callers, and selected-worker lifecycle callers; signal masks/safety;
+allocator, TSD, cancellation, synchronization, or loader reset; dynamic TLS;
+CRT/sysroot integration; general fork, atfork, process-exit, or pthread
+behavior; full pthread/TLS or x86-64 parity; promotion; and public x86 support.
 
 
 `libc-termios-control` is a separately recorded static

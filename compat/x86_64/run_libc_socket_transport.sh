@@ -131,7 +131,7 @@ for symbol in __errno_location socket socketpair bind listen accept accept4 \
         || fail "archive does not define ${symbol}"
 done
 for unselected in if_nametoindex if_indextoname \
-    gethostbyname gethostbyaddr fork _Fork vfork clone execve \
+    gethostbyname gethostbyaddr _Fork vfork clone execve \
     malloc free calloc realloc; do
     if grep -Eq "[[:space:]][TW][[:space:]]${unselected}$" "$archive_symbols"; then
         fail "archive accidentally exports unselected ${unselected}"

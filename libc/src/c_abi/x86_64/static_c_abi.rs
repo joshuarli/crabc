@@ -17,6 +17,8 @@
 //! `call_once` state machine over those private engines, all backed by the
 //! private Static Initial TLS v1 final-executable template, plus bounded weak `pthread_self`/
 //! `pthread_equal` and `thrd_current`/`thrd_equal` identity aliases,
+//! one single-threaded fixed-capacity `pthread_atfork`/`fork` transition that
+//! can compose the existing bounded ordinary-exit callback block in its child,
 //! termios-control, selected process-context, child-reaping, selected
 //! descriptor-entry, selected filesystem-access, fixed Linux `lchmod`
 //! unsupported compatibility, bounded fcntl status-control
@@ -76,6 +78,11 @@
 //! machine; the C11 lifecycle/sleep siblings likewise
 //! remain static-only typed-worker and direct non-cancellation realtime-sleep
 //! slices. None is a claim for broader pthread/C11 header support.
+//! The atfork leaf is narrower still: it owns no all-thread quiescence,
+//! signal masking, allocator/loader/TSD reset, or general process lifecycle;
+//! it admits only a caller with no live selected worker and no other concurrent
+//! runtime state, and registered hooks must not recurse into the atfork/fork or
+//! ordinary-exit registry while its fixed lock is held.
 //!
 //! Each child leaf owns its named C surface and must retain its own native
 //! artifact evidence. The shared result translator is intentionally smaller
@@ -148,6 +155,8 @@ mod pthread_identity;
 mod pthread_create_join;
 #[path = "pthread_cancel.rs"]
 mod pthread_cancel;
+#[path = "pthread_atfork.rs"]
+mod pthread_atfork;
 #[path = "pthread_tsd.rs"]
 mod pthread_tsd;
 #[path = "pthread_mutex.rs"]
