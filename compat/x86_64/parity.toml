@@ -2165,6 +2165,7 @@ source_owners = [
   "libc/src/c_abi/x86_64/clock_gettime.rs",
   "libc/src/c_abi/x86_64/clock_adjtime.rs",
   "libc/src/c_abi/x86_64/clock_settime.rs",
+  "libc/src/c_abi/x86_64/timer_getoverrun.rs",
   "libc/src/c_abi/x86_64/nanosleep.rs",
   "libc/src/c_abi/x86_64/clock_nanosleep.rs",
   "libc/src/c_abi/x86_64/descriptor_entry.rs",
@@ -3174,6 +3175,61 @@ oracle = [
   { kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT C declaration and source oracle for src/time/clock_settime.c: clock_settime returns syscall(SYS_clock_settime, clk, ts) without local policy or state." },
   { kind = "kernel-abi", source = "Linux 5.10 x86-64 ABI", role = "clock_settime=227 rdi/rsi record-pointer ABI, raw negative errno convention, capability-first EPERM possibility, and invalid/non-settable clock rejection before the fixture can mutate realtime." },
   { kind = "elf-abi", source = "System V AMD64 psABI", role = "clockid_t/pointer C register ABI, external-C linkage, and true-static initial-TLS errno fixture boundary." },
+]
+
+[[family.verified_artifact]]
+id = "static-c-timer-getoverrun-error-abi"
+description = "Private native x86 static C `timer_getoverrun` rejected-handle error-ABI artifact inside still-planned `libc.posix-runtime`. One project-header C fixture first executes through pinned musl 1.2.6 and then through a true dependency-free `-nostdlib -static` candidate linked only with the selected `crabc-libc` archive. For a nonnegative opaque `timer_t` bit pattern, pinned musl `src/time/timer_getoverrun.c` reaches exactly `syscall(SYS_timer_getoverrun, t)`; Linux syscall 225 receives that pointer-sized word in rdi, then raw failure becomes C `-1` plus initial-TLS errno. The fixture calls only `timer_t 0` and `INT_MAX`, which are rejected nonnegative opaque handles, and records `EINVAL`; it never creates, arms, queries, deletes, or observes a valid POSIX timer. Musl's negative `timer_t` branch uses a tagged pthread timer representation through private `pthread_impl`; this artifact explicitly excludes it and does not decode or dereference any timer handle. Strict C11/C++17 hides the POSIX declaration, while POSIX/XOPEN/GNU C11/C++17 profiles prove the exact `int (*)(timer_t)` declaration, opaque 8-byte align-8 layout, and unmangled C++ linkage. The artifact establishes neither timer ownership nor overrun values, valid timer state, signal delivery, calendar/timezone/environment, cancellation, libc.so, CRT, dynamic TLS lifecycle, loader, sysroot, family completion, promotion, or public x86 support."
+source_owners = [
+  "compat/upstreams.toml",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/timer_getoverrun.rs",
+  "libc/src/c_abi/x86_64/errno.rs",
+  "libc/src/c_abi/x86_64/syscall.rs",
+  "include/errno.h",
+  "include/features.h",
+  "include/limits.h",
+  "include/stdint.h",
+  "include/time.h",
+  "include/sys/types.h",
+  "include/sys/syscall.h",
+  "include/bits/alltypes.h",
+  "include/bits/syscall.h",
+  "compat/x86_64/timer_getoverrun_header_abi_probe.c",
+  "compat/x86_64/timer_getoverrun_header_abi_probe.cpp",
+  "compat/x86_64/run_timer_getoverrun_header_abi.sh",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/libc_timer_getoverrun_probe.c",
+  "compat/x86_64/libc_timer_getoverrun_start.S",
+  "compat/x86_64/run_libc_timer_getoverrun.sh",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "compat/x86_64/aarch64_parity_inventory.py",
+  "compat/x86_64/aarch64_parity_inventory.json",
+  "compat/x86_64/README.md",
+  "STATUS.md",
+  "x86-64.md",
+  "scripts/dev-x86_64.sh",
+  "scripts/check_structure.py",
+]
+x86_abi_prerequisites = [
+  "System V AMD64 calls `int timer_getoverrun(timer_t)` with the opaque 8-byte align-8 pointer-sized timer word in rdi and returns the signed int result in eax. Linux/x86-64 syscall 225 is timer_getoverrun and consumes that unchanged first syscall argument in rdi.",
+  "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417 maps src/time/timer_getoverrun.c exactly: a nonnegative opaque timer_t reaches syscall(SYS_timer_getoverrun, t). Its `(intptr_t)t < 0` branch reconstructs a tagged pthread timer through private pthread_impl and is deliberately not selected.",
+  "Linux raw -4095 through -1 errors become C -1 plus the selected initial-TLS errno through c_status. The pinned-musl and true-static common fixture passes only nonnegative opaque timer_t 0 and INT_MAX words, each rejected with EINVAL; it never creates, arms, queries, deletes, or observes a valid POSIX timer, so valid timer ownership and overrun values have no selected contract.",
+  "The final static candidate owns only direct initial-TLS errno access after fixture-local Variant-II %fs:0 setup, with no dynamic TLS resolver, allocation, environment, calendar/timezone, signal, pthread timer representation, or timer runtime state. It is a bounded rejected-handle ABI artifact, not POSIX timer support.",
+]
+x86_header_prerequisites = [
+  "Pinned-musl/project strict C11/C++17 probes require timer_getoverrun to remain hidden. POSIX/XOPEN/GNU C11/C++17 probes require the exact `int (*)(timer_t)` declaration, opaque 8-byte align-8 timer_t layout, and unmangled C++ external-C reference; they select no valid POSIX timer semantics.",
+  "The fixture preprocesses only project time.h, features.h, bits/alltypes.h, errno.h, limits.h, stdint.h, and sys/syscall.h for this feature-profile declaration/linkage/layout fact. This is a focused header ABI gate, not installed-header completion or C POSIX timer capability evidence.",
+]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-timer-getoverrun", scope = "Pinned-musl 1.2.6 project-header normal C execution and the separate strict-hidden/POSIX-XOPEN-GNU-visible C/C++ declaration/linkage/layout gate precede a true `-nostdlib -static` candidate. The shared fixture calls only nonnegative opaque timer_t 0 and INT_MAX values and requires EINVAL, never creating, arming, querying, deleting, or observing a valid POSIX timer. Header/archive/final-ELF/source/disassembly checks require exactly timer_getoverrun=225, direct rdi syscall input, initial-TLS errno conversion, and an env -i closure with no interpreter/DT_NEEDED/unresolved symbol, dynamic TLS resolver, allocation, ambient runtime, clock/calendar/timezone, signal delivery, pthread tagged timer representation, or timer lifecycle call. It excludes negative tagged pthread timer behavior, valid POSIX timer state, timer ownership, overrun values, family completion, promotion, and public x86 support." }]
+oracle = [
+  { kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT C declaration and source oracle for src/time/timer_getoverrun.c: nonnegative opaque t reaches syscall(SYS_timer_getoverrun, t), while negative tagged timer_t values require pthread_impl and are excluded." },
+  { kind = "kernel-abi", source = "Linux 5.10 x86-64 ABI", role = "timer_getoverrun=225 rdi opaque-word ABI, raw negative errno convention, and EINVAL for the selected invalid nonnegative fixture handles without valid POSIX timer state." },
+  { kind = "elf-abi", source = "System V AMD64 psABI", role = "timer_t pointer-sized external-C linkage and true-static initial-TLS errno fixture boundary." },
 ]
 
 [[family.verified_artifact]]

@@ -120,6 +120,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   time-header-abi  compile the staged x86 C/C++ time header layouts
   clock-adjtime-header-abi  verify x86 sys/timex.h clock_adjtime C/C++ ABI profiles
   clock-settime-header-abi  verify x86 POSIX clock_settime C/C++ ABI profiles
+  timer-getoverrun-header-abi  verify x86 POSIX timer_getoverrun C/C++ ABI profiles
   timerfd-header-abi  verify the selected x86 sys/timerfd.h C/C++ ABI profiles
   signalfd-header-abi  verify the selected x86 sys/signalfd.h C/C++ ABI profiles
   poll-header-abi  compile the staged x86 C/C++ poll header layouts
@@ -334,6 +335,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-clock-gettime  run the static x86 crabc-libc clock_gettime slice
   libc-clock-adjtime  run the static x86 crabc-libc clock_adjtime error-ABI slice
   libc-clock-settime  run the static x86 crabc-libc clock_settime error-ABI slice
+  libc-timer-getoverrun  run the static x86 crabc-libc timer_getoverrun error-ABI slice
   libc-time-observation  run the static x86 crabc-libc clock-observation slice
   libc-difftime  run the static x86 crabc-libc binary64 difftime slice
   libc-timegm  run the static x86 crabc-libc fixed-UTC timegm slice
@@ -2410,6 +2412,10 @@ run_libc_clock_settime() {
     run_in_container bash /workspace/compat/x86_64/run_libc_clock_settime.sh
 }
 
+run_libc_timer_getoverrun() {
+    run_in_container bash /workspace/compat/x86_64/run_libc_timer_getoverrun.sh
+}
+
 run_libc_time_observation() {
     run_in_container bash /workspace/compat/x86_64/run_libc_time_observation.sh
 }
@@ -2652,6 +2658,10 @@ run_clock_adjtime_header_abi() {
 
 run_clock_settime_header_abi() {
     run_in_container bash /workspace/compat/x86_64/run_clock_settime_header_abi.sh
+}
+
+run_timer_getoverrun_header_abi() {
+    run_in_container bash /workspace/compat/x86_64/run_timer_getoverrun_header_abi.sh
 }
 
 run_timerfd_header_abi() {
@@ -3973,6 +3983,7 @@ case "$command" in
     stdio-permanent-feof-unlocked-header-abi) ;;
     clock-adjtime-header-abi) ;;
     clock-settime-header-abi) ;;
+    timer-getoverrun-header-abi) ;;
     image|musl-oracle|header-abi-reference|public-header-surface|header-abi-project|math-complex-header-abi|sys-reg-header-abi|types-header-abi|stat-header-abi|utime-header-abi|pthread-c11-header-abi|pthread-cancellation-header-abi|stdlib-header-abi|stdio-standard-header-abi|time-header-abi|poll-header-abi|select-header-abi|fcntl-header-abi|descriptor-advice-header-abi|filesystem-capacity-header-abi|flock-header-abi|sendfile-header-abi|ioctl-header-abi|unistd-header-abi|system-header-abi|syscall-header-abi|signal-header-abi|termios-header-abi|mman-header-abi|resource-header-abi|socket-header-abi|socket-messages-header-abi|random-entropy-header-abi|mm-abi-reference|mapping-reference|memory-vm-reference|pty-basic-reference|terminal-reference|mlock-reference|msync-reference|mincore-reference|fs-advice-reference|memfd-reference|ftruncate-reference|statfs-reference|timestamp-reference|path-lifecycle-reference|namespace-reference|path-core-reference|xattr-reference|directory-reference|temporary-object-reference|statx-reference|cwd-canonicalize-reference|root-change-reference|mount-reference|thread-kill-reference|ipc-reference|shm-reference|inotify-reference|socket-transport-reference|interface-device-reference|resolver-transport-reference|resolver-facade-reference|netdb-reference|users-databases-reference|posix-fallocate-reference|fallocate-reference|file-position-reference|sync-reference|syncfs-reference|sync-file-range-reference|rand-reference|time-abi-reference|time-observation-reference|calendar-time-reference|advanced-time-reference|relative-sleep-reference|clock-nanosleep-reference|getitimer-reference|setitimer-reference|timerfd-reference|pselect-reference|poll-reference|ppoll-reference|epoll-reference|process-identity-reference|child-ownership-reference|getgroups-reference|process-session-reference|pidfd-open-reference|fcntl-getlk-reference|fcntl-status-reference|flock-reference|sendfile-reference|copy-file-range-reference|scheduler-priority-bounds-reference|rr-interval-reference|sched-affinity-reference|sched-affinity-set-reference|priority-reference|setpriority-reference|rlimit-reference|rlimit-targeted-reference|setrlimit-reference|umask-reference|rusage-reference|times-reference|fstat-reference|statat-reference|getcwd-reference|readlinkat-reference|access-reference|system-reference|thread-reference|thread-credentials-reference|fs-credentials-reference|core|facade|facade-record-owning|libc-syscall|libc-errno-tls|libc-stat-compat|libc-credentials|libc-bootstrap-primitives|libc-signal-control|libc-signal-execution|libc-static-tls-v1|libc-crt-static-tls|libc-pthread-create-join-tls|libc-c11-lifecycle|libc-c11-plain-sync|libc-pthread-c11-once|libc-pthread-c11-tsd|libc-pthread-tls-aggregate|libc-pthread-cancel-deferred|libc-pthread-atfork|libc-thrd-sleep|libc-pthread-mutex-normal|libc-pthread-rwlock|libc-pthread-cond-private|libc-termios-control|libc-process-context|libc-environment|libc-descriptor-io|libc-descriptor-lifecycle|libc-timestamp-updates|libc-process-resources|libc-socket-transport|libc-socket-messages|libc-thread-pointer|libc-foundation|libc-fenv|libc-math-complex|libc-elementary-sqrt-fenv|libc-math-x87-extended|libc-memory|libc-setjmp|libc-atomic|libc-clone-raw|libc-signal-altstack|libc-signal-foundation|ldso-relocation|ldso-image|ldso-initial-graph|ldso-initial-tls|ldso-initial-exec-tls|ldso-owned-crt-handoff|ldso-fixed-graph-introspection|ldso-dynamic-admission) ;;
     math-elementary-long-double-header-abi|libc-math-elementary-long-double) ;;
     ldso-fixed-graph-dlfcn) ;;
@@ -4060,6 +4071,7 @@ case "$command" in
     libc-posix-exit) ;;
     libc-clock-adjtime) ;;
     libc-clock-settime) ;;
+    libc-timer-getoverrun) ;;
     libc-readiness-waits|libc-system-observation|libc-system-information|libc-fcntl-record-locks|libc-flock|libc-sendfile|libc-posix-fallocate|libc-descriptor-advice|libc-filesystem-capacity|libc-uts-identity|libc-ctype|libc-locale-profile|libc-locale-multibyte|libc-locale-wide-iconv|libc-wide-character|libc-locale-object-wide|libc-locale-narrow|libc-locale-ctype-locators|libc-locale-error-strings|libc-regex|libc-integer-arithmetic|libc-integer-parse|libc-float-parse|libc-getsubopt|libc-intmax-arithmetic|libc-credential-observation|libc-secure-environment|libc-login-name|libc-child-reaping|libc-immediate-termination|libc-bsearch|libc-linear-search|libc-intrusive-queue|libc-qsort|libc-callback-algorithms|libc-search-tree-intrusive|libc-search-hash-table|libc-gettext-catalog|libc-access|libc-clock-gettime|libc-time-observation|libc-difftime|libc-timegm|libc-gmtime-r|libc-system-configuration|libc-mapping-core|libc-header-layouts-baseline|libc-nanosleep|libc-clock-nanosleep|libc-descriptor-entry|libc-fcntl-status-control|libc-ioctl|libc-ffs|libc-byte-strings|libc-in6addr-any|libc-in6addr-loopback|libc-process-globals-getopt|libc-auxv-observation|libc-inet-address|libc-inet-ntoa|libc-inet-classful|libc-hstrerror|libc-numeric-netdb|libc-random-entropy|libc-memory-search|libc-string-copy|libc-error-strings|libc-strsignal|libc-descriptor-pipeline) ;;
     libc-vector-io|libc-uio-cxx-linkage) ;;
     libc-sysv-semaphore|libc-posix-semaphore) ;;
@@ -4481,6 +4493,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "clock-settime-header-abi takes no arguments"
         ensure_image
         run_clock_settime_header_abi
+        ;;
+    timer-getoverrun-header-abi)
+        [ "$#" -eq 0 ] || fail "timer-getoverrun-header-abi takes no arguments"
+        ensure_image
+        run_timer_getoverrun_header_abi
         ;;
     timerfd-header-abi)
         [ "$#" -eq 0 ] || fail "timerfd-header-abi takes no arguments"
@@ -5766,6 +5783,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "libc-clock-settime takes no arguments"
         ensure_image
         run_libc_clock_settime
+        ;;
+    libc-timer-getoverrun)
+        [ "$#" -eq 0 ] || fail "libc-timer-getoverrun takes no arguments"
+        ensure_image
+        run_libc_timer_getoverrun
         ;;
     libc-time-observation)
         [ "$#" -eq 0 ] || fail "libc-time-observation takes no arguments"

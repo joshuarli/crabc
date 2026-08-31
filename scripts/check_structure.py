@@ -134,8 +134,8 @@ X86_RUNTIME_FOUNDATION_LDSO_SOURCES = {
 # locale ctype and the separately bounded named-locale/multibyte conversion
 # artifact, scalar integer arithmetic, complete integer parsing, intmax
 # arithmetic, and find-first-set, direct POSIX clock_gettime, direct rejected-
-# ID clock_adjtime and rejected-request clock_settime error translation, bounded
-# clock observation,
+# ID clock_adjtime, rejected-request clock_settime, and rejected-handle
+# timer_getoverrun error translation, bounded clock observation,
 # no-cancellation mapping synchronization, direct anonymous-memory
 # descriptor creation, nanosleep, and clock_nanosleep, descriptor entry, selected
 # filesystem access, bounded fcntl
@@ -159,6 +159,7 @@ X86_RUNTIME_FOUNDATION_LIBC_SOURCES = {
     Path("libc/src/c_abi/x86_64/clock_gettime.rs"),
     Path("libc/src/c_abi/x86_64/clock_adjtime.rs"),
     Path("libc/src/c_abi/x86_64/clock_settime.rs"),
+    Path("libc/src/c_abi/x86_64/timer_getoverrun.rs"),
     Path("libc/src/c_abi/x86_64/difftime.rs"),
     Path("libc/src/c_abi/x86_64/gmtime_r.rs"),
     Path("libc/src/c_abi/x86_64/timegm.rs"),
@@ -3800,6 +3801,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         '#[path = "clock_gettime.rs"]',
         '#[path = "clock_adjtime.rs"]',
         '#[path = "clock_settime.rs"]',
+        '#[path = "timer_getoverrun.rs"]',
         '#[path = "difftime.rs"]',
         '#[path = "gmtime_r.rs"]',
         '#[path = "timegm.rs"]',
@@ -8235,6 +8237,60 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
                 f"clock_settime error ABI must not select {forbidden!r}"
             )
 
+    timer_getoverrun_source = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "timer_getoverrun.rs"
+    )
+    timer_getoverrun_text = timer_getoverrun_source.read_text(errors="replace")
+    for required in (
+        "musl 1.2.6 release commit",
+        "src/time/timer_getoverrun.c::timer_getoverrun",
+        "SYS_TIMER_GETOVERRUN",
+        "raw_syscall::syscall1",
+        "c_status(result)",
+        "nonnegative opaque",
+        "pthread_impl",
+        "does not decode or dereference",
+        "valid POSIX timer",
+        "public x86 support",
+    ):
+        if required not in timer_getoverrun_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/timer_getoverrun.rs: selected static "
+                f"timer_getoverrun error ABI is missing {required!r}"
+            )
+    timer_getoverrun_exports = set(
+        re.findall(
+            r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(',
+            timer_getoverrun_text,
+        )
+    )
+    if timer_getoverrun_exports != {"timer_getoverrun"}:
+        errors.append(
+            "libc/src/c_abi/x86_64/timer_getoverrun.rs: selected static artifact "
+            "must export only timer_getoverrun"
+        )
+    for forbidden in (
+        "crabc_core",
+        "crabc_mimalloc",
+        "timer_create(",
+        "timer_delete(",
+        "timer_gettime(",
+        "timer_settime(",
+        "clock_gettime(",
+        "clock_getres(",
+        "clock_settime(",
+        "clock_adjtime(",
+        "adjtimex(",
+        "getenv(",
+        "tzset(",
+        "__tls_get_addr",
+    ):
+        if forbidden in timer_getoverrun_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/timer_getoverrun.rs: selected static "
+                f"timer_getoverrun error ABI must not select {forbidden!r}"
+            )
+
     difftime_source = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "difftime.rs"
     difftime_text = difftime_source.read_text(errors="replace")
     for required in (
@@ -8566,6 +8622,11 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         errors.append(
             "libc/src/c_abi/x86_64/syscall.rs: selected static clock_adjtime "
             "error ABI requires SYS_CLOCK_ADJTIME=305"
+        )
+    if "pub(crate) const SYS_TIMER_GETOVERRUN: i64 = 225;" not in raw_syscall_text:
+        errors.append(
+            "libc/src/c_abi/x86_64/syscall.rs: selected static timer_getoverrun "
+            "error ABI requires SYS_TIMER_GETOVERRUN=225"
         )
 
     memory_mapping_source = (
@@ -11635,6 +11696,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         clock_gettime_text,
         clock_adjtime_text,
         clock_settime_text,
+        timer_getoverrun_text,
         difftime_text,
         gmtime_r_text,
         timegm_text,
@@ -11964,6 +12026,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         "clock_gettime",
         "clock_adjtime",
         "clock_settime",
+        "timer_getoverrun",
         "difftime",
         "gmtime_r",
         "timegm",
@@ -12196,8 +12259,8 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         errors.append(
             "libc/src/c_abi/x86_64: selected static archive must export only its "
             "stat, credential, errno, bootstrap-memory/fenv/continuation, simple "
-            "signal-control, separate realtime-minimum/realtime-maximum bridges, one pure GNU signal-set predicate, paired GNU binary set-operation leaf, and a three-symbol POSIX signal-set mutation leaf, bounded process-signal execution, and one legacy single-signal pause wait, bounded pthread create/exit/join/detach initial-TLS worker, its private selected-main/worker pthread-key/C11-TSS lifecycle, private process-normal pthread mutexes and their musl private condition-variable handoff, the complete selected rwlock/attribute family with private-or-shared futex operation, plus the distinct C11 plain-sync adapter and normal-return pthread/C11 once state machine, its typed C11 create/exit/join/detach sibling, and pthread/C11 identity aliases, named termios-control, direct terminal-descriptor and foreground-group observations plus one named foreground-group assignment, caller-buffered terminal naming, historical ctermid pathname spelling, constant historical gethostid compatibility, direct GNU gettid observation, selected process-context, child-reaping, C11 immediate termination, callback algorithms, direct clock_gettime, binary64 difftime, caller-buffered fixed-UTC gmtime_r, fixed-UTC timegm, a caller-buffered GNU CPU-mask bit-count helper, a paired read-only scheduler-priority bounds leaf, a GNU current-CPU raw-fallback observation leaf, a status-returning POSIX scheduler-yield leaf, caller-owned mapping-core, no-cancellation mapping synchronization, direct anonymous-memory descriptor creation, nanosleep, and clock_nanosleep, selected "
-            "signal-control, separate realtime-minimum/realtime-maximum bridges, one historical SIGALRM interval-timer adapter leaf, one pure GNU signal-set predicate, paired GNU binary set-operation leaf, and a three-symbol POSIX signal-set mutation leaf, bounded process-signal execution, and one legacy single-signal pause wait, bounded pthread create/exit/join/detach initial-TLS worker, its private selected-main/worker pthread-key/C11-TSS lifecycle, private process-normal pthread mutexes and their musl private condition-variable handoff, the complete selected rwlock/attribute family with private-or-shared futex operation, plus the distinct C11 plain-sync adapter and normal-return pthread/C11 once state machine, its typed C11 create/exit/join/detach sibling, and pthread/C11 identity aliases, named termios-control, direct terminal-descriptor and foreground-group observations plus one named foreground-group assignment, caller-buffered terminal naming, historical ctermid pathname spelling, constant historical gethostid compatibility, selected process-context, child-reaping, C11 immediate termination, callback algorithms, direct clock_gettime, binary64 difftime, caller-buffered fixed-UTC gmtime_r, fixed-UTC timegm, a status-returning POSIX scheduler-yield leaf, caller-owned mapping-core, no-cancellation mapping synchronization, direct anonymous-memory descriptor creation, nanosleep, and clock_nanosleep, selected "
+            "signal-control, separate realtime-minimum/realtime-maximum bridges, one pure GNU signal-set predicate, paired GNU binary set-operation leaf, and a three-symbol POSIX signal-set mutation leaf, bounded process-signal execution, and one legacy single-signal pause wait, bounded pthread create/exit/join/detach initial-TLS worker, its private selected-main/worker pthread-key/C11-TSS lifecycle, private process-normal pthread mutexes and their musl private condition-variable handoff, the complete selected rwlock/attribute family with private-or-shared futex operation, plus the distinct C11 plain-sync adapter and normal-return pthread/C11 once state machine, its typed C11 create/exit/join/detach sibling, and pthread/C11 identity aliases, named termios-control, direct terminal-descriptor and foreground-group observations plus one named foreground-group assignment, caller-buffered terminal naming, historical ctermid pathname spelling, constant historical gethostid compatibility, direct GNU gettid observation, selected process-context, child-reaping, C11 immediate termination, callback algorithms, direct clock_gettime, rejected-handle timer_getoverrun error ABI, binary64 difftime, caller-buffered fixed-UTC gmtime_r, fixed-UTC timegm, a caller-buffered GNU CPU-mask bit-count helper, a paired read-only scheduler-priority bounds leaf, a GNU current-CPU raw-fallback observation leaf, a status-returning POSIX scheduler-yield leaf, caller-owned mapping-core, no-cancellation mapping synchronization, direct anonymous-memory descriptor creation, nanosleep, and clock_nanosleep, selected "
+            "signal-control, separate realtime-minimum/realtime-maximum bridges, one historical SIGALRM interval-timer adapter leaf, one pure GNU signal-set predicate, paired GNU binary set-operation leaf, and a three-symbol POSIX signal-set mutation leaf, bounded process-signal execution, and one legacy single-signal pause wait, bounded pthread create/exit/join/detach initial-TLS worker, its private selected-main/worker pthread-key/C11-TSS lifecycle, private process-normal pthread mutexes and their musl private condition-variable handoff, the complete selected rwlock/attribute family with private-or-shared futex operation, plus the distinct C11 plain-sync adapter and normal-return pthread/C11 once state machine, its typed C11 create/exit/join/detach sibling, and pthread/C11 identity aliases, named termios-control, direct terminal-descriptor and foreground-group observations plus one named foreground-group assignment, caller-buffered terminal naming, historical ctermid pathname spelling, constant historical gethostid compatibility, selected process-context, child-reaping, C11 immediate termination, callback algorithms, direct clock_gettime, rejected-handle timer_getoverrun error ABI, binary64 difftime, caller-buffered fixed-UTC gmtime_r, fixed-UTC timegm, a status-returning POSIX scheduler-yield leaf, caller-owned mapping-core, no-cancellation mapping synchronization, direct anonymous-memory descriptor creation, nanosleep, and clock_nanosleep, selected "
             "POSIX _exit forwarding, descriptor-entry, selected filesystem-access, bounded descriptor-control, timestamp updates, and descriptor-I/O, selected process-resources, selected readiness/signal-waits, "
             "selected socket transport and selected socket-message/options, selected system-observation, historical load snapshot, selected UTS-identity, "
             "selected numeric-address codecs, immutable IPv6 unspecified/loopback address data objects, and legacy classful IPv4 arithmetic, fixed-profile h_errno message text, byte-string, legacy-memory adapters, source-backed memccpy/mempcpy, caller-buffer strsep, random-entropy, memory-search, C-string-copy, immutable error-string, "
@@ -12272,6 +12335,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         ("clock_gettime.rs", clock_gettime_text),
         ("clock_adjtime.rs", clock_adjtime_text),
         ("clock_settime.rs", clock_settime_text),
+        ("timer_getoverrun.rs", timer_getoverrun_text),
         ("sched_cpucount.rs", sched_cpucount_text),
         ("sched_getcpu.rs", sched_getcpu_text),
         ("sched_priority_bounds.rs", sched_priority_bounds_text),

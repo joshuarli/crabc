@@ -1393,6 +1393,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "stdio-permanent-feof-unlocked-header-abi",
             "clock-adjtime-header-abi",
             "clock-settime-header-abi",
+            "timer-getoverrun-header-abi",
             "image|musl-oracle|header-abi-reference|public-header-surface|header-abi-project|math-complex-header-abi|sys-reg-header-abi|types-header-abi|stat-header-abi|utime-header-abi|pthread-c11-header-abi|pthread-cancellation-header-abi|stdlib-header-abi|stdio-standard-header-abi|time-header-abi|poll-header-abi|select-header-abi|fcntl-header-abi|descriptor-advice-header-abi|filesystem-capacity-header-abi|flock-header-abi|sendfile-header-abi|ioctl-header-abi|unistd-header-abi|system-header-abi|syscall-header-abi|signal-header-abi|termios-header-abi|mman-header-abi|resource-header-abi|socket-header-abi|socket-messages-header-abi|random-entropy-header-abi|mm-abi-reference|mapping-reference|memory-vm-reference|pty-basic-reference|terminal-reference|mlock-reference|msync-reference|mincore-reference|fs-advice-reference|memfd-reference|ftruncate-reference|statfs-reference|timestamp-reference|path-lifecycle-reference|namespace-reference|path-core-reference|xattr-reference|directory-reference|temporary-object-reference|statx-reference|cwd-canonicalize-reference|root-change-reference|mount-reference|thread-kill-reference|ipc-reference|shm-reference|inotify-reference|socket-transport-reference|interface-device-reference|resolver-transport-reference|resolver-facade-reference|netdb-reference|users-databases-reference|posix-fallocate-reference|fallocate-reference|file-position-reference|sync-reference|syncfs-reference|sync-file-range-reference|rand-reference|time-abi-reference|time-observation-reference|calendar-time-reference|advanced-time-reference|relative-sleep-reference|clock-nanosleep-reference|getitimer-reference|setitimer-reference|timerfd-reference|pselect-reference|poll-reference|ppoll-reference|epoll-reference|process-identity-reference|child-ownership-reference|getgroups-reference|process-session-reference|pidfd-open-reference|fcntl-getlk-reference|fcntl-status-reference|flock-reference|sendfile-reference|copy-file-range-reference|scheduler-priority-bounds-reference|rr-interval-reference|sched-affinity-reference|sched-affinity-set-reference|priority-reference|setpriority-reference|rlimit-reference|rlimit-targeted-reference|setrlimit-reference|umask-reference|rusage-reference|times-reference|fstat-reference|statat-reference|getcwd-reference|readlinkat-reference|access-reference|system-reference|thread-reference|thread-credentials-reference|fs-credentials-reference|core|facade|facade-record-owning|libc-syscall|libc-errno-tls|libc-stat-compat|libc-credentials|libc-bootstrap-primitives|libc-signal-control|libc-signal-execution|libc-static-tls-v1|libc-crt-static-tls|libc-pthread-create-join-tls|libc-c11-lifecycle|libc-c11-plain-sync|libc-pthread-c11-once|libc-pthread-c11-tsd|libc-pthread-tls-aggregate|libc-pthread-cancel-deferred|libc-pthread-atfork|libc-thrd-sleep|libc-pthread-mutex-normal|libc-pthread-rwlock|libc-pthread-cond-private|libc-termios-control|libc-process-context|libc-environment|libc-descriptor-io|libc-descriptor-lifecycle|libc-timestamp-updates|libc-process-resources|libc-socket-transport|libc-socket-messages|libc-thread-pointer|libc-foundation|libc-fenv|libc-math-complex|libc-elementary-sqrt-fenv|libc-math-x87-extended|libc-memory|libc-setjmp|libc-atomic|libc-clone-raw|libc-signal-altstack|libc-signal-foundation|ldso-relocation|ldso-image|ldso-initial-graph|ldso-initial-tls|ldso-initial-exec-tls|ldso-owned-crt-handoff|ldso-fixed-graph-introspection|ldso-dynamic-admission",
             "math-elementary-long-double-header-abi|libc-math-elementary-long-double",
             "ldso-fixed-graph-dlfcn",
@@ -1479,6 +1480,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "libc-posix-exit",
             "libc-clock-adjtime",
             "libc-clock-settime",
+            "libc-timer-getoverrun",
             "libc-readiness-waits|libc-system-observation|libc-system-information|libc-fcntl-record-locks|libc-flock|libc-sendfile|libc-posix-fallocate|libc-descriptor-advice|libc-filesystem-capacity|libc-uts-identity|libc-ctype|libc-locale-profile|libc-locale-multibyte|libc-locale-wide-iconv|libc-wide-character|libc-locale-object-wide|libc-locale-narrow|libc-locale-ctype-locators|libc-locale-error-strings|libc-regex|libc-integer-arithmetic|libc-integer-parse|libc-float-parse|libc-getsubopt|libc-intmax-arithmetic|libc-credential-observation|libc-secure-environment|libc-login-name|libc-child-reaping|libc-immediate-termination|libc-bsearch|libc-linear-search|libc-qsort|libc-callback-algorithms|libc-search-tree-intrusive|libc-search-hash-table|libc-gettext-catalog|libc-access|libc-clock-gettime|libc-time-observation|libc-difftime|libc-timegm|libc-gmtime-r|libc-system-configuration|libc-mapping-core|libc-header-layouts-baseline|libc-nanosleep|libc-clock-nanosleep|libc-descriptor-entry|libc-fcntl-status-control|libc-ioctl|libc-ffs|libc-byte-strings|libc-in6addr-any|libc-in6addr-loopback|libc-process-globals-getopt|libc-auxv-observation|libc-inet-address|libc-inet-ntoa|libc-inet-classful|libc-hstrerror|libc-numeric-netdb|libc-random-entropy|libc-memory-search|libc-string-copy|libc-error-strings|libc-strsignal|libc-descriptor-pipeline",
             "libc-vector-io|libc-uio-cxx-linkage",
             "libc-sysv-semaphore|libc-posix-semaphore",
@@ -18937,6 +18939,157 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         )
         self.assertIn(
             '    libc-clock-settime)\n        [ "$#" -eq 0 ] || fail "libc-clock-settime takes no arguments"',
+            runner,
+        )
+
+    def test_libc_static_c_abi_timer_getoverrun_error_artifact_stays_non_timer_support(
+        self,
+    ) -> None:
+        """Rejected opaque handles are a private errno ABI, not timer support."""
+
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        timer_getoverrun = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" /
+            "timer_getoverrun.rs"
+        ).read_text(encoding="utf-8")
+        probe = (
+            ROOT / "compat" / "x86_64" / "libc_timer_getoverrun_probe.c"
+        ).read_text(encoding="utf-8")
+        start = (
+            ROOT / "compat" / "x86_64" / "libc_timer_getoverrun_start.S"
+        ).read_text(encoding="utf-8")
+        artifact_runner = (
+            ROOT / "compat" / "x86_64" / "run_libc_timer_getoverrun.sh"
+        ).read_text(encoding="utf-8")
+        header_c = (
+            ROOT / "compat" / "x86_64" /
+            "timer_getoverrun_header_abi_probe.c"
+        ).read_text(encoding="utf-8")
+        header_cpp = (
+            ROOT / "compat" / "x86_64" /
+            "timer_getoverrun_header_abi_probe.cpp"
+        ).read_text(encoding="utf-8")
+        header_runner = (
+            ROOT / "compat" / "x86_64" /
+            "run_timer_getoverrun_header_abi.sh"
+        ).read_text(encoding="utf-8")
+        static_export_names = {
+            line
+            for line in (
+                ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+            ).read_text(encoding="utf-8").splitlines()
+            if line and not line.startswith("#")
+        }
+        parity_ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        runner = RUNNER.read_text(encoding="utf-8")
+
+        self.assertIn('#[path = "timer_getoverrun.rs"]', static_root)
+        for required in (
+            "musl 1.2.6 release commit",
+            "src/time/timer_getoverrun.c::timer_getoverrun",
+            "SYS_TIMER_GETOVERRUN",
+            "raw_syscall::syscall1",
+            "c_status(result)",
+            "nonnegative opaque",
+            "pthread_impl",
+            "does not decode or dereference",
+            "valid POSIX timer",
+            "public x86 support",
+        ):
+            self.assertIn(required, timer_getoverrun)
+        self.assertIn(
+            'pub unsafe extern "C" fn timer_getoverrun(', timer_getoverrun
+        )
+        for forbidden in (
+            "crabc_core",
+            "crabc_mimalloc",
+            "timer_create(",
+            "timer_delete(",
+            "timer_gettime(",
+            "timer_settime(",
+            "clock_gettime(",
+            "clock_getres(",
+            "clock_settime(",
+            "__tls_get_addr",
+        ):
+            self.assertNotIn(forbidden, timer_getoverrun)
+
+        for required in (
+            "#include <errno.h>",
+            "#include <limits.h>",
+            "#include <stdint.h>",
+            "#include <time.h>",
+            "SYS_timer_getoverrun == 225",
+            "check_rejected_timer",
+            "(timer_t)(uintptr_t)INT_MAX",
+            "EINVAL",
+            "CRABC_TIMER_GETOVERRUN_FREESTANDING",
+        ):
+            self.assertIn(required, probe)
+        for forbidden in (
+            "timer_create(",
+            "timer_delete(",
+            "timer_gettime(",
+            "timer_settime(",
+        ):
+            self.assertNotIn(forbidden, probe)
+        for required in (
+            "ARCH_SET_FS",
+            "mov %rsi, %fs:0",
+            "crabc_x86_64_timer_getoverrun_probe",
+        ):
+            self.assertIn(required, start)
+        for header_probe in (header_c, header_cpp):
+            self.assertIn("CRABC_TIMER_GETOVERRUN_EXPECT_HIDDEN", header_probe)
+            self.assertIn("timer_getoverrun_signature", header_probe)
+            self.assertIn("timer_getoverrun", header_probe)
+        for required in (
+            "Strict C11/C++17",
+            "compile_hidden_profile",
+            "posix",
+            "xopen",
+            "gnu",
+            "-std=c++17",
+            "nm --undefined-only",
+            "mangled",
+        ):
+            self.assertIn(required, header_runner)
+        for required in (
+            "static_c_abi_exports.txt",
+            "run_timer_getoverrun_header_abi.sh",
+            "-nostdlib -static",
+            "-Wl,-e,_start",
+            "R_X86_64_TPOFF",
+            "assert_timer_getoverrun_syscall",
+            "timer_getoverrun lacks syscall 225",
+            "direct fs initial TLS",
+            "env -i",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn("--whole-archive", artifact_runner)
+        self.assertIn("timer_getoverrun", static_export_names)
+        self.assertIn(
+            'id = "static-c-timer-getoverrun-error-abi"', parity_ledger
+        )
+        self.assertIn(
+            'command = "./scripts/dev-x86_64.sh libc-timer-getoverrun"',
+            parity_ledger,
+        )
+        self.assertIn("run_timer_getoverrun_header_abi()", runner)
+        self.assertIn("run_libc_timer_getoverrun()", runner)
+        self.assertIn(
+            "/workspace/compat/x86_64/run_libc_timer_getoverrun.sh", runner
+        )
+        self.assertIn(
+            '    timer-getoverrun-header-abi)\n        [ "$#" -eq 0 ] || fail "timer-getoverrun-header-abi takes no arguments"',
+            runner,
+        )
+        self.assertIn(
+            '    libc-timer-getoverrun)\n        [ "$#" -eq 0 ] || fail "libc-timer-getoverrun takes no arguments"',
             runner,
         )
 

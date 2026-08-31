@@ -1506,6 +1506,21 @@ this does not claim clock-setting authority, successful state mutation,
 calendar/timezone/timer behavior, C time-family completion, promotion, or
 public x86 support.
 
+The same archive has a private rejected-handle POSIX-timer error-ABI artifact:
+`./scripts/dev-x86_64.sh timer-getoverrun-header-abi` and
+`./scripts/dev-x86_64.sh libc-timer-getoverrun` map exactly to pinned musl
+1.2.6 `src/time/timer_getoverrun.c`'s nonnegative direct
+`timer_getoverrun=225` wrapper. Strict C11/C++17 `<time.h>` profiles hide the
+POSIX spelling; POSIX/XOPEN/GNU profiles prove its exact opaque C/C++ external-C
+declaration and linkage. The shared musl/static fixture calls only
+nonnegative opaque `timer_t` values `0` and `INT_MAX`, requiring Linux
+`EINVAL` without creating, arming, querying, deleting, or observing a valid
+POSIX timer. Musl's negative tagged `timer_t` branch requires private
+`pthread_impl` state and is explicitly excluded: this leaf never decodes or
+dereferences a timer handle. It does not claim timer ownership, overrun values,
+valid timer state, signal delivery, calendar/timezone behavior, C time-family
+completion, promotion, or public x86 support.
+
 The same archive has a private direct time-observation artifact:
 `./scripts/dev-x86_64.sh libc-time-observation` proves only `clock`, `time`,
 C11 `timespec_get`, `clock_getres`, and `gettimeofday` through a pinned-musl
