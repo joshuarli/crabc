@@ -50,7 +50,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 41)
-        self.assertEqual(report["verified_artifact_count"], 196)
+        self.assertEqual(report["verified_artifact_count"], 197)
         self.assertEqual(report["header_layout_probe_count"], 46)
         self.assertEqual(report["public_header_inventory_count"], 183)
         self.assertEqual(report["header_foundation_header_count"], 191)
@@ -11024,7 +11024,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             "libc/src/c_abi/x86_64/pthread_atfork.rs", pthread_tls["source_owners"]
         )
         self.assertIn(
-            "Twenty-five separately verified static artifacts", pthread_tls["description"]
+            "Twenty-six separately verified static artifacts", pthread_tls["description"]
         )
         self.assertIn(
             "sole delivery point is explicit `pthread_testcancel`",
@@ -11047,7 +11047,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         pthread_tls = self.family(data, "libc.pthread-tls")
         self.assertEqual(pthread_tls["status"], "planned")
         artifacts = pthread_tls["verified_artifact"]
-        self.assertEqual(len(artifacts), 25)
+        self.assertEqual(len(artifacts), 26)
         by_id = {artifact["id"]: artifact for artifact in artifacts}
         self.assertEqual(
             set(by_id),
@@ -11076,6 +11076,7 @@ class X86ParityLedgerTests(unittest.TestCase):
                 "static-c-pthread-barrierattr-pshared",
                 "static-c-pthread-condattr-pshared",
                 "static-c-pthread-condattr-clock",
+                "static-c-pthread-mutexattr-robust-query",
                 "static-c-thrd-yield",
             },
         )
@@ -11103,6 +11104,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         barrierattr_pshared = by_id["static-c-pthread-barrierattr-pshared"]
         condattr_pshared = by_id["static-c-pthread-condattr-pshared"]
         condattr_clock = by_id["static-c-pthread-condattr-clock"]
+        mutexattr_robust_query = by_id["static-c-pthread-mutexattr-robust-query"]
         thrd_yield = by_id["static-c-thrd-yield"]
         for artifact in artifacts:
             self.assertNotIn("capabilities", artifact)
@@ -11345,6 +11347,45 @@ class X86ParityLedgerTests(unittest.TestCase):
             "family completion, promotion, and public x86 support",
         ):
             self.assertIn(phrase, condattr_clock_scope)
+        self.assertEqual(
+            mutexattr_robust_query["native_evidence"][0]["command"],
+            "./scripts/dev-x86_64.sh libc-pthread-mutexattr-robust-query",
+        )
+        for phrase in (
+            "still-planned `libc.pthread-tls`",
+            "One dependency-free entry",
+            "only `pthread_mutexattr_getrobust`",
+            "four-byte, four-byte-aligned public `pthread_mutexattr_t` word",
+            "`a->__attr / 4U % 2`",
+            "`PTHREAD_MUTEX_STALLED`/`PTHREAD_MUTEX_ROBUST` `0`/`1` vocabulary",
+            "without changing the raw word",
+            "caller-owned raw record storage",
+            "`pthread_mutexattr_setrobust`, an attribute lifecycle function, or any mutex entry",
+            "setter probes and caches kernel robust-list support",
+            "normal-mutex artifact continues to reject every non-null attribute",
+            "not robust-mutex operation, a robust-list capability claim, or a mutex state machine",
+            "the setter, init/destroy lifecycle, type/pshared/protocol/prioceiling attributes",
+            "mutex initialization/locking/destruction",
+            "threads, TCB/TLS ownership, synchronization, cancellation",
+            "general pthread/TLS behavior or x86-64 parity",
+            "family completion, promotion, or public x86 support",
+        ):
+            self.assertIn(phrase, mutexattr_robust_query["description"])
+        mutexattr_robust_query_scope = mutexattr_robust_query["native_evidence"][0][
+            "scope"
+        ]
+        for phrase in (
+            "all-zero and bit-2 set output",
+            "noncanonical raw words with bit 2 clear/set",
+            "complete caller-word preservation",
+            "no setrobust, lifecycle, mutex-initialization, robust-list, or synchronization call",
+            "exactly pthread_mutexattr_getrobust",
+            "PT_TLS, errno/bootstrap, syscall, helper call",
+            "setrobust and its kernel capability cache",
+            "robust-mutex operation",
+            "family completion, promotion, and public x86 support",
+        ):
+            self.assertIn(phrase, mutexattr_robust_query_scope)
         self.assertEqual(
             thrd_yield["native_evidence"][0]["command"],
             "./scripts/dev-x86_64.sh libc-thrd-yield",

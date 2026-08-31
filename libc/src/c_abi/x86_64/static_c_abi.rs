@@ -318,6 +318,8 @@ mod pthread_atfork;
 mod pthread_tsd;
 #[path = "pthread_mutex.rs"]
 mod pthread_mutex;
+#[path = "pthread_mutexattr_robust_query.rs"]
+mod pthread_mutexattr_robust_query;
 #[path = "pthread_cond.rs"]
 mod pthread_cond;
 #[path = "pthread_rwlock.rs"]

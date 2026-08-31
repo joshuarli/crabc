@@ -126,6 +126,8 @@ using crabc_pthread_setspecific_signature = int (*)(pthread_key_t, const void *)
 using crabc_pthread_sigmask_signature = int (*)(int, const sigset_t *, sigset_t *);
 using crabc_pthread_mutex_init_signature = int (*)(
 	pthread_mutex_t *, const pthread_mutexattr_t *);
+using crabc_pthread_mutexattr_getrobust_signature = int (*)(
+	const pthread_mutexattr_t *, int *);
 using crabc_pthread_mutex_destroy_signature = int (*)(pthread_mutex_t *);
 using crabc_pthread_mutex_lock_signature = int (*)(pthread_mutex_t *);
 using crabc_pthread_mutex_trylock_signature = int (*)(pthread_mutex_t *);
@@ -215,6 +217,8 @@ static_assert(__is_same(decltype(&pthread_setspecific),
 	crabc_pthread_setspecific_signature), "pthread_setspecific signature");
 static_assert(__is_same(decltype(&pthread_mutex_init),
 	crabc_pthread_mutex_init_signature), "pthread_mutex_init signature");
+static_assert(__is_same(decltype(&pthread_mutexattr_getrobust),
+	crabc_pthread_mutexattr_getrobust_signature), "pthread_mutexattr_getrobust signature");
 static_assert(__is_same(decltype(&pthread_mutex_destroy),
 	crabc_pthread_mutex_destroy_signature), "pthread_mutex_destroy signature");
 static_assert(__is_same(decltype(&pthread_mutex_lock),
@@ -355,6 +359,8 @@ static crabc_pthread_setspecific_signature const crabc_force_pthread_setspecific
 	__attribute__((used)) = &pthread_setspecific;
 static crabc_pthread_mutex_init_signature const crabc_force_pthread_mutex_init
 	__attribute__((used)) = &pthread_mutex_init;
+static crabc_pthread_mutexattr_getrobust_signature const crabc_force_pthread_mutexattr_getrobust
+	__attribute__((used)) = &pthread_mutexattr_getrobust;
 static crabc_pthread_mutex_destroy_signature const crabc_force_pthread_mutex_destroy
 	__attribute__((used)) = &pthread_mutex_destroy;
 static crabc_pthread_mutex_lock_signature const crabc_force_pthread_mutex_lock

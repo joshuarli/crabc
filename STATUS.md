@@ -748,6 +748,20 @@ waiting, clock observation, destruction, process-shared condition operation,
 threads, TLS, synchronization, cancellation, CRT, loader, sysroot, family
 completion, promotion, or public x86 support.
 
+The separate
+`./scripts/dev-x86_64.sh libc-pthread-mutexattr-robust-query` artifact is a
+twenty-sixth private static artifact in that same still-planned family. It
+selects only `pthread_mutexattr_getrobust` over the public four-byte attribute
+word: musl reads raw bit 2 as the installed `PTHREAD_MUTEX_STALLED`/
+`PTHREAD_MUTEX_ROBUST` `0`/`1` vocabulary without modifying caller storage.
+The fixture uses raw caller-owned words and makes no `pthread_mutexattr_setrobust`,
+lifecycle, or mutex call. Musl's setter performs a cached kernel robust-list
+support probe, so it remains excluded; the selected normal-mutex artifact
+continues to reject non-null attributes. It therefore does not select robust
+mutex operation, robust-list capability, mutex initialization/locking/
+destruction, threads, TLS, synchronization, cancellation, CRT, loader,
+sysroot, family completion, promotion, or public x86 support.
+
 `./scripts/dev-x86_64.sh libc-pthread-mutex-normal` artifact is a tenth private static
 `verified_artifact` in the same still-planned `libc.pthread-tls` family. It admits only an all-zero or
 `pthread_mutex_init(..., NULL)` process-private `PTHREAD_MUTEX_NORMAL` record

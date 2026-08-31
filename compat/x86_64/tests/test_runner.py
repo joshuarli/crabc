@@ -1447,6 +1447,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "libc-pthread-barrierattr-pshared",
             "libc-pthread-condattr-pshared",
             "libc-pthread-condattr-clock",
+            "libc-pthread-mutexattr-robust-query",
             "libc-pthread-detach",
             "libc-thrd-yield",
             "libc-memory-sync",
@@ -1515,6 +1516,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn("libc-pthread-barrierattr-pshared", source)
         self.assertIn("libc-pthread-condattr-pshared", source)
         self.assertIn("libc-pthread-condattr-clock", source)
+        self.assertIn("libc-pthread-mutexattr-robust-query", source)
         self.assertIn("libc-termios-control", source)
         self.assertIn("ctermid-header-abi", source)
         self.assertIn("libc-ctermid", source)
@@ -7715,6 +7717,166 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             runner,
         )
 
+    def test_libc_static_c_abi_pthread_mutexattr_robust_query_stays_record_only(
+        self,
+    ) -> None:
+        """Keep the raw mutexattr robustness getter apart from robust mutexes."""
+
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        query = (
+            ROOT
+            / "libc"
+            / "src"
+            / "c_abi"
+            / "x86_64"
+            / "pthread_mutexattr_robust_query.rs"
+        ).read_text(encoding="utf-8")
+        probe_path = (
+            ROOT
+            / "compat"
+            / "x86_64"
+            / "libc_pthread_mutexattr_robust_query_probe.c"
+        )
+        start_path = (
+            ROOT
+            / "compat"
+            / "x86_64"
+            / "libc_pthread_mutexattr_robust_query_start.S"
+        )
+        artifact_runner_path = (
+            ROOT
+            / "compat"
+            / "x86_64"
+            / "run_libc_pthread_mutexattr_robust_query.sh"
+        )
+        c_header_probe = (
+            ROOT / "compat" / "x86_64" / "pthread_c11_header_abi_probe.c"
+        ).read_text(encoding="utf-8")
+        cxx_header_probe = (
+            ROOT / "compat" / "x86_64" / "pthread_c11_header_abi_probe.cpp"
+        ).read_text(encoding="utf-8")
+        header_runner = (
+            ROOT / "compat" / "x86_64" / "run_pthread_c11_header_abi.sh"
+        ).read_text(encoding="utf-8")
+        static_exports = {
+            line
+            for line in (
+                ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+            ).read_text(encoding="utf-8").splitlines()
+            if line and not line.startswith("#")
+        }
+        parity_ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        runner = RUNNER.read_text(encoding="utf-8")
+
+        for path in (probe_path, start_path, artifact_runner_path):
+            self.assertTrue(path.is_file(), f"missing mutexattr robust-query input: {path}")
+        probe = probe_path.read_text(encoding="utf-8")
+        start = start_path.read_text(encoding="utf-8")
+        artifact_runner = artifact_runner_path.read_text(encoding="utf-8")
+
+        self.assertIn('#[path = "pthread_mutexattr_robust_query.rs"]', static_root)
+        for required in (
+            "src/thread/pthread_attr_get.c::pthread_mutexattr_getrobust",
+            "*robust = a->__attr / 4U % 2",
+            "four-byte `pthread_mutexattr_t`",
+            "musl's setter probes and caches kernel robust-list support",
+            "does not select `pthread_mutexattr_setrobust`",
+            "no allocation,",
+            "C-`errno`",
+            "robust-mutex operation",
+        ):
+            self.assertIn(required, query)
+        for forbidden in (
+            "use super",
+            "raw_syscall::",
+            "static_tls::",
+            "pthread_mutex::",
+            "atomic::",
+            "fn pthread_mutexattr_setrobust",
+        ):
+            self.assertNotIn(forbidden, query)
+        for required in (
+            "#include <pthread.h>",
+            "sizeof(pthread_mutexattr_t) == 4",
+            "PTHREAD_MUTEX_STALLED == 0 && PTHREAD_MUTEX_ROBUST == 1",
+            "pthread_mutexattr_getrobust",
+            "CRABC_ROBUST_CLEAR_WORD 0xfffffffbU",
+            "CRABC_ROBUST_SET_WORD 0xfffffff4U",
+            "CRABC_PTHREAD_MUTEXATTR_ROBUST_QUERY_FREESTANDING",
+        ):
+            self.assertIn(required, probe)
+        for unselected in (
+            "pthread_mutexattr_setrobust(",
+            "pthread_mutexattr_init(",
+            "pthread_mutexattr_destroy(",
+            "pthread_mutex_init(",
+            "pthread_mutex_lock(",
+            "pthread_mutex_consistent(",
+        ):
+            self.assertNotIn(unselected, probe)
+        for required in (
+            "crabc_x86_64_pthread_mutexattr_robust_query_probe",
+            "mov $60, %eax",
+            "syscall",
+        ):
+            self.assertIn(required, start)
+        self.assertNotIn("__crabc_x86_static_tls_bootstrap", start)
+        self.assertNotIn("%fs", start)
+        for required in (
+            "static_c_abi_exports.txt",
+            "run_pthread_c11_header_abi.sh",
+            "-nostdlib -static",
+            "-Wl,-e,_start",
+            "-Wl,--no-undefined",
+            "assert_direct_record_path",
+            "must remain TLS-free",
+            "src/thread/pthread_attr_get.c",
+            "get_robust_list",
+            "assert_no_unselected_mutexattr_exports",
+            "pthread_mutexattr_setrobust",
+            "pthread_mutex_init pthread_mutex_destroy pthread_mutex_lock",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn("--whole-archive", artifact_runner)
+        self.assertIn("pthread_mutexattr_getrobust", static_exports)
+        self.assertTrue(
+            {
+                "pthread_mutexattr_setrobust",
+                "pthread_mutexattr_init",
+                "pthread_mutexattr_destroy",
+            }.isdisjoint(static_exports)
+        )
+        for header_probe in (c_header_probe, cxx_header_probe):
+            for required in (
+                "crabc_pthread_mutexattr_getrobust_signature",
+                "pthread_mutexattr_getrobust signature",
+            ):
+                self.assertIn(required, header_probe)
+        self.assertIn("crabc_force_pthread_mutexattr_getrobust", cxx_header_probe)
+        self.assertIn("pthread_mutexattr_getrobust", header_runner)
+        self.assertIn("pthread_mutexattr_getrobust|pthread_cond_init", header_runner)
+        self.assertIn(
+            'id = "static-c-pthread-mutexattr-robust-query"', parity_ledger
+        )
+        self.assertIn(
+            'command = "./scripts/dev-x86_64.sh libc-pthread-mutexattr-robust-query"',
+            parity_ledger,
+        )
+        self.assertIn("run_libc_pthread_mutexattr_robust_query_probe()", runner)
+        self.assertIn(
+            "/workspace/compat/x86_64/run_libc_pthread_mutexattr_robust_query.sh",
+            runner,
+        )
+        self.assertIn("    libc-pthread-mutexattr-robust-query) ;;", runner)
+        self.assertIn(
+            '    libc-pthread-mutexattr-robust-query)\n        [ "$#" -eq 0 ] || fail "libc-pthread-mutexattr-robust-query takes no arguments"',
+            runner,
+        )
+
     def test_libc_static_c_abi_pthread_normal_mutex_artifact_stays_private(
         self,
     ) -> None:
@@ -8831,7 +8993,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "pthread_cond_signal pthread_cond_broadcast\n        pthread_rwlock_init pthread_rwlock_destroy pthread_rwlock_rdlock",
             "thrd_create thrd_detach thrd_join thrd_exit thrd_sleep thrd_yield thrd_current thrd_equal",
             "call_once",
-            "pthread_rwlockattr_getpshared|pthread_barrierattr_setpshared|pthread_barrierattr_getpshared|pthread_condattr_setpshared|pthread_condattr_getpshared|pthread_condattr_setclock|pthread_condattr_getclock|pthread_once",
+            "pthread_mutexattr_getrobust|pthread_cond_init|pthread_rwlockattr_getpshared|pthread_barrierattr_setpshared|pthread_barrierattr_getpshared|pthread_condattr_setpshared|pthread_condattr_getpshared|pthread_condattr_setclock|pthread_condattr_getclock|pthread_once",
             "thrd_equal|call_once|tss_create|tss_delete|tss_get|tss_set|mtx_init",
         ):
             self.assertIn(required, header_runner)
