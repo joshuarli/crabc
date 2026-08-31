@@ -10233,12 +10233,12 @@ mod tests {
                 page_map,
             );
             let first = allocator
-                .allocate_aligned(7, 128 * crate::config::KIB)
+                .allocate_aligned(8 * crate::config::KIB + 1, 128 * crate::config::KIB)
                 .expect("the fixture creates its first OS-aligned singleton");
             let first_page = NonNull::new(unsafe { allocator.page_for_block(first) })
                 .expect("the first OS singleton is PageMap-published");
             let second = allocator
-                .allocate_aligned(8 * crate::config::KIB + 1, 256 * crate::config::KIB)
+                .allocate_aligned(16 * crate::config::KIB + 1, 256 * crate::config::KIB)
                 .expect("the fixture creates its distinct OS-aligned singleton");
             let second_page = NonNull::new(unsafe { allocator.page_for_block(second) })
                 .expect("the second OS singleton is PageMap-published");
@@ -10375,7 +10375,7 @@ mod tests {
                 page_map,
             );
             let block = allocator
-                .allocate_aligned(7, 128 * crate::config::KIB)
+                .allocate_aligned(8 * crate::config::KIB + 1, 128 * crate::config::KIB)
                 .expect("the fixture creates one OS-aligned singleton");
             let page = NonNull::new(unsafe { allocator.page_for_block(block) })
                 .expect("the OS singleton remains PageMap-published");
@@ -10432,12 +10432,12 @@ mod tests {
                 page_map,
             );
             let first = allocator
-                .allocate_aligned(7, 128 * crate::config::KIB)
+                .allocate_aligned(8 * crate::config::KIB + 1, 128 * crate::config::KIB)
                 .expect("the fixture creates its first OS singleton");
             let first_page = NonNull::new(unsafe { allocator.page_for_block(first) })
                 .expect("the first OS singleton remains PageMap-published");
             let second = allocator
-                .allocate_aligned(7, 128 * crate::config::KIB)
+                .allocate_aligned(8 * crate::config::KIB + 1, 128 * crate::config::KIB)
                 .expect("the fixture creates its second OS singleton");
             let second_page = NonNull::new(unsafe { allocator.page_for_block(second) })
                 .expect("the second OS singleton remains PageMap-published");
@@ -10499,14 +10499,14 @@ mod tests {
             );
             let fault = fault::install(fault::Plan::disabled());
             let first = allocator
-                .allocate_aligned(7, 128 * crate::config::KIB)
+                .allocate_aligned(8 * crate::config::KIB + 1, 128 * crate::config::KIB)
                 .expect("the fixture creates its first OS singleton");
             let first_page = NonNull::new(unsafe { allocator.page_for_block(first) })
                 .expect("the first OS singleton remains PageMap-published");
             let first_published = unsafe { PublishedOsAlignedPage::from_page(memory_config(), first_page) }
                 .expect("the first OS singleton retains its clipped release token");
             let second = allocator
-                .allocate_aligned(7, 128 * crate::config::KIB)
+                .allocate_aligned(8 * crate::config::KIB + 1, 128 * crate::config::KIB)
                 .expect("the fixture creates its second OS singleton");
             let second_page = NonNull::new(unsafe { allocator.page_for_block(second) })
                 .expect("the second OS singleton remains PageMap-published");

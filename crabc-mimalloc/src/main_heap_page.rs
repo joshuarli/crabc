@@ -10236,7 +10236,7 @@ mod tests {
                         .expect("the matched process pair admits the OS-singleton aggregate fixture");
                     let first = allocator
                         .engine
-                        .allocate_aligned(7, 128 * 1024)
+                        .allocate_aligned(8 * 1024 + 1, 128 * 1024)
                         .expect("the fixture creates its first OS-aligned singleton");
                     let first_page = NonNull::new(unsafe { allocator.test_page_for_block(first) })
                         .expect("the first OS singleton remains PageMap-published");
@@ -10244,7 +10244,7 @@ mod tests {
                         .expect("the first OS singleton has its clipped release token");
                     let second = allocator
                         .engine
-                        .allocate_aligned(8 * 1024 + 1, 256 * 1024)
+                        .allocate_aligned(16 * 1024 + 1, 256 * 1024)
                         .expect("the fixture creates its distinct OS-aligned singleton");
                     let second_page = NonNull::new(unsafe { allocator.test_page_for_block(second) })
                         .expect("the second OS singleton remains PageMap-published");
@@ -10447,7 +10447,7 @@ mod tests {
                         .expect("the matched process pair admits the sole OS-singleton refusal fixture");
                     let block = allocator
                         .engine
-                        .allocate_aligned(7, 128 * 1024)
+                        .allocate_aligned(8 * 1024 + 1, 128 * 1024)
                         .expect("the fixture creates one full OS-aligned singleton");
                     let page = NonNull::new(unsafe { allocator.test_page_for_block(block) })
                         .expect("the sole OS singleton remains PageMap-published");
@@ -10578,13 +10578,13 @@ mod tests {
                         .expect("the matched process pair admits the OS aggregate collection-failure fixture");
                     let first = allocator
                         .engine
-                        .allocate_aligned(7, 128 * 1024)
+                        .allocate_aligned(8 * 1024 + 1, 128 * 1024)
                         .expect("the fixture creates its first full OS singleton");
                     let first_page = NonNull::new(unsafe { allocator.test_page_for_block(first) })
                         .expect("the first OS singleton remains PageMap-published");
                     let second = allocator
                         .engine
-                        .allocate_aligned(7, 128 * 1024)
+                        .allocate_aligned(8 * 1024 + 1, 128 * 1024)
                         .expect("the fixture creates its second full OS singleton");
                     let second_page = NonNull::new(unsafe { allocator.test_page_for_block(second) })
                         .expect("the second OS singleton remains PageMap-published");
@@ -10731,7 +10731,7 @@ mod tests {
                         .expect("the matched process pair admits the failed-unmap OS aggregate fixture");
                     let first = allocator
                         .engine
-                        .allocate_aligned(7, 128 * 1024)
+                        .allocate_aligned(8 * 1024 + 1, 128 * 1024)
                         .expect("the fixture creates its first full OS singleton");
                     let first_page = NonNull::new(unsafe { allocator.test_page_for_block(first) })
                         .expect("the first OS singleton remains PageMap-published");
@@ -10739,7 +10739,7 @@ mod tests {
                         .expect("the first OS singleton retains its clipped terminal-release token");
                     let second = allocator
                         .engine
-                        .allocate_aligned(7, 128 * 1024)
+                        .allocate_aligned(8 * 1024 + 1, 128 * 1024)
                         .expect("the fixture creates its second full OS singleton");
                     let second_page = NonNull::new(unsafe { allocator.test_page_for_block(second) })
                         .expect("the second OS singleton remains PageMap-published");

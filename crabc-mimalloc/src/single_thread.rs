@@ -33179,11 +33179,19 @@ impl<'arena, 'map, Session: TheapPageSession> PageAllocatorEngine<'arena, 'map, 
         }
         let page = self.allocate_fresh_os_aligned_page(block_size, alignment)?;
         match self.pop_or_extend(page, zero) {
-            // `page.c` creates this selected aligned route directly in
-            // `BIN_HUGE`. Its one 4 KiB object is semantically full but does
-            // not satisfy the later `mi_page_to_full` small-size predicate,
-            // so no full-queue transition occurs here.
-            Ok(Some(block)) => Some(block),
+            Ok(Some(block)) => {
+                // `page.c` creates this aligned singleton in `BIN_HUGE`, but
+                // `alloc.c:1077-1080` still applies the generic post-pop
+                // full-page transition. Only a rounded block at or below
+                // `MI_SMALL_MAX_OBJ_SIZE` remains an unflagged huge-queue
+                // member; larger OS singletons move to `BIN_FULL` exactly
+                // like every other non-abandoning generic allocation.
+                if block_size > SMALL_MAX_OBJ_SIZE {
+                    self.move_regular_to_full(BIN_HUGE, page.as_ptr(), Some(block))
+                        .ok()?;
+                }
+                Some(block)
+            }
             Ok(None) | Err(_) => {
                 // The fresh helper extended exactly one block before queue
                 // publication, so this branch is an invariant failure. Its
@@ -38806,6 +38814,41 @@ mod tests {
     }
 
     #[test]
+    fn os_aligned_singletons_cross_the_source_small_full_queue_boundary() {
+        with_allocator(|allocator| {
+            let small = allocator
+                .allocate_aligned(7, 128 * KIB)
+                .expect("the small OS-aligned singleton is allocated");
+            let full = allocator
+                .allocate_aligned(3 * ARENA_SLICE_SIZE, MIB)
+                .expect("the larger OS-aligned singleton is allocated");
+
+            let small_page = NonNull::new(unsafe {
+                allocator.page_map.checked_lookup(small.as_ptr())
+            })
+            .expect("the small singleton stays PageMap-published");
+            let full_page = NonNull::new(unsafe {
+                allocator.page_map.checked_lookup(full.as_ptr())
+            })
+            .expect("the larger singleton stays PageMap-published");
+            let small_page = unsafe { small_page.as_ref() };
+            let full_page = unsafe { full_page.as_ref() };
+
+            assert!(small_page.block_size() <= SMALL_MAX_OBJ_SIZE);
+            assert!(full_page.block_size() > SMALL_MAX_OBJ_SIZE);
+            assert_eq!(allocator.queue_count(BIN_HUGE), Some(1));
+            assert_eq!(allocator.queue_count(BIN_FULL), Some(1));
+            assert!(!page_is_in_full(small_page));
+            assert!(page_is_in_full(full_page));
+
+            // SAFETY: both exact current allocations are returned once while
+            // their independently registered clipped mappings remain live.
+            unsafe { allocator.free(small).unwrap() };
+            unsafe { allocator.free(full).unwrap() };
+        });
+    }
+
+    #[test]
     fn os_aligned_singletons_publish_clipped_maps_aliases_and_reclaim_their_mapping() {
         with_allocator(|allocator| {
             for (request, alignment, aliases_expected) in [
@@ -38838,9 +38881,16 @@ mod tests {
                 assert!(page.memid().is_os());
                 assert_eq!(page.aligned_alias_owner(), primary.as_ptr());
                 assert_eq!(unsafe { page.start() }, block.as_ptr());
-                assert_eq!(allocator.queue_count(BIN_HUGE), Some(1));
-                assert_eq!(allocator.queue_count(BIN_FULL), Some(0));
-                assert!(!page_is_in_full(page));
+                let enters_full_queue = expected_block_size > SMALL_MAX_OBJ_SIZE;
+                assert_eq!(
+                    allocator.queue_count(BIN_HUGE),
+                    Some(usize::from(!enters_full_queue)),
+                );
+                assert_eq!(
+                    allocator.queue_count(BIN_FULL),
+                    Some(usize::from(enters_full_queue)),
+                );
+                assert_eq!(page_is_in_full(page), enters_full_queue);
 
                 // SAFETY: the primary is live, exclusive, and still has every
                 // published map/metadata predecessor required by this exact
@@ -38882,13 +38932,14 @@ mod tests {
                     assert_eq!(alias.aligned_alias_owner(), primary.as_ptr());
                 }
 
-                // SAFETY: this semantically full singleton remains in the
-                // special huge queue after its sole allocation, so this free
-                // executes its immediate terminal order: clipped unregister,
-                // aliases clear, primary retire, exact published-mapping
-                // reclaim.
+                // SAFETY: this semantically full singleton remains in its
+                // source-selected huge or full queue. Its sole free executes
+                // the same immediate terminal order from either queue:
+                // clipped unregister, aliases clear, primary retire, exact
+                // published-mapping reclaim.
                 unsafe { allocator.free(block).unwrap() };
                 assert_eq!(allocator.queue_count(BIN_HUGE), Some(0));
+                assert_eq!(allocator.queue_count(BIN_FULL), Some(0));
                 for offset in (0..layout.page_map_size()).step_by(ARENA_SLICE_SIZE) {
                     // SAFETY: lookup is integer-indexed and the source-clipped
                     // entry was cleared before the mapping was unmapped.
