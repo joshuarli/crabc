@@ -1059,6 +1059,8 @@ STRING_COPY_SYMBOLS = (
 ERROR_STRING_SYMBOLS = ("strerror", "strerror_r", "__xpg_strerror_r")
 STRING_DUPLICATION_SYMBOLS = ("strdup", "strndup")
 
+STRSIGNAL_SYMBOLS = ("strsignal",)
+
 CTYPE_SYMBOLS = (
     "isalnum",
     "isalpha",
@@ -10940,6 +10942,220 @@ def require_error_strings_artifact(family: Mapping[str, Any]) -> None:
             phrase in scope,
             f"static-c-error-strings evidence scope omits {phrase}",
         )
+
+
+def require_error_strsignal_slice(family: Mapping[str, Any]) -> None:
+    """Keep the fixed-profile strsignal selection bounded and non-promoting."""
+    slices = require_verified_slices(
+        family.get("verified_slice"),
+        "family[libc.c-abi-compat].verified_slice",
+        family.get("status", ""),
+        list(family.get("capabilities", [])),
+    )
+    matching = [entry for entry in slices if entry.get("id") == "error.strsignal"]
+    require(len(matching) == 1, "libc.c-abi-compat needs one error.strsignal slice")
+    require(
+        family.get("status") == "planned",
+        "strsignal selection must not promote libc.c-abi-compat",
+    )
+    selected = matching[0]
+    require(
+        selected["capabilities"] == ["error.reporting-termination"],
+        "strsignal slice must select exactly error.reporting-termination",
+    )
+    description = selected["description"]
+    assert isinstance(description, str)
+    for phrase in (
+        "still-planned `libc.c-abi-compat`",
+        "strong `strsignal`",
+        "C/POSIX/C.UTF-8",
+        "1 through 64",
+        "`SIGHUP..SIGSYS == 1..31`",
+        "`RT32` through `RT64`",
+        "`Unknown signal`",
+        "`strerror`/`strerror_l`",
+        "`psignal`",
+        "process termination",
+        "general diagnostics",
+        "promotion/public_support=false",
+        "public x86 support",
+    ):
+        require(phrase in description, f"error.strsignal description omits {phrase}")
+
+    owners = set(
+        nonempty_strings(selected["source_owners"], "error.strsignal.source_owners")
+    )
+    for owner in (
+        "compat/upstreams.toml",
+        "libc/Cargo.toml",
+        "libc/src/lib.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/strsignal.rs",
+        "include/string.h",
+        "compat/abi/musl-1.2.6/aarch64/libc.a.static.tsv",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/strsignal_header_abi_probe.c",
+        "compat/x86_64/strsignal_header_abi_probe.cpp",
+        "compat/x86_64/run_strsignal_header_abi.sh",
+        "compat/x86_64/libc_strsignal_probe.c",
+        "compat/x86_64/libc_strsignal_start.S",
+        "compat/x86_64/run_libc_strsignal.sh",
+        "compat/x86_64/aarch64_parity_inventory.py",
+        "compat/x86_64/aarch64_parity_inventory.json",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/README.md",
+        "STATUS.md",
+        "x86-64.md",
+        "scripts/dev-x86_64.sh",
+        "scripts/check_structure.py",
+    ):
+        require(owner in owners, f"error.strsignal source owners omit {owner}")
+
+    prerequisites = nonempty_strings(
+        selected["x86_abi_prerequisites"], "error.strsignal.x86_abi_prerequisites"
+    )
+    require(
+        any(
+            "SysV AMD64 LP64" in item
+            and "signed 32-bit" in item
+            and "eight-byte" in item
+            for item in prerequisites
+        ),
+        "error.strsignal must record its scalar/pointer ABI",
+    )
+    require(
+        any(
+            "src/string/strsignal.c" in item
+            and "SIGHUP..SIGSYS == 1..31" in item
+            and "_NSIG == 65" in item
+            and "RT32" in item
+            and "RT64" in item
+            for item in prerequisites
+        ),
+        "error.strsignal must record the musl signal-number map",
+    )
+    require(
+        any(
+            "LCTRANS_CUR" in item
+            and "C/POSIX/C.UTF-8" in item
+            and "no errno, TLS, lock, allocation, or syscall" in item
+            for item in prerequisites
+        ),
+        "error.strsignal must retain its fixed-profile runtime boundary",
+    )
+    require(
+        any(
+            "no PT_TLS" in item
+            and "ambient libc/compiler runtime" in item
+            for item in prerequisites
+        ),
+        "error.strsignal must record its sealed static ELF boundary",
+    )
+
+    header_prerequisites = nonempty_strings(
+        selected["x86_header_prerequisites"],
+        "error.strsignal.x86_header_prerequisites",
+    )
+    require(
+        any(
+            "strict C/C++" in item
+            and "POSIX/XOPEN/GNU/BSD" in item
+            and "`char *strsignal(int)`" in item
+            and "unmangled C++ linkage" in item
+            for item in header_prerequisites
+        ),
+        "error.strsignal must pin its selected C/C++ header contract",
+    )
+
+    static_exports = static_c_abi_export_names(
+        ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+    )
+    require(
+        set(STRSIGNAL_SYMBOLS) <= set(static_exports),
+        "error.strsignal must be included in the selected export ratchet",
+    )
+    static_root = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+    ).read_text(encoding="utf-8")
+    require(
+        '#[path = "strsignal.rs"]\nmod strsignal;' in static_root,
+        "x86 static C ABI must compose the bounded strsignal leaf",
+    )
+    source = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "strsignal.rs"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "src/string/strsignal.c",
+        "SIGHUP..SIGSYS == 1..31",
+        "MAX_SIGNAL_NUMBER: c_int = 64",
+        "RT32",
+        "RT64",
+        "LCTRANS_CUR",
+        "pub extern \"C\" fn strsignal",
+    ):
+        require(snippet in source, f"error.strsignal source omits {snippet}")
+
+    evidence = selected["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-strsignal"},
+        "error.strsignal must use the closed libc-strsignal command",
+    )
+    scope = evidence[0]["scope"]
+    assert isinstance(scope, str)
+    for phrase in (
+        "-4..=68",
+        "RT32..RT64",
+        "shared unknown storage",
+        "strerror/strerror_l",
+        "signal delivery/disposition",
+        "process termination",
+        "family promotion",
+        "public x86 support",
+    ):
+        require(phrase in scope, f"error.strsignal evidence scope omits {phrase}")
+
+    runner = (ROOT / "compat" / "x86_64" / "run_libc_strsignal.sh").read_text(
+        encoding="utf-8"
+    )
+    fixture = (ROOT / "compat" / "x86_64" / "libc_strsignal_probe.c").read_text(
+        encoding="utf-8"
+    )
+    header_runner = (
+        ROOT / "compat" / "x86_64" / "run_strsignal_header_abi.sh"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "assert_selected_c_abi_surface",
+        "assert_strong_function",
+        "run_strsignal_header_abi.sh",
+        "-nostdlib -static",
+        "candidate unexpectedly selects TLS",
+        "error strings, diagnostics, termination",
+    ):
+        require(snippet in runner, f"error.strsignal runner omits {snippet}")
+    for snippet in (
+        "strsignal-domain-fnv1a64",
+        "signal_number = -4",
+        "RT32",
+        "RT64",
+        "strsignal(-1) != strsignal(0)",
+        "CRABC_STRSIGNAL_FREESTANDING",
+    ):
+        require(snippet in fixture, f"error.strsignal fixture omits {snippet}")
+    for snippet in (
+        "CRABC_EXPECT_STRSIGNAL",
+        "CRABC_REQUIRE_STRSIGNAL_HIDDEN",
+        "-std=c++17",
+        "nm --undefined-only",
+        "string.h",
+    ):
+        require(snippet in header_runner, f"error.strsignal header runner omits {snippet}")
+    dispatcher = (ROOT / "scripts" / "dev-x86_64.sh").read_text(encoding="utf-8")
+    for snippet in ("run_strsignal_header_abi.sh", "run_libc_strsignal.sh"):
+        require(snippet in dispatcher, f"error.strsignal dispatcher omits {snippet}")
 
 
 def require_ctype_artifact(family: Mapping[str, Any]) -> None:
@@ -26449,6 +26665,7 @@ def validate_ledger(
     require_memory_search_artifact(by_id["libc.posix-runtime"])
     require_string_copy_artifact(by_id["libc.posix-runtime"])
     require_error_strings_artifact(by_id["libc.c-abi-compat"])
+    require_error_strsignal_slice(by_id["libc.c-abi-compat"])
     require_ctype_artifact(by_id["libc.posix-runtime"])
     require_integer_arithmetic_artifact(by_id["libc.posix-runtime"])
     require_integer_parse_artifact(by_id["libc.posix-runtime"])

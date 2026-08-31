@@ -3672,6 +3672,18 @@ protected-page full/bounded inputs. It excludes allocator lifecycle, general
 string or locale state, dynamic interposition/failure injection, full runtime
 closure, promotion, and public x86 support.
 
+`libc-strsignal` is the private selected `error.strsignal` slice within the
+still-planned `libc.c-abi-compat` family. Its pinned-musl/project `<string.h>`
+C/C++ matrix and static project-header differential select only strong
+`strsignal`: immutable fixed C/POSIX/C.UTF-8 descriptions for Linux x86
+signals `1..=64`, including the musl x86 `SIGHUP..SIGSYS` map and exact
+`RT32` through `RT64` spellings. The common fixture verifies the shared
+`Unknown signal` storage and hashes `-4..=68` through a sealed
+`-nostdlib -static` candidate. It selects no locale/catalog translation,
+`strerror`/`strerror_l`, `psignal`, perror/err/warn, signal
+delivery/disposition, termination, errno/TLS, allocation, syscall, general
+diagnostics, promotion, or public x86 support.
+
 `libc-ctype` is a separately recorded `static-c-ctype`
 `verified_artifact` gate over that archive, not a general locale or C text
 capability. Its project-header C body first executes through pinned musl and

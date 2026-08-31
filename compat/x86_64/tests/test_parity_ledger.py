@@ -49,7 +49,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["status_counts"], {"foundation-verified": 8, "planned": 18})
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
-        self.assertEqual(report["verified_slice_count"], 38)
+        self.assertEqual(report["verified_slice_count"], 39)
         self.assertEqual(report["verified_artifact_count"], 145)
         self.assertEqual(report["header_layout_probe_count"], 46)
         self.assertEqual(report["public_header_inventory_count"], 183)
@@ -228,6 +228,67 @@ class X86ParityLedgerTests(unittest.TestCase):
             ledger.LedgerError, "static-c-error-strings description omits"
         ):
             ledger.validate_ledger(changed)
+
+    def test_error_strsignal_slice_is_selected_private_and_non_promoting(self) -> None:
+        data = self.data()
+        family = self.family(data, "libc.c-abi-compat")
+        self.assertEqual(family["status"], "planned")
+        self.assertIn("error.reporting-termination", family["capabilities"])
+        slices = family["verified_slice"]
+        assert isinstance(slices, list)
+        selected = next(
+            entry
+            for entry in slices
+            if isinstance(entry, dict) and entry["id"] == "error.strsignal"
+        )
+        self.assertEqual(selected["capabilities"], ["error.reporting-termination"])
+        for phrase in (
+            "strong `strsignal`",
+            "C/POSIX/C.UTF-8",
+            "`SIGHUP..SIGSYS == 1..31`",
+            "`RT32` through `RT64`",
+            "`Unknown signal`",
+            "`strerror`/`strerror_l`",
+            "process termination",
+            "promotion/public_support=false",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, selected["description"])
+        owners = selected["source_owners"]
+        assert isinstance(owners, list)
+        for owner in (
+            "libc/src/c_abi/x86_64/strsignal.rs",
+            "include/string.h",
+            "compat/x86_64/strsignal_header_abi_probe.cpp",
+            "compat/x86_64/libc_strsignal_probe.c",
+            "compat/x86_64/run_libc_strsignal.sh",
+            "compat/x86_64/aarch64_parity_inventory.json",
+        ):
+            self.assertIn(owner, owners)
+        evidence = selected["native_evidence"]
+        assert isinstance(evidence, list) and isinstance(evidence[0], dict)
+        self.assertEqual(
+            evidence[0]["command"], "./scripts/dev-x86_64.sh libc-strsignal"
+        )
+        for phrase in (
+            "-4..=68",
+            "RT32..RT64",
+            "shared unknown storage",
+            "signal delivery/disposition",
+            "family promotion",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, evidence[0]["scope"])
+        oracle = selected["oracle"]
+        assert isinstance(oracle, list) and isinstance(oracle[0], dict)
+        self.assertIn("src/string/strsignal.c", oracle[0]["role"])
+
+        selected["capabilities"] = ["legacy.misc"]
+        with self.assertRaisesRegex(
+            ledger.LedgerError,
+            "strsignal slice must select exactly error.reporting-termination",
+        ):
+            ledger.validate_ledger(data)
 
     def test_ldso_initial_graph_is_a_planned_private_artifact(self) -> None:
         data = self.data()

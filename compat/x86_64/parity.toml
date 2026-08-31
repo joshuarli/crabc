@@ -7745,6 +7745,54 @@ oracle = [
 ]
 
 [[family.verified_slice]]
+id = "error.strsignal"
+description = "Private native x86 selected-static-archive slice selecting the bounded AArch64 `error.reporting-termination` capability inside still-planned `libc.c-abi-compat`. This independent musl-compatible leaf supplies exactly strong `strsignal`: immutable process-static C/POSIX/C.UTF-8 descriptions for Linux x86 signal numbers 1 through 64, with `SIGHUP..SIGSYS == 1..31`, `_NSIG == 65`, exact `RT32` through `RT64`, and one shared `Unknown signal` pointer for zero, negative, or out-of-domain values. Musl's `LCTRANS_CUR` step is deliberately fixed to this admitted profile; no locale or message-catalog translation is selected. This selects only the static signal-description sub-boundary, not the broader error-reporting or termination surface: it excludes `strerror`/`strerror_l`, `psignal`, perror/err/warn printing, signal delivery/disposition, process termination, errno, TLS, locks, allocation, syscalls, general diagnostics, libc.so, CRT, loader, sysroot, family completion, or public support. `libc.c-abi-compat` remains planned, promotion/public_support=false is unchanged, and public x86 support remains outside the slice."
+source_owners = [
+  "compat/upstreams.toml",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/strsignal.rs",
+  "include/features.h",
+  "include/bits/alltypes.h",
+  "include/stdint.h",
+  "include/string.h",
+  "compat/abi/musl-1.2.6/aarch64/libc.a.static.tsv",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/strsignal_header_abi_probe.c",
+  "compat/x86_64/strsignal_header_abi_probe.cpp",
+  "compat/x86_64/run_strsignal_header_abi.sh",
+  "compat/x86_64/libc_strsignal_probe.c",
+  "compat/x86_64/libc_strsignal_start.S",
+  "compat/x86_64/run_libc_strsignal.sh",
+  "compat/x86_64/aarch64_parity_inventory.py",
+  "compat/x86_64/aarch64_parity_inventory.json",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "compat/x86_64/README.md",
+  "STATUS.md",
+  "x86-64.md",
+  "scripts/dev-x86_64.sh",
+  "scripts/check_structure.py",
+]
+x86_abi_prerequisites = [
+  "The SysV AMD64 LP64 C ABI passes the signed 32-bit `int` signal number in `%edi` and returns an eight-byte process-static char pointer in `%rax`. The returned pointer has C's mutable type for ABI compatibility but must not be modified or freed.",
+  "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417 maps `src/string/strsignal.c` directly: its x86 branch has SIGHUP..SIGSYS == 1..31, `_NSIG == 65`, and the fixed table preserves RT32 through RT64, including the kernel-reserved 32--34 spellings. The fixture differentials every input from -4 through 68 and directly anchors ordinary, reserved, real-time, and unknown results.",
+  "Musl routes the table value through `LCTRANS_CUR`; this selected archive deliberately retains only fixed C/POSIX/C.UTF-8 descriptions. The lookup is immutable and has no errno, TLS, lock, allocation, or syscall boundary; it has no signal-delivery, disposition, or diagnostic-output state.",
+  "The final `-nostdlib -static` candidate has no PT_TLS, interpreter, DT_NEEDED, unresolved symbol, dynamic TLS model, ambient libc/compiler runtime, error-string, diagnostic, termination, allocator, or runtime-state input.",
+]
+x86_header_prerequisites = [
+  "Pinned-musl/project `<string.h>` C11/C++17 probes keep strict C/C++ profiles hidden and POSIX/XOPEN/GNU/BSD profiles visible with exact `char *strsignal(int)` typing and unmangled C++ linkage. This is selected declaration evidence, not installed-header closure or public x86 support.",
+]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-strsignal", scope = "Runs the pinned-musl/project strict C/C++ negative and POSIX/XOPEN/GNU/BSD positive `<string.h>` matrix, then a project-header pinned-musl static reference beside a true x86 `-nostdlib -static` crabc-libc candidate. The common fixture checks exact ordinary and reserved signal strings, RT32..RT64, shared unknown storage, and a complete -4..=68 FNV-1a domain digest. It ratchets strong strsignal and rejects PT_TLS, interpreter/DT_NEEDED, unresolved symbols, dynamic TLS, strerror/strerror_l, diagnostics, process termination, allocator, syscall, and ambient runtime state. It does not select locale/catalog translation, psignal/perror/err/warn, signal delivery/disposition, general diagnostics, family promotion, libc.so/CRT/loader/sysroot, or public x86 support." }]
+oracle = [
+  { kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source, declaration, fixed-description-table, and native behavior oracle for include/string.h and src/string/strsignal.c, including the x86 signal-number identity map, LCTRANS_CUR boundary, real-time names, and shared unknown clamp." },
+  { kind = "elf-abi", source = "System V AMD64 psABI", role = "LP64 signed-int argument, returned char-pointer, unmangled C++ linkage, strong function symbol, and static ET_EXEC closure contract." },
+]
+capabilities = ["error.reporting-termination"]
+
+[[family.verified_slice]]
 id = "search.tree-intrusive"
 description = "Private native x86 selected-static-archive completion of the AArch64 `search.tree-intrusive` capability inside still-planned `libc.c-abi-compat`. This independent musl-compatible AVL leaf supplies strong `tdelete`, `tdestroy`, `tfind`, `tsearch`, and `twalk` plus hidden global archive helper `__tsearch_balance`, with no weak aliases. Caller-owned roots and keys retain duplicate identity, comparator order, deterministic AVL rotations, musl parent-return deletion, predecessor-node release, four-phase traversal, optional key destruction, allocation-failure rollback, and repeated create/destroy ownership. Musl's malloc/free node ownership is represented by private mmap/munmap nodes without any public or hidden C allocator export. This selects only the private capability: `libc.c-abi-compat` remains planned, the separate `search.hash-table` selection remains private, promotion/public_support=false is unchanged, and libc.so, CRT, loader, sysroot, general allocation/containers, process/environment state, stdio/locale, and public x86 support remain outside it."
 source_owners = [

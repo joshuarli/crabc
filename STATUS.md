@@ -657,6 +657,17 @@ catalog files, read NLSPATH/LANG or locale maps, evaluate plural rules, use
 mmap/allocator state, or claim general gettext/catalog translation, family
 completion, promotion, or public x86 support.
 
+The same private C ABI family now also selects `error.strsignal`.
+`./scripts/dev-x86_64.sh libc-strsignal` proves the pinned-musl fixed
+C/POSIX/C.UTF-8 `strsignal` table against a freestanding x86 static archive:
+ordinary Linux signals, `RT32` through `RT64`, shared `Unknown signal`
+storage, and a `-4..=68` digest. Its strict/POSIX/XOPEN/GNU/BSD C/C++
+`<string.h>` matrix keeps the feature gate and unmangled linkage explicit. It
+does not select locale/catalog translation, `strerror`/`strerror_l`,
+`psignal` or diagnostic printing, signal delivery/disposition, process
+termination, errno/TLS, allocation, syscall, general diagnostics, family
+completion, promotion, or public x86 support.
+
 `./scripts/dev-x86_64.sh consumer-native-facade-lto` is the second private
 artifact in that family. It compiles an AArch64-native-facade-shaped no-std
 x86 workload—getpid, `/dev/null`, pipe, eventfd, descriptor flags, read/write,

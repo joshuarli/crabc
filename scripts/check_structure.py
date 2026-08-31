@@ -217,6 +217,7 @@ X86_RUNTIME_FOUNDATION_LIBC_SOURCES = {
     Path("libc/src/c_abi/x86_64/timestamp_updates.rs"),
     Path("libc/src/c_abi/x86_64/string_copy.rs"),
     Path("libc/src/c_abi/x86_64/error_strings.rs"),
+    Path("libc/src/c_abi/x86_64/strsignal.rs"),
     Path("libc/src/c_abi/x86_64/termios_control.rs"),
     Path("libc/src/c_abi/x86_64/getpass.rs"),
     Path("libc/src/c_abi/x86_64/thread_pointer.rs"),
@@ -3747,6 +3748,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         '#[path = "memory_search.rs"]',
         '#[path = "string_copy.rs"]',
         '#[path = "error_strings.rs"]',
+        '#[path = "strsignal.rs"]',
         '#[path = "ctype.rs"]',
         '#[path = "locale_ctype.rs"]',
         '#[path = "locale_multibyte.rs"]',
@@ -7492,6 +7494,41 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
             "artifact must retain strerror_l as the weak same-address alias"
         )
 
+    strsignal_source = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "strsignal.rs"
+    strsignal_text = strsignal_source.read_text(errors="replace")
+    for required in (
+        "musl 1.2.6 release commit",
+        "src/string/strsignal.c",
+        "SIGHUP..SIGSYS == 1..31",
+        "MAX_SIGNAL_NUMBER: c_int = 64",
+        "RT32",
+        "RT64",
+        "LCTRANS_CUR",
+        "general diagnostics",
+    ):
+        if required not in strsignal_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/strsignal.rs: selected static strsignal "
+                f"boundary is missing {required!r}"
+            )
+    strsignal_exports = set(
+        re.findall(
+            r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(',
+            strsignal_text,
+        )
+    )
+    if strsignal_exports != {"strsignal"}:
+        errors.append(
+            "libc/src/c_abi/x86_64/strsignal.rs: selected static strsignal "
+            "artifact must export only strsignal"
+        )
+    for forbidden in ("crabc_core", "crabc_mimalloc", "alloc::", "static mut", "use super"):
+        if forbidden in strsignal_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/strsignal.rs: selected static strsignal "
+                f"boundary selects forbidden runtime seam {forbidden!r}"
+            )
+
     ctype_source = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "ctype.rs"
     ctype_text = ctype_source.read_text(errors="replace")
     for required in (
@@ -7970,6 +8007,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         string_copy_text,
         error_strings_text,
         locale_error_strings_text,
+        strsignal_text,
         ctype_text,
         integer_arithmetic_text,
         integer_parse_text,
@@ -8327,6 +8365,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         "__xpg_strerror_r",
         "__strerror_l",
         "strerror_l",
+        "strsignal",
         "isalnum",
         "isalpha",
         "isblank",
@@ -8489,6 +8528,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         ("string_copy.rs", string_copy_text),
         ("error_strings.rs", error_strings_text),
         ("locale_error_strings.rs", locale_error_strings_text),
+        ("strsignal.rs", strsignal_text),
         ("ctype.rs", ctype_text),
         ("locale_ctype.rs", locale_ctype_text),
         ("integer_arithmetic.rs", integer_arithmetic_text),

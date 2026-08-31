@@ -64,7 +64,8 @@
 //! selected-thread locale overrides, and localized wide
 //! classification/case/collation wrappers,
 //! find-first-set, immutable C-locale error strings and their fixed-profile
-//! locale-message aliases, C11 immediate-termination,
+//! locale-message aliases, bounded fixed-profile signal descriptions, C11
+//! immediate-termination,
 //! a bounded private static
 //! startup/ordinary-exit lifecycle, startup-published program-name globals,
 //! raw initial auxiliary-vector observation, and option parsing,
@@ -172,6 +173,8 @@ mod string_copy;
 mod error_strings;
 #[path = "locale_error_strings.rs"]
 mod locale_error_strings;
+#[path = "strsignal.rs"]
+mod strsignal;
 #[path = "ctype.rs"]
 mod ctype;
 #[path = "locale_ctype.rs"]

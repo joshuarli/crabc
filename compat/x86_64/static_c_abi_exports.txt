@@ -723,6 +723,7 @@ strncpy
 strnlen
 strpbrk
 strrchr
+strsignal
 strspn
 strstr
 strtod

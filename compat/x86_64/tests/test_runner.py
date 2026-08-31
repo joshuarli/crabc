@@ -1309,7 +1309,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "byte-strings-header-abi",
             "memory-search-header-abi",
             "string-copy-header-abi",
-            "error-strings-header-abi|gettext-catalog-header-abi",
+            "error-strings-header-abi|strsignal-header-abi|gettext-catalog-header-abi",
             "string-duplication-header-abi",
             "random-entropy-header-abi",
             "sysv-semaphore-header-abi|posix-semaphore-header-abi",
@@ -1334,7 +1334,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "libc-static-c-abi-differential",
             "libc-static-c-abi-same-object-differential|qualification-posix-abi-admission",
             "libc-interface-discovery",
-            "libc-readiness-waits|libc-system-observation|libc-system-information|libc-fcntl-record-locks|libc-flock|libc-sendfile|libc-posix-fallocate|libc-descriptor-advice|libc-filesystem-capacity|libc-uts-identity|libc-ctype|libc-locale-multibyte|libc-locale-wide-iconv|libc-wide-character|libc-locale-object-wide|libc-locale-narrow|libc-locale-ctype-locators|libc-locale-error-strings|libc-regex|libc-integer-arithmetic|libc-integer-parse|libc-float-parse|libc-intmax-arithmetic|libc-credential-observation|libc-login-name|libc-child-reaping|libc-immediate-termination|libc-callback-algorithms|libc-search-tree-intrusive|libc-search-hash-table|libc-gettext-catalog|libc-access|libc-clock-gettime|libc-time-observation|libc-system-configuration|libc-mapping-core|libc-header-layouts-baseline|libc-nanosleep|libc-clock-nanosleep|libc-descriptor-entry|libc-fcntl-status-control|libc-ioctl|libc-ffs|libc-byte-strings|libc-process-globals-getopt|libc-auxv-observation|libc-inet-address|libc-numeric-netdb|libc-random-entropy|libc-memory-search|libc-string-copy|libc-error-strings|libc-descriptor-pipeline",
+            "libc-readiness-waits|libc-system-observation|libc-system-information|libc-fcntl-record-locks|libc-flock|libc-sendfile|libc-posix-fallocate|libc-descriptor-advice|libc-filesystem-capacity|libc-uts-identity|libc-ctype|libc-locale-multibyte|libc-locale-wide-iconv|libc-wide-character|libc-locale-object-wide|libc-locale-narrow|libc-locale-ctype-locators|libc-locale-error-strings|libc-regex|libc-integer-arithmetic|libc-integer-parse|libc-float-parse|libc-intmax-arithmetic|libc-credential-observation|libc-login-name|libc-child-reaping|libc-immediate-termination|libc-callback-algorithms|libc-search-tree-intrusive|libc-search-hash-table|libc-gettext-catalog|libc-access|libc-clock-gettime|libc-time-observation|libc-system-configuration|libc-mapping-core|libc-header-layouts-baseline|libc-nanosleep|libc-clock-nanosleep|libc-descriptor-entry|libc-fcntl-status-control|libc-ioctl|libc-ffs|libc-byte-strings|libc-process-globals-getopt|libc-auxv-observation|libc-inet-address|libc-numeric-netdb|libc-random-entropy|libc-memory-search|libc-string-copy|libc-error-strings|libc-strsignal|libc-descriptor-pipeline",
             "libc-vector-io|libc-uio-cxx-linkage",
             "libc-sysv-semaphore|libc-posix-semaphore",
             "libc-sysv-message-shared-memory",
@@ -10257,6 +10257,101 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         )
         self.assertIn("error-strings-header-abi", runner)
         self.assertIn("libc-error-strings", runner)
+
+    def test_libc_static_c_abi_strsignal_slice_stays_bounded(self) -> None:
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        implementation = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "strsignal.rs"
+        ).read_text(encoding="utf-8")
+        probe = (
+            ROOT / "compat" / "x86_64" / "libc_strsignal_probe.c"
+        ).read_text(encoding="utf-8")
+        artifact_runner = (
+            ROOT / "compat" / "x86_64" / "run_libc_strsignal.sh"
+        ).read_text(encoding="utf-8")
+        header_runner = (
+            ROOT / "compat" / "x86_64" / "run_strsignal_header_abi.sh"
+        ).read_text(encoding="utf-8")
+        static_exports = (
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        ).read_text(encoding="utf-8")
+        static_export_names = {
+            line
+            for line in static_exports.splitlines()
+            if line and not line.startswith("#")
+        }
+        parity_ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        runner = RUNNER.read_text(encoding="utf-8")
+
+        self.assertIn('#[path = "strsignal.rs"]', static_root)
+        for required in (
+            "musl 1.2.6 release commit",
+            "src/string/strsignal.c",
+            "SIGHUP..SIGSYS == 1..31",
+            "MAX_SIGNAL_NUMBER: c_int = 64",
+            "RT32",
+            "RT64",
+            "LCTRANS_CUR",
+            'fn strsignal(',
+            "immutable",
+            "general diagnostics",
+        ):
+            self.assertIn(required, implementation)
+        for forbidden in (
+            "static mut",
+            "crabc_core",
+            "crabc_mimalloc",
+            "alloc::",
+            "fn strerror(",
+            "fn strerror_l(",
+            "fn psignal(",
+            "fn abort(",
+            "fn syscall(",
+            "__tls_get_addr",
+        ):
+            self.assertNotIn(forbidden, implementation)
+        for required in (
+            "#include <string.h>",
+            "strsignal-domain-fnv1a64",
+            "signal_number = -4",
+            "RT32",
+            "RT64",
+            "strsignal(-1) != strsignal(0)",
+            "CRABC_STRSIGNAL_FREESTANDING",
+        ):
+            self.assertIn(required, probe)
+        for required in (
+            "run_strsignal_header_abi.sh",
+            "static_c_abi_exports.txt",
+            "-nostdlib -static",
+            "-Wl,--no-undefined",
+            "candidate unexpectedly selects TLS",
+            "candidate retains a dynamic TLS model",
+            "candidate output differs from pinned musl",
+            "strerror(_r|_l)?",
+            "strsignal-domain-fnv1a64",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn("--whole-archive", artifact_runner)
+        for required in (
+            "CRABC_EXPECT_STRSIGNAL",
+            "CRABC_REQUIRE_STRSIGNAL_HIDDEN",
+            "-std=c++17",
+            "C++ probe does not retain C linkage",
+            "string.h",
+        ):
+            self.assertIn(required, header_runner)
+        self.assertIn("strsignal", static_export_names)
+        self.assertIn('id = "error.strsignal"', parity_ledger)
+        self.assertIn(
+            'command = "./scripts/dev-x86_64.sh libc-strsignal"', parity_ledger
+        )
+        self.assertIn("strsignal-header-abi", runner)
+        self.assertIn("libc-strsignal", runner)
 
     def test_libc_static_c_abi_ctype_artifact_stays_narrow(self) -> None:
         static_root = (
