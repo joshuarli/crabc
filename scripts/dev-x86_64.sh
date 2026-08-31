@@ -1619,7 +1619,9 @@ candidate libc, a general loader, dynamic CRT/sysroot, or public x86 support.
 exports the musl-shaped public dlopen/dlsym/dlclose/dlerror plus
 dladdr/dlinfo/dl_iterate_phdr surface over that exact loader record. Its
 32-live-thread TID-keyed diagnostic table does not require loader TLS. The gate
-proves public C/C++ ABI layouts, per-thread one-shot errors, stale handles,
+proves public C/C++ ABI layouts, per-thread one-shot errors, and the pinned-musl
+live-handle-within-the-32-slot-bound `dlinfo(-7)` output-preserving exact `Unsupported request -7`
+diagnostic that survives one valid `RTLD_DI_LINKMAP` call, plus stale handles,
 malformed and absent records, and copied introspection, while continuing to
 exclude search, mutation, global promotion, RTLD_NEXT, finalization, and unload.
 It remains a staged fixed-graph artifact, not capability or platform promotion.

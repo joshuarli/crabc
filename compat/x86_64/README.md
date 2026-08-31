@@ -4572,7 +4572,10 @@ leaf so an unrelated static-errno codegen unit cannot introduce PT_TLS. The
 candidate PIE still has only the fixed mid -> leaf DT_NEEDED graph and one weak
 record GLOB_DAT. A 32-live-thread fixed table keyed by Linux TID owns one-shot
 errors and `dladdr` names, while `dlinfo` exposes stable immutable link-map
-views and iteration invokes callbacks outside the bridge lock. Pinned musl and
+views and iteration invokes callbacks outside the bridge lock. For a live
+retained handle within the 32-slot bound, the pinned-musl `-7` differential proves that the unsupported
+request preserves its output pointer, publishes exact `Unsupported request -7`,
+and remains pending through a valid `RTLD_DI_LINKMAP` query. Pinned musl and
 project C/C++ headers prove the public LP64 ABI and ordinary behavior; raw
 clone workers prove diagnostic isolation without TLS, and absent/malformed
 records prove there is no ambient loader fallback. RTLD_NEXT, global promotion,

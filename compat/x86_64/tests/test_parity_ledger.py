@@ -925,6 +925,8 @@ class X86ParityLedgerTests(unittest.TestCase):
             "32-live-thread",
             "one-shot `dlerror`",
             "without PT_TLS",
+            "exact one-shot `Unsupported request %d` diagnostic",
+            "a subsequent valid link-map query preserves that pending error",
             "`RTLD_NEXT`",
             "`RTLD_GLOBAL`",
             "neither `loader.dlfcn-basic` nor `loader.dlfcn-introspection` is selected",
@@ -934,6 +936,30 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(
             {entry["command"] for entry in artifact["native_evidence"]},
             {"./scripts/dev-x86_64.sh ldso-public-dlfcn"},
+        )
+        prerequisites = " ".join(artifact["x86_abi_prerequisites"])
+        for phrase in (
+            "AArch64 libc.so and libc.a ABI manifests retain both dlinfo and dlerror exports",
+            "src/ldso/dlinfo.c:dlinfo",
+            "Unsupported request %d",
+            "does not consume that pending state",
+        ):
+            self.assertIn(phrase, prerequisites)
+        scope = artifact["native_evidence"][0]["scope"]
+        for phrase in (
+            "request -7",
+            "leaves its result pointer untouched",
+            "exact `Unsupported request -7`",
+            "valid RTLD_DI_LINKMAP query leaves that error pending",
+        ):
+            self.assertIn(phrase, scope)
+        self.assertTrue(
+            any(
+                entry["kind"] == "aarch64-contract"
+                and "aarch64/libc.so.dynamic.tsv" in entry["source"]
+                and "not a behavioral fallback" in entry["role"]
+                for entry in artifact["oracle"]
+            )
         )
         self.assertEqual(
             set(artifact["source_owners"]),

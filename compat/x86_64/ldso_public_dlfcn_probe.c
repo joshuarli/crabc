@@ -191,9 +191,16 @@ int main(void) {
     if (typed_dladdr(mid_symbol, &address) != 1 || address.dli_fbase == NULL
         || address.dli_saddr != mid_symbol || !contains(address.dli_fname, "libmid-public-dlfcn.so")
         || !text_equal(address.dli_sname, "mid_value")) return 49;
+    struct link_map *unsupported_map = (void *)(uintptr_t)1;
     struct link_map *map = NULL;
-    if (typed_dlinfo(mid_one, RTLD_DI_LINKMAP, &map) != 0 || map == NULL
-        || map->l_addr != (ElfW(Addr))address.dli_fbase || map->l_ld == NULL
+    typed_dlerror();
+    if (typed_dlinfo(mid_one, -7, &unsupported_map) != -1
+        || unsupported_map != (void *)(uintptr_t)1) return 60;
+    if (typed_dlinfo(mid_one, RTLD_DI_LINKMAP, &map) != 0 || map == NULL) return 61;
+    char *unsupported_request = typed_dlerror();
+    if (!text_equal(unsupported_request, "Unsupported request -7")
+        || typed_dlerror() != NULL) return 62;
+    if (map->l_addr != (ElfW(Addr))address.dli_fbase || map->l_ld == NULL
         || !contains(map->l_name, "libmid-public-dlfcn.so") || map->l_prev == NULL
         || map->l_prev->l_ld == NULL || map->l_next == NULL
         || map->l_next->l_ld == NULL) return 50;

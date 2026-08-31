@@ -7015,6 +7015,8 @@ def require_ldso_public_fixed_graph_dlfcn_artifact(family: Mapping[str, Any]) ->
         "one-shot `dlerror`",
         "without PT_TLS",
         "`dlinfo(RTLD_DI_LINKMAP)`",
+        "exact one-shot `Unsupported request %d` diagnostic",
+        "a subsequent valid link-map query preserves that pending error",
         "`RTLD_NEXT`",
         "`RTLD_GLOBAL`",
         "neither `loader.dlfcn-basic` nor `loader.dlfcn-introspection` is selected",
@@ -7066,6 +7068,10 @@ def require_ldso_public_fixed_graph_dlfcn_artifact(family: Mapping[str, Any]) ->
         "32 fixed diagnostic slots",
         "tgkill=234",
         "RTLD_DEFAULT",
+        "AArch64 libc.so and libc.a ABI manifests retain both dlinfo and dlerror exports",
+        "src/ldso/dlinfo.c:dlinfo",
+        "Unsupported request %d",
+        "does not consume that pending state",
         "never searched, mapped, finalized, or unmapped",
     ):
         require(
@@ -7092,6 +7098,10 @@ def require_ldso_public_fixed_graph_dlfcn_artifact(family: Mapping[str, Any]) ->
         "40 more worker lifetimes",
         "malformed and absent record fail-closure without ambient fallback",
         "stale handles",
+        "request -7",
+        "leaves its result pointer untouched",
+        "exact `Unsupported request -7`",
+        "valid RTLD_DI_LINKMAP query leaves that error pending",
         "loader.dlfcn-basic",
         "public x86 support",
     ):
@@ -7121,6 +7131,77 @@ def require_ldso_public_fixed_graph_dlfcn_artifact(family: Mapping[str, Any]) ->
         "dlopen", "dlsym", "dlclose", "dlerror", "dladdr", "dlinfo", "dl_iterate_phdr"
     ):
         require(symbol in exports, f"static C ABI export ratchet omits {symbol}")
+    bridge = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "fixed_graph_dlfcn.rs"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+        "src/ldso/dlinfo.c:dlinfo",
+        "DLINFO_UNSUPPORTED_REQUEST",
+        "set_dlinfo_unsupported_request",
+        "Unsupported request ",
+        "if request != RTLD_DI_LINKMAP",
+    ):
+        require(
+            snippet in bridge,
+            f"public fixed-graph dlfcn bridge omits bounded dlinfo diagnostic {snippet}",
+        )
+    probe = (ROOT / "compat" / "x86_64" / "ldso_public_dlfcn_probe.c").read_text(
+        encoding="utf-8"
+    )
+    for snippet in (
+        "typed_dlinfo(mid_one, -7, &unsupported_map)",
+        "unsupported_map != (void *)(uintptr_t)1",
+        '"Unsupported request -7"',
+        "typed_dlinfo(mid_one, RTLD_DI_LINKMAP, &map) != 0",
+        "typed_dlerror() != NULL",
+    ):
+        require(
+            snippet in probe,
+            f"public fixed-graph dlfcn probe omits bounded dlinfo diagnostic {snippet}",
+        )
+    aarch64_static = (
+        ROOT / "compat" / "abi" / "musl-1.2.6" / "aarch64" / "libc.a.static.tsv"
+    ).read_text(encoding="utf-8")
+    aarch64_dynamic = (
+        ROOT / "compat" / "abi" / "musl-1.2.6" / "aarch64" / "libc.so.dynamic.tsv"
+    ).read_text(encoding="utf-8")
+    for symbol in ("dlerror", "dlinfo"):
+        require(
+            f"\n{symbol}\t" in aarch64_static,
+            f"pinned AArch64 musl static manifest omits {symbol}",
+        )
+        require(
+            f"\n{symbol}\t" in aarch64_dynamic,
+            f"pinned AArch64 musl dynamic manifest omits {symbol}",
+        )
+    oracle = artifact["oracle"]
+    assert isinstance(oracle, list)
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "c-posix"
+            and isinstance(entry.get("source"), str)
+            and "src/ldso/dlinfo.c" in entry["source"]
+            and isinstance(entry.get("role"), str)
+            and "exact live-handle unsupported-dlinfo diagnostic" in entry["role"]
+            for entry in oracle
+        ),
+        "ldso-public-fixed-graph-dlfcn must retain the pinned musl dlinfo oracle",
+    )
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "aarch64-contract"
+            and isinstance(entry.get("source"), str)
+            and "aarch64/libc.so.dynamic.tsv" in entry["source"]
+            and "libc.a.static.tsv" in entry["source"]
+            and isinstance(entry.get("role"), str)
+            and "not a behavioral fallback" in entry["role"]
+            for entry in oracle
+        ),
+        "ldso-public-fixed-graph-dlfcn must retain its AArch64 ABI-presence oracle",
+    )
     require(
         "run_ldso_public_dlfcn.sh" in (ROOT / "scripts" / "dev-x86_64.sh").read_text(),
         "ldso-public-dlfcn dispatcher binding is missing",

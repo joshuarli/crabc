@@ -41,6 +41,7 @@ const ESRCH: i64 = 3;
 
 const UNAVAILABLE: &[u8] = b"crabc fixed-graph loader runtime unavailable";
 const NEXT_UNSUPPORTED: &[u8] = b"crabc fixed graph does not support RTLD_NEXT";
+const DLINFO_UNSUPPORTED_REQUEST: &[u8] = b"Unsupported request ";
 static EXHAUSTED: &[u8] = b"crabc dlfcn diagnostic slots exhausted\0";
 
 #[repr(C)]
@@ -319,6 +320,43 @@ unsafe fn set_error_text(slot: usize, message: &TextV1) {
 
 unsafe fn unavailable(slot: usize) {
     set_error_bytes(slot, UNAVAILABLE);
+}
+
+/// Record musl 1.2.6 `dlinfo`'s exact unsupported-request diagnostic.
+///
+/// Pinned musl 1.2.6 commit 9fa28ece75d8a2191de7c5bb53bed224c5947417,
+/// `src/ldso/dlinfo.c:dlinfo`, accepts only `RTLD_DI_LINKMAP` for a live
+/// handle. Within this bridge's admitted diagnostic-slot bound, it reports
+/// every other `int` request as `Unsupported request %d`.
+/// Format the bounded C `int` directly in the calling thread's existing
+/// diagnostic slot so this bridge neither needs a formatter nor reaches for
+/// ambient loader state.
+unsafe fn set_dlinfo_unsupported_request(slot: usize, request: c_int) {
+    let mut message = [0u8; 32];
+    let mut length = DLINFO_UNSUPPORTED_REQUEST.len();
+    message[..length].copy_from_slice(DLINFO_UNSUPPORTED_REQUEST);
+
+    let mut magnitude = request as i64;
+    if magnitude < 0 {
+        message[length] = b'-';
+        length += 1;
+        magnitude = -magnitude;
+    }
+    let mut reverse_digits = [0u8; 20];
+    let mut digits = 0usize;
+    loop {
+        reverse_digits[digits] = b'0' + (magnitude % 10) as u8;
+        digits += 1;
+        magnitude /= 10;
+        if magnitude == 0 {
+            break;
+        }
+    }
+    for index in (0..digits).rev() {
+        message[length] = reverse_digits[index];
+        length += 1;
+    }
+    set_error_bytes(slot, &message[..length]);
 }
 
 unsafe fn open_fn(record: &RuntimeRecordV1) -> OpenFn {
@@ -609,12 +647,16 @@ pub unsafe extern "C" fn dlinfo(
     request: c_int,
     argument: *mut c_void,
 ) -> c_int {
-    if request != RTLD_DI_LINKMAP || argument.is_null() {
-        return -1;
-    }
     let Some(slot) = diagnostic_slot() else {
         return -1;
     };
+    if request != RTLD_DI_LINKMAP {
+        set_dlinfo_unsupported_request(slot, request);
+        return -1;
+    }
+    if argument.is_null() {
+        return -1;
+    }
     let Some(record) = runtime_record() else {
         unavailable(slot);
         return -1;
