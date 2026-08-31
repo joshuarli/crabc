@@ -54,6 +54,19 @@ or syscall path. It does not inspect `/etc/hosts` or `/etc/resolv.conf`,
 configure or send DNS, consult a network database/NSS, touch interfaces or
 sockets, complete the resolver family, promote x86, or claim public support.
 
+`./scripts/dev-x86_64.sh libc-getsubopt` is a private `static-c-getsubopt`
+artifact inside still-planned `libc.text-math-locale-stdio`. It isolates the
+already-selected `getsubopt` export into a direct pinned-musl 1.2.6
+`src/misc/getsubopt.c` mapping, with a strict/feature-selected project
+`<stdlib.h>` C/C++ ABI matrix and a true `-nostdlib -static` differential. The
+leaf has only caller-owned mutable input, key vector, cursor, and value slots:
+it covers in-place comma splitting, ordered NUL-or-`=` matching, empty
+keys/tokens, and interleaved cursors. It writes no errno and owns no TLS,
+locale, environment, allocator, stdio, syscall, byte-string dependency, or
+parser state. It is not a second capability selection, parser/environment/
+locale completion, text/math/locale/stdio family promotion, or public x86
+support claim.
+
 `./scripts/dev-x86_64.sh libc-login-name` is a private
 `static-c-login-name` artifact inside planned `libc.posix-runtime`. Its
 pinned-musl and freestanding-static routes compose the selected bounded

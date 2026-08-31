@@ -217,6 +217,8 @@ mod integer_parse;
 mod float_parse;
 #[path = "float_parse_locale.rs"]
 mod float_parse_locale;
+#[path = "getsubopt.rs"]
+mod getsubopt;
 #[path = "intmax_arithmetic.rs"]
 mod intmax_arithmetic;
 #[path = "ffs.rs"]

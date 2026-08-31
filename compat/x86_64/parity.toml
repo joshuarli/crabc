@@ -7283,6 +7283,7 @@ source_owners = [
   "libc/src/c_abi/x86_64/static_c_abi.rs",
   "libc/src/c_abi/x86_64/float_parse.rs",
   "libc/src/c_abi/x86_64/float_parse_locale.rs",
+  "libc/src/c_abi/x86_64/getsubopt.rs",
   "libc/src/c_abi/x86_64/float_parse_locale_aliases_x86_64.S",
   "libc/src/c_abi/x86_64/float_parse_locale_musl_x86_64.S",
   "libc/src/c_abi/x86_64/float_parse_musl_entry_x86_64.S",
@@ -7519,6 +7520,7 @@ source_owners = [
   "libc/src/c_abi/x86_64/errno.rs",
   "libc/src/c_abi/x86_64/float_parse.rs",
   "libc/src/c_abi/x86_64/float_parse_locale.rs",
+  "libc/src/c_abi/x86_64/getsubopt.rs",
   "libc/src/c_abi/x86_64/float_parse_locale_aliases_x86_64.S",
   "libc/src/c_abi/x86_64/float_parse_locale_musl_x86_64.S",
   "libc/src/c_abi/x86_64/float_parse_musl_entry_x86_64.S",
@@ -7550,7 +7552,7 @@ source_owners = [
 ]
 x86_abi_prerequisites = [
   "System V AMD64 passes narrow/wide input and optional end pointers through rdi/rsi, with base or ignored locale handles in rdx; float returns binary32 and double/atof return binary64 in xmm0, while all long-double spellings return x87 binary80 in st0. Linux/x86-64 long double storage is 16-byte align-16 with only its low 10-byte f80 payload defined; wchar_t is four bytes and LP64 wide integer results are 64-bit.",
-  "Pinned musl 1.2.6 src/stdlib/strtod.c, wcstod.c, wcstol.c, atof.c, ecvt.c, fcvt.c, and gcvt.c; src/locale/strtod_l.c; src/misc/getsubopt.c; src/ctype/iswspace.c; src/internal/floatscan.c, intscan.c, and shgetc.c; src/math/scalbn.c, scalbnl.c, and copysignl.c; and src/math/x86_64/fabsl.c and fmodl.c map to the target-local assembly/Rust implementation under the fixed release pin.",
+  "Pinned musl 1.2.6 src/stdlib/strtod.c, wcstod.c, wcstol.c, atof.c, ecvt.c, fcvt.c, and gcvt.c; src/locale/strtod_l.c; src/misc/getsubopt.c; src/ctype/iswspace.c; src/internal/floatscan.c, intscan.c, and shgetc.c; src/math/scalbn.c, scalbnl.c, and copysignl.c; and src/math/x86_64/fabsl.c and fmodl.c map to the target-local assembly/Rust implementation under the fixed release pin. `src/misc/getsubopt.c` now maps directly to the separate state-free `getsubopt.rs` byte-parser leaf while the broader numeric fixture continues to call that same public export.",
   "The narrow pseudo-FILE marks input exhausted at NUL. The private shgetc refill invokes only the owned wide adapter's one-byte callback and never imports public __uflow/__toread; no real FILE, printf, or general stdio ABI is selected.",
   "The selected fenv boundary must preserve the live x87/MXCSR rounding direction and record the observed source path's signed-zero, errno, FE_INEXACT, FE_UNDERFLOW, and FE_OVERFLOW outcomes. The final static fixture supplies only the already-selected initial-exec errno TLS datum and %fs:0 self word; this is not a CRT or general TLS lifecycle contract.",
 ]
@@ -7559,6 +7561,49 @@ x86_header_prerequisites = [
 ]
 native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-float-parse", scope = "Pinned-musl project-header C reference plus a true dependency-free x86 crabc-libc static archive and -nostdlib -static candidate. The gate requires the full C11/C++17 declaration/linkage check, ratchets the complete selected static C export surface, rejects unresolved symbols/interpreter/DT_NEEDED/dynamic-TLS, allocation, printf/FILE, internal scanner exports, and ambient dependencies, and verifies direct initial-exec errno TLS. Function-pointer calls prove all twenty-three numeric.parse-float-locale symbols: strtof/strtod/strtold/atof narrow grammar/end/range/fenv, raw x87 80-bit-in-16-byte strtold ABI payloads and all-four-direction decimal/hex boundary results; ignored locale handles; refill-spanning wide float and arbitrary-length wide integer semantics; exact legacy decimal strings; and getsubopt mutation. Candidate structural checks require the source-faithful fldt/fstpt/fprem parser path. It remains inside still-planned libc.text-math-locale-stdio, not family completion, promotion, or public x86 support." }]
 oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source mapping and C/POSIX behavior oracle for src/stdlib/strtod.c, wcstod.c, wcstol.c, atof.c, ecvt.c, fcvt.c, gcvt.c, src/locale/strtod_l.c, src/misc/getsubopt.c, src/ctype/iswspace.c, src/internal/floatscan.c, intscan.c, shgetc.c, src/math/scalbn.c, scalbnl.c, copysignl.c, and x86_64 fabsl.c and fmodl.c; the private pseudo-FILE/refill boundary intentionally excludes real streams and stdio." }, { kind = "aarch64-contract", source = "libc/src/c_abi.rs, libc/src/decimal_conversions.rs, libc/src/locale_exports.rs, and libc/src/program_utils_exports.rs", role = "AArch64 semantic/export mapping, with target-distinct binary128 long double and an older bounded wide-narrowing implementation not copied to x86." }, { kind = "elf-abi", source = "System V AMD64 psABI", role = "rdi/rsi/rdx inputs, xmm0 binary32/binary64 returns, x87 st0 binary80 returns, 16-byte align-16 long-double storage, four-byte wchar_t, LP64 integers, and initial-exec errno fixture contract." }]
+
+[[family.verified_artifact]]
+id = "static-c-getsubopt"
+description = "Private native x86 static `getsubopt` C parser artifact inside still-planned `libc.text-math-locale-stdio`, not parser, environment, locale, or C-runtime completion. A pinned-musl/project installed `<stdlib.h>` C11/C++17 matrix keeps the declaration hidden in strict profiles and visible for POSIX.1-2008, X/Open 700, GNU, and BSD selection with the exact `int (char **, char *const *, char **)` signature and unmangled C++ linkage. The same project-header C fixture first executes through pinned musl 1.2.6 and then through a true `-nostdlib -static` candidate. It exposes exactly `getsubopt`: caller-owned mutable comma splitting, first matching NUL-or-`=` key recognition, a returned value pointer after `=`, exact key-order index, unknown-token `-1`, empty key/token behavior, and independently interleaved caller cursors. Pinned musl's source writes no errno, and this direct state-free translation owns no storage, TLS, errno, locale, environment, allocator, stdio, syscall, or process state. `numeric.parse-float-locale` already selects this exported spelling, so this artifact intentionally carries no capability selection or promotion. General parser grammar/tokenizer state, environment/configuration parsing, locale/radix behavior, byte-string-family completion, libc.so, CRT, loader, sysroot, family completion, promotion, and public x86 support remain excluded."
+source_owners = [
+  "compat/upstreams.toml",
+  "compat/crabc-rs/coverage.toml",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/getsubopt.rs",
+  "include/bits/alltypes.h",
+  "include/features.h",
+  "include/stdlib.h",
+  "compat/x86_64/getsubopt_header_abi_probe.c",
+  "compat/x86_64/getsubopt_header_abi_probe.cpp",
+  "compat/x86_64/run_getsubopt_header_abi.sh",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/libc_getsubopt_probe.c",
+  "compat/x86_64/libc_getsubopt_start.S",
+  "compat/x86_64/run_libc_getsubopt.sh",
+  "compat/x86_64/aarch64_parity_inventory.py",
+  "compat/x86_64/aarch64_parity_inventory.json",
+  "compat/x86_64/tests/test_aarch64_parity_inventory.py",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "compat/x86_64/README.md",
+  "STATUS.md",
+  "x86-64.md",
+  "scripts/dev-x86_64.sh",
+  "scripts/check_structure.py",
+]
+x86_abi_prerequisites = [
+  "The selected public C boundary is SysV AMD64 LP64: `getsubopt(char **, char *const *, char **)` receives its writable cursor slot, NUL-terminated key-vector pointer, and writable value slot in rdi, rsi, and rdx respectively, returns its signed key index or -1 in eax, and only modifies caller-owned option-string/cursor/value storage.",
+  "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417 maps `src/misc/getsubopt.c` directly to `libc/src/c_abi/x86_64/getsubopt.rs`: its strchr/strlen/strncmp sequence becomes local bounded byte walks that preserve comma-to-NUL mutation, first-key order, NUL-or-`=` matching, empty-key/token behavior, and no errno write without selecting the separately owned byte-string archive leaf.",
+  "This leaf owns no parser context or result storage: valid C callers retain the mutable NUL-terminated option string, terminated key vector, cursor slot, and value slot. It has no errno, TLS, locale, environment, allocator, stdio, syscall, or process state and deliberately leaves invalid C pointers outside musl's direct-dereference contract.",
+]
+x86_header_prerequisites = [
+  "The pinned-musl/project `<stdlib.h>` C11/C++17 gate proves strict C/C++ hides `getsubopt`, while POSIX.1-2008, X/Open 700, GNU, and BSD profiles expose exactly `int (char **, char *const *, char **)` with unmangled C++ linkage. The raw project pass is `-nostdinc`-traced to project headers plus compiler builtin headers only; it is declaration evidence, not parser/runtime or public-header-family completion.",
+]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-getsubopt", scope = "Pinned-musl project-header C execution and pinned getsubopt.lo source-member inspection followed by a true x86 `-nostdlib -static` candidate. The isolated regression covers comma mutation, cursor/value updates, ordered exact key matching, `=` values including empty values, unknown/empty tokens, empty-key behavior, interleaved caller cursors, and reference-only stale errno preservation. It ratchets the aggregate selected archive export surface and rejects unresolved symbols, interpreter/DT_NEEDED, TLS/errno, calls or syscalls inside `getsubopt`, byte-string dependencies, floating parser, environment, locale, allocator, stdio, ambient runtime, family promotion, and public x86 support." }]
+oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source and C/POSIX behavior oracle for src/misc/getsubopt.c's in-place comma split, ordered NUL-or-equals key match, value pointer, empty-token/key, and state-free no-errno behavior." }, { kind = "elf-abi", source = "System V AMD64 psABI and pinned musl stdlib.h", role = "LP64 rdi/rsi/rdx pointer arguments, eax int return, and installed C/C++ declaration/linkage oracle for the freestanding candidate." }]
 
 [[family.verified_artifact]]
 id = "static-c-stdio-standard-streams"

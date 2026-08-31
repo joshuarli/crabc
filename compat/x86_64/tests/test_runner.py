@@ -1353,6 +1353,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn("    libc-math-bit-sign) ;;", source)
         self.assertIn("    libc-math-trunc) ;;", source)
         self.assertIn("    libc-math-fmod) ;;", source)
+        self.assertIn("    libc-math-cbrt) ;;", source)
         self.assertIn("    libc-math-x87-extended)", source)
         self.assertIn("    libc-math-special)", source)
         self.assertIn("    libc-fdim) ;;", source)
@@ -1386,6 +1387,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "libc-math-bit-sign",
             "libc-math-trunc",
             "libc-math-fmod",
+            "libc-math-cbrt",
             "libc-fdim",
             "machine-context-header-abi",
             "memory-sync-header-abi",
@@ -1410,7 +1412,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "xattr-header-abi",
             "madvise-reference",
             "ctype-header-abi|locale-profile-header-abi|locale-multibyte-header-abi|iconv-header-abi|wide-character-header-abi|locale-object-wide-header-abi|locale-narrow-header-abi",
-            "integer-arithmetic-header-abi|integer-parse-header-abi|float-parse-header-abi|intmax-arithmetic-header-abi|credential-observation-header-abi|login-name-header-abi|child-reaping-header-abi|immediate-termination-header-abi|callback-algorithms-header-abi",
+            "integer-arithmetic-header-abi|integer-parse-header-abi|float-parse-header-abi|getsubopt-header-abi|intmax-arithmetic-header-abi|credential-observation-header-abi|login-name-header-abi|child-reaping-header-abi|immediate-termination-header-abi|callback-algorithms-header-abi",
             "ffs-header-abi",
             "byte-strings-header-abi",
             "memory-search-header-abi",
@@ -1445,7 +1447,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "libc-static-c-abi-differential",
             "libc-static-c-abi-same-object-differential|qualification-posix-abi-admission",
             "libc-interface-discovery",
-            "libc-readiness-waits|libc-system-observation|libc-system-information|libc-fcntl-record-locks|libc-flock|libc-sendfile|libc-posix-fallocate|libc-descriptor-advice|libc-filesystem-capacity|libc-uts-identity|libc-ctype|libc-locale-profile|libc-locale-multibyte|libc-locale-wide-iconv|libc-wide-character|libc-locale-object-wide|libc-locale-narrow|libc-locale-ctype-locators|libc-locale-error-strings|libc-regex|libc-integer-arithmetic|libc-integer-parse|libc-float-parse|libc-intmax-arithmetic|libc-credential-observation|libc-secure-environment|libc-login-name|libc-child-reaping|libc-immediate-termination|libc-callback-algorithms|libc-search-tree-intrusive|libc-search-hash-table|libc-gettext-catalog|libc-access|libc-clock-gettime|libc-time-observation|libc-timegm|libc-gmtime-r|libc-system-configuration|libc-mapping-core|libc-header-layouts-baseline|libc-nanosleep|libc-clock-nanosleep|libc-descriptor-entry|libc-fcntl-status-control|libc-ioctl|libc-ffs|libc-byte-strings|libc-process-globals-getopt|libc-auxv-observation|libc-inet-address|libc-inet-ntoa|libc-inet-classful|libc-hstrerror|libc-numeric-netdb|libc-random-entropy|libc-memory-search|libc-string-copy|libc-error-strings|libc-strsignal|libc-descriptor-pipeline",
+            "libc-readiness-waits|libc-system-observation|libc-system-information|libc-fcntl-record-locks|libc-flock|libc-sendfile|libc-posix-fallocate|libc-descriptor-advice|libc-filesystem-capacity|libc-uts-identity|libc-ctype|libc-locale-profile|libc-locale-multibyte|libc-locale-wide-iconv|libc-wide-character|libc-locale-object-wide|libc-locale-narrow|libc-locale-ctype-locators|libc-locale-error-strings|libc-regex|libc-integer-arithmetic|libc-integer-parse|libc-float-parse|libc-getsubopt|libc-intmax-arithmetic|libc-credential-observation|libc-secure-environment|libc-login-name|libc-child-reaping|libc-immediate-termination|libc-callback-algorithms|libc-search-tree-intrusive|libc-search-hash-table|libc-gettext-catalog|libc-access|libc-clock-gettime|libc-time-observation|libc-timegm|libc-gmtime-r|libc-system-configuration|libc-mapping-core|libc-header-layouts-baseline|libc-nanosleep|libc-clock-nanosleep|libc-descriptor-entry|libc-fcntl-status-control|libc-ioctl|libc-ffs|libc-byte-strings|libc-process-globals-getopt|libc-auxv-observation|libc-inet-address|libc-inet-ntoa|libc-inet-classful|libc-hstrerror|libc-numeric-netdb|libc-random-entropy|libc-memory-search|libc-string-copy|libc-error-strings|libc-strsignal|libc-descriptor-pipeline",
             "libc-vector-io|libc-uio-cxx-linkage",
             "libc-sysv-semaphore|libc-posix-semaphore",
             "libc-sysv-message-shared-memory",
@@ -3073,6 +3075,22 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         )
         self.assertIn(
             '    libc-float-parse)\n        [ "$#" -eq 0 ] || fail "libc-float-parse takes no arguments"',
+            source,
+        )
+        self.assertIn('getsubopt-header-abi', source)
+        self.assertIn(
+            '/workspace/compat/x86_64/run_getsubopt_header_abi.sh', source,
+        )
+        self.assertIn(
+            '    getsubopt-header-abi)\n        [ "$#" -eq 0 ] || fail "getsubopt-header-abi takes no arguments"',
+            source,
+        )
+        self.assertIn('libc-getsubopt', source)
+        self.assertIn(
+            '/workspace/compat/x86_64/run_libc_getsubopt.sh', source,
+        )
+        self.assertIn(
+            '    libc-getsubopt)\n        [ "$#" -eq 0 ] || fail "libc-getsubopt takes no arguments"',
             source,
         )
         self.assertIn('libc-credential-observation', source)
@@ -11962,6 +11980,9 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         locale_implementation = (
             ROOT / "libc" / "src" / "c_abi" / "x86_64" / "float_parse_locale.rs"
         ).read_text(encoding="utf-8")
+        getsubopt_implementation = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "getsubopt.rs"
+        ).read_text(encoding="utf-8")
         locale_aliases = (
             ROOT / "libc" / "src" / "c_abi" / "x86_64"
             / "float_parse_locale_aliases_x86_64.S"
@@ -12024,6 +12045,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         symbols = ("strtof", "strtod", "strtold", "atof")
         self.assertIn('#[path = "float_parse.rs"]', static_root)
         self.assertIn('#[path = "float_parse_locale.rs"]', static_root)
+        self.assertIn('#[path = "getsubopt.rs"]', static_root)
         for symbol in symbols:
             self.assertIn(symbol, static_export_names)
             self.assertIn(f".globl {symbol}", entry_assembly)
@@ -12048,11 +12070,17 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "src/stdlib/wcstol.c",
             "src/stdlib/{ecvt,fcvt,gcvt}.c",
             "src/locale/strtod_l.c",
-            "src/misc/getsubopt.c",
             "exact binary64-to-decimal",
             "C/POSIX/C.UTF-8",
         ):
             self.assertIn(required, locale_implementation)
+        for required in (
+            "src/misc/getsubopt.c",
+            "State-free Linux/x86-64 C `getsubopt` parser",
+            "core::hint::black_box",
+            'pub unsafe extern "C" fn getsubopt',
+        ):
+            self.assertIn(required, getsubopt_implementation)
         for required in (
             "musl 1.2.6 release commit",
             "src/stdlib/strtod.c",
@@ -12119,6 +12147,106 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         )
         self.assertIn("float-parse-header-abi", runner)
         self.assertIn("libc-float-parse", runner)
+
+    def test_libc_static_c_abi_getsubopt_artifact_stays_state_free(self) -> None:
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        implementation = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "getsubopt.rs"
+        ).read_text(encoding="utf-8")
+        header_c_probe = (
+            ROOT / "compat" / "x86_64" / "getsubopt_header_abi_probe.c"
+        ).read_text(encoding="utf-8")
+        header_cxx_probe = (
+            ROOT / "compat" / "x86_64" / "getsubopt_header_abi_probe.cpp"
+        ).read_text(encoding="utf-8")
+        header_runner = (
+            ROOT / "compat" / "x86_64" / "run_getsubopt_header_abi.sh"
+        ).read_text(encoding="utf-8")
+        probe = (
+            ROOT / "compat" / "x86_64" / "libc_getsubopt_probe.c"
+        ).read_text(encoding="utf-8")
+        artifact_runner = (
+            ROOT / "compat" / "x86_64" / "run_libc_getsubopt.sh"
+        ).read_text(encoding="utf-8")
+        static_exports = (
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        ).read_text(encoding="utf-8")
+        parity_ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        runner = RUNNER.read_text(encoding="utf-8")
+
+        self.assertIn('#[path = "getsubopt.rs"]\nmod getsubopt;', static_root)
+        for required in (
+            "src/misc/getsubopt.c",
+            "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+            "core::hint::black_box",
+            'pub unsafe extern "C" fn getsubopt',
+            "NUL-terminated key vector",
+            "no storage and reads or writes no errno, TLS",
+        ):
+            self.assertIn(required, implementation)
+        for forbidden in (
+            "static mut",
+            "errno::",
+            "raw_syscall",
+            "getenv",
+            "setenv",
+            "crabc_core",
+            "crabc_mimalloc",
+        ):
+            self.assertNotIn(forbidden, implementation)
+
+        for header_probe in (header_c_probe, header_cxx_probe):
+            for required in (
+                "getsubopt",
+                "char *const *",
+                "CRABC_EXPECT_GETSUBOPT",
+                "CRABC_REQUIRE_GETSUBOPT_HIDDEN",
+            ):
+                self.assertIn(required, header_probe)
+        for required in (
+            "CANDIDATE_CC=/usr/bin/gcc",
+            "-nostdinc",
+            "-nostdinc++",
+            "-D_POSIX_C_SOURCE=200809L",
+            "-D_XOPEN_SOURCE=700",
+            "-D_GNU_SOURCE",
+            "-D_BSD_SOURCE",
+            "retain C linkage",
+            "escaped its declared roots",
+        ):
+            self.assertIn(required, header_runner)
+
+        for required in (
+            "CRABC_GETSUBOPT_FREESTANDING",
+            "check_primary_sequence",
+            "check_exact_key_matching",
+            "check_interleaved_cursors",
+            "check_empty_key",
+            "errno = E2BIG",
+        ):
+            self.assertIn(required, probe)
+        for required in (
+            "getsubopt.lo",
+            "run_getsubopt_header_abi.sh",
+            "-nostdlib -static",
+            "--no-undefined",
+            "candidate unexpectedly selects TLS",
+            "call|syscall",
+            "strchr strlen strncmp",
+            "getenv setenv unsetenv clearenv",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertIn("getsubopt", static_exports.splitlines())
+        self.assertIn('id = "static-c-getsubopt"', parity_ledger)
+        self.assertIn(
+            'command = "./scripts/dev-x86_64.sh libc-getsubopt"', parity_ledger
+        )
+        self.assertIn("getsubopt-header-abi", runner)
+        self.assertIn("libc-getsubopt", runner)
 
     def test_libc_static_c_abi_stdio_standard_streams_artifact_stays_narrow(
         self,

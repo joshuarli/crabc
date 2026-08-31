@@ -249,6 +249,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh integer-arithmetic-header-abi
 ./scripts/dev-x86_64.sh integer-parse-header-abi
 ./scripts/dev-x86_64.sh float-parse-header-abi
+./scripts/dev-x86_64.sh getsubopt-header-abi
 ./scripts/dev-x86_64.sh intmax-arithmetic-header-abi
 ./scripts/dev-x86_64.sh credential-observation-header-abi
 ./scripts/dev-x86_64.sh login-name-header-abi
@@ -492,6 +493,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-integer-arithmetic
 ./scripts/dev-x86_64.sh libc-integer-parse
 ./scripts/dev-x86_64.sh libc-float-parse
+./scripts/dev-x86_64.sh libc-getsubopt
 ./scripts/dev-x86_64.sh libc-intmax-arithmetic
 ./scripts/dev-x86_64.sh libc-credential-observation
 ./scripts/dev-x86_64.sh libc-ffs
@@ -1120,6 +1122,15 @@ x86 `long double`, four-byte `wchar_t`, LP64 `intmax_t`, `locale_t`, and
 unmangled C++ linkage. The three weak internal `__strto*_l` spellings have no
 public declaration. This remains compile-only evidence and does not establish
 general header-family or runtime support.
+
+`getsubopt-header-abi` separately proves the installed `<stdlib.h>` boundary
+for the already-selected `getsubopt` spelling: strict C/C++ hides it, while
+POSIX.1-2008, X/Open 700, GNU, and BSD profiles expose the exact
+`int (char **, char *const *, char **)` declaration and unmangled C++ symbol.
+The project pass uses raw `-nostdinc`/`-nostdinc++` compilation with a traced
+project-plus-compiler-builtin include closure. This is a declaration-only
+state-free parser boundary, not a broad parser, locale, environment, or
+installed-header-family completion.
 
 `intmax-arithmetic-header-abi` compiles project-first and pinned-musl C/C++
 `<inttypes.h>` declarations for `imaxabs` and `imaxdiv`. Both declarations are
@@ -4099,6 +4110,18 @@ locale-dependent radix, real stdio, allocation, general text/locale or
 scalar/complex math, libc.so, CRT, loader, sysroot, family completion,
 promotion, and public x86 support remain outside the slice.
 
+`libc-getsubopt` is a separate `static-c-getsubopt` artifact over the same
+already-selected export, not a second capability selection. Its installed
+header matrix compares pinned musl and project `<stdlib.h>` C/C++ feature
+visibility, then one project-header C body runs through pinned musl and a true
+`-nostdlib -static` candidate. It covers only caller-owned in-place comma
+splitting, ordered NUL-or-`=` key matching, value/cursor mutation, unknown and
+empty tokens, empty-key behavior, and independently interleaved caller
+cursors. The candidate has no TLS, errno, locale, environment, allocator,
+stdio, syscall, byte-string runtime dependency, or parser state. General
+parser/environment/locale behavior, family completion, promotion, and public
+x86 support remain excluded.
+
 `libc-intmax-arithmetic` is a separately recorded
 `static-c-intmax-arithmetic` `verified_artifact` gate over that archive, not a
 general numeric or C runtime capability. Its project-header C body first
@@ -5128,7 +5151,7 @@ Apart from the narrowly named `libc-stat-compat`, `libc-credentials`,
 `libc-byte-strings`, `libc-legacy-memory`, `libc-memccpy`, `libc-random-entropy`, `libc-memory-search`,
 `libc-string-copy`, `libc-allocator-string-duplication`, `libc-error-strings`,
 `libc-locale-error-strings`, `libc-ctype`, `libc-integer-arithmetic`,
-`libc-integer-parse`, `libc-float-parse`, `libc-intmax-arithmetic`, `libc-credential-observation`,
+`libc-integer-parse`, `libc-float-parse`, `libc-getsubopt`, `libc-intmax-arithmetic`, `libc-credential-observation`,
 `libc-ffs`, `libc-math-complex`, `libc-math-complex-complete`, `libc-elementary-sqrt-fenv`, and
 `libc-fenv-rounding` static archive harnesses, and the separately scoped
 `static-pie` CRT gate, and the bounded `owned-static-sysroot` installed

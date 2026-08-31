@@ -34,7 +34,6 @@
 //!   Musl obtains the same decimal rounding through its printf engine. Keeping
 //!   the conversion local is an intentional ownership difference: no FILE,
 //!   varargs, allocator, or general formatted-I/O ABI is selected.
-//! - `src/misc/getsubopt.c` maps directly to the in-place byte parser below.
 //!
 //! Linux/x86-64 uses four-byte `wchar_t`, LP64 integer widths, and x87
 //! binary80-in-16-byte `long double`. Public callers retain the C APIs' normal
@@ -651,56 +650,4 @@ pub unsafe extern "C" fn wcstoimax(input: *const u32, end: *mut *mut u32, base: 
 #[no_mangle]
 pub unsafe extern "C" fn wcstoumax(input: *const u32, end: *mut *mut u32, base: c_int) -> c_ulong {
     unsafe { wcstoull(input, end, base) as c_ulong }
-}
-
-#[no_mangle]
-pub unsafe extern "C" fn getsubopt(
-    option: *mut *mut c_char,
-    keys: *const *mut c_char,
-    value: *mut *mut c_char,
-) -> c_int {
-    let start = unsafe { core::ptr::read(option) };
-    unsafe { core::ptr::write(value, core::ptr::null_mut()) };
-    let mut end = start;
-    while unsafe { core::ptr::read(end) } != 0 && unsafe { core::ptr::read(end) } != b',' as c_char {
-        end = end.wrapping_add(1);
-    }
-    if unsafe { core::ptr::read(end) } == b',' as c_char {
-        unsafe { core::ptr::write(end, 0) };
-        unsafe { core::ptr::write(option, end.wrapping_add(1)) };
-    } else {
-        unsafe { core::ptr::write(option, end) };
-    }
-
-    let mut key_index = 0usize;
-    loop {
-        let key = unsafe { core::ptr::read(keys.wrapping_add(key_index)) };
-        if key.is_null() {
-            return -1;
-        }
-        let mut length = 0usize;
-        while unsafe { core::ptr::read(key.wrapping_add(length)) } != 0 {
-            length += 1;
-        }
-        let mut matched = true;
-        for offset in 0..length {
-            if unsafe { core::ptr::read(key.wrapping_add(offset)) }
-                != unsafe { core::ptr::read(start.wrapping_add(offset)) }
-            {
-                matched = false;
-                break;
-            }
-        }
-        if matched {
-            let suffix = unsafe { core::ptr::read(start.wrapping_add(length)) };
-            if suffix == b'=' as c_char {
-                unsafe { core::ptr::write(value, start.wrapping_add(length + 1)) };
-                return key_index as c_int;
-            }
-            if suffix == 0 {
-                return key_index as c_int;
-            }
-        }
-        key_index += 1;
-    }
 }

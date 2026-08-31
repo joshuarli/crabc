@@ -1414,6 +1414,8 @@ GETHOSTID_SYMBOLS = ("gethostid",)
 
 INET_CLASSFUL_SYMBOLS = ("inet_lnaof", "inet_makeaddr")
 
+GETSUBOPT_SYMBOLS = ("getsubopt",)
+
 INET_ADDRESS_UNSELECTED_SYMBOLS = (
     "calloc",
     "free",
@@ -23965,6 +23967,304 @@ def require_alloca_builtin_artifact(family: Mapping[str, Any]) -> None:
     )
 
 
+def require_getsubopt_artifact(family: Mapping[str, Any]) -> None:
+    """Keep the one state-free musl suboption parser below family completion."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.text-math-locale-stdio].verified_artifact",
+        family.get("status", ""),
+    )
+    require(
+        len(artifacts) == 32,
+        "libc.text-math-locale-stdio must retain exactly thirty-two private verified artifacts",
+    )
+    matching = [
+        entry for entry in artifacts if entry.get("id") == "static-c-getsubopt"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.text-math-locale-stdio must contain exactly one static-c-getsubopt artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-getsubopt must not promote libc.text-math-locale-stdio",
+    )
+    artifact = matching[0]
+    require(
+        "capabilities" not in artifact,
+        "static-c-getsubopt must not reselect numeric.parse-float-locale",
+    )
+
+    description = artifact.get("description")
+    require(isinstance(description, str), "static-c-getsubopt needs a description")
+    for phrase in (
+        "Private native x86 static `getsubopt` C parser artifact",
+        "still-planned `libc.text-math-locale-stdio`",
+        "POSIX.1-2008, X/Open 700, GNU, and BSD",
+        "unmangled C++ linkage",
+        "true `-nostdlib -static` candidate",
+        "empty key/token behavior",
+        "interleaved caller cursors",
+        "no storage, TLS, errno, locale, environment, allocator, stdio, syscall, or process state",
+        "already selects this exported spelling",
+        "General parser grammar/tokenizer state",
+        "family completion, promotion, and public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"static-c-getsubopt description omits {phrase}",
+        )
+
+    owners = set(
+        nonempty_strings(
+            artifact.get("source_owners"), "static-c-getsubopt.source_owners"
+        )
+    )
+    for owner in (
+        "compat/upstreams.toml",
+        "compat/crabc-rs/coverage.toml",
+        "libc/Cargo.toml",
+        "libc/src/lib.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/getsubopt.rs",
+        "include/stdlib.h",
+        "compat/x86_64/getsubopt_header_abi_probe.c",
+        "compat/x86_64/getsubopt_header_abi_probe.cpp",
+        "compat/x86_64/run_getsubopt_header_abi.sh",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/libc_getsubopt_probe.c",
+        "compat/x86_64/libc_getsubopt_start.S",
+        "compat/x86_64/run_libc_getsubopt.sh",
+        "compat/x86_64/aarch64_parity_inventory.py",
+        "compat/x86_64/aarch64_parity_inventory.json",
+        "compat/x86_64/tests/test_aarch64_parity_inventory.py",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/README.md",
+        "STATUS.md",
+        "x86-64.md",
+        "scripts/dev-x86_64.sh",
+        "scripts/check_structure.py",
+    ):
+        require(owner in owners, f"static-c-getsubopt source owners omit {owner}")
+
+    prerequisites = nonempty_strings(
+        artifact.get("x86_abi_prerequisites"),
+        "static-c-getsubopt.x86_abi_prerequisites",
+    )
+    require(
+        any(
+            "SysV AMD64 LP64" in item
+            and "char **, char *const *, char **" in item
+            and "rdi, rsi, and rdx" in item
+            and "eax" in item
+            for item in prerequisites
+        ),
+        "static-c-getsubopt must record its exact x86 C ABI",
+    )
+    require(
+        any(
+            "9fa28ece75d8a2191de7c5bb53bed224c5947417" in item
+            and "src/misc/getsubopt.c" in item
+            and "getsubopt.rs" in item
+            and "strchr/strlen/strncmp" in item
+            and "empty-key/token" in item
+            and "byte-string archive leaf" in item
+            for item in prerequisites
+        ),
+        "static-c-getsubopt must retain its pinned-musl source mapping",
+    )
+    require(
+        any(
+            "no parser context or result storage" in item
+            and "errno, TLS, locale, environment, allocator, stdio, syscall, or process state" in item
+            and "invalid C pointers" in item
+            for item in prerequisites
+        ),
+        "static-c-getsubopt must retain its state-free caller-ownership boundary",
+    )
+
+    headers = nonempty_strings(
+        artifact.get("x86_header_prerequisites"),
+        "static-c-getsubopt.x86_header_prerequisites",
+    )
+    require(
+        any(
+            "<stdlib.h>" in item
+            and "strict C/C++ hides" in item
+            and "POSIX.1-2008, X/Open 700, GNU, and BSD" in item
+            and "char *const *" in item
+            and "unmangled C++ linkage" in item
+            and "-nostdinc" in item
+            for item in headers
+        ),
+        "static-c-getsubopt must retain its installed-header ABI boundary",
+    )
+
+    exports = set(
+        static_c_abi_export_names(
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        )
+    )
+    require(
+        set(GETSUBOPT_SYMBOLS) <= exports,
+        "static-c-getsubopt must retain its one selected export",
+    )
+
+    static_root = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+    ).read_text(encoding="utf-8")
+    require(
+        '#[path = "getsubopt.rs"]\nmod getsubopt;' in static_root,
+        "x86 static C ABI must compose the getsubopt leaf",
+    )
+    implementation = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "getsubopt.rs"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "src/misc/getsubopt.c",
+        "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+        "core::hint::black_box",
+        'pub unsafe extern "C" fn getsubopt',
+        "NUL-terminated key vector",
+        "no storage and reads or writes no errno, TLS,",
+    ):
+        require(
+            snippet in implementation,
+            f"getsubopt leaf omits {snippet}",
+        )
+    for forbidden in (
+        "static mut",
+        "errno::",
+        "raw_syscall",
+        "getenv",
+        "setenv",
+        "crabc_core",
+        "crabc_mimalloc",
+    ):
+        require(
+            forbidden not in implementation,
+            f"getsubopt leaf widens into {forbidden}",
+        )
+
+    header_runner = (
+        ROOT / "compat" / "x86_64" / "run_getsubopt_header_abi.sh"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "CANDIDATE_CC=/usr/bin/gcc",
+        "-nostdinc",
+        "-nostdinc++",
+        "CRABC_REQUIRE_GETSUBOPT_HIDDEN",
+        "-D_POSIX_C_SOURCE=200809L",
+        "-D_XOPEN_SOURCE=700",
+        "-D_GNU_SOURCE",
+        "-D_BSD_SOURCE",
+        "retain C linkage",
+    ):
+        require(
+            snippet in header_runner,
+            f"getsubopt header runner omits {snippet}",
+        )
+    for probe_name in (
+        "getsubopt_header_abi_probe.c",
+        "getsubopt_header_abi_probe.cpp",
+    ):
+        probe = (ROOT / "compat" / "x86_64" / probe_name).read_text(
+            encoding="utf-8"
+        )
+        for snippet in ("getsubopt", "char *const *", "CRABC_EXPECT_GETSUBOPT"):
+            require(
+                snippet in probe,
+                f"getsubopt header probe {probe_name} omits {snippet}",
+            )
+
+    fixture = (
+        ROOT / "compat" / "x86_64" / "libc_getsubopt_probe.c"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "CRABC_GETSUBOPT_FREESTANDING",
+        "check_primary_sequence",
+        "check_exact_key_matching",
+        "check_interleaved_cursors",
+        "check_empty_key",
+        "errno = E2BIG",
+    ):
+        require(
+            snippet in fixture,
+            f"getsubopt fixture omits {snippet}",
+        )
+    runner = (
+        ROOT / "compat" / "x86_64" / "run_libc_getsubopt.sh"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "getsubopt.lo",
+        "run_getsubopt_header_abi.sh",
+        "-nostdlib -static",
+        "--no-undefined",
+        "candidate unexpectedly selects TLS",
+        "call|syscall",
+        "strchr strlen strncmp",
+        "getenv setenv unsetenv clearenv",
+    ):
+        require(
+            snippet in runner,
+            f"getsubopt runner omits {snippet}",
+        )
+
+    evidence = artifact.get("native_evidence")
+    require(isinstance(evidence, list), "static-c-getsubopt needs evidence")
+    require(
+        {entry.get("command") for entry in evidence if isinstance(entry, Mapping)}
+        == {"./scripts/dev-x86_64.sh libc-getsubopt"},
+        "static-c-getsubopt must use the closed libc-getsubopt command",
+    )
+    scope = evidence[0].get("scope")
+    require(isinstance(scope, str), "static-c-getsubopt evidence needs a scope")
+    for phrase in (
+        "Pinned-musl project-header C execution",
+        "getsubopt.lo",
+        "true x86 `-nostdlib -static` candidate",
+        "interleaved caller cursors",
+        "reference-only stale errno preservation",
+        "TLS/errno",
+        "byte-string dependencies",
+        "environment, locale, allocator, stdio",
+        "public x86 support",
+    ):
+        require(
+            phrase in scope,
+            f"static-c-getsubopt evidence omits {phrase}",
+        )
+
+    oracle = artifact.get("oracle")
+    require(isinstance(oracle, list), "static-c-getsubopt needs an oracle")
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "c-posix"
+            and "src/misc/getsubopt.c" in str(entry.get("role"))
+            and "no-errno" in str(entry.get("role"))
+            for entry in oracle
+        ),
+        "static-c-getsubopt must retain its musl behavior oracle",
+    )
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "elf-abi"
+            and "rdi/rsi/rdx" in str(entry.get("role"))
+            and "eax" in str(entry.get("role"))
+            for entry in oracle
+        ),
+        "static-c-getsubopt must retain its SysV ABI oracle",
+    )
+
+    dispatcher = (ROOT / "scripts" / "dev-x86_64.sh").read_text(encoding="utf-8")
+    for snippet in ("getsubopt-header-abi)", "libc-getsubopt)"):
+        require(snippet in dispatcher, f"x86 dispatcher omits {snippet}")
+
+
 def require_float_parse_artifact(family: Mapping[str, Any]) -> None:
     """Keep the source-faithful x87 parser below text/math family completion.
 
@@ -24021,6 +24321,7 @@ def require_float_parse_artifact(family: Mapping[str, Any]) -> None:
         "libc/src/c_abi/x86_64/static_c_abi.rs",
         "libc/src/c_abi/x86_64/errno.rs",
         "libc/src/c_abi/x86_64/float_parse.rs",
+        "libc/src/c_abi/x86_64/getsubopt.rs",
         "libc/src/c_abi/x86_64/float_parse_musl_entry_x86_64.S",
         "libc/src/c_abi/x86_64/float_parse_musl_support_x86_64.S",
         "libc/src/c_abi/x86_64/float_parse_musl_x86_64.S",
@@ -24340,6 +24641,7 @@ def require_float_parse_locale_slice(family: Mapping[str, Any]) -> None:
         "libc/src/c_abi/x86_64/static_c_abi.rs",
         "libc/src/c_abi/x86_64/float_parse.rs",
         "libc/src/c_abi/x86_64/float_parse_locale.rs",
+        "libc/src/c_abi/x86_64/getsubopt.rs",
         "libc/src/c_abi/x86_64/float_parse_locale_aliases_x86_64.S",
         "libc/src/c_abi/x86_64/float_parse_locale_musl_x86_64.S",
         "libc/src/c_abi/x86_64/float_parse_musl_entry_x86_64.S",
@@ -24413,6 +24715,10 @@ def require_float_parse_locale_slice(family: Mapping[str, Any]) -> None:
         '#[path = "float_parse_locale.rs"]\nmod float_parse_locale;' in static_root,
         "x86 static C ABI must compose the float_parse_locale leaf",
     )
+    require(
+        '#[path = "getsubopt.rs"]\nmod getsubopt;' in static_root,
+        "x86 static C ABI must compose the separate getsubopt leaf",
+    )
     implementation = (
         ROOT / "libc" / "src" / "c_abi" / "x86_64" / "float_parse_locale.rs"
     ).read_text(encoding="utf-8")
@@ -24422,18 +24728,31 @@ def require_float_parse_locale_slice(family: Mapping[str, Any]) -> None:
         "src/stdlib/wcstod.c",
         "src/stdlib/wcstol.c",
         "src/stdlib/{ecvt,fcvt,gcvt}.c",
-        "src/misc/getsubopt.c",
         "exact binary64-to-decimal",
         "C/POSIX/C.UTF-8",
     ):
         require(snippet in implementation, f"float_parse_locale leaf omits {snippet}")
     for function in (
-        "ecvt", "fcvt", "gcvt", "getsubopt", "wcstol", "wcstoul",
+        "ecvt", "fcvt", "gcvt", "wcstol", "wcstoul",
         "wcstoll", "wcstoull", "wcstoimax", "wcstoumax",
     ):
         require(
             f'extern "C" fn {function}' in implementation,
             f"float_parse_locale leaf omits {function}",
+        )
+
+    getsubopt_implementation = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "getsubopt.rs"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "src/misc/getsubopt.c",
+        "pub unsafe extern \"C\" fn getsubopt",
+        "State-free Linux/x86-64 C",
+        "no ambient libc dependency",
+    ):
+        require(
+            snippet in getsubopt_implementation,
+            f"separate getsubopt leaf omits {snippet}",
         )
 
     aliases = (
@@ -25113,8 +25432,8 @@ def require_stdio_integer_scan_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 31,
-        "libc.text-math-locale-stdio must retain exactly thirty-one private verified artifacts",
+        len(artifacts) == 32,
+        "libc.text-math-locale-stdio must retain exactly thirty-two private verified artifacts",
     )
     matching = [
         entry for entry in artifacts if entry.get("id") == "static-c-stdio-integer-scan"
@@ -25396,8 +25715,8 @@ def require_stdio_octal_hex_scan_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 31,
-        "libc.text-math-locale-stdio must retain exactly thirty-one private verified artifacts",
+        len(artifacts) == 32,
+        "libc.text-math-locale-stdio must retain exactly thirty-two private verified artifacts",
     )
     matching = [
         entry
@@ -25922,8 +26241,8 @@ def require_stdio_errno_output_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 31,
-        "libc.text-math-locale-stdio must retain exactly thirty-one private verified artifacts",
+        len(artifacts) == 32,
+        "libc.text-math-locale-stdio must retain exactly thirty-two private verified artifacts",
     )
     matching = [
         entry for entry in artifacts if entry.get("id") == "static-c-stdio-errno-output"
@@ -26443,8 +26762,8 @@ def require_stdio_permanent_byte_io_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 31,
-        "libc.text-math-locale-stdio must retain exactly thirty-one private verified artifacts",
+        len(artifacts) == 32,
+        "libc.text-math-locale-stdio must retain exactly thirty-two private verified artifacts",
     )
     matching = [
         entry
@@ -26770,8 +27089,8 @@ def require_stdio_permanent_status_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 31,
-        "libc.text-math-locale-stdio must retain exactly thirty-one private verified artifacts",
+        len(artifacts) == 32,
+        "libc.text-math-locale-stdio must retain exactly thirty-two private verified artifacts",
     )
     matching = [
         entry
@@ -31021,8 +31340,8 @@ def require_locale_wide_iconv_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 31,
-        "libc.text-math-locale-stdio must retain exactly thirty-one private verified artifacts",
+        len(artifacts) == 32,
+        "libc.text-math-locale-stdio must retain exactly thirty-two private verified artifacts",
     )
     matching = [
         entry for entry in artifacts if entry.get("id") == "static-c-locale-wide-iconv"
@@ -31847,8 +32166,8 @@ def require_locale_error_strings_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 31,
-        "libc.text-math-locale-stdio must retain exactly thirty-one private verified artifacts",
+        len(artifacts) == 32,
+        "libc.text-math-locale-stdio must retain exactly thirty-two private verified artifacts",
     )
     matching = [
         entry for entry in artifacts if entry.get("id") == "static-c-locale-error-strings"
@@ -33523,6 +33842,7 @@ def validate_ledger(
     require_allocator_string_duplication_artifact(by_id["libc.posix-runtime"])
     require_allocator_observability_slice(by_id["libc.c-abi-compat"])
     require_alloca_builtin_artifact(by_id["libc.c-abi-compat"])
+    require_getsubopt_artifact(by_id["libc.text-math-locale-stdio"])
     require_float_parse_artifact(by_id["libc.text-math-locale-stdio"])
     require_float_parse_locale_slice(by_id["libc.text-math-locale-stdio"])
     require_stdio_standard_streams_artifact(by_id["libc.text-math-locale-stdio"])
