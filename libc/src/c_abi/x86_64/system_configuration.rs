@@ -18,8 +18,11 @@
 //!   fd-independent selector table. The selected positive selector boundary is
 //!   0 through 20 plus the defined nonnegative out-of-range `EINVAL` result;
 //!   musl's unchecked negative C-array index remains outside differential admission.
-//! - `src/conf/pathconf.c` maps to [`pathconf`], which reuses the same table
-//!   without dereferencing its pathname.
+//! - `src/conf/pathconf.c` maps to [`pathconf`], which delegates to that
+//!   `fpathconf(-1, name)` table without dereferencing its pathname. Its
+//!   selected positive-selector boundary is therefore also 0 through 20 plus
+//!   the defined nonnegative out-of-range `EINVAL` result; the delegated
+//!   unchecked negative C-array index remains outside differential admission.
 //! - `src/legacy/getpagesize.c` maps to [`getpagesize`].
 //! - `src/legacy/getdtablesize.c` maps to [`getdtablesize`].
 //!
@@ -224,7 +227,10 @@ pub extern "C" fn fpathconf(_fd: c_int, name: c_int) -> c_long {
 /// Musl's selected Linux contract is table-based, so `path` is deliberately
 /// not dereferenced or passed to Linux. Valid selectors therefore do not fail
 /// for a null or missing pathname; valid indeterminate `-1` values preserve
-/// `errno`.
+/// `errno`. As in musl's delegated `fpathconf(-1, name)` source closure, this
+/// selected safe translation publishes `EINVAL` for every invalid Rust scalar,
+/// while the pinned C source's negative signed index remains outside the
+/// differential contract.
 #[no_mangle]
 pub extern "C" fn pathconf(_path: *const c_char, name: c_int) -> c_long {
     // SAFETY: this helper only publishes EINVAL for an invalid scalar selector.

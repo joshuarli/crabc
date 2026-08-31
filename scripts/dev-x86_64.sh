@@ -127,6 +127,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   getdtablesize-header-abi  compile the staged x86 C/C++ GNU/BSD getdtablesize declaration
   confstr-header-abi  verify x86 C/C++ unconditional confstr declaration and linkage
   fpathconf-header-abi  verify x86 C/C++ unconditional fpathconf declaration and linkage
+  pathconf-header-abi  verify x86 C/C++ unconditional pathconf declaration and linkage
   system-header-abi  compile the staged x86 C/C++ system header layouts
   syscall-header-abi  compare the staged x86 syscall macro surface with musl
   signal-header-abi  compile the staged x86 GNU/POSIX signal-header layouts
@@ -323,6 +324,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-getdtablesize  run the static x86 crabc-libc getdtablesize slice
   libc-confstr  run the static x86 crabc-libc confstr slice
   libc-fpathconf  run the static x86 crabc-libc fpathconf slice
+  libc-pathconf  run the static x86 crabc-libc pathconf slice
   libc-mapping-core  run the static x86 crabc-libc caller-owned mapping-core slice
   libc-memory-sync  run the static x86 crabc-libc no-cancellation msync slice
   libc-memory-locking  run the static x86 crabc-libc per-range memory-locking slice
@@ -2329,6 +2331,10 @@ run_libc_fpathconf() {
     run_in_container bash /workspace/compat/x86_64/run_libc_fpathconf.sh
 }
 
+run_libc_pathconf() {
+    run_in_container bash /workspace/compat/x86_64/run_libc_pathconf.sh
+}
+
 run_libc_mapping_core() {
     run_in_container bash /workspace/compat/x86_64/run_libc_mapping_core.sh
 }
@@ -2579,6 +2585,10 @@ run_confstr_header_abi() {
 
 run_fpathconf_header_abi() {
     run_in_container bash /workspace/compat/x86_64/run_fpathconf_header_abi.sh
+}
+
+run_pathconf_header_abi() {
+    run_in_container bash /workspace/compat/x86_64/run_pathconf_header_abi.sh
 }
 
 run_system_header_abi() {
@@ -3786,7 +3796,7 @@ shift
 case "$command" in
     timerfd-header-abi|signalfd-header-abi) ;;
     libc-timerfd|libc-signalfd|libc-sigpause|libc-sigisemptyset|libc-sigandset-sigorset|libc-sigpending|libc-sigrtmax|libc-sigrtmin|libc-sigaddset-sigdelset-sigfillset) ;;
-    ctermid-header-abi|gethostid-header-abi|getpagesize-header-abi|getdtablesize-header-abi|confstr-header-abi|fpathconf-header-abi|isatty-header-abi|tcgetpgrp-header-abi|tcsetpgrp-header-abi|getpass-header-abi|libc-ctermid|libc-gethostid|libc-getpagesize|libc-getdtablesize|libc-confstr|libc-fpathconf|libc-isatty|libc-tcgetpgrp|libc-tcsetpgrp|libc-getpass|mkfifo-header-abi|mkfifoat-header-abi|libc-mkfifo|libc-mkfifoat|mktemp-header-abi|libc-mktemp) ;;
+    ctermid-header-abi|gethostid-header-abi|getpagesize-header-abi|getdtablesize-header-abi|confstr-header-abi|fpathconf-header-abi|pathconf-header-abi|isatty-header-abi|tcgetpgrp-header-abi|tcsetpgrp-header-abi|getpass-header-abi|libc-ctermid|libc-gethostid|libc-getpagesize|libc-getdtablesize|libc-confstr|libc-fpathconf|libc-pathconf|libc-isatty|libc-tcgetpgrp|libc-tcsetpgrp|libc-getpass|mkfifo-header-abi|mkfifoat-header-abi|libc-mkfifo|libc-mkfifoat|mktemp-header-abi|libc-mktemp) ;;
     stdio-permanent-line-io-header-abi|stdio-octal-hex-scan-header-abi) ;;
     math-complex-complete-header-abi|libc-math-complex-complete) ;;
     stdio-permanent-byte-io-header-abi) ;;
@@ -4313,6 +4323,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "fpathconf-header-abi takes no arguments"
         ensure_image
         run_fpathconf_header_abi
+        ;;
+    pathconf-header-abi)
+        [ "$#" -eq 0 ] || fail "pathconf-header-abi takes no arguments"
+        ensure_image
+        run_pathconf_header_abi
         ;;
     system-header-abi)
         [ "$#" -eq 0 ] || fail "system-header-abi takes no arguments"
@@ -5513,6 +5528,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "libc-fpathconf takes no arguments"
         ensure_image
         run_libc_fpathconf
+        ;;
+    libc-pathconf)
+        [ "$#" -eq 0 ] || fail "libc-pathconf takes no arguments"
+        ensure_image
+        run_libc_pathconf
         ;;
     libc-mapping-core)
         [ "$#" -eq 0 ] || fail "libc-mapping-core takes no arguments"

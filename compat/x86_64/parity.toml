@@ -3439,6 +3439,54 @@ oracle = [
 ]
 
 [[family.verified_artifact]]
+id = "static-c-pathconf"
+description = "Private native x86 selected-static-archive `pathconf` C ABI artifact derived from the existing `system_configuration.rs` source owner inside still-planned `libc.posix-runtime`. Pinned musl 1.2.6 `src/conf/pathconf.c` is a one-call wrapper that delegates to `src/conf/fpathconf.c` with `fpathconf(-1, name)`: that closure owns the 21-entry fixed selector table for names 0 through 20, so valid selectors deliberately ignore the pathname, preserve stale errno, and include selected indeterminate `-1` values. Its defined nonnegative out-of-range path returns `-1` with EINVAL. The delegated pinned C source directly indexes a negative signed selector without a source-defined result, so negative selectors are explicitly outside this musl differential artifact rather than being promoted as compatibility behavior. The dedicated true `-nostdlib -static` candidate links the shared source object with `--gc-sections` and retains only `pathconf` plus its required `__errno_location` initial-TLS seam; it rejects sibling fpathconf/sysconf/confstr/getpagesize/getdtablesize and text or allocator helpers. This capability-free evidence does not change or promote the broad `static-c-system-configuration` artifact. It does not select broad system configuration, path or filesystem policy, fpathconf, sysconf, confstr, getpagesize, getdtablesize, negative-selector behavior, stdio, general text/memory helpers, allocator, libc.so, CRT, C runtime, pthread/TLS lifecycle, loader, sysroot, family completion, promotion, or public x86 support."
+source_owners = [
+  "compat/upstreams.toml",
+  "compat/abi/musl-1.2.6/aarch64/libc.a.static.tsv",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/system_configuration.rs",
+  "libc/src/c_abi/x86_64/errno.rs",
+  "include/errno.h",
+  "include/features.h",
+  "include/limits.h",
+  "include/sys/types.h",
+  "include/unistd.h",
+  "compat/x86_64/pathconf_header_abi_probe.c",
+  "compat/x86_64/pathconf_header_abi_probe.cpp",
+  "compat/x86_64/run_pathconf_header_abi.sh",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/libc_pathconf_probe.c",
+  "compat/x86_64/libc_pathconf_start.S",
+  "compat/x86_64/run_libc_pathconf.sh",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "compat/x86_64/aarch64_parity_inventory.py",
+  "compat/x86_64/aarch64_parity_inventory.json",
+  "compat/x86_64/README.md",
+  "STATUS.md",
+  "x86-64.md",
+  "scripts/dev-x86_64.sh",
+  "scripts/check_structure.py",
+]
+x86_abi_prerequisites = [
+  "The System V AMD64 C ABI passes `const char *path` in rdi and `int name` in rsi; `long pathconf(const char *, int)` returns its signed LP64 result in rax. For only the selected valid names 0 through 20, the pathname is deliberately ignored, so both a null pathname and an ordinary pathname produce the same table result and preserve the caller's errno.",
+  "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417 maps `src/conf/pathconf.c` through its direct `fpathconf(-1, name)` call to the existing `pathconf`/`pathconf_value` x86 source. The delegated static short table defines the 21 values for names 0..20 and the `name >= 21` EINVAL path; the pinned AArch64 static ABI inventory fixes `pathconf\tpathconf.lo\tT\tGLOBAL\t0\t8` ownership. Because the delegated pinned C source indexes negative names without a source-defined result, the fixture admits no negative-selector differential claim.",
+  "The co-owned system-configuration archive member is linked only with `-nostdlib -static -Wl,--gc-sections`: the final candidate retains pathconf and __errno_location, has a PT_TLS initial errno datum with direct %fs TPOFF access and no TLSGD/TLSLD/TLSDESC/GOTTPOFF/DTPMOD/DTPOFF model, and rejects fpathconf/sysconf/confstr/getpagesize/getdtablesize together with snprintf, string/memory helpers, allocator, and ambient runtime. Fixture-local arch_prctl setup does not select CRT or TLS lifecycle.",
+]
+x86_header_prerequisites = [
+  "The dedicated pinned-musl/raw-project C11/C++17 `<unistd.h>` matrix proves that `long pathconf(const char *, int)` is unconditional in strict, POSIX.1-2008, X/Open 700, GNU, and BSD profiles, with exact signature and unmangled C++ linkage. The raw project pass uses -nostdinc/-nostdinc++, compiler builtin headers, and traces only project unistd.h, features.h, and sys/types.h roots; it does not select broader unistd headers, filesystem/configuration behavior, archive linkage, or public x86 support.",
+]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-pathconf", scope = "Pinned-musl/project C/C++ unconditional header compilation plus equivalent pinned-musl C execution and one true x86 crabc-libc `-nostdlib -static -Wl,--gc-sections` candidate. The fixture ratchets the exact pinned AArch64 pathconf.lo static-ABI row, existing one-member archive ownership, direct/function-pointer full 0..20 table, ignored null/ordinary pathname, stale errno, and nonnegative out-of-range EINVAL behavior while deliberately excluding the delegated pinned source's unchecked negative selector. It proves the final candidate retains pathconf and __errno_location while rejecting fpathconf/sysconf/confstr/getpagesize/getdtablesize, snprintf/string/memory helpers, allocator, with no interpreter, DT_NEEDED, unresolved symbols, dynamic TLS model, PLT, ambient libc, C runtime, and syscall in pathconf. PT_TLS and direct initial-TLS FS errno access are fixture-closed. It does not select broad system configuration, filesystem/path policy, negative-selector behavior, allocator, CRT, pthread/TLS lifecycle, loader, sysroot, family completion, promotion, or public x86 support." }]
+oracle = [
+  { kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source, installed `<unistd.h>` declaration, and behavior oracle for src/conf/pathconf.c through src/conf/fpathconf.c: the delegated static names-0..20 table, ignored pathname, stale errno on valid values, and nonnegative out-of-range EINVAL path. Negative selectors are intentionally excluded because the delegated source uses an unchecked signed C-array index rather than defining an observable contract." },
+  { kind = "elf-abi", source = "System V AMD64 psABI", role = "rdi/rsi pointer-scalar ABI, rax long result, C++ C linkage, initial-TLS FS access, link-time section collection, and true-static ET_EXEC closure contract." },
+]
+
+[[family.verified_artifact]]
 id = "static-c-mman-mapping-core"
 description = "Private native x86 selected-static-archive caller-owned mapping-core block. One dependency-free `crabc-libc` archive resolves exactly `mmap`, `munmap`, `mprotect`, `madvise`, `posix_madvise`, and `mincore` into a freestanding C fixture after an equivalent pinned-musl execution. The existing project-first C/C++ `sys/mman.h` gate proves their declarations while the artifact proves archive linkage and behavior: musl's non-page-aligned-offset and `PTRDIFF_MAX` `mmap` rejections, anonymous non-fixed `EPERM` to `ENOMEM` fallback, page-rounded unaligned `mprotect`, ordinary GNU advice/errno behavior, POSIX `DONTNEED` no-op and direct-positive-error/no-errno behavior, and page-residency vector/partial-range behavior. Pinned musl calls private `__vm_wait` around MAP_FIXED mapping and unmap; this static artifact retains an explicitly local no-op call site because it owns no loader/allocator VM state, so it does not claim that process-wide synchronization contract. It excludes the separately owned no-cancellation `msync` sibling and all pthread-cancellation semantics, variadic `mremap`, `mlock*`, remap_file_pages, shm/memfd, mapping policy, allocator, libc.so, CRT, dynamic TLS lifecycle, loader, sysroot, or public x86 support. This is only a verified artifact within planned `libc.posix-runtime`, not family, header, C-runtime, or public-platform completion."
 source_owners = [

@@ -1204,6 +1204,8 @@ CONFSTR_SYMBOLS = ("confstr",)
 
 FPATHCONF_SYMBOLS = ("fpathconf",)
 
+PATHCONF_SYMBOLS = ("pathconf",)
+
 MEMORY_SYNC_SYMBOLS = ("msync",)
 
 MEMFD_CREATE_SYMBOLS = ("memfd_create",)
@@ -17811,6 +17813,338 @@ def require_fpathconf_artifact(family: Mapping[str, Any]) -> None:
         "run_libc_fpathconf",
     ):
         require(snippet in dispatcher, f"fpathconf dispatcher omits {snippet}")
+
+
+def require_pathconf_artifact(family: Mapping[str, Any]) -> None:
+    """Keep one pathname-agnostic path-configuration leaf private."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.posix-runtime].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [entry for entry in artifacts if entry.get("id") == "static-c-pathconf"]
+    require(
+        len(matching) == 1,
+        "libc.posix-runtime must contain exactly one static-c-pathconf artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-pathconf must not promote libc.posix-runtime",
+    )
+    artifact = matching[0]
+    require(
+        "capabilities" not in artifact,
+        "static-c-pathconf must not carry capabilities",
+    )
+
+    description = artifact.get("description")
+    require(isinstance(description, str), "static-c-pathconf needs a description")
+    for phrase in (
+        "Private native x86 selected-static-archive `pathconf` C ABI artifact",
+        "existing `system_configuration.rs` source owner",
+        "still-planned `libc.posix-runtime`",
+        "src/conf/pathconf.c",
+        "src/conf/fpathconf.c",
+        "one-call wrapper",
+        "21-entry fixed selector table",
+        "valid selectors deliberately ignore the pathname",
+        "defined nonnegative out-of-range path returns `-1` with EINVAL",
+        "negative signed selector without a source-defined result",
+        "negative selectors are explicitly outside this musl differential artifact",
+        "`--gc-sections`",
+        "only `pathconf` plus its required `__errno_location`",
+        "does not change or promote the broad `static-c-system-configuration` artifact",
+        "broad system configuration",
+        "path or filesystem policy",
+        "negative-selector behavior",
+        "general text/memory helpers",
+        "allocator",
+        "C runtime",
+        "family completion",
+        "promotion",
+        "public x86 support",
+    ):
+        require(phrase in description, f"static-c-pathconf description omits {phrase}")
+
+    owners = set(
+        nonempty_strings(artifact.get("source_owners"), "static-c-pathconf.source_owners")
+    )
+    for owner in (
+        "compat/upstreams.toml",
+        "compat/abi/musl-1.2.6/aarch64/libc.a.static.tsv",
+        "libc/Cargo.toml",
+        "libc/src/lib.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/system_configuration.rs",
+        "libc/src/c_abi/x86_64/errno.rs",
+        "include/errno.h",
+        "include/features.h",
+        "include/limits.h",
+        "include/sys/types.h",
+        "include/unistd.h",
+        "compat/x86_64/pathconf_header_abi_probe.c",
+        "compat/x86_64/pathconf_header_abi_probe.cpp",
+        "compat/x86_64/run_pathconf_header_abi.sh",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/libc_pathconf_probe.c",
+        "compat/x86_64/libc_pathconf_start.S",
+        "compat/x86_64/run_libc_pathconf.sh",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/aarch64_parity_inventory.py",
+        "compat/x86_64/aarch64_parity_inventory.json",
+        "compat/x86_64/README.md",
+        "STATUS.md",
+        "x86-64.md",
+        "scripts/dev-x86_64.sh",
+        "scripts/check_structure.py",
+    ):
+        require(owner in owners, f"static-c-pathconf source owners omit {owner}")
+
+    prerequisites = nonempty_strings(
+        artifact.get("x86_abi_prerequisites"), "static-c-pathconf.x86_abi_prerequisites"
+    )
+    require(
+        any(
+            "System V AMD64" in item
+            and "const char *path" in item
+            and "rdi" in item
+            and "int name" in item
+            and "rsi" in item
+            and "rax" in item
+            and "pathname is deliberately ignored" in item
+            for item in prerequisites
+        ),
+        "static-c-pathconf must retain its C ABI and pathname boundary",
+    )
+    require(
+        any(
+            "9fa28ece75d8a2191de7c5bb53bed224c5947417" in item
+            and "src/conf/pathconf.c" in item
+            and "fpathconf(-1, name)" in item
+            and "0..20" in item
+            and "pathconf\tpathconf.lo\tT\tGLOBAL\t0\t8" in item
+            and "negative names without a source-defined result" in item
+            for item in prerequisites
+        ),
+        "static-c-pathconf must retain pinned-musl source and selector provenance",
+    )
+    require(
+        any(
+            "system-configuration archive member" in item
+            and "--gc-sections" in item
+            and "pathconf and __errno_location" in item
+            and "PT_TLS" in item
+            and "%fs TPOFF" in item
+            and "fpathconf/sysconf/confstr/getpagesize/getdtablesize" in item
+            and "snprintf, string/memory helpers, allocator" in item
+            and "Fixture-local arch_prctl" in item
+            for item in prerequisites
+        ),
+        "static-c-pathconf must retain its final-link isolation boundary",
+    )
+
+    headers = nonempty_strings(
+        artifact.get("x86_header_prerequisites"), "static-c-pathconf.x86_header_prerequisites"
+    )
+    require(
+        any(
+            "long pathconf(const char *, int)" in item
+            and "unconditional" in item
+            and "strict, POSIX.1-2008, X/Open 700, GNU, and BSD" in item
+            and "unmangled C++ linkage" in item
+            and "-nostdinc/-nostdinc++" in item
+            and "unistd.h, features.h, and sys/types.h" in item
+            for item in headers
+        ),
+        "static-c-pathconf must retain its focused C/C++ header ABI",
+    )
+
+    exports = set(
+        static_c_abi_export_names(
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        )
+    )
+    require(
+        set(PATHCONF_SYMBOLS) <= exports,
+        "static-c-pathconf must retain its selected export",
+    )
+    require(
+        {symbol for symbol in exports if symbol.startswith("pathconf")}
+        == set(PATHCONF_SYMBOLS),
+        "static-c-pathconf must expose only pathconf",
+    )
+
+    static_root = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+    ).read_text(encoding="utf-8")
+    require(
+        '#[path = "system_configuration.rs"]\nmod system_configuration;' in static_root,
+        "x86 static C ABI must retain the existing system-configuration source owner",
+    )
+    source = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "system_configuration.rs"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "src/conf/pathconf.c",
+        "fpathconf(-1, name)",
+        "unchecked negative C-array index remains outside differential admission",
+        "fn pathconf_value",
+        "unsafe fn selected_pathconf",
+        'pub extern "C" fn pathconf',
+        "for a null or missing pathname",
+    ):
+        require(snippet in source, f"existing pathconf source omits {snippet}")
+    pathconf_body = source[
+        source.index("/// Return a selected path configuration value for a pathname.") : source.index(
+            "/// Return Linux/x86-64's fixed base page size."
+        )
+    ]
+    for forbidden in ("raw_syscall", 'pub extern "C" fn fpathconf', "getauxval", "alloc::"):
+        require(
+            forbidden not in pathconf_body,
+            f"pathconf source body must not select {forbidden}",
+        )
+
+    runner = (ROOT / "compat" / "x86_64" / "run_libc_pathconf.sh").read_text(
+        encoding="utf-8"
+    )
+    for snippet in (
+        "run_musl_oracle.sh",
+        "run_pathconf_header_abi.sh",
+        "pathconf.lo",
+        "archive_member_for_symbol",
+        "--gc-sections",
+        "-nostdlib -static",
+        "--no-undefined",
+        "candidate retained neighboring system-configuration or resource C ABI symbols",
+        "candidate retained an unselected text or allocator dependency",
+        "candidate lacks the required initial-TLS errno segment",
+        "candidate pathconf calls outside its explicit errno seam",
+        "candidate errno accessor does not use direct initial-TLS FS access",
+    ):
+        require(snippet in runner, f"pathconf runner omits {snippet}")
+    require("--whole-archive" not in runner, "pathconf runner must not force-link the archive")
+
+    probe = (ROOT / "compat" / "x86_64" / "libc_pathconf_probe.c").read_text(
+        encoding="utf-8"
+    )
+    for snippet in (
+        "pathconf_signature",
+        "ignored_path",
+        "expected_values",
+        "check_direct_values",
+        "check_indirect_values",
+        "check_nonnegative_invalid",
+        "source-defined result",
+        "_PC_2_SYMLINKS",
+        "E2BIG",
+        "EINVAL",
+        "CRABC_PATHCONF_FREESTANDING",
+    ):
+        require(snippet in probe, f"pathconf probe omits {snippet}")
+    start = (ROOT / "compat" / "x86_64" / "libc_pathconf_start.S").read_text(
+        encoding="utf-8"
+    )
+    for snippet in (
+        "crabc_x86_64_pathconf_probe",
+        "crabc_x86_64_pathconf_thread_pointer",
+        "mov %rsi, %fs:0",
+        "mov $60, %eax",
+    ):
+        require(snippet in start, f"pathconf start shim omits {snippet}")
+
+    header_c = (
+        ROOT / "compat" / "x86_64" / "pathconf_header_abi_probe.c"
+    ).read_text(encoding="utf-8")
+    header_cxx = (
+        ROOT / "compat" / "x86_64" / "pathconf_header_abi_probe.cpp"
+    ).read_text(encoding="utf-8")
+    for snippet in ("pathconf_signature", "pathconf", "const char", "long"):
+        require(snippet in header_c, f"pathconf C header probe omits {snippet}")
+        require(snippet in header_cxx, f"pathconf C++ header probe omits {snippet}")
+    header_runner = (
+        ROOT / "compat" / "x86_64" / "run_pathconf_header_abi.sh"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "pathconf_header_abi_probe.c",
+        "pathconf_header_abi_probe.cpp",
+        "-nostdinc",
+        "-nostdinc++",
+        "compile_profile strict",
+        "compile_profile posix",
+        "compile_profile xopen",
+        "compile_profile gnu",
+        "compile_profile bsd",
+        "retained a mangled pathconf reference",
+        "escaped its declared roots",
+    ):
+        require(snippet in header_runner, f"pathconf header runner omits {snippet}")
+
+    evidence = artifact.get("native_evidence")
+    require(isinstance(evidence, list), "static-c-pathconf needs evidence")
+    require(
+        {entry.get("command") for entry in evidence if isinstance(entry, Mapping)}
+        == {"./scripts/dev-x86_64.sh libc-pathconf"},
+        "static-c-pathconf must use the closed libc-pathconf command",
+    )
+    scope = evidence[0].get("scope")
+    require(
+        isinstance(scope, str)
+        and all(
+            phrase in scope
+            for phrase in (
+                "Pinned-musl/project C/C++ unconditional header",
+                "`-nostdlib -static -Wl,--gc-sections` candidate",
+                "pathconf.lo",
+                "direct/function-pointer full 0..20 table, ignored null/ordinary pathname, stale errno",
+                "unchecked negative selector",
+                "retains pathconf and __errno_location",
+                "rejecting fpathconf/sysconf/confstr/getpagesize/getdtablesize",
+                "snprintf/string/memory helpers, allocator",
+                "no interpreter, DT_NEEDED, unresolved symbols",
+                "PT_TLS and direct initial-TLS FS errno access",
+                "syscall in pathconf",
+                "C runtime",
+                "public x86 support",
+            )
+        ),
+        "static-c-pathconf evidence must retain its isolated static contract",
+    )
+    oracle = artifact.get("oracle")
+    require(isinstance(oracle, list), "static-c-pathconf needs an oracle")
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "c-posix"
+            and "src/conf/pathconf.c" in str(entry.get("role"))
+            and "src/conf/fpathconf.c" in str(entry.get("role"))
+            and "ignored pathname" in str(entry.get("role"))
+            and "Negative selectors are intentionally excluded" in str(entry.get("role"))
+            for entry in oracle
+        ),
+        "static-c-pathconf must retain its musl behavior oracle",
+    )
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "elf-abi"
+            and "rdi/rsi" in str(entry.get("role"))
+            and "rax long" in str(entry.get("role"))
+            for entry in oracle
+        ),
+        "static-c-pathconf must retain its SysV ABI oracle",
+    )
+
+    dispatcher = (ROOT / "scripts" / "dev-x86_64.sh").read_text(encoding="utf-8")
+    for snippet in (
+        "pathconf-header-abi)",
+        "run_pathconf_header_abi",
+        "libc-pathconf)",
+        "run_libc_pathconf",
+    ):
+        require(snippet in dispatcher, f"pathconf dispatcher omits {snippet}")
 
 
 def require_system_information_artifact(family: Mapping[str, Any]) -> None:
@@ -41375,6 +41709,7 @@ def validate_ledger(
     require_getdtablesize_artifact(by_id["libc.posix-runtime"])
     require_confstr_artifact(by_id["libc.posix-runtime"])
     require_fpathconf_artifact(by_id["libc.posix-runtime"])
+    require_pathconf_artifact(by_id["libc.posix-runtime"])
     require_system_information_artifact(by_id["libc.posix-runtime"])
     require_mapping_core_artifact(by_id["libc.posix-runtime"])
     require_memory_sync_artifact(by_id["libc.posix-runtime"])

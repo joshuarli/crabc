@@ -14768,6 +14768,81 @@ class X86ParityLedgerTests(unittest.TestCase):
         ):
             ledger.validate_ledger(data)
 
+    def test_pathconf_artifact_keeps_its_delegated_table_contract(self) -> None:
+        data = self.data()
+        family = self.family(data, "libc.posix-runtime")
+        self.assertEqual(family["status"], "planned")
+        artifacts = family["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-pathconf"
+        )
+        self.assertNotIn("capabilities", artifact)
+        for phrase in (
+            "src/conf/pathconf.c",
+            "src/conf/fpathconf.c",
+            "one-call wrapper",
+            "21-entry fixed selector table",
+            "valid selectors deliberately ignore the pathname",
+            "negative selectors are explicitly outside this musl differential artifact",
+            "only `pathconf` plus its required `__errno_location`",
+            "does not change or promote the broad",
+            "negative-selector behavior",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, artifact["description"])
+        self.assertEqual(
+            {entry["command"] for entry in artifact["native_evidence"]},
+            {"./scripts/dev-x86_64.sh libc-pathconf"},
+        )
+        self.assertIn("src/conf/pathconf.c", artifact["oracle"][0]["role"])
+        self.assertIn("src/conf/fpathconf.c", artifact["oracle"][0]["role"])
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-pathconf"
+        )
+        artifact["description"] = artifact["description"].replace(
+            "negative selectors are explicitly outside this musl differential artifact",
+            "negative selectors have complete musl parity",
+        )
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "negative selectors are explicitly outside"
+        ):
+            ledger.validate_ledger(data)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-pathconf"
+        )
+        artifact["capabilities"] = ["filesystem.configuration"]
+        with self.assertRaisesRegex(ledger.LedgerError, "must not carry capabilities"):
+            ledger.validate_ledger(data)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-pathconf"
+        )
+        evidence = artifact["native_evidence"]
+        assert isinstance(evidence, list) and isinstance(evidence[0], dict)
+        evidence[0]["command"] = "./scripts/dev-x86_64.sh libc-system-configuration"
+        with self.assertRaisesRegex(ledger.LedgerError, "closed libc-pathconf command"):
+            ledger.validate_ledger(data)
+
     def test_mapping_core_artifact_keeps_its_closed_static_contract(self) -> None:
         data = self.data()
         artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
