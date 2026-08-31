@@ -88,7 +88,6 @@
       "features": {
         "native-runtime-test-audit": false,
         "native-runtime-test-fault": false,
-        "native-runtime-test-published-source": false,
         "test-adapter": false
       },
       "key_values": {

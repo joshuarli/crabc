@@ -1846,7 +1846,6 @@ def validate_native_owner_exit_lifecycle_contract(
         "features": [
             "native-runtime-test-audit",
             "native-runtime-test-fault",
-            "native-runtime-test-published-source",
         ],
         "package": "crabc-mimalloc",
         "test_threads": 1,

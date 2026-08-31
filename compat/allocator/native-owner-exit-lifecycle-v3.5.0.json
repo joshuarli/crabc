@@ -155,8 +155,7 @@
   "execution": {
     "features": [
       "native-runtime-test-audit",
-      "native-runtime-test-fault",
-      "native-runtime-test-published-source"
+      "native-runtime-test-fault"
     ],
     "package": "crabc-mimalloc",
     "test_threads": 1,
