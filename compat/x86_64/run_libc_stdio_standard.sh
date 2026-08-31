@@ -144,7 +144,7 @@ for symbol in stdin stdout stderr; do
 done
 grep -Eq 'GLOBAL +HIDDEN +.*__crabc_x86_static_tls_bootstrap$' "$archive_elf_symbols" ||
     fail "archive Static Initial TLS v1 bootstrap is not hidden"
-for unselected in fdopen freopen setbuf setbuffer setlinebuf fgets gets fputs puts \
+for unselected in fdopen freopen setbuf setbuffer setlinebuf gets \
     printf fprintf vprintf vfprintf scanf fscanf vscanf vfscanf \
     flockfile ftrylockfile funlockfile \
     getc_unlocked getchar_unlocked putc_unlocked putchar_unlocked fmemopen \

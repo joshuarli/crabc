@@ -5,18 +5,20 @@
 //! fixed pathname/tmpfile stream slot. The permanent streams expose their selected
 //! byte/block operations: `fgetc`/`getc`/`getchar`, `ungetc`, `fread`,
 //! `fputc`/`putc`/`putchar`, `fwrite`, `fflush`, `feof`, `ferror`,
-//! `clearerr`, and `fileno`. The only valid non-null `FILE *` arguments for
-//! that permanent-standard-stream block are those three exported pointers.
+//! `clearerr`, and `fileno`. A separate permanent-only line-I/O leaf adds
+//! `fgets`, `fputs`, and `puts`; it deliberately does not admit the fixed
+//! pathname/tmpfile slot. The only valid non-null `FILE *` arguments for that
+//! permanent-standard-stream block are those three exported pointers.
 //! The sibling pathname/tmpfile block admits only one active `fopen("r")`,
-//! `fopen("w+")`, or `tmpfile` stream at a time, its exact `fclose`, pre-I/O caller-buffered
-//! `_IOFBF` configuration, and its selected `fseek`/`fseeko`/`ftell`/`ftello`/
-//! `rewind`/`fgetpos`/`fsetpos` routes. It is a deliberately lock-free,
-//! externally-serialized state machine: it does not select concurrent stream
-//! access, `flockfile`, unlocked entry points, `fdopen`, `freopen`, append
-//! modes, dynamic stream allocation, a general stream registry,
-//! formatters/scanners, line or unbuffered configuration, wide streams,
-//! callbacks, memory/tmp/popen streams other than this single private tmpfile
-//! lifecycle, or an open-file registry.
+//! `fopen("w+")`, or `tmpfile` stream at a time, its exact `fclose`, pre-I/O
+//! caller-buffered `_IOFBF` configuration, and its selected
+//! `fseek`/`fseeko`/`ftell`/`ftello`/`rewind`/`fgetpos`/`fsetpos` routes. It is
+//! a deliberately lock-free, externally-serialized state machine: it does
+//! not select concurrent stream access, `flockfile`, unlocked entry points,
+//! `fdopen`, `freopen`, append modes, dynamic stream allocation, a general
+//! stream registry, formatters/scanners, line or unbuffered configuration,
+//! wide streams, callbacks, memory/tmp/popen streams other than this single
+//! private tmpfile lifecycle, or an open-file registry.
 //!
 //! ## Fixed source and license provenance
 //!
@@ -34,6 +36,7 @@
 //! | `src/stdio/{__stdio_read,__uflow,__toread}.c` | read lookahead/refill, EOF/error, and byte/block input state |
 //! | `src/stdio/{__stdio_write,__overflow,__towrite}.c` | buffered/direct output and musl-shaped error/discard state |
 //! | `src/stdio/{fread,fwrite,fgetc,getc,getchar,fputc,putc,putchar,ungetc}.c` | selected public byte/block entries |
+//! | `src/stdio/{fgets,fputs,puts}.c` | selected permanent-standard-stream line I/O |
 //! | `src/stdio/{fflush,feof,ferror,clearerr,fileno}.c` | selected flush, status, and descriptor entries |
 //! | `src/stdio/{fopen,fclose,setvbuf,fseek,ftell,fgetpos,fsetpos,rewind}.c` | one fixed pathname-stream lifecycle, caller-buffered full buffering, and logical-position routes |
 //! | `src/stdio/tmpfile.c`, `src/temp/__randname.c` | one exclusive pathname created below `/tmp` with requested mode `0600`, immediately unlinked, and adopted as a `w+` fixed stream; Linux `getrandom` plus hex encoding replaces musl's noncryptographic name generator without adding a PRNG |
@@ -54,8 +57,9 @@
 //! fails closed if immediate unlinking fails rather than returning a named
 //! object. Those are implementation-strengthening differences from musl's
 //! `__randname` loop, not an expansion of the public stream contract. `stdout`
-//! is exercised only through explicit `fflush`; terminal-sensitive automatic
-//! newline flushing is not selected. The existing static `exit` lifecycle
+//! remains buffered until explicit `fflush` except for the separately selected
+//! `puts` newline-publication transition; terminal-sensitive automatic newline
+//! flushing is not selected. The existing static `exit` lifecycle
 //! deliberately does not call this module, so ordinary-exit flushing is also
 //! outside this artifact and must be added as a separately evidenced lifecycle
 //! transition after the relevant `atexit` ordering is specified.
@@ -68,7 +72,7 @@
 compile_error!("the x86 standard-stream core requires little-endian Linux/x86-64");
 
 use core::{
-    ffi::{c_int, c_void},
+    ffi::{c_char, c_int, c_void},
     ptr,
 };
 
@@ -1008,6 +1012,152 @@ pub unsafe extern "C" fn fwrite(
         written += 1;
     }
     written / size
+}
+
+/// Read one newline-bounded byte string from one permanent standard stream.
+///
+/// This deliberately accepts only `stdin`, `stdout`, or `stderr`; it does not
+/// extend the separately selected fixed pathname/tmpfile stream slot. The
+/// bounded leaf follows musl's `fgets` empty-input and `count == 1`
+/// contract: a positive one-byte destination is NUL-terminated without
+/// consuming input, while EOF before any copied byte returns null.
+///
+/// # Safety
+///
+/// `destination` must be non-null, `count` must be nonnegative, and a
+/// positive `count` requires at least that many writable `char` bytes.
+/// `stream` must be one of the three exported permanent stream pointers, and
+/// callers must externally serialize its access.
+#[no_mangle]
+pub unsafe extern "C" fn fgets(
+    destination: *mut c_char,
+    count: c_int,
+    stream: *mut StandardStream,
+) -> *mut c_char {
+    // SAFETY: first use initializes only permanent private records.
+    unsafe { ensure_standard_streams() };
+    if !is_permanent_stream(stream) {
+        // SAFETY: this boundary does not dereference an arbitrary FILE pointer.
+        unsafe { reject_stream() };
+        return ptr::null_mut();
+    }
+    if destination.is_null() {
+        // C requires writable caller storage. Keep the private diagnostic
+        // deterministic instead of dereferencing a null destination.
+        unsafe { errno::set_errno(EINVAL) };
+        return ptr::null_mut();
+    }
+    // Pinned musl returns the destination for its one-byte boundary after
+    // writing only the terminator; no input transition occurs here.
+    if count <= 1 {
+        if count != 0 {
+            // SAFETY: the caller promised one writable byte for positive count.
+            unsafe { destination.write(0) };
+        }
+        return destination;
+    }
+
+    let mut cursor = destination;
+    let mut remaining = count;
+    while remaining > 1 {
+        // SAFETY: the permanent-only predicate above proves this is one
+        // selected stream; read_byte owns its buffered input transition.
+        let character = unsafe { read_byte(stream) };
+        if character == EOF {
+            break;
+        }
+        // SAFETY: `remaining > 1` reserves this byte and the final terminator
+        // inside the caller-promised destination range.
+        unsafe { cursor.write(character as u8 as c_char) };
+        // SAFETY: the prior write stayed inside the caller-promised range.
+        cursor = unsafe { cursor.add(1) };
+        remaining -= 1;
+        if character == c_int::from(b'\n') {
+            break;
+        }
+    }
+    if cursor == destination {
+        return ptr::null_mut();
+    }
+    // SAFETY: at least one byte was copied while `remaining > 1`, leaving the
+    // terminating slot inside the caller-promised range.
+    unsafe { cursor.write(0) };
+    destination
+}
+
+/// Write one NUL-terminated byte string to one permanent standard stream.
+///
+/// This deliberately accepts only `stdin`, `stdout`, or `stderr`; in
+/// particular, it does not make line output available through the one active
+/// pathname/tmpfile slot. Output remains subject to the existing
+/// permanent stdout/stderr buffering contract. In particular, a newline in
+/// this bulk string entry does not itself widen the selected byte/block output
+/// behavior into a general line-buffering contract.
+///
+/// # Safety
+///
+/// `source` must point to a readable NUL-terminated C string. `stream` must
+/// be one of the three exported permanent stream pointers, and callers must
+/// externally serialize its access.
+#[no_mangle]
+pub unsafe extern "C" fn fputs(
+    source: *const c_char,
+    stream: *mut StandardStream,
+) -> c_int {
+    // SAFETY: first use initializes only permanent private records.
+    unsafe { ensure_standard_streams() };
+    if !is_permanent_stream(stream) {
+        // SAFETY: this boundary does not dereference an arbitrary FILE pointer.
+        unsafe { reject_stream() };
+        return EOF;
+    }
+    if source.is_null() {
+        // C requires a readable NUL-terminated source. Keep this candidate
+        // boundary fail-closed instead of dereferencing a null pointer.
+        unsafe { errno::set_errno(EINVAL) };
+        return EOF;
+    }
+
+    let mut cursor = source;
+    loop {
+        // SAFETY: the C contract promises a readable NUL-terminated source.
+        let byte = unsafe { cursor.read() as u8 };
+        if byte == 0 {
+            return 0;
+        }
+        // SAFETY: permanent-only admission above proves the selected stream;
+        // write_byte preserves its buffer/error transition.
+        if unsafe { write_byte(stream, byte) } == EOF {
+            return EOF;
+        }
+        // SAFETY: the non-NUL byte proves the next byte belongs to the
+        // caller-promised C string.
+        cursor = unsafe { cursor.add(1) };
+    }
+}
+
+/// Write one NUL-terminated byte string and one newline to permanent stdout.
+///
+/// # Safety
+///
+/// `source` must point to a readable NUL-terminated C string. Callers must
+/// externally serialize access to the permanent stdout stream.
+#[no_mangle]
+pub unsafe extern "C" fn puts(source: *const c_char) -> c_int {
+    // SAFETY: fputs keeps this call inside the permanent stdout boundary.
+    if unsafe { fputs(source, ptr::addr_of_mut!(STDOUT_STREAM)) } == EOF {
+        return EOF;
+    }
+    // SAFETY: stdout is one process-lifetime permanent record owned here.
+    if unsafe { write_byte(ptr::addr_of_mut!(STDOUT_STREAM), b'\n') } == EOF {
+        EOF
+    // SAFETY: musl's permanent stdout newline transition publishes the
+    // selected line through its existing static output buffer.
+    } else if unsafe { flush_output(ptr::addr_of_mut!(STDOUT_STREAM)) } == EOF {
+        EOF
+    } else {
+        0
+    }
 }
 
 /// Return the selected EOF-state marker for one selected stream.

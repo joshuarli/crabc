@@ -6973,6 +6973,51 @@ native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc
 oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source oracle for the GNU/musl extension in src/stdio/vfprintf.c: state-table bare-m NOARG behavior, strerror(errno) message choice, ZERO_PAD clearing, and string formatting path; src/errno/__strerror.h and strerror.c provide the fixed C-locale message table." }, { kind = "elf-abi", source = "System V AMD64 psABI", role = "LP64 C variadic register-save/overflow-area behavior for star width/precision and following integer arguments, plus direct initial-exec errno TLS used by the freestanding candidate." }]
 
 [[family.verified_artifact]]
+id = "static-c-stdio-permanent-line-io"
+description = "Private native x86 permanent-standard-stream line-I/O artifact inside still-planned `libc.text-math-locale-stdio`. The strong `fgets`, `fputs`, and `puts` entries accept only the process-lifetime `stdin`/`stdout`/`stderr` objects; they deliberately reject the separately selected fixed pathname/tmpfile slot before dereferencing it. The pinned-musl project-header differential proves `fgets` newline inclusion, NUL termination, its positive one-byte no-consume boundary, and null return at EOF before a copied byte. It also proves `fputs` writes no terminating NUL, keeps both an unterminated and newline-containing stdout string buffered until explicit `fflush`, while `puts` appends its newline and publishes the pending permanent stdout line; direct stderr `fputs` remains immediate. The dedicated C11/C++17 header gate proves the exact unconditional signatures and unmangled C++ spellings. This is one externally serialized, allocation-free permanent-stream leaf only: it does not select `stdio.stream-io`, pathname streams, descriptor adoption/reopen, `tmpfile`, LP64/LFS aliases, positions, buffer configuration, locks or unlocked entries, multiple live streams, allocation/registry, `getdelim`/`getline`, `gets`/`getw`/`putw`, formatted or wide I/O, memory/cookie/`fopencookie`/`popen` streams, ordinary-exit flushing, general stdio, libc.so, CRT lifecycle, loader, sysroot, capability or family completion, promotion, or public x86 support."
+source_owners = [
+  "compat/upstreams.toml",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/stdio_standard.rs",
+  "libc/src/c_abi/x86_64/errno.rs",
+  "libc/src/c_abi/x86_64/static_tls.rs",
+  "libc/src/c_abi/x86_64/syscall.rs",
+  "include/bits/alltypes.h",
+  "include/bits/fcntl.h",
+  "include/errno.h",
+  "include/fcntl.h",
+  "include/features.h",
+  "include/stdio.h",
+  "include/unistd.h",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/stdio_permanent_line_io_header_abi_probe.c",
+  "compat/x86_64/stdio_permanent_line_io_header_abi_probe.cpp",
+  "compat/x86_64/run_stdio_permanent_line_io_header_abi.sh",
+  "compat/x86_64/libc_stdio_permanent_line_io_probe.c",
+  "compat/x86_64/libc_stdio_permanent_line_io_start.S",
+  "compat/x86_64/run_libc_stdio_permanent_line_io.sh",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "compat/x86_64/README.md",
+  "x86-64.md",
+  "scripts/dev-x86_64.sh",
+]
+x86_abi_prerequisites = [
+  "System V AMD64 passes each selected `char *`, `const char *`, and opaque `FILE *` argument in a general-purpose pointer register and returns `char *` or `int` in rax/eax. Public FILE remains opaque; the target-private permanent records are not caller-constructible layouts.",
+  "Pinned musl 1.2.6 src/stdio/{fgets,fputs,puts}.c maps exactly the selected input/output contracts over the existing permanent stdio state: newline inclusion and terminator placement, the positive one-byte fgets no-consume boundary, EOF-before-byte null return, NUL suppression by fputs, and puts' appended newline/output result. Its general stream list, locks, cancellation, allocation, orientation, and ordinary-exit owner remain unselected.",
+  "Linux 5.10 x86-64 raw read=0 and write=1 remain the only line-I/O data paths inside the candidate. The pipe/dup2/fcntl fixture transport observes the three permanent descriptors without adding a stream allocator, and delegates its untouched entry stack to the existing Variant-II initial-exec errno TLS bootstrap.",
+]
+x86_header_prerequisites = [
+  "The dedicated project-first/pinned-musl strict C11/C++17 matrix checks only the unconditional fgets/fputs/puts declarations and their exact char/FILE pointer signatures. C++ used references retain unmangled C spellings; this compile-only gate selects no archive linkage or runtime behavior.",
+  "The runtime fixture preprocesses project stdio.h, errno.h, fcntl.h, unistd.h, features.h, bits/alltypes.h, and bits/fcntl.h before both the pinned-musl reference and the static candidate. It does not treat declarations for pathname, LFS, unlocked, memory/cookie/popen, or general stream APIs as linkable evidence.",
+]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-stdio-permanent-line-io", scope = "Pinned-musl project-header C reference plus one dependency-free x86 crabc-libc archive and a true `-nostdlib -static` candidate. The gate first requires the strict C11/C++17 permanent-line-I/O declaration/linkage proof, ratchets the complete selected static C export contract, requires strong fgets/fputs/puts in pinned musl and candidate archives, rejects unresolved symbols/interpreter/DT_NEEDED/dynamic TLS/allocator or ambient runtime, and verifies direct initial-exec errno TLS plus the existing Static Initial TLS v1 bootstrap. Function-pointer calls through pipe-redirection prove fgets newline/NUL/one-byte/EOF behavior, buffered permanent stdout fputs including a newline-containing string, puts' newline publication, explicit fflush suffix visibility, and immediate stderr fputs. It rejects unlocked/getdelim/getline/legacy-word, memory/cookie/popen, pathname, descriptor-reopen, tmpfile, LFS, position/buffering/lock, multiple-stream, formatted/wide, ordinary-exit, general stdio, capability or family completion, promotion, and public x86 support." }]
+oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source and C/POSIX behavior oracle for src/stdio/fgets.c, fputs.c, and puts.c over the existing permanent standard streams, including newline/terminator/EOF and output-result behavior." }, { kind = "kernel-abi", source = "Linux 5.10 x86-64 ABI", role = "read=0 and write=1 permanent-stream data paths plus pipe/dup2/fcntl descriptor transport used only to observe the fixed standard descriptors." }, { kind = "elf-abi", source = "System V AMD64 psABI and pinned musl x86 headers", role = "LP64 char-pointer/FILE-pointer and int-return calling ABI, exact C/C++ declaration linkage, and Variant-II initial-exec errno TLS contract." }]
+
+[[family.verified_artifact]]
 id = "static-c-stdio-path-stream"
 description = "Private native x86 fixed pathname-stream and logical-position artifact inside still-planned `libc.text-math-locale-stdio`. One dependency-free static `crabc-libc` archive owns exactly one externally serialized active path `FILE` slot: `fopen` accepts only regular-file `\"r\"` and `\"w+\"` modes, then selected `fread`/`fwrite`/`fgetc`/`fputc`/`fflush`/`fileno` plus `fclose`, pre-I/O caller-buffered `_IOFBF` `setvbuf`, `fseek`/`fseeko`, `ftell`/`ftello`, `rewind`, and opaque 16-byte `fgetpos`/`fsetpos` preserve its bounded state. The slot has one static `BUFSIZ=1024` backing object with musl-shaped eight-byte pushback headroom; caller-buffered mode owns no pushback route. The project-header fixture first runs through pinned musl then a real `-nostdlib -static` candidate, proving write buffering and logical output position, all-owned-output `fflush(NULL)`, failed positioning preserves the I/O-error indicator, read-ahead-adjusted `SEEK_CUR`, fpos save/restore with opaque tail bytes preserved, EOF/rewind, close, and one-slot reuse; candidate-only checks ratchet the one-slot, mode, and buffer-reconfiguration limits. It excludes `fdopen`, `freopen`, append/exclusive/close-on-exec/general mode parsing, more than one active path stream, stream allocation or a general registry, input `fflush`, `_IONBF`/`_IOLBF`/post-I/O buffer reconfiguration, line/formatted/wide/cookie/memory/popen streams, general stdio, libc.so, CRT lifecycle, loader, sysroot, family completion, promotion, and public x86 support."
 source_owners = [

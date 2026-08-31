@@ -210,6 +210,7 @@ ffsl
 ffsll
 fgetc
 fgetpos
+fgets
 fgetxattr
 fileno
 finite
@@ -229,6 +230,7 @@ fopen
 fork
 fpathconf
 fputc
+fputs
 fread
 freeaddrinfo
 freeifaddrs
@@ -566,6 +568,7 @@ pthread_testcancel
 putc
 putchar
 putenv
+puts
 pwrite
 pwritev
 qsort

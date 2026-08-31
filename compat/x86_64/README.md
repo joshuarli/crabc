@@ -736,6 +736,23 @@ broader output grammar; `%lm` and positional `%1$m` remain candidate-only
 `EINVAL` rejections. It does not establish general stdio, family completion,
 promotion, or public x86 support.
 
+The separate `stdio-permanent-line-io-header-abi` and
+`libc-stdio-permanent-line-io` gates record the private
+`static-c-stdio-permanent-line-io` artifact. It admits `fgets`, `fputs`, and
+`puts` only for the three process-lifetime standard streams; it deliberately
+rejects the fixed pathname/tmpfile slot. The pinned-musl
+project-header/static differential proves newline inclusion, NUL termination,
+the positive one-byte `fgets` no-consume boundary, and EOF-before-a-byte;
+then proves that `fputs` omits the terminating NUL and keeps both ordinary and
+newline-containing stdout strings buffered until explicit `fflush`, while
+`puts` appends and publishes its newline and stderr `fputs` is immediate. The
+dedicated strict C11/C++17 header proof ratchets the exact declarations and
+unmangled names. It does not select `stdio.stream-io`, path/descriptor-reopen/
+tmpfile or LP64/LFS work, positions/buffer configuration/locks/unlocked APIs,
+multiple streams, allocation/registry, `getdelim`/`getline`/legacy-word I/O,
+formatted/wide/memory/cookie/`fopencookie`/`popen` streams, ordinary-exit
+flushing, general stdio, parity, promotion, or public x86 support.
+
 The separate `libc-stdio-path-stream` gate records one fixed private static
 path-stream slot inside still-planned `libc.text-math-locale-stdio`: exactly
 one externally serialized regular-file `fopen("r")`/`fopen("w+")` lifecycle
