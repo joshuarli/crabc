@@ -5,10 +5,11 @@
 # as a true `-nostdlib -static` candidate linked only through crabc's selected
 # archive.  It owns exactly snprintf/vsnprintf/sprintf/vsprintf and
 # sscanf/vsscanf over the bounded integer, count-store, and byte-string grammar
-# documented in stdio_format_scan.rs.  It does not select FILE streams,
-# printf/fprintf, scanf/fscanf, floats, wide text, scansets, positional
-# arguments, pointer-valued %p, allocation, locale objects, a dynamic libc,
-# CRT, loader, sysroot, or public x86 support.
+# documented in stdio_format_scan.rs. The sibling float-hex-output profile
+# selects only `%a`/`%A` binary64 byte-buffer output. Neither profile selects
+# FILE streams, printf/fprintf, scanf/fscanf, decimal or long-double floats,
+# wide text, scansets, positional arguments, pointer-valued %p, allocation,
+# locale objects, a dynamic libc, CRT, loader, sysroot, or public x86 support.
 set -euo pipefail
 
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -17,8 +18,29 @@ readonly STATIC_C_ABI_EXPORTS="$ROOT_DIR/compat/x86_64/static_c_abi_exports.txt"
 readonly EXECUTION_TIMEOUT=20s
 readonly INITIAL_TLS_BYTES=4096
 readonly INITIAL_TLS_ALIGNMENT=64
+readonly EVIDENCE_PROFILE="${CRABC_STDIO_FORMAT_SCAN_PROFILE:-integer}"
 
-fail() { printf 'ERROR: x86 static libc stdio format/scan: %s\n' "$*" >&2; exit 1; }
+case "$EVIDENCE_PROFILE" in
+integer)
+    readonly FIXTURE_SOURCE=compat/x86_64/libc_stdio_format_scan_probe.c
+    readonly START_SOURCE=compat/x86_64/libc_stdio_format_scan_start.S
+    readonly FREESTANDING_DEFINE=CRABC_STDIO_FORMAT_SCAN_FREESTANDING
+    readonly EVIDENCE_LABEL="byte-string stdio format/scan"
+    ;;
+float-hex-output)
+    readonly FIXTURE_SOURCE=compat/x86_64/libc_stdio_float_hex_output_probe.c
+    readonly START_SOURCE=compat/x86_64/libc_stdio_float_hex_output_start.S
+    readonly FREESTANDING_DEFINE=CRABC_STDIO_FLOAT_HEX_OUTPUT_FREESTANDING
+    readonly EVIDENCE_LABEL="stdio binary64 hexadecimal output"
+    ;;
+*)
+    printf 'ERROR: unknown x86 stdio format/scan evidence profile: %s\n' \
+        "$EVIDENCE_PROFILE" >&2
+    exit 2
+    ;;
+esac
+
+fail() { printf 'ERROR: x86 static libc %s: %s\n' "$EVIDENCE_LABEL" "$*" >&2; exit 1; }
 require_tool() { command -v "$1" >/dev/null 2>&1 || fail "requires $1"; }
 
 assert_selected_c_abi_surface() {
@@ -58,10 +80,10 @@ for tool in ar awk cargo cmp diff grep mkdir nm objdump readelf rustup sort time
 [ -x "$ORACLE_CC" ] || fail "missing pinned musl oracle compiler"
 bash "$ROOT_DIR/compat/x86_64/run_musl_oracle.sh" >/dev/null
 
-work_dir="$(mktemp -d /tmp/crabc-x86-64-libc-stdio-format-scan.XXXXXX)"
+work_dir="$(mktemp -d "/tmp/crabc-x86-64-libc-stdio-${EVIDENCE_PROFILE}.XXXXXX")"
 trap 'rm -rf -- "$work_dir"' EXIT
 target_dir="$work_dir/cargo-target"; archive="$target_dir/x86_64-unknown-linux-musl/debug/libc.a"
-reference="$work_dir/musl-stdio-format-scan-reference"; candidate="$work_dir/crabc-static-stdio-format-scan-candidate"
+reference="$work_dir/musl-stdio-reference"; candidate="$work_dir/crabc-static-stdio-candidate"
 trace="$work_dir/header-trace"; archive_symbols="$work_dir/archive-symbols"; selected_symbols="$work_dir/selected-c-abi-symbols"
 expected_symbols="$work_dir/expected-c-abi-symbols"; symbols="$work_dir/candidate-symbols"; headers="$work_dir/candidate-program-headers"
 dynamic="$work_dir/candidate-dynamic"; relocs="$work_dir/candidate-relocations"; disassembly="$work_dir/candidate-disassembly"
@@ -69,12 +91,16 @@ errno_disassembly="$work_dir/errno-disassembly"; archive_relocs="$work_dir/archi
 
 cd "$ROOT_DIR"
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -I"$ROOT_DIR/include" -E -H \
-    compat/x86_64/libc_stdio_format_scan_probe.c >/dev/null 2>"$trace"
-for header in errno.h limits.h stdarg.h stddef.h stdint.h stdio.h features.h bits/alltypes.h; do
+    "$FIXTURE_SOURCE" >/dev/null 2>"$trace"
+project_headers=(errno.h limits.h stdarg.h stddef.h stdint.h stdio.h features.h bits/alltypes.h)
+if [ "$EVIDENCE_PROFILE" = float-hex-output ]; then
+    project_headers+=(fenv.h)
+fi
+for header in "${project_headers[@]}"; do
     grep -Fq "$ROOT_DIR/include/$header" "$trace" || fail "fixture did not use project $header"
 done
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -fno-builtin -fno-stack-protector \
-    -I"$ROOT_DIR/include" compat/x86_64/libc_stdio_format_scan_probe.c -o "$reference"
+    -I"$ROOT_DIR/include" "$FIXTURE_SOURCE" -o "$reference"
 timeout --foreground "$EXECUTION_TIMEOUT" "$reference" ||
     fail "pinned-musl format/scan fixture failed"
 
@@ -102,11 +128,10 @@ if grep -Eq 'TLSGD|TLSLD|TLSDESC|GOTTPOFF|DTPMOD(64)?|__tls_get_addr|crabc_core|
     fail "archive selects dynamic TLS or an unowned runtime dependency"
 fi
 
-"$ORACLE_CC" -std=c11 -D_GNU_SOURCE -DCRABC_STDIO_FORMAT_SCAN_FREESTANDING \
+"$ORACLE_CC" -std=c11 -D_GNU_SOURCE "-D${FREESTANDING_DEFINE}" \
     -I"$ROOT_DIR/include" -nostdlib -static -fno-pie -no-pie -ffreestanding \
     -fno-builtin -fno-stack-protector -Wl,-e,_start -Wl,--no-undefined \
-    compat/x86_64/libc_stdio_format_scan_probe.c \
-    compat/x86_64/libc_stdio_format_scan_start.S "$archive" -o "$candidate"
+    "$FIXTURE_SOURCE" "$START_SOURCE" "$archive" -o "$candidate"
 readelf --symbols --wide "$candidate" >"$symbols"
 readelf --program-headers --wide "$candidate" >"$headers"
 readelf --dynamic --wide "$candidate" >"$dynamic" || true
@@ -130,11 +155,26 @@ fi
 if grep -Eq 'crabc_core|mimalloc|sha_crypt' "$symbols" "$disassembly"; then
     fail "candidate selects an unowned runtime dependency"
 fi
+if [ "$EVIDENCE_PROFILE" = float-hex-output ]; then
+    grep -Fq 'unsafe fn write_hex_float' \
+        "$ROOT_DIR/libc/src/c_abi/x86_64/stdio_format_scan.rs" ||
+        fail "binary64 hexadecimal output no longer owns its spelling"
+    grep -Eq "[[:space:]]fegetround$" "$symbols" ||
+        fail "binary64 hexadecimal output candidate lacks the selected fenv reader"
+    if grep -Eq '(^|[^[:alnum:]_])(log10|pow|floor)([^[:alnum:]_]|$)' \
+        "$symbols" "$disassembly"; then
+        fail "binary64 hexadecimal output selects a decimal libm formatting edge"
+    fi
+fi
 objdump -d --disassemble=__errno_location "$candidate" >"$errno_disassembly"
 grep -Eq '%fs:0x0|%fs:-' "$errno_disassembly" ||
     fail "candidate errno does not use direct fs initial TLS"
 grep -Fq 'args.next_arg' "$ROOT_DIR/libc/src/c_abi/x86_64/stdio_format_scan.rs" ||
     fail "format/scan leaf no longer owns the x86 variadic boundary"
-timeout --foreground "$EXECUTION_TIMEOUT" "$candidate" ||
-    fail "freestanding format/scan fixture failed"
-printf 'x86 static crabc-libc byte-string stdio format/scan: PASS\n'
+if timeout --foreground "$EXECUTION_TIMEOUT" "$candidate"; then
+    :
+else
+    status=$?
+    fail "freestanding format/scan fixture failed with status ${status}"
+fi
+printf 'x86 static crabc-libc %s: PASS\n' "$EVIDENCE_LABEL"

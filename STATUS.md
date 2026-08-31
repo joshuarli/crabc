@@ -60,10 +60,21 @@ candidate fixture proves selected integer/byte-string format and scan grammar,
 C99 would-have-written/truncation/NUL/zero-capacity and `EOVERFLOW` behavior,
 output and input count stores, integer-prefix admission, and x86 native
 `va_list` forwarding.
-`FILE` streams, `printf`/`fprintf`/`scanf`/`fscanf`, floating/wide/scanset/
-positional/pointer-valued `%p` conversion, allocation, locale objects, integer
+`FILE` streams, `printf`/`fprintf`/`scanf`/`fscanf`, decimal/long-double/
+wide/scanset/positional/pointer-valued `%p` conversion, allocation, locale objects, integer
 scanner overflow, general stdio, family/platform parity, promotion, and public
 x86 support remain excluded.
+
+The separate private `./scripts/dev-x86_64.sh libc-stdio-float-hex-output`
+artifact adds no export and selects only allocation-free C-locale binary64
+`%a`/`%A` byte-buffer output. It preserves musl's no-op `l` modifier,
+default/explicit precision, all four selected x86 rounding directions
+(ties-to-even in nearest mode), normalized subnormal and special-value
+spelling, width/padding/truncation, count stores, and System V XMM
+register-save/overflow-area varargs. An impossible `int` return count fails
+closed with `EOVERFLOW`; formatter floating-exception side effects, decimal
+output, long-double output, positional grammar, and all stream boundaries
+remain excluded.
 
 
 The x86 lane has five private ET_DYN interpreter artifacts inside still-planned

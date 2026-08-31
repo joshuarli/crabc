@@ -1217,7 +1217,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "libc-pathname-lifecycle",
             "libc-directory-streams",
             "libc-lchmod-unsupported",
-            "libc-stdio-standard|libc-stdio-format-scan|libc-stdio-path-stream|libc-stdio-tmpfile|libc-text-math-locale-stdio-composition",
+            "libc-stdio-standard|libc-stdio-format-scan|libc-stdio-float-hex-output|libc-stdio-path-stream|libc-stdio-tmpfile|libc-text-math-locale-stdio-composition",
             "libc-pthread-identity",
             "libc-pthread-affinity",
             "libc-pthread-detach",
@@ -10443,6 +10443,95 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         )
         self.assertIn("libc-stdio-format-scan", dispatcher)
         self.assertIn("run_libc_stdio_format_scan.sh", dispatcher)
+
+    def test_libc_static_c_abi_stdio_float_hex_output_stays_narrow(self) -> None:
+        implementation = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" /
+            "stdio_format_scan.rs"
+        ).read_text(encoding="utf-8")
+        fixture = (
+            ROOT / "compat" / "x86_64" /
+            "libc_stdio_float_hex_output_probe.c"
+        ).read_text(encoding="utf-8")
+        start = (
+            ROOT / "compat" / "x86_64" /
+            "libc_stdio_float_hex_output_start.S"
+        ).read_text(encoding="utf-8")
+        runner = (
+            ROOT / "compat" / "x86_64" /
+            "run_libc_stdio_float_hex_output.sh"
+        ).read_text(encoding="utf-8")
+        shared_runner = (
+            ROOT / "compat" / "x86_64" /
+            "run_libc_stdio_format_scan.sh"
+        ).read_text(encoding="utf-8")
+        ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        dispatcher = RUNNER.read_text(encoding="utf-8")
+
+        for required in (
+            "unsafe fn write_hex_float",
+            "value.to_bits()",
+            "ties-to-even",
+            "should_round_hexadecimal",
+            "fegetround()",
+            "emitted_length",
+            "0x2...pE",
+            "args.next_arg::<f64>()",
+            "b'a' | b'A' if matches!(length, Length::None | Length::L)",
+        ):
+            self.assertIn(required, implementation)
+        self.assertNotIn("libm::", implementation)
+        for required in (
+            '"[%a][%A][%+a][% a][%#a]"',
+            '"%#.0a|%.0a|%.1a|%.3a|%.14a"',
+            '"%#.0a|%.1a|%#.0a|%.1a"',
+            '"%.2147483647a"',
+            "FE_UPWARD",
+            "FE_DOWNWARD",
+            "FE_TOWARDZERO",
+            '"[0x1p-1074][0x1p-1022][-0x0p+0]"',
+            '"[%a][%+a][% a][%020a]"',
+            '"%a/%a/%a/%a/%a/%a/%a/%a/%a"',
+            '"[%*.*a/%d/%la]"',
+            '"%3$a"',
+            '"a%a%n"',
+            "CRABC_STDIO_FLOAT_HEX_OUTPUT_FREESTANDING",
+            '"%La"',
+        ):
+            self.assertIn(required, fixture)
+        for required in (
+            "arch_prctl(ARCH_SET_FS",
+            "%fs:0",
+            "mov $60, %eax",
+        ):
+            self.assertIn(required, start)
+        self.assertIn(
+            "CRABC_STDIO_FORMAT_SCAN_PROFILE=float-hex-output", runner
+        )
+        self.assertIn("run_libc_stdio_format_scan.sh", runner)
+        for required in (
+            "float-hex-output)",
+            "CRABC_STDIO_FLOAT_HEX_OUTPUT_FREESTANDING",
+            "libc_stdio_float_hex_output_probe.c",
+            "libc_stdio_float_hex_output_start.S",
+            "write_hex_float",
+            "fenv.h",
+            "decimal libm formatting edge",
+            "-nostdlib -static",
+            "--no-undefined",
+            "R_X86_64_TPOFF",
+        ):
+            self.assertIn(required, shared_runner)
+        self.assertNotIn("--whole-archive", shared_runner)
+        self.assertIn('id = "static-c-stdio-float-hex-output"', ledger)
+        self.assertIn(
+            'command = "./scripts/dev-x86_64.sh libc-stdio-float-hex-output"',
+            ledger,
+        )
+        self.assertIn("libc-stdio-float-hex-output", dispatcher)
+        self.assertIn("run_libc_stdio_float_hex_output.sh", dispatcher)
 
     def test_libc_static_c_abi_stdio_path_stream_stays_one_slot(self) -> None:
         """The pathname stream is a fixed static lifecycle, not general stdio."""

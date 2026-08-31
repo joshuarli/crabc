@@ -6,17 +6,21 @@
 //! formatter declaration is an implementation: output accepts literals,
 //! `%%`, flags `-+ 0#`, numeric or `*` width/precision, integer length forms
 //! `hh`, `h`, `l`, `ll`, `j`, `z`, and `t`, and `%d`/`%i`/`%u`/`%o`/`%x`/`%X`,
-//! `%c`, `%s`, and count-store `%n`.  Input accepts literals and format
+//! `%c`, `%s`, count-store `%n`, and binary64 hexadecimal `%a`/`%A` output
+//! (with ordinary or `l` length). Input accepts literals and format
 //! whitespace, assignment suppression and width, the same integer length
 //! forms for `%d`/`%i`/`%u`/`%o`/`%x`/`%X`, plus `%c`, `%s`, and `%n`.
 //!
 //! The implementation is allocation-free and has no `FILE`, stream lock,
-//! locale-object, floating conversion, wide-character, scanset, positional
-//! argument, pointer-valued `%p`, or `printf`/`fprintf`/`scanf`/`fscanf`
-//! boundary.  Valid C callers supply readable NUL-terminated format/input
-//! strings and suitably sized writable destinations.  Integer scanner
-//! overflow and unsupported conversion grammar remain outside this closed
-//! artifact; unsupported
+//! locale-object, decimal or long-double floating conversion, wide-character,
+//! scanset, positional argument, pointer-valued `%p`, or
+//! `printf`/`fprintf`/`scanf`/`fscanf` boundary.  `%a`/`%A` derives its
+//! C-locale binary64 spelling from raw IEEE bits and observes the selected
+//! x86 fenv rounding direction for explicit precision; it does not select a
+//! decimal formatter or reproduce floating exception side effects. Valid C
+//! callers supply readable NUL-terminated format/input strings and suitably
+//! sized writable destinations. Integer scanner overflow and unsupported
+//! conversion grammar remain outside this closed artifact; unsupported
 //! conversions fail closed with `EINVAL` rather than silently routing through
 //! an ambient libc. `snprintf` additionally retains zero-capacity
 //! null-destination behavior: it never dereferences a null destination when
@@ -34,15 +38,15 @@
 //! | Pinned musl source | Owned bounded x86 translation |
 //! | --- | --- |
 //! | `src/stdio/vsnprintf.c`, `vsprintf.c`, `sprintf.c`, `snprintf.c` | byte-buffer count/truncation wrappers and C varargs entry boundary |
-//! | `src/stdio/vfprintf.c` (`printf_core`) | selected integer/byte-string format parser, flag, width, precision, count-store, and conversion behavior |
+//! | `src/stdio/vfprintf.c` (`printf_core`, `fmt_fp`) | selected integer/byte-string parser plus binary64 `%a`/`%A` spelling, flag, width, precision, and count-store behavior |
 //! | `src/stdio/sscanf.c`, `vsscanf.c`, `vfscanf.c`; `src/internal/intscan.c` | NUL-terminated byte scanner, assignment/count discipline, prefix admission, and selected integer/string conversions |
 //!
-//! The full musl formatter/scanner also owns floating and long-double
+//! The full musl formatter/scanner also owns decimal and long-double
 //! conversion, locale, wide input, scansets, positional arguments, stream
-//! buffering/cancellation, and error propagation through its complete `FILE`
-//! machinery.  None of those owners is imported here.  This leaf is evidence
-//! for the named static byte-string contract only, never a general stdio or
-//! x86 runtime claim.
+//! buffering/cancellation, floating exception side effects, and error
+//! propagation through its complete `FILE` machinery. None of those owners is
+//! imported here. This leaf is evidence for the named static byte-string
+//! contract only, never a general stdio or x86 runtime claim.
 //!
 //! The active Linux/AArch64 implementation remains the broader compatibility
 //! owner in `libc/src/c_abi.rs`, including stream, floating, wide, pointer, and
@@ -68,6 +72,19 @@ use super::errno;
 const EINVAL: c_int = 22;
 const EOVERFLOW: c_int = 75;
 const EOF: c_int = -1;
+
+// These fixed x86 musl fenv encodings are already owned by the selected fenv
+// leaf. `%a` precision rounding reads the caller's current direction, but this
+// byte-only formatter intentionally does not reproduce `fmt_fp`'s incidental
+// floating exception side effects.
+const FE_TONEAREST: c_int = 0;
+const FE_DOWNWARD: c_int = 0x400;
+const FE_UPWARD: c_int = 0x800;
+const FE_TOWARDZERO: c_int = 0xc00;
+
+unsafe extern "C" {
+    fn fegetround() -> c_int;
+}
 
 const FLAG_MINUS: u8 = 1 << 0;
 const FLAG_PLUS: u8 = 1 << 1;
@@ -385,6 +402,228 @@ unsafe fn write_character(output: &mut Output, character: u8, width: usize, flag
     }
 }
 
+#[inline]
+fn hexadecimal_digit(value: u8, uppercase: bool) -> u8 {
+    match value {
+        0..=9 => b'0' + value,
+        _ if uppercase => b'A' + value - 10,
+        _ => b'a' + value - 10,
+    }
+}
+
+#[inline]
+unsafe fn should_round_hexadecimal(
+    negative: bool,
+    retained: u64,
+    discarded: u64,
+    halfway: u64,
+) -> bool {
+    if discarded == 0 {
+        return false;
+    }
+    // SAFETY: `fegetround` is the no-argument fixed x86 fenv assembly leaf
+    // selected beside this formatter. It reads only the calling thread's
+    // MXCSR rounding field.
+    match unsafe { fegetround() } {
+        FE_UPWARD => !negative,
+        FE_DOWNWARD => negative,
+        FE_TOWARDZERO => false,
+        FE_TONEAREST => {
+            discarded > halfway || (discarded == halfway && retained & 1 != 0)
+        }
+        // The fenv leaf yields one of the four fixed encodings. Treat a
+        // malformed external environment as nearest/ties-to-even rather than
+        // widening this formatter's contract.
+        _ => discarded > halfway || (discarded == halfway && retained & 1 != 0),
+    }
+}
+
+/// Emit the bounded C-locale binary64 `%a`/`%A` spelling.
+///
+/// Musl's `fmt_fp` normalizes a nonzero subnormal before formatting it, so the
+/// selected representation is always `0x1...pE` for nonzero finite values;
+/// only signed zero has a leading zero. Raw IEEE bits retain that property,
+/// default trailing-zero elision, and current-rounding-mode precision rounding
+/// without selecting musl's decimal big-integer formatter or libm.
+unsafe fn write_hex_float(
+    output: &mut Output,
+    value: f64,
+    width: usize,
+    precision: Option<usize>,
+    flags: u8,
+    uppercase: bool,
+) {
+    const FRACTION_MASK: u64 = (1_u64 << 52) - 1;
+
+    let bits = value.to_bits();
+    let negative = bits >> 63 != 0;
+    let exponent_bits = ((bits >> 52) & 0x7ff) as u16;
+    let fraction_bits = bits & FRACTION_MASK;
+    let sign = if negative {
+        Some(b'-')
+    } else if flags & FLAG_PLUS != 0 {
+        Some(b'+')
+    } else if flags & FLAG_SPACE != 0 {
+        Some(b' ')
+    } else {
+        None
+    };
+
+    if exponent_bits == 0x7ff {
+        // `fmt_fp` ignores precision and zero padding for infinities and NaNs,
+        // but keeps a negative NaN's sign bit and the ordinary `+`/space flags.
+        let spelling: &[u8] = match (fraction_bits == 0, uppercase) {
+            (true, true) => b"INF",
+            (true, false) => b"inf",
+            (false, true) => b"NAN",
+            (false, false) => b"nan",
+        };
+        let total = spelling.len().saturating_add(sign.is_some() as usize);
+        let padding = width.saturating_sub(total);
+        if flags & FLAG_MINUS == 0 {
+            unsafe { output.repeated(b' ', padding) };
+        }
+        if let Some(sign) = sign {
+            unsafe { output.byte(sign) };
+        }
+        unsafe { output.bytes(spelling.as_ptr(), spelling.len()) };
+        if flags & FLAG_MINUS != 0 {
+            unsafe { output.repeated(b' ', padding) };
+        }
+        return;
+    }
+
+    let (exponent, normalized) = if exponent_bits != 0 {
+        (
+            exponent_bits as i32 - 1023,
+            fraction_bits | (1_u64 << 52),
+        )
+    } else if fraction_bits != 0 {
+        let leading_bit = 63_u32 - fraction_bits.leading_zeros();
+        (
+            -1074_i32 + leading_bit as i32,
+            fraction_bits << (52 - leading_bit),
+        )
+    } else {
+        (0, 0)
+    };
+
+    let mut default_precision = 13usize;
+    let mut trailing = normalized & FRACTION_MASK;
+    while default_precision != 0 && trailing & 0xf == 0 {
+        trailing >>= 4;
+        default_precision -= 1;
+    }
+    let requested_precision = precision.unwrap_or(default_precision);
+
+    // A binary64 has thirteen fractional hexadecimal digits. When an explicit
+    // precision keeps fewer, discard the rest with the current fenv direction.
+    // FE_TONEAREST uses ties-to-even. A carry intentionally prints `0x2...pE`
+    // rather than renormalizing the exponent, matching musl's observable
+    // spelling for (for example) `%.0a` of 1.5.
+    let (leading, fractional, materialized_digits) = if requested_precision < 13 {
+        let discarded_bits = 4 * (13 - requested_precision);
+        let discarded_mask = (1_u64 << discarded_bits) - 1;
+        let discarded = normalized & discarded_mask;
+        let halfway = 1_u64 << (discarded_bits - 1);
+        let mut rounded = normalized >> discarded_bits;
+        if unsafe { should_round_hexadecimal(negative, rounded, discarded, halfway) } {
+            rounded += 1;
+        }
+        let retained_bits = 4 * requested_precision;
+        let retained_mask = if retained_bits == 0 {
+            0
+        } else {
+            (1_u64 << retained_bits) - 1
+        };
+        (
+            (rounded >> retained_bits) as u8,
+            rounded & retained_mask,
+            requested_precision,
+        )
+    } else {
+        (
+            (normalized >> 52) as u8,
+            normalized & FRACTION_MASK,
+            13,
+        )
+    };
+
+    let exponent_magnitude = exponent.unsigned_abs();
+    let mut exponent_reversed = [0u8; 4];
+    let mut exponent_length = 0usize;
+    let mut remaining_exponent = exponent_magnitude;
+    loop {
+        exponent_reversed[exponent_length] = b'0' + (remaining_exponent % 10) as u8;
+        exponent_length += 1;
+        remaining_exponent /= 10;
+        if remaining_exponent == 0 {
+            break;
+        }
+    }
+
+    let has_decimal = requested_precision != 0 || flags & FLAG_ALT != 0;
+    let core_length = 2usize
+        .saturating_add(1)
+        .saturating_add(has_decimal as usize)
+        .saturating_add(requested_precision)
+        // `p`, an exponent sign, and at least one decimal exponent digit.
+        .saturating_add(2)
+        .saturating_add(exponent_length);
+    let total_length = core_length.saturating_add(sign.is_some() as usize);
+    let emitted_length = width.max(total_length);
+    // Reject a precision whose complete result cannot fit the `int` return
+    // contract before iterating through synthetic trailing zeroes. This keeps
+    // an enormous zero-capacity count query bounded.
+    if output
+        .count
+        .checked_add(emitted_length)
+        .is_none_or(|count| count > c_int::MAX as usize)
+    {
+        output.overflowed = true;
+        return;
+    }
+    let padding = width.saturating_sub(total_length);
+    let zero_padding = flags & FLAG_ZERO != 0 && flags & FLAG_MINUS == 0;
+
+    if flags & FLAG_MINUS == 0 && !zero_padding {
+        unsafe { output.repeated(b' ', padding) };
+    }
+    if let Some(sign) = sign {
+        unsafe { output.byte(sign) };
+    }
+    unsafe {
+        output.byte(b'0');
+        output.byte(if uppercase { b'X' } else { b'x' });
+    }
+    if zero_padding {
+        unsafe { output.repeated(b'0', padding) };
+    }
+    unsafe { output.byte(hexadecimal_digit(leading, uppercase)) };
+    if has_decimal {
+        unsafe { output.byte(b'.') };
+        let mut index = 0usize;
+        while index < materialized_digits {
+            let shift = 4 * (materialized_digits - index - 1);
+            let digit = ((fractional >> shift) & 0xf) as u8;
+            unsafe { output.byte(hexadecimal_digit(digit, uppercase)) };
+            index += 1;
+        }
+        unsafe { output.repeated(b'0', requested_precision - materialized_digits) };
+    }
+    unsafe {
+        output.byte(if uppercase { b'P' } else { b'p' });
+        output.byte(if exponent < 0 { b'-' } else { b'+' });
+    }
+    while exponent_length != 0 {
+        exponent_length -= 1;
+        unsafe { output.byte(exponent_reversed[exponent_length]) };
+    }
+    if flags & FLAG_MINUS != 0 {
+        unsafe { output.repeated(b' ', padding) };
+    }
+}
+
 unsafe fn format_to_buffer(
     destination: *mut c_char,
     capacity: usize,
@@ -544,6 +783,19 @@ unsafe fn format_to_buffer(
             b's' if length == Length::None => {
                 let string = unsafe { args.next_arg::<*const c_char>() };
                 unsafe { write_string(&mut output, string, width, precision, flags) };
+            }
+            b'a' | b'A' if matches!(length, Length::None | Length::L) => {
+                let value = unsafe { args.next_arg::<f64>() };
+                unsafe {
+                    write_hex_float(
+                        &mut output,
+                        value,
+                        width,
+                        precision,
+                        flags,
+                        specifier == b'A',
+                    )
+                };
             }
             b'n' => unsafe { assign_count(args, length, output.count) },
             _ => {

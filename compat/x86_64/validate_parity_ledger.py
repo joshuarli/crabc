@@ -19524,7 +19524,7 @@ def require_stdio_format_scan_artifact(family: Mapping[str, Any]) -> None:
         "count-store `%n`",
         "assignment and EOF/matching-failure boundaries",
         "FILE streams",
-        "float or long-double conversion",
+        "decimal float or long-double conversion",
         "scansets",
         "positional arguments",
         "integer scanner overflow",
@@ -19634,6 +19634,201 @@ def require_stdio_format_scan_artifact(family: Mapping[str, Any]) -> None:
         "stdio format/scan dispatcher binding is missing",
     )
 
+
+def require_stdio_float_hex_output_artifact(family: Mapping[str, Any]) -> None:
+    """Keep binary64 hexadecimal output distinct from general float stdio."""
+
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.text-math-locale-stdio].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [
+        entry
+        for entry in artifacts
+        if entry.get("id") == "static-c-stdio-float-hex-output"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.text-math-locale-stdio must contain exactly one static-c-stdio-float-hex-output artifact",
+    )
+    artifact = matching[0]
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for phrase in (
+        "still-planned `libc.text-math-locale-stdio`",
+        "adds no export or capability",
+        "binary64 `%a`/`%A`",
+        "no-op `l` modifier",
+        "all four selected current x86 fenv directions",
+        "ties-to-even hexadecimal rounding",
+        "`0x2pE` carry spelling",
+        "immediate `EOVERFLOW`",
+        "System V SSE register-save and overflow areas",
+        "Candidate-only `%f`, `%La`, and positional `%3$a`",
+        "floating-exception side effects",
+        "decimal `%e`/`%E`/`%f`/`%F`/`%g`/`%G`",
+        "long-double `%La`/`%LA`",
+        "FILE streams",
+        "general stdio",
+        "family completion",
+        "parity",
+        "promotion",
+        "public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"static-c-stdio-float-hex-output description omits {phrase}",
+        )
+    owners = set(
+        string_list(
+            artifact["source_owners"],
+            "static-c-stdio-float-hex-output source owners",
+        )
+    )
+    for path in (
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/fenv.rs",
+        "libc/src/c_abi/x86_64/stdio_format_scan.rs",
+        "include/fenv.h",
+        "include/stdio.h",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/libc_stdio_float_hex_output_probe.c",
+        "compat/x86_64/libc_stdio_float_hex_output_start.S",
+        "compat/x86_64/run_libc_stdio_format_scan.sh",
+        "compat/x86_64/run_libc_stdio_float_hex_output.sh",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/README.md",
+        "STATUS.md",
+        "x86-64.md",
+        "scripts/dev-x86_64.sh",
+    ):
+        require(
+            path in owners,
+            f"static-c-stdio-float-hex-output source owners omit {path}",
+        )
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-stdio-float-hex-output"},
+        "static-c-stdio-float-hex-output must use the closed libc-stdio-float-hex-output command",
+    )
+    oracle = artifact["oracle"]
+    assert isinstance(oracle, list)
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "c-posix"
+            and isinstance(entry.get("role"), str)
+            and "vfprintf.c printf_core/fmt_fp" in entry["role"]
+            and "binary64 `%a`/`%A`" in entry["role"]
+            and "rounding" in entry["role"]
+            for entry in oracle
+        ),
+        "static-c-stdio-float-hex-output must retain its pinned-musl fmt_fp oracle",
+    )
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "elf-abi"
+            and isinstance(entry.get("role"), str)
+            and "XMM register-save and overflow-area" in entry["role"]
+            and "sequential mixed GP/SSE" in entry["role"]
+            for entry in oracle
+        ),
+        "static-c-stdio-float-hex-output must retain its System V SSE varargs oracle",
+    )
+
+    implementation = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "stdio_format_scan.rs"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "unsafe fn write_hex_float",
+        "value.to_bits()",
+        "ties-to-even",
+        "should_round_hexadecimal",
+        "fegetround()",
+        "emitted_length",
+        "0x2...pE",
+        "args.next_arg::<f64>()",
+        "b'a' | b'A' if matches!(length, Length::None | Length::L)",
+    ):
+        require(
+            snippet in implementation,
+            f"stdio float hexadecimal-output implementation omits {snippet}",
+        )
+    require(
+        "libm::" not in implementation,
+        "stdio float hexadecimal-output leaf must not acquire a libm formatter edge",
+    )
+    fixture = (
+        ROOT / "compat" / "x86_64" / "libc_stdio_float_hex_output_probe.c"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        '"[%a][%A][%+a][% a][%#a]"',
+        '"%#.0a|%.0a|%.1a|%.3a|%.14a"',
+        '"%#.0a|%.1a|%#.0a|%.1a"',
+        '"%.2147483647a"',
+        "FE_UPWARD",
+        "FE_DOWNWARD",
+        "FE_TOWARDZERO",
+        '"[0x1p-1074][0x1p-1022][-0x0p+0]"',
+        '"[%a][%+a][% a][%020a]"',
+        '"%a/%a/%a/%a/%a/%a/%a/%a/%a"',
+        '"[%*.*a/%d/%la]"',
+        '"%3$a"',
+        '"a%a%n"',
+        "CRABC_STDIO_FLOAT_HEX_OUTPUT_FREESTANDING",
+        '"%La"',
+    ):
+        require(
+            snippet in fixture,
+            f"libc-stdio-float-hex-output fixture omits {snippet}",
+        )
+    start = (
+        ROOT / "compat" / "x86_64" / "libc_stdio_float_hex_output_start.S"
+    ).read_text(encoding="utf-8")
+    for snippet in ("arch_prctl(ARCH_SET_FS", "%fs:0", "mov $60, %eax"):
+        require(
+            snippet in start,
+            f"libc-stdio-float-hex-output start omits {snippet}",
+        )
+    runner = (
+        ROOT / "compat" / "x86_64" / "run_libc_stdio_float_hex_output.sh"
+    ).read_text(encoding="utf-8")
+    require(
+        "CRABC_STDIO_FORMAT_SCAN_PROFILE=float-hex-output" in runner
+        and "run_libc_stdio_format_scan.sh" in runner,
+        "libc-stdio-float-hex-output runner does not select the shared static profile",
+    )
+    shared_runner = (
+        ROOT / "compat" / "x86_64" / "run_libc_stdio_format_scan.sh"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "float-hex-output)",
+        "CRABC_STDIO_FLOAT_HEX_OUTPUT_FREESTANDING",
+        "libc_stdio_float_hex_output_probe.c",
+        "libc_stdio_float_hex_output_start.S",
+        "write_hex_float",
+        "fenv.h",
+        "decimal libm formatting edge",
+        "-nostdlib -static",
+        "--no-undefined",
+        "R_X86_64_TPOFF",
+    ):
+        require(
+            snippet in shared_runner,
+            f"libc-stdio-float-hex-output shared runner omits {snippet}",
+        )
+    dispatcher = (ROOT / "scripts" / "dev-x86_64.sh").read_text(encoding="utf-8")
+    require(
+        "libc-stdio-float-hex-output)" in dispatcher
+        and "run_libc_stdio_float_hex_output.sh" in dispatcher,
+        "stdio float hexadecimal-output dispatcher binding is missing",
+    )
 
 
 def require_stdio_path_stream_artifact(family: Mapping[str, Any]) -> None:
@@ -22242,8 +22437,8 @@ def require_locale_wide_iconv_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 19,
-        "libc.text-math-locale-stdio must retain exactly nineteen private verified artifacts",
+        len(artifacts) == 20,
+        "libc.text-math-locale-stdio must retain exactly twenty private verified artifacts",
     )
     matching = [
         entry for entry in artifacts if entry.get("id") == "static-c-locale-wide-iconv"
@@ -24072,6 +24267,7 @@ def validate_ledger(
     require_float_parse_locale_slice(by_id["libc.text-math-locale-stdio"])
     require_stdio_standard_streams_artifact(by_id["libc.text-math-locale-stdio"])
     require_stdio_format_scan_artifact(by_id["libc.text-math-locale-stdio"])
+    require_stdio_float_hex_output_artifact(by_id["libc.text-math-locale-stdio"])
     require_stdio_path_stream_artifact(by_id["libc.text-math-locale-stdio"])
     require_stdio_tmpfile_artifact(by_id["libc.text-math-locale-stdio"])
     require_math_complex_foundation_artifact(by_id["libc.text-math-locale-stdio"])

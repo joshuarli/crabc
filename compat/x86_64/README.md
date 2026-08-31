@@ -672,7 +672,7 @@ matrix and `./scripts/dev-x86_64.sh libc-stdio-standard` for the static
 runtime fixture.
 
 The separate `libc-stdio-format-scan` gate
-(`./scripts/dev-x86_64.sh libc-stdio-format-scan`) records a fifth private
+(`./scripts/dev-x86_64.sh libc-stdio-format-scan`) records one private
 `static-c-stdio-format-scan` artifact in the still-planned
 `libc.text-math-locale-stdio` family. Its project-header C fixture first runs
 against pinned musl and then a true `-nostdlib -static` candidate. It selects
@@ -687,10 +687,25 @@ would-have-written/truncation/NUL/one-byte/zero-capacity behavior,
 `EOVERFLOW` for a count beyond `int`, and native register-save/overflow-area
 `va_list` forwarding. A candidate-only section
 ratchets deterministic `EINVAL` rejection for selected unsupported grammar.
-It excludes `FILE` streams, `printf`/`fprintf`/`scanf`/`fscanf`, floating,
+It excludes `FILE` streams, `printf`/`fprintf`/`scanf`/`fscanf`, decimal/long-double,
 wide, scanset, grouping/positional, and pointer-valued `%p` conversion,
 allocation, locale objects, integer scanner overflow, general stdio, parity,
 promotion, and public x86 support.
+
+The separate `libc-stdio-float-hex-output` gate
+(`./scripts/dev-x86_64.sh libc-stdio-float-hex-output`) records one private
+`static-c-stdio-float-hex-output` artifact without adding an export or
+capability. Its project-header C fixture runs against pinned musl and a true
+`-nostdlib -static` candidate, selecting only C-locale promoted binary64
+`%a`/`%A` output with musl's no-op `l` modifier. It proves raw-bit default and
+explicit precision spelling, all four selected x86 fenv directions
+(ties-to-even in nearest mode), signed zero/subnormal/infinity/NaN, width,
+zero/left padding, C99 truncation, `%n`, bounded `EOVERFLOW`, and direct plus
+`v*` XMM register-save/overflow-area traversal with sequential mixed GP/SSE
+arguments. Candidate-only `%f`, `%La`, and positional `%3$a` reject with
+`EINVAL`. Formatter floating-exception side effects, decimal/long-double
+output, FILE streams, wide/allocating forms, locale objects, general stdio,
+parity, promotion, and public x86 support remain excluded.
 
 The separate `libc-stdio-path-stream` gate records one fixed private static
 path-stream slot inside still-planned `libc.text-math-locale-stdio`: exactly
