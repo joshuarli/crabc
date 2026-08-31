@@ -137,6 +137,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   res-init-header-abi  compile the staged x86 C/C++ legacy resolver-initializer declaration
   posix-spawnattr-destroy-header-abi  compile the staged x86 C/C++ POSIX spawn-attribute destroy declaration
   posix-spawnattr-getflags-header-abi  compile the staged x86 C/C++ POSIX spawn-attribute getflags declaration
+  posix-spawnattr-setpgroup-header-abi  compile the staged x86 C/C++ POSIX spawn-attribute setpgroup declaration
   posix-spawn-file-actions-init-header-abi  compile the staged x86 C/C++ POSIX spawn file-actions init declaration
   gettid-header-abi  compile the staged x86 C/C++ GNU gettid declaration
   posix-close-header-abi  compile the staged x86 C/C++ POSIX posix_close declaration
@@ -308,6 +309,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-res-init  run the static x86 crabc-libc legacy resolver-initializer slice
   libc-posix-spawnattr-destroy  run the static x86 crabc-libc POSIX spawn-attribute destroy slice
   libc-posix-spawnattr-getflags  run the static x86 crabc-libc POSIX spawn-attribute getflags slice
+  libc-posix-spawnattr-setpgroup  run the static x86 crabc-libc POSIX spawn-attribute setpgroup slice
   libc-posix-spawn-file-actions-init  run the static x86 crabc-libc POSIX spawn file-actions init slice
   libc-gettid  run the static x86 crabc-libc gettid compatibility slice
   libc-posix-close  run the static x86 crabc-libc posix_close compatibility slice
@@ -2673,6 +2675,10 @@ run_posix_spawnattr_getflags_header_abi() {
     run_in_container bash /workspace/compat/x86_64/run_posix_spawnattr_getflags_header_abi.sh
 }
 
+run_posix_spawnattr_setpgroup_header_abi() {
+    run_in_container bash /workspace/compat/x86_64/run_posix_spawnattr_setpgroup_header_abi.sh
+}
+
 run_posix_spawn_file_actions_init_header_abi() {
     run_in_container bash /workspace/compat/x86_64/run_posix_spawn_file_actions_init_header_abi.sh
 }
@@ -3609,6 +3615,10 @@ run_libc_posix_spawnattr_getflags_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_posix_spawnattr_getflags.sh
 }
 
+run_libc_posix_spawnattr_setpgroup_probe() {
+    run_in_container bash /workspace/compat/x86_64/run_libc_posix_spawnattr_setpgroup.sh
+}
+
 run_libc_posix_spawn_file_actions_init_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_posix_spawn_file_actions_init.sh
 }
@@ -3922,7 +3932,7 @@ case "$command" in
     libc-timerfd|libc-signalfd|libc-sigpause|libc-sigisemptyset|libc-sigandset-sigorset|libc-sigpending|libc-sigrtmax|libc-sigrtmin|libc-sched-getscheduler|libc-alarm|libc-sigaddset-sigdelset-sigfillset) ;;
     libc-sched-getcpu|libc-sched-yield) ;;
     sched-getscheduler-header-abi) ;;
-    ctermid-header-abi|gethostid-header-abi|endhostent-header-abi|ether-line-header-abi|res-init-header-abi|posix-spawnattr-destroy-header-abi|posix-spawnattr-getflags-header-abi|posix-spawn-file-actions-init-header-abi|getpagesize-header-abi|gettid-header-abi|posix-close-header-abi|isatty-header-abi|tcgetpgrp-header-abi|tcsetpgrp-header-abi|getpass-header-abi|libc-ctermid|libc-gethostid|libc-endhostent|libc-ether-line|libc-res-init|libc-posix-spawnattr-destroy|libc-posix-spawnattr-getflags|libc-posix-spawn-file-actions-init|libc-getpagesize|libc-gettid|libc-posix-close|libc-isatty|libc-tcgetpgrp|libc-tcsetpgrp|libc-getpass|mkfifo-header-abi|mkfifoat-header-abi|libc-mkfifo|libc-mkfifoat|mktemp-header-abi|libc-mktemp) ;;
+    ctermid-header-abi|gethostid-header-abi|endhostent-header-abi|ether-line-header-abi|res-init-header-abi|posix-spawnattr-destroy-header-abi|posix-spawnattr-getflags-header-abi|posix-spawnattr-setpgroup-header-abi|posix-spawn-file-actions-init-header-abi|getpagesize-header-abi|gettid-header-abi|posix-close-header-abi|isatty-header-abi|tcgetpgrp-header-abi|tcsetpgrp-header-abi|getpass-header-abi|libc-ctermid|libc-gethostid|libc-endhostent|libc-ether-line|libc-res-init|libc-posix-spawnattr-destroy|libc-posix-spawnattr-getflags|libc-posix-spawnattr-setpgroup|libc-posix-spawn-file-actions-init|libc-getpagesize|libc-gettid|libc-posix-close|libc-isatty|libc-tcgetpgrp|libc-tcsetpgrp|libc-getpass|mkfifo-header-abi|mkfifoat-header-abi|libc-mkfifo|libc-mkfifoat|mktemp-header-abi|libc-mktemp) ;;
     readlinkat-header-abi|libc-readlinkat) ;;
     stdio-permanent-line-io-header-abi|stdio-octal-hex-scan-header-abi) ;;
     math-complex-complete-header-abi|libc-math-complex-complete) ;;
@@ -4501,6 +4511,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "posix-spawnattr-getflags-header-abi takes no arguments"
         ensure_image
         run_posix_spawnattr_getflags_header_abi
+        ;;
+    posix-spawnattr-setpgroup-header-abi)
+        [ "$#" -eq 0 ] || fail "posix-spawnattr-setpgroup-header-abi takes no arguments"
+        ensure_image
+        run_posix_spawnattr_setpgroup_header_abi
         ;;
     posix-spawn-file-actions-init-header-abi)
         [ "$#" -eq 0 ] || fail "posix-spawn-file-actions-init-header-abi takes no arguments"
@@ -5300,6 +5315,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "libc-posix-spawnattr-getflags takes no arguments"
         ensure_image
         run_libc_posix_spawnattr_getflags_probe
+        ;;
+    libc-posix-spawnattr-setpgroup)
+        [ "$#" -eq 0 ] || fail "libc-posix-spawnattr-setpgroup takes no arguments"
+        ensure_image
+        run_libc_posix_spawnattr_setpgroup_probe
         ;;
     libc-posix-spawn-file-actions-init)
         [ "$#" -eq 0 ] || fail "libc-posix-spawn-file-actions-init takes no arguments"

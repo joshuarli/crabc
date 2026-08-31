@@ -10517,6 +10517,49 @@ native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc
 oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source, unconditional spawn.h declaration, static-member, and behavior oracle for src/process/posix_spawnattr_getflags.c::posix_spawnattr_getflags: valid caller-owned storage copies the int __flags member into the short result, then returns zero." }, { kind = "elf-abi", source = "System V AMD64 psABI and pinned musl x86 static object", role = "Two-pointer signed-int C ABI, C++ C linkage, caller-storage copy, and true-static ET_EXEC closure contract." }]
 
 [[family.verified_artifact]]
+id = "static-c-posix-spawnattr-setpgroup"
+description = "Private native x86 selected-static-archive POSIX spawn-attribute process-group assignment C ABI artifact inside still-planned `libc.c-abi-compat`. One dependency-free `crabc-libc` archive resolves exactly `int posix_spawnattr_setpgroup(posix_spawnattr_t *, pid_t)` into a freestanding C fixture after equivalent pinned-musl execution. Pinned musl's complete `src/process/posix_spawnattr_setpgroup.c::posix_spawnattr_setpgroup` body is exactly `attr->__pgrp = pgrp; return 0;`: direct and function-pointer calls prove caller-supplied zero, negative, and positive `pid_t` values land at the offset-four field of an all-byte-filled caller record while every other byte remains unchanged, with stale errno preservation on the ordinary musl route. The input must name a valid non-null caller-owned attribute record; null or invalid inputs remain outside the selected C source domain. This leaf writes only that caller storage, with no global mutable state, errno/TLS, allocation, syscall, process, child, signal, scheduler, file-action, or spawn-execution boundary. It does not select `posix_spawn`, `posix_spawnp`, `posix_spawnattr_init`, flag or process-group readback, any other attribute mutation/query, file actions, child lifecycle, generic process control, libc.so, CRT, loader, sysroot, family completion, promotion, or public x86 support."
+source_owners = [
+  "compat/upstreams.toml",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/posix_spawnattr_setpgroup.rs",
+  "include/features.h",
+  "include/bits/alltypes.h",
+  "include/sys/types.h",
+  "include/spawn.h",
+  "compat/x86_64/posix_spawnattr_setpgroup_header_abi_probe.c",
+  "compat/x86_64/posix_spawnattr_setpgroup_header_abi_probe.cpp",
+  "compat/x86_64/run_posix_spawnattr_setpgroup_header_abi.sh",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/libc_posix_spawnattr_setpgroup_probe.c",
+  "compat/x86_64/libc_posix_spawnattr_setpgroup_start.S",
+  "compat/x86_64/run_libc_posix_spawnattr_setpgroup.sh",
+  "compat/x86_64/aarch64_parity_inventory.py",
+  "compat/x86_64/aarch64_parity_inventory.json",
+  "compat/x86_64/tests/test_aarch64_parity_inventory.py",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "compat/x86_64/README.md",
+  "STATUS.md",
+  "x86-64.md",
+  "scripts/dev-x86_64.sh",
+  "scripts/check_structure.py",
+]
+x86_abi_prerequisites = [
+  "The SysV AMD64 ABI passes `int posix_spawnattr_setpgroup(posix_spawnattr_t *, pid_t)`'s writable attribute pointer in rdi, its signed pid_t value in esi, and returns its signed int result in eax. The musl header's align-8, 336-byte record has its signed int `__pgrp` member at byte offset four after the flags word; valid non-null caller storage is a source precondition.",
+  "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417 maps `src/process/posix_spawnattr_setpgroup.c::posix_spawnattr_setpgroup` directly to exact `attr->__pgrp = pgrp; return 0;`. `posix_spawn`, `posix_spawnp`, `posix_spawnattr_init`, process-group readback, every other attribute mutation/query, file actions, child lifecycle, signals, and scheduler behavior remain unselected.",
+  "The true `-nostdlib -static --gc-sections` candidate discards unrelated selected-archive sections and has no interpreter, DT_NEEDED, unresolved symbol, PT_TLS, errno path, dynamic-TLS model, allocator, helper call, syscall, or ambient runtime dependency. Its posix_spawnattr_setpgroup disassembly is one caller-storage int store and direct return, while the candidate rejects peer spawn exports, so this local assignment cannot become a process-spawn closure through archive extraction.",
+]
+x86_header_prerequisites = [
+  "The focused pinned-musl/project-first C11/C++17 `<spawn.h>` matrix proves unconditional `int posix_spawnattr_setpgroup(posix_spawnattr_t *, pid_t)` under strict, POSIX, X/Open, and GNU profiles, its exact pointer/value function-pointer type, the 336-byte/align-8/offset-4 public record layout, project-header provenance, and unmangled C++ linkage through the installed `extern \"C\"` guards. It selects no spawn execution, file-action, other attribute behavior, child lifecycle, or public x86 support.",
+]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-posix-spawnattr-setpgroup", scope = "Pinned-musl/project C/C++ header compilation plus equivalent pinned-musl C execution and one true dependency-free x86 crabc-libc `-nostdlib -static --gc-sections` candidate. The shared fixture proves direct and function-pointer fixed zero returns, caller-supplied zero/negative/positive pid_t values, a byte-filled caller-owned posix_spawnattr_t record with only the offset-four __pgrp int changed, every other byte unchanged, and stale errno preservation on the ordinary musl route. It ratchets pinned-musl posix_spawnattr_setpgroup.lo/AArch64 ownership, exact crate-owned export closure, no interpreter/DT_NEEDED/unresolved symbol/PT_TLS/errno/dynamic-TLS model/allocator/helper-call/syscall or ambient runtime, and a direct no-call/no-syscall int-store return disassembly while rejecting peer spawn extraction. It does not select spawn execution, file actions, attribute initialization or other mutation/query, child lifecycle, signal or scheduler behavior, generic process control, libc.so, CRT, loader, sysroot, family completion, promotion, or public x86 support." }]
+oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source, unconditional spawn.h declaration, static-member, and behavior oracle for src/process/posix_spawnattr_setpgroup.c::posix_spawnattr_setpgroup: valid caller-owned storage receives the supplied pid_t in its int __pgrp member, then returns zero." }, { kind = "elf-abi", source = "System V AMD64 psABI and pinned musl x86 static object", role = "Pointer-plus-signed-pid_t signed-int C ABI, C++ C linkage, caller-storage int-store, and true-static ET_EXEC closure contract." }]
+
+[[family.verified_artifact]]
 id = "static-c-posix-spawn-file-actions-init"
 description = "Private native x86 selected-static-archive POSIX spawn file-actions initialization C ABI artifact inside still-planned `libc.c-abi-compat`. One dependency-free `crabc-libc` archive resolves exactly `int posix_spawn_file_actions_init(posix_spawn_file_actions_t *)` into a freestanding C fixture after equivalent pinned-musl execution. Pinned musl's complete `src/process/posix_spawn_file_actions_init.c::posix_spawn_file_actions_init` body is exactly `fa->__actions = 0; return 0;`: direct and function-pointer calls prove an all-byte-filled caller record receives only the null `__actions` pointer at its offset-eight field, preserves every other byte, and proves stale errno preservation on the ordinary musl route. The input must name a valid non-null caller-owned file-actions record; null or invalid inputs remain outside the selected C source domain. This leaf writes only that caller storage, with no global mutable state, errno/TLS, allocation, syscall, process, child, signal, scheduler, file-action execution, or spawn-execution boundary. It does not select `posix_spawn`, `posix_spawnp`, attribute initialization/mutation/query, action addition or `posix_spawn_file_actions_destroy`, child lifecycle, generic process control, libc.so, CRT, loader, sysroot, family completion, promotion, or public x86 support."
 source_owners = [

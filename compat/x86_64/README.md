@@ -3610,6 +3610,28 @@ file actions, attribute initialization/mutation or other queries, child
 lifecycle, signal or scheduler behavior, generic process control, libc.so,
 CRT, loader, sysroot, family completion, promotion, or public x86 support.
 
+`posix-spawnattr-setpgroup-header-abi` and `libc-posix-spawnattr-setpgroup`
+record a separate private `static-c-posix-spawnattr-setpgroup` artifact inside
+still-planned `libc.c-abi-compat`, not a spawn or process capability. The
+pinned-musl/project `<spawn.h>` C/C++ matrix proves unconditional
+`int posix_spawnattr_setpgroup(posix_spawnattr_t *, pid_t)` under strict,
+POSIX, X/Open, and GNU profiles, its exact pointer/value function type, the
+public 336-byte/align-8/offset-4 `__pgrp` record layout, and unmangled C++
+linkage through the header's C-linkage guards. The shared C body then executes
+through pinned musl and one true dependency-free `-nostdlib -static
+--gc-sections` candidate. Musl 1.2.6
+`src/process/posix_spawnattr_setpgroup.c::posix_spawnattr_setpgroup` is exactly
+`attr->__pgrp = pgrp; return 0;`; the fixture proves direct/function-pointer
+success, zero/negative/positive `pid_t` values, a byte-filled caller record
+with only the `__pgrp` int changed, every other byte unchanged, and stale-errno
+preservation on the ordinary musl route. Valid non-null caller record storage
+is a C source precondition; null and invalid inputs remain outside this slice.
+The candidate rejects peer spawn extraction. It does not select spawn
+execution, file actions, attribute initialization or other mutation/query,
+child lifecycle, signal or scheduler behavior, generic process control,
+libc.so, CRT, loader, sysroot, family completion, promotion, or public x86
+support.
+
 `posix-spawn-file-actions-init-header-abi` and
 `libc-posix-spawn-file-actions-init` record a separate private
 `static-c-posix-spawn-file-actions-init` artifact inside still-planned

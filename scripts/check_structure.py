@@ -6701,6 +6701,57 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
                 f"static spawn-attribute flag-readback boundary must not select {forbidden!r}"
             )
 
+    posix_spawnattr_setpgroup_source = (
+        ROOT
+        / "libc"
+        / "src"
+        / "c_abi"
+        / "x86_64"
+        / "posix_spawnattr_setpgroup.rs"
+    )
+    posix_spawnattr_setpgroup_text = posix_spawnattr_setpgroup_source.read_text(
+        errors="replace"
+    )
+    for required in (
+        "pinned musl 1.2.6 release commit",
+        "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+        "src/process/posix_spawnattr_setpgroup.c::posix_spawnattr_setpgroup",
+        "attr->__pgrp = pgrp; return 0;",
+        "System V AMD64 ABI",
+        "PosixSpawnAttrPrefix",
+        'pub unsafe extern "C" fn posix_spawnattr_setpgroup(',
+        "addr_of_mut!",
+        "write_unaligned",
+    ):
+        if required not in posix_spawnattr_setpgroup_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/posix_spawnattr_setpgroup.rs: selected "
+                f"static spawn-attribute process-group boundary is missing {required!r}"
+            )
+    posix_spawnattr_setpgroup_exports = set(
+        re.findall(
+            r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(',
+            posix_spawnattr_setpgroup_text,
+        )
+    )
+    if posix_spawnattr_setpgroup_exports != {"posix_spawnattr_setpgroup"}:
+        errors.append(
+            "libc/src/c_abi/x86_64/posix_spawnattr_setpgroup.rs: selected "
+            "static artifact must export only posix_spawnattr_setpgroup"
+        )
+    for forbidden in (
+        "raw_syscall::",
+        "errno::",
+        "static_tls::",
+        "crabc_core",
+        "crabc_mimalloc",
+    ):
+        if forbidden in posix_spawnattr_setpgroup_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/posix_spawnattr_setpgroup.rs: selected "
+                f"static spawn-attribute process-group boundary must not select {forbidden!r}"
+            )
+
     posix_spawn_file_actions_init_source = (
         ROOT
         / "libc"
@@ -11357,6 +11408,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         res_init_text,
         posix_spawnattr_destroy_text,
         posix_spawnattr_getflags_text,
+        posix_spawnattr_setpgroup_text,
         posix_spawn_file_actions_init_text,
         isatty_text,
         tcgetpgrp_text,
@@ -11695,6 +11747,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         "res_init",
         "posix_spawnattr_destroy",
         "posix_spawnattr_getflags",
+        "posix_spawnattr_setpgroup",
         "posix_spawn_file_actions_init",
         "isatty",
         "tcgetpgrp",
@@ -12003,6 +12056,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         ("res_init.rs", res_init_text),
         ("posix_spawnattr_destroy.rs", posix_spawnattr_destroy_text),
         ("posix_spawnattr_getflags.rs", posix_spawnattr_getflags_text),
+        ("posix_spawnattr_setpgroup.rs", posix_spawnattr_setpgroup_text),
         ("posix_spawn_file_actions_init.rs", posix_spawn_file_actions_init_text),
         ("isatty.rs", isatty_text),
         ("tcgetpgrp.rs", tcgetpgrp_text),

@@ -273,6 +273,24 @@ initialization/mutation or other queries, child lifecycle, signal or scheduler
 behavior, generic process control, family completion, promotion, or public x86
 support.
 
+`./scripts/dev-x86_64.sh libc-posix-spawnattr-setpgroup` is a separate private
+`static-c-posix-spawnattr-setpgroup` artifact inside still-planned
+`libc.c-abi-compat`. Its pinned-musl/project `<spawn.h>` C/C++ matrix proves
+unconditional `int posix_spawnattr_setpgroup(posix_spawnattr_t *, pid_t)`, its
+exact pointer/value type, the public 336-byte/align-8/offset-4 `__pgrp`
+layout, and unmangled linkage under strict, POSIX, X/Open, and GNU profiles.
+Pinned musl 1.2.6
+`src/process/posix_spawnattr_setpgroup.c::posix_spawnattr_setpgroup` is exactly
+`attr->__pgrp = pgrp; return 0;`; the true-static `--gc-sections` fixture
+proves direct/function-pointer success, zero/negative/positive caller values,
+only the `__pgrp` field changed in a byte-filled caller record, every other
+byte unchanged, and stale-errno preservation on the musl reference route.
+Valid non-null caller-owned record storage is a source precondition; null and
+invalid inputs remain outside this leaf. It does not select spawn execution,
+file actions, attribute initialization or any other mutation/query, child
+lifecycle, signal or scheduler behavior, generic process control, family
+completion, promotion, or public x86 support.
+
 `./scripts/dev-x86_64.sh libc-posix-spawn-file-actions-init` is a separate
 private `static-c-posix-spawn-file-actions-init` artifact inside still-planned
 `libc.c-abi-compat`. Its pinned-musl/project `<spawn.h>` C/C++ matrix proves
