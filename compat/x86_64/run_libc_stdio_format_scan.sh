@@ -11,7 +11,9 @@
 # `fixed-percent-scan` owns only vfscanf's literal `%%` parser state,
 # `fixed-format-whitespace-scan` owns only its top-level format-whitespace
 # parser state, and `fixed-literal-scan` owns only its non-percent raw-literal
-# parser state.
+# parser state. `fixed-empty-format-scan` owns only the format-NUL termination
+# state before vfscanf enters a format-directed scanner state or a variadic
+# destination boundary.
 # The sibling `float-hex-output` profile selects only binary64 `%a`/`%A`
 # output, while the closed `errno-output` profile adds only bare GNU/musl `%m` C-locale
 # errno-message output through that same formatter. None selects a general
@@ -70,6 +72,13 @@ fixed-literal-scan)
     readonly START_SOURCE=compat/x86_64/libc_stdio_fixed_literal_scan_start.S
     readonly FREESTANDING_DEFINE=CRABC_STDIO_FIXED_LITERAL_SCAN_FREESTANDING
     readonly EVIDENCE_LABEL="sealed stdio raw-literal scan"
+    readonly -a REQUIRED_C_ABI_SYMBOLS=(sscanf vsscanf)
+    ;;
+fixed-empty-format-scan)
+    readonly FIXTURE_SOURCE=compat/x86_64/libc_stdio_fixed_empty_format_scan_probe.c
+    readonly START_SOURCE=compat/x86_64/libc_stdio_fixed_empty_format_scan_start.S
+    readonly FREESTANDING_DEFINE=CRABC_STDIO_FIXED_EMPTY_FORMAT_SCAN_FREESTANDING
+    readonly EVIDENCE_LABEL="sealed stdio empty-format scan"
     readonly -a REQUIRED_C_ABI_SYMBOLS=(sscanf vsscanf)
     ;;
 float-hex-output)
@@ -295,6 +304,16 @@ if [ "$EVIDENCE_PROFILE" = fixed-literal-scan ]; then
         fail "raw-literal scanner no longer distinguishes matching failure"
     grep -Fq 'zero-assignment raw literal' "$ROOT_DIR/$FIXTURE_SOURCE" ||
         fail "raw-literal fixture no longer records its assignment boundary"
+fi
+if [ "$EVIDENCE_PROFILE" = fixed-empty-format-scan ]; then
+    grep -Fq 'if format_byte == 0' \
+        "$ROOT_DIR/libc/src/c_abi/x86_64/stdio_format_scan.rs" ||
+        fail "empty-format scanner termination is no longer selected"
+    grep -Fq 'returns the existing assignment count without entering a scanner state' \
+        "$ROOT_DIR/libc/src/c_abi/x86_64/stdio_format_scan.rs" ||
+        fail "empty-format scanner no longer retains its sealed boundary"
+    grep -Fq 'zero-assignment empty format' "$ROOT_DIR/$FIXTURE_SOURCE" ||
+        fail "empty-format fixture no longer records its assignment boundary"
 fi
 if timeout --foreground "$EXECUTION_TIMEOUT" "$candidate"; then
     :

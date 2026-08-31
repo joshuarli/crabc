@@ -8684,6 +8684,51 @@ native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc
 oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source and behavior oracle for src/stdio/{sscanf,vsscanf,vfscanf}.c: vfscanf's top-level *p != '%' || p[1] == '%' parser arm enters through the selected *p != '%' raw-literal path, limits input, reads one byte with shgetc, shunget restores a nonmatching byte, distinguishes c < 0 input failure from matching failure, advances pos by shcnt without va_arg or assignment, and distinguishes matching failure from input EOF after a literal prefix." }, { kind = "elf-abi", source = "System V AMD64 psABI", role = "LP64 direct input/format pointer ABI plus compiler-owned vsscanf va_list spelling that remains unadvanced because the fixed raw-literal state has no destination, with direct initial-exec errno TLS used by the freestanding candidate." }]
 
 [[family.verified_artifact]]
+id = "static-c-stdio-fixed-empty-format-scan"
+description = "Private native x86 selected-static empty-format scan artifact inside still-planned `libc.text-math-locale-stdio`. It adds no C export or capability: it narrows evidence for the existing NUL-string `sscanf`/`vsscanf` boundary to a fixed zero-length format termination state only. Its independent project-header C11/C++17 gate ratchets those existing declarations and C++ unmangled C spellings only. Pinned musl 1.2.6 `sscanf` forwards its va_list to `vsscanf`, whose private NUL-string FILE setup admits a valid empty or nonempty input; `vfscanf` then sees `fmt[0] == 0`, skips the body of `for (p=(const unsigned char *)fmt; *p; p++)`, and returns its existing zero `matches` count without entering literal, literal-percent, format-whitespace, or conversion parser states, calling `va_arg`, acquiring a destination, or making an assignment. Fixed direct and `vsscanf` cases prove empty and nonempty input return zero, a trailing fixture-only va_list sentinel remains unadvanced, and stale errno remains unchanged. This is a pinned-musl format-termination profile, not a portable general scanf-empty-format claim. It excludes raw literal matching owned by `static-c-stdio-fixed-literal-scan`, literal-percent `%%` owned by `static-c-stdio-fixed-percent-scan`, C-locale format whitespace owned by `static-c-stdio-fixed-format-whitespace-scan`, all conversions and `%n`/`%hhn` count-store behavior, character/string/scanset/pointer/integer/floating/wide forms, FILE input, `scanf`/`fscanf`, byte formatting, allocation, locale objects, a general scanner, general stdio, libc.so, CRT, loader, sysroot, family completion, promotion, and public x86 support."
+source_owners = [
+  "compat/upstreams.toml",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/stdio_format_scan.rs",
+  "libc/src/c_abi/x86_64/errno.rs",
+  "include/bits/alltypes.h",
+  "include/errno.h",
+  "include/features.h",
+  "include/limits.h",
+  "include/stdarg.h",
+  "include/stddef.h",
+  "include/stdint.h",
+  "include/stdio.h",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/stdio_fixed_empty_format_scan_header_abi_probe.c",
+  "compat/x86_64/stdio_fixed_empty_format_scan_header_abi_probe.cpp",
+  "compat/x86_64/run_stdio_fixed_empty_format_scan_header_abi.sh",
+  "compat/x86_64/libc_stdio_fixed_empty_format_scan_probe.c",
+  "compat/x86_64/libc_stdio_fixed_empty_format_scan_start.S",
+  "compat/x86_64/run_libc_stdio_format_scan.sh",
+  "compat/x86_64/run_libc_stdio_fixed_empty_format_scan.sh",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "compat/x86_64/README.md",
+  "STATUS.md",
+  "x86-64.md",
+  "scripts/dev-x86_64.sh",
+]
+x86_abi_prerequisites = [
+  "System V AMD64 passes the fixed input and format pointers in rdi/rsi. The selected empty-format state has no caller destination; direct sscanf has no variadic payload, while vsscanf receives compiler-owned C va_list spelling and leaves its fixture-only trailing sentinel unadvanced. It introduces no external FILE, count-store, or floating variadic boundary.",
+  "Pinned musl 1.2.6 src/stdio/{sscanf,vsscanf,vfscanf}.c maps exactly the selected rule: sscanf forwards va_list through vsscanf's private string-backed FILE setup; after __toread admits the valid NUL string, vfscanf's for (p=(const unsigned char *)fmt; *p; p++) loop has no iteration for fmt[0] == 0 and returns matches == 0 without shlim, shgetc, shunget, store_int, va_arg, destination access, or assignment. Literal, literal-percent, format-whitespace, conversion, external FILE, and general scanner owners remain unselected.",
+  "The true static candidate has no syscall, allocator, stream, locale, or mutable scanner state. Its sole shared state is the selected initial-exec errno TLS slot, which remains stale on the selected zero-result format-end states; the fixture-local %fs:0 self word is test-only TLS setup, not a CRT contract.",
+]
+x86_header_prerequisites = [
+  "The independent project-header C11/C++17 probe compiles stdarg.h and stdio.h with compiler-owned va_list spelling under both pinned-musl and candidate trees, ratchets only existing sscanf/vsscanf signatures, and proves C++ object references retain unmangled C spellings. stdarg.h may originate in the permitted compiler-builtin include root; stdio.h, features.h, and bits/alltypes.h remain traced to the selected header tree. It is not a broader stdio-header, C++ runtime, or general scanner claim.",
+]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-stdio-fixed-empty-format-scan", scope = "Pinned-musl 1.2.6 C11/C++17 project-header declaration/linkage proof plus the dependency-free selected x86 crabc-libc archive and one true `-nostdlib -static` candidate. The header gate proves only sscanf/vsscanf signatures and unmangled C++ C spellings. The sealed profile proves vsscanf's private NUL-string setup followed by vfscanf format-NUL termination: empty and nonempty inputs return zero with no destination or assignment, direct vsscanf forwarding preserves a fixture-only trailing va_list sentinel, and stale errno remains unchanged. The shared archive/final-ELF checks retain the selected static export contract and reject unresolved symbols, interpreter/DT_NEEDED, dynamic TLS resolver, allocation, streams, ambient runtime, and nonselected printf/fprintf/scanf/fscanf/wide exports while retaining direct initial-exec errno TLS. It is pinned-musl format-termination evidence only, not raw literal, literal-percent, format-whitespace, `%n`/`%hhn` count-store, character/string/scanset/pointer/integer/floating/wide, conversion, FILE, byte-formatting, general scanner, general stdio, family-completion, promotion, or public-x86 claim." }]
+oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source and behavior oracle for src/stdio/{sscanf,vsscanf,vfscanf}.c: sscanf forwards va_list through vsscanf's private NUL-string FILE setup; vfscanf admits the valid string, then its for (p=(const unsigned char *)fmt; *p; p++) parser loop is skipped for fmt[0] == 0 and returns zero matches without literal, whitespace, percent, conversion, va_arg, destination, or assignment behavior." }, { kind = "elf-abi", source = "System V AMD64 psABI", role = "LP64 direct input/format pointer ABI plus compiler-owned vsscanf va_list spelling whose fixture-only trailing sentinel remains unadvanced because fixed format-NUL termination has no destination, with direct initial-exec errno TLS used by the freestanding candidate." }]
+
+[[family.verified_artifact]]
 id = "static-c-stdio-float-hex-output"
 description = "Private native x86 selected-static binary64 hexadecimal-output artifact inside still-planned `libc.text-math-locale-stdio`. It adds no export or capability: the existing allocation-free C-locale `snprintf`/`vsnprintf`/`sprintf`/`vsprintf` byte-buffer boundary accepts only binary64 `%a`/`%A` (and musl's no-op `l` modifier) beyond its separately evidenced integer grammar. The pinned-musl/project-header C reference and true `-nostdlib -static` candidate prove raw-bit default and explicit precision spelling, all four selected current x86 fenv directions, ties-to-even hexadecimal rounding, `0x2pE` carry spelling, signed zero, normalized subnormal, infinity/NaN, width/zero/left padding, C99 truncation, `%n`, and immediate `EOVERFLOW` when a precision-expanded count cannot fit `int`; direct and `v*` System V SSE register-save and overflow areas plus sequential mixed GP/SSE traversal are exercised. Candidate-only `%f`, `%La`, and positional `%3$a` reject with `EINVAL`. It excludes formatter floating-exception side effects, FILE streams, `printf`/`fprintf`, decimal `%e`/`%E`/`%f`/`%F`/`%g`/`%G`, long-double `%La`/`%LA`, floating input, wide/allocating output, scansets, positional grammar, locale objects, general stdio, libc.so, CRT, loader, sysroot, family completion, parity, promotion, and public x86 support."
 source_owners = [

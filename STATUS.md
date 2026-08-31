@@ -390,6 +390,23 @@ floating/wide forms, conversions, FILE input, byte formatting, locale objects,
 a general scanner or stdio boundary, parity, promotion, and public x86 support
 remain excluded.
 
+The separate private `./scripts/dev-x86_64.sh libc-stdio-fixed-empty-format-scan`
+artifact adds no export or capability. It narrows a pinned-musl 1.2.6 versus
+true `-nostdlib -static` differential to `sscanf`/`vsscanf` with only the
+zero-length format. Musl's private NUL-string setup admits the valid fixed
+input before `vfscanf` skips its format loop, returning its existing zero
+assignment count without entering a literal, percent, whitespace, or
+conversion parser state. Direct and `vsscanf` witnesses cover empty and
+nonempty input, retain a fixture-only trailing `va_list` sentinel, and keep
+errno stale. Its independent C11/C++17 header gate proves only the existing
+declarations and unmangled C++ C spellings. This is pinned-musl
+format-termination evidence, not a general scanf-empty-format claim. Raw
+literals, literal-percent `%%`, and C-locale format whitespace remain owned
+by their separate fixed profiles; `%n`/`%hhn`, character/string/scanset/
+pointer/integer/floating/wide forms, conversions, external FILE input, byte
+formatting, locale objects, a general scanner or stdio boundary, parity,
+promotion, and public x86 support remain excluded.
+
 The separate private `./scripts/dev-x86_64.sh libc-stdio-float-hex-output`
 artifact adds no export and selects only allocation-free C-locale binary64
 `%a`/`%A` byte-buffer output. It preserves musl's no-op `l` modifier,
