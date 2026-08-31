@@ -140,7 +140,7 @@ for symbol in __errno_location __inet_aton inet_addr inet_aton inet_ntop inet_pt
     grep -Eq "[[:space:]][TW][[:space:]]${symbol}$" "$archive_symbols" ||
         fail "archive does not define ${symbol}"
 done
-for unselected in inet_network inet_makeaddr inet_lnaof inet_netof \
+for unselected in inet_network inet_netof \
     gethostbyname gethostbyaddr \
     malloc free calloc realloc; do
     if grep -Eq "[[:space:]][TW][[:space:]]${unselected}$" "$archive_symbols"; then
@@ -174,6 +174,11 @@ assert_musl_inet_aton_alias "$candidate_symbols" candidate
 if grep -Eq '[[:space:]]inet_ntoa$' "$candidate_symbols"; then
     fail "candidate accidentally selects separate inet_ntoa scratch storage"
 fi
+for unselected in inet_makeaddr inet_lnaof; do
+    if grep -Eq "[[:space:]]${unselected}$" "$candidate_symbols"; then
+        fail "candidate accidentally selects separate classful IPv4 leaf"
+    fi
+done
 unresolved_symbols="$(awk '$7 == "UND" && NF >= 8 { print }' "$candidate_symbols")"
 if [ -n "$unresolved_symbols" ]; then
     printf '%s\n' "$unresolved_symbols" >&2

@@ -3757,6 +3757,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         '#[path = "socket_transport.rs"]',
         '#[path = "inet_address.rs"]',
         '#[path = "inet_ntoa.rs"]',
+        '#[path = "inet_classful.rs"]',
         '#[path = "hstrerror.rs"]',
         '#[path = "socket_messages.rs"]',
         '#[path = "posix_semaphore.rs"]',
@@ -7824,6 +7825,148 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
             "continue excluding the separate inet_ntoa scratch buffer"
         )
 
+    inet_classful_probe_source = (
+        ROOT / "compat" / "x86_64" / "libc_inet_classful_probe.c"
+    )
+    inet_classful_start_source = (
+        ROOT / "compat" / "x86_64" / "libc_inet_classful_start.S"
+    )
+    inet_classful_runner_source = (
+        ROOT / "compat" / "x86_64" / "run_libc_inet_classful.sh"
+    )
+    for path in (
+        inet_classful_probe_source,
+        inet_classful_start_source,
+        inet_classful_runner_source,
+    ):
+        if not path.is_file():
+            errors.append(
+                f"x86 static classful IPv4 artifact is missing {path.relative_to(ROOT)}"
+            )
+            return
+
+    inet_classful_source = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "inet_classful.rs"
+    )
+    inet_classful_text = inet_classful_source.read_text(errors="replace")
+    inet_classful_probe = inet_classful_probe_source.read_text(errors="replace")
+    inet_classful_start = inet_classful_start_source.read_text(errors="replace")
+    inet_classful_runner = inet_classful_runner_source.read_text(errors="replace")
+    for required in (
+        "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+        "src/network/inet_legacy.c",
+        "`inet_network` (and its `inet_addr` call)",
+        "`inet_netof`",
+        "network << 24",
+        "network << 16",
+        "network << 8",
+        "host >> 24 < 128",
+        "host >> 24 < 192",
+        "0x00ff_ffff",
+        "0x0000_ffff",
+        "0x0000_00ff",
+        "#[repr(C)]",
+        "pub struct InAddr",
+        'pub extern "C" fn inet_makeaddr',
+        'pub extern "C" fn inet_lnaof',
+    ):
+        if required not in inet_classful_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/inet_classful.rs: selected static "
+                f"classful boundary is missing {required!r}"
+            )
+    for forbidden in (
+        "raw_syscall",
+        "errno::",
+        "__h_errno_location",
+        "getaddrinfo",
+        "gethostby",
+        "if_nameindex",
+        "socket(",
+        "std::",
+        "alloc::",
+        "crabc_core",
+        "crabc_mimalloc",
+    ):
+        if forbidden in inet_classful_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/inet_classful.rs: selected static "
+                f"classful boundary must not select {forbidden!r}"
+            )
+    inet_classful_exports = set(
+        re.findall(
+            r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(',
+            inet_classful_text,
+        )
+    )
+    if inet_classful_exports != {"inet_makeaddr", "inet_lnaof"}:
+        errors.append(
+            "libc/src/c_abi/x86_64/inet_classful.rs: selected static artifact "
+            "must export only inet_makeaddr and inet_lnaof"
+        )
+    for required in (
+        "inet_makeaddr_signature",
+        "inet_lnaof_signature",
+        "sizeof(in_addr_t) == 4",
+        "offsetof(struct in_addr, s_addr) == 0",
+        "0x7f123456",
+        "0x80003456",
+        "0x01003456",
+        "0xffff00aa",
+        "0x010000bb",
+        "0xff000001",
+        "0x0000cdef",
+        "CRABC_INET_CLASSFUL_FREESTANDING",
+    ):
+        if required not in inet_classful_probe:
+            errors.append(
+                "compat/x86_64/libc_inet_classful_probe.c: static classful "
+                f"regression is missing {required!r}"
+            )
+    for required in (
+        "crabc_x86_64_inet_classful_probe",
+        "mov $60, %eax",
+    ):
+        if required not in inet_classful_start:
+            errors.append(
+                "compat/x86_64/libc_inet_classful_start.S: static classful "
+                f"entry is missing {required!r}"
+            )
+    if "ARCH_SET_FS" in inet_classful_start:
+        errors.append(
+            "compat/x86_64/libc_inet_classful_start.S: classful entry must not "
+            "bootstrap TLS"
+        )
+    for required in (
+        "inet_legacy.lo",
+        "inet_network inet_makeaddr inet_lnaof inet_netof",
+        "inet_network no longer carries its unselected inet_addr dependency",
+        "assert_selected_c_abi_surface",
+        "extract_selected_member",
+        "inet_makeaddr archive member does not also define inet_lnaof",
+        "-nostdlib -static",
+        '"$selected_member" -o "$candidate"',
+        "candidate unexpectedly selects TLS",
+        "htonl htons ntohl ntohs",
+        "inet_ntoa inet_ntop inet_pton inet_network inet_netof",
+        "call|syscall",
+    ):
+        if required not in inet_classful_runner:
+            errors.append(
+                "compat/x86_64/run_libc_inet_classful.sh: archive-free static "
+                f"classful evidence is missing {required!r}"
+            )
+    if '"$archive" -o "$candidate"' in inet_classful_runner:
+        errors.append(
+            "compat/x86_64/run_libc_inet_classful.sh: final classful candidate "
+            "must not link libc.a"
+        )
+    if "candidate accidentally selects separate classful IPv4 leaf" not in inet_address_runner:
+        errors.append(
+            "compat/x86_64/run_libc_inet_address.sh: numeric candidate must "
+            "continue excluding the separate classful IPv4 leaf"
+        )
+
     hstrerror_probe_source = ROOT / "compat" / "x86_64" / "libc_hstrerror_probe.c"
     hstrerror_start_source = ROOT / "compat" / "x86_64" / "libc_hstrerror_start.S"
     hstrerror_runner_source = ROOT / "compat" / "x86_64" / "run_libc_hstrerror.sh"
@@ -8673,6 +8816,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         socket_messages_text,
         inet_address_text,
         inet_ntoa_text,
+        inet_classful_text,
         hstrerror_text,
         byte_strings_text,
         random_entropy_text,
@@ -9022,6 +9166,8 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         "inet_aton",
         "inet_addr",
         "inet_ntoa",
+        "inet_lnaof",
+        "inet_makeaddr",
         "hstrerror",
         "uname",
         "sysinfo",
@@ -9160,7 +9306,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
             "signal-control, one pure GNU signal-set predicate and paired GNU binary set-operation leaf, bounded process-signal execution, and one legacy single-signal pause wait, bounded pthread create/exit/join/detach initial-TLS worker, its private selected-main/worker pthread-key/C11-TSS lifecycle, private process-normal pthread mutexes and their musl private condition-variable handoff, the complete selected rwlock/attribute family with private-or-shared futex operation, plus the distinct C11 plain-sync adapter and normal-return pthread/C11 once state machine, its typed C11 create/exit/join/detach sibling, and pthread/C11 identity aliases, named termios-control, historical ctermid pathname spelling, constant historical gethostid compatibility, selected process-context, child-reaping, C11 immediate termination, callback algorithms, direct clock_gettime, caller-owned mapping-core, no-cancellation mapping synchronization, direct anonymous-memory descriptor creation, nanosleep, and clock_nanosleep, selected "
             "descriptor-entry, selected filesystem-access, bounded descriptor-control, timestamp updates, and descriptor-I/O, selected process-resources, selected readiness/signal-waits, "
             "selected socket transport and selected socket-message/options, selected system-observation, selected UTS-identity, "
-            "selected numeric-address codecs, fixed-profile h_errno message text, byte-string, random-entropy, memory-search, C-string-copy, immutable error-string, "
+            "selected numeric-address codecs and legacy classful IPv4 arithmetic, fixed-profile h_errno message text, byte-string, random-entropy, memory-search, C-string-copy, immutable error-string, "
             "fixed-C-locale ctype, integer-arithmetic, integer-parsing, intmax-arithmetic, credential-observation, and "
             "raw auxiliary-vector observation, startup-derived secure-environment, and environment-backed login-name observation, find-first-set, startup-published program names, short/GNU-long "
             "getopt state and aliases, callback-tree/hash-table search, and the "
@@ -9227,6 +9373,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         ("socket_messages.rs", socket_messages_text),
         ("inet_address.rs", inet_address_text),
         ("inet_ntoa.rs", inet_ntoa_text),
+        ("inet_classful.rs", inet_classful_text),
         ("hstrerror.rs", hstrerror_text),
         ("random_entropy.rs", random_entropy_text),
         ("memory_search.rs", memory_search_text),

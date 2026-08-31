@@ -388,6 +388,8 @@ imaxdiv
 index
 inet_addr
 inet_aton
+inet_lnaof
+inet_makeaddr
 inet_ntoa
 inet_ntop
 inet_pton
