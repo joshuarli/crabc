@@ -107,7 +107,7 @@ done
 # Shared bootstrap memory/string-search symbols are deliberate exports; this
 # artifact only rejects neighboring unselected string and runtime families.
 for unselected in __stpcpy __stpncpy memccpy mempcpy strtok strtok_r strcoll \
-    strxfrm strdup strndup strerror malloc free calloc realloc; do
+    strxfrm strdup strndup malloc free calloc realloc; do
     if grep -Eq "[[:space:]][TW][[:space:]]${unselected}$" "$archive_symbols"; then
         fail "archive accidentally exports unselected ${unselected}"
     fi

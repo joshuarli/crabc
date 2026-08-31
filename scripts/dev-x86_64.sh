@@ -85,6 +85,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   byte-strings-header-abi  compile the staged x86 C/C++ string.h byte-string declarations
   memory-search-header-abi  compile the staged x86 C/C++ memory-search declarations
   string-copy-header-abi  compile the staged x86 C/C++ C-string-copy declarations
+  error-strings-header-abi  compile the staged x86 C/C++ error-string declarations
   random-entropy-header-abi  compile the staged x86 C/C++ random-source declarations
   time-header-abi  compile the staged x86 C/C++ time header layouts
   poll-header-abi  compile the staged x86 C/C++ poll header layouts
@@ -299,6 +300,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-random-entropy  run the static x86 crabc-libc random-entropy slice
   libc-memory-search  run the static x86 crabc-libc memory-search slice
   libc-string-copy  run the static x86 crabc-libc C-string-copy slice
+  libc-error-strings  run the static x86 crabc-libc error-string slice
   libc-socket-transport  run the static x86 crabc-libc base socket transport slice
   libc-socket-messages  run the static x86 crabc-libc socket-message/options slice
   libc-thread-pointer  run the source-only x86 opaque %fs:0 thread-pointer probe
@@ -1893,6 +1895,10 @@ run_string_copy_header_abi() {
     run_in_container bash /workspace/compat/x86_64/run_string_copy_header_abi.sh
 }
 
+run_error_strings_header_abi() {
+    run_in_container bash /workspace/compat/x86_64/run_error_strings_header_abi.sh
+}
+
 run_random_entropy_header_abi() {
     run_in_container bash /workspace/compat/x86_64/run_random_entropy_header_abi.sh
 }
@@ -3001,6 +3007,7 @@ case "$command" in
     byte-strings-header-abi) ;;
     memory-search-header-abi) ;;
     string-copy-header-abi) ;;
+    error-strings-header-abi) ;;
     random-entropy-header-abi) ;;
     sysv-semaphore-header-abi) ;;
     sysv-message-shared-memory-header-abi) ;;
@@ -3017,7 +3024,7 @@ case "$command" in
     libc-memfd-create) ;;
     libc-static-c-abi-differential) ;;
     libc-static-c-abi-same-object-differential|qualification-posix-abi-admission) ;;
-    libc-readiness-waits|libc-system-observation|libc-system-information|libc-fcntl-record-locks|libc-flock|libc-sendfile|libc-posix-fallocate|libc-descriptor-advice|libc-filesystem-capacity|libc-uts-identity|libc-ctype|libc-locale-multibyte|libc-locale-wide-iconv|libc-wide-character|libc-locale-object-wide|libc-regex|libc-integer-arithmetic|libc-integer-parse|libc-float-parse|libc-intmax-arithmetic|libc-credential-observation|libc-child-reaping|libc-immediate-termination|libc-callback-algorithms|libc-access|libc-clock-gettime|libc-time-observation|libc-system-configuration|libc-mapping-core|libc-header-layouts-baseline|libc-nanosleep|libc-clock-nanosleep|libc-descriptor-entry|libc-fcntl-status-control|libc-ioctl|libc-ffs|libc-byte-strings|libc-process-globals-getopt|libc-inet-address|libc-numeric-netdb|libc-random-entropy|libc-memory-search|libc-string-copy|libc-descriptor-pipeline) ;;
+    libc-readiness-waits|libc-system-observation|libc-system-information|libc-fcntl-record-locks|libc-flock|libc-sendfile|libc-posix-fallocate|libc-descriptor-advice|libc-filesystem-capacity|libc-uts-identity|libc-ctype|libc-locale-multibyte|libc-locale-wide-iconv|libc-wide-character|libc-locale-object-wide|libc-regex|libc-integer-arithmetic|libc-integer-parse|libc-float-parse|libc-intmax-arithmetic|libc-credential-observation|libc-child-reaping|libc-immediate-termination|libc-callback-algorithms|libc-access|libc-clock-gettime|libc-time-observation|libc-system-configuration|libc-mapping-core|libc-header-layouts-baseline|libc-nanosleep|libc-clock-nanosleep|libc-descriptor-entry|libc-fcntl-status-control|libc-ioctl|libc-ffs|libc-byte-strings|libc-process-globals-getopt|libc-inet-address|libc-numeric-netdb|libc-random-entropy|libc-memory-search|libc-string-copy|libc-error-strings|libc-descriptor-pipeline) ;;
     libc-vector-io|libc-uio-cxx-linkage) ;;
     libc-sysv-semaphore) ;;
     libc-sysv-message-shared-memory) ;;
@@ -3263,6 +3270,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "string-copy-header-abi takes no arguments"
         ensure_image
         run_string_copy_header_abi
+        ;;
+    error-strings-header-abi)
+        [ "$#" -eq 0 ] || fail "error-strings-header-abi takes no arguments"
+        ensure_image
+        run_error_strings_header_abi
         ;;
     random-entropy-header-abi)
         [ "$#" -eq 0 ] || fail "random-entropy-header-abi takes no arguments"
@@ -4362,6 +4374,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "libc-string-copy takes no arguments"
         ensure_image
         run_in_container bash /workspace/compat/x86_64/run_libc_string_copy.sh
+        ;;
+    libc-error-strings)
+        [ "$#" -eq 0 ] || fail "libc-error-strings takes no arguments"
+        ensure_image
+        run_in_container bash /workspace/compat/x86_64/run_libc_error_strings.sh
         ;;
     libc-thread-pointer)
         [ "$#" -eq 0 ] || fail "libc-thread-pointer takes no arguments"

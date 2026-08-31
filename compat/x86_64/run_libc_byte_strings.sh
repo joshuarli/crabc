@@ -121,7 +121,7 @@ done
 # exclusions of this byte-string artifact.
 for unselected in __memrchr __strchrnul strtok strtok_r strcoll strxfrm \
     strcasecmp strncasecmp strdup \
-    strndup strerror malloc free calloc realloc; do
+    strndup malloc free calloc realloc; do
     if grep -Eq "[[:space:]][TW][[:space:]]${unselected}$" "$archive_symbols"; then
         fail "archive accidentally exports unselected ${unselected}"
     fi

@@ -52,6 +52,7 @@ __sigsetjmp
 __strtod_l
 __strtof_l
 __strtold_l
+__xpg_strerror_r
 __xstat
 _environ
 _exit
@@ -607,6 +608,8 @@ strchrnul
 strcmp
 strcpy
 strcspn
+strerror
+strerror_r
 strlcat
 strlcpy
 strlen

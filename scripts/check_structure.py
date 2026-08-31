@@ -203,6 +203,7 @@ X86_RUNTIME_FOUNDATION_LIBC_SOURCES = {
     Path("libc/src/c_abi/x86_64/stat_compat.rs"),
     Path("libc/src/c_abi/x86_64/timestamp_updates.rs"),
     Path("libc/src/c_abi/x86_64/string_copy.rs"),
+    Path("libc/src/c_abi/x86_64/error_strings.rs"),
     Path("libc/src/c_abi/x86_64/termios_control.rs"),
     Path("libc/src/c_abi/x86_64/thread_pointer.rs"),
     Path("libc/src/c_abi/x86_64/uts_identity.rs"),
@@ -3721,6 +3722,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         '#[path = "random_entropy.rs"]',
         '#[path = "memory_search.rs"]',
         '#[path = "string_copy.rs"]',
+        '#[path = "error_strings.rs"]',
         '#[path = "ctype.rs"]',
         '#[path = "locale_multibyte.rs"]',
         '#[path = "locale_objects.rs"]',
@@ -6818,6 +6820,49 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
             "artifact must export only its named copy and concatenation symbols"
         )
 
+    error_strings_source = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "error_strings.rs"
+    error_strings_text = error_strings_source.read_text(errors="replace")
+    for required in (
+        "musl 1.2.6 release commit",
+        "src/errno/__strerror.h",
+        "src/errno/strerror.c",
+        "src/string/strerror_r.c",
+        "No error information",
+        "weak_alias(strerror_r, __xpg_strerror_r)",
+        ".weak __xpg_strerror_r",
+        ".set __xpg_strerror_r, strerror_r",
+        "immutable",
+        "allocation-free",
+        "negative indices",
+    ):
+        if required not in error_strings_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/error_strings.rs: selected static error-string "
+                f"boundary is missing {required!r}"
+            )
+    error_string_exports = set(
+        re.findall(
+            r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(',
+            error_strings_text,
+        )
+    )
+    if error_string_exports != {"strerror", "strerror_r"}:
+        errors.append(
+            "libc/src/c_abi/x86_64/error_strings.rs: selected static error-string "
+            "artifact must export only strong strerror and strerror_r functions"
+        )
+    error_string_aliases = set(
+        re.findall(
+            r'(?m)^\s*"\.set\s+(\w+)\s*,\s*strerror_r",\s*$',
+            error_strings_text,
+        )
+    )
+    if error_string_aliases != {"__xpg_strerror_r"}:
+        errors.append(
+            "libc/src/c_abi/x86_64/error_strings.rs: selected static error-string "
+            "artifact must retain only the weak same-address __xpg_strerror_r alias"
+        )
+
     ctype_source = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "ctype.rs"
     ctype_text = ctype_source.read_text(errors="replace")
     for required in (
@@ -7253,6 +7298,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         random_entropy_text,
         memory_search_text,
         string_copy_text,
+        error_strings_text,
         ctype_text,
         integer_arithmetic_text,
         integer_parse_text,
@@ -7322,6 +7368,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         | callback_algorithms_aliases
         | filesystem_access_aliases
         | inet_address_aliases
+        | error_string_aliases
         | timestamp_aliases
         | pthread_rwlock_public_aliases
         | pthread_identity_exports
@@ -7602,6 +7649,9 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         "strncat",
         "strlcpy",
         "strlcat",
+        "strerror",
+        "strerror_r",
+        "__xpg_strerror_r",
         "isalnum",
         "isalpha",
         "isblank",
@@ -7674,7 +7724,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
             "signal-control and bounded process-signal execution, bounded pthread create/exit/join/detach initial-TLS worker, its private selected-main/worker pthread-key/C11-TSS lifecycle, private process-normal pthread mutexes and their musl private condition-variable handoff, the complete selected rwlock/attribute family with private-or-shared futex operation, plus the distinct C11 plain-sync adapter and normal-return pthread/C11 once state machine, its typed C11 create/exit/join/detach sibling, and pthread/C11 identity aliases, named termios-control, selected process-context, child-reaping, C11 immediate termination, callback algorithms, direct clock_gettime, caller-owned mapping-core, no-cancellation mapping synchronization, direct anonymous-memory descriptor creation, nanosleep, and clock_nanosleep, selected "
             "descriptor-entry, selected filesystem-access, bounded descriptor-control, timestamp updates, and descriptor-I/O, selected process-resources, selected readiness/signal-waits, "
             "selected socket transport and selected socket-message/options, selected system-observation, selected UTS-identity, "
-            "selected byte-string, random-entropy, memory-search, C-string-copy, "
+            "selected byte-string, random-entropy, memory-search, C-string-copy, immutable error-string, "
             "fixed-C-locale ctype, integer-arithmetic, integer-parsing, intmax-arithmetic, credential-observation, and "
             "find-first-set, startup-published program names, short/GNU-long "
             "getopt state and aliases, "
@@ -7730,6 +7780,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         ("random_entropy.rs", random_entropy_text),
         ("memory_search.rs", memory_search_text),
         ("string_copy.rs", string_copy_text),
+        ("error_strings.rs", error_strings_text),
         ("ctype.rs", ctype_text),
         ("integer_arithmetic.rs", integer_arithmetic_text),
         ("integer_parse.rs", integer_parse_text),

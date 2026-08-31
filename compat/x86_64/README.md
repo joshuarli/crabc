@@ -245,6 +245,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh byte-strings-header-abi
 ./scripts/dev-x86_64.sh memory-search-header-abi
 ./scripts/dev-x86_64.sh string-copy-header-abi
+./scripts/dev-x86_64.sh error-strings-header-abi
 ./scripts/dev-x86_64.sh random-entropy-header-abi
 ./scripts/dev-x86_64.sh time-header-abi
 ./scripts/dev-x86_64.sh poll-header-abi
@@ -430,6 +431,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-random-entropy
 ./scripts/dev-x86_64.sh libc-memory-search
 ./scripts/dev-x86_64.sh libc-string-copy
+./scripts/dev-x86_64.sh libc-error-strings
 ./scripts/dev-x86_64.sh libc-ctype
 ./scripts/dev-x86_64.sh libc-integer-arithmetic
 ./scripts/dev-x86_64.sh libc-integer-parse
@@ -950,6 +952,15 @@ keep the feature-gated declarations hidden, while the C++ companion is checked
 positively because its driver implicitly enables GNU declarations. This is
 compile-only header evidence; it does not select C string-copy behavior or
 `crabc-libc`.
+
+`error-strings-header-abi` compiles project-first and pinned-musl C/C++
+`<string.h>` declarations for unconditional `strerror` and the
+POSIX/XOPEN/GNU/BSD-selected `int strerror_r` form. Strict C and C++ checks
+keep `strerror_r` hidden, while positive C++ objects retain unmangled
+references to both public functions. Musl's private `__xpg_strerror_r` alias
+is intentionally absent from the header and remains runtime/ELF evidence.
+This is compile-only evidence; it does not select diagnostics, termination,
+locale state, or `crabc-libc`.
 
 `random-entropy-header-abi` compiles project-first and pinned-musl C/C++
 `<sys/random.h>` and `<unistd.h>` declarations for `getrandom`, its GRND
@@ -3207,6 +3218,20 @@ errno/TLS or syscall boundary. It excludes bounded byte transfer,
 duplication/allocation, token/locale state, libc.so, dynamic runtime,
 allocator, loader, sysroot, and public x86 support.
 
+`libc-error-strings` is a separately recorded `static-c-error-strings`
+`verified_artifact` inside still-planned `libc.c-abi-compat`, not completion
+of the broader `error.reporting-termination` capability. Its identical
+project-header fixture runs through pinned musl 1.2.6 and a true
+`-nostdlib -static` candidate, comparing a digest over every nonnegative x86
+errno table index `0..=134`. Direct checks prove musl's immutable
+`No error information` catch-all, caller-buffer ERANGE/truncation/NUL and
+untouched-tail behavior, and weak same-address `__xpg_strerror_r`. The leaf
+has no errno/TLS, allocator, mutable unknown buffer, or dynamic dependency.
+It deliberately excludes negative-input musl undefined behavior,
+`strerror_l`/locale catalogs, `strsignal`, perror/err/warn diagnostics,
+`abort`, exit hooks, variadic `syscall`, libc.so, CRT, loader, sysroot,
+promotion, and public x86 support.
+
 `libc-ctype` is a separately recorded `static-c-ctype`
 `verified_artifact` gate over that archive, not a general locale or C text
 capability. Its project-header C body first executes through pinned musl and
@@ -3984,7 +4009,7 @@ Apart from the narrowly named `libc-stat-compat`, `libc-credentials`,
 `libc-system-observation`, `libc-system-information`, `libc-uts-identity`, `libc-socket-transport`,
 `libc-socket-messages`,
 `libc-byte-strings`, `libc-random-entropy`, `libc-memory-search`,
-`libc-string-copy`, `libc-ctype`, `libc-integer-arithmetic`,
+`libc-string-copy`, `libc-error-strings`, `libc-ctype`, `libc-integer-arithmetic`,
 `libc-integer-parse`, `libc-float-parse`, `libc-intmax-arithmetic`, `libc-credential-observation`,
 `libc-ffs`, `libc-math-complex`, `libc-elementary-sqrt-fenv`, and
 `libc-fenv-rounding` static archive harnesses, and the separately scoped

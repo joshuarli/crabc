@@ -1016,7 +1016,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "libc-crt1-static-tls",
             "owned-static-sysroot",
             "crt-object-bundle",
-            "crt-dynamic-startup|crt-dynamic-link-contract|consumer-static-pie-lto",
+            "crt-dynamic-startup|crt-dynamic-link-contract|consumer-static-pie-lto|consumer-native-facade-lto",
             "linux-5-10-uapi",
             "candidate-header-closure",
             "installed-header-tree-closure",
@@ -1036,6 +1036,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "byte-strings-header-abi",
             "memory-search-header-abi",
             "string-copy-header-abi",
+            "error-strings-header-abi",
             "random-entropy-header-abi",
             "sysv-semaphore-header-abi",
             "sysv-message-shared-memory-header-abi",
@@ -1052,7 +1053,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "libc-memfd-create",
             "libc-static-c-abi-differential",
             "libc-static-c-abi-same-object-differential|qualification-posix-abi-admission",
-            "libc-readiness-waits|libc-system-observation|libc-system-information|libc-fcntl-record-locks|libc-flock|libc-sendfile|libc-posix-fallocate|libc-descriptor-advice|libc-filesystem-capacity|libc-uts-identity|libc-ctype|libc-locale-multibyte|libc-locale-wide-iconv|libc-wide-character|libc-locale-object-wide|libc-regex|libc-integer-arithmetic|libc-integer-parse|libc-float-parse|libc-intmax-arithmetic|libc-credential-observation|libc-child-reaping|libc-immediate-termination|libc-callback-algorithms|libc-access|libc-clock-gettime|libc-time-observation|libc-system-configuration|libc-mapping-core|libc-header-layouts-baseline|libc-nanosleep|libc-clock-nanosleep|libc-descriptor-entry|libc-fcntl-status-control|libc-ioctl|libc-ffs|libc-byte-strings|libc-process-globals-getopt|libc-inet-address|libc-numeric-netdb|libc-random-entropy|libc-memory-search|libc-string-copy|libc-descriptor-pipeline",
+            "libc-readiness-waits|libc-system-observation|libc-system-information|libc-fcntl-record-locks|libc-flock|libc-sendfile|libc-posix-fallocate|libc-descriptor-advice|libc-filesystem-capacity|libc-uts-identity|libc-ctype|libc-locale-multibyte|libc-locale-wide-iconv|libc-wide-character|libc-locale-object-wide|libc-regex|libc-integer-arithmetic|libc-integer-parse|libc-float-parse|libc-intmax-arithmetic|libc-credential-observation|libc-child-reaping|libc-immediate-termination|libc-callback-algorithms|libc-access|libc-clock-gettime|libc-time-observation|libc-system-configuration|libc-mapping-core|libc-header-layouts-baseline|libc-nanosleep|libc-clock-nanosleep|libc-descriptor-entry|libc-fcntl-status-control|libc-ioctl|libc-ffs|libc-byte-strings|libc-process-globals-getopt|libc-inet-address|libc-numeric-netdb|libc-random-entropy|libc-memory-search|libc-string-copy|libc-error-strings|libc-descriptor-pipeline",
             "libc-vector-io|libc-uio-cxx-linkage",
             "libc-sysv-semaphore",
             "libc-sysv-message-shared-memory",
@@ -8716,6 +8717,106 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             parity_ledger,
         )
         self.assertIn("libc-string-copy", runner)
+
+    def test_libc_static_c_abi_error_strings_artifact_stays_narrow(self) -> None:
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        implementation = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "error_strings.rs"
+        ).read_text(encoding="utf-8")
+        probe = (
+            ROOT / "compat" / "x86_64" / "libc_error_strings_probe.c"
+        ).read_text(encoding="utf-8")
+        artifact_runner = (
+            ROOT / "compat" / "x86_64" / "run_libc_error_strings.sh"
+        ).read_text(encoding="utf-8")
+        header_runner = (
+            ROOT / "compat" / "x86_64" / "run_error_strings_header_abi.sh"
+        ).read_text(encoding="utf-8")
+        static_exports = (
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        ).read_text(encoding="utf-8")
+        static_export_names = {
+            line
+            for line in static_exports.splitlines()
+            if line and not line.startswith("#")
+        }
+        parity_ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        runner = RUNNER.read_text(encoding="utf-8")
+
+        self.assertIn('#[path = "error_strings.rs"]', static_root)
+        for required in (
+            "musl 1.2.6 release commit",
+            "src/errno/__strerror.h",
+            "src/errno/strerror.c",
+            "src/string/strerror_r.c",
+            "No error information",
+            "weak_alias(strerror_r, __xpg_strerror_r)",
+            ".weak __xpg_strerror_r",
+            ".set __xpg_strerror_r, strerror_r",
+            'fn strerror(',
+            'fn strerror_r(',
+            "capacity.wrapping_sub(1)",
+            "immutable",
+            "allocation-free",
+        ):
+            self.assertIn(required, implementation)
+        for forbidden in (
+            "static mut",
+            "crabc_core",
+            "crabc_mimalloc",
+            "fn malloc(",
+            "fn free(",
+            "fn abort(",
+            "fn syscall(",
+            "fn strerror_l(",
+            "fn __strerror_l(",
+            "__tls_get_addr",
+        ):
+            self.assertNotIn(forbidden, implementation)
+        for required in (
+            "#include <string.h>",
+            "__xpg_strerror_r",
+            "strerror-domain-fnv1a64",
+            "error <= 134",
+            "strerror_r(ENOENT, (char *)0, 0)",
+            "strerror_r != __xpg_strerror_r",
+            "CRABC_ERROR_STRINGS_FREESTANDING",
+        ):
+            self.assertIn(required, probe)
+        for required in (
+            "run_error_strings_header_abi.sh",
+            "static_c_abi_exports.txt",
+            "-nostdlib",
+            "-Wl,--no-undefined",
+            "candidate unexpectedly selects TLS",
+            "same-address strerror_r alias",
+            "candidate output differs from pinned musl",
+            "strerror-domain-fnv1a64",
+            "malloc|free|syscall",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn("--whole-archive", artifact_runner)
+        for required in (
+            "CRABC_EXPECT_STRERROR_R",
+            "CRABC_REQUIRE_STRERROR_R_HIDDEN",
+            "-std=c++17",
+            "C++ probe does not retain C linkage",
+            "string.h",
+        ):
+            self.assertIn(required, header_runner)
+        for symbol in ("strerror", "strerror_r", "__xpg_strerror_r"):
+            self.assertIn(symbol, static_export_names)
+        self.assertIn('id = "static-c-error-strings"', parity_ledger)
+        self.assertIn(
+            'command = "./scripts/dev-x86_64.sh libc-error-strings"',
+            parity_ledger,
+        )
+        self.assertIn("error-strings-header-abi", runner)
+        self.assertIn("libc-error-strings", runner)
 
     def test_libc_static_c_abi_ctype_artifact_stays_narrow(self) -> None:
         static_root = (

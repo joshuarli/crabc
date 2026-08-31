@@ -6560,6 +6560,48 @@ oracle = [
   { kind = "elf-abi", source = "System V AMD64 psABI", role = "LP64 struct option layout, C register/pointer convention, static initial-exec TLS, and weak same-address function/data alias contract in the selected archive and final ET_EXEC candidate." },
 ]
 
+[[family.verified_artifact]]
+id = "static-c-error-strings"
+description = "Private native x86 selected-static-archive C error-string block within the still-planned `libc.c-abi-compat` family. One dependency-free `crabc-libc` archive resolves exactly strong `strerror`, strong `strerror_r`, and weak same-address `__xpg_strerror_r` into a freestanding C fixture after the identical project-header body executes through pinned musl 1.2.6. The immutable fixed-C-locale lookup covers every nonnegative x86 Linux errno table index 0 through 133 plus one-past-table 134, including musl's `No error information` value for zero, holes, and out-of-range values. The caller-buffer forms prove zero/one/exact/truncating/success capacities, ERANGE, NUL termination, initialized prefixes, untouched tails, and alias equality. This completed vertical deliberately does not claim the broader `error.reporting-termination` capability or promote `libc.c-abi-compat`: it excludes negative-input musl undefined behavior, `strerror_l`/`__strerror_l`, locale objects or message catalogs, `strsignal`, perror/err/warn diagnostics, errno TLS, `abort`, exit hooks, allocation, variadic `syscall`, libc.so, CRT, loader, sysroot, or public x86 support."
+source_owners = [
+  "compat/upstreams.toml",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/error_strings.rs",
+  "include/features.h",
+  "include/bits/alltypes.h",
+  "include/errno.h",
+  "include/stdint.h",
+  "include/string.h",
+  "compat/x86_64/error_strings_header_abi_probe.c",
+  "compat/x86_64/error_strings_header_abi_probe.cpp",
+  "compat/x86_64/run_error_strings_header_abi.sh",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/libc_error_strings_probe.c",
+  "compat/x86_64/libc_error_strings_start.S",
+  "compat/x86_64/run_libc_error_strings.sh",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "compat/x86_64/README.md",
+  "x86-64.md",
+  "scripts/dev-x86_64.sh",
+  "scripts/check_structure.py",
+]
+x86_abi_prerequisites = [
+  "The SysV AMD64 C ABI supplies a signed four-byte error number, a returned char pointer for process-static storage, an LP64 size_t capacity, a caller-owned mutable char pointer, and a signed four-byte status. The `strerror` result must not be modified or freed; this leaf uses only immutable storage and has no errno, TLS, allocator, lock, or mutable-global edge.",
+  "Pinned musl 1.2.6 `src/errno/__strerror.h` plus `src/errno/strerror.c` define the complete fixed-C-locale Linux/x86 lookup. Nonnegative values 0 through 133 retain every named message and table hole, and 134 proves the table-clamp catch-all `No error information`; negative values are outside the native musl differential because musl indexes them without a lower-bound guard, while the candidate safely returns the same catch-all.",
+  "Pinned musl `src/string/strerror_r.c` copies the complete message and NUL only when length is below capacity; otherwise it copies at most capacity-minus-one, writes a NUL for nonzero capacity, and returns ERANGE=34. Zero capacity accepts a null destination, and bytes after the selected prefix/NUL remain caller-owned and untouched.",
+  "Musl's `weak_alias(strerror_r, __xpg_strerror_r)` makes both ELF values identical while keeping the compatibility spelling weak. The final `-nostdlib -static` candidate has no PT_TLS, interpreter, DT_NEEDED, unresolved symbol, dynamic TLS model, ambient libc/compiler runtime, allocator, termination, or variadic-syscall input.",
+]
+x86_header_prerequisites = ["The paired pinned-musl/project `<string.h>` C11/C++17 matrix proves unconditional `char *strerror(int)`, POSIX/XOPEN/GNU/BSD-selected `int strerror_r(int, char *, size_t)`, strict-profile hiding of `strerror_r`, and unmangled C++ linkage. Musl's private `__xpg_strerror_r` alias is intentionally absent from public headers and is declared only by the artifact fixture for ELF/runtime evidence."]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-error-strings", scope = "Pinned-musl/project C and C++ header selection plus an exact runtime differential between pinned musl 1.2.6 and a true dependency-free x86 `-nostdlib -static` crabc-libc candidate. The gate hashes the complete nonnegative errno index domain 0..=134, directly checks musl message anchors and shared catch-all storage, proves zero/one/exact/truncating/success strerror_r buffers with ERANGE/NUL/untouched tails, and requires weak same-address __xpg_strerror_r. ELF evidence rejects PT_TLS, interpreter/DT_NEEDED, unresolved symbols, dynamic TLS, allocator, abort/termination, locale, variadic syscall, and ambient runtime inputs. It does not complete error.reporting-termination, libc.c-abi-compat, promotion, or public x86 support." }]
+oracle = [
+  { kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source mapping and native behavior oracle for src/errno/__strerror.h, src/errno/strerror.c, and src/string/strerror_r.c: fixed-C-locale messages, catch-all lookup, caller-buffer truncation/ERANGE, and the weak same-address __xpg_strerror_r alias." },
+  { kind = "elf-abi", source = "System V AMD64 psABI", role = "LP64 pointer/size/scalar C calling convention plus strong/weak same-address static ELF symbol contract." },
+]
+
 [[family]]
 id = "ldso.relative-relocation"
 order = 120

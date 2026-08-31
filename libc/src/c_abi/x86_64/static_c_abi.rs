@@ -51,7 +51,8 @@
 //! regular-file pathname stream/position-buffering slot, intmax-arithmetic,
 //! immutable built-in locale objects, fixed langinfo, selected-thread locale
 //! overrides, and localized wide classification/case/collation wrappers,
-//! find-first-set, C11 immediate-termination, a bounded private static
+//! find-first-set, immutable C-locale error strings, C11 immediate-termination,
+//! a bounded private static
 //! startup/ordinary-exit lifecycle, startup-published program-name globals
 //! and option parsing, callback-algorithms, POSIX `nanosleep`
 //! and `clock_nanosleep`, and direct clock-observation artifacts, plus one
@@ -138,6 +139,8 @@ mod memory_search;
 mod byte_strings;
 #[path = "string_copy.rs"]
 mod string_copy;
+#[path = "error_strings.rs"]
+mod error_strings;
 #[path = "ctype.rs"]
 mod ctype;
 #[path = "locale_multibyte.rs"]

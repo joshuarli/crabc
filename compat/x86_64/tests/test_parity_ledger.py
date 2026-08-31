@@ -50,7 +50,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 32)
-        self.assertEqual(report["verified_artifact_count"], 117)
+        self.assertEqual(report["verified_artifact_count"], 118)
         self.assertEqual(report["header_layout_probe_count"], 45)
         self.assertEqual(report["public_header_inventory_count"], 183)
         self.assertEqual(report["header_foundation_header_count"], 191)
@@ -167,6 +167,65 @@ class X86ParityLedgerTests(unittest.TestCase):
         with self.assertRaisesRegex(
             ledger.LedgerError,
             "installed-static-pthread-tls-consumer description omits",
+        ):
+            ledger.validate_ledger(changed)
+
+    def test_static_error_strings_is_complete_private_c_abi_evidence(self) -> None:
+        data = self.data()
+        family = self.family(data, "libc.c-abi-compat")
+        self.assertEqual(family["status"], "planned")
+        self.assertIn("error.reporting-termination", family["capabilities"])
+        artifacts = family["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry for entry in artifacts if entry["id"] == "static-c-error-strings"
+        )
+        assert isinstance(artifact, dict)
+        self.assertNotIn("capabilities", artifact)
+        for owner in (
+            "libc/src/c_abi/x86_64/error_strings.rs",
+            "include/string.h",
+            "compat/x86_64/error_strings_header_abi_probe.c",
+            "compat/x86_64/error_strings_header_abi_probe.cpp",
+            "compat/x86_64/run_error_strings_header_abi.sh",
+            "compat/x86_64/static_c_abi_exports.txt",
+            "compat/x86_64/libc_error_strings_probe.c",
+            "compat/x86_64/libc_error_strings_start.S",
+            "compat/x86_64/run_libc_error_strings.sh",
+        ):
+            self.assertIn(owner, artifact["source_owners"])
+        self.assertEqual(
+            {entry["command"] for entry in artifact["native_evidence"]},
+            {"./scripts/dev-x86_64.sh libc-error-strings"},
+        )
+        for phrase in (
+            "strong `strerror`",
+            "strong `strerror_r`",
+            "weak same-address `__xpg_strerror_r`",
+            "0 through 133",
+            "one-past-table 134",
+            "does not claim the broader `error.reporting-termination`",
+            "`abort`",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, artifact["description"])
+        self.assertIn("src/errno/__strerror.h", artifact["oracle"][0]["role"])
+        self.assertIn("src/string/strerror_r.c", artifact["oracle"][0]["role"])
+
+        changed = copy.deepcopy(data)
+        changed_artifacts = self.family(changed, "libc.c-abi-compat")[
+            "verified_artifact"
+        ]
+        assert isinstance(changed_artifacts, list)
+        changed_artifact = next(
+            entry
+            for entry in changed_artifacts
+            if entry["id"] == "static-c-error-strings"
+        )
+        assert isinstance(changed_artifact, dict)
+        changed_artifact["description"] = "private error strings"
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "static-c-error-strings description omits"
         ):
             ledger.validate_ledger(changed)
 

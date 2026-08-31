@@ -1049,6 +1049,8 @@ STRING_COPY_SYMBOLS = (
     "strlcat",
 )
 
+ERROR_STRING_SYMBOLS = ("strerror", "strerror_r", "__xpg_strerror_r")
+
 CTYPE_SYMBOLS = (
     "isalnum",
     "isalpha",
@@ -10177,6 +10179,162 @@ def require_string_copy_artifact(family: Mapping[str, Any]) -> None:
         == {"./scripts/dev-x86_64.sh libc-string-copy"},
         "static-c-string-copy must use the closed libc-string-copy command",
     )
+
+
+def require_error_strings_artifact(family: Mapping[str, Any]) -> None:
+    """Keep the immutable error-string block complete but non-promoting."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.c-abi-compat].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [
+        entry for entry in artifacts if entry.get("id") == "static-c-error-strings"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.c-abi-compat must contain exactly one static-c-error-strings artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-error-strings must not promote libc.c-abi-compat",
+    )
+    artifact = matching[0]
+    require(
+        "capabilities" not in artifact,
+        "static-c-error-strings must not claim error.reporting-termination",
+    )
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for symbol in ERROR_STRING_SYMBOLS:
+        require(
+            f"`{symbol}`" in description,
+            f"static-c-error-strings description omits {symbol}",
+        )
+    for phrase in (
+        "still-planned `libc.c-abi-compat`",
+        "immutable fixed-C-locale lookup",
+        "0 through 133",
+        "one-past-table 134",
+        "`No error information`",
+        "ERANGE",
+        "weak same-address",
+        "does not claim the broader `error.reporting-termination`",
+        "negative-input musl undefined behavior",
+        "`strerror_l`/`__strerror_l`",
+        "errno TLS",
+        "`abort`",
+        "variadic `syscall`",
+        "public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"static-c-error-strings description omits {phrase}",
+        )
+
+    owners = set(
+        nonempty_strings(
+            artifact["source_owners"], "static-c-error-strings.source_owners"
+        )
+    )
+    for owner in (
+        "libc/src/c_abi/x86_64/error_strings.rs",
+        "include/string.h",
+        "compat/x86_64/error_strings_header_abi_probe.c",
+        "compat/x86_64/error_strings_header_abi_probe.cpp",
+        "compat/x86_64/run_error_strings_header_abi.sh",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/libc_error_strings_probe.c",
+        "compat/x86_64/libc_error_strings_start.S",
+        "compat/x86_64/run_libc_error_strings.sh",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "scripts/dev-x86_64.sh",
+        "scripts/check_structure.py",
+    ):
+        require(owner in owners, f"static-c-error-strings source owners omit {owner}")
+
+    prerequisites = nonempty_strings(
+        artifact["x86_abi_prerequisites"],
+        "static-c-error-strings.x86_abi_prerequisites",
+    )
+    require(
+        any(
+            "src/errno/__strerror.h" in item
+            and "0 through 133" in item
+            and "134" in item
+            and "negative values" in item
+            for item in prerequisites
+        ),
+        "static-c-error-strings must record its complete musl lookup domain",
+    )
+    require(
+        any(
+            "src/string/strerror_r.c" in item
+            and "capacity-minus-one" in item
+            and "ERANGE=34" in item
+            and "Zero capacity" in item
+            for item in prerequisites
+        ),
+        "static-c-error-strings must record its caller-buffer contract",
+    )
+    require(
+        any(
+            "weak_alias(strerror_r, __xpg_strerror_r)" in item
+            and "no PT_TLS" in item
+            and "ambient libc/compiler runtime" in item
+            for item in prerequisites
+        ),
+        "static-c-error-strings must record its alias and sealed ELF boundary",
+    )
+
+    header_prerequisites = nonempty_strings(
+        artifact["x86_header_prerequisites"],
+        "static-c-error-strings.x86_header_prerequisites",
+    )
+    require(
+        any(
+            "C11/C++17 matrix" in item
+            and "unconditional `char *strerror(int)`" in item
+            and "POSIX/XOPEN/GNU/BSD-selected" in item
+            and "strict-profile hiding" in item
+            and "unmangled C++ linkage" in item
+            and "absent from public headers" in item
+            for item in header_prerequisites
+        ),
+        "static-c-error-strings must retain its public-header visibility contract",
+    )
+
+    static_exports = static_c_abi_export_names(
+        ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+    )
+    require(
+        set(ERROR_STRING_SYMBOLS) <= set(static_exports),
+        "static-c-error-strings must be included in the selected export ratchet",
+    )
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-error-strings"},
+        "static-c-error-strings must use the closed libc-error-strings command",
+    )
+    scope = evidence[0]["scope"]
+    assert isinstance(scope, str)
+    for phrase in (
+        "0..=134",
+        "ERANGE/NUL/untouched tails",
+        "weak same-address __xpg_strerror_r",
+        "rejects PT_TLS",
+        "error.reporting-termination",
+        "libc.c-abi-compat",
+        "public x86 support",
+    ):
+        require(
+            phrase in scope,
+            f"static-c-error-strings evidence scope omits {phrase}",
+        )
 
 
 def require_ctype_artifact(family: Mapping[str, Any]) -> None:
@@ -19922,6 +20080,7 @@ def validate_ledger(
     require_random_entropy_artifact(by_id["libc.posix-runtime"])
     require_memory_search_artifact(by_id["libc.posix-runtime"])
     require_string_copy_artifact(by_id["libc.posix-runtime"])
+    require_error_strings_artifact(by_id["libc.c-abi-compat"])
     require_ctype_artifact(by_id["libc.posix-runtime"])
     require_integer_arithmetic_artifact(by_id["libc.posix-runtime"])
     require_integer_parse_artifact(by_id["libc.posix-runtime"])
