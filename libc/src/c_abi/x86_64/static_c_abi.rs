@@ -572,6 +572,20 @@ mod inet_classful;
 mod hstrerror;
 #[path = "endhostent.rs"]
 mod endhostent;
+#[path = "ether_line.rs"]
+mod ether_line;
+#[path = "res_init.rs"]
+mod res_init;
+#[path = "posix_spawnattr_destroy.rs"]
+mod posix_spawnattr_destroy;
+#[path = "posix_spawnattr_getflags.rs"]
+mod posix_spawnattr_getflags;
+#[path = "posix_spawnattr_setpgroup.rs"]
+mod posix_spawnattr_setpgroup;
+#[path = "posix_spawnattr_setschedpolicy.rs"]
+mod posix_spawnattr_setschedpolicy;
+#[path = "posix_spawn_file_actions_init.rs"]
+mod posix_spawn_file_actions_init;
 #[path = "endservent.rs"]
 mod endservent;
 #[path = "numeric_netdb.rs"]

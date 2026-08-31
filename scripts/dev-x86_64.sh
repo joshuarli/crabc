@@ -2065,6 +2065,20 @@ public dlfcn, runtime mapping/search, dynamic CRT/sysroot, or public-support
 claim.
 None of the other C-runtime commands is a crabc-libc or crabc-ldso build,
 general facade admission, or C ABI support claim.
+  ether-line-header-abi  compile the staged x86 C/C++ legacy Ethernet-line declaration
+  libc-ether-line  run the static x86 crabc-libc legacy Ethernet-line slice
+  libc-posix-spawn-file-actions-init  run the static x86 crabc-libc POSIX spawn file-actions init slice
+  libc-posix-spawnattr-destroy  run the static x86 crabc-libc POSIX spawn-attribute destroy slice
+  libc-posix-spawnattr-getflags  run the static x86 crabc-libc POSIX spawn-attribute getflags slice
+  libc-posix-spawnattr-setpgroup  run the static x86 crabc-libc POSIX spawn-attribute setpgroup slice
+  libc-posix-spawnattr-setschedpolicy  run the static x86 crabc-libc POSIX spawn-attribute setschedpolicy slice
+  libc-res-init  run the static x86 crabc-libc legacy resolver-initializer slice
+  posix-spawn-file-actions-init-header-abi  compile the staged x86 C/C++ POSIX spawn file-actions init declaration
+  posix-spawnattr-destroy-header-abi  compile the staged x86 C/C++ POSIX spawn-attribute destroy declaration
+  posix-spawnattr-getflags-header-abi  compile the staged x86 C/C++ POSIX spawn-attribute getflags declaration
+  posix-spawnattr-setpgroup-header-abi  compile the staged x86 C/C++ POSIX spawn-attribute setpgroup declaration
+  posix-spawnattr-setschedpolicy-header-abi  compile the staged x86 C/C++ POSIX spawn-attribute setschedpolicy declaration
+  res-init-header-abi  compile the staged x86 C/C++ legacy resolver-initializer declaration
 EOF
 }
 
@@ -4128,7 +4142,7 @@ case "$command" in
     usleep-header-abi|libc-timerfd|libc-signalfd|libc-sigpause|libc-sigisemptyset|libc-sigandset-sigorset|libc-sigpending|libc-sigrtmax|libc-sigrtmin|libc-sched-getscheduler|libc-alarm|libc-usleep|libc-sigaddset-sigdelset-sigfillset) ;;
     libc-sched-cpucount|libc-sched-getcpu|libc-sched-priority-bounds|libc-sched-yield) ;;
     sched-cpucount-header-abi|sched-getscheduler-header-abi|sched-priority-bounds-header-abi) ;;
-    ctermid-header-abi|gethostid-header-abi|endhostent-header-abi|getpagesize-header-abi|gettid-header-abi|posix-close-header-abi|isatty-header-abi|ttyname-r-header-abi|tcgetpgrp-header-abi|tcsetpgrp-header-abi|getpass-header-abi|libc-ctermid|libc-gethostid|libc-endhostent|libc-getpagesize|libc-gettid|libc-posix-close|libc-isatty|libc-ttyname-r|libc-tcgetpgrp|libc-tcsetpgrp|libc-getpass|mkfifo-header-abi|mkfifoat-header-abi|libc-mkfifo|libc-mkfifoat|mktemp-header-abi|libc-mktemp) ;;
+    ctermid-header-abi|gethostid-header-abi|endhostent-header-abi|ether-line-header-abi|res-init-header-abi|posix-spawnattr-destroy-header-abi|posix-spawnattr-getflags-header-abi|posix-spawnattr-setpgroup-header-abi|posix-spawnattr-setschedpolicy-header-abi|posix-spawn-file-actions-init-header-abi|getpagesize-header-abi|gettid-header-abi|posix-close-header-abi|isatty-header-abi|ttyname-r-header-abi|tcgetpgrp-header-abi|tcsetpgrp-header-abi|getpass-header-abi|libc-ctermid|libc-gethostid|libc-endhostent|libc-ether-line|libc-res-init|libc-posix-spawnattr-destroy|libc-posix-spawnattr-getflags|libc-posix-spawnattr-setpgroup|libc-posix-spawnattr-setschedpolicy|libc-posix-spawn-file-actions-init|libc-getpagesize|libc-gettid|libc-posix-close|libc-isatty|libc-ttyname-r|libc-tcgetpgrp|libc-tcsetpgrp|libc-getpass|mkfifo-header-abi|mkfifoat-header-abi|libc-mkfifo|libc-mkfifoat|mktemp-header-abi|libc-mktemp) ;;
     readlinkat-header-abi|libc-readlinkat|linkat-header-abi|libc-linkat|lchown-header-abi|libc-lchown|hasmntopt-header-abi|libc-hasmntopt) ;;
     stdio-permanent-line-io-header-abi|stdio-octal-hex-scan-header-abi) ;;
     math-complex-complete-header-abi|libc-math-complex-complete) ;;
@@ -6810,5 +6824,75 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "libc-sysconf takes no arguments"
         ensure_image
         run_in_container bash /workspace/compat/x86_64/run_libc_sysconf.sh
+        ;;
+    ether-line-header-abi)
+        [ "$#" -eq 0 ] || fail "ether-line-header-abi takes no arguments"
+        ensure_image
+        run_in_container bash /workspace/compat/x86_64/run_ether_line_header_abi.sh
+        ;;
+    libc-ether-line)
+        [ "$#" -eq 0 ] || fail "libc-ether-line takes no arguments"
+        ensure_image
+        run_in_container bash /workspace/compat/x86_64/run_libc_ether_line.sh
+        ;;
+    libc-posix-spawn-file-actions-init)
+        [ "$#" -eq 0 ] || fail "libc-posix-spawn-file-actions-init takes no arguments"
+        ensure_image
+        run_in_container bash /workspace/compat/x86_64/run_libc_posix_spawn_file_actions_init.sh
+        ;;
+    libc-posix-spawnattr-destroy)
+        [ "$#" -eq 0 ] || fail "libc-posix-spawnattr-destroy takes no arguments"
+        ensure_image
+        run_in_container bash /workspace/compat/x86_64/run_libc_posix_spawnattr_destroy.sh
+        ;;
+    libc-posix-spawnattr-getflags)
+        [ "$#" -eq 0 ] || fail "libc-posix-spawnattr-getflags takes no arguments"
+        ensure_image
+        run_in_container bash /workspace/compat/x86_64/run_libc_posix_spawnattr_getflags.sh
+        ;;
+    libc-posix-spawnattr-setpgroup)
+        [ "$#" -eq 0 ] || fail "libc-posix-spawnattr-setpgroup takes no arguments"
+        ensure_image
+        run_in_container bash /workspace/compat/x86_64/run_libc_posix_spawnattr_setpgroup.sh
+        ;;
+    libc-posix-spawnattr-setschedpolicy)
+        [ "$#" -eq 0 ] || fail "libc-posix-spawnattr-setschedpolicy takes no arguments"
+        ensure_image
+        run_in_container bash /workspace/compat/x86_64/run_libc_posix_spawnattr_setschedpolicy.sh
+        ;;
+    libc-res-init)
+        [ "$#" -eq 0 ] || fail "libc-res-init takes no arguments"
+        ensure_image
+        run_in_container bash /workspace/compat/x86_64/run_libc_res_init.sh
+        ;;
+    posix-spawn-file-actions-init-header-abi)
+        [ "$#" -eq 0 ] || fail "posix-spawn-file-actions-init-header-abi takes no arguments"
+        ensure_image
+        run_in_container bash /workspace/compat/x86_64/run_posix_spawn_file_actions_init_header_abi.sh
+        ;;
+    posix-spawnattr-destroy-header-abi)
+        [ "$#" -eq 0 ] || fail "posix-spawnattr-destroy-header-abi takes no arguments"
+        ensure_image
+        run_in_container bash /workspace/compat/x86_64/run_posix_spawnattr_destroy_header_abi.sh
+        ;;
+    posix-spawnattr-getflags-header-abi)
+        [ "$#" -eq 0 ] || fail "posix-spawnattr-getflags-header-abi takes no arguments"
+        ensure_image
+        run_in_container bash /workspace/compat/x86_64/run_posix_spawnattr_getflags_header_abi.sh
+        ;;
+    posix-spawnattr-setpgroup-header-abi)
+        [ "$#" -eq 0 ] || fail "posix-spawnattr-setpgroup-header-abi takes no arguments"
+        ensure_image
+        run_in_container bash /workspace/compat/x86_64/run_posix_spawnattr_setpgroup_header_abi.sh
+        ;;
+    posix-spawnattr-setschedpolicy-header-abi)
+        [ "$#" -eq 0 ] || fail "posix-spawnattr-setschedpolicy-header-abi takes no arguments"
+        ensure_image
+        run_in_container bash /workspace/compat/x86_64/run_posix_spawnattr_setschedpolicy_header_abi.sh
+        ;;
+    res-init-header-abi)
+        [ "$#" -eq 0 ] || fail "res-init-header-abi takes no arguments"
+        ensure_image
+        run_in_container bash /workspace/compat/x86_64/run_res_init_header_abi.sh
         ;;
 esac

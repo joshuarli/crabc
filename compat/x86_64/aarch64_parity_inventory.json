@@ -1483,7 +1483,7 @@
       "capability_count": 11,
       "contract_state": "selected-private",
       "id": "libc.c-abi-compat",
-      "verified_artifact_count": 15,
+      "verified_artifact_count": 22,
       "verified_slice_count": 6
     },
     {
@@ -1768,6 +1768,10 @@
     },
     {
       "family": "libc.c-abi-compat",
+      "id": "static-c-ether-line"
+    },
+    {
+      "family": "libc.c-abi-compat",
       "id": "static-c-gethostid"
     },
     {
@@ -1792,11 +1796,35 @@
     },
     {
       "family": "libc.c-abi-compat",
+      "id": "static-c-posix-spawn-file-actions-init"
+    },
+    {
+      "family": "libc.c-abi-compat",
+      "id": "static-c-posix-spawnattr-destroy"
+    },
+    {
+      "family": "libc.c-abi-compat",
+      "id": "static-c-posix-spawnattr-getflags"
+    },
+    {
+      "family": "libc.c-abi-compat",
+      "id": "static-c-posix-spawnattr-setpgroup"
+    },
+    {
+      "family": "libc.c-abi-compat",
+      "id": "static-c-posix-spawnattr-setschedpolicy"
+    },
+    {
+      "family": "libc.c-abi-compat",
       "id": "static-c-process-globals-getopt"
     },
     {
       "family": "libc.c-abi-compat",
       "id": "static-c-qsort"
+    },
+    {
+      "family": "libc.c-abi-compat",
+      "id": "static-c-res-init"
     },
     {
       "family": "libc.headers-layouts",
@@ -2655,9 +2683,9 @@
     "aarch64_abi_manifest": "33dd504470f467caac7b149e747ee2b7ff8714c4fb23dfe5ad46e7f58bfe610c",
     "aarch64_capability_ledger": "128458dde00073bc0320b94972d864e66fa10d5f54e92b1b1c83081e2b4955e0",
     "aarch64_headers": "a0d35f0950abb3c060b978dfb5257cf50f70bed46ce91d371f43d65db7626b68",
-    "x86_parity_ledger": "f1246ca26b327f12b777c213513948b44223299c9399d270a35da2b717c98292",
+    "x86_parity_ledger": "f897923143a6b27a9d091d33ad1138071d569fdf2929ad22012db4c12d8c8ce0",
     "x86_public_headers": "2cdcd860a423d99afef8360b6376447cf17ae926f1cd47416be817d421fca80f",
-    "x86_static_c_exports": "596648c3b67b6fe6b539da1eb4ab9a10345890a56949e63b0f44cdf0b6d4aa06"
+    "x86_static_c_exports": "78ebbd4ef9bb70ec1435a457054e418afb120ca0fec799dcf3b1e5afe5aa77c1"
   },
   "unsupported_contracts": [
     {
@@ -2669,7 +2697,7 @@
     "promotion_family_count": 26,
     "promotion_ready": false,
     "public_support": false,
-    "selected_static_export_count": 1018,
-    "selected_static_exports_in_aarch64_dynamic_candidate_set": 1003
+    "selected_static_export_count": 1025,
+    "selected_static_exports_in_aarch64_dynamic_candidate_set": 1010
   }
 }

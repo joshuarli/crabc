@@ -31796,7 +31796,6 @@ def require_endservent_artifact(family: Mapping[str, Any]) -> None:
             "getservbyport",
             "endprotoent",
             "setprotoent",
-            "res_init",
         },
         "static-c-endservent must not expose an unselected service, netdb, or resolver entry",
     )
@@ -32049,7 +32048,7 @@ def require_dn_skipname_artifact(family: Mapping[str, Any]) -> None:
         "static-c-dn-skipname must retain its selected export",
     )
     require(
-        not (exports & {"ns_skiprr", "ns_name_uncompress", "res_init"}),
+        not (exports & {"ns_skiprr", "ns_name_uncompress"}),
         "static-c-dn-skipname must not add broader nameserver exports",
     )
 
@@ -32404,7 +32403,7 @@ def require_dn_expand_artifact(family: Mapping[str, Any]) -> None:
         "static-c-dn-expand must retain both source-required alias exports",
     )
     require(
-        not (exports & {"ns_skiprr", "ns_name_uncompress", "res_init"}),
+        not (exports & {"ns_skiprr", "ns_name_uncompress"}),
         "static-c-dn-expand must not add broader nameserver exports",
     )
 
@@ -32784,7 +32783,7 @@ def require_ns_flagdata_artifact(family: Mapping[str, Any]) -> None:
         "static-c-ns-flagdata must retain _ns_flagdata export",
     )
     require(
-        not (exports & {"ns_initparse", "ns_parserr", "ns_skiprr", "ns_name_uncompress", "res_init"}),
+        not (exports & {"ns_initparse", "ns_parserr", "ns_skiprr", "ns_name_uncompress"}),
         "static-c-ns-flagdata must not add parser or resolver exports",
     )
 
@@ -33153,7 +33152,6 @@ def require_ns_get16_artifact(family: Mapping[str, Any]) -> None:
                 "ns_put32",
                 "ns_skiprr",
                 "ns_name_uncompress",
-                "res_init",
             }
         ),
         "static-c-ns-get16 must not add broader nameserver exports",
@@ -33506,7 +33504,6 @@ def require_ns_get32_artifact(family: Mapping[str, Any]) -> None:
                 "ns_put32",
                 "ns_skiprr",
                 "ns_name_uncompress",
-                "res_init",
             }
         ),
         "static-c-ns-get32 must not add broader nameserver exports",
@@ -33867,7 +33864,6 @@ def require_ns_put16_artifact(family: Mapping[str, Any]) -> None:
                 "ns_put32",
                 "ns_skiprr",
                 "ns_name_uncompress",
-                "res_init",
             }
         ),
         "static-c-ns-put16 must not add broader nameserver exports",
