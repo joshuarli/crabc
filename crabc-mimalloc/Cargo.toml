@@ -49,6 +49,14 @@ path = "tests/native_post_exit_failed_os_release.rs"
 required-features = ["native-runtime-test-audit", "native-runtime-test-fault"]
 
 [[test]]
+name = "native_pointer_first_post_exit_os_release"
+path = "tests/native_pointer_first_post_exit_os_release.rs"
+# This direct-only pointer dispatcher witness verifies the PageMap-owned
+# post-exit OS terminal release. Neither its fault hook nor scalar audit ships
+# in the production allocator or libc friend surface.
+required-features = ["native-runtime-test-audit", "native-runtime-test-fault"]
+
+[[test]]
 name = "native_source_published_live_owner_exit"
 path = "tests/native_source_published_live_owner_exit.rs"
 # This direct-only lifecycle witness constructs the one joined source

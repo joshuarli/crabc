@@ -35,7 +35,7 @@ fn initial_thread_frees_exact_client_after_worker_owner_exit() {
         assert_eq!(
             finish_current_thread_native_after_user_destructors(),
             ThreadFinishResult::Finished,
-            "the worker must publish its surviving allocation through the native post-exit route"
+            "the worker must publish its surviving allocation through source collect-abandon"
         );
         address
     });
@@ -47,7 +47,7 @@ fn initial_thread_frees_exact_client_after_worker_owner_exit() {
     assert_eq!(
         unsafe { native_free(block) },
         NativePageFreeResult::Freed,
-        "the initial caller must resolve the worker's detached route before its ticket-zero owner"
+        "the initial caller must resolve the exited worker's PageMap source state before its own owner"
     );
 
     let resumed = match ticket_zero_allocate(16, false) {
@@ -55,7 +55,7 @@ fn initial_thread_frees_exact_client_after_worker_owner_exit() {
         TicketZeroPageAllocationResult::Unavailable
         | TicketZeroPageAllocationResult::AllocationFailed
         | TicketZeroPageAllocationResult::Retained => {
-            panic!("ticket zero reactivates after the detached route is consumed")
+            panic!("ticket zero reactivates after the pointer-derived source state is consumed")
         }
     };
     assert_eq!(

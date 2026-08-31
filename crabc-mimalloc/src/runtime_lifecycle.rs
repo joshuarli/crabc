@@ -79,9 +79,12 @@ use crate::process_init::{ProcessMainInitializationStorage, ProcessMainThread};
 use crate::process_arena::{
     ProcessPageArenaLease, ProcessPageArenaLeaseError, ProcessSharedArenaStorage,
 };
-use crate::process_page_map::{ProcessPageMapError, ProcessPageMapLease};
+use crate::process_page_map::{
+    LiveAllocationPageState, LiveAllocationPointer, ProcessPageMapError, ProcessPageMapLease,
+};
 use crate::remote_free;
 use crate::single_thread::{
+    ProcessPostOwnerExitPointerFreeDisposition, ProcessPostOwnerExitPointerFreeRejection,
     RemoteFreeProducer, RemoteFreeProducerPair,
     ThreadExitKnownPostExitOsAbandonedList,
     ThreadExitMappedRegularPagesPostExitRemoteFreeProducer,
@@ -3228,15 +3231,15 @@ impl RuntimeProcessStorage {
         LiveThreadId::new(self.initial_thread_identity.load(Ordering::Acquire))
     }
 
-    /// Returns the process-static PageMap witness for the narrow source
-    /// remote-free lookup of an exact ticket-zero client.
+    /// Returns the process-static PageMap witness for one exact live native
+    /// allocation lookup.
     ///
     /// This intentionally shares only the immutable root witness, never the
     /// permanent owner, its page lifecycle lock, or an ordinary `&mut`
     /// engine. A live allocation itself supplies the same-slice lifetime
     /// proof consumed by `ProcessPageMapLease::lookup_page_for_live_client`.
     #[inline]
-    fn page_map_for_live_ticket_zero_client(&'static self) -> Option<ProcessPageMapLease> {
+    fn page_map_for_live_native_allocation(&'static self) -> Option<ProcessPageMapLease> {
         // SAFETY: the process owner is written before PROCESS_ACTIVE and is
         // never torn down by this bounded runtime. This takes only its
         // immutable ready witness; it never borrows the permanent page owner.
@@ -7546,109 +7549,162 @@ unsafe fn native_free_detached_route_phase_a(
     NativePostExitRouteFreeResult::NotOwned
 }
 
-/// Frees one C-facing native-shadow block from its pointer-owned route.
+/// Frees one C-facing native-shadow block from its source page state.
+///
+/// This is the production pointer-first counterpart of pinned
+/// `mi_free_nonnull`: it obtains one coherent PageMap observation before it
+/// compares the captured source owner against the caller. A matching source
+/// owner uses only its current local engine. Every other live, abandoned, or
+/// mapped-abandoned source state moves directly into W03's process-page-facts
+/// continuation, which consumes W07's exact claim internally. A detached
+/// PageMap observation remains a typed source refusal and is fail-closed as
+/// retained; it never revives a former owner through a route, registry,
+/// client ledger, scheduler bridge, or geometry selector.
 ///
 /// # Safety
 ///
 /// `block` must be a live native-shadow allocation. A wrong-domain pointer
-/// reports `InvalidPointer`. An attached later worker first uses PageMap
-/// association plus its persistent owner-local engine. Only a local miss may
-/// enter the temporary Phase-A detached/live-owner probes or source-publish an
-/// exact ticket-zero client. Callers must not route any native failure to the
+/// reports `InvalidPointer`. Callers must not route any native failure to the
 /// C allocator as recovery.
 #[doc(hidden)]
 pub unsafe fn native_free(block: core::ptr::NonNull<u8>) -> NativePageFreeResult {
-    let initial_thread = RUNTIME_PROCESS.is_on_initial_thread();
-    let local = if initial_thread {
-        NativePageFreeResult::Unavailable
-    } else {
-        // SAFETY: forwarded unchanged from this boundary's exact-current
-        // native block contract. The persistent path performs W02 association
-        // before it projects the owner-local engine; only a miss reaches any
-        // compatibility registry below.
-        unsafe { native_later_thread_free(block) }
+    let Some(page_map) = RUNTIME_PROCESS.page_map_for_live_native_allocation() else {
+        // The pointer contract could not obtain its one process-published
+        // PageMap witness. No caller-local fallback can establish a source
+        // owner after that failure.
+        RUNTIME_PROCESS.retain_page_owner();
+        return NativePageFreeResult::Retained;
     };
-    match local {
-        NativePageFreeResult::Freed | NativePageFreeResult::Retained => return local,
-        NativePageFreeResult::InvalidPointer | NativePageFreeResult::Unavailable => {}
-    }
-
-    // `CRABC-MI-PHASE-A-DETACHED-FREE-CONTINUATION`: this registry remains
-    // only for a pointer not consumed by the current persistent owner. It is
-    // removed when W07's claimed-abandoned outcome can synchronously acquire
-    // W09's concrete map/collect/terminal-release capability.
-    // SAFETY: `block` is forwarded unchanged from the C boundary's live
-    // native allocation contract. This pointer-only bridge consumes only an
-    // exact detached source client before caller-local owner selection.
-    match unsafe { native_free_detached_route_phase_a(block) } {
-        NativePostExitRouteFreeResult::Freed | NativePostExitRouteFreeResult::Finished => {
-            return NativePageFreeResult::Freed;
-        }
-        NativePostExitRouteFreeResult::Retained => return NativePageFreeResult::Retained,
-        NativePostExitRouteFreeResult::NotOwned => {}
-    }
-    if initial_thread {
-        // SAFETY: forwarded unchanged from this boundary's exact-current
-        // native block contract.
-        return native_free_from_ticket_zero(unsafe { ticket_zero_free(block) });
-    }
-    if current_thread_can_access_native_post_exit_route() {
-        match NATIVE_POST_EXIT_ROUTE.free_exact(block) {
-            NativePostExitRouteFreeResult::Freed | NativePostExitRouteFreeResult::Finished => {
-                return NativePageFreeResult::Freed;
-            }
-            NativePostExitRouteFreeResult::Retained => return NativePageFreeResult::Retained,
-            NativePostExitRouteFreeResult::NotOwned => {}
-        }
-    }
-    // A ticket-zero allocation may legitimately cross to a later pthread
-    // while the permanent initial owner remains active. Unlike a parked
-    // worker route, the exact live allocation itself pins the source page;
-    // the remote producer needs no borrowed engine, client ledger, or
-    // scheduler transition. Try this owner domain after persistent local
-    // PageMap association rejects the address, so a worker that owns unrelated
-    // native pages can still free an initial-thread client through
-    // `mi_free_block_mt`.
-    match unsafe { native_ticket_zero_live_remote_free(block) } {
-        NativeTicketZeroRemoteFreeResult::Freed => return NativePageFreeResult::Freed,
-        NativeTicketZeroRemoteFreeResult::Retained => {
+    // SAFETY: `native_free` accepts only an exact current native allocation.
+    // Its source lifetime keeps the selected registration and page metadata
+    // stable until one branch below consumes the observation.
+    let allocation = match unsafe { page_map.lookup_live_allocation(block) } {
+        Ok(Some(allocation)) => allocation,
+        Ok(None) => return NativePageFreeResult::InvalidPointer,
+        Err(_) => {
+            RUNTIME_PROCESS.retain_page_owner();
             return NativePageFreeResult::Retained;
         }
-        NativeTicketZeroRemoteFreeResult::NotOwned
-        | NativeTicketZeroRemoteFreeResult::Unavailable => {}
+    };
+
+    // Pinned `mi_free_nonnull` resolves the page before comparing the page's
+    // captured owner identity against the caller. Do not select a former
+    // owner, route, or current-thread ledger before this comparison.
+    let Some(current) = current_thread_identity() else {
+        drop(allocation);
+        RUNTIME_PROCESS.retain_page_owner();
+        return NativePageFreeResult::Retained;
+    };
+    if allocation.is_associated_with(current) {
+        return native_free_pointer_first_local(allocation);
     }
 
-    // A foreign block normally misses B's persistent owner association. That
-    // miss is not yet an invalid native C pointer: an older Phase-A B shape
-    // may hold an exact source client received from another live worker.
-    // Preserve the local result for an actual registry miss, but let that
-    // bounded source-publication route prove or reject the address first.
-    let can_access_post_exit_route = current_thread_can_access_native_post_exit_route();
-    if !matches!(
-        local,
-        NativePageFreeResult::InvalidPointer | NativePageFreeResult::Unavailable
-    ) || !can_access_post_exit_route
-    {
-        return local;
-    }
-    match unsafe { native_later_thread_live_remote_free(block) } {
-        NativeLiveRemoteFreeResult::Freed => NativePageFreeResult::Freed,
-        NativeLiveRemoteFreeResult::NotOwned => {
-            // A saw the source live-owner entry after B's first detached
-            // lookup, then held it `BUSY` while it published its replacement
-            // post-exit route. Observing the former entry as `EMPTY` is the
-            // Release-ordered handoff signal, not proof that this C pointer
-            // is foreign; retry the detached exact lookup once before the
-            // native boundary rejects it.
-            match NATIVE_POST_EXIT_ROUTE.free_exact(block) {
-                NativePostExitRouteFreeResult::Freed
-                | NativePostExitRouteFreeResult::Finished => NativePageFreeResult::Freed,
-                NativePostExitRouteFreeResult::Retained => NativePageFreeResult::Retained,
-                NativePostExitRouteFreeResult::NotOwned => NativePageFreeResult::InvalidPointer,
+    native_free_pointer_first_nonlocal(allocation)
+}
+
+/// Consumes one PageMap-derived allocation through its current source owner.
+///
+/// The caller already compared the captured `xthread_id` against its own
+/// identity. This helper deliberately performs no second PageMap lookup and
+/// never inspects a route, registry, or client ledger to recover local
+/// ownership.
+fn native_free_pointer_first_local(allocation: LiveAllocationPointer) -> NativePageFreeResult {
+    let client = allocation.client();
+    if RUNTIME_PROCESS.is_on_initial_thread() {
+        // SAFETY: the preceding PageMap classification associated this exact
+        // live allocation with the current initial source owner.
+        let result = unsafe { ticket_zero_free(client) };
+        drop(allocation);
+        return match result {
+            TicketZeroPageFreeResult::Freed => NativePageFreeResult::Freed,
+            TicketZeroPageFreeResult::Unavailable
+            | TicketZeroPageFreeResult::InvalidPointer
+            | TicketZeroPageFreeResult::Retained => {
+                // A PageMap-proven local allocation cannot become an
+                // ordinary caller-unavailable or invalid free. Preserve the
+                // source owner terminally instead of retrying a different
+                // runtime route.
+                RUNTIME_PROCESS.retain_page_owner();
+                NativePageFreeResult::Retained
             }
+        };
+    }
+
+    // The worker's continuously stored owner is already current. Its short
+    // local allocator borrow is the only local source operation; unlike the
+    // historical helper it does not reclassify the pointer or consult a
+    // session handle on a miss.
+    let result = with_current_thread_native_persistent_allocator(false, |allocator| {
+        // SAFETY: the caller's PageMap observation associated `client` with
+        // this exact current owner, and the observation remains live through
+        // this one consuming local source free.
+        unsafe { allocator.free(client) }
+    });
+    drop(allocation);
+    match result {
+        Ok(Ok(())) => NativePageFreeResult::Freed,
+        Ok(Err(_)) | Err(_) => {
+            retain_current_thread_native_persistent_owner_for_teardown();
+            NativePageFreeResult::Retained
         }
-        NativeLiveRemoteFreeResult::Unavailable => NativePageFreeResult::Unavailable,
-        NativeLiveRemoteFreeResult::Retained => NativePageFreeResult::Retained,
+    }
+}
+
+/// Consumes one nonlocal PageMap observation through W03's source-state tail.
+///
+/// This is the only nonlocal free continuation. W03 invokes W07's linear
+/// source claim internally and owns any post-CAS retained capability; this
+/// dispatcher receives only scalar disposition/rejection values.
+fn native_free_pointer_first_nonlocal(
+    allocation: LiveAllocationPointer,
+) -> NativePageFreeResult {
+    let detached = allocation.page_state() == LiveAllocationPageState::Detached;
+    let Some(process) = current_native_process_page_arena_pair() else {
+        // The PageMap observation cannot safely continue without the paired
+        // arena capability. This is not a temporary current-owner result.
+        RUNTIME_PROCESS.retain_page_owner();
+        return NativePageFreeResult::Retained;
+    };
+    // SAFETY: the active process owns this never-dropped main-Heap lease.
+    // `process` was formed from the same active root immediately above.
+    let Some(main_heap) = (unsafe { RUNTIME_PROCESS.active_main_heap() }) else {
+        RUNTIME_PROCESS.retain_page_owner();
+        return NativePageFreeResult::Retained;
+    };
+    // SAFETY: `allocation` is the exact current PageMap-derived source
+    // pointer, while `process` and `main_heap` are the matching process-wide
+    // PageMap/arena and static-Heap facts required by W03. W03 consumes any
+    // W07 claim rather than exposing or rebuilding it here.
+    match unsafe {
+        crate::single_thread::continue_post_owner_exit_live_allocation_with_process_page_facts(
+            allocation, process, main_heap,
+        )
+    } {
+        Ok(
+            ProcessPostOwnerExitPointerFreeDisposition::PublishedToOwner
+            | ProcessPostOwnerExitPointerFreeDisposition::StillLive
+            | ProcessPostOwnerExitPointerFreeDisposition::Released,
+        ) => NativePageFreeResult::Freed,
+        Ok(ProcessPostOwnerExitPointerFreeDisposition::Retained) => {
+            // W03 already sealed the exact post-CAS source owner. Mark the
+            // runtime terminal only after that consuming operation succeeds.
+            RUNTIME_PROCESS.retain_page_owner();
+            NativePageFreeResult::Retained
+        }
+        Err(ProcessPostOwnerExitPointerFreeRejection::Publication(
+            crate::remote_free::RemoteFreeError::NotOwnerAssociated,
+        )) if detached => {
+            // Detached is a valid PageMap observation but has no source
+            // producer. W03 rejected it before any CAS or terminal marker;
+            // retain this scalar result without poisoning the process.
+            NativePageFreeResult::Retained
+        }
+        Err(_) => {
+            // Any other pre-CAS failure contradicts the valid PageMap source
+            // operation. No legacy route can recover it safely.
+            RUNTIME_PROCESS.retain_page_owner();
+            NativePageFreeResult::Retained
+        }
     }
 }
 
@@ -11246,7 +11302,7 @@ unsafe fn native_ticket_zero_live_remote_free(
             NativeTicketZeroRemoteFreeResult::Unavailable
         };
     };
-    let Some(page_map) = RUNTIME_PROCESS.page_map_for_live_ticket_zero_client() else {
+    let Some(page_map) = RUNTIME_PROCESS.page_map_for_live_native_allocation() else {
         return if RUNTIME_PROCESS.state.load(Ordering::Acquire) == PROCESS_RETAINED {
             NativeTicketZeroRemoteFreeResult::Retained
         } else {
