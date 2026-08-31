@@ -1666,6 +1666,23 @@ musl's non-x86 fallback, credential/ownership policy, another pathname entry,
 pathname/CWD/namespace policy, allocation, a Rust facade, filesystem
 capability completion, promotion, and public x86 support.
 
+`./scripts/dev-x86_64.sh hasmntopt-header-abi` is a separate eight-profile
+C11/C++17 project-header/pinned-musl gate for unconditional
+`hasmntopt(const struct mntent *, const char *)`, the x86 LP64 40-byte,
+8-byte-aligned `struct mntent` record with 0/8/16/24/32/36 field offsets, and
+unmangled C++ linkage. The paired private
+`./scripts/dev-x86_64.sh libc-hasmntopt` artifact maps only pinned musl 1.2.6
+`src/misc/mntent.c::hasmntopt`: caller-owned `mnt_opts` bytes match only at a
+NUL/comma/equals boundary and return the exact borrowed element pointer. Its
+one-object `-nostdlib -static` fixture compares comma/equals matches,
+prefix/absent negatives, empty-first-element behavior, and unchanged bytes;
+it rejects syscall/call, TLS, errno, helper-string, FILE/stdio, allocation,
+and mount state closures. It does not select `setmntent`, `endmntent`,
+`getmntent`, `getmntent_r`, `addmntent`, `/etc/mtab` lookup, mount parsing,
+general string APIs, locale objects/environment/catalogs/general locale,
+pathname/CWD policy, a Rust facade, family completion, promotion, or public
+x86 support.
+
 `./scripts/dev-x86_64.sh libc-descriptor-lifecycle` is a separate private
 `static-c-descriptor-lifecycle` composition artifact inside that same planned
 family. It runs one project-header C body through pinned musl and then a

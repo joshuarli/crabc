@@ -301,6 +301,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh readlinkat-header-abi
 ./scripts/dev-x86_64.sh linkat-header-abi
 ./scripts/dev-x86_64.sh lchown-header-abi
+./scripts/dev-x86_64.sh hasmntopt-header-abi
 ./scripts/dev-x86_64.sh mm-abi-reference
 ./scripts/dev-x86_64.sh mlock-reference
 ./scripts/dev-x86_64.sh msync-reference
@@ -497,6 +498,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-readlinkat
 ./scripts/dev-x86_64.sh libc-linkat
 ./scripts/dev-x86_64.sh libc-lchown
+./scripts/dev-x86_64.sh libc-hasmntopt
 ./scripts/dev-x86_64.sh libc-extended-attributes
 ./scripts/dev-x86_64.sh libc-descriptor-io
 ./scripts/dev-x86_64.sh libc-descriptor-lifecycle
@@ -1103,6 +1105,24 @@ and null `EFAULT`. It excludes `chown`, `fchown`, `fchownat`, musl's non-x86
 fallback, credential/ownership policy, another pathname entry, pathname/CWD/
 namespace policy, directory streams, allocation, cancellation, a Rust facade,
 filesystem capability completion, family promotion, and public x86 support.
+
+`hasmntopt-header-abi` is a separate eight-profile C11/C++17 project-header/
+pinned-musl matrix for unconditional
+`hasmntopt(const struct mntent *, const char *)`, the x86 LP64 40-byte,
+8-byte-aligned `struct mntent` record, its 0/8/16/24/32/36 field offsets, and
+unmangled C++ linkage. The current project header reaches `stdio.h` for
+`FILE`, while pinned musl uses `__NEED_FILE` directly; the gate constrains only
+the selected lookup declaration and record ABI. Its paired private
+`libc-hasmntopt` static artifact runs a caller-owned option-byte fixture first
+through musl 1.2.6 and then through one selected archive member under true
+`-nostdlib -static`. It pins comma and equals boundaries, exact returned
+pointers, prefix/absent negatives, musl's empty-first-element behavior, and no
+mutation. The final candidate has no syscall, call, TLS, errno, helper-string,
+FILE/stdio, allocation, or mntent stream/parser closure. It excludes
+`setmntent`, `endmntent`, `getmntent`, `getmntent_r`, `addmntent`, `/etc/mtab`
+lookup, mount databases, general string APIs, locale objects/environment/
+catalogs/general locale, pathname policy, a Rust facade, promotion, and public
+x86 support.
 
 `libc-extended-attributes` is the separate private static C runtime artifact
 paired with that header gate. Its project-header fixture first runs through
@@ -5759,6 +5779,7 @@ Apart from the narrowly named `libc-stat-compat`, `libc-credentials`,
 `libc-readlinkat`,
 `libc-linkat`,
 `libc-lchown`,
+`libc-hasmntopt`,
 `libc-descriptor-io`,
 `libc-descriptor-lifecycle`,
 `libc-descriptor-pipeline`,
