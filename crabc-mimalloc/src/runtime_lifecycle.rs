@@ -14028,12 +14028,13 @@ pub fn finish_current_thread_native_after_user_destructors() -> ThreadFinishResu
 }
 
 /// Consumes the continuously stored native owner at the source destructor
-/// boundary. No client ledger participates: the lower engine accepts finish
-/// only after source Page used/free state is quiescent. Any refusal restores
-/// the exact engine in the pinned TLS payload. Since libc reclaims the ELF TLS
-/// image immediately after this boundary, an unresolved retained payload is a
-/// fail-stop condition rather than a result that may reach native thread
-/// return.
+/// boundary. No client ledger participates: the lower engine follows source
+/// collect-abandon, releasing all-free pages and abandoning surviving live
+/// pages before its Theap/TLD boundary. A pre-drain refusal restores the exact
+/// engine; a failure after source queue state changed retains the terminal
+/// engine and must fail-stop rather than reach native thread return. Since libc
+/// reclaims the ELF TLS image immediately after this boundary, an unresolved
+/// retained payload cannot become a normal thread-return result.
 fn finish_current_thread_native_persistent_owner_after_user_destructors(
 ) -> ThreadFinishResult {
     let teardown = current_thread_native_persistent_owner_cell()
@@ -14900,8 +14901,15 @@ mod tests {
     extern crate std;
 
     use super::*;
-    use crate::main_theap::MainStaticAttachmentStorage;
+    use crate::config::{ARENA_ALIGNMENT, ARENA_MIN_SIZE};
+    use crate::main_heap_page::MainHeapThreadOwnerLocalPageEngine;
+    use crate::main_heap_thread::{
+        MainHeapThreadAttachment, MainHeapThreadAttachmentBeginError,
+    };
+    use crate::main_theap::{MainStaticAttachmentStorage, MainStaticTheapAttachment};
     use crate::meta::MetaAllocator;
+    use crate::os::{MapAccess, Mapping};
+    use crate::process_arena::ProcessSharedArenaStorage;
     use crate::process_page_map::ProcessPageMapStorage;
     use crate::subproc::MainSubprocess;
     use std::sync::mpsc;
@@ -14914,6 +14922,218 @@ mod tests {
             false,
             false,
         )
+    }
+
+    fn native_persistent_owner_process_pair(
+        config: MemoryConfig,
+        subprocess: &'static MainSubprocess,
+    ) -> ProcessPageArenaLease {
+        let page_map = ProcessPageMapStorage::test_static_owner()
+            .initialize(config, subprocess)
+            .expect("the focused persistent-owner test initializes one process PageMap");
+        let mapping = Mapping::map_aligned_for_allocator(
+            config,
+            ARENA_MIN_SIZE,
+            ARENA_ALIGNMENT,
+            MapAccess::Committed,
+        )
+        .expect("the focused persistent-owner test owns one complete arena mapping");
+        let arena = match ProcessSharedArenaStorage::test_static_owner()
+            .install_one_owned_external_arena(page_map, mapping)
+        {
+            Ok(arena) => arena,
+            Err(_) => panic!("the focused persistent-owner test installs its paired process arena"),
+        };
+        ProcessPageArenaLease::join(page_map, arena)
+            .expect("the focused persistent-owner test joins its matching PageMap and arena")
+    }
+
+    fn with_native_persistent_owner_fixture(
+        operation: impl FnOnce(&mut NativePersistentThreadOwner) + Send + 'static,
+    ) {
+        thread::spawn(move || {
+            let config = memory_config();
+            let storage = MainStaticAttachmentStorage::test_static_owner();
+            let subprocess = MainSubprocess::test_static_owner();
+            let metadata = MetaAllocator::test_static_owner();
+            let pair = native_persistent_owner_process_pair(config, subprocess);
+            // The real compiler-TLS owner stores its attachment with a static
+            // process-main lease. Keep this isolated test root alive for the
+            // worker's complete terminal-state observation rather than
+            // shortening that production lifetime in a fixture.
+            let main = std::boxed::Box::leak(std::boxed::Box::new(unsafe {
+                MainStaticTheapAttachment::begin_with_test_storage(storage, subprocess)
+                .expect("ticket zero attaches the focused source-static main image")
+            }));
+            let main_heap = main
+                .shared_main_heap_lease()
+                .expect("the focused persistent worker borrows the static main Heap");
+
+            thread::scope(|scope| {
+                let worker = scope.spawn(move || {
+                    let mut attachment = match unsafe {
+                        MainHeapThreadAttachment::begin_with_test_metadata(
+                            main_heap,
+                            metadata,
+                            config,
+                        )
+                    } {
+                        Ok(attachment) => attachment,
+                        Err(MainHeapThreadAttachmentBeginError::Rejected(error)) => {
+                            panic!("focused persistent attachment rejected: {error:?}")
+                        }
+                        Err(MainHeapThreadAttachmentBeginError::Retained { error, .. }) => {
+                            panic!("focused persistent attachment retained: {error:?}")
+                        }
+                    };
+                    let engine = MainHeapThreadOwnerLocalPageEngine::begin(&mut attachment, pair)
+                        .expect("the focused attachment creates one persistent owner engine");
+                    let mut owner = NativePersistentThreadOwner {
+                        attachment,
+                        state: NativePersistentThreadOwnerExitState::PreDrain(engine),
+                    };
+                    operation(&mut owner);
+                });
+                worker
+                    .join()
+                    .expect("the focused persistent owner remains current-thread local");
+            });
+        })
+        .join()
+        .expect("the focused persistent-owner fixture remains current-thread local");
+    }
+
+    #[test]
+    fn native_persistent_owner_collect_abandon_predrain_retains_the_exact_engine() {
+        with_native_persistent_owner_fixture(|owner| {
+            let NativePersistentThreadOwner { attachment: _, state } = owner;
+            let NativePersistentThreadOwnerExitState::PreDrain(engine) = state else {
+                panic!("the focused persistent owner starts before its drain boundary");
+            };
+            engine.test_begin_borrowed_state();
+
+            assert_eq!(
+                owner.teardown(),
+                Err(()),
+                "a preflight failure remains retryable before the fast slot or engine changes"
+            );
+            assert!(matches!(
+                owner.state,
+                NativePersistentThreadOwnerExitState::PreDrain(_)
+            ));
+
+            let NativePersistentThreadOwner { attachment, state } = owner;
+            let NativePersistentThreadOwnerExitState::PreDrain(engine) = state else {
+                panic!("the preflight failure restores its exact persistent engine");
+            };
+            engine.test_end_borrowed_state();
+            engine
+                .with_local_allocator(attachment, |allocator| {
+                    let block = allocator
+                        .allocate(73, false)
+                        .expect("the restored engine still performs a normal local allocation");
+                    // SAFETY: this block is current in the exact engine which
+                    // the pre-drain failure returned unchanged.
+                    unsafe { allocator.free(block) }
+                        .expect("the restored engine still performs its normal local free");
+                })
+                .expect("the exact pre-drain engine is usable after its rejected teardown");
+
+            assert_eq!(
+                owner.teardown(),
+                Ok(()),
+                "the restored engine later enters the normal collect-abandon finish once"
+            );
+        });
+    }
+
+    #[test]
+    fn native_persistent_owner_collect_abandon_failure_is_terminal_without_retry_or_allocation() {
+        with_native_persistent_owner_fixture(|owner| {
+            let NativePersistentThreadOwner { attachment, state } = owner;
+            let NativePersistentThreadOwnerExitState::PreDrain(engine) = state else {
+                panic!("the focused persistent owner starts before its drain boundary");
+            };
+            engine
+                .with_local_allocator(attachment, |allocator| {
+                    let _live = allocator
+                        .allocate(81, false)
+                        .expect("the focused worker creates one source-live page");
+                    allocator.inject_page_free_collect_failure_once();
+                })
+                .expect("the focused collection injection stays on the exact local owner");
+
+            assert_eq!(
+                owner.teardown(),
+                Err(()),
+                "an injected source collection failure retains the changed drain terminally"
+            );
+            assert!(matches!(
+                owner.state,
+                NativePersistentThreadOwnerExitState::RetainedTerminalEngine(_)
+            ));
+
+            let allocation_entered = core::cell::Cell::new(false);
+            assert_eq!(
+                owner.with_local_allocator(|_| allocation_entered.set(true)),
+                Err(()),
+                "the terminal owner never reopens allocation authority"
+            );
+            assert!(
+                !allocation_entered.get(),
+                "the rejected terminal owner never forms a local allocator view"
+            );
+            assert_eq!(
+                owner.teardown(),
+                Err(()),
+                "a retained terminal engine never re-enters source queue collection"
+            );
+            assert!(matches!(
+                owner.state,
+                NativePersistentThreadOwnerExitState::RetainedTerminalEngine(_)
+            ));
+        });
+    }
+
+    #[test]
+    fn native_persistent_owner_collect_abandon_attachment_only_retries_no_page_boundary() {
+        with_native_persistent_owner_fixture(|owner| {
+            // The first fault is observed by the lower consumed drain; the
+            // second is observed by this call's attachment-only retry. The
+            // next teardown must then finish only the no-page boundary.
+            owner
+                .attachment
+                .test_fail_detached_process_page_finish_times(2);
+            assert_eq!(
+                owner.teardown(),
+                Err(()),
+                "a post-drain attachment failure consumes the page engine without recreating it"
+            );
+            assert!(matches!(
+                owner.state,
+                NativePersistentThreadOwnerExitState::AttachmentOnly
+            ));
+
+            let allocation_entered = core::cell::Cell::new(false);
+            assert_eq!(
+                owner.with_local_allocator(|_| allocation_entered.set(true)),
+                Err(()),
+                "attachment-only continuation has no page engine to borrow"
+            );
+            assert!(
+                !allocation_entered.get(),
+                "attachment-only continuation never recreates allocation authority"
+            );
+            assert_eq!(
+                owner.teardown(),
+                Ok(()),
+                "the next attempt retries only the already-drained attachment boundary"
+            );
+            assert!(matches!(
+                owner.state,
+                NativePersistentThreadOwnerExitState::AttachmentOnly
+            ));
+        });
     }
 
     // Keep this deterministic audit materially longer than the one-cycle

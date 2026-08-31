@@ -226,6 +226,12 @@ pub(crate) struct MainHeapThreadAttachment<'main> {
     /// re-entry contract.
     #[cfg(test)]
     deferred_free_test_observer: Option<DeferredFreeTestObserver>,
+    /// One focused test-only fault at the final attachment boundary after a
+    /// successful page drain. It never models a production fallback or route;
+    /// it proves that the outer persistent owner retains `AttachmentOnly`
+    /// rather than reconstructing a drained page engine.
+    #[cfg(test)]
+    detached_process_page_finish_failures: usize,
     state: MainHeapThreadAttachmentState,
     _not_send_or_sync: PhantomData<*mut ()>,
 }
@@ -312,6 +318,8 @@ impl<'main> MainHeapThreadAttachment<'main> {
             page_engine_suspended: false,
             #[cfg(test)]
             deferred_free_test_observer: None,
+            #[cfg(test)]
+            detached_process_page_finish_failures: 0,
             state: MainHeapThreadAttachmentState::Preparing,
             _not_send_or_sync: PhantomData,
         };
@@ -539,7 +547,28 @@ impl<'main> MainHeapThreadAttachment<'main> {
     pub(crate) unsafe fn finish_after_detached_process_page_route(
         &mut self,
     ) -> Result<(), MainHeapThreadAttachmentError> {
+        #[cfg(test)]
+        if self.detached_process_page_finish_failures != 0 {
+            self.detached_process_page_finish_failures -= 1;
+            return Err(MainHeapThreadAttachmentError::TheapProjection);
+        }
         self.finish_after_page_drain()
+    }
+
+    /// Makes the next selected final attachment-boundary attempts fail before
+    /// any root/list/TLD mutation.
+    ///
+    /// This is test-only evidence for the consuming collect-abandon wrapper.
+    /// It deliberately cannot select production cleanup, a scheduler, a
+    /// registry, or a page route.
+    #[cfg(test)]
+    pub(crate) fn test_fail_detached_process_page_finish_times(&mut self, failures: usize) {
+        assert_ne!(failures, 0, "the focused post-drain fault has one selected attempt");
+        assert_eq!(
+            self.detached_process_page_finish_failures, 0,
+            "one attachment owns at most one focused post-drain fault plan"
+        );
+        self.detached_process_page_finish_failures = failures;
     }
 
     fn initialize_and_publish(&mut self) -> Result<(), MainHeapThreadAttachmentError> {

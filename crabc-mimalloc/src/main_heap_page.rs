@@ -2372,12 +2372,12 @@ impl MainHeapThreadOwnerLocalPageEngine {
     }
 
     #[cfg(test)]
-    fn test_begin_borrowed_state(&mut self) {
+    pub(crate) fn test_begin_borrowed_state(&mut self) {
         self.lifecycle.test_begin_borrowed_state();
     }
 
     #[cfg(test)]
-    fn test_end_borrowed_state(&mut self) {
+    pub(crate) fn test_end_borrowed_state(&mut self) {
         self.lifecycle.test_end_borrowed_state();
     }
 }
@@ -2386,6 +2386,14 @@ impl MainHeapThreadOwnerLocalAllocator<'_> {
     #[inline]
     pub(crate) fn allocate(&mut self, request: usize, zero: bool) -> Option<NonNull<u8>> {
         self.engine.allocate(request, zero)
+    }
+
+    /// Injects one page-collection failure through the exact stored engine for
+    /// the focused persistent-owner terminal-state regression.
+    #[cfg(test)]
+    #[inline]
+    pub(crate) fn inject_page_free_collect_failure_once(&mut self) {
+        self.engine.inject_page_free_collect_failure_once();
     }
 
     #[inline]
