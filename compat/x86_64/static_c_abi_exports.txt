@@ -78,6 +78,8 @@ alphasort
 asinhl
 asinl
 atan2l
+atanh
+atanhf
 atanhl
 atanl
 atexit

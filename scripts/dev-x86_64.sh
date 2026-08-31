@@ -68,6 +68,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   math-sin-header-abi  verify x86 sin/sinf C++ ABI/linkage
   math-tan-header-abi  verify x86 tan/tanf C++ ABI/linkage
   math-tanh-header-abi verify x86 tanh/tanhf C++ ABI/linkage
+  math-atanh-header-abi verify x86 atanh/atanhf C++ ABI/linkage
   sys-reg-header-abi  compile the staged crabc x86 ptrace-register header slice
   machine-context-header-abi  verify staged x86 machine/context C/C++ header ABI profiles
   types-header-abi  compile the staged crabc x86 C/C++ type-layout header slice
@@ -427,6 +428,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-math-sin  run the static x86 sin/sinf scalar trigonometric slice
   libc-math-tan  run the static x86 tan/tanf scalar trigonometric slice
   libc-math-tanh run the static x86 tanh/tanhf scalar hyperbolic slice
+  libc-math-atanh run the static x86 atanh/atanhf scalar inverse-hyperbolic slice
   libc-math-ceil  run the static x86 ceil/ceilf fixed-direction slice
   libc-math-floor  run the static x86 floor/floorf fixed-direction slice
   libc-math-round  run the static x86 round/roundf half-away slice
@@ -1824,6 +1826,18 @@ extrema, infinities, quiet/signaling NaNs, IEEE flags, and requested versus
 observed direction in all four MXCSR modes. It excludes `tanhl`, tan/sin/cos,
 complex/special/inverse-hyperbolic math, fenv API/policy, family completion,
 promotion, and public x86 support.
+`libc-math-atanh` is the separate selected binary32/binary64 inverse-
+hyperbolic slice for `atanh` and `atanhf`. It compares parenthesized C calls
+and default-SSE/`-mfpmath=387` C++ declarations with pinned musl, then runs one
+freestanding static candidate. The checked GCC 15.2.0 translation of musl
+1.2.6 `atanh.c`/`atanhf.c` localizes only their matching
+`log1p.c`/`log1pf.c` providers instead of calling a separately selected public
+entry point or ambient libm. Its 256 raw 32-byte records cover signed zero,
+subnormal force evaluation, tiny-input and half-branch neighborhoods,
+pole/domain boundaries, finite extrema, infinities, quiet/signaling NaNs, IEEE
+flags, and requested versus observed direction in all four MXCSR modes. It
+excludes `atanhl`, atan/tanh/sin/cos/asinh/acosh/hyperbolic math,
+fenv API/policy, family completion, promotion, and public x86 support.
 `libc-math-ceil` is the separate selected binary32/binary64 fixed-direction
 ceiling slice for `ceil` and `ceilf`. It compares parenthesized C calls and
 default-SSE/`-mfpmath=387` C++ declarations with pinned musl, then runs one
@@ -2241,6 +2255,10 @@ run_math_tan_header_abi() {
 
 run_math_tanh_header_abi() {
     run_in_container bash /workspace/compat/x86_64/run_math_tanh_header_abi.sh
+}
+
+run_math_atanh_header_abi() {
+    run_in_container bash /workspace/compat/x86_64/run_math_atanh_header_abi.sh
 }
 
 run_sys_reg_header_abi() {
@@ -3786,6 +3804,10 @@ run_libc_math_tanh_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_math_tanh.sh
 }
 
+run_libc_math_atanh_probe() {
+    run_in_container bash /workspace/compat/x86_64/run_libc_math_atanh.sh
+}
+
 run_libc_math_ceil_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_math_ceil.sh
 }
@@ -3916,7 +3938,7 @@ case "$command" in
     ldso-public-dlfcn|ldso-dladdr-symbol-bounds) ;;
     ldso-bounded-dlopen) ;;
     math-special-header-abi|libc-math-special) ;;
-    math-exp2-header-abi|math-expm1-header-abi|math-log-header-abi|math-log10-header-abi|math-sin-header-abi|math-tan-header-abi|math-tanh-header-abi|libc-math-exp2|libc-math-expm1|libc-math-log|libc-math-log10|libc-math-sin|libc-math-tan|libc-math-tanh) ;;
+    math-exp2-header-abi|math-expm1-header-abi|math-log-header-abi|math-log10-header-abi|math-sin-header-abi|math-tan-header-abi|math-tanh-header-abi|math-atanh-header-abi|libc-math-exp2|libc-math-expm1|libc-math-log|libc-math-log10|libc-math-sin|libc-math-tan|libc-math-tanh|libc-math-atanh) ;;
     inet-address-header-abi) ;;
     libc-network-byte-order) ;;
     ldso-target-root) ;;
@@ -4150,6 +4172,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "math-tanh-header-abi takes no arguments"
         ensure_image
         run_math_tanh_header_abi
+        ;;
+    math-atanh-header-abi)
+        [ "$#" -eq 0 ] || fail "math-atanh-header-abi takes no arguments"
+        ensure_image
+        run_math_atanh_header_abi
         ;;
     sys-reg-header-abi)
         [ "$#" -eq 0 ] || fail "sys-reg-header-abi takes no arguments"
@@ -5995,6 +6022,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "libc-math-tanh takes no arguments"
         ensure_image
         run_libc_math_tanh_probe
+        ;;
+    libc-math-atanh)
+        [ "$#" -eq 0 ] || fail "libc-math-atanh takes no arguments"
+        ensure_image
+        run_libc_math_atanh_probe
         ;;
     libc-math-ceil)
         [ "$#" -eq 0 ] || fail "libc-math-ceil takes no arguments"

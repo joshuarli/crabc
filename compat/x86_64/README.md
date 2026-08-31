@@ -540,6 +540,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-math-sin
 ./scripts/dev-x86_64.sh libc-math-tan
 ./scripts/dev-x86_64.sh libc-math-tanh
+./scripts/dev-x86_64.sh libc-math-atanh
 ./scripts/dev-x86_64.sh libc-math-elementary-long-double
 ./scripts/dev-x86_64.sh libc-fdim
 ./scripts/dev-x86_64.sh libc-locale-profile
@@ -4798,6 +4799,25 @@ crabc-owned definitions, local closure providers, and scalar
 `addsd`/`addss`/`subsd`/`subss`/`mulsd`/`mulss`/`divsd`/`divss`/`cvtsd2ss`,
 while rejecting weak compiler-builtins fallback, `tanhl`, adjacent
 tan/sin/cos/hyperbolic/inverse-trig/log/exp/pow functions, fenv API/policy,
+special/complex/binary80 math, dynamic linkage, TLS, and ambient libm. Family
+completion, promotion, full x86-64 parity, and public x86 support remain
+unselected.
+`libc-math-atanh` is the separate non-promoting `static-c-math-atanh` artifact
+for binary64/binary32 `atanh`/`atanhf`. Its project-header C fixture and
+default-SSE/`-mfpmath=387` C++ signature probes run first through pinned musl
+and then through one garbage-collected `-nostdlib -static` candidate. The
+checked GCC 15.2.0 translation of musl 1.2.6 `atanh.c`/`atanhf.c` plus renamed
+local `log1p.c`/`log1pf.c` providers is the complete direct source closure: it
+retains source tiny-input force-evaluation, half-branch, pole/domain, and
+signed reconstruction behavior without calling ambient libm or a public
+`log1p` sibling. The 256-record raw differential covers signed zero,
+tiny/subnormal and normal bounds, half and pole/domain neighborhoods, finite
+extremes, infinities, quiet/signaling NaNs, result payloads, flags, and
+requested versus observed MXCSR direction in all four modes. Final-link proof
+requires strong crabc-owned definitions, local closure providers, and scalar
+`addsd`/`addss`/`subsd`/`subss`/`mulsd`/`mulss`/`divsd`/`divss`/`cvtsd2ss`,
+while rejecting weak compiler-builtins fallback, `atanhl`, adjacent
+atan/tanh/sin/cos/asinh/acosh/hyperbolic functions, fenv API/policy,
 special/complex/binary80 math, dynamic linkage, TLS, and ambient libm. Family
 completion, promotion, full x86-64 parity, and public x86 support remain
 unselected.

@@ -270,6 +270,8 @@ mod math_sin;
 mod math_tan;
 #[path = "math_tanh.rs"]
 mod math_tanh;
+#[path = "math_atanh.rs"]
+mod math_atanh;
 #[path = "math_ceil.rs"]
 mod math_ceil;
 #[path = "math_floor.rs"]
