@@ -1,5 +1,5 @@
 {
-  "format": 4,
+  "format": 5,
   "schema": "crabc-mimalloc-canonical-upstream-stress",
   "scope": {
     "claim": "one canonical executable inventory of the exact pinned upstream test/test-stress.c through the selected native-mimalloc-shadow crabc libc",
@@ -44,14 +44,54 @@
         "c_backend_fallback": false,
         "runtime_selection": "the selected target directory's libc.so via LD_LIBRARY_PATH",
         "artifact_attestation": {
-          "cargo_fingerprint": {
-            "directory": ".fingerprint",
-            "package_prefix": "crabc-libc-",
-            "file": "lib-c.json",
+          "cargo_compiler_artifact": {
+            "build_record_format": 1,
+            "build_record_schema": "crabc-selected-libc-cargo-build",
+            "cargo_command": [
+              "cargo",
+              "build",
+              "-p",
+              "crabc-libc",
+              "--features",
+              "native-mimalloc-shadow",
+              "--profile",
+              "dev",
+              "--message-format=json-render-diagnostics"
+            ],
+            "package_id_suffix": "#crabc-libc@0.3.0",
+            "manifest_path": "libc/Cargo.toml",
+            "target": {
+              "kind": [
+                "cdylib",
+                "staticlib"
+              ],
+              "crate_types": [
+                "cdylib",
+                "staticlib"
+              ],
+              "name": "c",
+              "src_path": "libc/src/lib.rs",
+              "edition": "2021",
+              "doc": true,
+              "doctest": false,
+              "test": false
+            },
+            "semantic_profile": "dev",
+            "profile": {
+              "opt_level": "2",
+              "debuginfo": 2,
+              "debug_assertions": true,
+              "overflow_checks": false,
+              "test": false
+            },
             "exact_features": [
               "default",
               "native-mimalloc-shadow"
-            ]
+            ],
+            "artifacts": {
+              "selected_shared_libc": "libc.so",
+              "selected_static_libc": "libc.a"
+            }
           },
           "exported_free_route": {
             "symbol": "free",
@@ -249,7 +289,7 @@
     ]
   },
   "report": {
-    "format": 3,
+    "format": 4,
     "schema": "crabc-mimalloc-canonical-upstream-stress-report",
     "path": "compat/reports/allocator/upstream-stress/latest.json",
     "atomic_publish": true,
@@ -282,7 +322,8 @@
       "selected_loader",
       "staged_canonical_loader",
       "selected_libc",
-      "selected_backend_fingerprint",
+      "selected_static_libc",
+      "selected_backend_build_record",
       "stress_binary"
     ]
   },
@@ -319,6 +360,7 @@
     "canonical_loader": "/lib/ld-crabc-aarch64.so.1",
     "owned_test_launcher": "scripts/run_owned_test_suite.py",
     "selected_runtime_directory": "target/debug",
+    "selected_libc_build_record": "target/compat/allocator/upstream-stress/selected-libc-build.json",
     "isolated_output_directory": "target/compat/allocator/upstream-stress",
     "sysroot_purity": {
       "required_crt_sysroot_pure_rust": true,
@@ -334,6 +376,6 @@
       ],
       "reason": "The installed driver and CRT/sysroot boundary must pass their owned purity audit. The separately recorded native-allocator blocker is only accepted in its exact documented form because this lane dynamically selects the native-mimalloc-shadow libc after the owned sysroot is built."
     },
-    "notes": "The caller builds crabc-libc with native-mimalloc-shadow last. The lane then compiles the exact archive member through the owned driver, selects that debug libc with LD_LIBRARY_PATH, and has no source-level adaptation beyond the upstream USE_STD_MALLOC symbol. It records the owned sysroot purity record and blocks if that record is missing, rejected, or differs from the exact documented native-allocator exception."
+    "notes": "The caller captures the exact Cargo compiler-artifact emitted while building crabc-libc with native-mimalloc-shadow in the dev profile. The lane attests both named libc outputs against that build record, then compiles the exact archive member through the owned driver, selects the attested debug libc with LD_LIBRARY_PATH, and has no source-level adaptation beyond the upstream USE_STD_MALLOC symbol. It records the owned sysroot purity record and blocks if that record is missing, rejected, or differs from the exact documented native-allocator exception."
   }
 }

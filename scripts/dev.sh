@@ -472,16 +472,20 @@ case "$command" in
         ;;
     allocator-upstream)
         ensure_image
-        # Build the owned runtime first and the selected nondefault libc last;
-        # the runner then attests that exact backend before starting stress.
+        # Build the owned runtime first, then capture the exact compiler-artifact
+        # emitted by the selected nondefault libc build. The runner binds both
+        # selected libc outputs to that record before starting stress.
         run_in_container cargo build --workspace
         run_in_container cargo build --workspace --release
         run_in_container python3 scripts/build_owned_sysroot.py
-        run_in_container cargo build -p crabc-libc --features native-mimalloc-shadow
+        selected_libc_build_record="target/compat/allocator/upstream-stress/selected-libc-build.json"
+        run_in_container python3 compat/allocator/upstream-stress/run.py \
+            --capture-selected-libc-build "$selected_libc_build_record"
         run_in_container python3 scripts/run_owned_test_suite.py \
             --sysroot target/crabc-sysroot \
             --loader target/debug/libldso.so \
-            -- python3 compat/allocator/upstream-stress/run.py "$@"
+            -- python3 compat/allocator/upstream-stress/run.py \
+                --libc-build-record "$selected_libc_build_record" "$@"
         ;;
     allocator-shadow)
         ensure_image

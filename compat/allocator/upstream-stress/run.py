@@ -44,6 +44,7 @@ CACHE = ALLOCATOR_ROOT / ".cache"
 DEFAULT_TARGET_DIR = ROOT / "target/debug"
 DEFAULT_OUTPUT_DIR = ROOT / "target/compat/allocator/upstream-stress"
 DEFAULT_REPORT = ROOT / "compat/reports/allocator/upstream-stress/latest.json"
+DEFAULT_LIBC_BUILD_RECORD = DEFAULT_OUTPUT_DIR / "selected-libc-build.json"
 CANONICAL_LOADER = Path("/lib/ld-crabc-aarch64.so.1")
 FIXED_PIN = {
     "version": "3.5.0",
@@ -272,7 +273,7 @@ def expected_contract(pin: Mapping[str, str]) -> dict[str, Any]:
     target_id = "linux-aarch64-little-endian"
     backend_id = "crabc-libc-native-mimalloc-shadow"
     return {
-        "format": 4,
+        "format": 5,
         "schema": "crabc-mimalloc-canonical-upstream-stress",
         "scope": {
             "claim": "one canonical executable inventory of the exact pinned upstream test/test-stress.c through the selected native-mimalloc-shadow crabc libc",
@@ -306,11 +307,45 @@ def expected_contract(pin: Mapping[str, str]) -> dict[str, Any]:
                     "c_backend_fallback": False,
                     "runtime_selection": "the selected target directory's libc.so via LD_LIBRARY_PATH",
                     "artifact_attestation": {
-                        "cargo_fingerprint": {
-                            "directory": ".fingerprint",
-                            "package_prefix": "crabc-libc-",
-                            "file": "lib-c.json",
+                        "cargo_compiler_artifact": {
+                            "build_record_format": 1,
+                            "build_record_schema": "crabc-selected-libc-cargo-build",
+                            "cargo_command": [
+                                "cargo",
+                                "build",
+                                "-p",
+                                "crabc-libc",
+                                "--features",
+                                "native-mimalloc-shadow",
+                                "--profile",
+                                "dev",
+                                "--message-format=json-render-diagnostics",
+                            ],
+                            "package_id_suffix": "#crabc-libc@0.3.0",
+                            "manifest_path": "libc/Cargo.toml",
+                            "target": {
+                                "kind": ["cdylib", "staticlib"],
+                                "crate_types": ["cdylib", "staticlib"],
+                                "name": "c",
+                                "src_path": "libc/src/lib.rs",
+                                "edition": "2021",
+                                "doc": True,
+                                "doctest": False,
+                                "test": False,
+                            },
+                            "semantic_profile": "dev",
+                            "profile": {
+                                "opt_level": "2",
+                                "debuginfo": 2,
+                                "debug_assertions": True,
+                                "overflow_checks": False,
+                                "test": False,
+                            },
                             "exact_features": ["default", "native-mimalloc-shadow"],
+                            "artifacts": {
+                                "selected_shared_libc": "libc.so",
+                                "selected_static_libc": "libc.a",
+                            },
                         },
                         "exported_free_route": {
                             "symbol": "free",
@@ -383,7 +418,7 @@ def expected_contract(pin: Mapping[str, str]) -> dict[str, Any]:
             ],
         },
         "report": {
-            "format": 3,
+            "format": 4,
             "schema": "crabc-mimalloc-canonical-upstream-stress-report",
             "path": "compat/reports/allocator/upstream-stress/latest.json",
             "atomic_publish": True,
@@ -408,7 +443,8 @@ def expected_contract(pin: Mapping[str, str]) -> dict[str, Any]:
                 "selected_loader",
                 "staged_canonical_loader",
                 "selected_libc",
-                "selected_backend_fingerprint",
+                "selected_static_libc",
+                "selected_backend_build_record",
                 "stress_binary",
             ],
         },
@@ -430,6 +466,7 @@ def expected_contract(pin: Mapping[str, str]) -> dict[str, Any]:
             "canonical_loader": "/lib/ld-crabc-aarch64.so.1",
             "owned_test_launcher": "scripts/run_owned_test_suite.py",
             "selected_runtime_directory": "target/debug",
+            "selected_libc_build_record": "target/compat/allocator/upstream-stress/selected-libc-build.json",
             "isolated_output_directory": "target/compat/allocator/upstream-stress",
             "sysroot_purity": {
                 "required_crt_sysroot_pure_rust": True,
@@ -445,7 +482,7 @@ def expected_contract(pin: Mapping[str, str]) -> dict[str, Any]:
                 ],
                 "reason": "The installed driver and CRT/sysroot boundary must pass their owned purity audit. The separately recorded native-allocator blocker is only accepted in its exact documented form because this lane dynamically selects the native-mimalloc-shadow libc after the owned sysroot is built.",
             },
-            "notes": "The caller builds crabc-libc with native-mimalloc-shadow last. The lane then compiles the exact archive member through the owned driver, selects that debug libc with LD_LIBRARY_PATH, and has no source-level adaptation beyond the upstream USE_STD_MALLOC symbol. It records the owned sysroot purity record and blocks if that record is missing, rejected, or differs from the exact documented native-allocator exception.",
+            "notes": "The caller captures the exact Cargo compiler-artifact emitted while building crabc-libc with native-mimalloc-shadow in the dev profile. The lane attests both named libc outputs against that build record, then compiles the exact archive member through the owned driver, selects the attested debug libc with LD_LIBRARY_PATH, and has no source-level adaptation beyond the upstream USE_STD_MALLOC symbol. It records the owned sysroot purity record and blocks if that record is missing, rejected, or differs from the exact documented native-allocator exception.",
         },
     }
 
@@ -488,6 +525,19 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
         type=Path,
         default=Path(os.environ.get("CRABC_UPSTREAM_STRESS_REPORT", DEFAULT_REPORT)),
         help="JSON report path (default: CRABC_UPSTREAM_STRESS_REPORT or compat/reports/allocator/upstream-stress/latest.json)",
+    )
+    parser.add_argument(
+        "--libc-build-record",
+        type=Path,
+        default=Path(
+            os.environ.get("CRABC_UPSTREAM_STRESS_LIBC_BUILD_RECORD", DEFAULT_LIBC_BUILD_RECORD)
+        ),
+        help="exact Cargo compiler-artifact build record for the selected dev libc",
+    )
+    parser.add_argument(
+        "--capture-selected-libc-build",
+        type=Path,
+        help="build the selected libc and atomically write its exact Cargo compiler-artifact record",
     )
     return parser.parse_args(arguments)
 
@@ -976,62 +1026,276 @@ def command_text(record: Mapping[str, Any], subject: str) -> str:
         raise EvidenceError(f"{subject} produced an invalid stdout record") from error
 
 
-def cargo_fingerprint_features(path: Path) -> list[str]:
-    """Decode one Cargo fingerprint's enabled-feature inventory fail closed."""
+def cargo_artifact_contract(expectation: Mapping[str, Any]) -> dict[str, Any]:
+    artifact = expectation.get("cargo_compiler_artifact")
+    if not isinstance(artifact, dict):
+        raise EvidenceError("native backend inventory lacks its Cargo compiler-artifact contract")
+    return dict(artifact)
 
+
+def expected_cargo_artifact_paths(
+    target_dir: Path, artifact_contract: Mapping[str, Any]
+) -> dict[str, Path]:
+    filenames = artifact_contract.get("artifacts")
+    if (
+        not isinstance(filenames, dict)
+        or set(filenames) != {"selected_shared_libc", "selected_static_libc"}
+        or not all(isinstance(value, str) and value for value in filenames.values())
+    ):
+        raise EvidenceError("native backend inventory has an invalid Cargo artifact filename map")
+    resolved_target = target_dir.expanduser().resolve()
+    return {
+        artifact_id: (resolved_target / filename).resolve()
+        for artifact_id, filename in filenames.items()
+    }
+
+
+def validate_compiler_artifact(
+    compiler_artifact: object,
+    target_dir: Path,
+    artifact_contract: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Validate the exact crabc-libc compiler-artifact emitted by one Cargo build."""
+
+    if not isinstance(compiler_artifact, dict):
+        raise EvidenceError("selected libc build record omits its Cargo compiler-artifact")
+    required_fields = {
+        "reason",
+        "package_id",
+        "manifest_path",
+        "target",
+        "profile",
+        "features",
+        "filenames",
+        "executable",
+        "fresh",
+    }
+    if set(compiler_artifact) != required_fields:
+        raise EvidenceError("selected libc Cargo compiler-artifact field inventory drifted")
+    if compiler_artifact.get("reason") != "compiler-artifact":
+        raise EvidenceError("selected libc build record is not a Cargo compiler-artifact")
+    package_id = compiler_artifact.get("package_id")
+    package_suffix = artifact_contract.get("package_id_suffix")
+    if (
+        not isinstance(package_id, str)
+        or not isinstance(package_suffix, str)
+        or not package_id.endswith(package_suffix)
+    ):
+        raise EvidenceError("selected libc Cargo package identity drifted")
+
+    manifest_path = artifact_contract.get("manifest_path")
+    if not isinstance(manifest_path, str) or not manifest_path:
+        raise EvidenceError("native backend inventory has an invalid Cargo manifest path")
     try:
-        value = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as error:
-        raise EvidenceError(f"cannot read crabc-libc Cargo fingerprint: {path}") from error
-    if not isinstance(value, dict) or not isinstance(value.get("features"), str):
-        raise EvidenceError("crabc-libc Cargo fingerprint omits its enabled features")
-    try:
-        features = json.loads(value["features"])
-    except json.JSONDecodeError as error:
-        raise EvidenceError("crabc-libc Cargo fingerprint has malformed enabled features") from error
+        observed_manifest = Path(str(compiler_artifact["manifest_path"])).resolve()
+    except (KeyError, TypeError) as error:
+        raise EvidenceError("selected libc Cargo manifest path is invalid") from error
+    if observed_manifest != (ROOT / manifest_path).resolve():
+        raise EvidenceError("selected libc Cargo manifest identity drifted")
+
+    target = compiler_artifact.get("target")
+    expected_target = artifact_contract.get("target")
+    if not isinstance(target, dict) or not isinstance(expected_target, dict):
+        raise EvidenceError("selected libc Cargo target identity is invalid")
+    normalized_target = dict(target)
+    src_path = normalized_target.get("src_path")
+    expected_src_path = expected_target.get("src_path")
+    if not isinstance(src_path, str) or not isinstance(expected_src_path, str):
+        raise EvidenceError("selected libc Cargo target source path is invalid")
+    normalized_target["src_path"] = relative_path(Path(src_path), ROOT)
+    if not exactly_matches(normalized_target, expected_target):
+        raise EvidenceError("selected libc Cargo target identity drifted")
+
+    expected_profile = artifact_contract.get("profile")
+    if not exactly_matches(compiler_artifact.get("profile"), expected_profile):
+        raise EvidenceError("selected libc Cargo semantic profile drifted")
+    features = compiler_artifact.get("features")
+    expected_features = artifact_contract.get("exact_features")
     if (
         not isinstance(features, list)
         or not all(isinstance(feature, str) and feature for feature in features)
         or len(features) != len(set(features))
+        or not isinstance(expected_features, list)
+        or sorted(features) != sorted(expected_features)
     ):
-        raise EvidenceError("crabc-libc Cargo fingerprint features must be unique strings")
-    return features
-
-
-def selected_backend_fingerprint(
-    target_dir: Path, expectation: Mapping[str, Any]
-) -> tuple[dict[str, Any], list[str]]:
-    """Select the one Cargo build identity with the reviewed native feature set."""
-
-    fingerprint = expectation.get("cargo_fingerprint")
-    if not isinstance(fingerprint, dict):
-        raise EvidenceError("native backend inventory lacks its Cargo fingerprint contract")
-    exact_features = fingerprint.get("exact_features")
-    if not isinstance(exact_features, list) or not all(
-        isinstance(feature, str) and feature for feature in exact_features
+        raise EvidenceError("selected libc Cargo feature inventory drifted")
+    expected_paths = expected_cargo_artifact_paths(target_dir, artifact_contract)
+    observed_filenames = compiler_artifact.get("filenames")
+    if not isinstance(observed_filenames, list) or not all(
+        isinstance(filename, str) and filename for filename in observed_filenames
     ):
-        raise EvidenceError("native backend inventory has invalid exact Cargo features")
-    directory = fingerprint.get("directory")
-    package_prefix = fingerprint.get("package_prefix")
-    filename = fingerprint.get("file")
-    if not all(isinstance(value, str) and value for value in (directory, package_prefix, filename)):
-        raise EvidenceError("native backend inventory has an invalid Cargo fingerprint locator")
-    candidates = sorted((target_dir / directory).glob(f"{package_prefix}*/{filename}"))
-    matches: list[tuple[Path, list[str]]] = []
-    for candidate in candidates:
-        try:
-            features = cargo_fingerprint_features(candidate)
-        except EvidenceError:
+        raise EvidenceError("selected libc Cargo artifact filenames are invalid")
+    observed_paths = [Path(filename).resolve() for filename in observed_filenames]
+    if observed_paths != list(expected_paths.values()):
+        raise EvidenceError("selected libc Cargo artifact filenames drifted")
+    if compiler_artifact.get("executable") is not None or type(compiler_artifact.get("fresh")) is not bool:
+        raise EvidenceError("selected libc Cargo artifact executable/fresh identity drifted")
+    return {
+        "package_id": package_id,
+        "target": normalized_target,
+        "profile": dict(compiler_artifact["profile"]),
+        "features": list(features),
+        "filenames": [relative_path(path, ROOT) for path in observed_paths],
+        "fresh": compiler_artifact["fresh"],
+    }
+
+
+def selected_libc_build_attestation(
+    build_record_path: Path,
+    target_dir: Path,
+    expectation: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Bind the selected libc files to one explicit just-built Cargo record."""
+
+    artifact_contract = cargo_artifact_contract(expectation)
+    build_record = read_json(build_record_path)
+    if set(build_record) != {
+        "format",
+        "schema",
+        "cargo_command",
+        "semantic_profile",
+        "compiler_artifact",
+        "artifacts",
+    }:
+        raise EvidenceError("selected libc Cargo build-record field inventory drifted")
+    if (
+        build_record.get("format") != artifact_contract.get("build_record_format")
+        or build_record.get("schema") != artifact_contract.get("build_record_schema")
+        or not exactly_matches(build_record.get("cargo_command"), artifact_contract.get("cargo_command"))
+        or build_record.get("semantic_profile") != artifact_contract.get("semantic_profile")
+    ):
+        raise EvidenceError("selected libc Cargo build-record contract drifted")
+    compiler_artifact = validate_compiler_artifact(
+        build_record.get("compiler_artifact"), target_dir, artifact_contract
+    )
+    artifact_paths = expected_cargo_artifact_paths(target_dir, artifact_contract)
+    recorded_artifacts = build_record.get("artifacts")
+    if not isinstance(recorded_artifacts, dict) or set(recorded_artifacts) != set(artifact_paths):
+        raise EvidenceError("selected libc Cargo build-record artifact inventory drifted")
+    observed_artifacts: dict[str, dict[str, Any]] = {}
+    for artifact_id, path in artifact_paths.items():
+        if not path.is_file():
+            raise EvidenceError(f"selected libc Cargo artifact is absent: {path}")
+        observed = file_record(path, root=ROOT)
+        if not exactly_matches(recorded_artifacts.get(artifact_id), observed):
+            raise EvidenceError(
+                f"selected libc Cargo artifact bytes drifted after build: {artifact_id}"
+            )
+        observed_artifacts[artifact_id] = observed
+    return {
+        "build_record": file_record(build_record_path, root=ROOT),
+        "semantic_profile": build_record["semantic_profile"],
+        "cargo_features": compiler_artifact["features"],
+        "compiler_artifact": compiler_artifact,
+        "artifacts": observed_artifacts,
+    }
+
+
+def compiler_artifacts_from_cargo_messages(payload: bytes) -> list[dict[str, Any]]:
+    """Decode only Cargo's JSON message stream; arbitrary terminal text is rejected."""
+
+    try:
+        lines = payload.decode("utf-8", errors="strict").splitlines()
+    except UnicodeDecodeError as error:
+        raise EvidenceError("selected libc Cargo message stream is not UTF-8") from error
+    messages: list[dict[str, Any]] = []
+    for line_number, line in enumerate(lines, start=1):
+        if not line:
             continue
-        if sorted(features) == sorted(exact_features):
-            matches.append((candidate, features))
+        try:
+            message = json.loads(line)
+        except json.JSONDecodeError as error:
+            raise EvidenceError(
+                f"selected libc Cargo message line {line_number} is not JSON"
+            ) from error
+        if not isinstance(message, dict):
+            raise EvidenceError(
+                f"selected libc Cargo message line {line_number} is not an object"
+            )
+        if message.get("reason") == "compiler-artifact":
+            messages.append(message)
+    return messages
+
+
+def select_libc_compiler_artifact(
+    compiler_artifacts: Sequence[Mapping[str, Any]],
+    target_dir: Path,
+    artifact_contract: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Select crabc-libc from this invocation, never from global Cargo cache state."""
+
+    manifest_path = artifact_contract.get("manifest_path")
+    target_contract = artifact_contract.get("target")
+    if not isinstance(manifest_path, str) or not isinstance(target_contract, dict):
+        raise EvidenceError("native backend inventory has an invalid Cargo target locator")
+    expected_manifest = (ROOT / manifest_path).resolve()
+    target_name = target_contract.get("name")
+    matches = [
+        dict(artifact)
+        for artifact in compiler_artifacts
+        if isinstance(artifact.get("manifest_path"), str)
+        and Path(str(artifact["manifest_path"])).resolve() == expected_manifest
+        and isinstance(artifact.get("target"), dict)
+        and artifact["target"].get("name") == target_name
+    ]
     if len(matches) != 1:
         raise EvidenceError(
-            "selected native-shadow backend identity is ambiguous: expected exactly one "
-            f"Cargo fingerprint with features {exact_features!r}, found {len(matches)}"
+            "selected libc Cargo invocation must emit exactly one matching compiler-artifact; "
+            f"observed {len(matches)}"
         )
-    path, features = matches[0]
-    return file_record(path, root=ROOT), features
+    validate_compiler_artifact(matches[0], target_dir, artifact_contract)
+    return matches[0]
+
+
+def capture_selected_libc_build(
+    contract: Mapping[str, Any], target_dir: Path, build_record_path: Path
+) -> dict[str, Any]:
+    """Run the canonical dev build and atomically preserve its exact artifact record."""
+
+    backend = selected_backend_contract(contract)
+    expectation = backend.get("artifact_attestation")
+    if not isinstance(expectation, dict):
+        raise EvidenceError("selected native backend lacks artifact attestation requirements")
+    artifact_contract = cargo_artifact_contract(expectation)
+    command = artifact_contract.get("cargo_command")
+    if not isinstance(command, list) or not all(
+        isinstance(argument, str) and argument for argument in command
+    ):
+        raise EvidenceError("selected libc Cargo build command is invalid")
+    completed = subprocess.run(
+        command,
+        cwd=ROOT,
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    if completed.returncode != 0:
+        sys.stderr.buffer.write(completed.stderr)
+        raise EvidenceError(
+            f"selected libc Cargo build failed with status {completed.returncode}"
+        )
+    target_dir = target_dir.expanduser().resolve()
+    compiler_artifact = select_libc_compiler_artifact(
+        compiler_artifacts_from_cargo_messages(completed.stdout),
+        target_dir,
+        artifact_contract,
+    )
+    artifacts = {
+        artifact_id: file_record(path, root=ROOT)
+        for artifact_id, path in expected_cargo_artifact_paths(
+            target_dir, artifact_contract
+        ).items()
+    }
+    build_record = {
+        "format": artifact_contract["build_record_format"],
+        "schema": artifact_contract["build_record_schema"],
+        "cargo_command": list(command),
+        "semantic_profile": artifact_contract["semantic_profile"],
+        "compiler_artifact": compiler_artifact,
+        "artifacts": artifacts,
+    }
+    write_json(build_record_path, build_record)
+    return build_record
 
 
 def selected_backend_contract(contract: Mapping[str, Any]) -> dict[str, Any]:
@@ -1051,14 +1315,18 @@ def selected_backend_contract(contract: Mapping[str, Any]) -> dict[str, Any]:
     return dict(selected[0])
 
 
-def attest_selected_backend(target_dir: Path, contract: Mapping[str, Any]) -> dict[str, Any]:
+def attest_selected_backend(
+    target_dir: Path, build_record_path: Path, contract: Mapping[str, Any]
+) -> dict[str, Any]:
     """Prove that the selected ``libc.so`` routes public ``free`` to Rust."""
 
     backend = selected_backend_contract(contract)
     expectation = backend.get("artifact_attestation")
     if not isinstance(expectation, dict):
         raise EvidenceError("selected native backend lacks artifact attestation requirements")
-    fingerprint, features = selected_backend_fingerprint(target_dir, expectation)
+    build_attestation = selected_libc_build_attestation(
+        build_record_path, target_dir, expectation
+    )
     route = expectation.get("exported_free_route")
     if not isinstance(route, dict):
         raise EvidenceError("selected native backend lacks its exported free route contract")
@@ -1099,8 +1367,7 @@ def attest_selected_backend(target_dir: Path, contract: Mapping[str, Any]) -> di
         raise EvidenceError(f"selected libc {symbol} branches to forbidden <{forbidden}")
     return {
         "backend": backend["id"],
-        "cargo_features": features,
-        "cargo_fingerprint": fingerprint,
+        **build_attestation,
         "exported_free": {
             "symbol": symbol,
             "required_callee_suffix": required,
@@ -1296,6 +1563,7 @@ def report_base(contract: Mapping[str, Any], pin: Mapping[str, str], args: argpa
             "backend": selected_backend_contract(contract)["id"],
             "target_dir": relative_path(args.target_dir, ROOT),
             "output_dir": relative_path(args.output_dir, ROOT),
+            "selected_libc_build_record": relative_path(args.libc_build_record, ROOT),
         },
         "selection": {
             "target": selected_target_contract(contract),
@@ -1353,7 +1621,21 @@ def execute(contract: Mapping[str, Any], pin: Mapping[str, str], args: argparse.
     requirements = contract["compile_requirements"]
     assert isinstance(requirements, dict)
     runtime_inputs = require_runtime_inputs(args.target_dir, requirements)
-    backend_attestation = attest_selected_backend(runtime_inputs.target_dir, contract)
+    build_record_path = args.libc_build_record.expanduser().resolve()
+    if not build_record_path.is_file():
+        raise BlockedPrerequisite(
+            "selected-libc-build-record",
+            "canonical upstream stress requires the exact Cargo compiler-artifact "
+            "record emitted by its selected libc build",
+            {
+                "build_record": str(build_record_path),
+                "required_producer": "compat/allocator/upstream-stress/run.py --capture-selected-libc-build",
+                "stress_process_started": False,
+            },
+        )
+    backend_attestation = attest_selected_backend(
+        runtime_inputs.target_dir, build_record_path, contract
+    )
     report["artifacts"].update(
         {
             "owned_sysroot_manifest": file_record(runtime_inputs.manifest_path, root=ROOT),
@@ -1365,8 +1647,9 @@ def execute(contract: Mapping[str, Any], pin: Mapping[str, str], args: argparse.
             "staged_canonical_loader": file_record(
                 runtime_inputs.canonical_loader_path, root=ROOT
             ),
-            "selected_libc": file_record(runtime_inputs.target_dir / "libc.so", root=ROOT),
-            "selected_backend_fingerprint": backend_attestation["cargo_fingerprint"],
+            "selected_libc": backend_attestation["artifacts"]["selected_shared_libc"],
+            "selected_static_libc": backend_attestation["artifacts"]["selected_static_libc"],
+            "selected_backend_build_record": backend_attestation["build_record"],
         }
     )
     report["runtime"] = {
@@ -1504,6 +1787,12 @@ def main(arguments: Sequence[str] | None = None) -> int:
     args = parse_arguments(arguments)
     try:
         contract, pin = load_contract()
+        if args.capture_selected_libc_build is not None:
+            capture_selected_libc_build(
+                contract, args.target_dir, args.capture_selected_libc_build
+            )
+            print(args.capture_selected_libc_build.expanduser().resolve())
+            return 0
         if args.check:
             print(
                 json.dumps(

@@ -1378,7 +1378,7 @@ def upstream_stress_capability(root: Path, manifest: Mapping[str, Any]) -> dict[
         "status": "unmet",
     }
     if (
-        contract.get("format") != 4
+        contract.get("format") != 5
         or contract.get("schema") != "crabc-mimalloc-canonical-upstream-stress"
     ):
         return {
@@ -1458,6 +1458,24 @@ def validate_byte_stream(record: object, expected: str, name: str) -> None:
         raise RatchetError(f"canonical upstream stress {name} byte-stream mismatched its case")
 
 
+def validate_file_artifact(root: Path, record: object, name: str) -> dict[str, object]:
+    if not isinstance(record, Mapping) or set(record) != {"bytes", "path", "sha256"}:
+        raise RatchetError(f"canonical upstream stress {name} file-artifact record drifted")
+    path_value = record.get("path")
+    if not isinstance(path_value, str) or not path_value:
+        raise RatchetError(f"canonical upstream stress {name} artifact path is invalid")
+    path = Path(path_value)
+    path = path if path.is_absolute() else root / path
+    if (
+        not path.is_file()
+        or type(record.get("bytes")) is not int
+        or record["bytes"] != path.stat().st_size
+        or record.get("sha256") != sha256(path)
+    ):
+        raise RatchetError(f"canonical upstream stress {name} artifact bytes drifted")
+    return dict(record)
+
+
 def validate_canonical_stress_report(
     root: Path,
     manifest: Mapping[str, Any],
@@ -1522,6 +1540,40 @@ def validate_canonical_stress_report(
     ] if isinstance(backends, list) else []
     if len(selected_backends) != 1 or selected_backends[0].get("allocator_feature") != "native-mimalloc-shadow" or selected_backends[0].get("c_backend_fallback") is not False:
         raise RatchetError("canonical upstream stress did not select the native Rust backend")
+    backend_attestation_contract = required_mapping(
+        selected_backends[0].get("artifact_attestation"),
+        "canonical stress backend artifact attestation",
+    )
+    cargo_artifact_contract = required_mapping(
+        backend_attestation_contract.get("cargo_compiler_artifact"),
+        "canonical stress Cargo compiler-artifact",
+    )
+    expected_cargo_command = [
+        "cargo",
+        "build",
+        "-p",
+        "crabc-libc",
+        "--features",
+        "native-mimalloc-shadow",
+        "--profile",
+        "dev",
+        "--message-format=json-render-diagnostics",
+    ]
+    if (
+        cargo_artifact_contract.get("build_record_format") != 1
+        or cargo_artifact_contract.get("build_record_schema")
+        != "crabc-selected-libc-cargo-build"
+        or cargo_artifact_contract.get("cargo_command") != expected_cargo_command
+        or cargo_artifact_contract.get("semantic_profile") != "dev"
+        or cargo_artifact_contract.get("exact_features")
+        != ["default", "native-mimalloc-shadow"]
+        or cargo_artifact_contract.get("artifacts")
+        != {
+            "selected_shared_libc": "libc.so",
+            "selected_static_libc": "libc.a",
+        }
+    ):
+        raise RatchetError("canonical upstream stress Cargo build-record contract drifted")
     target_inventory = required_mapping(contract.get("target_inventory"), "canonical stress target")
     target_id = required_string(target_inventory.get("selected"), "canonical stress selected target")
     targets = target_inventory.get("targets")
@@ -1533,6 +1585,74 @@ def validate_canonical_stress_report(
     expected_selection = {"backend": backend_id, "target": dict(selected_targets[0])}
     if not exact_json(report.get("selection"), expected_selection):
         raise RatchetError("canonical upstream stress report selection provenance drifted")
+
+    report_artifacts = required_mapping(
+        report.get("artifacts"), "canonical stress report.artifacts"
+    )
+    artifact_ids = required_mapping(contract.get("report"), "canonical stress report").get(
+        "artifact_ids"
+    )
+    if (
+        not isinstance(artifact_ids, list)
+        or set(report_artifacts) != set(artifact_ids)
+    ):
+        raise RatchetError("canonical upstream stress report artifact inventory drifted")
+    build_record = validate_file_artifact(
+        root,
+        report_artifacts.get("selected_backend_build_record"),
+        "selected backend build record",
+    )
+    shared_libc = validate_file_artifact(
+        root, report_artifacts.get("selected_libc"), "selected shared libc"
+    )
+    static_libc = validate_file_artifact(
+        root, report_artifacts.get("selected_static_libc"), "selected static libc"
+    )
+    runtime = required_mapping(report.get("runtime"), "canonical stress report.runtime")
+    backend_attestation = required_mapping(
+        runtime.get("backend_attestation"),
+        "canonical stress report.runtime.backend_attestation",
+    )
+    compiler_artifact = required_mapping(
+        backend_attestation.get("compiler_artifact"),
+        "canonical stress report compiler-artifact",
+    )
+    expected_artifacts = {
+        "selected_shared_libc": shared_libc,
+        "selected_static_libc": static_libc,
+    }
+    exported_route = required_mapping(
+        backend_attestation.get("exported_free"),
+        "canonical stress report exported free route",
+    )
+    route_contract = required_mapping(
+        backend_attestation_contract.get("exported_free_route"),
+        "canonical stress exported free route contract",
+    )
+    if (
+        backend_attestation.get("backend") != backend_id
+        or backend_attestation.get("status") != "passed"
+        or backend_attestation.get("semantic_profile") != "dev"
+        or backend_attestation.get("cargo_features")
+        != cargo_artifact_contract.get("exact_features")
+        or not exact_json(backend_attestation.get("build_record"), build_record)
+        or not exact_json(backend_attestation.get("artifacts"), expected_artifacts)
+        or compiler_artifact.get("profile") != cargo_artifact_contract.get("profile")
+        or compiler_artifact.get("target") != cargo_artifact_contract.get("target")
+        or compiler_artifact.get("features") != cargo_artifact_contract.get("exact_features")
+        or compiler_artifact.get("filenames")
+        != [shared_libc["path"], static_libc["path"]]
+        or type(compiler_artifact.get("fresh")) is not bool
+        or exported_route.get("symbol") != route_contract.get("symbol")
+        or exported_route.get("required_callee_suffix")
+        != route_contract.get("required_callee_suffix")
+        or exported_route.get("forbidden_callee_suffix")
+        != route_contract.get("forbidden_callee_suffix")
+        or not isinstance(exported_route.get("disassembly_sha256"), str)
+        or re.fullmatch(r"[0-9a-f]{64}", exported_route["disassembly_sha256"])
+        is None
+    ):
+        raise RatchetError("canonical upstream stress backend artifact attestation drifted")
 
     compile_requirements = required_mapping(
         contract.get("compile_requirements"), "canonical stress compile requirements"

@@ -538,6 +538,37 @@ fn hidden_or_selected() {}
             )
 
     def test_canonical_upstream_stress_complete_matrix_is_consumed(self) -> None:
+        cargo_target = {
+            "kind": ["cdylib", "staticlib"],
+            "crate_types": ["cdylib", "staticlib"],
+            "name": "c",
+            "src_path": "libc/src/lib.rs",
+            "edition": "2021",
+            "doc": True,
+            "doctest": False,
+            "test": False,
+        }
+        cargo_profile = {
+            "opt_level": "2",
+            "debuginfo": 2,
+            "debug_assertions": True,
+            "overflow_checks": False,
+            "test": False,
+        }
+        artifact_ids = [
+            "contract",
+            "upstream_archive",
+            "source_member",
+            "owned_sysroot_manifest",
+            "owned_sysroot_purity",
+            "owned_compiler",
+            "selected_loader",
+            "staged_canonical_loader",
+            "selected_libc",
+            "selected_static_libc",
+            "selected_backend_build_record",
+            "stress_binary",
+        ]
         matrix = [
             {
                 "id": f"workers-{workers}-scale-{scale}-iterations-{iterations}",
@@ -553,7 +584,7 @@ fn hidden_or_selected() {}
             for workers in (1, 2, 4, 8)
         ]
         contract = {
-            "format": 4,
+            "format": 5,
             "schema": "crabc-mimalloc-canonical-upstream-stress",
             "upstream": {
                 "project": "microsoft/mimalloc",
@@ -577,6 +608,32 @@ fn hidden_or_selected() {}
                     "id": "crabc-libc-native-mimalloc-shadow",
                     "allocator_feature": "native-mimalloc-shadow",
                     "c_backend_fallback": False,
+                    "artifact_attestation": {
+                        "cargo_compiler_artifact": {
+                            "build_record_format": 1,
+                            "build_record_schema": "crabc-selected-libc-cargo-build",
+                            "cargo_command": [
+                                "cargo", "build", "-p", "crabc-libc", "--features",
+                                "native-mimalloc-shadow", "--profile", "dev",
+                                "--message-format=json-render-diagnostics",
+                            ],
+                            "package_id_suffix": "#crabc-libc@0.3.0",
+                            "manifest_path": "libc/Cargo.toml",
+                            "target": cargo_target,
+                            "semantic_profile": "dev",
+                            "profile": cargo_profile,
+                            "exact_features": ["default", "native-mimalloc-shadow"],
+                            "artifacts": {
+                                "selected_shared_libc": "libc.so",
+                                "selected_static_libc": "libc.a",
+                            },
+                        },
+                        "exported_free_route": {
+                            "symbol": "free",
+                            "required_callee_suffix": "native_free>",
+                            "forbidden_callee_suffix": "mi_free>",
+                        },
+                    },
                 }],
             },
             "source_adaptation": {"kind": "upstream-preprocessor-symbol-selection-only", "patches": []},
@@ -593,10 +650,11 @@ fn hidden_or_selected() {}
                 "blocked_is_failure_closed": True,
             },
             "report": {
-                "format": 3,
+                "format": 4,
                 "schema": "crabc-mimalloc-canonical-upstream-stress-report",
                 "path": "reports/upstream-stress.json",
                 "fixture_elf_fields": ["dynamic_dependencies", "elf_identity", "interpreter"],
+                "artifact_ids": artifact_ids,
             },
             "compile_requirements": {
                 "expected_dynamic_dependencies": ["libc.so"],
@@ -610,6 +668,28 @@ fn hidden_or_selected() {}
         }
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
+            selected_shared = root / "target/debug/libc.so"
+            selected_static = root / "target/debug/libc.a"
+            selected_build_record = (
+                root / "target/compat/allocator/upstream-stress/selected-libc-build.json"
+            )
+            selected_shared.parent.mkdir(parents=True)
+            selected_build_record.parent.mkdir(parents=True)
+            selected_shared.write_bytes(b"attested shared libc")
+            selected_static.write_bytes(b"attested static libc")
+            selected_build_record.write_text('{"schema":"build-record"}\n', encoding="utf-8")
+
+            def artifact_record(path: Path) -> dict[str, object]:
+                payload = path.read_bytes()
+                return {
+                    "path": str(path.relative_to(root)),
+                    "bytes": len(payload),
+                    "sha256": hashlib.sha256(payload).hexdigest(),
+                }
+
+            shared_record = artifact_record(selected_shared)
+            static_record = artifact_record(selected_static)
+            build_record = artifact_record(selected_build_record)
             contract_path = root / "upstream-stress.json"
             contract_path.write_text(json.dumps(contract), encoding="utf-8")
             contract_bytes = contract_path.read_bytes()
@@ -630,7 +710,7 @@ fn hidden_or_selected() {}
                     },
                 })
             stress_report = {
-                "format": 3,
+                "format": 4,
                 "schema": "crabc-mimalloc-canonical-upstream-stress-report",
                 "status": "passed",
                 "contract": {
@@ -642,6 +722,42 @@ fn hidden_or_selected() {}
                 "selection": {
                     "target": contract["target_inventory"]["targets"][0],
                     "backend": contract["backend_inventory"]["selected"],
+                },
+                "artifacts": {
+                    artifact_id: (
+                        shared_record if artifact_id == "selected_libc" else
+                        static_record if artifact_id == "selected_static_libc" else
+                        build_record if artifact_id == "selected_backend_build_record" else
+                        None
+                    )
+                    for artifact_id in artifact_ids
+                },
+                "runtime": {
+                    "backend_attestation": {
+                        "backend": "crabc-libc-native-mimalloc-shadow",
+                        "semantic_profile": "dev",
+                        "cargo_features": ["default", "native-mimalloc-shadow"],
+                        "build_record": build_record,
+                        "compiler_artifact": {
+                            "package_id": "path+file:///workspace/libc#crabc-libc@0.3.0",
+                            "target": cargo_target,
+                            "profile": cargo_profile,
+                            "features": ["default", "native-mimalloc-shadow"],
+                            "filenames": [shared_record["path"], static_record["path"]],
+                            "fresh": True,
+                        },
+                        "artifacts": {
+                            "selected_shared_libc": shared_record,
+                            "selected_static_libc": static_record,
+                        },
+                        "exported_free": {
+                            "symbol": "free",
+                            "required_callee_suffix": "native_free>",
+                            "forbidden_callee_suffix": "mi_free>",
+                            "disassembly_sha256": "2" * 64,
+                        },
+                        "status": "passed",
+                    },
                 },
                 "fixture_elf": {
                     "dynamic_dependencies": ["libc.so"],
@@ -692,6 +808,13 @@ fn hidden_or_selected() {}
             self.assertEqual(capability["status"], "verified")
             self.assertEqual(capability["current_max_workers"], 8)
             self.assertFalse(capability["current_large_mode"])
+
+            stress_report["runtime"]["backend_attestation"]["semantic_profile"] = "test"
+            report_path.write_text(json.dumps(stress_report), encoding="utf-8")
+            rejected_profile = RATCHET.upstream_stress_capability(root, manifest)
+            self.assertEqual(rejected_profile["status"], "unmet")
+            self.assertIn("backend artifact attestation", rejected_profile["reason"])
+            stress_report["runtime"]["backend_attestation"]["semantic_profile"] = "dev"
 
             stress_report["execution"]["case_results"][-1]["observation"]["stdout"]["hex"] = ""
             report_path.write_text(json.dumps(stress_report), encoding="utf-8")

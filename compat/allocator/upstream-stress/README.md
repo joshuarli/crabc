@@ -24,18 +24,28 @@ selected shadow libc last, stages the owned loader, and runs the matrix:
 ./scripts/dev.sh allocator-upstream
 ```
 
-The owned-suite wrapper is required. It stages the owned canonical loader and
-debug libc aliases for the test process; the lane itself then selects the
-last-built `target/debug/libc.so` via `LD_LIBRARY_PATH`. Before execution it
-attests the exact `native-mimalloc-shadow` Cargo feature inventory and rejects
-an exported `free` route to the C `mi_free` backend. It also requires the
-staged `/lib/ld-crabc-aarch64.so.1` bytes to match the selected loader, then
-attests that the compiled fixture is little-endian AArch64 ELF64 with that
-exact `PT_INTERP` and only the expected `libc.so` `DT_NEEDED` entry. The runner writes its
+The owned-suite wrapper is required. Before entering it, the canonical
+dispatch builds `crabc-libc` with Cargo's JSON message format and atomically
+records the exact matching compiler-artifact from that invocation. The record
+binds the `crabc-libc` package and library target to the `dev` semantic
+profile, exact `default,native-mimalloc-shadow` features, ordered `libc.so` and
+`libc.a` filenames, and both files' byte counts and SHA-256 hashes. The runner
+does not select from Cargo's global fingerprint cache, so legitimate
+coexisting dev and test fingerprints do not make the selected build ambiguous.
+
+The owned-suite wrapper stages the owned canonical loader and debug libc
+aliases for the test process; the lane itself then selects the attested
+`target/debug/libc.so` via `LD_LIBRARY_PATH`. Before execution it rehashes both
+Cargo outputs against the passed build record and rejects an exported `free`
+route to the C `mi_free` backend. It also requires the staged
+`/lib/ld-crabc-aarch64.so.1` bytes to match the selected loader, then attests
+that the compiled fixture is little-endian AArch64 ELF64 with that exact
+`PT_INTERP` and only the expected `libc.so` `DT_NEEDED` entry. The runner writes its
 binary only under `target/compat/allocator/upstream-stress/` and atomically
 publishes the report at
 `compat/reports/allocator/upstream-stress/latest.json`. Override those ignored
-outputs with `CRABC_UPSTREAM_STRESS_OUTPUT_DIR` and
+outputs with `CRABC_UPSTREAM_STRESS_OUTPUT_DIR`,
+`CRABC_UPSTREAM_STRESS_LIBC_BUILD_RECORD`, and
 `CRABC_UPSTREAM_STRESS_REPORT`. Pass runner options through the canonical
 dispatch, for example `./scripts/dev.sh allocator-upstream --offline`.
 `--offline` requires both the verified source archive and annotated-tag
@@ -47,10 +57,12 @@ executing it.
 The checked-in manifest inventories the sole applicable target
 (`Linux/AArch64` little-endian, kernel baseline 5.10), the nondefault native
 shadow backend, the source seed policy, per-process watchdog, and report
-schema. Every file artifact record has `path`, `bytes`, and `sha256`; captured
+schema. Report format 4 records the passed Cargo build record plus the selected
+shared and static libc artifacts separately. Every file artifact record has
+`path`, `bytes`, and `sha256`; captured
 stdout/stderr records have `bytes`, `sha256`, and `hex`. The report reserves
 named slots for the contract, pinned archive/source, owned sysroot inputs,
-selected and staged loaders, libc/backend fingerprint, and compiled stress
+selected and staged loaders, both libc outputs, the backend build record, and compiled stress
 binary. The extracted source artifact is recorded as the stable archive member
 `mimalloc-3.5.0/test/test-stress.c`; compiler commands and diagnostics replace
 the deleted random extraction directory with
@@ -60,6 +72,7 @@ deterministically.
 If a native prerequisite is unavailable, the runner still atomically writes a
 report with `status: "blocked"`. Its `blocked` record names the exact missing
 boundary—such as the owned-sysroot manifest/driver, selected shadow libc,
+missing compiler-artifact build record,
 selected loader, owned canonical-loader staging, or native Linux/AArch64 host—
 and declares that no stress process started. Capability status is fail-closed:
 `not-run`, `blocked`, and `failed` are all non-success states, and `passed` is

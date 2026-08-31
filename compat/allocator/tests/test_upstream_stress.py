@@ -85,8 +85,12 @@ class CanonicalUpstreamStressContractTests(unittest.TestCase):
         self.assertEqual(backend["allocator_feature"], "native-mimalloc-shadow")
         self.assertFalse(backend["c_backend_fallback"])
         self.assertEqual(
-            backend["artifact_attestation"]["cargo_fingerprint"]["exact_features"],
+            backend["artifact_attestation"]["cargo_compiler_artifact"]["exact_features"],
             ["default", "native-mimalloc-shadow"],
+        )
+        self.assertEqual(
+            backend["artifact_attestation"]["cargo_compiler_artifact"]["semantic_profile"],
+            "dev",
         )
 
     def test_contract_records_upstream_seed_watchdog_and_artifact_schemas(self) -> None:
@@ -113,7 +117,7 @@ class CanonicalUpstreamStressContractTests(unittest.TestCase):
         )
         report = contract["report"]
         self.assertEqual(report["schema"], "crabc-mimalloc-canonical-upstream-stress-report")
-        self.assertEqual(report["format"], 3)
+        self.assertEqual(report["format"], 4)
         self.assertEqual(report["file_artifact_record_fields"], ["path", "bytes", "sha256"])
         self.assertEqual(report["byte_stream_record_fields"], ["bytes", "sha256", "hex"])
         self.assertEqual(
@@ -218,21 +222,107 @@ class CanonicalUpstreamStressContractTests(unittest.TestCase):
         self.assertEqual(failure.exception.prerequisite, "native-linux-kernel-baseline")
         self.assertEqual(failure.exception.details["required_kernel_baseline"], "5.10")
 
-    def test_native_backend_fingerprint_requires_one_exact_feature_inventory(self) -> None:
+    def test_selected_dev_build_record_ignores_coexisting_test_fingerprint(self) -> None:
         contract, _ = RUNNER.load_contract()
         expectation = contract["backend_inventory"]["backends"][0]["artifact_attestation"]
         with tempfile.TemporaryDirectory() as temporary:
-            target = Path(temporary)
-            fingerprint = target / ".fingerprint/crabc-libc-native/lib-c.json"
-            fingerprint.parent.mkdir(parents=True)
-            fingerprint.write_text(
-                json.dumps({"features": json.dumps(["default", "native-mimalloc-shadow"])}),
+            root = Path(temporary)
+            target = root / "target/debug"
+            target.mkdir(parents=True)
+            shared = target / "libc.so"
+            static = target / "libc.a"
+            shared.write_bytes(b"selected dev shared libc")
+            static.write_bytes(b"selected dev static libc")
+
+            for identity in ("dev", "test"):
+                fingerprint = target / f".fingerprint/crabc-libc-{identity}/lib-c.json"
+                fingerprint.parent.mkdir(parents=True)
+                fingerprint.write_text(
+                    json.dumps(
+                        {"features": json.dumps(["default", "native-mimalloc-shadow"])}
+                    ),
+                    encoding="utf-8",
+                )
+
+            cargo_artifact = {
+                "reason": "compiler-artifact",
+                "package_id": "path+file:///workspace/libc#crabc-libc@0.3.0",
+                "manifest_path": str((RUNNER.ROOT / "libc/Cargo.toml").resolve()),
+                "target": {
+                    "kind": ["cdylib", "staticlib"],
+                    "crate_types": ["cdylib", "staticlib"],
+                    "name": "c",
+                    "src_path": str((RUNNER.ROOT / "libc/src/lib.rs").resolve()),
+                    "edition": "2021",
+                    "doc": True,
+                    "doctest": False,
+                    "test": False,
+                },
+                "profile": {
+                    "opt_level": "2",
+                    "debuginfo": 2,
+                    "debug_assertions": True,
+                    "overflow_checks": False,
+                    "test": False,
+                },
+                "features": ["default", "native-mimalloc-shadow"],
+                "filenames": [str(shared.resolve()), str(static.resolve())],
+                "executable": None,
+                "fresh": True,
+            }
+            build_record_path = root / "selected-libc-build.json"
+            build_record_path.write_text(
+                json.dumps(
+                    {
+                        "format": 1,
+                        "schema": "crabc-selected-libc-cargo-build",
+                        "cargo_command": [
+                            "cargo",
+                            "build",
+                            "-p",
+                            "crabc-libc",
+                            "--features",
+                            "native-mimalloc-shadow",
+                            "--profile",
+                            "dev",
+                            "--message-format=json-render-diagnostics",
+                        ],
+                        "semantic_profile": "dev",
+                        "compiler_artifact": cargo_artifact,
+                        "artifacts": {
+                            "selected_shared_libc": RUNNER.file_record(shared, root=RUNNER.ROOT),
+                            "selected_static_libc": RUNNER.file_record(static, root=RUNNER.ROOT),
+                        },
+                    }
+                ),
                 encoding="utf-8",
             )
-            expected_sha256 = RUNNER.sha256_file(fingerprint)
-            record, features = RUNNER.selected_backend_fingerprint(target, expectation)
-        self.assertEqual(features, ["default", "native-mimalloc-shadow"])
-        self.assertEqual(record["sha256"], expected_sha256)
+            expected_shared_sha256 = RUNNER.sha256_file(shared)
+            expected_static_sha256 = RUNNER.sha256_file(static)
+
+            attestation = RUNNER.selected_libc_build_attestation(
+                build_record_path, target, expectation
+            )
+            shared.write_bytes(b"same name, different selected dev artifact")
+            with self.assertRaisesRegex(
+                RUNNER.EvidenceError, "artifact bytes drifted after build"
+            ):
+                RUNNER.selected_libc_build_attestation(
+                    build_record_path, target, expectation
+                )
+
+        self.assertEqual(attestation["semantic_profile"], "dev")
+        self.assertEqual(
+            attestation["cargo_features"], ["default", "native-mimalloc-shadow"]
+        )
+        self.assertEqual(
+            attestation["artifacts"]["selected_shared_libc"]["sha256"],
+            expected_shared_sha256,
+        )
+        self.assertEqual(
+            attestation["artifacts"]["selected_static_libc"]["sha256"],
+            expected_static_sha256,
+        )
 
     def test_native_backend_attestation_rejects_a_c_free_route(self) -> None:
         contract, _ = RUNNER.load_contract()
@@ -254,18 +344,23 @@ class CanonicalUpstreamStressContractTests(unittest.TestCase):
         }
         with mock.patch.object(
             RUNNER,
-            "selected_backend_fingerprint",
-            return_value=(
-                {"bytes": 1, "path": "fingerprint", "sha256": "0" * 64},
-                ["default", "native-mimalloc-shadow"],
-            ),
+            "selected_libc_build_attestation",
+            return_value={
+                "build_record": {"bytes": 1, "path": "build-record", "sha256": "0" * 64},
+                "semantic_profile": "dev",
+                "cargo_features": ["default", "native-mimalloc-shadow"],
+                "compiler_artifact": {},
+                "artifacts": {},
+            },
         ), mock.patch.object(
             RUNNER.shutil, "which", side_effect=lambda tool: tool
         ), mock.patch.object(
             RUNNER, "command_record", side_effect=[symbols, c_route]
         ):
             with self.assertRaisesRegex(RUNNER.EvidenceError, "does not branch to"):
-                RUNNER.attest_selected_backend(Path("/target/debug"), contract)
+                RUNNER.attest_selected_backend(
+                    Path("/target/debug"), Path("/build-record.json"), contract
+                )
 
     def test_fixture_elf_attestation_rejects_the_wrong_exact_interpreter(self) -> None:
         contract, _ = RUNNER.load_contract()
@@ -308,8 +403,17 @@ class CanonicalUpstreamStressContractTests(unittest.TestCase):
             source = source_root / "test/test-stress.c"
             source.parent.mkdir(parents=True)
             source.write_bytes(b"exact pinned source")
+            build_record = root / "selected-libc-build.json"
+            build_record.write_text("{}\n", encoding="utf-8")
             args = RUNNER.parse_arguments(
-                ["--target-dir", str(root / "target"), "--output-dir", str(root / "output")]
+                [
+                    "--target-dir",
+                    str(root / "target"),
+                    "--output-dir",
+                    str(root / "output"),
+                    "--libc-build-record",
+                    str(build_record),
+                ]
             )
             report = RUNNER.report_base(contract, pin, args)
             with mock.patch.object(RUNNER, "require_native_aarch64"), mock.patch.object(
@@ -326,10 +430,16 @@ class CanonicalUpstreamStressContractTests(unittest.TestCase):
                 RUNNER,
                 "attest_selected_backend",
                 return_value={
-                    "cargo_fingerprint": {
-                        "bytes": 1,
-                        "path": "fingerprint",
-                        "sha256": "0" * 64,
+                    "build_record": {
+                        "bytes": 1, "path": "build-record", "sha256": "0" * 64
+                    },
+                    "artifacts": {
+                        "selected_shared_libc": {
+                            "bytes": 1, "path": "libc.so", "sha256": "0" * 64
+                        },
+                        "selected_static_libc": {
+                            "bytes": 1, "path": "libc.a", "sha256": "0" * 64
+                        },
                     },
                     "status": "passed",
                 },
@@ -533,8 +643,17 @@ class CanonicalUpstreamStressContractTests(unittest.TestCase):
             source = source_root / "test/test-stress.c"
             source.parent.mkdir(parents=True)
             source.write_bytes(b"exact pinned source")
+            build_record = root / "selected-libc-build.json"
+            build_record.write_text("{}\n", encoding="utf-8")
             args = RUNNER.parse_arguments(
-                ["--target-dir", str(root / "target"), "--output-dir", str(root / "output")]
+                [
+                    "--target-dir",
+                    str(root / "target"),
+                    "--output-dir",
+                    str(root / "output"),
+                    "--libc-build-record",
+                    str(build_record),
+                ]
             )
             report = RUNNER.report_base(contract, pin, args)
             with mock.patch.object(RUNNER, "require_native_aarch64"), mock.patch.object(
@@ -551,10 +670,16 @@ class CanonicalUpstreamStressContractTests(unittest.TestCase):
                 RUNNER,
                 "attest_selected_backend",
                 return_value={
-                    "cargo_fingerprint": {
-                        "bytes": 1,
-                        "path": "fingerprint",
-                        "sha256": "0" * 64,
+                    "build_record": {
+                        "bytes": 1, "path": "build-record", "sha256": "0" * 64
+                    },
+                    "artifacts": {
+                        "selected_shared_libc": {
+                            "bytes": 1, "path": "libc.so", "sha256": "0" * 64
+                        },
+                        "selected_static_libc": {
+                            "bytes": 1, "path": "libc.a", "sha256": "0" * 64
+                        },
                     },
                     "status": "passed",
                 },
@@ -615,8 +740,17 @@ class CanonicalUpstreamStressContractTests(unittest.TestCase):
             source = source_root / "test/test-stress.c"
             source.parent.mkdir(parents=True)
             source.write_bytes(b"exact pinned source")
+            build_record = root / "selected-libc-build.json"
+            build_record.write_text("{}\n", encoding="utf-8")
             args = RUNNER.parse_arguments(
-                ["--target-dir", str(root / "target"), "--output-dir", str(root / "output")]
+                [
+                    "--target-dir",
+                    str(root / "target"),
+                    "--output-dir",
+                    str(root / "output"),
+                    "--libc-build-record",
+                    str(build_record),
+                ]
             )
             report = RUNNER.report_base(contract, pin, args)
             with mock.patch.object(RUNNER, "require_native_aarch64"), mock.patch.object(
@@ -633,10 +767,16 @@ class CanonicalUpstreamStressContractTests(unittest.TestCase):
                 RUNNER,
                 "attest_selected_backend",
                 return_value={
-                    "cargo_fingerprint": {
-                        "bytes": 1,
-                        "path": "fingerprint",
-                        "sha256": "0" * 64,
+                    "build_record": {
+                        "bytes": 1, "path": "build-record", "sha256": "0" * 64
+                    },
+                    "artifacts": {
+                        "selected_shared_libc": {
+                            "bytes": 1, "path": "libc.so", "sha256": "0" * 64
+                        },
+                        "selected_static_libc": {
+                            "bytes": 1, "path": "libc.a", "sha256": "0" * 64
+                        },
                     },
                     "status": "passed",
                 },
@@ -736,19 +876,20 @@ class CanonicalUpstreamStressContractTests(unittest.TestCase):
         dispatch = script[start:end]
         sysroot_build = dispatch.index("python3 scripts/build_owned_sysroot.py")
         shadow_build = dispatch.index(
-            "cargo build -p crabc-libc --features native-mimalloc-shadow"
+            "--capture-selected-libc-build \"$selected_libc_build_record\""
         )
-        stress_run = dispatch.index("python3 compat/allocator/upstream-stress/run.py")
+        stress_run = dispatch.rindex("python3 compat/allocator/upstream-stress/run.py")
         self.assertLess(sysroot_build, shadow_build)
         self.assertLess(shadow_build, stress_run)
+        self.assertIn("--message-format=json-render-diagnostics", RUNNER.expected_contract(RUNNER.FIXED_PIN)["backend_inventory"]["backends"][0]["artifact_attestation"]["cargo_compiler_artifact"]["cargo_command"])
         self.assertIn("python3 scripts/run_owned_test_suite.py", dispatch)
-        self.assertIn('-- python3 compat/allocator/upstream-stress/run.py "$@"', dispatch)
+        self.assertIn('--libc-build-record "$selected_libc_build_record" "$@"', dispatch)
 
     def test_report_starts_with_closed_artifact_slots_and_no_capability_claim(self) -> None:
         contract, pin = RUNNER.load_contract()
         args = RUNNER.parse_arguments([])
         report = RUNNER.report_base(contract, pin, args)
-        self.assertEqual(report["format"], 3)
+        self.assertEqual(report["format"], 4)
         self.assertEqual(report["capability"]["status"], "not-run")
         self.assertFalse(report["capability"]["native_execution_started"])
         self.assertEqual(
@@ -763,7 +904,8 @@ class CanonicalUpstreamStressContractTests(unittest.TestCase):
                 "selected_loader",
                 "staged_canonical_loader",
                 "selected_libc",
-                "selected_backend_fingerprint",
+                "selected_static_libc",
+                "selected_backend_build_record",
                 "stress_binary",
             },
         )
