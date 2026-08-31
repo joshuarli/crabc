@@ -10,7 +10,7 @@ fn current_page_size() -> usize {
         .expect("the native Linux test process exposes AT_PAGESZ")
 }
 
-fn publish_one_detached_worker_client(request: usize) -> usize {
+fn publish_one_post_exit_worker_client(request: usize) -> usize {
     std::thread::spawn(move || {
         assert_eq!(attach_current_thread(), ThreadAttachResult::Attached);
         let block = match native_allocate_aligned(request, 16, false) {
@@ -25,49 +25,50 @@ fn publish_one_detached_worker_client(request: usize) -> usize {
         assert_eq!(
             finish_current_thread_native_after_user_destructors(),
             ThreadFinishResult::Finished,
-            "the sequential worker publishes its surviving client before exit"
+            "the sequential worker exits while PageMap retains its surviving client"
         );
         address
     })
     .join()
-    .expect("the sequential detached worker completes its source exit")
+    .expect("the sequential post-exit worker completes its source exit")
 }
 
 #[test]
-fn initial_free_scans_past_newer_detached_route_for_an_older_worker_client() {
+fn initial_free_releases_older_post_exit_client_before_newer_worker_client() {
     assert!(
         initialize_process(current_page_size()),
-        "the native runtime initializes before detached routes are inserted"
+        "the native runtime initializes before the post-exit workers start"
     );
     assert!(
         prepare_native_later_thread_arena(),
-        "ticket zero primes the dormant pair before the sequential workers start"
+        "ticket zero prepares its dormant owner before the sequential workers start"
     );
 
-    let older_address = publish_one_detached_worker_client(37);
-    let newer_address = publish_one_detached_worker_client(53);
+    let older_address = publish_one_post_exit_worker_client(37);
+    let newer_address = publish_one_post_exit_worker_client(53);
     assert_ne!(
         older_address, newer_address,
         "each sequential exited owner leaves one distinct live native client"
     );
 
-    // The second owner was published most recently, so its registry entry is
-    // encountered first. The initial thread owns neither worker attachment:
-    // this first free can succeed only if the Phase-A pointer bridge restores
-    // that nonmatching newer route and continues to the older exact client.
+    // The workers exit in creation order, but their order cannot select a
+    // free target. The initial thread is associated with neither PageMap
+    // entry, so this exact older address takes the generic nonlocal
+    // pointer-first free while leaving the newer source client live.
     let older = unsafe { core::ptr::NonNull::new_unchecked(older_address as *mut u8) };
     assert_eq!(
         unsafe { native_free(older) },
         NativePageFreeResult::Freed,
-        "the pointer-only bridge releases the older client without caller identity"
+        "the pointer-first PageMap free releases the older client"
     );
 
-    // A skipped route must remain routable after the older one completes.
+    // The newer post-exit client remains independently PageMap-live after
+    // the older source free.
     let newer = unsafe { core::ptr::NonNull::new_unchecked(newer_address as *mut u8) };
     assert_eq!(
         unsafe { native_free(newer) },
         NativePageFreeResult::Freed,
-        "the restored newer route releases from the same initial caller"
+        "the same initial caller releases the newer post-exit client"
     );
 
     let resumed = match ticket_zero_allocate(61, false) {
@@ -75,12 +76,12 @@ fn initial_free_scans_past_newer_detached_route_for_an_older_worker_client() {
         TicketZeroPageAllocationResult::Unavailable
         | TicketZeroPageAllocationResult::AllocationFailed
         | TicketZeroPageAllocationResult::Retained => {
-            panic!("ticket zero reactivates after both out-of-order detached frees")
+            panic!("ticket zero reactivates after both out-of-order post-exit frees")
         }
     };
     assert_eq!(
         unsafe { ticket_zero_free(resumed) },
         TicketZeroPageFreeResult::Freed,
-        "the initial owner remains usable after the pointer-only route scan"
+        "the initial owner remains usable after the pointer-first PageMap frees"
     );
 }
