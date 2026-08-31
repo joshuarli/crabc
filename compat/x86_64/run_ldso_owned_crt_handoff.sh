@@ -8,7 +8,7 @@
 set -euo pipefail
 
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-readonly SOURCE="$ROOT_DIR/ldso/src/x86_64_initial_graph.rs"
+readonly SOURCE_ROOT="$ROOT_DIR/ldso/src/x86_64_initial_graph_source_root.rs"
 readonly START="$ROOT_DIR/compat/x86_64/ldso_initial_graph_start.S"
 readonly LEAF="$ROOT_DIR/compat/x86_64/ldso_initial_graph_leaf.c"
 readonly MID="$ROOT_DIR/compat/x86_64/ldso_initial_graph_mid.c"
@@ -38,7 +38,7 @@ build_interpreter() {
     local output="$1"
     shift
     rustc --edition=2021 --crate-type staticlib --cfg crabc_owned_crt_handoff "$@" \
-        -C panic=abort -C relocation-model=pic "$SOURCE" -o "$work_dir/libowned_crt_handoff.a"
+        -C panic=abort -C relocation-model=pic "$SOURCE_ROOT" -o "$work_dir/libowned_crt_handoff.a"
     cc -nostdlib -shared -Wl,-e,_start -Wl,-Bsymbolic -Wl,-z,now -Wl,--no-undefined \
         -Wl,--whole-archive "$work_dir/libowned_crt_handoff.a" -Wl,--no-whole-archive \
         -o "$output"

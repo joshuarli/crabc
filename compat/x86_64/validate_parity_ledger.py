@@ -5834,6 +5834,7 @@ def require_ldso_initial_tls_artifact(family: Mapping[str, Any]) -> None:
     ):
         require(phrase in description, f"ldso-initial-tls description omits {phrase}")
     expected_sources = {
+        "ldso/src/x86_64_initial_graph_source_root.rs",
         "ldso/src/x86_64_initial_graph.rs",
         "compat/x86_64/ldso_initial_graph_start.S",
         "compat/x86_64/ldso_initial_tls_leaf.c",
@@ -5904,6 +5905,7 @@ def require_ldso_initial_exec_tls_artifact(family: Mapping[str, Any]) -> None:
     ):
         require(phrase in description, f"ldso-initial-exec-tls description omits {phrase}")
     expected_sources = {
+        "ldso/src/x86_64_initial_graph_source_root.rs",
         "ldso/src/x86_64_initial_graph.rs",
         "compat/x86_64/ldso_initial_graph_start.S",
         "compat/x86_64/ldso_initial_tls_leaf.c",
@@ -5978,6 +5980,7 @@ def require_ldso_owned_crt_handoff_publication_artifact(family: Mapping[str, Any
             f"ldso-owned-crt-handoff-publication description omits {phrase}",
         )
     expected_sources = {
+        "ldso/src/x86_64_initial_graph_source_root.rs",
         "ldso/src/x86_64_initial_graph.rs",
         "compat/x86_64/ldso_initial_graph_leaf.c",
         "compat/x86_64/ldso_initial_graph_mid.c",
@@ -6059,6 +6062,140 @@ def require_ldso_owned_crt_handoff_publication_artifact(family: Mapping[str, Any
     )
 
 
+def require_ldso_fixed_graph_introspection_artifact(family: Mapping[str, Any]) -> None:
+    """Ratchet copied loader state without claiming a general dlfcn runtime."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[ldso.dynamic-runtime].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [
+        entry for entry in artifacts if entry.get("id") == "ldso-fixed-graph-introspection"
+    ]
+    require(
+        len(matching) == 1,
+        "ldso.dynamic-runtime needs exactly one ldso-fixed-graph-introspection artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "ldso-fixed-graph-introspection must not promote ldso.dynamic-runtime",
+    )
+    artifact = matching[0]
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for phrase in (
+        "still-planned `ldso.dynamic-runtime`",
+        "callback-free loader-introspection artifact",
+        "main PIE -> mid.so -> leaf.so",
+        "post-relocation, post-RELRO, post-constructor object records",
+        "weak undefined `R_X86_64_GLOB_DAT`",
+        "__crabc_x86_64_fixed_graph_introspection_v1",
+        "immutable 40-byte v1 record",
+        "`RuntimeV1`-shaped image snapshots",
+        "`dladdr`-shaped nearest-symbol metadata",
+        "`RTLD_DI_LINKMAP`-shaped per-image information",
+        "no `link_map *`",
+        "`dl_iterate_phdr`",
+        "`dlopen`/`dlinfo`/`dlclose`",
+        "`env -i`",
+        "status 127",
+        "does not select public dlfcn",
+        "general loader",
+        "public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"ldso-fixed-graph-introspection description omits {phrase}",
+        )
+    expected_sources = {
+        "ldso/src/x86_64_initial_graph_source_root.rs",
+        "ldso/src/x86_64_initial_graph.rs",
+        "compat/x86_64/ldso_initial_graph_leaf.c",
+        "compat/x86_64/ldso_initial_graph_mid.c",
+        "compat/x86_64/ldso_fixed_graph_introspection_start.S",
+        "compat/x86_64/ldso_fixed_graph_introspection_main.c",
+        "compat/x86_64/ldso_fixed_graph_introspection_oracle.c",
+        "compat/x86_64/run_ldso_fixed_graph_introspection.sh",
+        "scripts/dev-x86_64.sh",
+    }
+    require(
+        set(
+            string_list(
+                artifact["source_owners"],
+                "ldso-fixed-graph-introspection source owners",
+            )
+        )
+        == expected_sources,
+        "ldso-fixed-graph-introspection source owners drifted",
+    )
+    prerequisite_text = " ".join(
+        string_list(
+            artifact["x86_abi_prerequisites"],
+            "ldso-fixed-graph-introspection ABI prerequisites",
+        )
+    )
+    for phrase in (
+        "STB_WEAK",
+        "R_X86_64_GLOB_DAT",
+        "0x43524142435f5849",
+        "ABI size 40",
+        "256 caller-owned bytes",
+        "320, 536, and 280 bytes",
+        "release-publishes",
+        "post-relocation state",
+        "nearest defined non-TLS dynamic symbol",
+        "PT_DYNAMIC",
+    ):
+        require(
+            phrase in prerequisite_text,
+            f"ldso-fixed-graph-introspection ABI prerequisites omit {phrase}",
+        )
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh ldso-fixed-graph-introspection"},
+        "ldso-fixed-graph-introspection must use the dedicated native command",
+    )
+    scope = evidence[0]["scope"]
+    assert isinstance(scope, str)
+    for phrase in (
+        "private ET_DYN",
+        "40-byte record",
+        "weak-main-GLOB_DAT ABI",
+        "no ambient libc/loader dependency or PT_TLS",
+        "caller-copy isolation",
+        "malformed-record status 127",
+        "neither adds public dlfcn",
+        "public x86 support",
+    ):
+        require(
+            phrase in scope,
+            f"ldso-fixed-graph-introspection evidence scope omits {phrase}",
+        )
+    runner = (ROOT / "compat" / "x86_64" / "run_ldso_fixed_graph_introspection.sh").read_text()
+    for phrase in (
+        "crabc_fixed_graph_introspection",
+        "crabc_fixed_graph_introspection_malformed",
+        "env -i PATH=/usr/bin:/bin",
+        "__crabc_x86_64_fixed_graph_introspection_v1",
+        "R_X86_64_GLOB_DAT",
+        "GNU_RELRO",
+        "PT_TLS",
+        "main-musl-introspection",
+        "malformed_status",
+    ):
+        require(
+            phrase in runner,
+            f"ldso-fixed-graph-introspection runner omits {phrase}",
+        )
+    require(
+        "run_ldso_fixed_graph_introspection.sh"
+        in (ROOT / "scripts" / "dev-x86_64.sh").read_text(),
+        "ldso-fixed-graph-introspection dispatcher binding is missing",
+    )
+
+
 def require_ldso_dynamic_admission_artifact(family: Mapping[str, Any]) -> None:
     """Keep the consumed fixed-graph loader inventory explicit and non-promoting."""
     artifacts = require_verified_artifacts(
@@ -6080,16 +6217,19 @@ def require_ldso_dynamic_admission_artifact(family: Mapping[str, Any]) -> None:
     assert isinstance(description, str)
     for phrase in (
         "still-planned `ldso.dynamic-runtime`",
-        "three fixed private interpreter graphs",
+        "four fixed private interpreter graphs",
         "R_X86_64_RELATIVE/GLOB_DAT/JUMP_SLOT",
         "bounded leaf `DT_RELR`",
         "R_X86_64_DTPMOD64/DTPOFF64",
         "R_X86_64_TPOFF64",
         "weak `R_X86_64_GLOB_DAT`",
+        "40-byte v1 record",
+        "callback-free introspection graph",
         "DT_TEXTREL",
         "DF_STATIC_TLS",
         "status 127",
         "general loader",
+        "public dlfcn or mutable loader state",
         "public x86 support",
     ):
         require(
@@ -6101,6 +6241,7 @@ def require_ldso_dynamic_admission_artifact(family: Mapping[str, Any]) -> None:
         "compat/x86_64/run_ldso_initial_graph.sh",
         "compat/x86_64/run_ldso_initial_tls.sh",
         "compat/x86_64/run_ldso_owned_crt_handoff.sh",
+        "compat/x86_64/run_ldso_fixed_graph_introspection.sh",
         "compat/x86_64/run_ldso_dynamic_admission.sh",
         "scripts/dev-x86_64.sh",
     }
@@ -6121,8 +6262,10 @@ def require_ldso_dynamic_admission_artifact(family: Mapping[str, Any]) -> None:
         "run_ldso_initial_graph.sh",
         "run_ldso_initial_tls.sh",
         "run_ldso_owned_crt_handoff.sh",
+        "run_ldso_fixed_graph_introspection.sh",
         "R_X86_64_COPY",
         "R_X86_64_TPOFF64",
+        "__crabc_x86_64_fixed_graph_introspection_v1",
         "DT_TEXTREL",
         "STATIC_TLS",
         "x86 dynamic-loader fixed-graph admission inventory: PASS",
@@ -16656,6 +16799,7 @@ def validate_ledger(
     require_ldso_initial_tls_artifact(by_id["ldso.dynamic-runtime"])
     require_ldso_initial_exec_tls_artifact(by_id["ldso.dynamic-runtime"])
     require_ldso_owned_crt_handoff_publication_artifact(by_id["ldso.dynamic-runtime"])
+    require_ldso_fixed_graph_introspection_artifact(by_id["ldso.dynamic-runtime"])
     require_x86_crt_object_bundle_artifact(by_id["crt.dynamic-startup"])
     require_ldso_dynamic_admission_artifact(by_id["ldso.dynamic-runtime"])
     require_dynamic_pie_scrt1_artifact(by_id["crt.dynamic-startup"])

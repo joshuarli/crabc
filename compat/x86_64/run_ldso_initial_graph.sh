@@ -93,7 +93,10 @@ if ! readelf -dW "$work_dir/ld-crabc-x86_64-initial-graph.so" | grep -Eq '\(RELA
     printf '%s\n' 'ERROR: interpreter bootstrap RELA entry size drifted' >&2
     exit 1
 fi
-rela_byte_len="$(readelf -dW "$work_dir/ld-crabc-x86_64-initial-graph.so" | awk '/\(RELASZ\)/ { print $(NF - 1); exit }')"
+rela_byte_len="$(readelf -dW "$work_dir/ld-crabc-x86_64-initial-graph.so" | awk '
+    /\(RELASZ\)/ { size = $(NF - 1) }
+    END { if (size != "") print size }
+')"
 if ! [[ "$rela_byte_len" =~ ^[0-9]+$ ]] || (( rela_byte_len == 0 || rela_byte_len % 24 != 0 )); then
     printf '%s\n' 'ERROR: interpreter bootstrap RELA byte length drifted' >&2
     exit 1
@@ -235,8 +238,14 @@ dynamic_entry_offset() {
     local binary="$1"
     local wanted_tag="$2"
     local dynamic_offset dynamic_size entry tag
-    dynamic_offset="$(objdump -h "$binary" | awk '$2 == ".dynamic" { print "0x" $6; exit }')"
-    dynamic_size="$(objdump -h "$binary" | awk '$2 == ".dynamic" { print "0x" $3; exit }')"
+    dynamic_offset="$(objdump -h "$binary" | awk '
+        $2 == ".dynamic" { offset = "0x" $6 }
+        END { if (offset != "") print offset }
+    ')"
+    dynamic_size="$(objdump -h "$binary" | awk '
+        $2 == ".dynamic" { size = "0x" $3 }
+        END { if (size != "") print size }
+    ')"
     if [ -z "$dynamic_offset" ] || [ -z "$dynamic_size" ]; then
         return 1
     fi
@@ -251,11 +260,17 @@ dynamic_entry_offset() {
 }
 
 relr_section_offset() {
-    objdump -h "$1" | awk '$2 == ".relr.dyn" { print "0x" $6; exit }'
+    objdump -h "$1" | awk '
+        $2 == ".relr.dyn" { offset = "0x" $6 }
+        END { if (offset != "") print offset }
+    '
 }
 
 relr_section_size() {
-    objdump -h "$1" | awk '$2 == ".relr.dyn" { print "0x" $3; exit }'
+    objdump -h "$1" | awk '
+        $2 == ".relr.dyn" { size = "0x" $3 }
+        END { if (size != "") print size }
+    '
 }
 
 relr_entry_kind() {
@@ -478,7 +493,10 @@ mv "$work_dir/libleaf-valid.so" "$work_dir/libleaf.so"
 # precise unsupported-RELA mutation: no loader table size, target, or symbol
 # string changes, so a successful run would demonstrate an unsafe fallback.
 cp "$work_dir/libmid.so" "$work_dir/libmid-valid.so"
-rela_offset="$(objdump -h "$work_dir/libmid.so" | awk '$2 == ".rela.dyn" { print "0x" $6; exit }')"
+rela_offset="$(objdump -h "$work_dir/libmid.so" | awk '
+    $2 == ".rela.dyn" { offset = "0x" $6 }
+    END { if (offset != "") print offset }
+')"
 if [ -z "$rela_offset" ]; then
     printf '%s\n' 'ERROR: fixture has no .rela.dyn table to mutate' >&2
     exit 1

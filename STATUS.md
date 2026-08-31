@@ -15,7 +15,7 @@ planned: ABI inventory/symbol closure, the dynamic canonical
 OS/libc/pthread/signal suites, their runtime/sysroot prerequisites, and all
 other promotion gates are still required.
 
-The x86 lane has four private ET_DYN interpreter artifacts inside still-planned
+The x86 lane has five private ET_DYN interpreter artifacts inside still-planned
 `ldso.dynamic-runtime`. `ldso-initial-graph` is limited to
 one main PIE -> mid.so -> leaf.so graph, RELATIVE/GLOB_DAT/JUMP_SLOT ELF64
 RELA plus one bounded packed leaf `DT_RELR` direct-and-bitmap stream with
@@ -54,6 +54,19 @@ init arrays until after executable preinit. The native no-libc fixture proves
 does not select another executable/root, general loader lifecycle or DSO
 finalization, candidate libc, RuntimeV1, dynamic CRT/sysroot, or public x86
 support.
+
+The separate `ldso-fixed-graph-introspection` artifact keeps that no-TLS graph
+immutable while release-publishing its actual post-relocation, post-RELRO,
+post-constructor object records behind one weak main-image
+`R_X86_64_GLOB_DAT` import. Its exact 40-byte private v1 record copies a
+three-image snapshot, nearest dynamic-symbol address metadata, and useful
+per-image base/dynamic/name information into caller-owned bounded records.
+Pinned musl supplies the corresponding `dl_iterate_phdr`, `dladdr`, and
+`dlopen`/`dlinfo`/`dlclose` observations; the candidate has no ambient runtime
+dependency or PT_TLS, runs under `env -i`, and rejects a malformed record with
+status 127. It does not select public dlfcn, handles, graph mutation/unload,
+candidate libc, process RuntimeV1 publication, a general loader, dynamic
+CRT/sysroot, `ldso.dynamic-runtime` promotion, or public x86 support.
 
 The x86 lane now has sixteen private static artifacts inside still-planned
 `libc.pthread-tls`. `./scripts/dev-x86_64.sh libc-static-tls-v1` passes a

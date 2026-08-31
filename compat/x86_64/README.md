@@ -3511,14 +3511,33 @@ malformed records and an early finalizer fail closed. It uses neither `%rdx`
 nor an ambient loader/libc contract, and does not select a generic loader,
 DSO finalization, dynamic CRT/sysroot, or public x86 support.
 
-`ldso-dynamic-admission` is the consumed aggregate admission gate for those
-three real-ELF private transactions. It runs each fixture afresh, so its
+`ldso-fixed-graph-introspection` is a cfg-isolated private no-TLS sibling of
+that same main -> mid -> leaf loader transaction. After graph relocation,
+RELRO sealing, and dependency constructors, it release-publishes the actual
+three loader object records plus copied image names. One weak undefined main
+`R_X86_64_GLOB_DAT` import reaches an exact immutable 40-byte v1 record whose
+three callback-free operations copy a bounded image snapshot,
+`dladdr`-shaped nearest-symbol metadata, and useful
+`RTLD_DI_LINKMAP`-shaped per-image base/dynamic/name information. No borrowed
+loader name, `link_map *`, ordinary handle, callback reentrancy, graph mutation,
+or unload route crosses this wire. The candidate ET_DYN path runs under
+`env -i`, carries no ambient runtime dependency or PT_TLS, and returns status
+127 for a malformed record; pinned musl separately proves the corresponding
+fixed-graph `dl_iterate_phdr`, `dladdr`, and
+`dlopen`/`dlinfo`/`dlclose` observations. This remains a private copied-state
+foundation, not public dlfcn, process RuntimeV1 publication, a general loader,
+dynamic CRT/sysroot, family promotion, or public x86 support.
+
+`ldso-dynamic-admission` is the consumed aggregate admission gate for four
+real-ELF private transactions. It runs each fixture afresh, so its
 positive inventory is limited to the no-TLS RELATIVE/GLOB_DAT/JUMP_SLOT plus
 bounded leaf RELR graph, the GNU-Dynamic DTPMOD/DTPOFF graph, and the
-owned-CRT weak-GLOB_DAT record graph. Their in-place malformed inputs retain
-the fail-closed PT_TLS, COPY, malformed RELA/RELR, TEXTREL/static-TLS, TPOFF,
-and malformed/early-handoff negatives. It is not a generated report or a
-general loader/dlfcn/dynamic-CRT/sysroot/public-support claim.
+owned-CRT weak-GLOB_DAT record graph, and the callback-free fixed-graph
+introspection record. Their in-place malformed inputs retain the fail-closed
+PT_TLS, COPY, malformed RELA/RELR, TEXTREL/static-TLS, TPOFF,
+malformed/early-handoff, and malformed-introspection-record negatives. It is
+not a generated report or a general loader/public-dlfcn/mutable-graph/
+dynamic-CRT/sysroot/public-support claim.
 
 `ldso-initial-graph` is one separately built private ET_DYN interpreter
 artifact within still-planned `ldso.dynamic-runtime`, not the `crabc-ldso`

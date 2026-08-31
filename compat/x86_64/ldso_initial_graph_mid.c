@@ -26,3 +26,9 @@ int mid_initializers_ran(void) {
 int mid_leaf_relro_write_signal(void) {
     return leaf_relro_write_signal();
 }
+
+#if defined(CRABC_FIXED_GRAPH_INTROSPECTION)
+int *mid_leaf_data_address(void) {
+    return &leaf_data;
+}
+#endif
