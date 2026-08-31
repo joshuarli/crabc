@@ -50,7 +50,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 41)
-        self.assertEqual(report["verified_artifact_count"], 207)
+        self.assertEqual(report["verified_artifact_count"], 208)
         self.assertEqual(report["header_layout_probe_count"], 47)
         self.assertEqual(report["public_header_inventory_count"], 183)
         self.assertEqual(report["header_foundation_header_count"], 191)
@@ -20939,6 +20939,70 @@ class X86ParityLedgerTests(unittest.TestCase):
         with self.assertRaisesRegex(
             ledger.LedgerError,
             "static-c-linear-search evidence must retain its standalone static closure",
+        ):
+            ledger.validate_ledger(data)
+
+    def test_intrusive_queue_artifact_keeps_link_pair_private_and_non_promoting(
+        self,
+    ) -> None:
+        data = self.data()
+        family = self.family(data, "libc.c-abi-compat")
+        self.assertEqual(family["status"], "planned")
+        artifacts = family["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict)
+            and entry["id"] == "static-c-intrusive-queue"
+        )
+
+        self.assertNotIn("capabilities", artifact)
+        self.assertIn("`insque`", artifact["description"])
+        self.assertIn("`remque`", artifact["description"])
+        self.assertIn("does not select general searching, trees, lists, containers", artifact["description"])
+        self.assertIn("public x86 support", artifact["description"])
+
+        owners = artifact["source_owners"]
+        assert isinstance(owners, list)
+        for owner in (
+            "libc/src/c_abi/x86_64/intrusive_queue.rs",
+            "include/search.h",
+            "compat/x86_64/intrusive_queue_header_abi_probe.c",
+            "compat/x86_64/intrusive_queue_header_abi_probe.cpp",
+            "compat/x86_64/run_intrusive_queue_header_abi.sh",
+            "compat/x86_64/libc_intrusive_queue_probe.c",
+            "compat/x86_64/libc_intrusive_queue_start.S",
+            "compat/x86_64/run_libc_intrusive_queue.sh",
+            "compat/x86_64/aarch64_parity_inventory.json",
+            "compat/x86_64/static_c_abi_exports.txt",
+        ):
+            self.assertIn(owner, owners)
+
+        evidence = artifact["native_evidence"]
+        assert isinstance(evidence, list) and isinstance(evidence[0], dict)
+        self.assertEqual(
+            evidence[0]["command"],
+            "./scripts/dev-x86_64.sh libc-intrusive-queue",
+        )
+        for phrase in (
+            "Pinned-musl/project C11/C++ header",
+            "`-nostdlib -static` candidate",
+            "null-predecessor reset",
+            "insertion before a successor",
+            "remque retaining the removed node links",
+            "bsearch/lfind/lsearch/qsort",
+            "family promotion",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, evidence[0]["scope"])
+
+        evidence[0]["scope"] = evidence[0]["scope"].replace(
+            "remque retaining the removed node links", "removed-node behavior"
+        )
+        with self.assertRaisesRegex(
+            ledger.LedgerError,
+            "static-c-intrusive-queue evidence must retain its standalone static closure",
         ):
             ledger.validate_ledger(data)
 

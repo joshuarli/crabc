@@ -170,6 +170,7 @@ X86_RUNTIME_FOUNDATION_LIBC_SOURCES = {
     Path("libc/src/c_abi/x86_64/posix_exit.rs"),
     Path("libc/src/c_abi/x86_64/bsearch.rs"),
     Path("libc/src/c_abi/x86_64/linear_search.rs"),
+    Path("libc/src/c_abi/x86_64/intrusive_queue.rs"),
     Path("libc/src/c_abi/x86_64/qsort.rs"),
     Path("libc/src/c_abi/x86_64/callback_algorithms.rs"),
     Path("libc/src/c_abi/x86_64/search_tree_intrusive.rs"),
@@ -3782,6 +3783,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         '#[path = "posix_exit.rs"]',
         '#[path = "bsearch.rs"]',
         '#[path = "linear_search.rs"]',
+        '#[path = "intrusive_queue.rs"]',
         '#[path = "qsort.rs"]',
         '#[path = "callback_algorithms.rs"]',
         '#[path = "search_tree_intrusive.rs"]',
@@ -7756,6 +7758,51 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
                 f"linear-search boundary widens into {forbidden!r}"
             )
 
+    intrusive_queue_source = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "intrusive_queue.rs"
+    )
+    intrusive_queue_text = intrusive_queue_source.read_text(errors="replace")
+    for required in (
+        "Selected static Linux/x86-64 C intrusive-queue ABI boundary",
+        "pinned musl 1.2.6 release commit",
+        "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+        "src/search/insque.c::{insque,remque}",
+        "without clearing the removed node's own links",
+        "read_unaligned",
+        "write_unaligned",
+        'pub unsafe extern "C" fn insque',
+        'pub unsafe extern "C" fn remque',
+    ):
+        if required not in intrusive_queue_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/intrusive_queue.rs: selected static "
+                f"intrusive-queue boundary is missing {required!r}"
+            )
+    intrusive_queue_exports = set(
+        re.findall(
+            r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(',
+            intrusive_queue_text,
+        )
+    )
+    if intrusive_queue_exports != {"insque", "remque"}:
+        errors.append(
+            "libc/src/c_abi/x86_64/intrusive_queue.rs: selected static artifact "
+            "must export insque and remque only as Rust entries"
+        )
+    for forbidden in (
+        "raw_syscall::",
+        "errno::",
+        "crabc_core",
+        "crabc_mimalloc",
+        "global_asm!",
+        "panic_",
+    ):
+        if forbidden in intrusive_queue_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/intrusive_queue.rs: selected static "
+                f"intrusive-queue boundary widens into {forbidden!r}"
+            )
+
     qsort_source = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "qsort.rs"
     qsort_text = qsort_source.read_text(errors="replace")
     for required in (
@@ -11318,6 +11365,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         posix_exit_text,
         bsearch_text,
         linear_search_text,
+        intrusive_queue_text,
         qsort_text,
         callback_algorithms_text,
         search_tree_text,
@@ -11841,6 +11889,8 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         "bsearch",
         "lfind",
         "lsearch",
+        "insque",
+        "remque",
         "__qsort_r",
         "qsort",
         "qsort_r",
@@ -11881,7 +11931,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
             "selected numeric-address codecs, immutable IPv6 unspecified/loopback address data objects, and legacy classful IPv4 arithmetic, fixed-profile h_errno message text, byte-string, legacy-memory adapters, source-backed memccpy/mempcpy, caller-buffer strsep, random-entropy, memory-search, C-string-copy, immutable error-string, "
             "fixed-C-locale ctype, integer-arithmetic, integer-parsing, intmax-arithmetic, credential-observation, and "
             "raw auxiliary-vector observation, startup-derived secure-environment, and environment-backed login-name observation, find-first-set, startup-published program names, short/GNU-long "
-            "getopt state and aliases, standalone linear search, callback-tree/hash-table search, and the "
+            "getopt state and aliases, standalone linear search, paired intrusive-queue links, callback-tree/hash-table search, and the "
             "bounded no-catalog gettext/message-catalog ABI, "
             "and abort-personality surfaces"
         )
@@ -11941,6 +11991,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         ("posix_exit.rs", posix_exit_text),
         ("bsearch.rs", bsearch_text),
         ("linear_search.rs", linear_search_text),
+        ("intrusive_queue.rs", intrusive_queue_text),
         ("qsort.rs", qsort_text),
         ("callback_algorithms.rs", callback_algorithms_text),
         ("search_tree_intrusive.rs", search_tree_text),
