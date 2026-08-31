@@ -5884,6 +5884,117 @@ mod tests {
     }
 
     #[test]
+    fn rejected_adoption_republishes_before_terminal_release_retains_its_owner() {
+        // Deterministically schedule the source race from
+        // `arena.c:655-671` against `free.c:487-514`: the terminal free has
+        // acquired the abandoned low bit, an allocation-side bitmap reader
+        // observes that ownership and restores its claimed bit, and only then
+        // may `mi_abandoned_page_try_free` unabandon and hand the unique
+        // owner to its terminal release policy.
+        let block_size = crate::config::SMALL_SIZE_MAX + core::mem::size_of::<Block>();
+        let bin = size_class::bin(block_size).expect("the medium size has an arena bin");
+        assert!(bin < ARENA_BIN_COUNT);
+        let mut storage = BitmapStorage::uninit();
+        let mut arena = map_fixture_for_bin(&mut storage, bin);
+        let view = unsafe { ArenaView::from_ptr(&mut arena).unwrap() };
+        let map = view.abandoned_pages(bin).unwrap();
+        let mut page = Page::remote_free_test_page(2, 1);
+        page.set_block_size(block_size);
+        assert!(unsafe { page.abandoned_test_set_arena_memory(&mut arena, 17, 1) });
+        let page_raw = NonNull::from(&mut page);
+        assert_eq!(unsafe { abandon(page_raw, Some(&map)) }, Ok(AbandonResult::UnownedMapped));
+
+        let thread_id = LiveThreadId::new(16).unwrap();
+        let mut target_heap = Heap::bootstrap_empty();
+        let mut target_tld = ThreadLocalData::detached();
+        let mut target_theap = Theap::empty();
+        let target = bind_adopting_theap(
+            &mut target_heap,
+            &mut target_tld,
+            &mut target_theap,
+            thread_id,
+        );
+        let mut block = TestBlock([0; 16]);
+        let reclaim_resolver_calls = Cell::new(0usize);
+        let reclaim_rejected = Cell::new(false);
+        let terminal_calls = Cell::new(0usize);
+
+        assert_eq!(
+            unsafe {
+                free_post_owner_exit_regular_page(
+                    page_raw,
+                    block.pointer(),
+                    |memory, selected_block_size| {
+                        assert_eq!(memory.kind(), MemoryKind::Arena);
+                        assert_eq!(selected_block_size, block_size);
+                        view.abandoned_pages(bin)
+                            .ok_or(AbandonError::ArenaBitmapDoesNotMatchPage)
+                    },
+                    |_page| {
+                        // This callback is after the winning AcqRel
+                        // publication and source collection, but before the
+                        // all-free `unabandon` transition. The competing
+                        // reclaim may inspect only the atomic owner word; a
+                        // rejected claim must restore the bitmap for the
+                        // terminal reader/quiescence handoff.
+                        match try_adopt_retained(&map, 0, target, thread_id, |slice_index| {
+                            assert_eq!(slice_index, 17);
+                            reclaim_resolver_calls
+                                .set(reclaim_resolver_calls.get() + 1);
+                            Some(page_raw)
+                        }) {
+                            Ok(None) => reclaim_rejected.set(true),
+                            Ok(Some(_)) => panic!(
+                                "a terminal-free owner must reject concurrent abandoned-page adoption"
+                            ),
+                            Err(failure) => panic!(
+                                "a rejected adoption must restore the bitmap, not retain a second owner: {:?}",
+                                failure.error()
+                            ),
+                        }
+                        assert!(
+                            map.is_published(17),
+                            "the rejected arena claim restores its bit before terminal unabandon"
+                        );
+                        assert_ne!(
+                            page_raw.as_ref().remote_free_test_head() & THREAD_FREE_OWNED,
+                            0,
+                            "the terminal free keeps the sole abandoned owner through the reader race"
+                        );
+                        Ok(())
+                    },
+                    |_page| {
+                        assert!(reclaim_rejected.get());
+                        assert_eq!(reclaim_resolver_calls.get(), 1);
+                        assert!(
+                            !map.is_published(17),
+                            "terminal release clears the republished bit only after the rejecting reader returns"
+                        );
+                        assert_ne!(
+                            page_raw.as_ref().remote_free_test_head() & THREAD_FREE_OWNED,
+                            0,
+                            "the terminal policy receives the same unique low-bit owner"
+                        );
+                        terminal_calls.set(terminal_calls.get() + 1);
+                        // Model an OS/PageMap terminal failure: the source
+                        // low-bit owner remains intact rather than becoming a
+                        // reusable page after the rejected reclaim.
+                        PostOwnerExitTerminalRelease::Retained
+                    },
+                )
+            },
+            Ok(PostOwnerExitRegularFreeResult::TerminalReleaseRetained)
+        );
+        assert!(reclaim_rejected.get());
+        assert_eq!(reclaim_resolver_calls.get(), 1);
+        assert_eq!(terminal_calls.get(), 1);
+        assert!(!map.is_published(17));
+        assert_eq!(page.abandoned_test_thread_id(), THREAD_ID_ABANDONED);
+        assert_ne!(page.remote_free_test_head() & THREAD_FREE_OWNED, 0);
+        assert_eq!(page.remote_free_test_used(), 0);
+    }
+
+    #[test]
     fn successful_adoption_reassociates_and_collects_remote_frees() {
         let mut storage = BitmapStorage::uninit();
         let mut arena = map_fixture(&mut storage);
