@@ -19,9 +19,11 @@
 // expected-head unown tail. It deliberately excludes the separate
 // `_mi_deferred_free` callback, top-level allocation/free routing, and the
 // complete abandoned-page policy selected after a producer claims ownership.
-// `single_thread.rs` remains the sole bounded consumer that follows a detach
-// with false-force full-page collection, whose caller proves live producers
-// are joined/quiescent before its queue transition.
+// `single_thread.rs` follows a detach with false-force full-page collection
+// through raw disjoint owner projections. Live producers may still publish
+// through their atomic projection while the owner mutates local fields and
+// queue links; page lifetime and the source head handoff, not a whole-page
+// borrow or producer quiescence, order those transitions.
 // `remote_free_loom.rs` separately models this module's exact head CAS and
 // compact page-lifetime-word transitions with Loom; it does not model raw
 // block pointers or owner-local mutation.
@@ -94,6 +96,34 @@ unsafe impl LiveRemoteFreeAllocation for LiveAllocationPointer {
     }
 }
 
+/// Linear owner of a page claimed by a live remote-free publication.
+///
+/// The source CAS has already published `published_block` and changed an
+/// unowned `xthread_free` word into an owned word. This token is therefore the
+/// only authority to enter the post-owner-exit collection and
+/// release/reclaim/reabandon/unown tail. It is deliberately neither `Copy`
+/// nor `Clone`: a caller must move it into that continuation rather than
+/// re-publish the same block or return while silently retaining the low bit.
+#[derive(Debug, Eq, PartialEq)]
+#[must_use = "a claimed abandoned page must continue through its source owner tail"]
+pub(crate) struct ClaimedAbandonedRemoteFree {
+    page: NonNull<Page>,
+    published_block: NonNull<u8>,
+}
+
+impl ClaimedAbandonedRemoteFree {
+    /// Returns the page whose low remote-head owner bit this token holds.
+    #[inline]
+    pub(crate) const fn page(&self) -> NonNull<Page> { self.page }
+
+    /// Returns the exact block already published by the claiming CAS.
+    ///
+    /// This is an observation for the post-owner-exit continuation, not
+    /// permission to publish the block again.
+    #[inline]
+    pub(crate) const fn published_block(&self) -> NonNull<u8> { self.published_block }
+}
+
 /// Outcome of the source `mi_free_block_mt(..., allow_collect=true)` push for
 /// a pointer that dispatch observed on a live owner-associated page.
 ///
@@ -102,10 +132,11 @@ unsafe impl LiveRemoteFreeAllocation for LiveAllocationPointer {
 /// dispatch, the publication claims the now-abandoned head exactly as pinned
 /// `free.c`; the caller must continue with the abandoned-page collection
 /// protocol rather than returning while it owns that page.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Debug, Eq, PartialEq)]
+#[must_use = "remote publication may return a unique abandoned-page owner"]
 pub(crate) enum LiveRemoteFreePublish {
     PublishedToOwner,
-    ClaimedAbandonedPage,
+    ClaimedAbandonedPage(ClaimedAbandonedRemoteFree),
 }
 
 /// Publishes one pointer-dispatched remote free with pinned source atomics.
@@ -133,7 +164,7 @@ pub(crate) unsafe fn push_live_allocation<A>(
 where
     A: LiveRemoteFreeAllocation,
 {
-    let (_page, producer, block, page_state) = allocation.live_remote_free_allocation();
+    let (page, producer, block, page_state) = allocation.live_remote_free_allocation();
     if page_state != LiveAllocationPageState::LiveOwnerAssociated {
         return Err(RemoteFreeError::NotOwnerAssociated);
     }
@@ -145,7 +176,10 @@ where
     Ok(if was_owned {
         LiveRemoteFreePublish::PublishedToOwner
     } else {
-        LiveRemoteFreePublish::ClaimedAbandonedPage
+        LiveRemoteFreePublish::ClaimedAbandonedPage(ClaimedAbandonedRemoteFree {
+            page,
+            published_block: block,
+        })
     })
 }
 
@@ -908,33 +942,25 @@ where
 /// # Safety
 ///
 /// `page` must remain initialized and live through the publication and any
-/// resulting owner collection. It must be an abandoned page whose ordinary
-/// metadata and remote blocks remain valid; `block` must be one aligned,
-/// exclusively owned live allocation of that exact page and not previously
-/// freed. A caller receiving `ClaimedUnownedPage` owns the page's ordinary
-/// state until it transfers or releases the low owner bit according to the
-/// abandoned-page protocol. This function creates no producer `&Page`.
+/// resulting owner collection. Pointer dispatch must have observed this exact
+/// current allocation while the page carried an abandoned identity, but a
+/// concurrent source path may claim and reassociate the page before this CAS.
+/// `block` must be one aligned, exclusively owned live allocation of that
+/// exact page and not previously freed. A caller receiving
+/// `ClaimedUnownedPage` must validate the current abandoned identity only
+/// after this claim and then retain the page's ordinary-state authority until
+/// it transfers or releases the low owner bit. This function creates no
+/// producer `&Page` and never re-reads `xthread_id` before publication.
 pub(crate) unsafe fn push_abandoned(
     page: NonNull<Page>,
     block: NonNull<u8>,
 ) -> Result<AbandonedRemotePush, RemoteFreeError> {
-    if block.as_ptr().addr() & THREAD_FREE_OWNED != 0 {
-        return Err(RemoteFreeError::UnalignedBlock);
-    }
-    // SAFETY: caller supplies the stable initialized abandoned metadata.
-    let state = unsafe { Page::remote_free_producer_state_at(page) };
-    if !producer_has_abandoned_thread_identity(&state) {
-        return Err(RemoteFreeError::NotOwnerAssociated);
-    }
-    // SAFETY: state names initialized atomic source fields only.
-    let head = unsafe { state.xthread_free.as_ref() };
-    let block = block.cast::<Block>();
-    let block_address = block.as_ptr().expose_provenance();
-    let was_owned = publish_to_head_with_owner(head, block_address, |_| true, |previous_block| {
-        // SAFETY: caller retains exclusive ownership of this just-freed block
-        // until the AcqRel head publication succeeds.
-        unsafe { block_set_next(block, thread_free_block(previous_block)) };
-    })?;
+    // SAFETY: the valid current block keeps the page metadata stable. The
+    // producer projection contains only the two atomic source fields, and the
+    // helper performs pinned `allow_collect=true` publication regardless of
+    // whether a concurrent claimant has since installed a live identity.
+    let producer = unsafe { Page::remote_free_producer_state_at(page) };
+    let was_owned = unsafe { push_source_block_mt(producer, block, true) }?;
     Ok(if was_owned {
         AbandonedRemotePush::PublishedToExistingOwner
     } else {
@@ -1652,15 +1678,6 @@ fn producer_has_live_thread_identity(state: &PageRemoteFreeProducerState) -> boo
 }
 
 #[inline]
-fn producer_has_abandoned_thread_identity(state: &PageRemoteFreeProducerState) -> bool {
-    // SAFETY: producer state contains only initialized atomic subobjects.
-    let thread_id = unsafe { state.xthread_id.as_ref() }
-        .load(core::sync::atomic::Ordering::Acquire)
-        & !PAGE_FLAG_MASK;
-    thread_id == THREAD_ID_ABANDONED || thread_id == THREAD_ID_ABANDONED_MAPPED
-}
-
-#[inline]
 fn thread_free_block(thread_free: ThreadFree) -> *mut Block {
     // `mi_thread_free_t` stores a pointer in all bits except the low owner
     // bit. `expose_provenance` recorded that provenance when publishing; this
@@ -1800,6 +1817,61 @@ mod tests {
         assert_eq!(unsafe { collect(owner) }, Ok(0));
         assert_eq!(page.remote_free_test_head(), 1);
         assert_eq!(page.remote_free_test_used(), 1);
+    }
+
+    #[test]
+    fn abandoned_snapshot_publication_reaches_a_reclaimed_live_owner() {
+        let page = boxed_test_page(1, 1);
+        let mut block = TestBlock([0; 16]);
+        let block = block.pointer();
+        // SAFETY: this fixture remains address-stable and initialized through
+        // the complete source interleaving. Only its two atomic producer
+        // fields are retained while ownership changes.
+        let producer = unsafe { Page::remote_free_producer_state_at(page) };
+
+        // Pointer dispatch first observes mapped abandonment after the old
+        // owner has published that identity and released the low owner bit.
+        unsafe {
+            producer
+                .xthread_id
+                .as_ref()
+                .store(THREAD_ID_ABANDONED_MAPPED, Ordering::Release);
+            producer.xthread_free.as_ref().store(0, Ordering::Release);
+        }
+        let abandoned_snapshot = unsafe { producer.xthread_id.as_ref() }
+            .load(Ordering::Relaxed)
+            & !PAGE_FLAG_MASK;
+        assert_eq!(abandoned_snapshot, THREAD_ID_ABANDONED_MAPPED);
+
+        // Before the stale but still-valid client publishes, another source
+        // path claims the abandoned head and installs a current live owner.
+        assert_eq!(
+            claim_abandoned_owner(unsafe { producer.xthread_free.as_ref() }),
+            AbandonedOwnerClaim::ClaimedUnowned
+        );
+        unsafe { producer.xthread_id.as_ref() }.store(12, Ordering::Release);
+
+        // SAFETY: the copied abandoned observation, page, and canonical block
+        // came from one still-live allocation. Pinned `free.c` publishes to
+        // the current low-bit owner without re-reading the changed identity.
+        assert_eq!(
+            unsafe { push_abandoned(page, block) },
+            Ok(AbandonedRemotePush::PublishedToExistingOwner)
+        );
+
+        // SAFETY: publication is complete and this is the sole current live
+        // owner projection. It must account the stale client's block once.
+        let owner = unsafe { Page::remote_free_owner_state_at(page) }
+            .expect("reclaim installed one live page owner");
+        assert_eq!(unsafe { collect_live_page(owner) }, Ok(1));
+        assert_eq!(unsafe { test_page_snapshot(page) }.remote_free_test_head(), 1);
+        assert_eq!(unsafe { test_page_snapshot(page) }.remote_free_test_used(), 0);
+        assert_eq!(
+            unsafe { test_page_snapshot(page) }.remote_free_test_local_chain_len(2),
+            1
+        );
+        // SAFETY: producer publication and owner collection are quiescent.
+        unsafe { drop_boxed_test_page(page) };
     }
 
     #[test]
@@ -1988,7 +2060,8 @@ mod tests {
         let page = boxed_test_page(1, 1);
         let published_page = published_test_page(page);
         let mut block = TestBlock([0; 16]);
-        let allocation = TestLiveRemoteFreeAllocation::new(&published_page, block.pointer());
+        let block = block.pointer();
+        let allocation = TestLiveRemoteFreeAllocation::new(&published_page, block);
 
         // Pointer dispatch observed the live owner first. Source owner exit
         // then abandons the still-used page and releases its low owner bit.
@@ -1997,18 +2070,83 @@ mod tests {
         // SAFETY: `allocation` remains the coherent observation of this exact
         // current block. Its `used == 1` contribution pins the abandoned page
         // until the CAS claims it and returns the collection obligation.
-        assert_eq!(
-            unsafe { push_live_allocation(allocation) },
-            Ok(LiveRemoteFreePublish::ClaimedAbandonedPage)
-        );
-        assert_eq!(unsafe { test_page_snapshot(page) }.remote_free_test_head(), block.pointer().as_ptr().addr() | 1);
+        let claim = match unsafe { push_live_allocation(allocation) } {
+            Ok(LiveRemoteFreePublish::ClaimedAbandonedPage(claim)) => claim,
+            _ => panic!("the live observation must carry its abandoned owner claim"),
+        };
+        assert_eq!(claim.page(), page);
+        assert_eq!(claim.published_block(), block);
+        assert_eq!(unsafe { test_page_snapshot(page) }.remote_free_test_head(), block.as_ptr().addr() | 1);
 
         // SAFETY: the preceding source push claimed the abandoned page's low
         // owner bit; this test immediately completes its owner collection.
         assert_eq!(unsafe { collect_abandoned(page) }, Ok(1));
         assert_eq!(unsafe { test_page_snapshot(page) }.remote_free_test_used(), 0);
         assert_eq!(unsafe { test_page_snapshot(page) }.remote_free_test_head(), 1);
-        // SAFETY: publication and abandoned collection are complete.
+        {
+            // SAFETY: the claim still owns an empty abandoned head. This is
+            // the source's legal unown discharge after collection, not a
+            // fieldless return while the low bit remains set.
+            let producer = unsafe { Page::remote_free_producer_state_at(page) };
+            let mut no_hook = None::<fn()>;
+            assert_eq!(
+                try_unown_abandoned_head(
+                    unsafe { producer.xthread_free.as_ref() },
+                    &mut no_hook,
+                ),
+                AbandonedOwnerHeadTransition::Released
+            );
+        }
+        drop(claim);
+        assert_eq!(unsafe { test_page_snapshot(page) }.remote_free_test_head(), 0);
+        // SAFETY: publication, abandoned collection, and unown are complete.
+        unsafe { drop_boxed_test_page(page) };
+    }
+
+    #[test]
+    fn live_snapshot_publication_reaches_a_reclaimed_live_owner() {
+        let page = boxed_test_page(1, 1);
+        let published_page = published_test_page(page);
+        let mut block = TestBlock([0; 16]);
+        let block = block.pointer();
+        // Pointer dispatch captures a live-owner observation before the old
+        // owner exits. Its producer projection remains valid because this
+        // exact live client continues to keep the page and its PageMap entry
+        // alive through the source publication.
+        let allocation = TestLiveRemoteFreeAllocation::new(&published_page, block);
+
+        mark_abandoned_unowned_after_lookup(page);
+        // A different source path claims the abandoned head and makes the
+        // page live again before the stale observation reaches its CAS.
+        let producer = unsafe { Page::remote_free_producer_state_at(page) };
+        assert_eq!(
+            claim_abandoned_owner(unsafe { producer.xthread_free.as_ref() }),
+            AbandonedOwnerClaim::ClaimedUnowned
+        );
+        unsafe { producer.xthread_id.as_ref() }.store(12, Ordering::Release);
+
+        // SAFETY: this remains one coherent stale-live observation of the
+        // exact current allocation. Pinned `mi_free_block_mt` must publish to
+        // the current low-bit owner; it must not re-read the former abandoned
+        // identity and incorrectly take a second collection tail.
+        assert_eq!(
+            unsafe { push_live_allocation(allocation) },
+            Ok(LiveRemoteFreePublish::PublishedToOwner)
+        );
+
+        // SAFETY: the publication is complete and this is the sole current
+        // live-owner projection installed by the reclaim path.
+        let owner = unsafe { Page::remote_free_owner_state_at(page) }
+            .expect("reclaim installed one live page owner");
+        assert_eq!(unsafe { collect_live_page(owner) }, Ok(1));
+        assert_eq!(unsafe { test_page_snapshot(page) }.remote_free_test_head(), 1);
+        assert_eq!(unsafe { test_page_snapshot(page) }.remote_free_test_used(), 0);
+        assert_eq!(
+            unsafe { test_page_snapshot(page) }.remote_free_test_local_chain_len(2),
+            1
+        );
+        // SAFETY: source publication and current-owner collection are
+        // quiescent, so no raw field projection survives page destruction.
         unsafe { drop_boxed_test_page(page) };
     }
 
