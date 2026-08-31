@@ -113,3 +113,5 @@ _Static_assert(__builtin_types_compatible_p(__typeof__(&sigpending),
     int (*)(sigset_t *)), "GNU/POSIX sigpending declaration");
 _Static_assert(__builtin_types_compatible_p(__typeof__(&__libc_current_sigrtmax),
     int (*)(void)), "GNU realtime-maximum bridge declaration");
+_Static_assert(__builtin_types_compatible_p(__typeof__(&__libc_current_sigrtmin),
+    int (*)(void)), "GNU realtime-minimum bridge declaration");

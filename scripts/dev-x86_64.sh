@@ -154,6 +154,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-sigandset-sigorset  run the static x86 crabc-libc GNU signal-set binary slice
   libc-sigpending  run the static x86 crabc-libc POSIX pending-signal slice
   libc-sigrtmax  run the static x86 crabc-libc realtime-maximum ABI bridge slice
+  libc-sigrtmin  run the static x86 crabc-libc realtime-minimum ABI bridge slice
   libc-sigaddset-sigdelset-sigfillset  run the static x86 crabc-libc POSIX signal-set mutation slice
   libc-extended-attributes  run the static x86 crabc-libc extended-attribute slice
   libc-pathname-lifecycle  run the static x86 crabc-libc pathname-lifecycle slice
@@ -501,9 +502,17 @@ descriptors, timers, pthread behavior, dynamic libc, or application startup.
 `libc-sigrtmax` is a separate one-entry realtime-maximum ABI bridge. It is
 the exact musl x86 `_NSIG - 1` return: `_NSIG=65` makes direct
 `__libc_current_sigrtmax()` and the public `SIGRTMAX` macro return 64 without
-storage, errno writes, calls, or syscalls. It does not select realtime-signal
-minimum semantics, delivery, actions, masks, waits, descriptors, timers,
-pthread behavior, dynamic libc, or application startup.
+storage, errno writes, calls, or syscalls. It leaves the separately selected
+realtime-minimum bridge out of its candidate and does not select delivery,
+actions, masks, waits, descriptors, timers, pthread behavior, dynamic libc,
+or application startup.
+`libc-sigrtmin` is a separate one-entry realtime-minimum ABI bridge. It is the
+exact musl x86 fixed-35 return: direct `__libc_current_sigrtmin()` returns 35
+without storage, errno writes, calls, or syscalls. Its fixture also checks the
+pre-existing public `SIGRTMIN` value; it leaves the separately selected
+realtime-maximum bridge out of its candidate and does not select delivery,
+actions, masks, waits, descriptors, timers, pthread behavior, dynamic libc,
+or application startup.
 `libc-sigaddset-sigdelset-sigfillset` is a separate three-entry POSIX
 signal-set mutation boundary. It follows musl's one-word x86 helpers: fill
 writes `0xfffffffc7fffffff`, while add/delete reject 0, 32--34, and 65 with
@@ -2422,6 +2431,10 @@ run_libc_sigrtmax_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_sigrtmax.sh
 }
 
+run_libc_sigrtmin_probe() {
+    run_in_container bash /workspace/compat/x86_64/run_libc_sigrtmin.sh
+}
+
 run_libc_sigset_mutation_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_sigaddset_sigdelset_sigfillset.sh
 }
@@ -3730,7 +3743,7 @@ shift
 
 case "$command" in
     timerfd-header-abi|signalfd-header-abi) ;;
-    libc-timerfd|libc-signalfd|libc-sigpause|libc-sigisemptyset|libc-sigandset-sigorset|libc-sigpending|libc-sigrtmax|libc-sigaddset-sigdelset-sigfillset) ;;
+    libc-timerfd|libc-signalfd|libc-sigpause|libc-sigisemptyset|libc-sigandset-sigorset|libc-sigpending|libc-sigrtmax|libc-sigrtmin|libc-sigaddset-sigdelset-sigfillset) ;;
     ctermid-header-abi|gethostid-header-abi|isatty-header-abi|tcgetpgrp-header-abi|tcsetpgrp-header-abi|getpass-header-abi|libc-ctermid|libc-gethostid|libc-isatty|libc-tcgetpgrp|libc-tcsetpgrp|libc-getpass|mkfifo-header-abi|mkfifoat-header-abi|libc-mkfifo|libc-mkfifoat|mktemp-header-abi|libc-mktemp) ;;
     stdio-permanent-line-io-header-abi|stdio-octal-hex-scan-header-abi) ;;
     math-complex-complete-header-abi|libc-math-complex-complete) ;;
@@ -5548,6 +5561,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "libc-sigrtmax takes no arguments"
         ensure_image
         run_libc_sigrtmax_probe
+        ;;
+    libc-sigrtmin)
+        [ "$#" -eq 0 ] || fail "libc-sigrtmin takes no arguments"
+        ensure_image
+        run_libc_sigrtmin_probe
         ;;
     libc-sigaddset-sigdelset-sigfillset)
         [ "$#" -eq 0 ] || fail "libc-sigaddset-sigdelset-sigfillset takes no arguments"

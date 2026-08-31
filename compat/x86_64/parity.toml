@@ -3806,7 +3806,7 @@ oracle = [
 
 [[family.verified_artifact]]
 id = "static-c-sigrtmax"
-description = "Private native x86 selected-static-archive one-symbol realtime signal maximum macro-bridge artifact inside planned `libc.posix-runtime`. One dependency-free `crabc-libc` archive exposes exactly `__libc_current_sigrtmax`; its freestanding C body first runs through pinned musl 1.2.6 and then through a true `-nostdlib -static` candidate. Pinned musl's `src/signal/sigrtmax.c` returns `_NSIG-1`; x86 `_NSIG=65` therefore makes both the direct no-argument C bridge and the public `SIGRTMAX` macro return 64, deterministically and with stale errno. The C GNU/POSIX gate and paired C++17 POSIX/GNU feature matrix keep the POSIX-family `int __libc_current_sigrtmax(void)` declaration and unmangled direct/macro-mediated C references. This pure return leaf has no caller storage, syscall, or call path, and does not select `SIGRTMIN`/`__libc_current_sigrtmin`, handlers/actions, signal masks, process signaling, waits, queues, descriptors, timers, pthread policy, libc.so, CRT, dynamic TLS lifecycle, loader, sysroot, signal-family completion, promotion, or public x86 support."
+description = "Private native x86 selected-static-archive one-symbol realtime signal maximum macro-bridge artifact inside planned `libc.posix-runtime`. One dependency-free `crabc-libc` archive exposes exactly `__libc_current_sigrtmax`; its freestanding C body first runs through pinned musl 1.2.6 and then through a true `-nostdlib -static` candidate. Pinned musl's `src/signal/sigrtmax.c` returns `_NSIG-1`; x86 `_NSIG=65` therefore makes both the direct no-argument C bridge and the public `SIGRTMAX` macro return 64, deterministically and with stale errno. The C GNU/POSIX gate and paired C++17 POSIX/GNU feature matrix keep the POSIX-family `int __libc_current_sigrtmax(void)` declaration and unmangled direct/macro-mediated C references. This pure return leaf has no caller storage, syscall, or call path, and leaves the separate `SIGRTMIN`/`__libc_current_sigrtmin` artifact out of this candidate. It does not select handlers/actions, signal masks, process signaling, waits, queues, descriptors, timers, pthread policy, libc.so, CRT, dynamic TLS lifecycle, loader, sysroot, signal-family completion, promotion, or public x86 support."
 source_owners = [
   "compat/upstreams.toml",
   "libc/Cargo.toml",
@@ -3845,9 +3845,55 @@ x86_abi_prerequisites = [
   "The common pinned-musl/candidate C body proves direct 64, macro-mediated 64, deterministic repeated equality, and stale ERANGE. Its start delegates only the archive Static Initial TLS v1 bootstrap required to observe errno; it does not claim CRT or general TLS lifecycle.",
 ]
 x86_header_prerequisites = ["The project-first/pinned-musl GNU/POSIX C signal-header gate proves `int __libc_current_sigrtmax(void)` in both profiles. A paired C++17 POSIX/GNU feature matrix checks the same POSIX-family pointer signature, project-header provenance, SIGRTMAX macro call, and retained unmangled C references. The static fixture preprocesses project errno.h, signal.h, and bits/alltypes.h. This is a bounded internal-header bridge plus static linkage proof, not installed-header, signal/runtime family, or public-support completion."]
-native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-sigrtmax", scope = "Pinned-musl 1.2.6 C reference plus C++ POSIX/GNU feature matrix and a true dependency-free x86 crabc-libc archive with a `-nostdlib -static` candidate. The gate checks project-header provenance and exact crate-owned C-object export closure separately from compiler-builtins; rejects interpreter/DT_NEEDED/unresolved symbols/dynamic TLS/unowned runtime, handlers/actions, signal masks, process signaling, waits, queues, descriptors, timers, pthreads, allocator, auxv, and sysconf paths; proves direct initial-TLS errno plus __libc_current_sigrtmax disassembly with no call or syscall; and executes direct/macro 64, deterministic repeat, and stale-errno observations. It adds no SIGRTMIN bridge, general signal framework, dynamic libc, CRT, loader, sysroot, signal-family completion, promotion, or public x86 support." }]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-sigrtmax", scope = "Pinned-musl 1.2.6 C reference plus C++ POSIX/GNU feature matrix and a true dependency-free x86 crabc-libc archive with a `-nostdlib -static` candidate. The gate checks project-header provenance and exact crate-owned C-object export closure separately from compiler-builtins; rejects interpreter/DT_NEEDED/unresolved symbols/dynamic TLS/unowned runtime, handlers/actions, signal masks, process signaling, waits, queues, descriptors, timers, pthreads, allocator, auxv, and sysconf paths; proves direct initial-TLS errno plus __libc_current_sigrtmax disassembly with no call or syscall; and executes direct/macro 64, deterministic repeat, and stale-errno observations. It leaves the separate SIGRTMIN bridge out of this candidate and adds no general signal framework, dynamic libc, CRT, loader, sysroot, signal-family completion, promotion, or public x86 support." }]
 oracle = [
   { kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source, public declaration, macro, and behavior oracle for src/signal/sigrtmax.c: x86 `_NSIG=65` makes its `_NSIG-1` return exactly 64." },
+  { kind = "elf-abi", source = "System V AMD64 psABI", role = "No-argument int result ABI, C++ unmangled C linkage, and static initial-exec TLS fixture contract." },
+]
+
+[[family.verified_artifact]]
+id = "static-c-sigrtmin"
+description = "Private native x86 selected-static-archive one-symbol realtime signal minimum direct-ABI artifact inside planned `libc.posix-runtime`. One dependency-free `crabc-libc` archive exposes exactly `__libc_current_sigrtmin`; its freestanding C body first runs through pinned musl 1.2.6 and then through a true `-nostdlib -static` candidate. Pinned musl's `src/signal/sigrtmin.c` returns fixed 35, so the direct no-argument C bridge deterministically returns 35 with stale errno. The project header retains its pre-existing fixed x86 `SIGRTMIN` value spelling; the common body compares that public value without claiming a general signal-header rewrite. The C GNU/POSIX gate and paired C++17 POSIX/GNU feature matrix keep the POSIX-family `int __libc_current_sigrtmin(void)` declaration and unmangled direct C references. This pure return leaf has no caller storage, syscall, or call path, and leaves the separate `SIGRTMAX`/`__libc_current_sigrtmax` artifact out of this candidate. It does not select handlers/actions, signal masks, process signaling, waits, queues, descriptors, timers, pthread policy, libc.so, CRT, dynamic TLS lifecycle, loader, sysroot, signal-family completion, promotion, or public x86 support."
+source_owners = [
+  "compat/upstreams.toml",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/signal_realtime_min.rs",
+  "libc/src/c_abi/x86_64/errno.rs",
+  "libc/src/c_abi/x86_64/static_tls.rs",
+  "include/errno.h",
+  "include/signal.h",
+  "include/bits/alltypes.h",
+  "compat/x86_64/signal_header_abi_probe.c",
+  "compat/x86_64/signal_header_posix_abi_probe.c",
+  "compat/x86_64/run_signal_header_abi.sh",
+  "compat/x86_64/sigrtmin_header_abi_probe.cpp",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/libc_sigrtmin_probe.c",
+  "compat/x86_64/libc_sigrtmin_start.S",
+  "compat/x86_64/run_libc_sigrtmin.sh",
+  "compat/x86_64/aarch64_parity_inventory.py",
+  "compat/x86_64/aarch64_parity_inventory.json",
+  "compat/x86_64/tests/test_aarch64_parity_inventory.py",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "compat/x86_64/README.md",
+  "STATUS.md",
+  "x86-64.md",
+  "scripts/dev-x86_64.sh",
+  "scripts/check_structure.py",
+]
+x86_abi_prerequisites = [
+  "System V AMD64 passes no arguments to int __libc_current_sigrtmin(void) and receives its signed four-byte int result in eax. Pinned musl's x86 realtime application range begins at 35, so the complete selected result has no pointer, storage, syscall, or error-state ABI.",
+  "Pinned musl 1.2.6 `src/signal/sigrtmin.c` is the complete MIT source mapping: int __libc_current_sigrtmin() returns 35. Its public signal.h declaration is POSIX-family-visible; this selected direct bridge leaves sigrtmax.c and the separate maximum artifact outside its source closure.",
+  "The common pinned-musl/candidate C body proves direct 35, public SIGRTMIN value 35, deterministic repeated equality, and stale ERANGE. Its start delegates only the archive Static Initial TLS v1 bootstrap required to observe errno; it does not claim CRT or general TLS lifecycle.",
+]
+x86_header_prerequisites = ["The project-first/pinned-musl GNU/POSIX C signal-header gate proves `int __libc_current_sigrtmin(void)` in both profiles. A paired C++17 POSIX/GNU feature matrix checks the same POSIX-family pointer signature, project-header provenance, a valid SIGRTMIN macro expression, and retained unmangled direct C references. The static fixture preprocesses project errno.h, signal.h, and bits/alltypes.h. This is a bounded internal-header bridge plus static linkage proof, not installed-header, signal/runtime family, or public-support completion."]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-sigrtmin", scope = "Pinned-musl 1.2.6 C reference plus C++ POSIX/GNU feature matrix and a true dependency-free x86 crabc-libc archive with a `-nostdlib -static` candidate. The gate checks project-header provenance and exact crate-owned C-object export closure separately from compiler-builtins; rejects interpreter/DT_NEEDED/unresolved symbols/dynamic TLS/unowned runtime, handlers/actions, signal masks, process signaling, waits, queues, descriptors, timers, pthreads, allocator, auxv, and sysconf paths; proves direct initial-TLS errno plus __libc_current_sigrtmin disassembly with no call or syscall; and executes direct/public-macro 35, deterministic repeat, and stale-errno observations. It leaves the separate SIGRTMAX bridge out of this candidate and adds no general signal framework, dynamic libc, CRT, loader, sysroot, signal-family completion, promotion, or public x86 support." }]
+oracle = [
+  { kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source, public declaration, and behavior oracle for src/signal/sigrtmin.c: x86 application realtime signals start at exactly 35." },
   { kind = "elf-abi", source = "System V AMD64 psABI", role = "No-argument int result ABI, C++ unmangled C linkage, and static initial-exec TLS fixture contract." },
 ]
 

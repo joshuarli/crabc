@@ -1676,10 +1676,26 @@ one-symbol pinned-musl/freestanding-static C proof follows
 `__libc_current_sigrtmax(void)` bridge and the public `SIGRTMAX` macro return
 64. It proves direct/macro equality, a repeated result, stale `errno`, and no
 call or syscall; the shared C signal gate plus C++17 POSIX/GNU matrix retain
-the exact unmangled declaration. It does not select `SIGRTMIN`,
-handlers/actions, masks, process signaling, waits, queues, descriptors,
-timers, pthread policy, libc.so, CRT, loader, sysroot, family/platform parity,
-promotion, or public x86 support.
+the exact unmangled declaration. It leaves the separately selected realtime
+minimum bridge out of its candidate and does not select handlers/actions,
+masks, process signaling, waits, queues, descriptors, timers, pthread policy,
+libc.so, CRT, loader, sysroot, family/platform parity, promotion, or public
+x86 support.
+
+`./scripts/dev-x86_64.sh libc-sigrtmin` is a separate private
+`static-c-sigrtmin` artifact inside planned `libc.posix-runtime`. Its
+one-symbol pinned-musl/freestanding-static C proof follows
+`src/signal/sigrtmin.c`: direct POSIX-family
+`__libc_current_sigrtmin(void)` returns fixed 35. It proves direct/public
+`SIGRTMIN` value equality, a repeated result, stale `errno`, and no call or
+syscall; the shared C signal gate plus C++17 POSIX/GNU matrix retain the exact
+unmangled declaration. The project header deliberately retains its
+pre-existing fixed x86 `SIGRTMIN` spelling; this selected bridge does not turn
+that into a general header rewrite. It leaves the separate realtime-maximum
+bridge out of its candidate and does not select handlers/actions, masks,
+process signaling, waits, queues, descriptors, timers, pthread policy,
+libc.so, CRT, loader, sysroot, family/platform parity, promotion, or public
+x86 support.
 
 `./scripts/dev-x86_64.sh libc-sigaddset-sigdelset-sigfillset` is a separate
 private `static-c-sigset-mutation` artifact inside planned

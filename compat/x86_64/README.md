@@ -393,6 +393,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-sigandset-sigorset
 ./scripts/dev-x86_64.sh libc-sigpending
 ./scripts/dev-x86_64.sh libc-sigrtmax
+./scripts/dev-x86_64.sh libc-sigrtmin
 ./scripts/dev-x86_64.sh libc-sigaddset-sigdelset-sigfillset
 ./scripts/dev-x86_64.sh libc-static-tls-v1
 ./scripts/dev-x86_64.sh libc-crt-static-tls
@@ -2873,9 +2874,24 @@ musl's `src/signal/sigrtmax.c`: x86 `_NSIG=65` makes
 fixture proves direct/macro results, a repeated equality, stale `errno`, and
 no call or syscall; the common C signal-header gate and a C++17 POSIX/GNU
 matrix retain the POSIX-family C signature and unmangled
-references. It does not select `SIGRTMIN`, delivery, actions, masks, process
-signaling, waits, queues, descriptors, timers, pthread policy, signal-family
-completion, AArch64 parity, promotion, or public x86 support.
+references. It leaves the separately selected realtime-minimum bridge out of
+its candidate and does not select delivery, actions, masks, process signaling,
+waits, queues, descriptors, timers, pthread policy, signal-family completion,
+AArch64 parity, promotion, or public x86 support.
+
+`libc-sigrtmin` is a separate `static-c-sigrtmin` `verified_artifact` within
+planned `libc.posix-runtime`. Its one-symbol C body first runs through pinned
+musl 1.2.6 and then through a true `-nostdlib -static` candidate. It maps only
+musl's `src/signal/sigrtmin.c`: direct `__libc_current_sigrtmin()` returns 35.
+The fixture proves direct/public-`SIGRTMIN` value results, a repeated equality,
+stale `errno`, and no call or syscall; the common C signal-header gate and a
+C++17 POSIX/GNU matrix retain the POSIX-family C signature and unmangled direct
+references. The project header's existing fixed `SIGRTMIN` spelling remains a
+bounded value check, not a general header rewrite. It leaves the separately
+selected realtime-maximum bridge out of its candidate and does not select
+delivery, actions, masks, process signaling, waits, queues, descriptors,
+timers, pthread policy, signal-family completion, AArch64 parity, promotion,
+or public x86 support.
 
 `libc-sigaddset-sigdelset-sigfillset` is a separate
 `static-c-sigset-mutation` `verified_artifact` within planned
@@ -5486,7 +5502,7 @@ Apart from the narrowly named `libc-stat-compat`, `libc-credentials`,
 `libc-bootstrap-primitives`, `libc-signal-control`, `libc-signal-execution`,
 `libc-signal-altstack`, `libc-timerfd`, `libc-signalfd`, `libc-sigpause`,
 `libc-sigisemptyset`, `libc-sigandset-sigorset`, `libc-sigpending`, and
-`libc-sigaddset-sigdelset-sigfillset`,
+`libc-sigrtmax`, `libc-sigrtmin`, `libc-sigaddset-sigdelset-sigfillset`,
 `libc-static-tls-v1`, `libc-crt-static-tls`,
 `libc-pthread-create-join-tls`, `libc-pthread-identity`, `libc-c11-lifecycle`,
 `libc-pthread-detach`, `libc-thrd-sleep`, `libc-thrd-yield`, `libc-pthread-cpuclock`, `libc-pthread-name`, `libc-pthread-mutex-normal`,

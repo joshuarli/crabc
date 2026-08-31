@@ -361,6 +361,7 @@ struct sigevent {
 #define SIGEV_THREAD 2
 #define SIGEV_THREAD_ID 4
 #define SIGRTMIN 35
+int __libc_current_sigrtmin(void);
 int __libc_current_sigrtmax(void);
 #define SIGRTMAX (__libc_current_sigrtmax())
 #define SI_QUEUE (-1)
