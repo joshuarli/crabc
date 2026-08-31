@@ -837,6 +837,30 @@ pub unsafe extern "C" fn __fsetlocking(
     0
 }
 
+/// Set musl's fixed permanent-stdin error marker.
+///
+/// Pinned musl 1.2.6 `src/stdio/ext2.c` implements `__fseterr(FILE *)` as
+/// `f->flags |= F_ERR`. This closed target-private adapter admits only the
+/// process-lifetime stdin pointer and changes only its existing error marker.
+/// It therefore permits one explicit status transition without selecting
+/// arbitrary FILE status, locks, input/output, or a generalized stream model.
+///
+/// # Safety
+///
+/// `stream` must be the exported process-lifetime `stdin` pointer. The
+/// selected call is externally serialized with the permanent stream.
+#[no_mangle]
+pub unsafe extern "C" fn __fseterr(stream: *mut StandardStream) {
+    if stream != ptr::addr_of_mut!(STDIN_STREAM) {
+        // SAFETY: this closed boundary never dereferences an unselected FILE.
+        unsafe { reject_stream() };
+        return;
+    }
+
+    // SAFETY: pointer equality above proves this is the fixed stdin record.
+    unsafe { (*stream).flags |= F_ERR };
+}
+
 /// Observe musl's fixed permanent-stdin readable-access predicate.
 ///
 /// Musl 1.2.6 `src/stdio/ext.c` implements `__freadable` as

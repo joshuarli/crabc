@@ -64,7 +64,7 @@ class AArch64ParityInventoryTests(unittest.TestCase):
             if row["id"] == "libc.text-math-locale-stdio"
         )
         self.assertEqual(text_math["verified_slice_count"], 5)
-        self.assertEqual(text_math["verified_artifact_count"], 49)
+        self.assertEqual(text_math["verified_artifact_count"], 50)
         posix_runtime = next(
             row for row in report["families"] if row["id"] == "libc.posix-runtime"
         )

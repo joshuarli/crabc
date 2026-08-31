@@ -29,6 +29,7 @@ __fpclassifyf
 __fpclassifyl
 __freadable
 __freading
+__fseterr
 __fsetlocking
 __funcs_on_exit
 __futimesat

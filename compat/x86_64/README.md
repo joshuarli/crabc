@@ -843,10 +843,30 @@ matrix proves its unconditional `int (FILE *, int)` declaration, the exact
 configuration nor a general FILE claim: it excludes arbitrary FILE or request
 behavior, FLOCK/FUNLOCK and lock-free behavior, input/output/buffering/cursor,
 other permanent streams, every other `stdio_ext` helper except separately
-selected `__freading(stdin)`, `__freadable(stdin)`, `__fbufsize(stderr)`, and
-`__flbf(stderr)`, stdio.stream-io, path/descriptor-reopen/tmpfile/LFS behavior,
+selected `__freading(stdin)`, `__fseterr(stdin)`, `__freadable(stdin)`,
+`__fbufsize(stderr)`, and `__flbf(stderr)`, stdio.stream-io,
+path/descriptor-reopen/tmpfile/LFS behavior,
 byte/block I/O including `fread`/`fwrite`, positions/status/configuration,
 multiple streams, general stdio, parity, promotion, and public x86 support.
+
+The separate `stdio-permanent-fseterr-stdin-header-abi` and
+`libc-stdio-permanent-fseterr-stdin` gates record one private
+`static-c-stdio-permanent-fseterr-stdin` artifact. It adds only the GNU
+`__fseterr` C ABI spelling, without promoting a capability. Its pinned-musl/
+static differential calls `__fseterr(stdin)` directly and through a function
+pointer, then uses existing `ferror(stdin)` and `clearerr(stdin)` only to
+observe and reset the selected error marker. Musl 1.2.6 `ext2.c` does exactly
+`f->flags |= F_ERR`; the evidence therefore proves only a zero-to-nonzero
+status observation and reset, not a numeric normalization, I/O, or general
+FILE error model. The strict C11/C++17 `stdio_ext.h` matrix proves its
+unconditional `void (FILE *)` declaration and unmangled C++ linkage. It
+excludes arbitrary FILE, FLOCK/FUNLOCK, lock-free behavior, EOF, input/output/
+buffering/cursor/configuration, other streams, every other `stdio_ext` helper
+except separately selected fixed `__freading(stdin)`, `__fsetlocking(stdin)`,
+`__freadable(stdin)`, `__fbufsize(stderr)`, and `__flbf(stderr)`,
+`stdio.stream-io`, path/descriptor-reopen/tmpfile/LFS behavior, byte/block I/O
+including `fread`/`fwrite`, positions, multiple streams, general stdio, parity,
+promotion, and public x86 support.
 
 The separate `stdio-permanent-freading-stdin-header-abi` and
 `libc-stdio-permanent-freading-stdin` gates record one private
