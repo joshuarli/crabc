@@ -394,6 +394,59 @@ pub unsafe fn native_reallocate(block: NonNull<u8>, new_size: usize) {
             self.assertFalse(caller_first["page_map_first_source_routing"])
             self.assertTrue(caller_first["structural_violation"])
 
+    def test_native_reallocate_lookup_reachability_is_cycle_safe_and_fail_closed(self) -> None:
+        policy = copy.deepcopy(self.manifest)
+        policy["selected_production"]["runtime_source"] = "runtime.rs"
+        cycle_with_pagemap = """\
+pub unsafe fn native_reallocate(block: NonNull<u8>, new_size: usize) {
+    native_reallocate_cycle_one(block, new_size)
+}
+
+fn native_reallocate_cycle_one(
+    block: NonNull<u8>,
+    new_size: usize,
+) -> NativePageAllocationResult {
+    let allocation = native_reallocate_cycle_two(block);
+    native_reallocate_from_source_page(allocation, new_size)
+}
+
+fn native_reallocate_cycle_two(block: NonNull<u8>) -> LiveAllocationPointer {
+    native_reallocate_cycle_one(block, 0);
+    unsafe { page_map.lookup_live_allocation(block) }
+}
+
+fn native_reallocate_from_source_page(
+    allocation: LiveAllocationPointer,
+    new_size: usize,
+) -> NativePageAllocationResult {
+    let current = current_thread_identity();
+    if allocation.is_associated_with(current) {
+        return native_reallocate_local_source_page(allocation, new_size);
+    }
+    native_reallocate_allocate_copy_and_general_free(allocation, new_size)
+}
+"""
+        cycle_without_pagemap = cycle_with_pagemap.replace(
+            "    unsafe { page_map.lookup_live_allocation(block) }\n",
+            "    native_reallocate_cycle_one(block, 0)\n",
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "runtime.rs"
+            source.write_text(cycle_with_pagemap, encoding="utf-8")
+            with_pagemap = RATCHET.native_reallocate_pointer_first_dispatch(root, policy)
+            self.assertEqual(with_pagemap["status"], "page_map_first")
+            self.assertTrue(with_pagemap["page_map_first_source_routing"])
+            self.assertFalse(with_pagemap["structural_violation"])
+
+            source.write_text(cycle_without_pagemap, encoding="utf-8")
+            without_pagemap = RATCHET.native_reallocate_pointer_first_dispatch(root, policy)
+            self.assertEqual(
+                without_pagemap["status"], "missing_page_map_first_source_routing"
+            )
+            self.assertFalse(without_pagemap["page_map_first_source_routing"])
+            self.assertTrue(without_pagemap["structural_violation"])
+
     def test_runtime_evidence_requires_selected_artifact_metadata_and_matching_sources(self) -> None:
         report = RATCHET.evaluate(ROOT, MANIFEST, None)
         incomplete = {

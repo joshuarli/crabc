@@ -1179,28 +1179,27 @@ def native_reallocate_pointer_first_dispatch(
         edges[function.node] = targets
     reachable, predecessor = phase_bc_reachable_functions(entries, functions_by_node, edges)
 
-    lookup_reach_cache: dict[str, bool] = {}
-
-    def function_reaches_page_map_lookup(
-        node: str, visiting: frozenset[str] = frozenset()
-    ) -> bool:
-        cached = lookup_reach_cache.get(node)
-        if cached:
-            return True
-        if node in visiting:
-            return False
-        function = functions_by_node[node]
-        if PAGE_MAP_LIVE_ALLOCATION_LOOKUP.search(function.body):
-            lookup_reach_cache[node] = True
-            return True
-        result = any(
-            function_reaches_page_map_lookup(target, visiting | {node})
-            for target in edges.get(node, set())
-            if target in functions_by_node
-        )
-        if result:
-            lookup_reach_cache[node] = True
-        return result
+    # Compute the complete reverse closure once instead of recursively asking
+    # whether each prefix helper can reach a lookup. Realloc helpers can form
+    # ordinary cycles through release, allocation, and generic-free support;
+    # this fixed-point walk is linear in the bounded selected function graph
+    # and treats a cycle with no PageMap witness as no witness.
+    reverse_edges: dict[str, set[str]] = {node: set() for node in functions_by_node}
+    for caller, targets in edges.items():
+        for target in targets:
+            reverse_edges[target].add(caller)
+    page_map_lookup_reachable = {
+        node
+        for node, function in functions_by_node.items()
+        if PAGE_MAP_LIVE_ALLOCATION_LOOKUP.search(function.body)
+    }
+    pending_lookup_callers = list(page_map_lookup_reachable)
+    while pending_lookup_callers:
+        target = pending_lookup_callers.pop()
+        for caller in reverse_edges[target]:
+            if caller not in page_map_lookup_reachable:
+                page_map_lookup_reachable.add(caller)
+                pending_lookup_callers.append(caller)
 
     def source_lookup_in_prefix(function: RustFunction, offset: int) -> bool:
         prefix = function.body[:offset]
@@ -1208,11 +1207,10 @@ def native_reallocate_pointer_first_dispatch(
             return True
         for call in RUST_FREE_CALL_SITE.finditer(prefix):
             targets = functions_by_name.get(call.group("name"), set())
-            # An ambiguous local name is not a source-fact witness unless all
-            # its selected definitions can establish PageMap classification.
-            if len(targets) == 1 and all(
-                function_reaches_page_map_lookup(target) for target in targets
-            ):
+            # An ambiguous local name is not a source-fact witness. The
+            # precomputed closure makes this query bounded even when helpers
+            # recursively route through allocation/free support.
+            if len(targets) == 1 and next(iter(targets)) in page_map_lookup_reachable:
                 return True
         return False
 
