@@ -50,7 +50,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 41)
-        self.assertEqual(report["verified_artifact_count"], 217)
+        self.assertEqual(report["verified_artifact_count"], 218)
         self.assertEqual(report["header_layout_probe_count"], 47)
         self.assertEqual(report["public_header_inventory_count"], 183)
         self.assertEqual(report["header_foundation_header_count"], 191)
@@ -8707,6 +8707,50 @@ class X86ParityLedgerTests(unittest.TestCase):
             "libc/src/c_abi/x86_64/timer_gettime.rs",
             posix_runtime["source_owners"],
         )
+        timer_settime = artifacts_by_id["static-c-timer-settime-error-abi"]
+        assert isinstance(timer_settime, dict)
+        self.assertNotIn("capabilities", timer_settime)
+        for owner in (
+            "compat/upstreams.toml",
+            "libc/src/c_abi/x86_64/static_c_abi.rs",
+            "libc/src/c_abi/x86_64/timer_settime.rs",
+            "libc/src/c_abi/x86_64/errno.rs",
+            "libc/src/c_abi/x86_64/syscall.rs",
+            "include/time.h",
+            "compat/x86_64/timer_settime_header_abi_probe.c",
+            "compat/x86_64/timer_settime_header_abi_probe.cpp",
+            "compat/x86_64/run_timer_settime_header_abi.sh",
+            "compat/x86_64/static_c_abi_exports.txt",
+            "compat/x86_64/libc_timer_settime_probe.c",
+            "compat/x86_64/libc_timer_settime_start.S",
+            "compat/x86_64/run_libc_timer_settime.sh",
+        ):
+            self.assertIn(owner, timer_settime["source_owners"])
+        self.assertEqual(
+            {evidence["command"] for evidence in timer_settime["native_evidence"]},
+            {"./scripts/dev-x86_64.sh libc-timer-settime"},
+        )
+        for phrase in (
+            "rejected-handle input/output-preservation error-ABI artifact",
+            "src/time/timer_settime.c",
+            "timer_t 0",
+            "INT_MAX",
+            "flags zero",
+            "`-1`/`EINVAL`",
+            "both records to remain unchanged",
+            "negative `timer_t`",
+            "pthread_impl",
+            "does not decode or dereference",
+            "family completion, promotion, or public x86 support",
+        ):
+            self.assertIn(phrase, timer_settime["description"])
+        self.assertIn(
+            "src/time/timer_settime.c", timer_settime["oracle"][0]["role"]
+        )
+        self.assertIn(
+            "libc/src/c_abi/x86_64/timer_settime.rs",
+            posix_runtime["source_owners"],
+        )
         system_configuration = artifacts_by_id["static-c-system-configuration"]
         assert isinstance(system_configuration, dict)
         self.assertNotIn("capabilities", system_configuration)
@@ -14960,6 +15004,43 @@ class X86ParityLedgerTests(unittest.TestCase):
         evidence[0]["command"] = "./scripts/dev-x86_64.sh advanced-time-reference"
         with self.assertRaisesRegex(
             ledger.LedgerError, "closed libc-timer-gettime command"
+        ):
+            ledger.validate_ledger(data)
+
+    def test_timer_settime_error_abi_artifact_keeps_its_closed_mapping_contract(
+        self,
+    ) -> None:
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict)
+            and entry["id"] == "static-c-timer-settime-error-abi"
+        )
+        artifact["description"] = artifact["description"].replace(
+            "both records to remain unchanged", "records may change"
+        )
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "both records to remain unchanged"
+        ):
+            ledger.validate_ledger(data)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict)
+            and entry["id"] == "static-c-timer-settime-error-abi"
+        )
+        evidence = artifact["native_evidence"]
+        assert isinstance(evidence, list) and isinstance(evidence[0], dict)
+        evidence[0]["command"] = "./scripts/dev-x86_64.sh advanced-time-reference"
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "closed libc-timer-settime command"
         ):
             ledger.validate_ledger(data)
 

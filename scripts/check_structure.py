@@ -136,7 +136,8 @@ X86_RUNTIME_FOUNDATION_LDSO_SOURCES = {
 # arithmetic, and find-first-set, direct POSIX clock_gettime, direct rejected-
 # ID clock_adjtime, rejected-request clock_settime, and rejected-handle
 # timer_getoverrun error translation, raw-error timer_delete, rejected-output
-# timer_gettime error translation, bounded clock observation,
+# timer_gettime error translation, and rejected-control timer_settime error
+# translation, bounded clock observation,
 # no-cancellation mapping synchronization, direct anonymous-memory
 # descriptor creation, nanosleep, and clock_nanosleep, descriptor entry, selected
 # filesystem access, bounded fcntl
@@ -163,6 +164,7 @@ X86_RUNTIME_FOUNDATION_LIBC_SOURCES = {
     Path("libc/src/c_abi/x86_64/timer_getoverrun.rs"),
     Path("libc/src/c_abi/x86_64/timer_delete.rs"),
     Path("libc/src/c_abi/x86_64/timer_gettime.rs"),
+    Path("libc/src/c_abi/x86_64/timer_settime.rs"),
     Path("libc/src/c_abi/x86_64/difftime.rs"),
     Path("libc/src/c_abi/x86_64/gmtime_r.rs"),
     Path("libc/src/c_abi/x86_64/timegm.rs"),
@@ -3807,6 +3809,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         '#[path = "timer_getoverrun.rs"]',
         '#[path = "timer_delete.rs"]',
         '#[path = "timer_gettime.rs"]',
+        '#[path = "timer_settime.rs"]',
         '#[path = "difftime.rs"]',
         '#[path = "gmtime_r.rs"]',
         '#[path = "timegm.rs"]',
@@ -8411,6 +8414,60 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
                 f"timer_gettime error ABI must not select {forbidden!r}"
             )
 
+    timer_settime_source = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "timer_settime.rs"
+    )
+    timer_settime_text = timer_settime_source.read_text(errors="replace")
+    for required in (
+        "musl 1.2.6 release commit",
+        "src/time/timer_settime.c::timer_settime",
+        "SYS_TIMER_SETTIME",
+        "raw_syscall::syscall4",
+        "c_status(result)",
+        "nonnegative opaque",
+        "pthread_impl",
+        "does not decode or dereference",
+        "valid POSIX timer",
+        "public x86 support",
+    ):
+        if required not in timer_settime_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/timer_settime.rs: selected static "
+                f"timer_settime error ABI is missing {required!r}"
+            )
+    timer_settime_exports = set(
+        re.findall(
+            r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(',
+            timer_settime_text,
+        )
+    )
+    if timer_settime_exports != {"timer_settime"}:
+        errors.append(
+            "libc/src/c_abi/x86_64/timer_settime.rs: selected static artifact "
+            "must export only timer_settime"
+        )
+    for forbidden in (
+        "crabc_core",
+        "crabc_mimalloc",
+        "timer_create(",
+        "timer_delete(",
+        "timer_getoverrun(",
+        "timer_gettime(",
+        "clock_gettime(",
+        "clock_getres(",
+        "clock_settime(",
+        "clock_adjtime(",
+        "adjtimex(",
+        "getenv(",
+        "tzset(",
+        "__tls_get_addr",
+    ):
+        if forbidden in timer_settime_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/timer_settime.rs: selected static "
+                f"timer_settime error ABI must not select {forbidden!r}"
+            )
+
     difftime_source = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "difftime.rs"
     difftime_text = difftime_source.read_text(errors="replace")
     for required in (
@@ -8757,6 +8814,11 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         errors.append(
             "libc/src/c_abi/x86_64/syscall.rs: selected static timer_gettime "
             "error ABI requires SYS_TIMER_GETTIME=224"
+        )
+    if "pub(crate) const SYS_TIMER_SETTIME: i64 = 223;" not in raw_syscall_text:
+        errors.append(
+            "libc/src/c_abi/x86_64/syscall.rs: selected static timer_settime "
+            "error ABI requires SYS_TIMER_SETTIME=223"
         )
 
     memory_mapping_source = (
@@ -11829,6 +11891,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         timer_getoverrun_text,
         timer_delete_text,
         timer_gettime_text,
+        timer_settime_text,
         difftime_text,
         gmtime_r_text,
         timegm_text,
@@ -12161,6 +12224,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         "timer_getoverrun",
         "timer_delete",
         "timer_gettime",
+        "timer_settime",
         "difftime",
         "gmtime_r",
         "timegm",
@@ -12472,6 +12536,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         ("timer_getoverrun.rs", timer_getoverrun_text),
         ("timer_delete.rs", timer_delete_text),
         ("timer_gettime.rs", timer_gettime_text),
+        ("timer_settime.rs", timer_settime_text),
         ("sched_cpucount.rs", sched_cpucount_text),
         ("sched_getcpu.rs", sched_getcpu_text),
         ("sched_priority_bounds.rs", sched_priority_bounds_text),

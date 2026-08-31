@@ -101,8 +101,8 @@
 //! `difftime` artifact, one caller-buffered fixed-UTC `gmtime_r`
 //! conversion artifact, one direct rejected-handle `timer_getoverrun`
 //! error-ABI artifact, one raw-error `timer_delete` artifact, one rejected-
-//! handle `timer_gettime` artifact, and one fixed-UTC `timegm` conversion
-//! artifact, plus one
+//! handle `timer_gettime` artifact, one rejected-handle `timer_settime`
+//! artifact, and one fixed-UTC `timegm` conversion artifact, plus one
 //! bounded System V message-queue/shared-memory artifact, one bounded
 //! unnamed POSIX semaphore artifact, and one bounded event-descriptor
 //! artifact, one bounded pathname-mutation/lifecycle artifact, one distinct
@@ -428,6 +428,8 @@ mod timer_getoverrun;
 mod timer_delete;
 #[path = "timer_gettime.rs"]
 mod timer_gettime;
+#[path = "timer_settime.rs"]
+mod timer_settime;
 #[path = "difftime.rs"]
 mod difftime;
 #[path = "gmtime_r.rs"]

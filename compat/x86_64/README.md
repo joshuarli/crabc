@@ -276,6 +276,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh timer-getoverrun-header-abi
 ./scripts/dev-x86_64.sh timer-delete-header-abi
 ./scripts/dev-x86_64.sh timer-gettime-header-abi
+./scripts/dev-x86_64.sh timer-settime-header-abi
 ./scripts/dev-x86_64.sh timerfd-header-abi
 ./scripts/dev-x86_64.sh signalfd-header-abi
 ./scripts/dev-x86_64.sh poll-header-abi
@@ -473,6 +474,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-timer-getoverrun
 ./scripts/dev-x86_64.sh libc-timer-delete
 ./scripts/dev-x86_64.sh libc-timer-gettime
+./scripts/dev-x86_64.sh libc-timer-settime
 ./scripts/dev-x86_64.sh libc-time-observation
 ./scripts/dev-x86_64.sh libc-difftime
 ./scripts/dev-x86_64.sh libc-timegm
@@ -3983,6 +3985,24 @@ does not establish valid timer query values, timer ownership/state, lifecycle,
 clock/calendar/time-zone policy, signal delivery, cancellation, dynamic runtime,
 family completion, promotion, or public x86 support.
 
+`libc-timer-settime` is a separately recorded
+`static-c-timer-settime-error-abi` `verified_artifact` gate over that archive,
+not POSIX-timer support. Its `<time.h>` header gate hides the POSIX declaration
+under strict C11/C++17 and proves the exact opaque external-C declaration,
+flags argument, timespec/itimerspec layout, and unmangled C++ linkage under
+POSIX, X/Open, and GNU profiles. In a fresh process that creates no POSIX
+timers, the project-header C body first executes through pinned musl 1.2.6 and
+then through a `-nostdlib -static` candidate, but only with nonnegative opaque
+`timer_t` values `0` and `INT_MAX`, flags zero, a valid nonzero request record,
+and initialized old-value storage. It proves only the direct
+`timer_settime=223` rdi/rsi/rdx/r10 error convention: Linux returns
+`-1`/`EINVAL` and leaves both records unchanged. Musl's negative tagged
+pthread-timer representation requires private `pthread_impl` state and is
+explicitly excluded; the leaf never decodes or dereferences a timer handle. It
+does not establish valid timer-control values, timer ownership/state/lifecycle,
+signal delivery, clock/calendar/time-zone policy, cancellation, dynamic runtime,
+family completion, promotion, or public x86 support.
+
 `libc-time-observation` is a separately recorded
 `static-c-time-observation` `verified_artifact` gate over that archive, not a
 C time-runtime capability. Its project-header C body first executes through
@@ -5970,6 +5990,7 @@ Apart from the narrowly named `libc-stat-compat`, `libc-credentials`,
 `libc-timer-getoverrun`,
 `libc-timer-delete`,
 `libc-timer-gettime`,
+`libc-timer-settime`,
 `libc-time-observation`,
 `libc-difftime`,
 `libc-timegm`,
