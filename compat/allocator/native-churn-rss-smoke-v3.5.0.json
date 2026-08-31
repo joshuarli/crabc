@@ -10,7 +10,7 @@
   },
   "fixture": {
     "path": "compat/allocator/native-churn-rss-smoke.c",
-    "sha256": "938c012f761d7c58362bb02849eb63f74f55ba15f32e244d2e46ce9ea1fd3f0f",
+    "sha256": "23e7341d7602810edf5d7a38101e018623d1c406d7015320571bf757b4620f53",
     "license": "crabc-authored C11 evidence fixture"
   },
   "execution": {
@@ -50,8 +50,16 @@
     "thread_fanout": {
       "initial_threads": 1,
       "owner_workers_per_fixture_epoch": 1,
-      "handoff_workers_per_fixture_epoch": 1,
-      "peak_threads": 3
+      "post_exit_independent_releasers_per_fixture_epoch": 4,
+      "peak_threads": 5
+    },
+    "post_owner_exit_concurrent_release": {
+      "measurement_classification": "non-promotional-workload-liveness",
+      "performance_qualified": false,
+      "independent_releasers_per_fixture_epoch": 4,
+      "live_blocks_per_fixture_epoch": 85,
+      "release_gate": "all-independent-releasers-ready-before-release",
+      "assignment": "fixed-stride-disjoint-exit-block-indices"
     },
     "watchdog_seconds": 30,
     "rss_threshold_bytes": 16777216
@@ -94,9 +102,9 @@
     "allocator_private_hooks": false,
     "c_backend_fallback": false,
     "ownership_contract": [
-      "A fresh helper frees one selected ordinary C address while the allocating worker remains live.",
-      "Every owner returns normally with six ordinary C blocks still live.",
-      "After pthread_join confirms that owner exit, the initial thread validates malloc_usable_size and frees every surviving C address in a seed-derived order.",
+      "Every owner returns normally with the fixed mixed 85-block image from `tests/fixtures/native_mimalloc_concurrent_post_exit_release_test.c` still live: eighty direct-small blocks plus non-direct-small, medium, large, arena-singleton, and OS-singleton tails.",
+      "After pthread_join confirms owner exit, four fresh independent releasers wait until all are ready, then validate malloc_usable_size and free fixed-stride disjoint subsets of every surviving C address.",
+      "The fixture joins every independent releaser and rejects a retained or aborted valid free, post-warm release-count growth, and post-warm release-state growth.",
       "The fixture never transfers an allocator-private pointer, page, heap, route, or metadata capability."
     ]
   },
@@ -121,6 +129,11 @@
     ],
     "allocator_plateau_observation": "not-exposed-by-production-shadow-c-api",
     "general_production_state_qualification": "incomplete-when-unavailable",
+    "post_owner_exit_concurrent_release": {
+      "measurement_classification": "non-promotional-workload-liveness",
+      "performance_qualified": false,
+      "scope": "fixture-local-count-and-liveness-only"
+    },
     "allocator_metadata": "not-exposed-by-production-shadow-c-api",
     "metadata_high_water_bytes": null,
     "reason": "This selected C ABI has no allocator-statistics or debug-state API. That is an unmet production-boundary implementation and evidence contract, not an environmental prerequisite. The executable state auditor therefore proves only production-observable workload liveness and exact post-churn quiescence. Registry, ledger, PageMap, metadata, arena, abandoned-page, TLD, and Theap high-water and plateau fields remain null rather than being inferred from RSS, Rust internals, a C fallback, or an unsupported proxy."
@@ -155,6 +168,18 @@
       "executions[].executed_fixture_elf.sha256",
       "executions[].executed_fixture_elf.identity",
       "executions[].executed_fixture_elf.pt_interp"
+    ],
+    "required_non_promotional_measurements": [
+      "post_owner_exit_concurrent_release.measurement_classification",
+      "post_owner_exit_concurrent_release.performance_qualified",
+      "post_owner_exit_concurrent_release.independent_releasers_per_epoch",
+      "post_owner_exit_concurrent_release.completed_epochs",
+      "post_owner_exit_concurrent_release.releasers_completed",
+      "post_owner_exit_concurrent_release.successful_frees",
+      "post_owner_exit_concurrent_release.retained_valid_frees",
+      "post_owner_exit_concurrent_release.aborted_valid_frees",
+      "post_owner_exit_concurrent_release.count_growth_after_warmup",
+      "post_owner_exit_concurrent_release.state_growth_after_warmup"
     ],
     "required_high_water": [
       "rss_bytes",
@@ -192,6 +217,7 @@
     "classification": "C ABI compatibility machinery and native allocator evidence",
     "non_claims": [
       "This bounded smoke is not a completed general owner-exit, allocator registry, ledger, PageMap, metadata, arena, abandoned-page, TLD, Theap, or selected-shadow promotion proof.",
+      "Its post-owner-exit concurrent-release fields are fixture-local workload measurements only; they are not performance, soak, stress, allocator-internal-state, backend-promotion, or public-platform qualification.",
       "Its executable state auditor covers only production-observable workload liveness. It reports the general-production allocator-state qualification as incomplete and does not infer registry, ledger, PageMap, metadata, arena, abandoned-page, TLD, or Theap high-water or plateau state from RSS or workload liveness.",
       "It does not replace the separately owned upstream stress, differential, state-auditor, soak, performance, or architecture-ratchet evidence."
     ]

@@ -2,10 +2,17 @@
  * Deterministic selected-shadow allocator smoke.
  *
  * This fixture deliberately uses only production C allocation entry points.
- * Each owner returns normally with six still-live blocks.  The initial thread
- * joins that owner and then validates and frees those exact C addresses; a
- * fresh helper frees one randomly selected live-owner handoff before the
- * owner resumes.  Neither path receives an allocator-private capability.
+ * Each owner returns normally with the same mixed 85-block image as the
+ * independent-releaser C regression
+ * (`tests/fixtures/native_mimalloc_concurrent_post_exit_release_test.c`):
+ * eighty direct-small clients followed by non-direct-small, medium, large,
+ * arena-singleton, and OS-singleton tails.
+ * The initial thread joins that owner, starts four fresh independent releasers,
+ * and opens their common barrier only once each has reached it. Each releaser
+ * validates and frees its fixed-stride disjoint subset of those exact C
+ * addresses. The post-owner-exit release epoch is deliberately isolated from
+ * other ownership transitions so it stays equivalent to the independent-
+ * releaser C regression. It never receives an allocator-private capability.
  */
 #define _POSIX_C_SOURCE 200809L
 
@@ -21,31 +28,43 @@
 #include <unistd.h>
 
 enum {
-    HANDOFF_BLOCK_COUNT = 2,
-    EXIT_BLOCK_COUNT = 6,
+    DIRECT_SMALL_BLOCK_COUNT = 80,
+    NON_DIRECT_SMALL_INDEX = DIRECT_SMALL_BLOCK_COUNT,
+    MEDIUM_INDEX = NON_DIRECT_SMALL_INDEX + 1,
+    LARGE_INDEX = MEDIUM_INDEX + 1,
+    ARENA_SINGLETON_INDEX = LARGE_INDEX + 1,
+    OS_SINGLETON_INDEX = ARENA_SINGLETON_INDEX + 1,
+    EXIT_BLOCK_COUNT = OS_SINGLETON_INDEX + 1,
+    POST_EXIT_RELEASER_COUNT = 4,
 };
 
-static const size_t handoff_requests[HANDOFF_BLOCK_COUNT] = { 37, 53 };
-static const size_t exit_requests[EXIT_BLOCK_COUNT] = {
-    37,
-    1025,
-    64 * 1024,
-    128 * 1024,
-    1024 * 1024,
-    128 * 1024,
-};
+static size_t exit_request(unsigned index)
+{
+    if (index < DIRECT_SMALL_BLOCK_COUNT)
+        return 1024;
+    switch (index) {
+    case NON_DIRECT_SMALL_INDEX:
+        return 1025;
+    case MEDIUM_INDEX:
+        return 64 * 1024;
+    case LARGE_INDEX:
+        return 128 * 1024;
+    case ARENA_SINGLETON_INDEX:
+        return 1024 * 1024;
+    default:
+        return 7;
+    }
+}
 
 struct smoke_state {
     pthread_mutex_t lock;
-    pthread_cond_t changed;
-    unsigned char *handoff[HANDOFF_BLOCK_COUNT];
+    pthread_barrier_t post_exit_release_barrier;
     unsigned char *exiting[EXIT_BLOCK_COUNT];
     uint64_t epoch_seed;
     uint64_t first_fixture_epoch_seed;
     uint64_t last_fixture_epoch_seed;
-    unsigned handoff_slot;
-    unsigned owner_ready;
-    unsigned handoff_complete;
+    unsigned post_exit_release_started;
+    unsigned post_exit_releasers_completed_epoch;
     unsigned failed;
     unsigned fail_code;
     unsigned current_epoch;
@@ -65,18 +84,23 @@ struct smoke_state {
     uint64_t rss_last_quiescent_bytes;
     uint64_t rss_samples;
     uint64_t owner_exits_with_live_blocks;
-    uint64_t successful_cross_thread_handoffs;
-    uint64_t post_exit_initial_thread_frees;
-    uint64_t initial_usable_bytes;
+    uint64_t post_exit_concurrent_release_epochs;
+    uint64_t post_exit_independent_releasers_completed;
+    uint64_t post_exit_concurrent_release_frees;
+    uint64_t post_exit_retained_valid_frees;
+    uint64_t post_exit_aborted_valid_frees;
+    uint64_t post_exit_release_frees_epoch;
     uint64_t state_audit_snapshots;
     uint64_t state_audit_warm_requested_live_bytes;
     uint64_t state_audit_warm_usable_live_bytes;
     uint64_t state_audit_warm_live_blocks;
+    unsigned state_audit_warm_post_exit_release_started;
+    unsigned state_audit_warm_post_exit_releasers_completed_epoch;
+    uint64_t state_audit_warm_post_exit_release_frees_epoch;
 };
 
 static struct smoke_state state = {
     .lock = PTHREAD_MUTEX_INITIALIZER,
-    .changed = PTHREAD_COND_INITIALIZER,
     .failure_subject_index = -1,
 };
 
@@ -171,7 +195,6 @@ static void mark_failed_locked(unsigned code, const char *transition,
         state.failure_transition = transition;
         state.failure_subject_index = subject_index;
     }
-    (void)pthread_cond_broadcast(&state.changed);
 }
 
 static void record_free(size_t request, size_t usable)
@@ -246,128 +269,26 @@ static void mark_failed(unsigned code, const char *transition, int subject_index
 
 static void *owner_worker(void *opaque)
 {
-    unsigned char *local_handoff;
     unsigned index;
 
     (void)opaque;
-    for (index = 0; index < HANDOFF_BLOCK_COUNT; index++) {
-        state.handoff[index] = tracked_malloc(handoff_requests[index]);
-        if (state.handoff[index] == NULL) {
-            mark_failed(10 + index, "owner_handoff_allocation", (int)index);
-            return (void *)(uintptr_t)(10 + index);
-        }
-        fill_block(state.handoff[index], handoff_requests[index],
-            tag_for(state.epoch_seed, index, 1));
-    }
-
-    if (pthread_mutex_lock(&state.lock) != 0) {
-        mark_failed(20, "owner_ready_lock", -1);
-        return (void *)(uintptr_t)20;
-    }
-    state.owner_ready = 1;
-    if (pthread_cond_broadcast(&state.changed) != 0) {
-        mark_failed_locked(21, "owner_ready_broadcast", -1);
-        (void)pthread_mutex_unlock(&state.lock);
-        return (void *)(uintptr_t)21;
-    }
-    while (!state.handoff_complete && !state.failed) {
-        if (pthread_cond_wait(&state.changed, &state.lock) != 0) {
-            mark_failed_locked(22, "owner_handoff_wait", -1);
-            (void)pthread_mutex_unlock(&state.lock);
-            return (void *)(uintptr_t)22;
-        }
-    }
-    if (state.failed) {
-        (void)pthread_mutex_unlock(&state.lock);
-        return (void *)(uintptr_t)23;
-    }
-    local_handoff = state.handoff[(state.handoff_slot + 1) % HANDOFF_BLOCK_COUNT];
-    state.handoff[(state.handoff_slot + 1) % HANDOFF_BLOCK_COUNT] = NULL;
-    if (pthread_mutex_unlock(&state.lock) != 0) {
-        mark_failed(24, "owner_handoff_unlock", -1);
-        return (void *)(uintptr_t)24;
-    }
-
-    if (!block_matches(local_handoff,
-            handoff_requests[(state.handoff_slot + 1) % HANDOFF_BLOCK_COUNT],
-            tag_for(state.epoch_seed,
-                (state.handoff_slot + 1) % HANDOFF_BLOCK_COUNT, 1))
-            || !tracked_free(local_handoff,
-                handoff_requests[(state.handoff_slot + 1) % HANDOFF_BLOCK_COUNT])) {
-        mark_failed(25, "owner_local_handoff_free",
-            (int)((state.handoff_slot + 1) % HANDOFF_BLOCK_COUNT));
-        return (void *)(uintptr_t)25;
-    }
-
     for (index = 0; index < EXIT_BLOCK_COUNT; index++) {
-        if (index + 1 == EXIT_BLOCK_COUNT) {
+        size_t request = exit_request(index);
+
+        if (index == OS_SINGLETON_INDEX) {
             state.exiting[index] = tracked_aligned_allocation(128 * 1024,
-                exit_requests[index]);
+                request);
         } else {
-            state.exiting[index] = tracked_malloc(exit_requests[index]);
+            state.exiting[index] = tracked_malloc(request);
         }
         if (state.exiting[index] == NULL) {
-            mark_failed(30 + index, "owner_exit_allocation", (int)index);
-            return (void *)(uintptr_t)(30 + index);
+            mark_failed(30, "owner_exit_allocation", (int)index);
+            return (void *)(uintptr_t)30;
         }
-        fill_block(state.exiting[index], exit_requests[index],
+        fill_block(state.exiting[index], request,
             tag_for(state.epoch_seed, index, 2));
     }
 
-    return NULL;
-}
-
-static void *handoff_worker(void *opaque)
-{
-    unsigned char *handoff;
-    unsigned slot;
-
-    (void)opaque;
-    if (pthread_mutex_lock(&state.lock) != 0) {
-        mark_failed(40, "handoff_ready_lock", -1);
-        return (void *)(uintptr_t)40;
-    }
-    while (!state.owner_ready && !state.failed) {
-        if (pthread_cond_wait(&state.changed, &state.lock) != 0) {
-            mark_failed_locked(41, "handoff_owner_ready_wait", -1);
-            (void)pthread_mutex_unlock(&state.lock);
-            return (void *)(uintptr_t)41;
-        }
-    }
-    if (state.failed) {
-        (void)pthread_mutex_unlock(&state.lock);
-        return (void *)(uintptr_t)42;
-    }
-    slot = state.handoff_slot;
-    handoff = state.handoff[slot];
-    if (pthread_mutex_unlock(&state.lock) != 0) {
-        mark_failed(43, "handoff_ready_unlock", -1);
-        return (void *)(uintptr_t)43;
-    }
-
-    if (!block_matches(handoff, handoff_requests[slot],
-            tag_for(state.epoch_seed, slot, 1))
-            || !tracked_free(handoff, handoff_requests[slot])) {
-        mark_failed(44, "live_owner_cross_thread_free", (int)slot);
-        return (void *)(uintptr_t)44;
-    }
-
-    if (pthread_mutex_lock(&state.lock) != 0) {
-        mark_failed(45, "handoff_complete_lock", (int)slot);
-        return (void *)(uintptr_t)45;
-    }
-    state.handoff[slot] = NULL;
-    state.handoff_complete = 1;
-    state.successful_cross_thread_handoffs += 1;
-    if (pthread_cond_broadcast(&state.changed) != 0) {
-        mark_failed_locked(46, "handoff_complete_broadcast", (int)slot);
-        (void)pthread_mutex_unlock(&state.lock);
-        return (void *)(uintptr_t)46;
-    }
-    if (pthread_mutex_unlock(&state.lock) != 0) {
-        mark_failed(47, "handoff_complete_unlock", (int)slot);
-        return (void *)(uintptr_t)47;
-    }
     return NULL;
 }
 
@@ -384,53 +305,185 @@ static int prepare_epoch(unsigned epoch, uint64_t epoch_seed)
     state.fail_code = 0;
     state.failure_transition = NULL;
     state.failure_subject_index = -1;
-    if (state.live_blocks != 1) {
+    if (state.live_blocks != 0) {
         mark_failed_locked(50, "pre_epoch_liveness", -1);
         (void)pthread_mutex_unlock(&state.lock);
         return 0;
     }
-    memset(state.handoff, 0, sizeof(state.handoff));
     memset(state.exiting, 0, sizeof(state.exiting));
-    state.handoff_slot = (unsigned)(next_random(&epoch_seed) % HANDOFF_BLOCK_COUNT);
-    state.owner_ready = 0;
-    state.handoff_complete = 0;
+    state.post_exit_release_started = 0;
+    state.post_exit_releasers_completed_epoch = 0;
+    state.post_exit_release_frees_epoch = 0;
     observe_rss_locked();
     return pthread_mutex_unlock(&state.lock) == 0;
 }
 
-static int free_exiting_blocks_from_initial_thread(uint64_t *random_state)
+static void mark_post_exit_valid_free_failure(unsigned code, const char *transition,
+    unsigned index, int retained, int aborted)
 {
-    unsigned order[EXIT_BLOCK_COUNT] = { 0, 1, 2, 3, 4, 5 };
-    unsigned position;
+    if (pthread_mutex_lock(&state.lock) != 0)
+        return;
+    if (retained)
+        state.post_exit_retained_valid_frees += 1;
+    if (aborted)
+        state.post_exit_aborted_valid_frees += 1;
+    mark_failed_locked(code, transition, (int)index);
+    (void)pthread_mutex_unlock(&state.lock);
+}
 
-    for (position = EXIT_BLOCK_COUNT; position > 1; position--) {
-        unsigned other = (unsigned)(next_random(random_state) % position);
-        unsigned temporary = order[position - 1];
+static void *post_exit_releaser_worker(void *opaque)
+{
+    unsigned releaser = (unsigned)(uintptr_t)opaque;
+    unsigned index;
 
-        order[position - 1] = order[other];
-        order[other] = temporary;
+    if (releaser >= POST_EXIT_RELEASER_COUNT) {
+        mark_failed(100, "post_exit_releaser_index", (int)releaser);
+        return (void *)(uintptr_t)100;
     }
-    for (position = 0; position < EXIT_BLOCK_COUNT; position++) {
-        unsigned index = order[position];
-        unsigned char *block = state.exiting[index];
+    {
+        int barrier = pthread_barrier_wait(&state.post_exit_release_barrier);
 
-        if (!block_matches(block, exit_requests[index],
-                tag_for(state.epoch_seed, index, 2))
-                || !tracked_free(block, exit_requests[index])) {
-            mark_failed(70 + index, "post_exit_initial_thread_free", (int)index);
-            return 0;
+        if (barrier != 0 && barrier != PTHREAD_BARRIER_SERIAL_THREAD) {
+            mark_failed(101, "post_exit_releaser_start_barrier", (int)releaser);
+            return (void *)(uintptr_t)101;
+        }
+    }
+
+    for (index = releaser; index < EXIT_BLOCK_COUNT;
+            index += POST_EXIT_RELEASER_COUNT) {
+        unsigned char *block;
+        size_t request = exit_request(index);
+
+        if (pthread_mutex_lock(&state.lock) != 0) {
+            mark_failed(102, "post_exit_releaser_claim_lock", (int)releaser);
+            return (void *)(uintptr_t)102;
+        }
+        if (state.failed) {
+            (void)pthread_mutex_unlock(&state.lock);
+            return (void *)(uintptr_t)103;
+        }
+        block = state.exiting[index];
+        if (block == NULL) {
+            state.post_exit_aborted_valid_frees += 1;
+            mark_failed_locked(104, "post_exit_concurrent_free_aborted", (int)index);
+            (void)pthread_mutex_unlock(&state.lock);
+            return (void *)(uintptr_t)104;
+        }
+        if (pthread_mutex_unlock(&state.lock) != 0) {
+            mark_failed(105, "post_exit_releaser_claim_unlock", (int)index);
+            return (void *)(uintptr_t)105;
+        }
+        if (!block_matches(block, request,
+                tag_for(state.epoch_seed, index, 2))) {
+            mark_post_exit_valid_free_failure(106,
+                "post_exit_concurrent_valid_free_retained", index, 1, 0);
+            return (void *)(uintptr_t)106;
+        }
+        if (!tracked_free(block, request)) {
+            mark_post_exit_valid_free_failure(107,
+                "post_exit_concurrent_valid_free_retained", index, 1, 0);
+            return (void *)(uintptr_t)107;
+        }
+        if (pthread_mutex_lock(&state.lock) != 0) {
+            mark_failed(108, "post_exit_releaser_accounting_lock", (int)index);
+            return (void *)(uintptr_t)108;
+        }
+        if (state.exiting[index] != block) {
+            state.post_exit_aborted_valid_frees += 1;
+            mark_failed_locked(109, "post_exit_concurrent_free_state", (int)index);
+            (void)pthread_mutex_unlock(&state.lock);
+            return (void *)(uintptr_t)109;
         }
         state.exiting[index] = NULL;
-        if (pthread_mutex_lock(&state.lock) != 0) {
-            mark_failed(76, "post_exit_accounting_lock", (int)index);
-            return 0;
-        }
-        state.post_exit_initial_thread_frees += 1;
+        state.post_exit_concurrent_release_frees += 1;
+        state.post_exit_release_frees_epoch += 1;
         observe_rss_locked();
         if (pthread_mutex_unlock(&state.lock) != 0) {
-            mark_failed(77, "post_exit_accounting_unlock", (int)index);
+            mark_failed(110, "post_exit_releaser_accounting_unlock", (int)index);
+            return (void *)(uintptr_t)110;
+        }
+    }
+
+    if (pthread_mutex_lock(&state.lock) != 0) {
+        mark_failed(111, "post_exit_releaser_completion_lock", (int)releaser);
+        return (void *)(uintptr_t)111;
+    }
+    if (state.failed) {
+        (void)pthread_mutex_unlock(&state.lock);
+        return (void *)(uintptr_t)112;
+    }
+    state.post_exit_releasers_completed_epoch += 1;
+    state.post_exit_independent_releasers_completed += 1;
+    if (pthread_mutex_unlock(&state.lock) != 0) {
+        mark_failed(113, "post_exit_releaser_completion_unlock", (int)releaser);
+        return (void *)(uintptr_t)113;
+    }
+    return NULL;
+}
+
+static int run_post_exit_concurrent_release(void)
+{
+    pthread_t releasers[POST_EXIT_RELEASER_COUNT];
+    unsigned created = 0;
+    unsigned releaser;
+    void *result = (void *)(uintptr_t)1;
+
+    for (releaser = 0; releaser < POST_EXIT_RELEASER_COUNT; releaser++) {
+        if (pthread_create(&releasers[releaser], NULL, post_exit_releaser_worker,
+                (void *)(uintptr_t)releaser) != 0) {
+            mark_failed(120, "post_exit_releaser_create", (int)releaser);
             return 0;
         }
+        created += 1;
+    }
+    {
+        int barrier = pthread_barrier_wait(&state.post_exit_release_barrier);
+
+        if (barrier != 0 && barrier != PTHREAD_BARRIER_SERIAL_THREAD) {
+            mark_failed(121, "post_exit_release_start_barrier", -1);
+            goto join_releasers;
+        }
+    }
+    if (pthread_mutex_lock(&state.lock) != 0) {
+        mark_failed(122, "post_exit_release_start_lock", -1);
+        goto join_releasers;
+    }
+    state.post_exit_release_started = 1;
+    if (pthread_mutex_unlock(&state.lock) != 0) {
+        mark_failed(123, "post_exit_release_start_unlock", -1);
+        goto join_releasers;
+    }
+
+join_releasers:
+    for (releaser = 0; releaser < created; releaser++) {
+        result = (void *)(uintptr_t)1;
+        if (pthread_join(releasers[releaser], &result) != 0) {
+            mark_failed(124, "post_exit_releaser_join", (int)releaser);
+            continue;
+        }
+        if (result != NULL)
+            mark_failed((unsigned)(uintptr_t)result, "post_exit_releaser_exit", (int)releaser);
+    }
+    if (created != POST_EXIT_RELEASER_COUNT)
+        return 0;
+    if (pthread_mutex_lock(&state.lock) != 0) {
+        mark_failed(125, "post_exit_release_completion_lock", -1);
+        return 0;
+    }
+    if (state.failed
+            || state.post_exit_releasers_completed_epoch != POST_EXIT_RELEASER_COUNT
+            || state.post_exit_release_frees_epoch != EXIT_BLOCK_COUNT
+            || state.post_exit_retained_valid_frees != 0
+            || state.post_exit_aborted_valid_frees != 0) {
+        if (!state.failed)
+            mark_failed_locked(126, "post_exit_concurrent_release_completion", -1);
+        (void)pthread_mutex_unlock(&state.lock);
+        return 0;
+    }
+    state.post_exit_concurrent_release_epochs += 1;
+    if (pthread_mutex_unlock(&state.lock) != 0) {
+        mark_failed(127, "post_exit_release_completion_unlock", -1);
+        return 0;
     }
     return 1;
 }
@@ -438,7 +491,6 @@ static int free_exiting_blocks_from_initial_thread(uint64_t *random_state)
 static int run_epoch(uint64_t *random_state, unsigned epoch)
 {
     pthread_t owner;
-    pthread_t handoff;
     void *result = (void *)(uintptr_t)1;
     uint64_t epoch_seed = next_random(random_state);
     int join_status;
@@ -447,21 +499,6 @@ static int run_epoch(uint64_t *random_state, unsigned epoch)
         return 0;
     if (pthread_create(&owner, NULL, owner_worker, NULL) != 0) {
         mark_failed(58, "owner_thread_create", -1);
-        return 0;
-    }
-    if (pthread_create(&handoff, NULL, handoff_worker, NULL) != 0) {
-        mark_failed(60, "handoff_thread_create", -1);
-        (void)pthread_join(owner, &result);
-        return 0;
-    }
-    join_status = pthread_join(handoff, &result);
-    if (join_status != 0) {
-        mark_failed(61, "handoff_thread_join", -1);
-        return 0;
-    }
-    if (result != NULL) {
-        if (!state.failed)
-            mark_failed((unsigned)(uintptr_t)result, "handoff_worker_exit", -1);
         return 0;
     }
     result = (void *)(uintptr_t)2;
@@ -489,7 +526,7 @@ static int run_epoch(uint64_t *random_state, unsigned epoch)
         mark_failed(64, "owner_exit_accounting_unlock", -1);
         return 0;
     }
-    return free_exiting_blocks_from_initial_thread(random_state);
+    return run_post_exit_concurrent_release();
 }
 
 static int audit_quiescent_epoch(unsigned epoch)
@@ -502,21 +539,23 @@ static int audit_quiescent_epoch(unsigned epoch)
         mark_failed(80, "quiescent_state_audit_lock", -1);
         return 0;
     }
-    for (index = 0; index < HANDOFF_BLOCK_COUNT; index++) {
-        if (state.handoff[index] != NULL)
-            pointers_clear = 0;
-    }
     for (index = 0; index < EXIT_BLOCK_COUNT; index++) {
         if (state.exiting[index] != NULL)
             pointers_clear = 0;
     }
-    if (state.failed || !pointers_clear || state.requested_live != 79
-            || state.usable_live != state.initial_usable_bytes
-            || state.live_blocks != 1 || !state.owner_ready
-            || !state.handoff_complete
+    if (state.failed || !pointers_clear || state.requested_live != 0
+            || state.usable_live != 0 || state.live_blocks != 0
             || state.owner_exits_with_live_blocks != epoch
-            || state.successful_cross_thread_handoffs != epoch
-            || state.post_exit_initial_thread_frees != (uint64_t)epoch * EXIT_BLOCK_COUNT) {
+            || state.post_exit_concurrent_release_epochs != epoch
+            || state.post_exit_independent_releasers_completed
+                != (uint64_t)epoch * POST_EXIT_RELEASER_COUNT
+            || state.post_exit_concurrent_release_frees
+                != (uint64_t)epoch * EXIT_BLOCK_COUNT
+            || state.post_exit_retained_valid_frees != 0
+            || state.post_exit_aborted_valid_frees != 0
+            || !state.post_exit_release_started
+            || state.post_exit_releasers_completed_epoch != POST_EXIT_RELEASER_COUNT
+            || state.post_exit_release_frees_epoch != EXIT_BLOCK_COUNT) {
         mark_failed_locked(81, "quiescent_state_audit", -1);
         (void)pthread_mutex_unlock(&state.lock);
         return 0;
@@ -525,10 +564,27 @@ static int audit_quiescent_epoch(unsigned epoch)
         state.state_audit_warm_requested_live_bytes = state.requested_live;
         state.state_audit_warm_usable_live_bytes = state.usable_live;
         state.state_audit_warm_live_blocks = state.live_blocks;
+        state.state_audit_warm_post_exit_release_started = state.post_exit_release_started;
+        state.state_audit_warm_post_exit_releasers_completed_epoch
+            = state.post_exit_releasers_completed_epoch;
+        state.state_audit_warm_post_exit_release_frees_epoch
+            = state.post_exit_release_frees_epoch;
     } else if (state.requested_live != state.state_audit_warm_requested_live_bytes
             || state.usable_live != state.state_audit_warm_usable_live_bytes
             || state.live_blocks != state.state_audit_warm_live_blocks) {
         mark_failed_locked(82, "post_warm_liveness_plateau", -1);
+        (void)pthread_mutex_unlock(&state.lock);
+        return 0;
+    } else if (state.post_exit_releasers_completed_epoch
+                != state.state_audit_warm_post_exit_releasers_completed_epoch
+            || state.post_exit_release_frees_epoch
+                != state.state_audit_warm_post_exit_release_frees_epoch) {
+        mark_failed_locked(83, "post_warm_post_exit_concurrent_release_count_growth", -1);
+        (void)pthread_mutex_unlock(&state.lock);
+        return 0;
+    } else if (state.post_exit_release_started
+            != state.state_audit_warm_post_exit_release_started) {
+        mark_failed_locked(84, "post_warm_post_exit_concurrent_release_state_growth", -1);
         (void)pthread_mutex_unlock(&state.lock);
         return 0;
     }
@@ -543,12 +599,14 @@ static int audit_quiescent_epoch(unsigned epoch)
 static const char *failure_domain(unsigned code)
 {
     if ((code >= 20 && code <= 24) || (code >= 40 && code <= 43)
-            || (code >= 45 && code <= 47)
             || (code >= 58 && code <= 64) || code == 76 || code == 77
-            || code == 80)
+            || code == 80 || code == 101 || code == 102 || code == 103
+            || code == 105 || code == 108 || (code >= 110 && code <= 128)
+            || code == 130)
         return "thread_runtime";
     if ((code >= 10 && code <= 39) || code == 44
-            || (code >= 70 && code <= 75))
+            || (code >= 70 && code <= 75) || code == 104
+            || code == 106 || code == 107 || code == 109)
         return "allocator_runtime";
     return "fixture_invariant";
 }
@@ -607,11 +665,13 @@ int main(int argc, char **argv)
     uint64_t random_state;
     unsigned cycles;
     unsigned cycle;
-    unsigned char *initial;
 
     if (argc != 3 || !parse_u64(argv[1], &seed) || !parse_unsigned(argv[2], &cycles))
         return 64;
     random_state = seed == 0 ? UINT64_C(0x9e3779b97f4a7c15) : seed;
+    if (pthread_barrier_init(&state.post_exit_release_barrier, NULL,
+            POST_EXIT_RELEASER_COUNT + 1) != 0)
+        return 74;
     if (pthread_mutex_lock(&state.lock) != 0)
         return 65;
     state.rss_initial_bytes = read_rss_bytes();
@@ -620,11 +680,6 @@ int main(int argc, char **argv)
     if (pthread_mutex_unlock(&state.lock) != 0)
         return 66;
 
-    initial = tracked_malloc(79);
-    if (initial == NULL)
-        return 67;
-    state.initial_usable_bytes = malloc_usable_size(initial);
-    fill_block(initial, 79, tag_for(seed, 0, 3));
     for (cycle = 0; cycle < cycles; cycle++) {
         if (!run_epoch(&random_state, cycle + 1)) {
             print_epoch_failure(seed, cycles, cycle);
@@ -635,8 +690,8 @@ int main(int argc, char **argv)
             return 68;
         }
     }
-    if (!block_matches(initial, 79, tag_for(seed, 0, 3)) || !tracked_free(initial, 79))
-        return 69;
+    if (pthread_barrier_destroy(&state.post_exit_release_barrier) != 0)
+        return 74;
 
     if (pthread_mutex_lock(&state.lock) != 0)
         return 70;
@@ -655,12 +710,21 @@ int main(int argc, char **argv)
            "\"last_fixture_epoch_seed\":%" PRIu64 ","
            "\"thread_fanout\":{\"initial_threads\":1,"
            "\"owner_workers_per_epoch\":1,"
-           "\"handoff_workers_per_epoch\":1,"
-           "\"worker_threads_per_epoch\":2,\"peak_threads\":3,"
+           "\"post_exit_independent_releasers_per_epoch\":4,"
+           "\"worker_threads_per_epoch\":5,\"peak_threads\":5,"
            "\"worker_threads_created\":%u},"
            "\"owner_exits_with_live_blocks\":%" PRIu64 ","
-           "\"successful_cross_thread_handoffs\":%" PRIu64 ","
-           "\"post_exit_initial_thread_frees\":%" PRIu64 ","
+           "\"post_owner_exit_concurrent_release\":{"
+           "\"measurement_classification\":\"non-promotional-workload-liveness\","
+           "\"performance_qualified\":false,"
+           "\"independent_releasers_per_epoch\":4,"
+           "\"completed_epochs\":%" PRIu64 ","
+           "\"releasers_completed\":%" PRIu64 ","
+           "\"successful_frees\":%" PRIu64 ","
+           "\"retained_valid_frees\":%" PRIu64 ","
+           "\"aborted_valid_frees\":%" PRIu64 ","
+           "\"count_growth_after_warmup\":false,"
+           "\"state_growth_after_warmup\":false},"
            "\"requested_bytes_total\":%" PRIu64 ","
            "\"requested_bytes_live_final\":%" PRIu64 ","
            "\"requested_bytes_live_high_water\":%" PRIu64 ","
@@ -699,19 +763,31 @@ int main(int argc, char **argv)
            "\"snapshot_count\":%" PRIu64 ",\"warmup_epoch\":1,"
            "\"post_warm_snapshot_count\":%u,"
            "\"plateau_after_warmup\":true},"
+           "\"post_owner_exit_concurrent_release\":{\"status\":\"passed\","
+           "\"measurement_classification\":\"non-promotional-workload-liveness\","
+           "\"performance_qualified\":false,"
+           "\"snapshot_count\":%" PRIu64 ",\"warmup_epoch\":1,"
+           "\"post_warm_snapshot_count\":%u,"
+           "\"count_growth_after_warmup\":false,"
+           "\"state_growth_after_warmup\":false},"
            "\"allocator_state\":{\"status\":\"unavailable\","
            "\"observation\":\"not-exposed-by-production-shadow-c-api\"}}}\n",
         seed, cycles, cycles, state.first_fixture_epoch_seed,
-        state.last_fixture_epoch_seed, cycles * 2,
+        state.last_fixture_epoch_seed, cycles * (1 + POST_EXIT_RELEASER_COUNT),
         state.owner_exits_with_live_blocks,
-        state.successful_cross_thread_handoffs,
-        state.post_exit_initial_thread_frees, state.requested_total,
+        state.post_exit_concurrent_release_epochs,
+        state.post_exit_independent_releasers_completed,
+        state.post_exit_concurrent_release_frees,
+        state.post_exit_retained_valid_frees,
+        state.post_exit_aborted_valid_frees,
+        state.requested_total,
         state.requested_live, state.requested_live_high_water,
         state.usable_live, state.usable_live_high_water, state.live_blocks,
         state.live_blocks_high_water, state.rss_initial_bytes,
         state.rss_final_bytes, state.rss_high_water_bytes,
         state.rss_warm_quiescent_bytes, state.rss_last_quiescent_bytes,
         state.rss_samples,
+        state.state_audit_snapshots, cycles - 1,
         state.state_audit_snapshots, cycles - 1);
     return pthread_mutex_unlock(&state.lock) == 0 ? 0 : 72;
 }

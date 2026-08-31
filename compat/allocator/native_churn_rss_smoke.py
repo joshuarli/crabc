@@ -11,12 +11,11 @@ loader boundary, after building the debug libc with ``native-mimalloc-shadow``:
       python3 compat/allocator/native_churn_rss_smoke.py
 
 It builds one C11 fixture through the installed ``crabc-cc`` driver.  The
-fixture calls only standard production C allocation APIs, verifies one
-cross-thread free while the source owner remains live, and then has the
-initial thread free each worker-owned allocation after that worker has exited.
-The report distinguishes observable RSS and workload liveness from allocator
-internal state, which is deliberately not exposed through the production
-shadow C ABI and therefore is never inferred from private test hooks.  An
+fixture calls only standard production C allocation APIs and has four fresh
+independent releasers free fixed-stride disjoint allocations after the owner
+has exited.  The report distinguishes observable RSS and workload liveness
+from allocator internal state, which is deliberately not exposed through the
+production shadow C ABI and therefore is never inferred from private test hooks.  An
 unavailable registry, ledger, PageMap, metadata, arena, TLD, or Theap
 observation keeps the general-production state qualification incomplete even
 when the C workload itself passes.
@@ -44,13 +43,16 @@ CANONICAL_LOADER = Path("/lib/ld-crabc-aarch64.so.1")
 DEFAULT_REPORT = ROOT / "compat/reports/allocator/native-churn-rss-smoke-latest.json"
 NEEDED_LIBRARY = re.compile(r"Shared library: \[(?P<name>[^]]+)\]")
 UINT64_MAX = (1 << 64) - 1
-FIXTURE_RANDOM_UPDATES_PER_EPOCH = 6
+FIXTURE_RANDOM_UPDATES_PER_EPOCH = 1
+POST_OWNER_EXIT_RELEASER_COUNT = 4
+POST_OWNER_EXIT_LIVE_BLOCK_COUNT = 85
+POST_OWNER_EXIT_MEASUREMENT_CLASSIFICATION = "non-promotional-workload-liveness"
 THREAD_FANOUT = {
     "initial_threads": 1,
     "owner_workers_per_epoch": 1,
-    "handoff_workers_per_epoch": 1,
-    "worker_threads_per_epoch": 2,
-    "peak_threads": 3,
+    "post_exit_independent_releasers_per_epoch": POST_OWNER_EXIT_RELEASER_COUNT,
+    "worker_threads_per_epoch": 1 + POST_OWNER_EXIT_RELEASER_COUNT,
+    "peak_threads": 1 + POST_OWNER_EXIT_RELEASER_COUNT,
 }
 ALLOCATOR_STATE_FIELDS = {
     "live_owner_registry": (
@@ -150,6 +152,18 @@ REQUIRED_ARTIFACT_ATTESTATION_FIELDS = (
     "executions[].executed_fixture_elf.sha256",
     "executions[].executed_fixture_elf.identity",
     "executions[].executed_fixture_elf.pt_interp",
+)
+REQUIRED_NON_PROMOTIONAL_MEASUREMENT_FIELDS = (
+    "post_owner_exit_concurrent_release.measurement_classification",
+    "post_owner_exit_concurrent_release.performance_qualified",
+    "post_owner_exit_concurrent_release.independent_releasers_per_epoch",
+    "post_owner_exit_concurrent_release.completed_epochs",
+    "post_owner_exit_concurrent_release.releasers_completed",
+    "post_owner_exit_concurrent_release.successful_frees",
+    "post_owner_exit_concurrent_release.retained_valid_frees",
+    "post_owner_exit_concurrent_release.aborted_valid_frees",
+    "post_owner_exit_concurrent_release.count_growth_after_warmup",
+    "post_owner_exit_concurrent_release.state_growth_after_warmup",
 )
 
 
@@ -319,6 +333,38 @@ def fixture_epoch_seeds(seed: int, cycles: int) -> list[int]:
     return result
 
 
+def expected_post_owner_exit_concurrent_release(cycles: int) -> dict[str, Any]:
+    """Return the fixture-local, non-promotional post-owner-exit measurement."""
+
+    return {
+        "measurement_classification": POST_OWNER_EXIT_MEASUREMENT_CLASSIFICATION,
+        "performance_qualified": False,
+        "independent_releasers_per_epoch": POST_OWNER_EXIT_RELEASER_COUNT,
+        "completed_epochs": cycles,
+        "releasers_completed": cycles * POST_OWNER_EXIT_RELEASER_COUNT,
+        "successful_frees": cycles * POST_OWNER_EXIT_LIVE_BLOCK_COUNT,
+        "retained_valid_frees": 0,
+        "aborted_valid_frees": 0,
+        "count_growth_after_warmup": False,
+        "state_growth_after_warmup": False,
+    }
+
+
+def expected_post_owner_exit_concurrent_release_audit(cycles: int) -> dict[str, Any]:
+    """Return the fixed post-warm audit for one completed release epoch sequence."""
+
+    return {
+        "status": "passed",
+        "measurement_classification": POST_OWNER_EXIT_MEASUREMENT_CLASSIFICATION,
+        "performance_qualified": False,
+        "snapshot_count": cycles,
+        "warmup_epoch": 1,
+        "post_warm_snapshot_count": cycles - 1,
+        "count_growth_after_warmup": False,
+        "state_growth_after_warmup": False,
+    }
+
+
 def exact_slope(first: int, last: int, intervals: int) -> dict[str, Any]:
     """Report an exact endpoint delta plus its derived per-epoch slope."""
 
@@ -438,10 +484,19 @@ def validate_contract(contract: Mapping[str, Any]) -> dict[str, Any]:
     if require_object(execution, "thread_fanout") != {
         "initial_threads": 1,
         "owner_workers_per_fixture_epoch": 1,
-        "handoff_workers_per_fixture_epoch": 1,
-        "peak_threads": 3,
+        "post_exit_independent_releasers_per_fixture_epoch": POST_OWNER_EXIT_RELEASER_COUNT,
+        "peak_threads": 1 + POST_OWNER_EXIT_RELEASER_COUNT,
     }:
         raise SmokeError("thread-fanout contract changed")
+    if require_object(execution, "post_owner_exit_concurrent_release") != {
+        "measurement_classification": POST_OWNER_EXIT_MEASUREMENT_CLASSIFICATION,
+        "performance_qualified": False,
+        "independent_releasers_per_fixture_epoch": POST_OWNER_EXIT_RELEASER_COUNT,
+        "live_blocks_per_fixture_epoch": POST_OWNER_EXIT_LIVE_BLOCK_COUNT,
+        "release_gate": "all-independent-releasers-ready-before-release",
+        "assignment": "fixed-stride-disjoint-exit-block-indices",
+    }:
+        raise SmokeError("post-owner-exit concurrent-release contract changed")
 
     fingerprint = require_object(attestation, "cargo_fingerprint")
     if require_string(fingerprint, "directory") != "target/debug/.fingerprint":
@@ -502,6 +557,12 @@ def validate_contract(contract: Mapping[str, Any]) -> dict[str, Any]:
         raise SmokeError("production liveness state-auditor scope changed")
     if observation.get("general_production_state_qualification") != "incomplete-when-unavailable":
         raise SmokeError("general-production state qualification changed")
+    if observation.get("post_owner_exit_concurrent_release") != {
+        "measurement_classification": POST_OWNER_EXIT_MEASUREMENT_CLASSIFICATION,
+        "performance_qualified": False,
+        "scope": "fixture-local-count-and-liveness-only",
+    }:
+        raise SmokeError("post-owner-exit concurrent-release observation boundary changed")
     if require_string_list(failure_contract, "kinds") != [
         "harness",
         "prerequisite",
@@ -523,6 +584,10 @@ def validate_contract(contract: Mapping[str, Any]) -> dict[str, Any]:
         report_contract, "required_artifact_attestation"
     ) != list(REQUIRED_ARTIFACT_ATTESTATION_FIELDS):
         raise SmokeError("required artifact-attestation report fields changed")
+    if require_string_list(
+        report_contract, "required_non_promotional_measurements"
+    ) != list(REQUIRED_NON_PROMOTIONAL_MEASUREMENT_FIELDS):
+        raise SmokeError("required non-promotional measurement report fields changed")
 
     source = fixture_path.read_text(encoding="utf-8")
     for identifier in boundary["forbidden_allocator_identifiers"]:
@@ -533,8 +598,11 @@ def validate_contract(contract: Mapping[str, Any]) -> dict[str, Any]:
             raise SmokeError(f"fixture omits required production allocation API: {identifier}")
     required_semantics = [
         "owner_exits_with_live_blocks",
-        "successful_cross_thread_handoffs",
-        "post_exit_initial_thread_frees",
+        "post_owner_exit_concurrent_release",
+        "DIRECT_SMALL_BLOCK_COUNT = 80",
+        "POST_EXIT_RELEASER_COUNT",
+        "index += POST_EXIT_RELEASER_COUNT",
+        "pthread_barrier_wait",
         "not-exposed-by-production-shadow-c-api",
     ]
     if any(marker not in source for marker in required_semantics):
@@ -1026,8 +1094,7 @@ def parse_fixture_output(
         "first_fixture_epoch_seed": inner_seeds[0],
         "last_fixture_epoch_seed": inner_seeds[-1],
         "owner_exits_with_live_blocks": cycles,
-        "successful_cross_thread_handoffs": cycles,
-        "post_exit_initial_thread_frees": cycles * 6,
+        "post_owner_exit_concurrent_release": expected_post_owner_exit_concurrent_release(cycles),
         "requested_bytes_live_final": 0,
         "usable_bytes_live_final": 0,
         "live_blocks_final": 0,
@@ -1097,6 +1164,9 @@ def parse_fixture_output(
             "post_warm_snapshot_count": cycles - 1,
             "plateau_after_warmup": True,
         },
+        "post_owner_exit_concurrent_release": expected_post_owner_exit_concurrent_release_audit(
+            cycles
+        ),
         "allocator_state": {
             "status": "unavailable",
             "observation": ALLOCATOR_STATE_OBSERVATION,
@@ -1448,6 +1518,40 @@ def high_water(executions: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
     if not all(isinstance(audit, dict) for audit in workload_audits):
         raise SmokeError("fixture workload-liveness audit shape changed")
     typed_workload_audits = [audit for audit in workload_audits if isinstance(audit, dict)]
+    concurrent_release_audits = [
+        auditor.get("post_owner_exit_concurrent_release") for auditor in typed_auditors
+    ]
+    if not all(isinstance(audit, dict) for audit in concurrent_release_audits):
+        raise SmokeError("fixture post-owner-exit concurrent-release audit shape changed")
+    typed_concurrent_release_audits = [
+        audit for audit in concurrent_release_audits if isinstance(audit, dict)
+    ]
+    concurrent_release_measurements = [
+        result.get("post_owner_exit_concurrent_release") for result in typed_results
+    ]
+    if not all(isinstance(measurement, dict) for measurement in concurrent_release_measurements):
+        raise SmokeError("fixture post-owner-exit concurrent-release measurement changed shape")
+    typed_concurrent_release_measurements = [
+        measurement
+        for measurement in concurrent_release_measurements
+        if isinstance(measurement, dict)
+    ]
+    for result, audit, measurement in zip(
+        typed_results, typed_concurrent_release_audits, typed_concurrent_release_measurements
+    ):
+        cycles = result.get("cycles")
+        if isinstance(cycles, bool) or not isinstance(cycles, int):
+            raise SmokeError("fixture cycle count changed shape during aggregation")
+        if audit != expected_post_owner_exit_concurrent_release_audit(cycles):
+            raise AllocatorLivenessError(
+                "fixture post-owner-exit concurrent-release audit is not the "
+                "reviewed non-growth result"
+            )
+        if measurement != expected_post_owner_exit_concurrent_release(cycles):
+            raise AllocatorLivenessError(
+                "fixture post-owner-exit concurrent-release measurement is not the "
+                "reviewed non-promotional complete-free result"
+            )
     within_process_slopes = [fixture_rss_slope(result) for result in typed_results]
     high_water_samples = [result["rss_high_water_bytes"] for result in typed_results]
     across_process_slope = exact_slope(
@@ -1477,6 +1581,26 @@ def high_water(executions: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
                     for audit in typed_workload_audits
                 ),
             },
+            "post_owner_exit_concurrent_release": {
+                "status": "passed",
+                "measurement_classification": POST_OWNER_EXIT_MEASUREMENT_CLASSIFICATION,
+                "performance_qualified": False,
+                "snapshot_count": sum(
+                    audit["snapshot_count"] for audit in typed_concurrent_release_audits
+                ),
+                "post_warm_snapshot_count": sum(
+                    audit["post_warm_snapshot_count"]
+                    for audit in typed_concurrent_release_audits
+                ),
+                "count_growth_after_warmup": any(
+                    audit["count_growth_after_warmup"] is True
+                    for audit in typed_concurrent_release_audits
+                ),
+                "state_growth_after_warmup": any(
+                    audit["state_growth_after_warmup"] is True
+                    for audit in typed_concurrent_release_audits
+                ),
+            },
             "allocator_state": {
                 "status": "unavailable",
                 "observation": ALLOCATOR_STATE_OBSERVATION,
@@ -1487,6 +1611,39 @@ def high_water(executions: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
             **THREAD_FANOUT,
             "total_worker_threads": sum(
                 result["thread_fanout"]["worker_threads_created"] for result in typed_results
+            ),
+        },
+        "post_owner_exit_concurrent_release": {
+            "measurement_classification": POST_OWNER_EXIT_MEASUREMENT_CLASSIFICATION,
+            "performance_qualified": False,
+            "independent_releasers_per_epoch": POST_OWNER_EXIT_RELEASER_COUNT,
+            "completed_epochs": sum(
+                measurement["completed_epochs"]
+                for measurement in typed_concurrent_release_measurements
+            ),
+            "releasers_completed": sum(
+                measurement["releasers_completed"]
+                for measurement in typed_concurrent_release_measurements
+            ),
+            "successful_frees": sum(
+                measurement["successful_frees"]
+                for measurement in typed_concurrent_release_measurements
+            ),
+            "retained_valid_frees": sum(
+                measurement["retained_valid_frees"]
+                for measurement in typed_concurrent_release_measurements
+            ),
+            "aborted_valid_frees": sum(
+                measurement["aborted_valid_frees"]
+                for measurement in typed_concurrent_release_measurements
+            ),
+            "count_growth_after_warmup": any(
+                measurement["count_growth_after_warmup"] is True
+                for measurement in typed_concurrent_release_measurements
+            ),
+            "state_growth_after_warmup": any(
+                measurement["state_growth_after_warmup"] is True
+                for measurement in typed_concurrent_release_measurements
             ),
         },
         "rss_slopes": {
@@ -1564,6 +1721,12 @@ def report_configuration(
             "total_worker_threads": (
                 cycles * epochs * THREAD_FANOUT["worker_threads_per_epoch"]
             ),
+        },
+        "post_owner_exit_concurrent_release": {
+            "measurement_classification": POST_OWNER_EXIT_MEASUREMENT_CLASSIFICATION,
+            "performance_qualified": False,
+            "independent_releasers_per_fixture_epoch": POST_OWNER_EXIT_RELEASER_COUNT,
+            "live_blocks_per_fixture_epoch": POST_OWNER_EXIT_LIVE_BLOCK_COUNT,
         },
         "watchdog_seconds": watchdog_seconds,
         "rss_threshold_bytes": rss_threshold_bytes,

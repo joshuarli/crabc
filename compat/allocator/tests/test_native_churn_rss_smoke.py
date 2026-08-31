@@ -29,8 +29,18 @@ def fixture_result(seed: int = 91, cycles: int = 3) -> dict[str, object]:
         "cycles": cycles,
         "completed_epochs": cycles,
         "owner_exits_with_live_blocks": cycles,
-        "successful_cross_thread_handoffs": cycles,
-        "post_exit_initial_thread_frees": cycles * 6,
+        "post_owner_exit_concurrent_release": {
+            "measurement_classification": "non-promotional-workload-liveness",
+            "performance_qualified": False,
+            "independent_releasers_per_epoch": 4,
+            "completed_epochs": cycles,
+            "releasers_completed": cycles * 4,
+            "successful_frees": cycles * HARNESS.POST_OWNER_EXIT_LIVE_BLOCK_COUNT,
+            "retained_valid_frees": 0,
+            "aborted_valid_frees": 0,
+            "count_growth_after_warmup": False,
+            "state_growth_after_warmup": False,
+        },
         "requested_bytes_total": 123,
         "requested_bytes_live_final": 0,
         "requested_bytes_live_high_water": 97,
@@ -49,10 +59,10 @@ def fixture_result(seed: int = 91, cycles: int = 3) -> dict[str, object]:
         "thread_fanout": {
             "initial_threads": 1,
             "owner_workers_per_epoch": 1,
-            "handoff_workers_per_epoch": 1,
-            "worker_threads_per_epoch": 2,
-            "peak_threads": 3,
-            "worker_threads_created": cycles * 2,
+            "post_exit_independent_releasers_per_epoch": 4,
+            "worker_threads_per_epoch": 5,
+            "peak_threads": 5,
+            "worker_threads_created": cycles * 5,
         },
         "live_owner_registry_high_water_entries": None,
         "live_owner_registry_plateau_after_warmup": None,
@@ -83,6 +93,16 @@ def fixture_result(seed: int = 91, cycles: int = 3) -> dict[str, object]:
                 "post_warm_snapshot_count": cycles - 1,
                 "plateau_after_warmup": True,
             },
+            "post_owner_exit_concurrent_release": {
+                "status": "passed",
+                "measurement_classification": "non-promotional-workload-liveness",
+                "performance_qualified": False,
+                "snapshot_count": cycles,
+                "warmup_epoch": 1,
+                "post_warm_snapshot_count": cycles - 1,
+                "count_growth_after_warmup": False,
+                "state_growth_after_warmup": False,
+            },
             "allocator_state": {
                 "status": "unavailable",
                 "observation": "not-exposed-by-production-shadow-c-api",
@@ -97,7 +117,7 @@ class NativeChurnRssSmokeContractTests(unittest.TestCase):
     def test_fixture_epoch_seed_schedule_is_stable(self) -> None:
         self.assertEqual(
             HARNESS.fixture_epoch_seeds(91, 3),
-            [98469508763, 5269175524441963857, 17691037128211053274],
+            [98469508763, 12688499259981810358, 975110214599552163],
         )
 
     def test_contract_hashes_fixture_and_requires_production_api_only(self) -> None:
@@ -135,8 +155,19 @@ class NativeChurnRssSmokeContractTests(unittest.TestCase):
             {
                 "initial_threads": 1,
                 "owner_workers_per_fixture_epoch": 1,
-                "handoff_workers_per_fixture_epoch": 1,
-                "peak_threads": 3,
+                "post_exit_independent_releasers_per_fixture_epoch": 4,
+                "peak_threads": 5,
+            },
+        )
+        self.assertEqual(
+            contract["execution"]["post_owner_exit_concurrent_release"],
+            {
+                "measurement_classification": "non-promotional-workload-liveness",
+                "performance_qualified": False,
+                "independent_releasers_per_fixture_epoch": 4,
+                "live_blocks_per_fixture_epoch": 85,
+                "release_gate": "all-independent-releasers-ready-before-release",
+                "assignment": "fixed-stride-disjoint-exit-block-indices",
             },
         )
         self.assertEqual(
@@ -246,13 +277,27 @@ class NativeChurnRssSmokeContractTests(unittest.TestCase):
         self.assertEqual(report["failure"]["subtype"], "production_boundary")
         self.assertEqual(report["failure"]["boundary"], "fixture_elf_identity")
 
-    def test_fixture_result_requires_initial_thread_post_exit_frees(self) -> None:
+    def test_fixture_result_requires_non_promotional_concurrent_post_exit_releases(self) -> None:
         result = fixture_result()
 
         parsed = HARNESS.parse_fixture_output(json.dumps(result), seed=91, cycles=3)
 
-        self.assertEqual(parsed["post_exit_initial_thread_frees"], 18)
         self.assertEqual(parsed["owner_exits_with_live_blocks"], 3)
+        self.assertEqual(
+            parsed["post_owner_exit_concurrent_release"],
+            {
+                "measurement_classification": "non-promotional-workload-liveness",
+                "performance_qualified": False,
+                "independent_releasers_per_epoch": 4,
+                "completed_epochs": 3,
+                "releasers_completed": 12,
+                "successful_frees": 255,
+                "retained_valid_frees": 0,
+                "aborted_valid_frees": 0,
+                "count_growth_after_warmup": False,
+                "state_growth_after_warmup": False,
+            },
+        )
         self.assertEqual(parsed["allocator_metadata_high_water_bytes"], None)
         self.assertEqual(
             parsed["state_auditor"],
@@ -266,26 +311,94 @@ class NativeChurnRssSmokeContractTests(unittest.TestCase):
                     "post_warm_snapshot_count": 2,
                     "plateau_after_warmup": True,
                 },
+                "post_owner_exit_concurrent_release": {
+                    "status": "passed",
+                    "measurement_classification": "non-promotional-workload-liveness",
+                    "performance_qualified": False,
+                    "snapshot_count": 3,
+                    "warmup_epoch": 1,
+                    "post_warm_snapshot_count": 2,
+                    "count_growth_after_warmup": False,
+                    "state_growth_after_warmup": False,
+                },
                 "allocator_state": {
                     "status": "unavailable",
                     "observation": "not-exposed-by-production-shadow-c-api",
                 },
             },
         )
-        self.assertEqual(parsed["thread_fanout"]["peak_threads"], 3)
+        self.assertEqual(parsed["thread_fanout"]["peak_threads"], 5)
         self.assertEqual(
             [parsed["first_fixture_epoch_seed"], parsed["last_fixture_epoch_seed"]],
             [HARNESS.fixture_epoch_seeds(91, 3)[0], HARNESS.fixture_epoch_seeds(91, 3)[-1]],
         )
 
-    def test_fixture_result_rejects_hidden_post_exit_release(self) -> None:
+    def test_fixture_result_rejects_retained_or_aborted_post_exit_valid_free(self) -> None:
         result = fixture_result()
-        result["post_exit_initial_thread_frees"] = 0
+        release = result["post_owner_exit_concurrent_release"]
+        assert isinstance(release, dict)
+        release["retained_valid_frees"] = 1
 
         with self.assertRaisesRegex(
-            HARNESS.AllocatorLivenessError, "post_exit_initial_thread_frees"
+            HARNESS.AllocatorLivenessError, "post_owner_exit_concurrent_release"
         ):
             HARNESS.parse_fixture_output(json.dumps(result), seed=91, cycles=3)
+
+        release["retained_valid_frees"] = 0
+        release["aborted_valid_frees"] = 1
+        with self.assertRaisesRegex(
+            HARNESS.AllocatorLivenessError, "post_owner_exit_concurrent_release"
+        ):
+            HARNESS.parse_fixture_output(json.dumps(result), seed=91, cycles=3)
+
+    def test_fixture_result_rejects_promotional_post_exit_measurement(self) -> None:
+        result = fixture_result()
+        release = result["post_owner_exit_concurrent_release"]
+        assert isinstance(release, dict)
+        release["performance_qualified"] = True
+
+        with self.assertRaisesRegex(
+            HARNESS.AllocatorLivenessError, "post_owner_exit_concurrent_release"
+        ):
+            HARNESS.parse_fixture_output(json.dumps(result), seed=91, cycles=3)
+
+    def test_fixture_result_rejects_post_exit_count_or_state_growth(self) -> None:
+        result = fixture_result()
+        release = result["post_owner_exit_concurrent_release"]
+        assert isinstance(release, dict)
+        release["count_growth_after_warmup"] = True
+
+        with self.assertRaisesRegex(
+            HARNESS.AllocatorLivenessError, "post_owner_exit_concurrent_release"
+        ):
+            HARNESS.parse_fixture_output(json.dumps(result), seed=91, cycles=3)
+
+        release["count_growth_after_warmup"] = False
+        release["state_growth_after_warmup"] = True
+        with self.assertRaisesRegex(
+            HARNESS.AllocatorLivenessError, "post_owner_exit_concurrent_release"
+        ):
+            HARNESS.parse_fixture_output(json.dumps(result), seed=91, cycles=3)
+
+    def test_high_water_rejects_post_exit_audit_growth(self) -> None:
+        result = fixture_result()
+        state_auditor = result["state_auditor"]
+        assert isinstance(state_auditor, dict)
+        audit = state_auditor["post_owner_exit_concurrent_release"]
+        assert isinstance(audit, dict)
+        audit["count_growth_after_warmup"] = True
+
+        with self.assertRaisesRegex(
+            HARNESS.AllocatorLivenessError, "post-owner-exit concurrent-release audit"
+        ):
+            HARNESS.high_water([{"epoch": 1, "fixture": result}])
+
+        audit["count_growth_after_warmup"] = False
+        audit["state_growth_after_warmup"] = True
+        with self.assertRaisesRegex(
+            HARNESS.AllocatorLivenessError, "post-owner-exit concurrent-release audit"
+        ):
+            HARNESS.high_water([{"epoch": 1, "fixture": result}])
 
     def test_fixture_result_classifies_unavailable_rss_as_a_prerequisite(self) -> None:
         result = fixture_result()
@@ -322,6 +435,21 @@ class NativeChurnRssSmokeContractTests(unittest.TestCase):
         )
         self.assertTrue(
             high_water["state_auditor"]["workload_liveness"]["plateau_after_warmup"]
+        )
+        self.assertEqual(
+            high_water["post_owner_exit_concurrent_release"],
+            {
+                "measurement_classification": "non-promotional-workload-liveness",
+                "performance_qualified": False,
+                "independent_releasers_per_epoch": 4,
+                "completed_epochs": 6,
+                "releasers_completed": 24,
+                "successful_frees": 510,
+                "retained_valid_frees": 0,
+                "aborted_valid_frees": 0,
+                "count_growth_after_warmup": False,
+                "state_growth_after_warmup": False,
+            },
         )
         self.assertEqual(
             high_water["rss_slopes"]["within_process_quiescent"][
@@ -490,8 +618,17 @@ class NativeChurnRssSmokeContractTests(unittest.TestCase):
         self.assertEqual(configuration["process_epoch_seeds"], [91, 92])
         self.assertEqual(configuration["fixture_epochs_per_process"], 3)
         self.assertEqual(configuration["total_fixture_epochs"], 6)
-        self.assertEqual(configuration["thread_fanout"]["peak_threads"], 3)
-        self.assertEqual(configuration["thread_fanout"]["total_worker_threads"], 12)
+        self.assertEqual(configuration["thread_fanout"]["peak_threads"], 5)
+        self.assertEqual(configuration["thread_fanout"]["total_worker_threads"], 30)
+        self.assertEqual(
+            configuration["post_owner_exit_concurrent_release"],
+            {
+                "measurement_classification": "non-promotional-workload-liveness",
+                "performance_qualified": False,
+                "independent_releasers_per_fixture_epoch": 4,
+                "live_blocks_per_fixture_epoch": 85,
+            },
+        )
 
     def test_unavailable_allocator_state_fails_as_production_boundary_evidence(self) -> None:
         executions = [
