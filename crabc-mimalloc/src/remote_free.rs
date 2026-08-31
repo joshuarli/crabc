@@ -103,14 +103,41 @@ unsafe impl LiveRemoteFreeAllocation for LiveAllocationPointer {
 /// release/reclaim/reabandon/unown tail. It is deliberately neither `Copy`
 /// nor `Clone`: a caller must move it into that continuation rather than
 /// re-publish the same block or return while silently retaining the low bit.
+///
+/// On the concrete production path, this additionally owns the exact checked
+/// PageMap observation that supplied its page and canonical block. Keeping
+/// that observation inside the claim preserves the source live-client proof
+/// through `mi_free_try_collect_mt`'s collection, release, reclaim, or unown
+/// tail. Raw unit fixtures have no process PageMap observation and leave the
+/// private field empty; no normal entry can construct that form.
 #[derive(Debug, Eq, PartialEq)]
 #[must_use = "a claimed abandoned page must continue through its source owner tail"]
 pub(crate) struct ClaimedAbandonedRemoteFree {
     page: NonNull<Page>,
     published_block: NonNull<u8>,
+    source_observation: Option<LiveAllocationPointer>,
 }
 
 impl ClaimedAbandonedRemoteFree {
+    #[inline]
+    fn from_published_source_block(page: NonNull<Page>, published_block: NonNull<u8>) -> Self {
+        Self { page, published_block, source_observation: None }
+    }
+
+    /// Moves the concrete checked PageMap observation into this claim.
+    ///
+    /// The source CAS has already installed `published_block` with the low
+    /// owner bit. Until the tail consumes this claim, that atomic handoff and
+    /// the still-counted source block keep the page registered; retaining the
+    /// observation makes that proof explicit without taking a PageMap lease.
+    #[inline]
+    fn retain_checked_source_observation(&mut self, allocation: LiveAllocationPointer) {
+        debug_assert_eq!(self.page, allocation.page());
+        debug_assert_eq!(self.published_block, allocation.canonical_block());
+        debug_assert!(self.source_observation.is_none());
+        self.source_observation = Some(allocation);
+    }
+
     /// Returns the page whose low remote-head owner bit this token holds.
     #[inline]
     pub(crate) const fn page(&self) -> NonNull<Page> { self.page }
@@ -238,11 +265,33 @@ unsafe fn publish_canonical_source_block(
     Ok(if was_owned {
         LiveRemoteFreePublish::PublishedToOwner
     } else {
-        LiveRemoteFreePublish::ClaimedAbandonedPage(ClaimedAbandonedRemoteFree {
-            page,
-            published_block: canonical_block,
-        })
+        LiveRemoteFreePublish::ClaimedAbandonedPage(
+            ClaimedAbandonedRemoteFree::from_published_source_block(page, canonical_block),
+        )
     })
+}
+
+/// Couples a winning source claim back to the concrete checked observation
+/// that formed its page/block projection.
+///
+/// A publication to an existing owner ends this producer's source operation
+/// at its CAS: the existing owner now owns the atomic list. A claim instead
+/// begins the immediate source tail, so it must carry the non-copyable lookup
+/// proof until collection, terminal release, reclaim, reabandon, or unown
+/// finishes. This changes no source atomic ordering and acquires no PageMap
+/// mutation lease.
+#[inline]
+fn retain_checked_observation_until_claim_tail(
+    allocation: LiveAllocationPointer,
+    publication: LiveRemoteFreePublish,
+) -> LiveRemoteFreePublish {
+    match publication {
+        LiveRemoteFreePublish::PublishedToOwner => LiveRemoteFreePublish::PublishedToOwner,
+        LiveRemoteFreePublish::ClaimedAbandonedPage(mut claim) => {
+            claim.retain_checked_source_observation(allocation);
+            LiveRemoteFreePublish::ClaimedAbandonedPage(claim)
+        }
+    }
 }
 
 /// Projects the atomic source fields from one concrete PageMap observation.
@@ -251,7 +300,8 @@ unsafe fn publish_canonical_source_block(
 ///
 /// `allocation` must retain the valid-live-client proof documented by
 /// [`LiveAllocationPointer`]. Its PageMap registration and page metadata must
-/// remain live until the caller completes the resulting source CAS.
+/// remain live through the resulting source CAS and, if it claims an unowned
+/// abandoned head, through the claim's source tail.
 #[inline]
 unsafe fn page_map_live_allocation_parts(
     allocation: &LiveAllocationPointer,
@@ -307,9 +357,11 @@ unsafe fn push_live_allocation_parts(
 /// seam. Its concrete [`LiveAllocationPointer`] input can only be formed by
 /// the checked process PageMap lookup, which binds the exact client, canonical
 /// free-list block, source page, and copied ownership state together. The
-/// still-counted source block keeps the page registered through this CAS; no
-/// owner/TLD registry, allocation ledger, generation word, or structural
-/// PageMap mutation lease participates.
+/// still-counted source block keeps the page registered through this CAS. If
+/// the CAS claims an unowned abandoned head, the returned linear claim keeps
+/// this exact observation through its source tail; no owner/TLD registry,
+/// allocation ledger, generation word, or structural PageMap mutation lease
+/// participates.
 ///
 /// # Safety
 ///
@@ -326,7 +378,11 @@ pub(crate) unsafe fn push_live_allocation(
     // allow-collect CAS.
     let (page, producer, block, page_state) =
         unsafe { page_map_live_allocation_parts(&allocation) };
-    unsafe { push_live_allocation_parts(page, producer, block, page_state) }
+    let publication = unsafe { push_live_allocation_parts(page, producer, block, page_state) }?;
+    Ok(retain_checked_observation_until_claim_tail(
+        allocation,
+        publication,
+    ))
 }
 
 /// Test-only source publication adapter for raw fixture observations.
@@ -387,7 +443,11 @@ pub(crate) unsafe fn push_abandoned_live_allocation(
     // SAFETY: `allocation` is the one coherent PageMap observation. The
     // source CAS decides against its current head; do not re-read identity
     // after the snapshot because a reclaimed live owner is a legal winner.
-    unsafe { publish_canonical_source_block(page, producer, block) }
+    let publication = unsafe { publish_canonical_source_block(page, producer, block) }?;
+    Ok(retain_checked_observation_until_claim_tail(
+        allocation,
+        publication,
+    ))
 }
 
 /// Selects the exact state-qualified pointer publication for a post-owner-exit

@@ -116,9 +116,12 @@ const fn source_page_state(xthread_id: ThreadId) -> LiveAllocationPageState {
 /// Normal-build [`crate::remote_free::push_live_allocation`] accepts this
 /// concrete token rather than an independently supplied page/block pair, so
 /// the checked lookup is the only production route into live remote
-/// publication. Carrying this value does not permit ordinary page mutation,
-/// PageMap registration, or final release, and it must not be retained after
-/// the consuming source operation makes the client no longer live.
+/// publication. A winning abandoned-page publication transfers this exact
+/// observation into its linear claim until the source collection tail has
+/// finished; an ordinary publication to an existing owner consumes it at the
+/// CAS. Carrying this value does not permit ordinary page mutation, PageMap
+/// registration, or final release, and it must not be retained after the
+/// consuming source operation makes the client no longer live.
 #[must_use = "live allocation facts must be consumed by one source operation"]
 #[derive(Debug, Eq, PartialEq)]
 pub(crate) struct LiveAllocationPointer {
@@ -685,9 +688,11 @@ impl ProcessPageMapLease {
     /// overlapping plain PageMap entry mutation for the exact client slice.
     /// The returned value must not be retained after local free, completed
     /// remote publication/collection, realloc release, or any other operation
-    /// that ends the client's lifetime. This boundary does not validate
-    /// arbitrary C pointers and grants no ordinary page, PageMap mutation, or
-    /// final-release authority.
+    /// that ends the client's lifetime. The sole internal exception is a
+    /// winning `allow_collect=true` publication, which moves this exact
+    /// observation into its linear source-tail claim until that tail has
+    /// completed. This boundary does not validate arbitrary C pointers and
+    /// grants no ordinary page, PageMap mutation, or final-release authority.
     pub(crate) unsafe fn lookup_live_allocation(
         self,
         client: NonNull<u8>,
