@@ -41,11 +41,16 @@ struct smoke_state {
     unsigned char *handoff[HANDOFF_BLOCK_COUNT];
     unsigned char *exiting[EXIT_BLOCK_COUNT];
     uint64_t epoch_seed;
+    uint64_t first_fixture_epoch_seed;
+    uint64_t last_fixture_epoch_seed;
     unsigned handoff_slot;
     unsigned owner_ready;
     unsigned handoff_complete;
     unsigned failed;
     unsigned fail_code;
+    unsigned current_epoch;
+    int failure_subject_index;
+    const char *failure_transition;
     uint64_t requested_total;
     uint64_t requested_live;
     uint64_t requested_live_high_water;
@@ -56,15 +61,23 @@ struct smoke_state {
     uint64_t rss_initial_bytes;
     uint64_t rss_final_bytes;
     uint64_t rss_high_water_bytes;
+    uint64_t rss_warm_quiescent_bytes;
+    uint64_t rss_last_quiescent_bytes;
     uint64_t rss_samples;
     uint64_t owner_exits_with_live_blocks;
     uint64_t successful_cross_thread_handoffs;
     uint64_t post_exit_initial_thread_frees;
+    uint64_t initial_usable_bytes;
+    uint64_t state_audit_snapshots;
+    uint64_t state_audit_warm_requested_live_bytes;
+    uint64_t state_audit_warm_usable_live_bytes;
+    uint64_t state_audit_warm_live_blocks;
 };
 
 static struct smoke_state state = {
     .lock = PTHREAD_MUTEX_INITIALIZER,
     .changed = PTHREAD_COND_INITIALIZER,
+    .failure_subject_index = -1,
 };
 
 static uint64_t next_random(uint64_t *state_value)
@@ -121,13 +134,14 @@ static uint64_t read_rss_bytes(void)
     return 0;
 }
 
-static void observe_rss_locked(void)
+static uint64_t observe_rss_locked(void)
 {
     uint64_t rss = read_rss_bytes();
 
     state.rss_samples += 1;
     if (rss > state.rss_high_water_bytes)
         state.rss_high_water_bytes = rss;
+    return rss;
 }
 
 static void record_allocation(size_t request, size_t usable)
@@ -148,14 +162,25 @@ static void record_allocation(size_t request, size_t usable)
     (void)pthread_mutex_unlock(&state.lock);
 }
 
+static void mark_failed_locked(unsigned code, const char *transition,
+    int subject_index)
+{
+    if (!state.failed) {
+        state.failed = 1;
+        state.fail_code = code;
+        state.failure_transition = transition;
+        state.failure_subject_index = subject_index;
+    }
+    (void)pthread_cond_broadcast(&state.changed);
+}
+
 static void record_free(size_t request, size_t usable)
 {
     if (pthread_mutex_lock(&state.lock) != 0)
         return;
     if (state.requested_live < request || state.usable_live < usable
             || state.live_blocks == 0) {
-        state.failed = 1;
-        state.fail_code = 90;
+        mark_failed_locked(90, "tracked_free_accounting", -1);
     } else {
         state.requested_live -= request;
         state.usable_live -= usable;
@@ -211,15 +236,11 @@ static int block_matches(const unsigned char *block, size_t request, unsigned ch
         && malloc_usable_size((void *)block) >= request;
 }
 
-static void mark_failed(unsigned code)
+static void mark_failed(unsigned code, const char *transition, int subject_index)
 {
     if (pthread_mutex_lock(&state.lock) != 0)
         return;
-    if (!state.failed) {
-        state.failed = 1;
-        state.fail_code = code;
-    }
-    (void)pthread_cond_broadcast(&state.changed);
+    mark_failed_locked(code, transition, subject_index);
     (void)pthread_mutex_unlock(&state.lock);
 }
 
@@ -232,22 +253,26 @@ static void *owner_worker(void *opaque)
     for (index = 0; index < HANDOFF_BLOCK_COUNT; index++) {
         state.handoff[index] = tracked_malloc(handoff_requests[index]);
         if (state.handoff[index] == NULL) {
-            mark_failed(10 + index);
+            mark_failed(10 + index, "owner_handoff_allocation", (int)index);
             return (void *)(uintptr_t)(10 + index);
         }
         fill_block(state.handoff[index], handoff_requests[index],
             tag_for(state.epoch_seed, index, 1));
     }
 
-    if (pthread_mutex_lock(&state.lock) != 0)
+    if (pthread_mutex_lock(&state.lock) != 0) {
+        mark_failed(20, "owner_ready_lock", -1);
         return (void *)(uintptr_t)20;
+    }
     state.owner_ready = 1;
     if (pthread_cond_broadcast(&state.changed) != 0) {
+        mark_failed_locked(21, "owner_ready_broadcast", -1);
         (void)pthread_mutex_unlock(&state.lock);
         return (void *)(uintptr_t)21;
     }
     while (!state.handoff_complete && !state.failed) {
         if (pthread_cond_wait(&state.changed, &state.lock) != 0) {
+            mark_failed_locked(22, "owner_handoff_wait", -1);
             (void)pthread_mutex_unlock(&state.lock);
             return (void *)(uintptr_t)22;
         }
@@ -258,8 +283,10 @@ static void *owner_worker(void *opaque)
     }
     local_handoff = state.handoff[(state.handoff_slot + 1) % HANDOFF_BLOCK_COUNT];
     state.handoff[(state.handoff_slot + 1) % HANDOFF_BLOCK_COUNT] = NULL;
-    if (pthread_mutex_unlock(&state.lock) != 0)
+    if (pthread_mutex_unlock(&state.lock) != 0) {
+        mark_failed(24, "owner_handoff_unlock", -1);
         return (void *)(uintptr_t)24;
+    }
 
     if (!block_matches(local_handoff,
             handoff_requests[(state.handoff_slot + 1) % HANDOFF_BLOCK_COUNT],
@@ -267,7 +294,8 @@ static void *owner_worker(void *opaque)
                 (state.handoff_slot + 1) % HANDOFF_BLOCK_COUNT, 1))
             || !tracked_free(local_handoff,
                 handoff_requests[(state.handoff_slot + 1) % HANDOFF_BLOCK_COUNT])) {
-        mark_failed(25);
+        mark_failed(25, "owner_local_handoff_free",
+            (int)((state.handoff_slot + 1) % HANDOFF_BLOCK_COUNT));
         return (void *)(uintptr_t)25;
     }
 
@@ -279,7 +307,7 @@ static void *owner_worker(void *opaque)
             state.exiting[index] = tracked_malloc(exit_requests[index]);
         }
         if (state.exiting[index] == NULL) {
-            mark_failed(30 + index);
+            mark_failed(30 + index, "owner_exit_allocation", (int)index);
             return (void *)(uintptr_t)(30 + index);
         }
         fill_block(state.exiting[index], exit_requests[index],
@@ -295,10 +323,13 @@ static void *handoff_worker(void *opaque)
     unsigned slot;
 
     (void)opaque;
-    if (pthread_mutex_lock(&state.lock) != 0)
+    if (pthread_mutex_lock(&state.lock) != 0) {
+        mark_failed(40, "handoff_ready_lock", -1);
         return (void *)(uintptr_t)40;
+    }
     while (!state.owner_ready && !state.failed) {
         if (pthread_cond_wait(&state.changed, &state.lock) != 0) {
+            mark_failed_locked(41, "handoff_owner_ready_wait", -1);
             (void)pthread_mutex_unlock(&state.lock);
             return (void *)(uintptr_t)41;
         }
@@ -309,48 +340,60 @@ static void *handoff_worker(void *opaque)
     }
     slot = state.handoff_slot;
     handoff = state.handoff[slot];
-    if (pthread_mutex_unlock(&state.lock) != 0)
+    if (pthread_mutex_unlock(&state.lock) != 0) {
+        mark_failed(43, "handoff_ready_unlock", -1);
         return (void *)(uintptr_t)43;
+    }
 
     if (!block_matches(handoff, handoff_requests[slot],
             tag_for(state.epoch_seed, slot, 1))
             || !tracked_free(handoff, handoff_requests[slot])) {
-        mark_failed(44);
+        mark_failed(44, "live_owner_cross_thread_free", (int)slot);
         return (void *)(uintptr_t)44;
     }
 
-    if (pthread_mutex_lock(&state.lock) != 0)
+    if (pthread_mutex_lock(&state.lock) != 0) {
+        mark_failed(45, "handoff_complete_lock", (int)slot);
         return (void *)(uintptr_t)45;
+    }
     state.handoff[slot] = NULL;
     state.handoff_complete = 1;
     state.successful_cross_thread_handoffs += 1;
     if (pthread_cond_broadcast(&state.changed) != 0) {
+        mark_failed_locked(46, "handoff_complete_broadcast", (int)slot);
         (void)pthread_mutex_unlock(&state.lock);
         return (void *)(uintptr_t)46;
     }
-    if (pthread_mutex_unlock(&state.lock) != 0)
+    if (pthread_mutex_unlock(&state.lock) != 0) {
+        mark_failed(47, "handoff_complete_unlock", (int)slot);
         return (void *)(uintptr_t)47;
+    }
     return NULL;
 }
 
-static int prepare_epoch(uint64_t epoch_seed)
+static int prepare_epoch(unsigned epoch, uint64_t epoch_seed)
 {
+    state.current_epoch = epoch;
+    state.epoch_seed = epoch_seed;
+    if (epoch == 1)
+        state.first_fixture_epoch_seed = epoch_seed;
+    state.last_fixture_epoch_seed = epoch_seed;
     if (pthread_mutex_lock(&state.lock) != 0)
         return 0;
+    state.failed = 0;
+    state.fail_code = 0;
+    state.failure_transition = NULL;
+    state.failure_subject_index = -1;
     if (state.live_blocks != 1) {
-        state.failed = 1;
-        state.fail_code = 50;
+        mark_failed_locked(50, "pre_epoch_liveness", -1);
         (void)pthread_mutex_unlock(&state.lock);
         return 0;
     }
     memset(state.handoff, 0, sizeof(state.handoff));
     memset(state.exiting, 0, sizeof(state.exiting));
-    state.epoch_seed = epoch_seed;
     state.handoff_slot = (unsigned)(next_random(&epoch_seed) % HANDOFF_BLOCK_COUNT);
     state.owner_ready = 0;
     state.handoff_complete = 0;
-    state.failed = 0;
-    state.fail_code = 0;
     observe_rss_locked();
     return pthread_mutex_unlock(&state.lock) == 0;
 }
@@ -373,51 +416,166 @@ static int free_exiting_blocks_from_initial_thread(uint64_t *random_state)
 
         if (!block_matches(block, exit_requests[index],
                 tag_for(state.epoch_seed, index, 2))
-                || !tracked_free(block, exit_requests[index]))
+                || !tracked_free(block, exit_requests[index])) {
+            mark_failed(70 + index, "post_exit_initial_thread_free", (int)index);
             return 0;
+        }
         state.exiting[index] = NULL;
-        if (pthread_mutex_lock(&state.lock) != 0)
+        if (pthread_mutex_lock(&state.lock) != 0) {
+            mark_failed(76, "post_exit_accounting_lock", (int)index);
             return 0;
+        }
         state.post_exit_initial_thread_frees += 1;
         observe_rss_locked();
-        if (pthread_mutex_unlock(&state.lock) != 0)
+        if (pthread_mutex_unlock(&state.lock) != 0) {
+            mark_failed(77, "post_exit_accounting_unlock", (int)index);
             return 0;
+        }
     }
     return 1;
 }
 
-static int run_epoch(uint64_t *random_state)
+static int run_epoch(uint64_t *random_state, unsigned epoch)
 {
     pthread_t owner;
     pthread_t handoff;
     void *result = (void *)(uintptr_t)1;
     uint64_t epoch_seed = next_random(random_state);
+    int join_status;
 
-    if (!prepare_epoch(epoch_seed))
+    if (!prepare_epoch(epoch, epoch_seed))
         return 0;
-    if (pthread_create(&owner, NULL, owner_worker, NULL) != 0)
+    if (pthread_create(&owner, NULL, owner_worker, NULL) != 0) {
+        mark_failed(58, "owner_thread_create", -1);
         return 0;
+    }
     if (pthread_create(&handoff, NULL, handoff_worker, NULL) != 0) {
-        mark_failed(60);
+        mark_failed(60, "handoff_thread_create", -1);
         (void)pthread_join(owner, &result);
         return 0;
     }
-    if (pthread_join(handoff, &result) != 0 || result != NULL)
+    join_status = pthread_join(handoff, &result);
+    if (join_status != 0) {
+        mark_failed(61, "handoff_thread_join", -1);
         return 0;
+    }
+    if (result != NULL) {
+        if (!state.failed)
+            mark_failed((unsigned)(uintptr_t)result, "handoff_worker_exit", -1);
+        return 0;
+    }
     result = (void *)(uintptr_t)2;
-    if (pthread_join(owner, &result) != 0 || result != NULL)
+    join_status = pthread_join(owner, &result);
+    if (join_status != 0) {
+        mark_failed(62, "owner_thread_join", -1);
         return 0;
-    if (pthread_mutex_lock(&state.lock) != 0)
+    }
+    if (result != NULL) {
+        if (!state.failed)
+            mark_failed((unsigned)(uintptr_t)result, "owner_worker_exit", -1);
         return 0;
+    }
+    if (pthread_mutex_lock(&state.lock) != 0) {
+        mark_failed(63, "owner_exit_accounting_lock", -1);
+        return 0;
+    }
     if (state.failed) {
         (void)pthread_mutex_unlock(&state.lock);
         return 0;
     }
     state.owner_exits_with_live_blocks += 1;
     observe_rss_locked();
-    if (pthread_mutex_unlock(&state.lock) != 0)
+    if (pthread_mutex_unlock(&state.lock) != 0) {
+        mark_failed(64, "owner_exit_accounting_unlock", -1);
         return 0;
+    }
     return free_exiting_blocks_from_initial_thread(random_state);
+}
+
+static int audit_quiescent_epoch(unsigned epoch)
+{
+    unsigned index;
+    int pointers_clear = 1;
+    uint64_t quiescent_rss;
+
+    if (pthread_mutex_lock(&state.lock) != 0) {
+        mark_failed(80, "quiescent_state_audit_lock", -1);
+        return 0;
+    }
+    for (index = 0; index < HANDOFF_BLOCK_COUNT; index++) {
+        if (state.handoff[index] != NULL)
+            pointers_clear = 0;
+    }
+    for (index = 0; index < EXIT_BLOCK_COUNT; index++) {
+        if (state.exiting[index] != NULL)
+            pointers_clear = 0;
+    }
+    if (state.failed || !pointers_clear || state.requested_live != 79
+            || state.usable_live != state.initial_usable_bytes
+            || state.live_blocks != 1 || !state.owner_ready
+            || !state.handoff_complete
+            || state.owner_exits_with_live_blocks != epoch
+            || state.successful_cross_thread_handoffs != epoch
+            || state.post_exit_initial_thread_frees != (uint64_t)epoch * EXIT_BLOCK_COUNT) {
+        mark_failed_locked(81, "quiescent_state_audit", -1);
+        (void)pthread_mutex_unlock(&state.lock);
+        return 0;
+    }
+    if (state.state_audit_snapshots == 0) {
+        state.state_audit_warm_requested_live_bytes = state.requested_live;
+        state.state_audit_warm_usable_live_bytes = state.usable_live;
+        state.state_audit_warm_live_blocks = state.live_blocks;
+    } else if (state.requested_live != state.state_audit_warm_requested_live_bytes
+            || state.usable_live != state.state_audit_warm_usable_live_bytes
+            || state.live_blocks != state.state_audit_warm_live_blocks) {
+        mark_failed_locked(82, "post_warm_liveness_plateau", -1);
+        (void)pthread_mutex_unlock(&state.lock);
+        return 0;
+    }
+    quiescent_rss = observe_rss_locked();
+    if (state.state_audit_snapshots == 0)
+        state.rss_warm_quiescent_bytes = quiescent_rss;
+    state.rss_last_quiescent_bytes = quiescent_rss;
+    state.state_audit_snapshots += 1;
+    return pthread_mutex_unlock(&state.lock) == 0;
+}
+
+static const char *failure_domain(unsigned code)
+{
+    if ((code >= 20 && code <= 24) || (code >= 40 && code <= 43)
+            || (code >= 45 && code <= 47)
+            || (code >= 58 && code <= 64) || code == 76 || code == 77
+            || code == 80)
+        return "thread_runtime";
+    if ((code >= 10 && code <= 39) || code == 44
+            || (code >= 70 && code <= 75))
+        return "allocator_runtime";
+    return "fixture_invariant";
+}
+
+static void print_epoch_failure(uint64_t seed, unsigned cycles,
+    unsigned completed_epochs)
+{
+    printf("{\"schema\":\"crabc-mimalloc-native-churn-rss-smoke-fixture-v2\","
+           "\"status\":\"failed\",\"seed\":%" PRIu64 ",\"cycles\":%u,"
+           "\"completed_epochs\":%u,\"root_failure\":{"
+           "\"domain\":\"%s\",\"exit_status\":68,"
+           "\"epoch\":%u,\"epoch_seed\":%" PRIu64 ","
+           "\"transition\":\"%s\",\"code\":%u,\"subject_index\":",
+        seed, cycles, completed_epochs,
+        failure_domain(state.fail_code == 0 ? 99 : state.fail_code),
+        state.current_epoch, state.epoch_seed,
+        state.failure_transition == NULL ? "unclassified_epoch_failure"
+                                         : state.failure_transition,
+        state.fail_code == 0 ? 99 : state.fail_code);
+    if (state.failure_subject_index < 0)
+        fputs("null", stdout);
+    else
+        printf("%d", state.failure_subject_index);
+    printf("},\"state_auditor\":{\"status\":\"failed\","
+           "\"scope\":\"production-general-churn\","
+           "\"snapshot_count\":%" PRIu64 "}}\n",
+        state.state_audit_snapshots);
 }
 
 static int parse_u64(const char *text, uint64_t *value)
@@ -465,10 +623,17 @@ int main(int argc, char **argv)
     initial = tracked_malloc(79);
     if (initial == NULL)
         return 67;
+    state.initial_usable_bytes = malloc_usable_size(initial);
     fill_block(initial, 79, tag_for(seed, 0, 3));
     for (cycle = 0; cycle < cycles; cycle++) {
-        if (!run_epoch(&random_state))
+        if (!run_epoch(&random_state, cycle + 1)) {
+            print_epoch_failure(seed, cycles, cycle);
             return 68;
+        }
+        if (!audit_quiescent_epoch(cycle + 1)) {
+            print_epoch_failure(seed, cycles, cycle);
+            return 68;
+        }
     }
     if (!block_matches(initial, 79, tag_for(seed, 0, 3)) || !tracked_free(initial, 79))
         return 69;
@@ -483,8 +648,16 @@ int main(int argc, char **argv)
         (void)pthread_mutex_unlock(&state.lock);
         return 71;
     }
-    printf("{\"schema\":\"crabc-mimalloc-native-churn-rss-smoke-fixture-v1\","
-           "\"seed\":%" PRIu64 ",\"cycles\":%u,"
+    printf("{\"schema\":\"crabc-mimalloc-native-churn-rss-smoke-fixture-v2\","
+           "\"status\":\"passed\",\"seed\":%" PRIu64 ",\"cycles\":%u,"
+           "\"completed_epochs\":%u,"
+           "\"first_fixture_epoch_seed\":%" PRIu64 ","
+           "\"last_fixture_epoch_seed\":%" PRIu64 ","
+           "\"thread_fanout\":{\"initial_threads\":1,"
+           "\"owner_workers_per_epoch\":1,"
+           "\"handoff_workers_per_epoch\":1,"
+           "\"worker_threads_per_epoch\":2,\"peak_threads\":3,"
+           "\"worker_threads_created\":%u},"
            "\"owner_exits_with_live_blocks\":%" PRIu64 ","
            "\"successful_cross_thread_handoffs\":%" PRIu64 ","
            "\"post_exit_initial_thread_frees\":%" PRIu64 ","
@@ -498,15 +671,47 @@ int main(int argc, char **argv)
            "\"rss_initial_bytes\":%" PRIu64 ","
            "\"rss_final_bytes\":%" PRIu64 ","
            "\"rss_high_water_bytes\":%" PRIu64 ","
+           "\"rss_warm_quiescent_bytes\":%" PRIu64 ","
+           "\"rss_last_quiescent_bytes\":%" PRIu64 ","
            "\"rss_samples\":%" PRIu64 ","
+           "\"live_owner_registry_high_water_entries\":null,"
+           "\"live_owner_registry_plateau_after_warmup\":null,"
+           "\"post_exit_registry_high_water_entries\":null,"
+           "\"post_exit_registry_plateau_after_warmup\":null,"
+           "\"client_ledger_high_water_entries\":null,"
+           "\"client_ledger_plateau_after_warmup\":null,"
            "\"allocator_metadata_high_water_bytes\":null,"
-           "\"allocator_metadata_observation\":\"not-exposed-by-production-shadow-c-api\"}\n",
-        seed, cycles, state.owner_exits_with_live_blocks,
+           "\"allocator_metadata_plateau_after_warmup\":null,"
+           "\"page_map_registered_high_water_entries\":null,"
+           "\"page_map_plateau_after_warmup\":null,"
+           "\"arena_registry_high_water_entries\":null,"
+           "\"arena_plateau_after_warmup\":null,"
+           "\"abandoned_page_high_water_count\":null,"
+           "\"abandoned_page_plateau_after_warmup\":null,"
+           "\"tld_high_water_count\":null,"
+           "\"tld_plateau_after_warmup\":null,"
+           "\"theap_high_water_count\":null,"
+           "\"theap_plateau_after_warmup\":null,"
+           "\"allocator_metadata_observation\":\"not-exposed-by-production-shadow-c-api\","
+           "\"state_auditor\":{\"status\":\"incomplete\","
+           "\"scope\":\"production-general-churn\","
+           "\"workload_liveness\":{\"status\":\"passed\","
+           "\"snapshot_count\":%" PRIu64 ",\"warmup_epoch\":1,"
+           "\"post_warm_snapshot_count\":%u,"
+           "\"plateau_after_warmup\":true},"
+           "\"allocator_state\":{\"status\":\"unavailable\","
+           "\"observation\":\"not-exposed-by-production-shadow-c-api\"}}}\n",
+        seed, cycles, cycles, state.first_fixture_epoch_seed,
+        state.last_fixture_epoch_seed, cycles * 2,
+        state.owner_exits_with_live_blocks,
         state.successful_cross_thread_handoffs,
         state.post_exit_initial_thread_frees, state.requested_total,
         state.requested_live, state.requested_live_high_water,
         state.usable_live, state.usable_live_high_water, state.live_blocks,
         state.live_blocks_high_water, state.rss_initial_bytes,
-        state.rss_final_bytes, state.rss_high_water_bytes, state.rss_samples);
+        state.rss_final_bytes, state.rss_high_water_bytes,
+        state.rss_warm_quiescent_bytes, state.rss_last_quiescent_bytes,
+        state.rss_samples,
+        state.state_audit_snapshots, cycles - 1);
     return pthread_mutex_unlock(&state.lock) == 0 ? 0 : 72;
 }

@@ -15,8 +15,11 @@ fixture calls only standard production C allocation APIs, verifies one
 cross-thread free while the source owner remains live, and then has the
 initial thread free each worker-owned allocation after that worker has exited.
 The report distinguishes observable RSS and workload liveness from allocator
-metadata, which is deliberately not exposed through the production shadow C
-ABI and therefore is never inferred from private test hooks.
+internal state, which is deliberately not exposed through the production
+shadow C ABI and therefore is never inferred from private test hooks.  An
+unavailable registry, ledger, PageMap, metadata, arena, TLD, or Theap
+observation keeps the general-production state qualification incomplete even
+when the C workload itself passes.
 """
 
 from __future__ import annotations
@@ -35,23 +38,132 @@ from typing import Any, Mapping, Sequence
 
 ROOT = Path(__file__).resolve().parents[2]
 CONTRACT_PATH = ROOT / "compat/allocator/native-churn-rss-smoke-v3.5.0.json"
-FIXTURE_SCHEMA = "crabc-mimalloc-native-churn-rss-smoke-fixture-v1"
-REPORT_SCHEMA = "crabc-mimalloc-native-churn-rss-smoke-report-v1"
+FIXTURE_SCHEMA = "crabc-mimalloc-native-churn-rss-smoke-fixture-v2"
+REPORT_SCHEMA = "crabc-mimalloc-native-churn-rss-smoke-report-v2"
 CANONICAL_LOADER = Path("/lib/ld-crabc-aarch64.so.1")
 DEFAULT_REPORT = ROOT / "compat/reports/allocator/native-churn-rss-smoke-latest.json"
 NEEDED_LIBRARY = re.compile(r"Shared library: \[(?P<name>[^]]+)\]")
+UINT64_MAX = (1 << 64) - 1
+FIXTURE_RANDOM_UPDATES_PER_EPOCH = 6
+THREAD_FANOUT = {
+    "initial_threads": 1,
+    "owner_workers_per_epoch": 1,
+    "handoff_workers_per_epoch": 1,
+    "worker_threads_per_epoch": 2,
+    "peak_threads": 3,
+}
+ALLOCATOR_STATE_FIELDS = {
+    "live_owner_registry": (
+        "live_owner_registry_high_water_entries",
+        "live_owner_registry_plateau_after_warmup",
+        "registry_entries",
+    ),
+    "post_exit_registry": (
+        "post_exit_registry_high_water_entries",
+        "post_exit_registry_plateau_after_warmup",
+        "registry_entries",
+    ),
+    "client_ledger": (
+        "client_ledger_high_water_entries",
+        "client_ledger_plateau_after_warmup",
+        "ledger_entries",
+    ),
+    "page_map": (
+        "page_map_registered_high_water_entries",
+        "page_map_plateau_after_warmup",
+        "registered_entries",
+    ),
+    "metadata": (
+        "allocator_metadata_high_water_bytes",
+        "allocator_metadata_plateau_after_warmup",
+        "bytes",
+    ),
+    "arena": (
+        "arena_registry_high_water_entries",
+        "arena_plateau_after_warmup",
+        "registry_entries",
+    ),
+    "abandoned_page": (
+        "abandoned_page_high_water_count",
+        "abandoned_page_plateau_after_warmup",
+        "pages",
+    ),
+    "tld": (
+        "tld_high_water_count",
+        "tld_plateau_after_warmup",
+        "live_tlds",
+    ),
+    "theap": (
+        "theap_high_water_count",
+        "theap_plateau_after_warmup",
+        "live_theaps",
+    ),
+}
+ALLOCATOR_PLATEAU_CATEGORIES = tuple(ALLOCATOR_STATE_FIELDS)
+ALLOCATOR_STATE_OBSERVATION = "not-exposed-by-production-shadow-c-api"
+STATE_AUDITOR_SCOPE = "production-general-churn"
+REQUIRED_HIGH_WATER_FIELDS = (
+    "rss_bytes",
+    "requested_live_bytes",
+    "usable_live_bytes",
+    "live_blocks",
+    "thread_fanout.peak_threads",
+    "thread_fanout.total_worker_threads",
+    "rss_slopes.within_process_quiescent.minimum_bytes_per_fixture_epoch",
+    "rss_slopes.within_process_quiescent.maximum_bytes_per_fixture_epoch",
+    "rss_slopes.across_process_high_water.bytes_per_epoch",
+    "state_auditor.workload_liveness.snapshot_count",
+    "state_auditor.workload_liveness.plateau_after_warmup",
+    "allocator_state.live_owner_registry.high_water",
+    "allocator_state.live_owner_registry.plateau_after_warmup",
+    "allocator_state.post_exit_registry.high_water",
+    "allocator_state.post_exit_registry.plateau_after_warmup",
+    "allocator_state.client_ledger.high_water",
+    "allocator_state.client_ledger.plateau_after_warmup",
+    "allocator_state.metadata.high_water",
+    "allocator_state.metadata.plateau_after_warmup",
+    "allocator_state.page_map.high_water",
+    "allocator_state.page_map.plateau_after_warmup",
+    "allocator_state.arena.high_water",
+    "allocator_state.arena.plateau_after_warmup",
+    "allocator_state.abandoned_page.high_water",
+    "allocator_state.abandoned_page.plateau_after_warmup",
+    "allocator_state.tld.high_water",
+    "allocator_state.tld.plateau_after_warmup",
+    "allocator_state.theap.high_water",
+    "allocator_state.theap.plateau_after_warmup",
+)
 
 
 class SmokeError(RuntimeError):
     """A violated selected-shadow evidence precondition or fixture result."""
 
 
-class ArtifactAttestationError(SmokeError):
+class PrerequisiteError(SmokeError):
+    """The owned native execution prerequisites are not available."""
+
+
+class ArtifactAttestationError(PrerequisiteError):
     """The selected libc artifact cannot prove its native-shadow identity."""
+
+
+class AllocatorStatePrerequisiteError(PrerequisiteError):
+    """The production workload ran but its required internal audit is unavailable."""
 
 
 class AllocatorLivenessError(SmokeError):
     """The fixture did not complete its required allocation ownership lifecycle."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        root_failure: Mapping[str, Any] | None = None,
+        completed_executions: Sequence[Mapping[str, Any]] = (),
+    ) -> None:
+        self.root_failure = dict(root_failure) if root_failure is not None else None
+        self.completed_executions = [dict(execution) for execution in completed_executions]
+        super().__init__(message)
 
 
 class RssThresholdError(SmokeError):
@@ -117,6 +229,15 @@ def require_positive_int(value: Mapping[str, Any], key: str) -> int:
     return result
 
 
+def require_int_at_least(value: Mapping[str, Any], key: str, minimum: int) -> int:
+    """Read one integer field with the samples needed by a plateau or slope."""
+
+    result = value.get(key)
+    if isinstance(result, bool) or not isinstance(result, int) or result < minimum:
+        raise SmokeError(f"contract field {key!r} must be an integer at least {minimum}")
+    return result
+
+
 def require_string_list(value: Mapping[str, Any], key: str) -> list[str]:
     """Read one list of nonempty strings."""
 
@@ -135,6 +256,73 @@ def require_object(value: Mapping[str, Any], key: str) -> Mapping[str, Any]:
     return result
 
 
+def next_fixture_random(value: int) -> int:
+    """Apply the fixture's wrapping xorshift64 transition exactly."""
+
+    value ^= (value << 13) & UINT64_MAX
+    value ^= value >> 7
+    value ^= (value << 17) & UINT64_MAX
+    return value & UINT64_MAX
+
+
+def fixture_epoch_seeds(seed: int, cycles: int) -> list[int]:
+    """Derive every inner fixture-epoch seed reported by one process run."""
+
+    if seed <= 0 or seed > UINT64_MAX or cycles <= 0:
+        raise SmokeError("fixture seed and cycle count are outside their positive u64 range")
+    random_state = seed
+    result: list[int] = []
+    for _cycle in range(cycles):
+        random_state = next_fixture_random(random_state)
+        result.append(random_state)
+        for _shuffle_step in range(FIXTURE_RANDOM_UPDATES_PER_EPOCH - 1):
+            random_state = next_fixture_random(random_state)
+    return result
+
+
+def exact_slope(first: int, last: int, intervals: int) -> dict[str, Any]:
+    """Report an exact endpoint delta plus its derived per-epoch slope."""
+
+    if intervals <= 0:
+        raise SmokeError("RSS slope requires at least one complete epoch interval")
+    delta = last - first
+    return {
+        "first_bytes": first,
+        "last_bytes": last,
+        "delta_bytes": delta,
+        "interval_count": intervals,
+        "bytes_per_epoch": delta / intervals,
+    }
+
+
+def fixture_rss_slope(result: Mapping[str, Any]) -> dict[str, Any]:
+    """Measure post-warm quiescent RSS growth inside one fixture process."""
+
+    cycles = result.get("cycles")
+    first = result.get("rss_warm_quiescent_bytes")
+    last = result.get("rss_last_quiescent_bytes")
+    if any(isinstance(value, bool) or not isinstance(value, int) for value in (cycles, first, last)):
+        raise SmokeError("fixture RSS slope endpoints changed shape")
+    assert isinstance(cycles, int) and isinstance(first, int) and isinstance(last, int)
+    return exact_slope(first, last, cycles - 1)
+
+
+def unavailable_allocator_state() -> dict[str, dict[str, Any]]:
+    """Describe every required internal state without inventing a proxy."""
+
+    reason = "not exposed by the production shadow C API"
+    return {
+        category: {
+            "available": False,
+            "high_water": None,
+            "high_water_unit": unit,
+            "plateau_after_warmup": None,
+            "reason": reason,
+        }
+        for category, (_high_water_field, _plateau_field, unit) in ALLOCATOR_STATE_FIELDS.items()
+    }
+
+
 def validate_contract(contract: Mapping[str, Any]) -> dict[str, Any]:
     """Validate the fixed native-shadow workload and its honest boundaries."""
 
@@ -146,12 +334,18 @@ def validate_contract(contract: Mapping[str, Any]) -> dict[str, Any]:
     boundary = contract.get("production_shadow_boundary")
     observation = contract.get("state_observation")
     attestation = contract.get("selected_shadow_artifact_attestation")
+    failure_contract = contract.get("failure_contract")
+    report_contract = contract.get("report")
     if not isinstance(fixture, dict) or not isinstance(execution, dict):
         raise SmokeError("contract must contain fixture and execution objects")
     if not isinstance(boundary, dict) or not isinstance(observation, dict):
         raise SmokeError("contract must contain production boundary and observation objects")
     if not isinstance(attestation, dict):
         raise SmokeError("contract must contain a selected-shadow artifact attestation object")
+    if not isinstance(failure_contract, dict):
+        raise SmokeError("contract must contain a failure contract object")
+    if not isinstance(report_contract, dict):
+        raise SmokeError("contract must contain a report object")
 
     fixture_path = ROOT / require_string(fixture, "path")
     if fixture_path != ROOT / "compat/allocator/native-churn-rss-smoke.c":
@@ -187,8 +381,18 @@ def validate_contract(contract: Mapping[str, Any]) -> dict[str, Any]:
         raise SmokeError("link libraries changed")
     if require_string_list(execution, "expected_dynamic_dependencies") != ["libc.so"]:
         raise SmokeError("dynamic dependency boundary changed")
-    for key in ("seed", "cycles", "process_epochs", "watchdog_seconds", "rss_threshold_bytes"):
-        require_positive_int(execution, key)
+    require_positive_int(execution, "seed")
+    require_int_at_least(execution, "cycles", 2)
+    require_int_at_least(execution, "process_epochs", 2)
+    require_positive_int(execution, "watchdog_seconds")
+    require_positive_int(execution, "rss_threshold_bytes")
+    if require_object(execution, "thread_fanout") != {
+        "initial_threads": 1,
+        "owner_workers_per_fixture_epoch": 1,
+        "handoff_workers_per_fixture_epoch": 1,
+        "peak_threads": 3,
+    }:
+        raise SmokeError("thread-fanout contract changed")
 
     fingerprint = require_object(attestation, "cargo_fingerprint")
     if require_string(fingerprint, "directory") != "target/debug/.fingerprint":
@@ -241,6 +445,30 @@ def validate_contract(contract: Mapping[str, Any]) -> dict[str, Any]:
         raise SmokeError("allocator metadata boundary changed")
     if observation.get("metadata_high_water_bytes") is not None:
         raise SmokeError("metadata high-water must remain unavailable without a production API")
+    if observation.get("allocator_state_categories") != list(ALLOCATOR_PLATEAU_CATEGORIES):
+        raise SmokeError("allocator state category boundary changed")
+    if observation.get("allocator_plateau_observation") != ALLOCATOR_STATE_OBSERVATION:
+        raise SmokeError("allocator plateau observation boundary changed")
+    if observation.get("production_liveness_state_auditor") != STATE_AUDITOR_SCOPE:
+        raise SmokeError("production liveness state-auditor scope changed")
+    if observation.get("general_production_state_qualification") != "incomplete-when-unavailable":
+        raise SmokeError("general-production state qualification changed")
+    if require_string_list(failure_contract, "kinds") != [
+        "harness",
+        "prerequisite",
+        "runtime",
+    ]:
+        raise SmokeError("failure classification contract changed")
+    if failure_contract.get("exit_68_root_failure_required") is not True:
+        raise SmokeError("exit-68 root-failure requirement changed")
+    if require_string(report_contract, "path") != relative(DEFAULT_REPORT):
+        raise SmokeError("report path changed")
+    if require_string(report_contract, "schema") != REPORT_SCHEMA:
+        raise SmokeError("report schema changed")
+    if require_string_list(report_contract, "required_high_water") != list(
+        REQUIRED_HIGH_WATER_FIELDS
+    ):
+        raise SmokeError("required high-water report fields changed")
 
     source = fixture_path.read_text(encoding="utf-8")
     for identifier in boundary["forbidden_allocator_identifiers"]:
@@ -263,7 +491,7 @@ def validate_contract(contract: Mapping[str, Any]) -> dict[str, Any]:
         "fixture_sha256": fixture_sha256,
         "seed": require_positive_int(execution, "seed"),
         "cycles": require_positive_int(execution, "cycles"),
-        "process_epochs": require_positive_int(execution, "process_epochs"),
+        "process_epochs": require_int_at_least(execution, "process_epochs", 2),
         "watchdog_seconds": require_positive_int(execution, "watchdog_seconds"),
         "rss_threshold_bytes": require_positive_int(execution, "rss_threshold_bytes"),
         "compile_flags": require_string_list(execution, "compile_flags"),
@@ -292,6 +520,15 @@ def command_record(command: Sequence[str], **kwargs: Any) -> dict[str, Any]:
             "stderr": error.stderr or "",
             "timed_out": True,
         }
+    except OSError as error:
+        return {
+            "command": list(command),
+            "status": None,
+            "stdout": "",
+            "stderr": "",
+            "timed_out": False,
+            "launch_error": str(error),
+        }
     return {
         "command": list(command),
         "status": completed.returncode,
@@ -304,6 +541,8 @@ def command_record(command: Sequence[str], **kwargs: Any) -> dict[str, Any]:
 def require_success(record: Mapping[str, Any], subject: str) -> None:
     """Raise an actionable error for a failed compile or execution record."""
 
+    if record.get("launch_error"):
+        raise PrerequisiteError(f"{subject} could not launch: {record['launch_error']}")
     if record.get("timed_out"):
         raise SmokeError(f"{subject} exceeded the configured watchdog")
     if record.get("status") != 0:
@@ -388,6 +627,8 @@ def selected_shadow_fingerprint(
 def require_attestation_success(record: Mapping[str, Any], subject: str) -> str:
     """Turn an ELF-inspection failure into an explicit selected-artifact failure."""
 
+    if record.get("launch_error"):
+        raise ArtifactAttestationError(f"{subject} could not launch: {record['launch_error']}")
     if record.get("timed_out"):
         raise ArtifactAttestationError(f"{subject} exceeded its inspection watchdog")
     if record.get("status") != 0:
@@ -552,7 +793,7 @@ def require_owned_shadow_environment() -> tuple[Path, Path, Path]:
 
     raw_sysroot = os.environ.get("CRABC_TEST_SYSROOT")
     if not raw_sysroot:
-        raise SmokeError(
+        raise PrerequisiteError(
             "native churn/RSS smoke requires CRABC_TEST_SYSROOT from scripts/run_owned_test_suite.py"
         )
     sysroot = Path(raw_sysroot).expanduser().resolve()
@@ -560,11 +801,13 @@ def require_owned_shadow_environment() -> tuple[Path, Path, Path]:
     manifest = sysroot / "share/crabc/manifest.json"
     runtime = ROOT / "target/debug"
     if not compiler.is_file() or not manifest.is_file():
-        raise SmokeError("native churn/RSS smoke requires a complete owned crabc sysroot")
+        raise PrerequisiteError("native churn/RSS smoke requires a complete owned crabc sysroot")
     if not (runtime / "libc.so").is_file() or not (runtime / "libldso.so").is_file():
-        raise SmokeError("native churn/RSS smoke requires target/debug libc.so and libldso.so")
+        raise PrerequisiteError(
+            "native churn/RSS smoke requires target/debug libc.so and libldso.so"
+        )
     if not CANONICAL_LOADER.is_file() or CANONICAL_LOADER.is_symlink():
-        raise SmokeError(
+        raise PrerequisiteError(
             "native churn/RSS smoke must run under scripts/run_owned_test_suite.py canonical-loader staging"
         )
     return sysroot, compiler, runtime
@@ -584,18 +827,25 @@ def parse_fixture_output(
         raise AllocatorLivenessError(f"fixture stdout is not one JSON result: {stdout!r}") from error
     if not isinstance(value, dict) or value.get("schema") != FIXTURE_SCHEMA:
         raise AllocatorLivenessError("fixture JSON schema changed")
+    inner_seeds = fixture_epoch_seeds(seed, cycles)
     expected = {
+        "status": "passed",
         "seed": seed,
         "cycles": cycles,
+        "completed_epochs": cycles,
+        "first_fixture_epoch_seed": inner_seeds[0],
+        "last_fixture_epoch_seed": inner_seeds[-1],
         "owner_exits_with_live_blocks": cycles,
         "successful_cross_thread_handoffs": cycles,
         "post_exit_initial_thread_frees": cycles * 6,
         "requested_bytes_live_final": 0,
         "usable_bytes_live_final": 0,
         "live_blocks_final": 0,
-        "allocator_metadata_high_water_bytes": None,
-        "allocator_metadata_observation": "not-exposed-by-production-shadow-c-api",
+        "allocator_metadata_observation": ALLOCATOR_STATE_OBSERVATION,
     }
+    for high_water_field, plateau_field, _unit in ALLOCATOR_STATE_FIELDS.values():
+        expected[high_water_field] = None
+        expected[plateau_field] = None
     for key, expected_value in expected.items():
         if value.get(key) != expected_value:
             raise AllocatorLivenessError(
@@ -612,13 +862,172 @@ def parse_fixture_output(
         result = value.get(key)
         if isinstance(result, bool) or not isinstance(result, int) or result <= 0:
             raise AllocatorLivenessError(f"fixture result field {key!r} must be a positive integer")
-    for key in ("rss_initial_bytes", "rss_final_bytes", "rss_high_water_bytes"):
+    for key in (
+        "rss_initial_bytes",
+        "rss_final_bytes",
+        "rss_high_water_bytes",
+        "rss_warm_quiescent_bytes",
+        "rss_last_quiescent_bytes",
+    ):
         result = value.get(key)
         if isinstance(result, bool) or not isinstance(result, int) or result < 0:
             raise AllocatorLivenessError(f"fixture result field {key!r} must be a nonnegative integer")
-    if value["rss_high_water_bytes"] < max(value["rss_initial_bytes"], value["rss_final_bytes"]):
+    if any(
+        value[key] == 0
+        for key in (
+            "rss_initial_bytes",
+            "rss_high_water_bytes",
+            "rss_warm_quiescent_bytes",
+            "rss_last_quiescent_bytes",
+        )
+    ):
+        raise PrerequisiteError(
+            "fixture could not observe a positive VmRSS value from /proc/self/status"
+        )
+    if value["rss_high_water_bytes"] < max(
+        value["rss_initial_bytes"],
+        value["rss_final_bytes"],
+        value["rss_warm_quiescent_bytes"],
+        value["rss_last_quiescent_bytes"],
+    ):
         raise AllocatorLivenessError("fixture RSS high-water is below an observed RSS sample")
+    if value.get("thread_fanout") != {
+        **THREAD_FANOUT,
+        "worker_threads_created": cycles * THREAD_FANOUT["worker_threads_per_epoch"],
+    }:
+        raise AllocatorLivenessError("fixture thread-fanout record changed")
+    state_auditor = value.get("state_auditor")
+    expected_auditor = {
+        "status": "incomplete",
+        "scope": STATE_AUDITOR_SCOPE,
+        "workload_liveness": {
+            "status": "passed",
+            "snapshot_count": cycles,
+            "warmup_epoch": 1,
+            "post_warm_snapshot_count": cycles - 1,
+            "plateau_after_warmup": True,
+        },
+        "allocator_state": {
+            "status": "unavailable",
+            "observation": ALLOCATOR_STATE_OBSERVATION,
+        },
+    }
+    if state_auditor != expected_auditor:
+        raise AllocatorLivenessError(
+            "fixture state-auditor record differs: "
+            f"expected {expected_auditor!r}, got {state_auditor!r}"
+        )
+    fixture_rss_slope(value)
     return value
+
+
+def parse_fixture_failure(
+    stdout: str,
+    *,
+    status: int,
+    process_epoch: int,
+    seed: int,
+    cycles: int,
+) -> AllocatorLivenessError:
+    """Decode exit 68 without ever losing its runtime root classification."""
+
+    opaque_root = {
+        "process_epoch": process_epoch,
+        "process_seed": seed,
+        "exit_status": status,
+        "structured": False,
+        "stdout": stdout,
+    }
+
+    try:
+        value = json.loads(stdout)
+    except json.JSONDecodeError as error:
+        return AllocatorLivenessError(
+            f"exit-68 runtime failure did not emit one structured root: {stdout!r}",
+            root_failure=opaque_root,
+        )
+    if not isinstance(value, dict) or value.get("schema") != FIXTURE_SCHEMA:
+        return AllocatorLivenessError(
+            "exit-68 runtime root used an unknown fixture schema",
+            root_failure=opaque_root,
+        )
+    if value.get("status") != "failed" or value.get("seed") != seed or value.get("cycles") != cycles:
+        return AllocatorLivenessError(
+            "exit-68 structured fixture failure identity changed",
+            root_failure=opaque_root,
+        )
+    completed_epochs = value.get("completed_epochs")
+    failure = value.get("root_failure")
+    state_auditor = value.get("state_auditor")
+    if (
+        isinstance(completed_epochs, bool)
+        or not isinstance(completed_epochs, int)
+        or completed_epochs < 0
+        or completed_epochs >= cycles
+        or not isinstance(failure, dict)
+        or not isinstance(state_auditor, dict)
+    ):
+        return AllocatorLivenessError(
+            "exit-68 structured fixture failure shape changed",
+            root_failure=opaque_root,
+        )
+    fixture_epoch = failure.get("epoch")
+    fixture_epoch_seed = failure.get("epoch_seed")
+    transition_name = failure.get("transition")
+    code = failure.get("code")
+    subject_index = failure.get("subject_index")
+    domain = failure.get("domain")
+    if (
+        failure.get("exit_status") != status
+        or status != 68
+        or isinstance(fixture_epoch, bool)
+        or not isinstance(fixture_epoch, int)
+        or fixture_epoch != completed_epochs + 1
+        or isinstance(fixture_epoch_seed, bool)
+        or not isinstance(fixture_epoch_seed, int)
+        or fixture_epoch_seed < 0
+        or not isinstance(transition_name, str)
+        or not transition_name
+        or domain not in {"allocator_runtime", "thread_runtime", "fixture_invariant"}
+        or isinstance(code, bool)
+        or not isinstance(code, int)
+        or code <= 0
+        or (
+            subject_index is not None
+            and (
+                isinstance(subject_index, bool)
+                or not isinstance(subject_index, int)
+                or subject_index < 0
+            )
+        )
+        or state_auditor.get("status") != "failed"
+        or state_auditor.get("scope") != STATE_AUDITOR_SCOPE
+        or state_auditor.get("snapshot_count") != completed_epochs
+    ):
+        return AllocatorLivenessError(
+            "exit-68 structured fixture failure fields changed",
+            root_failure=opaque_root,
+        )
+    root_failure = {
+        "process_epoch": process_epoch,
+        "process_seed": seed,
+        "fixture_epoch": fixture_epoch,
+        "fixture_epoch_seed": fixture_epoch_seed,
+        "completed_fixture_epochs": completed_epochs,
+        "name": transition_name,
+        "code": code,
+        "subject_index": subject_index,
+        "exit_status": status,
+        "domain": domain,
+        "structured": True,
+    }
+    return AllocatorLivenessError(
+        "native churn/RSS smoke ownership transition failed: "
+        f"process epoch {process_epoch}, seed {seed}, fixture epoch {fixture_epoch}, "
+        f"epoch seed {fixture_epoch_seed}, transition {transition_name}, code {code}, "
+        f"subject index {subject_index!r}",
+        root_failure=root_failure,
+    )
 
 
 def run_smoke(
@@ -633,10 +1042,20 @@ def run_smoke(
     """Build then run fresh selected-shadow fixture processes deterministically."""
 
     validated = validate_contract(contract)
-    if min(seed, cycles, epochs, watchdog_seconds, rss_threshold_bytes) <= 0:
+    if min(seed, watchdog_seconds, rss_threshold_bytes) <= 0 or cycles < 2 or epochs < 2:
         raise SmokeError(
-            "seed, cycles, epochs, watchdog seconds, and RSS threshold bytes must all be positive"
+            "seed, watchdog seconds, and RSS threshold bytes must be positive; "
+            "cycles and epochs must each be at least two"
         )
+    if seed > UINT64_MAX or seed + epochs - 1 > UINT64_MAX:
+        raise SmokeError("process-epoch seed schedule exceeds the fixture's u64 range")
+    configuration = report_configuration(
+        seed=seed,
+        cycles=cycles,
+        epochs=epochs,
+        watchdog_seconds=watchdog_seconds,
+        rss_threshold_bytes=rss_threshold_bytes,
+    )
     _sysroot, compiler, runtime = require_owned_shadow_environment()
     fixture = validated["fixture"]
     assert isinstance(fixture, Path)
@@ -682,29 +1101,75 @@ def run_smoke(
                     env=environment,
                     timeout=watchdog_seconds,
                 )
-                try:
-                    require_success(
-                        record, f"native churn/RSS smoke process epoch {epoch + 1}/{epochs}"
+                if record.get("timed_out"):
+                    raise AllocatorLivenessError(
+                        f"native churn/RSS smoke process epoch {epoch + 1}/{epochs} "
+                        "exceeded the configured watchdog",
+                        root_failure={
+                            "process_epoch": epoch + 1,
+                            "process_seed": epoch_seed,
+                            "name": "watchdog_timeout",
+                            "domain": "thread_runtime",
+                            "structured": False,
+                        },
+                        completed_executions=executions,
                     )
-                except SmokeError as error:
-                    raise AllocatorLivenessError(str(error)) from error
+                status = record.get("status")
+                if status == 68:
+                    error = parse_fixture_failure(
+                        str(record["stdout"]),
+                        status=status,
+                        process_epoch=epoch + 1,
+                        seed=epoch_seed,
+                        cycles=cycles,
+                    )
+                    error.completed_executions = [dict(execution) for execution in executions]
+                    raise error
+                if status != 0:
+                    raise AllocatorLivenessError(
+                        f"native churn/RSS smoke process epoch {epoch + 1}/{epochs} "
+                        f"failed with status {status}: stdout={record.get('stdout')!r} "
+                        f"stderr={record.get('stderr')!r}",
+                        root_failure={
+                            "process_epoch": epoch + 1,
+                            "process_seed": epoch_seed,
+                            "name": "fixture_process_exit",
+                            "exit_status": status,
+                            "domain": "allocator_runtime",
+                            "structured": False,
+                        },
+                        completed_executions=executions,
+                    )
                 if record["stderr"]:
                     raise AllocatorLivenessError(
                         f"fixture emitted unexpected stderr at epoch {epoch + 1}/{epochs}: "
-                        f"{record['stderr']!r}"
+                        f"{record['stderr']!r}",
+                        root_failure={
+                            "process_epoch": epoch + 1,
+                            "process_seed": epoch_seed,
+                            "name": "unexpected_fixture_stderr",
+                            "domain": "fixture_invariant",
+                            "structured": False,
+                        },
+                        completed_executions=executions,
                     )
                 fixture_result = parse_fixture_output(
                     str(record["stdout"]), seed=epoch_seed, cycles=cycles
                 )
+                inner_seeds = fixture_epoch_seeds(epoch_seed, cycles)
                 executions.append(
                     {
                         "epoch": epoch + 1,
                         "seed": epoch_seed,
+                        "fixture_epoch_count": cycles,
+                        "fixture_epoch_seeds": inner_seeds,
+                        "thread_fanout": fixture_result["thread_fanout"],
+                        "rss_slope": fixture_rss_slope(fixture_result),
                         "fixture": fixture_result,
                         "watchdog": {"seconds": watchdog_seconds, "status": "passed"},
                     }
                 )
-        except AllocatorLivenessError as error:
+        except SmokeError as error:
             # The worker lifecycle can fail after all artifact proof has
             # succeeded. Retain that proof in the failed JSON rather than
             # making a liveness failure look like an unselected libc.
@@ -714,6 +1179,7 @@ def run_smoke(
                 dependencies=dependencies,
                 attestation=attestation,
             )
+            error.configuration = configuration
             raise
         observed_rss = high_water(executions)["rss_bytes"]
         if not isinstance(observed_rss, int):
@@ -722,13 +1188,26 @@ def run_smoke(
             error = RssThresholdError(
                 observed_bytes=observed_rss, threshold_bytes=rss_threshold_bytes
             )
+            error.completed_executions = [dict(execution) for execution in executions]
             retain_selected_shadow_context(
                 error,
                 binary=binary,
                 dependencies=dependencies,
                 attestation=attestation,
             )
+            error.configuration = configuration
             raise error
+        try:
+            require_general_production_state(executions)
+        except AllocatorStatePrerequisiteError as error:
+            retain_selected_shadow_context(
+                error,
+                binary=binary,
+                dependencies=dependencies,
+                attestation=attestation,
+            )
+            error.configuration = configuration
+            raise
         return {
             "artifact": {
                 "sha256": sha256_file(binary),
@@ -752,6 +1231,19 @@ def high_water(executions: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
     if not all(isinstance(result, dict) for result in fixture_results):
         raise SmokeError("execution result shape changed")
     typed_results = [result for result in fixture_results if isinstance(result, dict)]
+    state_auditors = [result.get("state_auditor") for result in typed_results]
+    if not all(isinstance(auditor, dict) for auditor in state_auditors):
+        raise SmokeError("fixture state-auditor result shape changed")
+    typed_auditors = [auditor for auditor in state_auditors if isinstance(auditor, dict)]
+    workload_audits = [auditor.get("workload_liveness") for auditor in typed_auditors]
+    if not all(isinstance(audit, dict) for audit in workload_audits):
+        raise SmokeError("fixture workload-liveness audit shape changed")
+    typed_workload_audits = [audit for audit in workload_audits if isinstance(audit, dict)]
+    within_process_slopes = [fixture_rss_slope(result) for result in typed_results]
+    high_water_samples = [result["rss_high_water_bytes"] for result in typed_results]
+    across_process_slope = exact_slope(
+        high_water_samples[0], high_water_samples[-1], len(high_water_samples) - 1
+    )
     return {
         "rss_bytes": max(result["rss_high_water_bytes"] for result in typed_results),
         "requested_live_bytes": max(
@@ -759,12 +1251,74 @@ def high_water(executions: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
         ),
         "usable_live_bytes": max(result["usable_bytes_live_high_water"] for result in typed_results),
         "live_blocks": max(result["live_blocks_high_water"] for result in typed_results),
-        "allocator_metadata": {
-            "available": False,
-            "high_water_bytes": None,
-            "reason": "not exposed by the production shadow C API",
+        "state_auditor": {
+            "status": "incomplete",
+            "scope": STATE_AUDITOR_SCOPE,
+            "workload_liveness": {
+                "status": "passed",
+                "process_epoch_count": len(typed_results),
+                "snapshot_count": sum(
+                    audit["snapshot_count"] for audit in typed_workload_audits
+                ),
+                "post_warm_snapshot_count": sum(
+                    audit["post_warm_snapshot_count"] for audit in typed_workload_audits
+                ),
+                "plateau_after_warmup": all(
+                    audit["plateau_after_warmup"] is True
+                    for audit in typed_workload_audits
+                ),
+            },
+            "allocator_state": {
+                "status": "unavailable",
+                "observation": ALLOCATOR_STATE_OBSERVATION,
+                "general_production_qualified": False,
+            },
         },
+        "thread_fanout": {
+            **THREAD_FANOUT,
+            "total_worker_threads": sum(
+                result["thread_fanout"]["worker_threads_created"] for result in typed_results
+            ),
+        },
+        "rss_slopes": {
+            "unit": "bytes_per_epoch",
+            "within_process_quiescent": {
+                "measurements": within_process_slopes,
+                "minimum_bytes_per_fixture_epoch": min(
+                    slope["bytes_per_epoch"] for slope in within_process_slopes
+                ),
+                "maximum_bytes_per_fixture_epoch": max(
+                    slope["bytes_per_epoch"] for slope in within_process_slopes
+                ),
+            },
+            "across_process_high_water": across_process_slope,
+        },
+        "allocator_state": unavailable_allocator_state(),
     }
+
+
+def require_general_production_state(
+    executions: Sequence[Mapping[str, Any]],
+) -> dict[str, Any]:
+    """Fail closed until every required allocator-internal category is auditable."""
+
+    summary = high_water(executions)
+    state_auditor = summary.get("state_auditor")
+    if not isinstance(state_auditor, dict):
+        raise SmokeError("aggregated state-auditor result changed shape")
+    allocator_audit = state_auditor.get("allocator_state")
+    if not isinstance(allocator_audit, dict):
+        raise SmokeError("aggregated allocator-state result changed shape")
+    if allocator_audit.get("general_production_qualified") is not True:
+        error = AllocatorStatePrerequisiteError(
+            "general-production churn audit requires registry, ledger, PageMap, "
+            "metadata, arena, abandoned-page, TLD, and Theap high-water and "
+            "post-warm plateau observations"
+        )
+        error.high_water = summary
+        error.completed_executions = [dict(execution) for execution in executions]
+        raise error
+    return summary
 
 
 def atomic_write_json(path: Path, value: Mapping[str, Any]) -> None:
@@ -778,6 +1332,33 @@ def atomic_write_json(path: Path, value: Mapping[str, Any]) -> None:
     finally:
         if temporary.exists():
             temporary.unlink()
+
+
+def report_configuration(
+    *,
+    seed: int,
+    cycles: int,
+    epochs: int,
+    watchdog_seconds: int,
+    rss_threshold_bytes: int,
+) -> dict[str, Any]:
+    """Describe every deterministic seed, epoch, and thread-fanout control."""
+
+    return {
+        "seed": seed,
+        "process_epoch_seeds": [seed + epoch for epoch in range(epochs)],
+        "fixture_epochs_per_process": cycles,
+        "fresh_process_epochs": epochs,
+        "total_fixture_epochs": cycles * epochs,
+        "thread_fanout": {
+            **THREAD_FANOUT,
+            "total_worker_threads": (
+                cycles * epochs * THREAD_FANOUT["worker_threads_per_epoch"]
+            ),
+        },
+        "watchdog_seconds": watchdog_seconds,
+        "rss_threshold_bytes": rss_threshold_bytes,
+    }
 
 
 def report_for_success(
@@ -795,6 +1376,7 @@ def report_for_success(
     executions = run.get("executions")
     if not isinstance(executions, list):
         raise SmokeError("successful run omitted execution records")
+    summary = require_general_production_state(executions)
     return {
         "schema": REPORT_SCHEMA,
         "status": "passed",
@@ -803,12 +1385,17 @@ def report_for_success(
             "sha256": sha256_file(CONTRACT_PATH),
             "fixture_sha256": contract["fixture"]["sha256"],
         },
-        "configuration": {
-            "seed": seed,
-            "cycles_per_process": cycles,
-            "fresh_process_epochs": epochs,
-            "watchdog_seconds": watchdog_seconds,
-            "rss_threshold_bytes": rss_threshold_bytes,
+        "configuration": report_configuration(
+            seed=seed,
+            cycles=cycles,
+            epochs=epochs,
+            watchdog_seconds=watchdog_seconds,
+            rss_threshold_bytes=rss_threshold_bytes,
+        ),
+        "qualification": {
+            "general_production_workload": "passed",
+            "allocator_internal_state": "passed",
+            "general_production_churn_audit": "passed",
         },
         "production_shadow_boundary": {
             "allocator_feature": "native-mimalloc-shadow",
@@ -822,7 +1409,7 @@ def report_for_success(
         },
         "artifact": run["artifact"],
         "executions": executions,
-        "high_water": high_water(executions),
+        "high_water": summary,
     }
 
 
@@ -846,17 +1433,32 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
 def failure_report(error: SmokeError) -> dict[str, Any]:
     """Record a machine-readable failure class without losing the diagnosis."""
 
-    failure: dict[str, Any] = {"kind": "harness", "message": str(error)}
+    failure: dict[str, Any] = {
+        "kind": "harness",
+        "subtype": "contract_or_harness",
+        "message": str(error),
+    }
     if isinstance(error, AllocatorLivenessError):
-        failure["kind"] = "allocator_liveness"
+        failure["kind"] = "runtime"
+        failure["subtype"] = "allocator_liveness"
+        if error.root_failure is not None:
+            failure["root_failure"] = error.root_failure
     elif isinstance(error, RssThresholdError):
-        failure["kind"] = "rss_threshold"
+        failure["kind"] = "runtime"
+        failure["subtype"] = "rss_threshold"
         failure["rss"] = {
             "observed_high_water_bytes": error.observed_bytes,
             "threshold_bytes": error.threshold_bytes,
         }
+    elif isinstance(error, AllocatorStatePrerequisiteError):
+        failure["kind"] = "prerequisite"
+        failure["subtype"] = "allocator_state_observation"
     elif isinstance(error, ArtifactAttestationError):
-        failure["kind"] = "selected_shadow_attestation"
+        failure["kind"] = "prerequisite"
+        failure["subtype"] = "selected_shadow_attestation"
+    elif isinstance(error, PrerequisiteError):
+        failure["kind"] = "prerequisite"
+        failure["subtype"] = "owned_native_environment"
     report: dict[str, Any] = {
         "schema": REPORT_SCHEMA,
         "status": "failed",
@@ -871,6 +1473,15 @@ def failure_report(error: SmokeError) -> dict[str, Any]:
             "selected_shadow_artifact_attestation": attestation,
         }
         report["artifact"] = getattr(error, "artifact", None)
+    completed_executions = getattr(error, "completed_executions", None)
+    if isinstance(completed_executions, list) and completed_executions:
+        report["executions"] = completed_executions
+    configuration = getattr(error, "configuration", None)
+    if isinstance(configuration, dict):
+        report["configuration"] = configuration
+    observed_high_water = getattr(error, "high_water", None)
+    if isinstance(observed_high_water, dict):
+        report["high_water"] = observed_high_water
     return report
 
 
@@ -879,6 +1490,7 @@ def main(arguments: Sequence[str] | None = None) -> int:
 
     args = parse_arguments(arguments)
     report_path = args.report.expanduser().resolve()
+    configuration: dict[str, Any] | None = None
     try:
         contract = read_json(CONTRACT_PATH)
         validated = validate_contract(contract)
@@ -895,6 +1507,22 @@ def main(arguments: Sequence[str] | None = None) -> int:
             if args.rss_threshold_bytes is None
             else args.rss_threshold_bytes
         )
+        if (
+            seed > 0
+            and cycles >= 2
+            and epochs >= 2
+            and watchdog_seconds > 0
+            and rss_threshold_bytes > 0
+            and seed <= UINT64_MAX
+            and seed + epochs - 1 <= UINT64_MAX
+        ):
+            configuration = report_configuration(
+                seed=seed,
+                cycles=cycles,
+                epochs=epochs,
+                watchdog_seconds=watchdog_seconds,
+                rss_threshold_bytes=rss_threshold_bytes,
+            )
         run = run_smoke(
             contract,
             seed=seed,
@@ -913,6 +1541,10 @@ def main(arguments: Sequence[str] | None = None) -> int:
             rss_threshold_bytes=rss_threshold_bytes,
         )
     except SmokeError as error:
+        if configuration is not None and not isinstance(
+            getattr(error, "configuration", None), dict
+        ):
+            error.configuration = configuration
         report = failure_report(error)
         atomic_write_json(report_path, report)
         print(f"native-churn-rss-smoke: {error}", file=sys.stderr)

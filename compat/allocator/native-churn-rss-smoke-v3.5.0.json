@@ -10,7 +10,7 @@
   },
   "fixture": {
     "path": "compat/allocator/native-churn-rss-smoke.c",
-    "sha256": "af3d4512c82db62da5221a78727fdb9cd0f112342ebd3d0341a4c861093c0755",
+    "sha256": "938c012f761d7c58362bb02849eb63f74f55ba15f32e244d2e46ce9ea1fd3f0f",
     "license": "crabc-authored C11 evidence fixture"
   },
   "execution": {
@@ -38,6 +38,12 @@
     "seed": 1511506142,
     "cycles": 8,
     "process_epochs": 4,
+    "thread_fanout": {
+      "initial_threads": 1,
+      "owner_workers_per_fixture_epoch": 1,
+      "handoff_workers_per_fixture_epoch": 1,
+      "peak_threads": 3
+    },
     "watchdog_seconds": 30,
     "rss_threshold_bytes": 16777216
   },
@@ -92,26 +98,73 @@
       "usable_bytes_live_high_water",
       "live_blocks_high_water"
     ],
+    "production_liveness_state_auditor": "production-general-churn",
+    "allocator_state_categories": [
+      "live_owner_registry",
+      "post_exit_registry",
+      "client_ledger",
+      "page_map",
+      "metadata",
+      "arena",
+      "abandoned_page",
+      "tld",
+      "theap"
+    ],
+    "allocator_plateau_observation": "not-exposed-by-production-shadow-c-api",
+    "general_production_state_qualification": "incomplete-when-unavailable",
     "allocator_metadata": "not-exposed-by-production-shadow-c-api",
     "metadata_high_water_bytes": null,
-    "reason": "This selected C ABI has no allocator-statistics or debug-state API. The smoke records null rather than deriving metadata from Rust internals, a C fallback, or an unsupported proxy."
+    "reason": "This selected C ABI has no allocator-statistics or debug-state API. The executable state auditor therefore proves only production-observable workload liveness and exact post-churn quiescence. Registry, ledger, PageMap, metadata, arena, abandoned-page, TLD, and Theap high-water and plateau fields remain null rather than being inferred from RSS, Rust internals, a C fallback, or an unsupported proxy."
+  },
+  "failure_contract": {
+    "kinds": [
+      "harness",
+      "prerequisite",
+      "runtime"
+    ],
+    "exit_68_root_failure_required": true,
+    "reason": "A fixture runtime failure, including malformed exit-68 output, remains classified as runtime. Missing owned-environment or selected-artifact proof is prerequisite failure; manifest, parser, build, and report defects are harness failures."
   },
   "report": {
     "path": "compat/reports/allocator/native-churn-rss-smoke-latest.json",
-    "schema": "crabc-mimalloc-native-churn-rss-smoke-report-v1",
+    "schema": "crabc-mimalloc-native-churn-rss-smoke-report-v2",
     "required_high_water": [
       "rss_bytes",
       "requested_live_bytes",
       "usable_live_bytes",
       "live_blocks",
-      "allocator_metadata.high_water_bytes"
+      "thread_fanout.peak_threads",
+      "thread_fanout.total_worker_threads",
+      "rss_slopes.within_process_quiescent.minimum_bytes_per_fixture_epoch",
+      "rss_slopes.within_process_quiescent.maximum_bytes_per_fixture_epoch",
+      "rss_slopes.across_process_high_water.bytes_per_epoch",
+      "state_auditor.workload_liveness.snapshot_count",
+      "state_auditor.workload_liveness.plateau_after_warmup",
+      "allocator_state.live_owner_registry.high_water",
+      "allocator_state.live_owner_registry.plateau_after_warmup",
+      "allocator_state.post_exit_registry.high_water",
+      "allocator_state.post_exit_registry.plateau_after_warmup",
+      "allocator_state.client_ledger.high_water",
+      "allocator_state.client_ledger.plateau_after_warmup",
+      "allocator_state.metadata.high_water",
+      "allocator_state.metadata.plateau_after_warmup",
+      "allocator_state.page_map.high_water",
+      "allocator_state.page_map.plateau_after_warmup",
+      "allocator_state.arena.high_water",
+      "allocator_state.arena.plateau_after_warmup",
+      "allocator_state.abandoned_page.high_water",
+      "allocator_state.abandoned_page.plateau_after_warmup",
+      "allocator_state.tld.high_water",
+      "allocator_state.tld.plateau_after_warmup",
+      "allocator_state.theap.high_water",
+      "allocator_state.theap.plateau_after_warmup"
     ]
   },
   "scope": {
     "classification": "C ABI compatibility machinery and native allocator evidence",
     "non_claims": [
-      "This bounded smoke is not a general owner-exit, allocator metadata, PageMap, arena, or selected-shadow promotion proof.",
-      "It does not infer a metadata plateau from RSS or workload liveness.",
+      "This bounded smoke is not a completed general owner-exit, allocator registry, ledger, PageMap, metadata, arena, abandoned-page, TLD, Theap, or selected-shadow promotion proof.",
+      "Its executable state auditor covers only production-observable workload liveness. It reports the general-production allocator-state qualification as incomplete and does not infer registry, ledger, PageMap, metadata, arena, abandoned-page, TLD, or Theap high-water or plateau state from RSS or workload liveness.",
       "It does not replace the separately owned upstream stress, differential, state-auditor, soak, performance, or architecture-ratchet evidence."
     ]
   }
