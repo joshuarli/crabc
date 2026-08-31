@@ -94,6 +94,8 @@ acoshl
 acosl
 alarm
 alphasort
+asinh
+asinhf
 asinhl
 asinl
 atan2l
@@ -194,6 +196,10 @@ connect
 copysign
 copysignf
 copysignl
+cos
+cosf
+cosh
+coshf
 coshl
 cosl
 cpow
@@ -267,9 +273,12 @@ eventfd
 eventfd_read
 eventfd_write
 exit
+exp
+exp10f
 exp2
 exp2f
 exp2l
+expf
 expl
 expm1
 expm1f
@@ -655,6 +664,7 @@ posix_spawnattr_destroy
 posix_spawnattr_getflags
 posix_spawnattr_setpgroup
 posix_spawnattr_setschedpolicy
+pow10f
 powl
 ppoll
 pread
@@ -709,6 +719,7 @@ pthread_setcanceltype
 pthread_setname_np
 pthread_setspecific
 pthread_spin_destroy
+pthread_spin_init
 pthread_testcancel
 putc
 putchar
@@ -841,6 +852,8 @@ sigtimedwait
 sigwait
 sigwaitinfo
 sincosl
+sinh
+sinhf
 sinhl
 sinl
 sleep

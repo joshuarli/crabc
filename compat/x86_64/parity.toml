@@ -7997,7 +7997,7 @@ id = "libc.pthread-tls"
 order = 80
 depends_on = ["oracle.musl-toolchain", "libc.errno-tls", "libc.headers-layouts", "libc.posix-runtime"]
 category = "c-abi"
-description = "Pthread, thread-specific data, static/dynamic TLS, cancellation, and fork interactions in the selected C runtime. The isolated x86 i32 atomic and fixed musl-shaped raw process-clone leaves remain source-only prerequisites. Twenty-four separately verified static artifacts establish a private Static Initial TLS v1 final-executable template, real rcrt1 static-PIE and conventional crt1 ET_EXEC handoffs with archive-owned bounded ordinary-exit lifecycle, null-attribute create/join normal-return plus selected-worker explicit-exit routes that consume independent copies of it, a bounded opaque `%fs:0` pthread/C11 identity boundary, a typed C11 create/join/explicit-exit sibling, a prompt pthread/C11 detach state transition with lazy later create/join reaping after clear-child-tid, a bounded direct GNU pthread-affinity route for bootstrapped-main self handles and executing selected-worker handles, one caller-self-only pthread CPU-clock-ID route over direct Linux gettid encoding, one bootstrapped-main GNU pthread task-name pair over direct Linux prctl, one source-closed opaque `pthread_spin_destroy` return-zero leaf with no spin-state observation, one raw barrier-attribute pshared record pair deliberately unconsumed by barrier initialization, one direct non-cancellation C11 `thrd_sleep` status adapter over `clock_nanosleep`, one void-returning direct C11 `thrd_yield` raw syscall leaf, a process-private normal pthread-mutex block over the selected worker seam, one complete private rwlock/rwlockattr block with private and process-shared futex waits, one process-private pthread-condition waiter/barrier/requeue handoff paired with that selected mutex, a distinct C11 `mtx_plain`/private-condition adapter over those exact engines, one private normal-return pthread/C11 once state machine over the same static worker seam, one bounded private pthread-key/C11-TSS lifecycle table with four-pass worker destructor ordering, one selected-worker deferred-cancellation route whose sole delivery point is explicit `pthread_testcancel`, one two-worker aggregate that composes those selected worker/TLS, mutex/condition, rwlock, once, and TSD paths, and one single-threaded fixed-capacity pthread_atfork/fork route with child-only bounded ordinary-exit callback dispatch. They are not pthread/TLS parity or a selected general C runtime."
+description = "Pthread, thread-specific data, static/dynamic TLS, cancellation, and fork interactions in the selected C runtime. The isolated x86 i32 atomic and fixed musl-shaped raw process-clone leaves remain source-only prerequisites. Twenty-four separately verified static artifacts establish a private Static Initial TLS v1 final-executable template, real rcrt1 static-PIE and conventional crt1 ET_EXEC handoffs with archive-owned bounded ordinary-exit lifecycle, null-attribute create/join normal-return plus selected-worker explicit-exit routes that consume independent copies of it, a bounded opaque `%fs:0` pthread/C11 identity boundary, a typed C11 create/join/explicit-exit sibling, a prompt pthread/C11 detach state transition with lazy later create/join reaping after clear-child-tid, a bounded direct GNU pthread-affinity route for bootstrapped-main self handles and executing selected-worker handles, one caller-self-only pthread CPU-clock-ID route over direct Linux gettid encoding, one bootstrapped-main GNU pthread task-name pair over direct Linux prctl, one source-closed opaque `pthread_spin_destroy` return-zero leaf with no spin-state observation, one raw barrier-attribute pshared record pair deliberately unconsumed by barrier initialization, one direct non-cancellation C11 `thrd_sleep` status adapter over `clock_nanosleep`, one void-returning direct C11 `thrd_yield` raw syscall leaf, a process-private normal pthread-mutex block over the selected worker seam, one complete private rwlock/rwlockattr block with private and process-shared futex waits, one process-private pthread-condition waiter/barrier/requeue handoff paired with that selected mutex, a distinct C11 `mtx_plain`/private-condition adapter over those exact engines, one private normal-return pthread/C11 once state machine over the same static worker seam, one bounded private pthread-key/C11-TSS lifecycle table with four-pass worker destructor ordering, one selected-worker deferred-cancellation route whose sole delivery point is explicit `pthread_testcancel`, one two-worker aggregate that composes those selected worker/TLS, mutex/condition, rwlock, once, and TSD paths, and one single-threaded fixed-capacity pthread_atfork/fork route with child-only bounded ordinary-exit callback dispatch. The direct pthread_spin_init zero-store record leaf follows those Twenty-four separately verified static artifacts; it is not pthread/TLS parity or a selected general C runtime."
 aarch64_gates = ["pthread-stress", "static-pthread-tls", "signal-process", "libc-test"]
 source_owners = ["libc/src/c_abi.rs", "libc/src/c_abi/x86_64/atomic.rs", "libc/src/c_abi/x86_64/clone.rs", "libc/src/c_abi/x86_64/static_tls.rs", "libc/src/c_abi/x86_64/static_startup.rs", "libc/src/c_abi/x86_64/pthread_identity.rs", "libc/src/c_abi/x86_64/pthread_name.rs", "libc/src/c_abi/x86_64/pthread_create_join.rs", "libc/src/c_abi/x86_64/pthread_cancel.rs", "libc/src/c_abi/x86_64/pthread_atfork.rs", "libc/src/c_abi/x86_64/pthread_tsd.rs", "libc/src/c_abi/x86_64/pthread_mutex.rs", "libc/src/c_abi/x86_64/pthread_rwlock.rs", "libc/src/c_abi/x86_64/pthread_cond.rs", "libc/src/c_abi/x86_64/pthread_once.rs", "libc/src/c_abi/x86_64/c11_thread_lifecycle.rs", "libc/src/c_abi/x86_64/c11_sync.rs", "libc/src/c_abi/x86_64/clock_nanosleep.rs", "ldso/src/loader.rs", "crt/build_x86_64.py", "crt/src/x86_64_crt1.rs", "crt/src/x86_64_rcrt1.rs", "crt/src/x86_64_startup.rs", "crt/src/x86_64_crti.rs", "crt/src/x86_64_crtn.rs", "compat/pthread-stress", "compat/static-pthread-tls", "compat/x86_64/libc_atomic_probe.rs", "compat/x86_64/run_libc_atomic.sh", "compat/x86_64/libc_clone_raw_probe.c", "compat/x86_64/libc_clone_raw_probe.rs", "compat/x86_64/run_libc_clone_raw.sh", "compat/x86_64/libc_static_tls_v1_probe.c", "compat/x86_64/libc_static_tls_v1_peer.c", "compat/x86_64/libc_static_tls_v1_start.S", "compat/x86_64/run_libc_static_tls_v1.sh", "compat/x86_64/libc_crt_static_tls_probe.c", "compat/x86_64/libc_crt_static_tls_peer.c", "compat/x86_64/run_libc_crt_static_tls.sh", "compat/x86_64/run_libc_crt1_static_tls.sh", "compat/x86_64/libc_pthread_create_join_tls_probe.c", "compat/x86_64/run_libc_pthread_create_join_tls.sh", "compat/x86_64/libc_pthread_identity_probe.c", "compat/x86_64/libc_pthread_identity_start.S", "compat/x86_64/run_libc_pthread_identity.sh", "compat/x86_64/libc_c11_lifecycle_probe.c", "compat/x86_64/libc_c11_lifecycle_start.S", "compat/x86_64/run_libc_c11_lifecycle.sh", "compat/x86_64/libc_c11_plain_sync_probe.c", "compat/x86_64/libc_c11_plain_sync_start.S", "compat/x86_64/run_libc_c11_plain_sync.sh", "compat/x86_64/libc_pthread_c11_once_probe.c", "compat/x86_64/libc_pthread_c11_once_start.S", "compat/x86_64/run_libc_pthread_c11_once.sh", "compat/x86_64/libc_pthread_c11_tsd_probe.c", "compat/x86_64/libc_pthread_c11_tsd_start.S", "compat/x86_64/run_libc_pthread_c11_tsd.sh", "compat/x86_64/libc_pthread_cancel_deferred_probe.c", "compat/x86_64/libc_pthread_cancel_deferred_start.S", "compat/x86_64/run_libc_pthread_cancel_deferred.sh", "compat/x86_64/pthread_cancellation_header_abi_probe.c", "compat/x86_64/pthread_cancellation_header_abi_probe.cpp", "compat/x86_64/run_pthread_cancellation_header_abi.sh", "compat/x86_64/libc_pthread_detach_probe.c", "compat/x86_64/libc_pthread_detach_start.S", "compat/x86_64/run_libc_pthread_detach.sh", "compat/x86_64/libc_thrd_sleep_probe.c", "compat/x86_64/libc_thrd_sleep_start.S", "compat/x86_64/run_libc_thrd_sleep.sh", "compat/x86_64/libc_pthread_mutex_normal_probe.c", "compat/x86_64/libc_pthread_mutex_normal_start.S", "compat/x86_64/run_libc_pthread_mutex_normal.sh", "compat/x86_64/libc_pthread_rwlock_probe.c", "compat/x86_64/libc_pthread_rwlock_start.S", "compat/x86_64/run_libc_pthread_rwlock.sh", "compat/x86_64/libc_pthread_cond_private_probe.c", "compat/x86_64/libc_pthread_cond_private_start.S", "compat/x86_64/run_libc_pthread_cond_private.sh", "compat/x86_64/libc_pthread_atfork_probe.c", "compat/x86_64/libc_pthread_atfork_start.S", "compat/x86_64/run_libc_pthread_atfork.sh", "compat/x86_64/libc_pthread_name_probe.c", "compat/x86_64/libc_pthread_name_start.S", "compat/x86_64/run_libc_pthread_name.sh"]
 x86_abi_prerequisites = ["ELF x86-64 initial and dynamic TLS", "%fs thread-pointer convention", "pthread ABI object layouts", "x86 clone and signal/TLS interaction", "fixed musl x86 raw-process-clone entry's seven-argument SysV layout, clone=56 register shuffle, supplied child stack, callback, and exit=60 tail without CLONE_VM/THREAD/SETTLS", "source-only locked i32 cmpxchg/xchg/xadd helper contract", "Private Static Initial TLS v1 validates one final static executable's AT_PHDR/AT_PHENT/AT_PHNUM plus either unique PT_PHDR or a controlled no-PT_PHDR ET_EXEC ELF64-header form with e_phoff=64 and zero load bias, and its optional PT_TLS. It copies exactly p_filesz, zeroes exactly p_memsz-p_filesz below a Variant-II aligned TP, writes only the %fs:0 self word, installs ARCH_SET_FS, and retains the immutable template for selected CLONE_SETTLS workers. It excludes dynamic modules, DTV, loader handoff, dynamic TLS, and a general pthread state machine", "The separately selected bounded static worker uses a distinct private clone seam with CLONE_VM/THREAD/SETTLS, parent/child TID words, shared FUTEX_WAIT join, a full independent Static Initial TLS v1 final-image copy, and a 64-slot `%fs:0` plus gettid and still-live child-TID registry identity that serializes selected explicit exit with join withdrawal.", "Pinned musl x86 makes pthread_t the opaque Variant-II `%fs:0` thread pointer. pthread_self/thrd_current and pthread_equal/thrd_equal are weak same-address pairs; equality returns canonical one or zero. The selected pthread_create therefore publishes its child TP, while pthread_join resolves TP to the private control record under the fixed registry lock before dereferencing or reclaiming it. The separate detach artifact has one `Joinable -> Detached` state-only owner transition and reclaims only from a later selected create/join boundary after CLONE_CHILD_CLEARTID; it does not promote general detached-thread semantics.", "The selected private normal mutex maps pinned musl 1.2.6 src/thread/pthread_mutex_init.c, pthread_mutex_trylock.c, pthread_mutex_lock.c, pthread_mutex_timedlock.c, pthread_mutex_unlock.c, and pthread_mutex_destroy.c. Its public record is exactly 40 bytes with 8-byte alignment; type, lock, and waiter words are at offsets 0, 4, and 8. Only type word zero is accepted, and the lock state is exactly 0, EBUSY=16, or EBUSY|INT_MIN.", "The selected private condition path maps pinned musl 1.2.6 pthread_cond_init/destroy/wait/timedwait/signal/broadcast plus __wait. Its exact 48-byte align-8 condition record keeps a private stack waiter list at offsets 8/40 behind its 0/1/2 lock at offset 32, and atomically unlocks/relocks only the selected 40-byte normal mutex during a waiter/barrier/requeue handoff.", "The separate C11 plain-sync adapter maps distinct 40-byte `mtx_t` and 48-byte `cnd_t` storage through those exact private engines. It admits only mtx_plain, maps held EBUSY to thrd_busy, retains musl's direct valid mtx_unlock result, and maps zero/nonzero selected condition results to thrd_success/thrd_error without C errno publication.", "The selected normal-return once path maps pinned musl 1.2.6 src/thread/pthread_once.c::{__pthread_once,__pthread_once_full}, src/thread/call_once.c, src/thread/__wait.c::__wait, and src/internal/pthread_impl.h::__wake. Its four-byte aligned pthread_once_t/once_flag control's selected state machine is 0 initial, 1 initializer, 2 complete, and 3 initializer-with-waiters; compare-exchange 0->1, acquire completion observation, and release exchange to 2 publish relaxed payload/count observations only through the once release/acquire edge. C11 call_once invokes that private state machine directly rather than crossing an interposable pthread C ABI, and the artifact does not establish musl's weak pthread_once ELF binding or exact ELF parity.", "The bounded pthread-key/C11-TSS artifact maps pinned musl 1.2.6 src/thread/pthread_key_create.c::{__pthread_key_create,__pthread_key_delete,__pthread_tsd_run_dtors}, pthread_getspecific.c::__pthread_getspecific, pthread_setspecific.c::pthread_setspecific, tss_create.c, tss_delete.c, tss_set.c, and pthread_create.c::{start,start_c11,__pthread_exit}. It keeps PTHREAD_KEYS_MAX=128 and PTHREAD_DESTRUCTOR_ITERATIONS=TSS_DTOR_ITERATIONS=4 in a private key table plus process-main and selected-worker value tables. A null destructor reserves its key; deletion clears only those selected tables without a callback; a worker clears every value before its non-null callback, drops the private lock across that callback, admits rearming for at most four ascending-key passes, and completes before selected normal return, pthread_exit, or thrd_exit result publication and SYS_exit. It deliberately fails closed for invalid/deleted keys and non-selected callers rather than using musl's unchecked internal fast paths. It does not establish musl's full thread-list/fork protocol, weak/same-address TSD aliases, or exact ELF parity.", "Linux 5.10 x86-64 futex=202 receives FUTEX_WAIT_PRIVATE=128 or FUTEX_WAKE_PRIVATE=129 through the raw syscall boundary, with the wait fourth null pointer in r10. The condition requeue path additionally uses FUTEX_REQUEUE_PRIVATE=131 with val2=1 in r10 and its mutex lock-word handoff address in r8. The once path waits on exact state 3 and normalizes musl's wake-all sentinel to INT_MAX; atomic compare-exchange and exchange preserve the private state handoff, while EINTR and wake races retry without a C errno status write.", "The SysV AMD64 C entries consume the public pointer record with explicit atomic memory ordering. The selected worker seam provides only static TLS for bounded contention; the mutex/condition/once artifacts have no TCB/gettid, allocator, or dynamic-TLS dependency. The TSD table is not a general TCB or all-thread list: main-thread process-exit destructors, foreign threads, cancellation/cleanup handlers, concurrent key deletion/destructor interaction, fork/atfork, detached-thread lifecycle, dynamic/loader TLS/DTV, allocator ordering, and general pthread/C11 runtime behavior remain excluded."]
@@ -9204,6 +9204,45 @@ x86_header_prerequisites = [
 ]
 native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-pthread-barrierattr-pshared", scope = "Pinned-musl 1.2.6 project-header C reference plus a dependency-free x86 crabc-libc archive and `-nostdlib -static` candidate. The shared fixture proves private/shared whole-word 0/INT_MIN encodings, invalid `2` and `-1` preserve the raw word, and nonzero raw-word getter canonicalization; it deliberately has no lifecycle call. Header/source/archive/final-ELF/disassembly checks require exactly pthread_barrierattr_setpshared/getpshared, direct record operations, the closed static export surface, and no interpreter/DT_NEEDED/unresolved symbol, PT_TLS, errno/bootstrap, syscall, helper call, allocator, or ambient runtime. It excludes init/destroy lifecycle, barrier initialization, wait, or destroy, process-shared barrier operation, all other barrier attributes, threads, synchronization, cancellation, family completion, promotion, and public x86 support." }]
 oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source/declaration/behavior oracle for src/thread/pthread_barrierattr_setpshared.c and src/thread/pthread_attr_get.c: pshared value validation, raw record replacement, non-mutation on invalid input, and nonzero canonicalization. Its lifecycle and barrier operation paths remain unselected." }, { kind = "elf-abi", source = "System V AMD64 psABI and pinned musl x86 headers", role = "LP64 pointer/int function ABI, public four-byte aligned record layout, C++ C linkage, static archive ownership, and direct static executable purity boundary." }]
+
+[[family.verified_artifact]]
+id = "static-c-pthread-spin-init"
+description = "Private native x86 static pthread spin-init record artifact inside still-planned `libc.pthread-tls`. One dependency-free entry exposes only `pthread_spin_init` over one caller-owned four-byte, four-byte-aligned public `pthread_spinlock_t` word. Pinned musl's `src/thread/pthread_spin_init.c` assigns and returns zero while ignoring `pshared`; each valid call replaces arbitrary initial bits with zero. The fixture calls the exact C declaration through its typed function pointer for 0, 1, -1, `INT_MIN`, and `INT_MAX` initial and pshared words. It excludes pthread_spin_destroy, pthread_spin_lock, pthread_spin_trylock, pthread_spin_unlock, process sharing, synchronization, thread/TLS lifecycle, cancellation, C errno, dynamic/loader TLS, CRT, sysroot, general pthread/TLS behavior or x86-64 parity, family completion, promotion, or public x86 support."
+source_owners = [
+  "compat/upstreams.toml",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/pthread_spin_init.rs",
+  "include/bits/alltypes.h",
+  "include/features.h",
+  "include/pthread.h",
+  "compat/x86_64/pthread_spin_init_header_abi_probe.c",
+  "compat/x86_64/pthread_spin_init_header_abi_probe.cpp",
+  "compat/x86_64/run_pthread_spin_init_header_abi.sh",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/libc_pthread_spin_init_probe.c",
+  "compat/x86_64/libc_pthread_spin_init_start.S",
+  "compat/x86_64/run_libc_pthread_spin_init.sh",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "compat/x86_64/README.md",
+  "STATUS.md",
+  "x86-64.md",
+  "scripts/dev-x86_64.sh",
+]
+x86_abi_prerequisites = [
+  "Pinned musl 1.2.6 `src/thread/pthread_spin_init.c::pthread_spin_init` is exactly `return *s = 0;`; it ignores its `shared` argument. The Rust leaf retains that source-specific MIT provenance under COPYRIGHT without importing a spin state machine or any pthread runtime seam.",
+  "SysV AMD64 passes the writable `pthread_spinlock_t *` in rdi and the four-byte int pshared value in esi. The installed public spinlock record is one four-byte, four-byte-aligned signed word at offset zero; valid caller-owned storage is replaced completely with zero for every pshared bit pattern.",
+  "The true-static candidate enters through a direct `_start`, calls only pthread_spin_init, then uses exit=60. It has no PT_TLS segment, errno/bootstrap owner, syscall in the leaf, helper call, allocation, thread state, or spin acquisition/release/destruction state. It selects only initialization, not process sharing or any other spin API.",
+]
+x86_header_prerequisites = [
+  "Pinned-musl and project `<pthread.h>` C/C++ probes prove the exact `int (*)(pthread_spinlock_t *, int)` declaration plus a four-byte, align-four public `pthread_spinlock_t` record. The candidate C trace must use project pthread.h, bits/alltypes.h, and features.h.",
+  "C++ objects retain an unmangled `pthread_spin_init` reference. This is narrow declaration/linkage evidence only, not spin lifecycle, synchronization, pthread runtime, or installed-header completion.",
+]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-pthread-spin-init", scope = "Pinned-musl 1.2.6 project-header C reference plus a dependency-free x86 crabc-libc archive and `-nostdlib -static` candidate. The same 5-by-5 initial/pshared corpus proves each call returns zero and fully resets arbitrary four-byte caller-owned record bits. Header/source/archive/final-ELF/disassembly checks require exactly pthread_spin_init, direct record storage, the closed static export surface, C++ C linkage, and no interpreter/DT_NEEDED/unresolved symbol, PT_TLS, errno/bootstrap, syscall in the leaf, helper call, allocator, or ambient runtime. It excludes destroy/lock/trylock/unlock, process sharing, synchronization, thread/TLS lifecycle, cancellation, family completion, promotion, and public x86 support." }]
+oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source/declaration/behavior oracle for src/thread/pthread_spin_init.c: direct zero store and zero return while ignoring pshared. Other spin APIs, process sharing, and lifecycle remain unselected." }, { kind = "elf-abi", source = "System V AMD64 psABI and pinned musl x86 headers", role = "LP64 pointer/int function ABI, public four-byte aligned spinlock record layout, C++ C linkage, static archive ownership, and direct static executable purity boundary." }]
 
 [[family]]
 id = "libc.text-math-locale-stdio"
@@ -11754,6 +11793,294 @@ x86_header_prerequisites = [
 ]
 native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-c32rtomb", scope = "Pinned-musl project-header C differential and dedicated C11/C++ `<uchar.h>` declaration matrix precede a true `-nostdlib -static` candidate. The runner ratchets the AArch64 c32rtomb static-ABI row and complete selected x86 export list; it extracts exactly one adapter object exporting only c32rtomb, requires its sole undefined/relocation to be wcrtomb and its direct tail jump, then reconstructs the final linker-discovered existing wcrtomb/setlocale/errno closure rather than linking libc.a. The differential covers C/POSIX private code units, C.UTF-8 two/four-byte scalars, invalid surrogates/out-of-range EILSEQ, stale errno success, untouched caller mbstate_t, and null-output query. The final ELF rejects unresolved symbols, interpreter/DT_NEEDED, dynamic TLS, PLT, allocator, iconv, wide streams, ambient libc, and unowned runtime dependencies while retaining direct fs initial-TLS errno. The established wcrtomb closure may materialize its fixed CTYPE override helper, but the runner rejects every public locale-object API call and this adapter neither invokes nor establishes those APIs. It does not select c16rtomb, mbrtoc16/mbrtoc32, decoding, locale-object APIs, environment or general locale databases, family completion, promotion, or public x86 support." }]
 oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT `src/multibyte/c32rtomb.c` source and executable C behavior oracle: direct wcrtomb forwarding, active CTYPE encoding, invalid-scalar errno behavior, null-output query, and caller mbstate_t forwarding. Its c16rtomb and decoder siblings remain unselected." }, { kind = "elf-abi", source = "System V AMD64 psABI and pinned musl uchar.h/static manifests", role = "rdi/esi/rdx to rax C ABI, 32-bit char32_t/wchar_t register equivalence, 8-byte mbstate_t pointer ABI, unconditional C/C++ declaration/linkage, direct static relocation, and initial-exec errno fixture contract." }]
+
+[[family.verified_artifact]]
+id = "static-c-math-exp"
+description = "Private native x86 selected-static binary32/binary64 exponential artifact inside still-planned `libc.text-math-locale-stdio`. One dependency-free `crabc-libc` archive resolves exactly `exp` and `expf` into a freestanding project-header C fixture after equivalent pinned-musl execution. A checked GCC 15.2.0 assembly translation of musl's `exp.c`/`expf.c`, two source tables, and six explicit error-expression providers retains table argument reduction, the close-to-zero rule, scalar polynomial evaluation, large-result `specialcase` reconstruction, gradual subnormal handling, and explicit overflow/underflow expressions rather than an ambient exponential provider. The localized data/error closure has no undefined callable symbols and exports neither its tables nor helpers. The record stream covers signed zero, finite normal/subnormal and threshold boundaries, high finite values, infinities, quiet/signaling NaNs, all four requested/observed rounding directions, and exception flags. Strong target-owned definitions reject weak compiler-builtins fallback. Existing fenv entries only reset and observe MXCSR; this artifact does not select fenv API/policy. It excludes binary80 `expl`, exp2/expm1 and all log families, inverse/direct trigonometry, fma, hypot, fmod/remainder, rounding/truncation/ceiling/floor, roots, special and complex functions, binary80/x87 math, errno policy, general libm, libc.so, CRT/TLS lifecycle, loader, sysroot, `math.elementary` family completion, promotion, full x86-64 parity, and public x86 support. The `exp2f_data.c` source table is a localized implementation detail, not selection of public `exp2f`."
+source_owners = [
+  "compat/upstreams.toml",
+  "docker/Dockerfile.x86_64",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/fenv.rs",
+  "libc/src/c_abi/x86_64/math_exp.rs",
+  "libc/src/c_abi/x86_64/math_exp_musl_x86_64.S",
+  "include/fenv.h",
+  "include/float.h",
+  "include/math.h",
+  "compat/x86_64/generate_libc_math_exp.py",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/math_exp_header_abi_probe.cpp",
+  "compat/x86_64/libc_math_exp_probe.c",
+  "compat/x86_64/libc_math_exp_start.S",
+  "compat/x86_64/run_libc_math_exp.sh",
+  "compat/x86_64/aarch64_parity_inventory.py",
+  "compat/x86_64/aarch64_parity_inventory.json",
+  "compat/x86_64/tests/test_aarch64_parity_inventory.py",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "compat/x86_64/README.md",
+  "SCOPE.md",
+  "COMPATIBILITY-PROFILE.md",
+  "STATUS.md",
+  "x86-64.md",
+  "scripts/check_structure.py",
+  "scripts/dev-x86_64.sh",
+]
+x86_abi_prerequisites = [
+  "Pinned musl 1.2.6 src/math/exp.c and expf.c plus exp_data.c, exp2f_data.c, __math_oflow.c, __math_oflowf.c, __math_uflow.c, __math_uflowf.c, __math_xflow.c, and __math_xflowf.c are the exact MIT source closure: their normalized 1.2.6 source-tree digest, GCC 15.2.0 input, retained Arm notices, `-frounding-math`, `-ffp-contract=off`, and `-fexcess-precision=standard` translation preserve table argument reduction, the close-to-zero rule, specialcase reconstruction, gradual subnormal behavior, and exceptional arithmetic without an ambient libm call.",
+  "The bounded ten-source closure links with no undefined callable symbols. Its two named tables and six overflow/underflow helpers are renamed and localized to local `crabc_x86_math_exp_*` assembly symbols, so only the public C names remain global rather than exporting source closure implementation details.",
+  "System V AMD64 with FLT_EVAL_METHOD=0 passes and returns binary64/binary32 in xmm0. The scalar SSE mulsd/addsd/subsd path retains binary64 reduction and polynomial arithmetic; expf retains addss/mulss exceptional and final binary32 behavior. Binary80 `expl` is representation- and ABI-distinct and remains excluded.",
+  "The fixture composes only existing selected static fegetenv/fesetenv/fesetround/fegetround/feclearexcept/fetestexcept entries to reset and observe MXCSR, including all-direction overflow/underflow and exception behavior, without selecting fenv API or policy as part of this artifact.",
+]
+x86_header_prerequisites = [
+  "The focused C fixture preprocesses project fenv.h, float.h, math.h, stddef.h, stdint.h, features.h, and bits/alltypes.h, then calls parenthesized exp/expf function pointers so compiler builtins cannot substitute for the named C ABI.",
+  "Dedicated C++17 objects compiled with default SSE and -mfpmath=387 pin exact binary64/binary32 unary function-pointer signatures and unmangled C references from the project header against pinned musl.",
+]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-math-exp", scope = "Pinned-musl/project-header C and C++ ABI execution plus one dependency-free `-nostdlib -static --no-undefined --gc-sections` candidate. The C fixture compares 216 exact 32-byte records across all four rounding directions: binary32/binary64 signed zero, raw normal/subnormal and threshold boundaries, table-reduction values, high finite values, infinities, quiet/signaling NaNs, raw results, requested/observed MXCSR direction, and exception flags. ELF proof requires strong global target-owned exp/expf definitions, exact archive surface, a ten-source localized data/error closure with no public `__exp_data` or `__math_oflow` helpers, and mulsd/addsd/subsd/addss/mulss scalar source arithmetic; it rejects weak compiler-builtins fallback, expl, exp2/expm1 and all log families, inverse/direct trigonometry, fma, hypot, fmod/remainder, rounding/truncation/ceiling/floor, roots, fenv API/policy, special and complex math, unresolved symbols, dynamic linkage, TLS, ambient libm, packed-SIMD/FMA ISA, and unowned runtime dependencies. It excludes category/family completion, promotion, full x86-64 parity, and public x86 support." }]
+oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source, IEEE bit-level/fenv behavior, and public C ABI oracle for exactly src/math/exp.c, expf.c, exp_data.c, exp2f_data.c, __math_oflow{,f}.c, __math_uflow{,f}.c, and __math_xflow{,f}.c." }, { kind = "aarch64-contract", source = "SCOPE.md, COMPATIBILITY-PROFILE.md, and libc/src/math_compat.rs", role = "The active AArch64 product contract supplies no selected public exp/expf mapping; this x86-only evidence remains selected-private and does not import, imply, or promote an AArch64 capability." }, { kind = "elf-abi", source = "System V AMD64 psABI", role = "xmm0 binary32/binary64 unary argument and return ABI plus caller-visible MXCSR scalar-SSE arithmetic boundary for the selected static C entries." }]
+
+[[family.verified_artifact]]
+id = "static-c-math-cos"
+description = "Private native x86 selected-static binary32/binary64 cosine artifact inside still-planned `libc.text-math-locale-stdio`. One dependency-free `crabc-libc` archive resolves exactly `cos` and `cosf` into a freestanding project-header C fixture after equivalent pinned-musl execution. A checked GCC 15.2.0 assembly translation of musl's `cos.c`/`cosf.c` plus the exact eleven-source closure retains raw classification, tiny-input inexact behavior, quadrant selection, fixed generic sine/cosine polynomials, moderate/large argument reduction, and fixed multiword `2/pi` data without ambient libm or selected `math.special` state. The localized kernel/reduction closure includes private `floor`/`scalbn` providers, has no undefined callable symbols, and exports neither implementation helpers nor public `sin`/`sinf` spellings. The record stream covers signed zero, tiny/subnormal and normal bounds, quadrant boundaries, moderate and huge reductions, finite extrema, infinities, quiet/signaling NaNs, raw results, requested/observed rounding directions, and exception flags. Strong target-owned definitions reject weak compiler-builtins fallback. Existing fenv entries only reset and observe MXCSR; this artifact does not select fenv API/policy. It excludes binary80 `cosl`, `sincos*`, public sin/tan/hyperbolic/inverse-trig/log/exp/pow functions, fmod/remainder/modf, special and complex functions, binary80/x87 math, errno policy, general libm, libc.so, CRT/TLS lifecycle, loader, sysroot, `math.elementary` family completion, promotion, full x86-64 parity, and public x86 support."
+source_owners = [
+  "compat/upstreams.toml",
+  "docker/Dockerfile.x86_64",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/fenv.rs",
+  "libc/src/c_abi/x86_64/math_cos.rs",
+  "libc/src/c_abi/x86_64/math_cos_musl_x86_64.S",
+  "include/fenv.h",
+  "include/float.h",
+  "include/math.h",
+  "compat/x86_64/generate_libc_math_cos.py",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/math_cos_header_abi_probe.cpp",
+  "compat/x86_64/libc_math_cos_probe.c",
+  "compat/x86_64/libc_math_cos_start.S",
+  "compat/x86_64/run_libc_math_cos.sh",
+  "compat/x86_64/aarch64_parity_inventory.py",
+  "compat/x86_64/aarch64_parity_inventory.json",
+  "compat/x86_64/tests/test_aarch64_parity_inventory.py",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "compat/x86_64/README.md",
+  "SCOPE.md",
+  "COMPATIBILITY-PROFILE.md",
+  "STATUS.md",
+  "x86-64.md",
+  "scripts/check_structure.py",
+  "scripts/dev-x86_64.sh",
+]
+x86_abi_prerequisites = [
+  "Pinned musl 1.2.6 src/math/cos.c and cosf.c plus __sin.c, __cos.c, __sindf.c, __cosdf.c, __rem_pio2.c, __rem_pio2f.c, __rem_pio2_large.c, floor.c, and scalbn.c are the exact eleven-source closure: their normalized 1.2.6 source-tree digest, GCC 15.2.0 input, retained Sun notices, musl's MIT license, `-frounding-math`, `-ffp-contract=off`, and `-fexcess-precision=standard` translation preserve tiny-input behavior, kernel evaluation, quadrant selection, and moderate/large `2/pi` reduction without an ambient libm call.",
+  "The bounded eleven-source closure links with no undefined callable symbols. Its sine/cosine kernels, reducers, and floor/scalbn providers are renamed and localized to local `crabc_x86_math_cos_*` assembly symbols, so only the public cosine C names remain global rather than exporting source-closure implementation details or public sin/tan entries.",
+  "System V AMD64 with FLT_EVAL_METHOD=0 passes and returns binary64/binary32 in xmm0. Scalar SSE addsd/subsd/mulsd source arithmetic drives both generic kernels and reduction; cosf uses addss/subss boundaries and cvtss2sd/cvtsd2ss around binary64 reduction. Binary80 `cosl` is representation- and ABI-distinct and remains excluded.",
+  "The fixture composes only existing selected static fegetenv/fesetenv/fesetround/fegetround/feclearexcept/fetestexcept entries to reset and observe MXCSR, including reduction-boundary and invalid exception behavior across all caller directions, without selecting fenv API or policy as part of this artifact.",
+]
+x86_header_prerequisites = [
+  "The focused C fixture preprocesses project fenv.h, float.h, math.h, stddef.h, stdint.h, features.h, and bits/alltypes.h, then calls parenthesized cos/cosf function pointers so compiler builtins cannot substitute for the named C ABI.",
+  "Dedicated C++17 objects compiled with default SSE and -mfpmath=387 pin exact binary64/binary32 unary function-pointer signatures and unmangled C references from the project header against pinned musl.",
+]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-math-cos", scope = "Pinned-musl/project-header C and C++ ABI execution plus one dependency-free `-nostdlib -static --no-undefined --gc-sections` candidate. The C fixture compares 256 exact 32-byte records across all four rounding directions: binary32/binary64 signed zero, raw normal/subnormal bounds, tiny and quadrant boundaries, moderate and huge reduction inputs, finite extrema, infinities, quiet/signaling NaNs, raw results, requested/observed MXCSR direction, and exception flags. ELF proof requires strong global target-owned cos/cosf definitions, exact archive surface, an eleven-source localized kernel/reduction closure with no public `__sin`, `__rem_pio2`, floor, or scalbn helpers, and addsd/addss/subsd/subss/mulsd/cvtss2sd/cvtsd2ss scalar source arithmetic; it rejects weak compiler-builtins fallback, cosl, sin/tan, sincos, hyperbolic/inverse trigonometry, log/exp/pow, fmod/remainder/modf, fenv API/policy, special and complex math, unresolved symbols, dynamic linkage, TLS, ambient libm, packed-SIMD/FMA ISA, and unowned runtime dependencies. It excludes category/family completion, promotion, full x86-64 parity, and public x86 support." }]
+oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "FreeBSD/Sun msun source, preserved permissive notices, exact IEEE payload/exception/directed-rounding behavior, and public C ABI oracle for exactly src/math/cos.c, cosf.c, __sin.c, __cos.c, __sindf.c, __cosdf.c, __rem_pio2.c, __rem_pio2f.c, __rem_pio2_large.c, floor.c, and scalbn.c." }, { kind = "aarch64-contract", source = "SCOPE.md, COMPATIBILITY-PROFILE.md, and libc/src/math_compat.rs", role = "The active AArch64 product contract supplies no selected public cos/cosf mapping; this x86-only evidence remains selected-private and does not import, imply, or promote an AArch64 capability." }, { kind = "elf-abi", source = "System V AMD64 psABI", role = "xmm0 binary32/binary64 unary argument and return ABI plus caller-visible MXCSR scalar-SSE arithmetic boundary for the selected static C entries." }]
+
+[[family.verified_artifact]]
+id = "static-c-math-cosh"
+description = "Private native x86 selected-static binary32/binary64 hyperbolic-cosine artifact inside still-planned `libc.text-math-locale-stdio`. One dependency-free `crabc-libc` archive resolves exactly `cosh` and `coshf` into a freestanding project-header C fixture after equivalent pinned-musl execution. A checked GCC 15.2.0 assembly translation of musl's `cosh.c`/`coshf.c` plus the exact sixteen-source closure retains raw magnitude classification, exact tiny-input one behavior with inexact evaluation, stable expm1 reconstruction, the fixed expm1 polynomial/reduction, reciprocal exponential reconstruction, and overflow-safe exponential scaling without ambient libm or selected `math.special` state. The localized exponent closure includes private exp/expm1, `__expo2`, tables, and error-expression providers, has no undefined callable symbols, and exports neither implementation helpers nor public exp/expm1 spellings. The record stream covers signed zero, tiny/subnormal and normal bounds, expm1/reconstruction and overflow thresholds, high finite values, infinities, quiet/signaling NaNs, raw results, requested/observed rounding directions, and exception flags. Strong target-owned definitions reject weak compiler-builtins fallback. Existing fenv entries only reset and observe MXCSR; this artifact does not select fenv API/policy. It excludes binary80 `coshl`, public sinh/tanh and direct/inverse trigonometry, public exp/expm1/log/pow functions, fmod/remainder/modf, special and complex functions, binary80/x87 math, errno policy, general libm, libc.so, CRT/TLS lifecycle, loader, sysroot, `math.elementary` family completion, promotion, full x86-64 parity, and public x86 support. The localized `exp_data.c` and `exp2f_data.c` tables are implementation details, not selection of public exp/exp2 entries."
+source_owners = [
+  "compat/upstreams.toml",
+  "docker/Dockerfile.x86_64",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/fenv.rs",
+  "libc/src/c_abi/x86_64/math_cosh.rs",
+  "libc/src/c_abi/x86_64/math_cosh_musl_x86_64.S",
+  "include/fenv.h",
+  "include/float.h",
+  "include/math.h",
+  "compat/x86_64/generate_libc_math_cosh.py",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/math_cosh_header_abi_probe.cpp",
+  "compat/x86_64/libc_math_cosh_probe.c",
+  "compat/x86_64/libc_math_cosh_start.S",
+  "compat/x86_64/run_libc_math_cosh.sh",
+  "compat/x86_64/aarch64_parity_inventory.py",
+  "compat/x86_64/aarch64_parity_inventory.json",
+  "compat/x86_64/tests/test_aarch64_parity_inventory.py",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "compat/x86_64/README.md",
+  "SCOPE.md",
+  "COMPATIBILITY-PROFILE.md",
+  "STATUS.md",
+  "x86-64.md",
+  "scripts/check_structure.py",
+  "scripts/dev-x86_64.sh",
+]
+x86_abi_prerequisites = [
+  "Pinned musl 1.2.6 src/math/cosh.c and coshf.c plus expm1.c, expm1f.c, __expo2.c, __expo2f.c, exp.c, expf.c, exp_data.c, exp2f_data.c, __math_oflow{,f}.c, __math_uflow{,f}.c, and __math_xflow{,f}.c are the exact sixteen-source closure: their normalized 1.2.6 source-tree digest, GCC 15.2.0 input, retained Sun and Arm notices, musl's MIT license, `-frounding-math`, `-ffp-contract=off`, and `-fexcess-precision=standard` translation preserve exact tiny-input one behavior, expm1/reciprocal reconstruction, and overflow-safe exponential scaling without an ambient libm call.",
+  "The bounded sixteen-source closure links with no undefined callable symbols. Its expm1, __expo2, exp tables, and error-expression providers are renamed and localized to local `crabc_x86_math_cosh_*` assembly symbols, so only the public hyperbolic-cosine C names remain global rather than exporting a source-closure implementation detail or public exp/expm1 ABI.",
+  "System V AMD64 with FLT_EVAL_METHOD=0 passes and returns binary64/binary32 in xmm0. Scalar SSE addsd/subsd/mulsd/divsd and addss/subss/mulss/divss paths preserve fixed polynomial and reconstruction arithmetic; the provider path uses cvtss2sd/cvtsd2ss only where musl's binary32 source does. Binary80 `coshl` is representation- and ABI-distinct and remains excluded.",
+  "The fixture composes only existing selected static fegetenv/fesetenv/fesetround/fegetround/feclearexcept/fetestexcept entries to reset and observe MXCSR, including tiny-input and overflow exception behavior across all caller directions, without selecting fenv API or policy as part of this artifact.",
+]
+x86_header_prerequisites = [
+  "The focused C fixture preprocesses project fenv.h, float.h, math.h, stddef.h, stdint.h, features.h, and bits/alltypes.h, then calls parenthesized cosh/coshf function pointers so compiler builtins cannot substitute for the named C ABI.",
+  "Dedicated C++17 objects compiled with default SSE and -mfpmath=387 pin exact binary64/binary32 unary function-pointer signatures and unmangled C references from the project header against pinned musl.",
+]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-math-cosh", scope = "Pinned-musl/project-header C and C++ ABI execution plus one dependency-free `-nostdlib -static --no-undefined --gc-sections` candidate. The C fixture compares 256 exact 32-byte records across all four rounding directions: binary32/binary64 signed zero, raw tiny/subnormal and normal bounds, expm1/reconstruction and overflow thresholds, high finite values, infinities, quiet/signaling NaNs, raw results, requested/observed MXCSR direction, and exception flags. ELF proof requires strong global target-owned cosh/coshf definitions, exact archive surface, a sixteen-source localized exponent closure with no public `expm1`, `__expo2`, exp table, or error helper, and addsd/addss/subsd/subss/mulsd/mulss/divsd/divss/cvtss2sd/cvtsd2ss scalar source arithmetic; it rejects weak compiler-builtins fallback, coshl, sinh/tanh, public exp/expm1/log/pow, direct/inverse trigonometry, fmod/remainder/modf, fenv API/policy, special and complex math, unresolved symbols, dynamic linkage, TLS, ambient libm, packed-SIMD/FMA ISA, and unowned runtime dependencies. It excludes category/family completion, promotion, full x86-64 parity, and public x86 support." }]
+oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "FreeBSD/Sun msun and Arm MIT source, preserved permissive notices, exact IEEE payload/exception/directed-rounding behavior, and public C ABI oracle for exactly src/math/cosh.c, coshf.c, expm1.c, expm1f.c, __expo2.c, __expo2f.c, exp.c, expf.c, exp_data.c, exp2f_data.c, __math_oflow{,f}.c, __math_uflow{,f}.c, and __math_xflow{,f}.c." }, { kind = "aarch64-contract", source = "SCOPE.md, COMPATIBILITY-PROFILE.md, and libc/src/math_hyperbolic.rs", role = "The active AArch64 product contract supplies no selected public cosh/coshf mapping; this x86-only evidence remains selected-private and does not import, imply, or promote an AArch64 capability." }, { kind = "elf-abi", source = "System V AMD64 psABI", role = "xmm0 binary32/binary64 unary argument and return ABI plus caller-visible MXCSR scalar-SSE arithmetic boundary for the selected static C entries." }]
+
+[[family.verified_artifact]]
+id = "static-c-math-asinh"
+description = "Private native x86 selected-static binary32/binary64 inverse-hyperbolic-sine artifact inside still-planned `libc.text-math-locale-stdio`. One dependency-free `crabc-libc` archive resolves exactly `asinh` and `asinhf` into a freestanding project-header C fixture after equivalent pinned-musl execution. A checked GCC 15.2.0 assembly translation of musl's `asinh.c`/`asinhf.c` plus the exact fifteen-source closure retains raw sign/magnitude classification, signed tiny-input behavior, log-plus-ln2 large reconstruction, reciprocal-square-root middle reconstruction, log1p near-one reconstruction, and final sign restoration without ambient libm or selected `math.special` state. The localized log/square-root closure includes private log/log1p/sqrt providers, tables, and IEEE error-expression providers, has no undefined callable symbols, and exports neither implementation helpers nor public log/log1p/sqrt spellings. The record stream covers signed zero, tiny/subnormal and normal bounds, log1p/middle/large-reconstruction thresholds, high finite values, infinities, quiet/signaling NaNs, raw results, requested/observed rounding directions, and exception flags. Strong target-owned definitions reject weak compiler-builtins fallback. Existing fenv entries only reset and observe MXCSR; this artifact does not select fenv API/policy. It excludes binary80 `asinhl`, public acosh/atanh/cosh/sinh/tanh and direct trigonometry, public log/log1p/sqrt/exp/pow functions, fmod/remainder/modf, special and complex functions, binary80/x87 math, errno policy, general libm, libc.so, CRT/TLS lifecycle, loader, sysroot, `math.elementary` family completion, promotion, full x86-64 parity, and public x86 support. The localized log/logf and square-root tables are implementation details, not selection of their public entries."
+source_owners = [
+  "compat/upstreams.toml",
+  "docker/Dockerfile.x86_64",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/fenv.rs",
+  "libc/src/c_abi/x86_64/math_asinh.rs",
+  "libc/src/c_abi/x86_64/math_asinh_musl_x86_64.S",
+  "include/fenv.h",
+  "include/float.h",
+  "include/math.h",
+  "compat/x86_64/generate_libc_math_asinh.py",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/math_asinh_header_abi_probe.cpp",
+  "compat/x86_64/libc_math_asinh_probe.c",
+  "compat/x86_64/libc_math_asinh_start.S",
+  "compat/x86_64/run_libc_math_asinh.sh",
+  "compat/x86_64/aarch64_parity_inventory.py",
+  "compat/x86_64/aarch64_parity_inventory.json",
+  "compat/x86_64/tests/test_aarch64_parity_inventory.py",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "compat/x86_64/README.md",
+  "SCOPE.md",
+  "COMPATIBILITY-PROFILE.md",
+  "STATUS.md",
+  "x86-64.md",
+  "scripts/check_structure.py",
+  "scripts/dev-x86_64.sh",
+]
+x86_abi_prerequisites = [
+  "Pinned musl 1.2.6 src/math/asinh.c and asinhf.c plus log.c, logf.c, log_data.c, logf_data.c, log1p.c, log1pf.c, sqrt.c, sqrtf.c, sqrt_data.c, __math_invalid{,f}.c, and __math_divzero{,f}.c are the exact fifteen-source closure: their normalized 1.2.6 source-tree digest, GCC 15.2.0 input, retained Sun and Arm notices, musl's MIT license, `-frounding-math`, `-ffp-contract=off`, and `-fexcess-precision=standard` translation preserve raw classification, signed tiny-input behavior, log-plus-ln2 large reconstruction, reciprocal-square-root middle reconstruction, log1p near-one reconstruction, and final sign restoration without an ambient libm call.",
+  "The bounded fifteen-source closure links with no undefined callable symbols. Its log/log1p/sqrt providers, log/logf and rsqrt tables, and invalid/divide-by-zero helpers are renamed and localized to local `crabc_x86_math_asinh_*` assembly symbols, so only the public inverse-hyperbolic-sine C names remain global rather than exporting a source-closure implementation detail or public log/log1p/sqrt ABI.",
+  "System V AMD64 with FLT_EVAL_METHOD=0 passes and returns binary64/binary32 in xmm0. Scalar SSE addsd/subsd/mulsd/divsd and addss/subss/mulss/divss paths preserve the source reconstruction arithmetic; the binary32 provider path uses cvtss2sd/cvtsd2ss only where musl's source does. Binary80 `asinhl` is representation- and ABI-distinct and remains excluded.",
+  "The fixture composes only existing selected static fegetenv/fesetenv/fesetround/fegetround/feclearexcept/fetestexcept entries to reset and observe MXCSR, including tiny-input, threshold, invalid, and divide-by-zero behavior across all caller directions, without selecting fenv API or policy as part of this artifact.",
+]
+x86_header_prerequisites = [
+  "The focused C fixture preprocesses project fenv.h, float.h, math.h, stddef.h, stdint.h, features.h, and bits/alltypes.h, then calls parenthesized asinh/asinhf function pointers so compiler builtins cannot substitute for the named C ABI.",
+  "Dedicated C++17 objects compiled with default SSE and -mfpmath=387 pin exact binary64/binary32 unary function-pointer signatures and unmangled C references from the project header against pinned musl.",
+]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-math-asinh", scope = "Pinned-musl/project-header C and C++ ABI compilation plus one dependency-free `-nostdlib -static --no-undefined --gc-sections` candidate. The C fixture compares 256 exact 32-byte records across all four rounding directions: binary32/binary64 signed zero, raw tiny/subnormal and normal bounds, log1p/middle/large-reconstruction thresholds, high finite values, infinities, quiet/signaling NaNs, raw results, requested/observed MXCSR direction, and exception flags. ELF proof requires strong global target-owned asinh/asinhf definitions, exact archive surface, a fifteen-source localized log/square-root closure with no public log, log1p, sqrt, table, or error helper, and addsd/addss/subsd/subss/mulsd/mulss/divsd/divss/cvtss2sd/cvtsd2ss scalar source arithmetic; it rejects weak compiler-builtins fallback, asinhl, acosh/atanh/cosh/sinh/tanh, direct trigonometry, public log/log1p/sqrt/exp/pow, fmod/remainder/modf, fenv API/policy, special and complex math, unresolved symbols, dynamic linkage, TLS, ambient libm, packed-SIMD/FMA ISA, and unowned runtime dependencies. It excludes category/family completion, promotion, full x86-64 parity, and public x86 support." }]
+oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "FreeBSD/Sun msun and Arm MIT source, preserved permissive notices, exact IEEE payload/exception/directed-rounding behavior, and public C ABI oracle for exactly src/math/asinh.c, asinhf.c, log.c, logf.c, log_data.c, logf_data.c, log1p.c, log1pf.c, sqrt.c, sqrtf.c, sqrt_data.c, __math_invalid{,f}.c, and __math_divzero{,f}.c." }, { kind = "aarch64-contract", source = "SCOPE.md, COMPATIBILITY-PROFILE.md, and libc/src/math_hyperbolic.rs", role = "The active AArch64 product contract supplies no selected public asinh/asinhf mapping; this x86-only evidence remains selected-private and does not import, imply, or promote an AArch64 capability." }, { kind = "elf-abi", source = "System V AMD64 psABI", role = "xmm0 binary32/binary64 unary argument and return ABI plus caller-visible MXCSR scalar-SSE arithmetic boundary for the selected static C entries." }]
+
+[[family.verified_artifact]]
+id = "static-c-math-exp10f"
+description = "Private native x86 selected-static GNU binary32 decimal-exponential artifact inside still-planned `libc.text-math-locale-stdio`. One dependency-free `crabc-libc` archive resolves strong `exp10f` and musl's weak same-address `pow10f` alias into a freestanding project-header C fixture after equivalent pinned-musl execution. A checked GCC 15.2.0 assembly translation of musl's `exp10f.c` plus the exact twelve-source closure retains raw integral/fractional splitting, the exact `[-7, 7]` decimal table, binary32 fractional exp2 reconstruction, binary64 large-magnitude fallback, and explicit overflow/underflow expressions without ambient libm or selected `math.special` state. The localized closure includes private modff/exp2/exp2f providers, exp tables, and IEEE error-expression providers, has no undefined callable symbols, and exports neither an implementation helper nor public modf/exp2 spellings. The record stream calls both aliases for signed zero, tiny/subnormal and normal bounds, table and fallback thresholds, overflow/underflow, infinities, quiet/signaling NaNs, raw results, requested/observed rounding directions, and exception flags. Strong target-owned `exp10f` and the required weak alias reject compiler-builtins fallback. Existing fenv entries only reset and observe MXCSR; this artifact does not select fenv API/policy. It excludes binary64 `exp10`/`pow10`, binary80 `exp10l`/`pow10l`, public modf/exp2/exp/pow functions, other elementary math, special and complex functions, binary80/x87 math, errno policy, general libm, libc.so, CRT/TLS lifecycle, loader, sysroot, `math.elementary` family completion, promotion, full x86-64 parity, and public x86 support. The localized exp data tables are implementation details, not selection of public exp/exp2 entries."
+source_owners = [
+  "compat/upstreams.toml",
+  "docker/Dockerfile.x86_64",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/fenv.rs",
+  "libc/src/c_abi/x86_64/math_exp10f.rs",
+  "libc/src/c_abi/x86_64/math_exp10f_musl_x86_64.S",
+  "include/fenv.h",
+  "include/float.h",
+  "include/math.h",
+  "compat/x86_64/generate_libc_math_exp10f.py",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/math_exp10f_header_abi_probe.cpp",
+  "compat/x86_64/libc_math_exp10f_probe.c",
+  "compat/x86_64/libc_math_exp10f_start.S",
+  "compat/x86_64/run_libc_math_exp10f.sh",
+  "compat/x86_64/aarch64_parity_inventory.py",
+  "compat/x86_64/aarch64_parity_inventory.json",
+  "compat/x86_64/tests/test_aarch64_parity_inventory.py",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "compat/x86_64/README.md",
+  "SCOPE.md",
+  "COMPATIBILITY-PROFILE.md",
+  "STATUS.md",
+  "x86-64.md",
+  "scripts/check_structure.py",
+  "scripts/dev-x86_64.sh",
+]
+x86_abi_prerequisites = [
+  "Pinned musl 1.2.6 src/math/exp10f.c plus modff.c, exp2.c, exp2f.c, exp_data.c, exp2f_data.c, __math_oflow{,f}.c, __math_uflow{,f}.c, and __math_xflow{,f}.c are the exact twelve-source closure: their normalized 1.2.6 source-tree digest, GCC 15.2.0 input, retained Arm notices, musl's MIT license, `-frounding-math`, `-ffp-contract=off`, and `-fexcess-precision=standard` translation preserve raw integral/fractional classification, the `[−7, 7]` table, binary32 fractional reconstruction, binary64 large-magnitude fallback, and IEEE overflow/underflow expressions without an ambient libm call.",
+  "The bounded twelve-source closure links with no undefined callable symbols. Its modff/exp2/exp2f providers, exp tables, and error helpers are renamed and localized to local `crabc_x86_math_exp10f_*` assembly symbols, so only strong `exp10f` and musl's weak same-address `pow10f` C aliases remain global rather than exporting a source-closure implementation detail or public modf/exp2 ABI.",
+  "System V AMD64 with FLT_EVAL_METHOD=0 passes and returns binary32 in xmm0. Scalar SSE addsd/addss/subsd/subss/mulsd/mulss paths preserve the source reduction and reconstruction arithmetic; cvtss2sd/cvtsd2ss remain only at musl's binary64 fallback boundary. Binary64 `exp10`/`pow10` and binary80 `exp10l`/`pow10l` are ABI-distinct and remain excluded.",
+  "The fixture composes only existing selected static fegetenv/fesetenv/fesetround/fegetround/feclearexcept/fetestexcept entries to reset and observe MXCSR, including tiny-input, threshold, overflow/underflow, and invalid behavior across all caller directions, without selecting fenv API or policy as part of this artifact.",
+]
+x86_header_prerequisites = [
+  "The focused GNU C fixture preprocesses project fenv.h, float.h, math.h, stddef.h, stdint.h, features.h, and bits/alltypes.h, then calls parenthesized exp10f/pow10f function pointers so compiler builtins cannot substitute for the named C ABI.",
+  "Dedicated C++17 GNU objects compiled with default SSE and -mfpmath=387 pin exact binary32 unary function-pointer signatures and unmangled C references for both the strong entry and weak alias from the project header against pinned musl.",
+]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-math-exp10f", scope = "Pinned-musl/project-header GNU C and C++ ABI execution plus one dependency-free `-nostdlib -static --no-undefined --gc-sections` candidate. The C fixture compares 256 exact 32-byte records across all four rounding directions and both aliases: binary32 signed zero, raw tiny/subnormal and normal bounds, table and fallback thresholds, overflow/underflow, infinities, quiet/signaling NaNs, raw results, requested/observed MXCSR direction, and exception flags. ELF proof requires strong global target-owned exp10f plus a weak same-address pow10f alias, exact archive surface, a twelve-source localized modff/exp2 closure with no public modff, exp2, table, or error helper, and addsd/addss/subsd/subss/mulsd/mulss/cvtss2sd/cvtsd2ss scalar source arithmetic; it rejects compiler-builtins fallback, binary64 exp10/pow10, binary80 variants, public modf/exp2/exp/pow functions, other elementary math, fenv API/policy, special and complex math, unresolved symbols, dynamic linkage, TLS, ambient libm, packed-SIMD/FMA ISA, and unowned runtime dependencies. It excludes category/family completion, promotion, full x86-64 parity, and public x86 support." }]
+oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT declaration/source/behavior oracle and Arm MIT scalar math source for exactly src/math/exp10f.c, modff.c, exp2.c, exp2f.c, exp_data.c, exp2f_data.c, __math_oflow{,f}.c, __math_uflow{,f}.c, and __math_xflow{,f}.c, including the public GNU weak_alias(exp10f, pow10f) ABI and exact IEEE payload/exception/directed-rounding behavior." }, { kind = "aarch64-contract", source = "SCOPE.md, COMPATIBILITY-PROFILE.md, and libc/src/math_compat.rs", role = "The active AArch64 product contract supplies no selected public exp10f/pow10f mapping; this x86-only evidence remains selected-private and does not import, imply, or promote an AArch64 capability." }, { kind = "elf-abi", source = "System V AMD64 psABI", role = "xmm0 binary32 unary argument/return ABI, strong/weak ELF binding, same-address alias identity, and caller-visible MXCSR scalar-SSE arithmetic boundary for the selected static C entries." }]
+
+[[family.verified_artifact]]
+id = "static-c-math-sinh"
+description = "Private native x86 selected-static binary32/binary64 hyperbolic-sine artifact inside still-planned `libc.text-math-locale-stdio`. One dependency-free `crabc-libc` archive resolves exactly `sinh` and `sinhf` into a freestanding project-header C fixture after equivalent pinned-musl execution. A checked GCC 15.2.0 assembly translation of musl's `sinh.c`/`sinhf.c` plus the exact sixteen-source closure retains raw sign/magnitude classification, signed tiny-input behavior, stable expm1 reconstruction, the fixed expm1 polynomial/reduction, and overflow-safe exponential scaling without ambient libm or selected `math.special` state. The localized exponent closure includes private exp/expm1, `__expo2`, tables, and error-expression providers, has no undefined callable symbols, and exports neither implementation helpers nor public exp/expm1 spellings. The record stream covers signed zero, tiny/subnormal and normal bounds, expm1/reconstruction and overflow thresholds, high finite values, infinities, quiet/signaling NaNs, raw results, requested/observed rounding directions, and exception flags. Strong target-owned definitions reject weak compiler-builtins fallback. Existing fenv entries only reset and observe MXCSR; this artifact does not select fenv API/policy. It excludes binary80 `sinhl`, public cosh/tanh and direct/inverse trigonometry, public exp/expm1/log/pow functions, fmod/remainder/modf, special and complex functions, binary80/x87 math, errno policy, general libm, libc.so, CRT/TLS lifecycle, loader, sysroot, `math.elementary` family completion, promotion, full x86-64 parity, and public x86 support. The localized `exp_data.c` and `exp2f_data.c` tables are implementation details, not selection of public exp/exp2 entries."
+source_owners = [
+  "compat/upstreams.toml",
+  "docker/Dockerfile.x86_64",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/fenv.rs",
+  "libc/src/c_abi/x86_64/math_sinh.rs",
+  "libc/src/c_abi/x86_64/math_sinh_musl_x86_64.S",
+  "include/fenv.h",
+  "include/float.h",
+  "include/math.h",
+  "compat/x86_64/generate_libc_math_sinh.py",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/math_sinh_header_abi_probe.cpp",
+  "compat/x86_64/libc_math_sinh_probe.c",
+  "compat/x86_64/libc_math_sinh_start.S",
+  "compat/x86_64/run_libc_math_sinh.sh",
+  "compat/x86_64/aarch64_parity_inventory.py",
+  "compat/x86_64/aarch64_parity_inventory.json",
+  "compat/x86_64/tests/test_aarch64_parity_inventory.py",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "compat/x86_64/README.md",
+  "SCOPE.md",
+  "COMPATIBILITY-PROFILE.md",
+  "STATUS.md",
+  "x86-64.md",
+  "scripts/check_structure.py",
+  "scripts/dev-x86_64.sh",
+]
+x86_abi_prerequisites = [
+  "Pinned musl 1.2.6 src/math/sinh.c and sinhf.c plus expm1.c, expm1f.c, __expo2.c, __expo2f.c, exp.c, expf.c, exp_data.c, exp2f_data.c, __math_oflow{,f}.c, __math_uflow{,f}.c, and __math_xflow{,f}.c are the exact sixteen-source closure: their normalized 1.2.6 source-tree digest, GCC 15.2.0 input, retained Sun and Arm notices, musl's MIT license, `-frounding-math`, `-ffp-contract=off`, and `-fexcess-precision=standard` translation preserve signed tiny-input behavior, expm1 reconstruction, and overflow-safe exponential scaling without an ambient libm call.",
+  "The bounded sixteen-source closure links with no undefined callable symbols. Its expm1, __expo2, exp tables, and error-expression providers are renamed and localized to local `crabc_x86_math_sinh_*` assembly symbols, so only the public hyperbolic-sine C names remain global rather than exporting a source-closure implementation detail or public exp/expm1 ABI.",
+  "System V AMD64 with FLT_EVAL_METHOD=0 passes and returns binary64/binary32 in xmm0. Scalar SSE addsd/subsd/mulsd/divsd and addss/subss/mulss/divss paths preserve fixed polynomial and reconstruction arithmetic; the provider path uses cvtss2sd/cvtsd2ss only where musl's binary32 source does. Binary80 `sinhl` is representation- and ABI-distinct and remains excluded.",
+  "The fixture composes only existing selected static fegetenv/fesetenv/fesetround/fegetround/feclearexcept/fetestexcept entries to reset and observe MXCSR, including tiny-input and overflow exception behavior across all caller directions, without selecting fenv API or policy as part of this artifact.",
+]
+x86_header_prerequisites = [
+  "The focused C fixture preprocesses project fenv.h, float.h, math.h, stddef.h, stdint.h, features.h, and bits/alltypes.h, then calls parenthesized sinh/sinhf function pointers so compiler builtins cannot substitute for the named C ABI.",
+  "Dedicated C++17 objects compiled with default SSE and -mfpmath=387 pin exact binary64/binary32 unary function-pointer signatures and unmangled C references from the project header against pinned musl.",
+]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-math-sinh", scope = "Pinned-musl/project-header C and C++ ABI execution plus one dependency-free `-nostdlib -static --no-undefined --gc-sections` candidate. The C fixture compares 256 exact 32-byte records across all four rounding directions: binary32/binary64 signed zero, raw tiny/subnormal and normal bounds, expm1/reconstruction and overflow thresholds, high finite values, infinities, quiet/signaling NaNs, raw results, requested/observed MXCSR direction, and exception flags. ELF proof requires strong global target-owned sinh/sinhf definitions, exact archive surface, a sixteen-source localized exponent closure with no public `expm1`, `__expo2`, exp table, or error helper, and addsd/addss/subsd/subss/mulsd/mulss/divsd/divss/cvtss2sd/cvtsd2ss scalar source arithmetic; it rejects weak compiler-builtins fallback, sinhl, cosh/tanh, public exp/expm1/log/pow, direct/inverse trigonometry, fmod/remainder/modf, fenv API/policy, special and complex math, unresolved symbols, dynamic linkage, TLS, ambient libm, packed-SIMD/FMA ISA, and unowned runtime dependencies. It excludes category/family completion, promotion, full x86-64 parity, and public x86 support." }]
+oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "FreeBSD/Sun msun and Arm MIT source, preserved permissive notices, exact IEEE payload/exception/directed-rounding behavior, and public C ABI oracle for exactly src/math/sinh.c, sinhf.c, expm1.c, expm1f.c, __expo2.c, __expo2f.c, exp.c, expf.c, exp_data.c, exp2f_data.c, __math_oflow{,f}.c, __math_uflow{,f}.c, and __math_xflow{,f}.c." }, { kind = "aarch64-contract", source = "SCOPE.md, COMPATIBILITY-PROFILE.md, and libc/src/math_hyperbolic.rs", role = "The active AArch64 product contract supplies no selected public sinh/sinhf mapping; this x86-only evidence remains selected-private and does not import, imply, or promote an AArch64 capability." }, { kind = "elf-abi", source = "System V AMD64 psABI", role = "xmm0 binary32/binary64 unary argument and return ABI plus caller-visible MXCSR scalar-SSE arithmetic boundary for the selected static C entries." }]
 
 [[family]]
 id = "libc.resolver"

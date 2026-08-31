@@ -346,6 +346,8 @@ mod pthread_cpuclock;
 mod pthread_name;
 #[path = "pthread_barrierattr_pshared.rs"]
 mod pthread_barrierattr_pshared;
+#[path = "pthread_spin_init.rs"]
+mod pthread_spin_init;
 #[path = "pthread_cancel.rs"]
 mod pthread_cancel;
 #[path = "pthread_atfork.rs"]
@@ -666,6 +668,18 @@ mod allocator {
 mod allocator_string_duplication;
 #[path = "complex_projection.rs"]
 mod complex_projection;
+#[path = "math_exp.rs"]
+mod math_exp;
+#[path = "math_cos.rs"]
+mod math_cos;
+#[path = "math_cosh.rs"]
+mod math_cosh;
+#[path = "math_asinh.rs"]
+mod math_asinh;
+#[path = "math_exp10f.rs"]
+mod math_exp10f;
+#[path = "math_sinh.rs"]
+mod math_sinh;
 
 // The sole AArch64 allocator-observability capability is a separate strong
 // C entry, not part of the weak allocation family. Its private witness keeps
