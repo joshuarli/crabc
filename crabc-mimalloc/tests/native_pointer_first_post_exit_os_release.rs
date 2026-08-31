@@ -11,7 +11,8 @@ use std::sync::mpsc;
 use crabc_mimalloc::__crabc_runtime::{
     NativePageAllocationResult, NativePageFreeResult, ThreadAttachResult, ThreadFinishResult,
     attach_current_thread, finish_current_thread_native_after_user_destructors, initialize_process,
-    native_allocate_aligned, native_free, native_runtime_fork_admission_test_audit,
+    native_allocate_aligned, native_free, native_post_exit_registry_test_audit,
+    native_runtime_fork_admission_test_audit,
     native_runtime_lifecycle_test_audit, native_runtime_test_fail_next_unmap,
     prepare_native_later_thread_arena,
 };
@@ -21,6 +22,25 @@ const OS_ALIGNMENT: usize = 128 * 1024;
 fn current_page_size() -> usize {
     crabc_core::param::auxv_value(crabc_core::param::AT_PAGESZ)
         .expect("the native Linux test process exposes AT_PAGESZ")
+}
+
+/// General pointer-first no-registry evidence: consuming an exited worker's
+/// PageMap-owned source must not resurrect the retired exact-client route
+/// bridge.
+fn assert_general_pointer_first_no_registry(context: &str) {
+    let audit = native_post_exit_registry_test_audit();
+    assert_eq!(
+        audit.published_entry_count, 0,
+        "{context}: pointer-first dispatch publishes no post-exit route metadata"
+    );
+    assert_eq!(
+        audit.live_entry_count, 0,
+        "{context}: pointer-first dispatch keeps no route storage live"
+    );
+    assert_eq!(
+        audit.retained_entry_count, 0,
+        "{context}: pointer-first dispatch retains no route storage"
+    );
 }
 
 /// Builds the source-shaped mixed exit image but returns only its OS client.
@@ -89,6 +109,10 @@ fn native_free_pointer_first_post_exit_os_release_is_terminal_without_retry() {
     owner
         .join()
         .expect("A completes the source Theap/TLD owner-exit boundary");
+
+    assert_general_pointer_first_no_registry(
+        "A's direct collect-abandon exit leaves only PageMap/process ownership",
+    );
 
     let after_owner_exit = native_runtime_lifecycle_test_audit()
         .expect("the exited source leaves a quiescent PageMap audit");
@@ -176,5 +200,8 @@ fn native_free_pointer_first_post_exit_os_release_is_terminal_without_retry() {
         native_runtime_fork_admission_test_audit().active_later_thread_count,
         0,
         "B's finished teardown releases its own admission without reviving A's retained claim"
+    );
+    assert_general_pointer_first_no_registry(
+        "B's failed pointer-first terminal release does not create a route completion",
     );
 }

@@ -522,7 +522,6 @@ case "$command" in
             --test native_sole_post_exit_lifecycle \
             --test native_two_post_exit_lifecycle \
             --test native_three_post_exit_lifecycle \
-            --test native_post_exit_registry_reuse \
             --test native_post_exit_with_local_session \
             --test native_live_remote_free \
             --test native_two_live_remote_owners \

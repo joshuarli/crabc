@@ -105,19 +105,18 @@ and frees before the TSD destructor, so the live ledger cannot enter the
 deferred route before either user-owned phase ends.
 Startup primes the first arena before constructors so a worker
 can borrow only an already-dormant source pair. A live native session may also
-cross owner exit through `NativePostExitRouteRegistry`: each stable,
-metadata-backed entry holds either the source aggregate or the source-produced
-sole mapped-regular result, together with its parked scheduler count and A's
-admission claim. Empty entries are reused, while a new process-lived entry is
-appended only when every existing entry is occupied. A focused direct
-regression holds one B completion in TLS after its entry has become empty,
-then admits a later A and proves that only the held B finish may release its
-admission or ticket zero. While all entries remain source-active, ticket zero
-may complete only its own private operation beside their separate scheduler
-tokens; it cannot inspect, consume, or settle any route. Once an exact free
-moves any route into B's terminal completion, ticket zero remains unavailable
-until every pending B completion has finished; a terminally retained route is a
-permanent blocker. Fresh attached B workers, including one with an
+cross owner exit through its persistent compiler-TLS owner. At that boundary,
+`NativePersistentThreadOwner::teardown` collect-abandons source state and
+finishes the worker directly; `native_free` and `native_reallocate` dispatch
+nonlocal clients from PageMap facts into the pointer-first continuation. Those
+paths neither publish, scan, nor complete a `NativePostExitRouteRegistry`
+entry. The remaining post-exit registry, B-completion, and scheduler code is
+deletion-pending scaffolding, forbidden from the final allocator by
+`native-mimalloc.md` §3.3 and Phases E/F; no current regression treats route
+reuse or B-held admission as supported behavior. Ticket zero's persistent
+initial owner is independent of worker exit and may complete its own valid
+private operation whenever source ownership permits. Fresh attached B workers,
+including one with an
 independently parked local session, may query an exact source-recorded usable
 extent through immutable PageMap facts or present an exact C address for
 generic pointer-first free. A TLS- or route-detached source can retain PageMap
