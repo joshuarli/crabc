@@ -287,6 +287,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-pthread-mutexattr-robust-query  run the static x86 crabc-libc mutex-attribute robust-bit query slice
   libc-pthread-mutexattr-type-query  run the static x86 crabc-libc mutex-attribute type-bit query slice
   libc-pthread-mutex-prioceiling-query  run the static x86 crabc-libc direct mutex priority-ceiling query slice
+  libc-pthread-getconcurrency  run the static x86 crabc-libc fixed pthread concurrency-query slice
   libc-pthread-setconcurrency  run the static x86 crabc-libc stateless pthread concurrency-status slice
   libc-pthread-mutex-normal  run the static x86 crabc-libc normal pthread-mutex slice
   libc-pthread-rwlock  run the static x86 crabc-libc pthread read/write-lock slice
@@ -3507,6 +3508,10 @@ run_libc_pthread_mutex_prioceiling_query_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_pthread_mutex_prioceiling_query.sh
 }
 
+run_libc_pthread_getconcurrency_probe() {
+    run_in_container bash /workspace/compat/x86_64/run_libc_pthread_getconcurrency.sh
+}
+
 run_libc_pthread_setconcurrency_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_pthread_setconcurrency.sh
 }
@@ -3961,6 +3966,7 @@ case "$command" in
     libc-pthread-mutexattr-robust-query) ;;
     libc-pthread-mutexattr-type-query) ;;
     libc-pthread-mutex-prioceiling-query) ;;
+    libc-pthread-getconcurrency) ;;
     libc-pthread-setconcurrency) ;;
     libc-pthread-detach) ;;
     libc-thrd-yield) ;;
@@ -5110,6 +5116,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "libc-pthread-mutex-prioceiling-query takes no arguments"
         ensure_image
         run_libc_pthread_mutex_prioceiling_query_probe
+        ;;
+    libc-pthread-getconcurrency)
+        [ "$#" -eq 0 ] || fail "libc-pthread-getconcurrency takes no arguments"
+        ensure_image
+        run_libc_pthread_getconcurrency_probe
         ;;
     libc-pthread-setconcurrency)
         [ "$#" -eq 0 ] || fail "libc-pthread-setconcurrency takes no arguments"

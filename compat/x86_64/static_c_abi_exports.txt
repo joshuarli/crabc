@@ -624,6 +624,7 @@ pthread_detach
 pthread_equal
 pthread_exit
 pthread_getaffinity_np
+pthread_getconcurrency
 pthread_getcpuclockid
 pthread_getname_np
 pthread_getspecific

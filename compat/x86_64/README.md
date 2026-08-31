@@ -646,7 +646,7 @@ The direct `utime-header-abi` gate checks the x86 LP64 `struct utimbuf`,
 `threads.h`, and `sched.h` layouts, macros, type identities, include orders,
 GNU declarations, and unmangled C linkage. Its selected declarations include
 every `pthread_rwlock_*` and `pthread_rwlockattr_*` signature plus the exact
-`pthread_setconcurrency`, `pthread_mutexattr_gettype`, `pthread_mutexattr_getprotocol`, `pthread_mutexattr_getpshared`, `pthread_mutexattr_getrobust`, `pthread_barrierattr_*pshared`, `pthread_condattr_*pshared`, and
+`pthread_getconcurrency`, `pthread_setconcurrency`, `pthread_mutexattr_gettype`, `pthread_mutexattr_getprotocol`, `pthread_mutexattr_getpshared`, `pthread_mutexattr_getrobust`, `pthread_barrierattr_*pshared`, `pthread_condattr_*pshared`, and
 `pthread_condattr_*clock` pairs, and the C++ object probe requires their
 unmangled C linkage. Both are compile-only
 partial evidence: they do not select archive linkage, pthread behavior,
@@ -3247,6 +3247,18 @@ requests return `EAGAIN`. The reference route also proves each result leaves
 `errno` unchanged; the freestanding candidate deliberately has no errno/TLS
 owner. It stores no setting and does not select `pthread_getconcurrency`,
 thread lifecycle, scheduler policy or pthread scheduling attributes, mutexes,
+conditions, rwlocks, barriers, TSD, cancellation, synchronization, family
+completion, promotion, or public x86 support.
+
+`libc-pthread-getconcurrency` is a thirty-second separately recorded private
+static `verified_artifact` in that same still-planned `libc.pthread-tls`
+family. Its project-header C body runs through pinned musl and then a true
+`-nostdlib -static` candidate. It selects only
+`pthread_getconcurrency(void)`, whose musl result is fixed zero; the reference
+route proves `errno` stays unchanged, while the freestanding candidate owns no
+errno/TLS state. It neither consumes nor retains a concurrency setting and
+does not select the separate `pthread_setconcurrency` artifact, thread
+lifecycle, scheduler policy or pthread scheduling attributes, mutexes,
 conditions, rwlocks, barriers, TSD, cancellation, synchronization, family
 completion, promotion, or public x86 support.
 

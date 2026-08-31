@@ -50,7 +50,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 41)
-        self.assertEqual(report["verified_artifact_count"], 202)
+        self.assertEqual(report["verified_artifact_count"], 204)
         self.assertEqual(report["header_layout_probe_count"], 46)
         self.assertEqual(report["public_header_inventory_count"], 183)
         self.assertEqual(report["header_foundation_header_count"], 191)
@@ -11073,7 +11073,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             "libc/src/c_abi/x86_64/pthread_atfork.rs", pthread_tls["source_owners"]
         )
         self.assertIn(
-            "Thirty-one separately verified static artifacts", pthread_tls["description"]
+            "Thirty-two separately verified static artifacts", pthread_tls["description"]
         )
         self.assertIn(
             "sole delivery point is explicit `pthread_testcancel`",
@@ -11096,7 +11096,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         pthread_tls = self.family(data, "libc.pthread-tls")
         self.assertEqual(pthread_tls["status"], "planned")
         artifacts = pthread_tls["verified_artifact"]
-        self.assertEqual(len(artifacts), 31)
+        self.assertEqual(len(artifacts), 32)
         by_id = {artifact["id"]: artifact for artifact in artifacts}
         self.assertEqual(
             set(by_id),
@@ -11131,6 +11131,7 @@ class X86ParityLedgerTests(unittest.TestCase):
                 "static-c-pthread-mutexattr-type-query",
                 "static-c-pthread-mutex-prioceiling-query",
                 "static-c-pthread-setconcurrency",
+                "static-c-pthread-getconcurrency",
                 "static-c-thrd-yield",
             },
         )
@@ -11170,6 +11171,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             "static-c-pthread-mutex-prioceiling-query"
         ]
         setconcurrency = by_id["static-c-pthread-setconcurrency"]
+        getconcurrency = by_id["static-c-pthread-getconcurrency"]
         thrd_yield = by_id["static-c-thrd-yield"]
         for artifact in artifacts:
             self.assertNotIn("capabilities", artifact)
@@ -11643,6 +11645,41 @@ class X86ParityLedgerTests(unittest.TestCase):
             "family completion, promotion, and public x86 support",
         ):
             self.assertIn(phrase, setconcurrency_scope)
+        self.assertEqual(
+            getconcurrency["native_evidence"][0]["command"],
+            "./scripts/dev-x86_64.sh libc-pthread-getconcurrency",
+        )
+        for phrase in (
+            "still-planned `libc.pthread-tls`",
+            "One dependency-free entry",
+            "only `pthread_getconcurrency(void)`",
+            "returns fixed zero directly",
+            "consumes no caller input, public record, retained concurrency setting",
+            "does not publish through C `errno`",
+            "fixture calls it twice",
+            "freestanding candidate deliberately owns no TLS",
+            "not a stored concurrency-setting state, a `pthread_setconcurrency` contract, a scheduler contract, or a pthread runtime claim",
+            "separate `pthread_setconcurrency` artifact",
+            "thread creation/join/detach/exit",
+            "pthread scheduling attributes and policies",
+            "mutexes/conditions/rwlocks/barriers, TSD, cancellation, synchronization",
+            "general pthread/TLS behavior or x86-64 parity",
+            "family completion, promotion, and public x86 support",
+        ):
+            self.assertIn(phrase, getconcurrency["description"])
+        getconcurrency_scope = getconcurrency["native_evidence"][0]["scope"]
+        for phrase in (
+            "two fixed zero results",
+            "preserved errno on the pinned-musl reference path",
+            "freestanding candidate has no errno/TLS owner",
+            "selected-object",
+            "exactly pthread_getconcurrency in the final candidate",
+            "PT_TLS, errno/bootstrap, syscall, helper call",
+            "pthread_setconcurrency, stored concurrency state",
+            "scheduling attributes/policies",
+            "family completion, promotion, and public x86 support",
+        ):
+            self.assertIn(phrase, getconcurrency_scope)
         self.assertEqual(
             thrd_yield["native_evidence"][0]["command"],
             "./scripts/dev-x86_64.sh libc-thrd-yield",

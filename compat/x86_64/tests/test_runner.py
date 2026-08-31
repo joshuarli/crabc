@@ -1452,6 +1452,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "libc-pthread-mutexattr-robust-query",
             "libc-pthread-mutexattr-type-query",
             "libc-pthread-mutex-prioceiling-query",
+            "libc-pthread-getconcurrency",
             "libc-pthread-setconcurrency",
             "libc-pthread-detach",
             "libc-thrd-yield",
@@ -1527,6 +1528,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn("libc-pthread-mutexattr-robust-query", source)
         self.assertIn("libc-pthread-mutexattr-type-query", source)
         self.assertIn("libc-pthread-mutex-prioceiling-query", source)
+        self.assertIn("libc-pthread-getconcurrency", source)
         self.assertIn("libc-pthread-setconcurrency", source)
         self.assertIn("libc-termios-control", source)
         self.assertIn("ctermid-header-abi", source)
@@ -7044,11 +7046,11 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             self.assertIn("pthread_getcpuclockid signature", header_probe)
         self.assertIn("crabc_force_pthread_getcpuclockid", cxx_header_probe)
         self.assertIn(
-            "pthread_create pthread_detach pthread_self pthread_equal pthread_getcpuclockid",
+            "pthread_create pthread_detach pthread_self pthread_equal pthread_getconcurrency pthread_getcpuclockid",
             header_runner,
         )
         self.assertIn(
-            "pthread_create|pthread_detach|pthread_self|pthread_equal|pthread_getcpuclockid",
+            "pthread_create|pthread_detach|pthread_self|pthread_equal|pthread_getconcurrency|pthread_getcpuclockid",
             header_runner,
         )
         self.assertIn('id = "static-c-pthread-cpuclock"', parity_ledger)
@@ -8656,9 +8658,9 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             self.assertIn(required, artifact_runner)
         self.assertNotIn("--whole-archive", artifact_runner)
         self.assertIn("pthread_setconcurrency", static_exports)
+        self.assertIn("pthread_getconcurrency", static_exports)
         self.assertTrue(
             {
-                "pthread_getconcurrency",
                 "pthread_getschedparam",
                 "pthread_setschedparam",
                 "pthread_setschedprio",
@@ -8673,7 +8675,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn("crabc_force_pthread_setconcurrency", cxx_header_probe)
         self.assertIn("pthread_setconcurrency", header_runner)
         self.assertIn(
-            "pthread_equal pthread_getcpuclockid pthread_setconcurrency",
+            "pthread_equal pthread_getconcurrency pthread_getcpuclockid pthread_setconcurrency",
             header_runner,
         )
         self.assertIn('id = "static-c-pthread-setconcurrency"', parity_ledger)
@@ -8688,6 +8690,152 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn("    libc-pthread-setconcurrency) ;;", runner)
         self.assertIn(
             '    libc-pthread-setconcurrency)\n        [ "$#" -eq 0 ] || fail "libc-pthread-setconcurrency takes no arguments"',
+            runner,
+        )
+
+    def test_libc_static_c_abi_pthread_getconcurrency_stays_stateless(
+        self,
+    ) -> None:
+        """Keep musl's fixed query separate from pthread runtime state."""
+
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        leaf = (
+            ROOT
+            / "libc"
+            / "src"
+            / "c_abi"
+            / "x86_64"
+            / "pthread_getconcurrency.rs"
+        ).read_text(encoding="utf-8")
+        probe_path = (
+            ROOT / "compat" / "x86_64" / "libc_pthread_getconcurrency_probe.c"
+        )
+        start_path = (
+            ROOT / "compat" / "x86_64" / "libc_pthread_getconcurrency_start.S"
+        )
+        artifact_runner_path = (
+            ROOT / "compat" / "x86_64" / "run_libc_pthread_getconcurrency.sh"
+        )
+        c_header_probe = (
+            ROOT / "compat" / "x86_64" / "pthread_c11_header_abi_probe.c"
+        ).read_text(encoding="utf-8")
+        cxx_header_probe = (
+            ROOT / "compat" / "x86_64" / "pthread_c11_header_abi_probe.cpp"
+        ).read_text(encoding="utf-8")
+        header_runner = (
+            ROOT / "compat" / "x86_64" / "run_pthread_c11_header_abi.sh"
+        ).read_text(encoding="utf-8")
+        static_exports = {
+            line
+            for line in (
+                ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+            ).read_text(encoding="utf-8").splitlines()
+            if line and not line.startswith("#")
+        }
+        parity_ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        runner = RUNNER.read_text(encoding="utf-8")
+
+        for path in (probe_path, start_path, artifact_runner_path):
+            self.assertTrue(path.is_file(), f"missing pthread_getconcurrency input: {path}")
+        probe = probe_path.read_text(encoding="utf-8")
+        start = start_path.read_text(encoding="utf-8")
+        artifact_runner = artifact_runner_path.read_text(encoding="utf-8")
+
+        self.assertIn('#[path = "pthread_getconcurrency.rs"]', static_root)
+        for required in (
+            "src/thread/pthread_getconcurrency.c::pthread_getconcurrency",
+            "zero directly",
+            "pthread_setconcurrency",
+            "no errno/TLS, syscall, allocator,",
+            "not a pthread runtime, scheduler",
+            "contract, family completion",
+        ):
+            self.assertIn(required, leaf)
+        for forbidden in (
+            "use super",
+            "raw_syscall::",
+            "static_tls::",
+            "pthread_mutex::",
+            "atomic::",
+            "fn pthread_setconcurrency",
+        ):
+            self.assertNotIn(forbidden, leaf)
+        for required in (
+            "#include <errno.h>",
+            "#include <pthread.h>",
+            "pthread_getconcurrency declaration",
+            "EBUSY == 16",
+            "CRABC_PTHREAD_GETCONCURRENCY_FREESTANDING",
+            "expect_result()",
+        ):
+            self.assertIn(required, probe)
+        for unselected in (
+            "pthread_setconcurrency(",
+            "pthread_create(",
+            "pthread_getschedparam(",
+            "pthread_mutex_init(",
+            "pthread_cond_init(",
+        ):
+            self.assertNotIn(unselected, probe)
+        for required in (
+            "crabc_x86_64_pthread_getconcurrency_probe",
+            "mov $60, %eax",
+            "syscall",
+        ):
+            self.assertIn(required, start)
+        self.assertNotIn("__crabc_x86_static_tls_bootstrap", start)
+        self.assertNotIn("%fs", start)
+        for required in (
+            "static_c_abi_exports.txt",
+            "run_pthread_c11_header_abi.sh",
+            "archive_member_for_symbol",
+            "-nostdlib -static",
+            "-Wl,-e,_start",
+            "-Wl,--no-undefined",
+            "assert_direct_query_path",
+            "candidate must remain TLS-free",
+            "src/thread/pthread_getconcurrency.c",
+            "pthread_setconcurrency",
+            "pthread_getschedparam pthread_setschedparam pthread_setschedprio",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn("--whole-archive", artifact_runner)
+        self.assertIn("pthread_getconcurrency", static_exports)
+        self.assertTrue(
+            {
+                "pthread_getschedparam",
+                "pthread_setschedparam",
+                "pthread_setschedprio",
+            }.isdisjoint(static_exports)
+        )
+        for header_probe in (c_header_probe, cxx_header_probe):
+            for required in (
+                "crabc_pthread_getconcurrency_signature",
+                "pthread_getconcurrency signature",
+            ):
+                self.assertIn(required, header_probe)
+        self.assertIn("crabc_force_pthread_getconcurrency", cxx_header_probe)
+        self.assertIn("pthread_getconcurrency", header_runner)
+        self.assertIn(
+            "pthread_equal pthread_getconcurrency pthread_getcpuclockid pthread_setconcurrency",
+            header_runner,
+        )
+        self.assertIn('id = "static-c-pthread-getconcurrency"', parity_ledger)
+        self.assertIn(
+            'command = "./scripts/dev-x86_64.sh libc-pthread-getconcurrency"',
+            parity_ledger,
+        )
+        self.assertIn("run_libc_pthread_getconcurrency_probe()", runner)
+        self.assertIn(
+            "/workspace/compat/x86_64/run_libc_pthread_getconcurrency.sh", runner
+        )
+        self.assertIn("    libc-pthread-getconcurrency) ;;", runner)
+        self.assertIn(
+            '    libc-pthread-getconcurrency)\n        [ "$#" -eq 0 ] || fail "libc-pthread-getconcurrency takes no arguments"',
             runner,
         )
 
