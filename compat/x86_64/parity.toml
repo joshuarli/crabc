@@ -5470,6 +5470,41 @@ capabilities = [
 status = "planned"
 
 [[family.verified_artifact]]
+id = "static-c-bounded-regex"
+description = "Private native x86 bounded static C regex artifact inside still-planned `libc.text-math-locale-stdio`. One dependency-free `crabc-libc` archive exposes the musl-shaped `regex_t`/`regmatch_t` ABI and exactly `regcomp`, `regexec`, `regerror`, and `regfree`. Its fixed-capacity C-locale byte grammar selects BRE/ERE concatenation, beginning/end anchors, dot, bracket byte lists and ranges, `*`, and ERE `+`/`?`; ASCII `REG_ICASE`, `REG_NEWLINE`, `REG_NOSUB`, `REG_NOTBOL`, and `REG_NOTEOL`; leftmost-longest whole-match reporting; and pinned-musl C-locale error messages. It deliberately rejects groups, alternation, counted repetition, backreferences, named character classes, collating/equivalence elements, and non-ASCII pattern bytes instead of assigning approximate semantics. Compiled state uses one private fixed 8192-byte anonymous mapping, never the public C allocator; expressions have at most 128 atoms and pattern/input C strings are bounded to 4096 bytes. This artifact does not complete `pattern.regex`, select `pattern.wordexp`, C glob/fnmatch, locale-aware or multibyte regex, a Rust regex API, libc.so, CRT, loader, sysroot, family completion, promotion, or public x86 support."
+source_owners = [
+  "compat/upstreams.toml",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/regex.rs",
+  "include/bits/alltypes.h",
+  "include/regex.h",
+  "compat/x86_64/regex_header_abi_probe.c",
+  "compat/x86_64/regex_header_abi_probe.cpp",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/libc_regex_probe.c",
+  "compat/x86_64/libc_regex_start.S",
+  "compat/x86_64/run_libc_regex.sh",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "compat/x86_64/README.md",
+  "STATUS.md",
+  "scripts/dev-x86_64.sh",
+]
+x86_abi_prerequisites = [
+  "Pinned musl 1.2.6 include/regex.h defines signed LP64 regoff_t; 64-byte/align-8 regex_t with re_nsub/__opaque/__padding/__nsub2/__padding2 offsets 0/8/16/48/56; and 16-byte/align-8 regmatch_t with signed offsets at 0/8. System V AMD64 passes the four public functions through ordinary pointer, int, and size_t register conventions.",
+  "Pinned musl 1.2.6 src/regex/regcomp.c, regexec.c, and regerror.c define the selected flag/result values, C-locale messages, leftmost-longest whole-match behavior, newline-aware anchors/dot/nonmatching brackets, REG_NOSUB, REG_NOTBOL, and REG_NOTEOL. The independent fixed-capacity matcher imports no TRE algorithm and rejects every unselected grammar form rather than approximating it.",
+  "Linux 5.10 x86-64 mmap=9 and munmap=11 own one private 8192-byte compiled record. The mapping is fixed-capacity, has no public malloc/calloc/realloc/free boundary, and neither matching nor error rendering uses errno, TLS, cancellation, mutable global state, or ambient shell policy.",
+]
+x86_header_prerequisites = [
+  "The strict project-first/pinned-musl C11 and C++17 probe checks regex_t/regoff_t/regmatch_t layouts, all four compile/execution flags, all thirteen POSIX result values plus musl REG_ENOSYS, exact declarations, and unmangled C++ references. It is the public regex.h ABI proof only, not evidence for unsupported grammar or a broader installed-header/runtime claim.",
+]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-regex", scope = "Pinned-musl project-header C reference plus one true dependency-free x86 crabc-libc archive and `-nostdlib -static` candidate. The shared fixture proves empty/BRE/ERE concatenation, anchors, dot, byte lists/ranges, `*`/`+`/`?`, ASCII case folding, newline line anchors and dot exclusion, execution flags, leftmost-longest whole matches, REG_NOSUB output suppression, compile diagnostics, and exact/truncated error text. Candidate-only evidence proves fixed 128-atom and 4096-byte bounds, rejects every named unselected grammar family, and rejects unknown flags. Archive/final-ELF checks ratchet exactly regcomp/regexec/regerror/regfree, direct private mmap/munmap storage, no C allocator, wordexp, glob/fnmatch, interpreter/DT_NEEDED, unresolved symbol, dynamic TLS resolver, cryptography, or ambient shell dependency. This is not pattern.regex completion, pattern.wordexp selection, family completion, promotion, or public x86 support." }]
+oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl C/POSIX declaration and selected-behavior oracle for include/regex.h and src/regex/regcomp.c, regexec.c, regerror.c; TRE grammar outside the named bounded subset remains deliberately unselected." }, { kind = "kernel-abi", source = "Linux 5.10 x86-64 ABI", role = "mmap=9 and munmap=11 fixed anonymous compiled-state lifetime beneath the freestanding static C boundary." }, { kind = "elf-abi", source = "System V AMD64 psABI", role = "LP64 regex_t, regoff_t, regmatch_t, pointer/int/size_t calling conventions, and unmangled C linkage." }]
+
+[[family.verified_artifact]]
 id = "static-c-math-complex-foundation"
 description = "Private native x86 selected-static long-double/complex foundation. One dependency-free `crabc-libc` archive resolves exactly `__fpclassify`, `__fpclassifyf`, `__fpclassifyl`, `__signbit`, `__signbitf`, `__signbitl`, and the C99 `creal`, `crealf`, `creall`, `cimag`, `cimagf`, `cimagl`, `conj`, `conjf`, and `conjl` entries into a freestanding C fixture after an equivalent pinned-musl execution. The leaf preserves the SysV AMD64 x87 storage, argument, and return ABI for 80-bit long double and 32-byte long-double complex while retaining the ordinary SSE ABI for float/double complex. This artifact excludes scalar math, cabs/carg/cproj, complex powers and transcendentals, errno/fenv behavior beyond the named classifiers, libm, libc.so, CRT, loader, sysroot, and public x86 support."
 source_owners = [

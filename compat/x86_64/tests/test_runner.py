@@ -902,7 +902,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "libc-memfd-create",
             "libc-static-c-abi-differential",
             "libc-static-c-abi-same-object-differential|qualification-posix-abi-admission",
-            "libc-readiness-waits|libc-system-observation|libc-system-information|libc-fcntl-record-locks|libc-flock|libc-sendfile|libc-posix-fallocate|libc-descriptor-advice|libc-filesystem-capacity|libc-uts-identity|libc-ctype|libc-locale-multibyte|libc-integer-arithmetic|libc-integer-parse|libc-float-parse|libc-intmax-arithmetic|libc-credential-observation|libc-child-reaping|libc-immediate-termination|libc-callback-algorithms|libc-access|libc-clock-gettime|libc-time-observation|libc-system-configuration|libc-mapping-core|libc-header-layouts-baseline|libc-nanosleep|libc-clock-nanosleep|libc-descriptor-entry|libc-fcntl-status-control|libc-ioctl|libc-ffs|libc-byte-strings|libc-inet-address|libc-numeric-netdb|libc-random-entropy|libc-memory-search|libc-string-copy|libc-descriptor-pipeline",
+            "libc-readiness-waits|libc-system-observation|libc-system-information|libc-fcntl-record-locks|libc-flock|libc-sendfile|libc-posix-fallocate|libc-descriptor-advice|libc-filesystem-capacity|libc-uts-identity|libc-ctype|libc-locale-multibyte|libc-regex|libc-integer-arithmetic|libc-integer-parse|libc-float-parse|libc-intmax-arithmetic|libc-credential-observation|libc-child-reaping|libc-immediate-termination|libc-callback-algorithms|libc-access|libc-clock-gettime|libc-time-observation|libc-system-configuration|libc-mapping-core|libc-header-layouts-baseline|libc-nanosleep|libc-clock-nanosleep|libc-descriptor-entry|libc-fcntl-status-control|libc-ioctl|libc-ffs|libc-byte-strings|libc-inet-address|libc-numeric-netdb|libc-random-entropy|libc-memory-search|libc-string-copy|libc-descriptor-pipeline",
             "libc-vector-io|libc-uio-cxx-linkage",
             "libc-sysv-semaphore",
             "libc-sysv-message-shared-memory",
@@ -8239,6 +8239,85 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             parity_ledger,
         )
         self.assertIn("libc-ctype", runner)
+
+    def test_libc_static_c_abi_bounded_regex_artifact_stays_non_promoting(self) -> None:
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        implementation = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "regex.rs"
+        ).read_text(encoding="utf-8")
+        header = (ROOT / "include" / "regex.h").read_text(encoding="utf-8")
+        probe = (
+            ROOT / "compat" / "x86_64" / "libc_regex_probe.c"
+        ).read_text(encoding="utf-8")
+        artifact_runner = (
+            ROOT / "compat" / "x86_64" / "run_libc_regex.sh"
+        ).read_text(encoding="utf-8")
+        parity_ledger = (
+            ROOT / "compat" / "x86_64" / "parity.toml"
+        ).read_text(encoding="utf-8")
+        static_exports = {
+            line
+            for line in (
+                ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+            ).read_text(encoding="utf-8").splitlines()
+            if line and not line.startswith("#")
+        }
+        dispatcher = RUNNER.read_text(encoding="utf-8")
+
+        symbols = ("regcomp", "regexec", "regerror", "regfree")
+        self.assertIn('#[path = "regex.rs"]', static_root)
+        for symbol in symbols:
+            self.assertIn(f"fn {symbol}(", implementation)
+            self.assertIn(symbol, static_exports)
+        for unselected in ("wordexp", "wordfree", "glob", "globfree", "fnmatch"):
+            self.assertNotIn(unselected, static_exports)
+        for required in (
+            "MAX_TOKENS: usize = 128",
+            "MAX_PATTERN_BYTES: usize = 4_096",
+            "MAX_INPUT_BYTES: usize = 4_096",
+            "COMPILED_MAPPING_BYTES: usize = 8_192",
+            "raw_syscall::SYS_MMAP",
+            "raw_syscall::SYS_MUNMAP",
+            "leftmost-longest",
+            "not complete `pattern.regex`",
+        ):
+            self.assertIn(required, implementation)
+        for required in (
+            "typedef struct re_pattern_buffer",
+            "#define REG_NEWLINE 4",
+            "#define REG_NOSUB 8",
+            "#define REG_ENOSYS -1",
+        ):
+            self.assertIn(required, header)
+        for required in (
+            "a.*a",
+            "[]a]+",
+            "REG_NEWLINE",
+            "REG_NOSUB",
+            "[[:digit:]]",
+            "too_many_atoms",
+            "too_long_input",
+        ):
+            self.assertIn(required, probe)
+        for required in (
+            "static_c_abi_exports.txt",
+            "-nostdlib -static",
+            "--no-undefined",
+            "wordexp wordfree malloc calloc realloc free",
+            "raw_syscall::SYS_MMAP",
+            "raw_syscall::SYS_MUNMAP",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertIn('id = "static-c-bounded-regex"', parity_ledger)
+        self.assertIn(
+            'command = "./scripts/dev-x86_64.sh libc-regex"',
+            parity_ledger,
+        )
+        self.assertIn("does not complete `pattern.regex`", parity_ledger)
+        self.assertIn("select `pattern.wordexp`", parity_ledger)
+        self.assertIn("libc-regex)", dispatcher)
 
     def test_libc_static_c_abi_integer_arithmetic_artifact_stays_narrow(self) -> None:
         static_root = (

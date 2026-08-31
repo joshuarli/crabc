@@ -50,7 +50,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 28)
-        self.assertEqual(report["verified_artifact_count"], 99)
+        self.assertEqual(report["verified_artifact_count"], 100)
         self.assertEqual(report["header_layout_probe_count"], 45)
         self.assertEqual(report["public_header_inventory_count"], 183)
         self.assertEqual(report["header_foundation_header_count"], 191)
@@ -96,6 +96,38 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertGreater(report["header_foundation_static_export_count"], 0)
         self.assertFalse(report["promotion_ready"])
         self.assertFalse(report["public_support"])
+
+    def test_bounded_regex_artifact_does_not_promote_pattern_regex(self) -> None:
+        data = self.data()
+        family = self.family(data, "libc.text-math-locale-stdio")
+        self.assertEqual(family["status"], "planned")
+        self.assertIn("pattern.regex", family["capabilities"])
+        self.assertIn("pattern.wordexp", family["capabilities"])
+        artifacts = family["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry for entry in artifacts
+            if entry["id"] == "static-c-bounded-regex"
+        )
+        self.assertNotIn("capabilities", artifact)
+        self.assertIn("does not complete `pattern.regex`", artifact["description"])
+        self.assertIn("select `pattern.wordexp`", artifact["description"])
+        self.assertEqual(
+            {entry["command"] for entry in artifact["native_evidence"]},
+            {"./scripts/dev-x86_64.sh libc-regex"},
+        )
+
+        changed = copy.deepcopy(data)
+        changed_family = self.family(changed, "libc.text-math-locale-stdio")
+        changed_artifact = next(
+            entry for entry in changed_family["verified_artifact"]
+            if entry["id"] == "static-c-bounded-regex"
+        )
+        changed_artifact["description"] = "complete regex"
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "static-c-bounded-regex description omits"
+        ):
+            ledger.validate_ledger(changed)
 
     def test_ldso_initial_graph_is_a_planned_private_artifact(self) -> None:
         data = self.data()
@@ -2061,7 +2093,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         text_math = self.family(data, "libc.text-math-locale-stdio")
         self.assertEqual(text_math["status"], "planned")
         artifacts = text_math["verified_artifact"]
-        assert isinstance(artifacts, list) and len(artifacts) == 5
+        assert isinstance(artifacts, list) and len(artifacts) == 6
         artifact = next(
             entry
             for entry in artifacts
@@ -2144,7 +2176,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         text_math = self.family(data, "libc.text-math-locale-stdio")
         self.assertEqual(text_math["status"], "planned")
         artifacts = text_math["verified_artifact"]
-        assert isinstance(artifacts, list) and len(artifacts) == 5
+        assert isinstance(artifacts, list) and len(artifacts) == 6
         artifact = next(
             entry
             for entry in artifacts
@@ -2282,7 +2314,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         text_math = self.family(data, "libc.text-math-locale-stdio")
         self.assertEqual(text_math["status"], "planned")
         artifacts = text_math["verified_artifact"]
-        assert isinstance(artifacts, list) and len(artifacts) == 5
+        assert isinstance(artifacts, list) and len(artifacts) == 6
         artifacts_by_id = {
             entry["id"]: entry for entry in artifacts if isinstance(entry, dict)
         }
@@ -2360,7 +2392,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         text_math = self.family(data, "libc.text-math-locale-stdio")
         self.assertEqual(text_math["status"], "planned")
         artifacts = text_math["verified_artifact"]
-        assert isinstance(artifacts, list) and len(artifacts) == 5
+        assert isinstance(artifacts, list) and len(artifacts) == 6
         artifact = next(
             entry
             for entry in artifacts

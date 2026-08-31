@@ -1397,6 +1397,13 @@ NAMED_LOCALE_MULTIBYTE_SYMBOLS = (
     "wctomb",
 )
 
+BOUNDED_REGEX_SYMBOLS = (
+    "regcomp",
+    "regexec",
+    "regerror",
+    "regfree",
+)
+
 
 class LedgerError(ValueError):
     """The parity ledger does not describe a reviewable closed contract."""
@@ -15885,6 +15892,205 @@ def require_named_locale_multibyte_artifact(family: Mapping[str, Any]) -> None:
         )
 
 
+def require_bounded_regex_artifact(family: Mapping[str, Any]) -> None:
+    """Keep the bounded C matcher as evidence, not regex-family promotion."""
+
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.text-math-locale-stdio].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [
+        entry for entry in artifacts
+        if entry.get("id") == "static-c-bounded-regex"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.text-math-locale-stdio must contain exactly one static-c-bounded-regex artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-bounded-regex must not promote libc.text-math-locale-stdio",
+    )
+    family_capabilities = family.get("capabilities")
+    assert isinstance(family_capabilities, list)
+    require(
+        "pattern.regex" in family_capabilities
+        and "pattern.wordexp" in family_capabilities,
+        "bounded regex must remain inside the planned regex/wordexp family contract",
+    )
+
+    artifact = matching[0]
+    require(
+        "capabilities" not in artifact,
+        "static-c-bounded-regex must not promote pattern.regex",
+    )
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for phrase in (
+        "still-planned `libc.text-math-locale-stdio`",
+        "musl-shaped `regex_t`/`regmatch_t` ABI",
+        "leftmost-longest whole-match reporting",
+        "128 atoms",
+        "4096 bytes",
+        "private fixed 8192-byte anonymous mapping",
+        "does not complete `pattern.regex`",
+        "select `pattern.wordexp`",
+        "family completion, promotion, or public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"static-c-bounded-regex description omits {phrase}",
+        )
+    for unselected in (
+        "groups",
+        "alternation",
+        "counted repetition",
+        "backreferences",
+        "named character classes",
+        "collating/equivalence elements",
+        "non-ASCII pattern bytes",
+    ):
+        require(
+            unselected in description,
+            f"static-c-bounded-regex description omits rejection of {unselected}",
+        )
+
+    owners = nonempty_strings(
+        artifact["source_owners"], "static-c-bounded-regex.source_owners"
+    )
+    for owner in (
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/regex.rs",
+        "include/bits/alltypes.h",
+        "include/regex.h",
+        "compat/x86_64/regex_header_abi_probe.c",
+        "compat/x86_64/regex_header_abi_probe.cpp",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/libc_regex_probe.c",
+        "compat/x86_64/libc_regex_start.S",
+        "compat/x86_64/run_libc_regex.sh",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/README.md",
+        "STATUS.md",
+        "scripts/dev-x86_64.sh",
+    ):
+        require(owner in owners, f"static-c-bounded-regex omits {owner}")
+
+    abi_prerequisites = nonempty_strings(
+        artifact["x86_abi_prerequisites"],
+        "static-c-bounded-regex.x86_abi_prerequisites",
+    )
+    require(
+        any(
+            "64-byte/align-8 regex_t" in item
+            and "16-byte/align-8 regmatch_t" in item
+            and "signed LP64 regoff_t" in item
+            for item in abi_prerequisites
+        ),
+        "static-c-bounded-regex must record its public x86 layouts",
+    )
+    require(
+        any(
+            "mmap=9" in item
+            and "munmap=11" in item
+            and "no public malloc/calloc/realloc/free boundary" in item
+            for item in abi_prerequisites
+        ),
+        "static-c-bounded-regex must record its private mapping lifetime",
+    )
+
+    header_prerequisites = nonempty_strings(
+        artifact["x86_header_prerequisites"],
+        "static-c-bounded-regex.x86_header_prerequisites",
+    )
+    require(
+        any(
+            "C11 and C++17" in item
+            and "all thirteen POSIX result values" in item
+            and "unmangled C++ references" in item
+            for item in header_prerequisites
+        ),
+        "static-c-bounded-regex must record the C/C++ header ABI boundary",
+    )
+
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-regex"},
+        "static-c-bounded-regex must use the closed libc-regex command",
+    )
+
+    static_root = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+    ).read_text(encoding="utf-8")
+    require(
+        '#[path = "regex.rs"]\nmod regex;' in static_root,
+        "x86 static C ABI must compose the bounded regex leaf",
+    )
+    implementation = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "regex.rs"
+    ).read_text(encoding="utf-8")
+    for symbol in BOUNDED_REGEX_SYMBOLS:
+        require(
+            f"fn {symbol}(" in implementation,
+            f"bounded regex leaf omits {symbol}",
+        )
+    for snippet in (
+        "MAX_TOKENS: usize = 128",
+        "MAX_PATTERN_BYTES: usize = 4_096",
+        "MAX_INPUT_BYTES: usize = 4_096",
+        "COMPILED_MAPPING_BYTES: usize = 8_192",
+        "raw_syscall::SYS_MMAP",
+        "raw_syscall::SYS_MUNMAP",
+    ):
+        require(
+            snippet in implementation,
+            f"bounded regex leaf omits {snippet}",
+        )
+
+    exports = static_c_abi_export_names(
+        ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+    )
+    for symbol in BOUNDED_REGEX_SYMBOLS:
+        require(symbol in exports, f"static C ABI export contract omits {symbol}")
+    for unselected in ("wordexp", "wordfree", "glob", "globfree", "fnmatch"):
+        require(
+            unselected not in exports,
+            f"bounded regex artifact promoted unselected {unselected}",
+        )
+
+    fixture = (
+        ROOT / "compat" / "x86_64" / "libc_regex_probe.c"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "CRABC_REGEX_FREESTANDING",
+        "a.*a",
+        "REG_NEWLINE",
+        "REG_NOSUB",
+        "REG_ESPACE",
+        "[[:digit:]]",
+    ):
+        require(snippet in fixture, f"bounded regex fixture omits {snippet}")
+    runner = (
+        ROOT / "compat" / "x86_64" / "run_libc_regex.sh"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "-nostdlib -static",
+        "--no-undefined",
+        "static_c_abi_exports.txt",
+        "wordexp wordfree malloc calloc realloc free",
+        "raw_syscall::SYS_MMAP",
+        "raw_syscall::SYS_MUNMAP",
+    ):
+        require(snippet in runner, f"bounded regex runner omits {snippet}")
+    dispatcher = (ROOT / "scripts" / "dev-x86_64.sh").read_text(encoding="utf-8")
+    require("libc-regex)" in dispatcher, "x86 dispatcher omits libc-regex")
+
+
 def baseline_capability_ids(path: Path) -> set[str]:
     """Load the checked-in baseline ledger instead of freezing its ID count here."""
     baseline = load_toml(path)
@@ -16257,6 +16463,7 @@ def validate_ledger(
     require_named_locale_multibyte_artifact(by_id["libc.text-math-locale-stdio"])
     require_same_object_static_c_abi_artifact(by_id["compat.abi-differential"])
     require_posix_process_abi_admission_artifact(by_id["compat.posix-process"])
+    require_bounded_regex_artifact(by_id["libc.text-math-locale-stdio"])
 
     musl_oracle = by_id["oracle.musl-toolchain"]
     require(musl_oracle["status"] == "foundation-verified", "musl oracle must remain foundation-verified")

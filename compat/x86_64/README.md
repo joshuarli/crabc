@@ -3225,6 +3225,23 @@ environment lookup, collation, iconv, wide streams/stdio, general locale/text
 completion, `libc.so`, CRT, loader, sysroot, promotion, and public x86 support
 remain outside this artifact.
 
+`libc-regex` is a separately recorded `static-c-bounded-regex` artifact, not
+completion of the `pattern.regex` capability. Its project-header C fixture
+first runs through pinned musl 1.2.6 and then through a true freestanding
+static candidate. The installed ABI matches musl's 64-byte `regex_t`, signed
+64-bit `regoff_t`, 16-byte `regmatch_t`, flags, result codes, declarations,
+and C++ linkage. Runtime evidence selects only C-locale byte concatenation,
+anchors, dot, byte lists/ranges, `*`, and ERE `+`/`?`, with ASCII
+`REG_ICASE`, `REG_NEWLINE`, `REG_NOSUB`, execution flags, leftmost-longest
+whole-match reporting, exact `regerror` messages, and fixed 128-atom/4096-byte
+bounds. A private fixed-size anonymous mapping owns compiled state without a
+public C allocator. Unsupported groups, alternation, counted repetition,
+backreferences, named classes, collating/equivalence elements, and non-ASCII
+pattern bytes are rejected instead of approximated. `wordexp`, glob/fnmatch C
+ABIs, locale-aware or multibyte regex, a Rust regex ecosystem, libc.so, CRT,
+loader, sysroot, family completion, promotion, and public x86 support remain
+unselected.
+
 `libc-memory` compiles only `libc/src/c_abi/x86_64/memory.rs`, then runs one C
 fixture against pinned musl and the isolated x86 object with project
 `<string.h>` first. It proves the fixed `memcpy`, `memmove`, and `memset`

@@ -263,6 +263,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-uts-identity  run the static x86 crabc-libc hostname/domain identity slice
   libc-ctype  run the static x86 crabc-libc C-locale ctype slice
   libc-locale-multibyte  run the static x86 crabc-libc named locale/multibyte slice
+  libc-regex  run the bounded static x86 crabc-libc POSIX regex slice
   libc-integer-arithmetic  run the static x86 crabc-libc integer-arithmetic slice
   libc-integer-parse  run the static x86 crabc-libc integer-parsing slice
   libc-float-parse  run the static x86 crabc-libc float/double/x87 parsing slice
@@ -2887,7 +2888,7 @@ case "$command" in
     libc-memfd-create) ;;
     libc-static-c-abi-differential) ;;
     libc-static-c-abi-same-object-differential|qualification-posix-abi-admission) ;;
-    libc-readiness-waits|libc-system-observation|libc-system-information|libc-fcntl-record-locks|libc-flock|libc-sendfile|libc-posix-fallocate|libc-descriptor-advice|libc-filesystem-capacity|libc-uts-identity|libc-ctype|libc-locale-multibyte|libc-integer-arithmetic|libc-integer-parse|libc-float-parse|libc-intmax-arithmetic|libc-credential-observation|libc-child-reaping|libc-immediate-termination|libc-callback-algorithms|libc-access|libc-clock-gettime|libc-time-observation|libc-system-configuration|libc-mapping-core|libc-header-layouts-baseline|libc-nanosleep|libc-clock-nanosleep|libc-descriptor-entry|libc-fcntl-status-control|libc-ioctl|libc-ffs|libc-byte-strings|libc-inet-address|libc-numeric-netdb|libc-random-entropy|libc-memory-search|libc-string-copy|libc-descriptor-pipeline) ;;
+    libc-readiness-waits|libc-system-observation|libc-system-information|libc-fcntl-record-locks|libc-flock|libc-sendfile|libc-posix-fallocate|libc-descriptor-advice|libc-filesystem-capacity|libc-uts-identity|libc-ctype|libc-locale-multibyte|libc-regex|libc-integer-arithmetic|libc-integer-parse|libc-float-parse|libc-intmax-arithmetic|libc-credential-observation|libc-child-reaping|libc-immediate-termination|libc-callback-algorithms|libc-access|libc-clock-gettime|libc-time-observation|libc-system-configuration|libc-mapping-core|libc-header-layouts-baseline|libc-nanosleep|libc-clock-nanosleep|libc-descriptor-entry|libc-fcntl-status-control|libc-ioctl|libc-ffs|libc-byte-strings|libc-inet-address|libc-numeric-netdb|libc-random-entropy|libc-memory-search|libc-string-copy|libc-descriptor-pipeline) ;;
     libc-vector-io|libc-uio-cxx-linkage) ;;
     libc-sysv-semaphore) ;;
     libc-sysv-message-shared-memory) ;;
@@ -3947,6 +3948,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "libc-locale-multibyte takes no arguments"
         ensure_image
         run_in_container bash /workspace/compat/x86_64/run_libc_locale_multibyte.sh
+        ;;
+    libc-regex)
+        [ "$#" -eq 0 ] || fail "libc-regex takes no arguments"
+        ensure_image
+        run_in_container bash /workspace/compat/x86_64/run_libc_regex.sh
         ;;
     libc-integer-arithmetic)
         [ "$#" -eq 0 ] || fail "libc-integer-arithmetic takes no arguments"

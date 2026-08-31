@@ -115,6 +115,8 @@ mod string_copy;
 mod ctype;
 #[path = "locale_multibyte.rs"]
 mod locale_multibyte;
+#[path = "regex.rs"]
+mod regex;
 #[path = "integer_arithmetic.rs"]
 mod integer_arithmetic;
 #[path = "integer_parse.rs"]

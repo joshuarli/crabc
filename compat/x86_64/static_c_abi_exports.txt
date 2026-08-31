@@ -341,6 +341,10 @@ recv
 recvfrom
 recvmmsg
 recvmsg
+regcomp
+regerror
+regexec
+regfree
 remove
 removexattr
 rename

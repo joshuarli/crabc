@@ -276,6 +276,17 @@ boundaries; the glob probe intentionally supplies a fixed Rust allocator.
 They remain private Rust-facade evidence, not C `fnmatch`/`glob`/`globfree` ABI
 support, complete facade/platform parity, or public x86 support.
 
+The x86 static C archive separately has one bounded `regex.h` artifact:
+`./scripts/dev-x86_64.sh libc-regex` proves the musl-shaped `regex_t`,
+`regmatch_t`, flags, result codes, and the four `regcomp`/`regexec`/`regerror`/
+`regfree` entries for a fixed-capacity C-locale byte grammar. Unsupported
+groups, alternation, counted repetition, backreferences, named character classes,
+collating/equivalence elements, and non-ASCII pattern bytes fail at compile
+time instead of receiving approximate semantics. This private artifact does
+not complete `pattern.regex`, select `wordexp`, expose a Rust regex API or C
+allocator, or promote the still-planned text/math/locale/stdio family or
+public x86 support.
+
 The x86 static C archive also has one private caller-owned mapping-core
 artifact: `./scripts/dev-x86_64.sh libc-mapping-core` runs the project-header
 C/C++ `sys/mman.h` gate and then one pinned-musl/freestanding-static proof for
