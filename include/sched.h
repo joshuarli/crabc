@@ -38,11 +38,17 @@ struct sched_param {
 /* Linux's GNU pthread-affinity entries exchange this fixed 1024-bit mask.
  * Keep musl 1.2.6's tagged type, capacity, and unsigned-long storage so the
  * pointer declarations in pthread.h are constructible by C and C++ callers
- * without inventing a separate x86-only public representation. The CPU_*
- * construction/allocation helper macro family remains unselected. */
+ * without inventing a separate x86-only public representation. This private
+ * static ABI slice selects only musl's read-only CPU_COUNT_S/CPU_COUNT
+ * spelling; the CPU_* construction/allocation/comparison macro family and
+ * affinity operations remain unselected. */
 typedef struct cpu_set_t {
     unsigned long __bits[128 / sizeof(long)];
 } cpu_set_t;
+
+int __sched_cpucount(size_t, const cpu_set_t *);
+#define CPU_COUNT_S(size,set) __sched_cpucount(size,set)
+#define CPU_COUNT(set) CPU_COUNT_S(sizeof(cpu_set_t),set)
 
 #define CSIGNAL             0x000000ff
 #define CLONE_NEWTIME       0x00000080

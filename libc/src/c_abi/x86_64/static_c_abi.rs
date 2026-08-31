@@ -30,7 +30,8 @@
 //! `thrd_create`/`thrd_exit`/`thrd_join`/`thrd_detach`/`thrd_sleep` sibling, a
 //! direct C11 `thrd_yield` leaf, one separate POSIX status-returning
 //! `sched_yield` leaf, one one-symbol POSIX scheduler-policy observation
-//! compatibility-failure leaf, and one GNU current-CPU observation leaf, a
+//! compatibility-failure leaf, one GNU current-CPU observation leaf, and one
+//! caller-buffered GNU CPU-mask bit-count helper, a
 //! process-private normal `pthread_mutex_*` block and its paired private
 //! process-private condition-variable handoff, a complete selected
 //! `pthread_rwlock_*`/`pthread_rwlockattr_*` block with private and
@@ -351,6 +352,8 @@ mod sched_getscheduler;
 mod sched_yield;
 #[path = "sched_getcpu.rs"]
 mod sched_getcpu;
+#[path = "sched_cpucount.rs"]
+mod sched_cpucount;
 #[path = "c11_sync.rs"]
 mod c11_sync;
 #[path = "pthread_once.rs"]

@@ -1185,6 +1185,7 @@ IMMEDIATE_TERMINATION_SYMBOLS = ("_Exit",)
 POSIX_EXIT_SYMBOLS = ("_exit",)
 SCHED_YIELD_SYMBOLS = ("sched_yield",)
 SCHED_GETCPU_SYMBOLS = ("sched_getcpu",)
+SCHED_CPUCOUNT_SYMBOLS = ("__sched_cpucount",)
 
 CALLBACK_ALGORITHM_SYMBOLS = ("bsearch", "__qsort_r", "qsort", "qsort_r")
 
@@ -16382,6 +16383,256 @@ def require_static_sched_getcpu_artifact(family: Mapping[str, Any]) -> None:
         require(
             snippet in dispatcher,
             f"static-c-sched-getcpu dispatcher omits {snippet}",
+        )
+
+
+def require_static_sched_cpucount_artifact(family: Mapping[str, Any]) -> None:
+    """Keep the GNU CPU-mask helper bytewise, private, and non-promoting."""
+
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.posix-runtime].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [
+        entry for entry in artifacts if entry.get("id") == "static-c-sched-cpucount"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.posix-runtime must contain exactly one static-c-sched-cpucount artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-sched-cpucount must not promote libc.posix-runtime",
+    )
+    artifact = matching[0]
+    require(
+        "capabilities" not in artifact,
+        "static-c-sched-cpucount must not carry capabilities",
+    )
+
+    description = artifact.get("description")
+    require(
+        isinstance(description, str),
+        "static-c-sched-cpucount needs a description",
+    )
+    for phrase in (
+        "GNU `__sched_cpucount`",
+        "still-planned `libc.posix-runtime`",
+        "src/sched/sched_cpucount.c::__sched_cpucount",
+        "zero-length",
+        "1/2/7/8/127-byte",
+        "128-byte",
+        "CPU_COUNT_S",
+        "CPU_COUNT",
+        "strict/POSIX/XOPEN",
+        "no Linux syscall, errno/TLS, allocation, mutation",
+        "CPU topology/migration policy",
+        "scheduler policy/parameters/priority/yield",
+        "clocks/timers/calendar/timezone/environment",
+        "family completion, promotion, or public x86 support",
+        "INT_MAX",
+    ):
+        require(
+            phrase in description,
+            f"static-c-sched-cpucount description omits {phrase}",
+        )
+
+    owners = set(
+        nonempty_strings(
+            artifact.get("source_owners"),
+            "static-c-sched-cpucount.source_owners",
+        )
+    )
+    for owner in (
+        "compat/upstreams.toml",
+        "libc/Cargo.toml",
+        "libc/src/lib.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/sched_cpucount.rs",
+        "include/sched.h",
+        "compat/x86_64/sched_cpucount_header_abi_probe.c",
+        "compat/x86_64/sched_cpucount_header_abi_probe.cpp",
+        "compat/x86_64/run_sched_cpucount_header_abi.sh",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/libc_sched_cpucount_probe.c",
+        "compat/x86_64/libc_sched_cpucount_start.S",
+        "compat/x86_64/run_libc_sched_cpucount.sh",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/aarch64_parity_inventory.py",
+        "compat/x86_64/aarch64_parity_inventory.json",
+        "compat/x86_64/README.md",
+        "STATUS.md",
+        "x86-64.md",
+        "scripts/dev-x86_64.sh",
+        "scripts/check_structure.py",
+    ):
+        require(
+            owner in owners,
+            f"static-c-sched-cpucount source ownership omits {owner}",
+        )
+
+    prerequisite_text = " ".join(
+        nonempty_strings(
+            artifact.get("x86_abi_prerequisites"),
+            "static-c-sched-cpucount.x86_abi_prerequisites",
+        )
+    )
+    for phrase in (
+        "System V AMD64",
+        "__sched_cpucount(size_t, const cpu_set_t *)",
+        "rdi",
+        "rsi",
+        "eax",
+        "128-byte, align-8",
+        "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+        "src/sched/sched_cpucount.c::__sched_cpucount",
+        "const unsigned char *p",
+        "eight bit positions",
+        "0, partial 1/2/7/8/127-byte",
+        "1024-bit",
+        "INT_MAX",
+        "no Linux syscall",
+        "no errno",
+        "no TLS",
+        "no allocation",
+        "no CPU-affinity/topology/state observation or mutation",
+        "no scheduler policy/parameter/priority/yield",
+        "no clock/timer/calendar/timezone/environment",
+    ):
+        require(
+            phrase in prerequisite_text,
+            f"static-c-sched-cpucount ABI prerequisites omit {phrase}",
+        )
+
+    header_text = " ".join(
+        nonempty_strings(
+            artifact.get("x86_header_prerequisites"),
+            "static-c-sched-cpucount.x86_header_prerequisites",
+        )
+    )
+    for phrase in (
+        "GNU C11/C++17",
+        "int __sched_cpucount(size_t, const cpu_set_t *)",
+        "CPU_COUNT_S",
+        "CPU_COUNT",
+        "128-byte align-8",
+        "unmangled C++ reference",
+        "Strict, POSIX, and XOPEN",
+        "_GNU_SOURCE",
+        "installed-header completion",
+    ):
+        require(
+            phrase in header_text,
+            f"static-c-sched-cpucount header prerequisites omit {phrase}",
+        )
+
+    exports = set(
+        static_c_abi_export_names(
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        )
+    )
+    require(
+        set(SCHED_CPUCOUNT_SYMBOLS) <= exports,
+        "static-c-sched-cpucount must retain its exact selected export",
+    )
+
+    static_root = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+    ).read_text(encoding="utf-8")
+    require(
+        '#[path = "sched_cpucount.rs"]\nmod sched_cpucount;' in static_root,
+        "x86 static C ABI must compose the CPU-count helper leaf",
+    )
+    source = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "sched_cpucount.rs"
+    ).read_text(encoding="utf-8")
+    for phrase in (
+        "src/sched/sched_cpucount.c::__sched_cpucount",
+        "const unsigned char *",
+        "while index < size",
+        "while bit < 8",
+        "wrapping_add",
+        'pub unsafe extern "C" fn __sched_cpucount',
+        "caller-owned",
+        "public x86 support",
+    ):
+        require(
+            phrase in source,
+            f"static-c-sched-cpucount source omits {phrase}",
+        )
+    for forbidden in (
+        "crabc_core",
+        "crabc_mimalloc",
+        "raw_syscall",
+        "set_errno",
+        "getenv",
+        "tzset",
+        "__tls_get_addr",
+    ):
+        require(
+            forbidden not in source,
+            f"static-c-sched-cpucount source must not select {forbidden}",
+        )
+
+    evidence = artifact.get("native_evidence")
+    require(isinstance(evidence, list), "static-c-sched-cpucount needs evidence")
+    require(
+        {entry.get("command") for entry in evidence if isinstance(entry, Mapping)}
+        == {"./scripts/dev-x86_64.sh libc-sched-cpucount"},
+        "static-c-sched-cpucount must use the closed libc-sched-cpucount command",
+    )
+    scope = evidence[0].get("scope")
+    require(
+        isinstance(scope, str),
+        "static-c-sched-cpucount evidence needs a scope",
+    )
+    for phrase in (
+        "Pinned-musl 1.2.6 project-header normal C execution",
+        "strict/POSIX/XOPEN/GNU C/C++",
+        "`-nostdlib -static` candidate",
+        "zero-length",
+        "1/2/7/8/127-byte",
+        "128-byte all-set",
+        "CPU_COUNT_S/CPU_COUNT",
+        "env -i",
+        "call-free byte-count closure",
+        "no interpreter/DT_NEEDED/unresolved symbol",
+        "TLS, errno, Linux syscall",
+        "CPU macro construction/allocation/comparison",
+        "promotion",
+        "public x86 support",
+    ):
+        require(
+            phrase in scope,
+            f"static-c-sched-cpucount evidence omits {phrase}",
+        )
+
+    oracle = artifact.get("oracle")
+    require(isinstance(oracle, list), "static-c-sched-cpucount needs oracle records")
+    oracle_text = " ".join(
+        str(entry.get("role", "")) for entry in oracle if isinstance(entry, Mapping)
+    )
+    require(
+        "src/sched/sched_cpucount.c::__sched_cpucount" in oracle_text
+        and "const unsigned char" in oracle_text
+        and "CPU_COUNT_S(size,set)" in oracle_text
+        and "CPU_COUNT(set)" in oracle_text,
+        "static-c-sched-cpucount must retain the exact musl helper/macro mapping",
+    )
+
+    dispatcher = (ROOT / "scripts" / "dev-x86_64.sh").read_text(encoding="utf-8")
+    for snippet in (
+        "run_sched_cpucount_header_abi()",
+        "run_libc_sched_cpucount_probe()",
+        "sched-cpucount-header-abi)",
+        "libc-sched-cpucount)",
+    ):
+        require(
+            snippet in dispatcher,
+            f"static-c-sched-cpucount dispatcher omits {snippet}",
         )
 
 
@@ -47132,6 +47383,7 @@ def validate_ledger(
     require_static_posix_exit_artifact(by_id["libc.posix-runtime"])
     require_static_sched_yield_artifact(by_id["libc.posix-runtime"])
     require_static_sched_getcpu_artifact(by_id["libc.posix-runtime"])
+    require_static_sched_cpucount_artifact(by_id["libc.posix-runtime"])
     require_readlinkat_artifact(by_id["libc.posix-runtime"])
     require_callback_algorithms_artifact(by_id["libc.posix-runtime"])
     require_clock_gettime_artifact(by_id["libc.posix-runtime"])

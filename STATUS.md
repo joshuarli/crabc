@@ -1608,6 +1608,19 @@ migration policy, affinity, scheduler policy/parameters/priority/yield,
 thread state, clocks/timers/calendar/timezone/environment, CRT, loader,
 sysroot, family completion, promotion, and public x86 support remain excluded.
 
+`./scripts/dev-x86_64.sh libc-sched-cpucount` is a distinct private
+`static-c-sched-cpucount` GNU caller-buffer bit-count artifact, not scheduler,
+affinity, or time support. Its GNU-only C/C++ `<sched.h>` declaration/macro
+gate and pinned-musl/true-static fixture map exactly to musl 1.2.6
+`src/sched/sched_cpucount.c::__sched_cpucount`: it counts the eight bit
+positions of each selected byte in valid caller-owned `cpu_set_t` storage,
+including zero, partial, and full 128-byte masks through `CPU_COUNT_S` and
+`CPU_COUNT`. It has no syscall, errno/TLS, allocation, CPU-state observation
+or mutation, scheduler policy/parameters/priority/yield, or
+clock/timer/calendar/timezone/environment path. Invalid storage, count
+conversion above `INT_MAX`, CPU-mask construction/allocation/comparison macros,
+family completion, promotion, and public x86 support remain excluded.
+
 `./scripts/dev-x86_64.sh libc-timegm` is a distinct private
 `static-c-timegm-utc` artifact in still-planned `libc.posix-runtime`. Its
 pinned-musl and true-static C fixture selects only GNU/BSD `timegm` as a

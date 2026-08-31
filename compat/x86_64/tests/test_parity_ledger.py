@@ -50,7 +50,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 41)
-        self.assertEqual(report["verified_artifact_count"], 219)
+        self.assertEqual(report["verified_artifact_count"], 220)
         self.assertEqual(report["header_layout_probe_count"], 47)
         self.assertEqual(report["public_header_inventory_count"], 183)
         self.assertEqual(report["header_foundation_header_count"], 191)
@@ -8146,6 +8146,40 @@ class X86ParityLedgerTests(unittest.TestCase):
             "libc/src/c_abi/x86_64/sched_getcpu.rs",
             posix_runtime["source_owners"],
         )
+        sched_cpucount = artifacts_by_id["static-c-sched-cpucount"]
+        assert isinstance(sched_cpucount, dict)
+        self.assertNotIn("capabilities", sched_cpucount)
+        for owner in (
+            "compat/upstreams.toml",
+            "libc/src/c_abi/x86_64/static_c_abi.rs",
+            "libc/src/c_abi/x86_64/sched_cpucount.rs",
+            "include/sched.h",
+            "compat/x86_64/sched_cpucount_header_abi_probe.c",
+            "compat/x86_64/sched_cpucount_header_abi_probe.cpp",
+            "compat/x86_64/run_sched_cpucount_header_abi.sh",
+            "compat/x86_64/static_c_abi_exports.txt",
+            "compat/x86_64/libc_sched_cpucount_probe.c",
+            "compat/x86_64/libc_sched_cpucount_start.S",
+            "compat/x86_64/run_libc_sched_cpucount.sh",
+        ):
+            self.assertIn(owner, sched_cpucount["source_owners"])
+        self.assertEqual(
+            {evidence["command"] for evidence in sched_cpucount["native_evidence"]},
+            {"./scripts/dev-x86_64.sh libc-sched-cpucount"},
+        )
+        for phrase in (
+            "GNU `__sched_cpucount`",
+            "src/sched/sched_cpucount.c::__sched_cpucount",
+            "CPU_COUNT_S",
+            "CPU_COUNT",
+            "strict/POSIX/XOPEN",
+            "family completion, promotion, or public x86 support",
+        ):
+            self.assertIn(phrase, sched_cpucount["description"])
+        self.assertIn(
+            "libc/src/c_abi/x86_64/sched_cpucount.rs",
+            posix_runtime["source_owners"],
+        )
         readiness_waits = artifacts_by_id["static-c-readiness-signal-waits"]
         assert isinstance(readiness_waits, dict)
         self.assertNotIn("capabilities", readiness_waits)
@@ -14773,6 +14807,37 @@ class X86ParityLedgerTests(unittest.TestCase):
         evidence[0]["command"] = "./scripts/dev-x86_64.sh libc-sched-yield"
         with self.assertRaisesRegex(
             ledger.LedgerError, "closed libc-sched-getcpu command"
+        ):
+            ledger.validate_ledger(data)
+
+    def test_sched_cpucount_artifact_keeps_its_bytewise_contract(self) -> None:
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-sched-cpucount"
+        )
+        artifact["description"] = artifact["description"].replace(
+            "CPU_COUNT_S", "CPU_COUNT_NOT_SELECTED"
+        )
+        with self.assertRaisesRegex(ledger.LedgerError, "CPU_COUNT_S"):
+            ledger.validate_ledger(data)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-sched-cpucount"
+        )
+        evidence = artifact["native_evidence"]
+        assert isinstance(evidence, list) and isinstance(evidence[0], dict)
+        evidence[0]["command"] = "./scripts/dev-x86_64.sh libc-sched-getcpu"
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "closed libc-sched-cpucount command"
         ):
             ledger.validate_ledger(data)
 
