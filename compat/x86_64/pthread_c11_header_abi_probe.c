@@ -176,6 +176,10 @@ typedef int (*crabc_pthread_barrierattr_setpshared_signature)(
 	pthread_barrierattr_t *, int);
 typedef int (*crabc_pthread_barrierattr_getpshared_signature)(
 	const pthread_barrierattr_t *, int *);
+typedef int (*crabc_pthread_condattr_setpshared_signature)(
+	pthread_condattr_t *, int);
+typedef int (*crabc_pthread_condattr_getpshared_signature)(
+	const pthread_condattr_t *, int *);
 typedef void (*crabc_once_init_signature)(void);
 typedef int (*crabc_pthread_once_signature)(
 	pthread_once_t *, crabc_once_init_signature);
@@ -273,6 +277,10 @@ _Static_assert(CRABC_TYPE_IS(__typeof__(&pthread_barrierattr_setpshared),
 	crabc_pthread_barrierattr_setpshared_signature), "pthread_barrierattr_setpshared signature");
 _Static_assert(CRABC_TYPE_IS(__typeof__(&pthread_barrierattr_getpshared),
 	crabc_pthread_barrierattr_getpshared_signature), "pthread_barrierattr_getpshared signature");
+_Static_assert(CRABC_TYPE_IS(__typeof__(&pthread_condattr_setpshared),
+	crabc_pthread_condattr_setpshared_signature), "pthread_condattr_setpshared signature");
+_Static_assert(CRABC_TYPE_IS(__typeof__(&pthread_condattr_getpshared),
+	crabc_pthread_condattr_getpshared_signature), "pthread_condattr_getpshared signature");
 _Static_assert(CRABC_TYPE_IS(__typeof__(&pthread_once), crabc_pthread_once_signature),
 	"pthread_once signature");
 #if defined(CRABC_EXPECT_POSIX_SIGNAL_DECLARATIONS)

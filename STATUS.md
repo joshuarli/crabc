@@ -618,7 +618,7 @@ internals without narrowing any public binary80 boundary. It selects no
 elementary/fenv-sensitive/numeric-parsing capability, general libc/libm,
 family completion, x86 promotion, or public support.
 
-The x86 lane now has twenty-three private static artifacts inside still-planned
+The x86 lane now has twenty-four private static artifacts inside still-planned
 `libc.pthread-tls`. `./scripts/dev-x86_64.sh libc-static-tls-v1` passes a
 freestanding final-static-executable fixture's untouched Linux entry stack to
 a hidden libc hook. That hook validates the final executable's program-header
@@ -719,6 +719,20 @@ initializer consumes the record. It therefore does not select barrier
 initialization, waiting, destruction, process-shared barrier operation,
 threads, TLS, synchronization, cancellation, CRT, loader, sysroot, family
 completion, promotion, or public x86 support.
+
+The separate `./scripts/dev-x86_64.sh libc-pthread-condattr-pshared` artifact
+is a twenty-fourth private static artifact in that same still-planned family.
+It selects only `pthread_condattr_setpshared` and
+`pthread_condattr_getpshared` over the public four-byte attribute word: musl's
+accepted `0`/`1` inputs change only bit 31 while preserving all low thirty-one
+clock-record bits, invalid inputs leave the complete word unchanged, and the
+getter reads that raw high bit. The fixture uses caller-owned raw storage with
+no lifecycle call, clock selection, or `pthread_cond_init`; the selected
+private condition initializer continues to reject non-null attributes. It
+therefore does not select condition initialization, waiting, destruction,
+process-shared condition operation, threads, TLS, synchronization,
+cancellation, CRT, loader, sysroot, family completion, promotion, or public
+x86 support.
 
 `./scripts/dev-x86_64.sh libc-pthread-mutex-normal` artifact is a tenth private static
 `verified_artifact` in the same still-planned `libc.pthread-tls` family. It admits only an all-zero or

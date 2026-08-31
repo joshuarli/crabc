@@ -50,7 +50,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 41)
-        self.assertEqual(report["verified_artifact_count"], 194)
+        self.assertEqual(report["verified_artifact_count"], 195)
         self.assertEqual(report["header_layout_probe_count"], 46)
         self.assertEqual(report["public_header_inventory_count"], 183)
         self.assertEqual(report["header_foundation_header_count"], 191)
@@ -11024,7 +11024,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             "libc/src/c_abi/x86_64/pthread_atfork.rs", pthread_tls["source_owners"]
         )
         self.assertIn(
-            "Twenty-three separately verified static artifacts", pthread_tls["description"]
+            "Twenty-four separately verified static artifacts", pthread_tls["description"]
         )
         self.assertIn(
             "sole delivery point is explicit `pthread_testcancel`",
@@ -11047,7 +11047,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         pthread_tls = self.family(data, "libc.pthread-tls")
         self.assertEqual(pthread_tls["status"], "planned")
         artifacts = pthread_tls["verified_artifact"]
-        self.assertEqual(len(artifacts), 23)
+        self.assertEqual(len(artifacts), 24)
         by_id = {artifact["id"]: artifact for artifact in artifacts}
         self.assertEqual(
             set(by_id),
@@ -11074,6 +11074,7 @@ class X86ParityLedgerTests(unittest.TestCase):
                 "static-c-pthread-cpuclock",
                 "static-c-pthread-name",
                 "static-c-pthread-barrierattr-pshared",
+                "static-c-pthread-condattr-pshared",
                 "static-c-thrd-yield",
             },
         )
@@ -11099,6 +11100,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         cpuclock = by_id["static-c-pthread-cpuclock"]
         name = by_id["static-c-pthread-name"]
         barrierattr_pshared = by_id["static-c-pthread-barrierattr-pshared"]
+        condattr_pshared = by_id["static-c-pthread-condattr-pshared"]
         thrd_yield = by_id["static-c-thrd-yield"]
         for artifact in artifacts:
             self.assertNotIn("capabilities", artifact)
@@ -11262,6 +11264,46 @@ class X86ParityLedgerTests(unittest.TestCase):
             "family completion, promotion, and public x86 support",
         ):
             self.assertIn(phrase, barrierattr_pshared_scope)
+        self.assertEqual(
+            condattr_pshared["native_evidence"][0]["command"],
+            "./scripts/dev-x86_64.sh libc-pthread-condattr-pshared",
+        )
+        for phrase in (
+            "still-planned `libc.pthread-tls`",
+            "Two dependency-free entries",
+            "`pthread_condattr_setpshared` and `pthread_condattr_getpshared`",
+            "four-byte, four-byte-aligned public `pthread_condattr_t` word",
+            "private/shared 0/1",
+            "only bit 31",
+            "all low thirty-one raw clock-record bits",
+            "raw high bit on get",
+            "invalid values preserve the complete word",
+            "caller-owned raw record storage",
+            "attribute lifecycle function, selecting a condition clock, or calling `pthread_cond_init`",
+            "private-condition initializer continues to reject every non-null attribute",
+            "not condition initialization, condition waiting, or process-shared condition operation",
+            "init/destroy lifecycle",
+            "condition clock operations",
+            "another condition attribute",
+            "a condition state machine",
+            "threads, TCB/TLS ownership, synchronization, cancellation",
+            "general pthread/TLS behavior or x86-64 parity",
+            "family completion, promotion, or public x86 support",
+        ):
+            self.assertIn(phrase, condattr_pshared["description"])
+        condattr_pshared_scope = condattr_pshared["native_evidence"][0]["scope"]
+        for phrase in (
+            "shared bit-31 update while retaining the low raw word",
+            "private bit-31 clear while retaining a different low raw word",
+            "raw high-bit getter behavior",
+            "invalid `2` and `-1` complete-word preservation",
+            "no lifecycle, clock, or condition-initialization call",
+            "exactly pthread_condattr_setpshared/getpshared",
+            "PT_TLS, errno/bootstrap, syscall, helper call",
+            "process-shared condition operation",
+            "family completion, promotion, and public x86 support",
+        ):
+            self.assertIn(phrase, condattr_pshared_scope)
         self.assertEqual(
             thrd_yield["native_evidence"][0]["command"],
             "./scripts/dev-x86_64.sh libc-thrd-yield",

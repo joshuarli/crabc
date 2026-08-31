@@ -280,6 +280,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-pthread-cpuclock  run the static x86 crabc-libc bounded pthread CPU-clock slice
   libc-pthread-name  run the static x86 crabc-libc bounded pthread task-name slice
   libc-pthread-barrierattr-pshared  run the static x86 crabc-libc barrier-attribute pshared record slice
+  libc-pthread-condattr-pshared  run the static x86 crabc-libc condition-attribute pshared record slice
   libc-pthread-mutex-normal  run the static x86 crabc-libc normal pthread-mutex slice
   libc-pthread-rwlock  run the static x86 crabc-libc pthread read/write-lock slice
   libc-pthread-cond-private  run the static x86 crabc-libc private pthread-condition slice
@@ -615,6 +616,18 @@ invalid inputs preserve it, and any nonzero raw word queries as shared. The
 fixture deliberately constructs caller-owned record words and does not call an
 attribute lifecycle function. It does not select barrier initialization,
 waiting, destruction, or process-shared barrier operation; thread, TLS,
+synchronization, cancellation, CRT, loader, sysroot, pthread-family
+completion, or public x86 support.
+`libc-pthread-condattr-pshared` is a separate static project-header fixture
+that first runs through pinned musl, then links only the selected archive. It
+selects only the four-byte public `pthread_condattr_t` record's
+`pthread_condattr_setpshared`/`pthread_condattr_getpshared` behavior: accepted
+private/shared inputs replace only bit 31 while retaining the low clock-record
+bits, invalid inputs preserve the complete word, and the getter reads that
+high bit. The fixture deliberately constructs caller-owned record words and
+does not call an attribute lifecycle function, select a condition clock, or
+call `pthread_cond_init`. It does not select condition initialization, waiting,
+destruction, or process-shared condition operation; thread, TLS,
 synchronization, cancellation, CRT, loader, sysroot, pthread-family
 completion, or public x86 support.
 `libc-pthread-mutex-normal` is a separate static project-header fixture that
@@ -3392,6 +3405,10 @@ run_libc_pthread_barrierattr_pshared_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_pthread_barrierattr_pshared.sh
 }
 
+run_libc_pthread_condattr_pshared_probe() {
+    run_in_container bash /workspace/compat/x86_64/run_libc_pthread_condattr_pshared.sh
+}
+
 run_libc_pthread_detach_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_pthread_detach.sh
 }
@@ -3835,6 +3852,7 @@ case "$command" in
     libc-pthread-cpuclock) ;;
     libc-pthread-name) ;;
     libc-pthread-barrierattr-pshared) ;;
+    libc-pthread-condattr-pshared) ;;
     libc-pthread-detach) ;;
     libc-thrd-yield) ;;
     libc-memory-sync) ;;
@@ -4947,6 +4965,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "libc-pthread-barrierattr-pshared takes no arguments"
         ensure_image
         run_libc_pthread_barrierattr_pshared_probe
+        ;;
+    libc-pthread-condattr-pshared)
+        [ "$#" -eq 0 ] || fail "libc-pthread-condattr-pshared takes no arguments"
+        ensure_image
+        run_libc_pthread_condattr_pshared_probe
         ;;
     libc-pthread-detach)
         [ "$#" -eq 0 ] || fail "libc-pthread-detach takes no arguments"

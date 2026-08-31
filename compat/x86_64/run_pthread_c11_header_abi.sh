@@ -125,6 +125,7 @@ assert_cxx_c_linkage() {
         pthread_rwlockattr_init pthread_rwlockattr_destroy
         pthread_rwlockattr_setpshared pthread_rwlockattr_getpshared pthread_once
         pthread_barrierattr_setpshared pthread_barrierattr_getpshared
+        pthread_condattr_setpshared pthread_condattr_getpshared
         thrd_create thrd_detach thrd_join thrd_exit thrd_sleep thrd_yield thrd_current thrd_equal
         call_once tss_create tss_delete tss_get tss_set
         mtx_init mtx_destroy mtx_lock mtx_trylock mtx_unlock
@@ -139,7 +140,7 @@ assert_cxx_c_linkage() {
         printf '%s\n' "$symbols" | grep -Fxq "$symbol" ||
             fail "$label does not request C-linkage symbol $symbol"
     done
-    if printf '%s\n' "$symbols" | grep -Eq '(^|.*)_Z.*(pthread_create|pthread_detach|pthread_self|pthread_equal|pthread_getcpuclockid|pthread_setname_np|pthread_getname_np|pthread_key_create|pthread_key_delete|pthread_getspecific|pthread_setspecific|pthread_mutex_init|pthread_mutex_destroy|pthread_mutex_lock|pthread_mutex_trylock|pthread_mutex_unlock|pthread_cond_init|pthread_cond_destroy|pthread_cond_wait|pthread_cond_signal|pthread_cond_broadcast|pthread_rwlock_init|pthread_rwlock_destroy|pthread_rwlock_rdlock|pthread_rwlock_tryrdlock|pthread_rwlock_timedrdlock|pthread_rwlock_wrlock|pthread_rwlock_trywrlock|pthread_rwlock_timedwrlock|pthread_rwlock_unlock|pthread_rwlockattr_init|pthread_rwlockattr_destroy|pthread_rwlockattr_setpshared|pthread_rwlockattr_getpshared|pthread_barrierattr_setpshared|pthread_barrierattr_getpshared|pthread_once|pthread_sigmask|thrd_create|thrd_detach|thrd_join|thrd_exit|thrd_sleep|thrd_yield|thrd_current|thrd_equal|call_once|tss_create|tss_delete|tss_get|tss_set|mtx_init|mtx_destroy|mtx_lock|mtx_trylock|mtx_unlock|cnd_init|cnd_destroy|cnd_wait|cnd_signal|cnd_broadcast)'; then
+    if printf '%s\n' "$symbols" | grep -Eq '(^|.*)_Z.*(pthread_create|pthread_detach|pthread_self|pthread_equal|pthread_getcpuclockid|pthread_setname_np|pthread_getname_np|pthread_key_create|pthread_key_delete|pthread_getspecific|pthread_setspecific|pthread_mutex_init|pthread_mutex_destroy|pthread_mutex_lock|pthread_mutex_trylock|pthread_mutex_unlock|pthread_cond_init|pthread_cond_destroy|pthread_cond_wait|pthread_cond_signal|pthread_cond_broadcast|pthread_rwlock_init|pthread_rwlock_destroy|pthread_rwlock_rdlock|pthread_rwlock_tryrdlock|pthread_rwlock_timedrdlock|pthread_rwlock_wrlock|pthread_rwlock_trywrlock|pthread_rwlock_timedwrlock|pthread_rwlock_unlock|pthread_rwlockattr_init|pthread_rwlockattr_destroy|pthread_rwlockattr_setpshared|pthread_rwlockattr_getpshared|pthread_barrierattr_setpshared|pthread_barrierattr_getpshared|pthread_condattr_setpshared|pthread_condattr_getpshared|pthread_once|pthread_sigmask|thrd_create|thrd_detach|thrd_join|thrd_exit|thrd_sleep|thrd_yield|thrd_current|thrd_equal|call_once|tss_create|tss_delete|tss_get|tss_set|mtx_init|mtx_destroy|mtx_lock|mtx_trylock|mtx_unlock|cnd_init|cnd_destroy|cnd_wait|cnd_signal|cnd_broadcast)'; then
         fail "$label requests a mangled C++ pthread/C11 symbol"
     fi
 }
