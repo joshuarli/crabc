@@ -761,6 +761,18 @@ initialization, waiting, destruction, process-shared barrier operation,
 threads, TLS, synchronization, cancellation, CRT, loader, sysroot, family
 completion, promotion, or public x86 support.
 
+The separate `./scripts/dev-x86_64.sh libc-pthread-spin-init` artifact is the
+twenty-fourth private static artifact in that same still-planned family. It
+selects only musl's direct `pthread_spin_init` four-byte record reset: for all
+tested initial and `pshared` word values, valid caller-owned
+`pthread_spinlock_t` storage becomes zero and the function returns zero.
+Pinned-musl/project C/C++ header checks establish the exact C declaration and
+unmangled linkage; the same 5-by-5 fixture runs through pinned musl and then a
+true `-nostdlib -static` candidate with only the selected archive. It excludes
+spin destroy/lock/trylock/unlock, process sharing, synchronization,
+thread/TLS lifecycle, cancellation, CRT, loader, sysroot, family completion,
+promotion, and public x86 support.
+
 `./scripts/dev-x86_64.sh libc-pthread-mutex-normal` artifact is a tenth private static
 `verified_artifact` in the same still-planned `libc.pthread-tls` family. It admits only an all-zero or
 `pthread_mutex_init(..., NULL)` process-private `PTHREAD_MUTEX_NORMAL` record

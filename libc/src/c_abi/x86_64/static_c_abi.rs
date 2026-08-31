@@ -132,9 +132,12 @@
 //! it owns no dereferenceable TCB, worker handle, or general C clock surface.
 //! The adjacent GNU task-name pair similarly admits only that bootstrapped
 //! process-main self handle through direct Linux `prctl`; it owns neither
-//! worker names nor musl's `/proc` target-name/cancellation path. The mutex
-//! block is limited to all-zero/NULL-attribute process-private normal mutexes
-//! and private futex contention. Its condition sibling retains musl's private
+//! worker names nor musl's `/proc` target-name/cancellation path. One
+//! independent `pthread_spin_init` leaf only
+//! replaces valid caller-owned four-byte spinlock storage with zero; it is not
+//! spin acquisition, release, destruction, process sharing, or synchronization.
+//! The mutex block is limited to all-zero/NULL-attribute process-private normal
+//! mutexes and private futex contention. Its condition sibling retains musl's private
 //! waiter-list/barrier/requeue protocol only for all-zero/NULL-attribute
 //! process-private conditions paired with those normal mutexes. The C11 plain
 //! synchronization sibling maps only distinct `mtx_t`/`cnd_t` storage through
@@ -328,6 +331,8 @@ mod pthread_cpuclock;
 mod pthread_name;
 #[path = "pthread_barrierattr_pshared.rs"]
 mod pthread_barrierattr_pshared;
+#[path = "pthread_spin_init.rs"]
+mod pthread_spin_init;
 #[path = "pthread_cancel.rs"]
 mod pthread_cancel;
 #[path = "pthread_atfork.rs"]

@@ -1386,7 +1386,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "stdio-permanent-fileno-header-abi",
             "stdio-permanent-fileno-unlocked-header-abi",
             "stdio-permanent-feof-unlocked-header-abi",
-            "image|musl-oracle|header-abi-reference|public-header-surface|header-abi-project|math-complex-header-abi|sys-reg-header-abi|types-header-abi|stat-header-abi|utime-header-abi|pthread-c11-header-abi|pthread-cancellation-header-abi|stdlib-header-abi|stdio-standard-header-abi|time-header-abi|poll-header-abi|select-header-abi|fcntl-header-abi|descriptor-advice-header-abi|filesystem-capacity-header-abi|flock-header-abi|sendfile-header-abi|ioctl-header-abi|unistd-header-abi|system-header-abi|syscall-header-abi|signal-header-abi|termios-header-abi|mman-header-abi|resource-header-abi|socket-header-abi|socket-messages-header-abi|random-entropy-header-abi|mm-abi-reference|mapping-reference|memory-vm-reference|pty-basic-reference|terminal-reference|mlock-reference|msync-reference|mincore-reference|fs-advice-reference|memfd-reference|ftruncate-reference|statfs-reference|timestamp-reference|path-lifecycle-reference|namespace-reference|path-core-reference|xattr-reference|directory-reference|temporary-object-reference|statx-reference|cwd-canonicalize-reference|root-change-reference|mount-reference|thread-kill-reference|ipc-reference|shm-reference|inotify-reference|socket-transport-reference|interface-device-reference|resolver-transport-reference|resolver-facade-reference|netdb-reference|users-databases-reference|posix-fallocate-reference|fallocate-reference|file-position-reference|sync-reference|syncfs-reference|sync-file-range-reference|rand-reference|time-abi-reference|time-observation-reference|calendar-time-reference|advanced-time-reference|relative-sleep-reference|clock-nanosleep-reference|getitimer-reference|setitimer-reference|timerfd-reference|pselect-reference|poll-reference|ppoll-reference|epoll-reference|process-identity-reference|child-ownership-reference|getgroups-reference|process-session-reference|pidfd-open-reference|fcntl-getlk-reference|fcntl-status-reference|flock-reference|sendfile-reference|copy-file-range-reference|scheduler-priority-bounds-reference|rr-interval-reference|sched-affinity-reference|sched-affinity-set-reference|priority-reference|setpriority-reference|rlimit-reference|rlimit-targeted-reference|setrlimit-reference|umask-reference|rusage-reference|times-reference|fstat-reference|statat-reference|getcwd-reference|readlinkat-reference|access-reference|system-reference|thread-reference|thread-credentials-reference|fs-credentials-reference|core|facade|facade-record-owning|libc-syscall|libc-errno-tls|libc-stat-compat|libc-credentials|libc-bootstrap-primitives|libc-signal-control|libc-signal-execution|libc-static-tls-v1|libc-crt-static-tls|libc-pthread-create-join-tls|libc-c11-lifecycle|libc-c11-plain-sync|libc-pthread-c11-once|libc-pthread-c11-tsd|libc-pthread-tls-aggregate|libc-pthread-cancel-deferred|libc-pthread-atfork|libc-thrd-sleep|libc-pthread-mutex-normal|libc-pthread-rwlock|libc-pthread-cond-private|libc-termios-control|libc-process-context|libc-environment|libc-descriptor-io|libc-descriptor-lifecycle|libc-timestamp-updates|libc-process-resources|libc-socket-transport|libc-socket-messages|libc-thread-pointer|libc-foundation|libc-fenv|libc-math-complex|libc-elementary-sqrt-fenv|libc-math-x87-extended|libc-memory|libc-setjmp|libc-atomic|libc-clone-raw|libc-signal-altstack|libc-signal-foundation|ldso-relocation|ldso-image|ldso-initial-graph|ldso-initial-tls|ldso-initial-exec-tls|ldso-owned-crt-handoff|ldso-fixed-graph-introspection|ldso-dynamic-admission",
+            "image|musl-oracle|header-abi-reference|public-header-surface|header-abi-project|math-complex-header-abi|sys-reg-header-abi|types-header-abi|stat-header-abi|utime-header-abi|pthread-c11-header-abi|pthread-cancellation-header-abi|pthread-spin-init-header-abi|stdlib-header-abi|stdio-standard-header-abi|time-header-abi|poll-header-abi|select-header-abi|fcntl-header-abi|descriptor-advice-header-abi|filesystem-capacity-header-abi|flock-header-abi|sendfile-header-abi|ioctl-header-abi|unistd-header-abi|system-header-abi|syscall-header-abi|signal-header-abi|termios-header-abi|mman-header-abi|resource-header-abi|socket-header-abi|socket-messages-header-abi|random-entropy-header-abi|mm-abi-reference|mapping-reference|memory-vm-reference|pty-basic-reference|terminal-reference|mlock-reference|msync-reference|mincore-reference|fs-advice-reference|memfd-reference|ftruncate-reference|statfs-reference|timestamp-reference|path-lifecycle-reference|namespace-reference|path-core-reference|xattr-reference|directory-reference|temporary-object-reference|statx-reference|cwd-canonicalize-reference|root-change-reference|mount-reference|thread-kill-reference|ipc-reference|shm-reference|inotify-reference|socket-transport-reference|interface-device-reference|resolver-transport-reference|resolver-facade-reference|netdb-reference|users-databases-reference|posix-fallocate-reference|fallocate-reference|file-position-reference|sync-reference|syncfs-reference|sync-file-range-reference|rand-reference|time-abi-reference|time-observation-reference|calendar-time-reference|advanced-time-reference|relative-sleep-reference|clock-nanosleep-reference|getitimer-reference|setitimer-reference|timerfd-reference|pselect-reference|poll-reference|ppoll-reference|epoll-reference|process-identity-reference|child-ownership-reference|getgroups-reference|process-session-reference|pidfd-open-reference|fcntl-getlk-reference|fcntl-status-reference|flock-reference|sendfile-reference|copy-file-range-reference|scheduler-priority-bounds-reference|rr-interval-reference|sched-affinity-reference|sched-affinity-set-reference|priority-reference|setpriority-reference|rlimit-reference|rlimit-targeted-reference|setrlimit-reference|umask-reference|rusage-reference|times-reference|fstat-reference|statat-reference|getcwd-reference|readlinkat-reference|access-reference|system-reference|thread-reference|thread-credentials-reference|fs-credentials-reference|core|facade|facade-record-owning|libc-syscall|libc-errno-tls|libc-stat-compat|libc-credentials|libc-bootstrap-primitives|libc-signal-control|libc-signal-execution|libc-static-tls-v1|libc-crt-static-tls|libc-pthread-create-join-tls|libc-c11-lifecycle|libc-c11-plain-sync|libc-pthread-c11-once|libc-pthread-c11-tsd|libc-pthread-tls-aggregate|libc-pthread-cancel-deferred|libc-pthread-atfork|libc-thrd-sleep|libc-pthread-mutex-normal|libc-pthread-rwlock|libc-pthread-cond-private|libc-termios-control|libc-process-context|libc-environment|libc-descriptor-io|libc-descriptor-lifecycle|libc-timestamp-updates|libc-process-resources|libc-socket-transport|libc-socket-messages|libc-thread-pointer|libc-foundation|libc-fenv|libc-math-complex|libc-elementary-sqrt-fenv|libc-math-x87-extended|libc-memory|libc-setjmp|libc-atomic|libc-clone-raw|libc-signal-altstack|libc-signal-foundation|ldso-relocation|ldso-image|ldso-initial-graph|ldso-initial-tls|ldso-initial-exec-tls|ldso-owned-crt-handoff|ldso-fixed-graph-introspection|ldso-dynamic-admission",
             "math-elementary-long-double-header-abi|libc-math-elementary-long-double",
             "ldso-fixed-graph-dlfcn",
             "ldso-public-dlfcn|ldso-dladdr-symbol-bounds",
@@ -1453,6 +1453,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "libc-pthread-cpuclock",
             "libc-pthread-name",
             "libc-pthread-barrierattr-pshared",
+            "libc-pthread-spin-init",
             "libc-pthread-detach",
             "libc-thrd-yield",
             "libc-memory-sync",
@@ -1519,6 +1520,8 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn("libc-pthread-cpuclock", source)
         self.assertIn("libc-pthread-name", source)
         self.assertIn("libc-pthread-barrierattr-pshared", source)
+        self.assertIn("pthread-spin-init-header-abi", source)
+        self.assertIn("libc-pthread-spin-init", source)
         self.assertIn("libc-termios-control", source)
         self.assertIn("ctermid-header-abi", source)
         self.assertIn("libc-ctermid", source)
@@ -7865,6 +7868,124 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             '    libc-pthread-barrierattr-pshared)\n        [ "$#" -eq 0 ] || fail "libc-pthread-barrierattr-pshared takes no arguments"',
             runner,
         )
+
+    def test_libc_static_c_abi_pthread_spin_init_artifact_stays_record_only(
+        self,
+    ) -> None:
+        """Keep direct pthread_spin_init separate from spin synchronization."""
+
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        spin_init = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "pthread_spin_init.rs"
+        ).read_text(encoding="utf-8")
+        c_header_probe = (
+            ROOT / "compat" / "x86_64" / "pthread_spin_init_header_abi_probe.c"
+        ).read_text(encoding="utf-8")
+        cxx_header_probe = (
+            ROOT / "compat" / "x86_64" / "pthread_spin_init_header_abi_probe.cpp"
+        ).read_text(encoding="utf-8")
+        header_runner = (
+            ROOT / "compat" / "x86_64" / "run_pthread_spin_init_header_abi.sh"
+        ).read_text(encoding="utf-8")
+        probe = (
+            ROOT / "compat" / "x86_64" / "libc_pthread_spin_init_probe.c"
+        ).read_text(encoding="utf-8")
+        start = (
+            ROOT / "compat" / "x86_64" / "libc_pthread_spin_init_start.S"
+        ).read_text(encoding="utf-8")
+        artifact_runner = (
+            ROOT / "compat" / "x86_64" / "run_libc_pthread_spin_init.sh"
+        ).read_text(encoding="utf-8")
+        static_exports = {
+            line
+            for line in (
+                ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+            ).read_text(encoding="utf-8").splitlines()
+            if line and not line.startswith("#")
+        }
+        parity_ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        runner = RUNNER.read_text(encoding="utf-8")
+
+        self.assertIn('#[path = "pthread_spin_init.rs"]', static_root)
+        for required in (
+            "src/thread/pthread_spin_init.c::pthread_spin_init",
+            "return *s = 0;",
+            "shared argument is deliberately ignored",
+            "pub unsafe extern \"C\" fn pthread_spin_init",
+            "core::ptr::write(spinlock, 0)",
+        ):
+            self.assertIn(required, spin_init)
+        for forbidden in ("use super", "raw_syscall::", "static_tls::", "errno::"):
+            self.assertNotIn(forbidden, spin_init)
+        for header_probe in (c_header_probe, cxx_header_probe):
+            for required in (
+                "#include <pthread.h>",
+                "pthread_spin_init_signature",
+                "sizeof(pthread_spinlock_t) == 4",
+                "pthread_spin_init declaration",
+            ):
+                self.assertIn(required, header_probe)
+        for required in (
+            "-nostdinc++",
+            "project pthread_spin_init C header contract drifted",
+            "unmangled pthread_spin_init reference",
+        ):
+            self.assertIn(required, header_runner)
+        for required in (
+            "initial_values[] = { 0, 1, -1, INT_MIN, INT_MAX }",
+            "shared_values[] = { 0, 1, -1, INT_MIN, INT_MAX }",
+            "direct_pthread_spin_init",
+            "CRABC_PTHREAD_SPIN_INIT_FREESTANDING",
+        ):
+            self.assertIn(required, probe)
+        self.assertNotIn("pthread_spin_destroy(", probe)
+        self.assertNotIn("pthread_spin_lock(", probe)
+        for required in (
+            "crabc_x86_64_pthread_spin_init_probe",
+            "mov $60, %eax",
+            "syscall",
+        ):
+            self.assertIn(required, start)
+        self.assertNotIn("%fs", start)
+        for required in (
+            "run_pthread_spin_init_header_abi.sh",
+            "-nostdlib -static",
+            "-Wl,-e,_start",
+            "-Wl,--no-undefined",
+            "pthread_spin_destroy pthread_spin_lock pthread_spin_trylock pthread_spin_unlock",
+            "must remain TLS-free",
+            "src/thread/pthread_spin_init.c",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn("--whole-archive", artifact_runner)
+        self.assertIn("pthread_spin_init", static_exports)
+        self.assertTrue(
+            {
+                "pthread_spin_destroy",
+                "pthread_spin_lock",
+                "pthread_spin_trylock",
+                "pthread_spin_unlock",
+            }.isdisjoint(static_exports)
+        )
+        self.assertIn('id = "static-c-pthread-spin-init"', parity_ledger)
+        self.assertIn(
+            'command = "./scripts/dev-x86_64.sh libc-pthread-spin-init"',
+            parity_ledger,
+        )
+        for required in (
+            "run_pthread_spin_init_header_abi()",
+            "run_libc_pthread_spin_init_probe()",
+            "/workspace/compat/x86_64/run_pthread_spin_init_header_abi.sh",
+            "/workspace/compat/x86_64/run_libc_pthread_spin_init.sh",
+            "pthread-spin-init-header-abi|stdlib-header-abi",
+            "    libc-pthread-barrierattr-pshared|libc-pthread-spin-init) ;;",
+            '    libc-pthread-spin-init)\n        [ "$#" -eq 0 ] || fail "libc-pthread-spin-init takes no arguments"',
+        ):
+            self.assertIn(required, runner)
 
     def test_libc_static_c_abi_pthread_normal_mutex_artifact_stays_private(
         self,

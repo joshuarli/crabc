@@ -414,6 +414,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-pthread-cpuclock
 ./scripts/dev-x86_64.sh libc-pthread-name
 ./scripts/dev-x86_64.sh libc-pthread-barrierattr-pshared
+./scripts/dev-x86_64.sh libc-pthread-spin-init
 ./scripts/dev-x86_64.sh libc-pthread-mutex-normal
 ./scripts/dev-x86_64.sh libc-pthread-rwlock
 ./scripts/dev-x86_64.sh libc-pthread-cond-private
@@ -3246,6 +3247,18 @@ destruction, or process-shared operation. Threads, TLS, synchronization,
 cancellation, CRT, loader, sysroot, family completion, promotion, and public
 x86 support remain excluded.
 
+`libc-pthread-spin-init` is the twenty-fourth separately recorded private
+static `verified_artifact` under the same still-planned `libc.pthread-tls`
+family. Its project-header C body first runs against pinned musl and then
+through a `-nostdlib -static` candidate. It selects only
+`pthread_spin_init`'s direct four-byte `pthread_spinlock_t` zero-store and
+zero return while ignoring `pshared`; the same 5-by-5 initial/pshared corpus
+checks all of `0`, `1`, `-1`, `INT_MIN`, and `INT_MAX`. Its C/C++ header gate
+requires the exact unmangled `int (*)(pthread_spinlock_t *, int)` declaration.
+It does not select spin destroy/lock/trylock/unlock, process sharing,
+synchronization, thread/TLS lifecycle, cancellation, CRT, loader, sysroot,
+family completion, promotion, or public x86 support.
+
 `libc-pthread-mutex-normal` is a tenth separately recorded private static
 `verified_artifact` under the same still-planned `libc.pthread-tls` family.
 Its project-header C body first runs against pinned musl and then through a
@@ -5831,7 +5844,7 @@ Apart from the narrowly named `libc-stat-compat`, `libc-credentials`,
 `libc-sigrtmax`, `libc-sigrtmin`, `libc-alarm`, `libc-sigaddset-sigdelset-sigfillset`,
 `libc-static-tls-v1`, `libc-crt-static-tls`,
 `libc-pthread-create-join-tls`, `libc-pthread-identity`, `libc-c11-lifecycle`,
-`libc-pthread-detach`, `libc-thrd-sleep`, `libc-thrd-yield`, `libc-pthread-cpuclock`, `libc-pthread-name`, `libc-pthread-barrierattr-pshared`, `libc-pthread-mutex-normal`,
+`libc-pthread-detach`, `libc-thrd-sleep`, `libc-thrd-yield`, `libc-pthread-cpuclock`, `libc-pthread-name`, `libc-pthread-barrierattr-pshared`, `libc-pthread-spin-init`, `libc-pthread-mutex-normal`,
 `libc-pthread-rwlock`, `libc-pthread-cond-private`, `libc-c11-plain-sync`, `libc-pthread-c11-once`,
 `libc-pthread-c11-tsd`,
 `libc-termios-control`,

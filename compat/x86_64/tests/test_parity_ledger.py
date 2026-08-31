@@ -50,7 +50,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 41)
-        self.assertEqual(report["verified_artifact_count"], 204)
+        self.assertEqual(report["verified_artifact_count"], 211)
         self.assertEqual(report["header_layout_probe_count"], 47)
         self.assertEqual(report["public_header_inventory_count"], 183)
         self.assertEqual(report["header_foundation_header_count"], 191)
@@ -11775,7 +11775,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             "libc/src/c_abi/x86_64/pthread_atfork.rs", pthread_tls["source_owners"]
         )
         self.assertIn(
-            "Twenty-three separately verified static artifacts", pthread_tls["description"]
+            "Twenty-four separately verified static artifacts", pthread_tls["description"]
         )
         self.assertIn(
             "sole delivery point is explicit `pthread_testcancel`",
@@ -11798,7 +11798,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         pthread_tls = self.family(data, "libc.pthread-tls")
         self.assertEqual(pthread_tls["status"], "planned")
         artifacts = pthread_tls["verified_artifact"]
-        self.assertEqual(len(artifacts), 23)
+        self.assertEqual(len(artifacts), 24)
         by_id = {artifact["id"]: artifact for artifact in artifacts}
         self.assertEqual(
             set(by_id),
@@ -11825,6 +11825,7 @@ class X86ParityLedgerTests(unittest.TestCase):
                 "static-c-pthread-cpuclock",
                 "static-c-pthread-name",
                 "static-c-pthread-barrierattr-pshared",
+                "static-c-pthread-spin-init",
                 "static-c-thrd-yield",
             },
         )
@@ -11850,6 +11851,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         cpuclock = by_id["static-c-pthread-cpuclock"]
         name = by_id["static-c-pthread-name"]
         barrierattr_pshared = by_id["static-c-pthread-barrierattr-pshared"]
+        spin_init = by_id["static-c-pthread-spin-init"]
         thrd_yield = by_id["static-c-thrd-yield"]
         for artifact in artifacts:
             self.assertNotIn("capabilities", artifact)
@@ -12013,6 +12015,36 @@ class X86ParityLedgerTests(unittest.TestCase):
             "family completion, promotion, and public x86 support",
         ):
             self.assertIn(phrase, barrierattr_pshared_scope)
+        self.assertEqual(
+            spin_init["native_evidence"][0]["command"],
+            "./scripts/dev-x86_64.sh libc-pthread-spin-init",
+        )
+        for phrase in (
+            "still-planned `libc.pthread-tls`",
+            "One dependency-free entry",
+            "only `pthread_spin_init`",
+            "caller-owned four-byte, four-byte-aligned public `pthread_spinlock_t` word",
+            "`src/thread/pthread_spin_init.c` assigns and returns zero",
+            "ignoring `pshared`",
+            "arbitrary initial bits with zero",
+            "0, 1, -1, `INT_MIN`, and `INT_MAX`",
+            "pthread_spin_destroy, pthread_spin_lock, pthread_spin_trylock, pthread_spin_unlock",
+            "process sharing, synchronization, thread/TLS lifecycle, cancellation",
+            "general pthread/TLS behavior or x86-64 parity",
+            "family completion, promotion, or public x86 support",
+        ):
+            self.assertIn(phrase, spin_init["description"])
+        spin_init_scope = spin_init["native_evidence"][0]["scope"]
+        for phrase in (
+            "5-by-5 initial/pshared corpus",
+            "each call returns zero",
+            "exactly pthread_spin_init",
+            "C++ C linkage",
+            "PT_TLS, errno/bootstrap, syscall in the leaf, helper call",
+            "destroy/lock/trylock/unlock, process sharing, synchronization, thread/TLS lifecycle",
+            "family completion, promotion, and public x86 support",
+        ):
+            self.assertIn(phrase, spin_init_scope)
         self.assertEqual(
             thrd_yield["native_evidence"][0]["command"],
             "./scripts/dev-x86_64.sh libc-thrd-yield",
