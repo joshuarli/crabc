@@ -466,6 +466,63 @@ class NativePointerFirstGuardTests(unittest.TestCase):
             },
         )
 
+    def test_dwarf_address_resolution_follows_a_top_level_abstract_origin(self) -> None:
+        output = '''\
+0x00002000: DW_TAG_subprogram
+              DW_AT_low_pc\t(0x0000000000002000)
+              DW_AT_high_pc\t(0x0000000000002010)
+              DW_AT_abstract_origin\t(0x00002100 "_RNvNtCsfHvYKLO1eBc_14crabc_mimalloc17runtime_lifecycle34native_free_pointer_first_nonlocal")
+0x00002010:   DW_TAG_formal_parameter
+              DW_AT_name\t("allocation")
+0x00002100: DW_TAG_subprogram
+              DW_AT_name\t("native_free_pointer_first_nonlocal")
+              DW_AT_decl_file\t("/workspace/crabc-mimalloc/src/runtime_lifecycle.rs")
+              DW_AT_inline\t(DW_INL_inlined)
+'''
+        function = RUNNER.dwarf_function_at_address(output, 0x2004)
+        self.assertEqual(
+            function,
+            {
+                "address": 0x2004,
+                "end_address": 0x2010,
+                "name": "native_free_pointer_first_nonlocal",
+                "source_path": "/workspace/crabc-mimalloc/src/runtime_lifecycle.rs",
+                "start_address": 0x2000,
+            },
+        )
+
+    def test_named_dwarf_address_resolution_uses_the_origin_declaration(self) -> None:
+        output = '''\
+0x00002000: DW_TAG_subprogram
+              DW_AT_low_pc\t(0x0000000000002000)
+              DW_AT_high_pc\t(0x0000000000002010)
+              DW_AT_abstract_origin\t(0x00002100 "_RNvNtCsfHvYKLO1eBc_14crabc_mimalloc17runtime_lifecycle34native_free_pointer_first_nonlocal")
+0x00002010:   DW_TAG_formal_parameter
+              DW_AT_name\t("allocation")
+0x00002100: DW_TAG_subprogram
+              DW_AT_name\t("native_free_pointer_first_nonlocal")
+              DW_AT_decl_file\t("/workspace/crabc-mimalloc/src/runtime_lifecycle.rs")
+              DW_AT_inline\t(DW_INL_inlined)
+'''
+        with mock.patch.object(RUNNER, "dwarf_subtree", return_value=output):
+            function = RUNNER.dwarf_named_function_at_address(
+                "/tools/llvm-dwarfdump",
+                Path("/tmp/libc.so"),
+                0x2004,
+                "native_free_pointer_first_nonlocal",
+                "crabc-mimalloc/src/runtime_lifecycle.rs",
+            )
+        self.assertEqual(
+            function,
+            {
+                "address": 0x2004,
+                "end_address": 0x2010,
+                "name": "native_free_pointer_first_nonlocal",
+                "source_path": "/workspace/crabc-mimalloc/src/runtime_lifecycle.rs",
+                "start_address": 0x2000,
+            },
+        )
+
     def test_native_export_attestation_accepts_an_opaque_elf_label_only_with_dwarf_dispatch_evidence(self) -> None:
         export = copy.deepcopy(RUNNER.NATIVE_DEBUG_GUARD_EXPORTS[0])
         dynamic_symbols = "   123: 0000000000001000    72 FUNC    GLOBAL DEFAULT   12 free\n"

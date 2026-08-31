@@ -876,29 +876,82 @@ _DWARF_DIE = re.compile(r"(?m)^0x[0-9A-Fa-f]+:\s+DW_TAG_[A-Za-z_]+\s*$")
 _DWARF_HEX_ATTRIBUTE = re.compile(r"DW_AT_(low_pc|high_pc)\s+\(0x([0-9A-Fa-f]+)\)")
 _DWARF_NAME = re.compile(r'DW_AT_name\s+\("([^"]+)"\)')
 _DWARF_DECL_FILE = re.compile(r'DW_AT_decl_file\s+\("([^"]+)"\)')
+_DWARF_ORIGIN = re.compile(r"DW_AT_(?:abstract_origin|specification)\s+\((0x[0-9A-Fa-f]+)")
 
 
-def dwarf_function_at_address(output: str, address: int) -> dict[str, Any] | None:
-    """Resolve an address through DWARF rather than an optimizer-chosen ELF label."""
+def dwarf_subprogram_records(output: str) -> dict[int, dict[str, Any]]:
+    """Collect top-level subprogram attributes, including their DWARF origin."""
 
+    records: dict[int, dict[str, Any]] = {}
     for match in _DWARF_SUBPROGRAM.finditer(output):
         next_die = _DWARF_DIE.search(output, match.end())
         end = next_die.start() if next_die is not None else len(output)
         attributes = output[match.end() : end]
         values = {name: int(value, 16) for name, value in _DWARF_HEX_ATTRIBUTE.findall(attributes)}
-        low_pc = values.get("low_pc")
-        high_pc = values.get("high_pc")
-        if low_pc is None or high_pc is None or not low_pc <= address < high_pc:
-            continue
         name = _DWARF_NAME.search(attributes)
         source = _DWARF_DECL_FILE.search(attributes)
-        if name is None or source is None:
+        origin = _DWARF_ORIGIN.search(attributes)
+        records[int(match.group(1), 16)] = {
+            "end_address": values.get("high_pc"),
+            "name": None if name is None else name.group(1),
+            "origin": None if origin is None else int(origin.group(1), 16),
+            "source_path": None if source is None else source.group(1),
+            "start_address": values.get("low_pc"),
+        }
+    return records
+
+
+def dwarf_subprogram_provenance(
+    records: Mapping[int, Mapping[str, Any]], record: Mapping[str, Any]
+) -> tuple[str, str] | None:
+    """Resolve a concrete subprogram's name/file through its DWARF origin.
+
+    Rust LLVM may emit an outlined concrete instance with only
+    ``DW_AT_abstract_origin`` while its named declaration carries the source
+    file and ``DW_AT_name``. This remains debug provenance, not an ELF-symbol
+    spelling: follow only the explicit DWARF reference and reject cycles or a
+    missing named source declaration.
+    """
+
+    name = record.get("name")
+    source_path = record.get("source_path")
+    origin = record.get("origin")
+    seen: set[int] = set()
+    while isinstance(origin, int):
+        if origin in seen:
+            return None
+        seen.add(origin)
+        parent = records.get(origin)
+        if parent is None:
+            return None
+        if name is None:
+            name = parent.get("name")
+        if source_path is None:
+            source_path = parent.get("source_path")
+        origin = parent.get("origin")
+    if not isinstance(name, str) or not isinstance(source_path, str):
+        return None
+    return name, source_path
+
+
+def dwarf_function_at_address(output: str, address: int) -> dict[str, Any] | None:
+    """Resolve an address through DWARF rather than an optimizer-chosen ELF label."""
+
+    records = dwarf_subprogram_records(output)
+    for record in records.values():
+        low_pc = record["start_address"]
+        high_pc = record["end_address"]
+        if low_pc is None or high_pc is None or not low_pc <= address < high_pc:
             continue
+        provenance = dwarf_subprogram_provenance(records, record)
+        if provenance is None:
+            continue
+        name, source_path = provenance
         return {
             "address": address,
             "end_address": high_pc,
-            "name": name.group(1),
-            "source_path": source.group(1),
+            "name": name,
+            "source_path": source_path,
             "start_address": low_pc,
         }
     return None
@@ -910,6 +963,28 @@ def dwarf_lookup_function(llvm_dwarfdump: str, libc: Path, address: int) -> dict
         "selected native DWARF address lookup",
     )
     return dwarf_function_at_address(output, address)
+
+
+def dwarf_named_function_at_address(
+    llvm_dwarfdump: str,
+    libc: Path,
+    address: int,
+    expected_name: str,
+    expected_source_path: str,
+) -> dict[str, Any] | None:
+    """Resolve one target through the named declaration's complete DWARF view.
+
+    ``llvm-dwarfdump --lookup`` deliberately elides the declaration DIE behind
+    an outlined Rust instance. The named query is still a DWARF query, and
+    includes that declaration so ``dwarf_function_at_address`` can follow its
+    explicit abstract-origin reference without consulting an ELF symbol label.
+    """
+
+    return require_native_dwarf_function(
+        dwarf_function_at_address(dwarf_subtree(llvm_dwarfdump, libc, expected_name), address),
+        expected_name,
+        expected_source_path,
+    )
 
 
 def dwarf_subtree(llvm_dwarfdump: str, libc: Path, name: str) -> str:
@@ -996,13 +1071,23 @@ def native_pointer_first_export_attestation(
     checked_public_targets: list[dict[str, Any]] = []
     for target in public_targets:
         function = dwarf_lookup_function(llvm_dwarfdump, libc, int(target["address"]))
+        accepted = require_native_dwarf_function(function, expected_name, expected_source_path)
+        if accepted is None:
+            accepted = dwarf_named_function_at_address(
+                llvm_dwarfdump,
+                libc,
+                int(target["address"]),
+                expected_name,
+                expected_source_path,
+            )
+        if accepted is not None:
+            function = accepted
         checked_public_targets.append(
             {
                 "address": f"0x{int(target['address']):x}",
                 "dwarf_name": None if function is None else function["name"],
             }
         )
-        accepted = require_native_dwarf_function(function, expected_name, expected_source_path)
         if accepted is not None:
             native_dispatch = accepted
             break
@@ -1034,6 +1119,22 @@ def native_pointer_first_export_attestation(
             dispatch_target_names.add(str(function["name"]))
     inline_provenance = dwarf_subtree(llvm_dwarfdump, libc, expected_name)
     pointer_first_provenance = [str(name) for name in export["pointer_first_dwarf_provenance"]]
+    for provenance_name in pointer_first_provenance:
+        if provenance_name in dispatch_target_names or dwarf_name_observed(
+            inline_provenance, provenance_name
+        ):
+            continue
+        for target in dispatch_targets:
+            matched = dwarf_named_function_at_address(
+                llvm_dwarfdump,
+                libc,
+                int(target["address"]),
+                provenance_name,
+                expected_source_path,
+            )
+            if matched is not None:
+                dispatch_target_names.add(provenance_name)
+                break
     missing_provenance = [
         name
         for name in pointer_first_provenance
