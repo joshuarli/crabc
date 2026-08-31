@@ -762,6 +762,22 @@ byte/block/output/buffering/position/lock/unlocked APIs, multiple streams,
 line/formatted/wide/memory/cookie/popen I/O, ordinary-exit flushing, general
 stdio, parity, promotion, and public x86 support.
 
+The separate `stdio-permanent-fileno-header-abi` and
+`libc-stdio-permanent-fileno` gates record a private
+`static-c-stdio-permanent-fileno` artifact without an export or capability.
+Its pinned-musl/static differential calls `fileno` only on permanent `stdin`,
+`stdout`, and `stderr`, proving their fixed `0`/`1`/`2` descriptor adapters.
+It creates no `FILE *`, performs no stream I/O or descriptor mutation, and
+does not select arbitrary-file, pathname, or descriptor-reopen behavior.
+Pinned musl's lock, negative-descriptor `EBADF`, and weak `fileno_unlocked`
+alias behavior remain outside this externally serialized leaf. The POSIX.1-2008
+C11/C++17 proof ratchets `int (FILE *)` and unmangled C++ linkage; matching
+strict witnesses retain its POSIX-only header visibility. It excludes
+`stdio.stream-io`, path/tmpfile/LFS behavior, byte/block/line/formatted/wide
+I/O, buffering/positions/status/lock/unlocked APIs, multiple streams,
+memory/cookie/popen I/O, ordinary-exit flushing, general stdio, parity,
+promotion, and public x86 support.
+
 The separate `libc-stdio-format-scan` gate
 (`./scripts/dev-x86_64.sh libc-stdio-format-scan`) records one private
 `static-c-stdio-format-scan` artifact in the still-planned

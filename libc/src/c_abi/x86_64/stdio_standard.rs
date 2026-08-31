@@ -16,6 +16,9 @@
 //! its `fgetc` calls create EOF and descriptor-error markers solely as setup
 //! for `feof`/`ferror`/`clearerr` zero-versus-nonzero transitions, without
 //! selecting byte I/O, pathname state, musl locks, or a general `FILE` model.
+//! The focused permanent-fileno evidence leaf reads only the three permanent
+//! descriptor adapters and their fixed `0`/`1`/`2` numbers; it neither opens,
+//! mutates, nor claims a pathname stream or arbitrary `FILE` behavior.
 //! The sibling pathname/tmpfile block admits only one active `fopen("r")`,
 //! `fopen("w+")`, or `tmpfile` stream at a time, its exact `fclose`, pre-I/O
 //! caller-buffered `_IOFBF` configuration, and its selected
@@ -46,7 +49,8 @@
 //! | `src/stdio/{fread,fwrite}.c` | selected public block entries |
 //! | `src/stdio/{fgets,fputs,puts}.c` | selected permanent-standard-stream line I/O |
 //! | `src/stdio/{feof,ferror,clearerr}.c` | selected permanent-status predicates and marker reset; focused evidence observes only stdin |
-//! | `src/stdio/{fflush,fileno}.c` | selected flush and descriptor entries |
+//! | `src/stdio/fileno.c` | selected descriptor adapter; focused evidence observes only permanent stdin/stdout/stderr |
+//! | `src/stdio/fflush.c` | selected explicit-flush entry |
 //! | `src/stdio/{fopen,fclose,setvbuf,fseek,ftell,fgetpos,fsetpos,rewind}.c` | one fixed pathname-stream lifecycle, caller-buffered full buffering, and logical-position routes |
 //! | `src/stdio/tmpfile.c`, `src/temp/__randname.c` | one exclusive pathname created below `/tmp` with requested mode `0600`, immediately unlinked, and adopted as a `w+` fixed stream; Linux `getrandom` plus hex encoding replaces musl's noncryptographic name generator without adding a PRNG |
 //!

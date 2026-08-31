@@ -8147,6 +8147,45 @@ native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc
 oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source and C/POSIX behavior oracle for src/stdio/{feof,ferror,clearerr}.c: zero/nonzero F_EOF/F_ERR predicates, exact F_EOF|F_ERR reset, internal numeric normalization, and unselected FLOCK/FUNLOCK/unlocked aliases." }, { kind = "kernel-abi", source = "Linux 5.10 x86-64 ABI", role = "read=0 and pipe/dup/dup2/close descriptor transport used only to establish permanent stdin EOF and EBADF status markers." }, { kind = "elf-abi", source = "System V AMD64 psABI and pinned musl x86 headers", role = "LP64 FILE-pointer/int/void calling ABI, exact C/C++ declaration linkage, and Variant-II initial-exec errno TLS contract." }]
 
 [[family.verified_artifact]]
+id = "static-c-stdio-permanent-fileno"
+description = "Private native x86 permanent-standard-stream descriptor-adapter artifact inside still-planned `libc.text-math-locale-stdio`. It adds no C export or capability: existing strong `fileno` observes only the process-lifetime `stdin`, `stdout`, and `stderr` objects, returning their fixed 0/1/2 descriptor numbers. The pinned-musl project-header differential makes only those three function-pointer calls; it creates no `FILE *`, performs no stream I/O or descriptor mutation, and proves fileno(stdin)==0, fileno(stdout)==1, and fileno(stderr)==2. Pinned musl `src/stdio/fileno.c` locks, reads `f->fd`, returns EBADF for a negative descriptor, and provides a weak `fileno_unlocked` alias. This externally serialized leaf samples only the positive permanent records: it makes no claim about FLOCK/FUNLOCK, EBADF, the weak alias, or arbitrary `FILE` objects. Its dedicated POSIX.1-2008 C11/C++17 header gate proves exact `int (FILE *)` declaration/linkage and unmangled C++ spelling, while matching strict C11/C++17 witnesses prove the POSIX-only declaration stays hidden. The shared implementation independently selects pathname-stream state, but this fixture never creates or invokes a pathname `FILE *`. It does not select `stdio.stream-io`, FILE/path streams, descriptor adoption/reopen, `tmpfile`, LP64/LFS aliases, byte/block/line/formatted/wide I/O, output, buffering or positions, status predicates, locks or unlocked entries, multiple streams, allocation/registry, memory/cookie/`fopencookie`/`popen` streams, ordinary-exit flushing, general stdio, libc.so, CRT lifecycle, loader, sysroot, capability or family completion, promotion, or public x86 support."
+source_owners = [
+  "compat/upstreams.toml",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/stdio_standard.rs",
+  "libc/src/c_abi/x86_64/static_tls.rs",
+  "include/bits/alltypes.h",
+  "include/features.h",
+  "include/stdio.h",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/stdio_permanent_fileno_header_abi_probe.c",
+  "compat/x86_64/stdio_permanent_fileno_header_abi_probe.cpp",
+  "compat/x86_64/run_stdio_permanent_fileno_header_abi.sh",
+  "compat/x86_64/libc_stdio_permanent_fileno_probe.c",
+  "compat/x86_64/libc_stdio_permanent_fileno_start.S",
+  "compat/x86_64/run_libc_stdio_permanent_fileno.sh",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "compat/x86_64/README.md",
+  "x86-64.md",
+  "scripts/dev-x86_64.sh",
+]
+x86_abi_prerequisites = [
+  "System V AMD64 passes each selected opaque `FILE *` in a general-purpose pointer register and returns fileno's int result in eax. The public FILE remains opaque; the process-lifetime stdin/stdout/stderr records are target-private and not caller-constructible layouts.",
+  "Pinned musl 1.2.6 src/stdio/fileno.c uses FLOCK/FUNLOCK around its f->fd read, returns EBADF for fd < 0, and weak-aliases fileno_unlocked. This externally serialized adapter observes only the three positive permanent descriptor fields, without claiming locking, EBADF, weak-alias, or arbitrary FILE behavior.",
+  "The selected Rust permanent records retain descriptor values 0, 1, and 2 across their first-use buffer initialization. The freestanding fixture performs no descriptor syscall or mutation; it delegates untouched startup TLS to the existing Static Initial TLS v1 bootstrap solely to link the selected static archive.",
+]
+x86_header_prerequisites = [
+  "The dedicated project-first/pinned-musl POSIX.1-2008 C11/C++17 matrix checks only `int fileno(FILE *)` and unmangled C++ linkage. Matching strict C11/C++17 negative witnesses retain fileno's POSIX-only visibility boundary; this compile-only gate selects no archive or runtime behavior.",
+  "The runtime fixture preprocesses only project stdio.h, features.h, and bits/alltypes.h before both the pinned-musl reference and the static candidate. It calls fileno only through permanent standard pointers and does not make descriptor transport, pathname, LFS, unlocked, I/O, buffer, or general stream APIs linkable evidence.",
+]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-stdio-permanent-fileno", scope = "Pinned-musl project-header C reference plus one dependency-free x86 crabc-libc archive and a true `-nostdlib -static` candidate. The gate first requires the strict/POSIX C11/C++17 permanent-fileno declaration/linkage proof, ratchets the complete selected static C export contract, requires strong fileno in pinned musl and candidate archives, rejects the unselected fileno_unlocked alias, unresolved symbols/interpreter/DT_NEEDED/dynamic TLS, and verifies the existing Static Initial TLS v1 bootstrap. Function-pointer calls only on permanent stdin/stdout/stderr prove fixed 0/1/2 fileno adapters; fileno itself has no syscall path. It makes no FLOCK/FUNLOCK, EBADF, arbitrary-FILE, pathname, descriptor-reopen, tmpfile, LFS, I/O/buffering/position, multiple-stream, general-stdio, capability or family completion, promotion, or public x86 support claim." }]
+oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source and C/POSIX behavior oracle for src/stdio/fileno.c: FLOCK/FUNLOCK around f->fd, EBADF for a negative descriptor, and weak_alias(fileno, fileno_unlocked), with only the positive permanent 0/1/2 adapter selected here." }, { kind = "elf-abi", source = "System V AMD64 psABI and pinned musl x86 headers", role = "LP64 FILE-pointer/int calling ABI, POSIX C/C++ declaration linkage, strict feature visibility, and Static Initial TLS v1 freestanding fixture linkage contract." }]
+
+[[family.verified_artifact]]
 id = "static-c-stdio-path-stream"
 description = "Private native x86 fixed pathname-stream and logical-position artifact inside still-planned `libc.text-math-locale-stdio`. One dependency-free static `crabc-libc` archive owns exactly one externally serialized active path `FILE` slot: `fopen` accepts only regular-file `\"r\"` and `\"w+\"` modes, then selected `fread`/`fwrite`/`fgetc`/`fputc`/`fflush`/`fileno` plus `fclose`, pre-I/O caller-buffered `_IOFBF` `setvbuf`, `fseek`/`fseeko`, `ftell`/`ftello`, `rewind`, and opaque 16-byte `fgetpos`/`fsetpos` preserve its bounded state. The slot has one static `BUFSIZ=1024` backing object with musl-shaped eight-byte pushback headroom; caller-buffered mode owns no pushback route. The project-header fixture first runs through pinned musl then a real `-nostdlib -static` candidate, proving write buffering and logical output position, all-owned-output `fflush(NULL)`, failed positioning preserves the I/O-error indicator, read-ahead-adjusted `SEEK_CUR`, fpos save/restore with opaque tail bytes preserved, EOF/rewind, close, and one-slot reuse; candidate-only checks ratchet the one-slot, mode, and buffer-reconfiguration limits. It excludes `fdopen`, `freopen`, append/exclusive/close-on-exec/general mode parsing, more than one active path stream, stream allocation or a general registry, input `fflush`, `_IONBF`/`_IOLBF`/post-I/O buffer reconfiguration, line/formatted/wide/cookie/memory/popen streams, general stdio, libc.so, CRT lifecycle, loader, sysroot, family completion, promotion, and public x86 support."
 source_owners = [

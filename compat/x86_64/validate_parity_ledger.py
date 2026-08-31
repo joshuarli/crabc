@@ -24767,8 +24767,8 @@ def require_getsubopt_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 32,
-        "libc.text-math-locale-stdio must retain exactly thirty-two private verified artifacts",
+        len(artifacts) == 33,
+        "libc.text-math-locale-stdio must retain exactly thirty-three private verified artifacts",
     )
     matching = [
         entry for entry in artifacts if entry.get("id") == "static-c-getsubopt"
@@ -26224,8 +26224,8 @@ def require_stdio_integer_scan_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 32,
-        "libc.text-math-locale-stdio must retain exactly thirty-two private verified artifacts",
+        len(artifacts) == 33,
+        "libc.text-math-locale-stdio must retain exactly thirty-three private verified artifacts",
     )
     matching = [
         entry for entry in artifacts if entry.get("id") == "static-c-stdio-integer-scan"
@@ -26507,8 +26507,8 @@ def require_stdio_octal_hex_scan_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 32,
-        "libc.text-math-locale-stdio must retain exactly thirty-two private verified artifacts",
+        len(artifacts) == 33,
+        "libc.text-math-locale-stdio must retain exactly thirty-three private verified artifacts",
     )
     matching = [
         entry
@@ -27033,8 +27033,8 @@ def require_stdio_errno_output_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 32,
-        "libc.text-math-locale-stdio must retain exactly thirty-two private verified artifacts",
+        len(artifacts) == 33,
+        "libc.text-math-locale-stdio must retain exactly thirty-three private verified artifacts",
     )
     matching = [
         entry for entry in artifacts if entry.get("id") == "static-c-stdio-errno-output"
@@ -27554,8 +27554,8 @@ def require_stdio_permanent_byte_io_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 32,
-        "libc.text-math-locale-stdio must retain exactly thirty-two private verified artifacts",
+        len(artifacts) == 33,
+        "libc.text-math-locale-stdio must retain exactly thirty-three private verified artifacts",
     )
     matching = [
         entry
@@ -27881,8 +27881,8 @@ def require_stdio_permanent_status_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 32,
-        "libc.text-math-locale-stdio must retain exactly thirty-two private verified artifacts",
+        len(artifacts) == 33,
+        "libc.text-math-locale-stdio must retain exactly thirty-three private verified artifacts",
     )
     matching = [
         entry
@@ -28186,6 +28186,309 @@ def require_stdio_permanent_status_artifact(family: Mapping[str, Any]) -> None:
         require(
             snippet in dispatcher,
             f"x86 dispatcher omits permanent-stream-status {snippet}",
+        )
+
+
+def require_stdio_permanent_fileno_artifact(family: Mapping[str, Any]) -> None:
+    """Keep the permanent descriptor adapter below a general FILE claim.
+
+    Pinned musl's fileno has locking, negative-fd, and weak-alias behavior, but
+    this leaf observes only the fixed positive fields of stdin/stdout/stderr.
+    It must not turn that direct mapping into a pathname or arbitrary-stream
+    capability claim.
+    """
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.text-math-locale-stdio].verified_artifact",
+        family.get("status", ""),
+    )
+    require(
+        len(artifacts) == 33,
+        "libc.text-math-locale-stdio must retain exactly thirty-three private verified artifacts",
+    )
+    matching = [
+        entry
+        for entry in artifacts
+        if entry.get("id") == "static-c-stdio-permanent-fileno"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.text-math-locale-stdio must contain exactly one static-c-stdio-permanent-fileno artifact",
+    )
+    artifact = matching[0]
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for phrase in (
+        "still-planned `libc.text-math-locale-stdio`",
+        "adds no C export or capability",
+        "existing strong `fileno`",
+        "process-lifetime `stdin`, `stdout`, and `stderr`",
+        "fixed 0/1/2 descriptor numbers",
+        "creates no `FILE *`",
+        "no stream I/O or descriptor mutation",
+        "src/stdio/fileno.c",
+        "FLOCK/FUNLOCK",
+        "EBADF",
+        "weak `fileno_unlocked` alias",
+        "externally serialized",
+        "POSIX.1-2008 C11/C++17 header gate",
+        "exact `int (FILE *)` declaration/linkage",
+        "unmangled C++ spelling",
+        "strict C11/C++17 witnesses",
+        "POSIX-only declaration stays hidden",
+        "independently selects pathname-stream state",
+        "never creates or invokes a pathname `FILE *`",
+        "does not select `stdio.stream-io`",
+        "FILE/path streams",
+        "descriptor adoption/reopen",
+        "`tmpfile`",
+        "LP64/LFS aliases",
+        "byte/block/line/formatted/wide I/O",
+        "buffering or positions",
+        "status predicates",
+        "locks or unlocked entries",
+        "multiple streams",
+        "allocation/registry",
+        "memory/cookie/`fopencookie`/`popen` streams",
+        "ordinary-exit flushing",
+        "general stdio",
+        "capability or family completion",
+        "promotion",
+        "public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"static-c-stdio-permanent-fileno description omits {phrase}",
+        )
+
+    owners = nonempty_strings(
+        artifact["source_owners"], "static-c-stdio-permanent-fileno.source_owners"
+    )
+    for owner in (
+        "compat/upstreams.toml",
+        "libc/Cargo.toml",
+        "libc/src/lib.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/stdio_standard.rs",
+        "libc/src/c_abi/x86_64/static_tls.rs",
+        "include/bits/alltypes.h",
+        "include/features.h",
+        "include/stdio.h",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/stdio_permanent_fileno_header_abi_probe.c",
+        "compat/x86_64/stdio_permanent_fileno_header_abi_probe.cpp",
+        "compat/x86_64/run_stdio_permanent_fileno_header_abi.sh",
+        "compat/x86_64/libc_stdio_permanent_fileno_probe.c",
+        "compat/x86_64/libc_stdio_permanent_fileno_start.S",
+        "compat/x86_64/run_libc_stdio_permanent_fileno.sh",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/README.md",
+        "x86-64.md",
+        "scripts/dev-x86_64.sh",
+    ):
+        require(
+            owner in owners,
+            f"static-c-stdio-permanent-fileno omits {owner}",
+        )
+    require(
+        not artifact.get("capabilities"),
+        "static-c-stdio-permanent-fileno must not promote stdio.stream-io",
+    )
+
+    exports = static_c_abi_export_names(
+        ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+    )
+    require(
+        "fileno" in exports,
+        "static C ABI export contract omits permanent-stream fileno",
+    )
+    require(
+        "fileno_unlocked" not in exports,
+        "permanent-stream fileno artifact accidentally exports unselected fileno_unlocked",
+    )
+
+    implementation = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "stdio_standard.rs"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "src/stdio/fileno.c",
+        'pub unsafe extern "C" fn fileno',
+        "StandardStream::new(0, F_PERM | F_NOWR)",
+        "StandardStream::new(1, F_PERM | F_NORD)",
+        "StandardStream::new(2, F_PERM | F_NORD)",
+        "(*stream).file_descriptor",
+    ):
+        require(
+            snippet in implementation,
+            f"permanent-stream fileno implementation omits {snippet}",
+        )
+
+    for probe_name in (
+        "stdio_permanent_fileno_header_abi_probe.c",
+        "stdio_permanent_fileno_header_abi_probe.cpp",
+    ):
+        probe = (ROOT / "compat" / "x86_64" / probe_name).read_text(
+            encoding="utf-8"
+        )
+        for snippet in ("fileno", "FILE", "_POSIX_C_SOURCE", "REQUIRE_HIDDEN"):
+            require(
+                snippet in probe,
+                f"permanent-stream fileno header probe {probe_name} omits {snippet}",
+            )
+    header_runner = (
+        ROOT / "compat" / "x86_64" / "run_stdio_permanent_fileno_header_abi.sh"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "CRABC_STDIO_PERMANENT_FILENO_C11",
+        "CRABC_STDIO_PERMANENT_FILENO_CXX17",
+        "CRABC_STDIO_PERMANENT_FILENO_REQUIRE_HIDDEN",
+        "-nostdinc",
+        "-nostdinc++",
+        "assert_cxx_c_linkage",
+        "assert_strict_hidden",
+        "run_musl_oracle.sh",
+    ):
+        require(
+            snippet in header_runner,
+            f"permanent-stream fileno header runner omits {snippet}",
+        )
+
+    fixture = (
+        ROOT / "compat" / "x86_64" / "libc_stdio_permanent_fileno_probe.c"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "fileno_entry(stdin) != 0",
+        "fileno_entry(stdout) != 1",
+        "fileno_entry(stderr) != 2",
+        "CRABC_STDIO_PERMANENT_FILENO_FREESTANDING",
+    ):
+        require(
+            snippet in fixture,
+            f"permanent-stream fileno fixture omits {snippet}",
+        )
+    for forbidden in ("fgetc", "fputc", "dup", "pipe", "fopen", "tmpfile"):
+        require(
+            forbidden not in fixture,
+            f"permanent-stream fileno fixture unexpectedly selects {forbidden}",
+        )
+    start = (
+        ROOT / "compat" / "x86_64" / "libc_stdio_permanent_fileno_start.S"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "__crabc_x86_static_tls_bootstrap",
+        "crabc_x86_64_stdio_permanent_fileno_probe",
+        "mov $231, %eax",
+    ):
+        require(
+            snippet in start,
+            f"permanent-stream fileno start shim omits {snippet}",
+        )
+    runner = (
+        ROOT / "compat" / "x86_64" / "run_libc_stdio_permanent_fileno.sh"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "ORACLE_ARCHIVE",
+        "run_stdio_permanent_fileno_header_abi.sh",
+        "STATIC_C_ABI_EXPORTS",
+        "strong fileno",
+        "fileno_unlocked",
+        "-nostdlib -static",
+        "dynamic TLS model",
+        "unowned runtime dependency",
+        "fileno unexpectedly contains a syscall path",
+        "__crabc_x86_static_tls_bootstrap",
+    ):
+        require(
+            snippet in runner,
+            f"permanent-stream fileno runner omits {snippet}",
+        )
+
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-stdio-permanent-fileno"},
+        "static-c-stdio-permanent-fileno must use its closed native command",
+    )
+    scope = evidence[0].get("scope")
+    require(
+        isinstance(scope, str)
+        and all(
+            phrase in scope
+            for phrase in (
+                "Pinned-musl project-header C reference",
+                "dependency-free x86 crabc-libc archive",
+                "`-nostdlib -static` candidate",
+                "strict/POSIX C11/C++17 permanent-fileno declaration/linkage proof",
+                "strong fileno",
+                "unselected fileno_unlocked alias",
+                "Static Initial TLS v1 bootstrap",
+                "permanent stdin/stdout/stderr",
+                "fixed 0/1/2 fileno adapters",
+                "fileno itself has no syscall path",
+                "FLOCK/FUNLOCK, EBADF, arbitrary-FILE",
+                "pathname, descriptor-reopen, tmpfile, LFS",
+                "I/O/buffering/position",
+                "multiple-stream",
+                "general-stdio",
+                "capability or family completion",
+                "promotion",
+                "public x86 support",
+            )
+        ),
+        "static-c-stdio-permanent-fileno evidence must retain its closed native boundary",
+    )
+
+    oracle = artifact["oracle"]
+    assert isinstance(oracle, list)
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "c-posix"
+            and all(
+                phrase in str(entry.get("role"))
+                for phrase in (
+                    "src/stdio/fileno.c",
+                    "FLOCK/FUNLOCK",
+                    "EBADF",
+                    "weak_alias(fileno, fileno_unlocked)",
+                    "positive permanent 0/1/2 adapter",
+                )
+            )
+            for entry in oracle
+        ),
+        "static-c-stdio-permanent-fileno must retain its pinned-musl source oracle",
+    )
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "elf-abi"
+            and all(
+                phrase in str(entry.get("role"))
+                for phrase in (
+                    "FILE-pointer/int",
+                    "POSIX C/C++ declaration linkage",
+                    "strict feature visibility",
+                    "Static Initial TLS v1",
+                )
+            )
+            for entry in oracle
+        ),
+        "static-c-stdio-permanent-fileno must retain its ABI/header oracle",
+    )
+
+    dispatcher = (ROOT / "scripts" / "dev-x86_64.sh").read_text(encoding="utf-8")
+    for snippet in (
+        "stdio-permanent-fileno-header-abi)",
+        "libc-stdio-permanent-fileno)",
+        "run_stdio_permanent_fileno_header_abi.sh",
+        "run_libc_stdio_permanent_fileno.sh",
+    ):
+        require(
+            snippet in dispatcher,
+            f"x86 dispatcher omits permanent-stream fileno {snippet}",
         )
 
 
@@ -32132,8 +32435,8 @@ def require_locale_wide_iconv_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 32,
-        "libc.text-math-locale-stdio must retain exactly thirty-two private verified artifacts",
+        len(artifacts) == 33,
+        "libc.text-math-locale-stdio must retain exactly thirty-three private verified artifacts",
     )
     matching = [
         entry for entry in artifacts if entry.get("id") == "static-c-locale-wide-iconv"
@@ -32958,8 +33261,8 @@ def require_locale_error_strings_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 32,
-        "libc.text-math-locale-stdio must retain exactly thirty-two private verified artifacts",
+        len(artifacts) == 33,
+        "libc.text-math-locale-stdio must retain exactly thirty-three private verified artifacts",
     )
     matching = [
         entry for entry in artifacts if entry.get("id") == "static-c-locale-error-strings"
@@ -34649,6 +34952,7 @@ def validate_ledger(
     require_stdio_permanent_line_io_artifact(by_id["libc.text-math-locale-stdio"])
     require_stdio_permanent_byte_io_artifact(by_id["libc.text-math-locale-stdio"])
     require_stdio_permanent_status_artifact(by_id["libc.text-math-locale-stdio"])
+    require_stdio_permanent_fileno_artifact(by_id["libc.text-math-locale-stdio"])
     require_stdio_path_stream_artifact(by_id["libc.text-math-locale-stdio"])
     require_stdio_tmpfile_artifact(by_id["libc.text-math-locale-stdio"])
     require_math_complex_foundation_artifact(by_id["libc.text-math-locale-stdio"])
