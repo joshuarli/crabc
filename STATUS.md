@@ -42,6 +42,17 @@ fixture-only; this does not select a C PTY/session API, generic ioctl,
 account/session identity, Rust password API, cancellation, secret-memory
 erasure, terminal policy, family completion, promotion, or public x86 support.
 
+`./scripts/dev-x86_64.sh libc-mktemp` is a separate private `static-c-mktemp`
+artifact inside still-planned `libc.posix-runtime`. Its GNU/BSD header gate and
+pinned-musl/static C fixture cover only a mutable trailing-`XXXXXX` historical
+pathname selection: musl's realtime/TID six-byte alphabet, absent-name
+`ENOENT`, invalid-template `EINVAL` clearing, and non-missing lookup-error
+clearing. It never creates, opens, reserves, or returns authority for the
+selected pathname, so it remains inherently racy and is not a Rust temporary
+API. `tmpnam`, `tempnam`, all `mkstemp`/`mkdtemp` forms, `tmpfile`, file-handle
+APIs, entropy/crypto policy, generic filesystem policy, family completion,
+promotion, and public x86 support remain excluded.
+
 The x86 qualification lane has one bounded same-object static
 `memfd_create`/errno differential and one consumed five-transaction POSIX/ABI
 admission inventory covering the selected process-context, process-signal,

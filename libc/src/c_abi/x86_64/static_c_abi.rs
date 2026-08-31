@@ -30,7 +30,8 @@
 //! termios-control, one historical `/dev/tty` password-input compatibility
 //! leaf, selected process-context, bounded process-environment,
 //! environment-backed login-name observation, child-reaping, selected
-//! descriptor-entry, selected filesystem-access, fixed Linux `lchmod`
+//! descriptor-entry, selected filesystem-access, one historical `mktemp`
+//! pathname-selection leaf, fixed Linux `lchmod`
 //! unsupported compatibility, bounded fcntl status-control
 //! and nonblocking record-lock boundaries, advisory whole-file flock, bounded
 //! regular-file sendfile transfer, mode-zero POSIX range allocation,
@@ -307,6 +308,8 @@ mod nanosleep;
 mod descriptor_entry;
 #[path = "filesystem_access.rs"]
 mod filesystem_access;
+#[path = "mktemp.rs"]
+mod mktemp;
 #[path = "lchmod_unsupported.rs"]
 mod lchmod_unsupported;
 #[path = "extended_attributes.rs"]

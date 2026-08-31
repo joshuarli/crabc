@@ -12,6 +12,7 @@ import argparse
 import hashlib
 import importlib.util
 import json
+import re
 import tomllib
 from pathlib import Path
 from typing import Any, Mapping
@@ -11403,6 +11404,280 @@ def require_getpass_artifact(family: Mapping[str, Any]) -> None:
         "libc-getpass)",
         "run_getpass_header_abi()",
         "run_libc_getpass_probe()",
+    ):
+        require(snippet in dispatcher, f"x86 dispatcher omits {snippet}")
+
+
+def require_mktemp_artifact(family: Mapping[str, Any]) -> None:
+    """Keep historical pathname selection below filesystem capability promotion."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.posix-runtime].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [entry for entry in artifacts if entry.get("id") == "static-c-mktemp"]
+    require(
+        len(matching) == 1,
+        "libc.posix-runtime must contain exactly one static-c-mktemp artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-mktemp must not promote libc.posix-runtime",
+    )
+    artifact = matching[0]
+    require(
+        "capabilities" not in artifact,
+        "static-c-mktemp must not promote filesystem.extensions",
+    )
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for phrase in (
+        "historical `mktemp` pathname-selection boundary",
+        "still-planned `libc.posix-runtime`",
+        "exactly `mktemp(char *)`",
+        "trailing `XXXXXX`",
+        "CLOCK_REALTIME-plus-TID",
+        "`newfstatat(AT_FDCWD, path, scratch, 0)`",
+        "`ENOENT`",
+        "`EEXIST`",
+        "inherently racy",
+        "no security or ownership guarantee",
+        "`tmpnam`",
+        "`tempnam`",
+        "`mkstemp`/`mkstemps`/`mkostemp`/`mkostemps`",
+        "`mkdtemp`",
+        "`tmpfile`",
+        "`name_to_handle_at`/`open_by_handle_at`",
+        "Rust facade APIs",
+        "family completion",
+        "promotion",
+        "public x86 support",
+    ):
+        require(phrase in description, f"static-c-mktemp description omits {phrase}")
+
+    owners = set(
+        nonempty_strings(artifact["source_owners"], "static-c-mktemp.source_owners")
+    )
+    for owner in (
+        "COMPATIBILITY-PROFILE.md",
+        "compat/upstreams.toml",
+        "libc/Cargo.toml",
+        "libc/src/lib.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/errno.rs",
+        "libc/src/c_abi/x86_64/syscall.rs",
+        "libc/src/c_abi/x86_64/mktemp.rs",
+        "include/errno.h",
+        "include/features.h",
+        "include/stddef.h",
+        "include/stdint.h",
+        "include/stdlib.h",
+        "include/bits/alltypes.h",
+        "include/sys/syscall.h",
+        "include/bits/syscall.h",
+        "compat/x86_64/mktemp_header_abi_probe.c",
+        "compat/x86_64/mktemp_header_abi_probe.cpp",
+        "compat/x86_64/run_mktemp_header_abi.sh",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/libc_mktemp_probe.c",
+        "compat/x86_64/libc_mktemp_start.S",
+        "compat/x86_64/run_libc_mktemp.sh",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/README.md",
+        "STATUS.md",
+        "x86-64.md",
+        "scripts/dev-x86_64.sh",
+        "scripts/check_structure.py",
+    ):
+        require(owner in owners, f"static-c-mktemp source owners omit {owner}")
+
+    prerequisites = nonempty_strings(
+        artifact["x86_abi_prerequisites"], "static-c-mktemp.x86_abi_prerequisites"
+    )
+    require(
+        any("char *mktemp(char *)" in item and "rdi" in item and "rax" in item for item in prerequisites),
+        "static-c-mktemp must retain its SysV template-pointer contract",
+    )
+    require(
+        any(
+            "src/temp/mktemp.c" in item
+            and "100 attempts" in item
+            and "src/temp/__randname.c" in item
+            and "65537" in item
+            for item in prerequisites
+        ),
+        "static-c-mktemp must retain musl's fixed template and name algorithm",
+    )
+    require(
+        any(
+            "clock_gettime=228" in item
+            and "gettid=186" in item
+            and "newfstatat=262" in item
+            and "AT_FDCWD=-100" in item
+            and "ENOENT=2" in item
+            and "EINVAL=22" in item
+            and "EEXIST=17" in item
+            for item in prerequisites
+        ),
+        "static-c-mktemp must retain its selected Linux lookup ABI",
+    )
+    require(
+        any("PT_TLS errno" in item and "__tls_get_addr" in item for item in prerequisites),
+        "static-c-mktemp must retain its static errno TLS boundary",
+    )
+    header_prerequisites = nonempty_strings(
+        artifact["x86_header_prerequisites"],
+        "static-c-mktemp.x86_header_prerequisites",
+    )
+    require(
+        any(
+            "GNU/BSD-selected `char *mktemp(char *)`" in item
+            and "unmangled C++" in item
+            and "strict POSIX" in item
+            and "X/Open" in item
+            and "tmpnam/tempnam" in item
+            for item in header_prerequisites
+        ),
+        "static-c-mktemp must retain its focused historical header ABI",
+    )
+
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-mktemp"},
+        "static-c-mktemp must use the closed libc-mktemp command",
+    )
+    scope = evidence[0].get("scope")
+    require(
+        isinstance(scope, str)
+        and all(
+            phrase in scope
+            for phrase in (
+                "EINVAL-first-byte clearing",
+                "six-byte musl alphabet output",
+                "ENOENT",
+                "ELOOP-first-byte clearing",
+                "clock_gettime=228",
+                "gettid=186",
+                "newfstatat=262",
+                "neither creates/reserves/opens",
+                "tmpnam/tempnam",
+                "name-to-handle/open-by-handle",
+                "family completion",
+                "public x86 support",
+            )
+        ),
+        "static-c-mktemp evidence must retain its observable bounded contract",
+    )
+
+    exports = set(
+        static_c_abi_export_names(
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        )
+    )
+    require("mktemp" in exports, "static C ABI export contract omits mktemp")
+
+    source = (ROOT / "libc" / "src" / "c_abi" / "x86_64" / "mktemp.rs").read_text(
+        encoding="utf-8"
+    )
+    for snippet in (
+        "pinned musl 1.2.6 release commit",
+        "src/temp/mktemp.c::mktemp",
+        "src/temp/__randname.c::__randname",
+        "TEMPLATE_SUFFIX_BYTES: usize = 6",
+        "MAX_ATTEMPTS: usize = 100",
+        "CLOCK_REALTIME",
+        "struct Timespec",
+        "struct KernelStatScratch",
+        "size_of::<KernelStatScratch>() == 144",
+        "raw_syscall::SYS_CLOCK_GETTIME",
+        "raw_syscall::SYS_GETTID",
+        "raw_syscall::SYS_NEWFSTATAT",
+        "wrapping_mul(65_537)",
+        "random >>= 5",
+        "if error != ENOENT",
+        "errno::set_errno(EEXIST)",
+        'pub unsafe extern "C" fn mktemp',
+        "inherently racy",
+        "does not create, open, reserve, unlink",
+    ):
+        require(snippet in source, f"mktemp implementation omits {snippet}")
+    exported = set(re.findall(r'pub unsafe extern "C" fn ([A-Za-z0-9_]+)', source))
+    require(exported == {"mktemp"}, "mktemp implementation must export only mktemp")
+    for forbidden in (
+        "raw_syscall::SYS_OPEN",
+        "raw_syscall::SYS_OPENAT",
+        "raw_syscall::SYS_GETRANDOM",
+        "raw_syscall::SYS_UNLINK",
+        "raw_syscall::SYS_UNLINKAT",
+        'pub unsafe extern "C" fn tmpnam',
+        'pub unsafe extern "C" fn tempnam',
+        'pub unsafe extern "C" fn mkstemp',
+        'pub unsafe extern "C" fn mkdtemp',
+        'pub unsafe extern "C" fn name_to_handle_at',
+        'pub unsafe extern "C" fn open_by_handle_at',
+        "crabc_core",
+        "crabc_mimalloc",
+    ):
+        require(forbidden not in source, f"mktemp implementation selects {forbidden}")
+
+    runner = (ROOT / "compat" / "x86_64" / "run_libc_mktemp.sh").read_text(
+        encoding="utf-8"
+    )
+    for snippet in (
+        "run_musl_oracle.sh",
+        "run_mktemp_header_abi.sh",
+        "static_c_abi_exports.txt",
+        "-nostdlib -static",
+        "--no-undefined",
+        "for symbol in __errno_location mktemp",
+        "--disassemble=mktemp",
+        "for word in 0xe4 0xba 0x106",
+        "excluded temporary or handle API",
+        "excluded entropy or authority API",
+        'timeout "$EXECUTION_TIMEOUT"',
+        "__tls_get_addr",
+    ):
+        require(snippet in runner, f"mktemp runner omits {snippet}")
+
+    probe = (ROOT / "compat" / "x86_64" / "libc_mktemp_probe.c").read_text(
+        encoding="utf-8"
+    )
+    for snippet in (
+        "FIXTURE_ENOENT",
+        "FIXTURE_EINVAL",
+        "FIXTURE_ELOOP",
+        "FIXTURE_STAT_BYTES = 144",
+        "has_musl_randname_alphabet",
+        "path_is_absent",
+        "mktemp(invalid) != invalid || invalid[0] != '\\0' || errno != EINVAL",
+        "mktemp(valid) != valid || errno != ENOENT",
+        "SYS_symlinkat",
+        "mktemp(loop_template) != loop_template || loop_template[0] != '\\0'",
+        "errno != ELOOP",
+        "crabc_x86_64_mktemp_probe",
+    ):
+        require(snippet in probe, f"mktemp probe omits {snippet}")
+
+    header_c = (ROOT / "compat" / "x86_64" / "mktemp_header_abi_probe.c").read_text(
+        encoding="utf-8"
+    )
+    header_cxx = (
+        ROOT / "compat" / "x86_64" / "mktemp_header_abi_probe.cpp"
+    ).read_text(encoding="utf-8")
+    for snippet in ("mktemp declaration", "mktemp_must_be_hidden"):
+        require(snippet in header_c, f"mktemp C header probe omits {snippet}")
+        require(snippet in header_cxx, f"mktemp C++ header probe omits {snippet}")
+
+    dispatcher = (ROOT / "scripts" / "dev-x86_64.sh").read_text(encoding="utf-8")
+    for snippet in (
+        "mktemp-header-abi)",
+        "libc-mktemp)",
+        "run_mktemp_header_abi()",
+        "run_libc_mktemp_probe()",
     ):
         require(snippet in dispatcher, f"x86 dispatcher omits {snippet}")
 
@@ -25853,6 +26128,7 @@ def validate_ledger(
     require_static_environment_artifact(by_id["libc.posix-runtime"])
     require_static_login_name_artifact(by_id["libc.posix-runtime"])
     require_getpass_artifact(by_id["libc.posix-runtime"])
+    require_mktemp_artifact(by_id["libc.posix-runtime"])
     require_child_reaping_artifact(by_id["libc.posix-runtime"])
     require_immediate_termination_artifact(by_id["libc.posix-runtime"])
     require_callback_algorithms_artifact(by_id["libc.posix-runtime"])

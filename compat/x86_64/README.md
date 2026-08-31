@@ -398,6 +398,8 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-termios-control
 ./scripts/dev-x86_64.sh getpass-header-abi
 ./scripts/dev-x86_64.sh libc-getpass
+./scripts/dev-x86_64.sh mktemp-header-abi
+./scripts/dev-x86_64.sh libc-mktemp
 ./scripts/dev-x86_64.sh libc-process-context
 ./scripts/dev-x86_64.sh libc-environment
 ./scripts/dev-x86_64.sh libc-login-name
@@ -2877,6 +2879,20 @@ fixture plumbing only. It excludes C PTY/session helpers, generic ioctl,
 account data, a Rust secret API, cancellation, secret-memory erasure, terminal
 policy, dynamic runtime, family completion, promotion, and public x86 support.
 
+`libc-mktemp` is a separately recorded `static-c-mktemp` `verified_artifact`
+gate over that archive, not `filesystem.extensions` completion. Its GNU/BSD
+C/C++ header gate and project-header C fixture first run through pinned musl
+and then through a `-nostdlib -static` candidate. It selects only historical
+`mktemp(char *)`: mutable trailing `XXXXXX` validation, musl's realtime/TID
+six-byte `A`-`P`/`a`-`p` mapping, direct `newfstatat` availability lookup,
+`ENOENT` for a presently absent result, and invalid/non-missing-error first-byte
+clearing. It does not create, reserve, open, or return authority for the
+pathname and is inherently racy. It excludes `tmpnam`/`tempnam`, all
+`mkstemp`/`mkdtemp` forms, `tmpfile`, entropy/crypto policy, generic temporary
+or filesystem policy, descriptor/directory and file-handle authority, a Rust
+temporary API, dynamic runtime, family completion, promotion, and public x86
+support.
+
 `libc-process-context` is a separately recorded static
 `verified_artifact` gate over that archive, not the `process.control`
 capability. Its project-header C body first executes through pinned musl and
@@ -4584,6 +4600,7 @@ Apart from the narrowly named `libc-stat-compat`, `libc-credentials`,
 `libc-pthread-c11-tsd`,
 `libc-termios-control`,
 `libc-getpass`,
+`libc-mktemp`,
 `libc-process-context`, `libc-environment`, `libc-login-name`, `libc-child-reaping`, and
 `libc-immediate-termination`, `libc-callback-algorithms`,
 `libc-search-hash-table`,

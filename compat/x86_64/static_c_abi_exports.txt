@@ -456,6 +456,7 @@ memrchr
 memset
 mincore
 mkdir
+mktemp
 mlock
 mlock2
 mmap

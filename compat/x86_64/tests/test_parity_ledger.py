@@ -50,7 +50,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 38)
-        self.assertEqual(report["verified_artifact_count"], 143)
+        self.assertEqual(report["verified_artifact_count"], 144)
         self.assertEqual(report["header_layout_probe_count"], 46)
         self.assertEqual(report["public_header_inventory_count"], 183)
         self.assertEqual(report["header_foundation_header_count"], 191)
@@ -4992,6 +4992,59 @@ class X86ParityLedgerTests(unittest.TestCase):
             self.assertIn(phrase, getpass_scope)
         self.assertIn(
             "libc/src/c_abi/x86_64/getpass.rs",
+            posix_runtime["source_owners"],
+        )
+        mktemp = artifacts_by_id["static-c-mktemp"]
+        assert isinstance(mktemp, dict)
+        self.assertNotIn("capabilities", mktemp)
+        for owner in (
+            "COMPATIBILITY-PROFILE.md",
+            "libc/src/c_abi/x86_64/mktemp.rs",
+            "compat/x86_64/mktemp_header_abi_probe.c",
+            "compat/x86_64/mktemp_header_abi_probe.cpp",
+            "compat/x86_64/run_mktemp_header_abi.sh",
+            "compat/x86_64/libc_mktemp_probe.c",
+            "compat/x86_64/libc_mktemp_start.S",
+            "compat/x86_64/run_libc_mktemp.sh",
+            "compat/x86_64/validate_parity_ledger.py",
+            "scripts/check_structure.py",
+        ):
+            self.assertIn(owner, mktemp["source_owners"])
+        self.assertEqual(
+            {evidence["command"] for evidence in mktemp["native_evidence"]},
+            {"./scripts/dev-x86_64.sh libc-mktemp"},
+        )
+        for phrase in (
+            "historical `mktemp` pathname-selection boundary",
+            "trailing `XXXXXX`",
+            "CLOCK_REALTIME-plus-TID",
+            "`newfstatat(AT_FDCWD, path, scratch, 0)`",
+            "inherently racy",
+            "no security or ownership guarantee",
+            "`tmpnam`",
+            "`tempnam`",
+            "`name_to_handle_at`/`open_by_handle_at`",
+            "family completion",
+            "promotion",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, mktemp["description"])
+        mktemp_scope = mktemp["native_evidence"][0]["scope"]
+        for phrase in (
+            "EINVAL-first-byte clearing",
+            "six-byte musl alphabet output",
+            "ENOENT",
+            "ELOOP-first-byte clearing",
+            "clock_gettime=228",
+            "gettid=186",
+            "newfstatat=262",
+            "neither creates/reserves/opens",
+            "tmpnam/tempnam",
+            "name-to-handle/open-by-handle",
+        ):
+            self.assertIn(phrase, mktemp_scope)
+        self.assertIn(
+            "libc/src/c_abi/x86_64/mktemp.rs",
             posix_runtime["source_owners"],
         )
         process_context = artifacts_by_id["static-c-process-context"]
@@ -10753,6 +10806,63 @@ class X86ParityLedgerTests(unittest.TestCase):
         evidence[0]["command"] = "./scripts/dev-x86_64.sh libc-termios-control"
         with self.assertRaisesRegex(
             ledger.LedgerError, "closed libc-getpass command"
+        ):
+            ledger.validate_ledger(data)
+
+    def test_static_mktemp_artifact_keeps_its_historical_nonpromoting_contract(
+        self,
+    ) -> None:
+        data = self.data()
+        family = self.family(data, "libc.posix-runtime")
+        family["status"] = "foundation-verified"
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "static-c-mktemp must not promote"
+        ):
+            ledger.require_mktemp_artifact(family)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-mktemp"
+        )
+        artifact["description"] = artifact["description"].replace(
+            "no security or ownership guarantee", "owned pathname guarantee"
+        )
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "description omits no security or ownership guarantee"
+        ):
+            ledger.validate_ledger(data)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-mktemp"
+        )
+        artifact["capabilities"] = ["filesystem.extensions"]
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "must not carry capabilities"
+        ):
+            ledger.validate_ledger(data)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-mktemp"
+        )
+        evidence = artifact["native_evidence"]
+        assert isinstance(evidence, list) and isinstance(evidence[0], dict)
+        evidence[0]["command"] = "./scripts/dev-x86_64.sh libc-getpass"
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "closed libc-mktemp command"
         ):
             ledger.validate_ledger(data)
 

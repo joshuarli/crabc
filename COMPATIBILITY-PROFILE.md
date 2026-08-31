@@ -114,8 +114,10 @@ not satisfy this C process-wide contract.
 The native `fs::NamedTempFile` contract covers the safe `mkstemp` family only:
 it uses an explicit directory authority, a 96-bit `getrandom` basename,
 exclusive `openat` creation with `O_CLOEXEC` and mode `0600`, and owned
-descriptor-relative unlink-on-drop cleanup. `mktemp`, `tempnam`, and `tmpnam`
-remain racy or ambient C pathname facilities. Linux `name_to_handle_at` and
+descriptor-relative unlink-on-drop cleanup. The staged x86 C ABI has one
+historical `mktemp` name-selection leaf, but `mktemp`, `tempnam`, and `tmpnam`
+remain racy or ambient C pathname facilities rather than safe Rust APIs or
+temporary-object ownership contracts. Linux `name_to_handle_at` and
 `open_by_handle_at` remain authority-bearing file-handle operations and are
 documented C-only here; crabc-rs does not provide a generic file-handle or
 filesystem-confinement framework.

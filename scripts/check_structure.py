@@ -155,6 +155,7 @@ X86_RUNTIME_FOUNDATION_LIBC_SOURCES = {
     Path("libc/src/c_abi/x86_64/nanosleep.rs"),
     Path("libc/src/c_abi/x86_64/descriptor_entry.rs"),
     Path("libc/src/c_abi/x86_64/filesystem_access.rs"),
+    Path("libc/src/c_abi/x86_64/mktemp.rs"),
     Path("libc/src/c_abi/x86_64/descriptor_control.rs"),
     Path("libc/src/c_abi/x86_64/ioctl.rs"),
     Path("libc/src/c_abi/x86_64/immediate_termination.rs"),
@@ -3727,6 +3728,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         '#[path = "nanosleep.rs"]',
         '#[path = "descriptor_entry.rs"]',
         '#[path = "filesystem_access.rs"]',
+        '#[path = "mktemp.rs"]',
         '#[path = "descriptor_control.rs"]',
         '#[path = "ioctl.rs"]',
         '#[path = "descriptor_io.rs"]',
@@ -5684,6 +5686,161 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         if required not in x86_runner:
             errors.append(
                 "scripts/dev-x86_64.sh: selected historical getpass dispatcher is "
+                f"missing {required!r}"
+            )
+
+    mktemp_source = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "mktemp.rs"
+    mktemp_text = mktemp_source.read_text(errors="replace")
+    for required in (
+        "pinned musl 1.2.6 release commit",
+        "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+        "src/temp/mktemp.c::mktemp",
+        "src/temp/__randname.c::__randname",
+        "TEMPLATE_SUFFIX_BYTES: usize = 6",
+        "MAX_ATTEMPTS: usize = 100",
+        "CLOCK_REALTIME",
+        "struct Timespec",
+        "struct KernelStatScratch",
+        "size_of::<KernelStatScratch>() == 144",
+        "raw_syscall::SYS_CLOCK_GETTIME",
+        "raw_syscall::SYS_GETTID",
+        "raw_syscall::SYS_NEWFSTATAT",
+        "wrapping_mul(65_537)",
+        "random >>= 5",
+        "if error != ENOENT",
+        "errno::set_errno(EEXIST)",
+        "inherently racy",
+        "does not create, open, reserve, unlink",
+    ):
+        if required not in mktemp_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/mktemp.rs: selected static historical "
+                f"mktemp boundary is missing {required!r}"
+            )
+    mktemp_exports = set(
+        re.findall(
+            r'(?m)^pub\s+unsafe\s+extern\s+"C"\s+fn\s+(\w+)\s*\(',
+            mktemp_text,
+        )
+    )
+    if mktemp_exports != {"mktemp"}:
+        errors.append(
+            "libc/src/c_abi/x86_64/mktemp.rs: selected static historical "
+            "mktemp artifact must export only mktemp"
+        )
+    for forbidden in (
+        "raw_syscall::SYS_OPEN",
+        "raw_syscall::SYS_OPENAT",
+        "raw_syscall::SYS_GETRANDOM",
+        "raw_syscall::SYS_UNLINK",
+        "raw_syscall::SYS_UNLINKAT",
+        'pub unsafe extern "C" fn tmpnam',
+        'pub unsafe extern "C" fn tempnam',
+        'pub unsafe extern "C" fn mkstemp',
+        'pub unsafe extern "C" fn mkdtemp',
+        'pub unsafe extern "C" fn name_to_handle_at',
+        'pub unsafe extern "C" fn open_by_handle_at',
+        "crabc_core",
+        "crabc_mimalloc",
+    ):
+        if forbidden in mktemp_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/mktemp.rs: selected static historical "
+                f"mktemp boundary must not select {forbidden!r}"
+            )
+
+    mktemp_runner = (
+        ROOT / "compat" / "x86_64" / "run_libc_mktemp.sh"
+    ).read_text(errors="replace")
+    mktemp_header_runner = (
+        ROOT / "compat" / "x86_64" / "run_mktemp_header_abi.sh"
+    ).read_text(errors="replace")
+    mktemp_header_c = (
+        ROOT / "compat" / "x86_64" / "mktemp_header_abi_probe.c"
+    ).read_text(errors="replace")
+    mktemp_header_cxx = (
+        ROOT / "compat" / "x86_64" / "mktemp_header_abi_probe.cpp"
+    ).read_text(errors="replace")
+    mktemp_probe = (
+        ROOT / "compat" / "x86_64" / "libc_mktemp_probe.c"
+    ).read_text(errors="replace")
+    mktemp_start = (
+        ROOT / "compat" / "x86_64" / "libc_mktemp_start.S"
+    ).read_text(errors="replace")
+    for required in (
+        "run_musl_oracle.sh",
+        "run_mktemp_header_abi.sh",
+        "static_c_abi_exports.txt",
+        "-nostdlib -static",
+        "--no-undefined",
+        "for symbol in __errno_location mktemp",
+        "--disassemble=mktemp",
+        "for word in 0xe4 0xba 0x106",
+        "excluded temporary or handle API",
+        "excluded entropy or authority API",
+        'timeout "$EXECUTION_TIMEOUT"',
+        "candidate retains a dynamic TLS model",
+    ):
+        if required not in mktemp_runner:
+            errors.append(
+                "compat/x86_64/run_libc_mktemp.sh: selected static historical "
+                f"mktemp evidence is missing {required!r}"
+            )
+    for required in (
+        "mktemp_header_abi_probe.c",
+        "mktemp_header_abi_probe.cpp",
+        "Pinned musl 1.2.6",
+        "mktemp outside GNU/BSD selection",
+        "retained a mangled mktemp reference",
+    ):
+        if required not in mktemp_header_runner:
+            errors.append(
+                "compat/x86_64/run_mktemp_header_abi.sh: selected historical "
+                f"mktemp declaration evidence is missing {required!r}"
+            )
+    for required in ("mktemp declaration", "mktemp_must_be_hidden"):
+        if required not in mktemp_header_c or required not in mktemp_header_cxx:
+            errors.append(
+                "compat/x86_64/mktemp_header_abi_probe: selected historical "
+                f"mktemp declaration evidence is missing {required!r}"
+            )
+    for required in (
+        "FIXTURE_ENOENT",
+        "FIXTURE_EINVAL",
+        "FIXTURE_ELOOP",
+        "FIXTURE_STAT_BYTES = 144",
+        "has_musl_randname_alphabet",
+        "path_is_absent",
+        "mktemp(invalid) != invalid || invalid[0] != '\\0' || errno != EINVAL",
+        "mktemp(valid) != valid || errno != ENOENT",
+        "SYS_symlinkat",
+        "mktemp(loop_template) != loop_template || loop_template[0] != '\\0'",
+        "errno != ELOOP",
+    ):
+        if required not in mktemp_probe:
+            errors.append(
+                "compat/x86_64/libc_mktemp_probe.c: selected historical "
+                f"mktemp regression is missing {required!r}"
+            )
+    for required in (
+        "ARCH_SET_FS",
+        "mov %rsi, %fs:0",
+        "crabc_x86_64_mktemp_probe",
+    ):
+        if required not in mktemp_start:
+            errors.append(
+                "compat/x86_64/libc_mktemp_start.S: selected historical "
+                f"mktemp TLS fixture is missing {required!r}"
+            )
+    for required in (
+        "mktemp-header-abi)",
+        "run_mktemp_header_abi",
+        "libc-mktemp)",
+        "run_libc_mktemp_probe",
+    ):
+        if required not in x86_runner:
+            errors.append(
+                "scripts/dev-x86_64.sh: selected historical mktemp dispatcher is "
                 f"missing {required!r}"
             )
 
@@ -7799,6 +7956,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         nanosleep_text,
         descriptor_entry_text,
         filesystem_access_text,
+        mktemp_text,
         descriptor_control_text,
         descriptor_io_text,
         process_resources_text,
@@ -8076,6 +8234,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         "faccessat",
         "euidaccess",
         "eaccess",
+        "mktemp",
         "close",
         "read",
         "write",
@@ -8300,6 +8459,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         ("pthread_once.rs", pthread_once_text),
         ("pthread_tsd.rs", pthread_tsd_text),
         ("termios_control.rs", termios_control_text),
+        ("mktemp.rs", mktemp_text),
         ("process_context.rs", process_context_text),
         ("child_reaping.rs", child_reaping_text),
         ("immediate_termination.rs", immediate_termination_text),
