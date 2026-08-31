@@ -4,8 +4,8 @@ use crabc_mimalloc::__crabc_runtime::{
     NativePageAllocationResult, NativePageFreeResult, ThreadAttachResult, ThreadFinishResult,
     TicketZeroPageAllocationResult, attach_current_thread,
     finish_current_thread_native_after_user_destructors, initialize_process, native_allocate_aligned,
-    native_free, native_post_exit_registry_test_audit, native_runtime_fork_admission_test_audit,
-    native_runtime_test_fail_next_unmap, prepare_native_later_thread_arena, ticket_zero_allocate,
+    native_free, native_runtime_fork_admission_test_audit, native_runtime_test_fail_next_unmap,
+    prepare_native_later_thread_arena, ticket_zero_allocate,
 };
 
 fn current_page_size() -> usize {
@@ -13,10 +13,9 @@ fn current_page_size() -> usize {
         .expect("the native Linux test process exposes AT_PAGESZ")
 }
 
-/// Allocates the existing mixed aggregate, but returns only its OS-aligned
-/// client. The other live members ensure A uses the source-shaped aggregate
-/// traversal rather than a singleton-specific owner-exit route; B receives no
-/// address other than the exact client that reaches the injected release.
+/// Allocates a source-shaped mixed exit image, but returns only its
+/// OS-aligned client. The other live members make A follow normal
+/// collect-abandon before B supplies the exact client to PageMap dispatch.
 fn allocate_mixed_owner_exit_aggregate() -> usize {
     for (request, alignment, name) in [
         (37, 16, "direct-small"),
@@ -46,7 +45,7 @@ fn allocate_mixed_owner_exit_aggregate() -> usize {
 }
 
 #[test]
-fn native_post_exit_failed_os_release_stays_terminal_and_keeps_a_admission() {
+fn native_post_exit_failed_os_release_is_terminal_without_retaining_worker_admission() {
     assert!(
         initialize_process(current_page_size()),
         "the native runtime initializes before the failed-OS-release witness"
@@ -65,7 +64,7 @@ fn native_post_exit_failed_os_release_stays_terminal_and_keeps_a_admission() {
         assert_eq!(
             finish_current_thread_native_after_user_destructors(),
             ThreadFinishResult::Finished,
-            "A detaches the mixed aggregate into one opaque native route"
+            "A's persistent owner completes collect-abandon before B's pointer free"
         );
     });
     let os_singleton = owner_receiver
@@ -76,76 +75,69 @@ fn native_post_exit_failed_os_release_stays_terminal_and_keeps_a_admission() {
         .expect("A completes the source Theap/TLD teardown before B starts");
     assert_eq!(
         native_runtime_fork_admission_test_audit().active_later_thread_count,
-        1,
-        "A's detached route retains its one worker-admission claim after old-Theap teardown"
+        0,
+        "A's persistent owner releases its worker admission at the owner-exit boundary"
     );
 
     let consumer = std::thread::spawn(move || {
         assert_eq!(attach_current_thread(), ThreadAttachResult::Attached);
         assert_eq!(
             native_runtime_fork_admission_test_audit().active_later_thread_count,
-            2,
-            "B's ordinary attachment adds its own claim without consuming A's detached-route claim"
+            1,
+            "B owns the one current worker admission before its foreign pointer free"
         );
         // SAFETY: A supplied this exact still-live OS-aligned client before
-        // its typed aggregate route detached. The test never gains a route,
-        // client ledger, PageMap, or scheduler capability from that address.
+        // its source owner exited. B has no owner or release capability for
+        // this address; `native_free` must begin with the PageMap lookup.
         let os_singleton = unsafe { core::ptr::NonNull::new_unchecked(os_singleton as *mut u8) };
         let unmap_failure = native_runtime_test_fail_next_unmap();
         assert_eq!(
             unsafe { native_free(os_singleton) },
             NativePageFreeResult::Retained,
-            "the failed source mapping release retains the opaque post-exit route"
+            "the failed PageMap-derived source release stays fail-closed"
         );
         assert_eq!(
             unmap_failure.observed(),
             1,
-            "B attempts exactly the one injected source terminal unmap"
-        );
-        assert_eq!(
-            native_runtime_fork_admission_test_audit().active_later_thread_count,
-            2,
-            "a failed terminal release cannot consume either A's route claim or B's live attachment claim"
-        );
-        drop(unmap_failure);
-        assert_eq!(
-            unsafe { native_free(os_singleton) },
-            NativePageFreeResult::Retained,
-            "clearing injection cannot turn a terminally retained route into a retry path"
-        );
-        let audit = native_post_exit_registry_test_audit();
-        assert_eq!(
-            audit.published_entry_count, 1,
-            "the failed route remains represented by its one stable registry node"
-        );
-        assert_eq!(
-            audit.live_entry_count, 0,
-            "the failed route cannot masquerade as a live retryable entry"
-        );
-        assert_eq!(
-            audit.retained_entry_count, 1,
-            "the native registry keeps the failed OS release terminally visible"
-        );
-        assert_eq!(
-            finish_current_thread_native_after_user_destructors(),
-            ThreadFinishResult::Finished,
-            "B can complete only its own no-page lifecycle; A's retained route remains parked"
+            "B attempts exactly the one injected terminal source unmap"
         );
         assert_eq!(
             native_runtime_fork_admission_test_audit().active_later_thread_count,
             1,
-            "B's ordinary finish releases only B while A's retained route keeps its worker admission"
+            "the retained source does not manufacture a second worker admission"
         );
+        assert_eq!(
+            unsafe { native_free(os_singleton) },
+            NativePageFreeResult::Retained,
+            "the retained source cannot be reopened into a retry path"
+        );
+        let finish = finish_current_thread_native_after_user_destructors();
+        (unmap_failure.observed(), finish)
     });
-    consumer
+    let (unmap_attempts, consumer_finish) = consumer
         .join()
-        .expect("B completes without manufacturing a terminal route proof");
+        .expect("B finishes independently of A's terminal retained source");
+    assert_eq!(
+        unmap_attempts,
+        1,
+        "neither the repeated pointer free nor B's teardown retries the failed terminal unmap"
+    );
+    assert_eq!(
+        consumer_finish,
+        ThreadFinishResult::Finished,
+        "A's retained PageMap source does not retain B's independent owner"
+    );
+    assert_eq!(
+        native_runtime_fork_admission_test_audit().active_later_thread_count,
+        0,
+        "B's finish releases its own admission without reconstructing A's"
+    );
 
-    let audit = native_post_exit_registry_test_audit();
-    assert_eq!(audit.live_entry_count, 0);
-    assert_eq!(audit.retained_entry_count, 1);
     assert!(
-        matches!(ticket_zero_allocate(73, false), TicketZeroPageAllocationResult::Unavailable),
-        "A's retained route keeps the dormant pair unavailable after B has finished"
+        matches!(
+            ticket_zero_allocate(73, false),
+            TicketZeroPageAllocationResult::Retained
+        ),
+        "the failed PageMap source closes the process owner instead of reporting an old scheduler miss"
     );
 }
