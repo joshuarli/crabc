@@ -394,6 +394,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-immediate-termination
 ./scripts/dev-x86_64.sh libc-callback-algorithms
 ./scripts/dev-x86_64.sh libc-search-tree-intrusive
+./scripts/dev-x86_64.sh libc-search-hash-table
 ./scripts/dev-x86_64.sh libc-clock-gettime
 ./scripts/dev-x86_64.sh libc-time-observation
 ./scripts/dev-x86_64.sh libc-system-configuration
@@ -2773,8 +2774,23 @@ differential prove strong `tdelete`, `tdestroy`, `tfind`, `tsearch`, and
 `twalk`, hidden global `__tsearch_balance`, GNU-only `tdestroy`/`struct qelem`,
 AVL rotations/traversal/deletion, optional key callbacks, allocation-failure
 rollback, and private mmap/munmap node ownership without a C allocator export.
-It leaves `search.hash-table`, libc.so, CRT, loader, sysroot, family promotion,
-and public x86 support unselected.
+It leaves libc.so, CRT, loader, sysroot, family promotion, and public x86
+support unselected.
+
+`libc-search-hash-table` is a private selected `search.hash-table` slice
+inside still-planned `libc.c-abi-compat`. Its six-profile pinned-musl/project
+C/C++ header matrix and static runtime differential prove strong `hcreate`,
+`hdestroy`, and `hsearch` plus weak GNU `hcreate_r`, `hdestroy_r`, and
+`hsearch_r`, with GNU-only `hsearch_data`/`_r` visibility under BSD. The common
+fixture proves zero-capacity construction, unsigned-byte hashing, duplicate
+first-entry retention, global/caller-record independence, grow-and-rehash
+rollback/retry, repeated-create overwrite/leak, and idempotent destruction.
+Musl's private calloc/free table ownership is deliberately represented by
+private mmap/munmap table and entry-array mappings; RLIMIT_AS and mincore prove
+the selected failure and release transitions without adding a C allocator
+export. It does not select callback trees, iteration, general allocation or
+containers, process/environment mutation, libc.so, CRT, loader, sysroot,
+family promotion, or public x86 support.
 
 `libc-clock-gettime` is a separately recorded
 `static-c-clock-gettime` `verified_artifact` gate over that archive, not a C
@@ -4184,6 +4200,7 @@ Apart from the narrowly named `libc-stat-compat`, `libc-credentials`,
 `libc-termios-control`,
 `libc-process-context`, `libc-environment`, `libc-login-name`, `libc-child-reaping`, and
 `libc-immediate-termination`, `libc-callback-algorithms`,
+`libc-search-hash-table`,
 `libc-clock-gettime`,
 `libc-time-observation`,
 `libc-system-configuration`,

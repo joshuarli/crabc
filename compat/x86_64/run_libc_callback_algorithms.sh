@@ -119,8 +119,7 @@ grep -Eq '[[:space:]]W[[:space:]]qsort_r$' "$archive_symbols" \
 if grep -Eq '[[:space:]]T[[:space:]]qsort_r$' "$archive_symbols"; then
     fail "archive uses a qsort_r wrapper instead of musl's weak alias"
 fi
-for unselected in lfind lsearch hsearch hcreate hdestroy \
-    btree_insert malloc calloc realloc free; do
+for unselected in lfind lsearch btree_insert malloc calloc realloc free; do
     if grep -Eq "[[:space:]][TW][[:space:]]${unselected}$" "$archive_symbols"; then
         fail "archive accidentally exports unselected ${unselected}"
     fi

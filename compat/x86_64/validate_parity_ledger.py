@@ -1426,6 +1426,15 @@ SEARCH_TREE_INTRUSIVE_SYMBOLS = (
     "twalk",
 )
 
+SEARCH_HASH_TABLE_SYMBOLS = (
+    "hcreate",
+    "hcreate_r",
+    "hdestroy",
+    "hdestroy_r",
+    "hsearch",
+    "hsearch_r",
+)
+
 QSORT_HELPER_SYMBOLS = ("__qsort_r",)
 
 MATH_COMPLEX_FOUNDATION_SYMBOLS = (
@@ -16168,7 +16177,7 @@ def require_search_tree_intrusive_slice(family: Mapping[str, Any]) -> None:
         "no weak aliases",
         "malloc/free node ownership",
         "private mmap/munmap nodes",
-        "`search.hash-table` remains missing",
+        "separate `search.hash-table` selection remains private",
         "promotion/public_support=false",
         "public x86 support",
     ):
@@ -16340,6 +16349,180 @@ def require_search_tree_intrusive_slice(family: Mapping[str, Any]) -> None:
     )
 
 
+def require_search_hash_table_slice(family: Mapping[str, Any]) -> None:
+    """Keep musl's hash-table capability private, exact, and standalone."""
+    slices = require_verified_slices(
+        family.get("verified_slice"),
+        "family[libc.c-abi-compat].verified_slice",
+        family.get("status", ""),
+        list(family.get("capabilities", [])),
+    )
+    matching = [entry for entry in slices if entry.get("id") == "search.hash-table"]
+    require(
+        len(matching) == 1,
+        "libc.c-abi-compat needs one search.hash-table slice",
+    )
+    require(
+        family.get("status") == "planned",
+        "hash-table selection must not promote libc.c-abi-compat",
+    )
+    selected = matching[0]
+    require(
+        selected["capabilities"] == ["search.hash-table"],
+        "hash-table slice must select exactly search.hash-table",
+    )
+    description = selected["description"]
+    assert isinstance(description, str)
+    for phrase in (
+        "still-planned `libc.c-abi-compat`",
+        "strong `hcreate`, `hdestroy`, and `hsearch`",
+        "weak GNU `hcreate_r`, `hdestroy_r`, and `hsearch_r`",
+        "calloc/free table ownership",
+        "private mmap/munmap table and entry-array objects",
+        "`search.tree-intrusive` remains selected-private",
+        "promotion/public_support=false",
+        "public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"search.hash-table description omits {phrase}",
+        )
+    for symbol in SEARCH_HASH_TABLE_SYMBOLS:
+        require(
+            f"`{symbol}`" in description,
+            f"search.hash-table description omits {symbol}",
+        )
+
+    owners = set(
+        nonempty_strings(selected["source_owners"], "search.hash-table.source_owners")
+    )
+    for owner in (
+        "libc/src/lib.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/search_hash_table.rs",
+        "include/search.h",
+        "compat/abi/musl-1.2.6/aarch64/libc.a.static.tsv",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/search_hash_table_header_abi_probe.c",
+        "compat/x86_64/search_hash_table_header_abi_probe.cpp",
+        "compat/x86_64/search_hash_table_header_hidden_probe.c",
+        "compat/x86_64/libc_search_hash_table_probe.c",
+        "compat/x86_64/libc_search_hash_table_start.S",
+        "compat/x86_64/run_libc_search_hash_table.sh",
+        "compat/x86_64/aarch64_parity_inventory.json",
+        "scripts/dev-x86_64.sh",
+        "scripts/check_structure.py",
+    ):
+        require(owner in owners, f"search.hash-table source owners omit {owner}")
+
+    prerequisites = nonempty_strings(
+        selected["x86_abi_prerequisites"], "search.hash-table.x86_abi_prerequisites"
+    )
+    for phrase in (
+        "`ENTRY` at size 16/alignment 8",
+        "unsigned bytes",
+        "overwrite-and-leak",
+        "No malloc/calloc/realloc/free export",
+    ):
+        require(
+            any(phrase in item for item in prerequisites),
+            f"search.hash-table ABI prerequisites omit {phrase}",
+        )
+    headers = nonempty_strings(
+        selected["x86_header_prerequisites"], "search.hash-table.x86_header_prerequisites"
+    )
+    require(
+        any(
+            "Default, strict, POSIX.1-2008, XOPEN-700, BSD, and GNU" in item
+            and "GNU-only" in item
+            and "hidden under BSD" in item
+            for item in headers
+        ),
+        "search.hash-table must pin exact GNU-only header visibility",
+    )
+
+    exports = static_c_abi_export_names(
+        ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+    )
+    for symbol in SEARCH_HASH_TABLE_SYMBOLS:
+        require(symbol in exports, f"static C ABI export contract omits {symbol}")
+    for symbol in ("malloc", "calloc", "realloc", "free"):
+        require(
+            symbol not in exports,
+            f"hash-table slice selects allocator export {symbol}",
+        )
+
+    static_root = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+    ).read_text(encoding="utf-8")
+    require(
+        '#[path = "search_hash_table.rs"]\nmod search_hash_table;' in static_root,
+        "x86 static C ABI must compose the standalone hash-table leaf",
+    )
+    source = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "search_hash_table.rs"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "src/search/hsearch.c",
+        "MAXIMUM_SIZE",
+        "key_hash",
+        "wrapping_mul(31)",
+        "selected_mmap",
+        "selected_munmap",
+        '#[linkage = "weak"]',
+    ):
+        require(snippet in source, f"search.hash-table source omits {snippet}")
+
+    evidence = selected["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-search-hash-table"},
+        "search.hash-table must use its closed native command",
+    )
+    scope = evidence[0]["scope"]
+    assert isinstance(scope, str)
+    for phrase in (
+        "RLIMIT_AS",
+        "mincore",
+        "public C allocator exports",
+        "family promotion",
+        "callback-tree capability promotion",
+        "public x86 support",
+    ):
+        require(
+            phrase in scope,
+            f"search.hash-table evidence omits {phrase}",
+        )
+    runner = (
+        ROOT / "compat" / "x86_64" / "run_libc_search_hash_table.sh"
+    ).read_text(encoding="utf-8")
+    fixture = (
+        ROOT / "compat" / "x86_64" / "libc_search_hash_table_probe.c"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "assert_selected_c_abi_surface",
+        "assert_weak_function",
+        "assert_reentrant_hidden",
+        "--wrap=calloc",
+        "-nostdlib -static",
+    ):
+        require(snippet in runner, f"search.hash-table runner omits {snippet}")
+    for snippet in (
+        "check_resize_failure_rollback",
+        "raw_prlimit64",
+        "mapping_is_live",
+        "check_unsigned_hash_bytes",
+        "check_overflow_and_repeated_create",
+    ):
+        require(snippet in fixture, f"search.hash-table fixture omits {snippet}")
+    dispatcher = (ROOT / "scripts" / "dev-x86_64.sh").read_text(encoding="utf-8")
+    require(
+        "run_libc_search_hash_table.sh" in dispatcher,
+        "search.hash-table dispatcher binding is missing",
+    )
+
+
 def require_numeric_qsort_helper_slice(family: Mapping[str, Any]) -> None:
     """Keep musl's private qsort helper selected without promoting sorting."""
     slices = require_verified_slices(
@@ -16370,7 +16553,7 @@ def require_numeric_qsort_helper_slice(family: Mapping[str, Any]) -> None:
         "weak same-address `qsort_r` alias",
         "O(1) cycling buffer",
         "numeric.scalar-legacy-callback",
-        "`search.hash-table` remains missing",
+        "separate `search.hash-table` selection remains private",
         "promotion/public_support=false",
         "public x86 support",
     ):
@@ -22238,6 +22421,7 @@ def validate_ledger(
     require_numeric_netdb_artifact(by_id["libc.resolver"])
     require_process_globals_getopt_artifact(by_id["libc.c-abi-compat"])
     require_search_tree_intrusive_slice(by_id["libc.c-abi-compat"])
+    require_search_hash_table_slice(by_id["libc.c-abi-compat"])
     require_numeric_qsort_helper_slice(by_id["libc.c-abi-compat"])
     require_descriptor_lifecycle_artifact(by_id["libc.posix-runtime"])
     require_descriptor_pipeline_artifact(by_id["libc.posix-runtime"])

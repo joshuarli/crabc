@@ -1201,7 +1201,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "libc-memfd-create",
             "libc-static-c-abi-differential",
             "libc-static-c-abi-same-object-differential|qualification-posix-abi-admission",
-            "libc-readiness-waits|libc-system-observation|libc-system-information|libc-fcntl-record-locks|libc-flock|libc-sendfile|libc-posix-fallocate|libc-descriptor-advice|libc-filesystem-capacity|libc-uts-identity|libc-ctype|libc-locale-multibyte|libc-locale-wide-iconv|libc-wide-character|libc-locale-object-wide|libc-locale-narrow|libc-locale-ctype-locators|libc-regex|libc-integer-arithmetic|libc-integer-parse|libc-float-parse|libc-intmax-arithmetic|libc-credential-observation|libc-login-name|libc-child-reaping|libc-immediate-termination|libc-callback-algorithms|libc-search-tree-intrusive|libc-access|libc-clock-gettime|libc-time-observation|libc-system-configuration|libc-mapping-core|libc-header-layouts-baseline|libc-nanosleep|libc-clock-nanosleep|libc-descriptor-entry|libc-fcntl-status-control|libc-ioctl|libc-ffs|libc-byte-strings|libc-process-globals-getopt|libc-inet-address|libc-numeric-netdb|libc-random-entropy|libc-memory-search|libc-string-copy|libc-error-strings|libc-descriptor-pipeline",
+            "libc-readiness-waits|libc-system-observation|libc-system-information|libc-fcntl-record-locks|libc-flock|libc-sendfile|libc-posix-fallocate|libc-descriptor-advice|libc-filesystem-capacity|libc-uts-identity|libc-ctype|libc-locale-multibyte|libc-locale-wide-iconv|libc-wide-character|libc-locale-object-wide|libc-locale-narrow|libc-locale-ctype-locators|libc-regex|libc-integer-arithmetic|libc-integer-parse|libc-float-parse|libc-intmax-arithmetic|libc-credential-observation|libc-login-name|libc-child-reaping|libc-immediate-termination|libc-callback-algorithms|libc-search-tree-intrusive|libc-search-hash-table|libc-access|libc-clock-gettime|libc-time-observation|libc-system-configuration|libc-mapping-core|libc-header-layouts-baseline|libc-nanosleep|libc-clock-nanosleep|libc-descriptor-entry|libc-fcntl-status-control|libc-ioctl|libc-ffs|libc-byte-strings|libc-process-globals-getopt|libc-inet-address|libc-numeric-netdb|libc-random-entropy|libc-memory-search|libc-string-copy|libc-error-strings|libc-descriptor-pipeline",
             "libc-vector-io|libc-uio-cxx-linkage",
             "libc-sysv-semaphore|libc-posix-semaphore",
             "libc-sysv-message-shared-memory",
@@ -10990,6 +10990,80 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn('id = "search.tree-intrusive"', parity)
         self.assertIn("libc-search-tree-intrusive)", dispatcher)
         self.assertIn("run_libc_search_tree_intrusive.sh", dispatcher)
+
+    def test_libc_static_c_abi_hash_table_slice_stays_independent(self) -> None:
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        source = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" /
+            "search_hash_table.rs"
+        ).read_text(encoding="utf-8")
+        runner = (
+            ROOT / "compat" / "x86_64" /
+            "run_libc_search_hash_table.sh"
+        ).read_text(encoding="utf-8")
+        fixture = (
+            ROOT / "compat" / "x86_64" /
+            "libc_search_hash_table_probe.c"
+        ).read_text(encoding="utf-8")
+        header = (ROOT / "include" / "search.h").read_text(encoding="utf-8")
+        static_exports = {
+            line
+            for line in (
+                ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+            ).read_text(encoding="utf-8").splitlines()
+            if line and not line.startswith("#")
+        }
+        parity = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        dispatcher = RUNNER.read_text(encoding="utf-8")
+
+        self.assertIn('#[path = "search_hash_table.rs"]', static_root)
+        for symbol in (
+            "hcreate",
+            "hcreate_r",
+            "hdestroy",
+            "hdestroy_r",
+            "hsearch",
+            "hsearch_r",
+        ):
+            self.assertIn(symbol, source)
+            self.assertIn(symbol, static_exports)
+        for required in (
+            "src/search/hsearch.c",
+            "MAXIMUM_SIZE",
+            "wrapping_mul(31)",
+            "selected_mmap",
+            "selected_munmap",
+            '#[linkage = "weak"]',
+        ):
+            self.assertIn(required, source)
+        for required in (
+            "assert_selected_c_abi_surface",
+            "assert_weak_function",
+            "assert_reentrant_hidden",
+            "--wrap=calloc",
+            "-nostdlib -static",
+        ):
+            self.assertIn(required, runner)
+        for required in (
+            "check_resize_failure_rollback",
+            "check_unsigned_hash_bytes",
+            "check_overflow_and_repeated_create",
+            "raw_prlimit64",
+            "mapping_is_live",
+        ):
+            self.assertIn(required, fixture)
+        self.assertIn("#ifdef _GNU_SOURCE\nstruct hsearch_data", header)
+        self.assertNotIn(
+            "#if defined(_GNU_SOURCE) || defined(_BSD_SOURCE)\nstruct hsearch_data",
+            header,
+        )
+        self.assertIn('id = "search.hash-table"', parity)
+        self.assertIn("libc-search-hash-table)", dispatcher)
+        self.assertIn("run_libc_search_hash_table.sh", dispatcher)
 
     def test_libc_static_c_abi_clock_gettime_artifact_stays_narrow(self) -> None:
         static_root = (

@@ -1,6 +1,9 @@
 #![cfg_attr(not(test), no_std)]
 #![cfg_attr(
-    all(target_os = "linux", target_arch = "aarch64", target_endian = "little"),
+    any(
+        all(target_os = "linux", target_arch = "aarch64", target_endian = "little"),
+        all(target_os = "linux", target_arch = "x86_64", target_endian = "little")
+    ),
     feature(linkage)
 )]
 #![cfg_attr(

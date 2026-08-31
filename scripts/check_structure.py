@@ -160,6 +160,7 @@ X86_RUNTIME_FOUNDATION_LIBC_SOURCES = {
     Path("libc/src/c_abi/x86_64/immediate_termination.rs"),
     Path("libc/src/c_abi/x86_64/callback_algorithms.rs"),
     Path("libc/src/c_abi/x86_64/search_tree_intrusive.rs"),
+    Path("libc/src/c_abi/x86_64/search_hash_table.rs"),
     Path("libc/src/c_abi/x86_64/ctype.rs"),
     Path("libc/src/c_abi/x86_64/locale_ctype.rs"),
     Path("libc/src/c_abi/x86_64/locale_multibyte.rs"),
@@ -3710,6 +3711,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         '#[path = "immediate_termination.rs"]',
         '#[path = "callback_algorithms.rs"]',
         '#[path = "search_tree_intrusive.rs"]',
+        '#[path = "search_hash_table.rs"]',
         '#[path = "clock_gettime.rs"]',
         '#[path = "clock_nanosleep.rs"]',
         '#[path = "nanosleep.rs"]',
@@ -5784,6 +5786,59 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
                 f"tree boundary selects forbidden allocator seam {forbidden!r}"
             )
 
+    search_hash_table_source = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "search_hash_table.rs"
+    )
+    search_hash_table_text = search_hash_table_source.read_text(errors="replace")
+    for required in (
+        "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+        "src/search/hsearch.c",
+        "unsigned-byte hash",
+        "quadratic probing",
+        "resize rollback",
+        "overwrite-and-leak",
+        "selected_mmap",
+        "selected_munmap",
+        "MAXIMUM_SIZE",
+        "wrapping_mul(31)",
+        '#[linkage = "weak"]',
+    ):
+        if required not in search_hash_table_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/search_hash_table.rs: selected static "
+                f"hash-table boundary is missing {required!r}"
+            )
+    search_hash_table_exports = set(
+        re.findall(
+            r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(',
+            search_hash_table_text,
+        )
+    )
+    if search_hash_table_exports != {
+        "hcreate",
+        "hcreate_r",
+        "hdestroy",
+        "hdestroy_r",
+        "hsearch",
+        "hsearch_r",
+    }:
+        errors.append(
+            "libc/src/c_abi/x86_64/search_hash_table.rs: selected static "
+            "artifact must export only the six named hash-table symbols"
+        )
+    for forbidden in (
+        "libmimalloc",
+        'extern "C" fn malloc',
+        'extern "C" fn calloc',
+        'extern "C" fn realloc',
+        'extern "C" fn free',
+    ):
+        if forbidden in search_hash_table_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/search_hash_table.rs: selected static "
+                f"hash-table boundary selects forbidden allocator seam {forbidden!r}"
+            )
+
     search_header_text = (ROOT / "include" / "search.h").read_text(errors="replace")
     if "#ifdef _GNU_SOURCE\nstruct qelem" not in search_header_text:
         errors.append("include/search.h: tdestroy/qelem must retain exact GNU-only visibility")
@@ -5792,6 +5847,13 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         in search_header_text
     ):
         errors.append("include/search.h: BSD must not expose musl GNU tdestroy/qelem")
+    if "#ifdef _GNU_SOURCE\nstruct hsearch_data" not in search_header_text:
+        errors.append("include/search.h: GNU hsearch_data must retain exact GNU-only visibility")
+    if (
+        "#if defined(_GNU_SOURCE) || defined(_BSD_SOURCE)\nstruct hsearch_data"
+        in search_header_text
+    ):
+        errors.append("include/search.h: BSD must not expose musl GNU hsearch_data")
 
     clock_nanosleep_source = (
         ROOT / "libc" / "src" / "c_abi" / "x86_64" / "clock_nanosleep.rs"
@@ -7445,6 +7507,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         immediate_termination_text,
         callback_algorithms_text,
         search_tree_text,
+        search_hash_table_text,
         clock_gettime_text,
         clock_nanosleep_text,
         memory_mapping_text,
@@ -7890,6 +7953,12 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         "tfind",
         "tsearch",
         "twalk",
+        "hcreate",
+        "hcreate_r",
+        "hdestroy",
+        "hdestroy_r",
+        "hsearch",
+        "hsearch_r",
         "rust_eh_personality",
     }
     if exports != expected_exports:
@@ -7902,7 +7971,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
             "selected byte-string, random-entropy, memory-search, C-string-copy, immutable error-string, "
             "fixed-C-locale ctype, integer-arithmetic, integer-parsing, intmax-arithmetic, credential-observation, and "
             "environment-backed login-name observation, find-first-set, startup-published program names, short/GNU-long "
-            "getopt state and aliases, "
+            "getopt state and aliases, callback-tree and hash-table search, "
             "and abort-personality surfaces"
         )
     for source_name, source_text in (
@@ -7937,6 +8006,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         ("immediate_termination.rs", immediate_termination_text),
         ("callback_algorithms.rs", callback_algorithms_text),
         ("search_tree_intrusive.rs", search_tree_text),
+        ("search_hash_table.rs", search_hash_table_text),
         ("clock_gettime.rs", clock_gettime_text),
         ("clock_nanosleep.rs", clock_nanosleep_text),
         ("memory_mapping.rs", memory_mapping_text),

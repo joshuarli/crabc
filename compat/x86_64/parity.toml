@@ -7032,7 +7032,7 @@ oracle = [
 
 [[family.verified_slice]]
 id = "search.tree-intrusive"
-description = "Private native x86 selected-static-archive completion of the AArch64 `search.tree-intrusive` capability inside still-planned `libc.c-abi-compat`. This independent musl-compatible AVL leaf supplies strong `tdelete`, `tdestroy`, `tfind`, `tsearch`, and `twalk` plus hidden global archive helper `__tsearch_balance`, with no weak aliases. Caller-owned roots and keys retain duplicate identity, comparator order, deterministic AVL rotations, musl parent-return deletion, predecessor-node release, four-phase traversal, optional key destruction, allocation-failure rollback, and repeated create/destroy ownership. Musl's malloc/free node ownership is represented by private mmap/munmap nodes without any public or hidden C allocator export. This selects only the private capability: `libc.c-abi-compat` remains planned, `search.hash-table` remains missing, promotion/public_support=false is unchanged, and libc.so, CRT, loader, sysroot, general allocation/containers, process/environment state, stdio/locale, and public x86 support remain outside it."
+description = "Private native x86 selected-static-archive completion of the AArch64 `search.tree-intrusive` capability inside still-planned `libc.c-abi-compat`. This independent musl-compatible AVL leaf supplies strong `tdelete`, `tdestroy`, `tfind`, `tsearch`, and `twalk` plus hidden global archive helper `__tsearch_balance`, with no weak aliases. Caller-owned roots and keys retain duplicate identity, comparator order, deterministic AVL rotations, musl parent-return deletion, predecessor-node release, four-phase traversal, optional key destruction, allocation-failure rollback, and repeated create/destroy ownership. Musl's malloc/free node ownership is represented by private mmap/munmap nodes without any public or hidden C allocator export. This selects only the private capability: `libc.c-abi-compat` remains planned, the separate `search.hash-table` selection remains private, promotion/public_support=false is unchanged, and libc.so, CRT, loader, sysroot, general allocation/containers, process/environment state, stdio/locale, and public x86 support remain outside it."
 source_owners = [
   "compat/upstreams.toml",
   "libc/Cargo.toml",
@@ -7081,8 +7081,58 @@ oracle = [
 capabilities = ["search.tree-intrusive"]
 
 [[family.verified_slice]]
+id = "search.hash-table"
+description = "Private native x86 selected-static-archive completion of the AArch64 `search.hash-table` capability inside still-planned `libc.c-abi-compat`. This independent musl-compatible open-addressed leaf supplies strong `hcreate`, `hdestroy`, and `hsearch` plus weak GNU `hcreate_r`, `hdestroy_r`, and `hsearch_r`. Caller-owned keys/data retain unsigned-byte hashing, quadratic probing, duplicate first-entry retention, process-global/caller-record independence, three-quarter grow-and-rehash, grow-failure rollback, zero-capacity construction, repeated-create overwrite-and-leak behavior, and idempotent destruction. Musl's calloc/free table ownership is represented by private mmap/munmap table and entry-array objects without any public or hidden C allocator export. This selects only the private capability: `libc.c-abi-compat` remains planned, `search.tree-intrusive` remains selected-private, promotion/public_support=false is unchanged, and callback trees, iteration, general allocation/containers, process/environment state, stdio/locale, libc.so, CRT, loader, sysroot, and public x86 support remain outside it."
+source_owners = [
+  "compat/upstreams.toml",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/search_hash_table.rs",
+  "libc/src/c_abi/x86_64/errno.rs",
+  "libc/src/c_abi/x86_64/memory_mapping.rs",
+  "include/search.h",
+  "include/features.h",
+  "include/bits/alltypes.h",
+  "compat/abi/musl-1.2.6/aarch64/libc.a.static.tsv",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/search_hash_table_header_abi_probe.c",
+  "compat/x86_64/search_hash_table_header_abi_probe.cpp",
+  "compat/x86_64/search_hash_table_header_hidden_probe.c",
+  "compat/x86_64/libc_search_hash_table_probe.c",
+  "compat/x86_64/libc_search_hash_table_start.S",
+  "compat/x86_64/run_libc_search_hash_table.sh",
+  "compat/x86_64/aarch64_parity_inventory.py",
+  "compat/x86_64/aarch64_parity_inventory.json",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "compat/x86_64/README.md",
+  "STATUS.md",
+  "x86-64.md",
+  "scripts/dev-x86_64.sh",
+  "scripts/check_structure.py",
+]
+x86_abi_prerequisites = [
+  "The SysV AMD64 ABI fixes `ENTRY` at size 16/alignment 8 with key/data offsets 0/8, `ACTION` as a four-byte enum with FIND=0 and ENTER=1, and GNU `struct hsearch_data` at size 16/alignment 8 with opaque table/unused-word offsets 0/8/12. The three ordinary functions are strong; the three GNU `_r` functions are weak in pinned musl, the selected archive, and the final ET_EXEC candidate.",
+  "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417 maps `src/search/hsearch.c` to this leaf. Its hash reads unsigned bytes, table size starts at eight and rounds upward to a power of two, quadratic probing retains the first entry for duplicate keys, and a seventh used slot in the initial table triggers growth before returning. A failed growth clears only the candidate slot, restores the used count, returns null/zero with ENOMEM from allocation, and leaves all prior entries usable.",
+  "The process-global record and every GNU caller record are independent opaque owners. Zero requested capacity creates the minimum table. `hdestroy[_r]` releases the current entry/table objects, clears the record, preserves errno, and is idempotent after that clear. Repeating `hcreate[_r]` on a live record deliberately retains musl's overwrite-and-leak behavior rather than inventing an implicit destroy.",
+  "Pinned musl uses calloc/free for one private table object and one current entry array. The x86 archive instead composes the already selected mapping-core and initial-TLS errno seams: page-rounded anonymous zero-filled objects, replacement mapping before rehash, old-entry unmap only after successful growth, and exact ENOMEM for unrepresentable/failed mappings. No malloc/calloc/realloc/free export or allocator dependency is selected.",
+]
+x86_header_prerequisites = [
+  "Default, strict, POSIX.1-2008, XOPEN-700, BSD, and GNU project-first/pinned-musl `<search.h>` C11/C++17 probes keep `ENTRY`, `ACTION`, `hcreate`, `hdestroy`, and `hsearch` unconditional with exact C linkage. Negative compilation proves `struct hsearch_data` and `hcreate_r`/`hdestroy_r`/`hsearch_r` are GNU-only, including hidden under BSD; GNU proves exact layout, signatures, and unmangled C linkage. This is not installed-header closure or public x86 support.",
+]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-search-hash-table", scope = "Runs a six-profile pinned-musl/project C/C++ header matrix with negative GNU-only visibility, a pinned-musl static project-header reference with wrapped calloc/free, and a true x86 `-nostdlib -static` selected-archive candidate. It ratchets strong ordinary and weak GNU _r ABI; proves zero-capacity construction, unsigned high-bit hashing at 512 slots, duplicate first-entry retention, FIND miss nulling, independent global/caller tables, resize and lookup, overflow ENOMEM, repeated-create overwrite/leak, destroy idempotence, and exact selected export binding. The seventh-entry grow allocation is injected to fail in both routes; the candidate temporarily lowers only RLIMIT_AS, restores it, verifies rollback/retry, and uses mincore to prove old-array unmap after growth, current-array unmap on destroy, and intentionally leaked overwritten arrays. The gate rejects public C allocator exports, mimalloc/unowned dependencies, dynamic TLS, unresolved symbols, interpreter/DT_NEEDED, dynamic relocations, panic machinery, family promotion, callback-tree capability promotion, and public x86 support." }]
+oracle = [
+  { kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source, header-feature, weak-binding, ownership-state-machine, and executable behavior oracle for include/search.h and src/search/hsearch.c." },
+  { kind = "elf-abi", source = "System V AMD64 psABI", role = "LP64 ENTRY/hsearch_data layout, enum/by-value calling convention, C++ C linkage, weak function binding, initial-exec errno TLS, and static ET_EXEC closure." },
+  { kind = "kernel-abi", source = "Linux 5.10 x86-64 mmap/munmap/mincore/prlimit64 ABI", role = "Private zero-filled mapping ownership, deterministic candidate allocation-failure containment, and mapped/unmapped lifecycle evidence; these syscalls do not replace the musl API oracle." },
+]
+capabilities = ["search.hash-table"]
+
+[[family.verified_slice]]
 id = "numeric.qsort-helper"
-description = "Private native x86 selected-static-archive completion of the AArch64 `numeric.qsort-helper` capability inside still-planned `libc.c-abi-compat`. It selects exactly musl's uninstalled `__qsort_r` helper: one strong global smoothsort implementation paired with the weak same-address `qsort_r` alias that is public. The independently recorded callback-algorithms artifact retains `bsearch`, `qsort`, and public `qsort_r` behavior; this ABI-only slice accounts only for the private helper without changing the existing native `numeric.scalar-legacy-callback` classification. Pinned musl's static-archive symbol record and the true freestanding candidate establish the direct helper path, while public qsort/qsort_r behavior is compared through the pinned musl dynamic reference. The fixed smoothsort preserves its O(1) cycling buffer, final-context comparator ABI, and strong-caller alias override. It owns no errno, TLS, allocator, syscall, locale, callback registry, or mutable process state. `libc.c-abi-compat` remains planned, `search.hash-table` remains missing, promotion/public_support=false is unchanged, and general C sorting/searching, C longjmp/C++ exception transport, libc.so, CRT, loader, sysroot, and public x86 support remain outside this capability."
+description = "Private native x86 selected-static-archive completion of the AArch64 `numeric.qsort-helper` capability inside still-planned `libc.c-abi-compat`. It selects exactly musl's uninstalled `__qsort_r` helper: one strong global smoothsort implementation paired with the weak same-address `qsort_r` alias that is public. The independently recorded callback-algorithms artifact retains `bsearch`, `qsort`, and public `qsort_r` behavior; this ABI-only slice accounts only for the private helper without changing the existing native `numeric.scalar-legacy-callback` classification. Pinned musl's static-archive symbol record and the true freestanding candidate establish the direct helper path, while public qsort/qsort_r behavior is compared through the pinned musl dynamic reference. The fixed smoothsort preserves its O(1) cycling buffer, final-context comparator ABI, and strong-caller alias override. It owns no errno, TLS, allocator, syscall, locale, callback registry, or mutable process state. `libc.c-abi-compat` remains planned, the separate `search.hash-table` selection remains private, promotion/public_support=false is unchanged, and general C sorting/searching, C longjmp/C++ exception transport, libc.so, CRT, loader, sysroot, and public x86 support remain outside this capability."
 source_owners = [
   "compat/upstreams.toml",
   "libc/Cargo.toml",

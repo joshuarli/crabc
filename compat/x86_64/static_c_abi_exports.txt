@@ -271,6 +271,12 @@ getsubopt
 gettimeofday
 getuid
 getxattr
+hcreate
+hcreate_r
+hdestroy
+hdestroy_r
+hsearch
+hsearch_r
 hypotl
 iconv
 iconv_close

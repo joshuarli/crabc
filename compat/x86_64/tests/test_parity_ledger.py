@@ -49,7 +49,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["status_counts"], {"foundation-verified": 8, "planned": 18})
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
-        self.assertEqual(report["verified_slice_count"], 35)
+        self.assertEqual(report["verified_slice_count"], 36)
         self.assertEqual(report["verified_artifact_count"], 126)
         self.assertEqual(report["header_layout_probe_count"], 46)
         self.assertEqual(report["public_header_inventory_count"], 183)
@@ -12905,7 +12905,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         ):
             self.assertIn(phrase, evidence[0]["scope"])
 
-        selected["capabilities"] = ["search.hash-table"]
+        selected["capabilities"] = ["legacy.misc"]
         with self.assertRaisesRegex(
             ledger.LedgerError,
             "qsort helper slice must select exactly numeric.qsort-helper",
@@ -12929,7 +12929,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         for phrase in (
             "hidden global archive helper `__tsearch_balance`",
             "private mmap/munmap nodes",
-            "`search.hash-table` remains missing",
+            "separate `search.hash-table` selection remains private",
             "promotion/public_support=false",
             "public x86 support",
         ):
@@ -12961,10 +12961,64 @@ class X86ParityLedgerTests(unittest.TestCase):
         ):
             self.assertIn(phrase, evidence[0]["scope"])
 
-        selected["capabilities"] = ["search.hash-table"]
+        selected["capabilities"] = ["legacy.misc"]
         with self.assertRaisesRegex(
             ledger.LedgerError,
             "tree slice must select exactly search.tree-intrusive",
+        ):
+            ledger.validate_ledger(data)
+
+    def test_search_hash_table_slice_is_selected_private_and_non_promoting(self) -> None:
+        data = self.data()
+        family = self.family(data, "libc.c-abi-compat")
+        self.assertEqual(family["status"], "planned")
+        slices = family["verified_slice"]
+        assert isinstance(slices, list)
+        selected = next(
+            entry
+            for entry in slices
+            if isinstance(entry, dict) and entry["id"] == "search.hash-table"
+        )
+        self.assertEqual(selected["capabilities"], ["search.hash-table"])
+        for symbol in ledger.SEARCH_HASH_TABLE_SYMBOLS:
+            self.assertIn(f"`{symbol}`", selected["description"])
+        for phrase in (
+            "private mmap/munmap table and entry-array objects",
+            "`search.tree-intrusive` remains selected-private",
+            "promotion/public_support=false",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, selected["description"])
+        owners = selected["source_owners"]
+        assert isinstance(owners, list)
+        for owner in (
+            "libc/src/c_abi/x86_64/search_hash_table.rs",
+            "include/search.h",
+            "compat/x86_64/search_hash_table_header_hidden_probe.c",
+            "compat/x86_64/libc_search_hash_table_probe.c",
+            "compat/x86_64/run_libc_search_hash_table.sh",
+            "compat/x86_64/aarch64_parity_inventory.json",
+        ):
+            self.assertIn(owner, owners)
+        evidence = selected["native_evidence"]
+        assert isinstance(evidence, list) and isinstance(evidence[0], dict)
+        self.assertEqual(
+            evidence[0]["command"],
+            "./scripts/dev-x86_64.sh libc-search-hash-table",
+        )
+        for phrase in (
+            "RLIMIT_AS",
+            "mincore",
+            "public C allocator exports",
+            "callback-tree capability promotion",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, evidence[0]["scope"])
+
+        selected["capabilities"] = ["legacy.misc"]
+        with self.assertRaisesRegex(
+            ledger.LedgerError,
+            "hash-table slice must select exactly search.hash-table",
         ):
             ledger.validate_ledger(data)
 

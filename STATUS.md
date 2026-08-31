@@ -441,8 +441,22 @@ and hidden global `__tsearch_balance`, GNU-only `tdestroy`/`struct qelem`,
 AVL rotations and traversal, duplicate/parent-return deletion semantics,
 optional key destruction, allocation-failure rollback, and private
 mmap/munmap node release. It remains allocation-API-free and does not select
-general containers, `search.hash-table`, libc.so, CRT, loader, sysroot,
-family promotion, or public x86 support.
+general containers, libc.so, CRT, loader, sysroot, family promotion, or public
+x86 support.
+
+The same still-planned C ABI family now also selects the private
+`search.hash-table` slice. `./scripts/dev-x86_64.sh libc-search-hash-table`
+compares musl 1.2.6's strong ordinary and weak GNU reentrant `<search.h>`
+table ABI with a true freestanding x86 archive. The six-profile C/C++ header
+matrix keeps `hcreate`/`hdestroy`/`hsearch` unconditional while
+`hsearch_data` and `_r` forms remain GNU-only, including under BSD. The common
+runtime differential proves zero-capacity construction, unsigned-byte
+hashing, duplicate first-entry retention, global/caller-record independence,
+grow-and-rehash rollback/retry, repeated-create overwrite/leak, idempotent
+destroy, and private mmap/munmap lifecycle via RLIMIT_AS/mincore. It adds no
+C allocator export and does not select callback trees, general containers,
+process/environment state, libc.so, CRT, loader, sysroot, family promotion, or
+public x86 support.
 
 `./scripts/dev-x86_64.sh consumer-native-facade-lto` is the second private
 artifact in that family. It compiles an AArch64-native-facade-shaped no-std

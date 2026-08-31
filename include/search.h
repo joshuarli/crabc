@@ -21,7 +21,7 @@ int hcreate(size_t);
 void hdestroy(void);
 ENTRY *hsearch(ENTRY, ACTION);
 
-#if defined(_GNU_SOURCE) || defined(_BSD_SOURCE)
+#ifdef _GNU_SOURCE
 struct hsearch_data {
 	struct __tab *__tab;
 	unsigned int __unused1;
