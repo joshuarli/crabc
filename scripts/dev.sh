@@ -540,6 +540,7 @@ case "$command" in
         run_in_container cargo test -p crabc-mimalloc \
             --features native-runtime-test-audit,native-runtime-test-fault \
             --test native_post_exit_failed_os_release \
+            --test native_post_exit_terminal_owner_retention \
             --test native_pointer_first_post_exit_os_release \
             -- --test-threads=1
         # A joined pointer-first source publication is collected during A's
