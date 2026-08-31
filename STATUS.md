@@ -777,6 +777,19 @@ mutex operation, futex-PI capability, mutex initialization/locking/destruction,
 threads, TLS, synchronization, cancellation, CRT, loader, sysroot, family
 completion, promotion, or public x86 support.
 
+The separate
+`./scripts/dev-x86_64.sh libc-pthread-mutex-prioceiling-query` artifact is a
+twenty-eighth private static artifact in that same still-planned family. It
+selects only musl's unavailable `pthread_mutex_getprioceiling` direct status:
+every null or opaque mutex/ceiling pointer combination returns `EINVAL`, and a
+provided ceiling slot stays unchanged because musl reads neither pointer. The
+fixture intentionally makes no mutex initializer, lock, unlock, destruction,
+setter, or scheduler call. It therefore does not select priority-protect mutex
+operation, a priority-ceiling state, `pthread_mutex_setprioceiling`, mutex
+attributes, mutex lifecycle, scheduler policy/priority behavior, threads, TLS,
+synchronization, cancellation, CRT, loader, sysroot, family completion,
+promotion, or public x86 support.
+
 `./scripts/dev-x86_64.sh libc-pthread-mutex-normal` artifact is a tenth private static
 `verified_artifact` in the same still-planned `libc.pthread-tls` family. It admits only an all-zero or
 `pthread_mutex_init(..., NULL)` process-private `PTHREAD_MUTEX_NORMAL` record

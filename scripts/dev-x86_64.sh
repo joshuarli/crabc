@@ -284,6 +284,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-pthread-condattr-clock  run the static x86 crabc-libc condition-attribute clock record slice
   libc-pthread-mutexattr-protocol-query  run the static x86 crabc-libc mutex-attribute protocol-bit query slice
   libc-pthread-mutexattr-robust-query  run the static x86 crabc-libc mutex-attribute robust-bit query slice
+  libc-pthread-mutex-prioceiling-query  run the static x86 crabc-libc direct mutex priority-ceiling query slice
   libc-pthread-mutex-normal  run the static x86 crabc-libc normal pthread-mutex slice
   libc-pthread-rwlock  run the static x86 crabc-libc pthread read/write-lock slice
   libc-pthread-cond-private  run the static x86 crabc-libc private pthread-condition slice
@@ -666,6 +667,14 @@ or any mutex entry. It does not select the setter's futex-PI capability probe,
 priority-inheritance mutex operation, threads, TLS, synchronization,
 cancellation, CRT, loader, sysroot, pthread-family completion, or public x86
 support.
+`libc-pthread-mutex-prioceiling-query` is a separate static project-header
+fixture that first runs through pinned musl, then links only the selected
+archive. It selects only musl's direct `pthread_mutex_getprioceiling` EINVAL
+stub: null or opaque mutex/ceiling pointers return that status and a valid
+ceiling slot remains unchanged because neither pointer is read. It does not
+select the setter, mutex operation/lifecycle, mutex attributes, scheduler
+priority/policy behavior, threads, TLS, synchronization, cancellation, CRT,
+loader, sysroot, pthread-family completion, or public x86 support.
 `libc-pthread-mutex-normal` is a separate static project-header fixture that
 first runs through pinned musl, then links only the selected archive. It
 selects only zero/NULL-attribute process-private `PTHREAD_MUTEX_NORMAL`
@@ -3457,6 +3466,10 @@ run_libc_pthread_mutexattr_protocol_query_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_pthread_mutexattr_protocol_query.sh
 }
 
+run_libc_pthread_mutex_prioceiling_query_probe() {
+    run_in_container bash /workspace/compat/x86_64/run_libc_pthread_mutex_prioceiling_query.sh
+}
+
 run_libc_pthread_detach_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_pthread_detach.sh
 }
@@ -3904,6 +3917,7 @@ case "$command" in
     libc-pthread-condattr-clock) ;;
     libc-pthread-mutexattr-protocol-query) ;;
     libc-pthread-mutexattr-robust-query) ;;
+    libc-pthread-mutex-prioceiling-query) ;;
     libc-pthread-detach) ;;
     libc-thrd-yield) ;;
     libc-memory-sync) ;;
@@ -5036,6 +5050,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "libc-pthread-mutexattr-protocol-query takes no arguments"
         ensure_image
         run_libc_pthread_mutexattr_protocol_query_probe
+        ;;
+    libc-pthread-mutex-prioceiling-query)
+        [ "$#" -eq 0 ] || fail "libc-pthread-mutex-prioceiling-query takes no arguments"
+        ensure_image
+        run_libc_pthread_mutex_prioceiling_query_probe
         ;;
     libc-pthread-detach)
         [ "$#" -eq 0 ] || fail "libc-pthread-detach takes no arguments"

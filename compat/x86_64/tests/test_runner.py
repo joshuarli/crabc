@@ -8046,6 +8046,162 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             runner,
         )
 
+    def test_libc_static_c_abi_pthread_mutex_prioceiling_query_stays_stub_only(
+        self,
+    ) -> None:
+        """Keep musl's unavailable priority-ceiling query out of mutex support."""
+
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        query = (
+            ROOT
+            / "libc"
+            / "src"
+            / "c_abi"
+            / "x86_64"
+            / "pthread_mutex_prioceiling_query.rs"
+        ).read_text(encoding="utf-8")
+        probe_path = (
+            ROOT
+            / "compat"
+            / "x86_64"
+            / "libc_pthread_mutex_prioceiling_query_probe.c"
+        )
+        start_path = (
+            ROOT
+            / "compat"
+            / "x86_64"
+            / "libc_pthread_mutex_prioceiling_query_start.S"
+        )
+        artifact_runner_path = (
+            ROOT
+            / "compat"
+            / "x86_64"
+            / "run_libc_pthread_mutex_prioceiling_query.sh"
+        )
+        c_header_probe = (
+            ROOT / "compat" / "x86_64" / "pthread_c11_header_abi_probe.c"
+        ).read_text(encoding="utf-8")
+        cxx_header_probe = (
+            ROOT / "compat" / "x86_64" / "pthread_c11_header_abi_probe.cpp"
+        ).read_text(encoding="utf-8")
+        header_runner = (
+            ROOT / "compat" / "x86_64" / "run_pthread_c11_header_abi.sh"
+        ).read_text(encoding="utf-8")
+        static_exports = {
+            line
+            for line in (
+                ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+            ).read_text(encoding="utf-8").splitlines()
+            if line and not line.startswith("#")
+        }
+        parity_ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        runner = RUNNER.read_text(encoding="utf-8")
+
+        for path in (probe_path, start_path, artifact_runner_path):
+            self.assertTrue(path.is_file(), f"missing mutex priority-ceiling input: {path}")
+        probe = probe_path.read_text(encoding="utf-8")
+        start = start_path.read_text(encoding="utf-8")
+        artifact_runner = artifact_runner_path.read_text(encoding="utf-8")
+
+        self.assertIn('#[path = "pthread_mutex_prioceiling_query.rs"]', static_root)
+        for required in (
+            "src/thread/pthread_mutex_getprioceiling.c::pthread_mutex_getprioceiling",
+            "returns `EINVAL` without reading either argument",
+            "does not select `pthread_mutex_setprioceiling`",
+            "mutex record, priority ceiling, scheduler state, errno/TLS state",
+        ):
+            self.assertIn(required, query)
+        for forbidden in (
+            "use super",
+            "raw_syscall::",
+            "static_tls::",
+            "pthread_mutex::",
+            "atomic::",
+            "fn pthread_mutex_setprioceiling",
+        ):
+            self.assertNotIn(forbidden, query)
+        for required in (
+            "#include <errno.h>",
+            "#include <pthread.h>",
+            "sizeof(pthread_mutex_t) == 40",
+            "pthread_mutex_getprioceiling",
+            "expect_direct_einval",
+            "CRABC_PTHREAD_MUTEX_PRIOCEILING_QUERY_FREESTANDING",
+        ):
+            self.assertIn(required, probe)
+        for unselected in (
+            "pthread_mutex_setprioceiling(",
+            "pthread_mutex_init(",
+            "pthread_mutex_lock(",
+            "pthread_mutex_unlock(",
+            "pthread_mutex_destroy(",
+        ):
+            self.assertNotIn(unselected, probe)
+        for required in (
+            "crabc_x86_64_pthread_mutex_prioceiling_query_probe",
+            "mov $60, %eax",
+            "syscall",
+        ):
+            self.assertIn(required, start)
+        self.assertNotIn("__crabc_x86_static_tls_bootstrap", start)
+        self.assertNotIn("%fs", start)
+        for required in (
+            "static_c_abi_exports.txt",
+            "run_pthread_c11_header_abi.sh",
+            "-nostdlib -static",
+            "-Wl,-e,_start",
+            "-Wl,--no-undefined",
+            "assert_direct_stub_path",
+            "must remain TLS-free",
+            "src/thread/pthread_mutex_getprioceiling.c",
+            "assert_no_unselected_mutex_exports",
+            "pthread_mutex_setprioceiling",
+            "pthread_mutex_init pthread_mutex_destroy pthread_mutex_lock",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn("--whole-archive", artifact_runner)
+        self.assertIn("pthread_mutex_getprioceiling", static_exports)
+        self.assertTrue(
+            {
+                "pthread_mutex_setprioceiling",
+                "pthread_mutexattr_init",
+                "pthread_mutexattr_destroy",
+            }.isdisjoint(static_exports)
+        )
+        for header_probe in (c_header_probe, cxx_header_probe):
+            for required in (
+                "crabc_pthread_mutex_getprioceiling_signature",
+                "pthread_mutex_getprioceiling signature",
+            ):
+                self.assertIn(required, header_probe)
+        self.assertIn("crabc_force_pthread_mutex_getprioceiling", cxx_header_probe)
+        self.assertIn("pthread_mutex_getprioceiling", header_runner)
+        self.assertIn(
+            "pthread_mutex_unlock|pthread_mutex_getprioceiling|pthread_mutexattr_getprotocol",
+            header_runner,
+        )
+        self.assertIn(
+            'id = "static-c-pthread-mutex-prioceiling-query"', parity_ledger
+        )
+        self.assertIn(
+            'command = "./scripts/dev-x86_64.sh libc-pthread-mutex-prioceiling-query"',
+            parity_ledger,
+        )
+        self.assertIn("run_libc_pthread_mutex_prioceiling_query_probe()", runner)
+        self.assertIn(
+            "/workspace/compat/x86_64/run_libc_pthread_mutex_prioceiling_query.sh",
+            runner,
+        )
+        self.assertIn("    libc-pthread-mutex-prioceiling-query) ;;", runner)
+        self.assertIn(
+            '    libc-pthread-mutex-prioceiling-query)\n        [ "$#" -eq 0 ] || fail "libc-pthread-mutex-prioceiling-query takes no arguments"',
+            runner,
+        )
+
     def test_libc_static_c_abi_pthread_normal_mutex_artifact_stays_private(
         self,
     ) -> None:

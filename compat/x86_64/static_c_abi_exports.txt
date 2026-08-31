@@ -631,6 +631,7 @@ pthread_join
 pthread_key_create
 pthread_key_delete
 pthread_mutex_destroy
+pthread_mutex_getprioceiling
 pthread_mutex_init
 pthread_mutex_lock
 pthread_mutex_trylock

@@ -3193,6 +3193,19 @@ inheritance mutex behavior, futex-PI support, mutex initialization/locking/
 destruction, threads, TLS, synchronization, cancellation, CRT, loader,
 sysroot, family completion, promotion, or public x86 support.
 
+`libc-pthread-mutex-prioceiling-query` is a twenty-eighth separately recorded
+private static `verified_artifact` under the same still-planned
+`libc.pthread-tls` family. Its project-header C body first runs against pinned
+musl and then through a `-nostdlib -static` candidate. It selects only musl's
+unavailable `pthread_mutex_getprioceiling` direct `EINVAL`: null or opaque
+mutex/ceiling pointer combinations return that status, and a supplied ceiling
+slot remains unchanged because neither pointer is read. The fixture makes no
+mutex initializer, lock, unlock, destruction, setter, or scheduler call. It
+therefore does not establish priority-protect mutex behavior, priority-ceiling
+state, `pthread_mutex_setprioceiling`, mutex attributes/lifecycle, scheduler
+policy/priority behavior, threads, TLS, synchronization, cancellation, CRT,
+loader, sysroot, family completion, promotion, or public x86 support.
+
 `libc-pthread-mutex-normal` is a tenth separately recorded private static
 `verified_artifact` under the same still-planned `libc.pthread-tls` family.
 Its project-header C body first runs against pinned musl and then through a
