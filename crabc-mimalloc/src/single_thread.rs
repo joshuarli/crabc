@@ -37859,6 +37859,56 @@ impl TheapCollectAbandonCallbacks for ProductionOwnerExitCallbacks<'_, '_, '_, '
 }
 
 impl PageAllocatorEngine<'static, 'static, MainStaticProcessPageSession> {
+    /// Activates the process-lifetime static owner over ranges that this
+    /// engine will own directly.
+    ///
+    /// Unlike [`Self::activate_main_static`], this entry does not require a
+    /// process-wide [`ProcessPageMapMutationLease`]. The caller must instead
+    /// own every PageMap range this engine registers, reads, mutates, and
+    /// unregisters; it must keep each page's metadata/backing live until
+    /// lookup users are quiescent and unregister that range before release or
+    /// reuse. Other owners may operate only on disjoint ranges. The initial
+    /// persistent native owner uses this after its one-time arena/setup
+    /// transition so an unrelated W03 terminal release can take its own short
+    /// exact mutation boundary.
+    ///
+    /// # Safety
+    ///
+    /// `session`, `arena`, and `page_map` must name the same process image.
+    /// The caller must uphold the exact-owned-range PageMap contract above for
+    /// this engine's complete lifetime, including every scoped producer.
+    #[cfg(not(test))]
+    pub(crate) unsafe fn activate_main_static_for_owned_ranges(
+        session: MainStaticProcessPageSession,
+        arena: ArenaView<'static>,
+        requested_arena: ArenaId,
+        page_map: &'static PageMap,
+    ) -> Self {
+        Self {
+            session,
+            arena,
+            requested_arena,
+            page_map,
+            thread_sequence: 0,
+            pending_os_release: None,
+            collection_poison: None,
+            page_commit_poison: false,
+            #[cfg(test)]
+            page_free_collect_failure_once: PageCollectFailureInjection::None,
+            #[cfg(test)]
+            page_release_after_page_map_unregister_failure_once: false,
+            #[cfg(test)]
+            aggregate_abandon_after_queue_detach_failure_once: false,
+            #[cfg(test)]
+            last_page_to_full: None,
+            #[cfg(test)]
+            page_commit_on_demand: false,
+            #[cfg(test)]
+            page_area_commit_lease: None,
+            shutdown_complete: false,
+        }
+    }
+
     /// Separates one live ticket-zero engine from its process-lifetime static
     /// session without collecting, abandoning, or releasing any source page.
     ///
@@ -37897,12 +37947,14 @@ impl PageAllocatorEngine<'static, 'static, MainStaticProcessPageSession> {
     /// completely empty.
     ///
     /// This is intentionally narrower than a general session-reuse API. The
-    /// caller must retain the returned process-lifetime session and separately
-    /// complete its [`crate::process_page_map::ProcessPageMapMutationLease`]
-    /// before another source page lifecycle can begin. The engine's arena
-    /// state is already empty at this point; reopening static teardown remains
-    /// impossible because the permanent session never leaves its process-page
-    /// state.
+    /// caller must retain the returned process-lifetime session and preserve
+    /// the PageMap boundary that activated this engine: the retired test
+    /// scheduler completes its paired
+    /// [`crate::process_page_map::ProcessPageMapMutationLease`], while the
+    /// production persistent owner retains its exact-owned-range contract.
+    /// The engine's arena state is already empty at this point; reopening
+    /// static teardown remains impossible because the permanent session never
+    /// leaves its process-page state.
     pub(crate) fn finish_runtime_ticket_zero(
         self,
     ) -> Result<MainStaticProcessPageSession, Self> {

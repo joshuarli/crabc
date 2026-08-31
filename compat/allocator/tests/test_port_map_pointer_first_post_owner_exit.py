@@ -239,6 +239,37 @@ class PointerFirstPostOwnerExitPortMapTests(unittest.TestCase):
             hashlib.sha256(PORT_MAP_PATH.read_bytes()).hexdigest(),
         )
 
+    def test_live_initial_owner_releases_setup_before_disjoint_w03(self) -> None:
+        record = self.item("src/free.c", "pointer-first-native-free-page-state-dispatch")
+        mapping = record["rust_module"] + record["rust_item"]
+        for rust_fact in (
+            "ProcessPageArenaLease::page_map_for_owned_ranges",
+            "PageAllocatorEngine::activate_main_static_for_owned_ranges",
+        ):
+            self.assertIn(rust_fact, mapping)
+
+        scope = record["intentional_difference"]
+        for invariant in (
+            "short reservation/setup transition",
+            "finishes that setup lease before the engine can make a client visible",
+            "no global PageMap lifecycle lock merely to touch already-owned pages",
+            "disjoint W03 terminal release",
+        ):
+            self.assertIn(invariant, scope)
+
+        fixture = ROOT / "tests/fixtures/native_mimalloc_initial_live_owner_exit_test.c"
+        harness = ROOT / "tests/native_mimalloc_initial_live_owner_exit.rs"
+        self.assertTrue(fixture.is_file())
+        self.assertTrue(harness.is_file())
+        self.assertIn("tests/fixtures/native_mimalloc_initial_live_owner_exit_test.c", record["tests"])
+        self.assertIn("tests/native_mimalloc_initial_live_owner_exit.rs", record["tests"])
+        fixture_source = fixture.read_text(encoding="utf-8")
+        self.assertIn("owner_worker", fixture_source)
+        self.assertIn("release_worker", fixture_source)
+        harness_source = harness.read_text(encoding="utf-8")
+        self.assertIn("run_with_timeout", harness_source)
+        self.assertIn("Duration::from_secs(5)", harness_source)
+
 
 if __name__ == "__main__":
     unittest.main()

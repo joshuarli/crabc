@@ -554,18 +554,25 @@ impl<'main> MainStaticFirstArenaPageAllocator<'main> {
 /// intentionally has no process finish transition: source process exit and
 /// complete page-bearing fork ownership are not implemented, so dropping or
 /// closing the runtime owner would turn live process state into a false
-/// reusable attachment. An all-free active engine may return only its private
-/// PageMap mutation lease; the same permanent session and published first
-/// arena remain retained and may reactivate sequentially on ticket zero.
+/// reusable attachment. An all-free active engine retains the same permanent
+/// session and published first arena, which may reactivate sequentially on
+/// ticket zero. The retired unit-test scheduler separately returns its legacy
+/// PageMap mutation lease before that dormant state.
 #[must_use = "the permanent ticket-zero runtime page owner must remain retained for process life"]
 pub(crate) struct MainStaticRuntimeFirstArenaPageAllocator {
     state: MainStaticRuntimeFirstArenaPageAllocatorState,
 }
 
-/// The active ticket-zero engine together with the one long PageMap lease it
-/// owns while the initial thread is running an ordinary allocator operation.
+/// The active ticket-zero engine and its exact owned PageMap ranges.
+///
+/// Production retains no process-wide PageMap mutation lease beside a live
+/// initial client: its engine owns and serializes only the ranges it registers,
+/// reads, mutates, and unregisters. The retired unit-test scheduler below
+/// still carries its historical long lease so its parked-engine fixtures keep
+/// their original capability boundary.
 struct MainStaticRuntimeActiveEngine {
     engine: PageAllocatorEngine<'static, 'static, MainStaticProcessPageSession>,
+    #[cfg(test)]
     page_map_lifecycle: ProcessPageMapMutationLease,
     page_map: crate::process_page_map::ProcessPageMapLease,
     arena_storage: &'static ProcessSharedArenaStorage,
@@ -615,9 +622,9 @@ enum MainStaticRuntimeFirstArenaPageAllocatorState {
     #[cfg(test)]
     ParkedActive(MainStaticRuntimeParkedEngine),
     /// The source page image is empty after a runtime free. The permanent
-    /// session and first arena remain process-owned, but the Rust-only long
-    /// PageMap exclusion is available to one other explicit sequential page
-    /// lifecycle before ticket zero reactivates.
+    /// session and first arena remain process-owned. Production can reactivate
+    /// its own disjoint ranges directly; the test-only retired scheduler has
+    /// returned its historical long PageMap exclusion before reaching here.
     DormantExistingArena {
         session: MainStaticProcessPageSession,
         page_map: crate::process_page_map::ProcessPageMapLease,
@@ -975,17 +982,17 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
         }
     }
 
-    /// Whether this permanent ticket-zero owner contains no active engine,
-    /// PageMap mutation lease, or caller-visible native allocation.
+    /// Whether this permanent ticket-zero owner contains no active engine or
+    /// caller-visible native allocation.
     ///
     /// The runtime asks this only after its fork-admission gate has excluded
     /// every later owner and after its own `READY` state has excluded a
     /// current ticket-zero operation.  `AwaitingFreshPage` has never mapped
     /// the first arena; `DormantExistingArena` reached the source all-free
     /// finish and retains only the process-lifetime session and arena
-    /// identity.  Both copied images are safe to continue independently in a
-    /// quiescent child.  An `Active` engine may hold a source page-map lease
-    /// or caller client, so it deliberately remains outside this narrow fork
+    /// identity. Both copied images are safe to continue independently in a
+    /// quiescent child. An `Active` engine may hold a caller client and exact
+    /// PageMap entries, so it deliberately remains outside this narrow fork
     /// contract.
     #[inline]
     pub(crate) fn is_quiescent_for_fork(&self) -> bool {
@@ -1000,10 +1007,12 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
     /// ticket-zero owner's source arena/page-map transition.
     ///
     /// Ordinary and aligned allocation share this lifecycle: a first request
-    /// may reserve exactly one source default arena, a dormant owner may only
-    /// reactivate that same arena, and every active request retains the long
-    /// PageMap lease beside the engine. The operation itself selects only the
-    /// source allocation primitive; it cannot change the owner state machine.
+    /// may reserve exactly one source default arena, and a dormant owner may
+    /// only reactivate that same arena. Production releases its short setup
+    /// lease before an active engine can publish a client, then relies on the
+    /// engine's exact-owned-range PageMap contract. The operation itself
+    /// selects only the source allocation primitive; it cannot change the
+    /// owner state machine.
     fn allocate_with(
         &mut self,
         request: usize,
@@ -1118,6 +1127,7 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
                         return None;
                     }
                 };
+                #[cfg(test)]
                 let page_map_ref = match page_map_lifecycle.page_map() {
                     Ok(page_map_ref) => page_map_ref,
                     Err(_) => {
@@ -1127,12 +1137,45 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
                         return None;
                     }
                 };
+                #[cfg(not(test))]
+                let page_map_ref = match unsafe { pair.page_map_for_owned_ranges() } {
+                    Ok(page_map_ref) => page_map_ref,
+                    Err(_) => {
+                        let _ = page_map_lifecycle.finish();
+                        session.retain_terminal();
+                        self.state = MainStaticRuntimeFirstArenaPageAllocatorState::Retained;
+                        return None;
+                    }
+                };
+                #[cfg(not(test))]
+                if page_map_lifecycle.finish().is_err() {
+                    // No page registration or caller-visible client exists
+                    // yet. The failed Release has already poisoned the root,
+                    // so retain the permanent session instead of exposing a
+                    // fresh engine without its completed setup boundary.
+                    session.retain_terminal();
+                    self.state = MainStaticRuntimeFirstArenaPageAllocatorState::Retained;
+                    return None;
+                }
                 // SAFETY: the permanent session just revalidated ticket-zero
-                // roots and an empty static Theap; `pair` names the same
-                // already-published first arena, while the new mutation lease
-                // again excludes every plain PageMap operation.
+                // roots and an empty static Theap. Production owns every map
+                // range this engine can touch; the test-only scheduler keeps
+                // its legacy complete-lifecycle lease.
+                #[cfg(test)]
                 let mut engine = unsafe {
                     PageAllocatorEngine::activate_main_static(
+                        session,
+                        arena,
+                        ArenaId::none(),
+                        page_map_ref,
+                    )
+                };
+                // SAFETY: the paired process facts establish one process
+                // image. This engine alone owns each range it registers and
+                // keeps its metadata live until it unregisters that range.
+                #[cfg(not(test))]
+                let mut engine = unsafe {
+                    PageAllocatorEngine::activate_main_static_for_owned_ranges(
                         session,
                         arena,
                         ArenaId::none(),
@@ -1143,6 +1186,7 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
                 self.state = MainStaticRuntimeFirstArenaPageAllocatorState::Active(
                     MainStaticRuntimeActiveEngine {
                         engine,
+                        #[cfg(test)]
                         page_map_lifecycle,
                         page_map,
                         arena_storage,
@@ -1234,6 +1278,7 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
                         return None;
                     }
                 };
+                #[cfg(test)]
                 let page_map_ref = match page_map_lifecycle.page_map() {
                     Ok(page_map_ref) => page_map_ref,
                     Err(_) => {
@@ -1243,12 +1288,45 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
                         return None;
                     }
                 };
+                #[cfg(not(test))]
+                let page_map_ref = match unsafe { pair.page_map_for_owned_ranges() } {
+                    Ok(page_map_ref) => page_map_ref,
+                    Err(_) => {
+                        let _ = page_map_lifecycle.finish();
+                        session.retain_terminal();
+                        self.state = MainStaticRuntimeFirstArenaPageAllocatorState::Retained;
+                        return None;
+                    }
+                };
+                #[cfg(not(test))]
+                if page_map_lifecycle.finish().is_err() {
+                    // The default arena is published, but no page has been
+                    // registered or client returned. A failed setup release
+                    // poisons the root, so keep the permanent session
+                    // terminal rather than exposing that arena again.
+                    session.retain_terminal();
+                    self.state = MainStaticRuntimeFirstArenaPageAllocatorState::Retained;
+                    return None;
+                }
                 // SAFETY: the permanent session revalidated the exact
-                // ticket-zero roots/images immediately before mapping, and
-                // this owner keeps the map lifecycle beside the engine while
-                // the runtime engine is active.
+                // ticket-zero roots/images immediately before mapping. The
+                // test-only scheduler retains its legacy complete-lifecycle
+                // lease beside the engine.
+                #[cfg(test)]
                 let mut engine = unsafe {
                     PageAllocatorEngine::activate_main_static(
+                        session,
+                        arena,
+                        ArenaId::none(),
+                        page_map_ref,
+                    )
+                };
+                // SAFETY: the paired process facts establish one process
+                // image. This engine alone owns each range it registers and
+                // keeps its metadata live until it unregisters that range.
+                #[cfg(not(test))]
+                let mut engine = unsafe {
+                    PageAllocatorEngine::activate_main_static_for_owned_ranges(
                         session,
                         arena,
                         ArenaId::none(),
@@ -1259,6 +1337,7 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
                 self.state = MainStaticRuntimeFirstArenaPageAllocatorState::Active(
                     MainStaticRuntimeActiveEngine {
                         engine,
+                        #[cfg(test)]
                         page_map_lifecycle,
                         page_map,
                         arena_storage,
@@ -1556,9 +1635,10 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
     /// Completes an exact free against a directly held active ticket-zero
     /// engine without suspending or resuming it.
     ///
-    /// `active` owns the permanent session and long PageMap mutation lease.
-    /// `block` must be current in that engine and may not be freed, remotely
-    /// transferred, or accessed concurrently through another path.
+    /// `active` owns the permanent session and every exact PageMap range its
+    /// engine may touch. `block` must be current in that engine and may not
+    /// be freed, remotely transferred, or accessed concurrently through
+    /// another path.
     unsafe fn free_active_engine(
         &mut self,
         mut active: MainStaticRuntimeActiveEngine,
@@ -1571,45 +1651,78 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
             return Err(MainStaticRuntimeFirstArenaPageAllocatorFreeError::Free(error));
         }
 
-        // The long PageMap lease is a Rust aliasing boundary, not a source
-        // process-lifetime allocation claim. Return it only after the engine
-        // proves that every page, queue, direct slot, retired record, and
+        // The exact-owned-range contract stays with a nonempty engine until
+        // it proves that every page, queue, direct slot, retired record, and
         // pending OS release is gone. A nonempty engine remains active; no
-        // allocation path can overlap it.
+        // allocation path can overlap it. Only the retired test scheduler
+        // additionally returns its old long PageMap lease at this boundary.
+        #[cfg(test)]
         let MainStaticRuntimeActiveEngine {
             engine,
             page_map_lifecycle,
             page_map,
             arena_storage,
         } = active;
+        #[cfg(not(test))]
+        let MainStaticRuntimeActiveEngine {
+            engine,
+            page_map,
+            arena_storage,
+        } = active;
         match engine.finish_runtime_ticket_zero() {
             Err(engine) => {
-                self.state = MainStaticRuntimeFirstArenaPageAllocatorState::Active(
-                    MainStaticRuntimeActiveEngine {
-                        engine,
-                        page_map_lifecycle,
-                        page_map,
-                        arena_storage,
-                    },
-                );
+                #[cfg(test)]
+                {
+                    self.state = MainStaticRuntimeFirstArenaPageAllocatorState::Active(
+                        MainStaticRuntimeActiveEngine {
+                            engine,
+                            page_map_lifecycle,
+                            page_map,
+                            arena_storage,
+                        },
+                    );
+                }
+                #[cfg(not(test))]
+                {
+                    self.state = MainStaticRuntimeFirstArenaPageAllocatorState::Active(
+                        MainStaticRuntimeActiveEngine {
+                            engine,
+                            page_map,
+                            arena_storage,
+                        },
+                    );
+                }
             }
-            Ok(session) => match page_map_lifecycle.finish() {
-                Ok(()) => {
+            Ok(session) => {
+                #[cfg(test)]
+                {
+                    match page_map_lifecycle.finish() {
+                        Ok(()) => {
+                            self.state = MainStaticRuntimeFirstArenaPageAllocatorState::DormantExistingArena {
+                                session,
+                                page_map,
+                                arena_storage,
+                            };
+                        }
+                        Err(_) => {
+                            // The source free already completed. A failed private
+                            // wake after releasing the guard poisons the root, so
+                            // retain the permanent session rather than reconstructing
+                            // a false active lifecycle.
+                            session.retain_terminal();
+                            self.state = MainStaticRuntimeFirstArenaPageAllocatorState::Retained;
+                        }
+                    }
+                }
+                #[cfg(not(test))]
+                {
                     self.state = MainStaticRuntimeFirstArenaPageAllocatorState::DormantExistingArena {
                         session,
                         page_map,
                         arena_storage,
                     };
                 }
-                Err(_) => {
-                    // The source free already completed. A failed private
-                    // wake after releasing the guard poisons the root, so
-                    // retain the permanent session rather than reconstructing
-                    // a false active lifecycle.
-                    session.retain_terminal();
-                    self.state = MainStaticRuntimeFirstArenaPageAllocatorState::Retained;
-                }
-            },
+            }
         }
         Ok(())
     }
