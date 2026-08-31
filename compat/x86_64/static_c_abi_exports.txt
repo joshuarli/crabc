@@ -461,6 +461,7 @@ mbsinit
 mbsrtowcs
 mbstowcs
 mbtowc
+memccpy
 memchr
 memcmp
 memcpy

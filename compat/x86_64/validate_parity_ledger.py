@@ -695,6 +695,7 @@ EXPECTED_HEADER_LAYOUT_PROBES = {
     "immediate-termination": "./scripts/dev-x86_64.sh immediate-termination-header-abi",
     "callback-algorithms": "./scripts/dev-x86_64.sh callback-algorithms-header-abi",
     "ffs": "./scripts/dev-x86_64.sh ffs-header-abi",
+    "memccpy": "./scripts/dev-x86_64.sh memccpy-header-abi",
     "byte-strings": "./scripts/dev-x86_64.sh byte-strings-header-abi",
     "memory-search": "./scripts/dev-x86_64.sh memory-search-header-abi",
     "string-copy": "./scripts/dev-x86_64.sh string-copy-header-abi",
@@ -822,6 +823,11 @@ EXPECTED_HEADER_LAYOUT_SOURCES = {
         "compat/x86_64/ffs_header_abi_probe.c",
         "compat/x86_64/ffs_header_abi_probe.cpp",
         "compat/x86_64/run_ffs_header_abi.sh",
+    ),
+    "memccpy": (
+        "compat/x86_64/memccpy_header_abi_probe.c",
+        "compat/x86_64/memccpy_header_abi_probe.cpp",
+        "compat/x86_64/run_memccpy_header_abi.sh",
     ),
     "byte-strings": (
         "compat/x86_64/byte_strings_header_abi_probe.c",
@@ -1050,6 +1056,8 @@ BYTE_STRING_SYMBOLS = (
 RANDOM_ENTROPY_SYMBOLS = ("getrandom", "getentropy")
 
 MEMORY_SEARCH_SYMBOLS = ("memchr", "memrchr", "memmem")
+
+MEMCCPY_SYMBOLS = ("memccpy",)
 
 STRING_COPY_SYMBOLS = (
     "stpcpy",
@@ -10862,6 +10870,330 @@ def require_memory_search_artifact(family: Mapping[str, Any]) -> None:
         {entry["command"] for entry in evidence}
         == {"./scripts/dev-x86_64.sh libc-memory-search"},
         "static-c-memory-search must use the closed libc-memory-search command",
+    )
+
+
+def require_memccpy_artifact(family: Mapping[str, Any]) -> None:
+    """Keep one source-closed byte-transfer leaf separate from memory families."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.posix-runtime].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [entry for entry in artifacts if entry.get("id") == "static-c-memccpy"]
+    require(
+        len(matching) == 1,
+        "libc.posix-runtime must contain exactly one static-c-memccpy artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-memccpy must not promote libc.posix-runtime",
+    )
+    artifact = matching[0]
+    require(
+        "capabilities" not in artifact,
+        "static-c-memccpy must not claim a general runtime capability",
+    )
+    description = artifact.get("description")
+    require(isinstance(description, str), "static-c-memccpy needs a description")
+    for phrase in (
+        "Private native x86 static `memccpy` bounded marker-terminated byte-transfer C ABI artifact",
+        "still-planned `libc.posix-runtime`",
+        "archive-free `-nostdlib -static` candidate",
+        "exactly one extracted `memccpy` object",
+        "never `libc.a`",
+        "equal-low-address-bit byte prefix",
+        "`ONES`/`HIGHS` word predicate",
+        "low unsigned byte",
+        "C `restrict` nonoverlap",
+        "`memcpy`/`memmove`/`memset`/`mempcpy`",
+        "stdio including current f400 work",
+        "resolver/DNS/netdb",
+        "public x86 support",
+    ):
+        require(phrase in description, f"static-c-memccpy description omits {phrase}")
+
+    owners = set(
+        nonempty_strings(artifact.get("source_owners"), "static-c-memccpy.source_owners")
+    )
+    for owner in (
+        "compat/upstreams.toml",
+        "compat/abi/musl-1.2.6/aarch64/libc.a.static.tsv",
+        "compat/x86_64/headers-layouts.toml",
+        "libc/Cargo.toml",
+        "libc/src/lib.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/memccpy.rs",
+        "include/string.h",
+        "compat/x86_64/memccpy_header_abi_probe.c",
+        "compat/x86_64/memccpy_header_abi_probe.cpp",
+        "compat/x86_64/run_memccpy_header_abi.sh",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/libc_memccpy_probe.c",
+        "compat/x86_64/libc_memccpy_start.S",
+        "compat/x86_64/run_libc_memccpy.sh",
+        "compat/x86_64/aarch64_parity_inventory.py",
+        "compat/x86_64/aarch64_parity_inventory.json",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/README.md",
+        "STATUS.md",
+        "x86-64.md",
+        "scripts/dev-x86_64.sh",
+        "scripts/check_structure.py",
+    ):
+        require(owner in owners, f"static-c-memccpy source owners omit {owner}")
+
+    prerequisites = nonempty_strings(
+        artifact.get("x86_abi_prerequisites"), "static-c-memccpy.x86_abi_prerequisites"
+    )
+    require(
+        any(
+            "SysV AMD64 LP64" in item
+            and "void *memccpy(void *restrict, const void *restrict, int, size_t)" in item
+            and "rdi/rsi/edx/rcx" in item
+            and "rax" in item
+            and "Nonzero counts" in item
+            and "do not overlap" in item
+            for item in prerequisites
+        ),
+        "static-c-memccpy must retain its caller-owned four-argument ABI",
+    )
+    require(
+        any(
+            "9fa28ece75d8a2191de7c5bb53bed224c5947417" in item
+            and "src/string/memccpy.c::memccpy" in item
+            and "memccpy.lo" in item
+            and "ALIGN" in item
+            and "ONES/HIGHS/HASZERO" in item
+            and "c=(unsigned char)c" in item
+            for item in prerequisites
+        ),
+        "static-c-memccpy must retain its pinned-musl source mapping",
+    )
+    require(
+        any(
+            "exactly one extracted `memccpy` object" in item
+            and "never libc.a" in item
+            and "no interpreter" in item
+            and "TLS/errno" in item
+            and "call, syscall" in item
+            for item in prerequisites
+        ),
+        "static-c-memccpy must retain its archive-free static closure",
+    )
+
+    headers = nonempty_strings(
+        artifact.get("x86_header_prerequisites"),
+        "static-c-memccpy.x86_header_prerequisites",
+    )
+    require(
+        any(
+            "<string.h>" in item
+            and "void *memccpy(void *restrict, const void *restrict, int, size_t)" in item
+            and "X/Open/GNU/BSD" in item
+            and "strict/POSIX hiding" in item
+            and "unmangled C++ C linkage" in item
+            for item in headers
+        ),
+        "static-c-memccpy must retain its C/C++ string declaration boundary",
+    )
+
+    exports = set(
+        static_c_abi_export_names(
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        )
+    )
+    require(
+        set(MEMCCPY_SYMBOLS) <= exports,
+        "static-c-memccpy must retain its selected export",
+    )
+
+    static_root = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+    ).read_text(encoding="utf-8")
+    require(
+        '#[path = "memccpy.rs"]\nmod memccpy;' in static_root,
+        "x86 static C ABI must compose the memccpy leaf",
+    )
+    implementation = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "memccpy.rs"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+        "src/string/memccpy.c::memccpy",
+        "const ONES",
+        "const HIGHS",
+        "fn has_zero_byte",
+        "source.cast::<usize>().read()",
+        "destination.cast::<usize>().write(word)",
+        "marker as u8",
+        'pub unsafe extern "C" fn memccpy',
+        "must not overlap",
+    ):
+        require(snippet in implementation, f"memccpy leaf omits {snippet}")
+    exported_functions = set(
+        re.findall(
+            r'(?m)^pub\s+unsafe\s+extern\s+"C"\s+fn\s+(\w+)\s*\(', implementation
+        )
+    )
+    require(
+        exported_functions == set(MEMCCPY_SYMBOLS),
+        "memccpy leaf must export only memccpy",
+    )
+    for forbidden in (
+        "static mut",
+        "raw_syscall",
+        "__errno_location",
+        "__h_errno_location",
+        "getaddrinfo",
+        "socket(",
+        "std::",
+        "alloc::",
+        "crabc_core",
+        "crabc_mimalloc",
+        "fn memcpy",
+        "fn memmove",
+        "fn memset",
+        "fn mempcpy",
+    ):
+        require(forbidden not in implementation, f"memccpy leaf widens into {forbidden}")
+
+    header_c = (
+        ROOT / "compat" / "x86_64" / "memccpy_header_abi_probe.c"
+    ).read_text(encoding="utf-8")
+    header_cpp = (
+        ROOT / "compat" / "x86_64" / "memccpy_header_abi_probe.cpp"
+    ).read_text(encoding="utf-8")
+    header_runner = (
+        ROOT / "compat" / "x86_64" / "run_memccpy_header_abi.sh"
+    ).read_text(encoding="utf-8")
+    for snippet in ("#include <string.h>", "memccpy_signature", "CRABC_EXPECT_MEMCCPY"):
+        require(snippet in header_c, f"memccpy C header probe omits {snippet}")
+        require(snippet in header_cpp, f"memccpy C++ header probe omits {snippet}")
+    for snippet in (
+        "_XOPEN_SOURCE=700",
+        "_GNU_SOURCE",
+        "_BSD_SOURCE",
+        "CRABC_REQUIRE_MEMCCPY_HIDDEN",
+        "_POSIX_SOURCE",
+        "_POSIX_C_SOURCE=200809L",
+        "nm --undefined-only",
+        "_Z.*memccpy",
+        "project C memccpy header contract drifted",
+    ):
+        require(snippet in header_runner, f"memccpy header runner omits {snippet}")
+
+    fixture = (
+        ROOT / "compat" / "x86_64" / "libc_memccpy_probe.c"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "#include <string.h>",
+        "memccpy_signature",
+        "0x100",
+        "-1",
+        "test_word_and_alignment_paths",
+        "test_source_page_edge",
+        "PROT_NONE",
+        "CRABC_MEMCCPY_FREESTANDING",
+    ):
+        require(snippet in fixture, f"memccpy fixture omits {snippet}")
+    start = (
+        ROOT / "compat" / "x86_64" / "libc_memccpy_start.S"
+    ).read_text(encoding="utf-8")
+    for snippet in ("crabc_x86_64_memccpy_probe", "mov $60, %eax"):
+        require(snippet in start, f"memccpy static entry omits {snippet}")
+    require("ARCH_SET_FS" not in start, "memccpy static entry must not bootstrap TLS")
+
+    runner = (
+        ROOT / "compat" / "x86_64" / "run_libc_memccpy.sh"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "run_memccpy_header_abi.sh",
+        "AARCH64_STATIC_TSV",
+        "memccpy.lo",
+        "memccpy.c",
+        "assert_selected_c_abi_surface",
+        "extract_selected_member",
+        "memccpy archive member also defines a byte/string sibling",
+        "-nostdlib -static",
+        '"$selected_member" -o "$candidate"',
+        "candidate unexpectedly selects TLS",
+        "never from libc.a",
+        "memcpy memmove memset memcmp bcmp memchr memrchr memmem",
+        "__errno_location __h_errno_location h_errno getaddrinfo socket",
+        "call|syscall",
+    ):
+        require(snippet in runner, f"memccpy runner omits {snippet}")
+    require(
+        '"$archive" -o "$candidate"' not in runner,
+        "memccpy final candidate must not link libc.a",
+    )
+
+    oracle = artifact.get("oracle")
+    require(isinstance(oracle, list), "static-c-memccpy needs oracle evidence")
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "c-posix"
+            and isinstance(entry.get("role"), str)
+            and "src/string/memccpy.c::memccpy" in entry["role"]
+            and "ONES/HIGHS/HASZERO" in entry["role"]
+            and "low-eight-bit marker" in entry["role"]
+            for entry in oracle
+        ),
+        "static-c-memccpy must retain its pinned-musl codec oracle",
+    )
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "elf-abi"
+            and isinstance(entry.get("role"), str)
+            and "LP64" in entry["role"]
+            and "archive-free static final-ELF boundary" in entry["role"]
+            for entry in oracle
+        ),
+        "static-c-memccpy must retain its static ELF ABI oracle",
+    )
+
+    evidence = artifact.get("native_evidence")
+    require(isinstance(evidence, list), "static-c-memccpy needs evidence")
+    require(
+        {entry.get("command") for entry in evidence if isinstance(entry, Mapping)}
+        == {"./scripts/dev-x86_64.sh libc-memccpy"},
+        "static-c-memccpy must use the closed libc-memccpy command",
+    )
+    scope = evidence[0].get("scope")
+    require(isinstance(scope, str), "static-c-memccpy evidence needs a scope")
+    for phrase in (
+        "Pinned-musl/project C/C++ <string.h> header proof",
+        "true x86 `-nostdlib -static` candidate",
+        "`memccpy.lo` source mapping",
+        "one extracted `memccpy` object",
+        "never `libc.a`",
+        "low-eight-bit marker truncation",
+        "return-after-marker/null behavior",
+        "equal and mismatched alignment paths",
+        "page-edge bounded source range",
+        "no interpreter/DT_NEEDED/unresolved symbol/dynamic-TLS model",
+        "no calls/syscalls",
+        "memcpy/memmove/memset/mempcpy",
+        "overlap support",
+        "errno/TLS",
+        "stdio including f400 work",
+        "resolver/DNS/netdb",
+        "public x86 support",
+    ):
+        require(phrase in scope, f"static-c-memccpy evidence omits {phrase}")
+
+    dispatch = (ROOT / "scripts" / "dev-x86_64.sh").read_text(encoding="utf-8")
+    require(
+        "memccpy-header-abi)" in dispatch
+        and "run_memccpy_header_abi.sh" in dispatch
+        and "libc-memccpy)" in dispatch
+        and "run_libc_memccpy.sh" in dispatch,
+        "memccpy dispatcher bindings are missing",
     )
 
 
@@ -33689,6 +34021,7 @@ def validate_ledger(
     require_byte_string_artifact(by_id["libc.posix-runtime"])
     require_random_entropy_artifact(by_id["libc.posix-runtime"])
     require_memory_search_artifact(by_id["libc.posix-runtime"])
+    require_memccpy_artifact(by_id["libc.posix-runtime"])
     require_string_copy_artifact(by_id["libc.posix-runtime"])
     require_error_strings_artifact(by_id["libc.c-abi-compat"])
     require_error_strsignal_slice(by_id["libc.c-abi-compat"])

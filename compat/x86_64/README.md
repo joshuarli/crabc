@@ -254,6 +254,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh immediate-termination-header-abi
 ./scripts/dev-x86_64.sh callback-algorithms-header-abi
 ./scripts/dev-x86_64.sh ffs-header-abi
+./scripts/dev-x86_64.sh memccpy-header-abi
 ./scripts/dev-x86_64.sh byte-strings-header-abi
 ./scripts/dev-x86_64.sh memory-search-header-abi
 ./scripts/dev-x86_64.sh string-copy-header-abi
@@ -462,6 +463,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-ns-skiprr
 ./scripts/dev-x86_64.sh libc-socket-transport
 ./scripts/dev-x86_64.sh libc-socket-messages
+./scripts/dev-x86_64.sh libc-memccpy
 ./scripts/dev-x86_64.sh libc-byte-strings
 ./scripts/dev-x86_64.sh libc-process-globals-getopt
 ./scripts/dev-x86_64.sh libc-auxv-observation
@@ -1084,6 +1086,12 @@ declarations for `ffs`, `ffsl`, and `ffsll`. It verifies their XOPEN/GNU/BSD
 feature gate, strict/POSIX hiding, exact signatures, and unmangled C++ symbol
 references. This is compile-only header evidence; it does not select C text,
 general bit operations, or `crabc-libc`.
+
+`memccpy-header-abi` compiles project-first and pinned-musl C/C++ `<string.h>`
+declarations for `memccpy(void *restrict, const void *restrict, int, size_t)`.
+It proves X/Open/GNU/BSD visibility, strict/POSIX hiding, the exact pointer
+signature, and unmangled C++ C linkage. This is header-only evidence, not a
+general memory or C-string capability.
 
 `byte-strings-header-abi` compiles project-first and pinned-musl C/C++
 `<string.h>` declarations for the closed byte-string set: `index`, `rindex`,
@@ -3949,6 +3957,18 @@ canonicalization, directory streams, xattr/ACL, mount/namespace policy,
 cancellation, dynamic runtime, header/runtime family completion, promotion,
 full x86-64 parity, and public x86 support.
 
+`libc-memccpy` is a separately recorded `static-c-memccpy`
+`verified_artifact` inside still-planned `libc.posix-runtime`, not a general
+memory or C-string capability. Its project-header fixture runs through pinned
+musl 1.2.6, then through a true archive-free `-nostdlib -static` candidate
+linked from exactly one extracted `memccpy` object, never `libc.a`.
+It preserves musl `src/string/memccpy.c`'s equally misaligned byte prefix and
+`ONES`/`HIGHS` marker-word check, low-eight-bit marker conversion, exact-range
+return-after-marker/null behavior, and bounded page-edge input. It excludes
+overlap support, `memcpy`/`memmove`/`memset`/`mempcpy`, errno/TLS, allocation,
+syscalls, stdio, resolver/DNS/netdb, sockets, family completion, promotion,
+and public x86 support.
+
 `libc-byte-strings` is a separately recorded
 `static-c-byte-strings` `verified_artifact` gate over that archive, not a
 promotion of the Rust-subsumed text capabilities. Its project-header C body
@@ -5057,7 +5077,7 @@ Apart from the narrowly named `libc-stat-compat`, `libc-credentials`,
 `libc-process-resources`, `libc-readiness-waits`, and
 `libc-system-observation`, `libc-system-information`, `libc-uts-identity`, `libc-socket-transport`,
 `libc-socket-messages`,
-`libc-byte-strings`, `libc-random-entropy`, `libc-memory-search`,
+`libc-memccpy`, `libc-byte-strings`, `libc-random-entropy`, `libc-memory-search`,
 `libc-string-copy`, `libc-allocator-string-duplication`, `libc-error-strings`,
 `libc-locale-error-strings`, `libc-ctype`, `libc-integer-arithmetic`,
 `libc-integer-parse`, `libc-float-parse`, `libc-intmax-arithmetic`, `libc-credential-observation`,

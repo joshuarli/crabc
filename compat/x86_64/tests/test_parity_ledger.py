@@ -50,8 +50,8 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 40)
-        self.assertEqual(report["verified_artifact_count"], 166)
-        self.assertEqual(report["header_layout_probe_count"], 47)
+        self.assertEqual(report["verified_artifact_count"], 167)
+        self.assertEqual(report["header_layout_probe_count"], 48)
         self.assertEqual(report["public_header_inventory_count"], 183)
         self.assertEqual(report["header_foundation_header_count"], 191)
         self.assertEqual(report["header_foundation_pinned_header_count"], 183)
@@ -7196,6 +7196,9 @@ class X86ParityLedgerTests(unittest.TestCase):
             "compat/x86_64/ffs_header_abi_probe.c",
             "compat/x86_64/ffs_header_abi_probe.cpp",
             "compat/x86_64/run_ffs_header_abi.sh",
+            "compat/x86_64/memccpy_header_abi_probe.c",
+            "compat/x86_64/memccpy_header_abi_probe.cpp",
+            "compat/x86_64/run_memccpy_header_abi.sh",
             "compat/x86_64/memory_search_header_abi_probe.c",
             "compat/x86_64/memory_search_header_abi_probe.cpp",
             "compat/x86_64/run_memory_search_header_abi.sh",
@@ -7207,6 +7210,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertIn("./scripts/dev-x86_64.sh poll-header-abi", header_commands)
         self.assertIn("./scripts/dev-x86_64.sh select-header-abi", header_commands)
         self.assertIn("./scripts/dev-x86_64.sh byte-strings-header-abi", header_commands)
+        self.assertIn("./scripts/dev-x86_64.sh memccpy-header-abi", header_commands)
         self.assertIn("./scripts/dev-x86_64.sh integer-parse-header-abi", header_commands)
         self.assertIn("./scripts/dev-x86_64.sh intmax-arithmetic-header-abi", header_commands)
         self.assertIn(
@@ -11154,6 +11158,80 @@ class X86ParityLedgerTests(unittest.TestCase):
         evidence[0]["command"] = "./scripts/dev-x86_64.sh libc-foundation"
         with self.assertRaisesRegex(ledger.LedgerError, "closed libc-byte-strings command"):
             ledger.validate_ledger(data)
+
+    def test_memccpy_artifact_keeps_its_archive_free_nonpromotion_boundary(self) -> None:
+        data = self.data()
+        family = self.family(data, "libc.posix-runtime")
+        self.assertEqual(family["status"], "planned")
+        artifacts = family["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-memccpy"
+        )
+        self.assertNotIn("capabilities", artifact)
+        for owner in (
+            "libc/src/c_abi/x86_64/memccpy.rs",
+            "compat/x86_64/memccpy_header_abi_probe.c",
+            "compat/x86_64/memccpy_header_abi_probe.cpp",
+            "compat/x86_64/run_memccpy_header_abi.sh",
+            "compat/x86_64/libc_memccpy_probe.c",
+            "compat/x86_64/libc_memccpy_start.S",
+            "compat/x86_64/run_libc_memccpy.sh",
+            "compat/x86_64/aarch64_parity_inventory.py",
+            "compat/x86_64/aarch64_parity_inventory.json",
+        ):
+            self.assertIn(owner, artifact["source_owners"])
+        self.assertEqual(
+            {evidence["command"] for evidence in artifact["native_evidence"]},
+            {"./scripts/dev-x86_64.sh libc-memccpy"},
+        )
+        for phrase in (
+            "archive-free `-nostdlib -static` candidate",
+            "exactly one extracted `memccpy` object",
+            "never `libc.a`",
+            "C `restrict` nonoverlap",
+            "stdio including current f400 work",
+            "resolver/DNS/netdb",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, artifact["description"])
+        self.assertIn(
+            "src/string/memccpy.c::memccpy", artifact["oracle"][0]["role"]
+        )
+
+        changed = copy.deepcopy(data)
+        changed_artifacts = self.family(changed, "libc.posix-runtime")[
+            "verified_artifact"
+        ]
+        assert isinstance(changed_artifacts, list)
+        changed_artifact = next(
+            entry
+            for entry in changed_artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-memccpy"
+        )
+        changed_artifact["description"] = changed_artifact["description"].replace(
+            "never `libc.a`", "uses `libc.a`"
+        )
+        with self.assertRaisesRegex(ledger.LedgerError, "never `libc.a`"):
+            ledger.validate_ledger(changed)
+
+        changed = copy.deepcopy(data)
+        changed_artifacts = self.family(changed, "libc.posix-runtime")[
+            "verified_artifact"
+        ]
+        assert isinstance(changed_artifacts, list)
+        changed_artifact = next(
+            entry
+            for entry in changed_artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-memccpy"
+        )
+        evidence = changed_artifact["native_evidence"]
+        assert isinstance(evidence, list) and isinstance(evidence[0], dict)
+        evidence[0]["command"] = "./scripts/dev-x86_64.sh libc-memory-search"
+        with self.assertRaisesRegex(ledger.LedgerError, "closed libc-memccpy command"):
+            ledger.validate_ledger(changed)
 
     def test_integer_parse_artifact_keeps_its_closed_mapping_contract(self) -> None:
         data = self.data()

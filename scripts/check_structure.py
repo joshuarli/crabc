@@ -183,6 +183,7 @@ X86_RUNTIME_FOUNDATION_LIBC_SOURCES = {
     Path("libc/src/c_abi/x86_64/math_minmax.rs"),
     Path("libc/src/c_abi/x86_64/math_special.rs"),
     Path("libc/src/c_abi/x86_64/math_x87_extended.rs"),
+    Path("libc/src/c_abi/x86_64/memccpy.rs"),
     Path("libc/src/c_abi/x86_64/memory_search.rs"),
     Path("libc/src/c_abi/x86_64/memory_sync.rs"),
     Path("libc/src/c_abi/x86_64/memfd_create.rs"),
@@ -3762,6 +3763,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         '#[path = "endservent.rs"]',
         '#[path = "socket_messages.rs"]',
         '#[path = "posix_semaphore.rs"]',
+        '#[path = "memccpy.rs"]',
         '#[path = "byte_strings.rs"]',
         '#[path = "random_entropy.rs"]',
         '#[path = "memory_search.rs"]',
@@ -9525,6 +9527,156 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
             "must not force-link the archive"
         )
 
+    memccpy_probe_source = ROOT / "compat" / "x86_64" / "libc_memccpy_probe.c"
+    memccpy_start_source = ROOT / "compat" / "x86_64" / "libc_memccpy_start.S"
+    memccpy_runner_source = ROOT / "compat" / "x86_64" / "run_libc_memccpy.sh"
+    for path in (memccpy_probe_source, memccpy_start_source, memccpy_runner_source):
+        if not path.is_file():
+            errors.append(
+                f"x86 static memccpy artifact is missing {path.relative_to(ROOT)}"
+            )
+            return
+
+    memccpy_source = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "memccpy.rs"
+    memccpy_text = memccpy_source.read_text(errors="replace")
+    memccpy_probe = memccpy_probe_source.read_text(errors="replace")
+    memccpy_start = memccpy_start_source.read_text(errors="replace")
+    memccpy_runner = memccpy_runner_source.read_text(errors="replace")
+    for required in (
+        "Selected static Linux/x86-64 `memccpy` C ABI boundary",
+        "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+        "src/string/memccpy.c::memccpy",
+        "const ONES",
+        "const HIGHS",
+        "fn has_zero_byte",
+        "source.cast::<usize>().read()",
+        "destination.cast::<usize>().write(word)",
+        "marker as u8",
+        'pub unsafe extern "C" fn memccpy',
+        "must not overlap",
+    ):
+        if required not in memccpy_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/memccpy.rs: selected static byte-transfer "
+                f"boundary is missing {required!r}"
+            )
+    memccpy_exports = set(
+        re.findall(
+            r'(?m)^pub\s+unsafe\s+extern\s+"C"\s+fn\s+(\w+)\s*\(', memccpy_text
+        )
+    )
+    if memccpy_exports != {"memccpy"}:
+        errors.append(
+            "libc/src/c_abi/x86_64/memccpy.rs: selected static artifact "
+            "must export only memccpy"
+        )
+    for forbidden in (
+        "static mut",
+        "raw_syscall",
+        "__errno_location",
+        "__h_errno_location",
+        "getaddrinfo",
+        "socket(",
+        "std::",
+        "alloc::",
+        "crabc_core",
+        "crabc_mimalloc",
+        "fn memcpy",
+        "fn memmove",
+        "fn memset",
+        "fn mempcpy",
+    ):
+        if forbidden in memccpy_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/memccpy.rs: selected static byte-transfer "
+                f"boundary must not select {forbidden!r}"
+            )
+
+    memccpy_header_c = (
+        ROOT / "compat" / "x86_64" / "memccpy_header_abi_probe.c"
+    ).read_text(errors="replace")
+    memccpy_header_cpp = (
+        ROOT / "compat" / "x86_64" / "memccpy_header_abi_probe.cpp"
+    ).read_text(errors="replace")
+    memccpy_header_runner = (
+        ROOT / "compat" / "x86_64" / "run_memccpy_header_abi.sh"
+    ).read_text(errors="replace")
+    for header_probe in (memccpy_header_c, memccpy_header_cpp):
+        for required in (
+            "#include <string.h>",
+            "memccpy_signature",
+            "CRABC_EXPECT_MEMCCPY",
+        ):
+            if required not in header_probe:
+                errors.append(
+                    "compat/x86_64 memccpy C/C++ header probe: selected "
+                    f"byte-transfer ABI is missing {required!r}"
+                )
+    for required in (
+        "_XOPEN_SOURCE=700",
+        "_GNU_SOURCE",
+        "_BSD_SOURCE",
+        "CRABC_REQUIRE_MEMCCPY_HIDDEN",
+        "_POSIX_SOURCE",
+        "_POSIX_C_SOURCE=200809L",
+        "nm --undefined-only",
+        "_Z.*memccpy",
+    ):
+        if required not in memccpy_header_runner:
+            errors.append(
+                "compat/x86_64/run_memccpy_header_abi.sh: selected byte-transfer "
+                f"declaration evidence is missing {required!r}"
+            )
+    for required in (
+        "#include <string.h>",
+        "memccpy_signature",
+        "0x100",
+        "test_word_and_alignment_paths",
+        "test_source_page_edge",
+        "PROT_NONE",
+        "CRABC_MEMCCPY_FREESTANDING",
+    ):
+        if required not in memccpy_probe:
+            errors.append(
+                "compat/x86_64/libc_memccpy_probe.c: static byte-transfer "
+                f"regression is missing {required!r}"
+            )
+    for required in ("crabc_x86_64_memccpy_probe", "mov $60, %eax"):
+        if required not in memccpy_start:
+            errors.append(
+                "compat/x86_64/libc_memccpy_start.S: static byte-transfer "
+                f"entry is missing {required!r}"
+            )
+    if "ARCH_SET_FS" in memccpy_start:
+        errors.append(
+            "compat/x86_64/libc_memccpy_start.S: byte-transfer entry must not "
+            "bootstrap TLS"
+        )
+    for required in (
+        "run_memccpy_header_abi.sh",
+        "AARCH64_STATIC_TSV",
+        "memccpy.lo",
+        "memccpy.c",
+        "assert_selected_c_abi_surface",
+        "extract_selected_member",
+        "memccpy archive member also defines a byte/string sibling",
+        "-nostdlib -static",
+        '"$selected_member" -o "$candidate"',
+        "candidate unexpectedly selects TLS",
+        "__errno_location __h_errno_location h_errno getaddrinfo socket",
+        "call|syscall",
+    ):
+        if required not in memccpy_runner:
+            errors.append(
+                "compat/x86_64/run_libc_memccpy.sh: archive-free static "
+                f"byte-transfer evidence is missing {required!r}"
+            )
+    if '"$archive" -o "$candidate"' in memccpy_runner:
+        errors.append(
+            "compat/x86_64/run_libc_memccpy.sh: final byte-transfer candidate "
+            "must not link libc.a"
+        )
+
     byte_strings_source = (
         ROOT / "libc" / "src" / "c_abi" / "x86_64" / "byte_strings.rs"
     )
@@ -10269,6 +10421,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         ns_put16_text,
         ns_put32_text,
         ns_skiprr_text,
+        memccpy_text,
         byte_strings_text,
         random_entropy_text,
         memory_search_text,
@@ -10617,6 +10770,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         "ns_put16",
         "ns_put32",
         "ns_skiprr",
+        "memccpy",
         "uname",
         "sysinfo",
         "gethostname",
@@ -10754,7 +10908,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
             "signal-control, bounded process-signal execution, and one legacy single-signal pause wait, bounded pthread create/exit/join/detach initial-TLS worker, its private selected-main/worker pthread-key/C11-TSS lifecycle, private process-normal pthread mutexes and their musl private condition-variable handoff, the complete selected rwlock/attribute family with private-or-shared futex operation, plus the distinct C11 plain-sync adapter and normal-return pthread/C11 once state machine, its typed C11 create/exit/join/detach sibling, and pthread/C11 identity aliases, named termios-control, selected process-context, child-reaping, C11 immediate termination, callback algorithms, direct clock_gettime, caller-owned mapping-core, no-cancellation mapping synchronization, direct anonymous-memory descriptor creation, nanosleep, and clock_nanosleep, selected "
             "descriptor-entry, selected filesystem-access, bounded descriptor-control, timestamp updates, and descriptor-I/O, selected process-resources, selected readiness/signal-waits, "
             "selected socket transport and selected socket-message/options, selected system-observation, selected UTS-identity, "
-            "immutable IPv6 unspecified-address and loopback-address data objects, immutable nameserver flag-accessor data, selected nameserver wire codecs and resource-record span accounting, selected numeric-address codecs and legacy classful IPv4 arithmetic, fixed-profile h_errno message text, byte-string, random-entropy, memory-search, C-string-copy, immutable error-string, "
+            "immutable IPv6 unspecified-address and loopback-address data objects, immutable nameserver flag-accessor data, selected nameserver wire codecs and resource-record span accounting, selected numeric-address codecs and legacy classful IPv4 arithmetic, fixed-profile h_errno message text, bounded marker-terminated byte transfer, byte-string, random-entropy, memory-search, C-string-copy, immutable error-string, "
             "fixed-C-locale ctype, integer-arithmetic, integer-parsing, intmax-arithmetic, credential-observation, and "
             "environment-backed login-name observation, find-first-set, startup-published program names, short/GNU-long "
             "getopt state and aliases, callback-tree/hash-table search, and the "
@@ -10830,6 +10984,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         ("ns_put16.rs", ns_put16_text),
         ("ns_put32.rs", ns_put32_text),
         ("ns_skiprr.rs", ns_skiprr_text),
+        ("memccpy.rs", memccpy_text),
         ("random_entropy.rs", random_entropy_text),
         ("memory_search.rs", memory_search_text),
         ("string_copy.rs", string_copy_text),

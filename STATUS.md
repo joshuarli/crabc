@@ -16,6 +16,20 @@ netdb/database, Ethernet/interface, address-codec, or socket-transport path;
 it is not resolver/network completion, family promotion, or public x86
 support.
 
+`./scripts/dev-x86_64.sh libc-memccpy` is a private `static-c-memccpy`
+artifact inside still-planned `libc.posix-runtime`, not a general memory or
+C-string capability. Its paired `./scripts/dev-x86_64.sh memccpy-header-abi`
+gate proves the exact X/Open/GNU/BSD-gated C/C++ `<string.h>` declaration,
+strict/POSIX hiding, and unmangled C++ linkage. The project-header fixture
+first passes through pinned musl 1.2.6, then through an archive-free true
+`-nostdlib -static` candidate linked from exactly one extracted `memccpy`
+object, never `libc.a`. It preserves musl `src/string/memccpy.c`'s
+equal-low-address-bit byte prefix, `ONES`/`HIGHS` marker-word detection,
+low-eight-bit marker conversion, return-after-marker/null result, and bounded
+page-edge input. It excludes overlap support, general bulk-memory/C-string
+work, errno/TLS, allocation, syscall, stdio including f400 work,
+resolver/DNS/netdb, sockets, promotion, and public x86 support.
+
 `./scripts/dev-x86_64.sh libc-in6addr-any` is a private
 `static-c-in6addr-any` data-object artifact inside still-planned
 `libc.posix-runtime`. Its project-header fixture first executes through pinned

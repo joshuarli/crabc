@@ -11788,6 +11788,106 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         )
         self.assertIn("libc-random-entropy", runner)
 
+    def test_libc_static_c_abi_memccpy_artifact_stays_archive_free(self) -> None:
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        memccpy = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "memccpy.rs"
+        ).read_text(encoding="utf-8")
+        probe = (
+            ROOT / "compat" / "x86_64" / "libc_memccpy_probe.c"
+        ).read_text(encoding="utf-8")
+        start = (
+            ROOT / "compat" / "x86_64" / "libc_memccpy_start.S"
+        ).read_text(encoding="utf-8")
+        artifact_runner = (
+            ROOT / "compat" / "x86_64" / "run_libc_memccpy.sh"
+        ).read_text(encoding="utf-8")
+        header_runner = (
+            ROOT / "compat" / "x86_64" / "run_memccpy_header_abi.sh"
+        ).read_text(encoding="utf-8")
+        static_exports = (
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        ).read_text(encoding="utf-8")
+        static_export_names = {
+            line for line in static_exports.splitlines()
+            if line and not line.startswith("#")
+        }
+        parity_ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        runner = RUNNER.read_text(encoding="utf-8")
+
+        self.assertIn('#[path = "memccpy.rs"]', static_root)
+        for required in (
+            "musl 1.2.6 release commit",
+            "src/string/memccpy.c::memccpy",
+            "const ONES",
+            "const HIGHS",
+            "fn has_zero_byte",
+            "marker as u8",
+            "source.cast::<usize>().read()",
+            "destination.cast::<usize>().write(word)",
+            "fn memccpy",
+            "must not overlap",
+        ):
+            self.assertIn(required, memccpy)
+        for forbidden in (
+            "crabc_core",
+            "crabc_mimalloc",
+            "raw_syscall",
+            "__errno_location",
+            "fn memcpy",
+            "fn memmove",
+            "fn memset",
+            "fn mempcpy",
+            "__tls_get_addr",
+        ):
+            self.assertNotIn(forbidden, memccpy)
+        for required in (
+            "#include <string.h>",
+            "memccpy_signature",
+            "0x100",
+            "test_word_and_alignment_paths",
+            "test_source_page_edge",
+            "PROT_NONE",
+            "CRABC_MEMCCPY_FREESTANDING",
+        ):
+            self.assertIn(required, probe)
+        self.assertIn("crabc_x86_64_memccpy_probe", start)
+        self.assertIn("mov $60, %eax", start)
+        self.assertNotIn("ARCH_SET_FS", start)
+        for required in (
+            "static_c_abi_exports.txt",
+            "memccpy.lo",
+            "memccpy.c",
+            "extract_selected_member",
+            "-nostdlib -static",
+            '"$selected_member" -o "$candidate"',
+            "candidate unexpectedly selects TLS",
+            "call|syscall",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn('"$archive" -o "$candidate"', artifact_runner)
+        for required in (
+            "_XOPEN_SOURCE=700",
+            "_GNU_SOURCE",
+            "_BSD_SOURCE",
+            "CRABC_REQUIRE_MEMCCPY_HIDDEN",
+            "_POSIX_SOURCE",
+            "_POSIX_C_SOURCE=200809L",
+            "_Z.*memccpy",
+        ):
+            self.assertIn(required, header_runner)
+        self.assertIn("memccpy", static_export_names)
+        self.assertIn('id = "static-c-memccpy"', parity_ledger)
+        self.assertIn(
+            'command = "./scripts/dev-x86_64.sh libc-memccpy"', parity_ledger
+        )
+        self.assertIn("memccpy-header-abi", runner)
+        self.assertIn("libc-memccpy", runner)
+
     def test_libc_static_c_abi_memory_search_artifact_stays_narrow(self) -> None:
         static_root = (
             ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"

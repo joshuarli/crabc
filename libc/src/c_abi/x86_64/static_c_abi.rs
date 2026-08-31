@@ -2,7 +2,8 @@
 //!
 //! This target root owns one dependency-free `libc.a` artifact containing the
 //! independently evidenced metadata and credential verticals alongside the x86
-//! bulk-memory, floating-environment, continuation, binary32/binary64/x87
+//! bulk-memory and one bounded marker-terminated byte transfer,
+//! floating-environment, continuation, binary32/binary64/x87
 //! classification/sign, complex accessor/conjugation/projection, hardware
 //! square root, binary32/binary64 bit-sign masks, binary32/binary64 extrema,
 //! binary32/binary64 truncation, selected fenv-sensitive rounding,
@@ -176,6 +177,8 @@ mod credentials;
 mod credential_observation;
 #[path = "memory.rs"]
 mod memory;
+#[path = "memccpy.rs"]
+mod memccpy;
 #[path = "memory_search.rs"]
 mod memory_search;
 #[path = "byte_strings.rs"]
