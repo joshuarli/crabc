@@ -283,6 +283,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-pthread-condattr-pshared  run the static x86 crabc-libc condition-attribute pshared record slice
   libc-pthread-condattr-clock  run the static x86 crabc-libc condition-attribute clock record slice
   libc-pthread-mutexattr-protocol-query  run the static x86 crabc-libc mutex-attribute protocol-bit query slice
+  libc-pthread-mutexattr-pshared-query  run the static x86 crabc-libc mutex-attribute pshared-bit query slice
   libc-pthread-mutexattr-robust-query  run the static x86 crabc-libc mutex-attribute robust-bit query slice
   libc-pthread-mutex-prioceiling-query  run the static x86 crabc-libc direct mutex priority-ceiling query slice
   libc-pthread-mutex-normal  run the static x86 crabc-libc normal pthread-mutex slice
@@ -667,6 +668,17 @@ or any mutex entry. It does not select the setter's futex-PI capability probe,
 priority-inheritance mutex operation, threads, TLS, synchronization,
 cancellation, CRT, loader, sysroot, pthread-family completion, or public x86
 support.
+`libc-pthread-mutexattr-pshared-query` is a separate static project-header
+fixture that first runs through pinned musl, then links only the selected
+archive. It selects only the four-byte public `pthread_mutexattr_t` record's
+`pthread_mutexattr_getpshared` raw bit-7 projection: it returns the installed
+`PTHREAD_PROCESS_PRIVATE`/`PTHREAD_PROCESS_SHARED` `0`/`1` vocabulary without
+changing caller-owned storage. The fixture deliberately constructs raw record
+words and does not call `pthread_mutexattr_setpshared`, an attribute lifecycle
+function, or any mutex entry. It does not select setter/record-construction/
+validation behavior, process-shared mutex operation, threads, TLS,
+synchronization, cancellation, CRT, loader, sysroot, pthread-family
+completion, or public x86 support.
 `libc-pthread-mutex-prioceiling-query` is a separate static project-header
 fixture that first runs through pinned musl, then links only the selected
 archive. It selects only musl's direct `pthread_mutex_getprioceiling` EINVAL
@@ -3466,6 +3478,10 @@ run_libc_pthread_mutexattr_protocol_query_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_pthread_mutexattr_protocol_query.sh
 }
 
+run_libc_pthread_mutexattr_pshared_query_probe() {
+    run_in_container bash /workspace/compat/x86_64/run_libc_pthread_mutexattr_pshared_query.sh
+}
+
 run_libc_pthread_mutex_prioceiling_query_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_pthread_mutex_prioceiling_query.sh
 }
@@ -3916,6 +3932,7 @@ case "$command" in
     libc-pthread-condattr-pshared) ;;
     libc-pthread-condattr-clock) ;;
     libc-pthread-mutexattr-protocol-query) ;;
+    libc-pthread-mutexattr-pshared-query) ;;
     libc-pthread-mutexattr-robust-query) ;;
     libc-pthread-mutex-prioceiling-query) ;;
     libc-pthread-detach) ;;
@@ -5050,6 +5067,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "libc-pthread-mutexattr-protocol-query takes no arguments"
         ensure_image
         run_libc_pthread_mutexattr_protocol_query_probe
+        ;;
+    libc-pthread-mutexattr-pshared-query)
+        [ "$#" -eq 0 ] || fail "libc-pthread-mutexattr-pshared-query takes no arguments"
+        ensure_image
+        run_libc_pthread_mutexattr_pshared_query_probe
         ;;
     libc-pthread-mutex-prioceiling-query)
         [ "$#" -eq 0 ] || fail "libc-pthread-mutex-prioceiling-query takes no arguments"

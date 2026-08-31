@@ -320,6 +320,8 @@ mod pthread_tsd;
 mod pthread_mutex;
 #[path = "pthread_mutexattr_protocol_query.rs"]
 mod pthread_mutexattr_protocol_query;
+#[path = "pthread_mutexattr_pshared_query.rs"]
+mod pthread_mutexattr_pshared_query;
 #[path = "pthread_mutexattr_robust_query.rs"]
 mod pthread_mutexattr_robust_query;
 #[path = "pthread_mutex_prioceiling_query.rs"]

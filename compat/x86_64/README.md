@@ -645,7 +645,7 @@ The direct `utime-header-abi` gate checks the x86 LP64 `struct utimbuf`,
 `threads.h`, and `sched.h` layouts, macros, type identities, include orders,
 GNU declarations, and unmangled C linkage. Its selected declarations include
 every `pthread_rwlock_*` and `pthread_rwlockattr_*` signature plus the exact
-`pthread_mutexattr_getprotocol`, `pthread_mutexattr_getrobust`, `pthread_barrierattr_*pshared`, `pthread_condattr_*pshared`, and
+`pthread_mutexattr_getprotocol`, `pthread_mutexattr_getpshared`, `pthread_mutexattr_getrobust`, `pthread_barrierattr_*pshared`, `pthread_condattr_*pshared`, and
 `pthread_condattr_*clock` pairs, and the C++ object probe requires their
 unmangled C linkage. Both are compile-only
 partial evidence: they do not select archive linkage, pthread behavior,
@@ -3193,7 +3193,22 @@ inheritance mutex behavior, futex-PI support, mutex initialization/locking/
 destruction, threads, TLS, synchronization, cancellation, CRT, loader,
 sysroot, family completion, promotion, or public x86 support.
 
-`libc-pthread-mutex-prioceiling-query` is a twenty-eighth separately recorded
+`libc-pthread-mutexattr-pshared-query` is a twenty-eighth separately recorded
+private static `verified_artifact` under the same still-planned
+`libc.pthread-tls` family. Its project-header C body first runs against pinned
+musl and then through a `-nostdlib -static` candidate. It selects only
+`pthread_mutexattr_getpshared` over the public four-byte word: musl projects
+raw bit 7 to `PTHREAD_PROCESS_PRIVATE`/`PTHREAD_PROCESS_SHARED` `0`/`1` without
+changing caller-owned storage. The fixture deliberately supplies raw record
+words without invoking `pthread_mutexattr_setpshared`, lifecycle, or any mutex
+entry. It establishes no setter, record-construction, validation, or
+consumption contract; the selected normal-mutex artifact still rejects non-null
+attributes. It therefore does not establish process-shared mutex behavior,
+cross-process capability, mutex initialization/locking/destruction, threads,
+TLS, synchronization, cancellation, CRT, loader, sysroot, family completion,
+promotion, or public x86 support.
+
+`libc-pthread-mutex-prioceiling-query` is a twenty-ninth separately recorded
 private static `verified_artifact` under the same still-planned
 `libc.pthread-tls` family. Its project-header C body first runs against pinned
 musl and then through a `-nostdlib -static` candidate. It selects only musl's

@@ -130,6 +130,8 @@ using crabc_pthread_mutex_getprioceiling_signature = int (*)(
 	const pthread_mutex_t *, int *);
 using crabc_pthread_mutexattr_getprotocol_signature = int (*)(
 	const pthread_mutexattr_t *, int *);
+using crabc_pthread_mutexattr_getpshared_signature = int (*)(
+	const pthread_mutexattr_t *, int *);
 using crabc_pthread_mutexattr_getrobust_signature = int (*)(
 	const pthread_mutexattr_t *, int *);
 using crabc_pthread_mutex_destroy_signature = int (*)(pthread_mutex_t *);
@@ -225,6 +227,8 @@ static_assert(__is_same(decltype(&pthread_mutex_getprioceiling),
 	crabc_pthread_mutex_getprioceiling_signature), "pthread_mutex_getprioceiling signature");
 static_assert(__is_same(decltype(&pthread_mutexattr_getprotocol),
 	crabc_pthread_mutexattr_getprotocol_signature), "pthread_mutexattr_getprotocol signature");
+static_assert(__is_same(decltype(&pthread_mutexattr_getpshared),
+	crabc_pthread_mutexattr_getpshared_signature), "pthread_mutexattr_getpshared signature");
 static_assert(__is_same(decltype(&pthread_mutexattr_getrobust),
 	crabc_pthread_mutexattr_getrobust_signature), "pthread_mutexattr_getrobust signature");
 static_assert(__is_same(decltype(&pthread_mutex_destroy),
@@ -371,6 +375,8 @@ static crabc_pthread_mutex_getprioceiling_signature const crabc_force_pthread_mu
 	__attribute__((used)) = &pthread_mutex_getprioceiling;
 static crabc_pthread_mutexattr_getprotocol_signature const crabc_force_pthread_mutexattr_getprotocol
 	__attribute__((used)) = &pthread_mutexattr_getprotocol;
+static crabc_pthread_mutexattr_getpshared_signature const crabc_force_pthread_mutexattr_getpshared
+	__attribute__((used)) = &pthread_mutexattr_getpshared;
 static crabc_pthread_mutexattr_getrobust_signature const crabc_force_pthread_mutexattr_getrobust
 	__attribute__((used)) = &pthread_mutexattr_getrobust;
 static crabc_pthread_mutex_destroy_signature const crabc_force_pthread_mutex_destroy
