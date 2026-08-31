@@ -417,6 +417,14 @@ unsafe fn information_fn(record: &RuntimeRecordV1) -> InformationFn {
 // must not become a public Cargo feature of the staged static archive.
 #[allow(unexpected_cfgs)]
 #[no_mangle]
+// Musl 1.2.6 `src/ldso/dlopen.c` keeps its static body private and publishes
+// `weak_alias(stub_dlopen, dlopen)`, while `ldso/dynlink.c:dlopen` supplies
+// the dynamic-loader spelling. The AArch64 static manifest therefore records
+// this archive entry as `STB_WEAK`. Keep this staged static body weak so an
+// application-owned strong `dlopen` can override it after another bridge
+// entry extracts the archive member; this does not alter the bounded NULL
+// input rule or admit any new loader operation.
+#[linkage = "weak"]
 pub unsafe extern "C" fn dlopen(filename: *const c_char, flags: c_int) -> *mut c_void {
     let Some(slot) = diagnostic_slot() else {
         return ptr::null_mut();

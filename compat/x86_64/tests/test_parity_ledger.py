@@ -923,6 +923,10 @@ class X86ParityLedgerTests(unittest.TestCase):
             "weak_alias(static_dl_iterate_phdr, dl_iterate_phdr)",
             "normal/malformed isolated candidates retain default-visible `STB_WEAK`",
             "caller strong definition wins after a retained `dlopen` address forces bridge extraction",
+            "weak_alias(stub_dlopen, dlopen)",
+            "normal/malformed isolated candidates retain that weak `dlopen` binding",
+            "caller strong `dlopen` definition wins after a retained `dlsym` address extracts the bridge",
+            "Both are static-link ABI ratchets only",
             "real ET_DYN main",
             "never falls back to an ambient loader",
             "32-live-thread",
@@ -967,9 +971,14 @@ class X86ParityLedgerTests(unittest.TestCase):
         for phrase in (
             "AArch64 libc.so and libc.a ABI manifests retain dl_iterate_phdr, dladdr, dlclose, dlinfo, dlerror, dlsym, and dlopen exports",
             "dl_iterate_phdr dl_iterate_phdr.lo W WEAK",
+            "dlopen dlopen.lo W WEAK",
             "src/ldso/dl_iterate_phdr.c",
             "weak_alias(static_dl_iterate_phdr, dl_iterate_phdr)",
             "caller STB_GLOBAL definition overrides it after a `dlopen` reference extracts the bridge",
+            "src/ldso/dlopen.c",
+            "weak_alias(stub_dlopen, dlopen)",
+            "caller STB_GLOBAL dlopen overrides it after a `dlsym` reference extracts the bridge",
+            "bounded NULL-open path",
             "src/ldso/dlinfo.c:dlinfo",
             "Unsupported request %d",
             "does not consume that pending state",
@@ -1010,6 +1019,8 @@ class X86ParityLedgerTests(unittest.TestCase):
             "request -7",
             "pinned static STB_WEAK `dl_iterate_phdr` binding",
             "caller STB_GLOBAL override after a `dlopen` reference extracts the bridge",
+            "pinned static STB_WEAK `dlopen` binding",
+            "caller STB_GLOBAL dlopen override after a `dlsym` reference extracts the bridge",
             "leaves its result pointer untouched",
             "exact `Unsupported request -7`",
             "valid RTLD_DI_LINKMAP query leaves that error pending",
@@ -1039,7 +1050,7 @@ class X86ParityLedgerTests(unittest.TestCase):
                 entry["kind"] == "aarch64-contract"
                 and "aarch64/libc.so.dynamic.tsv" in entry["source"]
                 and "dl_iterate_phdr, dladdr, dlclose, dlinfo, dlerror, dlsym, and dlopen exports" in entry["role"]
-                and "static manifest records weak dl_iterate_phdr while the shared manifest records global dl_iterate_phdr" in entry["role"]
+                and "static manifest records weak dl_iterate_phdr and dlopen while the shared manifest records global dl_iterate_phdr and dlopen" in entry["role"]
                 and "ABI-presence/binding evidence" in entry["role"]
                 and "not a behavioral fallback" in entry["role"]
                 for entry in artifact["oracle"]
@@ -1049,8 +1060,10 @@ class X86ParityLedgerTests(unittest.TestCase):
             any(
                 entry["kind"] == "c-posix"
                 and "src/ldso/dl_iterate_phdr.c" in entry["source"]
+                and "src/ldso/dlopen.c" in entry["source"]
                 and "ldso/dynlink.c" in entry["source"]
                 and "static `weak_alias(static_dl_iterate_phdr, dl_iterate_phdr)` archive-binding contract" in entry["role"]
+                and "`weak_alias(stub_dlopen, dlopen)` archive-binding contract" in entry["role"]
                 and "callback-before-next-lock same-thread pending-dlerror consumption"
                 in entry["role"]
                 for entry in artifact["oracle"]

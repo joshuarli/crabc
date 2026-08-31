@@ -1622,8 +1622,10 @@ dladdr/dlinfo/dl_iterate_phdr surface over that exact loader record. Its
 proves public C/C++ ABI layouts, per-thread one-shot errors, the pinned-musl
 static `dl_iterate_phdr` weak-alias binding in the staged archive and normal/
 malformed ET_DYN candidates, plus a caller-strong override after `dlopen`
-extracts the bridge; this is static-link ABI evidence only, not loader-scope
-promotion. It also proves the pinned-musl
+extracts the bridge. It also ratchets musl's static `dlopen` weak-alias binding
+in the same archive and candidates, plus a caller-strong `dlopen` override
+after `dlsym` extracts the bridge; both are static-link ABI evidence only, not
+loader-scope promotion. It also proves the pinned-musl
 live-handle-within-the-32-slot-bound `dlinfo(-7)` output-preserving exact
 `Unsupported request -7` diagnostic that survives one valid `RTLD_DI_LINKMAP`
 call, the pinned-musl `dlclose(NULL) == 1` exact `Invalid library handle 0`

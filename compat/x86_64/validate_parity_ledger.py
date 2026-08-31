@@ -7010,6 +7010,10 @@ def require_ldso_public_fixed_graph_dlfcn_artifact(family: Mapping[str, Any]) ->
         "weak_alias(static_dl_iterate_phdr, dl_iterate_phdr)",
         "normal/malformed isolated candidates retain default-visible `STB_WEAK`",
         "caller strong definition wins after a retained `dlopen` address forces bridge extraction",
+        "weak_alias(stub_dlopen, dlopen)",
+        "normal/malformed isolated candidates retain that weak `dlopen` binding",
+        "caller strong `dlopen` definition wins after a retained `dlsym` address extracts the bridge",
+        "Both are static-link ABI ratchets only",
         "real ET_DYN main",
         "weak undefined `R_X86_64_GLOB_DAT`",
         "never falls back to an ambient loader",
@@ -7098,9 +7102,14 @@ def require_ldso_public_fixed_graph_dlfcn_artifact(family: Mapping[str, Any]) ->
         "RTLD_DEFAULT",
         "AArch64 libc.so and libc.a ABI manifests retain dl_iterate_phdr, dladdr, dlclose, dlinfo, dlerror, dlsym, and dlopen exports",
         "dl_iterate_phdr dl_iterate_phdr.lo W WEAK",
+        "dlopen dlopen.lo W WEAK",
         "src/ldso/dl_iterate_phdr.c",
         "weak_alias(static_dl_iterate_phdr, dl_iterate_phdr)",
         "caller STB_GLOBAL definition overrides it after a `dlopen` reference extracts the bridge",
+        "src/ldso/dlopen.c",
+        "weak_alias(stub_dlopen, dlopen)",
+        "caller STB_GLOBAL dlopen overrides it after a `dlsym` reference extracts the bridge",
+        "bounded NULL-open path",
         "src/ldso/dlinfo.c:dlinfo",
         "Unsupported request %d",
         "does not consume that pending state",
@@ -7156,6 +7165,8 @@ def require_ldso_public_fixed_graph_dlfcn_artifact(family: Mapping[str, Any]) ->
         "staged libc.a export contract",
         "pinned static STB_WEAK `dl_iterate_phdr` binding",
         "caller STB_GLOBAL override after a `dlopen` reference extracts the bridge",
+        "pinned static STB_WEAK `dlopen` binding",
+        "caller STB_GLOBAL dlopen override after a `dlsym` reference extracts the bridge",
         "weak GLOB_DAT/64-byte RuntimeV1-prefix wire",
         "rejects ambient libc/loader dependencies and PT_TLS",
         "two concurrent TLS-free clone threads",
@@ -7204,8 +7215,11 @@ def require_ldso_public_fixed_graph_dlfcn_artifact(family: Mapping[str, Any]) ->
         "main-crabc-public-dlfcn-malformed",
         "main-crabc-public-dlfcn-absent",
         "main-crabc-public-dlfcn-override",
+        "main-crabc-public-dlfcn-override-open",
         "CRABC_PUBLIC_DLFCN_OVERRIDE_ITERATE",
+        "CRABC_PUBLIC_DLFCN_OVERRIDE_OPEN",
         "staged static archive lost musl weak dl_iterate_phdr binding",
+        "staged static archive lost musl weak dlopen binding",
         "env -i PATH=/usr/bin:/bin",
     ):
         require(
@@ -7248,6 +7262,8 @@ def require_ldso_public_fixed_graph_dlfcn_artifact(family: Mapping[str, Any]) ->
         "if (!file) return head",
         "filename.is_null() && flags == RTLD_NOLOAD",
         "crabc_bounded_runtime_dlopen",
+        "src/ldso/dlopen.c",
+        "weak_alias(stub_dlopen, dlopen)",
         "ldso/dynlink.c:dl_iterate_phdr",
         "src/ldso/dl_iterate_phdr.c",
         "weak_alias(static_dl_iterate_phdr, dl_iterate_phdr)",
@@ -7301,6 +7317,10 @@ def require_ldso_public_fixed_graph_dlfcn_artifact(family: Mapping[str, Any]) ->
         "callback_error.error == NULL",
         "CRABC_PUBLIC_DLFCN_OVERRIDE_ITERATE",
         "override_dl_iterate_phdr_calls",
+        "CRABC_PUBLIC_DLFCN_OVERRIDE_OPEN",
+        "override_dlopen_calls",
+        "typed_dlopen(NULL, RTLD_NOW)",
+        "typed_dlsym",
         "extract_bridge",
     ):
         require(
@@ -7327,8 +7347,16 @@ def require_ldso_public_fixed_graph_dlfcn_artifact(family: Mapping[str, Any]) ->
         "pinned AArch64 musl static manifest lacks weak dl_iterate_phdr binding",
     )
     require(
+        "\ndlopen\tdlopen.lo\tW\tWEAK\t" in aarch64_static,
+        "pinned AArch64 musl static manifest lacks weak dlopen binding",
+    )
+    require(
         "\ndl_iterate_phdr\tFUNC\tGLOBAL\tDEFAULT\t" in aarch64_dynamic,
         "pinned AArch64 musl dynamic manifest lacks global dl_iterate_phdr binding",
+    )
+    require(
+        "\ndlopen\tFUNC\tGLOBAL\tDEFAULT\t" in aarch64_dynamic,
+        "pinned AArch64 musl dynamic manifest lacks global dlopen binding",
     )
     oracle = artifact["oracle"]
     assert isinstance(oracle, list)
@@ -7338,12 +7366,14 @@ def require_ldso_public_fixed_graph_dlfcn_artifact(family: Mapping[str, Any]) ->
             and entry.get("kind") == "c-posix"
             and isinstance(entry.get("source"), str)
             and "src/ldso/dl_iterate_phdr.c" in entry["source"]
+            and "src/ldso/dlopen.c" in entry["source"]
             and "src/ldso/dlinfo.c" in entry["source"]
             and "src/ldso/dlclose.c" in entry["source"]
             and "src/ldso/dlsym.c" in entry["source"]
             and isinstance(entry.get("role"), str)
             and "exact live-handle unsupported-dlinfo diagnostic" in entry["role"]
             and "static `weak_alias(static_dl_iterate_phdr, dl_iterate_phdr)` archive-binding contract" in entry["role"]
+            and "`weak_alias(stub_dlopen, dlopen)` archive-binding contract" in entry["role"]
             and "exact null-dlclose return/diagnostic" in entry["role"]
             and "exact live-handle empty-dlsym diagnostic" in entry["role"]
             and "exact null-dladdr untouched-output/no-error behavior" in entry["role"]
@@ -7363,7 +7393,7 @@ def require_ldso_public_fixed_graph_dlfcn_artifact(family: Mapping[str, Any]) ->
             and "libc.a.static.tsv" in entry["source"]
             and isinstance(entry.get("role"), str)
             and "dl_iterate_phdr, dladdr, dlclose, dlinfo, dlerror, dlsym, and dlopen exports" in entry["role"]
-            and "static manifest records weak dl_iterate_phdr while the shared manifest records global dl_iterate_phdr" in entry["role"]
+            and "static manifest records weak dl_iterate_phdr and dlopen while the shared manifest records global dl_iterate_phdr and dlopen" in entry["role"]
             and "ABI-presence/binding evidence" in entry["role"]
             and "not a behavioral fallback" in entry["role"]
             for entry in oracle

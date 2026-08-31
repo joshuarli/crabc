@@ -52,6 +52,22 @@ int dl_iterate_phdr(int (*callback)(struct dl_phdr_info *, size_t, void *),
 }
 #endif
 
+#ifdef CRABC_PUBLIC_DLFCN_OVERRIDE_OPEN
+/*
+ * The static musl stub publishes dlopen as a weak alias. Keep this separate
+ * from the NULL-open behavior probe: dlsym forces the bridge object out of
+ * the archive, then this caller-owned strong definition must still win.
+ */
+static int override_dlopen_calls;
+
+void *dlopen(const char *filename, int flags) {
+    (void)filename;
+    (void)flags;
+    ++override_dlopen_calls;
+    return (void *)(uintptr_t)0x5a5a;
+}
+#endif
+
 struct observed_graph {
     int main_seen;
     int mid_seen;
@@ -185,6 +201,11 @@ int main(void) {
     if (extract_bridge == NULL) return 94;
     return typed_dl_iterate_phdr(NULL, NULL) == 79
         && override_dl_iterate_phdr_calls == 1 ? 0 : 95;
+#elif defined(CRABC_PUBLIC_DLFCN_OVERRIDE_OPEN)
+    void *(*volatile extract_bridge)(void *restrict, const char *restrict) = typed_dlsym;
+    if (extract_bridge == NULL) return 96;
+    return typed_dlopen(NULL, RTLD_NOW) == (void *)(uintptr_t)0x5a5a
+        && override_dlopen_calls == 1 ? 0 : 97;
 #else
     (void)typed_dlopen;
     (void)typed_dlclose;

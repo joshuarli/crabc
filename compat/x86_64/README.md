@@ -4619,6 +4619,15 @@ extracts the bridge. The declaration and all graph behavior are unchanged, so
 this is neither loader admission/lifecycle expansion nor capability/platform
 promotion.
 
+Pinned musl 1.2.6 `src/ldso/dlopen.c` keeps its static stub private and
+publishes `weak_alias(stub_dlopen, dlopen)`. The pinned AArch64 static manifest
+records its weak public spelling, whereas libc.so records it global.
+`ldso-public-dlfcn` now proves default-visible weak `dlopen` in both the staged
+archive and normal/malformed isolated ET_DYN candidates; a caller-owned strong
+definition wins after a `dlsym` reference extracts the bridge. The NULL-open
+rule and all graph behavior remain unchanged, so this adds neither loader
+admission/lifecycle behavior nor capability/platform promotion.
+
 `ldso-dladdr-symbol-bounds` is a separate fixed-graph `dladdr` differential
 over that already-existing bridge, not an additional loader admission path.
 Its real leaf has one four-byte default-visible dynamic object immediately
