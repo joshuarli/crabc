@@ -91,7 +91,7 @@ The production target is deliberately narrow:
 
 - Linux only;
 - AArch64 little-endian only;
-- the current crabc Linux kernel floor, currently Linux 5.6;
+- the current crabc Linux kernel floor, currently Linux 5.10;
 - all Linux/AArch64 kernel page sizes that crabc claims;
 - the supported AArch64 virtual-address profiles;
 - the current pinned Rust nightly;
