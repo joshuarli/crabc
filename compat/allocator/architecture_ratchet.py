@@ -35,6 +35,117 @@ PROMOTION_BENCHMARK_METRICS = (
     "metadata_plateau_after_warmup",
     "single_thread_throughput_ratio",
 )
+PHASE_EF_PRODUCTION_SYMBOL_SHAPES = {
+    "native_post_exit_route_registry": {
+        "kind": "struct",
+        "name": "NativePostExitRouteRegistry",
+        "path": "crabc-mimalloc/src/runtime_lifecycle.rs",
+    },
+    "native_post_exit_free_route_aggregate": {
+        "enum": "NativePostExitFreeRoute",
+        "kind": "enum_variant",
+        "name": "Aggregate",
+        "path": "crabc-mimalloc/src/runtime_lifecycle.rs",
+    },
+    "native_post_exit_free_route_sole_mapped_regular": {
+        "enum": "NativePostExitFreeRoute",
+        "kind": "enum_variant",
+        "name": "SoleMappedRegular",
+        "path": "crabc-mimalloc/src/runtime_lifecycle.rs",
+    },
+}
+PHASE_EF_SEMANTIC_SCAN_SHAPES = {
+    "post_exit_registry_exact_free_scan": (
+        "free_exact",
+        (
+            r"\bself\.head\.load\s*\(",
+            r"\bwhile\s*!current\.is_null\s*\(\s*\)",
+            r"\bnode\.storage\.free_exact\s*\(",
+        ),
+    ),
+    "post_exit_registry_usable_size_scan": (
+        "usable_size_exact",
+        (
+            r"\bself\.head\.load\s*\(",
+            r"\bwhile\s*!current\.is_null\s*\(\s*\)",
+            r"\bnode\.storage\.usable_size_exact\s*\(",
+        ),
+    ),
+    "post_exit_registry_completion_scan": (
+        "finish_completions_for_owner",
+        (
+            r"\bself\.head\.load\s*\(",
+            r"\bwhile\s*!current\.is_null\s*\(\s*\)",
+            r"\bnode\.storage\.finish_completion_for_owner\s*\(",
+        ),
+    ),
+    "detached_route_client_ledger_scan": (
+        "take_for_native_free",
+        (
+            r"\bentries\.iter_mut\s*\(\)\.find_map\s*\(",
+            r"\btake_detached_client_for_native_free\s*\(",
+        ),
+    ),
+    "prepared_owner_exit_client_ledger_scan": (
+        "native_client_for_block",
+        (
+            r"\bfor\s+slot\s+in\s+0\.\.self\.slot_count\s*\(\)\s*\{",
+            r"\bPreparedOwnerExitClientState::Live\b",
+        ),
+    ),
+}
+PHASE_EF_NORMAL_LIFECYCLE_FAILURE_SHAPES = {
+    "aggregate_route_normal_lifecycle_failure": (
+        "free_remaining_in_fresh_runtime_worker_with_publisher",
+        (
+            r"\bmatch\s+finish_current_thread_after_user_destructors\s*\(\s*\)",
+            r"\bThreadFinishResult::Retained\b",
+            r"\bTicketZeroOwnerExitFreeOutcome::(?:Finished|Retained|Poisoned)\b",
+        ),
+    ),
+    "sole_mapped_regular_route_normal_lifecycle_failure": (
+        "reclaim_and_finish",
+        (
+            r"\bmatch\s+finish_current_thread_after_user_destructors\s*\(\s*\)",
+            r"\bThreadFinishResult::Retained\b",
+            r"\bTicketZeroOwnerExitReclaimOutcome::(?:Finished|Retained|Poisoned)\b",
+        ),
+    ),
+}
+PHASE_EF_TEST_AUDIT_SHAPES = {
+    "post_exit_registry_audit_type": {
+        "kind": "struct",
+        "name": "NativePostExitRouteRegistryAudit",
+        "path": "crabc-mimalloc/src/runtime_lifecycle.rs",
+        "public": True,
+    },
+    "post_exit_registry_audit_query": {
+        "kind": "function",
+        "name": "native_post_exit_registry_test_audit",
+        "path": "crabc-mimalloc/src/runtime_lifecycle.rs",
+        "public": True,
+    },
+}
+PHASE_EF_PRODUCTION_SYMBOL_RULES = frozenset(PHASE_EF_PRODUCTION_SYMBOL_SHAPES)
+PHASE_EF_SEMANTIC_SCAN_RULES = frozenset(PHASE_EF_SEMANTIC_SCAN_SHAPES)
+PHASE_EF_NORMAL_LIFECYCLE_FAILURE_RULES = frozenset(
+    PHASE_EF_NORMAL_LIFECYCLE_FAILURE_SHAPES
+)
+PHASE_EF_TEST_AUDIT_RULES = frozenset(PHASE_EF_TEST_AUDIT_SHAPES)
+PHASE_EF_PRODUCTION_SYMBOL_CEILINGS = {
+    name: 1 for name in PHASE_EF_PRODUCTION_SYMBOL_RULES
+}
+PHASE_EF_SEMANTIC_SCAN_CEILINGS = {
+    "post_exit_registry_exact_free_scan": 1,
+    "post_exit_registry_usable_size_scan": 1,
+    "post_exit_registry_completion_scan": 1,
+    "detached_route_client_ledger_scan": 1,
+    "prepared_owner_exit_client_ledger_scan": 4,
+}
+PHASE_EF_NORMAL_LIFECYCLE_FAILURE_CEILINGS = {
+    name: 1 for name in PHASE_EF_NORMAL_LIFECYCLE_FAILURE_RULES
+}
+PHASE_EF_SYMBOL_KINDS = frozenset({"struct", "enum", "enum_variant", "function"})
 
 
 class RatchetError(RuntimeError):
@@ -742,6 +853,205 @@ def validate_phase_bc_manifest(
             raise RatchetError(f"architecture manifest Phase-B/C reachable floor {name} is incomplete")
 
 
+def phase_ef_policy(manifest: Mapping[str, Any]) -> Mapping[str, Any]:
+    return required_mapping(
+        manifest.get("phase_ef_forbidden_scaffolding"),
+        "phase_ef_forbidden_scaffolding",
+    )
+
+
+def validate_phase_ef_symbol_rule(
+    rule: Mapping[str, Any], name: str, selected_sources: set[str], *, audit: bool
+) -> None:
+    prefix = f"phase_ef_forbidden_scaffolding.{name}"
+    path = required_string(rule.get("path"), f"{prefix}.path")
+    if path not in selected_sources:
+        raise RatchetError(
+            f"architecture manifest Phase E/F rule {name} is absent from selected source hashing"
+        )
+    kind = required_string(rule.get("kind"), f"{prefix}.kind")
+    if kind not in PHASE_EF_SYMBOL_KINDS:
+        raise RatchetError(f"architecture manifest Phase E/F rule {name} has an invalid symbol kind")
+    required_string(rule.get("name"), f"{prefix}.name")
+    if kind == "enum_variant":
+        required_string(rule.get("enum"), f"{prefix}.enum")
+    elif "enum" in rule:
+        raise RatchetError(
+            f"architecture manifest Phase E/F non-variant symbol rule {name} names an enum"
+        )
+    if audit:
+        if type(rule.get("public")) is not bool:
+            raise RatchetError(
+                f"architecture manifest Phase E/F audit rule {name}.public must be boolean"
+            )
+    elif "public" in rule:
+        raise RatchetError(
+            f"architecture manifest Phase E/F production symbol rule {name} must not filter Rust visibility"
+        )
+
+
+def validate_phase_ef_function_rules(
+    rules: Mapping[str, Any],
+    expected_shapes: Mapping[str, tuple[str, tuple[str, ...]]],
+    section: str,
+    selected_sources: set[str],
+) -> None:
+    expected_names = frozenset(expected_shapes)
+    if set(rules) != expected_names:
+        raise RatchetError(
+            f"architecture manifest Phase E/F {section} rules are incomplete or renamed"
+        )
+    for name, raw_rule in rules.items():
+        rule = required_mapping(raw_rule, f"phase_ef_forbidden_scaffolding.{section}.{name}")
+        path = required_string(
+            rule.get("path"), f"phase_ef_forbidden_scaffolding.{section}.{name}.path"
+        )
+        if path not in selected_sources:
+            raise RatchetError(
+                f"architecture manifest Phase E/F rule {name} is absent from selected source hashing"
+            )
+        required_string(
+            rule.get("function"), f"phase_ef_forbidden_scaffolding.{section}.{name}.function"
+        )
+        patterns = rule.get("all_of")
+        if not isinstance(patterns, list) or not patterns or not all(
+            isinstance(pattern, str) and pattern for pattern in patterns
+        ):
+            raise RatchetError(
+                f"architecture manifest Phase E/F rule {name}.all_of must be non-empty regex strings"
+            )
+        for pattern in patterns:
+            try:
+                re.compile(pattern)
+            except re.error as error:
+                raise RatchetError(
+                    f"invalid Phase E/F rule regex {name}: {error}"
+                ) from error
+        expected_function, expected_patterns = expected_shapes[name]
+        if (
+            path != "crabc-mimalloc/src/runtime_lifecycle.rs"
+            or rule.get("function") != expected_function
+            or tuple(patterns) != expected_patterns
+        ):
+            raise RatchetError(f"architecture manifest Phase E/F {section} rule {name} drifted")
+
+
+def validate_phase_ef_forbidden_scaffolding(
+    manifest: Mapping[str, Any], selected_sources: set[str]
+) -> None:
+    policy = phase_ef_policy(manifest)
+    required_string(policy.get("meaning"), "phase_ef_forbidden_scaffolding.meaning")
+
+    production_symbols = required_mapping(
+        policy.get("production_symbols"), "phase_ef_forbidden_scaffolding.production_symbols"
+    )
+    production_rules = required_mapping(
+        production_symbols.get("rules"),
+        "phase_ef_forbidden_scaffolding.production_symbols.rules",
+    )
+    if set(production_rules) != PHASE_EF_PRODUCTION_SYMBOL_RULES:
+        raise RatchetError("architecture manifest Phase E/F production symbol rules are incomplete")
+    for name, raw_rule in production_rules.items():
+        rule = required_mapping(
+            raw_rule, f"phase_ef_forbidden_scaffolding.production_symbols.rules.{name}"
+        )
+        validate_phase_ef_symbol_rule(
+            rule,
+            f"production_symbols.rules.{name}",
+            selected_sources,
+            audit=False,
+        )
+        if any(
+            rule.get(field) != value
+            for field, value in PHASE_EF_PRODUCTION_SYMBOL_SHAPES[name].items()
+        ):
+            raise RatchetError(f"architecture manifest Phase E/F production symbol rule {name} drifted")
+
+    semantic_scans = required_mapping(
+        policy.get("semantic_route_or_ledger_scans"),
+        "phase_ef_forbidden_scaffolding.semantic_route_or_ledger_scans",
+    )
+    validate_phase_ef_function_rules(
+        required_mapping(
+            semantic_scans.get("rules"),
+            "phase_ef_forbidden_scaffolding.semantic_route_or_ledger_scans.rules",
+        ),
+        PHASE_EF_SEMANTIC_SCAN_SHAPES,
+        "semantic route/ledger scan",
+        selected_sources,
+    )
+
+    normal_lifecycle = required_mapping(
+        policy.get("normal_lifecycle_failure_routes"),
+        "phase_ef_forbidden_scaffolding.normal_lifecycle_failure_routes",
+    )
+    validate_phase_ef_function_rules(
+        required_mapping(
+            normal_lifecycle.get("rules"),
+            "phase_ef_forbidden_scaffolding.normal_lifecycle_failure_routes.rules",
+        ),
+        PHASE_EF_NORMAL_LIFECYCLE_FAILURE_SHAPES,
+        "normal lifecycle failure route",
+        selected_sources,
+    )
+
+    audits = required_mapping(
+        policy.get("test_only_audits"), "phase_ef_forbidden_scaffolding.test_only_audits"
+    )
+    audit_feature = required_string(
+        audits.get("feature"), "phase_ef_forbidden_scaffolding.test_only_audits.feature"
+    )
+    cfg_environment = required_mapping(
+        phase_bc_policy(manifest).get("cfg_environment"),
+        "phase_bc_call_graph.cfg_environment",
+    )
+    features = required_mapping(
+        cfg_environment.get("features"), "phase_bc_call_graph.cfg_environment.features"
+    )
+    if features.get(audit_feature) is not False:
+        raise RatchetError(
+            "architecture manifest Phase E/F audit feature must be disabled in selected production"
+        )
+    audit_rules = required_mapping(
+        audits.get("rules"), "phase_ef_forbidden_scaffolding.test_only_audits.rules"
+    )
+    if set(audit_rules) != PHASE_EF_TEST_AUDIT_RULES:
+        raise RatchetError("architecture manifest Phase E/F test-only audit rules are incomplete")
+    for name, raw_rule in audit_rules.items():
+        rule = required_mapping(
+            raw_rule, f"phase_ef_forbidden_scaffolding.test_only_audits.rules.{name}"
+        )
+        validate_phase_ef_symbol_rule(
+            rule,
+            f"test_only_audits.rules.{name}",
+            selected_sources,
+            audit=True,
+        )
+        if any(
+            rule.get(field) != value for field, value in PHASE_EF_TEST_AUDIT_SHAPES[name].items()
+        ):
+            raise RatchetError(f"architecture manifest Phase E/F test-only audit rule {name} drifted")
+
+    baseline = required_mapping(
+        policy.get("ratchet_baseline"), "phase_ef_forbidden_scaffolding.ratchet_baseline"
+    )
+    expected_ceilings = {
+        "production_symbol_ceiling": PHASE_EF_PRODUCTION_SYMBOL_CEILINGS,
+        "semantic_route_or_ledger_scan_ceiling": PHASE_EF_SEMANTIC_SCAN_CEILINGS,
+        "normal_lifecycle_failure_route_ceiling": PHASE_EF_NORMAL_LIFECYCLE_FAILURE_CEILINGS,
+    }
+    if set(baseline) != set(expected_ceilings):
+        raise RatchetError("architecture manifest Phase E/F ratchet ceilings are incomplete")
+    for field, expected_values in expected_ceilings.items():
+        ceiling = required_mapping(
+            baseline.get(field), f"phase_ef_forbidden_scaffolding.ratchet_baseline.{field}"
+        )
+        if dict(ceiling) != expected_values:
+            raise RatchetError(
+                f"architecture manifest Phase E/F {field} must preserve its current observed ceiling"
+            )
+
+
 def validate_manifest(manifest: Mapping[str, Any]) -> None:
     if manifest.get("format") != 1:
         raise RatchetError("unsupported architecture gate format")
@@ -848,6 +1158,7 @@ def validate_manifest(manifest: Mapping[str, Any]) -> None:
     if not all(type(value) is int and value >= 0 for value in static_ceiling.values()):
         raise RatchetError("architecture manifest static signal ceilings must be non-negative integers")
     validate_phase_bc_manifest(manifest, metrics, set(sources))
+    validate_phase_ef_forbidden_scaffolding(manifest, set(sources))
 
 
 def collect_static_signals(root: Path, manifest: Mapping[str, Any]) -> dict[str, list[SourceMatch]]:
@@ -1577,6 +1888,343 @@ def collect_forbidden_scaffolding(root: Path, manifest: Mapping[str, Any]) -> di
     }
 
 
+def phase_ef_symbol_matches(
+    root: Path,
+    rule: Mapping[str, Any],
+    cfg_environment: Mapping[str, Any],
+) -> list[dict[str, object]]:
+    """Find one exact cfg-selected Rust symbol without prefix matching audits."""
+
+    path = required_string(rule.get("path"), "Phase E/F symbol rule.path")
+    kind = required_string(rule.get("kind"), "Phase E/F symbol rule.kind")
+    name = required_string(rule.get("name"), "Phase E/F symbol rule.name")
+    source_path = root / path
+    if not source_path.is_file():
+        raise RatchetError(f"selected production source is absent: {path}")
+    source = production_rust_source(source_path.read_text(encoding="utf-8"), cfg_environment)
+
+    if kind == "function":
+        return [
+            {
+                "function": function.name,
+                "kind": kind,
+                "line": function.line,
+                "path": function.path,
+                "public": function.public,
+                "symbol": name,
+            }
+            for function in selected_rust_functions(root, path, cfg_environment)
+            if function.name == name
+        ]
+
+    visibility = r"(?P<public>pub(?:\([^)]*\))?\s+)?"
+    if kind == "enum_variant":
+        enum_name = required_string(rule.get("enum"), "Phase E/F enum variant rule.enum")
+        enum_header = re.compile(
+            rf"\b{visibility}enum\s+{re.escape(enum_name)}\b[^{{;]*\{{",
+            re.MULTILINE,
+        )
+        matches: list[dict[str, object]] = []
+        for header in enum_header.finditer(source):
+            opening = source.find("{", header.start(), header.end())
+            closing = matching_rust_delimiter(source, opening, "{", "}")
+            enum_body = source[opening + 1 : closing]
+            variant = re.compile(rf"^[ \t]*(?P<symbol>{re.escape(name)})\b", re.MULTILINE)
+            for match in variant.finditer(enum_body):
+                matches.append(
+                    {
+                        "enum": enum_name,
+                        "kind": kind,
+                        "line": source.count("\n", 0, opening + 1 + match.start()) + 1,
+                        "path": path,
+                        "public": bool(header.group("public")),
+                        "symbol": name,
+                    }
+                )
+        return matches
+
+    declaration = re.compile(
+        rf"\b{visibility}{re.escape(kind)}\s+{re.escape(name)}\b", re.MULTILINE
+    )
+    return [
+        {
+            "kind": kind,
+            "line": source.count("\n", 0, match.start()) + 1,
+            "path": path,
+            "public": bool(match.group("public")),
+            "symbol": name,
+        }
+        for match in declaration.finditer(source)
+    ]
+
+
+def phase_ef_function_rule_matches(
+    root: Path,
+    rule: Mapping[str, Any],
+    cfg_environment: Mapping[str, Any],
+) -> list[dict[str, object]]:
+    """Find every function in which all semantic route/ledger signals coexist.
+
+    The manifest records the current function name for reviewable provenance,
+    but the predicate intentionally scans every selected function so a rename
+    cannot hide the same registry, ledger, or lifecycle behavior.
+    """
+
+    path = required_string(rule.get("path"), "Phase E/F function rule.path")
+    expected_function = required_string(rule.get("function"), "Phase E/F function rule.function")
+    patterns = rule.get("all_of")
+    if not isinstance(patterns, list) or not all(isinstance(pattern, str) for pattern in patterns):
+        raise RatchetError("Phase E/F function rule.all_of is invalid")
+    matches: list[dict[str, object]] = []
+    for function in selected_rust_functions(root, path, cfg_environment):
+        matched_patterns: list[dict[str, object]] = []
+        for pattern in patterns:
+            found = list(re.finditer(pattern, function.body, flags=re.MULTILINE))
+            if not found:
+                break
+            matched_patterns.append(
+                {
+                    "lines": [
+                        function.body_line + function.body.count("\n", 0, match.start())
+                        for match in found
+                    ],
+                    "pattern": pattern,
+                }
+            )
+        else:
+            matches.append(
+                {
+                    "expected_current_function": expected_function,
+                    "function": function.name,
+                    "line": function.line,
+                    "matched_patterns": matched_patterns,
+                    "path": function.path,
+                    "public": function.public,
+                }
+            )
+    return matches
+
+
+def phase_ef_audit_cfg_environment(
+    production_cfg: Mapping[str, Any], audit_feature: str
+) -> dict[str, object]:
+    """Return the same closed target cfg with only the audit feature enabled."""
+
+    flags = required_mapping(production_cfg.get("flags"), "phase_bc_call_graph.cfg_environment.flags")
+    features = required_mapping(
+        production_cfg.get("features"), "phase_bc_call_graph.cfg_environment.features"
+    )
+    key_values = required_mapping(
+        production_cfg.get("key_values"), "phase_bc_call_graph.cfg_environment.key_values"
+    )
+    if audit_feature not in features or type(features[audit_feature]) is not bool:
+        raise RatchetError(f"unknown Phase E/F audit feature: {audit_feature}")
+    return {
+        "flags": dict(flags),
+        "features": {**features, audit_feature: True},
+        "key_values": dict(key_values),
+    }
+
+
+def phase_ef_ceiling_regressions(
+    section: str,
+    matches: Mapping[str, list[dict[str, object]]],
+    ceilings: Mapping[str, Any],
+) -> list[str]:
+    return [
+        f"Phase E/F {section} {name}: {len(entries)} matches exceed current ceiling {ceilings[name]}"
+        for name, entries in matches.items()
+        if len(entries) > ceilings[name]
+    ]
+
+
+def phase_ef_forbidden_scaffolding(root: Path, manifest: Mapping[str, Any]) -> dict[str, object]:
+    """Ratchet Phase E/F removal without treating audit-only APIs as production."""
+
+    policy = phase_ef_policy(manifest)
+    production_cfg = required_mapping(
+        phase_bc_policy(manifest).get("cfg_environment"),
+        "phase_bc_call_graph.cfg_environment",
+    )
+    production_symbol_rules = required_mapping(
+        required_mapping(
+            policy.get("production_symbols"), "phase_ef_forbidden_scaffolding.production_symbols"
+        ).get("rules"),
+        "phase_ef_forbidden_scaffolding.production_symbols.rules",
+    )
+    semantic_rules = required_mapping(
+        required_mapping(
+            policy.get("semantic_route_or_ledger_scans"),
+            "phase_ef_forbidden_scaffolding.semantic_route_or_ledger_scans",
+        ).get("rules"),
+        "phase_ef_forbidden_scaffolding.semantic_route_or_ledger_scans.rules",
+    )
+    lifecycle_rules = required_mapping(
+        required_mapping(
+            policy.get("normal_lifecycle_failure_routes"),
+            "phase_ef_forbidden_scaffolding.normal_lifecycle_failure_routes",
+        ).get("rules"),
+        "phase_ef_forbidden_scaffolding.normal_lifecycle_failure_routes.rules",
+    )
+    audits = required_mapping(
+        policy.get("test_only_audits"), "phase_ef_forbidden_scaffolding.test_only_audits"
+    )
+    audit_rules = required_mapping(
+        audits.get("rules"), "phase_ef_forbidden_scaffolding.test_only_audits.rules"
+    )
+    audit_feature = required_string(
+        audits.get("feature"), "phase_ef_forbidden_scaffolding.test_only_audits.feature"
+    )
+
+    production_symbols = {
+        name: phase_ef_symbol_matches(
+            root,
+            required_mapping(
+                raw_rule, f"phase_ef_forbidden_scaffolding.production_symbols.rules.{name}"
+            ),
+            production_cfg,
+        )
+        for name, raw_rule in production_symbol_rules.items()
+    }
+    semantic_scans = {
+        name: phase_ef_function_rule_matches(
+            root,
+            required_mapping(
+                raw_rule,
+                f"phase_ef_forbidden_scaffolding.semantic_route_or_ledger_scans.rules.{name}",
+            ),
+            production_cfg,
+        )
+        for name, raw_rule in semantic_rules.items()
+    }
+    normal_lifecycle_failure_routes = {
+        name: phase_ef_function_rule_matches(
+            root,
+            required_mapping(
+                raw_rule,
+                f"phase_ef_forbidden_scaffolding.normal_lifecycle_failure_routes.rules.{name}",
+            ),
+            production_cfg,
+        )
+        for name, raw_rule in lifecycle_rules.items()
+    }
+
+    audit_cfg = phase_ef_audit_cfg_environment(production_cfg, audit_feature)
+    audit_selected_in_production = {
+        name: phase_ef_symbol_matches(
+            root,
+            required_mapping(
+                raw_rule, f"phase_ef_forbidden_scaffolding.test_only_audits.rules.{name}"
+            ),
+            production_cfg,
+        )
+        for name, raw_rule in audit_rules.items()
+    }
+    audit_selected_when_enabled = {
+        name: phase_ef_symbol_matches(
+            root,
+            required_mapping(
+                raw_rule, f"phase_ef_forbidden_scaffolding.test_only_audits.rules.{name}"
+            ),
+            audit_cfg,
+        )
+        for name, raw_rule in audit_rules.items()
+    }
+    audit_visibility_mismatches = {
+        name: [
+            match
+            for match in audit_selected_when_enabled[name]
+            if match["public"]
+            != required_mapping(
+                audit_rules[name],
+                f"phase_ef_forbidden_scaffolding.test_only_audits.rules.{name}",
+            )["public"]
+        ]
+        for name in audit_rules
+    }
+
+    baseline = required_mapping(
+        policy.get("ratchet_baseline"), "phase_ef_forbidden_scaffolding.ratchet_baseline"
+    )
+    symbol_ceilings = required_mapping(
+        baseline.get("production_symbol_ceiling"),
+        "phase_ef_forbidden_scaffolding.ratchet_baseline.production_symbol_ceiling",
+    )
+    semantic_ceilings = required_mapping(
+        baseline.get("semantic_route_or_ledger_scan_ceiling"),
+        "phase_ef_forbidden_scaffolding.ratchet_baseline.semantic_route_or_ledger_scan_ceiling",
+    )
+    lifecycle_ceilings = required_mapping(
+        baseline.get("normal_lifecycle_failure_route_ceiling"),
+        "phase_ef_forbidden_scaffolding.ratchet_baseline.normal_lifecycle_failure_route_ceiling",
+    )
+    regressions = sorted(
+        [
+            *phase_ef_ceiling_regressions(
+                "production symbol", production_symbols, symbol_ceilings
+            ),
+            *phase_ef_ceiling_regressions(
+                "semantic route/ledger scan", semantic_scans, semantic_ceilings
+            ),
+            *phase_ef_ceiling_regressions(
+                "normal lifecycle failure route",
+                normal_lifecycle_failure_routes,
+                lifecycle_ceilings,
+            ),
+        ]
+    )
+    retained = any(production_symbols.values()) or any(semantic_scans.values()) or any(
+        normal_lifecycle_failure_routes.values()
+    )
+    audit_leak = any(audit_selected_in_production.values()) or any(
+        audit_visibility_mismatches.values()
+    )
+    return {
+        "evidence_kind": "cfg-selected exact Rust symbols and function-local semantic scans",
+        "meaning": policy["meaning"],
+        "normal_lifecycle_failure_routes": {
+            "found": {
+                name: entries for name, entries in normal_lifecycle_failure_routes.items() if entries
+            },
+            "match_counts": {
+                name: len(entries) for name, entries in normal_lifecycle_failure_routes.items()
+            },
+            "required_final_value": False,
+        },
+        "passed_static_absence": not retained and not audit_leak,
+        "production_retains_forbidden_surface": retained,
+        "production_symbols": {
+            "found": {name: entries for name, entries in production_symbols.items() if entries},
+            "match_counts": {name: len(entries) for name, entries in production_symbols.items()},
+            "required_final_value": False,
+        },
+        "ratchet": {"regressions": regressions},
+        "semantic_route_or_ledger_scans": {
+            "found": {name: entries for name, entries in semantic_scans.items() if entries},
+            "match_counts": {name: len(entries) for name, entries in semantic_scans.items()},
+            "required_final_value": False,
+        },
+        "status": "unmet" if retained or audit_leak else "static-absence-confirmed",
+        "test_only_audits": {
+            "feature": audit_feature,
+            "selected_in_production": {
+                name: entries for name, entries in audit_selected_in_production.items() if entries
+            },
+            "selected_when_audit_enabled": {
+                name: entries for name, entries in audit_selected_when_enabled.items() if entries
+            },
+            "visibility_mismatches": {
+                name: entries for name, entries in audit_visibility_mismatches.items() if entries
+            },
+        },
+        "warning": (
+            "This exact selected-source ratchet distinguishes default-off audit declarations from "
+            "production scaffolding. Static absence is necessary but cannot replace the final "
+            "promotion-qualified runtime/artifact evidence."
+        ),
+    }
+
+
 def upstream_stress_capability(root: Path, manifest: Mapping[str, Any]) -> dict[str, object]:
     contracts = required_mapping(manifest["contracts"], "contracts")
     contract_path = root / required_string(
@@ -2094,6 +2742,13 @@ def gate_unmet(report: Mapping[str, Any]) -> list[str]:
         unmet.append("selected production feature/module graph")
     if report["forbidden_scaffolding_compiled"]["compiled_from_selected_source"]:
         unmet.append("forbidden production scaffolding is still selected")
+    phase_ef = report["phase_ef_forbidden_scaffolding"]
+    if phase_ef["production_retains_forbidden_surface"]:
+        unmet.append("Phase E/F post-exit registry, route, ledger, or lifecycle scaffolding")
+    if phase_ef["test_only_audits"]["selected_in_production"]:
+        unmet.append("Phase E/F test-only post-exit audits leak into production")
+    if phase_ef["test_only_audits"]["visibility_mismatches"]:
+        unmet.append("Phase E/F test-only post-exit audit visibility")
     caller_dispatch = report["caller_identity_first_free_dispatch"]
     if caller_dispatch["status"] == "forbidden":
         unmet.append("caller-identity-first native_free dispatch")
@@ -2150,6 +2805,7 @@ def evaluate(root: Path, manifest_path: Path, runtime_evidence_path: Path | None
     caller_dispatch = caller_identity_first_free_dispatch(root, manifest)
     reallocate_dispatch = native_reallocate_pointer_first_dispatch(root, manifest)
     phase_bc = phase_bc_selected_production_reachability(root, manifest)
+    phase_ef = phase_ef_forbidden_scaffolding(root, manifest)
     runtime = load_runtime_evidence(runtime_evidence_path, selected, manifest, root)
     report: dict[str, object] = {
         "format": 1,
@@ -2160,12 +2816,17 @@ def evaluate(root: Path, manifest_path: Path, runtime_evidence_path: Path | None
         "caller_identity_first_free_dispatch": caller_dispatch,
         "native_reallocate_pointer_first_dispatch": reallocate_dispatch,
         "phase_bc_selected_production_reachability": phase_bc,
+        "phase_ef_forbidden_scaffolding": phase_ef,
         "forbidden_scaffolding_compiled": collect_forbidden_scaffolding(root, manifest),
         "unmodified_upstream_stress": upstream_stress_capability(root, manifest),
         "runtime_artifact_evidence": runtime,
         "ratchet": {
             "regressions": sorted(
-                [*ratchet_regressions(manifest, signals), *phase_bc["regressions"]]
+                [
+                    *ratchet_regressions(manifest, signals),
+                    *phase_bc["regressions"],
+                    *phase_ef["ratchet"]["regressions"],
+                ]
             )
         },
         "structural_violations": [

@@ -307,6 +307,134 @@
       }
     }
   },
+  "phase_ef_forbidden_scaffolding": {
+    "meaning": "Phase E requires page/process-abandonment post-exit operations rather than an exact-client route. Phase F then deletes the selected production registry, route variants, semantic route/client-ledger scans, and normal-lifecycle failure routes. Rust visibility does not exempt an implementation symbol: every cfg-selected production declaration is checked. The separately named default-off audit declarations are sampled under their audit feature and must not leak into the production cfg selection.",
+    "production_symbols": {
+      "rules": {
+        "native_post_exit_route_registry": {
+          "path": "crabc-mimalloc/src/runtime_lifecycle.rs",
+          "kind": "struct",
+          "name": "NativePostExitRouteRegistry"
+        },
+        "native_post_exit_free_route_aggregate": {
+          "path": "crabc-mimalloc/src/runtime_lifecycle.rs",
+          "kind": "enum_variant",
+          "enum": "NativePostExitFreeRoute",
+          "name": "Aggregate"
+        },
+        "native_post_exit_free_route_sole_mapped_regular": {
+          "path": "crabc-mimalloc/src/runtime_lifecycle.rs",
+          "kind": "enum_variant",
+          "enum": "NativePostExitFreeRoute",
+          "name": "SoleMappedRegular"
+        }
+      }
+    },
+    "semantic_route_or_ledger_scans": {
+      "rules": {
+        "post_exit_registry_exact_free_scan": {
+          "path": "crabc-mimalloc/src/runtime_lifecycle.rs",
+          "function": "free_exact",
+          "all_of": [
+            "\\bself\\.head\\.load\\s*\\(",
+            "\\bwhile\\s*!current\\.is_null\\s*\\(\\s*\\)",
+            "\\bnode\\.storage\\.free_exact\\s*\\("
+          ]
+        },
+        "post_exit_registry_usable_size_scan": {
+          "path": "crabc-mimalloc/src/runtime_lifecycle.rs",
+          "function": "usable_size_exact",
+          "all_of": [
+            "\\bself\\.head\\.load\\s*\\(",
+            "\\bwhile\\s*!current\\.is_null\\s*\\(\\s*\\)",
+            "\\bnode\\.storage\\.usable_size_exact\\s*\\("
+          ]
+        },
+        "post_exit_registry_completion_scan": {
+          "path": "crabc-mimalloc/src/runtime_lifecycle.rs",
+          "function": "finish_completions_for_owner",
+          "all_of": [
+            "\\bself\\.head\\.load\\s*\\(",
+            "\\bwhile\\s*!current\\.is_null\\s*\\(\\s*\\)",
+            "\\bnode\\.storage\\.finish_completion_for_owner\\s*\\("
+          ]
+        },
+        "detached_route_client_ledger_scan": {
+          "path": "crabc-mimalloc/src/runtime_lifecycle.rs",
+          "function": "take_for_native_free",
+          "all_of": [
+            "\\bentries\\.iter_mut\\s*\\(\\)\\.find_map\\s*\\(",
+            "\\btake_detached_client_for_native_free\\s*\\("
+          ]
+        },
+        "prepared_owner_exit_client_ledger_scan": {
+          "path": "crabc-mimalloc/src/runtime_lifecycle.rs",
+          "function": "native_client_for_block",
+          "all_of": [
+            "\\bfor\\s+slot\\s+in\\s+0\\.\\.self\\.slot_count\\s*\\(\\)\\s*\\{",
+            "\\bPreparedOwnerExitClientState::Live\\b"
+          ]
+        }
+      }
+    },
+    "normal_lifecycle_failure_routes": {
+      "rules": {
+        "aggregate_route_normal_lifecycle_failure": {
+          "path": "crabc-mimalloc/src/runtime_lifecycle.rs",
+          "function": "free_remaining_in_fresh_runtime_worker_with_publisher",
+          "all_of": [
+            "\\bmatch\\s+finish_current_thread_after_user_destructors\\s*\\(\\s*\\)",
+            "\\bThreadFinishResult::Retained\\b",
+            "\\bTicketZeroOwnerExitFreeOutcome::(?:Finished|Retained|Poisoned)\\b"
+          ]
+        },
+        "sole_mapped_regular_route_normal_lifecycle_failure": {
+          "path": "crabc-mimalloc/src/runtime_lifecycle.rs",
+          "function": "reclaim_and_finish",
+          "all_of": [
+            "\\bmatch\\s+finish_current_thread_after_user_destructors\\s*\\(\\s*\\)",
+            "\\bThreadFinishResult::Retained\\b",
+            "\\bTicketZeroOwnerExitReclaimOutcome::(?:Finished|Retained|Poisoned)\\b"
+          ]
+        }
+      }
+    },
+    "test_only_audits": {
+      "feature": "native-runtime-test-audit",
+      "rules": {
+        "post_exit_registry_audit_type": {
+          "path": "crabc-mimalloc/src/runtime_lifecycle.rs",
+          "kind": "struct",
+          "name": "NativePostExitRouteRegistryAudit",
+          "public": true
+        },
+        "post_exit_registry_audit_query": {
+          "path": "crabc-mimalloc/src/runtime_lifecycle.rs",
+          "kind": "function",
+          "name": "native_post_exit_registry_test_audit",
+          "public": true
+        }
+      }
+    },
+    "ratchet_baseline": {
+      "production_symbol_ceiling": {
+        "native_post_exit_route_registry": 1,
+        "native_post_exit_free_route_aggregate": 1,
+        "native_post_exit_free_route_sole_mapped_regular": 1
+      },
+      "semantic_route_or_ledger_scan_ceiling": {
+        "post_exit_registry_exact_free_scan": 1,
+        "post_exit_registry_usable_size_scan": 1,
+        "post_exit_registry_completion_scan": 1,
+        "detached_route_client_ledger_scan": 1,
+        "prepared_owner_exit_client_ledger_scan": 4
+      },
+      "normal_lifecycle_failure_route_ceiling": {
+        "aggregate_route_normal_lifecycle_failure": 1,
+        "sole_mapped_regular_route_normal_lifecycle_failure": 1
+      }
+    }
+  },
   "contracts": {
     "canonical_upstream_stress": "compat/allocator/upstream-stress-v3.5.0.json"
   },

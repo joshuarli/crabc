@@ -103,6 +103,81 @@ class ArchitectureRatchetTests(unittest.TestCase):
                 "process_global_page_owner_scheduler",
             },
         )
+        phase_ef = report["phase_ef_forbidden_scaffolding"]
+        self.assertEqual(
+            phase_ef["test_only_audits"]["selected_in_production"],
+            {},
+        )
+        self.assertEqual(
+            phase_ef["test_only_audits"]["visibility_mismatches"],
+            {},
+        )
+        if phase_ef["production_retains_forbidden_surface"]:
+            self.assertEqual(phase_ef["status"], "unmet")
+            self.assertFalse(phase_ef["passed_static_absence"])
+            self.assertEqual(
+                set(phase_ef["production_symbols"]["found"]),
+                {
+                    "native_post_exit_route_registry",
+                    "native_post_exit_free_route_aggregate",
+                    "native_post_exit_free_route_sole_mapped_regular",
+                },
+            )
+            self.assertEqual(
+                set(phase_ef["semantic_route_or_ledger_scans"]["found"]),
+                {
+                    "post_exit_registry_exact_free_scan",
+                    "post_exit_registry_usable_size_scan",
+                    "post_exit_registry_completion_scan",
+                    "detached_route_client_ledger_scan",
+                    "prepared_owner_exit_client_ledger_scan",
+                },
+            )
+            self.assertEqual(
+                set(phase_ef["normal_lifecycle_failure_routes"]["found"]),
+                {
+                    "aggregate_route_normal_lifecycle_failure",
+                    "sole_mapped_regular_route_normal_lifecycle_failure",
+                },
+            )
+            self.assertEqual(
+                phase_ef["production_symbols"]["match_counts"],
+                RATCHET.PHASE_EF_PRODUCTION_SYMBOL_CEILINGS,
+            )
+            self.assertEqual(
+                phase_ef["semantic_route_or_ledger_scans"]["match_counts"],
+                RATCHET.PHASE_EF_SEMANTIC_SCAN_CEILINGS,
+            )
+            self.assertEqual(
+                phase_ef["normal_lifecycle_failure_routes"]["match_counts"],
+                RATCHET.PHASE_EF_NORMAL_LIFECYCLE_FAILURE_CEILINGS,
+            )
+        else:
+            self.assertEqual(phase_ef["status"], "static-absence-confirmed")
+            self.assertTrue(phase_ef["passed_static_absence"])
+            for section in (
+                "production_symbols",
+                "semantic_route_or_ledger_scans",
+                "normal_lifecycle_failure_routes",
+            ):
+                self.assertEqual(phase_ef[section]["found"], {})
+                self.assertEqual(set(phase_ef[section]["match_counts"].values()), {0})
+        audit_symbols = set(phase_ef["test_only_audits"]["selected_when_audit_enabled"])
+        if phase_ef["production_retains_forbidden_surface"]:
+            self.assertEqual(
+                audit_symbols,
+                {
+                    "post_exit_registry_audit_type",
+                    "post_exit_registry_audit_query",
+                },
+            )
+        else:
+            self.assertTrue(audit_symbols <= RATCHET.PHASE_EF_TEST_AUDIT_RULES)
+        self.assertEqual(phase_ef["ratchet"]["regressions"], [])
+        self.assertIn(
+            "Phase E/F post-exit registry, route, ledger, or lifecycle scaffolding",
+            report["summary"]["unmet"],
+        )
         stress = report["unmodified_upstream_stress"]
         self.assertEqual(stress["current_max_workers"], 0)
         self.assertFalse(stress["current_large_mode"])
@@ -163,6 +238,13 @@ struct CurrentSource {};
         report = RATCHET.evaluate(ROOT, MANIFEST, None)
         synthetic = copy.deepcopy(report)
         synthetic["forbidden_scaffolding_compiled"]["compiled_from_selected_source"] = False
+        synthetic["phase_ef_forbidden_scaffolding"]["production_retains_forbidden_surface"] = False
+        synthetic["phase_ef_forbidden_scaffolding"]["test_only_audits"][
+            "selected_in_production"
+        ] = {}
+        synthetic["phase_ef_forbidden_scaffolding"]["test_only_audits"][
+            "visibility_mismatches"
+        ] = {}
         synthetic["unmodified_upstream_stress"]["status"] = "verified"
         synthetic["caller_identity_first_free_dispatch"]["status"] = "no_caller_identity_dispatch"
         synthetic["native_reallocate_pointer_first_dispatch"]["status"] = "page_map_first"
@@ -214,6 +296,35 @@ struct CurrentSource {};
             "crabc-mimalloc/src/main_heap_page.rs"
         )
         with self.assertRaisesRegex(RATCHET.RatchetError, "absent from selected source hashing"):
+            RATCHET.validate_manifest(invalid)
+
+    def test_phase_ef_manifest_keeps_exact_rules_and_the_honest_current_ceiling(self) -> None:
+        invalid = copy.deepcopy(self.manifest)
+        del invalid["phase_ef_forbidden_scaffolding"]["production_symbols"]["rules"][
+            "native_post_exit_free_route_aggregate"
+        ]
+        with self.assertRaisesRegex(RATCHET.RatchetError, "production symbol rules are incomplete"):
+            RATCHET.validate_manifest(invalid)
+
+        invalid = copy.deepcopy(self.manifest)
+        invalid["phase_ef_forbidden_scaffolding"]["ratchet_baseline"][
+            "semantic_route_or_ledger_scan_ceiling"
+        ]["post_exit_registry_exact_free_scan"] = 0
+        with self.assertRaisesRegex(RATCHET.RatchetError, "preserve its current observed ceiling"):
+            RATCHET.validate_manifest(invalid)
+
+        invalid = copy.deepcopy(self.manifest)
+        invalid["phase_ef_forbidden_scaffolding"]["semantic_route_or_ledger_scans"][
+            "rules"
+        ]["post_exit_registry_exact_free_scan"]["all_of"][0] = r"\\bany_registry_scan\\b"
+        with self.assertRaisesRegex(RATCHET.RatchetError, "semantic route/ledger scan rule"):
+            RATCHET.validate_manifest(invalid)
+
+        invalid = copy.deepcopy(self.manifest)
+        invalid["phase_bc_call_graph"]["cfg_environment"]["features"][
+            "native-runtime-test-audit"
+        ] = True
+        with self.assertRaisesRegex(RATCHET.RatchetError, "audit feature must be disabled"):
             RATCHET.validate_manifest(invalid)
 
     def test_phase_a_bridge_marker_must_be_inside_and_before_its_sole_identity_branch(self) -> None:
@@ -721,6 +832,172 @@ struct DisabledScaffold;
             (root / "runtime.rs").write_text(source, encoding="utf-8")
             forbidden = RATCHET.collect_forbidden_scaffolding(root, manifest)
         self.assertEqual(set(forbidden["found"]), {"production_only"})
+
+    def test_phase_ef_rejects_production_scaffolding_but_allows_test_only_audits(self) -> None:
+        manifest = copy.deepcopy(self.manifest)
+        policy = manifest["phase_ef_forbidden_scaffolding"]
+        for section in (
+            "production_symbols",
+            "semantic_route_or_ledger_scans",
+            "normal_lifecycle_failure_routes",
+            "test_only_audits",
+        ):
+            for rule in policy[section]["rules"].values():
+                rule["path"] = "runtime.rs"
+
+        production_scaffolding = """\
+pub struct NativePostExitRouteRegistry;
+
+pub enum NativePostExitFreeRoute {
+    Aggregate,
+    SoleMappedRegular,
+}
+
+fn free_exact() {
+    let mut current = self.head.load();
+    while !current.is_null() {
+        node.storage.free_exact(block);
+    }
+}
+
+fn usable_size_exact() {
+    let mut current = self.head.load();
+    while !current.is_null() {
+        node.storage.usable_size_exact(block);
+    }
+}
+
+fn finish_completions_for_owner() {
+    let mut current = self.head.load();
+    while !current.is_null() {
+        node.storage.finish_completion_for_owner(owner);
+    }
+}
+
+fn take_for_native_free() {
+    let _ = entries.iter_mut().find_map(|entry| entry.take());
+    let _ = take_detached_client_for_native_free(block);
+}
+
+fn native_client_for_block() {
+    for slot in 0..self.slot_count() {
+        let _ = PreparedOwnerExitClientState::Live;
+    }
+}
+
+fn free_remaining_in_fresh_runtime_worker_with_publisher() {
+    match finish_current_thread_after_user_destructors() {
+        ThreadFinishResult::Retained => {
+            let _ = TicketZeroOwnerExitFreeOutcome::Poisoned;
+        }
+        _ => {}
+    }
+}
+
+fn reclaim_and_finish() {
+    match finish_current_thread_after_user_destructors() {
+        ThreadFinishResult::Retained => {
+            let _ = TicketZeroOwnerExitReclaimOutcome::Poisoned;
+        }
+        _ => {}
+    }
+}
+
+#[cfg(feature = "native-runtime-test-audit")]
+pub struct NativePostExitRouteRegistryAudit;
+
+#[cfg(feature = "native-runtime-test-audit")]
+pub fn native_post_exit_registry_test_audit() {}
+"""
+        audit_only = """\
+#[cfg(feature = "native-runtime-test-audit")]
+pub struct NativePostExitRouteRegistryAudit;
+
+#[cfg(feature = "native-runtime-test-audit")]
+pub fn native_post_exit_registry_test_audit() {}
+"""
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "runtime.rs"
+            source.write_text(production_scaffolding, encoding="utf-8")
+            blocked = RATCHET.phase_ef_forbidden_scaffolding(root, manifest)
+
+            self.assertEqual(blocked["status"], "unmet")
+            self.assertTrue(blocked["production_retains_forbidden_surface"])
+            self.assertFalse(blocked["passed_static_absence"])
+            self.assertEqual(
+                set(blocked["production_symbols"]["found"]),
+                RATCHET.PHASE_EF_PRODUCTION_SYMBOL_RULES,
+            )
+            self.assertEqual(
+                set(blocked["semantic_route_or_ledger_scans"]["found"]),
+                RATCHET.PHASE_EF_SEMANTIC_SCAN_RULES,
+            )
+            self.assertEqual(
+                set(blocked["normal_lifecycle_failure_routes"]["found"]),
+                RATCHET.PHASE_EF_NORMAL_LIFECYCLE_FAILURE_RULES,
+            )
+            self.assertTrue(
+                blocked["production_symbols"]["found"]["native_post_exit_route_registry"][0][
+                    "public"
+                ]
+            )
+            self.assertEqual(blocked["test_only_audits"]["selected_in_production"], {})
+            self.assertEqual(
+                set(blocked["test_only_audits"]["selected_when_audit_enabled"]),
+                RATCHET.PHASE_EF_TEST_AUDIT_RULES,
+            )
+            self.assertEqual(blocked["ratchet"]["regressions"], [])
+
+            source.write_text(
+                production_scaffolding.replace(
+                    "fn free_exact()", "fn renamed_registry_exact_free_scan()", 1
+                ),
+                encoding="utf-8",
+            )
+            renamed_semantic_scan = RATCHET.phase_ef_forbidden_scaffolding(root, manifest)
+            self.assertEqual(
+                renamed_semantic_scan["semantic_route_or_ledger_scans"]["found"][
+                    "post_exit_registry_exact_free_scan"
+                ][0]["function"],
+                "renamed_registry_exact_free_scan",
+            )
+
+            source.write_text(audit_only, encoding="utf-8")
+            green = RATCHET.phase_ef_forbidden_scaffolding(root, manifest)
+            self.assertEqual(green["status"], "static-absence-confirmed")
+            self.assertTrue(green["passed_static_absence"])
+            self.assertFalse(green["production_retains_forbidden_surface"])
+            for section in (
+                "production_symbols",
+                "semantic_route_or_ledger_scans",
+                "normal_lifecycle_failure_routes",
+            ):
+                self.assertEqual(green[section]["found"], {})
+                self.assertEqual(set(green[section]["match_counts"].values()), {0})
+            self.assertEqual(green["test_only_audits"]["selected_in_production"], {})
+            self.assertEqual(
+                set(green["test_only_audits"]["selected_when_audit_enabled"]),
+                RATCHET.PHASE_EF_TEST_AUDIT_RULES,
+            )
+
+            source.write_text(
+                audit_only.replace(
+                    "#[cfg(feature = \"native-runtime-test-audit\")]\npub struct "
+                    "NativePostExitRouteRegistryAudit;",
+                    "pub struct NativePostExitRouteRegistryAudit;",
+                    1,
+                ),
+                encoding="utf-8",
+            )
+            leaked_audit = RATCHET.phase_ef_forbidden_scaffolding(root, manifest)
+            self.assertEqual(leaked_audit["status"], "unmet")
+            self.assertFalse(leaked_audit["production_retains_forbidden_surface"])
+            self.assertFalse(leaked_audit["passed_static_absence"])
+            self.assertEqual(
+                set(leaked_audit["test_only_audits"]["selected_in_production"]),
+                {"post_exit_registry_audit_type"},
+            )
 
     def test_unknown_production_cfg_fails_closed(self) -> None:
         source = """\
