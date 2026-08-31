@@ -37,8 +37,9 @@
 //! runtime sibling can add exactly one no-TLS DSO from the main image's fixed
 //! absolute RUNPATH when every dependency is already retained. That one DSO
 //! may carry a validated legacy `DT_INIT` entry followed by its bounded init
-//! array, then make no-mapping `RTLD_NOLOAD` acquisitions of its appended
-//! identity. It still cannot promote, finalize, or unload an object, and neither sibling
+//! array and one validated-but-inert legacy `DT_FINI` entry, then make
+//! no-mapping `RTLD_NOLOAD` acquisitions of its appended identity. It still
+//! cannot promote, finalize, or unload an object, and neither sibling
 //! publishes borrowed link-map state or public dlfcn entry points.
 
 #![allow(clippy::missing_safety_doc)]
@@ -469,8 +470,10 @@ struct Object {
     relr: *const u8,
     relrsz: usize,
     // Only the cfg-isolated one-slot runtime mapper may retain this legacy
-    // initializer. Startup objects remain on the established init-array-only
-    // boundary, and runtime finalization remains deliberately unsupported.
+    // initializer. It validates a legacy DT_FINI target transiently but does
+    // not retain or dispatch it: pinned musl makes that tag inert on dlclose.
+    // Startup objects remain on the established init-array-only boundary,
+    // and runtime finalization remains deliberately unsupported.
     #[cfg(crabc_bounded_runtime_dlopen)]
     init: usize,
     init_array: *const usize,
@@ -825,12 +828,12 @@ unsafe fn parse_mapped(
     phdr: *const u8,
     phnum: usize,
     mapped: bool,
-    allow_bounded_runtime_init: bool,
+    allow_bounded_runtime_legacy_tags: bool,
 ) -> Option<Object> {
-    // A legacy DT_INIT is not a general mapped-object feature. The only
+    // Legacy DT_INIT/DT_FINI are not general mapped-object features. The only
     // caller that may opt in is the one-slot runtime transaction below; it
     // must never accidentally select main-image or startup-DSO lifecycle.
-    if allow_bounded_runtime_init && !mapped {
+    if allow_bounded_runtime_legacy_tags && !mapped {
         return None;
     }
     let mut dynamic_virtual_address = None;
@@ -938,6 +941,8 @@ unsafe fn parse_mapped(
     let mut init_array_byte_len = None;
     #[cfg(crabc_bounded_runtime_dlopen)]
     let mut bounded_runtime_init_virtual_address = None;
+    #[cfg(crabc_bounded_runtime_dlopen)]
+    let mut bounded_runtime_fini_virtual_address = None;
     // The owned-CRT sibling does not execute any main-image lifecycle entry.
     // It only validates this exact Rust-Scrt1 dynamic-tag shape before that
     // CRT takes over through the post-relocation record.  The two established
@@ -1001,13 +1006,19 @@ unsafe fn parse_mapped(
             #[cfg(crabc_owned_crt_handoff)]
             DT_INIT if !mapped => { if owned_crt_main_init.replace(value).is_some() { return None; } }
             #[cfg(crabc_bounded_runtime_dlopen)]
-            DT_INIT if mapped && allow_bounded_runtime_init => {
+            DT_INIT if mapped && allow_bounded_runtime_legacy_tags => {
                 if bounded_runtime_init_virtual_address.replace(value).is_some() {
                     return None;
                 }
             }
             #[cfg(crabc_owned_crt_handoff)]
             DT_FINI if !mapped => { if owned_crt_main_fini.replace(value).is_some() { return None; } }
+            #[cfg(crabc_bounded_runtime_dlopen)]
+            DT_FINI if mapped && allow_bounded_runtime_legacy_tags => {
+                if bounded_runtime_fini_virtual_address.replace(value).is_some() {
+                    return None;
+                }
+            }
             #[cfg(crabc_owned_crt_handoff)]
             DT_PREINIT_ARRAY if !mapped => {
                 if owned_crt_main_preinit_array.replace(value).is_some() { return None; }
@@ -1152,7 +1163,7 @@ unsafe fn parse_mapped(
         _ => return None,
     }
     #[cfg(crabc_bounded_runtime_dlopen)]
-    if mapped && allow_bounded_runtime_init {
+    if mapped && allow_bounded_runtime_legacy_tags {
         if let Some(address) = bounded_runtime_init_virtual_address {
             // DT_INIT is a direct code pointer, not an array pointer. Make
             // its one permitted runtime use executable-load-contained before
@@ -1161,6 +1172,16 @@ unsafe fn parse_mapped(
                 return None;
             }
             object.init = runtime_address(base, address)? as usize;
+        }
+        if let Some(address) = bounded_runtime_fini_virtual_address {
+            // Pinned musl preserves a legacy DT_FINI tag but does not dispatch
+            // it on the dlclose path. Admit only the one-slot runtime shape
+            // after proving its direct code target; do not retain it or infer
+            // a DT_FINI_ARRAY/unload lifecycle from its presence.
+            if address == 0 || !virtual_range_in_executable_load(phdr, phnum, address, 1) {
+                return None;
+            }
+            let _ = runtime_address(base, address)?;
         }
     }
     if let Some(offset) = runpath_offset {
@@ -1227,7 +1248,7 @@ unsafe fn file_size_from_fd(fd: i64) -> Option<u64> {
     u64::try_from(read_i64(stat.as_ptr().add(X86_64_STAT_SIZE_OFFSET))).ok()
 }
 
-unsafe fn map_elf(fd: i64, allow_bounded_runtime_init: bool) -> Option<Object> {
+unsafe fn map_elf(fd: i64, allow_bounded_runtime_legacy_tags: bool) -> Option<Object> {
     let file_byte_len = file_size_from_fd(fd)?;
     if file_byte_len < 64 { return None; }
     let header_map_len = file_byte_len.min(PAGE);
@@ -1305,7 +1326,13 @@ unsafe fn map_elf(fd: i64, allow_bounded_runtime_init: bool) -> Option<Object> {
     syscall2(SYS_MUNMAP, first, header_map_len as i64);
     // The provisional header mapping is gone; the final PT_LOAD mapping owns
     // every object metadata pointer retained by the returned `Object`.
-    parse_mapped(base, runtime_phdr, phnum, true, allow_bounded_runtime_init)
+    parse_mapped(
+        base,
+        runtime_phdr,
+        phnum,
+        true,
+        allow_bounded_runtime_legacy_tags,
+    )
 }
 
 /// Assign the fixed graph's one-based GNU TLS module IDs and Variant-II
@@ -2493,9 +2520,10 @@ unsafe fn bounded_runtime_preflight_initializers(object: &Object) -> Option<()> 
 /// Run the sole admitted legacy initializer before the bounded init array.
 ///
 /// This is intentionally separate from `run_initializers`: the initial graph
-/// stays DT_INIT-rejecting, while the one runtime DSO may carry one validated
-/// executable DT_INIT entry followed by its already-bounded init array. There
-/// is no DT_FINI/DT_FINI_ARRAY counterpart and no unload transition.
+/// stays legacy-tag-rejecting, while the one runtime DSO may carry one
+/// validated executable DT_INIT entry followed by its already-bounded init
+/// array. Its separately validated legacy DT_FINI remains inert, matching
+/// pinned musl; DT_FINI_ARRAY and every unload transition remain rejected.
 #[cfg(crabc_bounded_runtime_dlopen)]
 unsafe fn run_bounded_runtime_initializers(object: &Object) -> Option<()> {
     if object.init != 0 {
@@ -2520,8 +2548,9 @@ unsafe fn run_bounded_runtime_initializers(object: &Object) -> Option<()> {
 /// The name must be a basename found through the already-validated absolute
 /// RUNPATH of the main image. The DSO is RELA-only, has no PT_TLS, may carry
 /// one validated executable legacy `DT_INIT` entry followed by a bounded
-/// initializer array, and may depend only on objects already retained by the
-/// initial graph. Failed transactions never enter the published graph.
+/// initializer array, plus one validated-but-inert legacy `DT_FINI` entry.
+/// It may depend only on objects already retained by the initial graph.
+/// Failed transactions never enter the published graph.
 #[cfg(crabc_bounded_runtime_dlopen)]
 unsafe fn bounded_runtime_map(path: *const u8) -> Result<usize, &'static [u8]> {
     let Some(path_len) = bounded_nul(path, FIXED_GRAPH_TEXT_CAPACITY) else {

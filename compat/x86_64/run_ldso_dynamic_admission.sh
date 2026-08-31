@@ -107,14 +107,19 @@ require_runner_contract "$BOUNDED_DLOPEN_RUNNER" \
     '__crabc_x86_64_fixed_graph_dlfcn_v1' \
     'R_X86_64_GLOB_DAT' \
     'libbounded-plugin.so' \
+    'libbounded-fini-plugin.so' \
     'libbounded-tls.so' \
     'bounded_plugin_legacy_initialize' \
+    'bounded_plugin_legacy_finalize' \
     'libmid-bounded-dlopen-init.so' \
+    'libmid-bounded-dlopen-fini.so' \
     'candidate accepted DT_INIT in an initial DSO' \
+    'candidate accepted DT_FINI in an initial DSO' \
     'RTLD_NOLOAD' \
     'RTLD_NODELETE' \
     'PT_TLS' \
     'main-musl-bounded-dlopen' \
+    'main-musl-bounded-dlopen-fini' \
     'env -i PATH=/usr/bin:/bin'
 
 run_fixture() {

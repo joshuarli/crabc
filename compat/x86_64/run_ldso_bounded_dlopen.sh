@@ -7,6 +7,7 @@ readonly SOURCE="$ROOT_DIR/ldso/src/x86_64_initial_graph_source_root.rs"
 readonly BRIDGE_SOURCE="$ROOT_DIR/libc/src/c_abi/x86_64/fixed_graph_dlfcn_runtime.rs"
 readonly START="$ROOT_DIR/compat/x86_64/ldso_public_dlfcn_start.S"
 readonly PROBE="$ROOT_DIR/compat/x86_64/ldso_bounded_dlopen_probe.c"
+readonly FINI_PROBE="$ROOT_DIR/compat/x86_64/ldso_bounded_dlopen_fini_probe.c"
 readonly PLUGIN="$ROOT_DIR/compat/x86_64/ldso_bounded_dlopen_plugin.c"
 readonly TLS_PLUGIN="$ROOT_DIR/compat/x86_64/ldso_bounded_dlopen_tls.c"
 readonly MID="$ROOT_DIR/compat/x86_64/ldso_initial_graph_mid.c"
@@ -47,17 +48,32 @@ cc -DCRABC_FIXED_GRAPH_DLFCN=1 -fPIC -shared -nostdlib -Wl,--hash-style=sysv \
     -Wl,-z,now -Wl,-soname,libmid-bounded-dlopen-init.so -Wl,-rpath,"$work_dir" \
     -Wl,-init,mid_value "$MID" -L"$work_dir" -Wl,--no-as-needed \
     -l:libleaf-bounded-dlopen.so -o "$work_dir/libmid-bounded-dlopen-init.so"
+cc -DCRABC_FIXED_GRAPH_DLFCN=1 -fPIC -shared -nostdlib -Wl,--hash-style=sysv \
+    -Wl,-z,now -Wl,-soname,libmid-bounded-dlopen-fini.so -Wl,-rpath,"$work_dir" \
+    -Wl,-fini,mid_value "$MID" -L"$work_dir" -Wl,--no-as-needed \
+    -l:libleaf-bounded-dlopen.so -o "$work_dir/libmid-bounded-dlopen-fini.so"
 for name in libbounded-plugin.so libbounded-extra.so; do
     cc -fPIC -shared -nostdlib -Wl,--hash-style=sysv -Wl,-z,now -Wl,-soname,"$name" \
         -Wl,-init,bounded_plugin_legacy_initialize \
         "$PLUGIN" -L"$work_dir" -Wl,--no-as-needed -l:libleaf-bounded-dlopen.so \
         -o "$work_dir/$name"
 done
+cc -fPIC -shared -nostdlib -Wl,--hash-style=sysv -Wl,-z,now \
+    -Wl,-soname,libbounded-fini-plugin.so \
+    -Wl,-init,bounded_plugin_legacy_initialize \
+    -Wl,-fini,bounded_plugin_legacy_finalize \
+    "$PLUGIN" -L"$work_dir" -Wl,--no-as-needed -l:libleaf-bounded-dlopen.so \
+    -o "$work_dir/libbounded-fini-plugin.so"
 cc -DCRABC_BOUNDED_PLUGIN_INVALID_INIT=1 -fPIC -shared -nostdlib \
     -Wl,--hash-style=sysv -Wl,-z,now -Wl,-soname,libbounded-init-malformed.so \
     -Wl,-init,bounded_plugin_invalid_init "$PLUGIN" -L"$work_dir" \
     -Wl,--no-as-needed -l:libleaf-bounded-dlopen.so \
     -o "$work_dir/libbounded-init-malformed.so"
+cc -DCRABC_BOUNDED_PLUGIN_INVALID_FINI=1 -fPIC -shared -nostdlib \
+    -Wl,--hash-style=sysv -Wl,-z,now -Wl,-soname,libbounded-fini-malformed.so \
+    -Wl,-fini,bounded_plugin_invalid_fini "$PLUGIN" -L"$work_dir" \
+    -Wl,--no-as-needed -l:libleaf-bounded-dlopen.so \
+    -o "$work_dir/libbounded-fini-malformed.so"
 cc -fPIC -shared -nostdlib -Wl,--hash-style=sysv -Wl,-z,now \
     -Wl,-soname,libbounded-tls.so "$TLS_PLUGIN" -o "$work_dir/libbounded-tls.so"
 cc -fPIC -shared -nostdlib -Wl,--hash-style=sysv -Wl,-z,now \
@@ -72,6 +88,10 @@ cc -fPIC -shared -nostdlib -Wl,--hash-style=sysv -Wl,-z,now \
     -Wl,--dynamic-linker,"$MUSL_LOADER" -Wl,-rpath,"$work_dir" \
     "$PROBE" -L"$work_dir" -Wl,--no-as-needed -l:libmid-bounded-dlopen.so \
     -pthread -ldl -o "$work_dir/main-musl-bounded-dlopen"
+"$ORACLE_CC" -std=c11 -fPIE -pie -fno-builtin \
+    -Wl,--dynamic-linker,"$MUSL_LOADER" -Wl,-rpath,"$work_dir" \
+    "$FINI_PROBE" -L"$work_dir" -Wl,--no-as-needed -l:libmid-bounded-dlopen.so \
+    -ldl -o "$work_dir/main-musl-bounded-dlopen-fini"
 "$ORACLE_CC" -std=c11 -DCRABC_BOUNDED_DLFCN_FREESTANDING=1 \
     -I"$ROOT_DIR/include" -nostdlib -fPIE -pie -ffreestanding -fno-builtin \
     -fno-stack-protector -fno-asynchronous-unwind-tables -Wl,--hash-style=sysv \
@@ -83,9 +103,23 @@ cc -DCRABC_BOUNDED_DLFCN_FREESTANDING=1 \
     -I"$ROOT_DIR/include" -nostdlib -fPIE -pie -ffreestanding -fno-builtin \
     -fno-stack-protector -fno-asynchronous-unwind-tables -Wl,--hash-style=sysv \
     -Wl,-z,now -Wl,--no-undefined -Wl,--dynamic-linker,"$interpreter" \
+    -Wl,-rpath,"$work_dir" "$START" "$FINI_PROBE" "$archive" -L"$work_dir" \
+    -Wl,--no-as-needed -l:libmid-bounded-dlopen.so \
+    -o "$work_dir/main-crabc-bounded-dlopen-fini"
+cc -DCRABC_BOUNDED_DLFCN_FREESTANDING=1 \
+    -I"$ROOT_DIR/include" -nostdlib -fPIE -pie -ffreestanding -fno-builtin \
+    -fno-stack-protector -fno-asynchronous-unwind-tables -Wl,--hash-style=sysv \
+    -Wl,-z,now -Wl,--no-undefined -Wl,--dynamic-linker,"$interpreter" \
     -Wl,-rpath,"$work_dir" "$START" "$PROBE" "$archive" -L"$work_dir" \
     -Wl,--no-as-needed -l:libmid-bounded-dlopen-init.so \
     -o "$work_dir/main-crabc-bounded-dlopen-initial-init"
+cc -DCRABC_BOUNDED_DLFCN_FREESTANDING=1 \
+    -I"$ROOT_DIR/include" -nostdlib -fPIE -pie -ffreestanding -fno-builtin \
+    -fno-stack-protector -fno-asynchronous-unwind-tables -Wl,--hash-style=sysv \
+    -Wl,-z,now -Wl,--no-undefined -Wl,--dynamic-linker,"$interpreter" \
+    -Wl,-rpath,"$work_dir" "$START" "$PROBE" "$archive" -L"$work_dir" \
+    -Wl,--no-as-needed -l:libmid-bounded-dlopen-fini.so \
+    -o "$work_dir/main-crabc-bounded-dlopen-initial-fini"
 
 [ "$(readelf -h "$interpreter" | awk '/Type:/{print $2}')" = DYN ] ||
     fail 'interpreter is not ET_DYN'
@@ -128,11 +162,21 @@ for image in "$work_dir/libbounded-plugin.so" "$work_dir/libbounded-extra.so"; d
 done
 readelf -dW "$work_dir/libbounded-plugin.so" | grep -F '(INIT)' >/dev/null ||
     fail 'positive runtime plugin lacks DT_INIT evidence'
+readelf -dW "$work_dir/libbounded-fini-plugin.so" | grep -F '(FINI)' >/dev/null ||
+    fail 'positive runtime plugin lacks DT_FINI evidence'
+if readelf -dW "$work_dir/libbounded-fini-plugin.so" | grep -F '(FINI_ARRAY)' >/dev/null; then
+    fail 'positive runtime plugin selected DT_FINI_ARRAY'
+fi
 readelf -dW "$work_dir/libmid-bounded-dlopen-init.so" | grep -F '(INIT)' >/dev/null ||
     fail 'initial DSO DT_INIT rejection fixture drifted'
+readelf -dW "$work_dir/libmid-bounded-dlopen-fini.so" | grep -F '(FINI)' >/dev/null ||
+    fail 'initial DSO DT_FINI rejection fixture drifted'
 readelf -Ws "$work_dir/libbounded-init-malformed.so" | awk \
     '$4 == "OBJECT" && $7 != "UND" && $8 == "bounded_plugin_invalid_init" { found=1 } END { exit found ? 0 : 1 }' ||
     fail 'malformed runtime plugin lacks non-executable DT_INIT target evidence'
+readelf -Ws "$work_dir/libbounded-fini-malformed.so" | awk \
+    '$4 == "OBJECT" && $7 != "UND" && $8 == "bounded_plugin_invalid_fini" { found=1 } END { exit found ? 0 : 1 }' ||
+    fail 'malformed runtime plugin lacks non-executable DT_FINI target evidence'
 readelf -lW "$work_dir/libbounded-tls.so" | grep -F ' TLS ' >/dev/null ||
     fail 'malformed runtime plugin lacks PT_TLS rejection evidence'
 actual="$(readelf -dW "$work_dir/libbounded-unretained.so" | sed -n 's/.*Shared library: \[\(.*\)\].*/\1/p')"
@@ -144,12 +188,23 @@ run_clean() { env -i PATH=/usr/bin:/bin "$1"; }
     fail 'pinned-musl runtime dlopen differential failed'
 (cd "$work_dir" && run_clean "$candidate") ||
     fail 'crabc bounded runtime dlopen behavior failed'
+(cd "$work_dir" && run_clean "$work_dir/main-musl-bounded-dlopen-fini") ||
+    fail 'pinned-musl legacy DT_FINI differential failed'
+(cd "$work_dir" && run_clean "$work_dir/main-crabc-bounded-dlopen-fini") ||
+    fail 'crabc legacy DT_FINI behavior failed'
 if (cd "$work_dir" && run_clean "$work_dir/main-crabc-bounded-dlopen-initial-init" >/dev/null 2>&1); then
     fail 'candidate accepted DT_INIT in an initial DSO'
 else
     status=$?
     [ "$status" -eq 127 ] ||
         fail "candidate initial-DSO DT_INIT rejection status drifted: $status"
+fi
+if (cd "$work_dir" && run_clean "$work_dir/main-crabc-bounded-dlopen-initial-fini" >/dev/null 2>&1); then
+    fail 'candidate accepted DT_FINI in an initial DSO'
+else
+    status=$?
+    [ "$status" -eq 127 ] ||
+        fail "candidate initial-DSO DT_FINI rejection status drifted: $status"
 fi
 
 printf '%s\n' 'x86 bounded runtime dlopen search/mapping/concurrency: PASS'

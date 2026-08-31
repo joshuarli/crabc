@@ -686,7 +686,9 @@ class X86ParityLedgerTests(unittest.TestCase):
             "public C dlfcn bridge",
             "one serialized RUNPATH mapping",
             "validated executable runtime `DT_INIT`",
-            "initial-DSO DT_INIT with status 127",
+            "validated inert legacy `DT_FINI` target",
+            "initial-DSO DT_INIT/DT_FINI with status 127",
+            "DT_FINI_ARRAY",
             "RTLD_NODELETE",
             "status 127",
             "general loader",
@@ -869,7 +871,9 @@ class X86ParityLedgerTests(unittest.TestCase):
             "one append-only graph mutation",
             "real ELF64 ET_DYN DSO",
             "at most one nonzero executable `DT_INIT` entry",
+            "at most one nonzero executable `DT_FINI` target",
             "initial main/mid/leaf `DT_INIT` remains reject-only",
+            "initial main/mid/leaf `DT_FINI` remains reject-only",
             "generation/additions one",
             "Two concurrent raw-clone callers",
             "RTLD_NOLOAD=4",
@@ -877,7 +881,9 @@ class X86ParityLedgerTests(unittest.TestCase):
             "RTLD_NODELETE=4096",
             "lifecycle-neutral flag",
             "PT_TLS",
+            "DT_FINI_ARRAY",
             "a second runtime object",
+            "legacy `DT_FINI` inert ordinary-close/reopen behavior",
             "neither `loader.dlfcn-basic` nor `loader.dlfcn-introspection` is selected",
             "public x86 support is not promoted",
         ):
@@ -896,8 +902,12 @@ class X86ParityLedgerTests(unittest.TestCase):
         )
         for phrase in (
             "one executable `DT_INIT` entry before its bounded `DT_INIT_ARRAY`",
+            "one executable `DT_FINI` entry without `DT_FINI_ARRAY`",
+            "legacy `DT_FINI` remains inert across each final explicit close",
             "malformed non-executable runtime `DT_INIT`",
+            "malformed non-executable runtime `DT_FINI`",
             "initial-DSO `DT_INIT` status-127 rejection",
+            "initial-DSO `DT_FINI` status-127 rejection",
         ):
             self.assertIn(phrase, artifact["native_evidence"][0]["scope"])
 
@@ -921,6 +931,7 @@ class X86ParityLedgerTests(unittest.TestCase):
                 "compat/x86_64/ldso_bounded_dlopen_plugin.c",
                 "compat/x86_64/ldso_bounded_dlopen_tls.c",
                 "compat/x86_64/ldso_bounded_dlopen_probe.c",
+                "compat/x86_64/ldso_bounded_dlopen_fini_probe.c",
                 "compat/x86_64/run_ldso_bounded_dlopen.sh",
                 "scripts/dev-x86_64.sh",
             },

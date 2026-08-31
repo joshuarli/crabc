@@ -251,11 +251,13 @@ The cfg-isolated `ldso-bounded-dlopen` sibling then admits one append-only
 no-TLS RELA-only ET_DYN mapping through the initial main's absolute RUNPATH,
 with only already-retained dependencies, one validated executable legacy
 `DT_INIT` entry followed by its bounded constructor array, each exactly once,
-four copied objects, and
-one generation/addition. The entry is available only to that appended DSO;
-initial main/mid/leaf `DT_INIT` stays reject-only, and malformed runtime
-targets fail before publication. Its pinned-musl differential also proves
-`RTLD_NOLOAD` reference acquisition for that already-loaded plugin. The
+one validated executable legacy `DT_FINI` target that remains inert on
+ordinary final close, four copied objects, and one generation/addition. Those
+legacy tags are available only to the appended DSO; initial main/mid/leaf
+`DT_INIT`/`DT_FINI` stay reject-only, malformed runtime targets fail before
+publication, and `DT_FINI_ARRAY` remains reject-only. Its pinned-musl
+differential also proves `RTLD_NOLOAD` reference acquisition for that
+already-loaded plugin. The
 candidate accepts that request only with `RTLD_LAZY` or `RTLD_NOW` for the
 single appended basename: it returns the existing opaque token without a path
 lookup, mapping, constructor, or graph change; an unpresent name, `NULL`, and
@@ -268,9 +270,9 @@ process-lifetime owned, it changes neither close/stale-token behavior nor the
 absence of an unload path; `NULL` and named initial identities fail closed.
 PT_TLS,
 RELR, recursive mapping,
-scope promotion, finalization/unload, and all general dlfcn/loader behavior
-remain excluded, so `ldso.dynamic-runtime` and public x86 support remain
-planned.
+scope promotion, `DT_FINI_ARRAY`, finalization/unload, and all general
+dlfcn/loader behavior remain excluded, so `ldso.dynamic-runtime` and public
+x86 support remain planned.
 
 The separate `static-c-math-elementary-long-double` verified slice now
 completes the exact private 35-symbol `math.elementary-long-double`

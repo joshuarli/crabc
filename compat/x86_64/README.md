@@ -4443,12 +4443,14 @@ serializes exactly one slash-free basename lookup through the main image's
 validated absolute RUNPATH. The candidate maps a no-TLS RELA-only ET_DYN whose
 dependencies are already retained, applies final protections and RELRO, then
 runs at most one validated executable legacy `DT_INIT` entry followed by its
-bounded constructor array, each exactly once, and append-publishes a fourth
-snapshot record with
-generation/additions one. The entry is limited to the appended DSO: main/mid/
-leaf `DT_INIT` stays reject-only, and a malformed runtime target fails before
+bounded constructor array, each exactly once, and validates at most one
+executable legacy `DT_FINI` target without dispatching it. Pinned musl leaves
+that legacy fini hook inert on ordinary final close; `DT_FINI_ARRAY` stays
+reject-only. The legacy tags are limited to the appended DSO: main/mid/leaf
+`DT_INIT`/`DT_FINI` stay reject-only, and malformed runtime targets fail before
 publication. Native raw-clone callers prove concurrent opens share one loader
-token and one legacy/init-array sequence; copied dladdr, dlinfo, and
+token and one legacy/init-array sequence; a separate no-`RTLD_NODELETE`
+close/reopen differential proves inert legacy fini behavior. Copied dladdr, dlinfo, and
 dl_iterate_phdr observations prove the added mapping. PT_TLS, slash paths,
 recursive/unretained dependencies, and second-object capacity fail closed.
 Pinned musl 1.2.6 additionally proves that `RTLD_NOLOAD` returns an extra
@@ -4462,7 +4464,7 @@ semantics. `RTLD_NODELETE` is accepted only with LAZY/NOW for that same
 fourth object, including a no-load reference. Its process-lifetime mapping
 already supplies residency, so explicit handles still become stale on close
 and no generic unload lifecycle is selected. General search/mutation, TLS growth, RTLD_NEXT, global promotion,
-finalization/unload, both dlfcn
+`DT_FINI_ARRAY`, finalization/unload, both dlfcn
 capability selections, and public x86 support remain excluded.
 
 `ldso-dynamic-admission` is the consumed aggregate admission gate for seven

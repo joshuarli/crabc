@@ -1587,25 +1587,27 @@ It remains a staged fixed-graph artifact, not capability or platform promotion.
 `ldso-bounded-dlopen` admits one append-only runtime mapping through the main
 image's already-validated absolute RUNPATH. It proves serialized concurrent
 open, one validated executable legacy `DT_INIT` entry followed by its bounded
-constructor array, each exactly once, retained dependencies, copied four-image
-introspection, and
+constructor array, each exactly once, plus one validated but inert legacy
+`DT_FINI` target, retained dependencies, copied four-image introspection, and
 bounded `RTLD_NOLOAD` acquisitions of only that published runtime basename.
-That entry is limited to the appended DSO: initial main/mid/leaf `DT_INIT`
-remains reject-only, and a malformed runtime target fails before publication.
+Those legacy tags are limited to the appended DSO: initial main/mid/leaf
+`DT_INIT`/`DT_FINI` remain reject-only, and a malformed runtime target fails
+before publication. Pinned musl leaves the admitted legacy fini target inert
+on ordinary final close; `DT_FINI_ARRAY` remains reject-only.
 Before publication, `NULL`, and named initial-graph identities fail closed
 without mapping; PT_TLS/malformed rejection and a hard one-object capacity
 remain enforced. `RTLD_NODELETE` is a lifecycle-neutral accepted flag
 only for the same appended object: process-lifetime mapping already retains it,
 while closed explicit tokens still go stale. It does not provide general search, recursive
-dependency mapping, TLS growth, global promotion, RTLD_NEXT, finalization/
-unload, general already-loaded-object queries, capability selection, or public
-x86 support.
+dependency mapping, TLS growth, global promotion, RTLD_NEXT, `DT_FINI_ARRAY`,
+finalization/unload, general already-loaded-object queries, capability
+selection, or public x86 support.
 `ldso-dynamic-admission` executes the initial no-TLS, GNU-Dynamic TLS, owned-
 CRT, copied-introspection, retained-object-dlfcn, public-C-bridge fixed-graph,
-and bounded runtime-mapping/DT_INIT/RTLD_NOLOAD/RTLD_NODELETE fixtures as
-one consumed admission gate. Their fresh candidate ELF inspection and negative
-launches retain only the explicit accepted shapes and rejected metadata,
-relocation, record, handle, and scope forms. It is not a general x86 ldso,
+and bounded runtime-mapping/DT_INIT/inert-DT_FINI/RTLD_NOLOAD/RTLD_NODELETE
+fixtures as one consumed admission gate. Their fresh candidate ELF inspection
+and negative launches retain only the explicit accepted shapes and rejected
+metadata, relocation, record, handle, and scope forms. It is not a general x86 ldso,
 public dlfcn, runtime mapping/search, dynamic CRT/sysroot, or public-support
 claim.
 None of the other C-runtime commands is a crabc-libc or crabc-ldso build,
