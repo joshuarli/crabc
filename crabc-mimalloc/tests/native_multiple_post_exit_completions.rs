@@ -1,15 +1,22 @@
 use std::sync::mpsc;
 
 use crabc_mimalloc::__crabc_runtime::{
-    NativePageAllocationResult, NativePageFreeResult, ThreadAttachResult,
-    ThreadFinishResult, TicketZeroPageAllocationResult, TicketZeroPageFreeResult,
-    attach_current_thread, finish_current_thread_native_after_user_destructors, initialize_process,
-    native_allocate_aligned, native_free, native_post_exit_registry_test_audit,
-    native_reallocate, native_runtime_fork_admission_test_audit, prepare_native_later_thread_arena,
-    ticket_zero_allocate, ticket_zero_free,
+    NativePageAllocationResult, NativePageFreeResult, ThreadAttachResult, ThreadFinishResult,
+    TicketZeroPageAllocationResult, TicketZeroPageFreeResult, attach_current_thread,
+    finish_current_thread_native_after_user_destructors, initialize_process, native_allocate_aligned,
+    native_free, native_reallocate, native_runtime_fork_admission_test_audit, native_usable_size,
+    prepare_native_later_thread_arena, ticket_zero_allocate, ticket_zero_free,
 };
 
 const OWNER_EXIT_CLIENT_COUNT: usize = 6;
+const OWNER_EXIT_CLIENTS: [(&str, usize); OWNER_EXIT_CLIENT_COUNT] = [
+    ("direct-small", 37),
+    ("non-direct-small", 1025),
+    ("medium", 64 * 1024),
+    ("regular-large", 128 * 1024),
+    ("arena-singleton", 1024 * 1024),
+    ("OS-singleton", 7),
+];
 
 fn current_page_size() -> usize {
     crabc_core::param::auxv_value(crabc_core::param::AT_PAGESZ)
@@ -52,191 +59,189 @@ fn allocate_owner_exit_aggregate() -> [usize; OWNER_EXIT_CLIENT_COUNT] {
     ]
 }
 
-fn publish_detached_owner() -> [usize; OWNER_EXIT_CLIENT_COUNT] {
+/// Returns the exact C-shaped clients from one finished owner. The consumer
+/// receives no owner, route token, client ledger, scheduler token, PageMap
+/// lease, or release capability; pointer-first operations must rediscover
+/// source state from the process PageMap. The current multi-owner source drain
+/// still has a deletion-pending registry preflight; Phase F must replace that
+/// preflight with PageMap/abandonment ownership without changing this consumer
+/// contract.
+fn publish_owner_exit_page_map_sources() -> [usize; OWNER_EXIT_CLIENT_COUNT] {
     let (sender, receiver) = mpsc::sync_channel(0);
     let owner = std::thread::spawn(move || {
         assert_eq!(attach_current_thread(), ThreadAttachResult::Attached);
         sender
             .send(allocate_owner_exit_aggregate())
-            .expect("A publishes only its exact C-shaped detached clients");
+            .expect("A publishes only its exact C-shaped clients before owner exit");
         assert_eq!(
             finish_current_thread_native_after_user_destructors(),
             ThreadFinishResult::Finished,
-            "A moves its aggregate into one independently typed detached route"
+            "A completes source collect-abandon before a later pointer operation"
         );
     });
     let clients = receiver
         .recv()
-        .expect("the coordinator receives every exact route client before A exits");
+        .expect("the coordinator receives every exact source client before A exits");
     owner
         .join()
-        .expect("the owner reaches its typed source-exit boundary");
+        .expect("A reaches the completed native owner-exit boundary");
     clients
 }
 
-fn free_exact_native_route_client(address: usize) {
-    // SAFETY: the owner supplied this exact C-shaped address before its typed
-    // detached route entered the private dispatcher. The dispatcher validates
-    // it again against that route's private ledger.
-    let block = unsafe { core::ptr::NonNull::new_unchecked(address as *mut u8) };
-    assert_eq!(
-        unsafe { native_free(block) },
-        NativePageFreeResult::Freed,
-        "B releases only an exact detached-route client"
-    );
+fn consume_owner_exit_page_map_sources(
+    clients: [usize; OWNER_EXIT_CLIENT_COUNT],
+    source: &str,
+) {
+    for (address, (geometry, minimum_usable_size)) in
+        clients.into_iter().zip(OWNER_EXIT_CLIENTS)
+    {
+        // SAFETY: this exact live native client was supplied before its owner
+        // completed source collect-abandon. The pointer-first query and free
+        // each obtain their own PageMap source observation; neither receives
+        // a former owner nor an exact-client route capability.
+        let block = unsafe { core::ptr::NonNull::new_unchecked(address as *mut u8) };
+        assert!(
+            unsafe { native_usable_size(block) }
+                .is_some_and(|usable_size| usable_size >= minimum_usable_size),
+            "{source}'s {geometry} client remains PageMap-queryable after owner exit"
+        );
+        assert_eq!(
+            unsafe { native_free(block) },
+            NativePageFreeResult::Freed,
+            "B consumes {source}'s {geometry} source through pointer-first PageMap dispatch"
+        );
+    }
 }
 
 #[test]
-fn one_b_finishes_multiple_terminal_post_exit_routes_after_its_own_teardown() {
+fn one_b_consumes_multiple_post_exit_page_map_sources_while_initial_owner_remains_independent() {
     assert!(
         initialize_process(current_page_size()),
-        "the native runtime initializes before the multiple-completion witness"
+        "the native runtime initializes before the multiple-source witness"
     );
     assert!(
         prepare_native_later_thread_arena(),
-        "ticket zero parks the first arena before detached owners begin"
+        "the persistent initial owner leaves its source arena pair dormant before workers begin"
     );
 
-    let first = publish_detached_owner();
-    let second = publish_detached_owner();
+    let first = publish_owner_exit_page_map_sources();
+    let second = publish_owner_exit_page_map_sources();
     assert_eq!(
         native_runtime_fork_admission_test_audit().active_later_thread_count,
-        2,
-        "both detached A routes retain their worker-admission claims"
+        0,
+        "both completed A owners release their admissions before B attaches"
     );
 
+    let (terminal_sender, terminal_receiver) = mpsc::sync_channel(0);
+    let (finish_sender, finish_receiver) = mpsc::sync_channel(0);
     let releaser = std::thread::spawn(move || {
         assert_eq!(attach_current_thread(), ThreadAttachResult::Attached);
         assert_eq!(
             native_runtime_fork_admission_test_audit().active_later_thread_count,
-            3,
-            "B attaches beside both detached source routes"
+            1,
+            "B owns the only worker-admission claim while it consumes both PageMap sources"
         );
 
         let local = match native_allocate_aligned(53, 16, false) {
             NativePageAllocationResult::Allocated(block) => block,
-            _ => panic!("B establishes one independently parked local session"),
+            _ => panic!("B establishes an independent local native owner"),
         };
-        // SAFETY: `local` stays in B's private ledger until the local
-        // replacement below. The sentinels prove that a completed A route
-        // cannot redirect B's ordinary local `realloc`.
+        // SAFETY: `local` remains B-local through its replacement below. The
+        // sentinels prove that consuming one completed A source cannot route
+        // B's ordinary local reallocation through a post-exit compatibility
+        // path.
         unsafe {
             local.as_ptr().write(0x51);
             local.as_ptr().add(52).write(0x52);
         }
 
-        for address in first {
-            free_exact_native_route_client(address);
-        }
+        consume_owner_exit_page_map_sources(first, "the first A");
         assert_eq!(
             native_runtime_fork_admission_test_audit().active_later_thread_count,
-            3,
-            "the first terminal A completion remains admitted until B finishes"
-        );
-        assert_eq!(
-            native_post_exit_registry_test_audit().live_entry_count,
-            2,
-            "the completed first route remains represented beside the live second route"
-        );
-        let continued_after_first = match native_allocate_aligned(89, 16, false) {
-            NativePageAllocationResult::Allocated(block) => block,
-            _ => panic!(
-                "B resumes its own parked session for an ordinary local allocation after the first completion"
-            ),
-        };
-        assert_eq!(
-            unsafe { native_free(continued_after_first) },
-            NativePageFreeResult::Freed,
-            "the continued first-completion allocation returns through B's private ledger"
+            1,
+            "the first source's PageMap consumption leaves B as the only admitted worker"
         );
         let local = match unsafe { native_reallocate(Some(local), 4096) } {
             NativePageAllocationResult::Allocated(block) => block,
-            _ => panic!(
-                "B resumes its own parked session for a local replacement after the first completion"
-            ),
+            _ => panic!("B keeps its local replacement available after the first source"),
         };
         assert_eq!(
             unsafe { local.as_ptr().read() },
             0x51,
-            "the first-completion local replacement preserves B's first sentinel"
+            "the first source leaves B's first local sentinel intact"
         );
         assert_eq!(
             unsafe { local.as_ptr().add(52).read() },
             0x52,
-            "the first-completion local replacement preserves B's second sentinel"
-        );
-        assert_eq!(
-            native_runtime_fork_admission_test_audit().active_later_thread_count,
-            3,
-            "resuming B's local session leaves both A admission proofs pending"
+            "the first source leaves B's second local sentinel intact"
         );
 
-        for address in second {
-            free_exact_native_route_client(address);
-        }
+        consume_owner_exit_page_map_sources(second, "the second A");
         assert_eq!(
             native_runtime_fork_admission_test_audit().active_later_thread_count,
-            3,
-            "both terminal A completions remain admitted before B's teardown"
-        );
-        assert_eq!(
-            native_post_exit_registry_test_audit().live_entry_count,
-            2,
-            "both completed routes stay private and non-reusable until B finishes"
-        );
-        assert!(
-            matches!(ticket_zero_allocate(73, false), TicketZeroPageAllocationResult::Unavailable),
-            "ticket zero cannot reopen while B still owes either typed route completion"
-        );
-        let continued_after_second = match native_allocate_aligned(97, 16, false) {
-            NativePageAllocationResult::Allocated(block) => block,
-            _ => panic!(
-                "B resumes its own parked session after the second completed route as well"
-            ),
-        };
-        assert_eq!(
-            unsafe { native_free(continued_after_second) },
-            NativePageFreeResult::Freed,
-            "the second-completion local allocation returns through B's private ledger"
+            1,
+            "the second source's PageMap consumption still leaves only B admitted"
         );
         assert_eq!(
             unsafe { native_free(local) },
             NativePageFreeResult::Freed,
-            "B may discharge its continued local replacement before its own source finish"
+            "B may discharge its local replacement before its own source finish"
         );
 
+        terminal_sender
+            .send(())
+            .expect("B completes both PageMap source consumptions before its normal finish");
+        finish_receiver
+            .recv()
+            .expect(
+                "the initial owner performs an independent ticket-zero operation while B remains attached"
+            );
         assert_eq!(
             finish_current_thread_native_after_user_destructors(),
             ThreadFinishResult::Finished,
-            "B tears down its own attachment before releasing either A admission"
+            "B finishes only its own persistent owner after both foreign source consumptions"
+        );
+        assert_eq!(
+            native_runtime_fork_admission_test_audit().active_later_thread_count,
+            0,
+            "B's own finish releases the remaining worker-admission claim"
         );
     });
+
+    terminal_receiver
+        .recv()
+        .expect("B consumes both completed source images before the initial owner operates");
+    let while_b_attached = match ticket_zero_allocate(73, false) {
+        TicketZeroPageAllocationResult::Allocated(block) => block,
+        TicketZeroPageAllocationResult::Unavailable => {
+            panic!("the persistent initial owner remains available while B is attached")
+        }
+        TicketZeroPageAllocationResult::AllocationFailed => {
+            panic!("the fixed ticket-zero request remains allocatable while B is attached")
+        }
+        TicketZeroPageAllocationResult::Retained => {
+            panic!("healthy PageMap source consumption leaves the initial owner usable")
+        }
+    };
+    assert_eq!(
+        unsafe { ticket_zero_free(while_b_attached) },
+        TicketZeroPageFreeResult::Freed,
+        "the initial persistent owner frees its independent ticket-zero client while B remains attached"
+    );
+    finish_sender
+        .send(())
+        .expect("B may complete its own normal source finish");
     releaser
         .join()
-        .expect("B completes both terminal detached-route lifecycles");
-
-    assert_eq!(
-        native_runtime_fork_admission_test_audit().active_later_thread_count,
-        0,
-        "B's successful finish releases both A claims and its own admission"
-    );
-    let registry = native_post_exit_registry_test_audit();
-    assert_eq!(
-        registry.live_entry_count, 0,
-        "no completed route remains live after B's ordinary finish"
-    );
-    assert_eq!(
-        registry.retained_entry_count, 0,
-        "the successful multi-completion path leaves no terminal entry"
-    );
+        .expect("B completes both independent PageMap source consumptions");
 
     let resumed = match ticket_zero_allocate(73, false) {
         TicketZeroPageAllocationResult::Allocated(block) => block,
-        _ => panic!("ticket zero reactivates only after B finishes every typed completion"),
+        _ => panic!("the initial persistent owner remains usable after B finishes"),
     };
     assert_eq!(
         unsafe { ticket_zero_free(resumed) },
         TicketZeroPageFreeResult::Freed,
-        "the resumed ticket-zero client returns to the dormant pair"
+        "the initial persistent owner returns its local client after B finishes"
     );
 }
