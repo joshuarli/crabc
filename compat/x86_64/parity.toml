@@ -2172,6 +2172,7 @@ source_owners = [
   "libc/src/c_abi/x86_64/ioctl.rs",
   "libc/src/c_abi/x86_64/descriptor_io.rs",
   "libc/src/c_abi/x86_64/process_resources.rs",
+  "libc/src/c_abi/x86_64/sched_yield.rs",
   "libc/src/c_abi/x86_64/system_configuration.rs",
   "libc/src/c_abi/x86_64/system_information.rs",
   "libc/src/c_abi/x86_64/memory_mapping.rs",
@@ -4859,6 +4860,53 @@ x86_abi_prerequisites = [
 x86_header_prerequisites = ["The strict/GNU/LFS C/C++ resource header gate proves project sys/resource.h's rlim_t spelling, rlimit/rusage layouts, caller-resident tail, selectors, priority declarations, prlimit64 alias, and LFS aliases. The static candidate additionally preprocesses project errno.h, limits.h, sys/resource.h, sys/time.h, sys/types.h, unistd.h, sys/syscall.h, and bits/syscall.h, selecting only the named resource declarations and errno profile, not a general installed x86 header or C ABI claim."]
 native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-process-resources", scope = "Pinned-musl C reference plus a true dependency-free x86 crabc-libc static archive and freestanding C candidate. The gate proves project-header provenance including the strict/GNU/LFS resource contract; exact crate-owned C object-member exports separately from compiler-builtins; no interpreter/DT_NEEDED/unresolved symbol or final-artifact dynamic TLS model; direct initial-TLS errno access; all-selector getrlimit/raw-prlimit agreement; invalid/missing-target errors; child-contained prlimit old-and-new transaction plus reversible setrlimit; live-child target prlimit through x86 r10; all-selector rusage prefix/canonical/tail behavior with a stable CHILDREN raw-prefix comparison; priority selector/raw-encoding/error behavior; and child-contained setpriority/nice clamping, successful stale-errno preservation, plus capability-conditional EACCES-to-EPERM mapping. It does not select process-resource capabilities, C scheduler policy, times/accounting, C process lifecycle, pthreads, libc.so, general startup, allocator, loader, sysroot, or public x86 support." }]
 oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl resource-limit, usage, priority, nice, declarations, and errno behavior oracle." }, { kind = "kernel-abi", source = "Linux 5.10 x86-64 ABI", role = "prlimit64/getrusage/getpriority/setpriority register, public-prefix, raw-result, and errno contract." }, { kind = "elf-abi", source = "System V AMD64 psABI", role = "Static initial-exec TLS and Variant-II thread-pointer fixture contract." }]
+
+[[family.verified_artifact]]
+id = "static-c-sched-yield"
+description = "Private native x86 selected-static-archive POSIX `sched_yield` leaf. One dependency-free `crabc-libc` archive resolves exactly `sched_yield(void)` into a freestanding C fixture after an equivalent pinned-musl execution. The separate strict/POSIX/XOPEN/GNU C/C++ header gate proves the unconditional no-argument signed-int declaration and unmangled C++ linkage. The static fixture proves a normal successful yield preserves stale errno, then uses fixture-local classic BPF only to force the raw Linux `-EPERM` result and prove musl's status bridge returns `-1` with `errno=EPERM`. It is distinct from the separate C11 `thrd_yield` artifact, whose void source intentionally discards that same raw result. This artifact establishes no scheduler handoff, fairness, peer-progress, scheduler policy/parameter API, affinity, C11 or pthread lifecycle, process lifecycle, libc.so, CRT, dynamic TLS, loader, sysroot, allocator, family completion, promotion, or public x86 support."
+source_owners = [
+  "compat/upstreams.toml",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/errno.rs",
+  "libc/src/c_abi/x86_64/syscall.rs",
+  "libc/src/c_abi/x86_64/sched_yield.rs",
+  "include/errno.h",
+  "include/features.h",
+  "include/sched.h",
+  "include/stdint.h",
+  "include/sys/prctl.h",
+  "include/sys/syscall.h",
+  "include/sys/types.h",
+  "include/time.h",
+  "include/bits/alltypes.h",
+  "include/bits/syscall.h",
+  "compat/x86_64/sched_yield_header_abi_probe.c",
+  "compat/x86_64/sched_yield_header_abi_probe.cpp",
+  "compat/x86_64/run_sched_yield_header_abi.sh",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/libc_sched_yield_probe.c",
+  "compat/x86_64/libc_sched_yield_start.S",
+  "compat/x86_64/run_libc_sched_yield.sh",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "scripts/check_structure.py",
+  "compat/x86_64/README.md",
+  "STATUS.md",
+  "x86-64.md",
+  "scripts/dev-x86_64.sh",
+]
+x86_abi_prerequisites = [
+  "The SysV AMD64 `int sched_yield(void)` ABI consumes no C argument registers and returns its signed status in eax. Linux 5.10 x86-64 sched_yield=24 consumes no kernel arguments, with the syscall number and raw signed result in rax",
+  "Pinned musl 1.2.6 src/sched/sched_yield.c::sched_yield returns syscall(SYS_sched_yield), so raw Linux -4095 through -1 becomes C -1 plus the calling initial-TLS errno value; normal success leaves errno unchanged",
+  "Fixture-only classic BPF installs PR_SET_NO_NEW_PRIVS=38 through prctl=157 then seccomp=317 and forces only sched_yield to raw -EPERM. The fixture observes that raw word before checking the public C -1/EPERM conversion; it selects no public seccomp or scheduler-policy interface",
+  "The final static candidate has a PT_TLS errno datum with direct initial-exec TPOFF access and no TLSGD/TLSLD/TLSDESC/GOTTPOFF/DTPMOD/DTPOFF model form or __tls_get_addr; fixture-local startup writes one Variant-II %fs:0 thread-pointer self word without claiming CRT or TLS lifecycle",
+]
+x86_header_prerequisites = ["The strict/POSIX/XOPEN/GNU pinned-musl/project-header C11/C++17 `sched.h` gate proves the unconditional `int sched_yield(void)` declaration and an unmangled C++ reference. It checks declaration/linkage only: neither scheduler policy/parameters, affinity, C11/thread lifecycle, archive linkage, installed-header completion, nor public x86 support is selected."]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-sched-yield", scope = "Pinned-musl C reference plus the separate strict/POSIX/XOPEN/GNU C/C++ project-header gate, a true dependency-free x86 crabc-libc archive, and a `-nostdlib -static` candidate. The same fixture proves normal sched_yield success preserves errno; a fixture-local BPF seccomp-forced raw -EPERM preserves raw-call errno and the selected POSIX wrapper publishes -1/EPERM; emitted code uses direct sched_yield=24 and errno TLS. Archive/final ELF checks require the exact export, reject an interpreter/DT_NEEDED/unresolved symbol/dynamic TLS resolver or unowned runtime, and ensure the final closure omits thrd_yield and every scheduler policy/affinity/process-lifecycle entry. It excludes scheduler handoff/fairness/peer progress, scheduler policy/parameters, affinity, C11/pthread lifecycle, process lifecycle, libc.so, CRT, loader, sysroot, family completion, promotion, and public x86 support." }]
+oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source and declaration/behavior oracle for src/sched/sched_yield.c::sched_yield: syscall(SYS_sched_yield) applies ordinary status/errno translation, unlike C11 thrd_yield's raw-result discard." }, { kind = "kernel-abi", source = "Linux 5.10 x86-64 ABI", role = "sched_yield=24 no-argument rax result and fixture-only prctl=157/seccomp=317 forced raw-EPERM contract." }, { kind = "elf-abi", source = "System V AMD64 psABI", role = "No-argument signed-int C ABI and freestanding static initial-exec errno fixture contract." }]
 
 [[family.verified_artifact]]
 id = "static-c-readiness-signal-waits"

@@ -30,8 +30,9 @@
 //! The separately selected bounded
 //! pthread create/explicit-exit/join leaf, private normal-mutex sibling, and
 //! private condition-variable handoff use mmap, munmap, futex, gettid
-//! identity validation, the selected raw thread exit, and the direct C11
-//! `thrd_yield` sched_yield=24 boundary here. The separately selected
+//! identity validation, the selected raw thread exit, the direct C11
+//! `thrd_yield` sched_yield=24 boundary, and the separate status-returning
+//! POSIX `sched_yield` boundary here. The separately selected
 //! bootstrapped-main pthread task-name pair uses direct prctl=157 here;
 //! it does not expose a general prctl C API. Static Initial
 //! TLS v1 additionally uses arch_prctl(ARCH_SET_FS) while it validates and

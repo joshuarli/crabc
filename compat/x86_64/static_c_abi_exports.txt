@@ -701,6 +701,7 @@ scalblnl
 scalbn
 scalbnf
 scalbnl
+sched_yield
 secure_getenv
 seekdir
 select

@@ -50,7 +50,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 41)
-        self.assertEqual(report["verified_artifact_count"], 193)
+        self.assertEqual(report["verified_artifact_count"], 194)
         self.assertEqual(report["header_layout_probe_count"], 46)
         self.assertEqual(report["public_header_inventory_count"], 183)
         self.assertEqual(report["header_foundation_header_count"], 191)
@@ -6729,7 +6729,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             "does not select libc.so", credentials["native_evidence"][0]["scope"]
         )
         posix_artifacts = posix_runtime["verified_artifact"]
-        assert isinstance(posix_artifacts, list) and len(posix_artifacts) == 80
+        assert isinstance(posix_artifacts, list) and len(posix_artifacts) == 81
         artifacts_by_id = {
             artifact["id"]: artifact
             for artifact in posix_artifacts
@@ -7386,6 +7386,40 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertIn("capability-conditional", process_resources["native_evidence"][0]["scope"])
         self.assertIn(
             "libc/src/c_abi/x86_64/process_resources.rs",
+            posix_runtime["source_owners"],
+        )
+        sched_yield = artifacts_by_id["static-c-sched-yield"]
+        assert isinstance(sched_yield, dict)
+        self.assertNotIn("capabilities", sched_yield)
+        for owner in (
+            "compat/upstreams.toml",
+            "libc/src/c_abi/x86_64/static_c_abi.rs",
+            "libc/src/c_abi/x86_64/sched_yield.rs",
+            "include/sched.h",
+            "compat/x86_64/sched_yield_header_abi_probe.c",
+            "compat/x86_64/sched_yield_header_abi_probe.cpp",
+            "compat/x86_64/run_sched_yield_header_abi.sh",
+            "compat/x86_64/static_c_abi_exports.txt",
+            "compat/x86_64/libc_sched_yield_probe.c",
+            "compat/x86_64/libc_sched_yield_start.S",
+            "compat/x86_64/run_libc_sched_yield.sh",
+        ):
+            self.assertIn(owner, sched_yield["source_owners"])
+        self.assertEqual(
+            {evidence["command"] for evidence in sched_yield["native_evidence"]},
+            {"./scripts/dev-x86_64.sh libc-sched-yield"},
+        )
+        for phrase in (
+            "POSIX `sched_yield`",
+            "raw Linux `-EPERM`",
+            "`-1` with `errno=EPERM`",
+            "C11 `thrd_yield`",
+            "scheduler policy/parameter API",
+            "family completion, promotion, or public x86 support",
+        ):
+            self.assertIn(phrase, sched_yield["description"])
+        self.assertIn(
+            "libc/src/c_abi/x86_64/sched_yield.rs",
             posix_runtime["source_owners"],
         )
         readiness_waits = artifacts_by_id["static-c-readiness-signal-waits"]
@@ -13857,6 +13891,37 @@ class X86ParityLedgerTests(unittest.TestCase):
         evidence[0]["command"] = "./scripts/dev-x86_64.sh libc-immediate-termination"
         with self.assertRaisesRegex(
             ledger.LedgerError, "closed libc-posix-exit command"
+        ):
+            ledger.validate_ledger(data)
+
+    def test_sched_yield_artifact_keeps_its_status_errno_mapping_contract(self) -> None:
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-sched-yield"
+        )
+        artifact["description"] = artifact["description"].replace(
+            "raw Linux `-EPERM`", "raw Linux `-EINVAL`"
+        )
+        with self.assertRaisesRegex(ledger.LedgerError, "raw Linux `-EPERM`"):
+            ledger.validate_ledger(data)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-sched-yield"
+        )
+        evidence = artifact["native_evidence"]
+        assert isinstance(evidence, list) and isinstance(evidence[0], dict)
+        evidence[0]["command"] = "./scripts/dev-x86_64.sh libc-thrd-yield"
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "closed libc-sched-yield command"
         ):
             ledger.validate_ledger(data)
 

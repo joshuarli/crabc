@@ -1177,6 +1177,7 @@ CHILD_REAPING_SYMBOLS = ("wait", "waitpid", "waitid")
 
 IMMEDIATE_TERMINATION_SYMBOLS = ("_Exit",)
 POSIX_EXIT_SYMBOLS = ("_exit",)
+SCHED_YIELD_SYMBOLS = ("sched_yield",)
 
 CALLBACK_ALGORITHM_SYMBOLS = ("bsearch", "__qsort_r", "qsort", "qsort_r")
 
@@ -15310,6 +15311,172 @@ def require_static_posix_exit_artifact(family: Mapping[str, Any]) -> None:
         "libc-posix-exit)",
     ):
         require(snippet in dispatcher, f"static-c-posix-exit dispatcher omits {snippet}")
+
+
+def require_static_sched_yield_artifact(family: Mapping[str, Any]) -> None:
+    """Keep musl's status-returning POSIX scheduler-yield closure bounded."""
+
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.posix-runtime].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [
+        entry for entry in artifacts if entry.get("id") == "static-c-sched-yield"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.posix-runtime must contain exactly one static-c-sched-yield artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-sched-yield must not promote libc.posix-runtime",
+    )
+    artifact = matching[0]
+    require(
+        "capabilities" not in artifact,
+        "static-c-sched-yield must not carry capabilities",
+    )
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for phrase in (
+        "POSIX `sched_yield`",
+        "strict/POSIX/XOPEN/GNU",
+        "raw Linux `-EPERM`",
+        "`-1` with `errno=EPERM`",
+        "C11 `thrd_yield`",
+        "scheduler handoff, fairness, peer-progress",
+        "scheduler policy/parameter API",
+        "affinity",
+        "process lifecycle",
+        "family completion, promotion, or public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"static-c-sched-yield description omits {phrase}",
+        )
+
+    owners = set(
+        nonempty_strings(
+            artifact["source_owners"], "static-c-sched-yield.source_owners"
+        )
+    )
+    for owner in (
+        "libc/src/c_abi/x86_64/sched_yield.rs",
+        "include/sched.h",
+        "compat/x86_64/sched_yield_header_abi_probe.c",
+        "compat/x86_64/sched_yield_header_abi_probe.cpp",
+        "compat/x86_64/run_sched_yield_header_abi.sh",
+        "compat/x86_64/libc_sched_yield_probe.c",
+        "compat/x86_64/libc_sched_yield_start.S",
+        "compat/x86_64/run_libc_sched_yield.sh",
+    ):
+        require(
+            owner in owners,
+            f"static-c-sched-yield source ownership omits {owner}",
+        )
+
+    prerequisite_text = " ".join(
+        nonempty_strings(
+            artifact["x86_abi_prerequisites"],
+            "static-c-sched-yield.x86_abi_prerequisites",
+        )
+    )
+    for phrase in (
+        "int sched_yield(void)",
+        "sched_yield=24",
+        "rax",
+        "src/sched/sched_yield.c::sched_yield",
+        "syscall(SYS_sched_yield)",
+        "-1 plus the calling initial-TLS errno",
+        "prctl=157",
+        "seccomp=317",
+        "raw -EPERM",
+        "Variant-II %fs:0",
+    ):
+        require(
+            phrase in prerequisite_text,
+            f"static-c-sched-yield ABI prerequisites omit {phrase}",
+        )
+
+    header_text = " ".join(
+        nonempty_strings(
+            artifact["x86_header_prerequisites"],
+            "static-c-sched-yield.x86_header_prerequisites",
+        )
+    )
+    for phrase in (
+        "strict/POSIX/XOPEN/GNU",
+        "C11/C++17",
+        "sched.h",
+        "int sched_yield(void)",
+        "unmangled C++ reference",
+        "installed-header completion",
+    ):
+        require(
+            phrase in header_text,
+            f"static-c-sched-yield header prerequisites omit {phrase}",
+        )
+
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-sched-yield"},
+        "static-c-sched-yield must use the closed libc-sched-yield command",
+    )
+    scope = evidence[0].get("scope")
+    require(
+        isinstance(scope, str)
+        and all(
+            phrase in scope
+            for phrase in (
+                "Pinned-musl C reference",
+                "strict/POSIX/XOPEN/GNU C/C++",
+                "`-nostdlib -static`",
+                "normal sched_yield success preserves errno",
+                "raw -EPERM",
+                "-1/EPERM",
+                "sched_yield=24",
+                "thrd_yield",
+                "scheduler policy/affinity/process-lifecycle",
+                "promotion",
+                "public x86 support",
+            )
+        ),
+        "static-c-sched-yield evidence must retain its observable bounded contract",
+    )
+    oracle = artifact["oracle"]
+    assert isinstance(oracle, list)
+    oracle_text = " ".join(
+        str(entry.get("role", "")) for entry in oracle if isinstance(entry, Mapping)
+    )
+    require(
+        "src/sched/sched_yield.c::sched_yield" in oracle_text
+        and "syscall(SYS_sched_yield)" in oracle_text
+        and "status/errno translation" in oracle_text,
+        "static-c-sched-yield must retain the exact musl source mapping",
+    )
+    exports = set(
+        static_c_abi_export_names(
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        )
+    )
+    require(
+        set(SCHED_YIELD_SYMBOLS) <= exports,
+        "static-c-sched-yield must retain its exact selected export set",
+    )
+    dispatcher = (ROOT / "scripts" / "dev-x86_64.sh").read_text(encoding="utf-8")
+    for snippet in (
+        "run_sched_yield_header_abi()",
+        "run_libc_sched_yield_probe()",
+        "sched-yield-header-abi)",
+        "libc-sched-yield)",
+    ):
+        require(
+            snippet in dispatcher,
+            f"static-c-sched-yield dispatcher omits {snippet}",
+        )
 
 
 def require_callback_algorithms_artifact(family: Mapping[str, Any]) -> None:
@@ -39541,10 +39708,6 @@ def require_static_thrd_yield_artifact(family: Mapping[str, Any]) -> None:
         "thrd_yield" in static_exports,
         "thrd_yield static export contract is incomplete",
     )
-    require(
-        "sched_yield" not in static_exports,
-        "thrd_yield must not expose the separate POSIX sched_yield C API",
-    )
     dispatcher = (ROOT / "scripts" / "dev-x86_64.sh").read_text(encoding="utf-8")
     for snippet in (
         "run_libc_thrd_yield_probe()",
@@ -39807,6 +39970,7 @@ def validate_ledger(
     require_child_reaping_artifact(by_id["libc.posix-runtime"])
     require_immediate_termination_artifact(by_id["libc.posix-runtime"])
     require_static_posix_exit_artifact(by_id["libc.posix-runtime"])
+    require_static_sched_yield_artifact(by_id["libc.posix-runtime"])
     require_callback_algorithms_artifact(by_id["libc.posix-runtime"])
     require_clock_gettime_artifact(by_id["libc.posix-runtime"])
     require_time_observation_artifact(by_id["libc.posix-runtime"])

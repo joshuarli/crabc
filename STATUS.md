@@ -1371,6 +1371,19 @@ not promoted. The leaf has no syscall, errno/TLS, clock observation,
 timezone/calendar policy, formatting, timer, or floating-environment policy;
 it does not complete the C time family, promote x86, or claim public support.
 
+`./scripts/dev-x86_64.sh libc-sched-yield` is a separate private
+`static-c-sched-yield` artifact in planned `libc.posix-runtime`, not a
+process-accounting or C11-thread artifact. Its strict/POSIX/XOPEN/GNU C/C++
+header matrix and pinned-musl/freestanding-static fixture map exactly to musl
+1.2.6 `src/sched/sched_yield.c::sched_yield`: the no-argument Linux
+`sched_yield=24` syscall returns status, preserving stale `errno` on success
+and translating a fixture-local raw `-EPERM` into `-1` with `errno=EPERM`.
+The adjacent C11 `thrd_yield` leaf remains a separate void/raw-result boundary.
+This artifact makes no scheduler handoff, fairness, or peer-progress claim and
+does not select scheduler policy/parameters, affinity, thread lifecycle,
+process control, CRT, loader, sysroot, family completion, promotion, or public
+x86 support.
+
 `./scripts/dev-x86_64.sh libc-timegm` is a distinct private
 `static-c-timegm-utc` artifact in still-planned `libc.posix-runtime`. Its
 pinned-musl and true-static C fixture selects only GNU/BSD `timegm` as a

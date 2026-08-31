@@ -218,6 +218,7 @@ X86_RUNTIME_FOUNDATION_LIBC_SOURCES = {
     Path("libc/src/c_abi/x86_64/auxv_observation.rs"),
     Path("libc/src/c_abi/x86_64/process_globals.rs"),
     Path("libc/src/c_abi/x86_64/process_resources.rs"),
+    Path("libc/src/c_abi/x86_64/sched_yield.rs"),
     Path("libc/src/c_abi/x86_64/posix_semaphore.rs"),
     Path("libc/src/c_abi/x86_64/c11_thread_lifecycle.rs"),
     Path("libc/src/c_abi/x86_64/c11_sync.rs"),
@@ -3783,6 +3784,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         '#[path = "difftime.rs"]',
         '#[path = "gmtime_r.rs"]',
         '#[path = "timegm.rs"]',
+        '#[path = "sched_yield.rs"]',
         '#[path = "clock_nanosleep.rs"]',
         '#[path = "nanosleep.rs"]',
         '#[path = "descriptor_entry.rs"]',
@@ -7695,6 +7697,36 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
                 f"boundary must not select {forbidden!r}"
             )
 
+    sched_yield_source = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "sched_yield.rs"
+    sched_yield_text = sched_yield_source.read_text(errors="replace")
+    for required in (
+        "musl 1.2.6 release commit",
+        "src/sched/sched_yield.c::sched_yield",
+        "sched_yield=24",
+        "raw_syscall::SYS_SCHED_YIELD",
+        "raw_syscall::syscall0",
+        "c_status(result)",
+        "initial-TLS",
+        "scheduler policy",
+        "process lifecycle",
+    ):
+        if required not in sched_yield_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/sched_yield.rs: selected static POSIX "
+                f"scheduler-yield boundary is missing {required!r}"
+            )
+    sched_yield_exports = set(
+        re.findall(
+            r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(',
+            sched_yield_text,
+        )
+    )
+    if sched_yield_exports != {"sched_yield"}:
+        errors.append(
+            "libc/src/c_abi/x86_64/sched_yield.rs: selected static artifact "
+            "must export only sched_yield"
+        )
+
     timegm_source = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "timegm.rs"
     timegm_text = timegm_source.read_text(errors="replace")
     for required in (
@@ -10299,6 +10331,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         difftime_text,
         gmtime_r_text,
         timegm_text,
+        sched_yield_text,
         clock_nanosleep_text,
         memory_mapping_text,
         memory_sync_text,
@@ -10613,6 +10646,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         "difftime",
         "gmtime_r",
         "timegm",
+        "sched_yield",
         "clock_nanosleep",
         "mmap",
         "munmap",
@@ -10830,7 +10864,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         errors.append(
             "libc/src/c_abi/x86_64: selected static archive must export only its "
             "stat, credential, errno, bootstrap-memory/fenv/continuation, simple "
-            "signal-control, separate realtime-minimum/realtime-maximum bridges, one pure GNU signal-set predicate, paired GNU binary set-operation leaf, and a three-symbol POSIX signal-set mutation leaf, bounded process-signal execution, and one legacy single-signal pause wait, bounded pthread create/exit/join/detach initial-TLS worker, its private selected-main/worker pthread-key/C11-TSS lifecycle, private process-normal pthread mutexes and their musl private condition-variable handoff, the complete selected rwlock/attribute family with private-or-shared futex operation, plus the distinct C11 plain-sync adapter and normal-return pthread/C11 once state machine, its typed C11 create/exit/join/detach sibling, and pthread/C11 identity aliases, named termios-control, direct terminal-descriptor and foreground-group observations plus one named foreground-group assignment, historical ctermid pathname spelling, constant historical gethostid compatibility, selected process-context, child-reaping, C11 immediate termination, callback algorithms, direct clock_gettime, binary64 difftime, caller-buffered fixed-UTC gmtime_r, fixed-UTC timegm, caller-owned mapping-core, no-cancellation mapping synchronization, direct anonymous-memory descriptor creation, nanosleep, and clock_nanosleep, selected "
+            "signal-control, separate realtime-minimum/realtime-maximum bridges, one pure GNU signal-set predicate, paired GNU binary set-operation leaf, and a three-symbol POSIX signal-set mutation leaf, bounded process-signal execution, and one legacy single-signal pause wait, bounded pthread create/exit/join/detach initial-TLS worker, its private selected-main/worker pthread-key/C11-TSS lifecycle, private process-normal pthread mutexes and their musl private condition-variable handoff, the complete selected rwlock/attribute family with private-or-shared futex operation, plus the distinct C11 plain-sync adapter and normal-return pthread/C11 once state machine, its typed C11 create/exit/join/detach sibling, and pthread/C11 identity aliases, named termios-control, direct terminal-descriptor and foreground-group observations plus one named foreground-group assignment, historical ctermid pathname spelling, constant historical gethostid compatibility, selected process-context, child-reaping, C11 immediate termination, callback algorithms, direct clock_gettime, binary64 difftime, caller-buffered fixed-UTC gmtime_r, fixed-UTC timegm, a status-returning POSIX scheduler-yield leaf, caller-owned mapping-core, no-cancellation mapping synchronization, direct anonymous-memory descriptor creation, nanosleep, and clock_nanosleep, selected "
             "POSIX _exit forwarding, descriptor-entry, selected filesystem-access, bounded descriptor-control, timestamp updates, and descriptor-I/O, selected process-resources, selected readiness/signal-waits, "
             "selected socket transport and selected socket-message/options, selected system-observation, selected UTS-identity, "
             "selected numeric-address codecs, immutable IPv6 unspecified/loopback address data objects, and legacy classful IPv4 arithmetic, fixed-profile h_errno message text, byte-string, legacy-memory adapters, source-backed memccpy/mempcpy, caller-buffer strsep, random-entropy, memory-search, C-string-copy, immutable error-string, "
@@ -10898,6 +10932,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         ("search_hash_table.rs", search_hash_table_text),
         ("gettext_catalog.rs", gettext_catalog_text),
         ("clock_gettime.rs", clock_gettime_text),
+        ("sched_yield.rs", sched_yield_text),
         ("clock_nanosleep.rs", clock_nanosleep_text),
         ("memory_mapping.rs", memory_mapping_text),
         ("memory_sync.rs", memory_sync_text),

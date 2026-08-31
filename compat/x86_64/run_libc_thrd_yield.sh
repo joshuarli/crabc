@@ -128,9 +128,6 @@ for symbol in __errno_location thrd_yield; do
     grep -Eq "[[:space:]][TW][[:space:]]${symbol}$" "$archive_symbols" ||
         fail "archive does not define ${symbol}"
 done
-if grep -Eq '[[:space:]][TW][[:space:]]sched_yield$' "$archive_symbols"; then
-    fail "archive accidentally exposes the unselected sched_yield C API"
-fi
 for marker in 'src/thread/thrd_yield.c' 'SYS_SCHED_YIELD' \
     'raw_syscall::syscall0' 'does not publish a raw failure through errno'; do
     grep -Fq "$marker" libc/src/c_abi/x86_64/thrd_yield.rs ||
@@ -159,6 +156,9 @@ for symbol in __errno_location thrd_yield; do
     grep -Eq "[[:space:]]${symbol}$" "$candidate_symbols" ||
         fail "candidate does not define ${symbol}"
 done
+if grep -Eq '[[:space:]]sched_yield$' "$candidate_symbols"; then
+    fail "thrd_yield candidate unexpectedly selects POSIX sched_yield wrapper"
+fi
 unresolved_symbols="$(awk '$7 == "UND" && NF >= 8 { print }' "$candidate_symbols")"
 if [ -n "$unresolved_symbols" ]; then
     printf '%s\n' "$unresolved_symbols" >&2
