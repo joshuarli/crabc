@@ -52,8 +52,9 @@
 //! direct no-cancellation mapping synchronization, direct anonymous-memory
 //! descriptor creation, system-observation,
 //! processor/page-count system-information, UTS-namespace identity, basic socket-transport,
-//! scalar network byte-order conversion, one isolated shared static IPv4
-//! presentation buffer with no resolver state, padded socket messages/options,
+//! scalar network byte-order conversion, one immutable IPv6 unspecified-address
+//! data object, one isolated shared static IPv4 presentation buffer with no
+//! resolver state, padded socket messages/options,
 //! deterministic numeric `netdb.h` address/service translation and result
 //! ownership without resolver configuration, hosts, or DNS,
 //! Linux interface name/index and address snapshots with private output
@@ -451,6 +452,8 @@ mod uts_identity;
 mod socket_transport;
 #[path = "network_byte_order.rs"]
 mod network_byte_order;
+#[path = "in6addr_any.rs"]
+mod in6addr_any;
 #[path = "inet_address.rs"]
 mod inet_address;
 #[path = "inet_ntoa.rs"]

@@ -396,6 +396,7 @@ ilogbf
 ilogbl
 imaxabs
 imaxdiv
+in6addr_any
 index
 inet_addr
 inet_aton

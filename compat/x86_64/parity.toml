@@ -1886,7 +1886,7 @@ native_evidence = [
   { state = "required", command = "./scripts/dev-x86_64.sh memory-locking-header-abi", scope = "This project-first/pinned-musl strict/POSIX/GNU C/C++ per-range locking matrix checks only `mlock`/`munlock` declarations, GNU `mlock2`/`MLOCK_ONFAULT` visibility, strict/POSIX GNU hiding, and unmangled C++ linkage. It does not select archive linkage, runtime behavior, installed-header completion, family completion, or public support." },
   { state = "required", command = "./scripts/dev-x86_64.sh memfd-create-header-abi", scope = "This project-first/pinned-musl eight-profile C/C++ sys/mman.h matrix checks only GNU `memfd_create(const char *, unsigned)`, MFD_CLOEXEC/MFD_ALLOW_SEALING/MFD_HUGETLB=1/2/4 values, GNU visibility, hiding in default/strict/POSIX/XOPEN/BSD and macro-free C++ selections, and unmangled GNU C++ linkage. It does not select archive linkage, runtime behavior, seals/fcntl, installed-header completion, family completion, or public support." },
   { state = "required", command = "./scripts/dev-x86_64.sh resource-header-abi", scope = "This compile-only C/C++ sys/resource strict/GNU/LFS layout, declaration, and alias slice is partial evidence." },
-  { state = "required", command = "./scripts/dev-x86_64.sh socket-header-abi", scope = "This project-first/pinned-musl C/C++ base socket transport declaration/layout plus tiny native IPv6 address-classification macro-behavior slice is partial evidence; it does not select socket options, vectored/ancillary messages, address conversion, or C networking runtime behavior." },
+  { state = "required", command = "./scripts/dev-x86_64.sh socket-header-abi", scope = "This project-first/pinned-musl C/C++ base socket transport declaration/layout plus tiny native IPv6 address-classification macro-behavior and immutable `in6addr_any` union-layout/C++ data-linkage slice is partial evidence; it does not select socket options, vectored/ancillary messages, address conversion, or C networking runtime behavior." },
   { state = "required", command = "./scripts/dev-x86_64.sh inet-address-header-abi", scope = "This project-first/pinned-musl default/GNU/strict C/C++ `<arpa/inet.h>` numeric-address declaration/layout/C-linkage slice is partial evidence: it checks `inet_pton`/`inet_ntop`/`inet_aton`/`inet_addr`/`inet_ntoa`/`inet_makeaddr`/`inet_lnaof`, x86 `in_addr_t`/`in_port_t`/`struct in_addr`, and INET text-buffer constants. It does not select archive linkage, address-conversion runtime behavior, DNS/resolver state, netdb, installed-header completion, family completion, or public x86 support." },
   { state = "required", command = "./scripts/dev-x86_64.sh socket-messages-header-abi", scope = "This project-first/pinned-musl POSIX/GNU/BSD C/C++ socket-message/options matrix checks selected sys/socket.h declarations, x86 iovec=16/8, padded public msghdr=56/8 and cmsghdr=16/4 records, GNU mmsghdr=64/8 visibility, CMSG macro boundaries, and unmangled C++ names. It does not select archive linkage, socket runtime behavior, installed-header completion, family completion, or public support." },
   { state = "required", command = "./scripts/dev-x86_64.sh sysv-semaphore-header-abi", scope = "This project-first/pinned-musl eight-profile C/C++ sys/ipc.h/sys/sem.h matrix checks selected LP64 SysV record layouts, command values, semget/semop/variadic-semctl declarations, C++ C linkage, and GNU-only semtimedop visibility. It is partial header evidence; it does not select a SysV IPC runtime, installed-header completion, family completion, or public support." },
@@ -2133,7 +2133,7 @@ id = "libc.posix-runtime"
 order = 70
 depends_on = ["oracle.musl-toolchain", "libc.headers-layouts", "libc.raw-syscall"]
 category = "c-abi"
-description = "Selected C/POSIX descriptor, event-descriptor, pathname-lifecycle, filesystem, process, signal, mapping, time, scalar network byte-order, private interface discovery, deliberately bounded System V IPC, and unnamed POSIX semaphore behavior in crabc-libc."
+description = "Selected C/POSIX descriptor, event-descriptor, pathname-lifecycle, filesystem, process, signal, mapping, time, scalar network byte-order, immutable IPv6 unspecified-address C ABI object, private interface discovery, deliberately bounded System V IPC, and unnamed POSIX semaphore behavior in crabc-libc."
 aarch64_gates = ["differential", "os-test", "signal-process", "libc-test"]
 source_owners = [
   "libc/src/c_abi.rs",
@@ -2182,6 +2182,7 @@ source_owners = [
   "libc/src/c_abi/x86_64/pathname_lifecycle.rs",
   "libc/src/c_abi/x86_64/socket_transport.rs",
   "libc/src/c_abi/x86_64/network_byte_order.rs",
+  "libc/src/c_abi/x86_64/in6addr_any.rs",
   "libc/src/c_abi/x86_64/interface_discovery.rs",
   "libc/src/network_interface_exports.rs",
   "libc/src/c_abi/x86_64/socket_messages.rs",
@@ -4963,6 +4964,58 @@ native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc
 oracle = [
   { kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source and C/POSIX behavior oracle for src/network/htonl.c, htons.c, ntohl.c, and ntohs.c: fixed-width scalar host/network conversion and its runtime-endian bswap-or-identity selection, restricted to the Linux/x86-64 little-endian bswap route." },
   { kind = "elf-abi", source = "System V AMD64 psABI", role = "Fixed-width unsigned scalar C argument/return ABI, static-link symbol identity, and no-ambient-runtime final-ELF boundary for the freestanding candidate." },
+]
+
+[[family.verified_artifact]]
+id = "static-c-in6addr-any"
+description = "Private native x86 static immutable IPv6 unspecified-address C ABI artifact inside still-planned `libc.posix-runtime`, not a socket, resolver, DNS, netdb, interface, Ethernet, or complete C runtime capability. One project-header C fixture first executes through pinned musl 1.2.6 and then through an archive-free true `-nostdlib -static` candidate linked with exactly one extracted crabc object, never `libc.a`. It exposes exactly the immutable `in6addr_any` global: a sixteen-byte align-4 union-backed `struct in6_addr` whose public `s6_addr` bytes are all zero. Pinned musl maps this independent object to `src/network/in6addr_any.c`; the distinct final-octet-one `in6addr_loopback` sibling in `src/network/in6addr_loopback.c` remains unselected. The shared project-first/pinned-musl C/C++ netinet header gate proves the union-backed layout, exact const pointer declaration, and unmangled C++ data-symbol spelling. This leaf has no code, mutable state, errno, TLS, allocation, syscall, address conversion, IPv6 socket transport, resolver configuration, `/etc/hosts`, `/etc/resolv.conf`, DNS packet, netdb/database, interface, or Ethernet behavior. It does not promote the family or public x86 support."
+source_owners = [
+  "compat/upstreams.toml",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/in6addr_any.rs",
+  "include/arpa/inet.h",
+  "include/netinet/in.h",
+  "include/stddef.h",
+  "include/stdint.h",
+  "include/sys/socket.h",
+  "include/sys/types.h",
+  "include/bits/alltypes.h",
+  "compat/x86_64/socket_header_abi_probe.c",
+  "compat/x86_64/socket_header_abi_probe.cpp",
+  "compat/x86_64/socket_header_ipv6_macro_probe.c",
+  "compat/x86_64/run_socket_header_abi.sh",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/libc_in6addr_any_probe.c",
+  "compat/x86_64/libc_in6addr_any_start.S",
+  "compat/x86_64/run_libc_in6addr_any.sh",
+  "compat/x86_64/aarch64_parity_inventory.py",
+  "compat/x86_64/aarch64_parity_inventory.json",
+  "compat/x86_64/tests/test_aarch64_parity_inventory.py",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "compat/x86_64/README.md",
+  "STATUS.md",
+  "x86-64.md",
+  "scripts/dev-x86_64.sh",
+  "scripts/check_structure.py",
+]
+x86_abi_prerequisites = [
+  "The selected public x86 data ABI is one immutable `const struct in6_addr in6addr_any` object. Pinned-musl/project C and C++ headers make `struct in6_addr` sixteen-byte align-4 storage with `s6_addr` at offset zero; the union's uint8_t/uint16_t/uint32_t arms preserve the ordinary byte, halfword, and word aliases. `&in6addr_any` has type `const struct in6_addr *` and retains an unmangled C++ data-symbol reference.",
+  "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417 maps `src/network/in6addr_any.c` to the independent 16-byte global all-zero `in6addr_any` object with no undefined references. Its separate `src/network/in6addr_loopback.c` sibling is a distinct 16-byte final-octet-one object, which remains outside this selected leaf.",
+  "The archive-free final link starts with exactly one extracted in6addr_any object and never `libc.a`. The final ELF retains a global default 16-byte read-only object, no interpreter, DT_NEEDED, unresolved symbol, PT_TLS, dynamic TLS model, runtime call, syscall, or unowned dependency. The fixture-only `_start` aligns the stack and exits after observing the object; it is not CRT or runtime behavior.",
+  "This is an immutable IPv6 address constant, not a networking runtime: it does not open or configure a socket, convert addresses, inspect interfaces or Ethernet state, read conventional resolver/database files, send DNS, access netdb, or select resolver state. It does not complete, promote, or publicly support x86 networking.",
+]
+x86_header_prerequisites = [
+  "The shared project-first/pinned-musl C/C++ netinet socket-header gate proves the 16-byte align-4 union-backed `struct in6_addr`, `s6_addr` offset zero, exact `const struct in6_addr *` `in6addr_any` declaration, and unmangled C++ data-symbol reference. It remains declaration/layout/linkage evidence only, not socket or resolver runtime behavior, family completion, or public x86 support.",
+  "The static fixture preprocesses project `netinet/in.h`, `arpa/inet.h`, `stddef.h`, `stdint.h`, socket/type, and alltypes headers before it observes the immutable object. It selects no netdb, resolver configuration, or DNS header surface.",
+]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-in6addr-any", scope = "Pinned-musl project-header C execution followed by an archive-free x86 `-nostdlib -static` candidate. The aggregate static export ratchet proves `in6addr_any` publication; the final link receives exactly one extracted object and never `libc.a`. The source audit proves the independent `in6addr_any.c` all-zero 16-byte object plus the separate unselected `in6addr_loopback.c` final-octet-one sibling. The fixture proves one stable address, all sixteen zero bytes, the unspecified classification, and exclusion from loopback/multicast/v4-compatible classifications. The final ELF retains a global default read-only 16-byte object with no interpreter/DT_NEEDED/unresolved symbol, TLS, errno, dynamic TLS, call, syscall, or unowned runtime dependency; it excludes in6addr_loopback, address conversion, socket transport, resolver configuration, hosts/resolv.conf, DNS, netdb/database, interfaces, Ethernet, allocation, libc.so, CRT, loader, sysroot, family promotion, and public x86 support." }]
+oracle = [
+  { kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source and C ABI oracle for src/network/in6addr_any.c: one dependency-free immutable 16-byte all-zero in6addr_any object. The distinct src/network/in6addr_loopback.c final-octet-one data object, resolver/DNS/netdb, socket, interface, and Ethernet behavior are unselected." },
+  { kind = "elf-abi", source = "System V AMD64 psABI and pinned musl x86 headers", role = "Global default read-only 16-byte data-symbol identity, union-backed align-4 struct in6_addr layout, C++ C-linkage spelling, and archive-free static final-ELF boundary." },
 ]
 
 [[family.verified_artifact]]

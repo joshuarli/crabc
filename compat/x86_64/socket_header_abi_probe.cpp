@@ -36,6 +36,9 @@ static_assert(sizeof(sockaddr_in6) == 28 && alignof(sockaddr_in6) == 4 &&
     offsetof(sockaddr_in6, sin6_addr) == 8 &&
     offsetof(sockaddr_in6, sin6_scope_id) == 24,
     "x86 sockaddr_in6 C++ layout");
+static_assert(sizeof(in6_addr) == 16 && alignof(in6_addr) == 4 &&
+    offsetof(in6_addr, s6_addr) == 0,
+    "x86 in6_addr C++ layout");
 static_assert(AF_UNSPEC == 0 && AF_UNIX == 1 && AF_INET == 2 && AF_INET6 == 10 &&
     SOCK_STREAM == 1 && SOCK_DGRAM == 2 && SOCK_SEQPACKET == 5 &&
     SOCK_CLOEXEC == 02000000 && SOCK_NONBLOCK == 04000,
@@ -59,6 +62,10 @@ using sendto_function = ssize_t (*)(int, const void *, size_t, int,
 using recvfrom_function = ssize_t (*)(int, void *, size_t, int, sockaddr *, socklen_t *);
 using shutdown_function = int (*)(int, int);
 using socket_name_function = int (*)(int, sockaddr *, socklen_t *);
+using in6addr_any_pointer = const in6_addr *;
+
+static_assert(__is_same(decltype(&in6addr_any), in6addr_any_pointer),
+    "in6addr_any C++ declaration");
 
 static_assert(__is_same(decltype(&socket), socket_function), "socket C++ declaration");
 static_assert(__is_same(decltype(&socketpair), socketpair_function),
@@ -95,6 +102,12 @@ extern "C" ssize_t recvfrom(int, void *, size_t, int, sockaddr *, socklen_t *);
 extern "C" int shutdown(int, int);
 extern "C" int getsockname(int, sockaddr *, socklen_t *);
 extern "C" int getpeername(int, sockaddr *, socklen_t *);
+extern "C" const in6_addr in6addr_any;
+
+const volatile in6_addr *crabc_x86_64_in6addr_any_header_abi_address()
+{
+    return &in6addr_any;
+}
 
 int crabc_x86_64_socket_header_abi_probe_cpp()
 {

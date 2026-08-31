@@ -1405,6 +1405,8 @@ NETWORK_BYTE_ORDER_SYMBOLS = (
     "ntohs",
 )
 
+IN6ADDR_ANY_SYMBOLS = ("in6addr_any",)
+
 NUMERIC_NETDB_SYMBOLS = (
     "freeaddrinfo",
     "gai_strerror",
@@ -20369,6 +20371,375 @@ def require_network_byte_order_artifact(family: Mapping[str, Any]) -> None:
     )
 
 
+def require_in6addr_any_artifact(family: Mapping[str, Any]) -> None:
+    """Keep one immutable IPv6 global separate from networking runtime state."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.posix-runtime].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [
+        entry for entry in artifacts if entry.get("id") == "static-c-in6addr-any"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.posix-runtime must contain exactly one static-c-in6addr-any artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-in6addr-any must not promote libc.posix-runtime",
+    )
+    artifact = matching[0]
+    description = artifact.get("description")
+    require(isinstance(description, str), "static-c-in6addr-any needs a description")
+    for phrase in (
+        "Private native x86 static immutable IPv6 unspecified-address C ABI artifact",
+        "still-planned `libc.posix-runtime`",
+        "archive-free true `-nostdlib -static` candidate",
+        "exactly one extracted crabc object",
+        "never `libc.a`",
+        "exactly the immutable `in6addr_any` global",
+        "sixteen-byte align-4 union-backed `struct in6_addr`",
+        "all zero",
+        "`src/network/in6addr_any.c`",
+        "`in6addr_loopback` sibling",
+        "`src/network/in6addr_loopback.c`",
+        "unmangled C++ data-symbol spelling",
+        "errno",
+        "TLS",
+        "address conversion",
+        "IPv6 socket transport",
+        "resolver configuration",
+        "`/etc/hosts`",
+        "`/etc/resolv.conf`",
+        "DNS packet",
+        "netdb/database",
+        "interface",
+        "Ethernet",
+        "public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"static-c-in6addr-any description omits {phrase}",
+        )
+
+    owners = set(
+        nonempty_strings(
+            artifact.get("source_owners"), "static-c-in6addr-any.source_owners"
+        )
+    )
+    for owner in (
+        "compat/upstreams.toml",
+        "libc/Cargo.toml",
+        "libc/src/lib.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/in6addr_any.rs",
+        "include/arpa/inet.h",
+        "include/netinet/in.h",
+        "include/stddef.h",
+        "include/stdint.h",
+        "include/sys/socket.h",
+        "include/sys/types.h",
+        "include/bits/alltypes.h",
+        "compat/x86_64/socket_header_abi_probe.c",
+        "compat/x86_64/socket_header_abi_probe.cpp",
+        "compat/x86_64/socket_header_ipv6_macro_probe.c",
+        "compat/x86_64/run_socket_header_abi.sh",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/libc_in6addr_any_probe.c",
+        "compat/x86_64/libc_in6addr_any_start.S",
+        "compat/x86_64/run_libc_in6addr_any.sh",
+        "compat/x86_64/aarch64_parity_inventory.py",
+        "compat/x86_64/aarch64_parity_inventory.json",
+        "compat/x86_64/tests/test_aarch64_parity_inventory.py",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/README.md",
+        "STATUS.md",
+        "x86-64.md",
+        "scripts/dev-x86_64.sh",
+        "scripts/check_structure.py",
+    ):
+        require(owner in owners, f"static-c-in6addr-any source owners omit {owner}")
+
+    prerequisites = nonempty_strings(
+        artifact.get("x86_abi_prerequisites"),
+        "static-c-in6addr-any.x86_abi_prerequisites",
+    )
+    require(
+        any(
+            "const struct in6_addr in6addr_any" in item
+            and "sixteen-byte align-4" in item
+            and "s6_addr" in item
+            and "uint8_t/uint16_t/uint32_t" in item
+            and "const struct in6_addr *" in item
+            and "unmangled C++" in item
+            for item in prerequisites
+        ),
+        "static-c-in6addr-any must record its C/C++ data-object ABI",
+    )
+    require(
+        any(
+            "9fa28ece75d8a2191de7c5bb53bed224c5947417" in item
+            and "src/network/in6addr_any.c" in item
+            and "all-zero" in item
+            and "no undefined references" in item
+            and "src/network/in6addr_loopback.c" in item
+            and "final-octet-one" in item
+            for item in prerequisites
+        ),
+        "static-c-in6addr-any must retain its exact pinned-musl source closure",
+    )
+    require(
+        any(
+            "archive-free final link" in item
+            and "exactly one extracted in6addr_any object" in item
+            and "never `libc.a`" in item
+            and "global default 16-byte read-only object" in item
+            and "no interpreter" in item
+            and "PT_TLS" in item
+            and "runtime call" in item
+            and "fixture-only `_start`" in item
+            for item in prerequisites
+        ),
+        "static-c-in6addr-any must retain its closed static-ELF boundary",
+    )
+    require(
+        any(
+            "immutable IPv6 address constant" in item
+            and "socket" in item
+            and "interfaces or Ethernet" in item
+            and "resolver/database file" in item
+            and "netdb" in item
+            and "publicly support x86 networking" in item
+            for item in prerequisites
+        ),
+        "static-c-in6addr-any must retain its non-promotion boundary",
+    )
+
+    headers = nonempty_strings(
+        artifact.get("x86_header_prerequisites"),
+        "static-c-in6addr-any.x86_header_prerequisites",
+    )
+    require(
+        any(
+            "project-first/pinned-musl C/C++" in item
+            and "netinet" in item
+            and "16-byte align-4" in item
+            and "union-backed" in item
+            and "const struct in6_addr *" in item
+            and "unmangled C++" in item
+            and "public x86 support" in item
+            for item in headers
+        ),
+        "static-c-in6addr-any must retain its C/C++ header ABI proof",
+    )
+
+    static_exports = set(
+        static_c_abi_export_names(
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        )
+    )
+    require(
+        set(IN6ADDR_ANY_SYMBOLS) <= static_exports,
+        "static-c-in6addr-any must retain in6addr_any in the static export manifest",
+    )
+    require(
+        "in6addr_loopback" not in static_exports,
+        "static-c-in6addr-any must leave in6addr_loopback unselected",
+    )
+
+    static_root = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+    ).read_text(encoding="utf-8")
+    require(
+        '#[path = "in6addr_any.rs"]\nmod in6addr_any;' in static_root,
+        "x86 static C ABI must compose the in6addr_any leaf",
+    )
+    leaf = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "in6addr_any.rs"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+        "src/network/in6addr_any.c",
+        "src/network/in6addr_loopback.c",
+        "#[repr(C)]",
+        "pub struct In6Addr",
+        "pub union In6AddrUnion",
+        "[u8; 16]",
+        "[u16; 8]",
+        "[u32; 4]",
+        "#[no_mangle]",
+        "pub static in6addr_any",
+        "[0; 16]",
+    ):
+        require(snippet in leaf, f"in6addr_any leaf omits {snippet}")
+    exports = set(re.findall(r"(?m)^pub\s+static\s+(\w+)\s*:", leaf))
+    require(
+        exports == set(IN6ADDR_ANY_SYMBOLS),
+        "in6addr_any leaf must export only its selected immutable global",
+    )
+    for forbidden in (
+        "static mut",
+        "raw_syscall",
+        "__errno_location",
+        "getaddrinfo",
+        "gethostby",
+        "if_nameindex",
+        "socket(",
+        "std::",
+        "alloc::",
+        "crabc_core",
+        "crabc_mimalloc",
+    ):
+        require(
+            forbidden not in leaf,
+            f"in6addr_any leaf widens into {forbidden}",
+        )
+
+    header = (ROOT / "include" / "netinet" / "in.h").read_text(encoding="utf-8")
+    for snippet in (
+        'extern "C" {',
+        "uint8_t __s6_addr[16]",
+        "uint16_t __s6_addr16[8]",
+        "uint32_t __s6_addr32[4]",
+        "__in6_union",
+        "#define s6_addr __in6_union.__s6_addr",
+        "extern const struct in6_addr in6addr_any",
+    ):
+        require(snippet in header, f"netinet/in.h omits {snippet}")
+
+    oracle = artifact.get("oracle")
+    require(isinstance(oracle, list), "static-c-in6addr-any needs oracle evidence")
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "c-posix"
+            and isinstance(entry.get("role"), str)
+            and "src/network/in6addr_any.c" in entry["role"]
+            and "dependency-free immutable 16-byte all-zero" in entry["role"]
+            and "src/network/in6addr_loopback.c" in entry["role"]
+            and "resolver/DNS/netdb" in entry["role"]
+            and "Ethernet" in entry["role"]
+            for entry in oracle
+        ),
+        "static-c-in6addr-any must retain its pinned-musl object oracle",
+    )
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "elf-abi"
+            and isinstance(entry.get("role"), str)
+            and "Global default read-only 16-byte data-symbol identity" in entry["role"]
+            and "align-4 struct in6_addr" in entry["role"]
+            and "archive-free static final-ELF boundary" in entry["role"]
+            for entry in oracle
+        ),
+        "static-c-in6addr-any must retain its data-symbol ELF ABI oracle",
+    )
+
+    evidence = artifact.get("native_evidence")
+    require(isinstance(evidence, list), "static-c-in6addr-any needs evidence")
+    require(
+        {entry.get("command") for entry in evidence if isinstance(entry, Mapping)}
+        == {"./scripts/dev-x86_64.sh libc-in6addr-any"},
+        "static-c-in6addr-any must use the closed libc-in6addr-any command",
+    )
+    scope = evidence[0].get("scope")
+    require(isinstance(scope, str), "static-c-in6addr-any evidence needs a scope")
+    for phrase in (
+        "Pinned-musl project-header C execution",
+        "archive-free x86 `-nostdlib -static` candidate",
+        "`in6addr_any` publication",
+        "exactly one extracted object",
+        "never `libc.a`",
+        "`in6addr_any.c` all-zero 16-byte object",
+        "`in6addr_loopback.c` final-octet-one sibling",
+        "stable address",
+        "all sixteen zero bytes",
+        "unspecified classification",
+        "loopback/multicast/v4-compatible",
+        "global default read-only 16-byte object",
+        "no interpreter/DT_NEEDED/unresolved symbol",
+        "TLS",
+        "errno",
+        "dynamic TLS",
+        "call",
+        "syscall",
+        "in6addr_loopback",
+        "address conversion",
+        "socket transport",
+        "resolver configuration",
+        "hosts/resolv.conf",
+        "DNS",
+        "netdb/database",
+        "interfaces",
+        "Ethernet",
+        "public x86 support",
+    ):
+        require(phrase in scope, f"static-c-in6addr-any evidence omits {phrase}")
+
+    fixture = (
+        ROOT / "compat" / "x86_64" / "libc_in6addr_any_probe.c"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "in6addr_any_pointer",
+        "sizeof(struct in6_addr) == 16",
+        "_Alignof(struct in6_addr) == 4",
+        "offsetof(struct in6_addr, s6_addr) == 0",
+        "const volatile struct in6_addr",
+        "all_zero",
+        "IN6_IS_ADDR_UNSPECIFIED",
+        "IN6_IS_ADDR_LOOPBACK",
+        "CRABC_IN6ADDR_ANY_FREESTANDING",
+    ):
+        require(snippet in fixture, f"in6addr_any fixture omits {snippet}")
+    runner_path = ROOT / "compat" / "x86_64" / "run_libc_in6addr_any.sh"
+    require(runner_path.is_file(), "static-c-in6addr-any runner is missing")
+    runner = runner_path.read_text(encoding="utf-8")
+    for snippet in (
+        "in6addr_any.lo",
+        "in6addr_loopback.lo",
+        "in6addr_any.c",
+        "in6addr_loopback.c",
+        "all zero",
+        "exactly one selected archive member",
+        "in6addr_any archive member also defines in6addr_loopback",
+        "-nostdlib -static",
+        '"$selected_member" -o "$candidate"',
+        "read-only in6addr_any",
+        "candidate_size",
+        "candidate unexpectedly selects TLS",
+        "in6addr_loopback htonl htons ntohl ntohs",
+        "getaddrinfo",
+        "if_indextoname",
+        "if_nameindex",
+        "if_nametoindex",
+        "socket bind connect send recv",
+        "__tls_get_addr",
+    ):
+        require(snippet in runner, f"static-c-in6addr-any runner omits {snippet}")
+    require(
+        '"$archive" -o "$candidate"' not in runner,
+        "static-c-in6addr-any final candidate must not link libc.a",
+    )
+    socket_header_runner = (
+        ROOT / "compat" / "x86_64" / "run_socket_header_abi.sh"
+    ).read_text(encoding="utf-8")
+    require(
+        "check_cxx_in6addr_any_linkage" in socket_header_runner
+        and "in6addr_any" in socket_header_runner,
+        "socket header gate must retain the in6addr_any C++ linkage proof",
+    )
+    dispatch_source = (ROOT / "scripts" / "dev-x86_64.sh").read_text(encoding="utf-8")
+    require(
+        "libc-in6addr-any)" in dispatch_source
+        and "run_libc_in6addr_any.sh" in dispatch_source,
+        "in6addr-any dispatcher binding is missing",
+    )
+
+
 def require_interface_discovery_artifact(family: Mapping[str, Any]) -> None:
     """Keep C interface snapshots outside numeric netdb and resolver behavior."""
     artifacts = require_verified_artifacts(
@@ -38693,6 +39064,7 @@ def validate_ledger(
     require_descriptor_advice_artifact(by_id["libc.posix-runtime"])
     require_generic_ioctl_artifact(by_id["libc.posix-runtime"])
     require_network_byte_order_artifact(by_id["libc.posix-runtime"])
+    require_in6addr_any_artifact(by_id["libc.posix-runtime"])
     require_interface_discovery_artifact(by_id["libc.posix-runtime"])
     require_socket_messages_artifact(by_id["libc.posix-runtime"])
     require_sysv_semaphore_artifact(by_id["libc.posix-runtime"])
