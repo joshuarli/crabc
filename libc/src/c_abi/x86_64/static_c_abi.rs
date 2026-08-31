@@ -488,6 +488,8 @@ mod in6addr_loopback;
 mod dn_skipname;
 #[path = "ns_get16.rs"]
 mod ns_get16;
+#[path = "ns_get32.rs"]
+mod ns_get32;
 #[path = "ns_put16.rs"]
 mod ns_put16;
 #[path = "inet_address.rs"]
