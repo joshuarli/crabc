@@ -79,6 +79,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   float-parse-header-abi  verify complete x86 numeric.parse-float-locale declarations and linkage
   intmax-arithmetic-header-abi  compile the staged x86 C/C++ inttypes intmax-arithmetic declarations
   credential-observation-header-abi  compile the staged x86 C/C++ unistd credential-observation declarations
+  login-name-header-abi  compile the staged x86 C/C++ unistd login-name declarations
   child-reaping-header-abi  compile the staged x86 C/C++ sys/wait child-reaping declarations
   immediate-termination-header-abi  compile the staged x86 C/C++ stdlib immediate-termination declaration
   callback-algorithms-header-abi  compile the staged x86 C/C++ stdlib callback-algorithm declarations
@@ -240,6 +241,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-termios-control  run the static x86 crabc-libc termios-control slice
   libc-process-context  run the static x86 crabc-libc selected process-context slice
   libc-environment  run the static x86 crabc-libc bounded environment slice
+  libc-login-name  run the static x86 crabc-libc environment-backed login-name slice
   libc-child-reaping  run the static x86 crabc-libc child-reaping slice
   libc-immediate-termination  run the static x86 crabc-libc C11 immediate-termination slice
   libc-callback-algorithms  run the static x86 crabc-libc callback-algorithms slice
@@ -1138,6 +1140,12 @@ does not cover returned-pointer use, direct writers, caller-owned `putenv`
 storage, signals, or fork recovery. It does not provide secure execution,
 exec/spawn inheritance, a general environment lifecycle, dynamic libc, CRT
 objects, loader, sysroot, or public x86 support.
+`libc-login-name` composes that bounded environment owner without widening it.
+It selects exactly `getlogin` and `getlogin_r`: first-match borrowed `LOGNAME`,
+direct ENXIO/ERANGE results, and exact caller-buffer copying with stale errno.
+It owns no storage or lock and does not add passwd/utmp/terminal lookup,
+allocation, secure-execution policy, session identity, process supervision,
+dynamic runtime, promotion, or public x86 support.
 `libc-child-reaping` links that archive into a separate freestanding
 project-header C fixture after an equivalent pinned-musl run. It selects only
 `wait`, `waitpid`, and `waitid`; raw clone/pipe fixture control fixes the
@@ -1760,6 +1768,10 @@ run_libc_intmax_arithmetic() {
 
 run_credential_observation_header_abi() {
     run_in_container bash /workspace/compat/x86_64/run_credential_observation_header_abi.sh
+}
+
+run_login_name_header_abi() {
+    run_in_container bash /workspace/compat/x86_64/run_login_name_header_abi.sh
 }
 
 run_child_reaping_header_abi() {
@@ -2799,6 +2811,10 @@ run_libc_environment_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_environment.sh
 }
 
+run_libc_login_name_probe() {
+    run_in_container bash /workspace/compat/x86_64/run_libc_login_name.sh
+}
+
 run_libc_descriptor_io_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_descriptor_io.sh
 }
@@ -3009,7 +3025,7 @@ case "$command" in
     xattr-header-abi) ;;
     madvise-reference) ;;
     ctype-header-abi|locale-multibyte-header-abi|iconv-header-abi|wide-character-header-abi|locale-object-wide-header-abi|locale-narrow-header-abi) ;;
-    integer-arithmetic-header-abi|integer-parse-header-abi|float-parse-header-abi|intmax-arithmetic-header-abi|credential-observation-header-abi|child-reaping-header-abi|immediate-termination-header-abi|callback-algorithms-header-abi) ;;
+    integer-arithmetic-header-abi|integer-parse-header-abi|float-parse-header-abi|intmax-arithmetic-header-abi|credential-observation-header-abi|login-name-header-abi|child-reaping-header-abi|immediate-termination-header-abi|callback-algorithms-header-abi) ;;
     ffs-header-abi) ;;
     byte-strings-header-abi) ;;
     memory-search-header-abi) ;;
@@ -3031,7 +3047,7 @@ case "$command" in
     libc-memfd-create) ;;
     libc-static-c-abi-differential) ;;
     libc-static-c-abi-same-object-differential|qualification-posix-abi-admission) ;;
-    libc-readiness-waits|libc-system-observation|libc-system-information|libc-fcntl-record-locks|libc-flock|libc-sendfile|libc-posix-fallocate|libc-descriptor-advice|libc-filesystem-capacity|libc-uts-identity|libc-ctype|libc-locale-multibyte|libc-locale-wide-iconv|libc-wide-character|libc-locale-object-wide|libc-locale-narrow|libc-regex|libc-integer-arithmetic|libc-integer-parse|libc-float-parse|libc-intmax-arithmetic|libc-credential-observation|libc-child-reaping|libc-immediate-termination|libc-callback-algorithms|libc-access|libc-clock-gettime|libc-time-observation|libc-system-configuration|libc-mapping-core|libc-header-layouts-baseline|libc-nanosleep|libc-clock-nanosleep|libc-descriptor-entry|libc-fcntl-status-control|libc-ioctl|libc-ffs|libc-byte-strings|libc-process-globals-getopt|libc-inet-address|libc-numeric-netdb|libc-random-entropy|libc-memory-search|libc-string-copy|libc-error-strings|libc-descriptor-pipeline) ;;
+    libc-readiness-waits|libc-system-observation|libc-system-information|libc-fcntl-record-locks|libc-flock|libc-sendfile|libc-posix-fallocate|libc-descriptor-advice|libc-filesystem-capacity|libc-uts-identity|libc-ctype|libc-locale-multibyte|libc-locale-wide-iconv|libc-wide-character|libc-locale-object-wide|libc-locale-narrow|libc-regex|libc-integer-arithmetic|libc-integer-parse|libc-float-parse|libc-intmax-arithmetic|libc-credential-observation|libc-login-name|libc-child-reaping|libc-immediate-termination|libc-callback-algorithms|libc-access|libc-clock-gettime|libc-time-observation|libc-system-configuration|libc-mapping-core|libc-header-layouts-baseline|libc-nanosleep|libc-clock-nanosleep|libc-descriptor-entry|libc-fcntl-status-control|libc-ioctl|libc-ffs|libc-byte-strings|libc-process-globals-getopt|libc-inet-address|libc-numeric-netdb|libc-random-entropy|libc-memory-search|libc-string-copy|libc-error-strings|libc-descriptor-pipeline) ;;
     libc-vector-io|libc-uio-cxx-linkage) ;;
     libc-sysv-semaphore) ;;
     libc-sysv-message-shared-memory) ;;
@@ -3247,6 +3263,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "credential-observation-header-abi takes no arguments"
         ensure_image
         run_credential_observation_header_abi
+        ;;
+    login-name-header-abi)
+        [ "$#" -eq 0 ] || fail "login-name-header-abi takes no arguments"
+        ensure_image
+        run_login_name_header_abi
         ;;
     child-reaping-header-abi)
         [ "$#" -eq 0 ] || fail "child-reaping-header-abi takes no arguments"
@@ -4031,6 +4052,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "libc-environment takes no arguments"
         ensure_image
         run_libc_environment_probe
+        ;;
+    libc-login-name)
+        [ "$#" -eq 0 ] || fail "libc-login-name takes no arguments"
+        ensure_image
+        run_libc_login_name_probe
         ;;
     libc-descriptor-io)
         [ "$#" -eq 0 ] || fail "libc-descriptor-io takes no arguments"

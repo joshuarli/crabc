@@ -689,6 +689,7 @@ EXPECTED_HEADER_LAYOUT_PROBES = {
     "float-parse": "./scripts/dev-x86_64.sh float-parse-header-abi",
     "intmax-arithmetic": "./scripts/dev-x86_64.sh intmax-arithmetic-header-abi",
     "credential-observation": "./scripts/dev-x86_64.sh credential-observation-header-abi",
+    "login-name": "./scripts/dev-x86_64.sh login-name-header-abi",
     "child-reaping": "./scripts/dev-x86_64.sh child-reaping-header-abi",
     "immediate-termination": "./scripts/dev-x86_64.sh immediate-termination-header-abi",
     "callback-algorithms": "./scripts/dev-x86_64.sh callback-algorithms-header-abi",
@@ -794,6 +795,11 @@ EXPECTED_HEADER_LAYOUT_SOURCES = {
         "compat/x86_64/credential_observation_header_abi_probe.c",
         "compat/x86_64/credential_observation_header_abi_probe.cpp",
         "compat/x86_64/run_credential_observation_header_abi.sh",
+    ),
+    "login-name": (
+        "compat/x86_64/login_name_header_abi_probe.c",
+        "compat/x86_64/login_name_header_abi_probe.cpp",
+        "compat/x86_64/run_login_name_header_abi.sh",
     ),
     "child-reaping": (
         "compat/x86_64/child_reaping_header_abi_probe.c",
@@ -1150,6 +1156,8 @@ STDIO_STANDARD_STREAM_SYMBOLS = (
 )
 
 CREDENTIAL_OBSERVATION_SYMBOLS = ("getgroups", "getresuid", "getresgid")
+
+LOGIN_NAME_SYMBOLS = ("getlogin", "getlogin_r")
 
 CHILD_REAPING_SYMBOLS = ("wait", "waitpid", "waitid")
 
@@ -10703,6 +10711,160 @@ def require_static_environment_artifact(family: Mapping[str, Any]) -> None:
         {"__environ", "environ", "_environ", "___environ", "getenv", "setenv", "putenv", "unsetenv", "clearenv"}
         <= exports,
         "static-c-environment must retain its exact selected export set",
+    )
+
+
+def require_static_login_name_artifact(family: Mapping[str, Any]) -> None:
+    """Keep environment-backed login-name observation exact and non-promoting."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.posix-runtime].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [entry for entry in artifacts if entry.get("id") == "static-c-login-name"]
+    require(
+        len(matching) == 1,
+        "libc.posix-runtime must contain exactly one static-c-login-name artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-login-name must not promote libc.posix-runtime",
+    )
+    artifact = matching[0]
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for phrase in (
+        "environment-backed login-name observation",
+        "exactly `getlogin` and `getlogin_r`",
+        "first `LOGNAME`",
+        "borrowed value pointer",
+        "caller-owned `putenv` aliasing",
+        "`ENXIO` directly",
+        "`ERANGE` without writing",
+        "preserve incoming `errno`",
+        "owns no storage, allocator, or lock",
+        "caller-coordinated environment writers",
+        "passwd or utmp",
+        "terminal/session identity",
+        "exec/spawn inheritance",
+        "promotion",
+        "public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"static-c-login-name description omits {phrase}",
+        )
+
+    owners = set(
+        nonempty_strings(artifact["source_owners"], "static-c-login-name.source_owners")
+    )
+    for owner in (
+        "compat/upstreams.toml",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/environment.rs",
+        "libc/src/c_abi/x86_64/login_name.rs",
+        "include/errno.h",
+        "include/stdlib.h",
+        "include/unistd.h",
+        "compat/x86_64/login_name_header_abi_probe.c",
+        "compat/x86_64/login_name_header_abi_probe.cpp",
+        "compat/x86_64/run_login_name_header_abi.sh",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/libc_login_name_probe.c",
+        "compat/x86_64/libc_login_name_start.S",
+        "compat/x86_64/run_libc_login_name.sh",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/tests/test_runner.py",
+        "scripts/dev-x86_64.sh",
+        "scripts/check_structure.py",
+    ):
+        require(owner in owners, f"static-c-login-name source owners omit {owner}")
+
+    prerequisites = nonempty_strings(
+        artifact["x86_abi_prerequisites"],
+        "static-c-login-name.x86_abi_prerequisites",
+    )
+    require(
+        any(
+            "first `LOGNAME`" in item
+            and "borrowed" in item
+            and "caller-owned `putenv` pointer identity" in item
+            for item in prerequisites
+        ),
+        "static-c-login-name must retain its borrowed first-LOGNAME contract",
+    )
+    require(
+        any(
+            "direct `ENXIO`" in item
+            and "direct `ERANGE` without a write" in item
+            and "terminating NUL" in item
+            and "preserve incoming `errno`" in item
+            for item in prerequisites
+        ),
+        "static-c-login-name must retain its exact copy/error contract",
+    )
+    require(
+        any(
+            "owns no storage, allocator, or lock" in item
+            and "Caller-coordinated environment writers" in item
+            and "direct environ assignment" in item
+            and "caller-owned putenv mutation/lifetime" in item
+            and "passwd/utmp/terminal/session identity" in item
+            for item in prerequisites
+        ),
+        "static-c-login-name must retain its exact ownership and concurrency exclusions",
+    )
+    header_prerequisites = nonempty_strings(
+        artifact["x86_header_prerequisites"],
+        "static-c-login-name.x86_header_prerequisites",
+    )
+    require(
+        any(
+            "char *getlogin(void)" in item
+            and "int getlogin_r(char *, size_t)" in item
+            and "strict, POSIX, GNU, and BSD" in item
+            and "unmangled C++ linkage" in item
+            for item in header_prerequisites
+        ),
+        "static-c-login-name must retain its focused header ABI contract",
+    )
+
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-login-name"},
+        "static-c-login-name must use the closed libc-login-name command",
+    )
+    scope = evidence[0].get("scope")
+    require(
+        isinstance(scope, str)
+        and all(
+            phrase in scope
+            for phrase in (
+                "exact crate-owned login-name exports",
+                "absent `LOGNAME` ENXIO",
+                "first-match duplicate selection",
+                "borrowed caller-owned putenv alias plus subsequent mutation",
+                "no-write ERANGE behavior",
+                "direct environ assignment",
+                "stale-errno preservation",
+                "passwd/utmp/terminal dependency",
+                "promotion",
+                "public x86 support",
+            )
+        ),
+        "static-c-login-name evidence must retain its observable bounded contract",
+    )
+    exports = set(
+        static_c_abi_export_names(
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        )
+    )
+    require(
+        set(LOGIN_NAME_SYMBOLS) <= exports,
+        "static-c-login-name must retain its exact selected export set",
     )
 
 
@@ -20483,6 +20645,7 @@ def validate_ledger(
     require_intmax_arithmetic_artifact(by_id["libc.posix-runtime"])
     require_credential_observation_artifact(by_id["libc.posix-runtime"])
     require_static_environment_artifact(by_id["libc.posix-runtime"])
+    require_static_login_name_artifact(by_id["libc.posix-runtime"])
     require_child_reaping_artifact(by_id["libc.posix-runtime"])
     require_immediate_termination_artifact(by_id["libc.posix-runtime"])
     require_callback_algorithms_artifact(by_id["libc.posix-runtime"])

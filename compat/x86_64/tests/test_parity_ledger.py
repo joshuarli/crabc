@@ -50,8 +50,8 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 32)
-        self.assertEqual(report["verified_artifact_count"], 120)
-        self.assertEqual(report["header_layout_probe_count"], 45)
+        self.assertEqual(report["verified_artifact_count"], 121)
+        self.assertEqual(report["header_layout_probe_count"], 46)
         self.assertEqual(report["public_header_inventory_count"], 183)
         self.assertEqual(report["header_foundation_header_count"], 191)
         self.assertEqual(report["header_foundation_pinned_header_count"], 183)
@@ -858,7 +858,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         report = ledger.validate_ledger(data, header_layout_manifest=manifest)
         headers_layouts = self.family(data, "libc.headers-layouts")
 
-        self.assertEqual(report["header_layout_probe_count"], 45)
+        self.assertEqual(report["header_layout_probe_count"], 46)
         self.assertEqual(manifest["schema"], "crabc.x86_64-headers-layouts/v1")
         self.assertEqual(manifest["status"], "planned")
         self.assertEqual(manifest["family"], "libc.headers-layouts")
@@ -4035,6 +4035,46 @@ class X86ParityLedgerTests(unittest.TestCase):
         )
         self.assertIn(
             "libc/src/c_abi/x86_64/environment.rs",
+            posix_runtime["source_owners"],
+        )
+        login_name = artifacts_by_id["static-c-login-name"]
+        assert isinstance(login_name, dict)
+        self.assertNotIn("capabilities", login_name)
+        for owner in (
+            "compat/upstreams.toml",
+            "libc/src/c_abi/x86_64/static_c_abi.rs",
+            "libc/src/c_abi/x86_64/environment.rs",
+            "libc/src/c_abi/x86_64/login_name.rs",
+            "include/unistd.h",
+            "compat/x86_64/login_name_header_abi_probe.c",
+            "compat/x86_64/login_name_header_abi_probe.cpp",
+            "compat/x86_64/run_login_name_header_abi.sh",
+            "compat/x86_64/static_c_abi_exports.txt",
+            "compat/x86_64/libc_login_name_probe.c",
+            "compat/x86_64/libc_login_name_start.S",
+            "compat/x86_64/run_libc_login_name.sh",
+        ):
+            self.assertIn(owner, login_name["source_owners"])
+        self.assertEqual(
+            {evidence["command"] for evidence in login_name["native_evidence"]},
+            {"./scripts/dev-x86_64.sh libc-login-name"},
+        )
+        for phrase in (
+            "first `LOGNAME`",
+            "borrowed value pointer",
+            "`ENXIO` directly",
+            "`ERANGE` without writing",
+            "caller-coordinated environment writers",
+            "passwd or utmp",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, login_name["description"])
+        self.assertIn(
+            "borrowed caller-owned putenv alias plus subsequent mutation",
+            login_name["native_evidence"][0]["scope"],
+        )
+        self.assertIn(
+            "libc/src/c_abi/x86_64/login_name.rs",
             posix_runtime["source_owners"],
         )
         descriptor_io = artifacts_by_id["static-c-descriptor-io"]
@@ -9540,6 +9580,73 @@ class X86ParityLedgerTests(unittest.TestCase):
         evidence[0]["command"] = "./scripts/dev-x86_64.sh libc-foundation"
         with self.assertRaisesRegex(
             ledger.LedgerError, "closed libc-environment command"
+        ):
+            ledger.validate_ledger(data)
+
+    def test_static_login_name_artifact_keeps_its_borrowed_nonpromoting_contract(
+        self,
+    ) -> None:
+        data = self.data()
+        family = self.family(data, "libc.posix-runtime")
+        family["status"] = "foundation-verified"
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "static-c-login-name must not promote"
+        ):
+            ledger.require_static_login_name_artifact(family)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-login-name"
+        )
+        artifact["description"] = artifact["description"].replace(
+            "borrowed value pointer", "copied value pointer"
+        )
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "description omits borrowed value pointer"
+        ):
+            ledger.validate_ledger(data)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-login-name"
+        )
+        prerequisites = artifact["x86_abi_prerequisites"]
+        assert isinstance(prerequisites, list)
+        ownership_index = next(
+            index
+            for index, prerequisite in enumerate(prerequisites)
+            if isinstance(prerequisite, str)
+            and "Caller-coordinated environment writers" in prerequisite
+        )
+        prerequisites[ownership_index] = prerequisites[ownership_index].replace(
+            "Caller-coordinated environment writers", "Environment writers"
+        )
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "exact ownership and concurrency exclusions"
+        ):
+            ledger.validate_ledger(data)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-login-name"
+        )
+        evidence = artifact["native_evidence"]
+        assert isinstance(evidence, list) and isinstance(evidence[0], dict)
+        evidence[0]["command"] = "./scripts/dev-x86_64.sh libc-environment"
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "closed libc-login-name command"
         ):
             ledger.validate_ledger(data)
 

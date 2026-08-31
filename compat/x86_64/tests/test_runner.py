@@ -1108,7 +1108,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "xattr-header-abi",
             "madvise-reference",
             "ctype-header-abi|locale-multibyte-header-abi|iconv-header-abi|wide-character-header-abi|locale-object-wide-header-abi|locale-narrow-header-abi",
-            "integer-arithmetic-header-abi|integer-parse-header-abi|float-parse-header-abi|intmax-arithmetic-header-abi|credential-observation-header-abi|child-reaping-header-abi|immediate-termination-header-abi|callback-algorithms-header-abi",
+            "integer-arithmetic-header-abi|integer-parse-header-abi|float-parse-header-abi|intmax-arithmetic-header-abi|credential-observation-header-abi|login-name-header-abi|child-reaping-header-abi|immediate-termination-header-abi|callback-algorithms-header-abi",
             "ffs-header-abi",
             "byte-strings-header-abi",
             "memory-search-header-abi",
@@ -1130,7 +1130,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "libc-memfd-create",
             "libc-static-c-abi-differential",
             "libc-static-c-abi-same-object-differential|qualification-posix-abi-admission",
-            "libc-readiness-waits|libc-system-observation|libc-system-information|libc-fcntl-record-locks|libc-flock|libc-sendfile|libc-posix-fallocate|libc-descriptor-advice|libc-filesystem-capacity|libc-uts-identity|libc-ctype|libc-locale-multibyte|libc-locale-wide-iconv|libc-wide-character|libc-locale-object-wide|libc-locale-narrow|libc-regex|libc-integer-arithmetic|libc-integer-parse|libc-float-parse|libc-intmax-arithmetic|libc-credential-observation|libc-child-reaping|libc-immediate-termination|libc-callback-algorithms|libc-access|libc-clock-gettime|libc-time-observation|libc-system-configuration|libc-mapping-core|libc-header-layouts-baseline|libc-nanosleep|libc-clock-nanosleep|libc-descriptor-entry|libc-fcntl-status-control|libc-ioctl|libc-ffs|libc-byte-strings|libc-process-globals-getopt|libc-inet-address|libc-numeric-netdb|libc-random-entropy|libc-memory-search|libc-string-copy|libc-error-strings|libc-descriptor-pipeline",
+            "libc-readiness-waits|libc-system-observation|libc-system-information|libc-fcntl-record-locks|libc-flock|libc-sendfile|libc-posix-fallocate|libc-descriptor-advice|libc-filesystem-capacity|libc-uts-identity|libc-ctype|libc-locale-multibyte|libc-locale-wide-iconv|libc-wide-character|libc-locale-object-wide|libc-locale-narrow|libc-regex|libc-integer-arithmetic|libc-integer-parse|libc-float-parse|libc-intmax-arithmetic|libc-credential-observation|libc-login-name|libc-child-reaping|libc-immediate-termination|libc-callback-algorithms|libc-access|libc-clock-gettime|libc-time-observation|libc-system-configuration|libc-mapping-core|libc-header-layouts-baseline|libc-nanosleep|libc-clock-nanosleep|libc-descriptor-entry|libc-fcntl-status-control|libc-ioctl|libc-ffs|libc-byte-strings|libc-process-globals-getopt|libc-inet-address|libc-numeric-netdb|libc-random-entropy|libc-memory-search|libc-string-copy|libc-error-strings|libc-descriptor-pipeline",
             "libc-vector-io|libc-uio-cxx-linkage",
             "libc-sysv-semaphore",
             "libc-sysv-message-shared-memory",
@@ -10194,6 +10194,88 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             parity_ledger,
         )
         self.assertIn("libc-credential-observation", runner)
+
+    def test_libc_static_c_abi_login_name_stays_environment_borrowed(self) -> None:
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        login_name = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "login_name.rs"
+        ).read_text(encoding="utf-8")
+        probe = (
+            ROOT / "compat" / "x86_64" / "libc_login_name_probe.c"
+        ).read_text(encoding="utf-8")
+        artifact_runner = (
+            ROOT / "compat" / "x86_64" / "run_libc_login_name.sh"
+        ).read_text(encoding="utf-8")
+        header_runner = (
+            ROOT / "compat" / "x86_64" / "run_login_name_header_abi.sh"
+        ).read_text(encoding="utf-8")
+        static_exports = {
+            line
+            for line in (
+                ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+            ).read_text(encoding="utf-8").splitlines()
+            if line and not line.startswith("#")
+        }
+        parity_ledger = (
+            ROOT / "compat" / "x86_64" / "parity.toml"
+        ).read_text(encoding="utf-8")
+        runner = RUNNER.read_text(encoding="utf-8")
+
+        self.assertIn('#[path = "login_name.rs"]', static_root)
+        for symbol in ("getlogin", "getlogin_r"):
+            self.assertIn(f"fn {symbol}(", login_name)
+            self.assertIn(symbol, static_exports)
+        for required in (
+            "musl 1.2.6 release commit",
+            "src/unistd/getlogin.c",
+            "src/unistd/getlogin_r.c",
+            "LOGNAME\\0",
+            "environment::getenv",
+            "ENXIO",
+            "ERANGE",
+            "copy_nonoverlapping",
+            "borrowed pointer",
+            "Caller-coordinated environment writers",
+            "does not set `errno`",
+        ):
+            self.assertIn(required, login_name)
+        for forbidden in (
+            "alloc::", "crabc_core", "crabc_mimalloc", "getpwnam",
+            "getpwuid", "getutent", "getutxent", "ttyname", "fn fork(", "fn execve(",
+        ):
+            self.assertNotIn(forbidden, login_name)
+        for required in (
+            "check_absent_logname",
+            "check_borrowed_putenv_value",
+            "check_first_match_and_copy",
+            "check_empty_logname",
+            "getlogin() != borrowed + 8",
+            "getlogin_r(buffer, 5) != ERANGE",
+            "getlogin_r(buffer, 6) != 0",
+            "getlogin_r(0, 0) != ERANGE",
+            "CRABC_LOGIN_NAME_FREESTANDING",
+        ):
+            self.assertIn(required, probe)
+        for required in (
+            "-nostdlib -static",
+            "static_c_abi_exports.txt",
+            "getlogin getlogin_r",
+            "exact crate-owned login-name exports",
+            "candidate retains a dynamic TLS model",
+            "unowned runtime dependency",
+            "passwd/utmp/terminal dependency",
+        ):
+            self.assertIn(required, artifact_runner)
+        for required in (
+            "strict", "posix", "gnu", "bsd", "-std=c++17",
+            "nm --undefined-only", "unistd.h",
+        ):
+            self.assertIn(required, header_runner)
+        self.assertIn('id = "static-c-login-name"', parity_ledger)
+        self.assertIn("login-name-header-abi", runner)
+        self.assertIn("libc-login-name", runner)
 
     def test_libc_static_c_abi_child_reaping_artifact_stays_narrow(self) -> None:
         static_root = (

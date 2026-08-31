@@ -24,7 +24,7 @@
 //! one single-threaded fixed-capacity `pthread_atfork`/`fork` transition that
 //! can compose the existing bounded ordinary-exit callback block in its child,
 //! termios-control, selected process-context, bounded process-environment,
-//! child-reaping, selected
+//! environment-backed login-name observation, child-reaping, selected
 //! descriptor-entry, selected filesystem-access, fixed Linux `lchmod`
 //! unsupported compatibility, bounded fcntl status-control
 //! and nonblocking record-lock boundaries, advisory whole-file flock, bounded
@@ -226,6 +226,8 @@ mod termios_control;
 mod process_context;
 #[path = "environment.rs"]
 mod environment;
+#[path = "login_name.rs"]
+mod login_name;
 #[path = "child_reaping.rs"]
 mod child_reaping;
 #[path = "immediate_termination.rs"]

@@ -230,6 +230,8 @@ geteuid
 getgid
 getgroups
 gethostname
+getlogin
+getlogin_r
 getnameinfo
 getopt
 getopt_long

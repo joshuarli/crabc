@@ -239,6 +239,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh float-parse-header-abi
 ./scripts/dev-x86_64.sh intmax-arithmetic-header-abi
 ./scripts/dev-x86_64.sh credential-observation-header-abi
+./scripts/dev-x86_64.sh login-name-header-abi
 ./scripts/dev-x86_64.sh child-reaping-header-abi
 ./scripts/dev-x86_64.sh immediate-termination-header-abi
 ./scripts/dev-x86_64.sh callback-algorithms-header-abi
@@ -384,6 +385,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-termios-control
 ./scripts/dev-x86_64.sh libc-process-context
 ./scripts/dev-x86_64.sh libc-environment
+./scripts/dev-x86_64.sh libc-login-name
 ./scripts/dev-x86_64.sh libc-child-reaping
 ./scripts/dev-x86_64.sh libc-immediate-termination
 ./scripts/dev-x86_64.sh libc-callback-algorithms
@@ -921,6 +923,14 @@ C/C++ `<unistd.h>` declarations for unconditional `getgroups` and GNU-only
 `getres*` declarations; the GNU C++ probe additionally checks unmangled C
 linkage. This is compile-only header evidence; it does not select account
 database, credential-mutation, or a general C-process ABI.
+
+`login-name-header-abi` compiles project-first and pinned-musl C/C++
+`<unistd.h>` declarations for unconditional `getlogin` and `getlogin_r`.
+Strict, POSIX, GNU, and BSD selections prove their exact `char *`/`int`
+signatures, x86 LP64 `size_t`, and unmangled C++ linkage. This is compile-only
+header evidence for the bounded environment-backed login-name artifact, not
+passwd, terminal/session identity, a general C-process ABI, or public x86
+support.
 
 `child-reaping-header-abi` compiles project-first and pinned-musl C/C++
 `<sys/wait.h>` declarations. Strict C/C++ checks `wait` and `waitpid`; a
@@ -2635,6 +2645,20 @@ caller-coordinated. This no-allocator artifact does not select
 threaded environment lifecycle, dynamic runtime, CRT objects, or public x86
 support.
 
+`libc-login-name` is a separately recorded `static-c-login-name`
+`verified_artifact` gate over that archive, not a login/session identity
+capability. Its project-header C body first executes through pinned musl and
+then through a `-nostdlib -static` candidate. It selects only `getlogin` and
+`getlogin_r`: the first `LOGNAME` entry returns a borrowed pointer, preserving
+caller-owned `putenv` aliasing and later mutation. An absent name returns
+`ENXIO`; too-small storage returns `ERANGE` without writing; an exact-fit or
+larger caller buffer receives the value and NUL, including for an empty name.
+Both calls preserve stale `errno`. It owns no allocation, storage, lock,
+passwd/utmp parsing, terminal/session lookup, credential policy, or secure
+execution. Direct `environ` assignment and caller-owned storage/mutation
+remain caller-coordinated. It does not select process creation, exec/spawn
+inheritance, supervision, dynamic runtime, CRT objects, or public x86 support.
+
 `libc-child-reaping` is a separately recorded
 `static-c-child-reaping` `verified_artifact` gate over that archive, not a
 process-control or child-supervision capability. Its project-header C body
@@ -4018,7 +4042,7 @@ Apart from the narrowly named `libc-stat-compat`, `libc-credentials`,
 `libc-pthread-rwlock`, `libc-pthread-cond-private`, `libc-c11-plain-sync`, `libc-pthread-c11-once`,
 `libc-pthread-c11-tsd`,
 `libc-termios-control`,
-`libc-process-context`, `libc-environment`, `libc-child-reaping`, and
+`libc-process-context`, `libc-environment`, `libc-login-name`, `libc-child-reaping`, and
 `libc-immediate-termination`, `libc-callback-algorithms`,
 `libc-clock-gettime`,
 `libc-time-observation`,

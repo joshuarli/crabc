@@ -6,6 +6,21 @@ runtime parity, defined by [`x86-64.md`](x86-64.md). It covers `crabc-core`,
 with explicit target-specific foundations and native evidence. Public support
 remains Linux/AArch64 little-endian until every x86 promotion gate passes.
 
+`./scripts/dev-x86_64.sh libc-login-name` is a private
+`static-c-login-name` artifact inside planned `libc.posix-runtime`. Its
+pinned-musl and freestanding-static routes compose the selected bounded
+environment owner with exactly `getlogin` and `getlogin_r`. The first
+`LOGNAME` entry supplies a borrowed `getlogin` pointer, including
+caller-owned `putenv` aliasing and later mutation; `getlogin_r` returns direct
+`ENXIO` when absent, returns direct `ERANGE` without a write when the complete
+value does not fit, and otherwise copies the value plus NUL, including an
+empty value. Both forms preserve incoming `errno`. The leaf owns no storage,
+allocator, lock, passwd/utmp parser, terminal/session lookup, credential or
+secure-execution policy. Caller-coordinated environment writers, direct
+`environ` assignment, and caller-owned string lifetime remain required. It
+does not select process creation, exec/spawn inheritance, supervision,
+family completion, promotion, or public x86 support.
+
 The x86 qualification lane has one bounded same-object static
 `memfd_create`/errno differential and one consumed five-transaction POSIX/ABI
 admission inventory covering the selected process-context, process-signal,

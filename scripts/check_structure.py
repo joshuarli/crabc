@@ -182,6 +182,7 @@ X86_RUNTIME_FOUNDATION_LIBC_SOURCES = {
     Path("libc/src/c_abi/x86_64/memory.rs"),
     Path("libc/src/c_abi/x86_64/process_context.rs"),
     Path("libc/src/c_abi/x86_64/environment.rs"),
+    Path("libc/src/c_abi/x86_64/login_name.rs"),
     Path("libc/src/c_abi/x86_64/process_globals.rs"),
     Path("libc/src/c_abi/x86_64/process_resources.rs"),
     Path("libc/src/c_abi/x86_64/c11_thread_lifecycle.rs"),
@@ -3699,6 +3700,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         '#[path = "pthread_once.rs"]',
         '#[path = "termios_control.rs"]',
         '#[path = "process_context.rs"]',
+        '#[path = "login_name.rs"]',
         '#[path = "child_reaping.rs"]',
         '#[path = "immediate_termination.rs"]',
         '#[path = "callback_algorithms.rs"]',
@@ -5555,6 +5557,59 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
             "artifact must export only its named identity/group/session/mask symbols"
         )
 
+    login_name_source = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "login_name.rs"
+    )
+    login_name_text = login_name_source.read_text(errors="replace")
+    for required in (
+        "musl 1.2.6 release commit",
+        "src/unistd/getlogin.c",
+        "src/unistd/getlogin_r.c",
+        "LOGNAME\\0",
+        "environment::getenv",
+        "ENXIO",
+        "ERANGE",
+        "copy_nonoverlapping",
+        "borrowed pointer",
+        "Caller-coordinated environment writers",
+        "does not set `errno`",
+        "public x86 support",
+    ):
+        if required not in login_name_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/login_name.rs: selected static "
+                f"login-name boundary is missing {required!r}"
+            )
+    login_name_exports = set(
+        re.findall(
+            r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(',
+            login_name_text,
+        )
+    )
+    expected_login_name_exports = {"getlogin", "getlogin_r"}
+    if login_name_exports != expected_login_name_exports:
+        errors.append(
+            "libc/src/c_abi/x86_64/login_name.rs: selected static artifact "
+            "must export only getlogin and getlogin_r"
+        )
+    for forbidden in (
+        "alloc::",
+        "crabc_core",
+        "crabc_mimalloc",
+        "getpwnam",
+        "getpwuid",
+        "getutent",
+        "getutxent",
+        "ttyname",
+        "fn fork(",
+        "fn execve(",
+    ):
+        if forbidden in login_name_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/login_name.rs: selected static "
+                f"login-name boundary must not select {forbidden!r}"
+            )
+
     child_reaping_source = (
         ROOT / "libc" / "src" / "c_abi" / "x86_64" / "child_reaping.rs"
     )
@@ -7276,6 +7331,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         pthread_tsd_text,
         termios_control_text,
         process_context_text,
+        login_name_text,
         child_reaping_text,
         immediate_termination_text,
         callback_algorithms_text,
@@ -7689,6 +7745,8 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         "getgroups",
         "getresuid",
         "getresgid",
+        "getlogin",
+        "getlogin_r",
         "_Exit",
         "__cxa_atexit",
         "atexit",
@@ -7727,7 +7785,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
             "selected socket transport and selected socket-message/options, selected system-observation, selected UTS-identity, "
             "selected byte-string, random-entropy, memory-search, C-string-copy, immutable error-string, "
             "fixed-C-locale ctype, integer-arithmetic, integer-parsing, intmax-arithmetic, credential-observation, and "
-            "find-first-set, startup-published program names, short/GNU-long "
+            "environment-backed login-name observation, find-first-set, startup-published program names, short/GNU-long "
             "getopt state and aliases, "
             "and abort-personality surfaces"
         )
@@ -7736,6 +7794,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         ("stat_compat.rs", stat_text),
         ("credentials.rs", credentials_text),
         ("credential_observation.rs", credential_observation_text),
+        ("login_name.rs", login_name_text),
         ("errno.rs", errno_text),
         ("static_startup.rs", static_startup_text),
         ("process_globals.rs", process_globals_text),

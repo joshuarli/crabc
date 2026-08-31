@@ -206,6 +206,18 @@ sources = [
 headers = ["include/unistd.h"]
 
 [[probe]]
+id = "login-name"
+command = "./scripts/dev-x86_64.sh login-name-header-abi"
+state = "required"
+kind = "compile-only"
+sources = [
+  "compat/x86_64/login_name_header_abi_probe.c",
+  "compat/x86_64/login_name_header_abi_probe.cpp",
+  "compat/x86_64/run_login_name_header_abi.sh",
+]
+headers = ["include/unistd.h"]
+
+[[probe]]
 id = "child-reaping"
 command = "./scripts/dev-x86_64.sh child-reaping-header-abi"
 state = "required"
