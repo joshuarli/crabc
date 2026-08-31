@@ -174,10 +174,10 @@ performance_qualified = false
 [[unit]]
 upstream = "src/free.c"
 source_region = "owner-local local_free and cross-thread xthread_free deferred-list protocols"
-rust_module = "crabc_mimalloc::free_list, crabc_mimalloc::remote_free, and crabc_mimalloc::single_thread"
-rust_item = "partial: exclusive local free, aligned interior-base recovery, unfull, retirement, arena/OS terminal page release, bounded live-owner remote push/collection, and abandoned allow-collect expected-head transitions"
-intentional_difference = "Pinned v3.5.0 has no separate delayed-free state. One bounded joined private producer is integrated into the shared static/non-abandoning-dynamic page engine; the separate raw failed-reclaim tail covers expected-head unown and reabandon decisions but is not production routing. General asynchronous/public allocation/free routing, producer-owned reclaim/reabandon lifecycle integration, the separate _mi_deferred_free user callback, encoded links, padding/security validation, and public invalid-free policy remain absent."
-tests = ["crabc-mimalloc/src/free_list.rs", "crabc-mimalloc/src/remote_free.rs", "crabc-mimalloc/src/abandoned.rs", "crabc-mimalloc/src/single_thread.rs", "compat/allocator/run.py"]
+rust_module = "crabc_mimalloc::free_list, crabc_mimalloc::process_page_map, crabc_mimalloc::remote_free, crabc_mimalloc::runtime_lifecycle, and crabc_mimalloc::single_thread"
+rust_item = "partial: exclusive local free, exact-live-client PageMap dispatch, aligned interior-base recovery, owner-local and permanent-initial foreign remote publication, bounded later-owner allow-collect publication, unfull, retirement, arena/OS terminal page release, and abandoned expected-head transitions"
+intentional_difference = "Pinned v3.5.0 has no separate delayed-free state. The private native runtime limits this route to exact current native clients: direct PageMap facts bind the source page and canonical block before the local/foreign decision, and the permanent initial owner has a source-faithful no-collect foreign push. Later-owner and abandoned continuations remain bounded native-runtime paths rather than a general public C allocation/free API. Producer-owned reclaim/adoption lifecycle integration, the separate _mi_deferred_free user callback, encoded links, padding/security validation, and public invalid-free policy remain absent."
+tests = ["crabc-mimalloc/src/free_list.rs", "crabc-mimalloc/src/process_page_map.rs", "crabc-mimalloc/src/remote_free.rs", "crabc-mimalloc/src/abandoned.rs", "crabc-mimalloc/src/runtime_lifecycle.rs", "crabc-mimalloc/src/single_thread.rs", "crabc-mimalloc/tests/native_page_local_live_remote_protocol.rs", "crabc-mimalloc/tests/native_pointer_first_initial_foreign_free.rs", "compat/allocator/run.py"]
 exported = false
 implemented = false
 unit_verified = false
