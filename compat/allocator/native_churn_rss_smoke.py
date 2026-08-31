@@ -39,7 +39,7 @@ from typing import Any, Mapping, Sequence
 ROOT = Path(__file__).resolve().parents[2]
 CONTRACT_PATH = ROOT / "compat/allocator/native-churn-rss-smoke-v3.5.0.json"
 FIXTURE_SCHEMA = "crabc-mimalloc-native-churn-rss-smoke-fixture-v2"
-REPORT_SCHEMA = "crabc-mimalloc-native-churn-rss-smoke-report-v2"
+REPORT_SCHEMA = "crabc-mimalloc-native-churn-rss-smoke-report-v3"
 CANONICAL_LOADER = Path("/lib/ld-crabc-aarch64.so.1")
 DEFAULT_REPORT = ROOT / "compat/reports/allocator/native-churn-rss-smoke-latest.json"
 NEEDED_LIBRARY = re.compile(r"Shared library: \[(?P<name>[^]]+)\]")
@@ -133,6 +133,24 @@ REQUIRED_HIGH_WATER_FIELDS = (
     "allocator_state.theap.high_water",
     "allocator_state.theap.plateau_after_warmup",
 )
+REQUIRED_ARTIFACT_ATTESTATION_FIELDS = (
+    "production_shadow_boundary.fixture_elf_attestation.fixture.sha256",
+    "production_shadow_boundary.fixture_elf_attestation.fixture.size_bytes",
+    "production_shadow_boundary.fixture_elf_attestation.fixture.identity.class",
+    "production_shadow_boundary.fixture_elf_attestation.fixture.identity.data",
+    "production_shadow_boundary.fixture_elf_attestation.fixture.identity.os_abi",
+    "production_shadow_boundary.fixture_elf_attestation.fixture.identity.abi_version",
+    "production_shadow_boundary.fixture_elf_attestation.fixture.identity.type",
+    "production_shadow_boundary.fixture_elf_attestation.fixture.identity.machine",
+    "production_shadow_boundary.fixture_elf_attestation.fixture.pt_interp",
+    "production_shadow_boundary.fixture_elf_attestation.selected_loader.canonical_path",
+    "production_shadow_boundary.fixture_elf_attestation.selected_loader.canonical_sha256",
+    "production_shadow_boundary.fixture_elf_attestation.selected_loader.runtime_path",
+    "production_shadow_boundary.fixture_elf_attestation.selected_loader.runtime_sha256",
+    "executions[].executed_fixture_elf.sha256",
+    "executions[].executed_fixture_elf.identity",
+    "executions[].executed_fixture_elf.pt_interp",
+)
 
 
 class SmokeError(RuntimeError):
@@ -143,12 +161,33 @@ class PrerequisiteError(SmokeError):
     """The owned native execution prerequisites are not available."""
 
 
-class ArtifactAttestationError(PrerequisiteError):
+class EvidenceContractError(SmokeError):
+    """An executed or selected artifact cannot satisfy a production boundary."""
+
+    def __init__(self, message: str, *, boundary: str) -> None:
+        self.boundary = boundary
+        super().__init__(message)
+
+
+class ArtifactAttestationError(EvidenceContractError):
     """The selected libc artifact cannot prove its native-shadow identity."""
 
+    def __init__(self, message: str) -> None:
+        super().__init__(message, boundary="selected_shadow_artifact")
 
-class AllocatorStatePrerequisiteError(PrerequisiteError):
-    """The production workload ran but its required internal audit is unavailable."""
+
+class FixtureElfAttestationError(EvidenceContractError):
+    """The fixture executable does not match the selected target/loader boundary."""
+
+    def __init__(self, message: str) -> None:
+        super().__init__(message, boundary="fixture_elf_identity")
+
+
+class AllocatorStateEvidenceError(EvidenceContractError):
+    """The production workload ran without its required internal audit evidence."""
+
+    def __init__(self, message: str) -> None:
+        super().__init__(message, boundary="allocator_internal_state")
 
 
 class AllocatorLivenessError(SmokeError):
@@ -381,6 +420,16 @@ def validate_contract(contract: Mapping[str, Any]) -> dict[str, Any]:
         raise SmokeError("link libraries changed")
     if require_string_list(execution, "expected_dynamic_dependencies") != ["libc.so"]:
         raise SmokeError("dynamic dependency boundary changed")
+    if require_object(execution, "fixture_elf_identity") != {
+        "class": "ELF64",
+        "data": "little-endian",
+        "os_abi": "UNIX - System V",
+        "abi_version": "0",
+        "type": "DYN",
+        "machine": "AArch64",
+        "pt_interp": str(CANONICAL_LOADER),
+    }:
+        raise SmokeError("fixture ELF identity boundary changed")
     require_positive_int(execution, "seed")
     require_int_at_least(execution, "cycles", 2)
     require_int_at_least(execution, "process_epochs", 2)
@@ -457,6 +506,7 @@ def validate_contract(contract: Mapping[str, Any]) -> dict[str, Any]:
         "harness",
         "prerequisite",
         "runtime",
+        "evidence",
     ]:
         raise SmokeError("failure classification contract changed")
     if failure_contract.get("exit_68_root_failure_required") is not True:
@@ -469,6 +519,10 @@ def validate_contract(contract: Mapping[str, Any]) -> dict[str, Any]:
         REQUIRED_HIGH_WATER_FIELDS
     ):
         raise SmokeError("required high-water report fields changed")
+    if require_string_list(
+        report_contract, "required_artifact_attestation"
+    ) != list(REQUIRED_ARTIFACT_ATTESTATION_FIELDS):
+        raise SmokeError("required artifact-attestation report fields changed")
 
     source = fixture_path.read_text(encoding="utf-8")
     for identifier in boundary["forbidden_allocator_identifiers"]:
@@ -556,8 +610,142 @@ def dynamic_dependencies(binary: Path) -> list[str]:
     """Read the exact NEEDED-library set of one selected-shadow fixture."""
 
     record = command_record(["readelf", "-d", str(binary)])
-    require_success(record, "readelf dynamic dependency inspection")
-    return NEEDED_LIBRARY.findall(str(record["stdout"]))
+    stdout = require_fixture_inspection_success(
+        record, "fixture dynamic dependency inspection"
+    )
+    return NEEDED_LIBRARY.findall(stdout)
+
+
+def require_fixture_inspection_success(record: Mapping[str, Any], subject: str) -> str:
+    """Distinguish a missing inspection tool from a wrong fixture artifact."""
+
+    if record.get("launch_error"):
+        raise PrerequisiteError(f"{subject} could not launch: {record['launch_error']}")
+    if record.get("timed_out"):
+        raise PrerequisiteError(f"{subject} exceeded its inspection watchdog")
+    if record.get("status") != 0:
+        raise FixtureElfAttestationError(
+            f"{subject} failed with status {record.get('status')}: "
+            f"stdout={record.get('stdout')!r} stderr={record.get('stderr')!r}"
+        )
+    stdout = record.get("stdout")
+    if not isinstance(stdout, str):
+        raise FixtureElfAttestationError(f"{subject} omitted textual inspection output")
+    return stdout
+
+
+def attested_elf_identity(stdout: str) -> dict[str, str]:
+    """Require the executed fixture to be the reviewed Linux/AArch64 PIE ELF."""
+
+    fields: dict[str, str] = {}
+    for line in stdout.splitlines():
+        stripped = line.strip()
+        if ":" not in stripped:
+            continue
+        key, value = stripped.split(":", 1)
+        fields[key] = value.strip()
+    elf_type = fields.get("Type", "").split(maxsplit=1)[0]
+    data = fields.get("Data", "")
+    identity = {
+        "class": fields.get("Class", ""),
+        "data": "little-endian" if "little endian" in data else data,
+        "os_abi": fields.get("OS/ABI", ""),
+        "abi_version": fields.get("ABI Version", ""),
+        "type": elf_type,
+        "machine": fields.get("Machine", ""),
+    }
+    expected = {
+        "class": "ELF64",
+        "data": "little-endian",
+        "os_abi": "UNIX - System V",
+        "abi_version": "0",
+        "type": "DYN",
+        "machine": "AArch64",
+    }
+    if identity != expected:
+        raise FixtureElfAttestationError(
+            f"fixture ELF identity differs: expected {expected!r}, got {identity!r}"
+        )
+    return identity
+
+
+def attested_program_interpreter(stdout: str, expected: Path) -> str:
+    """Require exactly one PT_INTERP naming the selected canonical loader."""
+
+    interpreters = re.findall(r"\[Requesting program interpreter:\s*([^]]+)\]", stdout)
+    expected_text = str(expected)
+    if interpreters != [expected_text]:
+        raise FixtureElfAttestationError(
+            "fixture program interpreter differs: "
+            f"expected exactly {expected_text!r}, got {interpreters!r}"
+        )
+    return interpreters[0]
+
+
+def fixture_elf_attestation(binary: Path, runtime: Path) -> dict[str, Any]:
+    """Attest the exact fixture bytes and loader selected for their execution."""
+
+    header_record = command_record(["readelf", "-h", str(binary)])
+    header = require_fixture_inspection_success(
+        header_record, "fixture ELF header inspection"
+    )
+    program_header_record = command_record(["readelf", "-l", str(binary)])
+    program_headers = require_fixture_inspection_success(
+        program_header_record, "fixture program-header inspection"
+    )
+    identity = attested_elf_identity(header)
+    interpreter = attested_program_interpreter(program_headers, CANONICAL_LOADER)
+
+    selected_loader = runtime / "libldso.so"
+    canonical_loader_hash = sha256_file(CANONICAL_LOADER)
+    selected_loader_hash = sha256_file(selected_loader)
+    if canonical_loader_hash != selected_loader_hash:
+        raise FixtureElfAttestationError(
+            "canonical PT_INTERP loader differs from target/debug/libldso.so"
+        )
+    return {
+        "status": "passed",
+        "fixture": {
+            "path": str(binary),
+            "sha256": sha256_file(binary),
+            "size_bytes": binary.stat().st_size,
+            "identity": identity,
+            "pt_interp": interpreter,
+            "elf_header_sha256": sha256_text(header),
+            "program_headers_sha256": sha256_text(program_headers),
+        },
+        "selected_loader": {
+            "canonical_path": interpreter,
+            "canonical_sha256": canonical_loader_hash,
+            "canonical_size_bytes": CANONICAL_LOADER.stat().st_size,
+            "runtime_path": relative(selected_loader),
+            "runtime_sha256": selected_loader_hash,
+            "runtime_size_bytes": selected_loader.stat().st_size,
+        },
+    }
+
+
+def require_fixture_elf_unchanged(
+    binary: Path, attestation: Mapping[str, Any]
+) -> dict[str, Any]:
+    """Prove the file about to execute is the exact attested fixture ELF."""
+
+    fixture = attestation.get("fixture")
+    if not isinstance(fixture, dict):
+        raise FixtureElfAttestationError("fixture ELF attestation changed shape")
+    if (
+        fixture.get("sha256") != sha256_file(binary)
+        or fixture.get("size_bytes") != binary.stat().st_size
+    ):
+        raise FixtureElfAttestationError(
+            "fixture ELF changed after attestation and before execution"
+        )
+    return {
+        "sha256": fixture["sha256"],
+        "size_bytes": fixture["size_bytes"],
+        "identity": fixture["identity"],
+        "pt_interp": fixture["pt_interp"],
+    }
 
 
 def sha256_text(value: str) -> str:
@@ -628,9 +816,9 @@ def require_attestation_success(record: Mapping[str, Any], subject: str) -> str:
     """Turn an ELF-inspection failure into an explicit selected-artifact failure."""
 
     if record.get("launch_error"):
-        raise ArtifactAttestationError(f"{subject} could not launch: {record['launch_error']}")
+        raise PrerequisiteError(f"{subject} could not launch: {record['launch_error']}")
     if record.get("timed_out"):
-        raise ArtifactAttestationError(f"{subject} exceeded its inspection watchdog")
+        raise PrerequisiteError(f"{subject} exceeded its inspection watchdog")
     if record.get("status") != 0:
         raise ArtifactAttestationError(
             f"{subject} failed with status {record.get('status')}: "
@@ -777,6 +965,7 @@ def retain_selected_shadow_context(
     binary: Path,
     dependencies: Sequence[str],
     attestation: Mapping[str, Any],
+    fixture_attestation: Mapping[str, Any],
 ) -> None:
     """Keep completed artifact proof visible when a later fixture check fails."""
 
@@ -786,6 +975,7 @@ def retain_selected_shadow_context(
         "size_bytes": binary.stat().st_size,
     }
     error.dynamic_dependencies = list(dependencies)
+    error.fixture_elf_attestation = dict(fixture_attestation)
 
 
 def require_owned_shadow_environment() -> tuple[Path, Path, Path]:
@@ -1086,6 +1276,17 @@ def run_smoke(
         attestation = selected_shadow_artifact_attestation(
             runtime, validated["selected_shadow_artifact_attestation"]
         )
+        try:
+            elf_attestation = fixture_elf_attestation(binary, runtime)
+        except EvidenceContractError as error:
+            error.selected_shadow_artifact_attestation = dict(attestation)
+            error.artifact = {
+                "sha256": sha256_file(binary),
+                "size_bytes": binary.stat().st_size,
+            }
+            error.dynamic_dependencies = list(dependencies)
+            error.configuration = configuration
+            raise
         environment = dict(os.environ)
         for key in ("LD_AUDIT", "LD_LIBRARY_PATH", "LD_PRELOAD"):
             environment.pop(key, None)
@@ -1095,6 +1296,9 @@ def run_smoke(
             for epoch in range(epochs):
                 epoch_seed = seed + epoch
                 run_command = [str(binary), str(epoch_seed), str(cycles)]
+                executed_fixture = require_fixture_elf_unchanged(
+                    binary, elf_attestation
+                )
                 record = command_record(
                     run_command,
                     cwd=ROOT,
@@ -1163,6 +1367,7 @@ def run_smoke(
                         "seed": epoch_seed,
                         "fixture_epoch_count": cycles,
                         "fixture_epoch_seeds": inner_seeds,
+                        "executed_fixture_elf": executed_fixture,
                         "thread_fanout": fixture_result["thread_fanout"],
                         "rss_slope": fixture_rss_slope(fixture_result),
                         "fixture": fixture_result,
@@ -1178,6 +1383,7 @@ def run_smoke(
                 binary=binary,
                 dependencies=dependencies,
                 attestation=attestation,
+                fixture_attestation=elf_attestation,
             )
             error.configuration = configuration
             raise
@@ -1194,17 +1400,19 @@ def run_smoke(
                 binary=binary,
                 dependencies=dependencies,
                 attestation=attestation,
+                fixture_attestation=elf_attestation,
             )
             error.configuration = configuration
             raise error
         try:
             require_general_production_state(executions)
-        except AllocatorStatePrerequisiteError as error:
+        except AllocatorStateEvidenceError as error:
             retain_selected_shadow_context(
                 error,
                 binary=binary,
                 dependencies=dependencies,
                 attestation=attestation,
+                fixture_attestation=elf_attestation,
             )
             error.configuration = configuration
             raise
@@ -1216,6 +1424,7 @@ def run_smoke(
             "build": {
                 "command": build_command,
                 "dynamic_dependencies": dependencies,
+                "fixture_elf_attestation": elf_attestation,
                 "selected_shadow_artifact_attestation": attestation,
             },
             "executions": executions,
@@ -1310,7 +1519,7 @@ def require_general_production_state(
     if not isinstance(allocator_audit, dict):
         raise SmokeError("aggregated allocator-state result changed shape")
     if allocator_audit.get("general_production_qualified") is not True:
-        error = AllocatorStatePrerequisiteError(
+        error = AllocatorStateEvidenceError(
             "general-production churn audit requires registry, ledger, PageMap, "
             "metadata, arena, abandoned-page, TLD, and Theap high-water and "
             "post-warm plateau observations"
@@ -1403,6 +1612,7 @@ def report_for_success(
             "allocator_private_hooks": False,
             "c_backend_fallback": False,
             "dynamic_dependencies": run["build"]["dynamic_dependencies"],
+            "fixture_elf_attestation": run["build"]["fixture_elf_attestation"],
             "selected_shadow_artifact_attestation": run["build"][
                 "selected_shadow_artifact_attestation"
             ],
@@ -1450,12 +1660,10 @@ def failure_report(error: SmokeError) -> dict[str, Any]:
             "observed_high_water_bytes": error.observed_bytes,
             "threshold_bytes": error.threshold_bytes,
         }
-    elif isinstance(error, AllocatorStatePrerequisiteError):
-        failure["kind"] = "prerequisite"
-        failure["subtype"] = "allocator_state_observation"
-    elif isinstance(error, ArtifactAttestationError):
-        failure["kind"] = "prerequisite"
-        failure["subtype"] = "selected_shadow_attestation"
+    elif isinstance(error, EvidenceContractError):
+        failure["kind"] = "evidence"
+        failure["subtype"] = "production_boundary"
+        failure["boundary"] = error.boundary
     elif isinstance(error, PrerequisiteError):
         failure["kind"] = "prerequisite"
         failure["subtype"] = "owned_native_environment"
@@ -1470,6 +1678,7 @@ def failure_report(error: SmokeError) -> dict[str, Any]:
     if isinstance(attestation, dict):
         report["production_shadow_boundary"] = {
             "dynamic_dependencies": getattr(error, "dynamic_dependencies", None),
+            "fixture_elf_attestation": getattr(error, "fixture_elf_attestation", None),
             "selected_shadow_artifact_attestation": attestation,
         }
         report["artifact"] = getattr(error, "artifact", None)

@@ -128,7 +128,7 @@ class NativeChurnRssSmokeContractTests(unittest.TestCase):
         )
         self.assertEqual(
             contract["failure_contract"]["kinds"],
-            ["harness", "prerequisite", "runtime"],
+            ["harness", "prerequisite", "runtime", "evidence"],
         )
         self.assertEqual(
             contract["execution"]["thread_fanout"],
@@ -138,6 +138,22 @@ class NativeChurnRssSmokeContractTests(unittest.TestCase):
                 "handoff_workers_per_fixture_epoch": 1,
                 "peak_threads": 3,
             },
+        )
+        self.assertEqual(
+            contract["execution"]["fixture_elf_identity"],
+            {
+                "class": "ELF64",
+                "data": "little-endian",
+                "os_abi": "UNIX - System V",
+                "abi_version": "0",
+                "type": "DYN",
+                "machine": "AArch64",
+                "pt_interp": "/lib/ld-crabc-aarch64.so.1",
+            },
+        )
+        self.assertIn(
+            "production_shadow_boundary.fixture_elf_attestation.fixture.pt_interp",
+            contract["report"]["required_artifact_attestation"],
         )
 
     def test_contract_requires_selected_shadow_build_and_free_route_attestation(self) -> None:
@@ -192,6 +208,43 @@ class NativeChurnRssSmokeContractTests(unittest.TestCase):
         HARNESS.require_branch_target(native_route, "native_free>", "exported free")
         with self.assertRaisesRegex(HARNESS.ArtifactAttestationError, "forbidden"):
             HARNESS.require_no_branch_target(fallback_route, "mi_free>", "exported free")
+
+    def test_fixture_elf_attestation_rejects_the_wrong_interpreter(self) -> None:
+        header = """ELF Header:
+  Class:                             ELF64
+  Data:                              2's complement, little endian
+  OS/ABI:                            UNIX - System V
+  ABI Version:                       0
+  Type:                              DYN (Position-Independent Executable file)
+  Machine:                           AArch64
+"""
+        program_headers = """Program Headers:
+  INTERP         0x0000000000000200 0x0000000000000200 0x0000000000000200
+      [Requesting program interpreter: /lib/ld-wrong-aarch64.so.1]
+"""
+
+        self.assertEqual(
+            HARNESS.attested_elf_identity(header),
+            {
+                "class": "ELF64",
+                "data": "little-endian",
+                "os_abi": "UNIX - System V",
+                "abi_version": "0",
+                "type": "DYN",
+                "machine": "AArch64",
+            },
+        )
+        with self.assertRaisesRegex(
+            HARNESS.FixtureElfAttestationError, "program interpreter"
+        ) as caught:
+            HARNESS.attested_program_interpreter(
+                program_headers, HARNESS.CANONICAL_LOADER
+            )
+
+        report = HARNESS.failure_report(caught.exception)
+        self.assertEqual(report["failure"]["kind"], "evidence")
+        self.assertEqual(report["failure"]["subtype"], "production_boundary")
+        self.assertEqual(report["failure"]["boundary"], "fixture_elf_identity")
 
     def test_fixture_result_requires_initial_thread_post_exit_frees(self) -> None:
         result = fixture_result()
@@ -391,6 +444,10 @@ class NativeChurnRssSmokeContractTests(unittest.TestCase):
         liveness = HARNESS.failure_report(HARNESS.AllocatorLivenessError("owner handoff failed"))
         threshold_error = HARNESS.RssThresholdError(observed_bytes=32768, threshold_bytes=16384)
         threshold_error.selected_shadow_artifact_attestation = {"status": "passed"}
+        threshold_error.fixture_elf_attestation = {
+            "status": "passed",
+            "fixture": {"pt_interp": "/lib/ld-crabc-aarch64.so.1"},
+        }
         threshold_error.artifact = {"sha256": "a" * 64, "size_bytes": 1}
         threshold_error.dynamic_dependencies = ["libc.so"]
         threshold = HARNESS.failure_report(threshold_error)
@@ -413,6 +470,12 @@ class NativeChurnRssSmokeContractTests(unittest.TestCase):
             threshold["production_shadow_boundary"]["selected_shadow_artifact_attestation"],
             {"status": "passed"},
         )
+        self.assertEqual(
+            threshold["production_shadow_boundary"]["fixture_elf_attestation"]["fixture"][
+                "pt_interp"
+            ],
+            "/lib/ld-crabc-aarch64.so.1",
+        )
         self.assertEqual(threshold["artifact"], {"sha256": "a" * 64, "size_bytes": 1})
 
     def test_report_configuration_records_seed_epoch_and_thread_fanout(self) -> None:
@@ -430,24 +493,26 @@ class NativeChurnRssSmokeContractTests(unittest.TestCase):
         self.assertEqual(configuration["thread_fanout"]["peak_threads"], 3)
         self.assertEqual(configuration["thread_fanout"]["total_worker_threads"], 12)
 
-    def test_unavailable_allocator_state_fails_closed_as_a_prerequisite(self) -> None:
+    def test_unavailable_allocator_state_fails_as_production_boundary_evidence(self) -> None:
         executions = [
             {"epoch": 1, "seed": 91, "fixture": fixture_result(seed=91, cycles=3)},
             {"epoch": 2, "seed": 92, "fixture": fixture_result(seed=92, cycles=3)},
         ]
 
-        with self.assertRaises(HARNESS.AllocatorStatePrerequisiteError) as caught:
+        with self.assertRaises(HARNESS.AllocatorStateEvidenceError) as caught:
             HARNESS.require_general_production_state(executions)
 
         report = HARNESS.failure_report(caught.exception)
-        self.assertEqual(report["failure"]["kind"], "prerequisite")
-        self.assertEqual(report["failure"]["subtype"], "allocator_state_observation")
+        self.assertEqual(report["failure"]["kind"], "evidence")
+        self.assertEqual(report["failure"]["subtype"], "production_boundary")
+        self.assertEqual(report["failure"]["boundary"], "allocator_internal_state")
+        self.assertEqual(len(report["executions"]), 2)
         self.assertEqual(report["high_water"]["state_auditor"]["status"], "incomplete")
         self.assertEqual(
             report["high_water"]["allocator_state"]["client_ledger"]["high_water"],
             None,
         )
-        with self.assertRaises(HARNESS.AllocatorStatePrerequisiteError):
+        with self.assertRaises(HARNESS.AllocatorStateEvidenceError):
             HARNESS.report_for_success(
                 HARNESS.read_json(HARNESS.CONTRACT_PATH),
                 {

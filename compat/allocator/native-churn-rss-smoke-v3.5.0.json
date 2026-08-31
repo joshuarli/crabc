@@ -35,6 +35,15 @@
     "expected_dynamic_dependencies": [
       "libc.so"
     ],
+    "fixture_elf_identity": {
+      "class": "ELF64",
+      "data": "little-endian",
+      "os_abi": "UNIX - System V",
+      "abi_version": "0",
+      "type": "DYN",
+      "machine": "AArch64",
+      "pt_interp": "/lib/ld-crabc-aarch64.so.1"
+    },
     "seed": 1511506142,
     "cycles": 8,
     "process_epochs": 4,
@@ -114,20 +123,39 @@
     "general_production_state_qualification": "incomplete-when-unavailable",
     "allocator_metadata": "not-exposed-by-production-shadow-c-api",
     "metadata_high_water_bytes": null,
-    "reason": "This selected C ABI has no allocator-statistics or debug-state API. The executable state auditor therefore proves only production-observable workload liveness and exact post-churn quiescence. Registry, ledger, PageMap, metadata, arena, abandoned-page, TLD, and Theap high-water and plateau fields remain null rather than being inferred from RSS, Rust internals, a C fallback, or an unsupported proxy."
+    "reason": "This selected C ABI has no allocator-statistics or debug-state API. That is an unmet production-boundary implementation and evidence contract, not an environmental prerequisite. The executable state auditor therefore proves only production-observable workload liveness and exact post-churn quiescence. Registry, ledger, PageMap, metadata, arena, abandoned-page, TLD, and Theap high-water and plateau fields remain null rather than being inferred from RSS, Rust internals, a C fallback, or an unsupported proxy."
   },
   "failure_contract": {
     "kinds": [
       "harness",
       "prerequisite",
-      "runtime"
+      "runtime",
+      "evidence"
     ],
     "exit_68_root_failure_required": true,
-    "reason": "A fixture runtime failure, including malformed exit-68 output, remains classified as runtime. Missing owned-environment or selected-artifact proof is prerequisite failure; manifest, parser, build, and report defects are harness failures."
+    "reason": "A fixture runtime failure, including malformed exit-68 output, remains classified as runtime. Missing owned-environment inputs or inspection tools are prerequisite failures. A selected or executed artifact that violates the production boundary, including unavailable required allocator-state evidence, is an evidence failure. Manifest, parser, build, and report defects are harness failures."
   },
   "report": {
     "path": "compat/reports/allocator/native-churn-rss-smoke-latest.json",
-    "schema": "crabc-mimalloc-native-churn-rss-smoke-report-v2",
+    "schema": "crabc-mimalloc-native-churn-rss-smoke-report-v3",
+    "required_artifact_attestation": [
+      "production_shadow_boundary.fixture_elf_attestation.fixture.sha256",
+      "production_shadow_boundary.fixture_elf_attestation.fixture.size_bytes",
+      "production_shadow_boundary.fixture_elf_attestation.fixture.identity.class",
+      "production_shadow_boundary.fixture_elf_attestation.fixture.identity.data",
+      "production_shadow_boundary.fixture_elf_attestation.fixture.identity.os_abi",
+      "production_shadow_boundary.fixture_elf_attestation.fixture.identity.abi_version",
+      "production_shadow_boundary.fixture_elf_attestation.fixture.identity.type",
+      "production_shadow_boundary.fixture_elf_attestation.fixture.identity.machine",
+      "production_shadow_boundary.fixture_elf_attestation.fixture.pt_interp",
+      "production_shadow_boundary.fixture_elf_attestation.selected_loader.canonical_path",
+      "production_shadow_boundary.fixture_elf_attestation.selected_loader.canonical_sha256",
+      "production_shadow_boundary.fixture_elf_attestation.selected_loader.runtime_path",
+      "production_shadow_boundary.fixture_elf_attestation.selected_loader.runtime_sha256",
+      "executions[].executed_fixture_elf.sha256",
+      "executions[].executed_fixture_elf.identity",
+      "executions[].executed_fixture_elf.pt_interp"
+    ],
     "required_high_water": [
       "rss_bytes",
       "requested_live_bytes",
