@@ -7,7 +7,7 @@ checked-in workload contracts.  Static inspection is deliberately useful only
 as a negative architecture witness: it can show that known scaffolding is
 still selected, but it cannot prove that a hot path has no operation.  A final
 gate therefore also requires an independently generated runtime/artifact
-evidence record with production-general-or-better scope.
+evidence record with the manifest's exact promotion-qualified scope.
 """
 
 from __future__ import annotations
@@ -15,8 +15,10 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import re
 import sys
+import tempfile
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
@@ -27,6 +29,12 @@ ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_MANIFEST = ROOT / "compat/allocator/architecture-gate-v3.5.0.json"
 DEFAULT_REPORT = ROOT / "target/architecture-ratchet/latest.json"
 RUNTIME_EVIDENCE_SCHEMA = "crabc-mimalloc-architecture-runtime-evidence"
+PROMOTION_BENCHMARK_METRICS = (
+    "cross_thread_free_throughput_ratio",
+    "four_thread_local_throughput_ratio",
+    "metadata_plateau_after_warmup",
+    "single_thread_throughput_ratio",
+)
 
 
 class RatchetError(RuntimeError):
@@ -247,14 +255,124 @@ def excluded_cfg_item_end(source: str, attribute_end: int) -> int:
     return first + 1
 
 
-def production_rust_source(source: str, excluded_cfg_patterns: list[str]) -> str:
-    """Mask comments, strings, and configured test-only/disabled cfg items."""
+class CfgParser:
+    """Evaluate the deliberately closed production cfg environment."""
+
+    TOKEN = re.compile(
+        r'\s*(?:(?P<identifier>[A-Za-z_][A-Za-z0-9_-]*)|'
+        r'(?P<string>"(?:\\.|[^"\\])*")|(?P<punctuation>[(),=]))'
+    )
+
+    def __init__(self, expression: str, environment: Mapping[str, Any]) -> None:
+        self.expression = expression
+        self.environment = environment
+        self.tokens: list[tuple[str, str]] = []
+        cursor = 0
+        while cursor < len(expression):
+            if not expression[cursor:].strip():
+                break
+            match = self.TOKEN.match(expression, cursor)
+            if match is None:
+                raise RatchetError(
+                    f"unsupported production cfg syntax: {expression[cursor:]!r}"
+                )
+            kind = next(name for name, value in match.groupdict().items() if value is not None)
+            self.tokens.append((kind, match.group(kind)))
+            cursor = match.end()
+        self.cursor = 0
+
+    def peek(self, value: str) -> bool:
+        return self.cursor < len(self.tokens) and self.tokens[self.cursor][1] == value
+
+    def take(self, kind: str | None = None, value: str | None = None) -> str:
+        if self.cursor >= len(self.tokens):
+            raise RatchetError("production cfg expression ended unexpectedly")
+        token_kind, token_value = self.tokens[self.cursor]
+        if kind is not None and token_kind != kind:
+            raise RatchetError(f"production cfg expected {kind}, found {token_value!r}")
+        if value is not None and token_value != value:
+            raise RatchetError(f"production cfg expected {value!r}, found {token_value!r}")
+        self.cursor += 1
+        return token_value
+
+    def parse(self) -> bool:
+        result = self.parse_predicate()
+        if self.cursor != len(self.tokens):
+            raise RatchetError(
+                f"production cfg has trailing syntax: {self.tokens[self.cursor][1]!r}"
+            )
+        return result
+
+    def parse_predicate(self) -> bool:
+        name = self.take("identifier")
+        if self.peek("("):
+            self.take(value="(")
+            values: list[bool] = []
+            if not self.peek(")"):
+                while True:
+                    values.append(self.parse_predicate())
+                    if not self.peek(","):
+                        break
+                    self.take(value=",")
+                    if self.peek(")"):
+                        break
+            self.take(value=")")
+            if name == "all":
+                return all(values)
+            if name == "any":
+                return any(values)
+            if name == "not" and len(values) == 1:
+                return not values[0]
+            raise RatchetError(f"unsupported production cfg operator: {name}")
+        if self.peek("="):
+            self.take(value="=")
+            raw_value = self.take("string")
+            try:
+                value = json.loads(raw_value)
+            except json.JSONDecodeError as error:
+                raise RatchetError(f"invalid production cfg string: {raw_value}") from error
+            if name == "feature":
+                features = required_mapping(
+                    self.environment.get("features"), "phase_bc_call_graph.cfg_environment.features"
+                )
+                if value not in features or type(features[value]) is not bool:
+                    raise RatchetError(f"unknown production cfg feature: {value}")
+                return bool(features[value])
+            key_values = required_mapping(
+                self.environment.get("key_values"),
+                "phase_bc_call_graph.cfg_environment.key_values",
+            )
+            if name not in key_values or not isinstance(key_values[name], str):
+                raise RatchetError(f"unknown production cfg key: {name}")
+            return key_values[name] == value
+        flags = required_mapping(
+            self.environment.get("flags"), "phase_bc_call_graph.cfg_environment.flags"
+        )
+        if name not in flags or type(flags[name]) is not bool:
+            raise RatchetError(f"unknown production cfg flag: {name}")
+        return bool(flags[name])
+
+
+def cfg_attribute_expression(attribute: str) -> str:
+    match = re.search(r"#\s*\[\s*cfg\s*\(", attribute)
+    if match is None:
+        raise RatchetError("selected Rust cfg attribute has an unsupported shape")
+    opening = attribute.find("(", match.start())
+    closing = matching_rust_delimiter(attribute, opening, "(", ")")
+    if attribute[closing + 1 :].strip() != "]":
+        raise RatchetError("selected Rust cfg attribute has trailing syntax")
+    return attribute[opening + 1 : closing]
+
+
+def production_rust_source(source: str, cfg_environment: Mapping[str, Any]) -> str:
+    """Mask comments, strings, and cfg items not selected in production."""
 
     code = strip_rust_comments(source)
     cfg_code = strip_rust_comments(source, mask_literals=False)
     excluded_ranges: list[tuple[int, int]] = []
     for start, end, attribute in rust_cfg_attribute_spans(cfg_code):
-        if any(re.search(pattern, attribute) for pattern in excluded_cfg_patterns):
+        expression = cfg_attribute_expression(attribute)
+        if not CfgParser(expression, cfg_environment).parse():
             excluded_ranges.append((start, excluded_cfg_item_end(code, end)))
     for start, end in sorted(excluded_ranges, reverse=True):
         code = mask_source_range(code, start, end)
@@ -272,12 +390,12 @@ RUST_FUNCTION_HEADER = re.compile(
 
 
 def selected_rust_functions(
-    root: Path, relative_path: str, excluded_cfg_patterns: list[str]
+    root: Path, relative_path: str, cfg_environment: Mapping[str, Any]
 ) -> list[RustFunction]:
     path = root / relative_path
     if not path.is_file():
         raise RatchetError(f"selected production source is absent: {relative_path}")
-    code = production_rust_source(path.read_text(encoding="utf-8"), excluded_cfg_patterns)
+    code = production_rust_source(path.read_text(encoding="utf-8"), cfg_environment)
     functions: list[RustFunction] = []
     cursor = 0
     while True:
@@ -302,11 +420,21 @@ def selected_rust_functions(
         cursor = closing + 1
 
 
-def source_matches(root: Path, relative_path: str, pattern: str) -> list[SourceMatch]:
+def source_matches(
+    root: Path,
+    relative_path: str,
+    pattern: str,
+    cfg_environment: Mapping[str, Any] | None = None,
+) -> list[SourceMatch]:
     path = root / relative_path
     if not path.is_file():
         raise RatchetError(f"selected production source is absent: {relative_path}")
-    source = strip_rust_comments(path.read_text(encoding="utf-8"))
+    raw_source = path.read_text(encoding="utf-8")
+    source = (
+        production_rust_source(raw_source, cfg_environment)
+        if cfg_environment is not None
+        else strip_rust_comments(raw_source)
+    )
     matches: list[SourceMatch] = []
     for match in re.finditer(pattern, source, flags=re.MULTILINE):
         matches.append(
@@ -462,18 +590,31 @@ def validate_phase_bc_manifest(
             "architecture manifest Phase-B/C sources are absent from selected source hashing: "
             + ", ".join(missing_selected_sources)
         )
-    cfg_patterns = phase_bc.get("test_only_cfg_patterns")
-    if not isinstance(cfg_patterns, list) or not cfg_patterns or not all(
-        isinstance(pattern, str) and pattern for pattern in cfg_patterns
+    cfg_environment = required_mapping(
+        phase_bc.get("cfg_environment"), "phase_bc_call_graph.cfg_environment"
+    )
+    flags = required_mapping(
+        cfg_environment.get("flags"), "phase_bc_call_graph.cfg_environment.flags"
+    )
+    features = required_mapping(
+        cfg_environment.get("features"), "phase_bc_call_graph.cfg_environment.features"
+    )
+    key_values = required_mapping(
+        cfg_environment.get("key_values"), "phase_bc_call_graph.cfg_environment.key_values"
+    )
+    if not flags or not all(isinstance(name, str) and type(value) is bool for name, value in flags.items()):
+        raise RatchetError("architecture manifest production cfg flags must be booleans")
+    if not features or not all(
+        isinstance(name, str) and type(value) is bool for name, value in features.items()
     ):
-        raise RatchetError(
-            "architecture manifest phase_bc_call_graph.test_only_cfg_patterns must be regex strings"
-        )
-    for pattern in cfg_patterns:
-        try:
-            re.compile(pattern)
-        except re.error as error:
-            raise RatchetError(f"invalid Phase-B/C cfg regex {pattern!r}: {error}") from error
+        raise RatchetError("architecture manifest production cfg features must be booleans")
+    if not key_values or not all(
+        isinstance(name, str) and isinstance(value, str) and value
+        for name, value in key_values.items()
+    ):
+        raise RatchetError("architecture manifest production cfg key-values must be strings")
+    if flags.get("test") is not False:
+        raise RatchetError("architecture manifest production cfg must select cfg(not(test))")
     default_entries = validate_entry_points(
         phase_bc.get("entry_points"), "phase_bc_call_graph.entry_points"
     )
@@ -622,6 +763,23 @@ def validate_manifest(manifest: Mapping[str, Any]) -> None:
         raise RatchetError("architecture manifest scope.current is not an evidence scope")
     if scope.get("static_analysis_cannot_close_final_gate") is not True:
         raise RatchetError("architecture manifest must prohibit static-only final success")
+    required_string(scope.get("final_required"), "scope.final_required")
+    runtime_evidence = required_mapping(manifest.get("runtime_evidence"), "runtime_evidence")
+    if runtime_evidence.get("format") != 1 or runtime_evidence.get("schema") != RUNTIME_EVIDENCE_SCHEMA:
+        raise RatchetError("architecture manifest runtime evidence contract drifted")
+    producer = required_mapping(
+        runtime_evidence.get("promotion_benchmark_producer"),
+        "runtime_evidence.promotion_benchmark_producer",
+    )
+    if producer.get("schema") is not None or producer.get("status") != "not-registered":
+        raise RatchetError("architecture manifest names an unreviewed benchmark producer schema")
+    observations = producer.get("required_observations")
+    if not isinstance(observations, list) or not observations or not all(
+        isinstance(value, str) and value for value in observations
+    ):
+        raise RatchetError("architecture manifest benchmark producer observations are incomplete")
+    if producer.get("required_metrics") != list(PROMOTION_BENCHMARK_METRICS):
+        raise RatchetError("architecture manifest benchmark producer metric inventory drifted")
     caller_dispatch = required_mapping(
         manifest.get("caller_identity_first_free_dispatch"),
         "caller_identity_first_free_dispatch",
@@ -677,6 +835,12 @@ def validate_manifest(manifest: Mapping[str, Any]) -> None:
         rule_mapping = required_mapping(rule, f"forbidden_scaffolding.patterns.{name}")
         required_string(rule_mapping.get("path"), f"forbidden_scaffolding.patterns.{name}.path")
         required_string(rule_mapping.get("pattern"), f"forbidden_scaffolding.patterns.{name}.pattern")
+    contracts = required_mapping(manifest.get("contracts"), "contracts")
+    if set(contracts) != {"canonical_upstream_stress"}:
+        raise RatchetError("architecture manifest must select the canonical upstream stress contract")
+    required_string(
+        contracts.get("canonical_upstream_stress"), "contracts.canonical_upstream_stress"
+    )
     baseline = required_mapping(manifest.get("ratchet_baseline"), "ratchet_baseline")
     static_ceiling = required_mapping(baseline.get("static_signal_ceiling"), "ratchet_baseline.static_signal_ceiling")
     if set(static_ceiling) != required_metrics:
@@ -692,42 +856,49 @@ def collect_static_signals(root: Path, manifest: Mapping[str, Any]) -> dict[str,
     selected = required_mapping(manifest["selected_production"], "selected_production")
     runtime = required_string(selected.get("runtime_source"), "selected_production.runtime_source")
     page_map = required_string(selected.get("page_map_source"), "selected_production.page_map_source")
+    cfg_environment = required_mapping(
+        phase_bc_policy(manifest)["cfg_environment"], "phase_bc_call_graph.cfg_environment"
+    )
+
+    def production_matches(path: str, pattern: str) -> list[SourceMatch]:
+        return source_matches(root, path, pattern, cfg_environment)
+
     signals = {
         "local_hot_path_process_scheduler_ops": [
-            *source_matches(root, runtime, r"\bpage_owner_state\s*:\s*AtomicUsize\b"),
-            *source_matches(root, runtime, r"\.page_owner_state\s*\.compare_exchange(?:_weak)?\s*\("),
+            *production_matches(runtime, r"\bpage_owner_state\s*:\s*AtomicUsize\b"),
+            *production_matches(runtime, r"\.page_owner_state\s*\.compare_exchange(?:_weak)?\s*\("),
         ],
         "local_hot_path_global_pagemap_leases": [
-            *source_matches(root, runtime, r"\bProcessPageMapLease\b"),
-            *source_matches(root, page_map, r"\bstruct\s+ProcessPageMapMutationLease\b"),
+            *production_matches(runtime, r"\bProcessPageMapLease\b"),
+            *production_matches(page_map, r"\bstruct\s+ProcessPageMapMutationLease\b"),
         ],
         "local_operation_owner_registry_scans": [
-            *source_matches(root, runtime, r"\bfn\s+claim_current_slot(?:_excluding_held_route)?\s*\("),
-            *source_matches(root, runtime, r"\bwhile\s*!current\.is_null\(\)\s*\{"),
+            *production_matches(runtime, r"\bfn\s+claim_current_slot(?:_excluding_held_route)?\s*\("),
+            *production_matches(runtime, r"\bwhile\s*!current\.is_null\(\)\s*\{"),
         ],
         "local_operation_client_ledger_scans": [
-            *source_matches(root, runtime, r"\bstruct\s+PreparedOwnerExitClients\b"),
-            *source_matches(root, runtime, r"\bfor\s+slot\s+in\s+0\.\.self\.slot_count\(\)\s*\{"),
-            *source_matches(root, runtime, r"\bsession\.clients\.native_client_for_block\s*\("),
+            *production_matches(runtime, r"\bstruct\s+PreparedOwnerExitClients\b"),
+            *production_matches(runtime, r"\bfor\s+slot\s+in\s+0\.\.self\.slot_count\(\)\s*\{"),
+            *production_matches(runtime, r"\bsession\.clients\.native_client_for_block\s*\("),
         ],
         "remote_free_owner_registry_scans": [
-            *source_matches(root, runtime, r"\bfn\s+claim_exact_client\s*\("),
-            *source_matches(root, runtime, r"\bfn\s+usable_size_exact\s*\("),
-            *source_matches(root, runtime, r"\bwhile\s*!current\.is_null\(\)\s*\{"),
+            *production_matches(runtime, r"\bfn\s+claim_exact_client\s*\("),
+            *production_matches(runtime, r"\bfn\s+usable_size_exact\s*\("),
+            *production_matches(runtime, r"\bwhile\s*!current\.is_null\(\)\s*\{"),
         ],
         "extra_control_bytes_per_live_allocation": [
-            *source_matches(root, runtime, r"\bstruct\s+PreparedOwnerExitClient\b"),
-            *source_matches(root, runtime, r"\benum\s+DetachedOwnerExitClientLedger\b"),
+            *production_matches(runtime, r"\bstruct\s+PreparedOwnerExitClient\b"),
+            *production_matches(runtime, r"\benum\s+DetachedOwnerExitClientLedger\b"),
         ],
         "per_call_engine_park_resume": [
-            *source_matches(root, runtime, r"\bfn\s+suspend\s*\("),
-            *source_matches(root, runtime, r"\bfn\s+resume\s*<"),
-            *source_matches(root, runtime, r"\.suspend\(\)"),
-            *source_matches(root, runtime, r"\.resume\("),
+            *production_matches(runtime, r"\bfn\s+suspend\s*\("),
+            *production_matches(runtime, r"\bfn\s+resume\s*<"),
+            *production_matches(runtime, r"\.suspend\(\)"),
+            *production_matches(runtime, r"\.resume\("),
         ],
         "exited_owner_admission_survives_thread_exit": [
-            *source_matches(root, runtime, r"\bstruct\s+LaterThreadAdmissionClaim\b"),
-            *source_matches(root, runtime, r"\badmission\s*:\s*LaterThreadAdmissionClaim\b"),
+            *production_matches(runtime, r"\bstruct\s+LaterThreadAdmissionClaim\b"),
+            *production_matches(runtime, r"\badmission\s*:\s*LaterThreadAdmissionClaim\b"),
         ],
         # Throughput and metadata plateau are runtime measurements. Keeping
         # their source signal sets empty records that source inspection has no
@@ -980,14 +1151,13 @@ def phase_bc_selected_production_reachability(
     """Evaluate Phase-B/C source requirements without claiming runtime proof."""
 
     policy = phase_bc_policy(manifest)
-    cfg_patterns = [
-        required_string(pattern, "phase_bc_call_graph.test_only_cfg_patterns[]")
-        for pattern in policy["test_only_cfg_patterns"]
-    ]
+    cfg_environment = required_mapping(
+        policy["cfg_environment"], "phase_bc_call_graph.cfg_environment"
+    )
     functions = [
         function
         for path in policy["sources"]
-        for function in selected_rust_functions(root, path, cfg_patterns)
+        for function in selected_rust_functions(root, path, cfg_environment)
     ]
     functions_by_node = {function.node: function for function in functions}
     edges = phase_bc_call_edges(functions)
@@ -1104,7 +1274,7 @@ def phase_bc_selected_production_reachability(
         "warning": (
             "Syntactic may-reachability can expose selected call sites or a missing source "
             "projection. It cannot establish dynamic frequency, emitted-artifact behavior, "
-            "or production-general runtime completion."
+            "or promotion-qualified runtime completion."
         ),
     }
 
@@ -1167,6 +1337,9 @@ def selected_source_metadata(root: Path, manifest: Mapping[str, Any]) -> dict[st
 
 def collect_forbidden_scaffolding(root: Path, manifest: Mapping[str, Any]) -> dict[str, object]:
     forbidden = required_mapping(manifest["forbidden_scaffolding"], "forbidden_scaffolding")
+    cfg_environment = required_mapping(
+        phase_bc_policy(manifest)["cfg_environment"], "phase_bc_call_graph.cfg_environment"
+    )
     found: dict[str, list[dict[str, object]]] = {}
     for name, raw_rule in required_mapping(forbidden["patterns"], "forbidden_scaffolding.patterns").items():
         rule = required_mapping(raw_rule, f"forbidden_scaffolding.patterns.{name}")
@@ -1174,6 +1347,7 @@ def collect_forbidden_scaffolding(root: Path, manifest: Mapping[str, Any]) -> di
             root,
             required_string(rule.get("path"), f"forbidden_scaffolding.patterns.{name}.path"),
             required_string(rule.get("pattern"), f"forbidden_scaffolding.patterns.{name}.pattern"),
+            cfg_environment,
         )
         if matches:
             found[name] = [match.as_dict() for match in matches]
@@ -1192,50 +1366,258 @@ def collect_forbidden_scaffolding(root: Path, manifest: Mapping[str, Any]) -> di
 
 def upstream_stress_capability(root: Path, manifest: Mapping[str, Any]) -> dict[str, object]:
     contracts = required_mapping(manifest["contracts"], "contracts")
-    inventory_path = root / required_string(contracts.get("upstream_inventory"), "contracts.upstream_inventory")
-    shadow_path = root / required_string(contracts.get("native_shadow_stress"), "contracts.native_shadow_stress")
-    inventory = read_json(inventory_path)
-    shadow = read_json(shadow_path)
-    test_record = next(
-        (
-            item
-            for item in inventory.get("tests", [])
-            if isinstance(item, Mapping) and item.get("path") == "test/test-stress.c"
-        ),
-        None,
+    contract_path = root / required_string(
+        contracts.get("canonical_upstream_stress"), "contracts.canonical_upstream_stress"
     )
-    if not isinstance(test_record, Mapping):
-        raise RatchetError("upstream test inventory does not record test/test-stress.c")
-    status = test_record.get("status")
-    patch = shadow.get("patch")
-    adapted = isinstance(patch, Mapping) and isinstance(patch.get("path"), str)
-    unmodified = status == "unmodified-production-general" and not adapted
-    current_workers = 0
-    current_large_mode = False
-    if unmodified:
-        execution = shadow.get("execution")
-        if isinstance(execution, Mapping):
-            workers = execution.get("source_worker_count")
-            current_workers = workers if type(workers) is int else 0
-            current_large_mode = "ALLOW_LARGE" not in {
-                item.get("macro")
-                for item in shadow.get("excluded_upstream_modes", [])
-                if isinstance(item, Mapping)
-            }
-    return {
-        "current_large_mode": current_large_mode,
-        "current_max_workers": current_workers,
-        "evidence_scope": "shadow_subset",
-        "inventory_status": status,
-        "native_shadow_patch": patch.get("path") if isinstance(patch, Mapping) else None,
+    contract = read_json(contract_path)
+    common: dict[str, object] = {
+        "current_large_mode": False,
+        "current_max_workers": 0,
         "required_final_large_mode": True,
         "required_final_max_workers": 8,
-        "status": "verified" if unmodified else "unmet",
+        "status": "unmet",
+    }
+    if (
+        contract.get("format") != 4
+        or contract.get("schema") != "crabc-mimalloc-canonical-upstream-stress"
+    ):
+        return {
+            **common,
+            "evidence_scope": None,
+            "reason": "canonical upstream stress producer contract is not integrated",
+            "report": None,
+        }
+    report_contract = required_mapping(contract.get("report"), "canonical stress report")
+    report_path = root / required_string(report_contract.get("path"), "canonical stress report.path")
+    try:
+        report = read_json(report_path)
+        workers, large_mode = validate_canonical_stress_report(
+            root, manifest, contract_path, contract, report
+        )
+    except RatchetError as error:
+        return {
+            **common,
+            "evidence_scope": required_mapping(
+                contract.get("capability"), "canonical stress capability"
+            ).get("evidence_scope"),
+            "reason": str(error),
+            "report": str(report_path),
+        }
+    return {
+        "current_large_mode": large_mode,
+        "current_max_workers": max(workers),
+        "evidence_scope": required_mapping(
+            contract.get("capability"), "canonical stress capability"
+        ).get("evidence_scope"),
+        "reason": None,
+        "report": str(report_path),
+        "required_final_large_mode": True,
+        "required_final_max_workers": 8,
+        "status": "verified",
         "warning": (
-            "The checked-in native-shadow workload is patched and therefore cannot count as "
-            "unmodified upstream stress capability."
+            "This canonical unmodified-source stress matrix is a bounded shadow-subset "
+            "capability, not allocator promotion or large-object evidence."
         ),
     }
+
+
+def exact_json(actual: object, expected: object) -> bool:
+    if type(actual) is not type(expected):
+        return False
+    if isinstance(expected, Mapping):
+        assert isinstance(actual, Mapping)
+        return set(actual) == set(expected) and all(
+            exact_json(actual[name], value) for name, value in expected.items()
+        )
+    if isinstance(expected, list):
+        assert isinstance(actual, list)
+        return len(actual) == len(expected) and all(
+            exact_json(left, right) for left, right in zip(actual, expected)
+        )
+    return actual == expected
+
+
+def validate_byte_stream(record: object, expected: str, name: str) -> None:
+    if not isinstance(record, Mapping) or set(record) != {"bytes", "hex", "sha256"}:
+        raise RatchetError(f"canonical upstream stress {name} byte-stream record drifted")
+    try:
+        payload = bytes.fromhex(str(record["hex"]))
+    except ValueError as error:
+        raise RatchetError(f"canonical upstream stress {name} byte-stream hex is invalid") from error
+    if (
+        type(record["bytes"]) is not int
+        or record["bytes"] != len(payload)
+        or record["sha256"] != hashlib.sha256(payload).hexdigest()
+    ):
+        raise RatchetError(f"canonical upstream stress {name} byte-stream attestation drifted")
+    try:
+        observed = payload.decode("utf-8", errors="strict")
+    except UnicodeDecodeError as error:
+        raise RatchetError(f"canonical upstream stress {name} byte-stream is not UTF-8") from error
+    if observed != expected:
+        raise RatchetError(f"canonical upstream stress {name} byte-stream mismatched its case")
+
+
+def validate_canonical_stress_report(
+    root: Path,
+    manifest: Mapping[str, Any],
+    contract_path: Path,
+    contract: Mapping[str, Any],
+    report: Mapping[str, Any],
+) -> tuple[list[int], bool]:
+    """Accept only the canonical producer's complete, attested native matrix."""
+
+    report_contract = required_mapping(contract.get("report"), "canonical stress report")
+    if report.get("format") != report_contract.get("format") or report.get("schema") != report_contract.get("schema"):
+        raise RatchetError("canonical upstream stress report schema drifted")
+    if report.get("status") != "passed":
+        raise RatchetError("canonical upstream stress report did not pass")
+    if report_contract.get("fixture_elf_fields") != [
+        "dynamic_dependencies",
+        "elf_identity",
+        "interpreter",
+    ]:
+        raise RatchetError("canonical upstream stress fixture ELF report contract drifted")
+    upstream = required_mapping(contract.get("upstream"), "canonical stress upstream")
+    manifest_upstream = required_mapping(manifest.get("upstream"), "upstream")
+    if upstream.get("version") != manifest_upstream.get("version") or upstream.get("revision") != manifest_upstream.get("revision"):
+        raise RatchetError("canonical upstream stress uses a different mimalloc pin")
+    expected_upstream_pin = {
+        "archive_root": upstream.get("archive_root"),
+        "repository": upstream.get("repository"),
+        "revision": upstream.get("revision"),
+        "sha256": upstream.get("archive_sha256"),
+        "source": upstream.get("archive_source"),
+        "tag": upstream.get("tag"),
+        "tag_object": upstream.get("tag_object"),
+        "version": upstream.get("version"),
+    }
+    if not all(isinstance(value, str) and value for value in expected_upstream_pin.values()):
+        raise RatchetError("canonical upstream stress contract has incomplete upstream provenance")
+    if not exact_json(report.get("upstream_pin"), expected_upstream_pin):
+        raise RatchetError("canonical upstream stress report upstream provenance drifted")
+
+    contract_record = required_mapping(report.get("contract"), "canonical stress report.contract")
+    recorded_path = Path(required_string(contract_record.get("path"), "canonical stress report.contract.path"))
+    recorded_path = recorded_path if recorded_path.is_absolute() else root / recorded_path
+    if recorded_path.resolve() != contract_path.resolve():
+        raise RatchetError("canonical upstream stress report names a different contract artifact")
+    if not contract_path.is_file():
+        raise RatchetError("canonical upstream stress contract artifact is absent")
+    if (
+        contract_record.get("bytes") != contract_path.stat().st_size
+        or contract_record.get("sha256") != sha256(contract_path)
+        or not exact_json(contract_record.get("upstream"), upstream)
+    ):
+        raise RatchetError("canonical upstream stress contract artifact attestation drifted")
+
+    adaptation = required_mapping(contract.get("source_adaptation"), "canonical stress adaptation")
+    if adaptation.get("patches") != [] or adaptation.get("kind") != "upstream-preprocessor-symbol-selection-only":
+        raise RatchetError("canonical upstream stress source is adapted outside upstream symbol selection")
+    backend_inventory = required_mapping(contract.get("backend_inventory"), "canonical stress backend")
+    backend_id = required_string(backend_inventory.get("selected"), "canonical stress selected backend")
+    backends = backend_inventory.get("backends")
+    selected_backends = [
+        item for item in backends if isinstance(item, Mapping) and item.get("id") == backend_id
+    ] if isinstance(backends, list) else []
+    if len(selected_backends) != 1 or selected_backends[0].get("allocator_feature") != "native-mimalloc-shadow" or selected_backends[0].get("c_backend_fallback") is not False:
+        raise RatchetError("canonical upstream stress did not select the native Rust backend")
+    target_inventory = required_mapping(contract.get("target_inventory"), "canonical stress target")
+    target_id = required_string(target_inventory.get("selected"), "canonical stress selected target")
+    targets = target_inventory.get("targets")
+    selected_targets = [
+        item for item in targets if isinstance(item, Mapping) and item.get("id") == target_id
+    ] if isinstance(targets, list) else []
+    if len(selected_targets) != 1 or selected_targets[0].get("status") != "applicable":
+        raise RatchetError("canonical upstream stress did not select its native target")
+    expected_selection = {"backend": backend_id, "target": dict(selected_targets[0])}
+    if not exact_json(report.get("selection"), expected_selection):
+        raise RatchetError("canonical upstream stress report selection provenance drifted")
+
+    compile_requirements = required_mapping(
+        contract.get("compile_requirements"), "canonical stress compile requirements"
+    )
+    expected_fixture_elf = {
+        "dynamic_dependencies": compile_requirements.get("expected_dynamic_dependencies"),
+        "elf_identity": compile_requirements.get("expected_elf_identity"),
+        "interpreter": compile_requirements.get("expected_interpreter"),
+    }
+    if not exact_json(report.get("fixture_elf"), expected_fixture_elf):
+        raise RatchetError("canonical upstream stress fixture ELF provenance drifted")
+    if not exact_json(
+        report.get("dynamic_dependencies"), expected_fixture_elf["dynamic_dependencies"]
+    ):
+        raise RatchetError("canonical upstream stress dynamic dependency provenance drifted")
+
+    execution_contract = required_mapping(contract.get("execution"), "canonical stress execution")
+    matrix = execution_contract.get("matrix")
+    if not isinstance(matrix, list) or len(matrix) != 8 or not all(isinstance(case, Mapping) for case in matrix):
+        raise RatchetError("canonical upstream stress contract does not contain the eight-case matrix")
+    case_ids = [case.get("id") for case in matrix]
+    if not all(isinstance(case_id, str) and case_id for case_id in case_ids) or len(set(case_ids)) != len(case_ids):
+        raise RatchetError("canonical upstream stress matrix case identities are invalid")
+    workers = sorted({case.get("workers") for case in matrix if type(case.get("workers")) is int})
+    if workers != [1, 2, 4, 8] or any(
+        case.get("arguments") != [str(case.get("workers")), str(case.get("scale")), str(case.get("iterations"))]
+        for case in matrix
+    ):
+        raise RatchetError("canonical upstream stress matrix is not the required 1/2/4/8 source-argument matrix")
+    if execution_contract.get("process_attempts_per_case") != 1 or execution_contract.get("stop_after_first_nonpass") is not True:
+        raise RatchetError("canonical upstream stress execution policy drifted")
+
+    execution = required_mapping(report.get("execution"), "canonical stress report.execution")
+    results = execution.get("case_results")
+    if (
+        execution.get("attempted") is not True
+        or execution.get("attempted_process_count") != len(matrix)
+        or execution.get("case_count") != len(matrix)
+        or execution.get("process_attempts_per_case") != 1
+        or not isinstance(results, list)
+        or len(results) != len(matrix)
+    ):
+        raise RatchetError("canonical upstream stress report contains a partial matrix")
+    inventory_fields = ("id", "workers", "scale", "iterations", "arguments")
+    for attempt, (case, result) in enumerate(zip(matrix, results), start=1):
+        expected_case = {name: case.get(name) for name in inventory_fields}
+        if not isinstance(result, Mapping) or result.get("state") != "passed" or result.get("process_attempt") != attempt or not exact_json(result.get("case"), expected_case):
+            raise RatchetError("canonical upstream stress report case order or state drifted")
+        observation = required_mapping(result.get("observation"), "canonical stress case observation")
+        command = observation.get("command")
+        if (
+            observation.get("kind") != "process"
+            or observation.get("status") != case.get("expected_exit_status")
+            or not isinstance(command, list)
+            or command[1:] != case.get("arguments")
+        ):
+            raise RatchetError("canonical upstream stress report lacks real process provenance")
+        validate_byte_stream(observation.get("stdout"), str(case.get("expected_stdout")), "stdout")
+        validate_byte_stream(observation.get("stderr"), str(case.get("expected_stderr")), "stderr")
+
+    capability_contract = required_mapping(contract.get("capability"), "canonical stress capability")
+    required_workers = capability_contract.get("required_worker_counts")
+    capability = required_mapping(report.get("capability"), "canonical stress report.capability")
+    expected_capability = {
+        "failure_closed": True,
+        "fully_verified_worker_counts": required_workers,
+        "id": capability_contract.get("id"),
+        "native_execution_completed": True,
+        "native_execution_started": True,
+        "passed_case_count": len(matrix),
+        "required_case_count": len(matrix),
+        "required_worker_counts": required_workers,
+        "status": "passed",
+    }
+    if not exact_json(capability, expected_capability):
+        raise RatchetError("canonical upstream stress capability did not complete exactly")
+    if not exact_json(
+        report.get("first_fact"),
+        {"completed_case_count": len(matrix), "kind": "pass", "stage": "matrix"},
+    ):
+        raise RatchetError("canonical upstream stress report does not record its complete matrix fact")
+    large_mode = required_mapping(
+        execution_contract.get("large_object_mode"), "canonical stress large-object mode"
+    ).get("status") == "passed"
+    return workers, large_mode
 
 
 def required_evidence_shape(
@@ -1277,6 +1659,7 @@ def load_runtime_evidence(
     path: Path | None,
     selected: Mapping[str, object],
     manifest: Mapping[str, Any] | None = None,
+    root: Path = ROOT,
 ) -> dict[str, object]:
     if path is None:
         return {
@@ -1287,38 +1670,56 @@ def load_runtime_evidence(
     evidence = read_json(path)
     if evidence.get("format") != 1 or evidence.get("schema") != RUNTIME_EVIDENCE_SCHEMA:
         raise RatchetError("runtime/artifact evidence has an unsupported schema")
-    scope = evidence.get("evidence_scope")
-    if scope not in {"production_general", "promotion_qualified"}:
-        raise RatchetError("runtime/artifact evidence scope cannot close the architecture gate")
     selection = evidence.get("selected_production")
     if not isinstance(selection, Mapping) or selection.get("feature") != selected.get("feature"):
         raise RatchetError("runtime/artifact evidence does not describe the selected native feature")
     if selection.get("source_sha256") != selected.get("sources"):
         raise RatchetError("runtime/artifact evidence does not match the selected source metadata")
     artifact = evidence.get("artifact")
-    if not isinstance(artifact, Mapping) or not isinstance(artifact.get("path"), str):
+    if not isinstance(artifact, Mapping) or not isinstance(artifact.get("path"), str) or not artifact.get("path"):
         raise RatchetError("runtime/artifact evidence does not identify a selected artifact")
     artifact_digest = artifact.get("sha256")
-    if not isinstance(artifact_digest, str) or len(artifact_digest) != 64:
+    if not isinstance(artifact_digest, str) or re.fullmatch(r"[0-9a-f]{64}", artifact_digest) is None:
         raise RatchetError("runtime/artifact evidence has no selected artifact SHA-256")
+    artifact_path = Path(artifact["path"])
+    artifact_path = artifact_path if artifact_path.is_absolute() else root / artifact_path
+    if not artifact_path.is_file() or artifact_path.is_symlink():
+        raise RatchetError("runtime/artifact evidence selected artifact is absent")
+    observed_artifact_digest = sha256(artifact_path)
+    if observed_artifact_digest != artifact_digest:
+        raise RatchetError("runtime/artifact evidence artifact SHA-256 mismatch")
     metrics = evidence.get("metrics")
     if not isinstance(metrics, Mapping):
         raise RatchetError("runtime/artifact evidence does not record metrics")
     if manifest is None:
         raise RatchetError("runtime/artifact evidence validation requires the architecture manifest")
+    scope = evidence.get("evidence_scope")
+    required_scope = required_string(
+        required_mapping(manifest.get("scope"), "scope").get("final_required"),
+        "scope.final_required",
+    )
+    if scope != required_scope:
+        raise RatchetError(
+            f"runtime/artifact evidence must have the manifest's exact final scope: {required_scope}"
+        )
     required_phase_bc = required_mapping(
         phase_bc_policy(manifest).get("runtime_evidence_required"),
         "phase_bc_call_graph.runtime_evidence_required",
     )
     phase_bc = evidence.get("phase_bc")
     required_evidence_shape(phase_bc, required_phase_bc, "phase_bc")
-    return {
-        "evidence": evidence,
-        "present": True,
-        "required_phase_bc": required_phase_bc,
-        "scope": scope,
-        "status": "accepted-for-gate-comparison",
-    }
+    runtime_contract = required_mapping(manifest.get("runtime_evidence"), "runtime_evidence")
+    producer = required_mapping(
+        runtime_contract.get("promotion_benchmark_producer"),
+        "runtime_evidence.promotion_benchmark_producer",
+    )
+    producer_schema = producer.get("schema")
+    if producer_schema is None:
+        raise RatchetError(
+            "no reviewed promotion benchmark producer schema is registered; "
+            "status strings are not benchmark samples or provenance"
+        )
+    raise RatchetError(f"unsupported promotion benchmark producer schema: {producer_schema}")
 
 
 def metric_statuses(
@@ -1379,13 +1780,17 @@ def gate_unmet(report: Mapping[str, Any]) -> list[str]:
         unmet.append("unmodified upstream stress capability")
     runtime = report["runtime_artifact_evidence"]
     if not runtime["present"]:
-        unmet.append("production-general runtime/artifact evidence")
+        unmet.append("promotion-qualified runtime/artifact evidence")
     else:
         evidence = runtime["evidence"]
         metrics = evidence["metrics"]
         for name, metric in report["metrics"].items():
+            if name in PROMOTION_BENCHMARK_METRICS:
+                continue
             if metrics.get(name) != metric["final_required"]:
                 unmet.append(f"runtime evidence {name}")
+        for name in PROMOTION_BENCHMARK_METRICS:
+            unmet.append(f"runtime evidence {name} lacks validated benchmark samples/provenance")
         if metrics.get("forbidden_scaffolding_compiled") is not False:
             unmet.append("runtime evidence forbidden_scaffolding_compiled")
         if metrics.get("unmodified_upstream_stress_max_workers", 0) < stress["required_final_max_workers"]:
@@ -1408,7 +1813,7 @@ def evaluate(root: Path, manifest_path: Path, runtime_evidence_path: Path | None
     metrics = metric_statuses(manifest, signals)
     caller_dispatch = caller_identity_first_free_dispatch(root, manifest)
     phase_bc = phase_bc_selected_production_reachability(root, manifest)
-    runtime = load_runtime_evidence(runtime_evidence_path, selected, manifest)
+    runtime = load_runtime_evidence(runtime_evidence_path, selected, manifest, root)
     report: dict[str, object] = {
         "format": 1,
         "schema": "crabc-mimalloc-architecture-ratchet-report",
@@ -1442,8 +1847,30 @@ def evaluate(root: Path, manifest_path: Path, runtime_evidence_path: Path | None
 
 
 def write_json(path: Path, value: Mapping[str, object]) -> None:
+    path = path.expanduser().resolve()
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    staged: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            dir=path.parent,
+            prefix=f".{path.name}.",
+            delete=False,
+        ) as stream:
+            json.dump(value, stream, indent=2, sort_keys=True)
+            stream.write("\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+            staged = Path(stream.name)
+        os.replace(staged, path)
+        staged = None
+    finally:
+        if staged is not None:
+            try:
+                staged.unlink()
+            except FileNotFoundError:
+                pass
 
 
 def parse_arguments() -> argparse.Namespace:

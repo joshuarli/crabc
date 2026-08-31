@@ -9,7 +9,26 @@
     "current": "shadow_subset",
     "final_required": "promotion_qualified",
     "static_analysis_cannot_close_final_gate": true,
-    "meaning": "This manifest records the nondefault native-mimalloc-shadow source path and its bounded evidence. Source/module inspection can show selected temporary scaffolding, but final hot-path values require independently generated production-general runtime and artifact evidence."
+    "meaning": "This manifest records the nondefault native-mimalloc-shadow source path and its bounded evidence. Source/module inspection can show selected temporary scaffolding, but final hot-path values require independently generated promotion-qualified runtime and artifact evidence from a reviewed producer schema."
+  },
+  "runtime_evidence": {
+    "format": 1,
+    "schema": "crabc-mimalloc-architecture-runtime-evidence",
+    "promotion_benchmark_producer": {
+      "schema": null,
+      "status": "not-registered",
+      "required_metrics": [
+        "cross_thread_free_throughput_ratio",
+        "four_thread_local_throughput_ratio",
+        "metadata_plateau_after_warmup",
+        "single_thread_throughput_ratio"
+      ],
+      "required_observations": [
+        "native and pinned-C per-sample measurements for every required workload and lane",
+        "sample-count, warmup, ordering, host, CPU, toolchain, artifact, and workload provenance",
+        "machine-evaluated promotion thresholds derived from the recorded samples"
+      ]
+    }
   },
   "selected_production": {
     "package": "crabc-libc",
@@ -48,7 +67,7 @@
       "phase": "A",
       "marker": "CRABC-MI-PHASE-A-CALLER-IDENTITY-FREE-BRIDGE",
       "source_anchor_pattern": "\\bRUNTIME_PROCESS\\.is_on_initial_thread\\s*\\(",
-      "removal_condition": "Remove CRABC-MI-PHASE-A-CALLER-IDENTITY-FREE-BRIDGE when native_free derives owner and abandoned-state authority from pointer-to-page dispatch, before any caller-identity branch, under production_general evidence. Until then, the exact marker text must occur inside native_free before or at its sole caller-identity branch.",
+      "removal_condition": "Remove CRABC-MI-PHASE-A-CALLER-IDENTITY-FREE-BRIDGE when native_free derives owner and abandoned-state authority from pointer-to-page dispatch, before any caller-identity branch, under promotion_qualified evidence. Until then, the exact marker text must occur inside native_free before or at its sole caller-identity branch.",
       "final_acceptance": false
     }
   },
@@ -61,15 +80,23 @@
       "crabc-mimalloc/src/process_arena.rs",
       "crabc-mimalloc/src/process_page_map.rs"
     ],
-    "test_only_cfg_patterns": [
-      "\\btest\\b",
-      "native-runtime-test-audit",
-      "native-runtime-test-fault",
-      "native-runtime-test-published-source",
-      "\\bmiri\\b",
-      "test-adapter",
-      "\\bany\\s*\\(\\s*\\)"
-    ],
+    "cfg_environment": {
+      "flags": {
+        "miri": false,
+        "test": false
+      },
+      "features": {
+        "native-runtime-test-audit": false,
+        "native-runtime-test-fault": false,
+        "native-runtime-test-published-source": false,
+        "test-adapter": false
+      },
+      "key_values": {
+        "target_arch": "aarch64",
+        "target_endian": "little",
+        "target_os": "linux"
+      }
+    },
     "entry_points": [
       {
         "path": "crabc-mimalloc/src/runtime_lifecycle.rs",
@@ -282,8 +309,7 @@
     }
   },
   "contracts": {
-    "upstream_inventory": "compat/allocator/upstream-tests-v3.5.0.json",
-    "native_shadow_stress": "compat/allocator/native-shadow-stress-v3.5.0.json"
+    "canonical_upstream_stress": "compat/allocator/upstream-stress-v3.5.0.json"
   },
   "ratchet_baseline": {
     "static_signal_ceiling": {

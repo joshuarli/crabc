@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import importlib.util
 import json
 import subprocess
@@ -11,6 +12,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -56,7 +58,7 @@ class ArchitectureRatchetTests(unittest.TestCase):
         self.assertFalse(report["summary"]["final_architecture_passed"])
         self.assertEqual(report["summary"]["gate_status"], "unmet")
         self.assertTrue(report["summary"]["static_analysis_only"])
-        self.assertIn("production-general runtime/artifact evidence", report["summary"]["unmet"])
+        self.assertIn("promotion-qualified runtime/artifact evidence", report["summary"]["unmet"])
         ceilings = self.manifest["ratchet_baseline"]["static_signal_ceiling"]
         selected_source_metrics = {
             "local_hot_path_process_scheduler_ops",
@@ -68,19 +70,9 @@ class ArchitectureRatchetTests(unittest.TestCase):
             "per_call_engine_park_resume",
             "exited_owner_admission_survives_thread_exit",
         }
-        expected_regressions = [
-            "local_operation_owner_registry_scans: 15 source indicators exceed ratchet ceiling 14",
-            "remote_free_owner_registry_scans: 17 source indicators exceed ratchet ceiling 16",
-        ]
-        self.assertEqual(report["ratchet"]["regressions"], expected_regressions)
+        self.assertEqual(report["ratchet"]["regressions"], [])
         for name, metric in report["metrics"].items():
-            if name in {
-                "local_operation_owner_registry_scans",
-                "remote_free_owner_registry_scans",
-            }:
-                self.assertGreater(metric["source_indicator_count"], ceilings[name])
-            else:
-                self.assertLessEqual(metric["source_indicator_count"], ceilings[name])
+            self.assertLessEqual(metric["source_indicator_count"], ceilings[name])
             if name in selected_source_metrics:
                 self.assertGreater(metric["source_indicator_count"], 0)
             else:
@@ -98,10 +90,11 @@ class ArchitectureRatchetTests(unittest.TestCase):
             },
         )
         stress = report["unmodified_upstream_stress"]
-        self.assertEqual(stress["inventory_status"], "adapted-milestone-5")
         self.assertEqual(stress["current_max_workers"], 0)
         self.assertFalse(stress["current_large_mode"])
         self.assertEqual(stress["status"], "unmet")
+        self.assertIsInstance(stress["reason"], str)
+        self.assertTrue(stress["reason"])
 
         phase_bc = report["phase_bc_selected_production_reachability"]
         self.assertEqual(phase_bc["evidence_kind"], "syntactic selected-source may-reachability")
@@ -171,7 +164,7 @@ struct CurrentSource {};
                 ratchet["static_projection_present"] = True
         self.assertEqual(
             RATCHET.gate_unmet(synthetic),
-            ["production-general runtime/artifact evidence"],
+            ["promotion-qualified runtime/artifact evidence"],
         )
 
     def test_phase_a_bridge_requires_its_explicit_removal_condition(self) -> None:
@@ -285,28 +278,128 @@ pub unsafe fn native_free() {
 
     def test_runtime_evidence_requires_explicit_phase_bc_observations(self) -> None:
         report = RATCHET.evaluate(ROOT, MANIFEST, None)
-        incomplete = {
-            "format": 1,
-            "schema": RATCHET.RUNTIME_EVIDENCE_SCHEMA,
-            "evidence_scope": "production_general",
-            "selected_production": {
-                "feature": report["selected_production"]["feature"],
-                "source_sha256": report["selected_production"]["sources"],
-            },
-            "artifact": {"path": "target/libc.so", "sha256": "0" * 64},
-            "metrics": {
-                name: metric["final_required"] for name, metric in report["metrics"].items()
-            },
-        }
         with tempfile.TemporaryDirectory() as temporary:
-            evidence_path = Path(temporary) / "runtime-evidence.json"
+            root = Path(temporary)
+            artifact = root / "target/libc.so"
+            artifact.parent.mkdir(parents=True)
+            artifact.write_bytes(b"selected production artifact")
+            incomplete = {
+                "format": 1,
+                "schema": RATCHET.RUNTIME_EVIDENCE_SCHEMA,
+                "evidence_scope": "promotion_qualified",
+                "selected_production": {
+                    "feature": report["selected_production"]["feature"],
+                    "source_sha256": report["selected_production"]["sources"],
+                },
+                "artifact": {
+                    "path": "target/libc.so",
+                    "sha256": hashlib.sha256(artifact.read_bytes()).hexdigest(),
+                },
+                "metrics": {
+                    name: metric["final_required"] for name, metric in report["metrics"].items()
+                },
+            }
+            evidence_path = root / "runtime-evidence.json"
             evidence_path.write_text(json.dumps(incomplete), encoding="utf-8")
             with self.assertRaisesRegex(RATCHET.RatchetError, "Phase-B/C"):
                 RATCHET.load_runtime_evidence(
                     evidence_path,
                     report["selected_production"],
                     self.manifest,
+                    root,
                 )
+
+    def test_runtime_evidence_requires_exact_final_scope_and_verified_artifact(self) -> None:
+        report = RATCHET.evaluate(ROOT, MANIFEST, None)
+        required_phase_bc = self.manifest["phase_bc_call_graph"]["runtime_evidence_required"]
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            artifact = root / "target/libc.so"
+            artifact.parent.mkdir(parents=True)
+            artifact.write_bytes(b"selected production artifact")
+            evidence = {
+                "format": 1,
+                "schema": RATCHET.RUNTIME_EVIDENCE_SCHEMA,
+                "evidence_scope": "production_general",
+                "selected_production": {
+                    "feature": report["selected_production"]["feature"],
+                    "source_sha256": report["selected_production"]["sources"],
+                },
+                "artifact": {
+                    "path": "target/libc.so",
+                    "sha256": hashlib.sha256(artifact.read_bytes()).hexdigest(),
+                },
+                "metrics": {
+                    name: metric["final_required"] for name, metric in report["metrics"].items()
+                },
+                "phase_bc": required_phase_bc,
+            }
+            evidence_path = root / "runtime-evidence.json"
+            evidence_path.write_text(json.dumps(evidence), encoding="utf-8")
+            with self.assertRaisesRegex(RATCHET.RatchetError, "exact final scope"):
+                RATCHET.load_runtime_evidence(
+                    evidence_path, report["selected_production"], self.manifest, root
+                )
+
+            evidence["evidence_scope"] = "promotion_qualified"
+            evidence["artifact"]["sha256"] = "0" * 64
+            evidence_path.write_text(json.dumps(evidence), encoding="utf-8")
+            with self.assertRaisesRegex(RATCHET.RatchetError, "artifact SHA-256 mismatch"):
+                RATCHET.load_runtime_evidence(
+                    evidence_path, report["selected_production"], self.manifest, root
+                )
+
+            artifact.unlink()
+            evidence_path.write_text(json.dumps(evidence), encoding="utf-8")
+            with self.assertRaisesRegex(RATCHET.RatchetError, "artifact is absent"):
+                RATCHET.load_runtime_evidence(
+                    evidence_path, report["selected_production"], self.manifest, root
+                )
+
+    def test_runtime_performance_claims_fail_closed_without_a_real_producer_schema(self) -> None:
+        report = RATCHET.evaluate(ROOT, MANIFEST, None)
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            artifact = root / "target/libc.so"
+            artifact.parent.mkdir(parents=True)
+            artifact.write_bytes(b"selected production artifact")
+            evidence = {
+                "format": 1,
+                "schema": RATCHET.RUNTIME_EVIDENCE_SCHEMA,
+                "evidence_scope": "promotion_qualified",
+                "selected_production": {
+                    "feature": report["selected_production"]["feature"],
+                    "source_sha256": report["selected_production"]["sources"],
+                },
+                "artifact": {
+                    "path": "target/libc.so",
+                    "sha256": hashlib.sha256(artifact.read_bytes()).hexdigest(),
+                },
+                "metrics": {
+                    name: metric["final_required"] for name, metric in report["metrics"].items()
+                },
+                "phase_bc": self.manifest["phase_bc_call_graph"]["runtime_evidence_required"],
+            }
+            evidence_path = root / "runtime-evidence.json"
+            evidence_path.write_text(json.dumps(evidence), encoding="utf-8")
+            with self.assertRaisesRegex(RATCHET.RatchetError, "benchmark producer schema"):
+                RATCHET.load_runtime_evidence(
+                    evidence_path, report["selected_production"], self.manifest, root
+                )
+        synthetic = copy.deepcopy(report)
+        synthetic["runtime_artifact_evidence"] = {
+            "present": True,
+            "evidence": evidence,
+            "required_phase_bc": self.manifest["phase_bc_call_graph"][
+                "runtime_evidence_required"
+            ],
+        }
+        unmet = RATCHET.gate_unmet(synthetic)
+        for name in RATCHET.PROMOTION_BENCHMARK_METRICS:
+            self.assertIn(
+                f"runtime evidence {name} lacks validated benchmark samples/provenance",
+                unmet,
+            )
 
     def test_phase_bc_runtime_observation_must_match_the_required_value(self) -> None:
         required = self.manifest["phase_bc_call_graph"]["runtime_evidence_required"]
@@ -364,6 +457,7 @@ fn feature_test_only_scaffolding() {
 }
 """
         helper_source = """\
+#[cfg(not(test))]
 fn helper_path() {
     RUNTIME_PROCESS.page_owner_state.load(Ordering::Acquire);
     parked.resume(attachment);
@@ -402,6 +496,229 @@ fn helper_path() {
             "ledger_owner_registry_scans",
         ):
             self.assertTrue(report["ratchets"][name]["matches"])
+
+    def test_production_cfg_keeps_not_test_and_excludes_test_consistently(self) -> None:
+        manifest = copy.deepcopy(self.manifest)
+        manifest["forbidden_scaffolding"]["patterns"] = {
+            "production_only": {
+                "path": "runtime.rs",
+                "pattern": r"\bstruct\s+ProductionOnlyScaffold\b",
+            },
+            "test_only": {
+                "path": "runtime.rs",
+                "pattern": r"\bstruct\s+TestOnlyScaffold\b",
+            },
+            "disabled": {
+                "path": "runtime.rs",
+                "pattern": r"\bstruct\s+DisabledScaffold\b",
+            },
+        }
+        source = """\
+#[cfg(not(test))]
+struct ProductionOnlyScaffold;
+#[cfg(test)]
+struct TestOnlyScaffold;
+#[cfg(any())]
+struct DisabledScaffold;
+"""
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "runtime.rs").write_text(source, encoding="utf-8")
+            forbidden = RATCHET.collect_forbidden_scaffolding(root, manifest)
+        self.assertEqual(set(forbidden["found"]), {"production_only"})
+
+    def test_unknown_production_cfg_fails_closed(self) -> None:
+        source = """\
+#[cfg(allocator_magic)]
+fn hidden_or_selected() {}
+"""
+        with self.assertRaisesRegex(RATCHET.RatchetError, "unknown production cfg"):
+            RATCHET.production_rust_source(
+                source, self.manifest["phase_bc_call_graph"]["cfg_environment"]
+            )
+
+    def test_canonical_upstream_stress_complete_matrix_is_consumed(self) -> None:
+        matrix = [
+            {
+                "id": f"workers-{workers}-scale-{scale}-iterations-{iterations}",
+                "workers": workers,
+                "scale": scale,
+                "iterations": iterations,
+                "arguments": [str(workers), str(scale), str(iterations)],
+                "expected_stdout": f"workers={workers} scale={scale} iterations={iterations}\n",
+                "expected_stderr": "",
+                "expected_exit_status": 0,
+            }
+            for scale, iterations in ((1, 1), (2, 2))
+            for workers in (1, 2, 4, 8)
+        ]
+        contract = {
+            "format": 4,
+            "schema": "crabc-mimalloc-canonical-upstream-stress",
+            "upstream": {
+                "project": "microsoft/mimalloc",
+                "version": "3.5.0",
+                "tag": "v3.5.0",
+                "tag_object": "tag-object",
+                "revision": self.manifest["upstream"]["revision"],
+                "repository": "https://github.com/microsoft/mimalloc.git",
+                "archive_source": "https://example.invalid/mimalloc.tar.gz",
+                "archive_path": "cache/mimalloc.tar.gz",
+                "archive_root": "mimalloc-3.5.0",
+                "archive_sha256": "1" * 64,
+            },
+            "target_inventory": {
+                "selected": "linux-aarch64-little-endian",
+                "targets": [{"id": "linux-aarch64-little-endian", "status": "applicable"}],
+            },
+            "backend_inventory": {
+                "selected": "crabc-libc-native-mimalloc-shadow",
+                "backends": [{
+                    "id": "crabc-libc-native-mimalloc-shadow",
+                    "allocator_feature": "native-mimalloc-shadow",
+                    "c_backend_fallback": False,
+                }],
+            },
+            "source_adaptation": {"kind": "upstream-preprocessor-symbol-selection-only", "patches": []},
+            "execution": {
+                "matrix": matrix,
+                "process_attempts_per_case": 1,
+                "stop_after_first_nonpass": True,
+                "large_object_mode": {"status": "not-claimed"},
+            },
+            "capability": {
+                "id": "canonical-unmodified-upstream-pthread-stress",
+                "required_worker_counts": [1, 2, 4, 8],
+                "evidence_scope": "shadow_subset",
+                "blocked_is_failure_closed": True,
+            },
+            "report": {
+                "format": 3,
+                "schema": "crabc-mimalloc-canonical-upstream-stress-report",
+                "path": "reports/upstream-stress.json",
+                "fixture_elf_fields": ["dynamic_dependencies", "elf_identity", "interpreter"],
+            },
+            "compile_requirements": {
+                "expected_dynamic_dependencies": ["libc.so"],
+                "expected_elf_identity": {
+                    "class": "ELF64",
+                    "endianness": "little",
+                    "machine": "AArch64",
+                },
+                "expected_interpreter": "/lib/ld-crabc-aarch64.so.1",
+            },
+        }
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            contract_path = root / "upstream-stress.json"
+            contract_path.write_text(json.dumps(contract), encoding="utf-8")
+            contract_bytes = contract_path.read_bytes()
+            case_results = []
+            for attempt, case in enumerate(matrix, start=1):
+                stdout = case["expected_stdout"].encode()
+                stderr = case["expected_stderr"].encode()
+                case_results.append({
+                    "case": {key: case[key] for key in ("id", "workers", "scale", "iterations", "arguments")},
+                    "process_attempt": attempt,
+                    "state": "passed",
+                    "observation": {
+                        "command": ["/fixture", *case["arguments"]],
+                        "kind": "process",
+                        "status": 0,
+                        "stdout": {"bytes": len(stdout), "sha256": hashlib.sha256(stdout).hexdigest(), "hex": stdout.hex()},
+                        "stderr": {"bytes": len(stderr), "sha256": hashlib.sha256(stderr).hexdigest(), "hex": stderr.hex()},
+                    },
+                })
+            stress_report = {
+                "format": 3,
+                "schema": "crabc-mimalloc-canonical-upstream-stress-report",
+                "status": "passed",
+                "contract": {
+                    "path": "upstream-stress.json",
+                    "bytes": len(contract_bytes),
+                    "sha256": hashlib.sha256(contract_bytes).hexdigest(),
+                    "upstream": contract["upstream"],
+                },
+                "selection": {
+                    "target": contract["target_inventory"]["targets"][0],
+                    "backend": contract["backend_inventory"]["selected"],
+                },
+                "fixture_elf": {
+                    "dynamic_dependencies": ["libc.so"],
+                    "elf_identity": {
+                        "class": "ELF64",
+                        "endianness": "little",
+                        "machine": "AArch64",
+                    },
+                    "interpreter": "/lib/ld-crabc-aarch64.so.1",
+                },
+                "dynamic_dependencies": ["libc.so"],
+                "execution": {
+                    "attempted": True,
+                    "attempted_process_count": len(matrix),
+                    "case_count": len(matrix),
+                    "case_results": case_results,
+                    "process_attempts_per_case": 1,
+                },
+                "capability": {
+                    "id": contract["capability"]["id"],
+                    "status": "passed",
+                    "failure_closed": True,
+                    "native_execution_started": True,
+                    "native_execution_completed": True,
+                    "passed_case_count": len(matrix),
+                    "required_case_count": len(matrix),
+                    "fully_verified_worker_counts": [1, 2, 4, 8],
+                    "required_worker_counts": [1, 2, 4, 8],
+                },
+                "first_fact": {"kind": "pass", "stage": "matrix", "completed_case_count": len(matrix)},
+                "upstream_pin": {
+                    "archive_root": contract["upstream"]["archive_root"],
+                    "repository": contract["upstream"]["repository"],
+                    "revision": contract["upstream"]["revision"],
+                    "sha256": contract["upstream"]["archive_sha256"],
+                    "source": contract["upstream"]["archive_source"],
+                    "tag": contract["upstream"]["tag"],
+                    "tag_object": contract["upstream"]["tag_object"],
+                    "version": contract["upstream"]["version"],
+                },
+            }
+            report_path = root / "reports/upstream-stress.json"
+            report_path.parent.mkdir()
+            report_path.write_text(json.dumps(stress_report), encoding="utf-8")
+            manifest = copy.deepcopy(self.manifest)
+            manifest["contracts"] = {"canonical_upstream_stress": "upstream-stress.json"}
+            capability = RATCHET.upstream_stress_capability(root, manifest)
+            self.assertEqual(capability["status"], "verified")
+            self.assertEqual(capability["current_max_workers"], 8)
+            self.assertFalse(capability["current_large_mode"])
+
+            stress_report["execution"]["case_results"][-1]["observation"]["stdout"]["hex"] = ""
+            report_path.write_text(json.dumps(stress_report), encoding="utf-8")
+            rejected = RATCHET.upstream_stress_capability(root, manifest)
+            self.assertEqual(rejected["status"], "unmet")
+            self.assertIn("byte-stream", rejected["reason"])
+
+    def test_reports_are_published_atomically(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "reports/latest.json"
+            real_replace = RATCHET.os.replace
+            observations = []
+
+            def observed_replace(source: object, destination: object) -> None:
+                staged = Path(source)
+                destination_path = Path(destination)
+                observations.append((staged.parent, destination_path.exists(), json.loads(staged.read_text())))
+                real_replace(source, destination)
+
+            with mock.patch.object(RATCHET.os, "replace", side_effect=observed_replace):
+                RATCHET.write_json(path, {"status": "complete"})
+            self.assertEqual(
+                observations,
+                [(path.parent.resolve(), False, {"status": "complete"})],
+            )
+            self.assertEqual(json.loads(path.read_text()), {"status": "complete"})
+            self.assertEqual(list(path.parent.glob(f".{path.name}.*")), [])
 
     def test_phase_bc_reachable_ceiling_is_a_ratchet_not_an_acceptance_threshold(self) -> None:
         manifest = copy.deepcopy(self.manifest)
