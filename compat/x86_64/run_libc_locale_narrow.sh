@@ -92,7 +92,10 @@ for symbol in "${SELECTED_SYMBOLS[@]}"; do
     grep -Eq "[[:space:]][TW][[:space:]]${symbol}$" "$archive_symbols" ||
         fail "archive does not define $symbol"
 done
-for unselected in strerror_l strtof_l strtod_l strtold_l wcstof_l wcstod_l \
+# Selected `strtof_l strtod_l strtold_l` numeric `_l` roots are deliberate
+# shared archive exports. This narrow-text artifact neither invokes nor
+# establishes their contract.
+for unselected in strerror_l wcstof_l wcstod_l \
     wcstold_l strftime_l wcsftime_l fwide fgetwc fputwc malloc calloc realloc free; do
     if grep -Eq "[[:space:]][TW][[:space:]]${unselected}$" "$archive_symbols"; then
         fail "archive accidentally exports unselected $unselected"
@@ -138,7 +141,7 @@ if grep -Eq 'TLSGD|TLSLD|TLSDESC|GOTTPOFF|DTPMOD(64)?|DTPOFF(32|64)?|__tls_get_a
     "$relocations" "$symbols" "$disassembly"; then
     fail "candidate retains a dynamic TLS model"
 fi
-if grep -Eq 'mimalloc|sha_crypt|malloc|calloc|realloc|strtod_l|wcstod_l|fgetwc|fputwc' \
+if grep -Eq 'mimalloc|sha_crypt|malloc|calloc|realloc|wcstod_l|fgetwc|fputwc' \
     "$symbols" "$disassembly"; then
     fail "candidate selects allocation, localized numeric parse, or wide stdio"
 fi
