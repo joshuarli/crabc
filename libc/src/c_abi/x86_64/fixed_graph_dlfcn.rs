@@ -47,6 +47,7 @@ const DLINFO_UNSUPPORTED_REQUEST: &[u8] = b"Unsupported request ";
 const DLCLOSE_NULL_HANDLE: &[u8] = b"Invalid library handle 0";
 const DLSYM_EMPTY_SYMBOL: &[u8] = b"Symbol not found: ";
 const LOADER_SYMBOL_NAME_INVALID: &[u8] = b"loader symbol name is invalid";
+const LOADER_ADDRESS_NOT_FOUND: &[u8] = b"loader address not found";
 static EXHAUSTED: &[u8] = b"crabc dlfcn diagnostic slots exhausted\0";
 
 #[repr(C)]
@@ -543,23 +544,7 @@ pub unsafe extern "C" fn dlerror() -> *mut c_char {
     storage.error.as_mut_ptr().cast()
 }
 
-/// Return copied loader address metadata through the public borrowed C view.
-///
-/// # Safety
-///
-/// `information` must point to writable `Dl_info` storage. Returned names are
-/// borrowed until this thread's next dlfcn operation. In this fixed graph,
-/// a null address has no containing image. Pinned musl 1.2.6 commit
-/// 9fa28ece75d8a2191de7c5bb53bed224c5947417 `ldso/dynlink.c:dladdr` returns
-/// zero at `if (!p) return 0` before writing the caller's `Dl_info` or setting
-/// a `dlerror` diagnostic. Keep only that null-address lookup branch here;
-/// non-null failure and unavailable-record handling retain their existing
-/// fail-closed paths.
-#[no_mangle]
-pub unsafe extern "C" fn dladdr(address: *const c_void, information: *mut DlInfo) -> c_int {
-    if information.is_null() || address.is_null() {
-        return 0;
-    }
+unsafe fn clear_dl_info(information: *mut DlInfo) {
     ptr::write(
         information,
         DlInfo {
@@ -569,10 +554,32 @@ pub unsafe extern "C" fn dladdr(address: *const c_void, information: *mut DlInfo
             dli_saddr: ptr::null_mut(),
         },
     );
+}
+
+/// Return copied loader address metadata through the public borrowed C view.
+///
+/// # Safety
+///
+/// `information` must point to writable `Dl_info` storage. Returned names are
+/// borrowed until this thread's next dlfcn operation. In this fixed graph,
+/// a null address has no containing image. Pinned musl 1.2.6 commit
+/// 9fa28ece75d8a2191de7c5bb53bed224c5947417 `ldso/dynlink.c:dladdr` returns
+/// zero at `if (!p) return 0` before writing the caller's `Dl_info` or setting
+/// a `dlerror` diagnostic. Keep that behavior for both a null address and the
+/// one loader-confirmed non-null no-image result, identified by the fixed
+/// graph's exact `loader address not found` error. Other non-null failures and
+/// unavailable records retain their existing output-clearing fail-closed paths.
+#[no_mangle]
+pub unsafe extern "C" fn dladdr(address: *const c_void, information: *mut DlInfo) -> c_int {
+    if information.is_null() || address.is_null() {
+        return 0;
+    }
     let Some(slot) = diagnostic_slot() else {
+        clear_dl_info(information);
         return 0;
     };
     let Some(record) = runtime_record() else {
+        clear_dl_info(information);
         unavailable(slot);
         return 0;
     };
@@ -584,6 +591,9 @@ pub unsafe extern "C" fn dladdr(address: *const c_void, information: *mut DlInfo
     };
     let mut error = EMPTY_TEXT;
     if address_fn(record)(address, &mut found, &mut error) != 0 {
+        if !text_matches(&error, LOADER_ADDRESS_NOT_FOUND) {
+            clear_dl_info(information);
+        }
         return 0;
     }
     let _guard = StateGuard::lock();

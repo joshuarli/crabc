@@ -1628,8 +1628,10 @@ diagnostic, and a live retained-handle empty-name `dlsym` null result with exact
 is invalid`; non-empty missing names, null symbol pointers, and invalid handles
 retain existing loader paths. A seeded writable `Dl_info` also proves the
 pinned-musl `dladdr(NULL)` zero result leaves the record and `dlerror` clear;
-the candidate admits only that null-address no-image observation. The gate also
-proves that only this non-runtime public bridge returns musl's permanent main
+the candidate also preserves a non-null no-image record only when its fixed
+graph confirms `loader address not found`, while malformed/unavailable records
+continue to clear output and fail closed. The gate also proves that only this
+non-runtime public bridge returns musl's permanent main
 handle with clear `dlerror` for `dlopen(NULL, RTLD_NOLOAD)` before mode
 processing; the bounded runtime-mapping sibling retains its bare NULL/NOLOAD
 initial-object rejection. The gate also proves stale handles, malformed and absent records, and copied

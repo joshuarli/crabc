@@ -207,6 +207,20 @@ int main(void) {
         || null_address.dli_saddr != (void *)(uintptr_t)4) return 67;
     if (typed_dlerror() != NULL) return 68;
 
+    Dl_info no_image_address = {
+        (const char *)(uintptr_t)5,
+        (void *)(uintptr_t)6,
+        (const char *)(uintptr_t)7,
+        (void *)(uintptr_t)8,
+    };
+    typed_dlerror();
+    if (typed_dladdr((const void *)(uintptr_t)1, &no_image_address) != 0
+        || no_image_address.dli_fname != (const char *)(uintptr_t)5
+        || no_image_address.dli_fbase != (void *)(uintptr_t)6
+        || no_image_address.dli_sname != (const char *)(uintptr_t)7
+        || no_image_address.dli_saddr != (void *)(uintptr_t)8) return 71;
+    if (typed_dlerror() != NULL) return 72;
+
     typed_dlerror();
     void *mid_symbol = typed_dlsym(mid_one, "mid_value");
     if (mid_symbol != (void *)&mid_value || ((int (*)(void))mid_symbol)() != 42
