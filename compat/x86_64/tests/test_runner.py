@@ -1384,7 +1384,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "libc-sched-cpucount|libc-sched-getcpu|libc-sched-priority-bounds|libc-sched-yield",
             "sched-cpucount-header-abi|sched-getscheduler-header-abi|sched-priority-bounds-header-abi",
             "ctermid-header-abi|gethostid-header-abi|endhostent-header-abi|getpagesize-header-abi|gettid-header-abi|posix-close-header-abi|isatty-header-abi|ttyname-r-header-abi|tcgetpgrp-header-abi|tcsetpgrp-header-abi|getpass-header-abi|libc-ctermid|libc-gethostid|libc-endhostent|libc-getpagesize|libc-gettid|libc-posix-close|libc-isatty|libc-ttyname-r|libc-tcgetpgrp|libc-tcsetpgrp|libc-getpass|mkfifo-header-abi|mkfifoat-header-abi|libc-mkfifo|libc-mkfifoat|mktemp-header-abi|libc-mktemp",
-            "readlinkat-header-abi|libc-readlinkat|linkat-header-abi|libc-linkat",
+            "readlinkat-header-abi|libc-readlinkat|linkat-header-abi|libc-linkat|lchown-header-abi|libc-lchown",
             "stdio-permanent-line-io-header-abi|stdio-octal-hex-scan-header-abi",
             "math-complex-complete-header-abi|libc-math-complex-complete",
             "stdio-permanent-byte-io-header-abi",
@@ -1561,6 +1561,8 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn("libc-readlinkat", source)
         self.assertIn("linkat-header-abi", source)
         self.assertIn("libc-linkat", source)
+        self.assertIn("lchown-header-abi", source)
+        self.assertIn("libc-lchown", source)
         self.assertIn("libc-readiness-waits", source)
         self.assertIn("libc-socket-transport", source)
         self.assertIn("libc-system-observation", source)
@@ -23022,6 +23024,165 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         )
         self.assertIn(
             '    libc-linkat)\n        [ "$#" -eq 0 ] || fail "libc-linkat takes no arguments"',
+            runner,
+        )
+
+    def test_libc_static_c_abi_lchown_artifact_stays_bounded(self) -> None:
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        implementation = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "lchown.rs"
+        ).read_text(encoding="utf-8")
+        header_c_probe = (
+            ROOT / "compat" / "x86_64" / "lchown_header_abi_probe.c"
+        ).read_text(encoding="utf-8")
+        header_cxx_probe = (
+            ROOT / "compat" / "x86_64" / "lchown_header_abi_probe.cpp"
+        ).read_text(encoding="utf-8")
+        header_runner = (
+            ROOT / "compat" / "x86_64" / "run_lchown_header_abi.sh"
+        ).read_text(encoding="utf-8")
+        probe = (ROOT / "compat" / "x86_64" / "libc_lchown_probe.c").read_text(
+            encoding="utf-8"
+        )
+        start = (ROOT / "compat" / "x86_64" / "libc_lchown_start.S").read_text(
+            encoding="utf-8"
+        )
+        artifact_runner = (
+            ROOT / "compat" / "x86_64" / "run_libc_lchown.sh"
+        ).read_text(encoding="utf-8")
+        static_export_names = {
+            line
+            for line in (
+                ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+            ).read_text(encoding="utf-8").splitlines()
+            if line and not line.startswith("#")
+        }
+        parity_ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        runner = RUNNER.read_text(encoding="utf-8")
+
+        self.assertIn('#[path = "lchown.rs"]', static_root)
+        for required in (
+            "Selected static Linux/x86-64 `lchown` C ABI leaf",
+            "musl 1.2.6",
+            "src/unistd/lchown.c",
+            "syscall(SYS_lchown, path, uid, gid)",
+            "non-x86 `fchownat",
+            "Linux 5.10",
+            "lchown=94",
+            "raw_syscall::SYS_LCHOWN",
+            "raw_syscall::syscall3(",
+            "i64::from(owner)",
+            "i64::from(group)",
+            "c_status(result)",
+        ):
+            self.assertIn(required, implementation)
+        for forbidden in (
+            "raw_syscall::SYS_FCHOWNAT",
+            "const AT_FDCWD",
+            "const AT_SYMLINK_NOFOLLOW",
+            "fn chown(",
+            "fn fchown(",
+            "fn fchownat(",
+            "crabc_core",
+            "mimalloc",
+            "alloc::",
+            "__tls_get_addr",
+        ):
+            self.assertNotIn(forbidden, implementation)
+
+        for header_probe in (header_c_probe, header_cxx_probe):
+            for required in (
+                "sys/types.h",
+                "unistd.h",
+                "lchown",
+                "uid_t",
+                "gid_t",
+                "sizeof(uid_t) == 4",
+                "sizeof(gid_t) == 4",
+            ):
+                self.assertIn(required, header_probe)
+        self.assertIn("__builtin_types_compatible_p(uid_t, unsigned int)", header_c_probe)
+        self.assertIn("__is_same(uid_t, unsigned int)", header_cxx_probe)
+        for required in (
+            "EXPECTED_PROFILE_COUNT=8",
+            "EXPECTED_VISIBLE_PROFILE_COUNT=8",
+            "EXPECTED_HIDDEN_PROFILE_COUNT=0",
+            "c-default c11-gnu cxx17-gnu",
+            "-nostdinc",
+            "-nostdinc++",
+            "run_musl_oracle.sh",
+            "compile-only",
+            "unmangled",
+        ):
+            self.assertIn(required, header_runner)
+
+        for required in (
+            "#include <errno.h>",
+            "#include <fcntl.h>",
+            "#include <sys/stat.h>",
+            "#include <sys/syscall.h>",
+            "#include <unistd.h>",
+            "SYS_lchown == 94",
+            "dangling symlink",
+            "AT_SYMLINK_NOFOLLOW",
+            "UINT32_MAX",
+            "no-change",
+            "stale errno",
+            "CAP_CHOWN",
+            "ENOENT",
+            "EFAULT",
+            "CRABC_LCHOWN_FREESTANDING",
+        ):
+            self.assertIn(required, probe)
+        for required in (
+            "call __crabc_x86_static_tls_bootstrap",
+            "crabc_x86_64_lchown_probe",
+            "exit_group",
+        ):
+            self.assertIn(required, start)
+        self.assertNotIn("arch_prctl", start)
+
+        for required in (
+            "static_c_abi_exports.txt",
+            "run_lchown_header_abi.sh",
+            "-nostdlib -static",
+            "-Wl,-e,_start",
+            "assert_selected_c_abi_surface",
+            "lchown=94",
+            "for symbol in __errno_location __crabc_x86_static_tls_bootstrap lchown",
+            "chown|fchown|fchownat|link|linkat|symlink|symlinkat|readlink|readlinkat|unlink|unlinkat|rename|renameat|renameat2|mkdir|mkdirat",
+            "unowned runtime dependency",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn("--whole-archive", artifact_runner)
+
+        self.assertIn("lchown", static_export_names)
+        self.assertFalse(static_export_names & {"chown", "fchown", "fchownat"})
+        self.assertIn('id = "static-c-lchown"', parity_ledger)
+        self.assertIn(
+            'command = "./scripts/dev-x86_64.sh libc-lchown"',
+            parity_ledger,
+        )
+        self.assertIn("run_lchown_header_abi()", runner)
+        self.assertIn(
+            "/workspace/compat/x86_64/run_lchown_header_abi.sh",
+            runner,
+        )
+        self.assertIn("run_libc_lchown_probe()", runner)
+        self.assertIn(
+            "/workspace/compat/x86_64/run_libc_lchown.sh",
+            runner,
+        )
+        self.assertIn(
+            '    lchown-header-abi)\n        [ "$#" -eq 0 ] || fail "lchown-header-abi takes no arguments"',
+            runner,
+        )
+        self.assertIn(
+            '    libc-lchown)\n        [ "$#" -eq 0 ] || fail "libc-lchown takes no arguments"',
             runner,
         )
 

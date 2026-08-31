@@ -304,6 +304,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh mkfifoat-header-abi
 ./scripts/dev-x86_64.sh readlinkat-header-abi
 ./scripts/dev-x86_64.sh linkat-header-abi
+./scripts/dev-x86_64.sh lchown-header-abi
 ./scripts/dev-x86_64.sh mm-abi-reference
 ./scripts/dev-x86_64.sh mlock-reference
 ./scripts/dev-x86_64.sh msync-reference
@@ -511,6 +512,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-mkfifoat
 ./scripts/dev-x86_64.sh libc-readlinkat
 ./scripts/dev-x86_64.sh libc-linkat
+./scripts/dev-x86_64.sh libc-lchown
 ./scripts/dev-x86_64.sh libc-extended-attributes
 ./scripts/dev-x86_64.sh libc-descriptor-io
 ./scripts/dev-x86_64.sh libc-descriptor-lifecycle
@@ -1142,6 +1144,19 @@ and invalid flags `EINVAL`. It excludes ordinary `link`, every other *at entry,
 pathname/CWD/namespace policy, directory streams, allocation, cancellation, a
 Rust facade, filesystem capability completion, family promotion, and public x86
 support.
+
+`lchown-header-abi` is a separate eight-profile C11/C++17 project-header/
+pinned-musl matrix for unconditional `lchown(const char *, uid_t, gid_t)`,
+four-byte unsigned x86 LP64 `uid_t`/`gid_t` spelling, and unmangled C++
+linkage. Its paired private `libc-lchown` static artifact selects only musl
+1.2.6's direct Linux x86-64 `lchown=94` branch. The raw-owned fixture creates
+and observes one dangling symlink, then passes all-ones no-change owner/group
+words: candidate stale `errno` success and a raw request pin final-component
+no-follow behavior without requiring `CAP_CHOWN`, plus missing/empty `ENOENT`
+and null `EFAULT`. It excludes `chown`, `fchown`, `fchownat`, musl's non-x86
+fallback, credential/ownership policy, another pathname entry, pathname/CWD/
+namespace policy, directory streams, allocation, cancellation, a Rust facade,
+filesystem capability completion, family promotion, and public x86 support.
 
 `libc-extended-attributes` is the separate private static C runtime artifact
 paired with that header gate. Its project-header fixture first runs through
@@ -6140,6 +6155,7 @@ Apart from the narrowly named `libc-stat-compat`, `libc-credentials`,
 `libc-mkfifoat`,
 `libc-readlinkat`,
 `libc-linkat`,
+`libc-lchown`,
 `libc-descriptor-io`,
 `libc-descriptor-lifecycle`,
 `libc-descriptor-pipeline`,

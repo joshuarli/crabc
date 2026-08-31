@@ -491,6 +491,7 @@ kill
 killpg
 labs
 lchmod
+lchown
 ldexp
 ldexpf
 ldexpl
