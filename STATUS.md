@@ -134,6 +134,16 @@ select host identity policy, secure-execution policy, the broad
 `system.kernel-admin` capability, family completion, promotion, or public x86
 support.
 
+`./scripts/dev-x86_64.sh libc-gettid` is a private `static-c-gettid` artifact
+inside still-planned `libc.c-abi-compat`. Its focused GNU-only `<unistd.h>`
+C/C++ matrix proves the four-byte `pid_t gettid(void)` declaration,
+strict/POSIX/X/Open/BSD hiding, and unmangled linkage. Pinned musl 1.2.6 reads
+the current TCB's tid; this one-symbol static candidate deliberately has no
+TCB and compares its direct `gettid=186` syscall result with the equivalent
+pinned-musl current-task result. It selects no process identity/session
+aggregate, scheduler behavior, pthread/TLS lifecycle, errno, process.globals,
+family completion, promotion, or public x86 support.
+
 `./scripts/dev-x86_64.sh libc-isatty` is a separate private `static-c-isatty`
 artifact inside still-planned `libc.posix-runtime`. Its strict/POSIX/X/Open/GNU/
 BSD C/C++ declaration gate and pinned-musl/static C fixture select only

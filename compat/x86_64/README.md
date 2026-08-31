@@ -427,6 +427,8 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-ctermid
 ./scripts/dev-x86_64.sh gethostid-header-abi
 ./scripts/dev-x86_64.sh libc-gethostid
+./scripts/dev-x86_64.sh gettid-header-abi
+./scripts/dev-x86_64.sh libc-gettid
 ./scripts/dev-x86_64.sh isatty-header-abi
 ./scripts/dev-x86_64.sh libc-isatty
 ./scripts/dev-x86_64.sh tcgetpgrp-header-abi
@@ -3401,6 +3403,20 @@ host configuration nor selects hostname/domain-name state, host-identity or
 secure-execution policy, libc.so, CRT, loader, sysroot, family completion,
 promotion, or public x86 support.
 
+`gettid-header-abi` and `libc-gettid` record a separate private
+`static-c-gettid` artifact inside still-planned `libc.c-abi-compat`, not a
+process or scheduler capability. The GNU-only `<unistd.h>` C/C++ matrix proves
+the exact `pid_t gettid(void)` spelling, strict/POSIX/X/Open/BSD hiding, and
+unmangled linkage against pinned musl and project headers. The shared C body
+then runs through pinned musl and a true one-member `-nostdlib -static`
+candidate, comparing direct and function-pointer returns with a fixture-local
+raw `gettid=186` result. Musl's source reads its current TCB's tid; the
+candidate makes the intentional no-TCB direct-syscall adaptation and rejects
+errno/TLS, helper calls, dynamic linkage, runtime dependencies, and aggregate
+process/scheduler/pthread behavior. It does not select process.globals,
+libc.so, CRT, loader, sysroot, family completion, promotion, or public x86
+support.
+
 `libc-isatty` is a separately recorded static `static-c-isatty`
 `verified_artifact` gate over that archive, not a terminal capability. Its
 strict/POSIX/X/Open/GNU/BSD C/C++ `unistd.h` declaration gate and one
@@ -5600,6 +5616,7 @@ Apart from the narrowly named `libc-stat-compat`, `libc-credentials`,
 `libc-termios-control`,
 `libc-ctermid`,
 `libc-gethostid`,
+`libc-gettid`,
 `libc-isatty`,
 `libc-tcgetpgrp`,
 `libc-tcsetpgrp`,

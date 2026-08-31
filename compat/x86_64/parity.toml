@@ -9947,6 +9947,48 @@ native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc
 oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source and declaration oracle: src/misc/gethostid.c returns the fixed zero Linux host identifier; include/unistd.h provides the X/Open/GNU/BSD declaration boundary." }, { kind = "elf-abi", source = "System V AMD64 psABI", role = "No-argument LP64 long return, C++ C linkage, and true-static ET_EXEC closure contract." }]
 
 [[family.verified_artifact]]
+id = "static-c-gettid"
+description = "Private native x86 selected-static-archive GNU `gettid` current-task identifier compatibility boundary inside still-planned `libc.c-abi-compat`. One dependency-free `crabc-libc` archive resolves exactly `pid_t gettid(void)` into a freestanding C fixture after an equivalent pinned-musl execution. Pinned musl's complete `src/linux/gettid.c` leaf reads `__pthread_self()->tid`; this archive deliberately owns no general TCB, thread list, or dynamic-TLS lifecycle, so its narrowly selected direct Linux `gettid=186` path returns the same ordinary positive calling-task identifier without C errno publication. A seccomp-injected raw kernel failure remains a signed raw result rather than inventing a TCB or errno behavior. This one-symbol ABI artifact does not select process identity/session aggregates, scheduler behavior, pthread APIs, TCB/TLS state, process.globals, libc.so, CRT, loader, sysroot, family completion, promotion, or public x86 support."
+source_owners = [
+  "compat/upstreams.toml",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/gettid.rs",
+  "libc/src/c_abi/x86_64/syscall.rs",
+  "include/unistd.h",
+  "include/features.h",
+  "compat/x86_64/gettid_header_abi_probe.c",
+  "compat/x86_64/gettid_header_abi_probe.cpp",
+  "compat/x86_64/run_gettid_header_abi.sh",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/libc_gettid_probe.c",
+  "compat/x86_64/libc_gettid_start.S",
+  "compat/x86_64/run_libc_gettid.sh",
+  "compat/x86_64/aarch64_parity_inventory.py",
+  "compat/x86_64/aarch64_parity_inventory.json",
+  "compat/x86_64/tests/test_aarch64_parity_inventory.py",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "compat/x86_64/README.md",
+  "STATUS.md",
+  "x86-64.md",
+  "scripts/dev-x86_64.sh",
+  "scripts/check_structure.py",
+]
+x86_abi_prerequisites = [
+  "The SysV AMD64 LP64 C ABI passes no argument to `pid_t gettid(void)` and receives the signed four-byte `pid_t` result in eax. The direct Linux x86-64 syscall has no arguments and uses rax=186, so the selected normal positive identifier needs no pointer, record, or caller-owned storage boundary.",
+  "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417 maps `src/linux/gettid.c::gettid` to `__pthread_self()->tid`. The candidate records its intentional no-TCB adaptation: direct Linux gettid=186 yields the same ordinary current-task ID while leaving musl's thread-list and TCB source closure unselected.",
+  "The one-member `-nostdlib -static` candidate has no interpreter, DT_NEEDED, unresolved symbol, no PT_TLS, no errno, no dynamic-TLS resolver, no TCB, helper call, allocation, scheduler entry, or ambient runtime dependency. Its gettid disassembly contains exactly the direct syscall-186 boundary; fixture-local raw gettid and exit syscalls are not selected C APIs.",
+]
+x86_header_prerequisites = [
+  "The focused pinned-musl/project-first C11/C++17 `<unistd.h>` matrix proves GNU-only `pid_t gettid(void)` on x86 LP64, strict/POSIX/X/Open/BSD hiding, the four-byte pid_t/function-pointer type, project-header provenance, and unmangled C++ linkage. It selects no aggregate process, scheduler, pthread, archive, installed-header-family, or public x86 support.",
+]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-gettid", scope = "Pinned-musl/project GNU C/C++ header compilation plus equivalent pinned-musl C execution and one true one-member x86 crabc-libc `-nostdlib -static` candidate. The shared fixture proves direct and function-pointer positive pid_t results equal a fixture-local raw Linux gettid=186 observation. It ratchets pinned-musl gettid.lo/AArch64 ownership, exact crate-owned export closure, no interpreter/DT_NEEDED/unresolved symbol/PT_TLS/errno/dynamic-TLS/TCB/helper-call/allocator or ambient runtime, and gettid disassembly with only syscall 186. It does not select process identity/session aggregates, scheduler behavior, pthread APIs, process.globals, libc.so, CRT, loader, sysroot, family completion, promotion, or public x86 support." }]
+oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source, GNU declaration, static member, and ordinary current-task behavior oracle for src/linux/gettid.c::gettid: its full TCB source reads the current thread's tid." }, { kind = "kernel-abi", source = "Linux 5.10 x86-64 ABI", role = "gettid=186 takes no arguments and returns the calling task's kernel TID; the direct static adaptation is limited to that ordinary syscall route." }, { kind = "elf-abi", source = "System V AMD64 psABI", role = "No-argument signed 32-bit pid_t result ABI, C++ C linkage, and true-static ET_EXEC closure contract." }]
+
+[[family.verified_artifact]]
 id = "static-c-bsearch"
 description = "Private native x86 selected-static-archive `bsearch` compatibility artifact inside still-planned `libc.c-abi-compat`. One dependency-free `crabc-libc` archive resolves exactly `bsearch` into a freestanding C fixture after an equivalent pinned-musl execution. Musl's complete `src/stdlib/bsearch.c` leaf retains its midpoint and signed comparator branches for caller-owned valid contiguous records: direct and function-pointer calls cover first/last/miss, a duplicate-key midpoint return, a wide record, and zero elements without a callback. The checked multiplication guard applies only outside the valid C array domain, where musl's source pointer expression is already undefined. The final candidate rejects `qsort`, `qsort_r`, `__qsort_r`, search-container helpers, TLS/errno, allocation, locale, locks, syscalls, and runtime state. This capability-free ABI artifact does not change the existing qsort/qsort_r behavior or select general sorting/searching, callback ownership, C longjmp/C++ exception transport, libc.so, CRT, loader, sysroot, family completion, promotion, or public x86 support."
 source_owners = [

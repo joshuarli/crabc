@@ -50,7 +50,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 41)
-        self.assertEqual(report["verified_artifact_count"], 198)
+        self.assertEqual(report["verified_artifact_count"], 199)
         self.assertEqual(report["header_layout_probe_count"], 46)
         self.assertEqual(report["public_header_inventory_count"], 183)
         self.assertEqual(report["header_foundation_header_count"], 191)
@@ -19634,6 +19634,92 @@ class X86ParityLedgerTests(unittest.TestCase):
         with self.assertRaisesRegex(
             ledger.LedgerError,
             "static-c-gethostid evidence must retain its constant static closure",
+        ):
+            ledger.validate_ledger(data)
+
+    def test_gettid_artifact_stays_private_and_non_promoting(self) -> None:
+        data = self.data()
+        family = self.family(data, "libc.c-abi-compat")
+        self.assertEqual(family["status"], "planned")
+        artifacts = family["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-gettid"
+        )
+        self.assertNotIn("capabilities", artifact)
+        for phrase in (
+            "GNU `gettid` current-task identifier compatibility boundary",
+            "`src/linux/gettid.c`",
+            "`__pthread_self()->tid`",
+            "direct Linux `gettid=186`",
+            "process identity/session aggregates",
+            "scheduler behavior",
+            "process.globals",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, artifact["description"])
+
+        owners = artifact["source_owners"]
+        assert isinstance(owners, list)
+        for owner in (
+            "libc/src/c_abi/x86_64/gettid.rs",
+            "libc/src/c_abi/x86_64/syscall.rs",
+            "include/unistd.h",
+            "compat/x86_64/gettid_header_abi_probe.c",
+            "compat/x86_64/gettid_header_abi_probe.cpp",
+            "compat/x86_64/run_gettid_header_abi.sh",
+            "compat/x86_64/libc_gettid_probe.c",
+            "compat/x86_64/libc_gettid_start.S",
+            "compat/x86_64/run_libc_gettid.sh",
+            "compat/x86_64/static_c_abi_exports.txt",
+        ):
+            self.assertIn(owner, owners)
+
+        prerequisites = artifact["x86_abi_prerequisites"]
+        assert isinstance(prerequisites, list)
+        self.assertTrue(
+            any(
+                "SysV AMD64" in item
+                and "pid_t" in item
+                and "eax" in item
+                and "rax=186" in item
+                for item in prerequisites
+            )
+        )
+        self.assertTrue(
+            any(
+                "src/linux/gettid.c::gettid" in item
+                and "__pthread_self()->tid" in item
+                and "direct Linux gettid=186" in item
+                for item in prerequisites
+            )
+        )
+
+        evidence = artifact["native_evidence"]
+        assert isinstance(evidence, list) and isinstance(evidence[0], dict)
+        self.assertEqual(
+            evidence[0]["command"],
+            "./scripts/dev-x86_64.sh libc-gettid",
+        )
+        for phrase in (
+            "Pinned-musl/project GNU C/C++ header",
+            "true one-member x86 crabc-libc `-nostdlib -static` candidate",
+            "raw Linux gettid=186 observation",
+            "gettid.lo/AArch64 ownership",
+            "process.globals",
+            "family completion",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, evidence[0]["scope"])
+
+        prerequisites[1] = prerequisites[1].replace(
+            "direct Linux gettid=186", "indirect current task lookup"
+        )
+        with self.assertRaisesRegex(
+            ledger.LedgerError,
+            "static-c-gettid must retain its pinned-musl no-TCB adaptation",
         ):
             ledger.validate_ledger(data)
 

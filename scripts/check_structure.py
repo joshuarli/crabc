@@ -6338,6 +6338,48 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
                 f"gethostid boundary must not select {forbidden!r}"
             )
 
+    gettid_source = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "gettid.rs"
+    gettid_text = gettid_source.read_text(errors="replace")
+    for required in (
+        "pinned musl 1.2.6 release commit",
+        "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+        "src/linux/gettid.c::gettid",
+        "__pthread_self()->tid",
+        "direct Linux 5.10 x86-64 `gettid=186` syscall",
+        "seccomp-injected raw",
+        "System V AMD64 ABI",
+        'pub extern \"C\" fn gettid() -> c_int',
+        "raw_syscall::syscall0(raw_syscall::SYS_GETTID)",
+    ):
+        if required not in gettid_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/gettid.rs: selected static GNU "
+                f"gettid boundary is missing {required!r}"
+            )
+    gettid_exports = set(
+        re.findall(
+            r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(',
+            gettid_text,
+        )
+    )
+    if gettid_exports != {"gettid"}:
+        errors.append(
+            "libc/src/c_abi/x86_64/gettid.rs: selected static GNU gettid "
+            "artifact must export only gettid"
+        )
+    for forbidden in (
+        "errno::",
+        "static_tls::",
+        "process_context::",
+        "crabc_core",
+        "crabc_mimalloc",
+    ):
+        if forbidden in gettid_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/gettid.rs: selected static GNU gettid "
+                f"boundary must not select {forbidden!r}"
+            )
+
     isatty_source = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "isatty.rs"
     isatty_text = isatty_source.read_text(errors="replace")
     for required in (
@@ -10487,6 +10529,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         termios_control_text,
         ctermid_text,
         gethostid_text,
+        gettid_text,
         isatty_text,
         tcgetpgrp_text,
         tcsetpgrp_text,
@@ -10799,6 +10842,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         "tcsetwinsize",
         "ctermid",
         "gethostid",
+        "gettid",
         "isatty",
         "tcgetpgrp",
         "tcsetpgrp",
@@ -11040,7 +11084,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         errors.append(
             "libc/src/c_abi/x86_64: selected static archive must export only its "
             "stat, credential, errno, bootstrap-memory/fenv/continuation, simple "
-            "signal-control, separate realtime-minimum/realtime-maximum bridges, one pure GNU signal-set predicate, paired GNU binary set-operation leaf, and a three-symbol POSIX signal-set mutation leaf, bounded process-signal execution, and one legacy single-signal pause wait, bounded pthread create/exit/join/detach initial-TLS worker, its private selected-main/worker pthread-key/C11-TSS lifecycle, private process-normal pthread mutexes and their musl private condition-variable handoff, the complete selected rwlock/attribute family with private-or-shared futex operation, plus the distinct C11 plain-sync adapter and normal-return pthread/C11 once state machine, its typed C11 create/exit/join/detach sibling, and pthread/C11 identity aliases, named termios-control, direct terminal-descriptor and foreground-group observations plus one named foreground-group assignment, historical ctermid pathname spelling, constant historical gethostid compatibility, selected process-context, child-reaping, C11 immediate termination, callback algorithms, direct clock_gettime, binary64 difftime, caller-buffered fixed-UTC gmtime_r, fixed-UTC timegm, a status-returning POSIX scheduler-yield leaf, caller-owned mapping-core, no-cancellation mapping synchronization, direct anonymous-memory descriptor creation, nanosleep, and clock_nanosleep, selected "
+            "signal-control, separate realtime-minimum/realtime-maximum bridges, one pure GNU signal-set predicate, paired GNU binary set-operation leaf, and a three-symbol POSIX signal-set mutation leaf, bounded process-signal execution, and one legacy single-signal pause wait, bounded pthread create/exit/join/detach initial-TLS worker, its private selected-main/worker pthread-key/C11-TSS lifecycle, private process-normal pthread mutexes and their musl private condition-variable handoff, the complete selected rwlock/attribute family with private-or-shared futex operation, plus the distinct C11 plain-sync adapter and normal-return pthread/C11 once state machine, its typed C11 create/exit/join/detach sibling, and pthread/C11 identity aliases, named termios-control, direct terminal-descriptor and foreground-group observations plus one named foreground-group assignment, historical ctermid pathname spelling, constant historical gethostid compatibility, direct GNU gettid observation, selected process-context, child-reaping, C11 immediate termination, callback algorithms, direct clock_gettime, binary64 difftime, caller-buffered fixed-UTC gmtime_r, fixed-UTC timegm, a status-returning POSIX scheduler-yield leaf, caller-owned mapping-core, no-cancellation mapping synchronization, direct anonymous-memory descriptor creation, nanosleep, and clock_nanosleep, selected "
             "POSIX _exit forwarding, descriptor-entry, selected filesystem-access, bounded descriptor-control, timestamp updates, and descriptor-I/O, selected process-resources, selected readiness/signal-waits, "
             "selected socket transport and selected socket-message/options, selected system-observation, selected UTS-identity, "
             "selected numeric-address codecs, immutable IPv6 unspecified/loopback address data objects, and legacy classful IPv4 arithmetic, fixed-profile h_errno message text, byte-string, legacy-memory adapters, source-backed memccpy/mempcpy, caller-buffer strsep, random-entropy, memory-search, C-string-copy, immutable error-string, "
@@ -11093,6 +11137,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         ("pthread_tsd.rs", pthread_tsd_text),
         ("termios_control.rs", termios_control_text),
         ("ctermid.rs", ctermid_text),
+        ("gettid.rs", gettid_text),
         ("isatty.rs", isatty_text),
         ("tcgetpgrp.rs", tcgetpgrp_text),
         ("tcsetpgrp.rs", tcsetpgrp_text),

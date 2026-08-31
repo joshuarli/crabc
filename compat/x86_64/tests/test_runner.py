@@ -1372,7 +1372,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "libc-timerfd|libc-signalfd|libc-sigpause|libc-sigisemptyset|libc-sigandset-sigorset|libc-sigpending|libc-sigrtmax|libc-sigrtmin|libc-sched-getscheduler|libc-sigaddset-sigdelset-sigfillset",
             "libc-sched-yield",
             "sched-getscheduler-header-abi",
-            "ctermid-header-abi|gethostid-header-abi|getpagesize-header-abi|isatty-header-abi|tcgetpgrp-header-abi|tcsetpgrp-header-abi|getpass-header-abi|libc-ctermid|libc-gethostid|libc-getpagesize|libc-isatty|libc-tcgetpgrp|libc-tcsetpgrp|libc-getpass|mkfifo-header-abi|mkfifoat-header-abi|libc-mkfifo|libc-mkfifoat|mktemp-header-abi|libc-mktemp",
+            "ctermid-header-abi|gethostid-header-abi|getpagesize-header-abi|gettid-header-abi|isatty-header-abi|tcgetpgrp-header-abi|tcsetpgrp-header-abi|getpass-header-abi|libc-ctermid|libc-gethostid|libc-getpagesize|libc-gettid|libc-isatty|libc-tcgetpgrp|libc-tcsetpgrp|libc-getpass|mkfifo-header-abi|mkfifoat-header-abi|libc-mkfifo|libc-mkfifoat|mktemp-header-abi|libc-mktemp",
             "readlinkat-header-abi|libc-readlinkat",
             "stdio-permanent-line-io-header-abi|stdio-octal-hex-scan-header-abi",
             "math-complex-complete-header-abi|libc-math-complex-complete",
@@ -21204,6 +21204,142 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         )
         self.assertIn(
             '    libc-gethostid)\n        [ "$#" -eq 0 ] || fail "libc-gethostid takes no arguments"',
+            runner,
+        )
+
+    def test_libc_static_c_abi_gettid_artifact_stays_narrow(self) -> None:
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        implementation = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "gettid.rs"
+        ).read_text(encoding="utf-8")
+        probe = (
+            ROOT / "compat" / "x86_64" / "libc_gettid_probe.c"
+        ).read_text(encoding="utf-8")
+        start = (
+            ROOT / "compat" / "x86_64" / "libc_gettid_start.S"
+        ).read_text(encoding="utf-8")
+        artifact_runner = (
+            ROOT / "compat" / "x86_64" / "run_libc_gettid.sh"
+        ).read_text(encoding="utf-8")
+        header_runner = (
+            ROOT / "compat" / "x86_64" / "run_gettid_header_abi.sh"
+        ).read_text(encoding="utf-8")
+        header_c = (
+            ROOT / "compat" / "x86_64" / "gettid_header_abi_probe.c"
+        ).read_text(encoding="utf-8")
+        header_cxx = (
+            ROOT / "compat" / "x86_64" / "gettid_header_abi_probe.cpp"
+        ).read_text(encoding="utf-8")
+        static_exports = {
+            line
+            for line in (
+                ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+            ).read_text(encoding="utf-8").splitlines()
+            if line and not line.startswith("#")
+        }
+        parity_ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        runner = RUNNER.read_text(encoding="utf-8")
+
+        self.assertIn('#[path = "gettid.rs"]', static_root)
+        for required in (
+            "Selected static Linux/x86-64 GNU `gettid` C ABI boundary",
+            "musl 1.2.6 release commit",
+            "src/linux/gettid.c::gettid",
+            "__pthread_self()->tid",
+            "direct Linux 5.10 x86-64 `gettid=186` syscall",
+            "seccomp-injected raw",
+            "System V AMD64 ABI",
+            'pub extern "C" fn gettid() -> c_int',
+            "raw_syscall::syscall0(raw_syscall::SYS_GETTID)",
+        ):
+            self.assertIn(required, implementation)
+        for forbidden in (
+            "errno::",
+            "static_tls::",
+            "process_context::",
+            "crabc_core",
+            "crabc_mimalloc",
+        ):
+            self.assertNotIn(forbidden, implementation)
+        self.assertIn("gettid", static_exports)
+        self.assertEqual(
+            {symbol for symbol in static_exports if symbol.startswith("gettid")},
+            {"gettid"},
+        )
+
+        for required in (
+            "#include <unistd.h>",
+            "sizeof(pid_t) == 4",
+            "pid_t (*)(void)",
+            "const gettid_signature function = gettid",
+            "raw_linux_gettid",
+            '"a" (186L)',
+            "raw != direct",
+            "CRABC_GETTID_FREESTANDING",
+        ):
+            self.assertIn(required, probe)
+        for required in (
+            "crabc_x86_64_gettid_probe",
+            "mov $60, %eax",
+        ):
+            self.assertIn(required, start)
+
+        for header in (header_c, header_cxx):
+            for required in (
+                "gettid declaration",
+                "gettid_must_be_hidden",
+                "CRABC_REQUIRE_GETTID_HIDDEN",
+            ):
+                self.assertIn(required, header)
+        for required in (
+            "gettid_header_abi_probe.c",
+            "gettid_header_abi_probe.cpp",
+            "-D_GNU_SOURCE",
+            "-D_BSD_SOURCE",
+            "-D_XOPEN_SOURCE=700",
+            "-D_POSIX_C_SOURCE=200809L",
+            "nm --undefined-only",
+            "retained a mangled gettid reference",
+        ):
+            self.assertIn(required, header_runner)
+
+        for required in (
+            "run_gettid_header_abi.sh",
+            "gettid.lo",
+            "static_c_abi_exports.txt",
+            "-nostdlib -static",
+            "-Wl,-e,_start",
+            "-Wl,--no-undefined",
+            "gettid object retains an unresolved helper",
+            "gettid candidate unexpectedly retains TLS or errno",
+            "gettid lacks Linux syscall 186",
+            "gettid unexpectedly selects a TCB, TLS, or helper-call path",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn("--whole-archive", artifact_runner)
+        self.assertIn('id = "static-c-gettid"', parity_ledger)
+        self.assertIn(
+            'command = "./scripts/dev-x86_64.sh libc-gettid"',
+            parity_ledger,
+        )
+        self.assertIn("run_gettid_header_abi()", runner)
+        self.assertIn(
+            "/workspace/compat/x86_64/run_gettid_header_abi.sh", runner
+        )
+        self.assertIn("run_libc_gettid_probe()", runner)
+        self.assertIn(
+            "/workspace/compat/x86_64/run_libc_gettid.sh", runner
+        )
+        self.assertIn(
+            '    gettid-header-abi)\n        [ "$#" -eq 0 ] || fail "gettid-header-abi takes no arguments"',
+            runner,
+        )
+        self.assertIn(
+            '    libc-gettid)\n        [ "$#" -eq 0 ] || fail "libc-gettid takes no arguments"',
             runner,
         )
 

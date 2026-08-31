@@ -371,6 +371,7 @@ getsockname
 getsockopt
 getsubopt
 gettext
+gettid
 gettimeofday
 getuid
 getxattr

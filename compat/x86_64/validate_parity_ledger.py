@@ -1423,6 +1423,7 @@ HSTRERROR_SYMBOLS = ("hstrerror",)
 INET_NTOA_SYMBOLS = ("inet_ntoa",)
 
 GETHOSTID_SYMBOLS = ("gethostid",)
+GETTID_SYMBOLS = ("gettid",)
 
 INET_CLASSFUL_SYMBOLS = ("inet_lnaof", "inet_makeaddr")
 
@@ -27101,6 +27102,276 @@ def require_gethostid_artifact(family: Mapping[str, Any]) -> None:
         require(snippet in dispatcher, f"gethostid dispatcher omits {snippet}")
 
 
+def require_gettid_artifact(family: Mapping[str, Any]) -> None:
+    """Keep the direct GNU current-task identifier leaf below promotion."""
+
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.c-abi-compat].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [entry for entry in artifacts if entry.get("id") == "static-c-gettid"]
+    require(
+        len(matching) == 1,
+        "libc.c-abi-compat must contain exactly one static-c-gettid artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-gettid must not promote libc.c-abi-compat",
+    )
+    artifact = matching[0]
+    require(
+        "capabilities" not in artifact,
+        "static-c-gettid must not promote process identity or scheduler capability",
+    )
+    description = artifact.get("description")
+    require(isinstance(description, str), "static-c-gettid needs a description")
+    for phrase in (
+        "GNU `gettid` current-task identifier compatibility boundary",
+        "still-planned `libc.c-abi-compat`",
+        "`pid_t gettid(void)`",
+        "`src/linux/gettid.c`",
+        "`__pthread_self()->tid`",
+        "direct Linux `gettid=186`",
+        "no general TCB, thread list, or dynamic-TLS lifecycle",
+        "seccomp-injected raw kernel failure",
+        "process identity/session aggregates",
+        "scheduler behavior",
+        "process.globals",
+        "family completion",
+        "promotion",
+        "public x86 support",
+    ):
+        require(phrase in description, f"static-c-gettid description omits {phrase}")
+
+    owners = set(
+        nonempty_strings(artifact.get("source_owners"), "static-c-gettid.source_owners")
+    )
+    for owner in (
+        "compat/upstreams.toml",
+        "libc/Cargo.toml",
+        "libc/src/lib.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/gettid.rs",
+        "libc/src/c_abi/x86_64/syscall.rs",
+        "include/unistd.h",
+        "include/features.h",
+        "compat/x86_64/gettid_header_abi_probe.c",
+        "compat/x86_64/gettid_header_abi_probe.cpp",
+        "compat/x86_64/run_gettid_header_abi.sh",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/libc_gettid_probe.c",
+        "compat/x86_64/libc_gettid_start.S",
+        "compat/x86_64/run_libc_gettid.sh",
+        "compat/x86_64/aarch64_parity_inventory.py",
+        "compat/x86_64/aarch64_parity_inventory.json",
+        "compat/x86_64/tests/test_aarch64_parity_inventory.py",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/README.md",
+        "STATUS.md",
+        "x86-64.md",
+        "scripts/dev-x86_64.sh",
+        "scripts/check_structure.py",
+    ):
+        require(owner in owners, f"static-c-gettid source owners omit {owner}")
+
+    prerequisites = nonempty_strings(
+        artifact.get("x86_abi_prerequisites"),
+        "static-c-gettid.x86_abi_prerequisites",
+    )
+    require(
+        any(
+            "SysV AMD64" in item
+            and "pid_t" in item
+            and "eax" in item
+            and "rax=186" in item
+            and "no argument" in item
+            for item in prerequisites
+        ),
+        "static-c-gettid must retain its no-argument pid_t/syscall ABI",
+    )
+    require(
+        any(
+            "9fa28ece75d8a2191de7c5bb53bed224c5947417" in item
+            and "src/linux/gettid.c::gettid" in item
+            and "__pthread_self()->tid" in item
+            and "direct Linux gettid=186" in item
+            for item in prerequisites
+        ),
+        "static-c-gettid must retain its pinned-musl no-TCB adaptation",
+    )
+    require(
+        any(
+            "one-member `-nostdlib -static`" in item
+            and "no PT_TLS" in item
+            and "no errno" in item
+            and "no TCB" in item
+            and "syscall-186" in item
+            for item in prerequisites
+        ),
+        "static-c-gettid must retain its closed direct-syscall archive boundary",
+    )
+
+    headers = nonempty_strings(
+        artifact.get("x86_header_prerequisites"),
+        "static-c-gettid.x86_header_prerequisites",
+    )
+    require(
+        any(
+            "GNU-only" in item
+            and "pid_t gettid(void)" in item
+            and "strict/POSIX/X/Open/BSD hiding" in item
+            and "unmangled C++ linkage" in item
+            for item in headers
+        ),
+        "static-c-gettid must retain its focused GNU C/C++ header ABI",
+    )
+
+    evidence = artifact.get("native_evidence")
+    require(isinstance(evidence, list), "static-c-gettid needs evidence")
+    require(
+        {entry.get("command") for entry in evidence if isinstance(entry, Mapping)}
+        == {"./scripts/dev-x86_64.sh libc-gettid"},
+        "static-c-gettid must use the closed libc-gettid command",
+    )
+    scope = evidence[0].get("scope")
+    require(
+        isinstance(scope, str)
+        and all(
+            phrase in scope
+            for phrase in (
+                "Pinned-musl/project GNU C/C++ header",
+                "true one-member x86 crabc-libc `-nostdlib -static` candidate",
+                "raw Linux gettid=186 observation",
+                "gettid.lo/AArch64 ownership",
+                "no interpreter/DT_NEEDED/unresolved symbol/PT_TLS/errno/dynamic-TLS/TCB/helper-call/allocator",
+                "process identity/session aggregates",
+                "scheduler behavior",
+                "process.globals",
+                "family completion",
+                "promotion",
+                "public x86 support",
+            )
+        ),
+        "static-c-gettid evidence must retain its direct static closure",
+    )
+
+    exports = set(
+        static_c_abi_export_names(
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        )
+    )
+    require(
+        set(GETTID_SYMBOLS) <= exports,
+        "static-c-gettid must retain its selected export",
+    )
+    require(
+        {symbol for symbol in exports if symbol.startswith("gettid")}
+        == set(GETTID_SYMBOLS),
+        "static-c-gettid must expose only gettid",
+    )
+
+    static_root = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+    ).read_text(encoding="utf-8")
+    require(
+        '#[path = "gettid.rs"]\nmod gettid;' in static_root,
+        "x86 static C ABI must compose the gettid leaf",
+    )
+    source = (ROOT / "libc" / "src" / "c_abi" / "x86_64" / "gettid.rs").read_text(
+        encoding="utf-8"
+    )
+    for snippet in (
+        "pinned musl 1.2.6 release commit",
+        "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+        "src/linux/gettid.c::gettid",
+        "__pthread_self()->tid",
+        "direct Linux 5.10 x86-64 `gettid=186` syscall",
+        "seccomp-injected raw",
+        "System V AMD64 ABI",
+        'pub extern "C" fn gettid() -> c_int',
+        "raw_syscall::syscall0(raw_syscall::SYS_GETTID)",
+    ):
+        require(snippet in source, f"gettid implementation omits {snippet}")
+    for forbidden in (
+        "errno::",
+        "static_tls::",
+        "process_context::",
+        "crabc_core",
+        "crabc_mimalloc",
+    ):
+        require(forbidden not in source, f"gettid leaf widens into {forbidden}")
+
+    runner = (ROOT / "compat" / "x86_64" / "run_libc_gettid.sh").read_text(
+        encoding="utf-8"
+    )
+    for snippet in (
+        "run_musl_oracle.sh",
+        "run_gettid_header_abi.sh",
+        "gettid.lo",
+        "static_c_abi_exports.txt",
+        "one-member `-nostdlib -static`",
+        "--no-undefined",
+        "archive does not define gettid",
+        "gettid object retains an unresolved helper",
+        "gettid candidate unexpectedly retains TLS or errno",
+        "gettid lacks Linux syscall 186",
+        "gettid unexpectedly selects a TCB, TLS, or helper-call path",
+    ):
+        require(snippet in runner, f"gettid runner omits {snippet}")
+
+    probe = (ROOT / "compat" / "x86_64" / "libc_gettid_probe.c").read_text(
+        encoding="utf-8"
+    )
+    for snippet in (
+        "sizeof(pid_t) == 4",
+        "pid_t (*)(void)",
+        "const gettid_signature function = gettid",
+        "raw_linux_gettid",
+        '"a" (186L)',
+        "raw != direct",
+        "CRABC_GETTID_FREESTANDING",
+    ):
+        require(snippet in probe, f"gettid probe omits {snippet}")
+
+    header_c = (
+        ROOT / "compat" / "x86_64" / "gettid_header_abi_probe.c"
+    ).read_text(encoding="utf-8")
+    header_cxx = (
+        ROOT / "compat" / "x86_64" / "gettid_header_abi_probe.cpp"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "gettid declaration",
+        "gettid_must_be_hidden",
+        "CRABC_REQUIRE_GETTID_HIDDEN",
+    ):
+        require(snippet in header_c, f"gettid C header probe omits {snippet}")
+        require(snippet in header_cxx, f"gettid C++ header probe omits {snippet}")
+
+    header_runner = (
+        ROOT / "compat" / "x86_64" / "run_gettid_header_abi.sh"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "gettid_header_abi_probe.c",
+        "gettid_header_abi_probe.cpp",
+        "Pinned musl 1.2.6",
+        "outside feature selectors",
+        "retained a mangled gettid reference",
+    ):
+        require(snippet in header_runner, f"gettid header runner omits {snippet}")
+
+    dispatcher = (ROOT / "scripts" / "dev-x86_64.sh").read_text(encoding="utf-8")
+    for snippet in (
+        "gettid-header-abi)",
+        "run_gettid_header_abi",
+        "libc-gettid)",
+        "run_libc_gettid_probe",
+    ):
+        require(snippet in dispatcher, f"gettid dispatcher omits {snippet}")
+
+
 def require_auxv_observation_artifact(family: Mapping[str, Any]) -> None:
     """Keep direct initial-vector lookup bounded, static, and private."""
     artifacts = require_verified_artifacts(
@@ -41005,6 +41276,7 @@ def validate_ledger(
     require_numeric_netdb_artifact(by_id["libc.resolver"])
     require_hstrerror_artifact(by_id["libc.resolver"])
     require_gethostid_artifact(by_id["libc.c-abi-compat"])
+    require_gettid_artifact(by_id["libc.c-abi-compat"])
     require_qsort_artifact(by_id["libc.c-abi-compat"])
     require_bsearch_artifact(by_id["libc.c-abi-compat"])
     require_linear_search_artifact(by_id["libc.c-abi-compat"])

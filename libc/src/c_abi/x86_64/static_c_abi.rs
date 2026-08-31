@@ -42,7 +42,8 @@
 //! can compose the existing bounded ordinary-exit callback block in its child,
 //! termios-control, two direct terminal-descriptor observations, one named
 //! foreground-group assignment, one historical `/dev/tty` pathname-spelling
-//! leaf, one historical `/dev/tty` password-input compatibility leaf, selected
+//! leaf, one historical `/dev/tty` password-input compatibility leaf, one
+//! direct GNU current-task identifier observation, selected
 //! process-context, bounded process-environment,
 //! environment-backed login-name observation, child-reaping, selected
 //! descriptor-entry, selected filesystem-access, one historical `mktemp`
@@ -339,6 +340,8 @@ mod termios_control;
 mod ctermid;
 #[path = "gethostid.rs"]
 mod gethostid;
+#[path = "gettid.rs"]
+mod gettid;
 #[path = "isatty.rs"]
 mod isatty;
 #[path = "tcgetpgrp.rs"]
