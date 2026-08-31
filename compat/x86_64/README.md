@@ -237,6 +237,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh machine-context-header-abi
 ./scripts/dev-x86_64.sh types-header-abi
 ./scripts/dev-x86_64.sh stat-header-abi
+./scripts/dev-x86_64.sh umask-header-abi
 ./scripts/dev-x86_64.sh utime-header-abi
 ./scripts/dev-x86_64.sh pthread-c11-header-abi
 ./scripts/dev-x86_64.sh ctype-header-abi
@@ -446,6 +447,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh mktemp-header-abi
 ./scripts/dev-x86_64.sh libc-mktemp
 ./scripts/dev-x86_64.sh libc-process-context
+./scripts/dev-x86_64.sh libc-umask
 ./scripts/dev-x86_64.sh libc-environment
 ./scripts/dev-x86_64.sh libc-secure-environment
 ./scripts/dev-x86_64.sh libc-login-name
@@ -1195,6 +1197,13 @@ not select a pthread implementation or `crabc-libc`.
 declarations, including the x86-64 144-byte `struct stat` layout and selected
 mode/timestamp contracts. It is source-only header evidence; it does not
 provide filesystem behavior or select `crabc-libc`.
+
+`umask-header-abi` is a separate project-first/pinned-musl C11/C++17
+`<sys/stat.h>` declaration gate for only `mode_t umask(mode_t)`. It proves the
+unconditional unsigned-32-bit `mode_t` signature and unmangled C++ linkage in
+strict, POSIX, X/Open, GNU, and BSD profiles. It is header-only evidence; it
+does not select broader stat headers, filesystem behavior, archive linkage, C
+runtime, or public x86 support.
 
 `ctype-header-abi` compiles project-first and pinned-musl C/C++ `<ctype.h>`
 declarations for the fixed-C-locale boundary. The fourteen ordinary
@@ -3484,6 +3493,18 @@ process control and signal delivery, pthread coordination, dynamic runtime,
 and public x86 support; the separately selected child-reaping artifact owns
 the closed `wait`/`waitpid`/`waitid` surface.
 
+`libc-umask` is a separate private `static-c-umask` artifact from the same
+existing `process_context.rs` source owner, not a process-context or
+filesystem capability. Pinned musl 1.2.6 `src/stat/umask.c` is one direct
+`SYS_umask=95` wrapper: the unsigned-32-bit `mode_t` call returns the prior
+mask. The fixture executes only in its own pinned-musl/candidate process and
+ratchets `0`, direct `0027`, function-pointer `0042`, and initial-mask
+restoration. The true `-nostdlib -static -Wl,--gc-sections` candidate retains
+only `umask`, with no TLS or `errno` seam, and rejects sibling process-context
+and pathname/file-creation APIs. It does not select file creation,
+kernel-applied modes, process lifecycle, broader process context, C runtime,
+or public x86 support.
+
 `libc-environment` is a separately recorded `static-c-environment`
 `verified_artifact` gate over that archive, not a process-environment
 capability. Its project-header C body first executes through pinned musl and
@@ -5691,7 +5712,7 @@ Apart from the narrowly named `libc-stat-compat`, `libc-credentials`,
 `libc-qsort`,
 `libc-getpass`,
 `libc-mktemp`,
-`libc-process-context`, `libc-environment`, `libc-secure-environment`, `libc-login-name`, `libc-child-reaping`, and
+`libc-process-context`, `libc-umask`, `libc-environment`, `libc-secure-environment`, `libc-login-name`, `libc-child-reaping`, and
 `libc-immediate-termination`, `libc-posix-exit`, `libc-callback-algorithms`,
 `libc-search-hash-table`,
 `libc-gettext-catalog`,

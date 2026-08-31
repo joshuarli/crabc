@@ -310,6 +310,18 @@ planned: ABI inventory/symbol closure, the dynamic canonical
 OS/libc/pthread/signal suites, their runtime/sysroot prerequisites, and all
 other promotion gates are still required.
 
+`./scripts/dev-x86_64.sh libc-umask` is a separate private `static-c-umask`
+artifact inside planned `libc.posix-runtime`. It maps pinned musl 1.2.6
+`src/stat/umask.c` to the existing `process_context.rs` source owner: direct
+Linux/x86-64 syscall 95 exchanges an unsigned 32-bit mask and returns the
+prior value. Its raw project/pinned-musl C/C++ `<sys/stat.h>` matrix is
+unconditional across strict, POSIX, X/Open, GNU, and BSD profiles. The
+true-static candidate admits only `0`/`0027`/`0042` transitions and restores
+the inherited mask within its fixture process; it retains only `umask` and no
+TLS/errno seam. This does not promote process context, file creation or
+kernel-applied modes, filesystem/path policy, C runtime, CRT, pthread/TLS
+lifecycle, family completion, or public x86 support.
+
 Within still-planned `libc.text-math-locale-stdio`, the separate private
 `./scripts/dev-x86_64.sh libc-stdio-format-scan` artifact selects only
 allocation-free C-locale byte-buffer `snprintf`/`vsnprintf`/`sprintf`/

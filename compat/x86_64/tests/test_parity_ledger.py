@@ -14917,6 +14917,78 @@ class X86ParityLedgerTests(unittest.TestCase):
         with self.assertRaisesRegex(ledger.LedgerError, "closed libc-sysconf command"):
             ledger.validate_ledger(data)
 
+    def test_umask_artifact_keeps_its_direct_exchange_contract(self) -> None:
+        data = self.data()
+        family = self.family(data, "libc.posix-runtime")
+        self.assertEqual(family["status"], "planned")
+        artifacts = family["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-umask"
+        )
+        self.assertNotIn("capabilities", artifact)
+        for phrase in (
+            "src/stat/umask.c",
+            "return syscall(SYS_umask, mode)",
+            "always returns the prior mask",
+            "no errno or TLS claim",
+            "function-pointer `umask(0042)`",
+            "initial-mask restoration",
+            "never creates or observes a filesystem entry",
+            "does not change or promote the broad",
+            "file creation or kernel-applied creation modes",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, artifact["description"])
+        self.assertEqual(
+            {entry["command"] for entry in artifact["native_evidence"]},
+            {"./scripts/dev-x86_64.sh libc-umask"},
+        )
+        self.assertIn("src/stat/umask.c", artifact["oracle"][0]["role"])
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-umask"
+        )
+        artifact["description"] = artifact["description"].replace(
+            "no errno or TLS claim",
+            "an errno/TLS lifecycle claim",
+        )
+        with self.assertRaisesRegex(ledger.LedgerError, "no errno or TLS claim"):
+            ledger.validate_ledger(data)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-umask"
+        )
+        artifact["capabilities"] = ["filesystem.creation"]
+        with self.assertRaisesRegex(ledger.LedgerError, "must not carry capabilities"):
+            ledger.validate_ledger(data)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-umask"
+        )
+        evidence = artifact["native_evidence"]
+        assert isinstance(evidence, list) and isinstance(evidence[0], dict)
+        evidence[0]["command"] = "./scripts/dev-x86_64.sh libc-process-context"
+        with self.assertRaisesRegex(ledger.LedgerError, "closed libc-umask command"):
+            ledger.validate_ledger(data)
+
     def test_mapping_core_artifact_keeps_its_closed_static_contract(self) -> None:
         data = self.data()
         artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]

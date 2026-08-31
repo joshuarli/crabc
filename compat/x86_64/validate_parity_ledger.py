@@ -1208,6 +1208,8 @@ PATHCONF_SYMBOLS = ("pathconf",)
 
 SYSCONF_SYMBOLS = ("sysconf",)
 
+UMASK_SYMBOLS = ("umask",)
+
 MEMORY_SYNC_SYMBOLS = ("msync",)
 
 MEMFD_CREATE_SYMBOLS = ("memfd_create",)
@@ -18491,6 +18493,370 @@ def require_sysconf_artifact(family: Mapping[str, Any]) -> None:
         "run_libc_sysconf",
     ):
         require(snippet in dispatcher, f"sysconf dispatcher omits {snippet}")
+
+
+def require_umask_artifact(family: Mapping[str, Any]) -> None:
+    """Keep one direct process-mask exchange below process-context promotion."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.posix-runtime].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [entry for entry in artifacts if entry.get("id") == "static-c-umask"]
+    require(
+        len(matching) == 1,
+        "libc.posix-runtime must contain exactly one static-c-umask artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-umask must not promote libc.posix-runtime",
+    )
+    artifact = matching[0]
+    require(
+        "capabilities" not in artifact,
+        "static-c-umask must not carry capabilities",
+    )
+
+    description = artifact.get("description")
+    require(isinstance(description, str), "static-c-umask needs a description")
+    for phrase in (
+        "Private native x86 selected-static-archive `umask` C ABI artifact",
+        "existing `process_context.rs` source owner",
+        "still-planned `libc.posix-runtime`",
+        "src/stat/umask.c",
+        "return syscall(SYS_umask, mode)",
+        "umask=95",
+        "unsigned 32-bit `mode_t`",
+        "always returns the prior mask",
+        "generic syscall macro has an error translator",
+        "no umask error encoding to translate",
+        "no errno or TLS claim",
+        "`umask(0)`",
+        "direct `umask(0027)`",
+        "function-pointer `umask(0042)`",
+        "initial-mask restoration",
+        "never creates or observes a filesystem entry",
+        "`--gc-sections`",
+        "only `umask`",
+        "`__errno_location`",
+        "does not change or promote the broad `static-c-process-context` artifact",
+        "process context",
+        "file creation or kernel-applied creation modes",
+        "filesystem/path policy",
+        "C fork/exec",
+        "process-group/session or identity behavior",
+        "errno/TLS lifecycle",
+        "C runtime",
+        "family completion",
+        "promotion",
+        "public x86 support",
+    ):
+        require(phrase in description, f"static-c-umask description omits {phrase}")
+
+    owners = set(
+        nonempty_strings(artifact.get("source_owners"), "static-c-umask.source_owners")
+    )
+    for owner in (
+        "compat/upstreams.toml",
+        "compat/abi/musl-1.2.6/aarch64/libc.a.static.tsv",
+        "libc/Cargo.toml",
+        "libc/src/lib.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/process_context.rs",
+        "libc/src/c_abi/x86_64/syscall.rs",
+        "include/features.h",
+        "include/sys/types.h",
+        "include/time.h",
+        "include/bits/alltypes.h",
+        "include/bits/stat.h",
+        "include/sys/stat.h",
+        "include/bits/syscall.h",
+        "include/sys/syscall.h",
+        "compat/x86_64/x86_umask_reference_probe.c",
+        "compat/x86_64/run_x86_umask_reference.sh",
+        "compat/x86_64/umask_header_abi_probe.c",
+        "compat/x86_64/umask_header_abi_probe.cpp",
+        "compat/x86_64/run_umask_header_abi.sh",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/libc_umask_probe.c",
+        "compat/x86_64/libc_umask_start.S",
+        "compat/x86_64/run_libc_umask.sh",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/aarch64_parity_inventory.py",
+        "compat/x86_64/aarch64_parity_inventory.json",
+        "compat/x86_64/README.md",
+        "STATUS.md",
+        "x86-64.md",
+        "scripts/dev-x86_64.sh",
+        "scripts/check_structure.py",
+    ):
+        require(owner in owners, f"static-c-umask source owners omit {owner}")
+
+    prerequisites = nonempty_strings(
+        artifact.get("x86_abi_prerequisites"), "static-c-umask.x86_abi_prerequisites"
+    )
+    require(
+        any(
+            "System V AMD64" in item
+            and "unsigned 32-bit `mode_t`" in item
+            and "edi" in item
+            and "mode_t umask(mode_t)" in item
+            and "eax" in item
+            and "0027" in item
+            and "0042" in item
+            and "0..0777" in item
+            for item in prerequisites
+        ),
+        "static-c-umask must retain its scalar C ABI and restoration boundary",
+    )
+    require(
+        any(
+            "9fa28ece75d8a2191de7c5bb53bed224c5947417" in item
+            and "src/stat/umask.c" in item
+            and "syscall(SYS_umask, mode)" in item
+            and "SYS_umask=95" in item
+            and "__syscall_ret" in item
+            and "no error encoding" in item
+            and "umask\tumask.lo\tT\tGLOBAL\t0\t1c" in item
+            for item in prerequisites
+        ),
+        "static-c-umask must retain pinned-musl source and ABI provenance",
+    )
+    require(
+        any(
+            "process-context archive member" in item
+            and "--gc-sections" in item
+            and "only umask" in item
+            and "no PT_TLS, __errno_location" in item
+            and "getpid/getppid/getuid/getgid/geteuid/getegid/setsid/setpgid/getpgid/getsid/getpgrp/setpgrp" in item
+            and "pathname/file-creation APIs" in item
+            and "text/memory helpers, allocator" in item
+            and "direct _start" in item
+            for item in prerequisites
+        ),
+        "static-c-umask must retain its final-link isolation boundary",
+    )
+
+    headers = nonempty_strings(
+        artifact.get("x86_header_prerequisites"), "static-c-umask.x86_header_prerequisites"
+    )
+    require(
+        any(
+            "mode_t umask(mode_t)" in item
+            and "unconditional" in item
+            and "strict, POSIX.1-2008, X/Open 700, GNU, and BSD" in item
+            and "unsigned 32-bit mode_t" in item
+            and "unmangled C++ linkage" in item
+            and "-nostdinc/-nostdinc++" in item
+            and "sys/stat.h, sys/types.h, time.h, features.h, bits/stat.h, and bits/alltypes.h" in item
+            for item in headers
+        ),
+        "static-c-umask must retain its focused C/C++ header ABI",
+    )
+
+    exports = set(
+        static_c_abi_export_names(
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        )
+    )
+    require(
+        set(UMASK_SYMBOLS) <= exports,
+        "static-c-umask must retain its selected export",
+    )
+    require(
+        {symbol for symbol in exports if symbol.startswith("umask")}
+        == set(UMASK_SYMBOLS),
+        "static-c-umask must expose only umask",
+    )
+
+    static_root = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+    ).read_text(encoding="utf-8")
+    require(
+        '#[path = "process_context.rs"]\nmod process_context;' in static_root,
+        "x86 static C ABI must retain the existing process-context source owner",
+    )
+    source = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "process_context.rs"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "src/stat/umask.c",
+        "SYS_UMASK=95",
+        "always returns the prior mask",
+        "kernel supplies no error encoding",
+        'pub extern "C" fn umask',
+    ):
+        require(snippet in source, f"existing umask source omits {snippet}")
+    umask_body = source[
+        source.index("/// Replace the process file-creation mask and return its prior value.") : source.index(
+            "/// Create a new session"
+        )
+    ]
+    for forbidden in (
+        "c_status(",
+        "errno::",
+        "alloc::",
+        "getpid(",
+    ):
+        require(
+            forbidden not in umask_body,
+            f"umask source body must not select {forbidden}",
+        )
+
+    runner = (ROOT / "compat" / "x86_64" / "run_libc_umask.sh").read_text(
+        encoding="utf-8"
+    )
+    for snippet in (
+        "run_musl_oracle.sh",
+        "run_x86_umask_reference.sh",
+        "run_umask_header_abi.sh",
+        "umask.lo",
+        "archive_member_for_symbol",
+        "--gc-sections",
+        "-nostdlib -static",
+        "--no-undefined",
+        "candidate unexpectedly selects TLS",
+        "candidate retained neighboring process-context C ABI symbols",
+        "candidate retained pathname or file-creation C ABI symbols",
+        "candidate retained an unselected text or allocator dependency",
+        "candidate umask does not retain Linux x86-64 umask=95",
+        "candidate umask unexpectedly delegates through a call",
+    ):
+        require(snippet in runner, f"umask runner omits {snippet}")
+    require("--whole-archive" not in runner, "umask runner must not force-link the archive")
+
+    probe = (ROOT / "compat" / "x86_64" / "libc_umask_probe.c").read_text(
+        encoding="utf-8"
+    )
+    for snippet in (
+        "umask_signature",
+        "check_mask_exchange",
+        "SYS_umask",
+        "original = umask(0)",
+        "umask(0027)",
+        "indirect(0042)",
+        "umask(original)",
+        "0777",
+        "CRABC_UMASK_FREESTANDING",
+        "does not create files",
+    ):
+        require(snippet in probe, f"umask probe omits {snippet}")
+    require("#include <errno.h>" not in probe, "umask probe must not select errno")
+    start = (ROOT / "compat" / "x86_64" / "libc_umask_start.S").read_text(
+        encoding="utf-8"
+    )
+    for snippet in (
+        "crabc_x86_64_umask_probe",
+        "mov $60, %eax",
+        "syscall",
+    ):
+        require(snippet in start, f"umask start shim omits {snippet}")
+    for forbidden in ("arch_prctl", "%fs:", "TLS"):
+        require(forbidden not in start, f"umask start shim must not select {forbidden}")
+
+    header_c = (
+        ROOT / "compat" / "x86_64" / "umask_header_abi_probe.c"
+    ).read_text(encoding="utf-8")
+    header_cxx = (
+        ROOT / "compat" / "x86_64" / "umask_header_abi_probe.cpp"
+    ).read_text(encoding="utf-8")
+    for snippet in ("umask_signature", "umask", "mode_t", "unsigned 32-bit"):
+        require(snippet in header_c, f"umask C header probe omits {snippet}")
+        require(snippet in header_cxx, f"umask C++ header probe omits {snippet}")
+    header_runner = (
+        ROOT / "compat" / "x86_64" / "run_umask_header_abi.sh"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "umask_header_abi_probe.c",
+        "umask_header_abi_probe.cpp",
+        "-nostdinc",
+        "-nostdinc++",
+        "compile_profile strict",
+        "compile_profile posix",
+        "compile_profile xopen",
+        "compile_profile gnu",
+        "compile_profile bsd",
+        "retained a mangled umask reference",
+        "escaped its declared roots",
+    ):
+        require(snippet in header_runner, f"umask header runner omits {snippet}")
+
+    evidence = artifact.get("native_evidence")
+    require(isinstance(evidence, list), "static-c-umask needs evidence")
+    require(
+        {entry.get("command") for entry in evidence if isinstance(entry, Mapping)}
+        == {"./scripts/dev-x86_64.sh libc-umask"},
+        "static-c-umask must use the closed libc-umask command",
+    )
+    scope = evidence[0].get("scope")
+    require(
+        isinstance(scope, str)
+        and all(
+            phrase in scope
+            for phrase in (
+                "Pinned-musl/project C/C++ unconditional `<sys/stat.h>`",
+                "child-contained pinned-musl umask reference",
+                "`-nostdlib -static -Wl,--gc-sections` candidate",
+                "umask.lo",
+                "direct 0-to-0027-to-0042 exchange",
+                "function-pointer call",
+                "initial-mask restoration",
+                "only umask and x86 syscall 95",
+                "__errno_location",
+                "pathname/file-creation APIs",
+                "string/memory helpers, allocator",
+                "no interpreter, DT_NEEDED, unresolved symbols, TLS",
+                "C runtime",
+                "public x86 support",
+            )
+        ),
+        "static-c-umask evidence must retain its isolated static contract",
+    )
+    oracle = artifact.get("oracle")
+    require(isinstance(oracle, list), "static-c-umask needs an oracle")
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "c-posix"
+            and "src/stat/umask.c" in str(entry.get("role"))
+            and "syscall(SYS_umask, mode)" in str(entry.get("role"))
+            and "prior-mask result" in str(entry.get("role"))
+            for entry in oracle
+        ),
+        "static-c-umask must retain its musl behavior oracle",
+    )
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "kernel-abi"
+            and "umask=95" in str(entry.get("role"))
+            and "always-successful" in str(entry.get("role"))
+            for entry in oracle
+        ),
+        "static-c-umask must retain its Linux kernel oracle",
+    )
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "elf-abi"
+            and "edi" in str(entry.get("role"))
+            and "eax" in str(entry.get("role"))
+            and "without TLS" in str(entry.get("role"))
+            for entry in oracle
+        ),
+        "static-c-umask must retain its SysV ABI oracle",
+    )
+
+    dispatcher = (ROOT / "scripts" / "dev-x86_64.sh").read_text(encoding="utf-8")
+    for snippet in (
+        "umask-header-abi)",
+        "run_umask_header_abi",
+        "libc-umask)",
+        "run_libc_umask",
+    ):
+        require(snippet in dispatcher, f"umask dispatcher omits {snippet}")
 
 
 def require_system_information_artifact(family: Mapping[str, Any]) -> None:
@@ -42057,6 +42423,7 @@ def validate_ledger(
     require_fpathconf_artifact(by_id["libc.posix-runtime"])
     require_pathconf_artifact(by_id["libc.posix-runtime"])
     require_sysconf_artifact(by_id["libc.posix-runtime"])
+    require_umask_artifact(by_id["libc.posix-runtime"])
     require_system_information_artifact(by_id["libc.posix-runtime"])
     require_mapping_core_artifact(by_id["libc.posix-runtime"])
     require_memory_sync_artifact(by_id["libc.posix-runtime"])

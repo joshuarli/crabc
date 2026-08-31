@@ -65,6 +65,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   machine-context-header-abi  verify staged x86 machine/context C/C++ header ABI profiles
   types-header-abi  compile the staged crabc x86 C/C++ type-layout header slice
   stat-header-abi  compile the staged x86 C/C++ sys/stat header layouts
+  umask-header-abi  verify x86 C/C++ unconditional umask declaration and linkage
   utime-header-abi  compile the staged x86 C/C++ utime header ABI/linkage slice
   pthread-c11-header-abi  verify staged x86 pthread/C11-thread C/C++ header ABI profiles
   pthread-cancellation-header-abi  verify staged x86 deferred pthread-cancellation C/C++ header ABI profiles
@@ -301,6 +302,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-mkfifoat  run the static x86 crabc-libc mkfifoat leaf
   libc-mktemp  run the static x86 crabc-libc historical mktemp slice
   libc-process-context  run the static x86 crabc-libc selected process-context slice
+  libc-umask  run the static x86 crabc-libc selected umask slice
   libc-environment  run the static x86 crabc-libc bounded environment slice
   libc-secure-environment  run the static x86 crabc-libc GNU secure-environment slice
   libc-login-name  run the static x86 crabc-libc environment-backed login-name slice
@@ -2143,6 +2145,10 @@ run_stat_header_abi() {
     run_in_container bash /workspace/compat/x86_64/run_stat_header_abi.sh
 }
 
+run_umask_header_abi() {
+    run_in_container bash /workspace/compat/x86_64/run_umask_header_abi.sh
+}
+
 run_utime_header_abi() {
     run_in_container bash /workspace/compat/x86_64/run_utime_header_abi.sh
 }
@@ -3550,6 +3556,10 @@ run_libc_process_context_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_process_context.sh
 }
 
+run_libc_umask() {
+    run_in_container bash /workspace/compat/x86_64/run_libc_umask.sh
+}
+
 run_libc_environment_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_environment.sh
 }
@@ -3814,6 +3824,7 @@ case "$command" in
     stdio-permanent-fileno-header-abi) ;;
     stdio-permanent-fileno-unlocked-header-abi) ;;
     stdio-permanent-feof-unlocked-header-abi) ;;
+    umask-header-abi|libc-umask) ;;
     image|musl-oracle|header-abi-reference|public-header-surface|header-abi-project|math-complex-header-abi|sys-reg-header-abi|types-header-abi|stat-header-abi|utime-header-abi|pthread-c11-header-abi|pthread-cancellation-header-abi|stdlib-header-abi|stdio-standard-header-abi|time-header-abi|poll-header-abi|select-header-abi|fcntl-header-abi|descriptor-advice-header-abi|filesystem-capacity-header-abi|flock-header-abi|sendfile-header-abi|ioctl-header-abi|unistd-header-abi|system-header-abi|syscall-header-abi|signal-header-abi|termios-header-abi|mman-header-abi|resource-header-abi|socket-header-abi|socket-messages-header-abi|random-entropy-header-abi|mm-abi-reference|mapping-reference|memory-vm-reference|pty-basic-reference|terminal-reference|mlock-reference|msync-reference|mincore-reference|fs-advice-reference|memfd-reference|ftruncate-reference|statfs-reference|timestamp-reference|path-lifecycle-reference|namespace-reference|path-core-reference|xattr-reference|directory-reference|temporary-object-reference|statx-reference|cwd-canonicalize-reference|root-change-reference|mount-reference|thread-kill-reference|ipc-reference|shm-reference|inotify-reference|socket-transport-reference|interface-device-reference|resolver-transport-reference|resolver-facade-reference|netdb-reference|users-databases-reference|posix-fallocate-reference|fallocate-reference|file-position-reference|sync-reference|syncfs-reference|sync-file-range-reference|rand-reference|time-abi-reference|time-observation-reference|calendar-time-reference|advanced-time-reference|relative-sleep-reference|clock-nanosleep-reference|getitimer-reference|setitimer-reference|timerfd-reference|pselect-reference|poll-reference|ppoll-reference|epoll-reference|process-identity-reference|child-ownership-reference|getgroups-reference|process-session-reference|pidfd-open-reference|fcntl-getlk-reference|fcntl-status-reference|flock-reference|sendfile-reference|copy-file-range-reference|scheduler-priority-bounds-reference|rr-interval-reference|sched-affinity-reference|sched-affinity-set-reference|priority-reference|setpriority-reference|rlimit-reference|rlimit-targeted-reference|setrlimit-reference|umask-reference|rusage-reference|times-reference|fstat-reference|statat-reference|getcwd-reference|readlinkat-reference|access-reference|system-reference|thread-reference|thread-credentials-reference|fs-credentials-reference|core|facade|facade-record-owning|libc-syscall|libc-errno-tls|libc-stat-compat|libc-credentials|libc-bootstrap-primitives|libc-signal-control|libc-signal-execution|libc-static-tls-v1|libc-crt-static-tls|libc-pthread-create-join-tls|libc-c11-lifecycle|libc-c11-plain-sync|libc-pthread-c11-once|libc-pthread-c11-tsd|libc-pthread-tls-aggregate|libc-pthread-cancel-deferred|libc-pthread-atfork|libc-thrd-sleep|libc-pthread-mutex-normal|libc-pthread-rwlock|libc-pthread-cond-private|libc-termios-control|libc-process-context|libc-environment|libc-descriptor-io|libc-descriptor-lifecycle|libc-timestamp-updates|libc-process-resources|libc-socket-transport|libc-socket-messages|libc-thread-pointer|libc-foundation|libc-fenv|libc-math-complex|libc-elementary-sqrt-fenv|libc-math-x87-extended|libc-memory|libc-setjmp|libc-atomic|libc-clone-raw|libc-signal-altstack|libc-signal-foundation|ldso-relocation|ldso-image|ldso-initial-graph|ldso-initial-tls|ldso-initial-exec-tls|ldso-owned-crt-handoff|ldso-fixed-graph-introspection|ldso-dynamic-admission) ;;
     math-elementary-long-double-header-abi|libc-math-elementary-long-double) ;;
     ldso-fixed-graph-dlfcn) ;;
@@ -4038,6 +4049,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "stat-header-abi takes no arguments"
         ensure_image
         run_stat_header_abi
+        ;;
+    umask-header-abi)
+        [ "$#" -eq 0 ] || fail "umask-header-abi takes no arguments"
+        ensure_image
+        run_umask_header_abi
         ;;
     utime-header-abi)
         [ "$#" -eq 0 ] || fail "utime-header-abi takes no arguments"
@@ -5157,6 +5173,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "libc-process-context takes no arguments"
         ensure_image
         run_libc_process_context_probe
+        ;;
+    libc-umask)
+        [ "$#" -eq 0 ] || fail "libc-umask takes no arguments"
+        ensure_image
+        run_libc_umask
         ;;
     libc-environment)
         [ "$#" -eq 0 ] || fail "libc-environment takes no arguments"

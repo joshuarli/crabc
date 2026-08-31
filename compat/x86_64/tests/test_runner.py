@@ -1378,6 +1378,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "stdio-permanent-fileno-header-abi",
             "stdio-permanent-fileno-unlocked-header-abi",
             "stdio-permanent-feof-unlocked-header-abi",
+            "umask-header-abi|libc-umask",
             "image|musl-oracle|header-abi-reference|public-header-surface|header-abi-project|math-complex-header-abi|sys-reg-header-abi|types-header-abi|stat-header-abi|utime-header-abi|pthread-c11-header-abi|pthread-cancellation-header-abi|stdlib-header-abi|stdio-standard-header-abi|time-header-abi|poll-header-abi|select-header-abi|fcntl-header-abi|descriptor-advice-header-abi|filesystem-capacity-header-abi|flock-header-abi|sendfile-header-abi|ioctl-header-abi|unistd-header-abi|system-header-abi|syscall-header-abi|signal-header-abi|termios-header-abi|mman-header-abi|resource-header-abi|socket-header-abi|socket-messages-header-abi|random-entropy-header-abi|mm-abi-reference|mapping-reference|memory-vm-reference|pty-basic-reference|terminal-reference|mlock-reference|msync-reference|mincore-reference|fs-advice-reference|memfd-reference|ftruncate-reference|statfs-reference|timestamp-reference|path-lifecycle-reference|namespace-reference|path-core-reference|xattr-reference|directory-reference|temporary-object-reference|statx-reference|cwd-canonicalize-reference|root-change-reference|mount-reference|thread-kill-reference|ipc-reference|shm-reference|inotify-reference|socket-transport-reference|interface-device-reference|resolver-transport-reference|resolver-facade-reference|netdb-reference|users-databases-reference|posix-fallocate-reference|fallocate-reference|file-position-reference|sync-reference|syncfs-reference|sync-file-range-reference|rand-reference|time-abi-reference|time-observation-reference|calendar-time-reference|advanced-time-reference|relative-sleep-reference|clock-nanosleep-reference|getitimer-reference|setitimer-reference|timerfd-reference|pselect-reference|poll-reference|ppoll-reference|epoll-reference|process-identity-reference|child-ownership-reference|getgroups-reference|process-session-reference|pidfd-open-reference|fcntl-getlk-reference|fcntl-status-reference|flock-reference|sendfile-reference|copy-file-range-reference|scheduler-priority-bounds-reference|rr-interval-reference|sched-affinity-reference|sched-affinity-set-reference|priority-reference|setpriority-reference|rlimit-reference|rlimit-targeted-reference|setrlimit-reference|umask-reference|rusage-reference|times-reference|fstat-reference|statat-reference|getcwd-reference|readlinkat-reference|access-reference|system-reference|thread-reference|thread-credentials-reference|fs-credentials-reference|core|facade|facade-record-owning|libc-syscall|libc-errno-tls|libc-stat-compat|libc-credentials|libc-bootstrap-primitives|libc-signal-control|libc-signal-execution|libc-static-tls-v1|libc-crt-static-tls|libc-pthread-create-join-tls|libc-c11-lifecycle|libc-c11-plain-sync|libc-pthread-c11-once|libc-pthread-c11-tsd|libc-pthread-tls-aggregate|libc-pthread-cancel-deferred|libc-pthread-atfork|libc-thrd-sleep|libc-pthread-mutex-normal|libc-pthread-rwlock|libc-pthread-cond-private|libc-termios-control|libc-process-context|libc-environment|libc-descriptor-io|libc-descriptor-lifecycle|libc-timestamp-updates|libc-process-resources|libc-socket-transport|libc-socket-messages|libc-thread-pointer|libc-foundation|libc-fenv|libc-math-complex|libc-elementary-sqrt-fenv|libc-math-x87-extended|libc-memory|libc-setjmp|libc-atomic|libc-clone-raw|libc-signal-altstack|libc-signal-foundation|ldso-relocation|ldso-image|ldso-initial-graph|ldso-initial-tls|ldso-initial-exec-tls|ldso-owned-crt-handoff|ldso-fixed-graph-introspection|ldso-dynamic-admission",
             "math-elementary-long-double-header-abi|libc-math-elementary-long-double",
             "ldso-fixed-graph-dlfcn",
@@ -18075,6 +18076,148 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         )
         self.assertIn(
             '    libc-sysconf)\n        [ "$#" -eq 0 ] || fail "libc-sysconf takes no arguments"',
+            runner,
+        )
+
+    def test_libc_static_c_abi_umask_artifact_stays_section_isolated(self) -> None:
+        """The direct umask exchange must not promote process or filesystem support."""
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        source_path = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "process_context.rs"
+        )
+        header_c_path = ROOT / "compat" / "x86_64" / "umask_header_abi_probe.c"
+        header_cxx_path = (
+            ROOT / "compat" / "x86_64" / "umask_header_abi_probe.cpp"
+        )
+        header_runner_path = (
+            ROOT / "compat" / "x86_64" / "run_umask_header_abi.sh"
+        )
+        probe_path = ROOT / "compat" / "x86_64" / "libc_umask_probe.c"
+        start_path = ROOT / "compat" / "x86_64" / "libc_umask_start.S"
+        artifact_runner_path = ROOT / "compat" / "x86_64" / "run_libc_umask.sh"
+        for path in (
+            source_path,
+            header_c_path,
+            header_cxx_path,
+            header_runner_path,
+            probe_path,
+            start_path,
+            artifact_runner_path,
+        ):
+            self.assertTrue(path.is_file(), f"missing umask artifact input: {path}")
+
+        source = source_path.read_text(encoding="utf-8")
+        header_c = header_c_path.read_text(encoding="utf-8")
+        header_cxx = header_cxx_path.read_text(encoding="utf-8")
+        header_runner = header_runner_path.read_text(encoding="utf-8")
+        probe = probe_path.read_text(encoding="utf-8")
+        start = start_path.read_text(encoding="utf-8")
+        artifact_runner = artifact_runner_path.read_text(encoding="utf-8")
+        static_exports = {
+            line
+            for line in (
+                ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+            ).read_text(encoding="utf-8").splitlines()
+            if line and not line.startswith("#")
+        }
+        parity_ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        runner = RUNNER.read_text(encoding="utf-8")
+
+        self.assertIn('#[path = "process_context.rs"]', static_root)
+        for required in (
+            "src/stat/umask.c",
+            "SYS_UMASK=95",
+            "always returns the prior mask",
+            "kernel supplies no error encoding",
+            'pub extern "C" fn umask',
+        ):
+            self.assertIn(required, source)
+        umask_body = source[
+            source.index("/// Replace the process file-creation mask and return its prior value.") : source.index(
+                "/// Create a new session"
+            )
+        ]
+        for forbidden in ("c_status(", "errno::", "alloc::", "getpid("):
+            self.assertNotIn(forbidden, umask_body)
+
+        for header_probe in (header_c, header_cxx):
+            for required in ("umask_signature", "umask", "mode_t", "unsigned 32-bit"):
+                self.assertIn(required, header_probe)
+        for required in (
+            "CANDIDATE_CC=/usr/bin/gcc",
+            "-nostdinc",
+            "-nostdinc++",
+            "compile_profile strict",
+            "compile_profile posix",
+            "compile_profile xopen",
+            "compile_profile gnu",
+            "compile_profile bsd",
+            "retained a mangled umask reference",
+            "escaped its declared roots",
+        ):
+            self.assertIn(required, header_runner)
+
+        for required in (
+            "umask_signature",
+            "check_mask_exchange",
+            "SYS_umask",
+            "original = umask(0)",
+            "umask(0027)",
+            "indirect(0042)",
+            "umask(original)",
+            "0777",
+            "CRABC_UMASK_FREESTANDING",
+            "does not create files",
+        ):
+            self.assertIn(required, probe)
+        self.assertNotIn("#include <errno.h>", probe)
+        for required in (
+            "crabc_x86_64_umask_probe",
+            "mov $60, %eax",
+            "syscall",
+        ):
+            self.assertIn(required, start)
+        for forbidden in ("arch_prctl", "%fs:", "TLS"):
+            self.assertNotIn(forbidden, start)
+        for required in (
+            "run_musl_oracle.sh",
+            "run_x86_umask_reference.sh",
+            "run_umask_header_abi.sh",
+            "umask.lo",
+            "archive_member_for_symbol",
+            "-nostdlib -static",
+            "--no-undefined",
+            "--gc-sections",
+            "candidate unexpectedly selects TLS",
+            "candidate retained neighboring process-context C ABI symbols",
+            "candidate retained pathname or file-creation C ABI symbols",
+            "candidate retained an unselected text or allocator dependency",
+            "candidate umask does not retain Linux x86-64 umask=95",
+            "candidate umask unexpectedly delegates through a call",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn("--whole-archive", artifact_runner)
+        self.assertIn("umask", static_exports)
+        self.assertIn('id = "static-c-umask"', parity_ledger)
+        self.assertIn(
+            'command = "./scripts/dev-x86_64.sh libc-umask"', parity_ledger
+        )
+        self.assertIn("run_umask_header_abi()", runner)
+        self.assertIn("run_libc_umask()", runner)
+        self.assertIn(
+            "/workspace/compat/x86_64/run_umask_header_abi.sh", runner
+        )
+        self.assertIn("/workspace/compat/x86_64/run_libc_umask.sh", runner)
+        self.assertIn(
+            '    umask-header-abi)\n        [ "$#" -eq 0 ] || fail "umask-header-abi takes no arguments"',
+            runner,
+        )
+        self.assertIn(
+            '    libc-umask)\n        [ "$#" -eq 0 ] || fail "libc-umask takes no arguments"',
             runner,
         )
 

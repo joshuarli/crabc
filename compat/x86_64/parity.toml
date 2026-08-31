@@ -2706,6 +2706,60 @@ native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc
 oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl get*id, process-group/session, and umask declarations, wrapper behavior, and errno oracle." }, { kind = "kernel-abi", source = "Linux 5.10 x86-64 ABI", role = "Selected direct syscall numbers, signed pid/mask words, group/session transition, and raw errno contract." }, { kind = "elf-abi", source = "System V AMD64 psABI", role = "Static initial-exec TLS and Variant-II thread-pointer fixture contract." }]
 
 [[family.verified_artifact]]
+id = "static-c-umask"
+description = "Private native x86 selected-static-archive `umask` C ABI artifact derived from the existing `process_context.rs` source owner inside still-planned `libc.posix-runtime`. Pinned musl 1.2.6 `src/stat/umask.c` is one direct `return syscall(SYS_umask, mode)` leaf: Linux/x86_64 `umask=95` exchanges the process-local unsigned 32-bit `mode_t` and always returns the prior mask. Musl's generic syscall macro has an error translator, but the kernel has no umask error encoding to translate; this bounded normal path carries no errno or TLS claim. The dedicated fixture runs in its own reference/candidate process, admits only `umask(0)`, direct `umask(0027)`, function-pointer `umask(0042)`, and initial-mask restoration, and never creates or observes a filesystem entry. The dedicated true `-nostdlib -static` candidate links the shared source object with `--gc-sections` and retains only `umask`, rejecting every sibling process-context entry, `__errno_location`, pathname/file-creation APIs, text/memory helpers, allocator, and runtime closure. This capability-free evidence does not change or promote the broad `static-c-process-context` artifact. It does not select process context, file creation or kernel-applied creation modes, filesystem/path policy, C fork/exec, process-group/session or identity behavior, gettid, errno/TLS lifecycle, libc.so, CRT, C runtime, pthread/TLS lifecycle, loader, sysroot, family completion, promotion, or public x86 support."
+source_owners = [
+  "compat/upstreams.toml",
+  "compat/abi/musl-1.2.6/aarch64/libc.a.static.tsv",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/process_context.rs",
+  "libc/src/c_abi/x86_64/syscall.rs",
+  "include/features.h",
+  "include/sys/types.h",
+  "include/time.h",
+  "include/bits/alltypes.h",
+  "include/bits/stat.h",
+  "include/sys/stat.h",
+  "include/bits/syscall.h",
+  "include/sys/syscall.h",
+  "compat/x86_64/x86_umask_reference_probe.c",
+  "compat/x86_64/run_x86_umask_reference.sh",
+  "compat/x86_64/umask_header_abi_probe.c",
+  "compat/x86_64/umask_header_abi_probe.cpp",
+  "compat/x86_64/run_umask_header_abi.sh",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/libc_umask_probe.c",
+  "compat/x86_64/libc_umask_start.S",
+  "compat/x86_64/run_libc_umask.sh",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "compat/x86_64/aarch64_parity_inventory.py",
+  "compat/x86_64/aarch64_parity_inventory.json",
+  "compat/x86_64/README.md",
+  "STATUS.md",
+  "x86-64.md",
+  "scripts/dev-x86_64.sh",
+  "scripts/check_structure.py",
+]
+x86_abi_prerequisites = [
+  "The System V AMD64 C ABI passes the unsigned 32-bit `mode_t` argument to `mode_t umask(mode_t)` in edi and returns the unsigned 32-bit prior mask in eax. The fixture admits only mode values 0, 0027, and 0042, requires the prior value to be in 0..0777, and restores the initial process mask before its private executable exits.",
+  "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417 maps `src/stat/umask.c`'s one `syscall(SYS_umask, mode)` statement to the existing selected x86 source. Linux x86_64 `SYS_umask=95` always returns the old mask, so musl's generic `__syscall_ret` error helper has no error encoding to publish. The pinned AArch64 static ABI inventory fixes `umask\tumask.lo\tT\tGLOBAL\t0\t1c` ownership.",
+  "The co-owned process-context archive member is linked only with `-nostdlib -static -Wl,--gc-sections`: the final candidate retains only umask, has no PT_TLS, __errno_location, dynamic TLS model, PLT, ambient libc, sibling getpid/getppid/getuid/getgid/geteuid/getegid/setsid/setpgid/getpgid/getsid/getpgrp/setpgrp, or pathname/file-creation APIs. It rejects text/memory helpers, allocator, and unowned runtime closure. The fixture-only direct _start does not select CRT, process lifecycle, or TLS lifecycle.",
+]
+x86_header_prerequisites = [
+  "The dedicated pinned-musl/raw-project C11/C++17 `<sys/stat.h>` matrix proves that `mode_t umask(mode_t)` is unconditional in strict, POSIX.1-2008, X/Open 700, GNU, and BSD profiles, with an unsigned 32-bit mode_t signature and unmangled C++ linkage. The raw project pass uses -nostdinc/-nostdinc++, compiler builtin headers, and traces only project sys/stat.h, sys/types.h, time.h, features.h, bits/stat.h, and bits/alltypes.h roots; it does not select broader stat headers, filesystem behavior, archive linkage, or public x86 support.",
+]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-umask", scope = "Pinned-musl/project C/C++ unconditional `<sys/stat.h>` compilation, the existing child-contained pinned-musl umask reference, equivalent pinned-musl C execution, and one true x86 crabc-libc `-nostdlib -static -Wl,--gc-sections` candidate. The fixture ratchets the exact pinned AArch64 umask.lo static-ABI row, existing one-member archive ownership, mode_t unsigned-32 ABI, direct 0-to-0027-to-0042 exchange, function-pointer call, and initial-mask restoration within each fixture process. It proves the final candidate retains only umask and x86 syscall 95 while rejecting every sibling process-context entry, __errno_location, pathname/file-creation APIs, string/memory helpers, allocator, with no interpreter, DT_NEEDED, unresolved symbols, TLS, dynamic TLS model, PLT, ambient libc, or C runtime. It does not select process context, file creation or kernel-applied modes, filesystem policy, C fork/exec, process-group/session or identity behavior, gettid, errno/TLS lifecycle, CRT, pthread/TLS lifecycle, loader, sysroot, family completion, promotion, or public x86 support." }]
+oracle = [
+  { kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source, installed `<sys/stat.h>` declaration, and behavior oracle for src/stat/umask.c: one syscall(SYS_umask, mode) call, unsigned mode_t, prior-mask result, and no source-level file creation." },
+  { kind = "kernel-abi", source = "Linux 5.10 x86-64 ABI", role = "umask=95 scalar register ABI, process-local mask exchange, 0..0777 prior-mask result, and always-successful kernel result contract." },
+  { kind = "elf-abi", source = "System V AMD64 psABI", role = "edi unsigned mode_t argument, eax unsigned prior-mask result, C++ C linkage, link-time section collection, and true-static ET_EXEC closure contract without TLS." },
+]
+
+[[family.verified_artifact]]
 id = "static-c-environment"
 description = "Private native x86 selected-static-archive process-environment block. One dependency-free `crabc-libc` archive resolves exactly `getenv`, `setenv`, `putenv`, `unsetenv`, `clearenv`, and the musl-shaped one-object `__environ`/`environ`/`_environ`/`___environ` aliases into a freestanding C fixture after an equivalent pinned-musl execution. The selected static startup installs its already validated initial `envp` before application callbacks. Lookup returns the first matching value under a 1,048,576-entry lookup ceiling; `setenv` copies a replacement, `putenv` retains its caller-owned `name=value` pointer, `putenv(\"NAME\")` removes, `unsetenv` removes all duplicates, and `clearenv` publishes a null global. A table-requiring mutation copies at most 128 pointers into private storage. Every successful `setenv` consumes its complete entry from a 16-KiB bump arena whose bytes are never reclaimed by replacement, `unsetenv`, or `clearenv`; over either mutation bound returns `-1`/initial-TLS `ENOMEM` without changing the public vector or selected entries, while allocation-free `clearenv` remains successful for a larger directly assigned vector. The spin lock serializes only these five calls: it does not stabilize returned `getenv` pointers, coordinate direct `environ` writers or mutation/lifetime of caller-owned `putenv` strings, supply async-signal safety, or provide fork recovery. This explicit no-allocator resource boundary is narrower than `process.environment-mutation`. It does not select `secure_getenv`, privileged/auxv secure-execution policy, exec/spawn inheritance, a general thread-safe environment lifecycle, libc.so, CRT completion, dynamic TLS, loader, sysroot, allocator, or public x86 support."
 source_owners = [
