@@ -259,6 +259,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh child-reaping-header-abi
 ./scripts/dev-x86_64.sh immediate-termination-header-abi
 ./scripts/dev-x86_64.sh posix-exit-header-abi
+./scripts/dev-x86_64.sh posix-spawnattr-init-header-abi
 ./scripts/dev-x86_64.sh callback-algorithms-header-abi
 ./scripts/dev-x86_64.sh ffs-header-abi
 ./scripts/dev-x86_64.sh byte-strings-header-abi
@@ -452,6 +453,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-child-reaping
 ./scripts/dev-x86_64.sh libc-immediate-termination
 ./scripts/dev-x86_64.sh libc-posix-exit
+./scripts/dev-x86_64.sh libc-posix-spawnattr-init
 ./scripts/dev-x86_64.sh libc-callback-algorithms
 ./scripts/dev-x86_64.sh libc-search-tree-intrusive
 ./scripts/dev-x86_64.sh libc-search-hash-table
@@ -3663,6 +3665,25 @@ raw syscall, errno, initial-TLS, callback, lock, allocator, or mutable
 lifecycle state. It excludes ordinary `exit`/`abort`/`atexit`,
 `at_quick_exit`/`quick_exit` hooks, stdio flushing/fini/destructors, fork
 coordination, pthread lifecycle, dynamic runtime, and public x86 support.
+
+`libc-posix-spawnattr-init` is a separately recorded
+`static-c-posix-spawnattr-init` `verified_artifact` inside still-planned
+`libc.posix-runtime`, not a spawn or process-control capability. Its focused
+pinned-musl/project C/C++ `<spawn.h>` matrix proves the unconditional
+`int posix_spawnattr_init(posix_spawnattr_t *)` signature, unmangled linkage,
+and the x86 336-byte/eight-byte-aligned record layout with its member offsets.
+The same project-header C fixture first executes musl 1.2.6
+`src/process/posix_spawnattr_init.c`, then a true `-nostdlib -static` candidate
+made from exactly one Rust object. Direct and function-pointer calls fully zero
+byte-filled caller records, retain adjacent guards, and preserve stale `errno`
+on the ordinary musl route. The candidate uses a fixed 42-word direct-store
+loop with no undefined helper, call, syscall, errno/TLS, allocator, dynamic
+runtime, CRT, loader, or sysroot dependency. It does not select
+`posix_spawn`/`posix_spawnp`, other attribute APIs, file actions,
+fork/vfork/clone, exec, child lifecycle, signal delivery, scheduler policy,
+family completion, promotion, or public x86 support; the generic AArch64
+export remains unchanged.
+
 `libc-bsearch` is a separate capability-free `static-c-bsearch`
 `verified_artifact` inside still-planned `libc.c-abi-compat`. Its strict,
 POSIX, X/Open, GNU, and BSD C/C++ `<stdlib.h>` matrix proves the unconditional
@@ -5689,7 +5710,7 @@ Apart from the narrowly named `libc-stat-compat`, `libc-credentials`,
 `libc-getpass`,
 `libc-mktemp`,
 `libc-process-context`, `libc-environment`, `libc-secure-environment`, `libc-login-name`, `libc-child-reaping`, and
-`libc-immediate-termination`, `libc-posix-exit`, `libc-callback-algorithms`,
+`libc-immediate-termination`, `libc-posix-exit`, `libc-posix-spawnattr-init`, `libc-callback-algorithms`,
 `libc-search-hash-table`,
 `libc-gettext-catalog`,
 `libc-clock-gettime`,

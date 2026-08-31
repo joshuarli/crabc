@@ -7387,6 +7387,363 @@ def require_strtok_artifact(family: Mapping[str, Any]) -> None:
         require(snippet in dispatcher, f"x86 dispatcher omits {snippet}")
 
 
+def require_posix_spawnattr_init_artifact(family: Mapping[str, Any]) -> None:
+    """Keep one initialized spawn record below process/spawn completion."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.posix-runtime].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [
+        entry
+        for entry in artifacts
+        if entry.get("id") == "static-c-posix-spawnattr-init"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.posix-runtime needs exactly one static-c-posix-spawnattr-init artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-posix-spawnattr-init must not promote libc.posix-runtime",
+    )
+    artifact = matching[0]
+    require(
+        "capabilities" not in artifact,
+        "static-c-posix-spawnattr-init must not promote a spawn or process capability",
+    )
+
+    description = artifact.get("description")
+    require(
+        isinstance(description, str),
+        "static-c-posix-spawnattr-init needs a description",
+    )
+    for phrase in (
+        "POSIX spawn-attribute initialization leaf",
+        "still-planned `libc.posix-runtime`",
+        "exactly one Rust object exporting only `posix_spawnattr_init`",
+        "no undefined symbol, helper call, syscall, errno/TLS, allocator",
+        "`src/process/posix_spawnattr_init.c::posix_spawnattr_init`",
+        "`(posix_spawnattr_t){ 0 }`",
+        "all 336 x86 bytes",
+        "preserve adjacent caller guards",
+        "stale errno",
+        "fixed 42-word direct-store loop",
+        "Null, misaligned, aliased, invalid, or concurrently accessed",
+        "`posix_spawn`",
+        "`posix_spawnp`",
+        "attribute destruction/query/mutation",
+        "file actions",
+        "fork/vfork/clone",
+        "exec",
+        "child lifecycle",
+        "signal delivery",
+        "scheduler policy",
+        "family completion",
+        "promotion",
+        "public x86 support",
+        "generic AArch64 `posix_spawnattr_init` export remains unchanged",
+    ):
+        require(
+            phrase in description,
+            f"static-c-posix-spawnattr-init description omits {phrase}",
+        )
+
+    owners = set(
+        nonempty_strings(
+            artifact.get("source_owners"),
+            "static-c-posix-spawnattr-init.source_owners",
+        )
+    )
+    for owner in (
+        "compat/upstreams.toml",
+        "compat/abi/musl-1.2.6/aarch64/libc.a.static.tsv",
+        "libc/Cargo.toml",
+        "libc/src/lib.rs",
+        "libc/src/c_abi.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/posix_spawnattr_init.rs",
+        "include/features.h",
+        "include/sys/types.h",
+        "include/bits/alltypes.h",
+        "include/spawn.h",
+        "include/errno.h",
+        "compat/x86_64/posix_spawnattr_init_header_abi_probe.c",
+        "compat/x86_64/posix_spawnattr_init_header_abi_probe.cpp",
+        "compat/x86_64/run_posix_spawnattr_init_header_abi.sh",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/libc_posix_spawnattr_init_probe.c",
+        "compat/x86_64/libc_posix_spawnattr_init_start.S",
+        "compat/x86_64/run_libc_posix_spawnattr_init.sh",
+        "compat/x86_64/aarch64_parity_inventory.py",
+        "compat/x86_64/aarch64_parity_inventory.json",
+        "compat/x86_64/tests/test_aarch64_parity_inventory.py",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/README.md",
+        "STATUS.md",
+        "x86-64.md",
+        "scripts/dev-x86_64.sh",
+        "scripts/check_structure.py",
+    ):
+        require(
+            owner in owners,
+            f"static-c-posix-spawnattr-init source owners omit {owner}",
+        )
+
+    prerequisites = nonempty_strings(
+        artifact.get("x86_abi_prerequisites"),
+        "static-c-posix-spawnattr-init.x86_abi_prerequisites",
+    )
+    require(
+        any(
+            "System V AMD64" in item
+            and "int posix_spawnattr_init(posix_spawnattr_t *)" in item
+            and "rdi" in item
+            and "eax" in item
+            and "336-byte" in item
+            and "offsets 0, 4, 8, 136, 264, 268, 272, and 280" in item
+            and "concurrent access" in item
+            for item in prerequisites
+        ),
+        "static-c-posix-spawnattr-init must retain its caller-record ABI",
+    )
+    require(
+        any(
+            "9fa28ece75d8a2191de7c5bb53bed224c5947417" in item
+            and "src/process/posix_spawnattr_init.c::posix_spawnattr_init" in item
+            and "complete zero initialization plus `return 0`" in item
+            and "posix_spawnattr_init.lo" in item
+            and "generic AArch64 export remains unchanged" in item
+            and "file actions" in item
+            and "child lifecycle" in item
+            and "scheduler" in item
+            for item in prerequisites
+        ),
+        "static-c-posix-spawnattr-init must retain its pinned-musl source mapping",
+    )
+    require(
+        any(
+            "`-nostdlib -static`" in item
+            and "exactly one Rust object exporting only posix_spawnattr_init" in item
+            and "no undefined symbols" in item
+            and "helper call" in item
+            and "PT_TLS" in item
+            and "fixed 42-word direct-store loop" in item
+            and "peer spawn/process export" in item
+            for item in prerequisites
+        ),
+        "static-c-posix-spawnattr-init must retain its closed static boundary",
+    )
+
+    headers = nonempty_strings(
+        artifact.get("x86_header_prerequisites"),
+        "static-c-posix-spawnattr-init.x86_header_prerequisites",
+    )
+    require(
+        any(
+            "unconditional `int posix_spawnattr_init(posix_spawnattr_t *)`" in item
+            and "strict, POSIX, X/Open, and GNU" in item
+            and "exact function-pointer ABI" in item
+            and "336-byte/eight-byte-aligned x86 record layout" in item
+            and "unmangled C++ linkage" in item
+            and '`extern "C"` guards' in item
+            for item in headers
+        ),
+        "static-c-posix-spawnattr-init must retain its unconditional C/C++ header ABI",
+    )
+
+    evidence = artifact.get("native_evidence")
+    require(
+        isinstance(evidence, list),
+        "static-c-posix-spawnattr-init needs evidence",
+    )
+    require(
+        {entry.get("command") for entry in evidence if isinstance(entry, Mapping)}
+        == {"./scripts/dev-x86_64.sh libc-posix-spawnattr-init"},
+        "static-c-posix-spawnattr-init must use the closed libc-posix-spawnattr-init command",
+    )
+    scope = evidence[0].get("scope")
+    require(
+        isinstance(scope, str)
+        and all(
+            phrase in scope
+            for phrase in (
+                "Pinned-musl/project C/C++ header",
+                "true dependency-free x86 crabc-libc `-nostdlib -static` candidate",
+                "direct and function-pointer successful initialization",
+                "byte-filled 336-byte caller-owned posix_spawnattr_t records",
+                "full zeroing",
+                "intact adjacent guards",
+                "stale errno preservation",
+                "posix_spawnattr_init.lo/AArch64 ownership",
+                "no interpreter/DT_NEEDED/unresolved symbol/PT_TLS/errno/dynamic-TLS model/allocator/helper-call/syscall",
+                "fixed direct-store no-call/no-syscall object",
+                "peer spawn and process extraction",
+                "attribute destruction/query/mutation",
+                "fork/vfork/clone",
+                "child lifecycle",
+                "signal or scheduler behavior",
+                "family completion",
+                "promotion",
+                "public x86 support",
+            )
+        ),
+        "static-c-posix-spawnattr-init evidence must retain its bounded static closure",
+    )
+
+    exports = set(
+        static_c_abi_export_names(
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        )
+    )
+    require(
+        "posix_spawnattr_init" in exports,
+        "static C ABI export contract omits posix_spawnattr_init",
+    )
+
+    static_root = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+    ).read_text(encoding="utf-8")
+    require(
+        '#[path = "posix_spawnattr_init.rs"]\nmod posix_spawnattr_init;'
+        in static_root,
+        "x86 static C ABI must compose the posix_spawnattr_init leaf",
+    )
+    source = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "posix_spawnattr_init.rs"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "Selected static Linux/x86-64 POSIX spawn-attribute initialization C ABI",
+        "musl 1.2.6 release commit",
+        "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+        "src/process/posix_spawnattr_init.c::posix_spawnattr_init",
+        "PosixSpawnAttr",
+        "const _: [(); 336]",
+        "const _: [(); 8]",
+        "POSIX_SPAWNATTR_INIT_WORDS",
+        "core::arch::asm!",
+        "mov qword ptr [{attributes} + rcx * 8 - 8], rax",
+        'pub unsafe extern "C" fn posix_spawnattr_init',
+    ):
+        require(
+            snippet in source,
+            f"posix_spawnattr_init implementation omits {snippet}",
+        )
+    for forbidden in (
+        "raw_syscall::",
+        "errno::",
+        "static_tls::",
+        "crabc_core",
+        "crabc_mimalloc",
+        "posix_spawnp",
+        "fork(",
+        "execve",
+    ):
+        require(
+            forbidden not in source,
+            f"posix_spawnattr_init leaf widens into {forbidden}",
+        )
+
+    runner = (
+        ROOT / "compat" / "x86_64" / "run_libc_posix_spawnattr_init.sh"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "run_musl_oracle.sh",
+        "run_posix_spawnattr_init_header_abi.sh",
+        "posix_spawnattr_init.lo",
+        "static_c_abi_exports.txt",
+        "archive_member_for_symbol",
+        "posix_spawnattr_init object export surface drifted",
+        "posix_spawnattr_init object unexpectedly depends on another symbol",
+        "posix_spawnattr_init object unexpectedly performs a call or syscall",
+        "-nostdlib -static",
+        "--no-undefined",
+        "candidate retains a PLT",
+        "for unselected in posix_spawn",
+        "fork vfork clone execve wait4",
+    ):
+        require(
+            snippet in runner,
+            f"posix_spawnattr_init runner omits {snippet}",
+        )
+    require(
+        "--whole-archive" not in runner,
+        "posix_spawnattr_init runner must not force-link the archive",
+    )
+
+    probe = (
+        ROOT / "compat" / "x86_64" / "libc_posix_spawnattr_init_probe.c"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "posix_spawnattr_init_signature",
+        "struct guarded_attributes",
+        "fill_bytes",
+        "attributes_are_zero",
+        "check_guarded_initialization",
+        "CRABC_POSIX_SPAWNATTR_INIT_FREESTANDING",
+        "errno = E2BIG",
+    ):
+        require(snippet in probe, f"posix_spawnattr_init probe omits {snippet}")
+    start = (
+        ROOT / "compat" / "x86_64" / "libc_posix_spawnattr_init_start.S"
+    ).read_text(encoding="utf-8")
+    for snippet in ("crabc_x86_64_posix_spawnattr_init_probe", "mov $60, %eax"):
+        require(snippet in start, f"posix_spawnattr_init start shim omits {snippet}")
+
+    header_c = (
+        ROOT / "compat" / "x86_64" / "posix_spawnattr_init_header_abi_probe.c"
+    ).read_text(encoding="utf-8")
+    header_cxx = (
+        ROOT / "compat" / "x86_64" / "posix_spawnattr_init_header_abi_probe.cpp"
+    ).read_text(encoding="utf-8")
+    header_runner = (
+        ROOT / "compat" / "x86_64" / "run_posix_spawnattr_init_header_abi.sh"
+    ).read_text(encoding="utf-8")
+    for header in (header_c, header_cxx):
+        for snippet in (
+            "posix_spawnattr_init_signature",
+            "posix_spawnattr_init_function",
+            "336",
+            "280",
+        ):
+            require(
+                snippet in header,
+                f"posix_spawnattr_init header evidence omits {snippet}",
+            )
+    for snippet in (
+        "c11-strict",
+        "c11-posix-2008",
+        "c11-xopen-700",
+        "c11-gnu",
+        "cxx17-strict",
+        "cxx17-gnu",
+        "-nostdinc",
+        "-nostdinc++",
+        "retained a mangled posix_spawnattr_init reference",
+        "project trace omitted $root/sys/types.h",
+    ):
+        require(
+            snippet in header_runner,
+            f"posix_spawnattr_init header runner omits {snippet}",
+        )
+
+    dispatcher = (ROOT / "scripts" / "dev-x86_64.sh").read_text(encoding="utf-8")
+    for snippet in (
+        "posix-spawnattr-init-header-abi)",
+        "run_posix_spawnattr_init_header_abi()",
+        "run_posix_spawnattr_init_header_abi",
+        "libc-posix-spawnattr-init)",
+        "run_libc_posix_spawnattr_init()",
+        "run_libc_posix_spawnattr_init",
+    ):
+        require(
+            snippet in dispatcher,
+            f"posix_spawnattr_init dispatcher omits {snippet}",
+        )
+
+
 def require_ldso_initial_graph_artifact(family: Mapping[str, Any]) -> None:
     """Ratchet the one private ET_DYN graph without promoting the loader family."""
     artifacts = require_verified_artifacts(
@@ -41487,6 +41844,7 @@ def validate_ledger(
     require_mempcpy_artifact(by_id["libc.posix-runtime"])
     require_strsep_artifact(by_id["libc.posix-runtime"])
     require_strtok_artifact(by_id["libc.posix-runtime"])
+    require_posix_spawnattr_init_artifact(by_id["libc.posix-runtime"])
     require_random_entropy_artifact(by_id["libc.posix-runtime"])
     require_memory_search_artifact(by_id["libc.posix-runtime"])
     require_string_copy_artifact(by_id["libc.posix-runtime"])

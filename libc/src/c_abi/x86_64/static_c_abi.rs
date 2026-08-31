@@ -375,6 +375,8 @@ mod child_reaping;
 mod immediate_termination;
 #[path = "posix_exit.rs"]
 mod posix_exit;
+#[path = "posix_spawnattr_init.rs"]
+mod posix_spawnattr_init;
 #[path = "static_startup.rs"]
 mod static_startup;
 #[path = "process_globals.rs"]

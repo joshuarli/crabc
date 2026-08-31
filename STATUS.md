@@ -246,6 +246,23 @@ string/tokenization or thread-safe text behavior, `memory.bytes-basic`, family
 completion, promotion, or public x86 support; the generic AArch64 export is
 unchanged.
 
+`./scripts/dev-x86_64.sh libc-posix-spawnattr-init` is a separate private
+`static-c-posix-spawnattr-init` artifact inside still-planned
+`libc.posix-runtime`, not a process-spawn or process-control capability. Its
+pinned-musl/project C/C++ `<spawn.h>` gate proves the unconditional
+`int posix_spawnattr_init(posix_spawnattr_t *)` ABI, unmangled C++ linkage,
+and the x86 336-byte/eight-byte-aligned record layout. The shared fixture first
+executes musl 1.2.6 `src/process/posix_spawnattr_init.c`, then a true
+`-nostdlib -static` candidate extracted from exactly one Rust object. It proves
+that direct and function-pointer calls fully zero byte-filled caller-owned
+records, preserve adjacent guards, and leave stale `errno` unchanged on the
+ordinary musl route. The candidate is a fixed 42-word direct-store loop with
+no undefined helper, call, syscall, errno/TLS, allocator, dynamic runtime,
+CRT, loader, or sysroot path. It does not select `posix_spawn`/`posix_spawnp`,
+other attribute APIs, file actions, fork/vfork/clone, exec, child lifecycle,
+signals, scheduler policy, family completion, promotion, or public x86
+support; the generic AArch64 export remains unchanged.
+
 `./scripts/dev-x86_64.sh libc-bsearch` is a separate private `static-c-bsearch`
 artifact inside still-planned `libc.c-abi-compat`. Its pinned-musl/project
 C/C++ `<stdlib.h>` matrix proves the unconditional five-argument declaration

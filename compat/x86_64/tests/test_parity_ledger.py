@@ -13354,6 +13354,102 @@ class X86ParityLedgerTests(unittest.TestCase):
         ):
             ledger.validate_ledger(data)
 
+    def test_posix_spawnattr_init_artifact_stays_private_and_nonpromoting(
+        self,
+    ) -> None:
+        data = self.data()
+        family = self.family(data, "libc.posix-runtime")
+        self.assertEqual(family["status"], "planned")
+        artifacts = family["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict)
+            and entry["id"] == "static-c-posix-spawnattr-init"
+        )
+        self.assertNotIn("capabilities", artifact)
+        for phrase in (
+            "POSIX spawn-attribute initialization leaf",
+            "`src/process/posix_spawnattr_init.c::posix_spawnattr_init`",
+            "`(posix_spawnattr_t){ 0 }`",
+            "all 336 x86 bytes",
+            "preserve adjacent caller guards",
+            "fixed 42-word direct-store loop",
+            "`posix_spawn`",
+            "`posix_spawnp`",
+            "attribute destruction/query/mutation",
+            "fork/vfork/clone",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, artifact["description"])
+
+        owners = artifact["source_owners"]
+        assert isinstance(owners, list)
+        for owner in (
+            "compat/abi/musl-1.2.6/aarch64/libc.a.static.tsv",
+            "libc/src/c_abi.rs",
+            "libc/src/c_abi/x86_64/posix_spawnattr_init.rs",
+            "include/spawn.h",
+            "include/errno.h",
+            "compat/x86_64/posix_spawnattr_init_header_abi_probe.c",
+            "compat/x86_64/posix_spawnattr_init_header_abi_probe.cpp",
+            "compat/x86_64/run_posix_spawnattr_init_header_abi.sh",
+            "compat/x86_64/libc_posix_spawnattr_init_probe.c",
+            "compat/x86_64/libc_posix_spawnattr_init_start.S",
+            "compat/x86_64/run_libc_posix_spawnattr_init.sh",
+            "compat/x86_64/static_c_abi_exports.txt",
+        ):
+            self.assertIn(owner, owners)
+
+        prerequisites = artifact["x86_abi_prerequisites"]
+        assert isinstance(prerequisites, list)
+        self.assertTrue(
+            any(
+                "System V AMD64" in item
+                and "int posix_spawnattr_init(posix_spawnattr_t *)" in item
+                and "336-byte" in item
+                and "rdi" in item
+                and "eax" in item
+                for item in prerequisites
+            )
+        )
+        self.assertTrue(
+            any(
+                "src/process/posix_spawnattr_init.c::posix_spawnattr_init" in item
+                and "complete zero initialization plus `return 0`" in item
+                and "posix_spawnattr_init.lo" in item
+                and "generic AArch64 export remains unchanged" in item
+                for item in prerequisites
+            )
+        )
+
+        evidence = artifact["native_evidence"]
+        assert isinstance(evidence, list) and isinstance(evidence[0], dict)
+        self.assertEqual(
+            evidence[0]["command"],
+            "./scripts/dev-x86_64.sh libc-posix-spawnattr-init",
+        )
+        for phrase in (
+            "direct and function-pointer successful initialization",
+            "byte-filled 336-byte caller-owned posix_spawnattr_t records",
+            "full zeroing",
+            "intact adjacent guards",
+            "posix_spawnattr_init.lo/AArch64 ownership",
+            "fixed direct-store no-call/no-syscall object",
+            "peer spawn and process extraction",
+        ):
+            self.assertIn(phrase, evidence[0]["scope"])
+
+        prerequisites[1] = prerequisites[1].replace(
+            "complete zero initialization plus `return 0`", "launch a child"
+        )
+        with self.assertRaisesRegex(
+            ledger.LedgerError,
+            "static-c-posix-spawnattr-init must retain its pinned-musl source mapping",
+        ):
+            ledger.validate_ledger(data)
+
     def test_integer_parse_artifact_keeps_its_closed_mapping_contract(self) -> None:
         data = self.data()
         artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]

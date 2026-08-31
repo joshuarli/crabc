@@ -171,6 +171,7 @@ X86_RUNTIME_FOUNDATION_LIBC_SOURCES = {
     Path("libc/src/c_abi/x86_64/ioctl.rs"),
     Path("libc/src/c_abi/x86_64/immediate_termination.rs"),
     Path("libc/src/c_abi/x86_64/posix_exit.rs"),
+    Path("libc/src/c_abi/x86_64/posix_spawnattr_init.rs"),
     Path("libc/src/c_abi/x86_64/bsearch.rs"),
     Path("libc/src/c_abi/x86_64/linear_search.rs"),
     Path("libc/src/c_abi/x86_64/qsort.rs"),
@@ -3788,6 +3789,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         '#[path = "child_reaping.rs"]',
         '#[path = "immediate_termination.rs"]',
         '#[path = "posix_exit.rs"]',
+        '#[path = "posix_spawnattr_init.rs"]',
         '#[path = "bsearch.rs"]',
         '#[path = "linear_search.rs"]',
         '#[path = "qsort.rs"]',
@@ -7498,6 +7500,85 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
                 "libc/src/c_abi/x86_64/posix_exit.rs: selected static POSIX "
                 f"_exit boundary must not select {forbidden!r}"
             )
+
+    posix_spawnattr_init_source = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "posix_spawnattr_init.rs"
+    )
+    posix_spawnattr_init_text = posix_spawnattr_init_source.read_text(errors="replace")
+    for required in (
+        "Selected static Linux/x86-64 POSIX spawn-attribute initialization C ABI",
+        "musl 1.2.6 release commit",
+        "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+        "src/process/posix_spawnattr_init.c::posix_spawnattr_init",
+        "PosixSpawnAttr",
+        "const _: [(); 336]",
+        "const _: [(); 8]",
+        "POSIX_SPAWNATTR_INIT_WORDS",
+        "core::arch::asm!",
+        "mov qword ptr [{attributes} + rcx * 8 - 8], rax",
+        "pub unsafe extern \"C\" fn posix_spawnattr_init",
+    ):
+        if required not in posix_spawnattr_init_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/posix_spawnattr_init.rs: selected static "
+                f"boundary is missing {required!r}"
+            )
+    posix_spawnattr_init_exports = set(
+        re.findall(
+            r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(',
+            posix_spawnattr_init_text,
+        )
+    )
+    if posix_spawnattr_init_exports != {"posix_spawnattr_init"}:
+        errors.append(
+            "libc/src/c_abi/x86_64/posix_spawnattr_init.rs: selected static "
+            "artifact must export only posix_spawnattr_init"
+        )
+    for forbidden in (
+        "raw_syscall::",
+        "errno::",
+        "static_tls::",
+        "crabc_core",
+        "crabc_mimalloc",
+        "posix_spawnp",
+        "fork(",
+        "execve",
+    ):
+        if forbidden in posix_spawnattr_init_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/posix_spawnattr_init.rs: selected static "
+                f"leaf must not select {forbidden!r}"
+            )
+    posix_spawnattr_init_runner = (
+        ROOT / "compat" / "x86_64" / "run_libc_posix_spawnattr_init.sh"
+    )
+    posix_spawnattr_init_runner_text = posix_spawnattr_init_runner.read_text(
+        errors="replace"
+    )
+    for required in (
+        "run_musl_oracle.sh",
+        "run_posix_spawnattr_init_header_abi.sh",
+        "posix_spawnattr_init.lo",
+        "archive_member_for_symbol",
+        "posix_spawnattr_init object export surface drifted",
+        "posix_spawnattr_init object unexpectedly depends on another symbol",
+        "posix_spawnattr_init object unexpectedly performs a call or syscall",
+        "-nostdlib -static",
+        "--no-undefined",
+        "candidate retains a PLT",
+        "fork vfork clone execve wait4",
+    ):
+        if required not in posix_spawnattr_init_runner_text:
+            errors.append(
+                "compat/x86_64/run_libc_posix_spawnattr_init.sh: selected static "
+                f"evidence is missing {required!r}"
+            )
+    if "--whole-archive" in posix_spawnattr_init_runner_text:
+        errors.append(
+            "compat/x86_64/run_libc_posix_spawnattr_init.sh: selected static "
+            "evidence must not force-link the archive"
+        )
+
     bsearch_source = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "bsearch.rs"
     bsearch_text = bsearch_source.read_text(errors="replace")
     for required in (
@@ -10646,6 +10727,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         child_reaping_text,
         immediate_termination_text,
         posix_exit_text,
+        posix_spawnattr_init_text,
         bsearch_text,
         linear_search_text,
         qsort_text,
@@ -11144,6 +11226,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         "__funcs_on_exit",
         "__cxa_finalize",
         "_exit",
+        "posix_spawnattr_init",
         "exit",
         "__libc_start_main",
         "__optpos",
@@ -11198,7 +11281,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
             "libc/src/c_abi/x86_64: selected static archive must export only its "
             "stat, credential, errno, bootstrap-memory/fenv/continuation, simple "
             "signal-control, separate realtime-minimum/realtime-maximum bridges, one pure GNU signal-set predicate, paired GNU binary set-operation leaf, and a three-symbol POSIX signal-set mutation leaf, bounded process-signal execution, and one legacy single-signal pause wait, bounded pthread create/exit/join/detach initial-TLS worker, its private selected-main/worker pthread-key/C11-TSS lifecycle, private process-normal pthread mutexes and their musl private condition-variable handoff, the complete selected rwlock/attribute family with private-or-shared futex operation, plus the distinct C11 plain-sync adapter and normal-return pthread/C11 once state machine, its typed C11 create/exit/join/detach sibling, and pthread/C11 identity aliases, named termios-control, direct terminal-descriptor and foreground-group observations plus one named foreground-group assignment, historical ctermid pathname spelling, constant historical gethostid compatibility, selected process-context, child-reaping, C11 immediate termination, callback algorithms, direct clock_gettime, binary64 difftime, caller-buffered fixed-UTC gmtime_r, fixed-UTC timegm, caller-owned mapping-core, no-cancellation mapping synchronization, direct anonymous-memory descriptor creation, nanosleep, and clock_nanosleep, selected "
-            "POSIX _exit forwarding, descriptor-entry, selected filesystem-access, bounded descriptor-control, timestamp updates, and descriptor-I/O, selected process-resources, selected readiness/signal-waits, "
+            "POSIX _exit forwarding, one caller-record POSIX spawn-attribute initialization leaf, descriptor-entry, selected filesystem-access, bounded descriptor-control, timestamp updates, and descriptor-I/O, selected process-resources, selected readiness/signal-waits, "
             "selected socket transport and selected socket-message/options, selected system-observation, selected UTS-identity, "
             "selected numeric-address codecs, immutable IPv6 unspecified/loopback address data objects, and legacy classful IPv4 arithmetic, fixed-profile h_errno message text, byte-string, legacy-memory adapters, source-backed memccpy/mempcpy, caller-buffer strsep and shared-cursor strtok, random-entropy, memory-search, C-string-copy, immutable error-string, "
             "fixed-C-locale ctype, integer-arithmetic, integer-parsing, intmax-arithmetic, one-symbol process-personality, one-symbol filesystem-credential setfsgid and setfsuid, credential-observation, and "
@@ -11264,6 +11347,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         ("child_reaping.rs", child_reaping_text),
         ("immediate_termination.rs", immediate_termination_text),
         ("posix_exit.rs", posix_exit_text),
+        ("posix_spawnattr_init.rs", posix_spawnattr_init_text),
         ("bsearch.rs", bsearch_text),
         ("linear_search.rs", linear_search_text),
         ("qsort.rs", qsort_text),
