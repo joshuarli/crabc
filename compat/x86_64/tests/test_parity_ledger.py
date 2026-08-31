@@ -49,7 +49,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["status_counts"], {"foundation-verified": 8, "planned": 18})
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
-        self.assertEqual(report["verified_slice_count"], 30)
+        self.assertEqual(report["verified_slice_count"], 31)
         self.assertEqual(report["verified_artifact_count"], 114)
         self.assertEqual(report["header_layout_probe_count"], 45)
         self.assertEqual(report["public_header_inventory_count"], 183)
@@ -2950,6 +2950,77 @@ class X86ParityLedgerTests(unittest.TestCase):
             ledger.LedgerError, "closed libc-math-x87-extended command"
         ):
             ledger.validate_ledger(data)
+
+    def test_math_special_is_one_complete_private_capability_slice(self) -> None:
+        data = self.data()
+        text_math = self.family(data, "libc.text-math-locale-stdio")
+        self.assertEqual(text_math["status"], "planned")
+        slices = text_math["verified_slice"]
+        assert isinstance(slices, list)
+        artifact = next(
+            entry
+            for entry in slices
+            if isinstance(entry, dict) and entry["id"] == "static-c-math-special"
+        )
+        self.assertEqual(artifact["capabilities"], ["math.special"])
+        self.assertEqual(
+            {evidence["command"] for evidence in artifact["native_evidence"]},
+            {"./scripts/dev-x86_64.sh libc-math-special"},
+        )
+        for owner in (
+            "libc/src/c_abi/x86_64/math_special.rs",
+            "libc/src/c_abi/x86_64/math_special_musl_x86_64.S",
+            "compat/x86_64/generate_libc_math_special.py",
+            "compat/x86_64/math_special_header_abi_probe.cpp",
+            "compat/x86_64/run_math_special_header_abi.sh",
+            "compat/x86_64/libc_math_special_probe.c",
+            "compat/x86_64/libc_math_special_start.S",
+            "compat/x86_64/run_libc_math_special.sh",
+        ):
+            self.assertIn(owner, artifact["source_owners"])
+        for phrase in (
+            "Complete private native x86 `math.special` capability",
+            "80 new pinned-musl entries",
+            "same-address `__signgam`/weak `signgam` state",
+            "without narrowing through binary64",
+            "does not select numeric parsing",
+            "family completion",
+            "promotion",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, artifact["description"])
+
+        changed = self.data()
+        changed_slices = self.family(changed, "libc.text-math-locale-stdio")[
+            "verified_slice"
+        ]
+        assert isinstance(changed_slices, list)
+        changed_artifact = next(
+            entry
+            for entry in changed_slices
+            if isinstance(entry, dict) and entry["id"] == "static-c-math-special"
+        )
+        changed_artifact["description"] = changed_artifact["description"].replace(
+            "without narrowing through binary64", "through ordinary arithmetic"
+        )
+        with self.assertRaisesRegex(ledger.LedgerError, "narrowing through binary64"):
+            ledger.validate_ledger(changed)
+
+        changed = self.data()
+        changed_slices = self.family(changed, "libc.text-math-locale-stdio")[
+            "verified_slice"
+        ]
+        assert isinstance(changed_slices, list)
+        changed_artifact = next(
+            entry
+            for entry in changed_slices
+            if isinstance(entry, dict) and entry["id"] == "static-c-math-special"
+        )
+        changed_artifact["native_evidence"][0]["command"] = (
+            "./scripts/dev-x86_64.sh libc-math-complex"
+        )
+        with self.assertRaisesRegex(ledger.LedgerError, "closed libc-math-special command"):
+            ledger.validate_ledger(changed)
 
     def test_named_locale_multibyte_remains_a_closed_non_capability_artifact(
         self,

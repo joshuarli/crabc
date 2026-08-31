@@ -91,11 +91,25 @@ one target-private assembly leaf without binary64 promotion. The native
 function-pointer differential compares 1,260 exact result/exception/quotient
 records across all four rounding modes and rejects ambient libm, TLS, dynamic
 linkage, and unowned runtime dependencies. It neither completes
-`math.elementary-long-double` nor selects `math.special`; the family, x86-64
-promotion, full parity, and public support all remain planned. Its `rintl` and
+`math.elementary-long-double` nor independently selects the special-function
+surface. Its `rintl` and
 `sqrtl` entries are composed from the separately selected fenv-rounding and
 elementary-square-root leaves, so the extended-math source owns the other 20
 entries without duplicating archive symbols.
+
+The separate `static-c-math-special` verified slice completes the exact
+90-symbol `math.special` capability privately. Ten classifier/sign/binary80
+conversion/remainder entries reuse those prior x87 leaves; 80 generated
+source-faithful entries map pinned musl 1.2.6's error, Bessel, gamma,
+decomposition, stepping, scaling, NaN, and rounding-conversion sources. All
+supporting elementary providers are localized, and every long-double boundary
+retains SysV binary80 rather than narrowing through binary64. The
+project-header gate proves every C++ function-pointer spelling in SSE and x87
+modes, while the native differential compares 5,544 exact 32-byte records over
+all four rounding modes and same-address `__signgam`/`signgam` state. It does
+not select numeric parsing, either remaining elementary capability, complex
+math, or a general libc/libm. The enclosing family, x86-64 promotion, full
+parity, and public support all remain planned.
 
 The x86 lane now has sixteen private static artifacts inside still-planned
 `libc.pthread-tls`. `./scripts/dev-x86_64.sh libc-static-tls-v1` passes a

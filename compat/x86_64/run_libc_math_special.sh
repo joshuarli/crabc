@@ -1,18 +1,27 @@
 #!/usr/bin/env bash
-# Pinned-musl differential for the selected static x87 long-double math block.
+# Pinned-musl differential for the complete x86 math.special capability.
 set -euo pipefail
 
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
 readonly STATIC_C_ABI_EXPORTS="$ROOT_DIR/compat/x86_64/static_c_abi_exports.txt"
-readonly EXPECTED_RECORDS=1260
+readonly RECORD_SIZE=32
+readonly EXPECTED_RECORDS=5544
 readonly SELECTED_SYMBOLS=(
-	acosl asinl atanl atan2l ceill exp2l expl expm1l fabsl floorl fmodl
-	log10l log1pl log2l logl lrintl llrintl rintl remainderl remquol sqrtl
-	truncl
+	__fpclassify __fpclassifyf __fpclassifyl __lgammal_r __signbit __signbitf
+	__signbitl drem dremf erf erfc erfcf erfcl erff erfl finite finitef frexp
+	frexpf frexpl ilogb ilogbf ilogbl j0 j0f j1 j1f jn jnf ldexp ldexpf
+	ldexpl lgamma lgamma_r lgammaf lgammaf_r lgammal lgammal_r llrint llrintf
+	llrintl llround llroundf llroundl logb logbf logbl lrint lrintf lrintl
+	lround lroundf lroundl modf modff modfl nan nanf nanl nextafter nextafterf
+	nextafterl nexttoward nexttowardf nexttowardl remainder remainderf
+	remainderl remquo remquof remquol scalb scalbf scalbln scalblnf scalblnl
+	scalbn scalbnf scalbnl significand significandf tgamma tgammaf tgammal y0
+	y0f y1 y1f yn ynf
 )
+readonly SELECTED_SIBLING_SYMBOLS=(rint rintf sqrt sqrtf)
 
-fail() { printf 'ERROR: x86 static libc x87 extended math: %s\n' "$*" >&2; exit 1; }
+fail() { printf 'ERROR: x86 static libc math.special: %s\n' "$*" >&2; exit 1; }
 require_tool() { command -v "$1" >/dev/null 2>&1 || fail "requires $1"; }
 
 assert_selected_c_abi_surface() {
@@ -34,12 +43,14 @@ assert_selected_c_abi_surface() {
 
 [ "$(uname -s)" = Linux ] || fail "requires native Linux"
 case "$(uname -m)" in x86_64|amd64) ;; *) fail "requires native x86-64" ;; esac
-for tool in ar awk cargo cmp diff grep nm objdump readelf rustup sort wc; do require_tool "$tool"; done
+for tool in ar awk cargo cmp diff grep nm objdump readelf rustup sort wc; do
+	require_tool "$tool"
+done
 [ -x "$ORACLE_CC" ] || fail "missing pinned musl oracle compiler"
 bash "$ROOT_DIR/compat/x86_64/run_musl_oracle.sh" >/dev/null
-bash "$ROOT_DIR/compat/x86_64/run_math_complex_header_abi.sh" >/dev/null
+bash "$ROOT_DIR/compat/x86_64/run_math_special_header_abi.sh" >/dev/null
 
-work_dir="$(mktemp -d /tmp/crabc-x86-64-libc-math-x87-extended.XXXXXX)"
+work_dir="$(mktemp -d /tmp/crabc-x86-64-libc-math-special.XXXXXX)"
 trap 'rm -rf -- "$work_dir"' EXIT
 target_dir="$work_dir/cargo-target"
 archive="$target_dir/x86_64-unknown-linux-musl/debug/libc.a"
@@ -49,6 +60,7 @@ reference_output="$work_dir/reference.records"
 candidate_output="$work_dir/candidate.records"
 trace="$work_dir/header-trace"
 archive_symbols="$work_dir/archive-symbols"
+archive_globals="$work_dir/archive-globals"
 selected_symbols="$work_dir/selected-c-abi-symbols"
 expected_symbols="$work_dir/expected-c-abi-symbols"
 symbols="$work_dir/candidate-symbols"
@@ -59,15 +71,21 @@ disassembly="$work_dir/candidate-disassembly"
 
 cd "$ROOT_DIR"
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -I"$ROOT_DIR/include" -E -H \
-	compat/x86_64/libc_math_x87_extended_probe.c >/dev/null 2>"$trace"
+	compat/x86_64/libc_math_special_probe.c >/dev/null 2>"$trace"
 for header in fenv.h float.h math.h stddef.h stdint.h features.h bits/alltypes.h; do
-	grep -Fq "$ROOT_DIR/include/$header" "$trace" || fail "fixture did not use project $header"
+	grep -Fq "$ROOT_DIR/include/$header" "$trace" ||
+		fail "fixture did not use project $header"
 done
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -I"$ROOT_DIR/include" -fno-builtin \
-	-fno-stack-protector compat/x86_64/libc_math_x87_extended_probe.c \
+	-fno-stack-protector compat/x86_64/libc_math_special_probe.c \
 	-lm -o "$reference"
-"$reference" >"$reference_output" || fail "pinned-musl x87 extended fixture failed"
-[ "$(wc -c < "$reference_output")" -eq "$((EXPECTED_RECORDS * 26))" ] ||
+"$reference" >"$reference_output" || fail "pinned-musl math.special fixture failed"
+reference_bytes="$(wc -c < "$reference_output")"
+[ "$reference_bytes" -gt 0 ] || fail "pinned-musl fixture emitted no records"
+[ "$((reference_bytes % RECORD_SIZE))" -eq 0 ] ||
+	fail "pinned-musl fixture emitted a partial record"
+record_count="$((reference_bytes / RECORD_SIZE))"
+[ "$record_count" -eq "$EXPECTED_RECORDS" ] ||
 	fail "pinned-musl fixture did not produce ${EXPECTED_RECORDS} complete records"
 
 CARGO_TARGET_DIR="$target_dir" cargo rustc --locked -p crabc-libc --lib \
@@ -75,29 +93,46 @@ CARGO_TARGET_DIR="$target_dir" cargo rustc --locked -p crabc-libc --lib \
 	-C relocation-model=static -C code-model=small -C panic=abort
 [ -f "$archive" ] || fail "cargo did not emit the x86 static libc archive"
 nm -A --defined-only "$archive" >"$archive_symbols"
+nm -A -g --defined-only "$archive" >"$archive_globals"
 assert_selected_c_abi_surface "$archive" "$selected_symbols" "$expected_symbols"
 for symbol in "${SELECTED_SYMBOLS[@]}"; do
-	grep -Eq "[[:space:]][TW][[:space:]]${symbol}$" "$archive_symbols" ||
+	grep -Eq "[[:space:]][TWVDBR][[:space:]]${symbol}$" "$archive_symbols" ||
 		fail "archive does not define ${symbol}"
 done
-for unselected in cosl sinl tanl powl cbrtl hypotl; do
-	if grep -Eq "[[:space:]][TW][[:space:]]${unselected}$" "$archive_symbols"; then
-		fail "archive accidentally exports unselected ${unselected}"
+for symbol in __signgam signgam; do
+	grep -Eq "[[:space:]][VDBR][[:space:]]${symbol}$" "$archive_symbols" ||
+		fail "archive does not define ${symbol}"
+done
+for symbol in "${SELECTED_SIBLING_SYMBOLS[@]}"; do
+	grep -Eq "[[:space:]][TWVDBR][[:space:]]${symbol}$" "$archive_symbols" ||
+		fail "archive does not retain selected sibling ${symbol}"
+done
+for helper in elementary_sin elementary_powl internal_rem_pio2 internal_lgamma_r; do
+	grep -Eq "[[:space:]][trdb][[:space:]]crabc_x86_math_special_${helper}$" \
+		"$archive_symbols" || fail "archive lacks local ${helper} provider"
+	if grep -Eq "[[:space:]][TWVDBR][[:space:]]crabc_x86_math_special_${helper}$" \
+		"$archive_globals"; then
+		fail "archive exposes private ${helper} provider"
+	fi
+done
+for unselected in cos cosf exp expf floor floorf log logf pow powl \
+	round roundf roundl sin sinf sinl; do
+	if grep -Fxq "$unselected" "$selected_symbols"; then
+		fail "archive accidentally exports private elementary provider ${unselected}"
 	fi
 done
 
-"$ORACLE_CC" -std=c11 -D_GNU_SOURCE -DCRABC_MATH_X87_EXTENDED_FREESTANDING \
+"$ORACLE_CC" -std=c11 -D_GNU_SOURCE -DCRABC_MATH_SPECIAL_FREESTANDING \
 	-I"$ROOT_DIR/include" -nostdlib -static -fno-pie -no-pie -ffreestanding \
 	-fno-builtin -fno-stack-protector -Wl,-e,_start -Wl,--no-undefined \
-	-Wl,--gc-sections \
-	compat/x86_64/libc_math_x87_extended_probe.c \
-	compat/x86_64/libc_math_x87_extended_start.S "$archive" -o "$candidate"
+	-Wl,--gc-sections compat/x86_64/libc_math_special_probe.c \
+	compat/x86_64/libc_math_special_start.S "$archive" -o "$candidate"
 readelf --symbols --wide "$candidate" >"$symbols"
 readelf --program-headers --wide "$candidate" >"$headers"
 readelf --dynamic --wide "$candidate" >"$dynamic" || true
 readelf --relocs --wide "$candidate" >"$relocs"
 objdump -d "$candidate" >"$disassembly"
-for symbol in "${SELECTED_SYMBOLS[@]}" feclearexcept fesetround fetestexcept; do
+for symbol in "${SELECTED_SYMBOLS[@]}"; do
 	grep -Eq "[[:space:]]${symbol}$" "$symbols" || fail "candidate lacks ${symbol}"
 done
 if awk '$7 == "UND" && NF >= 8 { print }' "$symbols" | grep -q .; then
@@ -108,22 +143,24 @@ if grep -Eq 'Requesting program interpreter|INTERP|NEEDED' "$headers" "$dynamic"
 fi
 if grep -Eq '[[:space:]]TLS[[:space:]]|TLSGD|TLSLD|TLSDESC|GOTTPOFF|DTPMOD(64)?|DTPOFF(32|64)?|__tls_get_addr' \
 	"$headers" "$relocs" "$symbols" "$disassembly"; then
-	grep -En '[[:space:]]TLS[[:space:]]|TLSGD|TLSLD|TLSDESC|GOTTPOFF|DTPMOD(64)?|DTPOFF(32|64)?|__tls_get_addr' \
-		"$headers" "$relocs" "$symbols" "$disassembly" >&2 || true
 	fail "candidate retains TLS"
 fi
-if grep -Eq 'crabc_core|mimalloc|sha_crypt|libm' "$symbols" "$disassembly"; then
-	fail "candidate selects an unowned math/runtime dependency"
+if grep -Eq 'crabc_core|mimalloc|float_parse|libm' "$symbols" "$disassembly"; then
+	fail "candidate selects an unowned runtime dependency"
 fi
-for instruction in fldt fpatan f2xm1 fyl2x fprem fprem1 frndint fsqrt; do
+for helper in elementary_sin elementary_powl internal_rem_pio2 internal_lgamma_r; do
+	grep -Fq "crabc_x86_math_special_${helper}" "$symbols" ||
+		fail "candidate lacks local ${helper} provider"
+done
+for instruction in fldt fstpt fistpll mulsd mulss; do
 	grep -Eq "[[:space:]]${instruction}([[:space:]]|$)" "$disassembly" ||
-		fail "candidate lacks selected x87 ${instruction} path"
+		fail "candidate lacks selected ${instruction} path"
 done
 
-"$candidate" >"$candidate_output" || fail "freestanding x87 extended fixture failed"
+"$candidate" >"$candidate_output" || fail "freestanding math.special fixture failed"
 if ! cmp -s "$reference_output" "$candidate_output"; then
-	cmp -l "$reference_output" "$candidate_output" | sed -n '1,80p' >&2 || true
-	fail "candidate binary80/fenv record stream differs from pinned musl"
+	cmp -l "$reference_output" "$candidate_output" | sed -n '1,120p' >&2 || true
+	fail "candidate math.special record stream differs from pinned musl"
 fi
-printf 'x86 static libc x87 extended math: PASS (%s records)\n' \
-	"$EXPECTED_RECORDS"
+
+printf 'x86 static libc math.special: PASS (%s records)\n' "$record_count"

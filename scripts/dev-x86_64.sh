@@ -20,8 +20,9 @@
 # entropy, memory search, C-string copy, fixed-C-locale
 # ctype, named C/POSIX/C.UTF-8 locale/multibyte conversion, integer arithmetic, integer parsing, source-faithful C-locale binary32/binary64/x87 floating parsing, intmax arithmetic, credential
 # observation, find-first-set, the x87 long-double/complex projection
-# foundation, exact square root and selected fenv-sensitive rounding, and a
-# selected binary80 elementary/remainder/conversion block);
+# foundation, exact square root and selected fenv-sensitive rounding, a
+# selected binary80 elementary/remainder/conversion block, and the complete
+# private math.special capability);
 # it does not select a general libc, ldso artifact, CRT, sysroot, or allocator
 # build.
 set -euo pipefail
@@ -57,6 +58,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   xattr-header-abi  verify selected direct sys/xattr.h C/C++ ABI profiles and C linkage
   header-abi-project  compile the staged crabc x86 fenv/float header slice
   math-complex-header-abi  verify x86 math/complex/tgmath C/C++ header semantics
+  math-special-header-abi  verify complete x86 math.special C++ ABI/linkage
   sys-reg-header-abi  compile the staged crabc x86 ptrace-register header slice
   machine-context-header-abi  verify staged x86 machine/context C/C++ header ABI profiles
   types-header-abi  compile the staged crabc x86 C/C++ type-layout header slice
@@ -301,6 +303,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-elementary-sqrt-fenv  run the static x86 sqrt/sqrtf/sqrtl fenv-sensitive slice
   libc-fenv-rounding  run the static x86 rint/nearbyint fenv-sensitive slice
   libc-math-x87-extended  run the static x86 x87 long-double math/remainder block
+  libc-math-special  run the complete static x86 math.special capability
   libc-memory  run the source-only x86 C memcpy/memmove/memset probe
   libc-setjmp  run the source-only x86 C setjmp/signal-mask ABI probe
   libc-atomic  run the source-only x86 atomic-helper probe
@@ -691,6 +694,9 @@ type declarations and does not link an x86 libc artifact.
 consumers in SSE and x87 modes, then checks C++ references retain unmangled C
 linkage. It proves only the named math/complex/tgmath header semantics; both
 C consumers intentionally link pinned musl's math runtime, not crabc-libc.
+`math-special-header-abi` compile-checks every `math.special` function-pointer
+type and unmangled C++ reference in SSE and x87 modes. It records declarations
+and ABI spelling only; the separate static differential owns runtime behavior.
 `sys-reg-header-abi` compiles only the staged ptrace register-index header.
 `machine-context-header-abi` compares only selected x86 aux-vector, ptrace,
 user-register, procfs, and ucontext declaration/layout profiles against pinned
@@ -1656,6 +1662,10 @@ run_header_abi_project() {
 
 run_math_complex_header_abi() {
     run_in_container bash /workspace/compat/x86_64/run_math_complex_header_abi.sh
+}
+
+run_math_special_header_abi() {
+    run_in_container bash /workspace/compat/x86_64/run_math_special_header_abi.sh
 }
 
 run_sys_reg_header_abi() {
@@ -2867,6 +2877,10 @@ run_libc_math_x87_extended_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_math_x87_extended.sh
 }
 
+run_libc_math_special_probe() {
+    run_in_container bash /workspace/compat/x86_64/run_libc_math_special.sh
+}
+
 run_libc_memory_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_memory.sh
 }
@@ -2938,6 +2952,7 @@ shift
 
 case "$command" in
     image|musl-oracle|header-abi-reference|public-header-surface|header-abi-project|math-complex-header-abi|sys-reg-header-abi|types-header-abi|stat-header-abi|utime-header-abi|pthread-c11-header-abi|pthread-cancellation-header-abi|stdlib-header-abi|stdio-standard-header-abi|time-header-abi|poll-header-abi|select-header-abi|fcntl-header-abi|descriptor-advice-header-abi|filesystem-capacity-header-abi|flock-header-abi|sendfile-header-abi|ioctl-header-abi|unistd-header-abi|system-header-abi|syscall-header-abi|signal-header-abi|termios-header-abi|mman-header-abi|resource-header-abi|socket-header-abi|socket-messages-header-abi|random-entropy-header-abi|mm-abi-reference|mapping-reference|memory-vm-reference|pty-basic-reference|terminal-reference|mlock-reference|msync-reference|mincore-reference|fs-advice-reference|memfd-reference|ftruncate-reference|statfs-reference|timestamp-reference|path-lifecycle-reference|namespace-reference|path-core-reference|xattr-reference|directory-reference|temporary-object-reference|statx-reference|cwd-canonicalize-reference|root-change-reference|mount-reference|thread-kill-reference|ipc-reference|shm-reference|inotify-reference|socket-transport-reference|interface-device-reference|resolver-transport-reference|resolver-facade-reference|netdb-reference|users-databases-reference|posix-fallocate-reference|fallocate-reference|file-position-reference|sync-reference|syncfs-reference|sync-file-range-reference|rand-reference|time-abi-reference|time-observation-reference|calendar-time-reference|advanced-time-reference|relative-sleep-reference|clock-nanosleep-reference|getitimer-reference|setitimer-reference|timerfd-reference|pselect-reference|poll-reference|ppoll-reference|epoll-reference|process-identity-reference|child-ownership-reference|getgroups-reference|process-session-reference|pidfd-open-reference|fcntl-getlk-reference|fcntl-status-reference|flock-reference|sendfile-reference|copy-file-range-reference|scheduler-priority-bounds-reference|rr-interval-reference|sched-affinity-reference|sched-affinity-set-reference|priority-reference|setpriority-reference|rlimit-reference|rlimit-targeted-reference|setrlimit-reference|umask-reference|rusage-reference|times-reference|fstat-reference|statat-reference|getcwd-reference|readlinkat-reference|access-reference|system-reference|thread-reference|thread-credentials-reference|fs-credentials-reference|core|facade|facade-record-owning|libc-syscall|libc-errno-tls|libc-stat-compat|libc-credentials|libc-bootstrap-primitives|libc-signal-control|libc-signal-execution|libc-static-tls-v1|libc-crt-static-tls|libc-pthread-create-join-tls|libc-c11-lifecycle|libc-c11-plain-sync|libc-pthread-c11-once|libc-pthread-c11-tsd|libc-pthread-tls-aggregate|libc-pthread-cancel-deferred|libc-pthread-atfork|libc-thrd-sleep|libc-pthread-mutex-normal|libc-pthread-rwlock|libc-pthread-cond-private|libc-termios-control|libc-process-context|libc-environment|libc-descriptor-io|libc-descriptor-lifecycle|libc-timestamp-updates|libc-process-resources|libc-socket-transport|libc-socket-messages|libc-thread-pointer|libc-foundation|libc-fenv|libc-math-complex|libc-elementary-sqrt-fenv|libc-math-x87-extended|libc-memory|libc-setjmp|libc-atomic|libc-clone-raw|libc-signal-altstack|libc-signal-foundation|ldso-relocation|ldso-image|ldso-initial-graph|ldso-initial-tls|ldso-initial-exec-tls|ldso-owned-crt-handoff|ldso-fixed-graph-introspection|ldso-dynamic-admission) ;;
+    math-special-header-abi|libc-math-special) ;;
     inet-address-header-abi) ;;
     ldso-target-root) ;;
     libc-fenv-rounding) ;;
@@ -3091,6 +3106,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "math-complex-header-abi takes no arguments"
         ensure_image
         run_math_complex_header_abi
+        ;;
+    math-special-header-abi)
+        [ "$#" -eq 0 ] || fail "math-special-header-abi takes no arguments"
+        ensure_image
+        run_math_special_header_abi
         ;;
     sys-reg-header-abi)
         [ "$#" -eq 0 ] || fail "sys-reg-header-abi takes no arguments"
@@ -4335,6 +4355,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "libc-math-x87-extended takes no arguments"
         ensure_image
         run_libc_math_x87_extended_probe
+        ;;
+    libc-math-special)
+        [ "$#" -eq 0 ] || fail "libc-math-special takes no arguments"
+        ensure_image
+        run_libc_math_special_probe
         ;;
     libc-memory)
         [ "$#" -eq 0 ] || fail "libc-memory takes no arguments"

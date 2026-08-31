@@ -5,9 +5,11 @@
 //! bulk-memory, floating-environment, continuation, binary32/binary64/x87
 //! classification/sign, complex accessor/conjugation/projection, hardware
 //! square root, selected fenv-sensitive rounding, and one selected x87 binary80
-//! extended-math block as real C bootstrap leaves, plus deliberately narrow
-//! simple signal action/mask, bounded process-signal execution, and
-//! fixed-minimum alternate signal-stack behavior, one default-attribute
+//! extended-math block as real C bootstrap leaves, plus the complete private
+//! `math.special` error/Bessel/gamma/decomposition/stepping/scaling/conversion
+//! block with binary80 preserved end to end, plus deliberately narrow simple
+//! signal action/mask, bounded process-signal execution, and fixed-minimum
+//! alternate signal-stack behavior, one default-attribute
 //! create/explicit-exit/join/detach worker and its typed C11
 //! `thrd_create`/`thrd_exit`/`thrd_join`/`thrd_detach`/`thrd_sleep` sibling, a
 //! process-private normal `pthread_mutex_*` block and its paired private
@@ -162,6 +164,8 @@ mod elementary_sqrt;
 mod fenv_rounding;
 #[path = "math_x87_extended.rs"]
 mod math_x87_extended;
+#[path = "math_special.rs"]
+mod math_special;
 #[path = "setjmp.rs"]
 mod setjmp;
 #[path = "signal_foundation.rs"]

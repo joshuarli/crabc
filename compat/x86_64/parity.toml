@@ -5873,8 +5873,55 @@ x86_header_prerequisites = [
   "The existing project-first/pinned-musl C11/C++ math-complex header gate proves 16-byte align-16 x87 long double storage, every selected long-double function-pointer type, math_errhandling/fenv policy, and unmangled C++ linkage in default SSE and -mfpmath=387 modes. This runtime fixture additionally preprocesses project fenv.h, float.h, math.h, stddef.h, stdint.h, features.h, and bits/alltypes.h before both executions.",
   "The fixture takes every selected function address, preventing compiler builtins or constant folding from substituting for the named C ABI. Header declarations for unselected long-double or special functions remain declaration-only and do not become archive evidence.",
 ]
-native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-math-x87-extended", scope = "Pinned-musl project-header C reference plus one true dependency-free x86 crabc-libc static archive and `-nostdlib -static --gc-sections` candidate. The gate ratchets the complete selected static export surface, requires all 22 named symbols, composes `rintl` and `sqrtl` from their separately selected owners, rejects unselected trigonometric/power/hyperbolic/error/gamma/Bessel exports, and rejects unresolved symbols, interpreter/DT_NEEDED, TLS or dynamic-TLS resolver, ambient libm, allocation, and unowned runtime dependencies. Function-pointer calls compare 1,260 exact records over four rounding directions: defined ten-byte binary80 results, x87/MXCSR exceptions, lrintl/llrintl results, and signed remquol quotient bits. Structural evidence requires fldt, fpatan, f2xm1, fyl2x, fprem, fprem1, frndint, and fsqrt across the composed archive. This is one verified non-capability artifact inside still-planned libc.text-math-locale-stdio, not math.elementary-long-double or math.special completion, family promotion, full x86-64 parity, or public x86 support." }]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-math-x87-extended", scope = "Pinned-musl project-header C reference plus one true dependency-free x86 crabc-libc static archive and `-nostdlib -static --gc-sections` candidate. The gate ratchets the complete selected static export surface, requires all 22 named symbols, composes `rintl` and `sqrtl` from their separately selected owners, rejects still-unselected trigonometric/power/hyperbolic exports, recognizes the separately selected math.special surface without attributing it to this artifact, and rejects unresolved symbols, interpreter/DT_NEEDED, TLS or dynamic-TLS resolver, ambient libm, allocation, and unowned runtime dependencies. Function-pointer calls compare 1,260 exact records over four rounding directions: defined ten-byte binary80 results, x87/MXCSR exceptions, lrintl/llrintl results, and signed remquol quotient bits. Structural evidence requires fldt, fpatan, f2xm1, fyl2x, fprem, fprem1, frndint, and fsqrt across the composed archive. This is one verified non-capability artifact inside still-planned libc.text-math-locale-stdio, not math.elementary-long-double or math.special completion, family promotion, full x86-64 parity, or public x86 support." }]
 oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source mapping and C/POSIX behavior oracle for the selected src/math/x86_64 binary80 inverse-trigonometric, exponential, logarithm, rounding, remainder, conversion, absolute-value, and square-root leaves." }, { kind = "elf-abi", source = "System V AMD64 psABI", role = "x87 binary80 stack-argument/st0-return ABI, rax integer returns, rdi remquol pointer argument, and ten-defined-byte long-double storage contract." }]
+
+[[family.verified_slice]]
+id = "static-c-math-special"
+description = "Complete private native x86 `math.special` capability. The artifact composes the ten already evidenced classifier/sign/binary80-conversion/remainder entries with 80 new pinned-musl entries covering binary32/binary64/binary80 error functions; Bessel and gamma functions; finite/exponent/decomposition/stepping/scaling operations; rounding conversions; NaN construction; historical drem/scalb/significand aliases; and the exact `__lgammal_r` boundary. It also supplies musl's same-address `__signgam`/weak `signgam` state required by non-reentrant lgamma calls without selecting the broader environment-global capability. The checked GCC 15.2.0 source translation preserves musl's x86 code generation and localizes every private sine/cosine/exp/log/pow/sqrt/rounding provider under `crabc_x86_math_special_*`; those helpers are neither public archive exports nor another elementary capability. The shared archive separately retains the already selected public `rint`, `rintf`, `sqrt`, and `sqrtf` sibling symbols without attributing them to this slice. All C long-double inputs, pointer outputs, mixed nexttoward operands, and returns remain SysV x87 binary80 without narrowing through binary64. This selects exactly `math.special` but does not select numeric parsing, `math.elementary-long-double`, `math.elementary-fenv-sensitive`, `math.complex`, a general libc/libm, libc.so, CRT/TLS lifecycle, allocator, loader, sysroot, family completion, promotion, full x86-64 parity, or public x86 support."
+capabilities = ["math.special"]
+source_owners = [
+  "compat/upstreams.toml",
+  "compat/crabc-rs/coverage.toml",
+  "docker/Dockerfile.x86_64",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/math_complex.rs",
+  "libc/src/c_abi/x86_64/math_x87_extended.rs",
+  "libc/src/c_abi/x86_64/math_special.rs",
+  "libc/src/c_abi/x86_64/math_special_musl_x86_64.S",
+  "include/fenv.h",
+  "include/float.h",
+  "include/math.h",
+  "compat/x86_64/generate_libc_math_special.py",
+  "compat/x86_64/math_special_header_abi_probe.cpp",
+  "compat/x86_64/run_math_special_header_abi.sh",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/libc_math_special_probe.c",
+  "compat/x86_64/libc_math_special_start.S",
+  "compat/x86_64/run_libc_math_special.sh",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "compat/x86_64/README.md",
+  "STATUS.md",
+  "x86-64.md",
+  "scripts/check_structure.py",
+  "scripts/dev-x86_64.sh",
+]
+x86_abi_prerequisites = [
+  "The closed capability surface is exactly the ninety symbols recorded by `compat/crabc-rs/coverage.toml` under `math.special`. Six classifiers/sign predicates plus `llrintl`, `lrintl`, `remainderl`, and `remquol` come from the two prior x87 artifacts; this artifact adds the other eighty entries and the required `__signgam`/weak-`signgam` state.",
+  "System V AMD64 passes binary32/binary64 operands and results in SSE registers, returns signed int/long/long-long in eax/rax, passes integer and pointer companions in ordinary INTEGER-class registers, and carries every C long double in a 16-byte align-16 slot with ten defined binary80 bytes and an x87 st0 result. Mixed nexttoward/nexttowardf calls retain the long-double second operand in stack storage.",
+  "Pinned musl 1.2.6 src/math error, Bessel, gamma, decomposition, stepping, scaling, remainder, conversion, and compatibility sources plus x86_64/{lrint,lrintf,llrint,llrintf}.c define the public algorithms. The generator verifies the normalized 1.2.6 source-tree digest and pinned GCC 15.2.0, prefixes every translation-unit local label, and localizes all elementary support symbols before producing the checked assembly.",
+  "Musl weak aliases drem=remainder, dremf=remainderf, lgamma_r's internal implementation, lgammaf_r's internal implementation, lgammal_r=__lgammal_r, and signgam=__signgam preserve one implementation/state address. The native fixture rejects a split signgam state and the final archive rejects public private-provider leakage.",
+]
+x86_header_prerequisites = [
+  "The project-first/pinned-musl C++17 gate compiles the complete capability's exact function-pointer signatures and unmangled references in default SSE and -mfpmath=387 modes. It records 16-byte align-16 binary80, LP64 integer returns, the GNU/XSI declarations, and public signgam data; musl intentionally omits hidden __lgammal_r from math.h, so the probe declares only that ledger-named internal C ABI explicitly.",
+  "The runtime fixture preprocesses project fenv.h, float.h, math.h, stddef.h, stdint.h, features.h, and bits/alltypes.h and takes every named address under -fno-builtin. Header declarations for unselected elementary, complex, or fenv-sensitive functions do not become archive evidence.",
+]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-math-special", scope = "Pinned-musl project-header reference plus one true dependency-free crabc-libc archive and `-nostdlib -static --gc-sections` candidate. The closed export gate requires all ninety capability symbols plus __signgam/signgam, requires private local musl elementary providers, recognizes the separately selected public rint/rintf/sqrt/sqrtf siblings without attributing them to this slice, rejects other public elementary spellings, and rejects unresolved symbols, interpreter/DT_NEEDED, TLS/dynamic-TLS resolver, ambient libm, numeric floating parser, allocation, and unowned runtime dependencies. Function-pointer calls compare 5,544 exact 32-byte records over all four rounding modes: binary32/binary64 payloads, the defined ten binary80 bytes, x87/MXCSR exception flags, integer results, frexp exponents, modf components, lgamma signs/signgam state, remquo quotient bits, scaling/stepping boundaries, and ordinary/special error/gamma/Bessel cases. This completes only math.special inside still-planned libc.text-math-locale-stdio; family completion, x86 promotion, full parity, and public support remain false." }]
+oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl source, license, weak-alias/state, numerical behavior, exception, and special-value oracle for the complete math.special symbol set." }, { kind = "elf-abi", source = "System V AMD64 psABI", role = "SSE binary32/binary64, LP64 integer/pointer, and x87 binary80 stack/storage/st0 calling convention for the complete capability." }]
 
 [[family.verified_artifact]]
 id = "static-c-float-parse"

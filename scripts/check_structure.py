@@ -170,6 +170,7 @@ X86_RUNTIME_FOUNDATION_LIBC_SOURCES = {
     Path("libc/src/c_abi/x86_64/complex_projection.rs"),
     Path("libc/src/c_abi/x86_64/elementary_sqrt.rs"),
     Path("libc/src/c_abi/x86_64/fenv_rounding.rs"),
+    Path("libc/src/c_abi/x86_64/math_special.rs"),
     Path("libc/src/c_abi/x86_64/math_x87_extended.rs"),
     Path("libc/src/c_abi/x86_64/memory_search.rs"),
     Path("libc/src/c_abi/x86_64/memory_sync.rs"),

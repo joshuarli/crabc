@@ -809,6 +809,16 @@ unmangled C++ linkage for every named runtime symbol. Its C executables
 intentionally link pinned musl's math runtime, so it is header semantics
 only—not general math, `crabc-libc`, or public x86 support.
 
+`math-special-header-abi` is the complete declaration/linkage ratchet for the
+separately selected `math.special` capability. A project-first and pinned-musl
+C++17 probe takes an exactly typed address for all ninety ledger symbols plus
+`signgam` in default SSE and `-mfpmath=387` modes. It fixes the SysV 16-byte,
+align-16 binary80 layout and LP64 integer returns and requires every reference
+to retain unmangled C linkage. Musl intentionally does not declare the hidden
+`__lgammal_r` implementation name, so only that ledger-named ABI receives an
+explicit `extern "C"` declaration in the probe. This compile-only gate does
+not itself select runtime behavior or broader elementary/complex math.
+
 `sys-reg-header-abi` places the project headers first and compile-checks the
 27 Linux/x86-64 ptrace register-index macros in `<sys/reg.h>`. It is another
 declaration-only header ratchet, not a ptrace runtime or `crabc-libc` claim.
@@ -3391,9 +3401,37 @@ all four rounding modes: the defined ten binary80 bytes, exception flags,
 integer conversions, and signed `remquol` quotient bits. The final ELF rejects
 TLS, ambient `libm`, and unowned runtime dependencies and structurally requires
 the selected x87 instruction families. This remains a non-capability artifact:
-it does not complete `math.elementary-long-double`, select `math.special`,
+it does not complete `math.elementary-long-double` or itself select the
+special-function surface,
 promote `libc.text-math-locale-stdio`, or establish general libc/libm, CRT,
 loader, sysroot, full x86-64 parity, or public x86 support.
+
+`libc-math-special` is the complete private `static-c-math-special` capability
+slice. Ten of its exact ninety symbols are supplied by the prior classifier/
+sign and x87 conversion/remainder leaves; the other eighty come from a checked
+source-faithful assembly translation of pinned musl 1.2.6. The generator
+verifies the normalized complete source-tree digest and GCC 15.2.0 input,
+prefixes translation-unit locals, and renames every required elementary
+support provider under local `crabc_x86_math_special_*` names, so sine/cosine,
+exp/log/pow/sqrt, rounding, and argument-reduction dependencies do not leak as
+public exports or select another capability. The shared archive's separately
+selected public `rint`/`rintf` and `sqrt`/`sqrtf` siblings remain visible but
+are not attributed to this slice. `__signgam` and weak same-address
+`signgam` are included only for non-reentrant `lgamma*` state.
+
+The runner first invokes `math-special-header-abi`, builds the selected static
+archive, ratchets all ninety capability exports plus the sign state and the
+private-provider locality, and links a freestanding `-nostdlib -static
+--gc-sections` candidate. It rejects unresolved, dynamic, TLS, ambient libm,
+numeric-parser, allocation, and unowned dependencies. Function-pointer calls
+compare 5,544 exact 32-byte records with pinned musl across all four rounding
+modes: exception flags, binary32/binary64 results, the defined ten binary80
+bytes, integer/pointer outputs, decomposition components, quotient bits,
+gamma signs/state, stepping/scaling boundaries, and ordinary/special error,
+gamma, and Bessel cases. Every long-double boundary remains SysV x87 binary80
+without binary64 narrowing. The completed slice selects only `math.special`;
+the surrounding family, elementary/fenv-sensitive/complex/general math,
+promotion, full parity, and public x86 support remain planned or false.
 
 `locale-multibyte-header-abi` and `libc-locale-multibyte` are one separate,
 non-promoting named-locale/text artifact. The strict C11/C++17 header matrix

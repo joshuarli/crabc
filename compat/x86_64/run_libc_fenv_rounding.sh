@@ -70,8 +70,7 @@ for symbol in rint rintf rintl nearbyint nearbyintf nearbyintl feclearexcept \
 	grep -Eq "[[:space:]][TW][[:space:]]${symbol}$" "$archive_symbols" \
 		|| fail "archive does not define $symbol"
 done
-for unselected in exp10 exp10f exp10l pow10 pow10f pow10l fdim fdimf fdiml \
-	lrint lrintf llrint llrintf; do
+for unselected in exp10 exp10f exp10l pow10 pow10f pow10l fdim fdimf fdiml; do
 	if grep -Fxq "$unselected" "$selected_symbols"; then
 		fail "archive accidentally exports unselected ${unselected}"
 	fi

@@ -1438,6 +1438,24 @@ MATH_X87_EXTENDED_LOCAL_SYMBOLS = tuple(
     if symbol not in ("rintl", "sqrtl")
 )
 
+MATH_SPECIAL_SYMBOLS = (
+    "__fpclassify", "__fpclassifyf", "__fpclassifyl", "__lgammal_r",
+    "__signbit", "__signbitf", "__signbitl", "drem", "dremf", "erf",
+    "erfc", "erfcf", "erfcl", "erff", "erfl", "finite", "finitef",
+    "frexp", "frexpf", "frexpl", "ilogb", "ilogbf", "ilogbl", "j0",
+    "j0f", "j1", "j1f", "jn", "jnf", "ldexp", "ldexpf", "ldexpl",
+    "lgamma", "lgamma_r", "lgammaf", "lgammaf_r", "lgammal",
+    "lgammal_r", "llrint", "llrintf", "llrintl", "llround", "llroundf",
+    "llroundl", "logb", "logbf", "logbl", "lrint", "lrintf", "lrintl",
+    "lround", "lroundf", "lroundl", "modf", "modff", "modfl", "nan",
+    "nanf", "nanl", "nextafter", "nextafterf", "nextafterl", "nexttoward",
+    "nexttowardf", "nexttowardl", "remainder", "remainderf", "remainderl",
+    "remquo", "remquof", "remquol", "scalb", "scalbf", "scalbln",
+    "scalblnf", "scalblnl", "scalbn", "scalbnf", "scalbnl",
+    "significand", "significandf", "tgamma", "tgammaf", "tgammal", "y0",
+    "y0f", "y1", "y1f", "yn", "ynf",
+)
+
 NAMED_LOCALE_MULTIBYTE_SYMBOLS = (
     "__ctype_get_mb_cur_max",
     "btowc",
@@ -17757,7 +17775,6 @@ def require_math_x87_extended_artifact(family: Mapping[str, Any]) -> None:
         "EXPECTED_RECORDS=1260",
         "1,80p",
         "cosl sinl tanl powl",
-        "lgammal tgammal",
         "fldt fpatan f2xm1 fyl2x fprem fprem1 frndint fsqrt",
         "candidate binary80/fenv record stream differs from pinned musl",
     ):
@@ -17768,6 +17785,195 @@ def require_math_x87_extended_artifact(family: Mapping[str, Any]) -> None:
         "run_libc_math_x87_extended_probe()",
         "/workspace/compat/x86_64/run_libc_math_x87_extended.sh",
         "libc-math-x87-extended)",
+    ):
+        require(snippet in dispatcher, f"x86 dispatcher omits {snippet}")
+
+
+def require_math_special_slice(family: Mapping[str, Any]) -> None:
+    """Pin the complete selected math.special source and evidence contract."""
+    artifacts = require_verified_slices(
+        family.get("verified_slice"),
+        "family[libc.text-math-locale-stdio].verified_slice",
+        family.get("status", ""),
+        family.get("capabilities", []),
+    )
+    matching = [entry for entry in artifacts if entry.get("id") == "static-c-math-special"]
+    require(
+        len(matching) == 1,
+        "libc.text-math-locale-stdio must contain exactly one static-c-math-special slice",
+    )
+    artifact = matching[0]
+    require(
+        artifact.get("capabilities") == ["math.special"],
+        "static-c-math-special must select exactly math.special",
+    )
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for phrase in (
+        "Complete private native x86 `math.special` capability",
+        "80 new pinned-musl entries",
+        "same-address `__signgam`/weak `signgam` state",
+        "without narrowing through binary64",
+        "does not select numeric parsing",
+        "family completion",
+        "promotion",
+        "public x86 support",
+    ):
+        require(phrase in description, f"static-c-math-special description omits {phrase}")
+
+    owners = nonempty_strings(artifact["source_owners"], "static-c-math-special.source_owners")
+    for owner in (
+        "compat/crabc-rs/coverage.toml",
+        "docker/Dockerfile.x86_64",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/math_special.rs",
+        "libc/src/c_abi/x86_64/math_special_musl_x86_64.S",
+        "compat/x86_64/generate_libc_math_special.py",
+        "compat/x86_64/math_special_header_abi_probe.cpp",
+        "compat/x86_64/run_math_special_header_abi.sh",
+        "compat/x86_64/libc_math_special_probe.c",
+        "compat/x86_64/libc_math_special_start.S",
+        "compat/x86_64/run_libc_math_special.sh",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/README.md",
+        "STATUS.md",
+        "x86-64.md",
+        "scripts/check_structure.py",
+        "scripts/dev-x86_64.sh",
+    ):
+        require(owner in owners, f"static-c-math-special omits {owner}")
+
+    abi_prerequisites = nonempty_strings(
+        artifact["x86_abi_prerequisites"], "static-c-math-special.x86_abi_prerequisites"
+    )
+    for snippets, message in (
+        (("ninety symbols", "llrintl", "__signgam"), "closed capability surface"),
+        (("binary80", "st0", "nexttowardf"), "SysV binary80 ABI"),
+        (("normalized 1.2.6 source-tree digest", "GCC 15.2.0", "localizes"), "source translation"),
+        (("drem=remainder", "lgammal_r=__lgammal_r", "signgam=__signgam"), "musl aliases"),
+    ):
+        require(
+            any(all(snippet in item for snippet in snippets) for item in abi_prerequisites),
+            f"static-c-math-special must record its {message}",
+        )
+
+    header_prerequisites = nonempty_strings(
+        artifact["x86_header_prerequisites"],
+        "static-c-math-special.x86_header_prerequisites",
+    )
+    require(
+        any("C++17" in item and "-mfpmath=387" in item and "__lgammal_r" in item for item in header_prerequisites),
+        "static-c-math-special must record its complete C++ ABI gate",
+    )
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence} == {"./scripts/dev-x86_64.sh libc-math-special"},
+        "static-c-math-special must use the closed libc-math-special command",
+    )
+    scope = evidence[0]["scope"]
+    assert isinstance(scope, str)
+    for phrase in (
+        "all ninety capability symbols",
+        "5,544 exact 32-byte records",
+        "defined ten binary80 bytes",
+        "private local musl elementary providers",
+        "family completion",
+        "public support remain false",
+    ):
+        require(phrase in scope, f"static-c-math-special evidence omits {phrase}")
+
+    static_root = (ROOT / "libc/src/c_abi/x86_64/static_c_abi.rs").read_text(encoding="utf-8")
+    require(
+        '#[path = "math_special.rs"]\nmod math_special;' in static_root,
+        "x86 static C ABI must compose the math_special leaf",
+    )
+    rust_leaf = (ROOT / "libc/src/c_abi/x86_64/math_special.rs").read_text(encoding="utf-8")
+    for snippet in (
+        "Complete static Linux/x86-64 `math.special` C ABI leaf",
+        "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+        "d585fd3b613c66151fc3249e8ed44f77020cb5e6c1e635a616d3f9f82460512a",
+        'include_str!("math_special_musl_x86_64.S")',
+        "No binary80 operation narrows through binary64",
+    ):
+        require(snippet in rust_leaf, f"math_special leaf omits {snippet}")
+
+    generator = (ROOT / "compat/x86_64/generate_libc_math_special.py").read_text(encoding="utf-8")
+    for snippet in (
+        "2ebc86943f5cdac77729695b304a08f6308e7a218f9d484cec5675006b207d88",
+        '"src/math/erf.c"',
+        '"src/math/jn.c"',
+        '"src/math/lgammal.c"',
+        '"src/math/nexttowardl.c"',
+        '"src/math/tgammal.c"',
+        '"src/math/__rem_pio2_large.c"',
+        '"15.2.0"',
+        "Sun Microsystems",
+        "Stephen L. Moshier",
+        "crabc_x86_math_special_elementary_",
+        "crabc_x86_math_special_internal_",
+    ):
+        require(snippet in generator, f"math-special generator omits {snippet}")
+
+    assembly = (ROOT / "libc/src/c_abi/x86_64/math_special_musl_x86_64.S").read_text(encoding="utf-8")
+    for notice in ("Sun Microsystems", "Stephen L. Moshier", "musl's MIT license"):
+        require(notice in assembly, f"generated math-special assembly omits {notice} license provenance")
+    for symbol in (
+        "erf", "erfl", "j0", "jnf", "lgamma", "lgammal", "nexttowardl",
+        "scalblnl", "tgammal", "ynf", "__signgam",
+    ):
+        require(f"\t.globl\t{symbol}\n" in assembly, f"generated math-special assembly omits {symbol}")
+    for helper in (
+        "crabc_x86_math_special_elementary_sin",
+        "crabc_x86_math_special_elementary_powl",
+        "crabc_x86_math_special_internal_rem_pio2",
+        "crabc_x86_math_special_internal_lgamma_r",
+    ):
+        require(f"\t.local\t{helper}\n" in assembly, f"generated math-special assembly omits local {helper}")
+        require(f"\t.globl\t{helper}\n" not in assembly, f"generated math-special assembly exposes {helper}")
+
+    exports = [
+        line for line in (ROOT / "compat/x86_64/static_c_abi_exports.txt").read_text(encoding="utf-8").splitlines()
+        if line and not line.startswith("#")
+    ]
+    require(exports == sorted(exports), "static C ABI export contract must remain ASCII-sorted")
+    for symbol in MATH_SPECIAL_SYMBOLS + ("__signgam", "signgam"):
+        require(symbol in exports, f"static C ABI export contract omits {symbol}")
+
+    header_probe = (ROOT / "compat/x86_64/math_special_header_abi_probe.cpp").read_text(encoding="utf-8")
+    header_runner = (ROOT / "compat/x86_64/run_math_special_header_abi.sh").read_text(encoding="utf-8")
+    runtime_probe = (ROOT / "compat/x86_64/libc_math_special_probe.c").read_text(encoding="utf-8")
+    for symbol in MATH_SPECIAL_SYMBOLS:
+        require(f", {symbol});" in header_probe, f"math-special C++ header probe omits typed {symbol}")
+        require(symbol in header_runner, f"math-special header runner omits {symbol}")
+        require(f"direct_{symbol}" in runtime_probe, f"math-special runtime probe omits direct {symbol}")
+
+    runner = (ROOT / "compat/x86_64/run_libc_math_special.sh").read_text(encoding="utf-8")
+    for snippet in (
+        "EXPECTED_RECORDS=5544",
+        "RECORD_SIZE=32",
+        "--no-undefined",
+        "--gc-sections",
+        "run_math_special_header_abi.sh",
+        "elementary_sin elementary_powl internal_rem_pio2 internal_lgamma_r",
+        "SELECTED_SIBLING_SYMBOLS=(rint rintf sqrt sqrtf)",
+        "cos cosf exp expf floor floorf log logf pow powl",
+        "float_parse",
+        "fldt fstpt fistpll mulsd mulss",
+        "candidate math.special record stream differs from pinned musl",
+    ):
+        require(snippet in runner, f"libc-math-special runner omits {snippet}")
+    dispatcher = (ROOT / "scripts/dev-x86_64.sh").read_text(encoding="utf-8")
+    for snippet in (
+        "run_math_special_header_abi()",
+        "/workspace/compat/x86_64/run_math_special_header_abi.sh",
+        "math-special-header-abi)",
+        "run_libc_math_special_probe()",
+        "/workspace/compat/x86_64/run_libc_math_special.sh",
+        "libc-math-special)",
     ):
         require(snippet in dispatcher, f"x86 dispatcher omits {snippet}")
 
@@ -19070,6 +19276,7 @@ def validate_ledger(
     require_fenv_sensitive_rounding_artifact(by_id["libc.text-math-locale-stdio"])
 
     require_math_x87_extended_artifact(by_id["libc.text-math-locale-stdio"])
+    require_math_special_slice(by_id["libc.text-math-locale-stdio"])
     require_named_locale_multibyte_artifact(by_id["libc.text-math-locale-stdio"])
     require_same_object_static_c_abi_artifact(by_id["compat.abi-differential"])
     require_posix_process_abi_admission_artifact(by_id["compat.posix-process"])
