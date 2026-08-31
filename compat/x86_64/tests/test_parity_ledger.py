@@ -507,6 +507,73 @@ class X86ParityLedgerTests(unittest.TestCase):
         with self.assertRaisesRegex(ledger.LedgerError, "closed libc-alloca command"):
             ledger.validate_ledger(changed)
 
+    def test_stack_check_failure_stays_a_private_terminal_archive_pair(self) -> None:
+        data = self.data()
+        family = self.family(data, "libc.c-abi-compat")
+        self.assertEqual(family["status"], "planned")
+        artifacts = family["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if entry["id"] == "static-c-stack-check-failure"
+        )
+        assert isinstance(artifact, dict)
+        self.assertNotIn("capabilities", artifact)
+        for owner in (
+            "compat/abi/musl-1.2.6/aarch64/libc.a.static.tsv",
+            "libc/src/c_abi/x86_64/static_c_abi.rs",
+            "libc/src/c_abi/x86_64/stack_chk_fail.rs",
+            "libc/src/c_abi/x86_64/static_startup.rs",
+            "compat/x86_64/static_c_abi_exports.txt",
+            "compat/x86_64/libc_stack_chk_fail_probe.c",
+            "compat/x86_64/libc_stack_chk_fail_start.S",
+            "compat/x86_64/run_libc_stack_chk_fail.sh",
+            "compat/x86_64/aarch64_parity_inventory.py",
+            "compat/x86_64/aarch64_parity_inventory.json",
+            "scripts/dev-x86_64.sh",
+        ):
+            self.assertIn(owner, artifact["source_owners"])
+        for phrase in (
+            "`__stack_chk_fail`",
+            "`__stack_chk_fail_local`",
+            "hidden weak same-address",
+            "status 139 (`128 + SIGSEGV`)",
+            "x86 `hlt`",
+            "`__stack_chk_guard`",
+            "`__init_ssp`",
+            "terminal pair",
+            "error.reporting-termination",
+            "stack-protector startup policy",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, artifact["description"])
+        self.assertEqual(
+            {entry["command"] for entry in artifact["native_evidence"]},
+            {"./scripts/dev-x86_64.sh libc-stack-chk-fail"},
+        )
+
+        changed = self.data()
+        changed_artifacts = self.family(changed, "libc.c-abi-compat")[
+            "verified_artifact"
+        ]
+        assert isinstance(changed_artifacts, list)
+        changed_artifact = next(
+            entry
+            for entry in changed_artifacts
+            if entry["id"] == "static-c-stack-check-failure"
+        )
+        changed_artifact["native_evidence"][0]["scope"] = (
+            changed_artifact["native_evidence"][0]["scope"].replace(
+                "guard storage/initializer", "guard behavior"
+            )
+        )
+        with self.assertRaisesRegex(
+            ledger.LedgerError,
+            "evidence must retain its private negative boundary",
+        ):
+            ledger.validate_ledger(changed)
+
     def test_ldso_target_root_admission_is_a_planned_private_artifact(self) -> None:
         data = self.data()
         family = self.family(data, "ldso.dynamic-runtime")

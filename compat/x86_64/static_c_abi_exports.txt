@@ -58,6 +58,8 @@ __signbitf
 __signbitl
 __signgam
 __sigsetjmp
+__stack_chk_fail
+__stack_chk_fail_local
 __stdio_exit
 __strerror_l
 __strtod_l

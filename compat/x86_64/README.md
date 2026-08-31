@@ -425,6 +425,8 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-allocator-runtime
 ./scripts/dev-x86_64.sh libc-allocator-string-duplication
 ./scripts/dev-x86_64.sh libc-allocator-observability
+./scripts/dev-x86_64.sh libc-alloca
+./scripts/dev-x86_64.sh libc-stack-chk-fail
 ./scripts/dev-x86_64.sh libc-static-c-abi-same-object-differential
 ./scripts/dev-x86_64.sh qualification-posix-abi-admission
 ./scripts/dev-x86_64.sh libc-header-layouts-baseline
@@ -2446,6 +2448,16 @@ selects neither `memory.allocator-basic` nor
 `memory.allocator-observability`; alloca zero-size, stack exhaustion/guards,
 VLA/unwind/escaping-pointer behavior, heap allocation/lifecycle/interposition,
 CRT/sysroot, promotion, and public x86 support remain excluded.
+
+`libc-stack-chk-fail` is a separate private selected-static compiler-support
+artifact, not a stack-protector runtime. It maps only musl 1.2.6
+`src/env/__stack_chk_fail.c::__stack_chk_fail` and its x86 `a_crash()` `hlt`
+body, retaining the strong default-visible primary plus the hidden weak
+same-address `__stack_chk_fail_local` alias. Pinned musl's primary entry and
+two true `-nostdlib -static` candidates (one for each spelling) terminate with
+status 139 (`128 + SIGSEGV`); the archive and final-ELF checks reject guard
+storage, `__init_ssp`, ambient failure handlers, TLS, dynamic linkage, loader,
+pthread, lifecycle, public C declarations, promotion, and public x86 support.
 
 `libc-stat-compat` and `libc-credentials` are two private static
 `crabc-libc` semantic-vertical gates over one dependency-free `libc.a`. The

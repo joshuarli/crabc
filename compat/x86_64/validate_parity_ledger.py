@@ -21189,6 +21189,289 @@ def require_alloca_builtin_artifact(family: Mapping[str, Any]) -> None:
     )
 
 
+def require_stack_check_failure_artifact(family: Mapping[str, Any]) -> None:
+    """Keep the terminal compiler-support pair private and fragment-scoped."""
+
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.c-abi-compat].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [
+        entry
+        for entry in artifacts
+        if entry.get("id") == "static-c-stack-check-failure"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.c-abi-compat must contain exactly one static-c-stack-check-failure artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-stack-check-failure must not promote libc.c-abi-compat",
+    )
+    artifact = matching[0]
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for phrase in (
+        "still-planned `libc.c-abi-compat`",
+        "`__stack_chk_fail`",
+        "`__stack_chk_fail_local`",
+        "hidden weak same-address",
+        "status 139 (`128 + SIGSEGV`)",
+        "x86 `hlt`",
+        "`__stack_chk_guard`",
+        "`__init_ssp`",
+        "terminal pair",
+        "error.reporting-termination",
+        "stack-protector startup policy",
+        "public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"static-c-stack-check-failure description omits {phrase}",
+        )
+
+    owners = set(
+        nonempty_strings(
+            artifact["source_owners"], "static-c-stack-check-failure.source_owners"
+        )
+    )
+    for owner in (
+        "compat/upstreams.toml",
+        "compat/abi/musl-1.2.6/aarch64/libc.a.static.tsv",
+        "libc/Cargo.toml",
+        "libc/src/lib.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/stack_chk_fail.rs",
+        "libc/src/c_abi/x86_64/static_startup.rs",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/libc_stack_chk_fail_probe.c",
+        "compat/x86_64/libc_stack_chk_fail_start.S",
+        "compat/x86_64/run_libc_stack_chk_fail.sh",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/aarch64_parity_inventory.py",
+        "compat/x86_64/aarch64_parity_inventory.json",
+        "compat/x86_64/README.md",
+        "STATUS.md",
+        "x86-64.md",
+        "scripts/dev-x86_64.sh",
+        "scripts/check_structure.py",
+    ):
+        require(
+            owner in owners,
+            f"static-c-stack-check-failure source owners omit {owner}",
+        )
+
+    prerequisites = " ".join(
+        nonempty_strings(
+            artifact["x86_abi_prerequisites"],
+            "static-c-stack-check-failure.x86_abi_prerequisites",
+        )
+    )
+    for phrase in (
+        "SysV AMD64",
+        "no arguments",
+        "a_crash",
+        "hlt",
+        "status 139 (`128 + SIGSEGV`)",
+        "src/env/__stack_chk_fail.c::__stack_chk_fail",
+        "hidden void __stack_chk_fail_local(void)",
+        "weak_alias(__stack_chk_fail, __stack_chk_fail_local)",
+        "__stack_chk_fail __stack_chk_fail.lo T GLOBAL 0 c",
+        "__stack_chk_fail_local __stack_chk_fail.lo W WEAK 0 c",
+        "__stack_chk_guard __stack_chk_fail.lo B GLOBAL 0 8",
+        "strong `__init_ssp`",
+        "STT_FUNC STB_GLOBAL STV_DEFAULT",
+        "STT_FUNC STB_WEAK STV_HIDDEN",
+        "same ELF value",
+        "not an externally callable override",
+        "`-nostdlib -static`",
+        "__stack_chk_guard",
+        "__init_ssp",
+        "dynamic-TLS resolver",
+        "no call instruction",
+    ):
+        require(
+            phrase in prerequisites,
+            f"static-c-stack-check-failure ABI prerequisites omit {phrase}",
+        )
+
+    headers = " ".join(
+        nonempty_strings(
+            artifact["x86_header_prerequisites"],
+            "static-c-stack-check-failure.x86_header_prerequisites",
+        )
+    )
+    for phrase in (
+        "No installed C header",
+        "__stack_chk_fail",
+        "__stack_chk_fail_local",
+        "private compiler-support spelling",
+        "public callable linkage",
+        "stack-protector configuration",
+    ):
+        require(
+            phrase in headers,
+            f"static-c-stack-check-failure header prerequisites omit {phrase}",
+        )
+
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-stack-chk-fail"},
+        "static-c-stack-check-failure must use the closed libc-stack-chk-fail command",
+    )
+    scope = evidence[0].get("scope")
+    require(
+        isinstance(scope, str)
+        and all(
+            phrase in scope
+            for phrase in (
+                "Pinned-musl static primary-entry execution",
+                "two true dependency-free x86 `-nostdlib -static` candidates",
+                "status 139 (`128 + SIGSEGV`)",
+                "strong/default primary",
+                "weak/hidden same-address alias",
+                "x86 `hlt` body",
+                "guard storage/initializer",
+                "dynamic runtime",
+                "dlfcn, pthread, lifecycle, and loader",
+                "stack-protector",
+                "error.reporting-termination completion",
+                "public C declaration/API",
+                "public x86 support",
+            )
+        ),
+        "static-c-stack-check-failure evidence must retain its private negative boundary",
+    )
+
+    oracle_entries = artifact["oracle"]
+    assert isinstance(oracle_entries, list)
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "c-posix"
+            and entry.get("source")
+            == "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417"
+            and isinstance(entry.get("role"), str)
+            and "src/env/__stack_chk_fail.c::__stack_chk_fail" in entry["role"]
+            and "weak_alias(__stack_chk_fail, __stack_chk_fail_local)" in entry["role"]
+            and "arch/x86_64/atomic_arch.h::a_crash hlt" in entry["role"]
+            and "__stack_chk_guard and __init_ssp are intentionally outside" in entry["role"]
+            for entry in oracle_entries
+        ),
+        "static-c-stack-check-failure must retain its musl source/negative-boundary oracle",
+    )
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "aarch64-contract"
+            and entry.get("source")
+            == "compat/abi/musl-1.2.6/aarch64/libc.a.static.tsv"
+            and isinstance(entry.get("role"), str)
+            and "__stack_chk_fail __stack_chk_fail.lo T GLOBAL 0 c" in entry["role"]
+            and "__stack_chk_fail_local __stack_chk_fail.lo W WEAK 0 c" in entry["role"]
+            and "__stack_chk_guard __stack_chk_fail.lo B GLOBAL 0 8" in entry["role"]
+            and "strong __init_ssp remain unselected" in entry["role"]
+            and "private static compiler-support evidence only" in entry["role"]
+            for entry in oracle_entries
+        ),
+        "static-c-stack-check-failure must retain its static-manifest fragment oracle",
+    )
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "kernel-abi"
+            and entry.get("source") == "Linux 5.10 x86-64 ABI"
+            and isinstance(entry.get("role"), str)
+            and "128 + SIGSEGV" in entry["role"]
+            for entry in oracle_entries
+        ),
+        "static-c-stack-check-failure must retain its native fault observation oracle",
+    )
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "elf-abi"
+            and entry.get("source") == "System V AMD64 psABI"
+            and isinstance(entry.get("role"), str)
+            and "weak/hidden same-value" in entry["role"]
+            for entry in oracle_entries
+        ),
+        "static-c-stack-check-failure must retain its ELF alias oracle",
+    )
+
+    static_exports = set(
+        static_c_abi_export_names(
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        )
+    )
+    require(
+        {"__stack_chk_fail", "__stack_chk_fail_local"} <= static_exports,
+        "static-c-stack-check-failure must retain its selected terminal pair",
+    )
+    require(
+        "__stack_chk_guard" not in static_exports,
+        "static-c-stack-check-failure must not select guard storage",
+    )
+
+    static_root = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+    ).read_text(encoding="utf-8")
+    require(
+        '#[path = "stack_chk_fail.rs"]\nmod stack_chk_fail;' in static_root,
+        "static-c-stack-check-failure is absent from the selected x86 static root",
+    )
+    source = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "stack_chk_fail.rs"
+    ).read_text(encoding="utf-8")
+    for phrase in (
+        "src/env/__stack_chk_fail.c::__stack_chk_fail",
+        "arch/x86_64/atomic_arch.h",
+        "weak_alias(__stack_chk_fail, __stack_chk_fail_local)",
+        "__stack_chk_guard",
+        "__init_ssp",
+        '"hlt"',
+        '".weak __stack_chk_fail_local"',
+        '".hidden __stack_chk_fail_local"',
+        '".set __stack_chk_fail_local, __stack_chk_fail"',
+    ):
+        require(
+            phrase in source,
+            f"static-c-stack-check-failure source omits {phrase}",
+        )
+
+    runner = (
+        ROOT / "compat" / "x86_64" / "run_libc_stack_chk_fail.sh"
+    ).read_text(encoding="utf-8")
+    for phrase in (
+        "expect_sigsegv",
+        "139",
+        "__stack_chk_fail_local",
+        "archive stack-check failure aliases do not share one address",
+        "candidate stack-check failure aliases do not share one address",
+        "__stack_chk_guard",
+        "__init_ssp",
+        "-nostdlib -static",
+        "hlt termination",
+        "ambient failure handler",
+    ):
+        require(
+            phrase in runner,
+            f"static-c-stack-check-failure runner omits {phrase}",
+        )
+    dispatcher = (ROOT / "scripts" / "dev-x86_64.sh").read_text(encoding="utf-8")
+    require(
+        "libc-stack-chk-fail)" in dispatcher
+        and "run_libc_stack_chk_fail.sh" in dispatcher,
+        "static-c-stack-check-failure dispatcher binding is missing",
+    )
+
+
 def require_float_parse_artifact(family: Mapping[str, Any]) -> None:
     """Keep the source-faithful x87 parser below text/math family completion.
 
@@ -29161,6 +29444,7 @@ def validate_ledger(
     require_allocator_string_duplication_artifact(by_id["libc.posix-runtime"])
     require_allocator_observability_slice(by_id["libc.c-abi-compat"])
     require_alloca_builtin_artifact(by_id["libc.c-abi-compat"])
+    require_stack_check_failure_artifact(by_id["libc.c-abi-compat"])
     require_float_parse_artifact(by_id["libc.text-math-locale-stdio"])
     require_float_parse_locale_slice(by_id["libc.text-math-locale-stdio"])
     require_stdio_standard_streams_artifact(by_id["libc.text-math-locale-stdio"])

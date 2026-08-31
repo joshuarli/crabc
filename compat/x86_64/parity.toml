@@ -8059,6 +8059,47 @@ oracle = [
   { kind = "elf-abi", source = "System V AMD64 psABI", role = "LP64 size_t/pointer width, 16-byte stack-alignment observation, static ET_EXEC shape, and syscall-exit register contract for the fixture-only candidate." },
 ]
 
+[[family.verified_artifact]]
+id = "static-c-stack-check-failure"
+description = "Private native x86 selected-static-archive terminal stack-check failure artifact within still-planned `libc.c-abi-compat`. One dependency-free `crabc-libc` archive supplies exactly default-visible strong `__stack_chk_fail` plus hidden weak same-address `__stack_chk_fail_local`; neither spelling has an installed declaration or becomes a public x86 API. A pinned-musl static reference and two true `-nostdlib -static` candidates invoke the primary and hidden-local spellings separately and each terminate with Linux status 139 (`128 + SIGSEGV`) after the x86 `hlt` instruction. The pinned AArch64 static manifest records the pair in `__stack_chk_fail.lo`, but that upstream source object also contains strong `__init_ssp` and `__stack_chk_guard`; this artifact deliberately selects only the terminal pair and proves the extracted candidate retains neither guard storage nor canary initialization. It does not complete `error.reporting-termination` or select a stack-protector startup policy, entropy/AT_RANDOM, TLS, CRT, loader, process lifecycle, abort/raise/diagnostics, general compiler-runtime support, libc.so, sysroot, family promotion, or public x86 support."
+source_owners = [
+  "compat/upstreams.toml",
+  "compat/abi/musl-1.2.6/aarch64/libc.a.static.tsv",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/stack_chk_fail.rs",
+  "libc/src/c_abi/x86_64/static_startup.rs",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/libc_stack_chk_fail_probe.c",
+  "compat/x86_64/libc_stack_chk_fail_start.S",
+  "compat/x86_64/run_libc_stack_chk_fail.sh",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "compat/x86_64/aarch64_parity_inventory.py",
+  "compat/x86_64/aarch64_parity_inventory.json",
+  "compat/x86_64/README.md",
+  "STATUS.md",
+  "x86-64.md",
+  "scripts/dev-x86_64.sh",
+  "scripts/check_structure.py",
+]
+x86_abi_prerequisites = [
+  "The SysV AMD64 compiler-support entries take no arguments and have no return contract. Musl x86-64 `arch/x86_64/atomic_arch.h::a_crash` emits `hlt`; native Linux execution proves the terminal user-mode fault as status 139 (`128 + SIGSEGV`) for the pinned-musl primary and each freestanding candidate spelling.",
+  "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417 `src/env/__stack_chk_fail.c::__stack_chk_fail` calls that x86 `a_crash` and declares `hidden void __stack_chk_fail_local(void)` through `weak_alias(__stack_chk_fail, __stack_chk_fail_local)`. The AArch64 static manifest records `__stack_chk_fail __stack_chk_fail.lo T GLOBAL 0 c` and `__stack_chk_fail_local __stack_chk_fail.lo W WEAK 0 c`; it also records `__stack_chk_guard __stack_chk_fail.lo B GLOBAL 0 8` and strong `__init_ssp`, which remain deliberately unselected.",
+  "The selected archive object and final candidate require one `STT_FUNC STB_GLOBAL STV_DEFAULT` primary and one `STT_FUNC STB_WEAK STV_HIDDEN` local alias at the same ELF value. The local spelling is private object-level compiler support, not an externally callable override or public declaration contract.",
+  "Each true `-nostdlib -static` candidate contains only the fixture, its `_start` exit shim, and the extracted terminal pair. It rejects `__stack_chk_guard`, `__init_ssp`, abort/raise/exit, dlfcn, pthread, PT_TLS, dynamic-TLS resolver forms, interpreter/DT_NEEDED, unresolved symbols, and ambient runtime handlers; the failure body must contain `hlt` and no call instruction.",
+]
+x86_header_prerequisites = ["No installed C header declares `__stack_chk_fail` or hidden `__stack_chk_fail_local`. The fixture declares each private compiler-support spelling only for archive/ELF evidence and does not turn either into public callable linkage, a stack-protector configuration, or installed-header support."]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-stack-chk-fail", scope = "Pinned-musl static primary-entry execution plus two true dependency-free x86 `-nostdlib -static` candidates. The gate requires the reference, `__stack_chk_fail`, and hidden `__stack_chk_fail_local` executables each to terminate with status 139 (`128 + SIGSEGV`); ratchets the full selected static export surface; proves one archive owner, strong/default primary, weak/hidden same-address alias, and an x86 `hlt` body with no ambient handler call; and rejects guard storage/initializer, TLS, dynamic runtime, unresolved symbols, dlfcn, pthread, lifecycle, and loader inputs in the extracted candidate. It does not select a general stack-protector, canary/entropy/AT_RANDOM setup, error.reporting-termination completion, public C declaration/API, libc.so, CRT, sysroot, family promotion, or public x86 support." }]
+oracle = [
+  { kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source mapping and static executable terminal behavior oracle for src/env/__stack_chk_fail.c::__stack_chk_fail, its hidden weak_alias(__stack_chk_fail, __stack_chk_fail_local), and arch/x86_64/atomic_arch.h::a_crash hlt; __stack_chk_guard and __init_ssp are intentionally outside the selected fragment." },
+  { kind = "aarch64-contract", source = "compat/abi/musl-1.2.6/aarch64/libc.a.static.tsv", role = "Pinned static archive ownership oracle: __stack_chk_fail __stack_chk_fail.lo T GLOBAL 0 c and __stack_chk_fail_local __stack_chk_fail.lo W WEAK 0 c require the selected pair, while __stack_chk_guard __stack_chk_fail.lo B GLOBAL 0 8 and strong __init_ssp remain unselected. This is private static compiler-support evidence only, not stack-protector startup or public support." },
+  { kind = "kernel-abi", source = "Linux 5.10 x86-64 ABI", role = "Native user-mode hlt fault observation and the process-status 128 + SIGSEGV evidence boundary used by the isolated executables." },
+  { kind = "elf-abi", source = "System V AMD64 psABI", role = "No-argument function entry plus strong/default and weak/hidden same-value ELF symbol binding/visibility contract for the selected archive pair." },
+]
+
 [[family.verified_slice]]
 id = "error.strsignal"
 description = "Private native x86 selected-static-archive slice selecting the bounded AArch64 `error.reporting-termination` capability inside still-planned `libc.c-abi-compat`. This independent musl-compatible leaf supplies exactly strong `strsignal`: immutable process-static C/POSIX/C.UTF-8 descriptions for Linux x86 signal numbers 1 through 64, with `SIGHUP..SIGSYS == 1..31`, `_NSIG == 65`, exact `RT32` through `RT64`, and one shared `Unknown signal` pointer for zero, negative, or out-of-domain values. Musl's `LCTRANS_CUR` step is deliberately fixed to this admitted profile; no locale or message-catalog translation is selected. This selects only the static signal-description sub-boundary, not the broader error-reporting or termination surface: it excludes `strerror`/`strerror_l`, `psignal`, perror/err/warn printing, signal delivery/disposition, process termination, errno, TLS, locks, allocation, syscalls, general diagnostics, libc.so, CRT, loader, sysroot, family completion, or public support. `libc.c-abi-compat` remains planned, promotion/public_support=false is unchanged, and public x86 support remains outside the slice."

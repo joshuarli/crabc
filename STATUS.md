@@ -180,6 +180,16 @@ PLT use. It does not select either allocator capability, heap lifecycle or
 interposition, alloca zero-size/VLA/unwind/stack-guard behavior, CRT/sysroot,
 promotion, or public x86 support.
 
+`./scripts/dev-x86_64.sh libc-stack-chk-fail` is a separate private static
+compiler-support artifact. It retains only musl 1.2.6's terminal x86
+`__stack_chk_fail` `hlt` body and its hidden weak same-address
+`__stack_chk_fail_local` alias: the pinned-musl primary and both freestanding
+`-nostdlib -static` candidate spellings terminate with status 139
+(`128 + SIGSEGV`). It does not select guard storage, `__init_ssp`, stack-
+protector startup policy, an ambient error/failure handler, TLS, loader/dlfcn,
+pthread/lifecycle behavior, public C API/header support, promotion, or public
+x86 support.
+
 The x86 lane has five private ET_DYN interpreter artifacts inside still-planned
 `ldso.dynamic-runtime`. `ldso-initial-graph` is limited to
 one main PIE -> mid.so -> leaf.so graph, RELATIVE/GLOB_DAT/JUMP_SLOT ELF64

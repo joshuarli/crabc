@@ -294,6 +294,8 @@ mod child_reaping;
 mod immediate_termination;
 #[path = "static_startup.rs"]
 mod static_startup;
+#[path = "stack_chk_fail.rs"]
+mod stack_chk_fail;
 #[path = "process_globals.rs"]
 mod process_globals;
 #[path = "stdio_standard.rs"]
