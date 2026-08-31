@@ -789,6 +789,7 @@ impl Drop for OwnerLocalMainHeapPageSessionUnbind {
         // SAFETY: the guard cannot outlive the engine call which created it;
         // that call keeps the adapter alive and does not move the engine.
         unsafe { (*self.session).active = None };
+        MainHeapThreadAttachment::end_owner_local_page_engine_access();
     }
 }
 
@@ -876,11 +877,23 @@ unsafe impl TheapPageSession for OwnerLocalMainHeapPageSession {
         &mut self,
         owner: OsAlignedPageOwner,
     ) -> Result<(), OsAlignedPageOwner> {
-        self.active_mut().retain_unfinished_os_release(owner)
+        let Some(mut active) = self.active else {
+            MainHeapThreadAttachment::latch_unfinished_owner_local_page_engine();
+            return Err(owner);
+        };
+        // SAFETY: a present adapter pointer is installed only for the live
+        // short source projection guarded by the enclosing engine call.
+        unsafe { active.as_mut().retain_unfinished_os_release(owner) }
     }
     #[inline]
     fn latch_unfinished_page_engine(&mut self) {
-        self.active_mut().latch_unfinished_page_engine()
+        if let Some(mut active) = self.active {
+            // SAFETY: a present adapter pointer is installed only for the
+            // live short source projection guarded by the enclosing call.
+            unsafe { active.as_mut().latch_unfinished_page_engine() };
+        } else {
+            MainHeapThreadAttachment::latch_unfinished_owner_local_page_engine();
+        }
     }
 }
 
@@ -6172,7 +6185,10 @@ impl<'arena, 'map> PageAllocatorEngine<'arena, 'map, OwnerLocalMainHeapPageSessi
         mut session: MainHeapThreadPageSession<'_, '_>,
         operation: impl FnOnce(&mut Self) -> R,
     ) -> Result<R, OwnerLocalMainHeapPageSessionBindError> {
-        self.session.bind(&mut session)?;
+        if let Err(error) = self.session.bind(&mut session) {
+            MainHeapThreadAttachment::end_owner_local_page_engine_access();
+            return Err(error);
+        }
         let _unbind = OwnerLocalMainHeapPageSessionUnbind {
             session: core::ptr::addr_of_mut!(self.session),
         };

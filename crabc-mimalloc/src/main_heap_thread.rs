@@ -75,6 +75,35 @@ enum MainHeapThreadAttachmentState {
     Poisoned,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum MainHeapThreadOwnerLocalPageEngineState {
+    Missing,
+    Idle,
+    Borrowed,
+    Terminal,
+}
+
+// This marker belongs to the one source attachment permitted by the current
+// thread's compiler-TLS roots. It carries no pointer or registry identity: the
+// attachment's root/list validation supplies that proof, while this linear
+// state alone prevents a second persistent engine and makes unfinished Drop
+// permanently ineligible for fresh begin or attachment teardown.
+#[thread_local]
+static mut OWNER_LOCAL_PAGE_ENGINE_STATE: MainHeapThreadOwnerLocalPageEngineState =
+    MainHeapThreadOwnerLocalPageEngineState::Missing;
+
+#[inline]
+fn owner_local_page_engine_state() -> MainHeapThreadOwnerLocalPageEngineState {
+    // SAFETY: the current thread alone reads its compiler-TLS lifecycle byte.
+    unsafe { OWNER_LOCAL_PAGE_ENGINE_STATE }
+}
+
+#[inline]
+fn set_owner_local_page_engine_state(state: MainHeapThreadOwnerLocalPageEngineState) {
+    // SAFETY: the current thread alone writes its compiler-TLS lifecycle byte.
+    unsafe { OWNER_LOCAL_PAGE_ENGINE_STATE = state };
+}
+
 /// One source-boundary failure while attaching or retiring a later thread's
 /// metadata Theap on the process-static main heap.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -109,6 +138,19 @@ pub(crate) enum MainHeapThreadAttachmentError {
     /// did not record its matching suspended session.  This is a rejected
     /// capability mismatch; no page, root, or TLD state has changed.
     PersistentPageEngineMissing,
+    /// This attachment already has one continuously stored owner-local page
+    /// engine. Neither a duplicate engine nor direct attachment teardown may
+    /// cross that linear ownership boundary.
+    OwnerLocalPageEngineActive,
+    /// An owner-local allocator callback tried to enter another page operation
+    /// before the first short source projection returned.
+    OwnerLocalPageEngineReentrant,
+    /// No owner-local engine is currently claimed by this attachment.
+    OwnerLocalPageEngineMissing,
+    /// An unfinished owner-local engine was dropped or its lifecycle otherwise
+    /// lost a safe retry boundary. The attachment and its page state remain
+    /// terminally retained.
+    OwnerLocalPageEngineTerminal,
     ListOwnership,
     TheapList(ThreadLocalTheapListError),
     TheapClear,
@@ -129,6 +171,17 @@ pub(crate) enum MainHeapThreadPageSessionError {
     /// A later-thread metadata TLD must never claim ticket zero, which belongs
     /// to the source-static main TLD.
     FirstTicket,
+}
+
+/// Linear compiler-TLS claim for one continuously stored later-main page
+/// engine. It owns no attachment reference, so the TLS payload can store the
+/// attachment and engine in sibling fields without a self-reference.
+#[must_use = "an owner-local page-engine claim must finish or retain its attachment terminally"]
+pub(crate) struct MainHeapThreadOwnerLocalPageEngineLease {
+    thread: crate::types::LiveThreadId,
+    thread_sequence: usize,
+    finished: bool,
+    _not_send_or_sync: PhantomData<*mut ()>,
 }
 
 /// A failed later-thread construction that either made no retained source
@@ -560,6 +613,25 @@ impl<'main> MainHeapThreadAttachment<'main> {
         &mut self,
         require_empty: bool,
     ) -> Result<(), MainHeapThreadAttachmentError> {
+        match owner_local_page_engine_state() {
+            MainHeapThreadOwnerLocalPageEngineState::Missing => {}
+            MainHeapThreadOwnerLocalPageEngineState::Idle => {
+                return Err(MainHeapThreadAttachmentError::OwnerLocalPageEngineActive);
+            }
+            MainHeapThreadOwnerLocalPageEngineState::Borrowed => {
+                return Err(MainHeapThreadAttachmentError::OwnerLocalPageEngineReentrant);
+            }
+            MainHeapThreadOwnerLocalPageEngineState::Terminal => {
+                return Err(MainHeapThreadAttachmentError::OwnerLocalPageEngineTerminal);
+            }
+        }
+        self.prevalidate_attached_page_drain_without_owner_local(require_empty)
+    }
+
+    fn prevalidate_attached_page_drain_without_owner_local(
+        &mut self,
+        require_empty: bool,
+    ) -> Result<(), MainHeapThreadAttachmentError> {
         if self.page_engine_suspended {
             return Err(MainHeapThreadAttachmentError::PersistentPageEngineSuspended);
         }
@@ -861,8 +933,26 @@ impl<'attachment, 'main> MainHeapThreadPageSession<'attachment, 'main> {
     fn begin_owner_local(
         attachment: &'attachment mut MainHeapThreadAttachment<'main>,
     ) -> Result<Self, MainHeapThreadPageSessionError> {
+        match owner_local_page_engine_state() {
+            MainHeapThreadOwnerLocalPageEngineState::Idle => {}
+            MainHeapThreadOwnerLocalPageEngineState::Borrowed => {
+                return Err(MainHeapThreadPageSessionError::Attachment(
+                    MainHeapThreadAttachmentError::OwnerLocalPageEngineReentrant,
+                ));
+            }
+            MainHeapThreadOwnerLocalPageEngineState::Terminal => {
+                return Err(MainHeapThreadPageSessionError::Attachment(
+                    MainHeapThreadAttachmentError::OwnerLocalPageEngineTerminal,
+                ));
+            }
+            MainHeapThreadOwnerLocalPageEngineState::Missing => {
+                return Err(MainHeapThreadPageSessionError::Attachment(
+                    MainHeapThreadAttachmentError::OwnerLocalPageEngineMissing,
+                ));
+            }
+        }
         attachment
-            .prevalidate_attached_page_drain(false)
+            .prevalidate_attached_page_drain_without_owner_local(false)
             .map_err(MainHeapThreadPageSessionError::Attachment)?;
         if attachment.terminal_os_release.is_some() {
             return Err(MainHeapThreadPageSessionError::Attachment(
@@ -881,6 +971,10 @@ impl<'attachment, 'main> MainHeapThreadPageSession<'attachment, 'main> {
         {
             return Err(MainHeapThreadPageSessionError::FirstTicket);
         }
+        // Every attachment/root/list check has succeeded and no fallible step
+        // remains. Publish the synchronous borrow only now, so a rejection
+        // leaves the persistent engine idle and retryable.
+        set_owner_local_page_engine_state(MainHeapThreadOwnerLocalPageEngineState::Borrowed);
         Ok(Self { attachment })
     }
 
@@ -980,6 +1074,123 @@ impl<'attachment, 'main> MainHeapThreadPageSession<'attachment, 'main> {
             }),
             Err(error) => Err((self, error)),
         }
+    }
+}
+
+impl MainHeapThreadOwnerLocalPageEngineLease {
+    /// Claims the current attachment's compiler-TLS owner after an ordinary
+    /// empty page session has established its exact root/list/thread identity.
+    pub(crate) fn claim(
+        session: &MainHeapThreadPageSession<'_, '_>,
+    ) -> Result<Self, MainHeapThreadAttachmentError> {
+        match owner_local_page_engine_state() {
+            MainHeapThreadOwnerLocalPageEngineState::Missing => {}
+            MainHeapThreadOwnerLocalPageEngineState::Idle => {
+                return Err(MainHeapThreadAttachmentError::OwnerLocalPageEngineActive);
+            }
+            MainHeapThreadOwnerLocalPageEngineState::Borrowed => {
+                return Err(MainHeapThreadAttachmentError::OwnerLocalPageEngineReentrant);
+            }
+            MainHeapThreadOwnerLocalPageEngineState::Terminal => {
+                return Err(MainHeapThreadAttachmentError::OwnerLocalPageEngineTerminal);
+            }
+        }
+        let thread = session
+            .thread_id()
+            .ok_or(MainHeapThreadAttachmentError::InvalidCurrentThread)?;
+        if current_thread_identity() != Some(thread) {
+            return Err(MainHeapThreadAttachmentError::InvalidCurrentThread);
+        }
+        let thread_sequence = session.thread_sequence();
+        if thread_sequence == 0 {
+            return Err(MainHeapThreadAttachmentError::OwnerLocalPageEngineMissing);
+        }
+        set_owner_local_page_engine_state(MainHeapThreadOwnerLocalPageEngineState::Idle);
+        Ok(Self {
+            thread,
+            thread_sequence,
+            finished: false,
+            _not_send_or_sync: PhantomData,
+        })
+    }
+
+    /// Checks the compiler-TLS linear/reentry state before the caller forms a
+    /// new mutable attachment or page-session projection.
+    pub(crate) fn precheck_access(&self) -> Result<(), MainHeapThreadAttachmentError> {
+        if self.finished {
+            return Err(MainHeapThreadAttachmentError::OwnerLocalPageEngineMissing);
+        }
+        if current_thread_identity() != Some(self.thread) || self.thread_sequence == 0 {
+            return Err(MainHeapThreadAttachmentError::InvalidCurrentThread);
+        }
+        match owner_local_page_engine_state() {
+            MainHeapThreadOwnerLocalPageEngineState::Idle => Ok(()),
+            MainHeapThreadOwnerLocalPageEngineState::Borrowed => {
+                Err(MainHeapThreadAttachmentError::OwnerLocalPageEngineReentrant)
+            }
+            MainHeapThreadOwnerLocalPageEngineState::Terminal => {
+                Err(MainHeapThreadAttachmentError::OwnerLocalPageEngineTerminal)
+            }
+            MainHeapThreadOwnerLocalPageEngineState::Missing => {
+                Err(MainHeapThreadAttachmentError::OwnerLocalPageEngineMissing)
+            }
+        }
+    }
+
+    /// Releases the linear compiler-TLS claim only after the page engine has
+    /// proved quiescent and disarmed its own conservative Drop.
+    pub(crate) fn finish(&mut self) -> Result<(), MainHeapThreadAttachmentError> {
+        self.precheck_access()?;
+        set_owner_local_page_engine_state(MainHeapThreadOwnerLocalPageEngineState::Missing);
+        self.finished = true;
+        Ok(())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn test_begin_borrowed_state(&mut self) {
+        self.precheck_access()
+            .expect("the test reentry marker starts from one idle owner");
+        set_owner_local_page_engine_state(MainHeapThreadOwnerLocalPageEngineState::Borrowed);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn test_end_borrowed_state(&mut self) {
+        MainHeapThreadAttachment::end_owner_local_page_engine_access();
+        self.precheck_access()
+            .expect("the test reentry marker restores the idle owner");
+    }
+}
+
+impl Drop for MainHeapThreadOwnerLocalPageEngineLease {
+    fn drop(&mut self) {
+        if !self.finished {
+            MainHeapThreadAttachment::latch_unfinished_owner_local_page_engine();
+        }
+    }
+}
+
+impl MainHeapThreadAttachment<'_> {
+    /// Restores the persistent owner to idle after one synchronous short
+    /// source projection, including panic unwinding.
+    pub(crate) fn end_owner_local_page_engine_access() {
+        match owner_local_page_engine_state() {
+            MainHeapThreadOwnerLocalPageEngineState::Borrowed => {
+                set_owner_local_page_engine_state(MainHeapThreadOwnerLocalPageEngineState::Idle);
+            }
+            MainHeapThreadOwnerLocalPageEngineState::Terminal => {}
+            MainHeapThreadOwnerLocalPageEngineState::Missing
+            | MainHeapThreadOwnerLocalPageEngineState::Idle => {
+                set_owner_local_page_engine_state(
+                    MainHeapThreadOwnerLocalPageEngineState::Terminal,
+                );
+            }
+        }
+    }
+
+    /// Permanently prevents fresh page-engine entry and attachment teardown
+    /// after an unfinished owner lost its explicit consuming finish boundary.
+    pub(crate) fn latch_unfinished_owner_local_page_engine() {
+        set_owner_local_page_engine_state(MainHeapThreadOwnerLocalPageEngineState::Terminal);
     }
 }
 
