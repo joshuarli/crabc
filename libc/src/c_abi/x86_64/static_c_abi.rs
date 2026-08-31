@@ -9,8 +9,8 @@
 //! square root, binary32/binary64 bit-sign masks, binary32/binary64 extrema,
 //! binary32/binary64 fixed-direction ceiling/floor, half-away rounding,
 //! truncation, remainder,
-//! and cube root, selected scalar binary32/binary64 base-two and minus-one
-//! exponential,
+//! and cube root, selected scalar binary32/binary64 base-two/minus-one
+//! exponential and base-ten logarithm,
 //! selected
 //! fenv-sensitive rounding,
 //! and one selected x87 binary80 extended-math block as real C bootstrap
@@ -266,6 +266,8 @@ mod math_cbrt;
 mod math_exp2;
 #[path = "math_expm1.rs"]
 mod math_expm1;
+#[path = "math_log10.rs"]
+mod math_log10;
 #[path = "math_ceil.rs"]
 mod math_ceil;
 #[path = "math_floor.rs"]
