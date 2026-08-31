@@ -408,6 +408,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-memory-sync
 ./scripts/dev-x86_64.sh libc-memory-locking
 ./scripts/dev-x86_64.sh libc-memfd-create
+./scripts/dev-x86_64.sh libc-allocator-runtime
 ./scripts/dev-x86_64.sh libc-static-c-abi-same-object-differential
 ./scripts/dev-x86_64.sh qualification-posix-abi-admission
 ./scripts/dev-x86_64.sh libc-header-layouts-baseline
@@ -2279,6 +2280,30 @@ probe remains direct relocation evidence; separately recorded static archive
 artifact boundaries select the shared archive, while only their errno-observing
 leaves link this owner. It is not a musl differential or a general C ABI
 claim.
+
+`libc-allocator-runtime` is a distinct opt-in mixed-runtime artifact, not one
+of the dependency-free selected-static leaves. It builds the exact shared
+`libc/src/allocator_mimalloc.rs` wrapper and `libmimalloc-sys` 0.1.49 backend
+used by the active AArch64 runtime, then extracts only the wrapper object, the
+x86 initial-TLS errno owner, and the bundled mimalloc v3.3.2 object. The same
+project-header probe first runs against pinned musl and then through that
+crabc wrapper. The candidate is statically linked, and its link map must reject
+musl's `malloc`, `calloc`, `realloc`, `free`, `aligned_alloc`, and
+`posix_memalign` objects, so every observed allocation call belongs to crabc.
+The transaction covers distinct aligned zero-size allocation, natural
+alignment through large requests, grow/shrink/failure-preserving reallocation,
+zeroed and overflow-checked counted allocation, stale-errno `free`, accepted
+non-multiple aligned sizes, invalid-alignment errno, POSIX output preservation,
+and reallocation to zero.
+
+Pinned musl still supplies the candidate's static startup, pthread-key,
+mapping, time, environment, and diagnostic primitives because their x86 crabc
+composition is not owned here. The bundled backend object also retains its
+private `mi_*` globals. The artifact therefore proves real x86 libc allocator
+wrapper integration but not a standalone runtime, dynamic interposition,
+general thread/fork/exit lifecycle, an owned CRT/sysroot, the separately paused
+fixed mimalloc v3.5.0 Rust port, allocator-family closure, promotion, or public
+x86 support.
 
 `libc-stat-compat` and `libc-credentials` are two private static
 `crabc-libc` semantic-vertical gates over one dependency-free `libc.a`. The

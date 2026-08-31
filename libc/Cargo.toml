@@ -13,6 +13,14 @@ crate-type = ["cdylib", "staticlib"]
 test = false
 bench = false
 
+[features]
+default = []
+# Private Linux/x86-64 parity evidence for the same C allocator backend used
+# by the active AArch64 runtime. Keeping this opt-in prevents the existing
+# dependency-free selected-static artifacts from silently acquiring bundled C
+# allocator objects before the wider x86 runtime composition is ready.
+x86-allocator-runtime = ["dep:libmimalloc-sys"]
+
 [target.'cfg(all(target_os = "linux", target_arch = "aarch64", target_endian = "little"))'.dependencies]
 crabc-core = { path = "../crabc-core" }
 crabc-mimalloc = { path = "../crabc-mimalloc" }
@@ -23,6 +31,9 @@ libmimalloc-sys = { version = "0.1.49", default-features = false, features = ["e
 # is the existing mimalloc-backed C allocation strategy in `crypt_impl.rs`.
 base64ct = { version = "1.8", default-features = false }
 sha-crypt = { version = "0.6", default-features = false, features = ["alloc", "password-hash"] }
+
+[target.'cfg(all(target_os = "linux", target_arch = "x86_64", target_endian = "little"))'.dependencies]
+libmimalloc-sys = { version = "0.1.49", default-features = false, features = ["extended"], optional = true }
 
 # The repository-level C and loader fixtures remain in ../tests so their
 # evidence paths are stable. Explicit targets make crabc-libc their owner

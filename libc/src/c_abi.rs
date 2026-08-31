@@ -136,6 +136,16 @@ const ENOTRECOVERABLE: c_int = 131;
 #[thread_local]
 static mut ERRNO: c_int = 0;
 
+#[inline]
+unsafe fn cabi_allocator_errno() -> c_int {
+    ERRNO
+}
+
+#[inline]
+unsafe fn cabi_set_allocator_errno(value: c_int) {
+    ERRNO = value;
+}
+
 #[no_mangle]
 pub unsafe extern "C" fn __errno_location() -> *mut c_int {
     core::ptr::addr_of_mut!(ERRNO)

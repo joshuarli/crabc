@@ -19068,6 +19068,67 @@ def require_ffs_artifact(family: Mapping[str, Any]) -> None:
     )
 
 
+def require_allocator_wrapper_artifact(family: Mapping[str, Any]) -> None:
+    """Keep allocator integration distinct from runtime and Rust-port promotion."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.posix-runtime].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [
+        entry for entry in artifacts if entry.get("id") == "static-c-allocator-wrapper"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.posix-runtime must contain exactly one static-c-allocator-wrapper artifact",
+    )
+    artifact = matching[0]
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for symbol in ("malloc", "calloc", "realloc", "free", "aligned_alloc", "posix_memalign"):
+        require(
+            symbol in description,
+            f"static-c-allocator-wrapper description omits {symbol}",
+        )
+    for phrase in (
+        "mixed-runtime",
+        "libmimalloc-sys` 0.1.49",
+        "bundled mimalloc v3.3.2",
+        "pinned musl 1.2.6",
+        "reject every pinned-musl",
+        "paused fixed-v3.5.0 Rust-port evidence",
+        "not an owned runtime",
+        "private `mi_*` globals",
+        "public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"static-c-allocator-wrapper description omits {phrase}",
+        )
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-allocator-runtime"},
+        "static-c-allocator-wrapper must use the closed libc-allocator-runtime command",
+    )
+    scope = evidence[0].get("scope")
+    require(
+        isinstance(scope, str)
+        and all(
+            phrase in scope
+            for phrase in (
+                "feature-gated reuse",
+                "absence of every pinned-musl allocator object",
+                "no-glibc purity",
+                "Pinned musl still supplies startup/process prerequisites",
+                "does not select a complete x86 C runtime",
+            )
+        ),
+        "static-c-allocator-wrapper evidence must retain its mixed-runtime boundary",
+    )
+
+
 def require_float_parse_artifact(family: Mapping[str, Any]) -> None:
     """Keep the source-faithful x87 parser below text/math family completion.
 
@@ -25496,6 +25557,7 @@ def validate_ledger(
     require_descriptor_pipeline_artifact(by_id["libc.posix-runtime"])
     require_timestamp_updates_artifact(by_id["libc.posix-runtime"])
     require_ffs_artifact(by_id["libc.posix-runtime"])
+    require_allocator_wrapper_artifact(by_id["libc.posix-runtime"])
     require_float_parse_artifact(by_id["libc.text-math-locale-stdio"])
     require_float_parse_locale_slice(by_id["libc.text-math-locale-stdio"])
     require_stdio_standard_streams_artifact(by_id["libc.text-math-locale-stdio"])

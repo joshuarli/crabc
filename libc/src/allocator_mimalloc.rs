@@ -18,7 +18,7 @@ unsafe fn mimalloc_failed<T>(ptr: *mut T) -> *mut T {
     if ptr.is_null() {
         // libmimalloc-sys intentionally does not own the process errno.  The
         // C ABI does, so publish the allocator failure at this boundary.
-        ERRNO = ENOMEM;
+        cabi_set_allocator_errno(ENOMEM);
     }
     ptr
 }
@@ -38,9 +38,9 @@ pub unsafe extern "C" fn free(ptr: *mut c_void) {
         // POSIX permits cleanup code to call free without disturbing a prior
         // error.  mimalloc may internally issue VM calls while reclaiming a
         // page, so preserve the libc-owned errno around the implementation.
-        let errno = ERRNO;
+        let errno = cabi_allocator_errno();
         libmimalloc_sys::mi_free(ptr);
-        ERRNO = errno;
+        cabi_set_allocator_errno(errno);
     }
 }
 
@@ -49,7 +49,7 @@ pub unsafe extern "C" fn calloc(count: SizeT, size: SizeT) -> *mut c_void {
     let total = match count.checked_mul(size) {
         Some(value) => value,
         None => {
-            ERRNO = ENOMEM;
+            cabi_set_allocator_errno(ENOMEM);
             return null_mut();
         }
     };
@@ -70,7 +70,7 @@ pub unsafe extern "C" fn aligned_alloc(alignment: SizeT, size: SizeT) -> *mut c_
     // mallocng implementation.  Validate only the required power-of-two
     // alignment before entering mimalloc.
     if !mimalloc_is_power_of_two(alignment) {
-        ERRNO = EINVAL;
+        cabi_set_allocator_errno(EINVAL);
         return null_mut();
     }
     mimalloc_failed(libmimalloc_sys::mi_malloc_aligned(size, alignment))
@@ -83,10 +83,16 @@ pub unsafe extern "C" fn posix_memalign(
     size: SizeT,
 ) -> c_int {
     // POSIX requires the output pointer to remain untouched on every error.
-    if result.is_null()
-        || !mimalloc_is_power_of_two(alignment)
+    if result.is_null() {
+        return EINVAL;
+    }
+    if !mimalloc_is_power_of_two(alignment)
         || alignment % core::mem::size_of::<*mut c_void>() != 0
     {
+        // Musl's posix_memalign delegates this form to aligned_alloc after
+        // rejecting only sub-pointer alignments, so its invalid-alignment
+        // result also leaves EINVAL in the calling thread's errno slot.
+        cabi_set_allocator_errno(EINVAL);
         return EINVAL;
     }
     let allocation = mimalloc_failed(libmimalloc_sys::mi_malloc_aligned(size, alignment));

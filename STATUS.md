@@ -51,7 +51,6 @@ planned: ABI inventory/symbol closure, the dynamic canonical
 OS/libc/pthread/signal suites, their runtime/sysroot prerequisites, and all
 other promotion gates are still required.
 
-
 Within still-planned `libc.text-math-locale-stdio`, the separate private
 `./scripts/dev-x86_64.sh libc-stdio-format-scan` artifact selects only
 allocation-free C-locale byte-buffer `snprintf`/`vsnprintf`/`sprintf`/
@@ -94,6 +93,15 @@ resolver configuration, DNS packets, conventional network databases, public
 `ifreq`, interface mutation, general allocation, dynamic runtime artifacts,
 promotion, and public x86 support.
 
+The x86 C runtime also has one opt-in mixed-runtime allocator-wrapper
+artifact. It reuses the exact `allocator_mimalloc.rs` wrapper and
+`libmimalloc-sys` 0.1.49 backend used by AArch64, extracts only that wrapper,
+the x86 initial-TLS errno owner, and the bundled backend object, and proves all
+six allocation entries against pinned musl while rejecting musl's allocator
+objects from the candidate link. Pinned musl still supplies startup and
+process primitives, and the backend retains private `mi_*` globals, so this is
+not an owned x86 runtime, fixed-v3.5.0 Rust-port promotion, allocator-family
+closure, or public x86 support.
 
 The x86 lane has five private ET_DYN interpreter artifacts inside still-planned
 `ldso.dynamic-runtime`. `ldso-initial-graph` is limited to

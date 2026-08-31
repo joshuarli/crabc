@@ -1323,6 +1323,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "libc-memory-sync",
             "libc-memory-locking",
             "libc-memfd-create",
+            "libc-allocator-runtime",
             "libc-static-c-abi-differential",
             "libc-static-c-abi-same-object-differential|qualification-posix-abi-admission",
             "libc-interface-discovery",

@@ -377,6 +377,48 @@ mod sysv_message_shared_memory;
 #[path = "fixed_graph_dlfcn.rs"]
 mod fixed_graph_dlfcn;
 
+// The allocator is opt-in until the complete x86 runtime can own its bundled
+// backend and lifecycle. Its C contract is shared verbatim with AArch64; only
+// the target-local errno accessor differs.
+#[cfg(feature = "x86-allocator-runtime")]
+mod allocator {
+    use core::ffi::{c_int, c_void};
+    use core::ptr::null_mut;
+
+    use super::errno;
+
+    type SizeT = usize;
+    const ENOMEM: c_int = 12;
+    const EINVAL: c_int = 22;
+
+    #[inline]
+    unsafe fn cabi_allocator_errno() -> c_int {
+        // SAFETY: allocator entry points read only their calling thread's
+        // selected initial-TLS errno slot.
+        unsafe { errno::get_errno() }
+    }
+
+    #[inline]
+    unsafe fn cabi_set_allocator_errno(value: c_int) {
+        // SAFETY: allocator failure translation changes only the calling
+        // thread's selected initial-TLS errno slot.
+        unsafe { errno::set_errno(value) };
+    }
+
+    include!("../../allocator_mimalloc.rs");
+
+    /// Link-time witness for the opt-in x86 allocator wrapper object.
+    ///
+    /// This is private evidence glue, not an installed libc interface. The
+    /// mixed-runtime differential calls it solely to force this archive
+    /// member into the candidate before pinned musl supplies the still-missing
+    /// process/runtime prerequisites of the bundled allocator backend.
+    #[no_mangle]
+    pub extern "C" fn __crabc_x86_allocator_runtime_v1() -> usize {
+        1
+    }
+}
+
 use core::ffi::{c_int, c_void};
 
 const LINUX_ERRNO_MAX: i64 = 4_095;
