@@ -455,6 +455,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-system-information
 ./scripts/dev-x86_64.sh libc-uts-identity
 ./scripts/dev-x86_64.sh libc-network-byte-order
+./scripts/dev-x86_64.sh libc-in6addr-any
 ./scripts/dev-x86_64.sh libc-socket-transport
 ./scripts/dev-x86_64.sh libc-socket-messages
 ./scripts/dev-x86_64.sh libc-byte-strings
@@ -1264,7 +1265,9 @@ header evidence and does not select process-resource behavior or `crabc-libc`.
 `socket-header-abi` compile-checks project-first and pinned-musl GNU C/C++
 `<sys/socket.h>` and `<netinet/in.h>` base transport declarations, then runs a
 tiny C probe through each header set for the installed IPv6 address-
-classification macros. It covers only generic and IPv4/IPv6 socket-address
+classification macros. It also proves the immutable `in6addr_any` declaration,
+musl's union-backed 16-byte align-4 `struct in6_addr` layout, and an unmangled
+C++ data-symbol reference. It covers only generic and IPv4/IPv6 socket-address
 records, `socklen_t`, selected address-family/type, creation, shutdown, and
 basic send/receive constants, the `socket`/`socketpair`,
 bind/listen/accept/`accept4`/connect, send/receive, name-query, and shutdown
@@ -3634,6 +3637,20 @@ paths. It does not select `inet_*` address conversion or scratch storage,
 resolver configuration, DNS, netdb/database, Ethernet/interface behavior,
 socket transport, general networking, family promotion, or public x86
 support.
+
+`libc-in6addr-any` is a separately recorded private `static-c-in6addr-any`
+`verified_artifact` inside still-planned `libc.posix-runtime`, not resolver,
+DNS, netdb, interface, Ethernet, or socket-runtime work. Its project-header C
+fixture first runs through pinned musl 1.2.6 and then through an archive-free
+`-nostdlib -static` candidate that receives exactly one extracted crabc object,
+never `libc.a`. It proves the stable, global default read-only 16-byte
+all-zero `in6addr_any` object from musl `src/network/in6addr_any.c`; the
+independent final-octet-one `src/network/in6addr_loopback.c` object remains
+unselected. The paired C/C++ socket-header gate proves the union-backed
+align-4 `struct in6_addr` and unmangled C++ data reference. It selects no
+address conversion, errno, TLS, allocation, syscall, `/etc/hosts`,
+`/etc/resolv.conf`, resolver/DNS/netdb, interface, Ethernet, socket transport,
+family promotion, or public x86 support.
 
 `libc-socket-transport` is a separately recorded
 `static-c-socket-transport` `verified_artifact` gate over that archive, not a

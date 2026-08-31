@@ -3744,6 +3744,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         '#[path = "memfd_create.rs"]',
         '#[path = "readiness_waits.rs"]',
         '#[path = "socket_transport.rs"]',
+        '#[path = "in6addr_any.rs"]',
         '#[path = "inet_address.rs"]',
         '#[path = "inet_ntoa.rs"]',
         '#[path = "inet_classful.rs"]',
@@ -7188,6 +7189,162 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
             "artifact must export only its named socket-message/options symbols"
         )
 
+    in6addr_any_probe_source = (
+        ROOT / "compat" / "x86_64" / "libc_in6addr_any_probe.c"
+    )
+    in6addr_any_start_source = (
+        ROOT / "compat" / "x86_64" / "libc_in6addr_any_start.S"
+    )
+    in6addr_any_runner_source = (
+        ROOT / "compat" / "x86_64" / "run_libc_in6addr_any.sh"
+    )
+    for path in (
+        in6addr_any_probe_source,
+        in6addr_any_start_source,
+        in6addr_any_runner_source,
+    ):
+        if not path.is_file():
+            errors.append(
+                "x86 static immutable IPv6 unspecified-address artifact is missing "
+                f"{path.relative_to(ROOT)}"
+            )
+            return
+
+    in6addr_any_source = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "in6addr_any.rs"
+    )
+    in6addr_any_text = in6addr_any_source.read_text(errors="replace")
+    in6addr_any_probe = in6addr_any_probe_source.read_text(errors="replace")
+    in6addr_any_start = in6addr_any_start_source.read_text(errors="replace")
+    in6addr_any_runner = in6addr_any_runner_source.read_text(errors="replace")
+    for required in (
+        "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+        "src/network/in6addr_any.c",
+        "src/network/in6addr_loopback.c",
+        "pub struct In6Addr",
+        "pub union In6AddrUnion",
+        "[u8; 16]",
+        "[u16; 8]",
+        "[u32; 4]",
+        "#[no_mangle]",
+        "pub static in6addr_any",
+        "[0; 16]",
+    ):
+        if required not in in6addr_any_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/in6addr_any.rs: selected static "
+                f"immutable IPv6 object boundary is missing {required!r}"
+            )
+    for forbidden in (
+        "static mut",
+        "raw_syscall",
+        "__errno_location",
+        "getaddrinfo",
+        "gethostby",
+        "if_nameindex",
+        "socket(",
+        "std::",
+        "alloc::",
+        "crabc_core",
+        "crabc_mimalloc",
+    ):
+        if forbidden in in6addr_any_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/in6addr_any.rs: selected static "
+                f"immutable IPv6 object must not select {forbidden!r}"
+            )
+    in6addr_any_exports = set(
+        re.findall(r"(?m)^pub\s+static\s+(\w+)\s*:", in6addr_any_text)
+    )
+    if in6addr_any_exports != {"in6addr_any"}:
+        errors.append(
+            "libc/src/c_abi/x86_64/in6addr_any.rs: selected static artifact "
+            "must export only in6addr_any"
+        )
+    netinet_header = (ROOT / "include" / "netinet" / "in.h").read_text(
+        errors="replace"
+    )
+    for required in (
+        'extern "C" {',
+        "uint8_t __s6_addr[16]",
+        "uint16_t __s6_addr16[8]",
+        "uint32_t __s6_addr32[4]",
+        "__in6_union",
+        "#define s6_addr __in6_union.__s6_addr",
+        "extern const struct in6_addr in6addr_any",
+    ):
+        if required not in netinet_header:
+            errors.append(
+                "include/netinet/in.h: immutable IPv6 C/C++ data-object ABI "
+                f"is missing {required!r}"
+            )
+    for required in (
+        "sizeof(struct in6_addr) == 16",
+        "_Alignof(struct in6_addr) == 4",
+        "offsetof(struct in6_addr, s6_addr) == 0",
+        "in6addr_any_pointer",
+        "all_zero",
+        "IN6_IS_ADDR_UNSPECIFIED",
+        "IN6_IS_ADDR_LOOPBACK",
+        "CRABC_IN6ADDR_ANY_FREESTANDING",
+    ):
+        if required not in in6addr_any_probe:
+            errors.append(
+                "compat/x86_64/libc_in6addr_any_probe.c: immutable IPv6 "
+                f"regression is missing {required!r}"
+            )
+    for required in (
+        "crabc_x86_64_in6addr_any_probe",
+        "mov $60, %eax",
+    ):
+        if required not in in6addr_any_start:
+            errors.append(
+                "compat/x86_64/libc_in6addr_any_start.S: immutable IPv6 "
+                f"entry is missing {required!r}"
+            )
+    if "ARCH_SET_FS" in in6addr_any_start:
+        errors.append(
+            "compat/x86_64/libc_in6addr_any_start.S: immutable IPv6 entry "
+            "must not bootstrap TLS"
+        )
+    for required in (
+        "in6addr_any.lo",
+        "in6addr_loopback.lo",
+        "in6addr_any.c",
+        "in6addr_loopback.c",
+        "assert_selected_c_abi_surface",
+        "extract_selected_member",
+        "in6addr_any archive member also defines in6addr_loopback",
+        "-nostdlib -static",
+        '"$selected_member" -o "$candidate"',
+        "candidate unexpectedly selects TLS",
+        "in6addr_loopback htonl htons ntohl ntohs",
+        "getaddrinfo",
+        "if_indextoname",
+        "if_nameindex",
+        "if_nametoindex",
+        "socket bind connect send recv",
+        "__tls_get_addr",
+    ):
+        if required not in in6addr_any_runner:
+            errors.append(
+                "compat/x86_64/run_libc_in6addr_any.sh: archive-free static "
+                f"immutable IPv6 evidence is missing {required!r}"
+            )
+    if '"$archive" -o "$candidate"' in in6addr_any_runner:
+        errors.append(
+            "compat/x86_64/run_libc_in6addr_any.sh: final immutable IPv6 "
+            "candidate must not link libc.a"
+        )
+    socket_header_runner = (
+        ROOT / "compat" / "x86_64" / "run_socket_header_abi.sh"
+    ).read_text(errors="replace")
+    if "check_cxx_in6addr_any_linkage" not in socket_header_runner:
+        errors.append(
+            "compat/x86_64/run_socket_header_abi.sh: IPv6 data-object C++ "
+            "linkage proof is missing"
+        )
+
     inet_address_probe_source = (
         ROOT / "compat" / "x86_64" / "libc_inet_address_probe.c"
     )
@@ -8796,6 +8953,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         | pthread_rwlock_public_aliases
         | pthread_identity_exports
         | process_global_data_exports
+        | in6addr_any_exports
     )
     expected_exports = {
         "__errno_location",
@@ -9036,6 +9194,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         "sendmmsg",
         "recvmmsg",
         "sockatmark",
+        "in6addr_any",
         "inet_pton",
         "inet_ntop",
         "__inet_aton",
@@ -9243,6 +9402,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         ("readiness_waits.rs", readiness_waits_text),
         ("socket_transport.rs", socket_transport_text),
         ("socket_messages.rs", socket_messages_text),
+        ("in6addr_any.rs", in6addr_any_text),
         ("inet_address.rs", inet_address_text),
         ("inet_ntoa.rs", inet_ntoa_text),
         ("inet_classful.rs", inet_classful_text),

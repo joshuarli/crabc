@@ -3,13 +3,32 @@
 
 #include <arpa/inet.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 struct sockaddr_in {
     sa_family_t sin_family;
     in_port_t sin_port;
     struct in_addr sin_addr;
     unsigned char sin_zero[8];
 };
-struct in6_addr { uint8_t s6_addr[16]; };
+/*
+ * Keep musl's union-backed public IPv6 object layout. In particular, the
+ * uint32_t arm gives `struct in6_addr` its required x86 ABI alignment of four
+ * while the byte arm remains the ordinary `s6_addr` C spelling used by socket
+ * callers and the address-classification macros below.
+ */
+struct in6_addr {
+    union {
+        uint8_t __s6_addr[16];
+        uint16_t __s6_addr16[8];
+        uint32_t __s6_addr32[4];
+    } __in6_union;
+};
+#define s6_addr __in6_union.__s6_addr
+#define s6_addr16 __in6_union.__s6_addr16
+#define s6_addr32 __in6_union.__s6_addr32
 struct sockaddr_in6 {
     sa_family_t sin6_family;
     in_port_t sin6_port;
@@ -21,8 +40,8 @@ struct ipv6_mreq { struct in6_addr ipv6mr_multiaddr; unsigned ipv6mr_interface; 
 
 extern const struct in6_addr in6addr_any;
 extern const struct in6_addr in6addr_loopback;
-#define IN6ADDR_ANY_INIT {{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}}
-#define IN6ADDR_LOOPBACK_INIT {{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1}}
+#define IN6ADDR_ANY_INIT {{{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}}}
+#define IN6ADDR_LOOPBACK_INIT {{{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1}}}
 
 #define IPPROTO_IP 0
 #define IPPROTO_ICMP 1
@@ -106,5 +125,9 @@ extern const struct in6_addr in6addr_loopback;
     (IN6_IS_ADDR_MULTICAST(a) && (__IN6_ADDR_BYTE(a, 1) & 0x0f) == 0x08)
 #define IN6_IS_ADDR_MC_GLOBAL(a) \
     (IN6_IS_ADDR_MULTICAST(a) && (__IN6_ADDR_BYTE(a, 1) & 0x0f) == 0x0e)
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif
