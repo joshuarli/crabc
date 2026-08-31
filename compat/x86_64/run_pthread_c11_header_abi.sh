@@ -113,10 +113,12 @@ assert_cxx_c_linkage() {
     local symbols
     local symbol
     local -a required_symbols=(
-        pthread_create pthread_detach pthread_self pthread_equal pthread_getcpuclockid
+        pthread_create pthread_detach pthread_self pthread_equal pthread_getconcurrency pthread_getcpuclockid pthread_setconcurrency
         pthread_key_create pthread_key_delete pthread_getspecific pthread_setspecific
         pthread_mutex_init pthread_mutex_destroy pthread_mutex_lock
         pthread_mutex_trylock pthread_mutex_unlock
+        pthread_mutex_getprioceiling
+        pthread_mutexattr_gettype pthread_mutexattr_settype pthread_mutexattr_getprotocol pthread_mutexattr_getpshared pthread_mutexattr_getrobust
         pthread_cond_init pthread_cond_destroy pthread_cond_wait
         pthread_cond_signal pthread_cond_broadcast
         pthread_rwlock_init pthread_rwlock_destroy pthread_rwlock_rdlock

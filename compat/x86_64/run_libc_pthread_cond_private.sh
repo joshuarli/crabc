@@ -165,8 +165,6 @@ grep -Eq 'GLOBAL +HIDDEN +.*__crabc_x86_pthread_clone$' "$archive_elf_symbols" |
 grep -Eq 'GLOBAL +HIDDEN +.*__crabc_x86_static_tls_bootstrap$' "$archive_elf_symbols" ||
     fail "archive Static Initial TLS v1 bootstrap is not hidden"
 for unselected in pthread_condattr_init pthread_condattr_destroy \
-    pthread_condattr_setclock pthread_condattr_getclock \
-    pthread_condattr_setpshared pthread_condattr_getpshared \
     pthread_cond_timedwait pthread_mutexattr_init pthread_mutexattr_destroy \
     pthread_mutexattr_settype pthread_mutexattr_gettype pthread_mutex_timedlock \
     pthread_mutex_consistent \

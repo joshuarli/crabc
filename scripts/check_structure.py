@@ -129,7 +129,9 @@ X86_RUNTIME_FOUNDATION_LDSO_SOURCES = {
 # selected readiness/signal waits, selected system observation, selected
 # UTS-namespace identity, selected legacy bcopy/bzero adapters, selected
 # source-backed memccpy copy-until-target and mempcpy return-after-copy adapters,
-# one caller-buffer `strsep` token-mutation leaf, selected C-string
+# one caller-buffer `strsep` token-mutation leaf, one caller-owned `rand_r`
+# PRNG-state transform, stateless `pthread_setconcurrency`, fixed
+# `pthread_getconcurrency`, and raw-record `pthread_mutexattr_settype` leaves, selected C-string
 # copy/concatenation, fixed-C-
 # locale ctype and the separately bounded named-locale/multibyte conversion
 # artifact, scalar integer arithmetic, complete integer parsing, intmax
@@ -3787,6 +3789,9 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         '#[path = "timer_fd.rs"]',
         '#[path = "pthread_identity.rs"]',
         '#[path = "pthread_create_join.rs"]',
+        '#[path = "pthread_getconcurrency.rs"]',
+        '#[path = "pthread_setconcurrency.rs"]',
+        '#[path = "pthread_mutexattr_type_setter.rs"]',
         '#[path = "pthread_tsd.rs"]',
         '#[path = "pthread_mutex.rs"]',
         '#[path = "pthread_cond.rs"]',

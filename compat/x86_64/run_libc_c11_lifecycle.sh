@@ -121,9 +121,7 @@ grep -Eq 'GLOBAL +HIDDEN +.*__crabc_x86_static_tls_bootstrap$' "$archive_elf_sym
 # runner deliberately does not reject those independently selected exports.
 for unselected in pthread_mutexattr_init pthread_mutexattr_destroy \
     pthread_mutexattr_settype pthread_mutex_timedlock pthread_mutex_consistent \
-    pthread_condattr_init pthread_condattr_destroy pthread_condattr_setclock \
-    pthread_condattr_getclock pthread_condattr_setpshared pthread_condattr_getpshared \
-    pthread_cond_timedwait \
+    pthread_condattr_init pthread_condattr_destroy pthread_cond_timedwait \
     __tls_get_addr; do
     if grep -Eq "[[:space:]][TW][[:space:]]${unselected}$" "$archive_symbols"; then
         fail "archive accidentally exports unselected ${unselected}"

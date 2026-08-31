@@ -6,6 +6,14 @@ runtime parity, defined by [`x86-64.md`](x86-64.md). It covers `crabc-core`,
 with explicit target-specific foundations and native evidence. Public support
 remains Linux/AArch64 little-endian until every x86 promotion gate passes.
 
+The private `libc-rand-r` and `libc-pthread-*` static commands extend only
+leaf-level accounting: caller-owned `rand_r` state; condattr pshared/clock;
+mutexattr robust/protocol/pshared/type queries and type setting; mutex
+priority-ceiling status; and pthread concurrency query/set status. Their
+artifacts remain in planned `libc.posix-runtime` or `libc.pthread-tls`; they
+do not complete pthread/TLS, the C runtime, an owned sysroot, dynamic runtime,
+family promotion, or public x86 support.
+
 `./scripts/dev-x86_64.sh libc-network-byte-order` is a private
 `static-c-network-byte-order` artifact inside planned `libc.posix-runtime`.
 Its pinned-musl and true-static candidate fixture selects only `htonl`,

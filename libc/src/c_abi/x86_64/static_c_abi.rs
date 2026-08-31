@@ -272,6 +272,8 @@ mod intmax_arithmetic;
 mod ffs;
 #[path = "random_entropy.rs"]
 mod random_entropy;
+#[path = "rand_r.rs"]
+mod rand_r;
 #[path = "fenv.rs"]
 mod fenv;
 #[path = "math_complex.rs"]
@@ -728,6 +730,26 @@ mod sched_getparam;
 mod sched_setparam;
 #[path = "sched_getaffinity.rs"]
 mod sched_getaffinity;
+#[path = "pthread_getconcurrency.rs"]
+mod pthread_getconcurrency;
+#[path = "pthread_setconcurrency.rs"]
+mod pthread_setconcurrency;
+#[path = "pthread_condattr_pshared.rs"]
+mod pthread_condattr_pshared;
+#[path = "pthread_condattr_clock.rs"]
+mod pthread_condattr_clock;
+#[path = "pthread_mutexattr_protocol_query.rs"]
+mod pthread_mutexattr_protocol_query;
+#[path = "pthread_mutexattr_pshared_query.rs"]
+mod pthread_mutexattr_pshared_query;
+#[path = "pthread_mutexattr_robust_query.rs"]
+mod pthread_mutexattr_robust_query;
+#[path = "pthread_mutexattr_type_query.rs"]
+mod pthread_mutexattr_type_query;
+#[path = "pthread_mutexattr_type_setter.rs"]
+mod pthread_mutexattr_type_setter;
+#[path = "pthread_mutex_prioceiling_query.rs"]
+mod pthread_mutex_prioceiling_query;
 
 // The sole AArch64 allocator-observability capability is a separate strong
 // C entry, not part of the weak allocation family. Its private witness keeps

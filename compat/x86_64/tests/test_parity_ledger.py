@@ -50,7 +50,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 41)
-        self.assertEqual(report["verified_artifact_count"], 292)
+        self.assertEqual(report["verified_artifact_count"], 303)
         self.assertEqual(report["header_layout_probe_count"], 47)
         self.assertEqual(report["public_header_inventory_count"], 183)
         self.assertEqual(report["header_foundation_header_count"], 191)
@@ -25202,6 +25202,59 @@ class X86ParityLedgerTests(unittest.TestCase):
         ):
             ledger.validate_ledger(data)
 
+    def test_pthread_and_rand_leaf_matrix_remains_closed(self) -> None:
+        data = self.data()
+        pthread = self.family(data, "libc.pthread-tls")
+        artifacts = pthread["verified_artifact"]
+        assert isinstance(artifacts, list)
+        commands = {
+            entry["id"]: entry["native_evidence"][0]["command"]
+            for entry in artifacts
+            if isinstance(entry, dict)
+            and isinstance(entry.get("native_evidence"), list)
+            and entry["native_evidence"]
+        }
+        expected = {
+            "static-c-pthread-condattr-pshared": "./scripts/dev-x86_64.sh libc-pthread-condattr-pshared",
+            "static-c-pthread-condattr-clock": "./scripts/dev-x86_64.sh libc-pthread-condattr-clock",
+            "static-c-pthread-mutexattr-robust-query": "./scripts/dev-x86_64.sh libc-pthread-mutexattr-robust-query",
+            "static-c-pthread-mutexattr-protocol-query": "./scripts/dev-x86_64.sh libc-pthread-mutexattr-protocol-query",
+            "static-c-pthread-mutexattr-pshared-query": "./scripts/dev-x86_64.sh libc-pthread-mutexattr-pshared-query",
+            "static-c-pthread-mutexattr-type-query": "./scripts/dev-x86_64.sh libc-pthread-mutexattr-type-query",
+            "static-c-pthread-mutexattr-type-setter": "./scripts/dev-x86_64.sh libc-pthread-mutexattr-type-setter",
+            "static-c-pthread-mutex-prioceiling-query": "./scripts/dev-x86_64.sh libc-pthread-mutex-prioceiling-query",
+            "static-c-pthread-getconcurrency": "./scripts/dev-x86_64.sh libc-pthread-getconcurrency",
+            "static-c-pthread-setconcurrency": "./scripts/dev-x86_64.sh libc-pthread-setconcurrency",
+        }
+        self.assertEqual({key: commands[key] for key in expected}, expected)
+
+        posix_runtime = self.family(data, "libc.posix-runtime")
+        rand_r = next(
+            entry
+            for entry in posix_runtime["verified_artifact"]
+            if isinstance(entry, dict) and entry["id"] == "static-c-rand-r"
+        )
+        self.assertEqual(
+            rand_r["native_evidence"][0]["command"],
+            "./scripts/dev-x86_64.sh libc-rand-r",
+        )
+
+        changed = self.data()
+        artifacts = self.family(changed, "libc.pthread-tls")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        selected = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict)
+            and entry["id"] == "static-c-pthread-getconcurrency"
+        )
+        evidence = selected["native_evidence"]
+        assert isinstance(evidence, list) and isinstance(evidence[0], dict)
+        evidence[0]["command"] = "./scripts/dev-x86_64.sh libc-pthread-setconcurrency"
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "static-c-pthread-getconcurrency must retain its closed native command"
+        ):
+            ledger.validate_ledger(changed)
 
     def test_rejects_an_unknown_aarch64_gate(self) -> None:
         data = self.data()

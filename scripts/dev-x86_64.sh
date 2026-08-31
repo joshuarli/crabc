@@ -2140,6 +2140,17 @@ general facade admission, or C ABI support claim.
   sched-setparam-header-abi  compile x86 sched_setparam C/C++ declarations
   setfsgid-header-abi  compile x86 sys/fsuid.h setfsgid C/C++ declarations
   setfsuid-header-abi  compile x86 sys/fsuid.h setfsuid C/C++ declarations
+  libc-pthread-condattr-clock  run the static x86 crabc-libc condition-attribute clock record slice
+  libc-pthread-condattr-pshared  run the static x86 crabc-libc condition-attribute pshared record slice
+  libc-pthread-getconcurrency  run the static x86 crabc-libc fixed pthread concurrency-query slice
+  libc-pthread-mutex-prioceiling-query  run the static x86 crabc-libc direct mutex priority-ceiling query slice
+  libc-pthread-mutexattr-protocol-query  run the static x86 crabc-libc mutex-attribute protocol-bit query slice
+  libc-pthread-mutexattr-pshared-query  run the static x86 crabc-libc mutex-attribute pshared-bit query slice
+  libc-pthread-mutexattr-robust-query  run the static x86 crabc-libc mutex-attribute robust-bit query slice
+  libc-pthread-mutexattr-type-query  run the static x86 crabc-libc mutex-attribute type-bit query slice
+  libc-pthread-mutexattr-type-setter  run the static x86 crabc-libc mutex-attribute type-bit setter slice
+  libc-pthread-setconcurrency  run the static x86 crabc-libc stateless pthread concurrency-status slice
+  libc-rand-r  run the static x86 crabc-libc caller-state rand_r slice
 EOF
 }
 
@@ -2673,6 +2684,10 @@ run_libc_strsep() {
 
 run_libc_strtok() {
     run_in_container bash /workspace/compat/x86_64/run_libc_strtok.sh
+}
+
+run_libc_rand_r() {
+    run_in_container bash /workspace/compat/x86_64/run_libc_rand_r.sh
 }
 
 run_libc_allocator_runtime() {
@@ -3856,6 +3871,46 @@ run_libc_pthread_barrierattr_pshared_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_pthread_barrierattr_pshared.sh
 }
 
+run_libc_pthread_condattr_pshared_probe() {
+    run_in_container bash /workspace/compat/x86_64/run_libc_pthread_condattr_pshared.sh
+}
+
+run_libc_pthread_condattr_clock_probe() {
+    run_in_container bash /workspace/compat/x86_64/run_libc_pthread_condattr_clock.sh
+}
+
+run_libc_pthread_mutexattr_robust_query_probe() {
+    run_in_container bash /workspace/compat/x86_64/run_libc_pthread_mutexattr_robust_query.sh
+}
+
+run_libc_pthread_mutexattr_protocol_query_probe() {
+    run_in_container bash /workspace/compat/x86_64/run_libc_pthread_mutexattr_protocol_query.sh
+}
+
+run_libc_pthread_mutexattr_pshared_query_probe() {
+    run_in_container bash /workspace/compat/x86_64/run_libc_pthread_mutexattr_pshared_query.sh
+}
+
+run_libc_pthread_mutexattr_type_query_probe() {
+    run_in_container bash /workspace/compat/x86_64/run_libc_pthread_mutexattr_type_query.sh
+}
+
+run_libc_pthread_mutexattr_type_setter_probe() {
+    run_in_container bash /workspace/compat/x86_64/run_libc_pthread_mutexattr_type_setter.sh
+}
+
+run_libc_pthread_mutex_prioceiling_query_probe() {
+    run_in_container bash /workspace/compat/x86_64/run_libc_pthread_mutex_prioceiling_query.sh
+}
+
+run_libc_pthread_getconcurrency_probe() {
+    run_in_container bash /workspace/compat/x86_64/run_libc_pthread_getconcurrency.sh
+}
+
+run_libc_pthread_setconcurrency_probe() {
+    run_in_container bash /workspace/compat/x86_64/run_libc_pthread_setconcurrency.sh
+}
+
 run_pthread_spin_init_header_abi() {
     run_in_container bash /workspace/compat/x86_64/run_pthread_spin_init_header_abi.sh
 }
@@ -4425,6 +4480,17 @@ case "$command" in
     libc-math-asinh) ;;
     libc-math-exp10f) ;;
     libc-math-sinh) ;;
+    libc-pthread-condattr-pshared) ;;
+    libc-pthread-condattr-clock) ;;
+    libc-pthread-mutexattr-protocol-query) ;;
+    libc-pthread-mutexattr-pshared-query) ;;
+    libc-pthread-mutexattr-robust-query) ;;
+    libc-pthread-mutexattr-type-query) ;;
+    libc-pthread-mutexattr-type-setter) ;;
+    libc-pthread-mutex-prioceiling-query) ;;
+    libc-pthread-getconcurrency) ;;
+    libc-pthread-setconcurrency) ;;
+    libc-rand-r) ;;
 
     *)
         usage >&2
@@ -5713,6 +5779,56 @@ case "$command" in
         ensure_image
         run_libc_pthread_barrierattr_pshared_probe
         ;;
+    libc-pthread-condattr-pshared)
+        [ "$#" -eq 0 ] || fail "libc-pthread-condattr-pshared takes no arguments"
+        ensure_image
+        run_libc_pthread_condattr_pshared_probe
+        ;;
+    libc-pthread-condattr-clock)
+        [ "$#" -eq 0 ] || fail "libc-pthread-condattr-clock takes no arguments"
+        ensure_image
+        run_libc_pthread_condattr_clock_probe
+        ;;
+    libc-pthread-mutexattr-robust-query)
+        [ "$#" -eq 0 ] || fail "libc-pthread-mutexattr-robust-query takes no arguments"
+        ensure_image
+        run_libc_pthread_mutexattr_robust_query_probe
+        ;;
+    libc-pthread-mutexattr-protocol-query)
+        [ "$#" -eq 0 ] || fail "libc-pthread-mutexattr-protocol-query takes no arguments"
+        ensure_image
+        run_libc_pthread_mutexattr_protocol_query_probe
+        ;;
+    libc-pthread-mutexattr-pshared-query)
+        [ "$#" -eq 0 ] || fail "libc-pthread-mutexattr-pshared-query takes no arguments"
+        ensure_image
+        run_libc_pthread_mutexattr_pshared_query_probe
+        ;;
+    libc-pthread-mutexattr-type-query)
+        [ "$#" -eq 0 ] || fail "libc-pthread-mutexattr-type-query takes no arguments"
+        ensure_image
+        run_libc_pthread_mutexattr_type_query_probe
+        ;;
+    libc-pthread-mutexattr-type-setter)
+        [ "$#" -eq 0 ] || fail "libc-pthread-mutexattr-type-setter takes no arguments"
+        ensure_image
+        run_libc_pthread_mutexattr_type_setter_probe
+        ;;
+    libc-pthread-mutex-prioceiling-query)
+        [ "$#" -eq 0 ] || fail "libc-pthread-mutex-prioceiling-query takes no arguments"
+        ensure_image
+        run_libc_pthread_mutex_prioceiling_query_probe
+        ;;
+    libc-pthread-getconcurrency)
+        [ "$#" -eq 0 ] || fail "libc-pthread-getconcurrency takes no arguments"
+        ensure_image
+        run_libc_pthread_getconcurrency_probe
+        ;;
+    libc-pthread-setconcurrency)
+        [ "$#" -eq 0 ] || fail "libc-pthread-setconcurrency takes no arguments"
+        ensure_image
+        run_libc_pthread_setconcurrency_probe
+        ;;
     libc-pthread-spin-destroy)
         [ "$#" -eq 0 ] || fail "libc-pthread-spin-destroy takes no arguments"
         ensure_image
@@ -6648,6 +6764,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "libc-strtok takes no arguments"
         ensure_image
         run_libc_strtok
+        ;;
+    libc-rand-r)
+        [ "$#" -eq 0 ] || fail "libc-rand-r takes no arguments"
+        ensure_image
+        run_libc_rand_r
         ;;
     libc-network-byte-order)
         [ "$#" -eq 0 ] || fail "libc-network-byte-order takes no arguments"

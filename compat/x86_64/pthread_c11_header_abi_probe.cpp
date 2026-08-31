@@ -117,7 +117,9 @@ using crabc_pthread_create_signature = int (*)(
 using crabc_pthread_detach_signature = int (*)(pthread_t);
 using crabc_pthread_self_signature = pthread_t (*)();
 using crabc_pthread_equal_signature = int (*)(pthread_t, pthread_t);
+using crabc_pthread_getconcurrency_signature = int (*)();
 using crabc_pthread_getcpuclockid_signature = int (*)(pthread_t, clockid_t *);
+using crabc_pthread_setconcurrency_signature = int (*)(int);
 using crabc_pthread_key_create_signature = int (*)(
 	pthread_key_t *, void (*)(void *));
 using crabc_pthread_key_delete_signature = int (*)(pthread_key_t);
@@ -126,6 +128,18 @@ using crabc_pthread_setspecific_signature = int (*)(pthread_key_t, const void *)
 using crabc_pthread_sigmask_signature = int (*)(int, const sigset_t *, sigset_t *);
 using crabc_pthread_mutex_init_signature = int (*)(
 	pthread_mutex_t *, const pthread_mutexattr_t *);
+using crabc_pthread_mutex_getprioceiling_signature = int (*)(
+	const pthread_mutex_t *, int *);
+using crabc_pthread_mutexattr_gettype_signature = int (*)(
+	const pthread_mutexattr_t *, int *);
+using crabc_pthread_mutexattr_settype_signature = int (*)(
+	pthread_mutexattr_t *, int);
+using crabc_pthread_mutexattr_getprotocol_signature = int (*)(
+	const pthread_mutexattr_t *, int *);
+using crabc_pthread_mutexattr_getpshared_signature = int (*)(
+	const pthread_mutexattr_t *, int *);
+using crabc_pthread_mutexattr_getrobust_signature = int (*)(
+	const pthread_mutexattr_t *, int *);
 using crabc_pthread_mutex_destroy_signature = int (*)(pthread_mutex_t *);
 using crabc_pthread_mutex_lock_signature = int (*)(pthread_mutex_t *);
 using crabc_pthread_mutex_trylock_signature = int (*)(pthread_mutex_t *);
@@ -195,8 +209,12 @@ static_assert(__is_same(decltype(&pthread_self), crabc_pthread_self_signature),
 	"pthread_self signature");
 static_assert(__is_same(decltype(&pthread_equal), crabc_pthread_equal_signature),
 	"pthread_equal signature");
+static_assert(__is_same(decltype(&pthread_getconcurrency),
+	crabc_pthread_getconcurrency_signature), "pthread_getconcurrency signature");
 static_assert(__is_same(decltype(&pthread_getcpuclockid),
 	crabc_pthread_getcpuclockid_signature), "pthread_getcpuclockid signature");
+static_assert(__is_same(decltype(&pthread_setconcurrency),
+	crabc_pthread_setconcurrency_signature), "pthread_setconcurrency signature");
 static_assert(__is_same(decltype(&pthread_key_create),
 	crabc_pthread_key_create_signature), "pthread_key_create signature");
 static_assert(__is_same(decltype(&pthread_key_delete),
@@ -207,6 +225,18 @@ static_assert(__is_same(decltype(&pthread_setspecific),
 	crabc_pthread_setspecific_signature), "pthread_setspecific signature");
 static_assert(__is_same(decltype(&pthread_mutex_init),
 	crabc_pthread_mutex_init_signature), "pthread_mutex_init signature");
+static_assert(__is_same(decltype(&pthread_mutex_getprioceiling),
+	crabc_pthread_mutex_getprioceiling_signature), "pthread_mutex_getprioceiling signature");
+static_assert(__is_same(decltype(&pthread_mutexattr_gettype),
+	crabc_pthread_mutexattr_gettype_signature), "pthread_mutexattr_gettype signature");
+static_assert(__is_same(decltype(&pthread_mutexattr_settype),
+	crabc_pthread_mutexattr_settype_signature), "pthread_mutexattr_settype signature");
+static_assert(__is_same(decltype(&pthread_mutexattr_getprotocol),
+	crabc_pthread_mutexattr_getprotocol_signature), "pthread_mutexattr_getprotocol signature");
+static_assert(__is_same(decltype(&pthread_mutexattr_getpshared),
+	crabc_pthread_mutexattr_getpshared_signature), "pthread_mutexattr_getpshared signature");
+static_assert(__is_same(decltype(&pthread_mutexattr_getrobust),
+	crabc_pthread_mutexattr_getrobust_signature), "pthread_mutexattr_getrobust signature");
 static_assert(__is_same(decltype(&pthread_mutex_destroy),
 	crabc_pthread_mutex_destroy_signature), "pthread_mutex_destroy signature");
 static_assert(__is_same(decltype(&pthread_mutex_lock),
@@ -327,8 +357,12 @@ static crabc_pthread_self_signature const crabc_force_pthread_self
 	__attribute__((used)) = &pthread_self;
 static crabc_pthread_equal_signature const crabc_force_pthread_equal
 	__attribute__((used)) = &pthread_equal;
+static crabc_pthread_getconcurrency_signature const crabc_force_pthread_getconcurrency
+	__attribute__((used)) = &pthread_getconcurrency;
 static crabc_pthread_getcpuclockid_signature const crabc_force_pthread_getcpuclockid
 	__attribute__((used)) = &pthread_getcpuclockid;
+static crabc_pthread_setconcurrency_signature const crabc_force_pthread_setconcurrency
+	__attribute__((used)) = &pthread_setconcurrency;
 static crabc_pthread_key_create_signature const crabc_force_pthread_key_create
 	__attribute__((used)) = &pthread_key_create;
 static crabc_pthread_key_delete_signature const crabc_force_pthread_key_delete
@@ -339,6 +373,18 @@ static crabc_pthread_setspecific_signature const crabc_force_pthread_setspecific
 	__attribute__((used)) = &pthread_setspecific;
 static crabc_pthread_mutex_init_signature const crabc_force_pthread_mutex_init
 	__attribute__((used)) = &pthread_mutex_init;
+static crabc_pthread_mutex_getprioceiling_signature const crabc_force_pthread_mutex_getprioceiling
+	__attribute__((used)) = &pthread_mutex_getprioceiling;
+static crabc_pthread_mutexattr_gettype_signature const crabc_force_pthread_mutexattr_gettype
+	__attribute__((used)) = &pthread_mutexattr_gettype;
+static crabc_pthread_mutexattr_settype_signature const crabc_force_pthread_mutexattr_settype
+	__attribute__((used)) = &pthread_mutexattr_settype;
+static crabc_pthread_mutexattr_getprotocol_signature const crabc_force_pthread_mutexattr_getprotocol
+	__attribute__((used)) = &pthread_mutexattr_getprotocol;
+static crabc_pthread_mutexattr_getpshared_signature const crabc_force_pthread_mutexattr_getpshared
+	__attribute__((used)) = &pthread_mutexattr_getpshared;
+static crabc_pthread_mutexattr_getrobust_signature const crabc_force_pthread_mutexattr_getrobust
+	__attribute__((used)) = &pthread_mutexattr_getrobust;
 static crabc_pthread_mutex_destroy_signature const crabc_force_pthread_mutex_destroy
 	__attribute__((used)) = &pthread_mutex_destroy;
 static crabc_pthread_mutex_lock_signature const crabc_force_pthread_mutex_lock

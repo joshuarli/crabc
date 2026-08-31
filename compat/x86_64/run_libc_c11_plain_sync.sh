@@ -166,9 +166,7 @@ grep -Eq 'GLOBAL +HIDDEN +.*__crabc_x86_static_tls_bootstrap$' "$archive_elf_sym
 for unselected in mtx_timedlock cnd_timedwait pthread_mutexattr_init \
     pthread_mutexattr_destroy pthread_mutexattr_settype pthread_mutexattr_gettype \
     pthread_mutex_timedlock pthread_mutex_consistent pthread_condattr_init \
-    pthread_condattr_destroy pthread_condattr_setclock pthread_condattr_getclock \
-    pthread_condattr_setpshared pthread_condattr_getpshared \
-    pthread_cond_timedwait malloc free calloc realloc __tls_get_addr; do
+    pthread_condattr_destroy pthread_cond_timedwait malloc free calloc realloc __tls_get_addr; do
     if grep -Eq "[[:space:]][TW][[:space:]]${unselected}$" "$archive_symbols"; then
         fail "archive accidentally exports unselected ${unselected}"
     fi

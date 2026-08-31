@@ -135,7 +135,9 @@ typedef int (*crabc_pthread_create_signature)(
 	pthread_t *, const pthread_attr_t *, void *(*)(void *), void *);
 typedef int (*crabc_pthread_detach_signature)(pthread_t);
 typedef int (*crabc_pthread_equal_signature)(pthread_t, pthread_t);
+typedef int (*crabc_pthread_getconcurrency_signature)(void);
 typedef int (*crabc_pthread_getcpuclockid_signature)(pthread_t, clockid_t *);
+typedef int (*crabc_pthread_setconcurrency_signature)(int);
 typedef int (*crabc_pthread_key_create_signature)(
 	pthread_key_t *, void (*)(void *));
 typedef int (*crabc_pthread_key_delete_signature)(pthread_key_t);
@@ -144,6 +146,18 @@ typedef int (*crabc_pthread_setspecific_signature)(pthread_key_t, const void *);
 typedef int (*crabc_pthread_sigmask_signature)(int, const sigset_t *, sigset_t *);
 typedef int (*crabc_pthread_mutex_init_signature)(
 	pthread_mutex_t *, const pthread_mutexattr_t *);
+typedef int (*crabc_pthread_mutex_getprioceiling_signature)(
+	const pthread_mutex_t *, int *);
+typedef int (*crabc_pthread_mutexattr_gettype_signature)(
+	const pthread_mutexattr_t *, int *);
+typedef int (*crabc_pthread_mutexattr_settype_signature)(
+	pthread_mutexattr_t *, int);
+typedef int (*crabc_pthread_mutexattr_getprotocol_signature)(
+	const pthread_mutexattr_t *, int *);
+typedef int (*crabc_pthread_mutexattr_getpshared_signature)(
+	const pthread_mutexattr_t *, int *);
+typedef int (*crabc_pthread_mutexattr_getrobust_signature)(
+	const pthread_mutexattr_t *, int *);
 typedef int (*crabc_pthread_mutex_destroy_signature)(pthread_mutex_t *);
 typedef int (*crabc_pthread_mutex_lock_signature)(pthread_mutex_t *);
 typedef int (*crabc_pthread_mutex_trylock_signature)(pthread_mutex_t *);
@@ -213,8 +227,12 @@ _Static_assert(CRABC_TYPE_IS(__typeof__(&pthread_detach), crabc_pthread_detach_s
 	"pthread_detach signature");
 _Static_assert(CRABC_TYPE_IS(__typeof__(&pthread_equal), crabc_pthread_equal_signature),
 	"pthread_equal signature");
+_Static_assert(CRABC_TYPE_IS(__typeof__(&pthread_getconcurrency),
+	crabc_pthread_getconcurrency_signature), "pthread_getconcurrency signature");
 _Static_assert(CRABC_TYPE_IS(__typeof__(&pthread_getcpuclockid),
 	crabc_pthread_getcpuclockid_signature), "pthread_getcpuclockid signature");
+_Static_assert(CRABC_TYPE_IS(__typeof__(&pthread_setconcurrency),
+	crabc_pthread_setconcurrency_signature), "pthread_setconcurrency signature");
 _Static_assert(CRABC_TYPE_IS(__typeof__(&pthread_key_create),
 	crabc_pthread_key_create_signature), "pthread_key_create signature");
 _Static_assert(CRABC_TYPE_IS(__typeof__(&pthread_key_delete),
@@ -225,6 +243,18 @@ _Static_assert(CRABC_TYPE_IS(__typeof__(&pthread_setspecific),
 	crabc_pthread_setspecific_signature), "pthread_setspecific signature");
 _Static_assert(CRABC_TYPE_IS(__typeof__(&pthread_mutex_init),
 	crabc_pthread_mutex_init_signature), "pthread_mutex_init signature");
+_Static_assert(CRABC_TYPE_IS(__typeof__(&pthread_mutex_getprioceiling),
+	crabc_pthread_mutex_getprioceiling_signature), "pthread_mutex_getprioceiling signature");
+_Static_assert(CRABC_TYPE_IS(__typeof__(&pthread_mutexattr_gettype),
+	crabc_pthread_mutexattr_gettype_signature), "pthread_mutexattr_gettype signature");
+_Static_assert(CRABC_TYPE_IS(__typeof__(&pthread_mutexattr_settype),
+	crabc_pthread_mutexattr_settype_signature), "pthread_mutexattr_settype signature");
+_Static_assert(CRABC_TYPE_IS(__typeof__(&pthread_mutexattr_getprotocol),
+	crabc_pthread_mutexattr_getprotocol_signature), "pthread_mutexattr_getprotocol signature");
+_Static_assert(CRABC_TYPE_IS(__typeof__(&pthread_mutexattr_getpshared),
+	crabc_pthread_mutexattr_getpshared_signature), "pthread_mutexattr_getpshared signature");
+_Static_assert(CRABC_TYPE_IS(__typeof__(&pthread_mutexattr_getrobust),
+	crabc_pthread_mutexattr_getrobust_signature), "pthread_mutexattr_getrobust signature");
 _Static_assert(CRABC_TYPE_IS(__typeof__(&pthread_mutex_destroy),
 	crabc_pthread_mutex_destroy_signature), "pthread_mutex_destroy signature");
 _Static_assert(CRABC_TYPE_IS(__typeof__(&pthread_mutex_lock),

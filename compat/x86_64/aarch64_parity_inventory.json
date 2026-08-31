@@ -1435,7 +1435,7 @@
       "capability_count": 9,
       "contract_state": "selected-private",
       "id": "libc.posix-runtime",
-      "verified_artifact_count": 133,
+      "verified_artifact_count": 134,
       "verified_slice_count": 3
     },
     {
@@ -1448,7 +1448,7 @@
       "capability_count": 3,
       "contract_state": "selected-private",
       "id": "libc.pthread-tls",
-      "verified_artifact_count": 25,
+      "verified_artifact_count": 35,
       "verified_slice_count": 1
     },
     {
@@ -2180,6 +2180,10 @@
     },
     {
       "family": "libc.posix-runtime",
+      "id": "static-c-rand-r"
+    },
+    {
+      "family": "libc.posix-runtime",
       "id": "static-c-random-entropy"
     },
     {
@@ -2448,6 +2452,14 @@
     },
     {
       "family": "libc.pthread-tls",
+      "id": "static-c-pthread-condattr-clock"
+    },
+    {
+      "family": "libc.pthread-tls",
+      "id": "static-c-pthread-condattr-pshared"
+    },
+    {
+      "family": "libc.pthread-tls",
       "id": "static-c-pthread-cpuclock"
     },
     {
@@ -2460,7 +2472,35 @@
     },
     {
       "family": "libc.pthread-tls",
+      "id": "static-c-pthread-getconcurrency"
+    },
+    {
+      "family": "libc.pthread-tls",
       "id": "static-c-pthread-identity"
+    },
+    {
+      "family": "libc.pthread-tls",
+      "id": "static-c-pthread-mutex-prioceiling-query"
+    },
+    {
+      "family": "libc.pthread-tls",
+      "id": "static-c-pthread-mutexattr-protocol-query"
+    },
+    {
+      "family": "libc.pthread-tls",
+      "id": "static-c-pthread-mutexattr-pshared-query"
+    },
+    {
+      "family": "libc.pthread-tls",
+      "id": "static-c-pthread-mutexattr-robust-query"
+    },
+    {
+      "family": "libc.pthread-tls",
+      "id": "static-c-pthread-mutexattr-type-query"
+    },
+    {
+      "family": "libc.pthread-tls",
+      "id": "static-c-pthread-mutexattr-type-setter"
     },
     {
       "family": "libc.pthread-tls",
@@ -2473,6 +2513,10 @@
     {
       "family": "libc.pthread-tls",
       "id": "static-c-pthread-rwlock"
+    },
+    {
+      "family": "libc.pthread-tls",
+      "id": "static-c-pthread-setconcurrency"
     },
     {
       "family": "libc.pthread-tls",
@@ -2831,9 +2875,9 @@
     "aarch64_abi_manifest": "33dd504470f467caac7b149e747ee2b7ff8714c4fb23dfe5ad46e7f58bfe610c",
     "aarch64_capability_ledger": "128458dde00073bc0320b94972d864e66fa10d5f54e92b1b1c83081e2b4955e0",
     "aarch64_headers": "a0d35f0950abb3c060b978dfb5257cf50f70bed46ce91d371f43d65db7626b68",
-    "x86_parity_ledger": "ddc963e9087d398684b6f4ffd4882dc7d28ed9a5144db243ba4c63951c20621e",
+    "x86_parity_ledger": "0ba7e51ee6be4151483cc14663502cb6b14785ca672b05d8927b0425d0c92dfe",
     "x86_public_headers": "2cdcd860a423d99afef8360b6376447cf17ae926f1cd47416be817d421fca80f",
-    "x86_static_c_exports": "a63dd79fa08c279c17697c7b1c66f19ebd144cdec8ff51af8c1daa56c621c077"
+    "x86_static_c_exports": "036bd2d8db97f7735a52c3ff2263b6ad26e67a132843ad5bdcba3b1546ef4748"
   },
   "unsupported_contracts": [
     {
@@ -2845,7 +2889,7 @@
     "promotion_family_count": 26,
     "promotion_ready": false,
     "public_support": false,
-    "selected_static_export_count": 1083,
-    "selected_static_exports_in_aarch64_dynamic_candidate_set": 1062
+    "selected_static_export_count": 1096,
+    "selected_static_exports_in_aarch64_dynamic_candidate_set": 1075
   }
 }

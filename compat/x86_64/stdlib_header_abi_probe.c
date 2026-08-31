@@ -251,6 +251,11 @@ __attribute__((used)) static void *crabc_stdlib_posix_must_be_hidden =
     (void *)&setenv;
 #endif
 
+#if defined(CRABC_STDLIB_REQUIRE_RAND_R_HIDDEN)
+__attribute__((used)) static void *crabc_stdlib_rand_r_must_be_hidden =
+    (void *)&rand_r;
+#endif
+
 #if defined(CRABC_STDLIB_REQUIRE_XOPEN_HIDDEN)
 __attribute__((used)) static void *crabc_stdlib_xopen_must_be_hidden =
     (void *)&realpath;

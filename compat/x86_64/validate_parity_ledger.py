@@ -12372,8 +12372,8 @@ def require_static_pthread_rwlock_artifact(family: Mapping[str, Any]) -> None:
         "libc.pthread-tls must contain exactly one static-c-pthread-rwlock artifact",
     )
     require(
-        len(artifacts) == 25,
-        "libc.pthread-tls must retain exactly twenty-five private verified artifacts",
+        len(artifacts) == 35,
+        "libc.pthread-tls must retain exactly thirty-five private verified artifacts",
     )
     require(
         family.get("status") == "planned",
@@ -12839,10 +12839,20 @@ def require_static_pthread_private_cond_artifact(family: Mapping[str, Any]) -> N
         "pthread_cond_signal",
         "pthread_cond_broadcast",
     }
+    selected_condattr_pshared_exports = {
+        "pthread_condattr_setpshared",
+        "pthread_condattr_getpshared",
+    }
+    selected_condattr_clock_exports = {
+        "pthread_condattr_setclock",
+        "pthread_condattr_getclock",
+    }
     require(
         {symbol for symbol in static_exports if symbol.startswith("pthread_cond")}
-        == selected_condition_exports,
-        "static-c-pthread-cond-private must expose exactly its five selected condition symbols",
+        == selected_condition_exports
+        | selected_condattr_pshared_exports
+        | selected_condattr_clock_exports,
+        "static-c-pthread-cond-private must expose only its five selected condition symbols plus the separate raw condattr pshared and clock pairs",
     )
     require(
         "run_libc_pthread_cond_private.sh"
@@ -13116,8 +13126,8 @@ def require_static_pthread_c11_once_artifact(family: Mapping[str, Any]) -> None:
         "libc.pthread-tls must contain exactly one static-c-pthread-c11-once artifact",
     )
     require(
-        len(artifacts) == 25,
-        "libc.pthread-tls must retain exactly twenty-five private verified artifacts",
+        len(artifacts) == 35,
+        "libc.pthread-tls must retain exactly thirty-five private verified artifacts",
     )
     require(
         family.get("status") == "planned",
@@ -13443,8 +13453,8 @@ def require_static_pthread_c11_tsd_artifact(family: Mapping[str, Any]) -> None:
         "libc.pthread-tls must contain exactly one static-c-pthread-c11-tsd artifact",
     )
     require(
-        len(artifacts) == 25,
-        "libc.pthread-tls must retain exactly twenty-five private verified artifacts",
+        len(artifacts) == 35,
+        "libc.pthread-tls must retain exactly thirty-five private verified artifacts",
     )
     require(
         family.get("status") == "planned",
@@ -13814,8 +13824,8 @@ def require_static_pthread_cancel_deferred_artifact(
         "libc.pthread-tls must contain exactly one static-c-pthread-cancel-deferred artifact",
     )
     require(
-        len(artifacts) == 25,
-        "libc.pthread-tls must retain exactly twenty-five private verified artifacts",
+        len(artifacts) == 35,
+        "libc.pthread-tls must retain exactly thirty-five private verified artifacts",
     )
     require(
         family.get("status") == "planned",
@@ -52914,8 +52924,8 @@ def require_static_pthread_atfork_artifact(family: Mapping[str, Any]) -> None:
         "libc.pthread-tls must contain exactly one static-c-pthread-atfork-fork artifact",
     )
     require(
-        len(artifacts) == 25,
-        "libc.pthread-tls must retain exactly twenty-five private verified artifacts",
+        len(artifacts) == 35,
+        "libc.pthread-tls must retain exactly thirty-five private verified artifacts",
     )
     require(
         family.get("status") == "planned",
@@ -53246,8 +53256,8 @@ def require_static_pthread_affinity_artifact(
         "libc.pthread-tls must contain exactly one bounded pthread-affinity artifact",
     )
     require(
-        len(artifacts) == 25,
-        "libc.pthread-tls must retain exactly twenty-five private verified artifacts",
+        len(artifacts) == 35,
+        "libc.pthread-tls must retain exactly thirty-five private verified artifacts",
     )
     require(
         family.get("status") == "planned",
@@ -53437,8 +53447,8 @@ def require_static_pthread_cpuclock_artifact(
         "libc.pthread-tls must contain exactly one bounded pthread CPU-clock artifact",
     )
     require(
-        len(artifacts) == 25,
-        "libc.pthread-tls must retain exactly twenty-five private verified artifacts",
+        len(artifacts) == 35,
+        "libc.pthread-tls must retain exactly thirty-five private verified artifacts",
     )
     require(
         family.get("status") == "planned",
@@ -53630,8 +53640,8 @@ def require_static_pthread_name_artifact(
         "libc.pthread-tls must contain exactly one bounded pthread task-name artifact",
     )
     require(
-        len(artifacts) == 25,
-        "libc.pthread-tls must retain exactly twenty-five private verified artifacts",
+        len(artifacts) == 35,
+        "libc.pthread-tls must retain exactly thirty-five private verified artifacts",
     )
     require(
         family.get("status") == "planned",
@@ -53835,8 +53845,8 @@ def require_static_pthread_spin_destroy_artifact(
         "libc.pthread-tls must contain exactly one source-closed pthread spin-destroy artifact",
     )
     require(
-        len(artifacts) == 25,
-        "libc.pthread-tls must retain exactly twenty-five private verified artifacts",
+        len(artifacts) == 35,
+        "libc.pthread-tls must retain exactly thirty-five private verified artifacts",
     )
     require(
         family.get("status") == "planned",
@@ -54085,8 +54095,8 @@ def require_static_pthread_barrierattr_pshared_artifact(
         "libc.pthread-tls must contain exactly one barrierattr pshared artifact",
     )
     require(
-        len(artifacts) == 25,
-        "libc.pthread-tls must retain exactly twenty-five private verified artifacts",
+        len(artifacts) == 35,
+        "libc.pthread-tls must retain exactly thirty-five private verified artifacts",
     )
     require(
         family.get("status") == "planned",
@@ -54283,8 +54293,8 @@ def require_static_pthread_spin_init_artifact(family: Mapping[str, Any]) -> None
         "libc.pthread-tls must contain exactly one pthread spin-init artifact",
     )
     require(
-        len(artifacts) == 25,
-        "libc.pthread-tls must retain exactly twenty-five private verified artifacts",
+        len(artifacts) == 35,
+        "libc.pthread-tls must retain exactly thirty-five private verified artifacts",
     )
     require(
         family.get("status") == "planned",
@@ -54525,8 +54535,8 @@ def require_static_thrd_yield_artifact(family: Mapping[str, Any]) -> None:
         "libc.pthread-tls must contain exactly one direct C11 thrd_yield artifact",
     )
     require(
-        len(artifacts) == 25,
-        "libc.pthread-tls must retain exactly twenty-five private verified artifacts",
+        len(artifacts) == 35,
+        "libc.pthread-tls must retain exactly thirty-five private verified artifacts",
     )
     require(
         family.get("status") == "planned",
@@ -56735,6 +56745,74 @@ def require_sched_getaffinity_artifact(family: Mapping[str, Any]) -> None:
 
 
 
+def require_closed_static_leaf_artifacts(
+    family: Mapping[str, Any],
+    specifications: tuple[tuple[str, str, str, str, tuple[str, ...]], ...],
+) -> None:
+    """Keep independently selected one-symbol leaves tied to their evidence."""
+
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        f"family[{family.get('id')}].verified_artifact",
+        family.get("status", ""),
+    )
+    exports = set(
+        static_c_abi_export_names(
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        )
+    )
+    dispatcher = (ROOT / "scripts" / "dev-x86_64.sh").read_text(encoding="utf-8")
+
+    for artifact_id, command, source_path, runner_path, symbols in specifications:
+        matching = [entry for entry in artifacts if entry.get("id") == artifact_id]
+        require(
+            len(matching) == 1,
+            f"{family.get('id')} must contain exactly one {artifact_id} artifact",
+        )
+        artifact = matching[0]
+        owners = set(
+            string_list(
+                artifact.get("source_owners"),
+                f"{artifact_id}.source_owners",
+            )
+        )
+        for path_text in (source_path, runner_path):
+            require(path_text in owners, f"{artifact_id} source owners omit {path_text}")
+            require(
+                (ROOT / path_text).is_file(),
+                f"{artifact_id} source owner is missing: {path_text}",
+            )
+        evidence = artifact.get("native_evidence")
+        require(isinstance(evidence, list), f"{artifact_id}.native_evidence is invalid")
+        require(
+            {entry.get("command") for entry in evidence} == {command},
+            f"{artifact_id} must retain its closed native command",
+        )
+        command_name = command.rsplit(" ", 1)[1]
+        require(
+            f"    {command_name})" in dispatcher,
+            f"x86 dispatcher omits {command_name}",
+        )
+        require(
+            Path(runner_path).name in dispatcher,
+            f"x86 dispatcher omits {runner_path}",
+        )
+        source = (ROOT / source_path).read_text(encoding="utf-8")
+        for symbol in symbols:
+            require(
+                symbol in exports,
+                f"static C ABI export contract omits {symbol} for {artifact_id}",
+            )
+            require(
+                re.search(
+                    rf'pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+{re.escape(symbol)}\s*\(',
+                    source,
+                )
+                is not None,
+                f"{artifact_id} source omits exported {symbol}",
+            )
+
+
 def validate_ledger(
     data: Mapping[str, Any],
     *,
@@ -56965,6 +57043,81 @@ def validate_ledger(
     require_static_pthread_spin_destroy_artifact(by_id["libc.pthread-tls"])
     require_static_pthread_barrierattr_pshared_artifact(by_id["libc.pthread-tls"])
     require_static_pthread_spin_init_artifact(by_id["libc.pthread-tls"])
+    require_closed_static_leaf_artifacts(
+        by_id["libc.pthread-tls"],
+        (
+            (
+                "static-c-pthread-condattr-pshared",
+                "./scripts/dev-x86_64.sh libc-pthread-condattr-pshared",
+                "libc/src/c_abi/x86_64/pthread_condattr_pshared.rs",
+                "compat/x86_64/run_libc_pthread_condattr_pshared.sh",
+                ("pthread_condattr_setpshared", "pthread_condattr_getpshared"),
+            ),
+            (
+                "static-c-pthread-condattr-clock",
+                "./scripts/dev-x86_64.sh libc-pthread-condattr-clock",
+                "libc/src/c_abi/x86_64/pthread_condattr_clock.rs",
+                "compat/x86_64/run_libc_pthread_condattr_clock.sh",
+                ("pthread_condattr_setclock", "pthread_condattr_getclock"),
+            ),
+            (
+                "static-c-pthread-mutexattr-robust-query",
+                "./scripts/dev-x86_64.sh libc-pthread-mutexattr-robust-query",
+                "libc/src/c_abi/x86_64/pthread_mutexattr_robust_query.rs",
+                "compat/x86_64/run_libc_pthread_mutexattr_robust_query.sh",
+                ("pthread_mutexattr_getrobust",),
+            ),
+            (
+                "static-c-pthread-mutexattr-protocol-query",
+                "./scripts/dev-x86_64.sh libc-pthread-mutexattr-protocol-query",
+                "libc/src/c_abi/x86_64/pthread_mutexattr_protocol_query.rs",
+                "compat/x86_64/run_libc_pthread_mutexattr_protocol_query.sh",
+                ("pthread_mutexattr_getprotocol",),
+            ),
+            (
+                "static-c-pthread-mutexattr-pshared-query",
+                "./scripts/dev-x86_64.sh libc-pthread-mutexattr-pshared-query",
+                "libc/src/c_abi/x86_64/pthread_mutexattr_pshared_query.rs",
+                "compat/x86_64/run_libc_pthread_mutexattr_pshared_query.sh",
+                ("pthread_mutexattr_getpshared",),
+            ),
+            (
+                "static-c-pthread-mutexattr-type-query",
+                "./scripts/dev-x86_64.sh libc-pthread-mutexattr-type-query",
+                "libc/src/c_abi/x86_64/pthread_mutexattr_type_query.rs",
+                "compat/x86_64/run_libc_pthread_mutexattr_type_query.sh",
+                ("pthread_mutexattr_gettype",),
+            ),
+            (
+                "static-c-pthread-mutexattr-type-setter",
+                "./scripts/dev-x86_64.sh libc-pthread-mutexattr-type-setter",
+                "libc/src/c_abi/x86_64/pthread_mutexattr_type_setter.rs",
+                "compat/x86_64/run_libc_pthread_mutexattr_type_setter.sh",
+                ("pthread_mutexattr_settype",),
+            ),
+            (
+                "static-c-pthread-mutex-prioceiling-query",
+                "./scripts/dev-x86_64.sh libc-pthread-mutex-prioceiling-query",
+                "libc/src/c_abi/x86_64/pthread_mutex_prioceiling_query.rs",
+                "compat/x86_64/run_libc_pthread_mutex_prioceiling_query.sh",
+                ("pthread_mutex_getprioceiling",),
+            ),
+            (
+                "static-c-pthread-getconcurrency",
+                "./scripts/dev-x86_64.sh libc-pthread-getconcurrency",
+                "libc/src/c_abi/x86_64/pthread_getconcurrency.rs",
+                "compat/x86_64/run_libc_pthread_getconcurrency.sh",
+                ("pthread_getconcurrency",),
+            ),
+            (
+                "static-c-pthread-setconcurrency",
+                "./scripts/dev-x86_64.sh libc-pthread-setconcurrency",
+                "libc/src/c_abi/x86_64/pthread_setconcurrency.rs",
+                "compat/x86_64/run_libc_pthread_setconcurrency.sh",
+                ("pthread_setconcurrency",),
+            ),
+        ),
+    )
     require_static_thrd_yield_artifact(by_id["libc.pthread-tls"])
     require_byte_string_artifact(by_id["libc.posix-runtime"])
     require_legacy_memory_artifact(by_id["libc.posix-runtime"])
@@ -56972,6 +57125,18 @@ def validate_ledger(
     require_mempcpy_artifact(by_id["libc.posix-runtime"])
     require_strsep_artifact(by_id["libc.posix-runtime"])
     require_strtok_artifact(by_id["libc.posix-runtime"])
+    require_closed_static_leaf_artifacts(
+        by_id["libc.posix-runtime"],
+        (
+            (
+                "static-c-rand-r",
+                "./scripts/dev-x86_64.sh libc-rand-r",
+                "libc/src/c_abi/x86_64/rand_r.rs",
+                "compat/x86_64/run_libc_rand_r.sh",
+                ("rand_r",),
+            ),
+        ),
+    )
     require_posix_spawnattr_init_artifact(by_id["libc.posix-runtime"])
     require_posix_spawnattr_getpgroup_artifact(by_id["libc.posix-runtime"])
     require_posix_spawnattr_getschedpolicy_artifact(by_id["libc.posix-runtime"])

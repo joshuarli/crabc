@@ -20,6 +20,14 @@ whose final arm runs a verifier; image-building, stale, and arbitrary commands
 cannot stand in for native evidence. A selected artifact cannot repeat one
 command as though it were independent corroboration.
 
+The selected private static matrix also includes `libc-rand-r` for
+caller-owned `rand_r` state and `libc-pthread-*` commands for the individual
+condattr and mutexattr bits/statuses, priority-ceiling status, and
+get/set-concurrency status. Those commands are isolated C ABI leaves in the
+still-planned `libc.posix-runtime` and `libc.pthread-tls` families, not a
+pthread/TLS lifecycle vertical, family completion, owned-sysroot proof,
+promotion, or public support claim.
+
 This lane runs the fixed `crabc-core` lib suite and the separately admitted
 direct `crabc-rs` subset for the `x86_64-unknown-linux-musl` target, including
 only the proved `fs::flock` whole-file advisory locking, `fs::sendfile`

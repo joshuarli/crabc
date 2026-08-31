@@ -296,6 +296,10 @@ static_assert(__is_same(decltype(NULL), decltype(nullptr)),
 __attribute__((used)) static auto crabc_stdlib_posix_must_be_hidden = &setenv;
 #endif
 
+#if defined(CRABC_STDLIB_REQUIRE_RAND_R_HIDDEN)
+__attribute__((used)) static auto crabc_stdlib_rand_r_must_be_hidden = &rand_r;
+#endif
+
 #if defined(CRABC_STDLIB_REQUIRE_XOPEN_HIDDEN)
 __attribute__((used)) static auto crabc_stdlib_xopen_must_be_hidden =
     &realpath;
