@@ -4948,15 +4948,12 @@ pub unsafe extern "C" fn pthread_create(
             MIMALLOC_THREAD_LIFECYCLE_NOT_REQUESTED
         },
     );
-    // A selected native-shadow initial allocation may remain live across the
-    // first later pthread.  Only its creating ticket-zero thread may park the
-    // normal engine before clone; the child receives no engine or client
-    // capability, only the ordinary attach request below. The default C
-    // mimalloc backend has no corresponding Rust handoff.
-    #[cfg(feature = "native-mimalloc-shadow")]
-    if mimalloc_lifecycle_requested {
-        crabc_mimalloc::__crabc_runtime::prepare_native_initial_owner_for_later_thread();
-    }
+    // Native-shadow startup prepares the immutable later-thread process facts
+    // before constructors can allocate.  Do not repeat that dormant-only
+    // preparation here: the initial thread may now own live pages in its
+    // persistent compiler-TLS owner, and attempting to reprepare it would
+    // terminally retain the process instead of admitting this independent
+    // worker.
     let stack_top = stack.add(stack_mapping_size);
     let tid_ptr = &raw mut (*slot).tid;
     let flags = CLONE_VM

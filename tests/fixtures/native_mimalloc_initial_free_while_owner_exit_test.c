@@ -1,8 +1,8 @@
 /*
- * Ticket zero frees its own live client while A's typed post-exit route is
- * still awaiting B.  A and B exchange only A's ordinary C address; the
- * initial operation must resume and re-park only ticket zero's own engine,
- * without releasing A's worker-admission claim or borrowing its route.
+ * The initial thread remains an independent persistent owner while A has
+ * exited with live C allocations. Its own exact live client remains usable
+ * and can be freed before B later frees A's survivors through post-exit
+ * page/process state.
  */
 #include <malloc.h>
 #include <pthread.h>
@@ -117,8 +117,8 @@ int main(void)
     if (pthread_join(owner, &result) != 0 || result != NULL)
         return 3;
 
-    /* A's route is still live. This exact initial client must be released
-     * through ticket zero's re-parked engine without settling A's route. */
+    /* A has exited with live allocations. This exact initial client uses the
+     * initial persistent owner and must not require A's former ownership. */
     {
         size_t initial_usable = malloc_usable_size(initial);
 
@@ -133,8 +133,8 @@ int main(void)
     if (pthread_join(releaser, &result) != 0 || result != NULL)
         return 6;
 
-    /* B's terminal pthread finish consumes A's proof. Ticket zero may then
-     * allocate normally rather than treating the interleaving as a release. */
+    /* After B frees A's survivors, the initial owner may continue ordinary
+     * allocator work independently of A's completed owner-exit release. */
     after = malloc(53);
     if (after == NULL)
         return 7;
