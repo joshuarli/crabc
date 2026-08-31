@@ -788,6 +788,8 @@ sigtimedwait
 sigwait
 sigwaitinfo
 sincosl
+sinh
+sinhf
 sinhl
 sinl
 snprintf

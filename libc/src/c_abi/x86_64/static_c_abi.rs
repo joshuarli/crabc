@@ -272,6 +272,8 @@ mod math_log2;
 mod math_exp;
 #[path = "math_cos.rs"]
 mod math_cos;
+#[path = "math_sinh.rs"]
+mod math_sinh;
 #[path = "math_minmax.rs"]
 mod math_minmax;
 #[path = "math_x87_extended.rs"]

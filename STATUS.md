@@ -1288,6 +1288,22 @@ fallback, public closure helpers, `cosl`, public sin/tan surface, fenv
 API/policy, special/complex/binary80 math, family completion, promotion, and
 public x86 support.
 
+The separate private `static-c-math-sinh` artifact records only binary64
+`sinh` and binary32 `sinhf`: `./scripts/dev-x86_64.sh libc-math-sinh` runs
+project-header C and default-SSE/`-mfpmath=387` C++ function-pointer fixtures
+through pinned musl and one freestanding static candidate. Its checked GCC
+15.2.0 translation of musl 1.2.6 `sinh.c`/`sinhf.c` keeps the exact
+sixteen-source expm1/overflow-reconstruction closure private: `expm1`,
+`__expo2`, private exp tables, and six overflow/underflow error helpers. The
+256-record differential covers signed zero, tiny/normal/subnormal and
+reconstruction/overflow bounds, high finite values, infinities,
+quiet/signaling NaNs, all four requested-and-observed rounding directions,
+and exception flags. Strong target-owned definitions and final ELF checks
+reject weak compiler-builtins fallback, public closure helpers, `sinhl`, other
+hyperbolic surface, public exp/expm1 ABI, fenv API/policy,
+special/complex/binary80 math, family completion, promotion, and public x86
+support.
+
 The x86 static archive now also has one private allocation-free wide-character
 core: `./scripts/dev-x86_64.sh libc-wide-character` runs an exact
 `_XOPEN_SOURCE=700` C/C++ ABI gate and one shared pinned-musl/freestanding
