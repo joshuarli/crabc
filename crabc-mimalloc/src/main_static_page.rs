@@ -5,7 +5,7 @@
 // SPDX-License-Identifier: MIT
 //
 // Source map: pinned mimalloc v3.5.0 `src/init.c:181-224,305-360`,
-// `src/page-map.c:228-365`, `src/alloc.c:29-159,379-451`, and `src/arena.c:341-406,
+// `src/page-map.c:228-365`, `src/alloc.c:29-159,379-451`, `src/free.c:221-255`, and `src/arena.c:341-406,
 // 525-569,674-723,781-821,951-1114,1129-1213,1240-1282`.
 
 //! Page-bearing binding of the static main Theap to one process-owned arena.
@@ -621,10 +621,11 @@ enum MainStaticRuntimeFirstArenaPageAllocatorState {
     /// Test-only compatibility state for the retired ticket-zero scheduler.
     #[cfg(test)]
     ParkedActive(MainStaticRuntimeParkedEngine),
-    /// The source page image is empty after a runtime free. The permanent
-    /// session and first arena remain process-owned. Production can reactivate
-    /// its own disjoint ranges directly; the test-only retired scheduler has
-    /// returned its historical long PageMap exclusion before reaching here.
+    /// The source page image was force-collected at an explicit handoff after
+    /// an all-free local cycle. The permanent session and first arena remain
+    /// process-owned. Production can reactivate its own disjoint ranges
+    /// directly; the test-only retired scheduler has returned its historical
+    /// long PageMap exclusion before reaching here.
     DormantExistingArena {
         session: MainStaticProcessPageSession,
         page_map: crate::process_page_map::ProcessPageMapLease,
@@ -1632,30 +1633,21 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
         }
     }
 
-    /// Completes an exact free against a directly held active ticket-zero
-    /// engine without suspending or resuming it.
+    /// Force-collects an active initial engine only when an explicit boundary
+    /// needs to lend its dormant process pair to a later worker.
     ///
-    /// `active` owns the permanent session and every exact PageMap range its
-    /// engine may touch. `block` must be current in that engine and may not
-    /// be freed, remotely transferred, or accessed concurrently through
-    /// another path.
-    unsafe fn free_active_engine(
+    /// Pinned `mi_free` performs its local page free without a Theap teardown;
+    /// this is the separate source collection boundary. A live client leaves
+    /// the exact active engine intact and rejects the handoff. A completed
+    /// all-free engine transitions once to its dormant process pair.
+    fn finish_active_engine_for_dormant_pair(
         &mut self,
-        mut active: MainStaticRuntimeActiveEngine,
-        block: NonNull<u8>,
-    ) -> Result<(), MainStaticRuntimeFirstArenaPageAllocatorFreeError> {
-        // SAFETY: forwarded unchanged from this method's exact-current
-        // allocation contract while this state owns the sole engine.
-        if let Err(error) = unsafe { active.engine.free(block) } {
-            self.state = MainStaticRuntimeFirstArenaPageAllocatorState::Active(active);
-            return Err(MainStaticRuntimeFirstArenaPageAllocatorFreeError::Free(error));
-        }
-
-        // The exact-owned-range contract stays with a nonempty engine until
-        // it proves that every page, queue, direct slot, retired record, and
-        // pending OS release is gone. A nonempty engine remains active; no
-        // allocation path can overlap it. Only the retired test scheduler
-        // additionally returns its old long PageMap lease at this boundary.
+        active: MainStaticRuntimeActiveEngine,
+    ) -> bool {
+        // The exact-owned-range contract stays with an active engine until
+        // this explicit boundary proves that every page, queue, direct slot,
+        // retired record, and pending OS release is gone. Only the retired
+        // test scheduler additionally returns its old long PageMap lease.
         #[cfg(test)]
         let MainStaticRuntimeActiveEngine {
             engine,
@@ -1692,6 +1684,7 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
                         },
                     );
                 }
+                false
             }
             Ok(session) => {
                 #[cfg(test)]
@@ -1703,6 +1696,7 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
                                 page_map,
                                 arena_storage,
                             };
+                            true
                         }
                         Err(_) => {
                             // The source free already completed. A failed private
@@ -1711,6 +1705,7 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
                             // a false active lifecycle.
                             session.retain_terminal();
                             self.state = MainStaticRuntimeFirstArenaPageAllocatorState::Retained;
+                            false
                         }
                     }
                 }
@@ -1721,16 +1716,39 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
                         page_map,
                         arena_storage,
                     };
+                    true
                 }
             }
         }
+    }
+
+    /// Completes an exact free through the historical generic runtime path.
+    ///
+    /// The direct persistent initial-thread path below deliberately bypasses
+    /// this helper: pinned `mi_free` leaves its all-free page owned by the
+    /// current Theap until an explicit collection or handoff boundary.
+    unsafe fn free_active_engine(
+        &mut self,
+        mut active: MainStaticRuntimeActiveEngine,
+        block: NonNull<u8>,
+    ) -> Result<(), MainStaticRuntimeFirstArenaPageAllocatorFreeError> {
+        // SAFETY: forwarded unchanged from this method's exact-current
+        // allocation contract while this state owns the sole engine.
+        if let Err(error) = unsafe { active.engine.free(block) } {
+            self.state = MainStaticRuntimeFirstArenaPageAllocatorState::Active(active);
+            return Err(MainStaticRuntimeFirstArenaPageAllocatorFreeError::Free(error));
+        }
+        let _ = self.finish_active_engine_for_dormant_pair(active);
         Ok(())
     }
 
     /// Frees a current client through the continuously owned initial-thread
     /// engine.
     ///
-    /// This path operates only on the direct active owner.
+    /// This path operates only on the direct active owner and leaves that
+    /// engine resident when the page becomes all-free. Pinned `mi_free` keeps
+    /// that local Theap/page state for a later local allocation; only an
+    /// explicit later-worker handoff force-collects it.
     ///
     /// # Safety
     ///
@@ -1741,43 +1759,41 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
         &mut self,
         block: NonNull<u8>,
     ) -> Result<(), MainStaticRuntimeFirstArenaPageAllocatorFreeError> {
+        match &mut self.state {
+            MainStaticRuntimeFirstArenaPageAllocatorState::Active(active) => {
+                // SAFETY: the persistent initial owner keeps this exact
+                // engine current and exclusively borrowed for the local free.
+                unsafe { active.engine.free(block) }
+                    .map_err(MainStaticRuntimeFirstArenaPageAllocatorFreeError::Free)
+            }
+            _ => Err(MainStaticRuntimeFirstArenaPageAllocatorFreeError::NotActive),
+        }
+    }
+
+    /// Gives the persistent initial owner a dormant process pair before a
+    /// later worker starts. An all-free active engine force-collects exactly
+    /// here; a live initial client never parks or transfers merely to make a
+    /// later worker admissible.
+    #[inline]
+    pub(crate) fn prepare_dormant_page_pair_current_initial_thread_local(&mut self) -> bool {
         let state = core::mem::replace(
             &mut self.state,
             MainStaticRuntimeFirstArenaPageAllocatorState::Transition,
         );
         match state {
             MainStaticRuntimeFirstArenaPageAllocatorState::Active(active) => {
-                // SAFETY: the persistent initial owner holds the sole direct
-                // mutable projection of this exact active engine.
-                unsafe { self.free_active_engine(active, block) }
+                self.finish_active_engine_for_dormant_pair(active)
             }
             other => {
+                let may_prepare = matches!(
+                    &other,
+                    MainStaticRuntimeFirstArenaPageAllocatorState::AwaitingFreshPage { .. }
+                        | MainStaticRuntimeFirstArenaPageAllocatorState::DormantExistingArena { .. }
+                );
                 self.state = other;
-                Err(MainStaticRuntimeFirstArenaPageAllocatorFreeError::NotActive)
+                may_prepare && self.prepare_dormant_page_pair()
             }
         }
-    }
-
-    /// Gives the persistent initial owner a dormant process pair only after
-    /// it has no live direct engine. This never parks an active engine merely
-    /// to make a later worker admissible.
-    #[inline]
-    pub(crate) fn prepare_dormant_page_pair_current_initial_thread_local(&mut self) -> bool {
-        if matches!(
-            &self.state,
-            MainStaticRuntimeFirstArenaPageAllocatorState::Retained
-                | MainStaticRuntimeFirstArenaPageAllocatorState::Transition
-        ) {
-            return false;
-        }
-        #[cfg(test)]
-        if matches!(
-            &self.state,
-            MainStaticRuntimeFirstArenaPageAllocatorState::ParkedActive(_)
-        ) {
-            return false;
-        }
-        self.prepare_dormant_page_pair()
     }
 
     /// Frees one exact ticket-zero runtime allocation.
