@@ -3748,6 +3748,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         '#[path = "inet_ntoa.rs"]',
         '#[path = "inet_classful.rs"]',
         '#[path = "inet_netof.rs"]',
+        '#[path = "inet_network.rs"]',
         '#[path = "hstrerror.rs"]',
         '#[path = "socket_messages.rs"]',
         '#[path = "posix_semaphore.rs"]',
@@ -7725,7 +7726,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
             "compat/x86_64/run_libc_inet_netof.sh: final netof candidate "
             "must not link libc.a"
         )
-    if "inet_makeaddr inet_lnaof inet_netof" not in inet_address_runner:
+    if "inet_makeaddr inet_lnaof inet_netof inet_network" not in inet_address_runner:
         errors.append(
             "compat/x86_64/run_libc_inet_address.sh: numeric candidate must "
             "continue excluding the separate netof leaf"
@@ -7734,6 +7735,137 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         errors.append(
             "compat/x86_64/run_libc_inet_classful.sh: classful candidate must "
             "continue excluding the separate netof leaf"
+        )
+
+    inet_network_probe_source = (
+        ROOT / "compat" / "x86_64" / "libc_inet_network_probe.c"
+    )
+    inet_network_start_source = (
+        ROOT / "compat" / "x86_64" / "libc_inet_network_start.S"
+    )
+    inet_network_runner_source = (
+        ROOT / "compat" / "x86_64" / "run_libc_inet_network.sh"
+    )
+    for path in (
+        inet_network_probe_source,
+        inet_network_start_source,
+        inet_network_runner_source,
+    ):
+        if not path.is_file():
+            errors.append(
+                f"x86 static inet_network artifact is missing {path.relative_to(ROOT)}"
+            )
+            return
+
+    inet_network_source = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "inet_network.rs"
+    )
+    inet_network_text = inet_network_source.read_text(errors="replace")
+    inet_network_probe = inet_network_probe_source.read_text(errors="replace")
+    inet_network_start = inet_network_start_source.read_text(errors="replace")
+    inet_network_runner = inet_network_runner_source.read_text(errors="replace")
+    for required in (
+        "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+        "src/network/inet_legacy.c",
+        "return ntohl(inet_addr(p));",
+        "super::inet_address::inet_addr",
+        '#[link_name = "inet_addr"]',
+        "selected_inet_addr",
+        "swap_bytes",
+        'pub unsafe extern "C" fn inet_network',
+    ):
+        if required not in inet_network_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/inet_network.rs: selected static "
+                f"inet_network boundary is missing {required!r}"
+            )
+    for forbidden in (
+        "raw_syscall",
+        "getaddrinfo",
+        "gethostby",
+        "if_nameindex",
+        "socket(",
+        "std::",
+        "alloc::",
+        "crabc_core",
+        "crabc_mimalloc",
+    ):
+        if forbidden in inet_network_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/inet_network.rs: selected static "
+                f"inet_network boundary must not select {forbidden!r}"
+            )
+    inet_network_exports = set(
+        re.findall(
+            r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(',
+            inet_network_text,
+        )
+    )
+    if inet_network_exports != {"inet_network"}:
+        errors.append(
+            "libc/src/c_abi/x86_64/inet_network.rs: selected static artifact "
+            "must export only inet_network"
+        )
+    for required in (
+        "inet_network_signature",
+        "sizeof(in_addr_t) == 4",
+        "offsetof(struct in_addr, s_addr) == 0",
+        '"127.18.52.86"',
+        '"127.1"',
+        '"0177.1"',
+        '"18446744073709551616"',
+        '"not-an-address"',
+        "ERANGE",
+        "EINVAL",
+        "CRABC_INET_NETWORK_FREESTANDING",
+    ):
+        if required not in inet_network_probe:
+            errors.append(
+                "compat/x86_64/libc_inet_network_probe.c: static inet_network "
+                f"regression is missing {required!r}"
+            )
+    for required in (
+        "__crabc_x86_static_tls_bootstrap",
+        "crabc_x86_64_inet_network_probe",
+        "mov $231, %eax",
+    ):
+        if required not in inet_network_start:
+            errors.append(
+                "compat/x86_64/libc_inet_network_start.S: static inet_network "
+                f"TLS shim is missing {required!r}"
+            )
+    for required in (
+        "inet_legacy.lo",
+        "inet_network inet_makeaddr inet_lnaof inet_netof",
+        "inet_network no longer carries its inet_addr dependency",
+        "assert_selected_c_abi_surface",
+        "assert_musl_inet_aton_alias",
+        "extract_selected_member",
+        "inet_network archive member also defines",
+        "-nostdlib -static",
+        '"$selected_member" "$archive"',
+        "call.*<inet_addr>",
+        "bswap",
+        "htonl|htons|ntohl|ntohs",
+        "inet_ntoa inet_makeaddr inet_lnaof",
+        "getaddrinfo gethostbyaddr gethostbyname",
+        "if_indextoname if_nameindex if_nametoindex",
+        "__tls_get_addr",
+    ):
+        if required not in inet_network_runner:
+            errors.append(
+                "compat/x86_64/run_libc_inet_network.sh: true static "
+                f"inet_network evidence is missing {required!r}"
+            )
+    if "archive-free candidate" in inet_network_runner:
+        errors.append(
+            "compat/x86_64/run_libc_inet_network.sh: parser-dependent final "
+            "candidate must not claim to be archive-free"
+        )
+    if "inet_makeaddr inet_lnaof inet_netof inet_network" not in inet_address_runner:
+        errors.append(
+            "compat/x86_64/run_libc_inet_address.sh: numeric candidate must "
+            "continue excluding the separate inet_network leaf"
         )
 
     hstrerror_probe_source = ROOT / "compat" / "x86_64" / "libc_hstrerror_probe.c"
@@ -8580,6 +8712,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         inet_ntoa_text,
         inet_classful_text,
         inet_netof_text,
+        inet_network_text,
         hstrerror_text,
         byte_strings_text,
         random_entropy_text,
@@ -8912,6 +9045,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         "inet_lnaof",
         "inet_makeaddr",
         "inet_netof",
+        "inet_network",
         "hstrerror",
         "uname",
         "sysinfo",
@@ -9113,6 +9247,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         ("inet_ntoa.rs", inet_ntoa_text),
         ("inet_classful.rs", inet_classful_text),
         ("inet_netof.rs", inet_netof_text),
+        ("inet_network.rs", inet_network_text),
         ("hstrerror.rs", hstrerror_text),
         ("random_entropy.rs", random_entropy_text),
         ("memory_search.rs", memory_search_text),

@@ -389,6 +389,8 @@ mod inet_ntoa;
 mod inet_classful;
 #[path = "inet_netof.rs"]
 mod inet_netof;
+#[path = "inet_network.rs"]
+mod inet_network;
 #[path = "hstrerror.rs"]
 mod hstrerror;
 #[path = "numeric_netdb.rs"]

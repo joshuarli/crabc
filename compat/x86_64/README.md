@@ -464,6 +464,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-inet-ntoa
 ./scripts/dev-x86_64.sh libc-inet-classful
 ./scripts/dev-x86_64.sh libc-inet-netof
+./scripts/dev-x86_64.sh libc-inet-network
 ./scripts/dev-x86_64.sh libc-hstrerror
 ./scripts/dev-x86_64.sh libc-numeric-netdb
 ./scripts/dev-x86_64.sh libc-interface-discovery
@@ -1273,7 +1274,7 @@ address-conversion or socket behavior, `crabc-libc`, or public x86 support.
 
 `inet-address-header-abi` compile-checks project-first and pinned-musl
 default/GNU/strict C and C++ `<arpa/inet.h>` profiles. It ratchets the exact
-`inet_pton`, `inet_ntop`, `inet_aton`, `inet_addr`, `inet_ntoa`,
+`inet_pton`, `inet_ntop`, `inet_aton`, `inet_addr`, `inet_network`, `inet_ntoa`,
 `inet_makeaddr`, `inet_lnaof`, and `inet_netof`
 declarations, the x86 `in_addr_t`/`in_port_t`/`struct in_addr` layouts, `INET_ADDRSTRLEN` and
 `INET6_ADDRSTRLEN`, and unmangled C++ C spellings. It is declaration/layout
@@ -1290,8 +1291,8 @@ fixture pins strict IPv4/IPv6 grammar, historical base-zero and abbreviated
 `inet_aton` forms, network bytes, `INADDR_NONE` ambiguity, partial parse and
 output writes, mapped-v4/longest-zero-run text, AF-family errors, and the
 different short-buffer behavior for AF_INET and AF_INET6 `inet_ntop`. It does
-not select DNS/resolver state, netdb, interface lookup, the separate
-`inet_ntoa` scratch-buffer and classful IPv4 arithmetic/network-extraction candidates, allocation, stdio, libc.so, CRT, loader, sysroot, resolver-network
+not select DNS/resolver state, netdb, interface lookup, the separate legacy
+`inet_network` wrapper, `inet_ntoa` scratch-buffer, and classful IPv4 arithmetic/network-extraction candidates, allocation, stdio, libc.so, CRT, loader, sysroot, resolver-network
 behavior, family promotion, or public x86 support.
 
 `libc-inet-ntoa` is a distinct private static C `inet_ntoa` scratch-buffer
@@ -1316,8 +1317,8 @@ candidate whose final link receives only the one extracted object containing
 `inet_makeaddr` and `inet_lnaof`, never `libc.a`; a separate archive ratchet
 proves both exports. Pinned musl's `inet_legacy.c` puts those two local
 raw-word functions beside `inet_network` and `inet_netof`; the source audit
-confirms the unselected `inet_network` still carries its `inet_addr`
-dependency, while `inet_netof` has its own extraction artifact. The regression covers musl's `n < 256`, `n < 65536`, and remaining
+keeps the separate `inet_network`/`inet_addr` parser composition outside this
+archive-free candidate, while `inet_netof` has its own extraction artifact. The regression covers musl's `n < 256`, `n < 65536`, and remaining
 prefix shifts plus the raw `s_addr` <128/<192/otherwise local-address masks.
 It does not select byte-order helpers, `inet_ntoa` scratch storage, h_errno or
 errno, TLS, allocation, stdio, syscalls, resolver configuration, DNS,
@@ -1330,14 +1331,31 @@ body runs through pinned musl 1.2.6 and then through an archive-free
 `-nostdlib -static` candidate whose final link receives only the one extracted
 `inet_netof` object, never `libc.a`; a separate archive ratchet proves that
 export. Pinned musl's `inet_legacy.c` keeps this raw-word leaf beside
-`inet_network`, `inet_makeaddr`, and `inet_lnaof`; the source audit preserves
-the unselected `inet_network`/`inet_addr` dependency while the classful pair
-stays separately extracted. The regression covers raw `s_addr` high-byte
+`inet_network`, `inet_makeaddr`, and `inet_lnaof`; the source audit keeps the
+separate `inet_network`/`inet_addr` parser composition outside this
+archive-free candidate while the classful pair stays separately extracted. The regression covers raw `s_addr` high-byte
 network-part shifts for <128, <192, and the remaining class. It does not
 select byte-order helpers, `inet_ntoa` scratch storage, h_errno or errno,
 TLS, mutable state, allocation, stdio, syscalls, resolver configuration, DNS,
 `/etc/hosts`, `/etc/resolv.conf`, netdb, interfaces, sockets, libc.so, CRT,
 loader, sysroot, resolver completion, family promotion, or public x86 support.
+
+`libc-inet-network` is a distinct private static C legacy IPv4 textual-network
+artifact under still-planned `libc.resolver`. Its project-header C body first
+runs through pinned musl 1.2.6 and then through a true `-nostdlib -static`
+candidate. Pinned musl's `inet_legacy.c` body is
+`ntohl(inet_addr(p))`; the final link begins with one extracted
+`inet_network` object, then uses ordinary demand-driven `libc.a` only for the
+already selected `inet_addr` parser and initial-TLS errno closure. It is
+therefore intentionally not archive-free. The direct wrapper disassembly
+requires the `inet_network` → `inet_addr` call and a local little-endian byte
+swap, never an `ntohl` helper call. The differential covers dotted,
+abbreviated, and base-zero forms, broadcast/invalid all-ones ambiguity, and
+inherited `ERANGE`/`EINVAL` parser effects. It selects no resolver
+configuration, DNS, `/etc/hosts`, `/etc/resolv.conf`, netdb, interfaces,
+sockets, h_errno, `inet_ntoa` storage, classful siblings, allocation, stdio,
+libc.so, CRT, loader, sysroot, resolver completion, family promotion, or
+public x86 support.
 
 `libc-hstrerror` is a separate private static C message leaf under
 still-planned `libc.resolver`. Its project-header C body first executes through

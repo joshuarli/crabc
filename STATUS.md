@@ -36,8 +36,8 @@ through an archive-free true static candidate: an archive ratchet proves
 `inet_makeaddr` and `inet_lnaof`, while the final `-nostdlib -static` link
 takes only their one extracted object, never `libc.a`. Pinned musl keeps those
 two raw classful IPv4 arithmetic functions beside `inet_network` and
-`inet_netof` in `inet_legacy.c`; this slice leaves `inet_network` and its
-`inet_addr` dependency out, while `inet_netof` is separately evidenced. It covers the exact
+`inet_netof` in `inet_legacy.c`; this archive-free slice leaves the separate
+`inet_network`/`inet_addr` parser composition and `inet_netof` extraction out. It covers the exact
 `n < 256`/`n < 65536` construction shifts and the raw `s_addr` <128/<192/else
 local-part masks. It has no byte-order helper, `inet_ntoa` storage, h_errno or
 errno state, TLS, allocation, syscall, stdio, `/etc/hosts`, `/etc/resolv.conf`,
@@ -55,6 +55,22 @@ and the remaining class. It has no byte-order helper, `inet_ntoa` storage,
 h_errno or errno state, TLS, mutable state, allocation, syscall, stdio,
 `/etc/hosts`, `/etc/resolv.conf`, resolver/DNS, netdb, interface, socket,
 promotion, or public x86 support.
+
+`./scripts/dev-x86_64.sh libc-inet-network` is a separate private
+`static-c-inet-network` artifact inside still-planned `libc.resolver`. Its
+project-header C fixture first executes through pinned musl 1.2.6 and then
+through a true static candidate. Musl's `inet_legacy.c` body is
+`ntohl(inet_addr(p))`; the final `-nostdlib -static` link starts with one
+extracted `inet_network` object and uses ordinary demand-driven `libc.a` only
+for the already selected `inet_addr` parser and its initial-TLS errno closure.
+It is deliberately not archive-free. The direct wrapper proves the
+`inet_network` → `inet_addr` call and local byte swap without selecting the
+separate byte-order helper. Its differential covers dotted, abbreviated, and
+base-zero numeric forms, broadcast/invalid all-ones ambiguity, and inherited
+`ERANGE`/`EINVAL` parser effects. It reads no `/etc/hosts` or
+`/etc/resolv.conf`, performs no resolver/DNS/netdb/interface/socket work, and
+adds no h_errno, inet_ntoa, classful, allocation, stdio, promotion, or public
+x86 support.
 
 `./scripts/dev-x86_64.sh libc-hstrerror` is a private `static-c-hstrerror`
 artifact inside still-planned `libc.resolver`. Its project-header C fixture

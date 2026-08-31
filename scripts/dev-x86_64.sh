@@ -340,6 +340,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-inet-ntoa  run the archive-free static x86 crabc-libc inet_ntoa scratch-buffer slice
   libc-inet-classful  run the archive-free static x86 crabc-libc classful IPv4 slice
   libc-inet-netof  run the archive-free static x86 crabc-libc classful IPv4 network-part slice
+  libc-inet-network  run the static x86 crabc-libc inet_network parser-composition slice
   libc-hstrerror  run the static x86 crabc-libc h_errno message-string slice
   libc-numeric-netdb  run the static x86 crabc-libc deterministic numeric netdb slice
   libc-interface-discovery  run the static x86 C interface index/address discovery slice
@@ -3400,7 +3401,7 @@ case "$command" in
     libc-static-c-abi-differential) ;;
     libc-static-c-abi-same-object-differential|qualification-posix-abi-admission) ;;
     libc-interface-discovery) ;;
-    libc-readiness-waits|libc-system-observation|libc-system-information|libc-fcntl-record-locks|libc-flock|libc-sendfile|libc-posix-fallocate|libc-descriptor-advice|libc-filesystem-capacity|libc-uts-identity|libc-ctype|libc-locale-profile|libc-locale-multibyte|libc-locale-wide-iconv|libc-wide-character|libc-locale-object-wide|libc-locale-narrow|libc-locale-ctype-locators|libc-locale-error-strings|libc-regex|libc-integer-arithmetic|libc-integer-parse|libc-float-parse|libc-intmax-arithmetic|libc-credential-observation|libc-login-name|libc-child-reaping|libc-immediate-termination|libc-callback-algorithms|libc-search-tree-intrusive|libc-search-hash-table|libc-gettext-catalog|libc-access|libc-clock-gettime|libc-time-observation|libc-system-configuration|libc-mapping-core|libc-header-layouts-baseline|libc-nanosleep|libc-clock-nanosleep|libc-descriptor-entry|libc-fcntl-status-control|libc-ioctl|libc-ffs|libc-byte-strings|libc-process-globals-getopt|libc-auxv-observation|libc-inet-address|libc-inet-ntoa|libc-inet-classful|libc-inet-netof|libc-hstrerror|libc-numeric-netdb|libc-random-entropy|libc-memory-search|libc-string-copy|libc-error-strings|libc-strsignal|libc-descriptor-pipeline) ;;
+    libc-readiness-waits|libc-system-observation|libc-system-information|libc-fcntl-record-locks|libc-flock|libc-sendfile|libc-posix-fallocate|libc-descriptor-advice|libc-filesystem-capacity|libc-uts-identity|libc-ctype|libc-locale-profile|libc-locale-multibyte|libc-locale-wide-iconv|libc-wide-character|libc-locale-object-wide|libc-locale-narrow|libc-locale-ctype-locators|libc-locale-error-strings|libc-regex|libc-integer-arithmetic|libc-integer-parse|libc-float-parse|libc-intmax-arithmetic|libc-credential-observation|libc-login-name|libc-child-reaping|libc-immediate-termination|libc-callback-algorithms|libc-search-tree-intrusive|libc-search-hash-table|libc-gettext-catalog|libc-access|libc-clock-gettime|libc-time-observation|libc-system-configuration|libc-mapping-core|libc-header-layouts-baseline|libc-nanosleep|libc-clock-nanosleep|libc-descriptor-entry|libc-fcntl-status-control|libc-ioctl|libc-ffs|libc-byte-strings|libc-process-globals-getopt|libc-auxv-observation|libc-inet-address|libc-inet-ntoa|libc-inet-classful|libc-inet-netof|libc-inet-network|libc-hstrerror|libc-numeric-netdb|libc-random-entropy|libc-memory-search|libc-string-copy|libc-error-strings|libc-strsignal|libc-descriptor-pipeline) ;;
     libc-vector-io|libc-uio-cxx-linkage) ;;
     libc-sysv-semaphore|libc-posix-semaphore) ;;
     libc-sysv-message-shared-memory) ;;
@@ -4950,6 +4951,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "libc-inet-netof takes no arguments"
         ensure_image
         run_in_container bash /workspace/compat/x86_64/run_libc_inet_netof.sh
+        ;;
+    libc-inet-network)
+        [ "$#" -eq 0 ] || fail "libc-inet-network takes no arguments"
+        ensure_image
+        run_in_container bash /workspace/compat/x86_64/run_libc_inet_network.sh
         ;;
     libc-hstrerror)
         [ "$#" -eq 0 ] || fail "libc-hstrerror takes no arguments"

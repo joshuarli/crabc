@@ -1404,12 +1404,13 @@ INET_CLASSFUL_SYMBOLS = ("inet_lnaof", "inet_makeaddr")
 
 INET_NETOF_SYMBOLS = ("inet_netof",)
 
+INET_NETWORK_SYMBOLS = ("inet_network",)
+
 INET_ADDRESS_UNSELECTED_SYMBOLS = (
     "calloc",
     "free",
     "gethostbyaddr",
     "gethostbyname",
-    "inet_network",
     "malloc",
     "realloc",
 )
@@ -5380,7 +5381,7 @@ def require_inet_address_header_evidence(family: Mapping[str, Any]) -> None:
             for phrase in (
                 "default/GNU/strict C/C++",
                 "<arpa/inet.h>",
-                "`inet_pton`/`inet_ntop`/`inet_aton`/`inet_addr`/`inet_ntoa`/`inet_makeaddr`/`inet_lnaof`/`inet_netof`",
+                "`inet_pton`/`inet_ntop`/`inet_aton`/`inet_addr`/`inet_network`/`inet_ntoa`/`inet_makeaddr`/`inet_lnaof`/`inet_netof`",
                 "`in_addr_t`/`in_port_t`/`struct in_addr`",
                 "INET text-buffer constants",
                 "archive linkage",
@@ -18476,10 +18477,6 @@ def require_inet_classful_artifact(family: Mapping[str, Any]) -> None:
         "static-c-inet-classful must retain both selected exports",
     )
     require(
-        "inet_network" not in static_exports,
-        "static-c-inet-classful must leave inet_network unselected",
-    )
-    require(
         not (set(INET_CLASSFUL_SYMBOLS) & set(INET_ADDRESS_UNSELECTED_SYMBOLS)),
         "static-c-inet-address-codecs must leave the classful exports selectable",
     )
@@ -18841,10 +18838,6 @@ def require_inet_netof_artifact(family: Mapping[str, Any]) -> None:
         "static-c-inet-netof must retain inet_netof in the static export manifest",
     )
     require(
-        "inet_network" not in static_exports,
-        "static-c-inet-netof must leave inet_network unselected",
-    )
-    require(
         not (set(INET_NETOF_SYMBOLS) & set(INET_ADDRESS_UNSELECTED_SYMBOLS)),
         "static-c-inet-address-codecs must leave inet_netof selectable",
     )
@@ -19010,7 +19003,7 @@ def require_inet_netof_artifact(family: Mapping[str, Any]) -> None:
         ROOT / "compat" / "x86_64" / "run_libc_inet_address.sh"
     ).read_text(encoding="utf-8")
     require(
-        "inet_makeaddr inet_lnaof inet_netof" in inet_address_runner,
+        "inet_makeaddr inet_lnaof inet_netof inet_network" in inet_address_runner,
         "numeric inet-address candidate must continue excluding inet_netof",
     )
     inet_classful_runner = (
@@ -19025,6 +19018,376 @@ def require_inet_netof_artifact(family: Mapping[str, Any]) -> None:
         "libc-inet-netof)" in dispatch_source
         and "run_libc_inet_netof.sh" in dispatch_source,
         "inet-netof dispatcher binding is missing",
+    )
+
+
+def require_inet_network_artifact(family: Mapping[str, Any]) -> None:
+    """Keep musl's inet_network wrapper private and explicitly parser-dependent."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.resolver].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [
+        entry for entry in artifacts if entry.get("id") == "static-c-inet-network"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.resolver must contain exactly one static-c-inet-network artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-inet-network must not promote libc.resolver",
+    )
+    artifact = matching[0]
+    description = artifact.get("description")
+    require(isinstance(description, str), "static-c-inet-network needs a description")
+    for phrase in (
+        "Private native x86 static legacy IPv4 textual-network artifact",
+        "still-planned `libc.resolver`",
+        "true `-nostdlib -static` candidate",
+        "exactly `inet_network`",
+        "`src/network/inet_legacy.c`",
+        "`ntohl(inet_addr(p))`",
+        "exactly one extracted `inet_network` object",
+        "demand-driven `libc.a` closure",
+        "not archive-free",
+        "local scalar byte swap",
+        "abbreviated",
+        "base-zero",
+        "all-ones ambiguity",
+        "`ERANGE`/`EINVAL`",
+        "resolver configuration",
+        "DNS",
+        "/etc/hosts",
+        "/etc/resolv.conf",
+        "netdb",
+        "interface lookup",
+        "socket dependency",
+        "h_errno",
+        "classful arithmetic/extraction",
+        "family promotion",
+        "public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"static-c-inet-network description omits {phrase}",
+        )
+
+    owners = set(
+        nonempty_strings(
+            artifact.get("source_owners"), "static-c-inet-network.source_owners"
+        )
+    )
+    for owner in (
+        "compat/upstreams.toml",
+        "libc/Cargo.toml",
+        "libc/src/lib.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/inet_network.rs",
+        "libc/src/c_abi/x86_64/inet_address.rs",
+        "libc/src/c_abi/x86_64/integer_parse.rs",
+        "libc/src/c_abi/x86_64/errno.rs",
+        "libc/src/c_abi/x86_64/static_tls.rs",
+        "include/arpa/inet.h",
+        "include/errno.h",
+        "include/netinet/in.h",
+        "include/stddef.h",
+        "include/stdint.h",
+        "include/sys/socket.h",
+        "include/sys/types.h",
+        "include/bits/alltypes.h",
+        "compat/x86_64/inet_address_header_abi_probe.c",
+        "compat/x86_64/inet_address_header_abi_probe.cpp",
+        "compat/x86_64/run_inet_address_header_abi.sh",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/libc_inet_network_probe.c",
+        "compat/x86_64/libc_inet_network_start.S",
+        "compat/x86_64/run_libc_inet_network.sh",
+        "compat/x86_64/run_libc_inet_address.sh",
+        "compat/x86_64/aarch64_parity_inventory.py",
+        "compat/x86_64/aarch64_parity_inventory.json",
+        "compat/x86_64/tests/test_aarch64_parity_inventory.py",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/README.md",
+        "STATUS.md",
+        "x86-64.md",
+        "scripts/dev-x86_64.sh",
+        "scripts/check_structure.py",
+    ):
+        require(owner in owners, f"static-c-inet-network source owners omit {owner}")
+
+    prerequisites = nonempty_strings(
+        artifact.get("x86_abi_prerequisites"),
+        "static-c-inet-network.x86_abi_prerequisites",
+    )
+    require(
+        any(
+            "SysV AMD64 LP64" in item
+            and "rdi" in item
+            and "eax" in item
+            and "in_addr_t" in item
+            and "struct in_addr" in item
+            for item in prerequisites
+        ),
+        "static-c-inet-network must record its pointer/result x86 C ABI",
+    )
+    require(
+        any(
+            "9fa28ece75d8a2191de7c5bb53bed224c5947417" in item
+            and "src/network/inet_legacy.c" in item
+            and "inet_network" in item
+            and "inet_makeaddr" in item
+            and "inet_lnaof" in item
+            and "inet_netof" in item
+            and "ntohl(inet_addr(p))" in item
+            and "inet_addr" in item
+            and "ERANGE" in item
+            and "EINVAL" in item
+            and "No resolver or DNS source is selected" in item
+            for item in prerequisites
+        ),
+        "static-c-inet-network must record its exact pinned-musl source closure",
+    )
+    require(
+        any(
+            "swap_bytes" in item
+            and "ntohl" in item
+            and "htonl" in item
+            and "libc.a" in item
+            and "initial-TLS" in item
+            and "dynamic TLS resolver" in item
+            for item in prerequisites
+        ),
+        "static-c-inet-network must record its static dependency boundary",
+    )
+    require(
+        any(
+            "textual numeric-address compatibility machinery" in item
+            and "conventional resolver/database file" in item
+            and "netdb/interface/socket" in item
+            and "h_errno" in item
+            and "publicly support x86 resolver behavior" in item
+            for item in prerequisites
+        ),
+        "static-c-inet-network must retain its non-promotion boundary",
+    )
+
+    headers = nonempty_strings(
+        artifact.get("x86_header_prerequisites"),
+        "static-c-inet-network.x86_header_prerequisites",
+    )
+    require(
+        any(
+            "six-profile" in item
+            and "project-first/pinned-musl" in item
+            and "<arpa/inet.h>" in item
+            and "`inet_network`" in item
+            and "`inet_addr`" in item
+            and "struct in_addr" in item
+            and "unmangled C++" in item
+            and "public x86 support" in item
+            for item in headers
+        ),
+        "static-c-inet-network must record its direct inet_network header boundary",
+    )
+
+    static_exports = set(
+        static_c_abi_export_names(
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        )
+    )
+    require(
+        set(INET_NETWORK_SYMBOLS) <= static_exports,
+        "static-c-inet-network must retain inet_network in the static export manifest",
+    )
+    require(
+        not (set(INET_NETWORK_SYMBOLS) & set(INET_ADDRESS_UNSELECTED_SYMBOLS)),
+        "static-c-inet-address-codecs must leave inet_network separately selectable",
+    )
+
+    static_root = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+    ).read_text(encoding="utf-8")
+    require(
+        '#[path = "inet_network.rs"]\nmod inet_network;' in static_root,
+        "x86 static C ABI must compose the inet_network leaf",
+    )
+    implementation = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "inet_network.rs"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+        "src/network/inet_legacy.c",
+        "return ntohl(inet_addr(p));",
+        "super::inet_address::inet_addr",
+        "swap_bytes",
+        '#[link_name = "inet_addr"]',
+        "selected_inet_addr",
+        'pub unsafe extern "C" fn inet_network',
+    ):
+        require(snippet in implementation, f"inet_network leaf omits {snippet}")
+    exports = set(
+        re.findall(
+            r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(',
+            implementation,
+        )
+    )
+    require(
+        exports == set(INET_NETWORK_SYMBOLS),
+        "inet_network must export only inet_network",
+    )
+    for forbidden in (
+        "raw_syscall",
+        "getaddrinfo",
+        "gethostby",
+        "if_nameindex",
+        "socket(",
+        "std::",
+        "alloc::",
+        "crabc_core",
+        "crabc_mimalloc",
+    ):
+        require(
+            forbidden not in implementation,
+            f"inet_network leaf widens into {forbidden}",
+        )
+
+    oracle = artifact.get("oracle")
+    require(isinstance(oracle, list), "static-c-inet-network needs oracle evidence")
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "c-posix"
+            and isinstance(entry.get("role"), str)
+            and "src/network/inet_legacy.c" in entry["role"]
+            and "ntohl(inet_addr(p))" in entry["role"]
+            and "inet_makeaddr/inet_lnaof/inet_netof" in entry["role"]
+            and "resolver" in entry["role"]
+            and "socket" in entry["role"]
+            for entry in oracle
+        ),
+        "static-c-inet-network must retain its pinned-musl source separation",
+    )
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "elf-abi"
+            and isinstance(entry.get("role"), str)
+            and "rdi" in entry["role"]
+            and "eax" in entry["role"]
+            and "inet_network-to-inet_addr" in entry["role"]
+            and "initial-exec static-TLS" in entry["role"]
+            for entry in oracle
+        ),
+        "static-c-inet-network must retain its direct static C ABI contract",
+    )
+
+    evidence = artifact.get("native_evidence")
+    require(isinstance(evidence, list), "static-c-inet-network needs evidence")
+    require(
+        {entry.get("command") for entry in evidence if isinstance(entry, Mapping)}
+        == {"./scripts/dev-x86_64.sh libc-inet-network"},
+        "static-c-inet-network must use the closed libc-inet-network command",
+    )
+    scope = evidence[0].get("scope")
+    require(isinstance(scope, str), "static-c-inet-network evidence needs a scope")
+    for phrase in (
+        "Pinned-musl project-header C execution",
+        "true x86 `-nostdlib -static` candidate",
+        "`inet_network` publication",
+        "exactly one extracted inet_network object",
+        "demand-driven `libc.a`",
+        "not archive-free",
+        "inet_legacy.c",
+        "inet_network/inet_makeaddr/inet_lnaof/inet_netof",
+        "inet_addr dependency",
+        "`inet_network` call to `inet_addr`",
+        "bswap/ntohl equivalence",
+        "byte-order-helper call or syscall",
+        "dotted/abbreviated/base-zero",
+        "all-ones ambiguity",
+        "ERANGE/EINVAL",
+        "no interpreter/DT_NEEDED/unresolved",
+        "dynamic TLS resolver",
+        "inet_ntoa",
+        "classful siblings",
+        "resolver/DNS state",
+        "hosts/resolv.conf",
+        "netdb",
+        "interface",
+        "socket",
+        "h_errno",
+        "public x86 support",
+    ):
+        require(phrase in scope, f"static-c-inet-network evidence omits {phrase}")
+
+    fixture = (
+        ROOT / "compat" / "x86_64" / "libc_inet_network_probe.c"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "inet_network_signature",
+        "sizeof(in_addr_t) == 4",
+        "offsetof(struct in_addr, s_addr) == 0",
+        '"127.18.52.86"',
+        '"127.1"',
+        '"0177.1"',
+        '"18446744073709551616"',
+        '"not-an-address"',
+        "ERANGE",
+        "EINVAL",
+        "CRABC_INET_NETWORK_FREESTANDING",
+    ):
+        require(snippet in fixture, f"inet_network fixture omits {snippet}")
+    runner_path = ROOT / "compat" / "x86_64" / "run_libc_inet_network.sh"
+    require(runner_path.is_file(), "static-c-inet-network runner is missing")
+    runner = runner_path.read_text(encoding="utf-8")
+    for snippet in (
+        "inet_legacy.lo",
+        "inet_network inet_makeaddr inet_lnaof inet_netof",
+        "inet_network no longer carries its inet_addr dependency",
+        "assert_selected_c_abi_surface",
+        "assert_musl_inet_aton_alias",
+        "extract_selected_member",
+        "inet_network archive member also defines",
+        "-nostdlib -static",
+        '"$selected_member" "$archive"',
+        "call.*<inet_addr>",
+        "bswap",
+        "htonl|htons|ntohl|ntohs",
+        "inet_ntoa inet_makeaddr inet_lnaof",
+        "getaddrinfo gethostbyaddr gethostbyname",
+        "if_indextoname if_nameindex if_nametoindex",
+        "socket bind",
+        "connect send recv",
+        "__tls_get_addr",
+    ):
+        require(snippet in runner, f"static-c-inet-network runner omits {snippet}")
+    require(
+        "archive-free candidate" not in runner,
+        "static-c-inet-network must not claim its parser-dependent candidate is archive-free",
+    )
+    inet_address_runner = (
+        ROOT / "compat" / "x86_64" / "run_libc_inet_address.sh"
+    ).read_text(encoding="utf-8")
+    require(
+        "inet_makeaddr inet_lnaof inet_netof inet_network" in inet_address_runner,
+        "numeric inet-address candidate must continue excluding inet_network",
+    )
+    byte_order_runner = (
+        ROOT / "compat" / "x86_64" / "run_libc_network_byte_order.sh"
+    ).read_text(encoding="utf-8")
+    require(
+        "inet_ntoa inet_network inet_makeaddr inet_lnaof inet_netof" in byte_order_runner,
+        "network byte-order candidate must continue excluding inet_network",
+    )
+    dispatch_source = (ROOT / "scripts" / "dev-x86_64.sh").read_text(encoding="utf-8")
+    require(
+        "libc-inet-network)" in dispatch_source
+        and "run_libc_inet_network.sh" in dispatch_source,
+        "inet-network dispatcher binding is missing",
     )
 
 
@@ -29363,6 +29726,7 @@ def validate_ledger(
     require_inet_ntoa_artifact(by_id["libc.resolver"])
     require_inet_classful_artifact(by_id["libc.resolver"])
     require_inet_netof_artifact(by_id["libc.resolver"])
+    require_inet_network_artifact(by_id["libc.resolver"])
     require_numeric_netdb_artifact(by_id["libc.resolver"])
     require_hstrerror_artifact(by_id["libc.resolver"])
     require_auxv_observation_artifact(by_id["libc.c-abi-compat"])

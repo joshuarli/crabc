@@ -13,6 +13,7 @@ using inet_pton_signature = int (*)(int, const char *, void *);
 using inet_ntop_signature = const char *(*)(int, const void *, char *, socklen_t);
 using inet_aton_signature = int (*)(const char *, in_addr *);
 using inet_addr_signature = in_addr_t (*)(const char *);
+using inet_network_signature = in_addr_t (*)(const char *);
 using inet_ntoa_signature = char *(*)(in_addr);
 using inet_makeaddr_signature = in_addr (*)(in_addr_t, in_addr_t);
 using inet_lnaof_signature = in_addr_t (*)(in_addr);
@@ -36,6 +37,8 @@ static_assert(__is_same(decltype(&inet_aton), inet_aton_signature),
     "inet_aton C++ declaration");
 static_assert(__is_same(decltype(&inet_addr), inet_addr_signature),
     "inet_addr C++ declaration");
+static_assert(__is_same(decltype(&inet_network), inet_network_signature),
+    "inet_network C++ declaration");
 static_assert(__is_same(decltype(&inet_ntoa), inet_ntoa_signature),
     "inet_ntoa C++ declaration");
 static_assert(__is_same(decltype(&inet_makeaddr), inet_makeaddr_signature),
@@ -49,6 +52,7 @@ static inet_pton_signature inet_pton_function = inet_pton;
 static inet_ntop_signature inet_ntop_function = inet_ntop;
 static inet_aton_signature inet_aton_function = inet_aton;
 static inet_addr_signature inet_addr_function = inet_addr;
+static inet_network_signature inet_network_function = inet_network;
 static inet_ntoa_signature inet_ntoa_function = inet_ntoa;
 static inet_makeaddr_signature inet_makeaddr_function = inet_makeaddr;
 static inet_lnaof_signature inet_lnaof_function = inet_lnaof;
@@ -58,6 +62,7 @@ extern "C" int inet_pton(int, const char *, void *);
 extern "C" const char *inet_ntop(int, const void *, char *, socklen_t);
 extern "C" int inet_aton(const char *, in_addr *);
 extern "C" in_addr_t inet_addr(const char *);
+extern "C" in_addr_t inet_network(const char *);
 extern "C" char *inet_ntoa(in_addr);
 extern "C" in_addr inet_makeaddr(in_addr_t, in_addr_t);
 extern "C" in_addr_t inet_lnaof(in_addr);
@@ -69,6 +74,7 @@ int crabc_x86_64_inet_address_header_abi_probe_cpp()
     (void)inet_ntop_function;
     (void)inet_aton_function;
     (void)inet_addr_function;
+    (void)inet_network_function;
     (void)inet_ntoa_function;
     (void)inet_makeaddr_function;
     (void)inet_lnaof_function;
