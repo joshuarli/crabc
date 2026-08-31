@@ -17556,6 +17556,260 @@ def require_stdio_path_stream_artifact(family: Mapping[str, Any]) -> None:
     )
 
 
+def require_stdio_tmpfile_artifact(family: Mapping[str, Any]) -> None:
+    """Keep tmpfile as one bounded ABI leaf, not a temp-file framework."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.text-math-locale-stdio].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [
+        entry for entry in artifacts if entry.get("id") == "static-c-stdio-tmpfile"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.text-math-locale-stdio must contain exactly one static-c-stdio-tmpfile artifact",
+    )
+    artifact = matching[0]
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for phrase in (
+        "still-planned `libc.text-math-locale-stdio`",
+        "strong `tmpfile`",
+        "one externally serialized fixed owned `FILE` slot",
+        "mode-`0600`",
+        "below `/tmp`",
+        "immediately unlinks",
+        "selected `w+` stream",
+        "`MAXTRIES=100`",
+        "direct 96-bit Linux `getrandom`",
+        "no userspace PRNG",
+        "fails closed if immediate unlinking fails",
+        "`tmpfile64`",
+        "`_LARGEFILE64_SOURCE` preprocessing alias",
+        "no distinct ELF symbol",
+        "zero umask",
+        "normal restrictive-umask masking",
+        "unlinked regular descriptor",
+        "busy fixed slot `EMFILE` boundary",
+        "multiple live streams",
+        "allocation/registry",
+        "generic temporary-file policy",
+        "tmpnam`/`tempnam`/`mkstemp`/`mkdtemp`/`mktemp",
+        "fopencookie",
+        "popen",
+        "general stdio",
+        "capability or family completion",
+        "promotion",
+        "public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"static-c-stdio-tmpfile description omits {phrase}",
+        )
+
+    owners = nonempty_strings(
+        artifact["source_owners"], "static-c-stdio-tmpfile.source_owners"
+    )
+    for owner in (
+        "compat/upstreams.toml",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/stdio_standard.rs",
+        "libc/src/c_abi/x86_64/errno.rs",
+        "libc/src/c_abi/x86_64/static_tls.rs",
+        "libc/src/c_abi/x86_64/syscall.rs",
+        "include/stdio.h",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/libc_stdio_tmpfile_header_probe.cpp",
+        "compat/x86_64/libc_stdio_tmpfile_probe.c",
+        "compat/x86_64/libc_stdio_tmpfile_start.S",
+        "compat/x86_64/run_libc_stdio_tmpfile.sh",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/README.md",
+        "x86-64.md",
+        "scripts/dev-x86_64.sh",
+    ):
+        require(owner in owners, f"static-c-stdio-tmpfile omits {owner}")
+
+    require(
+        not artifact.get("capabilities"),
+        "static-c-stdio-tmpfile must not promote a capability",
+    )
+    exports = static_c_abi_export_names(
+        ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+    )
+    require("tmpfile" in exports, "static C ABI export contract omits tmpfile")
+    require(
+        "tmpfile64" not in exports,
+        "static C ABI must keep tmpfile64 as a header-only alias",
+    )
+
+    implementation = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "stdio_standard.rs"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "const TMPFILE_RANDOM_BYTES: usize = 12;",
+        "MAXTRIES = 100",
+        "const TMPFILE_MAX_ATTEMPTS: usize = 100;",
+        'pub unsafe extern "C" fn tmpfile',
+        "raw_syscall::SYS_GETRANDOM",
+        "raw_syscall::SYS_OPEN",
+        "raw_syscall::SYS_UNLINK",
+        "raw_syscall::SYS_CLOSE",
+        "O_RDWR | O_CREAT | O_EXCL | O_LARGEFILE",
+        "0o600",
+        "last_open_error",
+        "immediate unlinking fails",
+    ):
+        require(
+            snippet in implementation,
+            f"tmpfile implementation omits {snippet}",
+        )
+
+    header = (ROOT / "include" / "stdio.h").read_text(encoding="utf-8")
+    require(
+        "#define tmpfile64 tmpfile" in header,
+        "stdio.h must retain tmpfile64 as the exact LP64 macro alias",
+    )
+    cxx_probe = (
+        ROOT / "compat" / "x86_64" / "libc_stdio_tmpfile_header_probe.cpp"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "_LARGEFILE64_SOURCE",
+        "tmpfile64",
+        "crabc_tmpfile_signature",
+        "decltype(&tmpfile64)",
+        "crabc_tmpfile64_reference",
+    ):
+        require(
+            snippet in cxx_probe,
+            f"tmpfile C++ header probe omits {snippet}",
+        )
+
+    fixture = (
+        ROOT / "compat" / "x86_64" / "libc_stdio_tmpfile_probe.c"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "tmpfile_entry != tmpfile64_entry",
+        "old_mask = umask_entry(0)",
+        "(state.st_mode & S_IFMT) != S_IFREG",
+        "(state.st_mode & 0777) != 0600",
+        "state.st_nlink != 0",
+        "umask_entry(0600)",
+        "(state.st_mode & 0777) != 0",
+        "(fcntl_entry(descriptor, F_GETFL) & O_ACCMODE) != O_RDWR",
+        "fcntl_entry(descriptor, F_GETFD) != 0",
+        "fwrite_entry(payload",
+        "fseek_entry(stream, 0, SEEK_SET)",
+        "fread_entry(observed",
+        "CRABC_STDIO_TMPFILE_FREESTANDING",
+        "errno != EMFILE",
+        "fcntl_entry(descriptor, F_GETFD) != -1 || errno != EBADF",
+        "reused = tmpfile_entry()",
+    ):
+        require(snippet in fixture, f"tmpfile fixture omits {snippet}")
+
+    runner = (
+        ROOT / "compat" / "x86_64" / "run_libc_stdio_tmpfile.sh"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "run_musl_oracle.sh",
+        "libc_stdio_tmpfile_header_probe.cpp",
+        "-std=c++17",
+        "ORACLE_ARCHIVE",
+        "-nostdlib -static",
+        "STATIC_C_ABI_EXPORTS",
+        "strong tmpfile",
+        "header-only tmpfile64 alias",
+        "SYS_GETRANDOM SYS_OPEN SYS_UNLINK SYS_CLOSE",
+        "__crabc_x86_static_tls_bootstrap",
+        "dynamic TLS model",
+    ):
+        require(snippet in runner, f"libc-stdio-tmpfile runner omits {snippet}")
+
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-stdio-tmpfile"},
+        "static-c-stdio-tmpfile must use its closed native command",
+    )
+    scope = evidence[0].get("scope")
+    require(
+        isinstance(scope, str)
+        and all(
+            phrase in scope
+            for phrase in (
+                "Pinned-musl project-header C reference",
+                "C++ alias probe",
+                "dependency-free x86 crabc-libc archive",
+                "`-nostdlib -static` candidate",
+                "strong tmpfile",
+                "tmpfile64 ELF symbol",
+                "zero-umask mode-0600",
+                "normal restrictive-umask masking",
+                "nlink zero",
+                "O_RDWR/no-CLOEXEC",
+                "second live tmpfile fails EMFILE",
+                "direct initial-exec errno TLS",
+                "Static Initial TLS v1 bootstrap",
+                "getrandom/open/unlink/close",
+                "general temporary-object",
+                "general stdio",
+                "capability or family completion",
+                "public x86 support",
+            )
+        ),
+        "static-c-stdio-tmpfile evidence must retain its closed native boundary",
+    )
+
+    oracle = artifact["oracle"]
+    assert isinstance(oracle, list)
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "c-posix"
+            and all(
+                source in str(entry.get("role"))
+                for source in ("tmpfile.c", "MAXTRIES=100", "__randname", "tmpfile64")
+            )
+            for entry in oracle
+        ),
+        "static-c-stdio-tmpfile must retain its pinned-musl tmpfile oracle",
+    )
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "kernel-abi"
+            and all(
+                number in str(entry.get("role"))
+                for number in ("getrandom=318", "open=2", "unlink=87", "close=3")
+            )
+            for entry in oracle
+        ),
+        "static-c-stdio-tmpfile must retain its raw temporary-file ABI oracle",
+    )
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "elf-abi"
+            and "strong tmpfile ELF entry" in str(entry.get("role"))
+            and "tmpfile64 preprocessing alias" in str(entry.get("role"))
+            for entry in oracle
+        ),
+        "static-c-stdio-tmpfile must retain its ELF/header alias oracle",
+    )
+
+    dispatcher = (ROOT / "scripts" / "dev-x86_64.sh").read_text(encoding="utf-8")
+    require(
+        "libc-stdio-tmpfile)" in dispatcher
+        and "run_libc_stdio_tmpfile.sh" in dispatcher,
+        "x86 dispatcher omits libc-stdio-tmpfile",
+    )
+
+
 def require_math_complex_foundation_artifact(family: Mapping[str, Any]) -> None:
     """Keep the x87-only math/complex foundation distinct from math parity.
 
@@ -18979,8 +19233,8 @@ def require_locale_wide_iconv_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 15,
-        "libc.text-math-locale-stdio must retain exactly fifteen private verified artifacts",
+        len(artifacts) == 16,
+        "libc.text-math-locale-stdio must retain exactly sixteen private verified artifacts",
     )
     matching = [
         entry for entry in artifacts if entry.get("id") == "static-c-locale-wide-iconv"
@@ -20273,6 +20527,7 @@ def validate_ledger(
     require_stdio_standard_streams_artifact(by_id["libc.text-math-locale-stdio"])
     require_stdio_format_scan_artifact(by_id["libc.text-math-locale-stdio"])
     require_stdio_path_stream_artifact(by_id["libc.text-math-locale-stdio"])
+    require_stdio_tmpfile_artifact(by_id["libc.text-math-locale-stdio"])
     require_math_complex_foundation_artifact(by_id["libc.text-math-locale-stdio"])
     require_elementary_sqrt_fenv_artifact(by_id["libc.text-math-locale-stdio"])
     require_fenv_sensitive_rounding_artifact(by_id["libc.text-math-locale-stdio"])

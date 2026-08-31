@@ -677,6 +677,7 @@ thrd_join
 thrd_sleep
 time
 timespec_get
+tmpfile
 toascii
 tolower
 tolower_l

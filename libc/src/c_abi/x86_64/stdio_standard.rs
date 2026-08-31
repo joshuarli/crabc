@@ -2,20 +2,21 @@
 //!
 //! This target-local leaf owns the three process-lifetime stream objects
 //! exported as `stdin`, `stdout`, and `stderr`, plus one separately selected
-//! fixed pathname-stream slot. The permanent streams expose their selected
+//! fixed pathname/tmpfile stream slot. The permanent streams expose their selected
 //! byte/block operations: `fgetc`/`getc`/`getchar`, `ungetc`, `fread`,
 //! `fputc`/`putc`/`putchar`, `fwrite`, `fflush`, `feof`, `ferror`,
 //! `clearerr`, and `fileno`. The only valid non-null `FILE *` arguments for
 //! that permanent-standard-stream block are those three exported pointers.
-//! The sibling pathname block admits only one active `fopen("r")` or
-//! `fopen("w+")` stream at a time, its exact `fclose`, pre-I/O caller-buffered
+//! The sibling pathname/tmpfile block admits only one active `fopen("r")`,
+//! `fopen("w+")`, or `tmpfile` stream at a time, its exact `fclose`, pre-I/O caller-buffered
 //! `_IOFBF` configuration, and its selected `fseek`/`fseeko`/`ftell`/`ftello`/
 //! `rewind`/`fgetpos`/`fsetpos` routes. It is a deliberately lock-free,
 //! externally-serialized state machine: it does not select concurrent stream
 //! access, `flockfile`, unlocked entry points, `fdopen`, `freopen`, append
 //! modes, dynamic stream allocation, a general stream registry,
 //! formatters/scanners, line or unbuffered configuration, wide streams,
-//! callbacks, or an open-file registry.
+//! callbacks, memory/tmp/popen streams other than this single private tmpfile
+//! lifecycle, or an open-file registry.
 //!
 //! ## Fixed source and license provenance
 //!
@@ -35,6 +36,7 @@
 //! | `src/stdio/{fread,fwrite,fgetc,getc,getchar,fputc,putc,putchar,ungetc}.c` | selected public byte/block entries |
 //! | `src/stdio/{fflush,feof,ferror,clearerr,fileno}.c` | selected flush, status, and descriptor entries |
 //! | `src/stdio/{fopen,fclose,setvbuf,fseek,ftell,fgetpos,fsetpos,rewind}.c` | one fixed pathname-stream lifecycle, caller-buffered full buffering, and logical-position routes |
+//! | `src/stdio/tmpfile.c`, `src/temp/__randname.c` | one exclusive pathname created below `/tmp` with requested mode `0600`, immediately unlinked, and adopted as a `w+` fixed stream; Linux `getrandom` plus hex encoding replaces musl's noncryptographic name generator without adding a PRNG |
 //!
 //! The intentional boundaries are explicit. Musl's private x86 `FILE` record
 //! is a 232-byte internal layout tied to its full stream list, lock state,
@@ -46,7 +48,12 @@
 //! unselected owners. The pathname sibling deliberately reuses one static
 //! state record and one static `BUFSIZ + UNGET` backing object rather than
 //! importing musl's allocation-backed open-file list. It is therefore one
-//! regular-file pathname stream, not a generic `FILE` implementation. `stdout`
+//! regular-file pathname/tmpfile stream, not a generic `FILE` implementation.
+//! The temporary-name spelling is deliberately unobservable through the API;
+//! this translation uses 96 kernel-random bits and musl's 100-attempt bound, then
+//! fails closed if immediate unlinking fails rather than returning a named
+//! object. Those are implementation-strengthening differences from musl's
+//! `__randname` loop, not an expansion of the public stream contract. `stdout`
 //! is exercised only through explicit `fflush`; terminal-sensitive automatic
 //! newline flushing is not selected. The existing static `exit` lifecycle
 //! deliberately does not call this module, so ordinary-exit flushing is also
@@ -71,10 +78,15 @@ const BUFSIZ: usize = 1024;
 const UNGET: usize = 8;
 const STREAM_STORAGE: usize = BUFSIZ + UNGET;
 const EOF: c_int = -1;
+const EINTR: c_int = 4;
 const EIO: c_int = 5;
 const EOVERFLOW: c_int = 75;
 const EINVAL: c_int = 22;
 const EMFILE: c_int = 24;
+const TMPFILE_RANDOM_BYTES: usize = 12;
+// `src/stdio/tmpfile.c` fixes this retry count at `MAXTRIES = 100`.
+const TMPFILE_MAX_ATTEMPTS: usize = 100;
+const TMPFILE_SUFFIX_OFFSET: usize = b"/tmp/tmpfile_".len();
 
 // These are the selected musl stdio flags. Keeping their source values makes
 // the public nonzero `feof`/`ferror` results and internal direction checks
@@ -92,6 +104,7 @@ const F_IO_STARTED: u32 = 512;
 const O_RDONLY: c_int = 0;
 const O_RDWR: c_int = 2;
 const O_CREAT: c_int = 0o100;
+const O_EXCL: c_int = 0o200;
 const O_TRUNC: c_int = 0o1000;
 const O_LARGEFILE: c_int = 0o100000;
 
@@ -1126,7 +1139,137 @@ pub unsafe extern "C" fn fopen(
     unsafe { initialize_path_stream(descriptor as c_int, open_mode.stream_flags()) }
 }
 
-/// Close the one selected pathname stream.
+/// Create one unnamed private read/write temporary-file stream.
+///
+/// Pinned musl requests an exclusive mode-`0600` pathname below `/tmp`, lets
+/// the process umask mask that mode, unlinks it immediately, and adopts the
+/// descriptor through its `w+` stream path. This bounded translation preserves
+/// those observable descriptor and stream transitions while drawing a 96-bit
+/// hexadecimal candidate suffix directly from Linux `getrandom`. It contains
+/// no userspace PRNG and retains musl's [`TMPFILE_MAX_ATTEMPTS`]-attempt retry
+/// bound. Unlike musl's clock/TID `__randname` helper, this name source has no
+/// userspace random state; unlike musl's ignored unlink result, this bounded
+/// route fails closed if unlinking cannot establish unnamed ownership. A busy
+/// fixed stream slot fails before creating an object, and every later failure
+/// closes any descriptor it has acquired.
+///
+/// Linux LP64 exposes `tmpfile64` only as the preprocessing alias in
+/// `<stdio.h>`; no distinct ELF entry is emitted here.
+///
+/// # Safety
+///
+/// The caller must externally serialize the selected fixed-stream lifecycle
+/// and close a successful result through this module's [`fclose`].
+#[no_mangle]
+pub unsafe extern "C" fn tmpfile() -> *mut StandardStream {
+    // SAFETY: the predicate dereferences only the one private slot.
+    if unsafe { is_active_path_stream(ptr::addr_of!(PATH_STREAM)) } {
+        // SAFETY: the bounded runtime has no second stream record to consume.
+        unsafe { errno::set_errno(EMFILE) };
+        return ptr::null_mut();
+    }
+
+    let mut attempt = 0;
+    let mut last_open_error = EIO;
+    while attempt < TMPFILE_MAX_ATTEMPTS {
+        let mut entropy = [0u8; TMPFILE_RANDOM_BYTES];
+        let mut initialized = 0;
+        while initialized < entropy.len() {
+            // SAFETY: the not-yet-filled suffix is writable for the exact
+            // remaining length and lives across the direct Linux call.
+            let result = unsafe {
+                raw_syscall::syscall3(
+                    raw_syscall::SYS_GETRANDOM,
+                    entropy.as_mut_ptr().add(initialized) as usize as i64,
+                    (entropy.len() - initialized) as i64,
+                    0,
+                )
+            };
+            if result < 0 {
+                let error = (-result) as c_int;
+                if error == EINTR {
+                    continue;
+                }
+                // SAFETY: the x86 static C ABI owns this thread's errno slot.
+                unsafe { errno::set_errno(error) };
+                return ptr::null_mut();
+            }
+            if result == 0 {
+                // Linux 5.10 does not return a zero-length success for a
+                // nonempty getrandom request. Retry defensively without
+                // treating uninitialized bytes as a pathname.
+                continue;
+            }
+            initialized += result as usize;
+        }
+
+        let mut path = *b"/tmp/tmpfile_XXXXXXXXXXXXXXXXXXXXXXXX\0";
+        let hexadecimal = b"0123456789abcdef";
+        let mut index = 0;
+        while index < entropy.len() {
+            path[TMPFILE_SUFFIX_OFFSET + index * 2] = hexadecimal[(entropy[index] >> 4) as usize];
+            path[TMPFILE_SUFFIX_OFFSET + index * 2 + 1] = hexadecimal[(entropy[index] & 0x0f) as usize];
+            index += 1;
+        }
+
+        // SAFETY: `path` is a live NUL-terminated pathname; O_EXCL makes the
+        // name acquisition atomic, and mode 0600 supplies the musl contract.
+        let descriptor = unsafe {
+            raw_syscall::syscall3(
+                raw_syscall::SYS_OPEN,
+                path.as_ptr() as usize as i64,
+                i64::from(O_RDWR | O_CREAT | O_EXCL | O_LARGEFILE),
+                0o600,
+            )
+        };
+        if descriptor < 0 {
+            // Pinned musl retries the entire fixed budget after every failed
+            // open, not just collisions. Keep its final-open errno behavior
+            // while the stronger entropy source makes ordinary collisions
+            // vanishingly unlikely.
+            last_open_error = (-descriptor) as c_int;
+            attempt += 1;
+            continue;
+        }
+        if descriptor > i64::from(c_int::MAX) {
+            // SAFETY: this impossible future raw-boundary value still owns
+            // the exclusive pathname. Retire that name before closing the
+            // descriptor so no failure can leave a temporary-file entry.
+            let _ = unsafe {
+                raw_syscall::syscall1(raw_syscall::SYS_UNLINK, path.as_ptr() as usize as i64)
+            };
+            let _ = unsafe { raw_syscall::syscall1(raw_syscall::SYS_CLOSE, descriptor) };
+            // SAFETY: an unrepresentable descriptor cannot enter FILE state.
+            unsafe { errno::set_errno(EOVERFLOW) };
+            return ptr::null_mut();
+        }
+
+        // SAFETY: the successful exclusive path is still live and owned by
+        // this call. Do not expose a FILE until the directory entry is gone.
+        let unlink_status = unsafe {
+            raw_syscall::syscall1(raw_syscall::SYS_UNLINK, path.as_ptr() as usize as i64)
+        };
+        if unlink_status < 0 {
+            let unlink_error = (-unlink_status) as c_int;
+            let _ = unsafe { raw_syscall::syscall1(raw_syscall::SYS_CLOSE, descriptor) };
+            // SAFETY: preserve the operation that prevented unnamed ownership.
+            unsafe { errno::set_errno(unlink_error) };
+            return ptr::null_mut();
+        }
+
+        // SAFETY: external serialization and the busy-slot preflight grant
+        // ownership of the inactive fixed record; zero direction flags are
+        // exactly the read/write `w+` stream state.
+        return unsafe { initialize_path_stream(descriptor as c_int, 0) };
+    }
+
+    // SAFETY: every bounded candidate failed to open; preserve the final
+    // kernel reason exactly as musl's fixed retry loop does.
+    unsafe { errno::set_errno(last_open_error) };
+    ptr::null_mut()
+}
+
+/// Close the one selected pathname or tmpfile stream.
 ///
 /// Pending selected output is flushed first. The static slot is retired even
 /// when flushing or closing reports an error, matching the lifecycle boundary
@@ -1135,7 +1278,8 @@ pub unsafe extern "C" fn fopen(
 /// # Safety
 ///
 /// `stream` must be the still-active pointer returned by this module's
-/// selected `fopen`, and no other caller may access it during this transition.
+/// selected `fopen` or `tmpfile`, and no other caller may access it during this
+/// transition.
 #[no_mangle]
 pub unsafe extern "C" fn fclose(stream: *mut StandardStream) -> c_int {
     // SAFETY: this predicate dereferences only the exact private pathname slot.

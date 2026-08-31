@@ -690,6 +690,27 @@ multiple live streams, allocation/registries, input `fflush`, `_IONBF`/`_IOLBF`/
 post-I/O buffer reconfiguration, and general stdio; it does not establish x86
 support, parity, promotion, or public support.
 
+The separate `libc-stdio-tmpfile` gate records one bounded private static C
+`tmpfile` route over that same fixed slot. It accepts only an inactive slot,
+requests a mode-`0600` exclusive regular-file candidate below `/tmp`, lets the
+process umask mask that mode, immediately unlinks it, and uses the descriptor
+as the selected `w+` stream. It retains musl 1.2.6 `src/stdio/tmpfile.c`'s
+`MAXTRIES=100` attempt bound, but deliberately replaces
+`src/temp/__randname.c`'s clock/TID state with a direct 96-bit Linux
+`getrandom` hexadecimal suffix; no userspace PRNG is introduced. If unlinking
+fails it fails closed rather than returning a linked file. The project-header
+C fixture runs first through pinned musl and then through a true
+`-nostdlib -static` candidate, while a dedicated C++17 probe independently
+proves the same header alias. Together they prove that
+`_LARGEFILE64_SOURCE` gives `tmpfile64` only as a preprocessing alias with no
+distinct ELF symbol, zero-umask mode-0600, normal restrictive-umask masking,
+nlink-zero regular-descriptor state, binary read/write/seek behavior,
+close/slot reuse, and the candidate-only busy-slot `EMFILE` limit. It does not
+select multiple streams, a general temporary-file policy or pathname exposure,
+allocation/registry, `tmpnam`/`tempnam`/`mkstemp`/`mkdtemp`/`mktemp`,
+`fopencookie`, `popen`, formatted/wide I/O, ordinary-exit flushing, general
+stdio, capability or family completion, promotion, or public x86 support.
+
 The separate `libc-text-math-locale-stdio-composition` gate is one private
 cross-surface static artifact, not another implementation wrapper or a family
 completion claim. Its one project-header C fixture runs against pinned musl

@@ -1122,7 +1122,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "libc-pathname-lifecycle",
             "libc-directory-streams",
             "libc-lchmod-unsupported",
-            "libc-stdio-standard|libc-stdio-format-scan|libc-stdio-path-stream|libc-text-math-locale-stdio-composition",
+            "libc-stdio-standard|libc-stdio-format-scan|libc-stdio-path-stream|libc-stdio-tmpfile|libc-text-math-locale-stdio-composition",
             "libc-pthread-identity",
             "libc-pthread-detach",
             "libc-memory-sync",
@@ -9825,6 +9825,109 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         )
         self.assertIn("libc-stdio-path-stream", dispatcher)
         self.assertIn("run_libc_stdio_path_stream.sh", dispatcher)
+
+    def test_libc_static_c_abi_stdio_tmpfile_stays_bounded(self) -> None:
+        """tmpfile remains one private slot route, not a temp-file framework."""
+        implementation = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "stdio_standard.rs"
+        ).read_text(encoding="utf-8")
+        header = (ROOT / "include" / "stdio.h").read_text(encoding="utf-8")
+        cxx_probe = (
+            ROOT / "compat" / "x86_64" / "libc_stdio_tmpfile_header_probe.cpp"
+        ).read_text(encoding="utf-8")
+        fixture = (
+            ROOT / "compat" / "x86_64" / "libc_stdio_tmpfile_probe.c"
+        ).read_text(encoding="utf-8")
+        start = (
+            ROOT / "compat" / "x86_64" / "libc_stdio_tmpfile_start.S"
+        ).read_text(encoding="utf-8")
+        runner = (
+            ROOT / "compat" / "x86_64" / "run_libc_stdio_tmpfile.sh"
+        ).read_text(encoding="utf-8")
+        exports = {
+            line
+            for line in (
+                ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+            ).read_text(encoding="utf-8").splitlines()
+            if line and not line.startswith("#")
+        }
+        ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        dispatcher = RUNNER.read_text(encoding="utf-8")
+
+        self.assertIn("tmpfile", exports)
+        self.assertNotIn("tmpfile64", exports)
+        self.assertIn("#define tmpfile64 tmpfile", header)
+        for required in (
+            "src/stdio/tmpfile.c",
+            "src/temp/__randname.c",
+            "const TMPFILE_RANDOM_BYTES: usize = 12;",
+            "MAXTRIES = 100",
+            "const TMPFILE_MAX_ATTEMPTS: usize = 100;",
+            'pub unsafe extern "C" fn tmpfile',
+            "raw_syscall::SYS_GETRANDOM",
+            "raw_syscall::SYS_OPEN",
+            "raw_syscall::SYS_UNLINK",
+            "raw_syscall::SYS_CLOSE",
+            "O_RDWR | O_CREAT | O_EXCL | O_LARGEFILE",
+            "0o600",
+            "last_open_error",
+            "immediate unlinking fails",
+        ):
+            self.assertIn(required, implementation)
+        for required in (
+            "_LARGEFILE64_SOURCE",
+            "tmpfile64",
+            "crabc_tmpfile_signature",
+            "decltype(&tmpfile64)",
+            "crabc_tmpfile64_reference",
+        ):
+            self.assertIn(required, cxx_probe)
+        for required in (
+            "tmpfile_entry != tmpfile64_entry",
+            "old_mask = umask_entry(0)",
+            "(state.st_mode & S_IFMT) != S_IFREG",
+            "(state.st_mode & 0777) != 0600",
+            "state.st_nlink != 0",
+            "umask_entry(0600)",
+            "(state.st_mode & 0777) != 0",
+            "F_GETFD",
+            "fwrite_entry(payload",
+            "fseek_entry(stream, 0, SEEK_SET)",
+            "fread_entry(observed",
+            "CRABC_STDIO_TMPFILE_FREESTANDING",
+            "errno != EMFILE",
+            "reused = tmpfile_entry()",
+        ):
+            self.assertIn(required, fixture)
+        for required in (
+            "__crabc_x86_static_tls_bootstrap",
+            "crabc_x86_64_stdio_tmpfile_probe",
+            "mov $231,%eax",
+        ):
+            self.assertIn(required, start)
+        for required in (
+            "ORACLE_ARCHIVE",
+            "STATIC_C_ABI_EXPORTS",
+            "run_musl_oracle.sh",
+            "libc_stdio_tmpfile_header_probe.cpp",
+            "-std=c++17",
+            "strong tmpfile",
+            "header-only tmpfile64 alias",
+            "-nostdlib -static",
+            "SYS_GETRANDOM SYS_OPEN SYS_UNLINK SYS_CLOSE",
+            "dynamic TLS model",
+        ):
+            self.assertIn(required, runner)
+        self.assertNotIn("--whole-archive", runner)
+        self.assertIn('id = "static-c-stdio-tmpfile"', ledger)
+        self.assertIn(
+            'command = "./scripts/dev-x86_64.sh libc-stdio-tmpfile"', ledger
+        )
+        self.assertIn("tmpnam`/`tempnam`/`mkstemp`/`mkdtemp`/`mktemp", ledger)
+        self.assertIn("libc-stdio-tmpfile", dispatcher)
+        self.assertIn("run_libc_stdio_tmpfile.sh", dispatcher)
 
     def test_libc_static_c_abi_text_math_locale_stdio_composition_stays_cross_surface(
         self,

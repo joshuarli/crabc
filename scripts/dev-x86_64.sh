@@ -291,6 +291,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-stdio-standard  run the static x86 crabc-libc permanent standard-stream slice
   libc-stdio-format-scan  run the static x86 crabc-libc byte-string format/scan slice
   libc-stdio-path-stream  run the static x86 crabc-libc fixed pathname-stream slice
+  libc-stdio-tmpfile  run the static x86 crabc-libc bounded tmpfile stream slice
   libc-text-math-locale-stdio-composition  run the static x86 selected text/math/locale/stdio composition
   libc-intmax-arithmetic  run the static x86 crabc-libc intmax-arithmetic slice
   libc-credential-observation  run the static x86 crabc-libc credential-observation slice
@@ -3022,7 +3023,7 @@ case "$command" in
     libc-pathname-lifecycle) ;;
     libc-directory-streams) ;;
     libc-lchmod-unsupported) ;;
-    libc-stdio-standard|libc-stdio-format-scan|libc-stdio-path-stream|libc-text-math-locale-stdio-composition) ;;
+    libc-stdio-standard|libc-stdio-format-scan|libc-stdio-path-stream|libc-stdio-tmpfile|libc-text-math-locale-stdio-composition) ;;
     libc-pthread-identity) ;;
     libc-pthread-detach) ;;
     libc-memory-sync) ;;
@@ -4205,6 +4206,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "libc-stdio-path-stream takes no arguments"
         ensure_image
         run_in_container bash /workspace/compat/x86_64/run_libc_stdio_path_stream.sh
+        ;;
+    libc-stdio-tmpfile)
+        [ "$#" -eq 0 ] || fail "libc-stdio-tmpfile takes no arguments"
+        ensure_image
+        run_in_container bash /workspace/compat/x86_64/run_libc_stdio_tmpfile.sh
         ;;
     libc-text-math-locale-stdio-composition)
         [ "$#" -eq 0 ] || fail "libc-text-math-locale-stdio-composition takes no arguments"

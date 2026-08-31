@@ -6151,6 +6151,50 @@ native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc
 oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source mapping and C/POSIX behavior oracle for src/internal/stdio_impl.h and src/stdio/{fopen,fdopen,freopen,fclose,setvbuf,fflush,fseek,ftell,fgetpos,fsetpos,rewind,fread,fwrite,fgetc,fputc}.c; this fixed source-mapped slot deliberately selects only the listed r/w+ regular-file behavior." }, { kind = "kernel-abi", source = "Linux 5.10 x86-64 ABI", role = "open=2, close=3, lseek=8, read=0, readv=19, and write=1 raw Linux x86-64 register contracts beneath the fixed pathname-stream state machine." }, { kind = "elf-abi", source = "System V AMD64 psABI and pinned musl x86 headers", role = "LP64 FILE-pointer/long/off_t ABI, opaque 16-byte fpos_t storage, C linkage, and Variant-II initial-exec errno TLS fixture contract." }]
 
 [[family.verified_artifact]]
+id = "static-c-stdio-tmpfile"
+description = "Private native x86 bounded `tmpfile` artifact inside still-planned `libc.text-math-locale-stdio`. The strong `tmpfile` entry consumes the existing one externally serialized fixed owned `FILE` slot only when it is inactive, then requests a mode-`0600` exclusive regular-file candidate below `/tmp`, lets the process umask mask that mode, immediately unlinks it, and initializes the descriptor as the selected `w+` stream. Pinned musl 1.2.6 `src/stdio/tmpfile.c` fixes `MAXTRIES=100`; this translation retains that fixed attempt count but replaces `src/temp/__randname.c`'s clock/TID state with a direct 96-bit Linux `getrandom` hexadecimal suffix, so it owns no userspace PRNG. It also fails closed if immediate unlinking fails rather than exposing a linked pathname. The shared project-header C fixture plus a dedicated C++17 header probe first execute or compile through pinned musl and then one dependency-free `-nostdlib -static` candidate, proving `tmpfile64` is only the `_LARGEFILE64_SOURCE` preprocessing alias of `tmpfile` with no distinct ELF symbol, mode-0600 under a zero umask, normal restrictive-umask masking, an unlinked regular descriptor, read/write/seek behavior, close retirement, fixed-slot reuse, and the candidate-only busy fixed slot `EMFILE` boundary. It does not select multiple live streams, allocation/registry, a generic temporary-file policy, pathname exposure, `tmpnam`/`tempnam`/`mkstemp`/`mkdtemp`/`mktemp`, `fopencookie`, `popen`, formatted/wide I/O, ordinary-exit flushing, general stdio, libc.so, CRT lifecycle, loader, sysroot, capability or family completion, promotion, or public x86 support."
+source_owners = [
+  "compat/upstreams.toml",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/stdio_standard.rs",
+  "libc/src/c_abi/x86_64/errno.rs",
+  "libc/src/c_abi/x86_64/static_tls.rs",
+  "libc/src/c_abi/x86_64/syscall.rs",
+  "include/bits/alltypes.h",
+  "include/bits/fcntl.h",
+  "include/errno.h",
+  "include/fcntl.h",
+  "include/features.h",
+  "include/stdio.h",
+  "include/sys/stat.h",
+  "include/unistd.h",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/libc_stdio_tmpfile_header_probe.cpp",
+  "compat/x86_64/libc_stdio_tmpfile_probe.c",
+  "compat/x86_64/libc_stdio_tmpfile_start.S",
+  "compat/x86_64/run_libc_stdio_tmpfile.sh",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "compat/x86_64/README.md",
+  "x86-64.md",
+  "scripts/dev-x86_64.sh",
+]
+x86_abi_prerequisites = [
+  "System V AMD64 returns the no-argument tmpfile FILE pointer in rax; the public FILE remains opaque, and the selected fixed record is neither a caller-constructed layout nor a general stream allocator.",
+  "Pinned musl 1.2.6 src/stdio/tmpfile.c fixes MAXTRIES=100, calls __randname on the six-byte suffix beginning at /tmp/tmpfile_, opens O_RDWR|O_CREAT|O_EXCL mode 0600, unlinks, then adopts the descriptor through __fdopen(fd, \"w+\") and closes it on adoption failure. src/temp/__randname.c is intentionally not translated as a clock/TID PRNG: the x86 leaf instead obtains twelve bytes directly from Linux getrandom and hex-encodes them, retaining the fixed attempt count and observable unnamed w+ descriptor lifecycle.",
+  "Linux 5.10 x86-64 getrandom=318, open=2, unlink=87, close=3, lseek=8, read=0, readv=19, and write=1 implement the selected entropy, private 0600 creation, unlink-after-open, stream I/O, and close boundary. O_RDWR=2, O_CREAT=0100, O_EXCL=0200, and O_LARGEFILE=0100000 are passed directly; the existing Variant-II initial-exec errno TLS plus hidden __crabc_x86_static_tls_bootstrap belongs only to the freestanding fixture.",
+]
+x86_header_prerequisites = [
+  "The dedicated pinned-musl/project-first C++17 tmpfile probe and the project-header C fixture prove _LARGEFILE64_SOURCE gives tmpfile64 as an exact macro alias with the same FILE *(*)(void) type and unmangled tmpfile C spelling; no other LFS declaration or ELF name is selected.",
+  "The runtime fixture preprocesses only project errno.h, fcntl.h, stdio.h, sys/stat.h, unistd.h, features.h, bits/alltypes.h, and bits/fcntl.h before both the pinned-musl reference and the static candidate. It supplies no ambient libc or temporary-file helper.",
+]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-stdio-tmpfile", scope = "Pinned-musl project-header C reference and C++ alias probe plus one dependency-free x86 crabc-libc archive and true `-nostdlib -static` candidate. The gate ratchets the complete selected static C export list, proves strong tmpfile and the absence of a distinct tmpfile64 ELF symbol in both pinned-musl and candidate archives, and rejects unresolved symbols, interpreter/DT_NEEDED, dynamic TLS resolver, allocator, fopencookie/popen, or ambient runtime dependencies. Function-pointer calls prove the header-only tmpfile64 identity, zero-umask mode-0600 and normal restrictive-umask masking, nlink zero regular-descriptor state, O_RDWR/no-CLOEXEC descriptor state, binary write/seek/read behavior, close retirement, and slot reuse; the candidate alone proves a second live tmpfile fails EMFILE. The candidate reaches direct initial-exec errno TLS through the archive-owned Static Initial TLS v1 bootstrap and retains direct getrandom/open/unlink/close instructions. It is one bounded C ABI artifact, not multiple-stream, general temporary-object, general stdio, capability or family completion, promotion, or public x86 support." }]
+oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source and executable behavior oracle for src/stdio/tmpfile.c's MAXTRIES=100, /tmp/tmpfile_ creation, O_RDWR|O_CREAT|O_EXCL mode 0600, unlink, __fdopen(fd, w+), close-on-adoption-failure lifecycle, and the header-only tmpfile64 alias. src/temp/__randname.c's clock/TID name state is an intentional direct-getrandom replacement; unlink failure is intentionally fail-closed." }, { kind = "kernel-abi", source = "Linux 5.10 x86-64 ABI", role = "getrandom=318, open=2, unlink=87, close=3, lseek=8, read=0, readv=19, write=1, mode 0600, O_RDWR/O_CREAT/O_EXCL/O_LARGEFILE, nlink-zero, and descriptor-status contract below the selected stream slot." }, { kind = "elf-abi", source = "System V AMD64 psABI and pinned musl x86 headers/static manifests", role = "No-argument FILE * return, opaque FILE pointer, strong tmpfile ELF entry, _LARGEFILE64_SOURCE tmpfile64 preprocessing alias with no ELF entry, C/C++ linkage, and Variant-II initial-exec errno TLS fixture contract." }]
+
+[[family.verified_artifact]]
 id = "static-c-named-locale-multibyte"
 description = "Private native x86 selected-static-archive named C locale/multibyte core. One dependency-free `crabc-libc` archive lets its freestanding C fixture resolve the sixteen selected entries `setlocale`, `localeconv`, `__ctype_get_mb_cur_max`, `mbrtowc`, `mbrlen`, `mbsinit`, `wcrtomb`, `mblen`, `mbtowc`, `wctomb`, `mbsrtowcs`, `wcsrtombs`, `mbstowcs`, `wcstombs`, `btowc`, and `wctob` after equivalent pinned-musl execution; the archive-wide selected C ABI remains separately ratcheted. It admits only named global `C`, `POSIX`, and `C.UTF-8` category selection plus its exact six-component mixed `LC_ALL` serialization. Musl's built-in `C.UTF-8` map changes only `LC_CTYPE`, so global `C.UTF-8` and the returned mixed state are exactly `C.UTF-8;C;C;C;C;C`; direct `POSIX` and non-CTYPE `C.UTF-8` normalize to `C`. A candidate-only regression rejects POSIX components, non-CTYPE UTF-8 components, or redundant uniform six-component forms without changing state. `C`/`POSIX` retain musl's private C code units while CTYPE `C.UTF-8` retains the bounded UTF-8 state machine, split-state/error/reset behavior, legacy conversion results, initial-state C string source/destination updates, and one caller-owned positive-capacity UTF-8 resume. The immutable POSIX `lconv` record carries `CHAR_MAX` monetary fields, while EILSEQ uses the already selected x86 initial-TLS errno seam. The separate C/C++ header gate proves the six-category values, x86 `wchar_t`/`wint_t`/8-byte `mbstate_t` and 96-byte `lconv` layouts, selected signatures, MB_CUR_MAX type, and unmangled C++ names. This artifact intentionally excludes noninitial `mbsrtowcs` resume with zero output capacity, `setlocale(category, \"\")` environment lookup, arbitrary locale names/maps, locale objects and `_l` APIs, per-thread locale overrides, collation, iconv, wide streams, general stdio, libc.so, CRT, loader, sysroot, family completion, promotion, and public x86 support."
 source_owners = [

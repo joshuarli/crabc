@@ -169,6 +169,11 @@ int rename(const char *, const char *);
 /* Temp files */
 char *tmpnam(char *);
 FILE *tmpfile(void);
+/* Linux LP64 has one 64-bit file-offset model. Musl exposes tmpfile64
+ * as a preprocessing alias rather than a distinct declaration. */
+#if defined(_LARGEFILE64_SOURCE)
+#define tmpfile64 tmpfile
+#endif
 /* POSIX.1-2024 removes these legacy names from the XSI namespace. */
 #if defined(_GNU_SOURCE) || defined(_BSD_SOURCE) \
  || (defined(_XOPEN_SOURCE) && _XOPEN_SOURCE < 800)

@@ -50,7 +50,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 32)
-        self.assertEqual(report["verified_artifact_count"], 119)
+        self.assertEqual(report["verified_artifact_count"], 120)
         self.assertEqual(report["header_layout_probe_count"], 45)
         self.assertEqual(report["public_header_inventory_count"], 183)
         self.assertEqual(report["header_foundation_header_count"], 191)
@@ -2387,7 +2387,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         text_math = self.family(data, "libc.text-math-locale-stdio")
         self.assertEqual(text_math["status"], "planned")
         artifacts = text_math["verified_artifact"]
-        assert isinstance(artifacts, list) and len(artifacts) == 15
+        assert isinstance(artifacts, list) and len(artifacts) == 16
         artifact = next(
             entry
             for entry in artifacts
@@ -2506,7 +2506,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         text_math = self.family(data, "libc.text-math-locale-stdio")
         self.assertEqual(text_math["status"], "planned")
         artifacts = text_math["verified_artifact"]
-        assert isinstance(artifacts, list) and len(artifacts) == 15
+        assert isinstance(artifacts, list) and len(artifacts) == 16
         artifact = next(
             entry
             for entry in artifacts
@@ -2644,7 +2644,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         text_math = self.family(data, "libc.text-math-locale-stdio")
         self.assertEqual(text_math["status"], "planned")
         artifacts = text_math["verified_artifact"]
-        assert isinstance(artifacts, list) and len(artifacts) == 14
+        assert isinstance(artifacts, list) and len(artifacts) == 16
         artifact = next(
             entry
             for entry in artifacts
@@ -2705,7 +2705,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         family = self.family(data, "libc.text-math-locale-stdio")
         self.assertEqual(family["status"], "planned")
         artifacts = family["verified_artifact"]
-        assert isinstance(artifacts, list) and len(artifacts) == 14
+        assert isinstance(artifacts, list) and len(artifacts) == 16
         artifact = next(
             entry
             for entry in artifacts
@@ -2762,12 +2762,112 @@ class X86ParityLedgerTests(unittest.TestCase):
         ):
             ledger.validate_ledger(changed)
 
+    def test_stdio_tmpfile_remains_a_closed_non_capability_artifact(self) -> None:
+        data = self.data()
+        family = self.family(data, "libc.text-math-locale-stdio")
+        self.assertEqual(family["status"], "planned")
+        artifacts = family["verified_artifact"]
+        assert isinstance(artifacts, list) and len(artifacts) == 16
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-stdio-tmpfile"
+        )
+        self.assertNotIn("capabilities", artifact)
+        for owner in (
+            "compat/upstreams.toml",
+            "libc/src/c_abi/x86_64/static_c_abi.rs",
+            "libc/src/c_abi/x86_64/stdio_standard.rs",
+            "libc/src/c_abi/x86_64/errno.rs",
+            "libc/src/c_abi/x86_64/static_tls.rs",
+            "libc/src/c_abi/x86_64/syscall.rs",
+            "include/stdio.h",
+            "compat/x86_64/libc_stdio_tmpfile_header_probe.cpp",
+            "compat/x86_64/libc_stdio_tmpfile_probe.c",
+            "compat/x86_64/libc_stdio_tmpfile_start.S",
+            "compat/x86_64/run_libc_stdio_tmpfile.sh",
+            "compat/x86_64/static_c_abi_exports.txt",
+            "scripts/dev-x86_64.sh",
+        ):
+            self.assertIn(owner, artifact["source_owners"])
+        self.assertEqual(
+            {evidence["command"] for evidence in artifact["native_evidence"]},
+            {"./scripts/dev-x86_64.sh libc-stdio-tmpfile"},
+        )
+        for phrase in (
+            "strong `tmpfile`",
+            "one externally serialized fixed owned `FILE` slot",
+            "mode-`0600`",
+            "below `/tmp`",
+            "immediately unlinks",
+            "selected `w+` stream",
+            "`MAXTRIES=100`",
+            "direct 96-bit Linux `getrandom`",
+            "no userspace PRNG",
+            "fails closed if immediate unlinking fails",
+            "`tmpfile64`",
+            "`_LARGEFILE64_SOURCE` preprocessing alias",
+            "no distinct ELF symbol",
+            "zero umask",
+            "normal restrictive-umask masking",
+            "unlinked regular descriptor",
+            "busy fixed slot `EMFILE` boundary",
+            "multiple live streams",
+            "allocation/registry",
+            "generic temporary-file policy",
+            "tmpnam`/`tempnam`/`mkstemp`/`mkdtemp`/`mktemp",
+            "fopencookie",
+            "popen",
+            "general stdio",
+            "capability or family completion",
+            "promotion",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, artifact["description"])
+
+        changed = self.data()
+        artifacts = self.family(changed, "libc.text-math-locale-stdio")[
+            "verified_artifact"
+        ]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-stdio-tmpfile"
+        )
+        artifact["description"] = artifact["description"].replace(
+            "busy fixed slot `EMFILE` boundary", "busy slot"
+        )
+        with self.assertRaisesRegex(
+            ledger.LedgerError,
+            "static-c-stdio-tmpfile description omits busy fixed slot `EMFILE` boundary",
+        ):
+            ledger.validate_ledger(changed)
+
+        changed = self.data()
+        artifacts = self.family(changed, "libc.text-math-locale-stdio")[
+            "verified_artifact"
+        ]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-stdio-tmpfile"
+        )
+        evidence = artifact["native_evidence"]
+        assert isinstance(evidence, list) and isinstance(evidence[0], dict)
+        evidence[0]["command"] = "./scripts/dev-x86_64.sh libc-fenv"
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "closed native command"
+        ):
+            ledger.validate_ledger(changed)
+
     def test_math_complex_foundation_remains_a_closed_non_capability_artifact(self) -> None:
         data = self.data()
         text_math = self.family(data, "libc.text-math-locale-stdio")
         self.assertEqual(text_math["status"], "planned")
         artifacts = text_math["verified_artifact"]
-        assert isinstance(artifacts, list) and len(artifacts) == 15
+        assert isinstance(artifacts, list) and len(artifacts) == 16
         artifacts_by_id = {
             entry["id"]: entry for entry in artifacts if isinstance(entry, dict)
         }
@@ -2849,7 +2949,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         text_math = self.family(data, "libc.text-math-locale-stdio")
         self.assertEqual(text_math["status"], "planned")
         artifacts = text_math["verified_artifact"]
-        assert isinstance(artifacts, list) and len(artifacts) == 14
+        assert isinstance(artifacts, list) and len(artifacts) == 16
         artifact = next(
             entry
             for entry in artifacts
@@ -2934,7 +3034,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         text_math = self.family(data, "libc.text-math-locale-stdio")
         self.assertEqual(text_math["status"], "planned")
         artifacts = text_math["verified_artifact"]
-        assert isinstance(artifacts, list) and len(artifacts) == 14
+        assert isinstance(artifacts, list) and len(artifacts) == 16
         artifact = next(
             entry
             for entry in artifacts
@@ -3020,7 +3120,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertIn("math.elementary-long-double", text_math["capabilities"])
         self.assertIn("math.special", text_math["capabilities"])
         artifacts = text_math["verified_artifact"]
-        assert isinstance(artifacts, list) and len(artifacts) == 14
+        assert isinstance(artifacts, list) and len(artifacts) == 16
         artifact = next(
             entry
             for entry in artifacts
@@ -3188,7 +3288,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         text_math = self.family(data, "libc.text-math-locale-stdio")
         self.assertEqual(text_math["status"], "planned")
         artifacts = text_math["verified_artifact"]
-        assert isinstance(artifacts, list) and len(artifacts) == 15
+        assert isinstance(artifacts, list) and len(artifacts) == 16
         artifact = next(
             entry
             for entry in artifacts
@@ -3292,7 +3392,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         data = self.data()
         text_math = self.family(data, "libc.text-math-locale-stdio")
         artifacts = text_math["verified_artifact"]
-        assert isinstance(artifacts, list) and len(artifacts) == 15
+        assert isinstance(artifacts, list) and len(artifacts) == 16
         artifact = next(
             entry
             for entry in artifacts
@@ -3376,7 +3476,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         data = self.data()
         text_math = self.family(data, "libc.text-math-locale-stdio")
         artifacts = text_math["verified_artifact"]
-        assert isinstance(artifacts, list) and len(artifacts) == 15
+        assert isinstance(artifacts, list) and len(artifacts) == 16
         artifact = next(
             entry
             for entry in artifacts
@@ -3463,7 +3563,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         data = self.data()
         text_math = self.family(data, "libc.text-math-locale-stdio")
         artifacts = text_math["verified_artifact"]
-        assert isinstance(artifacts, list) and len(artifacts) == 15
+        assert isinstance(artifacts, list) and len(artifacts) == 16
         artifact = next(
             entry
             for entry in artifacts
