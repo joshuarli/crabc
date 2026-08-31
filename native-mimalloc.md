@@ -1904,9 +1904,15 @@ results.
 
 ## `allocator-shadow`
 
-Builds the owned sysroot, selects only the Rust allocator libc, proves the
-loaded/interposed artifact, and runs the full standard C/pthread/owner-exit/
-fork/loader fixture matrix. It must not accidentally load the C-backed libc.
+Builds the owned sysroot, snapshots and attests the ordinary C-backed dynamic
+`libc.so`, then selects the Rust allocator libc. The bounded paired ABI matrix
+runs one normalized initial-thread `malloc`/`free`/`realloc` trace against each
+explicitly selected artifact and writes a deterministic report. Its two
+zero-size `realloc` ordinary/native alignment differences are named known reds,
+while foreign-worker, owner-exit, DSO/static-linkage, and allocator-layout rows
+stay blocked rather than broadening the comparison. The remaining standard
+C/pthread/owner-exit/fork/loader fixture matrix proves the loaded/interposed Rust
+artifact and must not accidentally load the C-backed libc.
 
 ## `allocator --soak`
 

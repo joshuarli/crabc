@@ -1953,6 +1953,7 @@ snapshot after review; the normal gate never updates its own baseline.
 | `adapted/test-stress-creating-thread.patch` | Minimal source adaptation of the exact upstream stress fixture; it keeps the source workload but intentionally excludes every unsupported scheduler or allocator mode rather than copying a C fork. |
 | `native-shadow-stress-v3.5.0.json` | Reviewed selected-libc source-stress provenance map, behavior-named patch/hash, fixed four-pthread `4 1 2` execution, fresh-process count, source-transfer cleanup boundary, and unsupported-mode rejections. |
 | `adapted/test-stress-native-shadow-pthreads.patch` | Minimal selected-shadow adaptation of the exact upstream stress fixture; standard C allocation names bind to the native shadow `libc.so`, while unsupported upstream modes fail at compile time. |
+| `shadow-abi-matrix-v1.json` and `shadow-abi-matrix/` | Closed paired-artifact local C ABI contract and runner. It snapshots and attests the ordinary C-backed `libc.so` before native feature selection, then independently attests and compares one normalized `malloc`/`free`/`realloc` trace through both artifacts. It records the two current zero-size `realloc` ordinary/native alignment known reds exactly and keeps lifecycle, cross-owner, DSO/static-linkage, and allocator-layout cases explicitly blocked rather than smuggling them into a local comparison. |
 | `test-adapter/` | Standalone default-off Rust staticlib/cdylib, private C header, and checked-in wrapper for the existing allocator fixture. |
 | `runtime-ticket-zero-test-v3.5.0.json` | Reviewed source map, eleven-symbol inventory, one-shot caller contract, and native link contract for the process-lifetime ticket-zero C witness, including scalar-only lifecycle stability auditing plus retained narrow, persistent mixed-local, live-owner remote-free, a fresh-B mixed post-exit owner route, and alternating sole-medium/direct-small reclamation worker round trips through one existing export. |
 | `native-owner-exit-lifecycle-v3.5.0.json` | Reviewed direct-engine Gate 5C suite: exact Cargo feature set, fifteen focused runtime/source traversal checks, and the required owner-exit scenario coverage. |
@@ -2042,6 +2043,15 @@ backend until promotion. Production must not choose its allocator at runtime.
 It first builds the default owned sysroot and then rebuilds only
 `crabc-libc` with `native-mimalloc-shadow`, so the C ABI fixtures execute the
 selected `libc.so` rather than a default artifact left by sysroot assembly.
+Immediately before that feature rebuild, its paired shadow-ABI matrix snapshots
+and attests the ordinary C-backed `libc.so`; immediately afterward, it links
+and runs one normalized local public C allocation trace once against each
+explicit artifact. The matrix is the sole deliberate ordinary-artifact run in
+this command, uses an isolated `LD_LIBRARY_PATH` for each process, and records
+its two zero-size `realloc` alignment known-red backend differences plus
+intentionally blocked cross-owner/lifecycle/DSO/layout rows rather than
+treating either as a default-backend fallback. The remaining C ABI fixtures
+stay selected-native only.
 It covers the allocator fixture's local malloc/calloc/realloc/free/alignment/
 usable-size contract, the pthread TSD-destructor fixture's worker-local
 allocation/free plus all-free finish, bounded one- and two-owner owner-exit

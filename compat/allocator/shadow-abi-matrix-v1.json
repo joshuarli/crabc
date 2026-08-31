@@ -1,0 +1,199 @@
+{
+  "format": 1,
+  "schema": "crabc-libc-native-mimalloc-shadow-abi-matrix",
+  "scope": {
+    "claim": "one deterministic local C malloc/free/realloc semantic comparison between separately attested ordinary C-backed and nondefault Rust-native libc artifacts",
+    "target": "linux-aarch64-little-endian",
+    "kernel_baseline": "5.10",
+    "not_a_promotion_gate": true,
+    "not_a_runtime_selector": true,
+    "purpose": "Preserve the ordinary libc artifact before native-mimalloc-shadow selection, then run the same normalized public C trace through both explicitly selected dynamic libc artifacts and record exact semantic matches or named known reds."
+  },
+  "fixture": {
+    "path": "tests/fixtures/native_mimalloc_shadow_backend_matrix_test.c",
+    "sha256": "b9aa6a19a86002f0fb2ca6745f5ff654b7d3a347f0882776830b54dd2a9f7afa",
+    "language": "C11",
+    "compile_flags": [
+      "-fPIE",
+      "-pie",
+      "-fno-builtin"
+    ],
+    "link_flags": [
+      "-Wl,--allow-shlib-undefined"
+    ],
+    "link_libraries": [
+      "-lc"
+    ]
+  },
+  "backends": [
+    {
+      "id": "ordinary-c-mimalloc",
+      "cargo_features": [
+        "default"
+      ],
+      "selection": "snapshot target/debug/libc.so before native-mimalloc-shadow is built",
+      "fallback": false,
+      "exported_free_route": {
+        "symbol": "free",
+        "required_callee_suffix": "mi_free>",
+        "forbidden_callee_suffix": "native_free>"
+      }
+    },
+    {
+      "id": "native-rust-mimalloc-shadow",
+      "cargo_features": [
+        "default",
+        "native-mimalloc-shadow"
+      ],
+      "selection": "build crabc-libc with native-mimalloc-shadow after the ordinary artifact is snapshotted",
+      "fallback": false,
+      "exported_free_route": {
+        "symbol": "free",
+        "required_callee_suffix": "native_free>",
+        "forbidden_callee_suffix": "mi_free>"
+      }
+    }
+  ],
+  "semantic_cases": [
+    {
+      "id": "free-null-preserves-errno",
+      "operations": [
+        "free"
+      ],
+      "expected": {
+        "ordinary-c-mimalloc": "pass",
+        "native-rust-mimalloc-shadow": "pass"
+      },
+      "comparison": "match"
+    },
+    {
+      "id": "malloc-local-content-and-errno",
+      "operations": [
+        "malloc"
+      ],
+      "expected": {
+        "ordinary-c-mimalloc": "pass",
+        "native-rust-mimalloc-shadow": "pass"
+      },
+      "comparison": "match"
+    },
+    {
+      "id": "realloc-grow-preserves-prefix-and-errno",
+      "operations": [
+        "realloc"
+      ],
+      "expected": {
+        "ordinary-c-mimalloc": "pass",
+        "native-rust-mimalloc-shadow": "pass"
+      },
+      "comparison": "match"
+    },
+    {
+      "id": "realloc-shrink-preserves-prefix-and-errno",
+      "operations": [
+        "realloc"
+      ],
+      "expected": {
+        "ordinary-c-mimalloc": "pass",
+        "native-rust-mimalloc-shadow": "pass"
+      },
+      "comparison": "match"
+    },
+    {
+      "id": "realloc-null-zero-result",
+      "operations": [
+        "realloc"
+      ],
+      "expected": {
+        "ordinary-c-mimalloc": "freeable-misaligned-preserves-errno",
+        "native-rust-mimalloc-shadow": "freeable-aligned-preserves-errno"
+      },
+      "comparison": "known-red",
+      "reason": "The ordinary C-backed artifact returns a freeable but non-16-byte-aligned zero-size result, while the selected native shadow returns a freeable 16-byte-aligned result. Both preserve the fixture's incoming errno. This is a recorded public-C ABI red, not an accepted musl-equivalence result."
+    },
+    {
+      "id": "realloc-zero-result",
+      "operations": [
+        "realloc"
+      ],
+      "expected": {
+        "ordinary-c-mimalloc": "distinct-aligned-preserves-errno",
+        "native-rust-mimalloc-shadow": "distinct-misaligned-preserves-errno"
+      },
+      "comparison": "known-red",
+      "reason": "The ordinary C-backed artifact returns a distinct freeable 16-byte-aligned zero-size replacement, while the selected native shadow returns a distinct freeable but non-16-byte-aligned replacement. Both preserve the fixture's incoming errno. This is a recorded public-C ABI red, not an accepted musl-equivalence result."
+    },
+    {
+      "id": "realloc-failure-preserves-source-and-sets-enomem",
+      "operations": [
+        "realloc"
+      ],
+      "expected": {
+        "ordinary-c-mimalloc": "pass",
+        "native-rust-mimalloc-shadow": "pass"
+      },
+      "comparison": "match"
+    },
+    {
+      "id": "free-local-preserves-errno",
+      "operations": [
+        "free"
+      ],
+      "expected": {
+        "ordinary-c-mimalloc": "pass",
+        "native-rust-mimalloc-shadow": "pass"
+      },
+      "comparison": "match"
+    }
+  ],
+  "intentionally_blocked_cases": [
+    {
+      "id": "foreign-worker-free-or-realloc",
+      "status": "blocked",
+      "reason": "The native shadow admits only separately proved exact live-client free and one detached-owner reallocation transition; the ordinary C backend is not a semantic oracle for those bounded native-only routes."
+    },
+    {
+      "id": "owner-exit-and-post-exit-routing",
+      "status": "blocked",
+      "reason": "Owner exit, deferred release, and post-exit replacement have their own typed lifecycle evidence. This local ABI matrix must not manufacture a general lifecycle comparison."
+    },
+    {
+      "id": "dso-interposition-and-static-linking",
+      "status": "blocked",
+      "reason": "The existing native_mimalloc_shadow_abi integration target owns weak binding, DSO JUMP_SLOT, and selected archive checks. This matrix uses one dynamically linked executable per artifact."
+    },
+    {
+      "id": "address-reuse-usable-size-and-page-layout",
+      "status": "blocked",
+      "reason": "Those are allocator implementation details, not stable C ABI semantic facts, and comparing them would falsely require the Rust port to reproduce private layout choices."
+    }
+  ],
+  "execution": {
+    "compiler": "crabc-cc from the installed owned crabc sysroot",
+    "canonical_loader": "/lib/ld-crabc-aarch64.so.1",
+    "owned_test_launcher": "scripts/run_owned_test_suite.py",
+    "expected_dynamic_dependencies": [
+      "libc.so"
+    ],
+    "process_attempts_per_backend": 1,
+    "watchdog_seconds": 15,
+    "runtime_library_selection": "LD_LIBRARY_PATH contains exactly the directory holding the selected backend libc.so after inherited loader overrides are removed, and the fixture carries no RPATH or RUNPATH that could select another libc.so",
+    "artifact_snapshot": "The ordinary C-backed libc.so and its Cargo feature attestation are copied before the native feature build; the native artifact is attested from target/debug after that build."
+  },
+  "report": {
+    "format": 1,
+    "schema": "crabc-libc-native-mimalloc-shadow-abi-matrix-report",
+    "path": "compat/reports/allocator/shadow-abi-matrix/latest.json",
+    "atomic_publish": true,
+    "file_artifact_record_fields": [
+      "path",
+      "bytes",
+      "sha256"
+    ],
+    "byte_stream_record_fields": [
+      "bytes",
+      "sha256",
+      "hex"
+    ]
+  }
+}

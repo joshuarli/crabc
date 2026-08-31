@@ -501,7 +501,16 @@ case "$command" in
         run_in_container cargo build --workspace
         run_in_container cargo build --workspace --release
         run_in_container python3 scripts/build_owned_sysroot.py
+        # Preserve and attest the ordinary C-backed dynamic libc before the
+        # feature build replaces target/debug/libc.so. The paired runner later
+        # compiles the same normalized local C trace against this snapshot and
+        # the selected Rust artifact; it does not create runtime selection.
+        run_in_container python3 compat/allocator/shadow-abi-matrix/run.py capture
         run_in_container cargo build -p crabc-libc --features native-mimalloc-shadow
+        run_in_container python3 scripts/run_owned_test_suite.py \
+            --sysroot target/crabc-sysroot \
+            --loader target/debug/libldso.so \
+            -- python3 compat/allocator/shadow-abi-matrix/run.py run
         # The direct runtime regressions keep the typed post-exit proof and
         # live-owner remote-publication boundaries observable without
         # accidentally selecting the ordinary C allocator artifact. They
