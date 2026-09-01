@@ -9743,6 +9743,74 @@ def runtime_ticket_zero_soak_consumer_attest_artifact(
     return observed
 
 
+def runtime_ticket_zero_soak_consumer_pinned_source_records(
+    root: Path,
+    archive_path: Path,
+    pin: Mapping[str, str],
+    archive_record: Mapping[str, Any],
+) -> list[dict[str, Any]]:
+    """Re-read every producer C-oracle member from the live pinned archive.
+
+    The soak producer carries the compact `source_file_records` inventory from
+    `milestone0_report`.  Those member records are meaningful only when this
+    later reader independently verifies the same ordered `ORACLE_SOURCES`
+    bytes against the still-live archive that already matched the immutable
+    pin.  Reading directly from the archive avoids accepting a relabelled
+    extracted tree or a producer-shaped list of arbitrary strings.
+    """
+
+    _, before = runtime_ticket_zero_soak_consumer_observed_file(
+        root, archive_path, "pinned archive"
+    )
+    if (
+        not runtime_ticket_zero_soak_consumer_exactly_matches(before, archive_record)
+        or before["sha256"] != pin["sha256"]
+    ):
+        raise RuntimeTicketZeroSoakRejected(
+            "runtime ticket-zero soak consumer pinned archive changed before source-member validation"
+        )
+    records: list[dict[str, Any]] = []
+    try:
+        with tarfile.open(archive_path, mode="r:gz") as stream:
+            for name in sorted(ORACLE_SOURCES):
+                member_path = f"{pin['archive_root']}/{name}"
+                members = [
+                    member
+                    for member in stream.getmembers()
+                    if member.name == member_path
+                ]
+                if len(members) != 1 or not members[0].isfile():
+                    raise RuntimeTicketZeroSoakRejected(
+                        "runtime ticket-zero soak consumer pinned archive lacks a required C-oracle source member"
+                    )
+                extracted = stream.extractfile(members[0])
+                if extracted is None:
+                    raise RuntimeTicketZeroSoakRejected(
+                        "runtime ticket-zero soak consumer cannot read a C-oracle source member"
+                    )
+                with extracted:
+                    payload = extracted.read()
+                records.append(
+                    {
+                        "bytes": len(payload),
+                        "path": name,
+                        "sha256": hashlib.sha256(payload).hexdigest(),
+                    }
+                )
+    except (OSError, tarfile.TarError) as error:
+        raise RuntimeTicketZeroSoakRejected(
+            "runtime ticket-zero soak consumer cannot read the pinned upstream archive"
+        ) from error
+    _, after = runtime_ticket_zero_soak_consumer_observed_file(
+        root, archive_path, "pinned archive"
+    )
+    if not runtime_ticket_zero_soak_consumer_exactly_matches(before, after):
+        raise RuntimeTicketZeroSoakRejected(
+            "runtime ticket-zero soak consumer pinned archive changed during source-member validation"
+        )
+    return records
+
+
 def runtime_ticket_zero_soak_consumer_fixture_build_command(
     root: Path, artifact_paths: Mapping[str, Path]
 ) -> list[str]:
@@ -9883,11 +9951,9 @@ def runtime_ticket_zero_soak_consumer_validate_report(
     expected_pin = {
         "archive": archive,
         "archive_root": pin["archive_root"],
-        "repository": pin["repository"],
         "revision": pin["revision"],
         "sha256": pin["sha256"],
         "source": pin["source"],
-        "tag": pin["tag"],
         "tag_object": pin["tag_object"],
         "tag_verified": expected_tag,
         "version": pin["version"],
@@ -9910,10 +9976,21 @@ def runtime_ticket_zero_soak_consumer_validate_report(
         or not isinstance(oracle.get("compiler"), str)
         or not oracle["compiler"]
         or not isinstance(oracle.get("source_files"), list)
-        or not all(isinstance(source_file, str) and source_file for source_file in oracle["source_files"])
     ):
         raise RuntimeTicketZeroSoakRejected(
             "runtime ticket-zero soak consumer C oracle identity drifted"
+        )
+    source_files = runtime_ticket_zero_soak_consumer_pinned_source_records(
+        root,
+        artifact_paths["archive"],
+        pin,
+        archive,
+    )
+    if not runtime_ticket_zero_soak_consumer_exactly_matches(
+        oracle["source_files"], source_files
+    ):
+        raise RuntimeTicketZeroSoakRejected(
+            "runtime ticket-zero soak consumer C oracle source-member binding drifted"
         )
     expected_target = {
         "architecture": "aarch64",

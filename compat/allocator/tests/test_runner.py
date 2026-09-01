@@ -3062,7 +3062,23 @@ class RuntimeTicketZeroSoakConsumerTests(unittest.TestCase):
         artifact_paths = RUNNER.runtime_ticket_zero_soak_consumer_artifact_paths(
             work_root
         )
-        archive = write(artifact_paths["archive"], b"synthetic pinned archive")
+        base_pin = RUNNER.load_pin()
+        archive = artifact_paths["archive"]
+        archive.parent.mkdir(parents=True, exist_ok=True)
+        source_files: list[dict[str, object]] = []
+        with tarfile.open(archive, mode="w:gz") as stream:
+            for source_name in sorted(RUNNER.ORACLE_SOURCES):
+                payload = f"synthetic {source_name}\n".encode()
+                member = tarfile.TarInfo(f"{base_pin['archive_root']}/{source_name}")
+                member.size = len(payload)
+                stream.addfile(member, io.BytesIO(payload))
+                source_files.append(
+                    {
+                        "bytes": len(payload),
+                        "path": source_name,
+                        "sha256": hashlib.sha256(payload).hexdigest(),
+                    }
+                )
         adapter_archive = write(
             artifact_paths["adapter_archive"], b"synthetic adapter archive"
         )
@@ -3071,7 +3087,7 @@ class RuntimeTicketZeroSoakConsumerTests(unittest.TestCase):
         )
         fixture_binary = write(artifact_paths["fixture"], b"synthetic fixture")
         pin = {
-            **RUNNER.load_pin(),
+            **base_pin,
             "sha256": hashlib.sha256(archive.read_bytes()).hexdigest(),
         }
         tag = {
@@ -3147,11 +3163,9 @@ class RuntimeTicketZeroSoakConsumerTests(unittest.TestCase):
             "pin": {
                 "archive": cls.file_record(root, archive),
                 "archive_root": pin["archive_root"],
-                "repository": pin["repository"],
                 "revision": pin["revision"],
                 "sha256": pin["sha256"],
                 "source": pin["source"],
-                "tag": pin["tag"],
                 "tag_object": pin["tag_object"],
                 "tag_verified": tag,
                 "version": pin["version"],
@@ -3159,7 +3173,7 @@ class RuntimeTicketZeroSoakConsumerTests(unittest.TestCase):
             "oracle": {
                 "build_strategy": "pinned C oracle",
                 "compiler": "musl-gcc (pinned container)",
-                "source_files": ["src/init.c"],
+                "source_files": source_files,
             },
             "target": {
                 "architecture": "aarch64",
@@ -3272,6 +3286,9 @@ class RuntimeTicketZeroSoakConsumerTests(unittest.TestCase):
             ),
             "tag": lambda report: report["pin"]["tag_verified"].update(
                 {"tag": "v0.0.0"}
+            ),
+            "oracle-source-member": lambda report: report["oracle"]["source_files"][0].update(
+                {"path": "src/unreviewed.c"}
             ),
             "build-command": lambda report: report["fixture"]["build_command"].__setitem__(
                 0, "/unreviewed/musl-gcc"
