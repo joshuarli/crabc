@@ -1032,13 +1032,18 @@ the source owner is process-lifetime.
 `allocator --soak` runs the same two-worker schedule for 1,024 cycles from
 seed `0x94d049bb133111eb` under a separate 180-second watchdog: exactly two
 routes per cycle and 2,048 route invocations. Only a completed run with
-byte-identical clean Git source states before execution and immediately before
-publication atomically replaces
+byte-identical clean Git source states before its pin, contract, and header
+reads and immediately before publication atomically replaces
 `.work/reports/allocator/runtime-ticket-zero-soak-1024.json`; it does not
 write the shared allocator `latest.json` report. The format-1
 `crabc-mimalloc-runtime-ticket-zero-soak-report` binds the live ticket-zero
 contract digest, pinned archive, adapter archive/shared library, fixture,
 oracle identity, target, commands, schedule, and all 13 scalar audit fields.
+It re-attests the fixed raw paths for the contract, archive, adapter outputs,
+and fixture before recording them, rejecting final or parent-directory symlink
+indirection; the fixture command/build record must bind that exact executable,
+the checked-in C fixture source, and adapter archive. Its cached annotated-tag
+attestation must be live and exactly pin-matched.
 The C fixture requires every later cycle and its final ticket-zero
 allocation/free to match the first complete cycle's scalar baseline for
 process/page-owner readiness, PageMap registration and capacity counts,

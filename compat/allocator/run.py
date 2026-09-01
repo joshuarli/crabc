@@ -6301,10 +6301,51 @@ def runtime_ticket_zero_soak_source_attestation(
     }
 
 
-def attest_runtime_ticket_zero_soak_artifact(
-    record: object, subject: str
+def runtime_ticket_zero_soak_regular_path(path: Path, subject: str) -> Path:
+    """Reject symlink indirection in one trusted checkout-relative artifact path."""
+
+    raw_path = path if path.is_absolute() else ROOT / path
+    root = ROOT.resolve()
+    try:
+        relative_parts = raw_path.relative_to(root).parts
+    except ValueError as error:
+        raise HarnessError(
+            f"runtime ticket-zero soak {subject} artifact escapes the checkout"
+        ) from error
+    if any(part in {".", ".."} for part in relative_parts):
+        raise HarnessError(f"runtime ticket-zero soak {subject} artifact path is invalid")
+
+    current = root
+    for part in relative_parts:
+        current /= part
+        if current.is_symlink():
+            raise HarnessError(
+                f"runtime ticket-zero soak {subject} artifact is not a regular file"
+            )
+    if not raw_path.is_file():
+        raise HarnessError(f"runtime ticket-zero soak {subject} artifact is not live")
+    resolved = raw_path.resolve()
+    try:
+        resolved.relative_to(root)
+    except ValueError as error:
+        raise HarnessError(
+            f"runtime ticket-zero soak {subject} artifact escapes the checkout"
+        ) from error
+    return raw_path
+
+
+def runtime_ticket_zero_soak_expected_artifact_record(
+    expected_path: Path, subject: str
 ) -> dict[str, Any]:
-    """Require a report artifact to remain a regular live file beneath this checkout."""
+    """Record a trusted raw artifact path only after its full path is checked."""
+
+    return artifact_record(runtime_ticket_zero_soak_regular_path(expected_path, subject))
+
+
+def attest_runtime_ticket_zero_soak_artifact(
+    record: object, subject: str, *, expected_path: Path
+) -> dict[str, Any]:
+    """Bind a record to one trusted raw path before recording or resolving it."""
 
     if not isinstance(record, Mapping) or set(record) != {"bytes", "path", "sha256"}:
         raise HarnessError(f"runtime ticket-zero soak {subject} artifact record is invalid")
@@ -6318,24 +6359,36 @@ def attest_runtime_ticket_zero_soak_artifact(
         or not re.fullmatch(r"[0-9a-f]{64}", str(record["sha256"]))
     ):
         raise HarnessError(f"runtime ticket-zero soak {subject} artifact record is invalid")
-    path = Path(raw_path)
-    if not path.is_absolute():
-        path = ROOT / path
-    if path.is_symlink():
-        raise HarnessError(f"runtime ticket-zero soak {subject} artifact is not a regular file")
-    resolved = path.resolve()
-    try:
-        resolved.relative_to(ROOT.resolve())
-    except ValueError as error:
-        raise HarnessError(
-            f"runtime ticket-zero soak {subject} artifact escapes the checkout"
-        ) from error
-    if not resolved.is_file():
-        raise HarnessError(f"runtime ticket-zero soak {subject} artifact is not live")
-    observed = artifact_record(resolved)
+    observed = runtime_ticket_zero_soak_expected_artifact_record(expected_path, subject)
     if observed != dict(record):
         raise HarnessError(f"runtime ticket-zero soak {subject} artifact changed")
     return observed
+
+
+def runtime_ticket_zero_soak_tag_attestation(
+    pin: Mapping[str, str], reported: object
+) -> dict[str, Any]:
+    """Require the report and live cache to name the same pinned annotated tag."""
+
+    expected = {
+        "format": 1,
+        "repository": pin["repository"],
+        "revision": pin["revision"],
+        "tag": pin["tag"],
+        "tag_object": pin["tag_object"],
+    }
+    if reported != expected:
+        raise HarnessError("runtime ticket-zero soak tag attestation differs from its pin")
+    path = runtime_ticket_zero_soak_regular_path(
+        tag_attestation_path(pin), "tag attestation"
+    )
+    try:
+        live = read_json(path)
+    except HarnessError as error:
+        raise HarnessError("runtime ticket-zero soak tag attestation is invalid") from error
+    if live != expected:
+        raise HarnessError("runtime ticket-zero soak tag attestation is not live or pin-matched")
+    return expected
 
 
 def x86_64_source_map_contract(archive: Path) -> dict[str, Any]:
@@ -8311,6 +8364,19 @@ def build_test_adapter(
     return static_library, native_libraries, report
 
 
+def runtime_ticket_zero_adapter_artifact_paths() -> dict[str, Path]:
+    """Name the only build outputs accepted by the durable soak producer."""
+
+    artifact_root = ARTIFACT_ROOT / "runtime-ticket-zero-adapter"
+    release_root = artifact_root / "cargo-target" / PRODUCTION_RUST_TARGET / "release"
+    return {
+        "archive": release_root / "libcrabc_mimalloc_runtime_ticket_zero_adapter.a",
+        "fixture": artifact_root / "runtime-ticket-zero-fixture",
+        "shared_library": release_root
+        / "libcrabc_mimalloc_runtime_ticket_zero_adapter.so",
+    }
+
+
 def build_runtime_ticket_zero_adapter(
     readelf: str,
     nm: str,
@@ -8318,7 +8384,8 @@ def build_runtime_ticket_zero_adapter(
 ) -> tuple[Path, list[str], dict[str, Any]]:
     """Build and audit the separate no_std runtime page-owner test ABI."""
 
-    artifact_root = ARTIFACT_ROOT / "runtime-ticket-zero-adapter"
+    artifact_paths = runtime_ticket_zero_adapter_artifact_paths()
+    artifact_root = artifact_paths["fixture"].parent
     cargo_target = artifact_root / "cargo-target"
     artifact_root.mkdir(parents=True, exist_ok=True)
     package = str(contract["adapter_package"])
@@ -8364,9 +8431,8 @@ def build_runtime_ticket_zero_adapter(
             "runtime ticket-zero adapter native static library order differs from the contract"
         )
 
-    release_root = cargo_target / PRODUCTION_RUST_TARGET / "release"
-    static_library = release_root / "libcrabc_mimalloc_runtime_ticket_zero_adapter.a"
-    shared_library = release_root / "libcrabc_mimalloc_runtime_ticket_zero_adapter.so"
+    static_library = artifact_paths["archive"]
+    shared_library = artifact_paths["shared_library"]
     expected_symbols = contract["expected_adapter_symbols"]
     assert isinstance(expected_symbols, list)
     shared_symbols = validate_runtime_ticket_zero_adapter_symbols(
@@ -8946,8 +9012,7 @@ def run_runtime_ticket_zero_adapter_fixture(
 ) -> dict[str, Any]:
     """Run one fresh process through the bounded, seeded ticket-zero C witness."""
 
-    artifact_root = ARTIFACT_ROOT / "runtime-ticket-zero-adapter"
-    fixture_binary = artifact_root / "runtime-ticket-zero-fixture"
+    fixture_binary = runtime_ticket_zero_adapter_artifact_paths()["fixture"]
     fixture_command = [
         compiler,
         "-std=c11",
@@ -9044,8 +9109,8 @@ def runtime_ticket_zero_soak_contract_record(
 
     return {
         "format": contract["format"],
-        "record": attest_runtime_ticket_zero_soak_artifact(
-            artifact_record(RUNTIME_TICKET_ZERO_ADAPTER_CONTRACT), "contract"
+        "record": runtime_ticket_zero_soak_expected_artifact_record(
+            RUNTIME_TICKET_ZERO_ADAPTER_CONTRACT, "contract"
         ),
         "schema": contract["schema"],
         "soak_report": dict(contract["soak_report"]),
@@ -9076,9 +9141,14 @@ def runtime_ticket_zero_soak_fixture_evidence(
     for field in ("archive_root", "revision", "sha256", "source", "tag_object", "version"):
         if oracle.get(field) != pin[field]:
             raise HarnessError("runtime ticket-zero soak oracle no longer matches its pin")
-    archive = attest_runtime_ticket_zero_soak_artifact(oracle.get("archive"), "archive")
+    archive = attest_runtime_ticket_zero_soak_artifact(
+        oracle.get("archive"), "archive", expected_path=archive_path(pin)
+    )
     if archive["sha256"] != pin["sha256"]:
         raise HarnessError("runtime ticket-zero soak archive differs from its pin")
+    tag_verified = runtime_ticket_zero_soak_tag_attestation(
+        pin, oracle.get("tag_verified")
+    )
 
     c_oracle = milestone_report.get("c_oracle")
     if not isinstance(c_oracle, Mapping) or set(c_oracle) != {
@@ -9113,15 +9183,18 @@ def runtime_ticket_zero_soak_fixture_evidence(
     fixture = adapter.get("fixture")
     if not isinstance(build, Mapping) or not isinstance(fixture, Mapping):
         raise HarnessError("runtime ticket-zero soak adapter record is invalid")
+    artifact_paths = runtime_ticket_zero_adapter_artifact_paths()
     adapter_archive = attest_runtime_ticket_zero_soak_artifact(
-        build.get("archive"), "adapter archive"
+        build.get("archive"), "adapter archive", expected_path=artifact_paths["archive"]
     )
     adapter_shared_library = attest_runtime_ticket_zero_soak_artifact(
-        build.get("shared_library"), "adapter shared library"
+        build.get("shared_library"),
+        "adapter shared library",
+        expected_path=artifact_paths["shared_library"],
     )
 
     fixture_artifact = attest_runtime_ticket_zero_soak_artifact(
-        fixture.get("artifact"), "fixture"
+        fixture.get("artifact"), "fixture", expected_path=artifact_paths["fixture"]
     )
     fixture_build_command = fixture.get("build_command")
     fixture_run_command = fixture.get("run_command")
@@ -9136,8 +9209,44 @@ def runtime_ticket_zero_soak_fixture_evidence(
         or not isinstance(stdout, str)
     ):
         raise HarnessError("runtime ticket-zero soak fixture command record is invalid")
+    fixture_path = artifact_paths["fixture"]
+    fixture_executable = runtime_ticket_zero_soak_regular_path(
+        Path(fixture_run_command[0]), "fixture executable"
+    )
+    if fixture_executable != fixture_path:
+        raise HarnessError(
+            "runtime ticket-zero soak fixture executable differs from its attested artifact"
+        )
+    output_positions = [
+        index for index, argument in enumerate(fixture_build_command) if argument == "-o"
+    ]
+    if (
+        len(output_positions) != 1
+        or output_positions[0] + 1 >= len(fixture_build_command)
+    ):
+        raise HarnessError(
+            "runtime ticket-zero soak fixture build output differs from its attested artifact"
+        )
+    fixture_build_output = runtime_ticket_zero_soak_regular_path(
+        Path(fixture_build_command[output_positions[0] + 1]), "fixture build output"
+    )
+    if fixture_build_output != fixture_path:
+        raise HarnessError(
+            "runtime ticket-zero soak fixture build output differs from its attested artifact"
+        )
+    fixture_source = runtime_ticket_zero_soak_regular_path(
+        RUNTIME_TICKET_ZERO_ADAPTER_FIXTURE, "fixture source"
+    )
+    if fixture_build_command.count(str(fixture_source)) != 1:
+        raise HarnessError(
+            "runtime ticket-zero soak fixture build input differs from its checked-in source"
+        )
+    if fixture_build_command.count(str(artifact_paths["archive"])) != 1:
+        raise HarnessError(
+            "runtime ticket-zero soak fixture build input differs from its attested adapter archive"
+        )
     expected_run_command = runtime_ticket_zero_fixture_command(
-        Path(fixture_run_command[0]),
+        fixture_path,
         worker_cycles=RUNTIME_TICKET_ZERO_SOAK_WORKER_CYCLES,
         stress_seed=RUNTIME_TICKET_ZERO_SOAK_STRESS_SEED,
     )
@@ -9225,7 +9334,7 @@ def runtime_ticket_zero_soak_fixture_evidence(
             "sha256": oracle["sha256"],
             "source": oracle["source"],
             "tag_object": oracle["tag_object"],
-            "tag_verified": oracle["tag_verified"],
+            "tag_verified": tag_verified,
             "version": oracle["version"],
         },
         "schedule": {
@@ -9251,12 +9360,15 @@ def run_runtime_ticket_zero_soak(*, offline: bool, architecture: str) -> dict[st
 
     if architecture != "aarch64":
         raise HarnessError("runtime ticket-zero soak is available only for Linux/AArch64")
+    # The pin, witness contract, and checked-in fixture/header are all source
+    # inputs. Capture cleanliness before any of them so their semantic fields
+    # and recorded digests cannot describe a source state observed too late.
+    source_before = runtime_ticket_zero_soak_source_state()
     pin = load_pin()
     contract = read_json(RUNTIME_TICKET_ZERO_ADAPTER_CONTRACT)
     validate_runtime_ticket_zero_adapter_contract(
         contract, RUNTIME_TICKET_ZERO_ADAPTER_HEADER.read_text(encoding="utf-8")
     )
-    source_before = runtime_ticket_zero_soak_source_state()
     milestone_report = run_milestone0(
         offline=offline,
         generate_contracts=False,

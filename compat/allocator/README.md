@@ -1059,10 +1059,16 @@ the shared `.work/reports/allocator/latest.json` slot. The durable report is
 `crabc-mimalloc-runtime-ticket-zero-soak-report` format 1 and binds the live
 ticket-zero contract digest, pinned archive, adapter archive/shared library,
 fixture binary, C-oracle identity, target, commands, schedule, and all
-13 scalar audit fields. Its Git source attestation reads with
+13 scalar audit fields. Each artifact is re-attested at its fixed raw
+producer path before recording, rejecting final-component and parent-directory
+symlinks; the fixture's executable and `-o` output must name that fixture,
+and its build record must name the checked-in C fixture and attested adapter
+archive. The pinned annotated-tag attestation must also be live and exactly
+match the loaded pin. Its Git source attestation reads with
 `GIT_OPTIONAL_LOCKS=0` and requires byte-identical clean source states before
-the run and immediately before publication, so a failed, dirty, changed, or
-artifact-drifting run preserves a prior good stable record. After its first
+its pin, contract, and header reads and immediately before publication, so a
+failed, dirty, changed, or artifact-drifting run preserves a prior good stable
+record. After its first
 complete two-worker cycle, the original fixture thread records the scalar-only
 quiescent baseline: process and ticket-zero readiness, PageMap
 registration/submap counts, arena registry, live TLDs, metadata

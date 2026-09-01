@@ -1170,13 +1170,17 @@ direct-specific C ABI. Those bounded witnesses do not make it a general
 later-thread reclamation route. The opt-in `allocator --soak` lane repeats the
 same two-worker C schedule 1,024 times from seed `0x94d049bb133111eb` under a
 180-second watchdog: two routes per cycle and exactly 2,048 route invocations.
-Only a completed run with byte-identical clean Git source states before the
-run and immediately before publication atomically replaces
+Only a completed run with byte-identical clean Git source states before its
+pin, contract, and header reads and immediately before publication atomically
+replaces
 `.work/reports/allocator/runtime-ticket-zero-soak-1024.json`; it does not
 write the shared allocator `latest.json`. The format-1 stable report retains
 the live contract digest, pinned archive, adapter archive/shared library,
 fixture, oracle/target identity, commands, schedule, and all 13 scalar audit
-fields. Every later cycle and the final ticket-zero allocation/free must match
+fields. It re-attests the fixed raw contract/archive/adapter/fixture paths
+without symlink indirection, binds the fixture executable/build inputs to those
+records, and requires a live pin-matched annotated-tag cache. Every later
+cycle and the final ticket-zero allocation/free must match
 the first complete cycle's process/page-owner readiness, PageMap
 registration/capacity, arena registry, live-TLD, metadata, shared-Theap, and
 regular/OS-abandonment baseline. The audit exposes no pointer, page, route,

@@ -2439,19 +2439,39 @@ class RuntimeTicketZeroSoakReportTests(unittest.TestCase):
             return path
 
         archive = write(root / "allocator-cache/mimalloc-3.5.0.tar.gz", b"mimalloc")
+        adapter_root = root / "target/compat/allocator/runtime-ticket-zero-adapter"
+        release_root = (
+            adapter_root
+            / "cargo-target"
+            / RUNNER.PRODUCTION_RUST_TARGET
+            / "release"
+        )
         adapter_archive = write(
-            root / "target/runtime-ticket-zero/libadapter.a", b"adapter archive"
+            release_root / "libcrabc_mimalloc_runtime_ticket_zero_adapter.a",
+            b"adapter archive",
         )
         adapter_shared = write(
-            root / "target/runtime-ticket-zero/libadapter.so", b"adapter shared"
+            release_root / "libcrabc_mimalloc_runtime_ticket_zero_adapter.so",
+            b"adapter shared",
         )
         fixture_binary = write(
-            root / "target/runtime-ticket-zero/runtime-ticket-zero-fixture", b"fixture"
+            adapter_root / "runtime-ticket-zero-fixture", b"fixture"
         )
         pin = {
             **RUNNER.load_pin(),
             "sha256": hashlib.sha256(archive.read_bytes()).hexdigest(),
         }
+        tag_attestation = {
+            "format": 1,
+            "repository": pin["repository"],
+            "revision": pin["revision"],
+            "tag": pin["tag"],
+            "tag_object": pin["tag_object"],
+        }
+        write(
+            root / "allocator-cache/mimalloc-3.5.0.tag.json",
+            (json.dumps(tag_attestation, sort_keys=True) + "\n").encode(),
+        )
         audit = cls.lifecycle_audit()
         stdout = (
             RUNNER.RUNTIME_TICKET_ZERO_LIFECYCLE_AUDIT_PREFIX
@@ -2462,7 +2482,21 @@ class RuntimeTicketZeroSoakReportTests(unittest.TestCase):
         )
         fixture = {
             "artifact": RUNNER.artifact_record(fixture_binary),
-            "build_command": ["musl-gcc", "-o", str(fixture_binary)],
+            "build_command": [
+                "musl-gcc",
+                "-std=c11",
+                "-O2",
+                "-fPIE",
+                "-pie",
+                "-ftls-model=initial-exec",
+                "-pthread",
+                "-I",
+                str(RUNNER.RUNTIME_TICKET_ZERO_ADAPTER_ROOT),
+                str(RUNNER.RUNTIME_TICKET_ZERO_ADAPTER_FIXTURE),
+                str(adapter_archive),
+                "-o",
+                str(fixture_binary),
+            ],
             "lifecycle_stability": {
                 "audit_snapshot_count": 1025,
                 "post_warm_cycle_count": 1023,
@@ -2497,7 +2531,7 @@ class RuntimeTicketZeroSoakReportTests(unittest.TestCase):
                     "sha256": pin["sha256"],
                     "source": pin["source"],
                     "tag_object": pin["tag_object"],
-                    "tag_verified": None,
+                    "tag_verified": tag_attestation,
                     "version": pin["version"],
                 },
                 "runtime_ticket_zero_test_adapter": {
@@ -2515,6 +2549,16 @@ class RuntimeTicketZeroSoakReportTests(unittest.TestCase):
             fixture_binary,
         )
 
+    @staticmethod
+    def patch_soak_artifact_roots(root: Path):
+        """Make synthetic live paths match the producer's trusted locations."""
+
+        return mock.patch.multiple(
+            RUNNER,
+            CACHE=root / "allocator-cache",
+            ARTIFACT_ROOT=root / "target/compat/allocator",
+        )
+
     def test_soak_publication_is_unique_attested_and_leaves_latest_untouched(self) -> None:
         with RUNNER.temporary_directory("runtime-ticket-zero-soak-report-") as temporary:
             root = Path(temporary)
@@ -2527,7 +2571,7 @@ class RuntimeTicketZeroSoakReportTests(unittest.TestCase):
             milestone, pin, _ = self.successful_milestone_report(root)
             source = self.clean_source_state()
 
-            with mock.patch.object(
+            with self.patch_soak_artifact_roots(root), mock.patch.object(
                 RUNNER, "RUNTIME_TICKET_ZERO_SOAK_REPORT", report_path
             ), mock.patch.object(
                 RUNNER, "load_pin", return_value=pin
@@ -2612,6 +2656,16 @@ class RuntimeTicketZeroSoakReportTests(unittest.TestCase):
                 RUNNER.RUNTIME_TICKET_ZERO_ADAPTER_CONTRACT
             ))
             self.assertEqual(
+                report["pin"]["tag_verified"],
+                {
+                    "format": 1,
+                    "repository": pin["repository"],
+                    "revision": pin["revision"],
+                    "tag": pin["tag"],
+                    "tag_object": pin["tag_object"],
+                },
+            )
+            self.assertEqual(
                 report["fixture"]["artifact"],
                 milestone["runtime_ticket_zero_test_adapter"]["fixture"]["artifact"],
             )
@@ -2638,7 +2692,7 @@ class RuntimeTicketZeroSoakReportTests(unittest.TestCase):
             before = self.clean_source_state()
             after = self.clean_source_state("b" * 40)
 
-            with mock.patch.object(
+            with self.patch_soak_artifact_roots(root), mock.patch.object(
                 RUNNER, "RUNTIME_TICKET_ZERO_SOAK_REPORT", report_path
             ), mock.patch.object(
                 RUNNER, "load_pin", return_value=pin
@@ -2650,6 +2704,78 @@ class RuntimeTicketZeroSoakReportTests(unittest.TestCase):
                 with self.assertRaisesRegex(RUNNER.HarnessError, "source changed during execution"):
                     RUNNER.run_runtime_ticket_zero_soak(offline=True, architecture="aarch64")
 
+            self.assertEqual(report_path.read_text(encoding="utf-8"), previous)
+
+    def test_soak_rejects_a_source_transition_before_contract_read(self) -> None:
+        """A contract digest must not describe a source state captured too late."""
+
+        with RUNNER.temporary_directory("runtime-ticket-zero-soak-source-transition-") as temporary:
+            root = Path(temporary)
+            contract_path = root / "compat/allocator/runtime-ticket-zero-test-v3.5.0.json"
+            contract_path.parent.mkdir(parents=True)
+            original_text = RUNNER.RUNTIME_TICKET_ZERO_ADAPTER_CONTRACT.read_text(
+                encoding="utf-8"
+            )
+            contract_path.write_text(original_text, encoding="utf-8")
+            original_contract = json.loads(original_text)
+            transitioned_contract = json.loads(original_text)
+            transitioned_soak_report = dict(transitioned_contract["soak_report"])
+            transitioned_soak_report["evidence_scope"] = "source-transitioned-contract"
+            transitioned_contract["soak_report"] = transitioned_soak_report
+            transitioned_text = json.dumps(transitioned_contract, indent=2) + "\n"
+            self.assertNotEqual(
+                original_contract["soak_report"], transitioned_contract["soak_report"]
+            )
+            self.assertNotEqual(
+                hashlib.sha256(original_text.encode()).hexdigest(),
+                hashlib.sha256(transitioned_text.encode()).hexdigest(),
+            )
+
+            report_path = root / "reports/allocator/runtime-ticket-zero-soak-1024.json"
+            report_path.parent.mkdir(parents=True)
+            previous = '{"status":"passed","prior":true}\n'
+            report_path.write_text(previous, encoding="utf-8")
+            milestone, pin, _ = self.successful_milestone_report(root)
+            before = self.clean_source_state("a" * 40)
+            after = self.clean_source_state("b" * 40)
+            transition = {"occurred": False}
+            pin_source_capture_counts: list[int] = []
+            validate_contract = RUNNER.validate_runtime_ticket_zero_adapter_contract
+
+            def source_state() -> dict[str, object]:
+                return after if transition["occurred"] else before
+
+            def validate_then_transition(contract: object, header: object) -> dict[str, object]:
+                result = validate_contract(contract, header)
+                contract_path.write_text(transitioned_text, encoding="utf-8")
+                transition["occurred"] = True
+                return result
+
+            def load_pin_after_source_capture() -> dict[str, str]:
+                pin_source_capture_counts.append(source_states.call_count)
+                return pin
+
+            with self.patch_soak_artifact_roots(root), mock.patch.object(
+                RUNNER, "RUNTIME_TICKET_ZERO_ADAPTER_CONTRACT", contract_path
+            ), mock.patch.object(
+                RUNNER, "RUNTIME_TICKET_ZERO_SOAK_REPORT", report_path
+            ), mock.patch.object(
+                RUNNER, "load_pin", side_effect=load_pin_after_source_capture
+            ), mock.patch.object(
+                RUNNER,
+                "runtime_ticket_zero_soak_source_state",
+                side_effect=source_state,
+            ) as source_states, mock.patch.object(
+                RUNNER,
+                "validate_runtime_ticket_zero_adapter_contract",
+                side_effect=validate_then_transition,
+            ), mock.patch.object(RUNNER, "run_milestone0", return_value=milestone):
+                with self.assertRaisesRegex(RUNNER.HarnessError, "source changed during execution"):
+                    RUNNER.run_runtime_ticket_zero_soak(offline=True, architecture="aarch64")
+
+            self.assertTrue(transition["occurred"])
+            self.assertEqual(source_states.call_count, 2)
+            self.assertEqual(pin_source_capture_counts, [1, 1])
             self.assertEqual(report_path.read_text(encoding="utf-8"), previous)
 
     def test_soak_requires_live_fixture_artifact_before_replacing_the_stable_record(self) -> None:
@@ -2666,7 +2792,7 @@ class RuntimeTicketZeroSoakReportTests(unittest.TestCase):
                 fixture_binary.write_bytes(b"fixture drift")
                 return milestone
 
-            with mock.patch.object(
+            with self.patch_soak_artifact_roots(root), mock.patch.object(
                 RUNNER, "RUNTIME_TICKET_ZERO_SOAK_REPORT", report_path
             ), mock.patch.object(
                 RUNNER, "load_pin", return_value=pin
@@ -2677,6 +2803,168 @@ class RuntimeTicketZeroSoakReportTests(unittest.TestCase):
                     RUNNER.run_runtime_ticket_zero_soak(offline=True, architecture="aarch64")
 
             self.assertEqual(report_path.read_text(encoding="utf-8"), previous)
+
+    def test_soak_rejects_a_fixture_command_for_an_unattested_live_binary(self) -> None:
+        with RUNNER.temporary_directory("runtime-ticket-zero-soak-fixture-identity-") as temporary:
+            root = Path(temporary)
+            report_path = root / "reports/allocator/runtime-ticket-zero-soak-1024.json"
+            report_path.parent.mkdir(parents=True)
+            previous = '{"status":"passed","prior":true}\n'
+            report_path.write_text(previous, encoding="utf-8")
+            milestone, pin, fixture_binary = self.successful_milestone_report(root)
+            alternate_binary = fixture_binary.with_name("runtime-ticket-zero-unattested")
+            alternate_binary.write_bytes(b"a different live fixture")
+            adapter = milestone["runtime_ticket_zero_test_adapter"]
+            assert isinstance(adapter, dict)
+            fixture = adapter["fixture"]
+            assert isinstance(fixture, dict)
+            fixture["run_command"] = RUNNER.runtime_ticket_zero_fixture_command(
+                alternate_binary,
+                worker_cycles=1024,
+                stress_seed=RUNNER.RUNTIME_TICKET_ZERO_SOAK_STRESS_SEED,
+            )
+            source = self.clean_source_state()
+
+            with self.patch_soak_artifact_roots(root), mock.patch.object(
+                RUNNER, "RUNTIME_TICKET_ZERO_SOAK_REPORT", report_path
+            ), mock.patch.object(
+                RUNNER, "load_pin", return_value=pin
+            ), mock.patch.object(
+                RUNNER,
+                "runtime_ticket_zero_soak_source_state",
+                side_effect=[source, source],
+            ), mock.patch.object(RUNNER, "run_milestone0", return_value=milestone):
+                with self.assertRaisesRegex(RUNNER.HarnessError, "fixture executable"):
+                    RUNNER.run_runtime_ticket_zero_soak(offline=True, architecture="aarch64")
+
+            self.assertEqual(report_path.read_text(encoding="utf-8"), previous)
+
+    def test_soak_rejects_fixture_build_records_unbound_to_its_artifacts(self) -> None:
+        for case in ("output", "source", "adapter-archive"):
+            with self.subTest(case=case), RUNNER.temporary_directory(
+                "runtime-ticket-zero-soak-build-identity-"
+            ) as temporary:
+                root = Path(temporary)
+                report_path = root / "reports/allocator/runtime-ticket-zero-soak-1024.json"
+                report_path.parent.mkdir(parents=True)
+                previous = '{"status":"passed","prior":true}\n'
+                report_path.write_text(previous, encoding="utf-8")
+                milestone, pin, fixture_binary = self.successful_milestone_report(root)
+                adapter = milestone["runtime_ticket_zero_test_adapter"]
+                assert isinstance(adapter, dict)
+                build = adapter["build"]
+                fixture = adapter["fixture"]
+                assert isinstance(build, dict) and isinstance(fixture, dict)
+                build_command = fixture["build_command"]
+                assert isinstance(build_command, list)
+                if case == "output":
+                    alternate = fixture_binary.with_name("runtime-ticket-zero-other-output")
+                    alternate.write_bytes(b"other fixture output")
+                    build_command[build_command.index("-o") + 1] = str(alternate)
+                elif case == "source":
+                    alternate = root / "runtime-ticket-zero-other-fixture.c"
+                    alternate.write_text("int main(void) { return 0; }\n", encoding="utf-8")
+                    build_command[build_command.index(str(RUNNER.RUNTIME_TICKET_ZERO_ADAPTER_FIXTURE))] = str(
+                        alternate
+                    )
+                else:
+                    alternate = root / "libother-runtime-ticket-zero-adapter.a"
+                    alternate.write_bytes(b"other adapter archive")
+                    adapter_archive = (
+                        root
+                        / "target/compat/allocator/runtime-ticket-zero-adapter/cargo-target"
+                        / RUNNER.PRODUCTION_RUST_TARGET
+                        / "release/libcrabc_mimalloc_runtime_ticket_zero_adapter.a"
+                    )
+                    build_command[build_command.index(str(adapter_archive))] = str(alternate)
+                source = self.clean_source_state()
+
+                with self.patch_soak_artifact_roots(root), mock.patch.object(
+                    RUNNER, "RUNTIME_TICKET_ZERO_SOAK_REPORT", report_path
+                ), mock.patch.object(
+                    RUNNER, "load_pin", return_value=pin
+                ), mock.patch.object(
+                    RUNNER,
+                    "runtime_ticket_zero_soak_source_state",
+                    side_effect=[source, source],
+                ), mock.patch.object(RUNNER, "run_milestone0", return_value=milestone):
+                    with self.assertRaisesRegex(RUNNER.HarnessError, "fixture build"):
+                        RUNNER.run_runtime_ticket_zero_soak(offline=True, architecture="aarch64")
+
+                self.assertEqual(report_path.read_text(encoding="utf-8"), previous)
+
+    def test_soak_requires_a_live_pin_matched_tag_attestation(self) -> None:
+        for case in (
+            "missing-report-attestation",
+            "missing-live-attestation",
+            "mismatched-live-attestation",
+        ):
+            with self.subTest(case=case), RUNNER.temporary_directory(
+                "runtime-ticket-zero-soak-tag-attestation-"
+            ) as temporary:
+                root = Path(temporary)
+                report_path = root / "reports/allocator/runtime-ticket-zero-soak-1024.json"
+                report_path.parent.mkdir(parents=True)
+                previous = '{"status":"passed","prior":true}\n'
+                report_path.write_text(previous, encoding="utf-8")
+                milestone, pin, _ = self.successful_milestone_report(root)
+                oracle = milestone["oracle"]
+                assert isinstance(oracle, dict)
+                if case == "missing-report-attestation":
+                    oracle["tag_verified"] = None
+                elif case == "missing-live-attestation":
+                    (root / "allocator-cache/mimalloc-3.5.0.tag.json").unlink()
+                else:
+                    tag_path = root / "allocator-cache/mimalloc-3.5.0.tag.json"
+                    tag_path.write_text(
+                        json.dumps({"format": 1, "repository": "wrong"}) + "\n",
+                        encoding="utf-8",
+                    )
+                source = self.clean_source_state()
+
+                with self.patch_soak_artifact_roots(root), mock.patch.object(
+                    RUNNER, "RUNTIME_TICKET_ZERO_SOAK_REPORT", report_path
+                ), mock.patch.object(
+                    RUNNER, "load_pin", return_value=pin
+                ), mock.patch.object(
+                    RUNNER,
+                    "runtime_ticket_zero_soak_source_state",
+                    side_effect=[source, source],
+                ), mock.patch.object(RUNNER, "run_milestone0", return_value=milestone):
+                    with self.assertRaisesRegex(RUNNER.HarnessError, "tag attestation"):
+                        RUNNER.run_runtime_ticket_zero_soak(offline=True, architecture="aarch64")
+
+                self.assertEqual(report_path.read_text(encoding="utf-8"), previous)
+
+    def test_soak_expected_artifact_attestation_rejects_final_and_parent_symlinks(self) -> None:
+        for kind in ("final", "parent"):
+            with self.subTest(kind=kind), RUNNER.temporary_directory(
+                "runtime-ticket-zero-soak-artifact-symlink-"
+            ) as temporary:
+                root = Path(temporary)
+                expected = root / "artifacts/nested/live-artifact"
+                expected.parent.mkdir(parents=True)
+                expected.write_bytes(b"live artifact")
+                if kind == "final":
+                    target = expected.with_name("other-artifact")
+                    expected.rename(target)
+                    expected.symlink_to(target.name)
+                else:
+                    target_parent = expected.parent.with_name("other-artifacts")
+                    expected.parent.rename(target_parent)
+                    expected.parent.symlink_to(target_parent.name)
+
+                record = RUNNER.artifact_record(expected)
+                self.assertNotEqual(
+                    record["path"], expected.relative_to(RUNNER.ROOT).as_posix()
+                )
+
+                with self.assertRaisesRegex(RUNNER.HarnessError, "not a regular file"):
+                    RUNNER.attest_runtime_ticket_zero_soak_artifact(
+                        record,
+                        "fixture",
+                        expected_path=expected,
+                    )
 
     def test_soak_source_attestation_disables_git_optional_locks_and_rejects_dirty_state(self) -> None:
         revision = "a" * 40
