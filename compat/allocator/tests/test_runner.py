@@ -2288,6 +2288,16 @@ class ContractTests(unittest.TestCase):
         )
         self.assertEqual(RUNNER.ratchet_measurement_regressions(baseline, baseline), [])
 
+    def test_checked_in_ratchet_accepts_checked_in_adapted_contract_digest(self) -> None:
+        """The reviewed snapshot must cover the runner's current contract path."""
+
+        baseline = RUNNER.read_json(RUNNER.RATCHET)
+        self.assertEqual(
+            baseline["adapted_test_contract_sha256"],
+            RUNNER.file_digest(RUNNER.ADAPTED_TEST_CONTRACT),
+        )
+        RUNNER.check_ratchet(RUNNER.load_port_map())
+
     def test_ratchet_check_rejects_unreviewed_port_map_digest_drift(self) -> None:
         """A status-preserving port-map edit still requires a reviewed snapshot."""
 
