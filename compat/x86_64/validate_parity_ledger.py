@@ -47494,8 +47494,8 @@ def require_getsubopt_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 74,
-        "libc.text-math-locale-stdio must retain exactly seventy-four private verified artifacts",
+        len(artifacts) == 75,
+        "libc.text-math-locale-stdio must retain exactly seventy-five private verified artifacts",
     )
     matching = [
         entry for entry in artifacts if entry.get("id") == "static-c-getsubopt"
@@ -48951,8 +48951,8 @@ def require_stdio_integer_scan_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 74,
-        "libc.text-math-locale-stdio must retain exactly seventy-four private verified artifacts",
+        len(artifacts) == 75,
+        "libc.text-math-locale-stdio must retain exactly seventy-five private verified artifacts",
     )
     matching = [
         entry for entry in artifacts if entry.get("id") == "static-c-stdio-integer-scan"
@@ -49234,8 +49234,8 @@ def require_stdio_octal_hex_scan_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 74,
-        "libc.text-math-locale-stdio must retain exactly seventy-four private verified artifacts",
+        len(artifacts) == 75,
+        "libc.text-math-locale-stdio must retain exactly seventy-five private verified artifacts",
     )
     matching = [
         entry
@@ -49564,8 +49564,8 @@ def require_stdio_fixed_percent_scan_artifact(family: Mapping[str, Any]) -> None
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 74,
-        "libc.text-math-locale-stdio must retain exactly seventy-four private verified artifacts",
+        len(artifacts) == 75,
+        "libc.text-math-locale-stdio must retain exactly seventy-five private verified artifacts",
     )
     matching = [
         entry
@@ -49907,8 +49907,8 @@ def require_stdio_fixed_format_whitespace_scan_artifact(
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 74,
-        "libc.text-math-locale-stdio must retain exactly seventy-four private verified artifacts",
+        len(artifacts) == 75,
+        "libc.text-math-locale-stdio must retain exactly seventy-five private verified artifacts",
     )
     matching = [
         entry
@@ -50265,8 +50265,8 @@ def require_stdio_fixed_literal_scan_artifact(
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 74,
-        "libc.text-math-locale-stdio must retain exactly seventy-four private verified artifacts",
+        len(artifacts) == 75,
+        "libc.text-math-locale-stdio must retain exactly seventy-five private verified artifacts",
     )
     matching = [
         entry
@@ -50621,8 +50621,8 @@ def require_stdio_fixed_empty_format_scan_artifact(
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 74,
-        "libc.text-math-locale-stdio must retain exactly seventy-four private verified artifacts",
+        len(artifacts) == 75,
+        "libc.text-math-locale-stdio must retain exactly seventy-five private verified artifacts",
     )
     matching = [
         entry
@@ -50972,8 +50972,8 @@ def require_stdio_fixed_suppressed_character_scan_artifact(
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 74,
-        "libc.text-math-locale-stdio must retain exactly seventy-four private verified artifacts",
+        len(artifacts) == 75,
+        "libc.text-math-locale-stdio must retain exactly seventy-five private verified artifacts",
     )
     matching = [
         entry
@@ -51333,8 +51333,8 @@ def require_stdio_fixed_suppressed_string_scan_artifact(
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 74,
-        "libc.text-math-locale-stdio must retain exactly seventy-four private verified artifacts",
+        len(artifacts) == 75,
+        "libc.text-math-locale-stdio must retain exactly seventy-five private verified artifacts",
     )
     matching = [
         entry
@@ -51704,8 +51704,8 @@ def require_stdio_fixed_suppressed_scanset_scan_artifact(
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 74,
-        "libc.text-math-locale-stdio must retain exactly seventy-four private verified artifacts",
+        len(artifacts) == 75,
+        "libc.text-math-locale-stdio must retain exactly seventy-five private verified artifacts",
     )
     matching = [
         entry
@@ -52076,8 +52076,8 @@ def require_stdio_fixed_suppressed_count_scan_artifact(
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 74,
-        "libc.text-math-locale-stdio must retain exactly seventy-four private verified artifacts",
+        len(artifacts) == 75,
+        "libc.text-math-locale-stdio must retain exactly seventy-five private verified artifacts",
     )
     matching = [
         entry
@@ -52634,8 +52634,8 @@ def require_stdio_errno_output_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 74,
-        "libc.text-math-locale-stdio must retain exactly seventy-four private verified artifacts",
+        len(artifacts) == 75,
+        "libc.text-math-locale-stdio must retain exactly seventy-five private verified artifacts",
     )
     matching = [
         entry for entry in artifacts if entry.get("id") == "static-c-stdio-errno-output"
@@ -53155,8 +53155,8 @@ def require_stdio_permanent_byte_io_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 74,
-        "libc.text-math-locale-stdio must retain exactly seventy-four private verified artifacts",
+        len(artifacts) == 75,
+        "libc.text-math-locale-stdio must retain exactly seventy-five private verified artifacts",
     )
     matching = [
         entry
@@ -53482,8 +53482,8 @@ def require_stdio_permanent_status_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 74,
-        "libc.text-math-locale-stdio must retain exactly seventy-four private verified artifacts",
+        len(artifacts) == 75,
+        "libc.text-math-locale-stdio must retain exactly seventy-five private verified artifacts",
     )
     matching = [
         entry
@@ -53522,7 +53522,7 @@ def require_stdio_permanent_status_artifact(family: Mapping[str, Any]) -> None:
         "byte/block I/O beyond existing fgetc marker setup",
         "`fread`/`fwrite`",
         "general buffering or buffer configuration",
-        "locks or unlocked entries other than the separately selected GNU/BSD `feof_unlocked` alias",
+        "locks or unlocked entries other than the separately selected GNU/BSD `feof_unlocked` and `ferror_unlocked` aliases",
         "multiple live streams",
         "allocation/registry",
         "line/formatted/wide I/O",
@@ -53590,8 +53590,11 @@ def require_stdio_permanent_status_artifact(family: Mapping[str, Any]) -> None:
         "feof_unlocked" in exports,
         "static C ABI export contract omits separately selected feof_unlocked",
     )
+    require(
+        "ferror_unlocked" in exports,
+        "static C ABI export contract omits separately selected ferror_unlocked",
+    )
     for symbol in (
-        "ferror_unlocked",
         "clearerr_unlocked",
         "fgetc_unlocked",
         "getc_unlocked",
@@ -53690,7 +53693,8 @@ def require_stdio_permanent_status_artifact(family: Mapping[str, Any]) -> None:
         "strong ${symbol}",
         "STATIC_C_ABI_EXPORTS",
         "-nostdlib -static",
-        "ferror_unlocked clearerr_unlocked",
+        "ferror_unlocked is separately selected",
+        "--gc-sections",
         "dynamic TLS model",
         "__crabc_x86_static_tls_bootstrap",
     ):
@@ -53723,7 +53727,7 @@ def require_stdio_permanent_status_artifact(family: Mapping[str, Any]) -> None:
                 "feof/ferror zero-versus-nonzero state",
                 "each clearerr reset",
                 "numeric musl-normalization or lock claim",
-                "unselected unlocked aliases other than separately selected feof_unlocked",
+                "unselected unlocked aliases other than separately selected feof_unlocked and ferror_unlocked",
                 "pathname, descriptor-reopen, tmpfile, LFS",
                 "byte/block behavior beyond marker setup",
                 "multiple-stream",
@@ -53809,8 +53813,8 @@ def require_stdio_permanent_freading_stdin_artifact(
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 74,
-        "libc.text-math-locale-stdio must retain exactly seventy-four private verified artifacts",
+        len(artifacts) == 75,
+        "libc.text-math-locale-stdio must retain exactly seventy-five private verified artifacts",
     )
     matching = [
         entry
@@ -54177,8 +54181,8 @@ def require_stdio_permanent_fsetlocking_stdin_artifact(
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 74,
-        "libc.text-math-locale-stdio must retain exactly seventy-four private verified artifacts",
+        len(artifacts) == 75,
+        "libc.text-math-locale-stdio must retain exactly seventy-five private verified artifacts",
     )
     matching = [
         entry
@@ -54561,8 +54565,8 @@ def require_stdio_permanent_fseterr_stdin_artifact(
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 74,
-        "libc.text-math-locale-stdio must retain exactly seventy-four private verified artifacts",
+        len(artifacts) == 75,
+        "libc.text-math-locale-stdio must retain exactly seventy-five private verified artifacts",
     )
     matching = [
         entry
@@ -54942,8 +54946,8 @@ def require_stdio_permanent_freadable_stdin_artifact(
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 74,
-        "libc.text-math-locale-stdio must retain exactly seventy-four private verified artifacts",
+        len(artifacts) == 75,
+        "libc.text-math-locale-stdio must retain exactly seventy-five private verified artifacts",
     )
     matching = [
         entry
@@ -55298,8 +55302,8 @@ def require_stdio_permanent_fwritable_stderr_artifact(
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 74,
-        "libc.text-math-locale-stdio must retain exactly seventy-four private verified artifacts",
+        len(artifacts) == 75,
+        "libc.text-math-locale-stdio must retain exactly seventy-five private verified artifacts",
     )
     matching = [
         entry
@@ -55660,8 +55664,8 @@ def require_stdio_permanent_fbufsize_stderr_artifact(
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 74,
-        "libc.text-math-locale-stdio must retain exactly seventy-four private verified artifacts",
+        len(artifacts) == 75,
+        "libc.text-math-locale-stdio must retain exactly seventy-five private verified artifacts",
     )
     matching = [
         entry
@@ -56034,8 +56038,8 @@ def require_stdio_permanent_flbf_stderr_artifact(
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 74,
-        "libc.text-math-locale-stdio must retain exactly seventy-four private verified artifacts",
+        len(artifacts) == 75,
+        "libc.text-math-locale-stdio must retain exactly seventy-five private verified artifacts",
     )
     matching = [
         entry
@@ -56401,8 +56405,8 @@ def require_stdio_permanent_feof_unlocked_artifact(
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 74,
-        "libc.text-math-locale-stdio must retain exactly seventy-four private verified artifacts",
+        len(artifacts) == 75,
+        "libc.text-math-locale-stdio must retain exactly seventy-five private verified artifacts",
     )
     matching = [
         entry
@@ -56433,6 +56437,7 @@ def require_stdio_permanent_feof_unlocked_artifact(
         "equal addresses",
         "both begin at zero",
         "both become nonzero",
+        "`errno` stays zero",
         "existing `fgetc(stdin)` observes an empty-pipe EOF",
         "C/POSIX zero-versus-nonzero predicate contract",
         "numeric `1` normalization",
@@ -56441,7 +56446,7 @@ def require_stdio_permanent_feof_unlocked_artifact(
         "src/stdio/feof.c",
         "FLOCK/FUNLOCK",
         "weak_alias(feof, feof_unlocked)",
-        "`_IO_feof_unlocked`, `ferror_unlocked`, and `clearerr_unlocked` aliases remain unselected",
+        "`_IO_feof_unlocked` and `clearerr_unlocked` aliases remain unselected; `ferror_unlocked` is separately selected",
         "externally serialized",
         "no FLOCK/FUNLOCK, lock-free, arbitrary `FILE`",
         "GNU/BSD C11/C++17 header gate",
@@ -56456,9 +56461,9 @@ def require_stdio_permanent_feof_unlocked_artifact(
         "`tmpfile`",
         "LP64/LFS aliases",
         "byte/block I/O beyond existing fgetc marker setup",
-        "ferror/clearerr",
+        "strong ferror behavior/clearerr",
         "`_IO_feof_unlocked`",
-        "ferror_unlocked/clearerr_unlocked",
+        "all other unlocked entries other than separately selected ferror_unlocked",
         "all other unlocked entries",
         "multiple streams",
         "allocation/registry",
@@ -56489,6 +56494,7 @@ def require_stdio_permanent_feof_unlocked_artifact(
         "libc/src/c_abi/x86_64/static_tls.rs",
         "libc/src/c_abi/x86_64/syscall.rs",
         "include/bits/alltypes.h",
+        "include/errno.h",
         "include/features.h",
         "include/stdio.h",
         "include/unistd.h",
@@ -56521,7 +56527,6 @@ def require_stdio_permanent_feof_unlocked_artifact(
             f"static C ABI export contract omits permanent-stream {symbol}",
         )
     for symbol in (
-        "ferror_unlocked",
         "clearerr_unlocked",
         "_IO_feof_unlocked",
         "fgetc_unlocked",
@@ -56602,6 +56607,8 @@ def require_stdio_permanent_feof_unlocked_artifact(
     for snippet in (
         "feof_unlocked_entry != feof_entry",
         "redirect_empty_input",
+        "errno = 0;",
+        "errno != 0",
         "feof_entry(stdin) != 0 || feof_unlocked_entry(stdin) != 0",
         "fgetc_entry(stdin) != EOF",
         "feof_entry(stdin) == 0 || feof_unlocked_entry(stdin) == 0",
@@ -56635,6 +56642,8 @@ def require_stdio_permanent_feof_unlocked_artifact(
         "assert_weak_same_address_alias",
         "weak_alias(feof, feof_unlocked)",
         "-nostdlib -static",
+        "--gc-sections",
+        "candidate unexpectedly pulls independently selected ferror_unlocked",
         "dynamic TLS model",
         "unowned runtime dependency",
         "feof unexpectedly contains a syscall path",
@@ -56672,6 +56681,7 @@ def require_stdio_permanent_feof_unlocked_artifact(
                 "permanent stdin",
                 "equal feof/feof_unlocked addresses",
                 "zero-to-nonzero EOF observation",
+                "unchanged-zero errno observation",
                 "fgetc and pipe/dup/dup2/close",
                 "direct initial-exec errno TLS",
                 "Static Initial TLS v1 bootstrap",
@@ -56755,6 +56765,269 @@ def require_stdio_permanent_feof_unlocked_artifact(
         )
 
 
+def require_stdio_permanent_ferror_unlocked_artifact(
+    family: Mapping[str, Any],
+) -> None:
+    """Keep musl's GNU/BSD ferror alias below general FILE-state support."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.text-math-locale-stdio].verified_artifact",
+        family.get("status", ""),
+    )
+    require(
+        len(artifacts) == 75,
+        "libc.text-math-locale-stdio must retain exactly seventy-five private verified artifacts",
+    )
+    matching = [
+        entry
+        for entry in artifacts
+        if entry.get("id") == "static-c-stdio-permanent-ferror-unlocked"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.text-math-locale-stdio must contain exactly one static-c-stdio-permanent-ferror-unlocked artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-stdio-permanent-ferror-unlocked must not promote libc.text-math-locale-stdio",
+    )
+    artifact = matching[0]
+    require(
+        not artifact.get("capabilities"),
+        "static-c-stdio-permanent-ferror-unlocked must not promote stdio.stream-io",
+    )
+
+    description = artifact.get("description")
+    require(
+        isinstance(description, str)
+        and all(
+            phrase in description
+            for phrase in (
+                "adds exactly one weak C ABI spelling, `ferror_unlocked`",
+                "weak same-address alias",
+                "existing strong `ferror`",
+                "process-lifetime `stdin`",
+                "equal addresses",
+                "both begin at zero",
+                "both become nonzero",
+                "EBADF",
+                "C/POSIX zero-versus-nonzero predicate contract",
+                "src/stdio/ferror.c",
+                "weak_alias(ferror, ferror_unlocked)",
+                "`_IO_ferror_unlocked` unselected",
+                "GNU/BSD C11/C++17 header gate",
+                "strict/POSIX C11/C++17 witnesses",
+                "does not select `stdio.stream-io`",
+                "capability or family completion",
+                "promotion",
+                "public x86 support",
+            )
+        ),
+        "static-c-stdio-permanent-ferror-unlocked must retain its closed private description",
+    )
+
+    owners = nonempty_strings(
+        artifact.get("source_owners"),
+        "static-c-stdio-permanent-ferror-unlocked.source_owners",
+    )
+    for owner in (
+        "libc/src/c_abi/x86_64/stdio_standard.rs",
+        "include/stdio.h",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/stdio_permanent_ferror_unlocked_header_abi_probe.c",
+        "compat/x86_64/stdio_permanent_ferror_unlocked_header_abi_probe.cpp",
+        "compat/x86_64/run_stdio_permanent_ferror_unlocked_header_abi.sh",
+        "compat/x86_64/libc_stdio_permanent_ferror_unlocked_probe.c",
+        "compat/x86_64/libc_stdio_permanent_ferror_unlocked_start.S",
+        "compat/x86_64/run_libc_stdio_permanent_ferror_unlocked.sh",
+        "compat/x86_64/run_libc_stdio_permanent_status.sh",
+        "compat/x86_64/run_libc_stdio_permanent_feof_unlocked.sh",
+        "compat/x86_64/run_libc_stdio_permanent_fileno_unlocked.sh",
+        "compat/x86_64/tests/test_ferror_unlocked.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/README.md",
+        "scripts/dev-x86_64.sh",
+    ):
+        require(
+            owner in owners,
+            f"static-c-stdio-permanent-ferror-unlocked omits {owner}",
+        )
+
+    exports = static_c_abi_export_names(
+        ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+    )
+    for symbol in ("ferror", "ferror_unlocked"):
+        require(
+            symbol in exports,
+            f"static C ABI export contract omits permanent-stream {symbol}",
+        )
+    require(
+        "_IO_ferror_unlocked" not in exports,
+        "permanent-stream ferror_unlocked artifact exports unselected _IO spelling",
+    )
+
+    implementation = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "stdio_standard.rs"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "src/stdio/ferror.c",
+        "weak_alias(ferror, ferror_unlocked)",
+        'pub unsafe extern "C" fn ferror',
+        ".weak ferror_unlocked",
+        ".set ferror_unlocked, ferror",
+        "F_ERR",
+        "`_IO_ferror_unlocked` remains",
+    ):
+        require(
+            snippet in implementation,
+            f"permanent-stream ferror_unlocked implementation omits {snippet}",
+        )
+
+    for probe_name in (
+        "stdio_permanent_ferror_unlocked_header_abi_probe.c",
+        "stdio_permanent_ferror_unlocked_header_abi_probe.cpp",
+    ):
+        probe = (ROOT / "compat" / "x86_64" / probe_name).read_text(encoding="utf-8")
+        for snippet in ("ferror_unlocked", "FILE", "_GNU_SOURCE", "_BSD_SOURCE", "REQUIRE_HIDDEN"):
+            require(
+                snippet in probe,
+                f"permanent-stream ferror_unlocked header probe {probe_name} omits {snippet}",
+            )
+    header_runner = (
+        ROOT / "compat" / "x86_64" / "run_stdio_permanent_ferror_unlocked_header_abi.sh"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "c11-gnu",
+        "c11-bsd",
+        "cxx17-gnu",
+        "cxx17-bsd",
+        "c11-posix-2008",
+        "cxx17-posix-2008",
+        "CRABC_STDIO_PERMANENT_FERROR_UNLOCKED_C11_GNU",
+        "CRABC_STDIO_PERMANENT_FERROR_UNLOCKED_CXX17_GNU",
+        "CRABC_STDIO_PERMANENT_FERROR_UNLOCKED_REQUIRE_HIDDEN",
+        "assert_cxx_c_linkage",
+        "assert_hidden",
+        "run_musl_oracle.sh",
+    ):
+        require(
+            snippet in header_runner,
+            f"permanent-stream ferror_unlocked header runner omits {snippet}",
+        )
+
+    fixture = (
+        ROOT / "compat" / "x86_64" / "libc_stdio_permanent_ferror_unlocked_probe.c"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "ferror_unlocked_entry != ferror_entry",
+        "errno != EBADF",
+        "ferror_entry(stdin) != 0 || ferror_unlocked_entry(stdin) != 0",
+        "ferror_entry(stdin) == 0 || ferror_unlocked_entry(stdin) == 0",
+        "CRABC_STDIO_PERMANENT_FERROR_UNLOCKED_FREESTANDING",
+    ):
+        require(
+            snippet in fixture,
+            f"permanent-stream ferror_unlocked fixture omits {snippet}",
+        )
+    start = (
+        ROOT / "compat" / "x86_64" / "libc_stdio_permanent_ferror_unlocked_start.S"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "__crabc_x86_static_tls_bootstrap",
+        "crabc_x86_64_stdio_permanent_ferror_unlocked_probe",
+        "mov $231, %eax",
+    ):
+        require(
+            snippet in start,
+            f"permanent-stream ferror_unlocked start shim omits {snippet}",
+        )
+    runner = (
+        ROOT / "compat" / "x86_64" / "run_libc_stdio_permanent_ferror_unlocked.sh"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "strong ferror",
+        "weak ferror_unlocked",
+        "assert_weak_same_address_alias",
+        "weak_alias(ferror, ferror_unlocked)",
+        "-nostdlib -static",
+        "--gc-sections",
+        "candidate unexpectedly pulls independently selected",
+        "ferror unexpectedly contains a syscall path",
+        "dynamic TLS model",
+        "__crabc_x86_static_tls_bootstrap",
+    ):
+        require(
+            snippet in runner,
+            f"permanent-stream ferror_unlocked runner omits {snippet}",
+        )
+    for collision_runner in (
+        ROOT / "compat" / "x86_64" / "run_libc_stdio_permanent_feof_unlocked.sh",
+        ROOT / "compat" / "x86_64" / "run_libc_stdio_permanent_fileno_unlocked.sh",
+    ):
+        collision = collision_runner.read_text(encoding="utf-8")
+        require(
+            "--gc-sections" in collision
+            and "candidate unexpectedly pulls independently selected ferror_unlocked" in collision,
+            f"{collision_runner.name} must reject independently selected ferror_unlocked in its final ELF",
+        )
+
+    evidence = artifact.get("native_evidence")
+    require(
+        isinstance(evidence, list)
+        and {entry.get("command") for entry in evidence if isinstance(entry, Mapping)}
+        == {"./scripts/dev-x86_64.sh libc-stdio-permanent-ferror-unlocked"},
+        "static-c-stdio-permanent-ferror-unlocked must use its closed native command",
+    )
+    scope = evidence[0].get("scope") if evidence else None
+    require(
+        isinstance(scope, str)
+        and all(
+            phrase in scope
+            for phrase in (
+                "strong ferror and weak ferror_unlocked",
+                "weak same-address function alias",
+                "equal ferror/ferror_unlocked addresses",
+                "EBADF error observation",
+                "direct initial-exec errno TLS",
+                "ferror has no syscall path",
+                "general-stdio",
+                "public x86 support",
+            )
+        ),
+        "static-c-stdio-permanent-ferror-unlocked evidence must retain its closed native boundary",
+    )
+    oracle = artifact.get("oracle")
+    require(
+        isinstance(oracle, list)
+        and any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "c-posix"
+            and all(
+                phrase in str(entry.get("role"))
+                for phrase in (
+                    "src/stdio/ferror.c",
+                    "FLOCK/FUNLOCK",
+                    "weak_alias(ferror, ferror_unlocked)",
+                    "`_IO_ferror_unlocked`",
+                )
+            )
+            for entry in oracle
+        ),
+        "static-c-stdio-permanent-ferror-unlocked must retain its pinned-musl source oracle",
+    )
+    dispatcher = (ROOT / "scripts" / "dev-x86_64.sh").read_text(encoding="utf-8")
+    for snippet in (
+        "stdio-permanent-ferror-unlocked-header-abi)",
+        "libc-stdio-permanent-ferror-unlocked)",
+        "run_stdio_permanent_ferror_unlocked_header_abi.sh",
+        "run_libc_stdio_permanent_ferror_unlocked.sh",
+    ):
+        require(
+            snippet in dispatcher,
+            f"x86 dispatcher omits permanent-stream ferror_unlocked {snippet}",
+        )
+
+
 def require_stdio_permanent_fileno_artifact(family: Mapping[str, Any]) -> None:
     """Keep the permanent descriptor adapter below a general FILE claim.
 
@@ -56769,8 +57042,8 @@ def require_stdio_permanent_fileno_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 74,
-        "libc.text-math-locale-stdio must retain exactly seventy-four private verified artifacts",
+        len(artifacts) == 75,
+        "libc.text-math-locale-stdio must retain exactly seventy-five private verified artifacts",
     )
     matching = [
         entry
@@ -57074,8 +57347,8 @@ def require_stdio_permanent_fileno_unlocked_artifact(
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 74,
-        "libc.text-math-locale-stdio must retain exactly seventy-four private verified artifacts",
+        len(artifacts) == 75,
+        "libc.text-math-locale-stdio must retain exactly seventy-five private verified artifacts",
     )
     matching = [
         entry
@@ -57289,6 +57562,8 @@ def require_stdio_permanent_fileno_unlocked_artifact(
         "assert_weak_same_address_alias",
         "weak_alias(fileno, fileno_unlocked)",
         "-nostdlib -static",
+        "--gc-sections",
+        "candidate unexpectedly pulls independently selected ferror_unlocked",
         "dynamic TLS model",
         "unowned runtime dependency",
         "fileno unexpectedly contains a syscall path",
@@ -61276,8 +61551,8 @@ def require_math_exp2_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 74,
-        "libc.text-math-locale-stdio must retain exactly seventy-four private verified artifacts",
+        len(artifacts) == 75,
+        "libc.text-math-locale-stdio must retain exactly seventy-five private verified artifacts",
     )
     matching = [entry for entry in artifacts if entry.get("id") == "static-c-math-exp2"]
     require(
@@ -61536,8 +61811,8 @@ def require_math_expm1_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 74,
-        "libc.text-math-locale-stdio must retain exactly seventy-four private verified artifacts",
+        len(artifacts) == 75,
+        "libc.text-math-locale-stdio must retain exactly seventy-five private verified artifacts",
     )
     matching = [entry for entry in artifacts if entry.get("id") == "static-c-math-expm1"]
     require(
@@ -61774,8 +62049,8 @@ def require_math_log10_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 74,
-        "libc.text-math-locale-stdio must retain exactly seventy-four private verified artifacts",
+        len(artifacts) == 75,
+        "libc.text-math-locale-stdio must retain exactly seventy-five private verified artifacts",
     )
     matching = [entry for entry in artifacts if entry.get("id") == "static-c-math-log10"]
     require(
@@ -62019,8 +62294,8 @@ def require_math_ceil_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 74,
-        "libc.text-math-locale-stdio must retain exactly seventy-four private verified artifacts",
+        len(artifacts) == 75,
+        "libc.text-math-locale-stdio must retain exactly seventy-five private verified artifacts",
     )
     matching = [entry for entry in artifacts if entry.get("id") == "static-c-math-ceil"]
     require(
@@ -62244,8 +62519,8 @@ def require_math_floor_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 74,
-        "libc.text-math-locale-stdio must retain exactly seventy-four private verified artifacts",
+        len(artifacts) == 75,
+        "libc.text-math-locale-stdio must retain exactly seventy-five private verified artifacts",
     )
     matching = [entry for entry in artifacts if entry.get("id") == "static-c-math-floor"]
     require(
@@ -62470,8 +62745,8 @@ def require_math_round_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 74,
-        "libc.text-math-locale-stdio must retain exactly seventy-four private verified artifacts",
+        len(artifacts) == 75,
+        "libc.text-math-locale-stdio must retain exactly seventy-five private verified artifacts",
     )
     matching = [entry for entry in artifacts if entry.get("id") == "static-c-math-round"]
     require(
@@ -62698,8 +62973,8 @@ def require_math_log2_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 74,
-        "libc.text-math-locale-stdio must retain exactly seventy-four private verified artifacts",
+        len(artifacts) == 75,
+        "libc.text-math-locale-stdio must retain exactly seventy-five private verified artifacts",
     )
     matching = [entry for entry in artifacts if entry.get("id") == "static-c-math-log2"]
     require(
@@ -63682,8 +63957,8 @@ def require_locale_wide_iconv_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 74,
-        "libc.text-math-locale-stdio must retain exactly seventy-four private verified artifacts",
+        len(artifacts) == 75,
+        "libc.text-math-locale-stdio must retain exactly seventy-five private verified artifacts",
     )
     matching = [
         entry for entry in artifacts if entry.get("id") == "static-c-locale-wide-iconv"
@@ -64742,8 +65017,8 @@ def require_locale_error_strings_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 74,
-        "libc.text-math-locale-stdio must retain exactly seventy-four private verified artifacts",
+        len(artifacts) == 75,
+        "libc.text-math-locale-stdio must retain exactly seventy-five private verified artifacts",
     )
     matching = [
         entry for entry in artifacts if entry.get("id") == "static-c-locale-error-strings"
@@ -69815,6 +70090,9 @@ def validate_ledger(
         by_id["libc.text-math-locale-stdio"]
     )
     require_stdio_permanent_feof_unlocked_artifact(
+        by_id["libc.text-math-locale-stdio"]
+    )
+    require_stdio_permanent_ferror_unlocked_artifact(
         by_id["libc.text-math-locale-stdio"]
     )
     require_stdio_permanent_fileno_artifact(by_id["libc.text-math-locale-stdio"])

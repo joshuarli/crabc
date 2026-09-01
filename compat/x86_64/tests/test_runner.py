@@ -20298,8 +20298,8 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             self.assertIn(symbol, exports)
             self.assertIn(f'pub unsafe extern "C" fn {symbol}', implementation)
         self.assertIn("feof_unlocked", exports)
+        self.assertIn("ferror_unlocked", exports)
         for symbol in (
-            "ferror_unlocked",
             "clearerr_unlocked",
             "fgetc_unlocked",
             "getc_unlocked",
@@ -20350,7 +20350,8 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "run_stdio_permanent_status_header_abi.sh",
             "STATIC_C_ABI_EXPORTS",
             "strong ${symbol}",
-            "ferror_unlocked clearerr_unlocked",
+            "ferror_unlocked is separately selected",
+            "--gc-sections",
             "-nostdlib -static",
             "dynamic TLS model",
             "__crabc_x86_static_tls_bootstrap",
@@ -21393,8 +21394,8 @@ class X86_64CoreRunnerTests(unittest.TestCase):
 
         self.assertIn("feof", exports)
         self.assertIn("feof_unlocked", exports)
+        self.assertIn("ferror_unlocked", exports)
         for symbol in (
-            "ferror_unlocked",
             "clearerr_unlocked",
             "_IO_feof_unlocked",
         ):
@@ -21435,8 +21436,11 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         ):
             self.assertIn(required, header_runner)
         for required in (
+            "#include <errno.h>",
             "feof_unlocked_entry != feof_entry",
             "redirect_empty_input",
+            "errno = 0;",
+            "errno != 0",
             "feof_entry(stdin) != 0 || feof_unlocked_entry(stdin) != 0",
             "fgetc_entry(stdin) != EOF",
             "feof_entry(stdin) == 0 || feof_unlocked_entry(stdin) == 0",
@@ -21458,6 +21462,8 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "assert_weak_same_address_alias",
             "weak_alias(feof, feof_unlocked)",
             "-nostdlib -static",
+            "--gc-sections",
+            "candidate unexpectedly pulls independently selected ferror_unlocked",
             "dynamic TLS model",
             "unowned runtime dependency",
             "feof unexpectedly contains a syscall path",

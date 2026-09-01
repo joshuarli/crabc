@@ -1049,15 +1049,35 @@ same-address GNU/BSD `feof_unlocked` alias of strong `feof`, without promoting
 a capability. Its pinned-musl/static fixture compares both function-pointer
 addresses only on permanent `stdin`, then uses an empty pipe and existing
 `fgetc(stdin)` solely as EOF-marker setup: both predicates begin at zero and
-become nonzero. The C/POSIX contract is zero versus nonzero, so this does not
+become nonzero while `errno` remains zero. The C/POSIX contract is zero versus nonzero, so this does not
 claim musl's internal numeric `1` normalization. The C11/C++17 matrix proves
 GNU/BSD declaration visibility and unmangled C++ linkage while strict/POSIX
 profiles keep it hidden. `_unlocked` does not claim a lock-free call:
-FLOCK/FUNLOCK, arbitrary `FILE`, `_IO_feof_unlocked`, `ferror_unlocked`, and
-`clearerr_unlocked` remain outside this externally serialized leaf. It never
+FLOCK/FUNLOCK, arbitrary `FILE`, `_IO_feof_unlocked`, and `clearerr_unlocked`
+remain outside this externally serialized leaf; `ferror_unlocked` is a
+separately selected private alias artifact. It never
 creates a pathname `FILE *` and excludes `stdio.stream-io`, path/descriptor-
 reopen/tmpfile/LFS behavior, byte/block I/O beyond the marker setup,
 ferror/clearerr, buffering/position, other unlocked APIs, multiple streams,
+line/formatted/wide/memory/cookie/popen I/O, ordinary-exit flushing, general
+stdio, parity, promotion, and public x86 support.
+
+The separate `stdio-permanent-ferror-unlocked-header-abi` and
+`libc-stdio-permanent-ferror-unlocked` gates record one private
+`static-c-stdio-permanent-ferror-unlocked` artifact. It adds only musl's weak,
+same-address GNU/BSD `ferror_unlocked` alias of strong `ferror`, without
+promoting a capability. Its pinned-musl/static fixture compares both
+function-pointer addresses only on permanent `stdin`, then closes the
+descriptor so existing `fgetc(stdin)` establishes an `EBADF` error marker:
+both predicates begin at zero and become nonzero. The C/POSIX contract is zero
+versus nonzero, so this does not claim musl's internal numeric `1`
+normalization. The C11/C++17 matrix proves GNU/BSD declaration visibility and
+unmangled C++ linkage while strict/POSIX profiles keep it hidden. `_unlocked`
+does not claim a lock-free call: FLOCK/FUNLOCK, arbitrary `FILE`, and
+`_IO_ferror_unlocked` remain outside this externally serialized leaf. It never
+creates a pathname `FILE *` and excludes `stdio.stream-io`, path/descriptor-
+reopen/tmpfile/LFS behavior, byte/block I/O beyond the marker setup,
+feof/clearerr, buffering/position, other unlocked APIs, multiple streams,
 line/formatted/wide/memory/cookie/popen I/O, ordinary-exit flushing, general
 stdio, parity, promotion, and public x86 support.
 
@@ -1091,7 +1111,8 @@ remain negative. The conventional `_unlocked` spelling does not claim a
 lock-free operation: musl's FLOCK/FUNLOCK and negative-descriptor `EBADF`
 paths remain outside this externally serialized leaf. It excludes
 `stdio.stream-io`, FILE/path or descriptor-reopen/tmpfile/LFS behavior, all
-other unlocked APIs other than separately selected `feof_unlocked`,
+other unlocked APIs other than separately selected `feof_unlocked` and
+`ferror_unlocked`,
 byte/block/line/formatted/wide I/O, buffering/position or
 status, multiple streams, memory/cookie/popen I/O, ordinary-exit flushing,
 general stdio, parity, promotion, and public x86 support.

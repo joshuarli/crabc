@@ -113,7 +113,7 @@ oracle_archive_symbols="$work_dir/oracle-archive-symbols"
 cd "$ROOT_DIR"
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -I"$ROOT_DIR/include" -E -H \
     compat/x86_64/libc_stdio_permanent_feof_unlocked_probe.c >/dev/null 2>"$trace"
-for header in stdio.h unistd.h features.h bits/alltypes.h; do
+for header in errno.h stdio.h unistd.h features.h bits/alltypes.h; do
     grep -Fq "$ROOT_DIR/include/$header" "$trace" ||
         fail "fixture did not use the project $header header"
 done
@@ -144,7 +144,9 @@ grep -Eq '[[:space:]][BDR][[:space:]]stdin$' "$archive_symbols" ||
     fail "archive does not define permanent stdin data"
 grep -Eq "[[:space:]]W[[:space:]]feof_unlocked$" "$archive_symbols" ||
     fail "archive does not define weak feof_unlocked"
-for unselected in ferror_unlocked clearerr_unlocked fgetc_unlocked getc_unlocked \
+# ferror_unlocked is independently selected. Archive-surface validation is
+# global; final-ELF GC below proves this feof-only fixture does not pull it.
+for unselected in clearerr_unlocked fgetc_unlocked getc_unlocked \
     getchar_unlocked fputc_unlocked putc_unlocked putchar_unlocked \
     fdopen freopen fopencookie popen pclose fmemopen open_memstream; do
     if grep -Eq "[[:space:]][TW][[:space:]]${unselected}$" "$archive_symbols"; then
@@ -161,7 +163,7 @@ done
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE \
     -DCRABC_STDIO_PERMANENT_FEOF_UNLOCKED_FREESTANDING -I"$ROOT_DIR/include" \
     -nostdlib -static -fno-pie -no-pie -ffreestanding -fno-builtin \
-    -fno-stack-protector -Wl,-e,_start -Wl,--no-undefined \
+    -fno-stack-protector -Wl,--gc-sections -Wl,-e,_start -Wl,--no-undefined \
     compat/x86_64/libc_stdio_permanent_feof_unlocked_probe.c \
     compat/x86_64/libc_stdio_permanent_feof_unlocked_start.S "$archive" -o "$candidate"
 readelf --symbols --wide "$candidate" >"$candidate_symbols"
@@ -176,6 +178,16 @@ for symbol in feof feof_unlocked fgetc close dup dup2 pipe stdin; do
         fail "candidate lacks ${symbol}"
 done
 assert_weak_same_address_alias "$candidate_symbols" feof_unlocked feof candidate
+if grep -Eq "[[:space:]]ferror_unlocked$" "$candidate_symbols"; then
+    fail "candidate unexpectedly pulls independently selected ferror_unlocked"
+fi
+for unselected in clearerr_unlocked fgetc_unlocked \
+    getc_unlocked getchar_unlocked fputc_unlocked putc_unlocked \
+    putchar_unlocked; do
+    if grep -Eq "[[:space:]]${unselected}$" "$candidate_symbols"; then
+        fail "candidate unexpectedly pulls independently selected ${unselected}"
+    fi
+done
 if awk '$7 == "UND" && NF >= 8 { print }' "$candidate_symbols" | grep -q .; then
     fail "candidate retains an unresolved symbol"
 fi

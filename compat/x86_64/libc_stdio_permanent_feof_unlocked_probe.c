@@ -13,6 +13,7 @@
 #define _GNU_SOURCE 1
 #endif
 
+#include <errno.h>
 #include <stdio.h>
 #include <unistd.h>
 
@@ -89,7 +90,8 @@ int crabc_x86_64_stdio_permanent_feof_unlocked_probe(void)
         status = 3;
         goto cleanup;
     }
-    if (fgetc_entry(stdin) != EOF) {
+    errno = 0;
+    if (fgetc_entry(stdin) != EOF || errno != 0) {
         status = 4;
         goto cleanup;
     }

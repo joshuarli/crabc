@@ -144,7 +144,9 @@ for symbol in stdin stdout stderr; do
     grep -Eq "[[:space:]][BDR][[:space:]]${symbol}$" "$archive_symbols" ||
         fail "archive does not define permanent stream data ${symbol}"
 done
-for unselected in ferror_unlocked clearerr_unlocked \
+# ferror_unlocked is independently selected. Archive-surface validation is
+# global; final-ELF GC below proves this fileno-only fixture does not pull it.
+for unselected in clearerr_unlocked \
     fgetc_unlocked getc_unlocked getchar_unlocked fputc_unlocked \
     putc_unlocked putchar_unlocked; do
     if grep -Eq "[[:space:]][TW][[:space:]]${unselected}$" "$archive_symbols"; then
@@ -161,7 +163,7 @@ done
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE \
     -DCRABC_STDIO_PERMANENT_FILENO_UNLOCKED_FREESTANDING -I"$ROOT_DIR/include" \
     -nostdlib -static -fno-pie -no-pie -ffreestanding -fno-builtin \
-    -fno-stack-protector -Wl,-e,_start -Wl,--no-undefined \
+    -fno-stack-protector -Wl,--gc-sections -Wl,-e,_start -Wl,--no-undefined \
     compat/x86_64/libc_stdio_permanent_fileno_unlocked_probe.c \
     compat/x86_64/libc_stdio_permanent_fileno_unlocked_start.S "$archive" -o "$candidate"
 readelf --symbols --wide "$candidate" >"$candidate_symbols"
@@ -175,6 +177,16 @@ for symbol in fileno fileno_unlocked stdin stdout stderr; do
         fail "candidate lacks ${symbol}"
 done
 assert_weak_same_address_alias "$candidate_symbols" fileno_unlocked fileno candidate
+if grep -Eq "[[:space:]]ferror_unlocked$" "$candidate_symbols"; then
+    fail "candidate unexpectedly pulls independently selected ferror_unlocked"
+fi
+for unselected in clearerr_unlocked fgetc_unlocked \
+    getc_unlocked getchar_unlocked fputc_unlocked putc_unlocked \
+    putchar_unlocked; do
+    if grep -Eq "[[:space:]]${unselected}$" "$candidate_symbols"; then
+        fail "candidate unexpectedly pulls independently selected ${unselected}"
+    fi
+done
 if awk '$7 == "UND" && NF >= 8 { print }' "$candidate_symbols" | grep -q .; then
     fail "candidate retains an unresolved symbol"
 fi

@@ -113,7 +113,10 @@ for symbol in __errno_location __crabc_x86_static_tls_bootstrap \
 done
 grep -Eq '[[:space:]][BDR][[:space:]]stdin$' "$archive_symbols" ||
     fail "archive does not define permanent stdin data"
-for unselected in ferror_unlocked clearerr_unlocked \
+# ferror_unlocked is separately selected as the exact weak alias of the
+# required strong ferror target. Its dedicated artifact proves the alias;
+# this status fixture retains the target's existing marker transitions only.
+for unselected in clearerr_unlocked \
     fgetc_unlocked getc_unlocked getchar_unlocked fputc_unlocked \
     putc_unlocked putchar_unlocked fdopen freopen fopencookie popen pclose \
     fmemopen open_memstream; do
@@ -131,7 +134,7 @@ done
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE \
     -DCRABC_STDIO_PERMANENT_STATUS_FREESTANDING -I"$ROOT_DIR/include" \
     -nostdlib -static -fno-pie -no-pie -ffreestanding -fno-builtin \
-    -fno-stack-protector -Wl,-e,_start -Wl,--no-undefined \
+    -fno-stack-protector -Wl,--gc-sections -Wl,-e,_start -Wl,--no-undefined \
     compat/x86_64/libc_stdio_permanent_status_probe.c \
     compat/x86_64/libc_stdio_permanent_status_start.S "$archive" -o "$candidate"
 readelf --symbols --wide "$candidate" >"$candidate_symbols"
@@ -139,7 +142,7 @@ readelf --program-headers --wide "$candidate" >"$candidate_program_headers"
 readelf --dynamic --wide "$candidate" >"$candidate_dynamic" || true
 readelf --relocs --wide "$candidate" >"$candidate_relocations"
 objdump -d "$candidate" >"$candidate_disassembly"
-for symbol in feof ferror clearerr fgetc close dup dup2 pipe stdin; do
+for symbol in feof ferror ferror_unlocked clearerr fgetc close dup dup2 pipe stdin; do
     grep -Eq "[[:space:]]${symbol}$" "$candidate_symbols" ||
         fail "candidate lacks ${symbol}"
 done
