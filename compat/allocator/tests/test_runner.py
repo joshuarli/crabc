@@ -4,9 +4,11 @@
 from __future__ import annotations
 
 import importlib.util
+import hashlib
 import io
 import json
 import os
+import subprocess
 import sys
 import tarfile
 import tempfile
@@ -1941,7 +1943,7 @@ class ContractTests(unittest.TestCase):
         report["native_owner_exit_lifecycle"]["checks"].pop()
         self.assertFalse(RUNNER._m5_native_owner_exit_lifecycle_evidence_passed(report))
 
-    def test_m5_gate_report_accepts_executed_owner_exit_evidence_before_open_later_gates(self) -> None:
+    def test_m5_gate_report_keeps_m5d_and_m5e_blocked_with_verified_upstream_matrix(self) -> None:
         contract = RUNNER.read_json(RUNNER.M5_GATE_CONTRACT)
         report = {
             "compiler_tls_codegen": {"status": "passed"},
@@ -1997,6 +1999,15 @@ class ContractTests(unittest.TestCase):
                     "watchdog": {"seconds": 30, "status": "passed"},
                 }
             },
+            "canonical_upstream_stress": {
+                "format": 1,
+                "schema": "crabc-mimalloc-canonical-upstream-stress-consumer",
+                "status": "verified",
+                "evidence_scope": "shadow_subset",
+                "large_object_mode": {"status": "not-claimed"},
+                "matrix": {"case_count": 8, "worker_counts": [1, 2, 4, 8]},
+                "current_head": {"record": {}, "source": {}},
+            },
         }
         native_contract = RUNNER.read_json(RUNNER.NATIVE_OWNER_EXIT_LIFECYCLE_CONTRACT)
         native_summary = RUNNER.validate_native_owner_exit_lifecycle_contract(
@@ -2048,8 +2059,12 @@ class ContractTests(unittest.TestCase):
         )
         self.assertEqual(
             gate_by_id["m5.5d"]["observed_evidence"],
-            ["report:/m5_source_derived_stress_adapter/fixture"],
+            [
+                "report:/m5_source_derived_stress_adapter/fixture",
+                "report:/canonical_upstream_stress",
+            ],
         )
+        self.assertNotIn("observed_evidence", gate_by_id["m5.5e"])
 
     def test_adapted_api_fixture_rejects_unexplained_omission_and_symbol_drift(self) -> None:
         contract = RUNNER.read_json(RUNNER.ADAPTED_TEST_CONTRACT)
@@ -2367,6 +2382,673 @@ class ContractTests(unittest.TestCase):
                     "allocator ratchet input changed: port_map_sha256",
                 ):
                     RUNNER.check_ratchet({})
+
+
+class CanonicalUpstreamStressConsumerTests(unittest.TestCase):
+    """Exercise the M5 consumer without compiling the canonical fixture."""
+
+    @staticmethod
+    def byte_record(payload: bytes) -> dict[str, object]:
+        return {
+            "bytes": len(payload),
+            "hex": payload.hex(),
+            "sha256": hashlib.sha256(payload).hexdigest(),
+        }
+
+    @staticmethod
+    def file_record(root: Path, path: Path) -> dict[str, object]:
+        payload = path.read_bytes()
+        return {
+            "bytes": len(payload),
+            "path": path.relative_to(root).as_posix(),
+            "sha256": hashlib.sha256(payload).hexdigest(),
+        }
+
+    @classmethod
+    def canonical_loader_record(cls, root: Path, path: Path) -> dict[str, object]:
+        """Record the fixture stand-in as the literal external loader path."""
+
+        return {
+            **cls.file_record(root, path),
+            "path": "/lib/ld-crabc-aarch64.so.1",
+        }
+
+    @staticmethod
+    def write_synthetic_archive(
+        path: Path, archive_root: str, member: str, payload: bytes
+    ) -> Path:
+        """Write a tiny archive for the archive/member binding boundary."""
+
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with tarfile.open(path, "w:gz") as stream:
+            for directory in (archive_root, f"{archive_root}/test"):
+                header = tarfile.TarInfo(directory)
+                header.type = tarfile.DIRTYPE
+                stream.addfile(header)
+            header = tarfile.TarInfo(f"{archive_root}/{member}")
+            header.size = len(payload)
+            stream.addfile(header, io.BytesIO(payload))
+        return path
+
+    @classmethod
+    def write_fixture(cls, root: Path) -> dict[str, object]:
+        """Make one complete current-head report with live local artifacts."""
+
+        work_root = root / ".work"
+        contract_path = root / "compat/allocator/upstream-stress-v3.5.0.json"
+        contract_path.parent.mkdir(parents=True)
+        contract_path.write_bytes(
+            (RUNNER.ALLOCATOR_ROOT / "upstream-stress-v3.5.0.json").read_bytes()
+        )
+        contract = json.loads(contract_path.read_text(encoding="utf-8"))
+        staged_loader = root / "canonical-loader/ld-crabc-aarch64.so.1"
+        pin = RUNNER.load_pin()
+        backend = contract["backend_inventory"]["backends"][0]
+        cargo_contract = backend["artifact_attestation"]["cargo_compiler_artifact"]
+        artifact_ids = contract["report"]["artifact_ids"]
+
+        def write(path: Path, payload: bytes) -> Path:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(payload)
+            return path
+
+        fixture_source = b"synthetic upstream test-stress source\n"
+        archive = cls.write_synthetic_archive(
+            work_root / "allocator-cache/mimalloc-3.5.0.tar.gz",
+            str(pin["archive_root"]),
+            str(contract["fixture"]["archive_member"]),
+            fixture_source,
+        )
+        pin = {**pin, "sha256": hashlib.sha256(archive.read_bytes()).hexdigest()}
+        fixture_contract = {
+            **contract["fixture"],
+            "sha256": hashlib.sha256(fixture_source).hexdigest(),
+        }
+        output = work_root / "target/compat/allocator/upstream-stress"
+        binary = write(output / "canonical-upstream-test-stress", b"stress binary")
+        target = root / "target/debug"
+        selected_libc = write(target / "libc.so", b"selected shared libc")
+        selected_static_libc = write(target / "libc.a", b"selected static libc")
+        selected_loader = write(target / "libldso.so", b"selected loader")
+        sysroot = root / "target/crabc-sysroot"
+        manifest = write(sysroot / "share/crabc/manifest.json", b"{}\n")
+        purity_payload = {
+            "crt_sysroot_pure_rust": True,
+            "full_runtime_pure_rust": False,
+            "full_runtime_purity_status": "blocked_by_native_allocator",
+        }
+        purity = write(
+            sysroot / "share/crabc/purity.json",
+            (json.dumps(purity_payload, sort_keys=True) + "\n").encode(),
+        )
+        compiler = write(sysroot / "bin/crabc-cc", b"#!/bin/sh\n")
+        staged_loader = write(staged_loader, b"selected loader")
+        write(root / "libc/Cargo.toml", b"[package]\nname = \"crabc-libc\"\n")
+        write(root / "libc/src/lib.rs", b"#![no_std]\n")
+
+        shared_record = cls.file_record(root, selected_libc)
+        static_record = cls.file_record(root, selected_static_libc)
+        compiler_artifact = {
+            "package_id": f"path+file://{root}/libc#crabc-libc@0.3.0",
+            "target": cargo_contract["target"],
+            "profile": cargo_contract["profile"],
+            "features": cargo_contract["exact_features"],
+            "filenames": [shared_record["path"], static_record["path"]],
+            "fresh": False,
+        }
+        cargo_message_artifact = {
+            "reason": "compiler-artifact",
+            "package_id": compiler_artifact["package_id"],
+            "manifest_path": str(root / "libc/Cargo.toml"),
+            "target": {
+                **cargo_contract["target"],
+                "src_path": str(root / "libc/src/lib.rs"),
+            },
+            "profile": cargo_contract["profile"],
+            "features": cargo_contract["exact_features"],
+            "filenames": [str(selected_libc), str(selected_static_libc)],
+            "executable": None,
+            "fresh": False,
+        }
+        build_record_path = output / "selected-libc-build.json"
+        write(
+            build_record_path,
+            (json.dumps(
+                {
+                    "format": cargo_contract["build_record_format"],
+                    "schema": cargo_contract["build_record_schema"],
+                    "cargo_command": cargo_contract["cargo_command"],
+                    "semantic_profile": cargo_contract["semantic_profile"],
+                    "compiler_artifact": cargo_message_artifact,
+                    "artifacts": {
+                        "selected_shared_libc": shared_record,
+                        "selected_static_libc": static_record,
+                    },
+                },
+                sort_keys=True,
+            ) + "\n").encode(),
+        )
+        build_record = cls.file_record(root, build_record_path)
+        source = {
+            "kind": "git",
+            "revision": "a" * 40,
+            "worktree_clean": True,
+            "worktree_status": cls.byte_record(b""),
+        }
+        companion_path = output / "selected-libc-build-current-head.json"
+        write(
+            companion_path,
+            (json.dumps(
+                {
+                    "format": 1,
+                    "schema": "crabc-selected-libc-current-head-build",
+                    "source_before": source,
+                    "source_after": source,
+                    "source_unchanged_during_build": True,
+                    "selected_libc_build_record": build_record,
+                    "artifacts": {
+                        "selected_shared_libc": shared_record,
+                        "selected_static_libc": static_record,
+                    },
+                },
+                sort_keys=True,
+            ) + "\n").encode(),
+        )
+        companion = cls.file_record(root, companion_path)
+        contract_record = cls.file_record(root, contract_path)
+        source_member = {
+            "bytes": len(fixture_source),
+            "path": "mimalloc-3.5.0/test/test-stress.c",
+            "sha256": fixture_contract["sha256"],
+        }
+        artifact_records = {
+            "contract": contract_record,
+            "upstream_archive": cls.file_record(root, archive),
+            "source_member": source_member,
+            "owned_sysroot_manifest": cls.file_record(root, manifest),
+            "owned_sysroot_purity": cls.file_record(root, purity),
+            "owned_compiler": cls.file_record(root, compiler),
+            "selected_loader": cls.file_record(root, selected_loader),
+            "staged_canonical_loader": cls.canonical_loader_record(root, staged_loader),
+            "selected_libc": shared_record,
+            "selected_static_libc": static_record,
+            "selected_backend_build_record": build_record,
+            "stress_binary": cls.file_record(root, binary),
+        }
+        assert set(artifact_records) == set(artifact_ids)
+
+        matrix = contract["execution"]["matrix"]
+        results = []
+        for attempt, case in enumerate(matrix, start=1):
+            stdout = str(case["expected_stdout"]).encode()
+            stderr = str(case["expected_stderr"]).encode()
+            results.append(
+                {
+                    "case": {
+                        key: case[key]
+                        for key in ("id", "workers", "scale", "iterations", "arguments")
+                    },
+                    "process_attempt": attempt,
+                    "state": "passed",
+                    "observation": {
+                        "command": [str(binary), *case["arguments"]],
+                        "kind": "process",
+                        "status": case["expected_exit_status"],
+                        "stdout": cls.byte_record(stdout),
+                        "stderr": cls.byte_record(stderr),
+                    },
+                }
+            )
+        report = {
+            "format": contract["report"]["format"],
+            "schema": contract["report"]["schema"],
+            "status": "passed",
+            "contract": {**contract_record, "upstream": contract["upstream"]},
+            "artifacts": artifact_records,
+            "fixture": {
+                "archive_member": fixture_contract["archive_member"],
+                "expected_sha256": fixture_contract["sha256"],
+                "source_adaptation": {
+                    "compile_defines": contract["source_adaptation"]["compile_defines"],
+                    "patches": contract["source_adaptation"]["patches"],
+                },
+                "observed_source": source_member,
+            },
+            "execution": {
+                "attempted": True,
+                "attempted_process_count": len(matrix),
+                "case_count": len(matrix),
+                "case_results": results,
+                "process_attempts_per_case": 1,
+                "source_randomness": contract["execution"]["source_randomness"],
+                "watchdog": contract["execution"]["watchdog"],
+            },
+            "requested_runtime": {
+                "allocator_feature": contract["compile_requirements"]["allocator_feature"],
+                "backend": backend["id"],
+                "target_dir": "target/debug",
+                "output_dir": output.relative_to(root).as_posix(),
+                "selected_libc_build_record": build_record_path.relative_to(root).as_posix(),
+                "current_head_build_record": companion_path.relative_to(root).as_posix(),
+            },
+            "selection": {
+                "target": contract["target_inventory"]["targets"][0],
+                "backend": backend["id"],
+            },
+            "runtime": {
+                "compiler": compiler.relative_to(root).as_posix(),
+                "backend_attestation": {
+                    "backend": backend["id"],
+                    "status": "passed",
+                    "semantic_profile": cargo_contract["semantic_profile"],
+                    "cargo_features": cargo_contract["exact_features"],
+                    "build_record": build_record,
+                    "compiler_artifact": compiler_artifact,
+                    "artifacts": {
+                        "selected_shared_libc": shared_record,
+                        "selected_static_libc": static_record,
+                    },
+                    "exported_free": {
+                        "symbol": "free",
+                        "required_callee_suffix": backend["artifact_attestation"]["exported_free_route"]["required_callee_suffix"],
+                        "forbidden_callee_suffix": backend["artifact_attestation"]["exported_free_route"]["forbidden_callee_suffix"],
+                        "disassembly_sha256": "2" * 64,
+                    },
+                },
+                "environment": {},
+                "sysroot": sysroot.relative_to(root).as_posix(),
+                "sysroot_purity": {
+                    "crt_sysroot_pure_rust": True,
+                    "full_runtime_pure_rust": False,
+                    "full_runtime_purity_status": "blocked_by_native_allocator",
+                },
+            },
+            "fixture_elf": {
+                "dynamic_dependencies": contract["compile_requirements"]["expected_dynamic_dependencies"],
+                "elf_identity": contract["compile_requirements"]["expected_elf_identity"],
+                "interpreter": contract["compile_requirements"]["expected_interpreter"],
+            },
+            "dynamic_dependencies": contract["compile_requirements"]["expected_dynamic_dependencies"],
+            "capability": {
+                "failure_closed": True,
+                "fully_verified_worker_counts": contract["capability"]["required_worker_counts"],
+                "id": contract["capability"]["id"],
+                "native_execution_completed": True,
+                "native_execution_started": True,
+                "passed_case_count": len(matrix),
+                "required_case_count": len(matrix),
+                "required_worker_counts": contract["capability"]["required_worker_counts"],
+                "status": "passed",
+            },
+            "current_head": {
+                "status": "attested",
+                "record": companion,
+                "source": source,
+            },
+            "blocked": None,
+            "first_fact": {
+                "kind": "pass",
+                "stage": "matrix",
+                "completed_case_count": len(matrix),
+            },
+            "upstream_pin": {
+                "archive_root": contract["upstream"]["archive_root"],
+                "repository": contract["upstream"]["repository"],
+                "revision": contract["upstream"]["revision"],
+                "sha256": pin["sha256"],
+                "source": pin["source"],
+                "tag": pin["tag"],
+                "tag_object": pin["tag_object"],
+                "version": pin["version"],
+            },
+        }
+        report_path = work_root / "reports/allocator/upstream-stress/latest.json"
+        report_path.parent.mkdir(parents=True)
+        report_path.write_text(json.dumps(report, sort_keys=True) + "\n", encoding="utf-8")
+        summary = RUNNER.validate_canonical_upstream_stress_contract(
+            contract, RUNNER.load_pin()
+        )
+        summary["fixture"] = fixture_contract
+        return {
+            "contract": contract,
+            "contract_path": contract_path,
+            "pin": pin,
+            "report": report,
+            "report_path": report_path,
+            "root": root,
+            "source": source,
+            "work_root": work_root,
+            "archive_record": artifact_records["upstream_archive"],
+            "source_member": source_member,
+            "staged_loader": staged_loader,
+            "summary": summary,
+            "contract_record": contract_record,
+        }
+
+    @classmethod
+    def validate_fixture(
+        cls, fixture: dict[str, object], *, source_state: object | None = None
+    ) -> dict[str, object]:
+        """Exercise report validation with a synthetic archive pin unmocked.
+
+        The production consumer validates the checked-in literal contract and
+        pin first. This isolated fixture instead passes a coherent synthetic
+        archive/pin/fixture triple directly to the report validator, so its
+        tar extraction and report binding remain real without pretending the
+        synthetic tarball is the pinned upstream archive.
+        """
+
+        root = Path(fixture["root"])
+        staged_loader = Path(fixture["staged_loader"])
+        canonical_loader = Path("/lib/ld-crabc-aarch64.so.1")
+        observed_file_record = RUNNER.canonical_upstream_stress_observed_file_record
+
+        def read_fixture_staged_loader(
+            observed_root: Path, path: Path, subject: str
+        ) -> dict[str, object]:
+            if path == canonical_loader:
+                return cls.canonical_loader_record(root, staged_loader)
+            return observed_file_record(observed_root, path, subject)
+
+        with mock.patch.object(
+            RUNNER,
+            "canonical_current_git_source_state",
+            return_value=(fixture["source"] if source_state is None else source_state),
+        ), mock.patch.object(
+            RUNNER,
+            "canonical_upstream_stress_observed_file_record",
+            side_effect=read_fixture_staged_loader,
+        ):
+            try:
+                verified = RUNNER.canonical_upstream_stress_validate_report(
+                    fixture["report"],
+                    root=fixture["root"],
+                    work_root=fixture["work_root"],
+                    contract=fixture["contract"],
+                    contract_record=fixture["contract_record"],
+                    summary=fixture["summary"],
+                    pin=fixture["pin"],
+                )
+            except RUNNER.CanonicalUpstreamStressRejected as error:
+                return {"status": "rejected", "reason": str(error)}
+            return {"status": "verified", **verified}
+
+    @classmethod
+    def consume_unavailable(cls, fixture: dict[str, object]) -> dict[str, object]:
+        return RUNNER.consume_canonical_upstream_stress_evidence(
+            contract_path=fixture["contract_path"],
+            report_path=fixture["report_path"],
+            root=fixture["root"],
+            work_root=fixture["work_root"],
+            pin=RUNNER.load_pin(),
+        )
+
+    def test_report_validator_verifies_the_complete_current_head_matrix(self) -> None:
+        RUNNER.TEMP_ROOT.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=RUNNER.TEMP_ROOT) as temporary:
+            fixture = self.write_fixture(Path(temporary))
+            evidence = self.validate_fixture(fixture)
+
+        self.assertEqual(evidence["status"], "verified")
+        self.assertEqual(evidence["evidence_scope"], "shadow_subset")
+        self.assertEqual(evidence["matrix"], {"case_count": 8, "worker_counts": [1, 2, 4, 8]})
+        self.assertEqual(evidence["large_object_mode"]["status"], "not-claimed")
+        self.assertEqual(evidence["current_head"]["source"], fixture["source"])
+
+    def test_archive_member_binding_rejects_a_coherent_archive_substitution(self) -> None:
+        RUNNER.TEMP_ROOT.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=RUNNER.TEMP_ROOT) as temporary:
+            root = Path(temporary)
+            archive = self.write_synthetic_archive(
+                root / ".work/allocator-cache/mimalloc-3.5.0.tar.gz",
+                "mimalloc-test",
+                "test/test-stress.c",
+                b"pinned source member\n",
+            )
+            pin = {
+                "archive_root": "mimalloc-test",
+                "sha256": hashlib.sha256(archive.read_bytes()).hexdigest(),
+            }
+            fixture = {
+                "archive_member": "test/test-stress.c",
+                "sha256": hashlib.sha256(b"pinned source member\n").hexdigest(),
+            }
+            archive_record, source_record = RUNNER.canonical_upstream_stress_archive_source_member(
+                root, archive, pin, fixture
+            )
+
+            self.assertEqual(archive_record, self.file_record(root, archive))
+            self.assertEqual(source_record["bytes"], len(b"pinned source member\n"))
+
+            # Simulate an attacker replacing both the live archive and its
+            # report artifact record. The immutable pin still rejects it.
+            self.write_synthetic_archive(
+                archive,
+                "mimalloc-test",
+                "test/test-stress.c",
+                b"substituted source member\n",
+            )
+            substituted_report_record = self.file_record(root, archive)
+            RUNNER.canonical_upstream_stress_live_file_record(
+                root,
+                substituted_report_record,
+                "upstream archive",
+                expected_path=archive,
+            )
+            with self.assertRaisesRegex(
+                RUNNER.CanonicalUpstreamStressRejected, "pinned digest"
+            ):
+                RUNNER.canonical_upstream_stress_archive_source_member(
+                    root, archive, pin, fixture
+                )
+
+            # The checked-in pin also rejects a report/artifact substitution
+            # that is internally coherent with this different archive.
+            with self.assertRaisesRegex(
+                RUNNER.CanonicalUpstreamStressRejected, "pinned digest"
+            ):
+                RUNNER.canonical_upstream_stress_archive_source_member(
+                    root,
+                    archive,
+                    RUNNER.load_pin(),
+                    RUNNER.read_json(RUNNER.CANONICAL_UPSTREAM_STRESS_CONTRACT)[
+                        "fixture"
+                    ],
+                )
+
+            substituted_pin = {**pin, "sha256": substituted_report_record["sha256"]}
+            with self.assertRaisesRegex(
+                RUNNER.CanonicalUpstreamStressRejected, "fixture digest"
+            ):
+                RUNNER.canonical_upstream_stress_archive_source_member(
+                    root, archive, substituted_pin, fixture
+                )
+
+    def test_contract_rejects_redirected_loader_or_purity_policy(self) -> None:
+        contract = RUNNER.read_json(RUNNER.CANONICAL_UPSTREAM_STRESS_CONTRACT)
+        redirected = json.loads(json.dumps(contract))
+        redirected["compile_requirements"]["canonical_loader"] = "/tmp/redirected-loader"
+        with self.assertRaisesRegex(
+            RUNNER.CanonicalUpstreamStressRejected, "canonical loader"
+        ):
+            RUNNER.validate_canonical_upstream_stress_contract(
+                redirected, RUNNER.load_pin()
+            )
+
+        policy_drift = json.loads(json.dumps(contract))
+        policy_drift["compile_requirements"]["sysroot_purity"][
+            "allowed_full_runtime_purity"
+        ].pop()
+        with self.assertRaisesRegex(
+            RUNNER.CanonicalUpstreamStressRejected, "sysroot purity"
+        ):
+            RUNNER.validate_canonical_upstream_stress_contract(
+                policy_drift, RUNNER.load_pin()
+            )
+
+    def test_report_validator_rejects_relabelled_runtime_artifact_or_loader_mismatch(self) -> None:
+        RUNNER.TEMP_ROOT.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=RUNNER.TEMP_ROOT) as temporary:
+            fixture = self.write_fixture(Path(temporary))
+            root = Path(fixture["root"])
+            relabelled_manifest = root / "target/other/manifest.json"
+            relabelled_manifest.parent.mkdir(parents=True)
+            relabelled_manifest.write_bytes(b"{}\n")
+            report = fixture["report"]
+            assert isinstance(report, dict)
+            report["artifacts"]["owned_sysroot_manifest"] = self.file_record(
+                root, relabelled_manifest
+            )
+            relabelled_evidence = self.validate_fixture(fixture)
+
+        with tempfile.TemporaryDirectory(dir=RUNNER.TEMP_ROOT) as temporary:
+            fixture = self.write_fixture(Path(temporary))
+            root = Path(fixture["root"])
+            staged_loader = root / "canonical-loader/ld-crabc-aarch64.so.1"
+            staged_loader.write_bytes(b"different staged loader")
+            report = fixture["report"]
+            assert isinstance(report, dict)
+            report["artifacts"]["staged_canonical_loader"] = self.canonical_loader_record(
+                root, staged_loader
+            )
+            loader_evidence = self.validate_fixture(fixture)
+
+            with self.assertRaisesRegex(
+                RUNNER.CanonicalUpstreamStressRejected, "noncanonical path"
+            ):
+                RUNNER.canonical_upstream_stress_live_file_record(
+                    root,
+                    self.file_record(root, staged_loader),
+                    "staged canonical loader",
+                    expected_path=Path("/lib/ld-crabc-aarch64.so.1"),
+                    allowed_external_path=Path("/lib/ld-crabc-aarch64.so.1"),
+                )
+
+        self.assertEqual(relabelled_evidence["status"], "rejected")
+        self.assertIn("owned sysroot manifest", relabelled_evidence["reason"])
+        self.assertEqual(loader_evidence["status"], "rejected")
+        self.assertIn("staged loader", loader_evidence["reason"])
+
+    def test_consumer_records_an_absent_fixed_report_as_unavailable(self) -> None:
+        RUNNER.TEMP_ROOT.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=RUNNER.TEMP_ROOT) as temporary:
+            fixture = self.write_fixture(Path(temporary))
+            Path(fixture["report_path"]).unlink()
+            evidence = self.consume_unavailable(fixture)
+
+        self.assertEqual(evidence["status"], "unavailable")
+        self.assertIsNone(evidence["report"])
+        self.assertIsNone(evidence["current_head"])
+
+    def test_consumer_rejects_stale_or_dirty_current_git_source(self) -> None:
+        RUNNER.TEMP_ROOT.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=RUNNER.TEMP_ROOT) as temporary:
+            fixture = self.write_fixture(Path(temporary))
+            stale = json.loads(json.dumps(fixture["source"]))
+            stale["revision"] = "b" * 40
+            stale_evidence = self.validate_fixture(fixture, source_state=stale)
+            dirty = json.loads(json.dumps(fixture["source"]))
+            dirty["worktree_clean"] = False
+            dirty["worktree_status"] = self.byte_record(b" M compat/allocator/run.py\0")
+            dirty_evidence = self.validate_fixture(fixture, source_state=dirty)
+
+        self.assertEqual(stale_evidence["status"], "rejected")
+        self.assertIn("source", stale_evidence["reason"])
+        self.assertEqual(dirty_evidence["status"], "rejected")
+        self.assertIn("clean Git", dirty_evidence["reason"])
+
+    def test_consumer_rejects_tampered_live_artifact_or_companion(self) -> None:
+        RUNNER.TEMP_ROOT.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=RUNNER.TEMP_ROOT) as temporary:
+            fixture = self.write_fixture(Path(temporary))
+            shared = Path(fixture["root"]) / "target/debug/libc.so"
+            shared.write_bytes(b"tampered selected shared libc")
+            artifact_evidence = self.validate_fixture(fixture)
+
+        with tempfile.TemporaryDirectory(dir=RUNNER.TEMP_ROOT) as temporary:
+            fixture = self.write_fixture(Path(temporary))
+            companion_path = (
+                Path(fixture["root"])
+                / ".work/target/compat/allocator/upstream-stress/selected-libc-build-current-head.json"
+            )
+            companion = json.loads(companion_path.read_text(encoding="utf-8"))
+            companion["source_unchanged_during_build"] = False
+            companion_path.write_text(json.dumps(companion, sort_keys=True) + "\n", encoding="utf-8")
+            report = fixture["report"]
+            assert isinstance(report, dict)
+            report["current_head"]["record"] = self.file_record(
+                Path(fixture["root"]), companion_path
+            )
+            Path(fixture["report_path"]).write_text(
+                json.dumps(report, sort_keys=True) + "\n", encoding="utf-8"
+            )
+            companion_evidence = self.validate_fixture(fixture)
+
+        self.assertEqual(artifact_evidence["status"], "rejected")
+        self.assertIn("selected shared libc", artifact_evidence["reason"])
+        self.assertEqual(companion_evidence["status"], "rejected")
+        self.assertIn("companion", companion_evidence["reason"])
+
+    def test_consumer_rejects_partial_or_diagnostic_report(self) -> None:
+        RUNNER.TEMP_ROOT.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=RUNNER.TEMP_ROOT) as temporary:
+            fixture = self.write_fixture(Path(temporary))
+            report = fixture["report"]
+            assert isinstance(report, dict)
+            report["execution"]["case_results"].pop()
+            Path(fixture["report_path"]).write_text(
+                json.dumps(report, sort_keys=True) + "\n", encoding="utf-8"
+            )
+            partial_evidence = self.validate_fixture(fixture)
+
+        with tempfile.TemporaryDirectory(dir=RUNNER.TEMP_ROOT) as temporary:
+            fixture = self.write_fixture(Path(temporary))
+            report = fixture["report"]
+            assert isinstance(report, dict)
+            report["format"] = 1
+            report["schema"] = (
+                "crabc-mimalloc-canonical-upstream-stress-current-head-diagnostic-report"
+            )
+            Path(fixture["report_path"]).write_text(
+                json.dumps(report, sort_keys=True) + "\n", encoding="utf-8"
+            )
+            diagnostic_evidence = self.validate_fixture(fixture)
+
+        self.assertEqual(partial_evidence["status"], "rejected")
+        self.assertIn("partial matrix", partial_evidence["reason"])
+        self.assertEqual(diagnostic_evidence["status"], "rejected")
+        self.assertIn("schema", diagnostic_evidence["reason"])
+
+    def test_consumer_git_reads_disable_optional_locks(self) -> None:
+        revision = "a" * 40
+        completed = [
+            subprocess.CompletedProcess(
+                args=["git", "rev-parse", "--verify", "HEAD"],
+                returncode=0,
+                stdout=f"{revision}\n".encode(),
+                stderr=b"",
+            ),
+            subprocess.CompletedProcess(
+                args=["git", "status"], returncode=0, stdout=b"", stderr=b""
+            ),
+        ]
+        with mock.patch.dict(
+            RUNNER.os.environ,
+            {"HOME": "/attested/home", "PATH": "/attested/bin"},
+            clear=True,
+        ), mock.patch.object(
+            RUNNER.shutil, "which", return_value="/attested/bin/git"
+        ), mock.patch.object(RUNNER.subprocess, "run", side_effect=completed) as git_reads:
+            state = RUNNER.canonical_current_git_source_state(Path("/attested/root"))
+
+        self.assertEqual(state["revision"], revision)
+        self.assertTrue(state["worktree_clean"])
+        self.assertEqual(len(git_reads.call_args_list), 2)
+        for call in git_reads.call_args_list:
+            environment = call.kwargs["env"]
+            self.assertEqual(environment["GIT_OPTIONAL_LOCKS"], "0")
+            self.assertEqual(environment["HOME"], "/attested/home")
+            self.assertEqual(environment["PATH"], "/attested/bin")
 
 
 if __name__ == "__main__":

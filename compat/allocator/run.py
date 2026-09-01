@@ -144,6 +144,9 @@ X86_64_TLS_CODEGEN_REPORT = REPORT_ROOT / "tls-codegen-x86_64.json"
 PORT_MAP = ALLOCATOR_ROOT / "port-map.toml"
 RATCHET = ALLOCATOR_ROOT / "ratchet-v3.5.0.json"
 M5_GATE_CONTRACT = ALLOCATOR_ROOT / "m5-gate-v3.5.0.json"
+CANONICAL_UPSTREAM_STRESS_CONTRACT = ALLOCATOR_ROOT / "upstream-stress-v3.5.0.json"
+CANONICAL_UPSTREAM_STRESS_REPORT = REPORT_ROOT / "upstream-stress/latest.json"
+CANONICAL_UPSTREAM_STRESS_GIT_ENVIRONMENT = {"GIT_OPTIONAL_LOCKS": "0"}
 NATIVE_OWNER_EXIT_LIFECYCLE_CONTRACT = (
     ALLOCATOR_ROOT / "native-owner-exit-lifecycle-v3.5.0.json"
 )
@@ -160,6 +163,12 @@ M5_GATE_IDS = (
     "m5.5e",
 )
 M5_STATIC_BLOCKED_GATE_IDS = frozenset({"m5.5d", "m5.5e"})
+M5_5D_EVIDENCE = (
+    "runtime-ticket-zero:128-cycle-churn",
+    "native-post-exit-registry:high-water",
+    "source-derived:test-stress-single-creating-thread",
+    "canonical-upstream-stress:current-head-full-matrix",
+)
 
 # This is a source-order contract, not a claim that the incomplete Rust port
 # has completed generic owner exit.  Each name fixes the source fact to its
@@ -1484,6 +1493,10 @@ class MilestoneUnavailable(HarnessError):
     """A requested later milestone has no implementation yet."""
 
 
+class CanonicalUpstreamStressRejected(HarnessError):
+    """A canonical upstream-stress report cannot be consumed as M5 evidence."""
+
+
 def sha256_file(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as stream:
@@ -1545,6 +1558,1386 @@ def load_pin(path: Path = UPSTREAMS) -> dict[str, str]:
     if normalized["archive_root"] != "mimalloc-3.5.0":
         raise HarnessError("mimalloc.archive_root must be mimalloc-3.5.0")
     return normalized
+
+
+# The upstream-stress producer owns execution.  This runner only consumes its
+# one fixed, atomically-published full-matrix report.  Keep this validator here
+# rather than importing the producer: a full M5 run must not make a nested
+# upstream-stress invocation or silently acquire a second execution policy.
+CANONICAL_UPSTREAM_STRESS_ARTIFACT_IDS = (
+    "contract",
+    "upstream_archive",
+    "source_member",
+    "owned_sysroot_manifest",
+    "owned_sysroot_purity",
+    "owned_compiler",
+    "selected_loader",
+    "staged_canonical_loader",
+    "selected_libc",
+    "selected_static_libc",
+    "selected_backend_build_record",
+    "stress_binary",
+)
+CANONICAL_UPSTREAM_STRESS_WORKERS = (1, 2, 4, 8)
+
+
+def canonical_upstream_stress_exactly_matches(
+    observed: object, expected: object
+) -> bool:
+    """Compare JSON values without allowing bool/int or shape coercion."""
+
+    if type(observed) is not type(expected):
+        return False
+    if isinstance(expected, dict):
+        assert isinstance(observed, dict)
+        return set(observed) == set(expected) and all(
+            canonical_upstream_stress_exactly_matches(observed[key], expected[key])
+            for key in expected
+        )
+    if isinstance(expected, list):
+        assert isinstance(observed, list)
+        return len(observed) == len(expected) and all(
+            canonical_upstream_stress_exactly_matches(left, right)
+            for left, right in zip(observed, expected)
+        )
+    return observed == expected
+
+
+def canonical_upstream_stress_byte_record(
+    record: object, subject: str
+) -> bytes:
+    """Decode a producer byte record only after checking its self-attestation."""
+
+    if not isinstance(record, dict) or set(record) != {"bytes", "sha256", "hex"}:
+        raise CanonicalUpstreamStressRejected(
+            f"canonical upstream stress {subject} byte record is invalid"
+        )
+    if (
+        type(record.get("bytes")) is not int
+        or record["bytes"] < 0
+        or not isinstance(record.get("sha256"), str)
+        or re.fullmatch(r"[0-9a-f]{64}", record["sha256"]) is None
+        or not isinstance(record.get("hex"), str)
+    ):
+        raise CanonicalUpstreamStressRejected(
+            f"canonical upstream stress {subject} byte record is invalid"
+        )
+    try:
+        payload = bytes.fromhex(record["hex"])
+    except ValueError as error:
+        raise CanonicalUpstreamStressRejected(
+            f"canonical upstream stress {subject} byte record has invalid hex"
+        ) from error
+    if (
+        len(payload) != record["bytes"]
+        or hashlib.sha256(payload).hexdigest() != record["sha256"]
+    ):
+        raise CanonicalUpstreamStressRejected(
+            f"canonical upstream stress {subject} byte record drifted"
+        )
+    return payload
+
+
+def canonical_upstream_stress_relative_path(root: Path, path: Path) -> str:
+    """Render a producer-compatible artifact path without accepting escapes."""
+
+    resolved = path.resolve()
+    try:
+        return resolved.relative_to(root.resolve()).as_posix()
+    except ValueError:
+        return str(resolved)
+
+
+def canonical_upstream_stress_observed_file_record(
+    root: Path, path: Path, subject: str
+) -> dict[str, Any]:
+    """Read one live regular file twice enough to reject a changing artifact."""
+
+    try:
+        if not path.is_file() or path.is_symlink():
+            raise CanonicalUpstreamStressRejected(
+                f"canonical upstream stress {subject} is absent or not a regular file"
+            )
+        before = path.stat()
+        payload = path.read_bytes()
+        after = path.stat()
+    except OSError as error:
+        raise CanonicalUpstreamStressRejected(
+            f"canonical upstream stress cannot read {subject}"
+        ) from error
+    if (
+        before.st_size != len(payload)
+        or after.st_size != len(payload)
+        or before.st_mtime_ns != after.st_mtime_ns
+        or before.st_ino != after.st_ino
+    ):
+        raise CanonicalUpstreamStressRejected(
+            f"canonical upstream stress {subject} changed while being read"
+        )
+    return {
+        "bytes": len(payload),
+        "path": canonical_upstream_stress_relative_path(root, path),
+        "sha256": hashlib.sha256(payload).hexdigest(),
+    }
+
+
+def canonical_upstream_stress_live_file_record(
+    root: Path,
+    record: object,
+    subject: str,
+    *,
+    expected_path: Path | None = None,
+    allowed_external_path: Path | None = None,
+) -> dict[str, Any]:
+    """Require a report artifact to be a current, non-symlinked named file."""
+
+    if not isinstance(record, dict) or set(record) != {"bytes", "path", "sha256"}:
+        raise CanonicalUpstreamStressRejected(
+            f"canonical upstream stress {subject} file record is invalid"
+        )
+    raw_path = record.get("path")
+    if (
+        type(record.get("bytes")) is not int
+        or record["bytes"] < 0
+        or not isinstance(raw_path, str)
+        or not raw_path
+        or not isinstance(record.get("sha256"), str)
+        or re.fullmatch(r"[0-9a-f]{64}", record["sha256"]) is None
+    ):
+        raise CanonicalUpstreamStressRejected(
+            f"canonical upstream stress {subject} file record is invalid"
+        )
+    candidate = Path(raw_path)
+    if candidate.is_absolute():
+        if allowed_external_path is None or candidate.resolve() != allowed_external_path.resolve():
+            raise CanonicalUpstreamStressRejected(
+                f"canonical upstream stress {subject} escapes the canonical workspace"
+            )
+        path = candidate
+    else:
+        if any(part in {"", ".", ".."} for part in candidate.parts):
+            raise CanonicalUpstreamStressRejected(
+                f"canonical upstream stress {subject} has an unsafe relative path"
+            )
+        path = root / candidate
+        try:
+            path.resolve().relative_to(root.resolve())
+        except ValueError as error:
+            raise CanonicalUpstreamStressRejected(
+                f"canonical upstream stress {subject} escapes the canonical workspace"
+            ) from error
+    observed = canonical_upstream_stress_observed_file_record(root, path, subject)
+    if not canonical_upstream_stress_exactly_matches(record, observed):
+        raise CanonicalUpstreamStressRejected(
+            f"canonical upstream stress {subject} no longer matches its report artifact"
+        )
+    if expected_path is not None:
+        expected = canonical_upstream_stress_relative_path(root, expected_path)
+        if record["path"] != expected:
+            raise CanonicalUpstreamStressRejected(
+                f"canonical upstream stress {subject} has a noncanonical path"
+            )
+    return observed
+
+
+def canonical_upstream_stress_read_json(
+    root: Path, path: Path, subject: str
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Read a current JSON artifact and retain the file identity used to read it."""
+
+    record = canonical_upstream_stress_observed_file_record(root, path, subject)
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise CanonicalUpstreamStressRejected(
+            f"canonical upstream stress {subject} is not valid JSON"
+        ) from error
+    after = canonical_upstream_stress_observed_file_record(root, path, subject)
+    if not canonical_upstream_stress_exactly_matches(record, after):
+        raise CanonicalUpstreamStressRejected(
+            f"canonical upstream stress {subject} changed while being decoded"
+        )
+    if not isinstance(value, dict):
+        raise CanonicalUpstreamStressRejected(
+            f"canonical upstream stress {subject} is not a JSON object"
+        )
+    return value, record
+
+
+def canonical_current_git_source_state(root: Path) -> dict[str, Any]:
+    """Read the live source state without taking an optional Git index lock."""
+
+    git = shutil.which("git")
+    if git is None:
+        raise CanonicalUpstreamStressRejected(
+            "canonical upstream stress execution requires a clean Git source tree"
+        )
+    environment = dict(os.environ)
+    environment.update(CANONICAL_UPSTREAM_STRESS_GIT_ENVIRONMENT)
+    try:
+        revision = subprocess.run(
+            [git, "rev-parse", "--verify", "HEAD"],
+            cwd=root,
+            env=environment,
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=30,
+        )
+        status = subprocess.run(
+            [git, "status", "--porcelain=v1", "--untracked-files=all", "-z"],
+            cwd=root,
+            env=environment,
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=30,
+        )
+    except (OSError, subprocess.TimeoutExpired) as error:
+        raise CanonicalUpstreamStressRejected(
+            "canonical upstream stress execution cannot read its Git source state"
+        ) from error
+    if revision.returncode != 0 or status.returncode != 0:
+        raise CanonicalUpstreamStressRejected(
+            "canonical upstream stress execution requires an available Git source tree"
+        )
+    try:
+        revision_text = revision.stdout.decode("ascii", errors="strict").strip()
+    except UnicodeDecodeError as error:
+        raise CanonicalUpstreamStressRejected(
+            "canonical upstream stress execution has an invalid Git revision"
+        ) from error
+    if re.fullmatch(r"[0-9a-f]{40}", revision_text) is None:
+        raise CanonicalUpstreamStressRejected(
+            "canonical upstream stress execution has an invalid Git revision"
+        )
+    return {
+        "kind": "git",
+        "revision": revision_text,
+        "worktree_clean": status.stdout == b"",
+        "worktree_status": {
+            "bytes": len(status.stdout),
+            "hex": status.stdout.hex(),
+            "sha256": hashlib.sha256(status.stdout).hexdigest(),
+        },
+    }
+
+
+def canonical_upstream_stress_clean_git_source(
+    state: object, subject: str
+) -> dict[str, Any]:
+    """Validate the producer's clean-Git current-head schema exactly."""
+
+    if not isinstance(state, dict) or set(state) != {
+        "kind",
+        "revision",
+        "worktree_clean",
+        "worktree_status",
+    }:
+        raise CanonicalUpstreamStressRejected(
+            f"canonical upstream stress {subject} source state is invalid"
+        )
+    if (
+        state.get("kind") != "git"
+        or not isinstance(state.get("revision"), str)
+        or re.fullmatch(r"[0-9a-f]{40}", state["revision"]) is None
+        or type(state.get("worktree_clean")) is not bool
+    ):
+        raise CanonicalUpstreamStressRejected(
+            f"canonical upstream stress {subject} source state is invalid"
+        )
+    worktree_status = canonical_upstream_stress_byte_record(
+        state.get("worktree_status"), f"{subject} worktree status"
+    )
+    if state["worktree_clean"] != (worktree_status == b""):
+        raise CanonicalUpstreamStressRejected(
+            f"canonical upstream stress {subject} source cleanliness is contradictory"
+        )
+    if not state["worktree_clean"]:
+        raise CanonicalUpstreamStressRejected(
+            f"canonical upstream stress {subject} requires a clean Git source tree"
+        )
+    return dict(state)
+
+
+def canonical_upstream_stress_expected_matrix() -> list[dict[str, Any]]:
+    """Fix the producer's complete source schedule in this M5 consumer too."""
+
+    matrix: list[dict[str, Any]] = []
+    for scale, iterations in ((1, 1), (2, 2)):
+        for workers in CANONICAL_UPSTREAM_STRESS_WORKERS:
+            matrix.append(
+                {
+                    "id": f"workers-{workers}-scale-{scale}-iterations-{iterations}",
+                    "workers": workers,
+                    "scale": scale,
+                    "iterations": iterations,
+                    "arguments": [str(workers), str(scale), str(iterations)],
+                    "expected_stdout": (
+                        f"Using {workers} threads with a {scale}% load-per-thread and "
+                        f"{iterations} iterations\n"
+                    ),
+                    "expected_stderr": "",
+                    "expected_exit_status": 0,
+                }
+            )
+    return matrix
+
+
+def validate_canonical_upstream_stress_contract(
+    contract: Mapping[str, Any], pin: Mapping[str, str]
+) -> dict[str, Any]:
+    """Validate only the fixed producer boundary that M5 may consume."""
+
+    if not isinstance(contract, dict) or set(contract) != {
+        "format",
+        "schema",
+        "scope",
+        "upstream",
+        "target_inventory",
+        "backend_inventory",
+        "fixture",
+        "source_adaptation",
+        "execution",
+        "capability",
+        "report",
+        "compile_requirements",
+    }:
+        raise CanonicalUpstreamStressRejected(
+            "canonical upstream stress contract schema drifted"
+        )
+    if (
+        contract.get("format") != 5
+        or contract.get("schema") != "crabc-mimalloc-canonical-upstream-stress"
+    ):
+        raise CanonicalUpstreamStressRejected(
+            "canonical upstream stress contract schema drifted"
+        )
+    expected_upstream = {
+        "project": "microsoft/mimalloc",
+        "version": pin["version"],
+        "tag": pin["tag"],
+        "tag_object": pin["tag_object"],
+        "revision": pin["revision"],
+        "repository": pin["repository"],
+        "archive_source": pin["source"],
+        "archive_path": ".work/allocator-cache/mimalloc-3.5.0.tar.gz",
+        "archive_root": pin["archive_root"],
+        "archive_sha256": pin["sha256"],
+    }
+    if not canonical_upstream_stress_exactly_matches(
+        contract.get("upstream"), expected_upstream
+    ):
+        raise CanonicalUpstreamStressRejected(
+            "canonical upstream stress contract pin drifted"
+        )
+    target = {
+        "id": "linux-aarch64-little-endian",
+        "architecture": "aarch64",
+        "byte_order": "little",
+        "execution": "native-only",
+        "kernel_baseline": "5.10",
+        "status": "applicable",
+        "system": "Linux",
+    }
+    if not canonical_upstream_stress_exactly_matches(
+        contract.get("target_inventory"),
+        {"selected": target["id"], "targets": [target]},
+    ):
+        raise CanonicalUpstreamStressRejected(
+            "canonical upstream stress contract target inventory drifted"
+        )
+    backend_inventory = contract.get("backend_inventory")
+    if not isinstance(backend_inventory, dict):
+        raise CanonicalUpstreamStressRejected(
+            "canonical upstream stress contract backend inventory is invalid"
+        )
+    backend_id = "crabc-libc-native-mimalloc-shadow"
+    backends = backend_inventory.get("backends")
+    if (
+        backend_inventory.get("selected") != backend_id
+        or not isinstance(backends, list)
+        or len(backends) != 1
+        or not isinstance(backends[0], dict)
+    ):
+        raise CanonicalUpstreamStressRejected(
+            "canonical upstream stress contract backend inventory drifted"
+        )
+    backend = backends[0]
+    if (
+        backend.get("id") != backend_id
+        or backend.get("target") != target["id"]
+        or backend.get("status") != "applicable-nondefault"
+        or backend.get("allocator_feature") != "native-mimalloc-shadow"
+        or backend.get("c_backend_fallback") is not False
+    ):
+        raise CanonicalUpstreamStressRejected(
+            "canonical upstream stress contract backend selection drifted"
+        )
+    attestation = backend.get("artifact_attestation")
+    if not isinstance(attestation, dict) or set(attestation) != {
+        "cargo_compiler_artifact",
+        "exported_free_route",
+    }:
+        raise CanonicalUpstreamStressRejected(
+            "canonical upstream stress contract backend attestation drifted"
+        )
+    cargo = attestation["cargo_compiler_artifact"]
+    expected_cargo = {
+        "build_record_format": 1,
+        "build_record_schema": "crabc-selected-libc-cargo-build",
+        "cargo_command": [
+            "cargo",
+            "build",
+            "--locked",
+            "-p",
+            "crabc-libc",
+            "--features",
+            "native-mimalloc-shadow",
+            "--profile",
+            "dev",
+            "--message-format=json-render-diagnostics",
+        ],
+        "package_id_suffix": "#crabc-libc@0.3.0",
+        "manifest_path": "libc/Cargo.toml",
+        "target": {
+            "kind": ["cdylib", "staticlib"],
+            "crate_types": ["cdylib", "staticlib"],
+            "name": "c",
+            "src_path": "libc/src/lib.rs",
+            "edition": "2021",
+            "doc": True,
+            "doctest": False,
+            "test": False,
+        },
+        "semantic_profile": "dev",
+        "profile": {
+            "opt_level": "2",
+            "debuginfo": 2,
+            "debug_assertions": True,
+            "overflow_checks": False,
+            "test": False,
+        },
+        "exact_features": ["default", "native-mimalloc-shadow"],
+        "artifacts": {
+            "selected_shared_libc": "libc.so",
+            "selected_static_libc": "libc.a",
+        },
+    }
+    if not canonical_upstream_stress_exactly_matches(cargo, expected_cargo):
+        raise CanonicalUpstreamStressRejected(
+            "canonical upstream stress contract Cargo attestation drifted"
+        )
+    expected_route = {
+        "symbol": "free",
+        "required_callee_suffix": "native_free>",
+        "forbidden_callee_suffix": "mi_free>",
+    }
+    if not canonical_upstream_stress_exactly_matches(
+        attestation["exported_free_route"], expected_route
+    ):
+        raise CanonicalUpstreamStressRejected(
+            "canonical upstream stress contract free-route attestation drifted"
+        )
+    fixture = contract.get("fixture")
+    if (
+        not isinstance(fixture, dict)
+        or fixture.get("archive_member") != "test/test-stress.c"
+        or fixture.get("sha256")
+        != "e2bed5f2be12239b1fa696dafffda384d19140cb50a6ee2f6e096f70934d73df"
+    ):
+        raise CanonicalUpstreamStressRejected(
+            "canonical upstream stress contract fixture drifted"
+        )
+    adaptation = contract.get("source_adaptation")
+    if (
+        not isinstance(adaptation, dict)
+        or adaptation.get("kind") != "upstream-preprocessor-symbol-selection-only"
+        or adaptation.get("compile_defines") != ["USE_STD_MALLOC"]
+        or adaptation.get("patches") != []
+    ):
+        raise CanonicalUpstreamStressRejected(
+            "canonical upstream stress contract source adaptation drifted"
+        )
+    execution = contract.get("execution")
+    if not isinstance(execution, dict) or not canonical_upstream_stress_exactly_matches(
+        execution.get("matrix"), canonical_upstream_stress_expected_matrix()
+    ):
+        raise CanonicalUpstreamStressRejected(
+            "canonical upstream stress contract matrix drifted"
+        )
+    if (
+        execution.get("process_attempts_per_case") != 1
+        or execution.get("stop_after_first_nonpass") is not True
+        or not isinstance(execution.get("source_randomness"), dict)
+        or not isinstance(execution.get("watchdog"), dict)
+        or execution["watchdog"].get("seconds") != 30
+        or execution["watchdog"].get("process_retries") != 0
+        or not isinstance(execution.get("large_object_mode"), dict)
+        or execution["large_object_mode"].get("status") != "not-claimed"
+        or not isinstance(execution["large_object_mode"].get("reason"), str)
+        or not execution["large_object_mode"]["reason"]
+    ):
+        raise CanonicalUpstreamStressRejected(
+            "canonical upstream stress contract execution policy drifted"
+        )
+    capability = contract.get("capability")
+    if (
+        not isinstance(capability, dict)
+        or capability.get("id") != "canonical-unmodified-upstream-pthread-stress"
+        or capability.get("evidence_scope") != "shadow_subset"
+        or capability.get("blocked_is_failure_closed") is not True
+        or capability.get("required_worker_counts") != list(CANONICAL_UPSTREAM_STRESS_WORKERS)
+    ):
+        raise CanonicalUpstreamStressRejected(
+            "canonical upstream stress contract capability policy drifted"
+        )
+    report_contract = contract.get("report")
+    expected_current_head = {
+        "build_record_format": 1,
+        "build_record_schema": "crabc-selected-libc-current-head-build",
+        "required_before_stress_compile": True,
+        "git_read_environment": dict(CANONICAL_UPSTREAM_STRESS_GIT_ENVIRONMENT),
+        "capture_source": {
+            "kind": "git",
+            "worktree_clean": True,
+            "unchanged_during_selected_libc_build": True,
+        },
+        "execution_source": {
+            "kind": "git",
+            "worktree_clean": True,
+            "matches_selected_libc_build": True,
+        },
+        "report_fields": ["status", "record", "source"],
+        "status_values": ["not-attested", "attested"],
+    }
+    if (
+        not isinstance(report_contract, dict)
+        or report_contract.get("format") != 5
+        or report_contract.get("schema")
+        != "crabc-mimalloc-canonical-upstream-stress-report"
+        or report_contract.get("path")
+        != ".work/reports/allocator/upstream-stress/latest.json"
+        or report_contract.get("atomic_publish") is not True
+        or report_contract.get("artifact_ids")
+        != list(CANONICAL_UPSTREAM_STRESS_ARTIFACT_IDS)
+        or not canonical_upstream_stress_exactly_matches(
+            report_contract.get("current_head"), expected_current_head
+        )
+    ):
+        raise CanonicalUpstreamStressRejected(
+            "canonical upstream stress contract report policy drifted"
+        )
+    requirements = contract.get("compile_requirements")
+    expected_sysroot_purity = {
+        "required_crt_sysroot_pure_rust": True,
+        "allowed_full_runtime_purity": [
+            {
+                "full_runtime_pure_rust": True,
+                "full_runtime_purity_status": "passed",
+            },
+            {
+                "full_runtime_pure_rust": False,
+                "full_runtime_purity_status": "blocked_by_native_allocator",
+            },
+        ],
+        "reason": (
+            "The installed driver and CRT/sysroot boundary must pass their owned purity "
+            "audit. The separately recorded native-allocator blocker is only accepted "
+            "in its exact documented form because this lane dynamically selects the "
+            "native-mimalloc-shadow libc after the owned sysroot is built."
+        ),
+    }
+    if (
+        not isinstance(requirements, dict)
+        or requirements.get("allocator_feature") != "native-mimalloc-shadow"
+        or requirements.get("selected_runtime_directory") != "target/debug"
+        or requirements.get("selected_libc_build_record")
+        != ".work/target/compat/allocator/upstream-stress/selected-libc-build.json"
+        or requirements.get("isolated_output_directory")
+        != ".work/target/compat/allocator/upstream-stress"
+        or requirements.get("expected_dynamic_dependencies") != ["libc.so"]
+        or requirements.get("expected_interpreter") != "/lib/ld-crabc-aarch64.so.1"
+        or requirements.get("canonical_loader") != "/lib/ld-crabc-aarch64.so.1"
+        or requirements.get("canonical_loader") != requirements.get("expected_interpreter")
+        or requirements.get("expected_elf_identity")
+        != {"class": "ELF64", "endianness": "little", "machine": "AArch64"}
+        or not canonical_upstream_stress_exactly_matches(
+            requirements.get("sysroot_purity"), expected_sysroot_purity
+        )
+    ):
+        raise CanonicalUpstreamStressRejected(
+            "canonical upstream stress contract canonical loader or sysroot purity policy drifted"
+        )
+    return {
+        "backend": backend,
+        "backend_id": backend_id,
+        "cargo": expected_cargo,
+        "fixture": fixture,
+        "matrix": canonical_upstream_stress_expected_matrix(),
+        "target": target,
+        "requirements": requirements,
+        "report": report_contract,
+        "execution": execution,
+    }
+
+
+def canonical_upstream_stress_canonical_loader_path(
+    requirements: Mapping[str, Any],
+) -> Path:
+    """Return the contract-pinned staged loader after static validation."""
+
+    value = requirements["canonical_loader"]
+    assert isinstance(value, str)
+    return Path(value)
+
+
+def canonical_upstream_stress_normalized_cargo_artifact(
+    artifact: object, root: Path, cargo: Mapping[str, Any]
+) -> dict[str, Any]:
+    """Check the raw Cargo message before comparing its normalized report form."""
+
+    expected_fields = {
+        "reason",
+        "package_id",
+        "manifest_path",
+        "target",
+        "profile",
+        "features",
+        "filenames",
+        "executable",
+        "fresh",
+    }
+    if not isinstance(artifact, dict) or set(artifact) != expected_fields:
+        raise CanonicalUpstreamStressRejected(
+            "canonical upstream stress selected libc Cargo artifact schema drifted"
+        )
+    package_id = artifact.get("package_id")
+    if (
+        artifact.get("reason") != "compiler-artifact"
+        or not isinstance(package_id, str)
+        or not package_id.endswith(str(cargo["package_id_suffix"]))
+        or Path(str(artifact.get("manifest_path"))).resolve()
+        != (root / str(cargo["manifest_path"])).resolve()
+        or artifact.get("profile") != cargo["profile"]
+        or artifact.get("executable") is not None
+        or type(artifact.get("fresh")) is not bool
+    ):
+        raise CanonicalUpstreamStressRejected(
+            "canonical upstream stress selected libc Cargo artifact drifted"
+        )
+    raw_target = artifact.get("target")
+    if not isinstance(raw_target, dict):
+        raise CanonicalUpstreamStressRejected(
+            "canonical upstream stress selected libc Cargo target is invalid"
+        )
+    normalized_target = dict(raw_target)
+    source_path = normalized_target.get("src_path")
+    if (
+        not isinstance(source_path, str)
+        or Path(source_path).resolve() != (root / "libc/src/lib.rs").resolve()
+    ):
+        raise CanonicalUpstreamStressRejected(
+            "canonical upstream stress selected libc Cargo source path drifted"
+        )
+    normalized_target["src_path"] = "libc/src/lib.rs"
+    if not canonical_upstream_stress_exactly_matches(
+        normalized_target, cargo["target"]
+    ):
+        raise CanonicalUpstreamStressRejected(
+            "canonical upstream stress selected libc Cargo target drifted"
+        )
+    features = artifact.get("features")
+    if (
+        not isinstance(features, list)
+        or not all(isinstance(feature, str) and feature for feature in features)
+        or len(features) != len(set(features))
+        or sorted(features) != sorted(cargo["exact_features"])
+    ):
+        raise CanonicalUpstreamStressRejected(
+            "canonical upstream stress selected libc Cargo features drifted"
+        )
+    filenames = artifact.get("filenames")
+    expected_filenames = [
+        (root / "target/debug" / cargo["artifacts"]["selected_shared_libc"]).resolve(),
+        (root / "target/debug" / cargo["artifacts"]["selected_static_libc"]).resolve(),
+    ]
+    if (
+        not isinstance(filenames, list)
+        or [Path(str(name)).resolve() for name in filenames] != expected_filenames
+    ):
+        raise CanonicalUpstreamStressRejected(
+            "canonical upstream stress selected libc Cargo output paths drifted"
+        )
+    return {
+        "package_id": package_id,
+        "target": normalized_target,
+        "profile": dict(cargo["profile"]),
+        "features": list(features),
+        "filenames": [
+            "target/debug/libc.so",
+            "target/debug/libc.a",
+        ],
+        "fresh": artifact["fresh"],
+    }
+
+
+def canonical_upstream_stress_validate_build_record(
+    root: Path,
+    record: Mapping[str, Any],
+    cargo: Mapping[str, Any],
+    shared: Mapping[str, Any],
+    static: Mapping[str, Any],
+    output: Path,
+) -> dict[str, Any]:
+    """Bind live selected libc outputs to the current Cargo record."""
+
+    path = output / "selected-libc-build.json"
+    observed_record = canonical_upstream_stress_live_file_record(
+        root, record, "selected libc build record", expected_path=path
+    )
+    payload, parsed_record = canonical_upstream_stress_read_json(
+        root, path, "selected libc build record"
+    )
+    if not canonical_upstream_stress_exactly_matches(parsed_record, observed_record):
+        raise CanonicalUpstreamStressRejected(
+            "canonical upstream stress selected libc build record changed while being read"
+        )
+    if not isinstance(payload, dict) or set(payload) != {
+        "format",
+        "schema",
+        "cargo_command",
+        "semantic_profile",
+        "compiler_artifact",
+        "artifacts",
+    }:
+        raise CanonicalUpstreamStressRejected(
+            "canonical upstream stress selected libc build record schema drifted"
+        )
+    if (
+        payload.get("format") != cargo["build_record_format"]
+        or payload.get("schema") != cargo["build_record_schema"]
+        or not canonical_upstream_stress_exactly_matches(
+            payload.get("cargo_command"), cargo["cargo_command"]
+        )
+        or payload.get("semantic_profile") != cargo["semantic_profile"]
+    ):
+        raise CanonicalUpstreamStressRejected(
+            "canonical upstream stress selected libc build record contract drifted"
+        )
+    normalized = canonical_upstream_stress_normalized_cargo_artifact(
+        payload.get("compiler_artifact"), root, cargo
+    )
+    artifacts = payload.get("artifacts")
+    expected_artifacts = {
+        "selected_shared_libc": dict(shared),
+        "selected_static_libc": dict(static),
+    }
+    if not canonical_upstream_stress_exactly_matches(artifacts, expected_artifacts):
+        raise CanonicalUpstreamStressRejected(
+            "canonical upstream stress selected libc build record artifacts drifted"
+        )
+    return {
+        "record": observed_record,
+        "normalized_artifact": normalized,
+        "artifacts": expected_artifacts,
+    }
+
+
+def canonical_upstream_stress_archive_source_member(
+    root: Path,
+    archive: Path,
+    pin: Mapping[str, str],
+    fixture: Mapping[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Re-read the pinned archive and its exact source member from live bytes.
+
+    The report's archive and source-member records are only claims until this
+    consumer independently checks the archive against the pinned digest and
+    extracts the exact member named by the fixed contract.  Do not accept a
+    report that merely relabels another in-worktree tarball or source file.
+    """
+
+    archive_record = canonical_upstream_stress_observed_file_record(
+        root, archive, "upstream archive"
+    )
+    if archive_record["sha256"] != pin["sha256"]:
+        raise CanonicalUpstreamStressRejected(
+            "canonical upstream stress live upstream archive does not match the pinned digest"
+        )
+    member_path = f"{pin['archive_root']}/{fixture['archive_member']}"
+    try:
+        with tarfile.open(archive, mode="r:gz") as stream:
+            members = [member for member in stream.getmembers() if member.name == member_path]
+            if len(members) != 1 or not members[0].isfile():
+                raise CanonicalUpstreamStressRejected(
+                    "canonical upstream stress pinned archive has no unique regular test-stress.c member"
+                )
+            extracted = stream.extractfile(members[0])
+            if extracted is None:
+                raise CanonicalUpstreamStressRejected(
+                    "canonical upstream stress cannot extract pinned test-stress.c"
+                )
+            with extracted:
+                payload = extracted.read()
+    except (OSError, tarfile.TarError) as error:
+        raise CanonicalUpstreamStressRejected(
+            "canonical upstream stress cannot read the pinned upstream archive"
+        ) from error
+    after = canonical_upstream_stress_observed_file_record(
+        root, archive, "upstream archive"
+    )
+    if not canonical_upstream_stress_exactly_matches(archive_record, after):
+        raise CanonicalUpstreamStressRejected(
+            "canonical upstream stress upstream archive changed while its source member was read"
+        )
+    member_record = {
+        "bytes": len(payload),
+        "path": member_path,
+        "sha256": hashlib.sha256(payload).hexdigest(),
+    }
+    if (
+        not payload
+        or member_record["sha256"] != fixture["sha256"]
+    ):
+        raise CanonicalUpstreamStressRejected(
+            "canonical upstream stress pinned test-stress.c member does not match its fixture digest"
+        )
+    return archive_record, member_record
+
+
+def canonical_upstream_stress_validate_report(
+    report: Mapping[str, Any],
+    *,
+    root: Path,
+    work_root: Path,
+    contract: Mapping[str, Any],
+    contract_record: Mapping[str, Any],
+    summary: Mapping[str, Any],
+    pin: Mapping[str, str],
+) -> dict[str, Any]:
+    """Reject every partial, stale, or unbound canonical report shape."""
+
+    report_contract = summary["report"]
+    requirements = summary["requirements"]
+    matrix = summary["matrix"]
+    backend_id = summary["backend_id"]
+    cargo = summary["cargo"]
+    output = work_root / "target/compat/allocator/upstream-stress"
+    if (
+        report.get("format") != report_contract["format"]
+        or report.get("schema") != report_contract["schema"]
+        or report.get("status") != "passed"
+    ):
+        raise CanonicalUpstreamStressRejected(
+            "canonical upstream stress report schema or passed status is invalid"
+        )
+    expected_contract_record = {**dict(contract_record), "upstream": dict(contract["upstream"])}
+    if not canonical_upstream_stress_exactly_matches(
+        report.get("contract"), expected_contract_record
+    ):
+        raise CanonicalUpstreamStressRejected(
+            "canonical upstream stress report contract binding drifted"
+        )
+    expected_pin = {
+        "archive_root": pin["archive_root"],
+        "repository": pin["repository"],
+        "revision": pin["revision"],
+        "sha256": pin["sha256"],
+        "source": pin["source"],
+        "tag": pin["tag"],
+        "tag_object": pin["tag_object"],
+        "version": pin["version"],
+    }
+    if not canonical_upstream_stress_exactly_matches(report.get("upstream_pin"), expected_pin):
+        raise CanonicalUpstreamStressRejected(
+            "canonical upstream stress report pin binding drifted"
+        )
+    expected_runtime = {
+        "allocator_feature": requirements["allocator_feature"],
+        "backend": backend_id,
+        "target_dir": "target/debug",
+        "output_dir": canonical_upstream_stress_relative_path(root, output),
+        "selected_libc_build_record": canonical_upstream_stress_relative_path(
+            root, output / "selected-libc-build.json"
+        ),
+        "current_head_build_record": canonical_upstream_stress_relative_path(
+            root, output / "selected-libc-build-current-head.json"
+        ),
+    }
+    if not canonical_upstream_stress_exactly_matches(
+        report.get("requested_runtime"), expected_runtime
+    ):
+        raise CanonicalUpstreamStressRejected(
+            "canonical upstream stress report runtime selection drifted"
+        )
+    if not canonical_upstream_stress_exactly_matches(
+        report.get("selection"), {"target": summary["target"], "backend": backend_id}
+    ):
+        raise CanonicalUpstreamStressRejected(
+            "canonical upstream stress report target/backend selection drifted"
+        )
+    artifacts = report.get("artifacts")
+    if not isinstance(artifacts, dict) or set(artifacts) != set(
+        CANONICAL_UPSTREAM_STRESS_ARTIFACT_IDS
+    ):
+        raise CanonicalUpstreamStressRejected(
+            "canonical upstream stress report artifact inventory drifted"
+        )
+    if not canonical_upstream_stress_exactly_matches(artifacts["contract"], contract_record):
+        raise CanonicalUpstreamStressRejected(
+            "canonical upstream stress report contract artifact drifted"
+        )
+    runtime = report.get("runtime")
+    if not isinstance(runtime, dict) or not isinstance(
+        runtime.get("backend_attestation"), dict
+    ):
+        raise CanonicalUpstreamStressRejected(
+            "canonical upstream stress report backend attestation is absent"
+        )
+    sysroot = root / "target/crabc-sysroot"
+    canonical_loader = canonical_upstream_stress_canonical_loader_path(requirements)
+    if (
+        runtime.get("sysroot") != canonical_upstream_stress_relative_path(root, sysroot)
+        or runtime.get("compiler")
+        != canonical_upstream_stress_relative_path(root, sysroot / "bin/crabc-cc")
+    ):
+        raise CanonicalUpstreamStressRejected(
+            "canonical upstream stress report runtime sysroot selection drifted"
+        )
+    expected_paths = {
+        "upstream_archive": work_root / "allocator-cache/mimalloc-3.5.0.tar.gz",
+        "owned_sysroot_manifest": sysroot / "share/crabc/manifest.json",
+        "owned_sysroot_purity": sysroot / "share/crabc/purity.json",
+        "owned_compiler": sysroot / "bin/crabc-cc",
+        "selected_loader": root / "target/debug/libldso.so",
+        "staged_canonical_loader": canonical_loader,
+        "selected_libc": root / "target/debug/libc.so",
+        "selected_static_libc": root / "target/debug/libc.a",
+        "selected_backend_build_record": output / "selected-libc-build.json",
+        "stress_binary": output / "canonical-upstream-test-stress",
+    }
+    names = {
+        "upstream_archive": "upstream archive",
+        "owned_sysroot_manifest": "owned sysroot manifest",
+        "owned_sysroot_purity": "owned sysroot purity",
+        "owned_compiler": "owned compiler",
+        "selected_loader": "selected loader",
+        "staged_canonical_loader": "staged canonical loader",
+        "selected_libc": "selected shared libc",
+        "selected_static_libc": "selected static libc",
+        "selected_backend_build_record": "selected libc build record",
+        "stress_binary": "stress binary",
+    }
+    live_artifacts: dict[str, dict[str, Any]] = {"contract": dict(contract_record)}
+    for artifact_id, name in names.items():
+        live_artifacts[artifact_id] = canonical_upstream_stress_live_file_record(
+            root,
+            artifacts[artifact_id],
+            name,
+            expected_path=expected_paths.get(artifact_id),
+            allowed_external_path=(
+                canonical_loader
+                if artifact_id == "staged_canonical_loader"
+                else None
+            ),
+        )
+    archive_record, source_member = canonical_upstream_stress_archive_source_member(
+        root,
+        expected_paths["upstream_archive"],
+        pin,
+        summary["fixture"],
+    )
+    if not canonical_upstream_stress_exactly_matches(
+        live_artifacts["upstream_archive"], archive_record
+    ):
+        raise CanonicalUpstreamStressRejected(
+            "canonical upstream stress upstream archive changed while its source member was read"
+        )
+    if not canonical_upstream_stress_exactly_matches(
+        artifacts["source_member"], source_member
+    ):
+        raise CanonicalUpstreamStressRejected(
+            "canonical upstream stress report source-member attestation drifted"
+        )
+    live_artifacts["source_member"] = source_member
+    if (
+        live_artifacts["selected_loader"]["bytes"]
+        != live_artifacts["staged_canonical_loader"]["bytes"]
+        or live_artifacts["selected_loader"]["sha256"]
+        != live_artifacts["staged_canonical_loader"]["sha256"]
+    ):
+        raise CanonicalUpstreamStressRejected(
+            "canonical upstream stress staged loader does not match the selected loader"
+        )
+    purity, purity_record = canonical_upstream_stress_read_json(
+        root, expected_paths["owned_sysroot_purity"], "owned sysroot purity"
+    )
+    if not canonical_upstream_stress_exactly_matches(
+        live_artifacts["owned_sysroot_purity"], purity_record
+    ):
+        raise CanonicalUpstreamStressRejected(
+            "canonical upstream stress owned sysroot purity changed while being read"
+        )
+    purity_requirement = requirements.get("sysroot_purity")
+    if not isinstance(purity_requirement, dict):
+        raise CanonicalUpstreamStressRejected(
+            "canonical upstream stress contract lacks owned sysroot purity requirements"
+        )
+    runtime_purity = {
+        "crt_sysroot_pure_rust": purity.get("crt_sysroot_pure_rust"),
+        "full_runtime_pure_rust": purity.get("full_runtime_pure_rust"),
+        "full_runtime_purity_status": purity.get("full_runtime_purity_status"),
+    }
+    allowed_purity = purity_requirement.get("allowed_full_runtime_purity")
+    if (
+        runtime_purity["crt_sysroot_pure_rust"]
+        is not purity_requirement.get("required_crt_sysroot_pure_rust")
+        or not isinstance(allowed_purity, list)
+        or not any(
+            canonical_upstream_stress_exactly_matches(
+                {
+                    "full_runtime_pure_rust": runtime_purity["full_runtime_pure_rust"],
+                    "full_runtime_purity_status": runtime_purity[
+                        "full_runtime_purity_status"
+                    ],
+                },
+                candidate,
+            )
+            for candidate in allowed_purity
+        )
+        or not canonical_upstream_stress_exactly_matches(
+            runtime.get("sysroot_purity"), runtime_purity
+        )
+    ):
+        raise CanonicalUpstreamStressRejected(
+            "canonical upstream stress owned sysroot purity binding drifted"
+        )
+    shared = live_artifacts["selected_libc"]
+    static = live_artifacts["selected_static_libc"]
+    build = canonical_upstream_stress_validate_build_record(
+        root,
+        live_artifacts["selected_backend_build_record"],
+        cargo,
+        shared,
+        static,
+        output,
+    )
+    backend_attestation = runtime["backend_attestation"]
+    expected_backend_fields = {
+        "backend",
+        "build_record",
+        "semantic_profile",
+        "cargo_features",
+        "compiler_artifact",
+        "artifacts",
+        "exported_free",
+        "status",
+    }
+    if set(backend_attestation) != expected_backend_fields or (
+        backend_attestation.get("backend") != backend_id
+        or backend_attestation.get("status") != "passed"
+        or backend_attestation.get("semantic_profile") != cargo["semantic_profile"]
+        or not canonical_upstream_stress_exactly_matches(
+            backend_attestation.get("build_record"), build["record"]
+        )
+        or not canonical_upstream_stress_exactly_matches(
+            backend_attestation.get("cargo_features"), build["normalized_artifact"]["features"]
+        )
+        or not canonical_upstream_stress_exactly_matches(
+            backend_attestation.get("compiler_artifact"), build["normalized_artifact"]
+        )
+        or not canonical_upstream_stress_exactly_matches(
+            backend_attestation.get("artifacts"), build["artifacts"]
+        )
+    ):
+        raise CanonicalUpstreamStressRejected(
+            "canonical upstream stress report backend attestation drifted"
+        )
+    route = backend_attestation.get("exported_free")
+    expected_route = summary["backend"]["artifact_attestation"]["exported_free_route"]
+    if (
+        not isinstance(route, dict)
+        or set(route) != {
+            "symbol",
+            "required_callee_suffix",
+            "forbidden_callee_suffix",
+            "disassembly_sha256",
+        }
+        or route.get("symbol") != expected_route["symbol"]
+        or route.get("required_callee_suffix")
+        != expected_route["required_callee_suffix"]
+        or route.get("forbidden_callee_suffix")
+        != expected_route["forbidden_callee_suffix"]
+        or not isinstance(route.get("disassembly_sha256"), str)
+        or re.fullmatch(r"[0-9a-f]{64}", route["disassembly_sha256"]) is None
+    ):
+        raise CanonicalUpstreamStressRejected(
+            "canonical upstream stress report free-route attestation drifted"
+        )
+    fixture = report.get("fixture")
+    if (
+        not isinstance(fixture, dict)
+        or fixture.get("archive_member") != summary["fixture"]["archive_member"]
+        or fixture.get("expected_sha256") != summary["fixture"]["sha256"]
+        or not canonical_upstream_stress_exactly_matches(
+            fixture.get("source_adaptation"),
+            {
+                "compile_defines": ["USE_STD_MALLOC"],
+                "patches": [],
+            },
+        )
+        or not canonical_upstream_stress_exactly_matches(
+            fixture.get("observed_source"), source_member
+        )
+    ):
+        raise CanonicalUpstreamStressRejected(
+            "canonical upstream stress report source adaptation binding drifted"
+        )
+    execution = report.get("execution")
+    if (
+        not isinstance(execution, dict)
+        or execution.get("attempted") is not True
+        or execution.get("attempted_process_count") != len(matrix)
+        or execution.get("case_count") != len(matrix)
+        or execution.get("process_attempts_per_case") != 1
+        or not canonical_upstream_stress_exactly_matches(
+            execution.get("source_randomness"), summary["execution"]["source_randomness"]
+        )
+        or not canonical_upstream_stress_exactly_matches(
+            execution.get("watchdog"), summary["execution"]["watchdog"]
+        )
+    ):
+        raise CanonicalUpstreamStressRejected(
+            "canonical upstream stress report execution policy drifted"
+        )
+    results = execution.get("case_results")
+    if not isinstance(results, list) or len(results) != len(matrix):
+        raise CanonicalUpstreamStressRejected(
+            "canonical upstream stress report has a partial matrix"
+        )
+    binary = output / "canonical-upstream-test-stress"
+    for attempt, (result, case) in enumerate(zip(results, matrix), start=1):
+        inventory = {
+            field: case[field]
+            for field in ("id", "workers", "scale", "iterations", "arguments")
+        }
+        if not isinstance(result, dict) or set(result) != {
+            "case",
+            "process_attempt",
+            "state",
+            "observation",
+        }:
+            raise CanonicalUpstreamStressRejected(
+                "canonical upstream stress report matrix result schema drifted"
+            )
+        observation = result.get("observation")
+        if (
+            not canonical_upstream_stress_exactly_matches(result.get("case"), inventory)
+            or result.get("process_attempt") != attempt
+            or result.get("state") != "passed"
+            or not isinstance(observation, dict)
+            or set(observation) != {"command", "kind", "status", "stdout", "stderr"}
+            or observation.get("command") != [str(binary), *case["arguments"]]
+            or observation.get("kind") != "process"
+            or observation.get("status") != case["expected_exit_status"]
+            or canonical_upstream_stress_byte_record(
+                observation.get("stdout"), f"matrix case {case['id']} stdout"
+            )
+            != case["expected_stdout"].encode()
+            or canonical_upstream_stress_byte_record(
+                observation.get("stderr"), f"matrix case {case['id']} stderr"
+            )
+            != case["expected_stderr"].encode()
+        ):
+            raise CanonicalUpstreamStressRejected(
+                "canonical upstream stress report matrix result drifted"
+            )
+    expected_capability = {
+        "id": "canonical-unmodified-upstream-pthread-stress",
+        "status": "passed",
+        "failure_closed": True,
+        "native_execution_started": True,
+        "native_execution_completed": True,
+        "passed_case_count": len(matrix),
+        "required_case_count": len(matrix),
+        "fully_verified_worker_counts": list(CANONICAL_UPSTREAM_STRESS_WORKERS),
+        "required_worker_counts": list(CANONICAL_UPSTREAM_STRESS_WORKERS),
+    }
+    if not canonical_upstream_stress_exactly_matches(
+        report.get("capability"), expected_capability
+    ):
+        raise CanonicalUpstreamStressRejected(
+            "canonical upstream stress report capability is not a complete failure-closed pass"
+        )
+    if report.get("blocked") is not None or not canonical_upstream_stress_exactly_matches(
+        report.get("first_fact"),
+        {"kind": "pass", "stage": "matrix", "completed_case_count": len(matrix)},
+    ):
+        raise CanonicalUpstreamStressRejected(
+            "canonical upstream stress report first-fact policy drifted"
+        )
+    fixture_elf = {
+        "dynamic_dependencies": requirements["expected_dynamic_dependencies"],
+        "elf_identity": requirements["expected_elf_identity"],
+        "interpreter": requirements["expected_interpreter"],
+    }
+    if (
+        not canonical_upstream_stress_exactly_matches(report.get("fixture_elf"), fixture_elf)
+        or report.get("dynamic_dependencies") != requirements["expected_dynamic_dependencies"]
+    ):
+        raise CanonicalUpstreamStressRejected(
+            "canonical upstream stress report fixture ELF binding drifted"
+        )
+    current_head = report.get("current_head")
+    companion_path = output / "selected-libc-build-current-head.json"
+    if (
+        not isinstance(current_head, dict)
+        or set(current_head) != {"status", "record", "source"}
+        or current_head.get("status") != "attested"
+    ):
+        raise CanonicalUpstreamStressRejected(
+            "canonical upstream stress current-head report schema drifted"
+        )
+    companion_record = canonical_upstream_stress_live_file_record(
+        root,
+        current_head.get("record"),
+        "current-head companion",
+        expected_path=companion_path,
+    )
+    companion, observed_companion_record = canonical_upstream_stress_read_json(
+        root, companion_path, "current-head companion"
+    )
+    if not canonical_upstream_stress_exactly_matches(
+        companion_record, observed_companion_record
+    ):
+        raise CanonicalUpstreamStressRejected(
+            "canonical upstream stress current-head companion changed while being read"
+        )
+    if not isinstance(companion, dict) or set(companion) != {
+        "format",
+        "schema",
+        "source_before",
+        "source_after",
+        "source_unchanged_during_build",
+        "selected_libc_build_record",
+        "artifacts",
+    }:
+        raise CanonicalUpstreamStressRejected(
+            "canonical upstream stress current-head companion schema drifted"
+        )
+    before = canonical_upstream_stress_clean_git_source(
+        companion.get("source_before"), "current-head companion before capture"
+    )
+    after = canonical_upstream_stress_clean_git_source(
+        companion.get("source_after"), "current-head companion after capture"
+    )
+    if (
+        companion.get("format") != 1
+        or companion.get("schema") != "crabc-selected-libc-current-head-build"
+        or companion.get("source_unchanged_during_build") is not True
+        or not canonical_upstream_stress_exactly_matches(before, after)
+        or not canonical_upstream_stress_exactly_matches(
+            companion.get("selected_libc_build_record"), build["record"]
+        )
+        or not canonical_upstream_stress_exactly_matches(
+            companion.get("artifacts"), build["artifacts"]
+        )
+        or not canonical_upstream_stress_exactly_matches(current_head.get("source"), after)
+    ):
+        raise CanonicalUpstreamStressRejected(
+            "canonical upstream stress current-head companion binding drifted"
+        )
+    observed_source = canonical_upstream_stress_clean_git_source(
+        canonical_current_git_source_state(root), "execution"
+    )
+    if not canonical_upstream_stress_exactly_matches(observed_source, after):
+        raise CanonicalUpstreamStressRejected(
+            "canonical upstream stress execution source no longer matches the selected libc build"
+        )
+    return {
+        "current_head": {"record": companion_record, "source": after},
+        "evidence_scope": "shadow_subset",
+        "large_object_mode": dict(summary["execution"]["large_object_mode"]),
+        "matrix": {
+            "case_count": len(matrix),
+            "worker_counts": list(CANONICAL_UPSTREAM_STRESS_WORKERS),
+        },
+    }
+
+
+def consume_canonical_upstream_stress_evidence(
+    *,
+    contract_path: Path = CANONICAL_UPSTREAM_STRESS_CONTRACT,
+    report_path: Path = CANONICAL_UPSTREAM_STRESS_REPORT,
+    root: Path = ROOT,
+    work_root: Path = WORK_ROOT,
+    pin: Mapping[str, str] | None = None,
+) -> dict[str, Any]:
+    """Classify the one canonical report without compiling or executing it."""
+
+    root = root.resolve()
+    work_root = work_root.resolve()
+    expected_contract_path = root / "compat/allocator/upstream-stress-v3.5.0.json"
+    expected_report_path = work_root / "reports/allocator/upstream-stress/latest.json"
+    base: dict[str, Any] = {
+        "format": 1,
+        "schema": "crabc-mimalloc-canonical-upstream-stress-consumer",
+        "status": "rejected",
+        "report_path": canonical_upstream_stress_relative_path(root, expected_report_path),
+        "report": None,
+        "contract": None,
+        "evidence_scope": None,
+        "large_object_mode": {"status": "not-claimed"},
+        "matrix": None,
+        "current_head": None,
+    }
+    if contract_path.resolve() != expected_contract_path or report_path.resolve() != expected_report_path:
+        base["reason"] = "canonical upstream stress consumer accepts only its fixed report path"
+        return base
+    if not report_path.exists():
+        base["status"] = "unavailable"
+        base["reason"] = "canonical upstream stress report is unavailable"
+        return base
+    try:
+        actual_pin = dict(load_pin() if pin is None else pin)
+        contract, contract_record = canonical_upstream_stress_read_json(
+            root, contract_path, "contract"
+        )
+        summary = validate_canonical_upstream_stress_contract(contract, actual_pin)
+        base["contract"] = {
+            **contract_record,
+            "format": contract["format"],
+            "schema": contract["schema"],
+            "upstream": {
+                "revision": actual_pin["revision"],
+                "version": actual_pin["version"],
+            },
+        }
+        report, report_record = canonical_upstream_stress_read_json(
+            root, report_path, "report"
+        )
+        verified = canonical_upstream_stress_validate_report(
+            report,
+            root=root,
+            work_root=work_root,
+            contract=contract,
+            contract_record=contract_record,
+            summary=summary,
+            pin=actual_pin,
+        )
+    except (CanonicalUpstreamStressRejected, HarnessError) as error:
+        base["reason"] = str(error)
+        return base
+    base.update(
+        {
+            "status": "verified",
+            "reason": None,
+            "report": report_record,
+            **verified,
+        }
+    )
+    return base
 
 
 def validate_m5_gate_contract(
@@ -1617,6 +3010,11 @@ def validate_m5_gate_contract(
                 raise HarnessError(f"M5 allocator gate {gate_id} lacks a current blocker")
         elif blockers is not None:
             raise HarnessError(f"M5 allocator gate {gate_id} must not predeclare a blocker")
+        if gate_id == "m5.5d" and evidence != list(M5_5D_EVIDENCE):
+            raise HarnessError(
+                "M5 allocator gate m5.5d must retain its bounded, high-water, "
+                "source-derived, and canonical-upstream evidence inventory"
+            )
 
     return {
         "full_lane": expected_full_lane,
@@ -2173,6 +3571,28 @@ def _m5_source_derived_stress_evidence_passed(report: Mapping[str, Any]) -> bool
     )
 
 
+def _m5_canonical_upstream_stress_evidence_verified(report: Mapping[str, Any]) -> bool:
+    """Recognize only this runner's complete, source-attested report consumer."""
+
+    evidence = _m5_report_mapping(report, "canonical_upstream_stress")
+    if evidence is None:
+        return False
+    return (
+        evidence.get("format") == 1
+        and evidence.get("schema")
+        == "crabc-mimalloc-canonical-upstream-stress-consumer"
+        and evidence.get("status") == "verified"
+        and evidence.get("evidence_scope") == "shadow_subset"
+        and evidence.get("matrix")
+        == {"case_count": 8, "worker_counts": [1, 2, 4, 8]}
+        and isinstance(evidence.get("large_object_mode"), Mapping)
+        and evidence["large_object_mode"].get("status") == "not-claimed"
+        and isinstance(evidence.get("current_head"), Mapping)
+        and isinstance(evidence["current_head"].get("record"), Mapping)
+        and isinstance(evidence["current_head"].get("source"), Mapping)
+    )
+
+
 def m5_gate_report(contract: Mapping[str, Any], report: Mapping[str, Any]) -> dict[str, Any]:
     """Classify the full lane from executed evidence and reviewed blockers.
 
@@ -2209,6 +3629,9 @@ def m5_gate_report(contract: Mapping[str, Any], report: Mapping[str, Any]) -> di
         "m5.5c": ["report:/native_owner_exit_lifecycle"],
     }
     source_derived_stress_passed = _m5_source_derived_stress_evidence_passed(report)
+    canonical_upstream_stress_verified = _m5_canonical_upstream_stress_evidence_verified(
+        report
+    )
 
     gate_records: list[dict[str, Any]] = []
     for source_gate in contract["gates"]:
@@ -2233,10 +3656,14 @@ def m5_gate_report(contract: Mapping[str, Any], report: Mapping[str, Any]) -> di
         else:
             record["status"] = "blocked"
             record["blocked_by"] = list(source_gate["blocked_by"])
-            if gate_id == "m5.5d" and source_derived_stress_passed:
-                record["observed_evidence"] = [
-                    "report:/m5_source_derived_stress_adapter/fixture"
-                ]
+            if gate_id == "m5.5d":
+                observed: list[str] = []
+                if source_derived_stress_passed:
+                    observed.append("report:/m5_source_derived_stress_adapter/fixture")
+                if canonical_upstream_stress_verified:
+                    observed.append("report:/canonical_upstream_stress")
+                if observed:
+                    record["observed_evidence"] = observed
         gate_records.append(record)
 
     unmet_required = [
@@ -7940,6 +9367,12 @@ def main() -> int:
             architecture=arguments.architecture,
         )
         if arguments.full:
+            # Consume the separately produced canonical matrix once.  Its
+            # unavailable/rejected result is durable evidence too; it never
+            # triggers a nested upstream-stress build or process.
+            report["canonical_upstream_stress"] = (
+                consume_canonical_upstream_stress_evidence()
+            )
             gate = m5_gate_report(read_json(M5_GATE_CONTRACT), report)
             report["m5_gate"] = gate
             write_json(REPORT_ROOT / "latest.json", report)
