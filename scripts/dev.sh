@@ -6,16 +6,160 @@
 # normal edit/build loops do not rebuild it.
 set -euo pipefail
 
-readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-work_dir="${CRABC_WORK_DIR:-$ROOT_DIR/.work}"
-if [[ "$work_dir" != /* ]]; then
-    work_dir="$ROOT_DIR/$work_dir"
+readonly ROOT_DIR="$(cd -P "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+readonly WORK_BOUNDARY="$ROOT_DIR/.work"
+
+# Docker interprets an unqualified --volume source as a named volume. Resolve
+# every mutable host path before creating it so no configuration can turn that
+# convenience syntax, a `..` traversal, or a symlink into an escape from the
+# checkout-local .work boundary.
+normalize_absolute_path() {
+    local path="${1#/}"
+    local component
+    local last_index
+    local normalized=""
+    local -a components=()
+
+    while [ -n "$path" ]; do
+        if [[ "$path" == */* ]]; then
+            component="${path%%/*}"
+            path="${path#*/}"
+        else
+            component="$path"
+            path=""
+        fi
+        case "$component" in
+            ""|.)
+                ;;
+            ..)
+                if [ "${#components[@]}" -gt 0 ]; then
+                    last_index=$((${#components[@]} - 1))
+                    unset "components[$last_index]"
+                fi
+                ;;
+            *)
+                components+=("$component")
+                ;;
+        esac
+    done
+
+    for component in "${components[@]}"; do
+        normalized="$normalized/$component"
+    done
+    printf '%s\n' "${normalized:-/}"
+}
+
+resolve_existing_directory() {
+    local candidate="$1"
+    local existing="$candidate"
+    local missing_component
+    local missing_suffix=""
+    local physical_existing
+
+    # Resolve every existing prefix physically before making the missing tail.
+    # This catches a symlink below .work before `mkdir -p` could follow it.
+    while [ ! -e "$existing" ] && [ ! -L "$existing" ]; do
+        missing_component="${existing##*/}"
+        missing_suffix="/$missing_component$missing_suffix"
+        existing="${existing%/*}"
+        if [ -z "$existing" ]; then
+            existing="/"
+        fi
+    done
+    if ! physical_existing="$(cd -P "$existing" 2>/dev/null && pwd)"; then
+        return 1
+    fi
+    if [ -z "$missing_suffix" ]; then
+        printf '%s\n' "$physical_existing"
+    elif [ "$physical_existing" = "/" ]; then
+        printf '%s\n' "$missing_suffix"
+    else
+        printf '%s%s\n' "$physical_existing" "$missing_suffix"
+    fi
+}
+
+path_is_within_work_boundary() {
+    [ "$1" = "$WORK_BOUNDARY" ] || [[ "$1" == "$WORK_BOUNDARY/"* ]]
+}
+
+configuration_error() {
+    printf 'ERROR: %s\n' "$*" >&2
+    return 1
+}
+
+resolve_bounded_directory() {
+    local name="$1"
+    local configured_path="$2"
+    local relative_base="$3"
+    local candidate
+    local resolved
+
+    if [[ "/$configured_path/" == */../* ]]; then
+        configuration_error "$name must not contain '..' path components: $configured_path"
+        return 1
+    fi
+    if [[ "$configured_path" == *:* ]]; then
+        configuration_error "$name must be a host directory path, not Docker mount syntax: $configured_path"
+        return 1
+    fi
+    if [[ "$configured_path" = /* ]]; then
+        candidate="$configured_path"
+    else
+        candidate="$relative_base/$configured_path"
+    fi
+    candidate="$(normalize_absolute_path "$candidate")"
+    if ! resolved="$(resolve_existing_directory "$candidate")"; then
+        configuration_error "$name must name a directory: $candidate"
+        return 1
+    fi
+    if ! path_is_within_work_boundary "$resolved"; then
+        configuration_error "$name must resolve below $WORK_BOUNDARY: $resolved"
+        return 1
+    fi
+    printf '%s\n' "$resolved"
+}
+
+resolve_container_bind_directory() {
+    local name="$1"
+    local configured_path="$2"
+    local relative_base="$3"
+
+    # A bare word is Docker's named-volume syntax. Require an explicit host
+    # path marker for overrides, then apply the same physical boundary check.
+    if [[ "$configured_path" != /* && "$configured_path" != .* ]]; then
+        configuration_error "$name must be an explicit host path; named Docker volumes are not allowed: $configured_path"
+        return 1
+    fi
+    resolve_bounded_directory "$name" "$configured_path" "$relative_base"
+}
+
+if ! resolved_work_boundary="$(resolve_existing_directory "$WORK_BOUNDARY")"; then
+    printf 'ERROR: checkout work boundary is not a directory: %s\n' "$WORK_BOUNDARY" >&2
+    exit 2
 fi
-readonly WORK_DIR="$work_dir"
+if [ "$resolved_work_boundary" != "$WORK_BOUNDARY" ]; then
+    printf 'ERROR: checkout work boundary must resolve to %s, not %s\n' \
+        "$WORK_BOUNDARY" "$resolved_work_boundary" >&2
+    exit 2
+fi
+
+work_dir_input="${CRABC_WORK_DIR:-$WORK_BOUNDARY}"
+if ! WORK_DIR="$(resolve_bounded_directory CRABC_WORK_DIR "$work_dir_input" "$ROOT_DIR")"; then
+    exit 2
+fi
+readonly WORK_DIR
+target_volume_input="${CRABC_TARGET_VOLUME:-$WORK_DIR/target}"
+if ! TARGET_VOLUME="$(resolve_container_bind_directory CRABC_TARGET_VOLUME "$target_volume_input" "$WORK_DIR")"; then
+    exit 2
+fi
+readonly TARGET_VOLUME
+cargo_volume_input="${CRABC_CARGO_VOLUME:-$WORK_DIR/cargo}"
+if ! CARGO_VOLUME="$(resolve_container_bind_directory CRABC_CARGO_VOLUME "$cargo_volume_input" "$WORK_DIR")"; then
+    exit 2
+fi
+readonly CARGO_VOLUME
 readonly PLATFORM="linux/arm64"
 readonly IMAGE="${CRABC_DEV_IMAGE:-crabc-dev:aarch64}"
-readonly TARGET_VOLUME="${CRABC_TARGET_VOLUME:-$WORK_DIR/target}"
-readonly CARGO_VOLUME="${CRABC_CARGO_VOLUME:-$WORK_DIR/cargo}"
 
 usage() {
     cat <<'EOF'
@@ -66,11 +210,13 @@ Commands:
   shell               open a shell in the development image
 
 The image and containers are always requested as linux/arm64. Mutable build
-state uses the repository-local `.work/` boundary by default: targets live in
+state is confined to this checkout's `.work/` boundary: targets live in
 `.work/target`, Cargo's download cache lives in `.work/cargo`, and reports and
-scratch state live below `.work/`. Set `CRABC_WORK_DIR` to select another host
-directory. `CRABC_TARGET_VOLUME` and `CRABC_CARGO_VOLUME` continue to override
-their individual mounts.
+scratch state live below `.work/`. `CRABC_WORK_DIR` may select another physical
+descendant of `.work/`. `CRABC_TARGET_VOLUME` and `CRABC_CARGO_VOLUME` accept
+only explicit host paths below that boundary; relative overrides resolve from
+the selected work directory. Docker named volumes, `..` path components,
+symlink escapes, and external paths are rejected.
 EOF
 }
 
@@ -98,11 +244,14 @@ ensure_image() {
 
 prepare_work_dir() {
     mkdir -p \
+        "$WORK_DIR" \
         "$WORK_DIR/target" \
         "$WORK_DIR/cargo" \
         "$WORK_DIR/reports" \
         "$WORK_DIR/allocator-cache" \
-        "$WORK_DIR/tmp"
+        "$WORK_DIR/tmp" \
+        "$TARGET_VOLUME" \
+        "$CARGO_VOLUME"
 }
 
 run_in_container() {
