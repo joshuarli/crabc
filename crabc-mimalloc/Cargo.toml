@@ -73,6 +73,14 @@ path = "tests/native_initial_persistent_quiescent_fork.rs"
 required-features = ["native-runtime-test-audit"]
 
 [[test]]
+name = "native_initial_all_free_local_fork"
+path = "tests/native_initial_all_free_local_fork.rs"
+# This direct-only fork witness leaves the initial local engine resident after
+# its last ordinary free, then proves the held fork gate performs the one
+# all-free-only source collection before preserving the child image.
+required-features = ["native-runtime-test-audit"]
+
+[[test]]
 name = "native_source_published_live_owner_exit"
 path = "tests/native_source_published_live_owner_exit.rs"
 # This direct-only lifecycle witness uses ordinary persistent-owner allocation,

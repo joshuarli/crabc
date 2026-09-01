@@ -73,12 +73,17 @@ leaves the C mimalloc backend active with its existing private key outside the
 libc's direct `fork` path, after public prepare handlers and before the raw
 syscall, a private allocation-free gate first excludes later bridge owners. It
 preserves the copied original ticket-zero `TPIDR_EL0` image only when that
-admission count is zero and the ticket-zero owner is either still unmapped or
-has returned to `AwaitingFreshPage`/`DormantExistingArena` with no live native
-client or PageMap operation. That child resets the copied gate and may
-reactivate the dormant owner or attach a fresh pthread; any other child
-disables the bridge. This is not inherited-lock, root, pointer, or page-state
-repair, and it does not claim general fork recovery.
+admission count is zero and the ticket-zero owner is either still unmapped,
+already in `AwaitingFreshPage`/`DormantExistingArena`, or an all-free resident
+initial engine that the held gate has successfully finished into
+`DormantExistingArena`. Normal local free intentionally retains that all-free
+engine for the next initial-thread allocation; this direct-fork boundary is
+its one separate source collection point. A live client, remote publication,
+retained poison, or pending release cannot finish and remains non-preserving.
+That child resets the copied gate and may reactivate the dormant owner or
+attach a fresh pthread; any other child disables the bridge. This is not
+inherited-lock, root, pointer, or page-state repair, and it does not claim
+general fork recovery.
 
 The default allocator remains that C backend. The explicit nondefault
 `crabc-libc` feature `native-mimalloc-shadow` selects
@@ -870,12 +875,14 @@ engines, finishes either one first, and proves the other still blocks ticket
 zero. Every PageMap mutation remains one-at-a-time. This is not a
 `ThreadLifecycleSlot` persistence route, general concurrent allocator, or
 public worker API. The fork gate may preserve that permanent owner only after
-it has excluded every later admission and verified that its `READY` engine is
-`AwaitingFreshPage` or `DormantExistingArena`; an active engine, live native
-client, parked worker, or retained route remains non-preserving. This is a
-copied quiescent initial-thread image, not inherited-lock or page repair. A
-source-dormant permanent owner may lend only the already-published map/arena
-pair to one fresh test worker that has entered the existing later-main
+it has excluded every later admission and either finds its `READY` engine in
+`AwaitingFreshPage`/`DormantExistingArena` or finishes one proven-all-free
+resident engine into `DormantExistingArena`. An active engine with a live
+native client, remote publication, failed finish, parked worker, or retained
+route remains non-preserving. This is a copied quiescent initial-thread image,
+not inherited-lock or page repair. A source-dormant permanent owner may lend
+only the already-published map/arena pair to one fresh test worker that has
+entered the existing later-main
 attachment. A selected live initial owner instead uses the distinct
 pre-`clone` parked-engine handoff above. In both cases the worker owns one
 scoped engine, must return it empty, and then completes the normal no-page

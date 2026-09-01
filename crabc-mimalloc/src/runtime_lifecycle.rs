@@ -3218,7 +3218,7 @@ impl RuntimeProcessStorage {
     }
 
     #[inline]
-    fn is_quiescent_on_initial_thread_for_fork(&self) -> bool {
+    fn prepare_quiescent_on_initial_thread_for_held_fork_gate(&self) -> bool {
         if !self.is_on_initial_thread() {
             return false;
         }
@@ -3227,29 +3227,31 @@ impl RuntimeProcessStorage {
             // The historical no-page case remains valid.
             PAGE_OWNER_COLD => true,
             // The caller invokes this only after `RuntimeForkAdmission` has
-            // installed its held gate while its count is zero.  That excludes
+            // installed its held gate while its count is zero. That excludes
             // every later owner which could otherwise change READY into BUSY
-            // and mutably borrow this final slot.  The initial thread itself
-            // is crossing `fork` with signals held, so this immutable view is
-            // the one safe quiescent ticket-zero inspection.
+            // and mutably borrow this final slot. The initial thread itself
+            // is crossing `fork` with signals held, so this is the one safe
+            // source collection/inspection boundary for ticket zero.
             PAGE_OWNER_READY => {
                 // SAFETY: `start_ticket_zero_page_owner_with_storage` wrote
                 // this final slot before its Release READY publication.  The
                 // gate precondition above excludes a concurrent later-engine
                 // transition, and the current initial thread owns the only
-                // ticket-zero operation.
-                let page_owner = unsafe { (&*self.page_owner.get()).assume_init_ref() };
-                page_owner.is_quiescent_for_fork()
+                // ticket-zero operation. The direct fork boundary may make
+                // one all-free-only source collection; a failed collection
+                // leaves the source non-preserving.
+                let page_owner = unsafe { (&mut *self.page_owner.get()).assume_init_mut() };
+                page_owner.prepare_quiescent_for_held_fork_gate()
             }
             // The static staging slot is vacant after W01's one-time
             // ticket-zero promotion. Do not read it here: the source owner
             // now lives only in the original thread's pinned compiler-TLS
-            // cell. `before_fork_with` invokes this predicate while the
+            // cell. `before_fork_with` invokes this preparation while the
             // admission gate is held at count zero, so no later owner can
             // borrow or transition that direct initial engine during this
-            // temporary source-state inspection.
+            // temporary source collection/inspection.
             PAGE_OWNER_INITIAL_PERSISTENT => {
-                current_thread_initial_persistent_owner_is_quiescent_for_held_fork_gate()
+                current_thread_initial_persistent_owner_prepare_quiescent_for_held_fork_gate()
             }
             // Starting, a current operation, any parked page engine, and
             // retained source state all remain outside the child contract.
@@ -3873,21 +3875,21 @@ impl RuntimeForkAdmission {
 
     /// Holds the direct internal fork boundary and records whether the copied
     /// child may preserve its quiescent ticket-zero image. No allocation,
-    /// lock traversal, page operation, or public pthread-atfork slot is
-    /// involved.
+    /// lock traversal, or public pthread-atfork slot is involved.
     fn before_fork(&self, can_preserve_process_owner: bool) {
         self.before_fork_with(|| can_preserve_process_owner);
     }
 
-    /// Holds the gate before inspecting a potentially permanent page owner.
+    /// Holds the gate before preparing a potentially permanent page owner.
     ///
     /// The callback executes only after the gate has observed zero later
     /// attachments. That ordering matters: a READY static ticket-zero owner
     /// or INITIAL_PERSISTENT initial TLS owner may otherwise be mutably
-    /// borrowed by a source operation, so inspecting its dormant image before
-    /// worker admission is closed would be an unsound concurrent view. The
-    /// callback is an allocation-free private predicate for the direct libc
-    /// fork path; it never exposes a page or fork capability.
+    /// borrowed by a source operation, so inspecting or all-free-collecting
+    /// its source image before worker admission is closed would be an unsound
+    /// concurrent view. The callback is an allocation-free private
+    /// preparation for the direct libc fork path; it never exposes a page or
+    /// fork capability.
     fn before_fork_with(&self, can_preserve_process_owner: impl FnOnce() -> bool) {
         let mut can_preserve_process_owner = Some(can_preserve_process_owner);
         loop {
@@ -3905,9 +3907,9 @@ impl RuntimeForkAdmission {
             {
                 // A zero count under HELD excludes every later attachment:
                 // `claim_later_thread` spins until the parent clears HELD.
-                // Therefore the predicate may safely inspect a quiescent
-                // static or pinned-initial ticket-zero owner before this raw
-                // fork.
+                // Therefore the preparation may safely inspect or
+                // all-free-collect a static or pinned-initial ticket-zero
+                // owner before this raw fork.
                 if count == 0
                     && can_preserve_process_owner
                         .take()
@@ -5201,16 +5203,17 @@ impl NativeInitialPersistentThreadOwner {
         self.allocator.is_retained()
     }
 
-    /// Reports whether this direct initial source owner is safe to copy into
-    /// the prepared raw-fork child.
+    /// Prepares this direct initial source owner for the prepared raw-fork
+    /// child and reports whether its copied image is safe.
     ///
     /// The caller must have already held the fork-admission gate with zero
     /// later admissions. That gate excludes the only other runtime owners;
     /// the current initial thread then uses its pinned TLS cell rather than
-    /// the vacated process-static staging slot to inspect the source state.
+    /// the vacated process-static staging slot to collect/inspect the source
+    /// state.
     #[inline]
-    fn is_quiescent_for_held_fork_gate(&self) -> bool {
-        self.allocator.is_quiescent_for_fork()
+    fn prepare_quiescent_for_held_fork_gate(&mut self) -> bool {
+        self.allocator.prepare_quiescent_for_held_fork_gate()
     }
 }
 
@@ -5540,7 +5543,7 @@ fn current_thread_has_active_native_initial_persistent_owner() -> bool {
     slot.initial_native_persistent_owner_installed && RUNTIME_PROCESS.is_active()
 }
 
-/// Inspects the promoted initial owner's source state during the held,
+/// Prepares the promoted initial owner's source state during the held,
 /// zero-admission fork boundary.
 ///
 /// `RuntimeForkAdmission::before_fork_with` calls this only after it has
@@ -5548,11 +5551,11 @@ fn current_thread_has_active_native_initial_persistent_owner() -> bool {
 /// direct owner was moved out of `RuntimeProcessStorage::page_owner` during
 /// promotion, so this deliberately projects only the original thread's
 /// pinned compiler-TLS cell and never reads that vacated static slot. A cell
-/// state mismatch is conservative: it cannot preserve a copied child and it
-/// must not terminalize or otherwise mutate the source owner while merely
-/// answering the fork predicate.
+/// state mismatch is conservative: it cannot preserve a copied child. The
+/// only mutation is the existing all-free source finish, which either returns
+/// the exact engine to its dormant state or leaves/retains it non-preserving.
 #[inline]
-fn current_thread_initial_persistent_owner_is_quiescent_for_held_fork_gate() -> bool {
+fn current_thread_initial_persistent_owner_prepare_quiescent_for_held_fork_gate() -> bool {
     let gate = RUNTIME_FORK_ADMISSION.state.load(Ordering::Acquire);
     if gate & (FORK_GATE_HELD | FORK_GATE_COUNT_MASK) != FORK_GATE_HELD {
         return false;
@@ -5563,10 +5566,10 @@ fn current_thread_initial_persistent_owner_is_quiescent_for_held_fork_gate() -> 
     debug_assert_eq!(
         gate & (FORK_GATE_HELD | FORK_GATE_COUNT_MASK),
         FORK_GATE_HELD,
-        "the pinned initial-owner fork probe runs only under the held zero-admission gate"
+        "the pinned initial-owner fork preparation runs only under the held zero-admission gate"
     );
     current_thread_native_initial_persistent_owner_cell()
-        .with_owner(|owner| owner.as_ref().get_ref().is_quiescent_for_held_fork_gate())
+        .with_owner(|owner| owner.get_mut().prepare_quiescent_for_held_fork_gate())
         .unwrap_or(false)
 }
 
@@ -11843,14 +11846,17 @@ pub fn ticket_zero_later_thread_page_roundtrip(
 /// for preservation only when the caller is the original ticket-zero
 /// TPIDR_EL0 image, no later bridge attachment is live or retained, and its
 /// ticket-zero source owner is either unmapped or has returned to its source
-/// all-free dormant image. That owner may remain in the static staging slot
-/// or, after one-time promotion, in the initial thread's pinned compiler-TLS
-/// cell. It does not repair a live page engine or client.
+/// all-free dormant image. A normal all-free resident initial engine is
+/// collected only at this held boundary through its existing source finish;
+/// a failed collection, live page engine, or client remains non-preserving.
+/// That owner may remain in the static staging slot or, after one-time
+/// promotion, in the initial thread's pinned compiler-TLS cell. It does not
+/// repair a live page engine or client.
 #[doc(hidden)]
 #[inline]
 pub fn before_fork() {
     RUNTIME_FORK_ADMISSION.before_fork_with(|| {
-        RUNTIME_PROCESS.is_quiescent_on_initial_thread_for_fork()
+        RUNTIME_PROCESS.prepare_quiescent_on_initial_thread_for_held_fork_gate()
     });
 }
 
@@ -13509,7 +13515,9 @@ mod tests {
             let arena_storage = ProcessSharedArenaStorage::test_static_owner();
             let admissions = RuntimeForkAdmission::new();
             let is_preserved_at_quiescent_fork_boundary = || {
-                admissions.before_fork_with(|| runtime.is_quiescent_on_initial_thread_for_fork());
+                admissions.before_fork_with(|| {
+                    runtime.prepare_quiescent_on_initial_thread_for_held_fork_gate()
+                });
                 let preserves = admissions.state.load(Ordering::Acquire) & FORK_GATE_PRESERVE != 0;
                 admissions.after_fork_parent();
                 preserves

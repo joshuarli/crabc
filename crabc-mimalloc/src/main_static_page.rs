@@ -983,25 +983,44 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
         }
     }
 
-    /// Whether this permanent ticket-zero owner contains no active engine or
-    /// caller-visible native allocation.
+    /// Prepares the permanent ticket-zero owner for one held direct-fork
+    /// boundary and reports whether the copied image is quiescent.
     ///
-    /// The runtime asks this only after its fork-admission gate has excluded
+    /// The runtime calls this only after its fork-admission gate has excluded
     /// every later owner and after its own `READY` state has excluded a
-    /// current ticket-zero operation.  `AwaitingFreshPage` has never mapped
-    /// the first arena; `DormantExistingArena` reached the source all-free
-    /// finish and retains only the process-lifetime session and arena
+    /// current ticket-zero operation. `AwaitingFreshPage` has never mapped
+    /// the first arena; `DormantExistingArena` already reached the source
+    /// all-free finish and retains only the process-lifetime session and arena
     /// identity. Both copied images are safe to continue independently in a
-    /// quiescent child. An `Active` engine may hold a caller client and exact
-    /// PageMap entries, so it deliberately remains outside this narrow fork
-    /// contract.
+    /// quiescent child.
+    ///
+    /// Normal local `mi_free` deliberately retains an all-free `Active`
+    /// engine for the next initial-thread allocation. This held fork boundary
+    /// is the one additional collection point: it may use the existing
+    /// all-free finish to return that exact engine to `DormantExistingArena`.
+    /// A live client, remote publication, retained poison, or pending release
+    /// makes that finish fail and preserves the exact active/retained state;
+    /// no live engine is treated as a safe fork image.
     #[inline]
-    pub(crate) fn is_quiescent_for_fork(&self) -> bool {
-        matches!(
-            &self.state,
-            MainStaticRuntimeFirstArenaPageAllocatorState::AwaitingFreshPage { .. }
-                | MainStaticRuntimeFirstArenaPageAllocatorState::DormantExistingArena { .. }
-        )
+    pub(crate) fn prepare_quiescent_for_held_fork_gate(&mut self) -> bool {
+        let state = core::mem::replace(
+            &mut self.state,
+            MainStaticRuntimeFirstArenaPageAllocatorState::Transition,
+        );
+        match state {
+            MainStaticRuntimeFirstArenaPageAllocatorState::Active(active) => {
+                self.finish_active_engine_for_dormant_pair(active)
+            }
+            other => {
+                let quiescent = matches!(
+                    &other,
+                    MainStaticRuntimeFirstArenaPageAllocatorState::AwaitingFreshPage { .. }
+                        | MainStaticRuntimeFirstArenaPageAllocatorState::DormantExistingArena { .. }
+                );
+                self.state = other;
+                quiescent
+            }
+        }
     }
 
     /// Runs one allocation operation while preserving the permanent
@@ -1668,7 +1687,7 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
     }
 
     /// Force-collects an active initial engine only when an explicit boundary
-    /// needs to lend its dormant process pair to a later worker.
+    /// needs its source-dormant process pair.
     ///
     /// Pinned `mi_free` performs its local page free without a Theap teardown;
     /// this is the separate source collection boundary. A live client leaves
