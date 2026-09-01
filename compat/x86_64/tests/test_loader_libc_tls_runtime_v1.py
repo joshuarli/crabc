@@ -36,6 +36,22 @@ GENERAL_RUNTIME_TARGET_RUNNER_PATH = (
 )
 GENERAL_RUNTIME_GRAPH_PATH = ROOT / "ldso" / "src" / "x86_64_general_initial_graph.rs"
 GENERAL_RUNTIME_STATE_PATH = ROOT / "ldso" / "src" / "x86_64_general_initial_tls_state.rs"
+DYNAMIC_MAIN_THREAD_ROOT_PATH = (
+    ROOT / "ldso" / "src" / "x86_64_dynamic_main_thread_runtime_v1_source_root.rs"
+)
+DYNAMIC_MAIN_THREAD_RUNNER_PATH = (
+    ROOT / "compat" / "x86_64" / "run_dynamic_main_thread_runtime_v1.sh"
+)
+DYNAMIC_MAIN_THREAD_TARGET_RUNNER_PATH = (
+    ROOT / "compat" / "x86_64" / "run_dynamic_main_thread_runtime_v1_target_root.sh"
+)
+DYNAMIC_MAIN_THREAD_LIBC_ROOT_PATH = (
+    ROOT / "libc" / "src" / "c_abi" / "x86_64" / "dynamic_main_thread_runtime_v1_source_root.rs"
+)
+DYNAMIC_MAIN_THREAD_LIBC_PATH = (
+    ROOT / "libc" / "src" / "c_abi" / "x86_64" / "dynamic_main_thread_runtime_v1.rs"
+)
+DYNAMIC_MAIN_THREAD_CRT_PATH = ROOT / "crt" / "src" / "x86_64_dynamic_startup.rs"
 DISPATCHER_PATH = ROOT / "scripts" / "dev-x86_64.sh"
 STRUCTURE_PATH = ROOT / "scripts" / "check_structure.py"
 
@@ -66,6 +82,7 @@ class LoaderLibcTlsRuntimeV1ContractTests(unittest.TestCase):
         self.assertTrue(report["private_initial_tls_registry_foundation"])
         self.assertTrue(report["private_general_initial_tls_foundation"])
         self.assertTrue(report["private_general_initial_tls_runtime_v1_foundation"])
+        self.assertTrue(report["private_dynamic_main_thread_runtime_v1_bridge"])
         self.assertEqual(
             report["initial_tls_foundation_state"], "implemented-private-evidence-only"
         )
@@ -82,12 +99,19 @@ class LoaderLibcTlsRuntimeV1ContractTests(unittest.TestCase):
             "implemented-private-evidence-only",
         )
         self.assertEqual(
+            report["dynamic_main_thread_runtime_v1_bridge_state"],
+            "implemented-private-evidence-only",
+        )
+        self.assertEqual(
             report["current_runtime_v1_producers"],
-            ["ldso-general-initial-tls-runtime-v1"],
+            [
+                "ldso-general-initial-tls-runtime-v1",
+                "ldso-dynamic-main-thread-runtime-v1",
+            ],
         )
         self.assertEqual(report["process_modes"], ["static", "dynamic"])
         self.assertEqual(
-            report["evidence_states"], ["private-foundation-complete"] * 3 + ["planned"] * 5
+            report["evidence_states"], ["private-foundation-complete"] * 4 + ["planned"] * 5
         )
 
     def test_static_dynamic_selection_and_owner_are_not_interchangeable(self) -> None:
@@ -159,7 +183,7 @@ class LoaderLibcTlsRuntimeV1ContractTests(unittest.TestCase):
                 with self.assertRaisesRegex(runtime_v1.TlsRuntimeContractError, message):
                     runtime_v1.validate_contract(contract)
 
-    def test_only_the_dedicated_general_artifact_is_a_private_runtime_v1_producer(self) -> None:
+    def test_only_the_dedicated_general_artifacts_are_private_runtime_v1_producers(self) -> None:
         contract = self.contract()
         artifacts = contract["current_artifact"]
         assert isinstance(artifacts, list)
@@ -172,6 +196,7 @@ class LoaderLibcTlsRuntimeV1ContractTests(unittest.TestCase):
             with self.subTest(artifact_id=artifact_id):
                 self.assertFalse(by_id[artifact_id]["runtime_v1_producer"])
         self.assertTrue(by_id["ldso-general-initial-tls-runtime-v1"]["runtime_v1_producer"])
+        self.assertTrue(by_id["ldso-dynamic-main-thread-runtime-v1"]["runtime_v1_producer"])
 
         by_id["libc-static-initial-tls-v1"]["runtime_v1_producer"] = True
 
@@ -183,6 +208,14 @@ class LoaderLibcTlsRuntimeV1ContractTests(unittest.TestCase):
         assert isinstance(artifacts, list)
         by_id = {row["id"]: row for row in artifacts if isinstance(row, dict)}
         by_id["ldso-general-initial-tls-runtime-v1"]["runtime_v1_producer"] = False
+        with self.assertRaisesRegex(runtime_v1.TlsRuntimeContractError, "current-artifact"):
+            runtime_v1.validate_contract(contract)
+
+        contract = self.contract()
+        artifacts = contract["current_artifact"]
+        assert isinstance(artifacts, list)
+        by_id = {row["id"]: row for row in artifacts if isinstance(row, dict)}
+        by_id["ldso-dynamic-main-thread-runtime-v1"]["runtime_v1_producer"] = False
         with self.assertRaisesRegex(runtime_v1.TlsRuntimeContractError, "current-artifact"):
             runtime_v1.validate_contract(contract)
 
@@ -260,6 +293,7 @@ class LoaderLibcTlsRuntimeV1ContractTests(unittest.TestCase):
             "must fail before mapping, relocation, constructors",
             "not RuntimeV1 producers",
             "Implemented private general initial-TLS RuntimeV1 wire",
+            "Implemented private dynamic main-thread RuntimeV1 bridge",
         ):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, document)
@@ -515,6 +549,71 @@ class LoaderLibcTlsRuntimeV1ContractTests(unittest.TestCase):
         for command in (
             "loader-libc-general-tls-runtime-v1)",
             "loader-libc-general-tls-runtime-v1-target-root)",
+        ):
+            with self.subTest(command=command):
+                self.assertIn(command, dispatcher)
+
+    def test_dynamic_main_thread_bridge_stays_direct_scrt1_evidence_only(self) -> None:
+        contract = self.contract()
+        bridge = contract["dynamic_main_thread_runtime_v1_bridge"]
+        assert isinstance(bridge, dict)
+        self.assertEqual(bridge["state"], "implemented-private-evidence-only")
+        self.assertIn("crabc_dynamic_main_thread_runtime_v1", bridge["producer"])
+        self.assertIn("--dynamic-main-thread-runtime-v1", bridge["scrt1"])
+        self.assertIn("before-private-dynamic-libc-startup", bridge["attachment"])
+        self.assertIn("strong-main-and-weak-dso-reject-before-arch-set-fs", bridge["owned_crt_import_rule"])
+        self.assertIn("dso-definition-cannot-interpose", bridge["owned_crt_import_rule"])
+        self.assertIn("loader-validates-real-scrt1-main-tags-without-dispatch", bridge["main_lifecycle"])
+        self.assertIn("poisoned-dtv-reject-before-preinit", bridge["descriptor_failure"])
+        self.assertFalse(bridge["general_dynamic_product"])
+        self.assertFalse(bridge["capability_or_family_promotion"])
+
+        root = DYNAMIC_MAIN_THREAD_ROOT_PATH.read_text(encoding="utf-8")
+        runner = DYNAMIC_MAIN_THREAD_RUNNER_PATH.read_text(encoding="utf-8")
+        target_runner = DYNAMIC_MAIN_THREAD_TARGET_RUNNER_PATH.read_text(encoding="utf-8")
+        libc_root = DYNAMIC_MAIN_THREAD_LIBC_ROOT_PATH.read_text(encoding="utf-8")
+        libc = DYNAMIC_MAIN_THREAD_LIBC_PATH.read_text(encoding="utf-8")
+        crt = DYNAMIC_MAIN_THREAD_CRT_PATH.read_text(encoding="utf-8")
+        dispatcher = DISPATCHER_PATH.read_text(encoding="utf-8")
+
+        for phrase in (
+            "crabc_general_initial_graph",
+            "crabc_general_initial_tls_materialization_v1",
+            "crabc_general_loader_libc_tls_runtime_v1",
+            "crabc_dynamic_main_thread_runtime_v1",
+        ):
+            with self.subTest(root_phrase=phrase):
+                self.assertIn(phrase, root)
+        attach = crt.index("__crabc_x86_loader_tls_runtime_v1_attach")
+        self.assertLess(attach, crt.index("__libc_start_main(", attach))
+        self.assertIn("errno.rs", libc_root)
+        for phrase in (
+            "fn __libc_start_main",
+            "rtld_fini.is_some()",
+            "errno::get_errno()",
+            "__crabc_dynamic_main_thread_runtime_v1_fini_state",
+        ):
+            with self.subTest(libc_phrase=phrase):
+                self.assertIn(phrase, libc)
+        for phrase in (
+            "--dynamic-main-thread-runtime-v1",
+            "Scrt1.o",
+            "PIMFL",
+            "strong-main-owned-record.o",
+            "weak-owned-record",
+            "owned-record-definition",
+            "expect_empty_status_127",
+            "expect_rejection_before_fs",
+            "poisoned-dtv",
+        ):
+            with self.subTest(runner_phrase=phrase):
+                self.assertIn(phrase, runner)
+        self.assertIn(
+            "CRABC_DYNAMIC_MAIN_THREAD_RUNTIME_V1_LOADER_ROOT=crabc-target", target_runner
+        )
+        for command in (
+            "dynamic-main-thread-runtime-v1)",
+            "dynamic-main-thread-runtime-v1-target-root)",
         ):
             with self.subTest(command=command):
                 self.assertIn(command, dispatcher)

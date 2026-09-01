@@ -684,6 +684,10 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh ldso-image
 ./scripts/dev-x86_64.sh ldso-initial-graph
 ./scripts/dev-x86_64.sh ldso-target-root
+./scripts/dev-x86_64.sh loader-libc-general-tls-runtime-v1
+./scripts/dev-x86_64.sh loader-libc-general-tls-runtime-v1-target-root
+./scripts/dev-x86_64.sh dynamic-main-thread-runtime-v1
+./scripts/dev-x86_64.sh dynamic-main-thread-runtime-v1-target-root
 ./scripts/dev-x86_64.sh ldso-initial-tls
 ./scripts/dev-x86_64.sh ldso-initial-exec-tls
 ./scripts/dev-x86_64.sh ldso-owned-crt-handoff
@@ -7054,6 +7058,18 @@ ordinary diamond's initial TLS layout/value oracle. Neither command creates a
 CRT carrier, installed dynamic product, pthread/new-thread operation, DTV
 growth, runtime mapping/unload, general lifecycle, promotion, or public x86
 support.
+
+`dynamic-main-thread-runtime-v1` adds one narrower private bridge above that
+wire: a special Rust-produced `Scrt1.o` calls the main-resident RuntimeV1
+observer immediately before a fixture-local dynamic `__libc_start_main`. The
+loader accepts only Scrt1's exact weak null owned-CRT `R_X86_64_GLOB_DAT`
+import; strong-main and weak-DSO variants reject before `ARCH_SET_FS`, and a
+DSO definition cannot interpose. The real main and private dynamic libc prove
+dynamic TLS/errno and `PIMFL` callback order. Its
+`dynamic-main-thread-runtime-v1-target-root` companion executes the Cargo
+feature root. This is not an owned-CRT carrier, loader finalizer/dependency
+lifecycle handoff, dynamic product, worker/DTV-growth, `dlopen`, sysroot,
+promotion, or public x86 support.
 
 `ldso-initial-tls` is a separate private Variant-II GNU-Dynamic TLS artifact
 inside the same still-planned `ldso.dynamic-runtime` family, not a widened

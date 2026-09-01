@@ -20,7 +20,8 @@
         feature = "x86_64-initial-interpreter",
         feature = "x86_64-general-initial-interpreter",
         feature = "x86_64-general-initial-tls-interpreter",
-        feature = "x86_64-general-initial-tls-runtime-v1-interpreter"
+        feature = "x86_64-general-initial-tls-runtime-v1-interpreter",
+        feature = "x86_64-general-initial-tls-runtime-v1-dynamic-main-thread-interpreter"
     )
 ))]
 #[path = "x86_64_initial_graph.rs"]
@@ -41,10 +42,11 @@ mod loader;
             feature = "x86_64-initial-interpreter",
             feature = "x86_64-general-initial-interpreter",
             feature = "x86_64-general-initial-tls-interpreter",
-            feature = "x86_64-general-initial-tls-runtime-v1-interpreter"
+            feature = "x86_64-general-initial-tls-runtime-v1-interpreter",
+            feature = "x86_64-general-initial-tls-runtime-v1-dynamic-main-thread-interpreter"
         )
     )
 )))]
 compile_error!(
-    "crabc-ldso supports Linux/AArch64 little-endian; a private x86 root requires --features x86_64-initial-interpreter, x86_64-general-initial-interpreter, x86_64-general-initial-tls-interpreter, or x86_64-general-initial-tls-runtime-v1-interpreter"
+    "crabc-ldso supports Linux/AArch64 little-endian; a private x86 root requires --features x86_64-initial-interpreter, x86_64-general-initial-interpreter, x86_64-general-initial-tls-interpreter, x86_64-general-initial-tls-runtime-v1-interpreter, or x86_64-general-initial-tls-runtime-v1-dynamic-main-thread-interpreter"
 );

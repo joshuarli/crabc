@@ -9943,6 +9943,223 @@ def require_loader_libc_general_tls_runtime_v1_artifact(family: Mapping[str, Any
         )
 
 
+def require_dynamic_main_thread_runtime_v1_artifact(family: Mapping[str, Any]) -> None:
+    """Ratchet one real-Scrt1 RuntimeV1 bridge without product promotion."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[ldso.dynamic-runtime].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [
+        entry for entry in artifacts if entry.get("id") == "dynamic-main-thread-runtime-v1"
+    ]
+    require(
+        len(matching) == 1,
+        "ldso.dynamic-runtime needs exactly one dynamic-main-thread-runtime-v1 artifact",
+    )
+    artifact = matching[0]
+    require(
+        family.get("status") == "planned",
+        "dynamic-main-thread-runtime-v1 must not promote ldso.dynamic-runtime",
+    )
+    require(
+        "capabilities" not in artifact,
+        "dynamic-main-thread-runtime-v1 must not select capabilities",
+    )
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for phrase in (
+        "still-planned `ldso.dynamic-runtime`",
+        "real-Scrt1 dynamic-main-thread RuntimeV1 bridge",
+        "`x86_64-general-initial-tls-runtime-v1-dynamic-main-thread-interpreter`",
+        "Rust-produced `Scrt1.o`",
+        "`__crabc_x86_loader_tls_runtime_v1_attach`",
+        "immediately before `__libc_start_main`",
+        "`R_X86_64_GLOB_DAT`",
+        "`__crabc_x86_64_owned_crt_handoff`",
+        "Strong main and weak DSO forms reject before `ARCH_SET_FS`",
+        "DSO definition cannot interpose",
+        "null `rtld_fini`",
+        "dynamic TLS and dynamic errno",
+        "`PIMFL`",
+        "loader structurally validates the real main lifecycle tags",
+        "Pinned musl 1.2.6",
+        "owned-CRT carrier",
+        "loader-owned finalizer",
+        "dependency-lifecycle deferral",
+        "DTV growth/replacement",
+        "runtime mapping/dlopen",
+        "public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"dynamic-main-thread-runtime-v1 description omits {phrase}",
+        )
+    expected_sources = {
+        "ldso/Cargo.toml",
+        "ldso/build.rs",
+        "ldso/src/lib.rs",
+        "ldso/src/x86_64_initial_graph.rs",
+        "ldso/src/x86_64_initial_graph_state.rs",
+        "ldso/src/x86_64_initial_tls_registry.rs",
+        "ldso/src/x86_64_general_initial_graph.rs",
+        "ldso/src/x86_64_general_initial_tls_state.rs",
+        "ldso/src/x86_64_dynamic_main_thread_runtime_v1_source_root.rs",
+        "crt/build_x86_64.py",
+        "crt/src/x86_64_Scrt1.rs",
+        "crt/src/x86_64_dynamic_startup.rs",
+        "crt/x86_64-dynamic-startup.md",
+        "libc/src/c_abi/x86_64/errno.rs",
+        "libc/src/c_abi/x86_64/loader_tls_runtime_v1.rs",
+        "libc/src/c_abi/x86_64/loader_tls_runtime_v1_source_root.rs",
+        "libc/src/c_abi/x86_64/dynamic_main_thread_runtime_v1.rs",
+        "libc/src/c_abi/x86_64/dynamic_main_thread_runtime_v1_source_root.rs",
+        "compat/x86_64/dynamic_main_thread_runtime_v1.map",
+        "compat/x86_64/dynamic_main_thread_runtime_v1_main.c",
+        "compat/x86_64/dynamic_main_thread_runtime_v1_strong_owned_crt_record.c",
+        "compat/x86_64/dynamic_main_thread_runtime_v1_weak_dso_owned_crt_record.c",
+        "compat/x86_64/dynamic_main_thread_runtime_v1_owned_crt_record_definition.c",
+        "compat/x86_64/ldso_general_initial_tls_trace.c",
+        "compat/x86_64/run_loader_libc_general_tls_runtime_v1.sh",
+        "compat/x86_64/run_dynamic_main_thread_runtime_v1.sh",
+        "compat/x86_64/run_dynamic_main_thread_runtime_v1_target_root.sh",
+        "compat/x86_64/loader-libc-tls-runtime-v1.toml",
+        "compat/x86_64/validate_loader_libc_tls_runtime_v1.py",
+        "compat/x86_64/tests/test_dynamic_main_thread_runtime_v1.py",
+        "compat/x86_64/tests/test_loader_libc_tls_runtime_v1.py",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/README.md",
+        "compat/x86_64/validate_parity_ledger.py",
+        "docs/evidence/x86-loader-libc-tls-runtime-v1.md",
+        "STATUS.md",
+        "scripts/check_structure.py",
+        "scripts/dev-x86_64.sh",
+    }
+    require(
+        set(
+            string_list(
+                artifact["source_owners"],
+                "dynamic-main-thread-runtime-v1 source owners",
+            )
+        )
+        == expected_sources,
+        "dynamic-main-thread-runtime-v1 source owners drifted",
+    )
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {
+            "./scripts/dev-x86_64.sh dynamic-main-thread-runtime-v1",
+            "./scripts/dev-x86_64.sh dynamic-main-thread-runtime-v1-target-root",
+        },
+        "dynamic-main-thread-runtime-v1 must use both dedicated native commands",
+    )
+    runner = (
+        ROOT / "compat" / "x86_64" / "run_dynamic_main_thread_runtime_v1.sh"
+    ).read_text(encoding="utf-8")
+    for phrase in (
+        "CRABC_DYNAMIC_MAIN_THREAD_RUNTIME_V1_LOADER_ROOT",
+        "x86_64-general-initial-tls-runtime-v1-dynamic-main-thread-interpreter",
+        "--dynamic-main-thread-runtime-v1",
+        "Scrt1.o",
+        "__crabc_x86_64_owned_crt_handoff",
+        "R_X86_64_GLOB_DAT",
+        "strong-main-owned-record.o",
+        "weak-owned-record",
+        "owned-record-definition",
+        "expect_empty_status_127",
+        "expect_rejection_before_fs",
+        "no-arch-set-fs-trace",
+        "magic version abi_size mode owner generation",
+        "poisoned-dtv",
+        "PIMFL",
+        "libcrabc-dynamic-main-thread-runtime-v1.so",
+    ):
+        require(
+            phrase in runner,
+            f"dynamic-main-thread-runtime-v1 runner omits {phrase}",
+        )
+    wrapper = (
+        ROOT / "compat" / "x86_64" / "run_dynamic_main_thread_runtime_v1_target_root.sh"
+    ).read_text(encoding="utf-8")
+    require(
+        "CRABC_DYNAMIC_MAIN_THREAD_RUNTIME_V1_LOADER_ROOT=crabc-target" in wrapper,
+        "dynamic-main-thread-runtime-v1 target-root wrapper must select the Cargo root",
+    )
+    cargo = (ROOT / "ldso" / "Cargo.toml").read_text(encoding="utf-8")
+    lib = (ROOT / "ldso" / "src" / "lib.rs").read_text(encoding="utf-8")
+    build = (ROOT / "ldso" / "build.rs").read_text(encoding="utf-8")
+    feature = "x86_64-general-initial-tls-runtime-v1-dynamic-main-thread-interpreter"
+    require(
+        feature in cargo
+        and feature in lib
+        and "CARGO_FEATURE_X86_64_GENERAL_INITIAL_TLS_RUNTIME_V1_DYNAMIC_MAIN_THREAD_INTERPRETER"
+        in build,
+        "dynamic-main-thread-runtime-v1 Cargo feature binding is missing",
+    )
+    graph = (ROOT / "ldso" / "src" / "x86_64_initial_graph.rs").read_text(
+        encoding="utf-8"
+    )
+    require(
+        "crabc_dynamic_main_thread_runtime_v1" in graph
+        and "__crabc_x86_64_owned_crt_handoff" in graph
+        and graph.index("__crabc_x86_64_owned_crt_handoff")
+        < graph.index("match kind", graph.index("unsafe fn relocation_value")),
+        "dynamic-main-thread-runtime-v1 must classify Scrt1 owned-record imports before lookup",
+    )
+    startup = (ROOT / "crt" / "src" / "x86_64_dynamic_startup.rs").read_text(
+        encoding="utf-8"
+    )
+    attach = startup.index("__crabc_x86_loader_tls_runtime_v1_attach")
+    require(
+        attach < startup.index("__libc_start_main(", attach),
+        "dynamic-main-thread-runtime-v1 must attach before private libc startup",
+    )
+    dynamic_libc = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "dynamic_main_thread_runtime_v1.rs"
+    ).read_text(encoding="utf-8")
+    for phrase in (
+        "fn __libc_start_main",
+        "rtld_fini.is_some()",
+        "errno::get_errno()",
+        "__crabc_dynamic_main_thread_runtime_v1_fini_state",
+        "exit_group",
+    ):
+        require(
+            phrase in dynamic_libc,
+            f"dynamic-main-thread-runtime-v1 private dynamic libc omits {phrase}",
+        )
+    contract = (ROOT / "compat" / "x86_64" / "loader-libc-tls-runtime-v1.toml").read_text(
+        encoding="utf-8"
+    )
+    require(
+        "[dynamic_main_thread_runtime_v1_bridge]" in contract,
+        "dynamic-main-thread-runtime-v1 shared RuntimeV1 contract row is missing",
+    )
+    documentation = (ROOT / "docs" / "evidence" / "x86-loader-libc-tls-runtime-v1.md").read_text(
+        encoding="utf-8"
+    )
+    require(
+        "Implemented private dynamic main-thread RuntimeV1 bridge" in documentation,
+        "dynamic-main-thread-runtime-v1 evidence document section is missing",
+    )
+    dispatcher = (ROOT / "scripts" / "dev-x86_64.sh").read_text(encoding="utf-8")
+    for phrase in (
+        "run_dynamic_main_thread_runtime_v1_tests()",
+        "run_dynamic_main_thread_runtime_v1_target_root_tests()",
+        "run_dynamic_main_thread_runtime_v1.sh",
+        "run_dynamic_main_thread_runtime_v1_target_root.sh",
+        "dynamic-main-thread-runtime-v1)",
+        "dynamic-main-thread-runtime-v1-target-root)",
+    ):
+        require(
+            phrase in dispatcher,
+            f"dynamic-main-thread-runtime-v1 dispatcher omits {phrase}",
+        )
+
+
 def require_ldso_target_root_admission_artifact(family: Mapping[str, Any]) -> None:
     """Ratchet the private Cargo-built x86 loader root without promotion."""
     artifacts = require_verified_artifacts(
@@ -69720,6 +69937,7 @@ def validate_ledger(
     require_ldso_general_initial_graph_artifact(by_id["ldso.dynamic-runtime"])
     require_ldso_general_initial_tls_artifact(by_id["ldso.dynamic-runtime"])
     require_loader_libc_general_tls_runtime_v1_artifact(by_id["ldso.dynamic-runtime"])
+    require_dynamic_main_thread_runtime_v1_artifact(by_id["ldso.dynamic-runtime"])
     require_ldso_target_root_admission_artifact(by_id["ldso.dynamic-runtime"])
     require_ldso_initial_tls_artifact(by_id["ldso.dynamic-runtime"])
     require_ldso_initial_exec_tls_artifact(by_id["ldso.dynamic-runtime"])

@@ -379,8 +379,11 @@ X86_RUNTIME_FOUNDATION_LIBC_SOURCES = {
 X86_RUNTIME_FOUNDATION_LOADER_LIBC_SOURCES = {
     Path("ldso/src/x86_64_initial_tls_registry.rs"),
     Path("ldso/src/x86_64_general_initial_tls_runtime_v1_source_root.rs"),
+    Path("ldso/src/x86_64_dynamic_main_thread_runtime_v1_source_root.rs"),
     Path("libc/src/c_abi/x86_64/loader_tls_runtime_v1.rs"),
     Path("libc/src/c_abi/x86_64/loader_tls_runtime_v1_source_root.rs"),
+    Path("libc/src/c_abi/x86_64/dynamic_main_thread_runtime_v1.rs"),
+    Path("libc/src/c_abi/x86_64/dynamic_main_thread_runtime_v1_source_root.rs"),
 }
 # The fixed-mimalloc evidence lane remains a separate, private program. Its
 # historical feature is retained for compatibility but no longer governs the

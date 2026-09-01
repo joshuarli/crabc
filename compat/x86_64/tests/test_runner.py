@@ -1884,6 +1884,8 @@ class X86_64CoreRunnerTests(unittest.TestCase):
                 "loader-libc-tls-runtime-v1-registry",
                 "loader-libc-general-tls-runtime-v1",
                 "loader-libc-general-tls-runtime-v1-target-root",
+                "dynamic-main-thread-runtime-v1",
+                "dynamic-main-thread-runtime-v1-target-root",
             )
             + expected_groups[bounded_dlopen_index:]
         )

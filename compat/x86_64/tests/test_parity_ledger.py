@@ -51,7 +51,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 42)
-        self.assertEqual(report["verified_artifact_count"], 304)
+        self.assertEqual(report["verified_artifact_count"], 305)
         self.assertEqual(report["header_layout_probe_count"], 53)
         self.assertEqual(report["public_header_inventory_count"], 183)
         self.assertEqual(report["header_foundation_header_count"], 191)
@@ -807,6 +807,85 @@ class X86ParityLedgerTests(unittest.TestCase):
         with self.assertRaisesRegex(
             ledger.LedgerError,
             "loader-libc-general-tls-runtime-v1 description omits release-publishes `READY` last",
+        ):
+            ledger.validate_ledger(changed)
+
+    def test_dynamic_main_thread_runtime_v1_is_a_nonpromoting_real_scrt1_artifact(self) -> None:
+        data = self.data()
+        family = self.family(data, "ldso.dynamic-runtime")
+        self.assertEqual(family["status"], "planned")
+        artifacts = family["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if entry["id"] == "dynamic-main-thread-runtime-v1"
+        )
+        assert isinstance(artifact, dict)
+        self.assertNotIn("capabilities", artifact)
+        for phrase in (
+            "real-Scrt1 dynamic-main-thread RuntimeV1 bridge",
+            "`x86_64-general-initial-tls-runtime-v1-dynamic-main-thread-interpreter`",
+            "Rust-produced `Scrt1.o`",
+            "`__crabc_x86_loader_tls_runtime_v1_attach`",
+            "immediately before `__libc_start_main`",
+            "`R_X86_64_GLOB_DAT`",
+            "Strong main and weak DSO forms reject before `ARCH_SET_FS`",
+            "DSO definition cannot interpose",
+            "null `rtld_fini`",
+            "dynamic TLS and dynamic errno",
+            "`PIMFL`",
+            "loader structurally validates the real main lifecycle tags",
+            "owned-CRT carrier",
+            "loader-owned finalizer",
+            "dependency-lifecycle deferral",
+            "DTV growth/replacement",
+            "runtime mapping/dlopen",
+            "public x86 support",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, artifact["description"])
+        self.assertEqual(
+            {entry["command"] for entry in artifact["native_evidence"]},
+            {
+                "./scripts/dev-x86_64.sh dynamic-main-thread-runtime-v1",
+                "./scripts/dev-x86_64.sh dynamic-main-thread-runtime-v1-target-root",
+            },
+        )
+        for owner in (
+            "ldso/src/x86_64_dynamic_main_thread_runtime_v1_source_root.rs",
+            "crt/build_x86_64.py",
+            "crt/src/x86_64_dynamic_startup.rs",
+            "libc/src/c_abi/x86_64/dynamic_main_thread_runtime_v1.rs",
+            "compat/x86_64/dynamic_main_thread_runtime_v1_main.c",
+            "compat/x86_64/dynamic_main_thread_runtime_v1_strong_owned_crt_record.c",
+            "compat/x86_64/dynamic_main_thread_runtime_v1_weak_dso_owned_crt_record.c",
+            "compat/x86_64/dynamic_main_thread_runtime_v1_owned_crt_record_definition.c",
+            "compat/x86_64/run_dynamic_main_thread_runtime_v1.sh",
+            "compat/x86_64/run_dynamic_main_thread_runtime_v1_target_root.sh",
+            "compat/x86_64/loader-libc-tls-runtime-v1.toml",
+            "docs/evidence/x86-loader-libc-tls-runtime-v1.md",
+        ):
+            with self.subTest(owner=owner):
+                self.assertIn(owner, artifact["source_owners"])
+
+        changed = copy.deepcopy(data)
+        changed_artifacts = self.family(changed, "ldso.dynamic-runtime")[
+            "verified_artifact"
+        ]
+        assert isinstance(changed_artifacts, list)
+        changed_artifact = next(
+            entry
+            for entry in changed_artifacts
+            if entry["id"] == "dynamic-main-thread-runtime-v1"
+        )
+        assert isinstance(changed_artifact, dict)
+        changed_artifact["description"] = changed_artifact["description"].replace(
+            "`PIMFL`", "`PI-M-FL`"
+        )
+        with self.assertRaisesRegex(
+            ledger.LedgerError,
+            "dynamic-main-thread-runtime-v1 description omits `PIMFL`",
         ):
             ledger.validate_ledger(changed)
 

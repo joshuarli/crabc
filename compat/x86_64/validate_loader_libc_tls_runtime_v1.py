@@ -114,6 +114,50 @@ GENERAL_INITIAL_TLS_RUNTIME_V1_FOUNDATION = {
     ),
 }
 
+DYNAMIC_MAIN_THREAD_RUNTIME_V1_BRIDGE = {
+    "state": "implemented-private-evidence-only",
+    "producer": (
+        "ldso/src/x86_64_dynamic_main_thread_runtime_v1_source_root.rs:"
+        "crabc_general_initial_graph+crabc_general_initial_tls_materialization_v1+"
+        "crabc_general_loader_libc_tls_runtime_v1+crabc_dynamic_main_thread_runtime_v1"
+    ),
+    "scrt1": (
+        "crt/build_x86_64.py:--dynamic-main-thread-runtime-v1->"
+        "crt/src/x86_64_dynamic_startup.rs:"
+        "__crabc_x86_loader_tls_runtime_v1_attach-before-__libc_start_main"
+    ),
+    "consumer": "libc/src/c_abi/x86_64/dynamic_main_thread_runtime_v1_source_root.rs",
+    "record": "__crabc_x86_64_loader_tls_runtime_v1",
+    "selector": "bounded-general-initial-pt-interp-only-real-scrt1",
+    "attachment": "main-resident-runtimev1-consumer-before-private-dynamic-libc-startup",
+    "owned_crt_import_rule": (
+        "only-real-scrt1-main-undefined-default-visible-weak-object-glob-dat-zero-addend-"
+        "is-forced-null-before-lookup-strong-main-and-weak-dso-reject-before-arch-set-fs-"
+        "dso-definition-cannot-interpose"
+    ),
+    "main_lifecycle": (
+        "loader-validates-real-scrt1-main-tags-without-dispatch-scrt1-dispatches-"
+        "preinit-init-and-fini-callbacks"
+    ),
+    "descriptor_failure": (
+        "magic-version-abi-size-mode-owner-generation-and-poisoned-dtv-reject-before-"
+        "preinit-init-main-or-private-dynamic-libc"
+    ),
+    "dynamic_tls_errno": (
+        "main-and-private-dynamic-libc-pt-tls-and-dynamic-errno-observe-one-"
+        "loader-installed-generation"
+    ),
+    "dynamic_tls_growth": "not-implemented-and-not-implied",
+    "pthread_or_clone_settls": "not-implemented-and-not-implied",
+    "loader_finalizer_or_dependency_lifecycle": "not-implemented-and-not-implied",
+    "general_dynamic_product": False,
+    "capability_or_family_promotion": False,
+    "native_evidence": (
+        "compat/x86_64/run_dynamic_main_thread_runtime_v1.sh+"
+        "compat/x86_64/run_dynamic_main_thread_runtime_v1_target_root.sh"
+    ),
+}
+
 VARIANT_II = {
     "thread_pointer_register": "%fs",
     "tcb_self_word": "%fs:0",
@@ -156,6 +200,12 @@ CURRENT_ARTIFACTS = [
     {
         "id": "ldso-general-initial-tls-runtime-v1",
         "path": "ldso/src/x86_64_general_initial_tls_runtime_v1_source_root.rs",
+        "state": "implemented-private-evidence-only",
+        "runtime_v1_producer": True,
+    },
+    {
+        "id": "ldso-dynamic-main-thread-runtime-v1",
+        "path": "ldso/src/x86_64_dynamic_main_thread_runtime_v1_source_root.rs",
         "state": "implemented-private-evidence-only",
         "runtime_v1_producer": True,
     },
@@ -233,6 +283,22 @@ EVIDENCE = [
         "scope": "one-general-initial-generation-loader-observer-wire-no-crt-handoff-installed-dynamic-product-pthread-new-thread-dtv-growth-replacement-runtime-map-dlopen-unload-or-product-family-capability-promotion",
     },
     {
+        "id": "dynamic-main-thread-runtime-v1-bridge",
+        "state": "private-foundation-complete",
+        "required": (
+            "source-and-cargo-target-root-real-scrt1-attach-before-private-libc-startup-"
+            "prove-pimfl-main-and-libc-dynamic-tls-and-errno-null-owned-handoff-dso-"
+            "definition-noninterposition-metadata-and-poisoned-dtv-rejection-before-"
+            "callbacks-and-strong-main-weak-dso-owned-record-rejection-before-fs"
+        ),
+        "scope": (
+            "one-general-initial-generation-real-scrt1-private-dynamic-libc-evidence-"
+            "no-owned-crt-carrier-loader-finalizer-dependency-lifecycle-handoff-installed-"
+            "product-pthread-new-thread-dtv-growth-runtime-map-dlopen-unload-or-product-"
+            "family-capability-promotion"
+        ),
+    },
+    {
         "id": "initial-dynamic-variant-ii-layout",
         "state": "planned",
         "required": "installed-dynamic-pie-and-non-pie-prove-tls-template-copy-tbss-alignment-fs-self-and-dtv",
@@ -298,6 +364,7 @@ def validate_contract(document: Mapping[str, object]) -> dict[str, object]:
         "initial_tls_foundation",
         "initial_tls_registry_foundation",
         "general_initial_tls_runtime_v1_foundation",
+        "dynamic_main_thread_runtime_v1_bridge",
         "variant_ii",
         "dtv",
         "current_artifact",
@@ -338,6 +405,11 @@ def validate_contract(document: Mapping[str, object]) -> dict[str, object]:
         GENERAL_INITIAL_TLS_RUNTIME_V1_FOUNDATION,
         "general initial-TLS RuntimeV1 foundation",
     )
+    require_exact_mapping(
+        document.get("dynamic_main_thread_runtime_v1_bridge"),
+        DYNAMIC_MAIN_THREAD_RUNTIME_V1_BRIDGE,
+        "dynamic main-thread RuntimeV1 bridge",
+    )
     require_exact_mapping(document.get("variant_ii"), VARIANT_II, "Variant-II")
     require_exact_mapping(document.get("dtv"), DTV, "DTV")
     require_exact_rows(document.get("current_artifact"), CURRENT_ARTIFACTS, "current-artifact")
@@ -366,6 +438,13 @@ def validate_contract(document: Mapping[str, object]) -> dict[str, object]:
         ROOT / "compat" / "x86_64" / "run_ldso_general_initial_tls_target_root.sh",
         ROOT / "compat" / "x86_64" / "run_loader_libc_general_tls_runtime_v1.sh",
         ROOT / "compat" / "x86_64" / "run_loader_libc_general_tls_runtime_v1_target_root.sh",
+        ROOT / "ldso" / "src" / "x86_64_dynamic_main_thread_runtime_v1_source_root.rs",
+        ROOT / "crt" / "build_x86_64.py",
+        ROOT / "crt" / "src" / "x86_64_dynamic_startup.rs",
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "dynamic_main_thread_runtime_v1_source_root.rs",
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "dynamic_main_thread_runtime_v1.rs",
+        ROOT / "compat" / "x86_64" / "run_dynamic_main_thread_runtime_v1.sh",
+        ROOT / "compat" / "x86_64" / "run_dynamic_main_thread_runtime_v1_target_root.sh",
     ):
         if not path.is_file():
             raise TlsRuntimeContractError(f"initial-TLS foundation path is missing: {path.relative_to(ROOT)}")
@@ -386,6 +465,10 @@ def validate_contract(document: Mapping[str, object]) -> dict[str, object]:
         ]["state"],
         "private_general_initial_tls_runtime_v1_foundation": True,
         "general_initial_tls_runtime_v1_foundation_state": GENERAL_INITIAL_TLS_RUNTIME_V1_FOUNDATION[
+            "state"
+        ],
+        "private_dynamic_main_thread_runtime_v1_bridge": True,
+        "dynamic_main_thread_runtime_v1_bridge_state": DYNAMIC_MAIN_THREAD_RUNTIME_V1_BRIDGE[
             "state"
         ],
         "current_runtime_v1_producers": [

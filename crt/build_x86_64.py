@@ -18,7 +18,7 @@ import struct
 import subprocess
 import sys
 import tempfile
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -93,6 +93,9 @@ STATIC_PIE_BOUNDARIES = (
 )
 
 X86_64_OWNED_CRT_HANDOFF_BOUNDARY = "__crabc_x86_64_owned_crt_handoff"
+X86_64_DYNAMIC_MAIN_THREAD_RUNTIME_V1_ATTACH_BOUNDARY = (
+    "__crabc_x86_loader_tls_runtime_v1_attach"
+)
 
 STATIC_PIE_LIBC_BOUNDARIES = STATIC_PIE_BOUNDARIES + (
     "__crabc_x86_static_tls_bootstrap",
@@ -205,7 +208,32 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--out-dir", type=Path, default=DEFAULT_OUTPUT)
     parser.add_argument("--llvm-objdump", default="llvm-objdump")
+    parser.add_argument(
+        "--dynamic-main-thread-runtime-v1",
+        action="store_true",
+        help=(
+            "build the private Scrt1.o variant that requires the main-image "
+            "RuntimeV1 attachment before __libc_start_main"
+        ),
+    )
     return parser.parse_args()
+
+
+def selected_objects(args: argparse.Namespace) -> tuple[ObjectSpec, ...]:
+    """Return the audited object contract for one explicit private build mode."""
+
+    if not args.dynamic_main_thread_runtime_v1:
+        return OBJECTS
+    return tuple(
+        replace(
+            spec,
+            undefined_symbols=spec.undefined_symbols
+            + (X86_64_DYNAMIC_MAIN_THREAD_RUNTIME_V1_ATTACH_BOUNDARY,),
+        )
+        if spec.name == "Scrt1.o"
+        else spec
+        for spec in OBJECTS
+    )
 
 
 def source_path(name: str) -> Path:
@@ -601,7 +629,7 @@ def build(args: argparse.Namespace) -> dict[str, object]:
 
     object_records: dict[str, dict[str, object]] = {}
     try:
-        for spec in OBJECTS:
+        for spec in selected_objects(args):
             source = source_path(spec.source_name)
             destination = output / spec.name
             command = rustc + [
@@ -632,6 +660,11 @@ def build(args: argparse.Namespace) -> dict[str, object]:
                 f"{ROOT}=/crabc",
                 "--crate-name",
                 "crabc_x86_64_" + spec.name.removesuffix(".o").replace(".", "_"),
+                *(
+                    ["--cfg", "crabc_dynamic_main_thread_runtime_v1"]
+                    if args.dynamic_main_thread_runtime_v1 and spec.name == "Scrt1.o"
+                    else []
+                ),
                 str(source),
                 "-o",
                 str(destination),
@@ -682,6 +715,7 @@ def build(args: argparse.Namespace) -> dict[str, object]:
         "schema": 1,
         "target": TARGET,
         "scope": "bounded-static-and-private-dynamic-startup",
+        "dynamic_main_thread_runtime_v1": args.dynamic_main_thread_runtime_v1,
         "toolchain": PINNED_TOOLCHAIN,
         "objects": object_records,
         "commands": {"name": commands_path.name, "sha256": sha256_file(commands_path)},

@@ -15,6 +15,9 @@
 //! static TLS itself or call `__crabc_x86_static_tls_bootstrap`: an interpreter
 //! owns relocation and initial thread state before it transfers control here.
 
+#[cfg(crabc_dynamic_main_thread_runtime_v1)]
+use core::ffi::c_int;
+
 const MAX_INITIAL_POINTERS: usize = 1 << 20;
 
 type ApplicationMain = unsafe extern "C" fn(i32, *const *const u8, *const *const u8) -> i32;
@@ -83,6 +86,8 @@ unsafe extern "C" {
     fn __crabc_fini_array_start_address() -> *const LinkerArrayEntry;
     fn __crabc_fini_array_end_address() -> *const LinkerArrayEntry;
     fn __crabc_x86_64_owned_crt_handoff_value() -> *const OwnedCrtHandoffV1;
+    #[cfg(crabc_dynamic_main_thread_runtime_v1)]
+    fn __crabc_x86_loader_tls_runtime_v1_attach() -> c_int;
 }
 
 impl InitialProcess {
@@ -146,6 +151,15 @@ pub unsafe extern "C" fn __crabc_x86_64_dynamic_start(initial_stack: *const usiz
     // weak object: that would fault on the required foreign-musl null path.
     let handoff = unsafe { __crabc_x86_64_owned_crt_handoff_value() };
     let rtld_fini = unsafe { configure_owned_loader_handoff(handoff) };
+    // This private Scrt1 build mode is selected only by the general
+    // RuntimeV1 main-thread evidence. Its main image provides the companion
+    // directly, so this is neither a weak fallback nor a libc.so import. A
+    // failed descriptor observation must stop before the dynamic libc sees
+    // the six-argument startup boundary or any main-image callback runs.
+    #[cfg(crabc_dynamic_main_thread_runtime_v1)]
+    if unsafe { __crabc_x86_loader_tls_runtime_v1_attach() } != 0 {
+        startup_reject();
+    }
     unsafe {
         __libc_start_main(
             Some(main),

@@ -3,8 +3,10 @@
 # This is deliberately a design and evidence gate, not a claim that the
 # staged x86 dynamic product is complete. The fixed-graph and bounded-general
 # cfg-isolated initial-TLS producer/consumer foundations recorded below prove
-# only their descriptor validation and publication ordering; neither can stand
-# in for registry growth, pthread, CRT, or product ownership. The validator
+# only their descriptor validation and publication ordering. A third narrow
+# bridge below proves one real Scrt1 attachment to one private dynamic libc;
+# none of these evidence roots can stand in for registry growth, pthread,
+# owned-CRT carrier, loader lifecycle, or product ownership. The validator
 # rejects a status or source-boundary change until the owning product
 # implementation and evidence change together.
 
@@ -114,6 +116,31 @@ general_dynamic_product = false
 capability_or_family_promotion = false
 native_evidence = "compat/x86_64/run_loader_libc_general_tls_runtime_v1.sh+compat/x86_64/run_loader_libc_general_tls_runtime_v1_target_root.sh"
 
+# This bridge is deliberately narrower than the planned owned-CRT carrier.
+# A special private Scrt1.o makes the same main-resident RuntimeV1 observation
+# immediately before __libc_start_main, while the loader admits only Scrt1's
+# exact null weak-owned-handoff relocation. Scrt1, not the loader, retains its
+# main lifecycle callbacks; the private dynamic libc owns only the minimal
+# six-argument call, dynamic errno/TLS observation, and final raw exit.
+[dynamic_main_thread_runtime_v1_bridge]
+state = "implemented-private-evidence-only"
+producer = "ldso/src/x86_64_dynamic_main_thread_runtime_v1_source_root.rs:crabc_general_initial_graph+crabc_general_initial_tls_materialization_v1+crabc_general_loader_libc_tls_runtime_v1+crabc_dynamic_main_thread_runtime_v1"
+scrt1 = "crt/build_x86_64.py:--dynamic-main-thread-runtime-v1->crt/src/x86_64_dynamic_startup.rs:__crabc_x86_loader_tls_runtime_v1_attach-before-__libc_start_main"
+consumer = "libc/src/c_abi/x86_64/dynamic_main_thread_runtime_v1_source_root.rs"
+record = "__crabc_x86_64_loader_tls_runtime_v1"
+selector = "bounded-general-initial-pt-interp-only-real-scrt1"
+attachment = "main-resident-runtimev1-consumer-before-private-dynamic-libc-startup"
+owned_crt_import_rule = "only-real-scrt1-main-undefined-default-visible-weak-object-glob-dat-zero-addend-is-forced-null-before-lookup-strong-main-and-weak-dso-reject-before-arch-set-fs-dso-definition-cannot-interpose"
+main_lifecycle = "loader-validates-real-scrt1-main-tags-without-dispatch-scrt1-dispatches-preinit-init-and-fini-callbacks"
+descriptor_failure = "magic-version-abi-size-mode-owner-generation-and-poisoned-dtv-reject-before-preinit-init-main-or-private-dynamic-libc"
+dynamic_tls_errno = "main-and-private-dynamic-libc-pt-tls-and-dynamic-errno-observe-one-loader-installed-generation"
+dynamic_tls_growth = "not-implemented-and-not-implied"
+pthread_or_clone_settls = "not-implemented-and-not-implied"
+loader_finalizer_or_dependency_lifecycle = "not-implemented-and-not-implied"
+general_dynamic_product = false
+capability_or_family_promotion = false
+native_evidence = "compat/x86_64/run_dynamic_main_thread_runtime_v1.sh+compat/x86_64/run_dynamic_main_thread_runtime_v1_target_root.sh"
+
 # Linux/x86-64 Variant II: TLS images occupy addresses below TP and the TCB
 # starts at TP. The DTV pointer at %fs:8 is a private RuntimeV1 invariant;
 # consumers may not infer further TCB offsets.
@@ -163,6 +190,12 @@ runtime_v1_producer = false
 [[current_artifact]]
 id = "ldso-general-initial-tls-runtime-v1"
 path = "ldso/src/x86_64_general_initial_tls_runtime_v1_source_root.rs"
+state = "implemented-private-evidence-only"
+runtime_v1_producer = true
+
+[[current_artifact]]
+id = "ldso-dynamic-main-thread-runtime-v1"
+path = "ldso/src/x86_64_dynamic_main_thread_runtime_v1_source_root.rs"
 state = "implemented-private-evidence-only"
 runtime_v1_producer = true
 
@@ -231,6 +264,12 @@ id = "general-runtime-v1-descriptor-publication"
 state = "private-foundation-complete"
 required = "source-and-cargo-target-root-bounded-diamond-prove-paired-pre-fs-reservation-rollback-72-byte-local-hidden-nondynsym-writable-non-page-rounded-relro-record-unpublished-publishing-ready-ready-before-constructor-attach-metadata-and-poisoned-dtv-rejection-strong-main-and-weak-dso-import-rejection-before-fs-and-static-no-pt-interp-observer-rejection-without-record-import"
 scope = "one-general-initial-generation-loader-observer-wire-no-crt-handoff-installed-dynamic-product-pthread-new-thread-dtv-growth-replacement-runtime-map-dlopen-unload-or-product-family-capability-promotion"
+
+[[evidence]]
+id = "dynamic-main-thread-runtime-v1-bridge"
+state = "private-foundation-complete"
+required = "source-and-cargo-target-root-real-scrt1-attach-before-private-libc-startup-prove-pimfl-main-and-libc-dynamic-tls-and-errno-null-owned-handoff-dso-definition-noninterposition-metadata-and-poisoned-dtv-rejection-before-callbacks-and-strong-main-weak-dso-owned-record-rejection-before-fs"
+scope = "one-general-initial-generation-real-scrt1-private-dynamic-libc-evidence-no-owned-crt-carrier-loader-finalizer-dependency-lifecycle-handoff-installed-product-pthread-new-thread-dtv-growth-runtime-map-dlopen-unload-or-product-family-capability-promotion"
 
 [[evidence]]
 id = "initial-dynamic-variant-ii-layout"

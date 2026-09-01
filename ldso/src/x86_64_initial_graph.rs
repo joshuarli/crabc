@@ -157,6 +157,30 @@ compile_error!("general loader/libc TLS RuntimeV1 requires general initial TLS m
 ))]
 compile_error!("general loader/libc TLS RuntimeV1 is disjoint from fixed RuntimeV1, CRT, and dlfcn siblings");
 
+// The dynamic-main-thread bridge is a fourth, explicitly dependent general
+// RuntimeV1 cfg. It admits one Rust-produced Scrt1.o shape and one
+// main-resident attachment before libc startup; it does not reuse the fixed
+// owned-CRT carrier or acquire its loader-owned lifecycle/finalizer state.
+#[cfg(all(
+    crabc_dynamic_main_thread_runtime_v1,
+    not(crabc_general_loader_libc_tls_runtime_v1)
+))]
+compile_error!("dynamic main-thread RuntimeV1 requires the general RuntimeV1 descriptor");
+
+#[cfg(all(
+    crabc_dynamic_main_thread_runtime_v1,
+    any(
+        crabc_initial_tls_graph,
+        crabc_initial_exec_tls_graph,
+        crabc_owned_crt_handoff,
+        crabc_fixed_graph_introspection,
+        crabc_fixed_graph_dlfcn,
+        crabc_bounded_runtime_dlopen,
+        crabc_loader_libc_tls_runtime_v1
+    )
+))]
+compile_error!("dynamic main-thread RuntimeV1 is disjoint from fixed graph and owned-CRT siblings");
+
 // The first loader/libc RuntimeV1 wire is intentionally an initial-TLS
 // sibling. It must not silently attach to the older no-TLS graph, the one
 // initial-exec exception, an owned-CRT fixture, or the general non-TLS graph.
@@ -467,10 +491,10 @@ struct InstalledInitialTls {
     dtv_words: usize,
     module_count: usize,
 }
-// The owned-CRT sibling accepts exactly one tiny Rust-Scrt1 lifecycle shape.
-// This caps every executable array before the handoff without pretending to
-// be a general constructor-array policy.
-#[cfg(crabc_owned_crt_handoff)]
+// Each Scrt1-admitting sibling accepts exactly one tiny Rust-Scrt1 lifecycle
+// shape. This caps every executable array before the handoff without
+// pretending to be a general constructor-array policy.
+#[cfg(any(crabc_owned_crt_handoff, crabc_dynamic_main_thread_runtime_v1))]
 const MAX_OWNED_CRT_MAIN_ARRAY_ENTRIES: usize = 16;
 
 // This record is compiled only into the third private sibling artifact.  The
@@ -1280,25 +1304,26 @@ unsafe fn parse_mapped(
     let mut bounded_runtime_preinit_array_virtual_address = None;
     #[cfg(crabc_bounded_runtime_dlopen)]
     let mut bounded_runtime_preinit_array_byte_len = None;
-    // The owned-CRT sibling does not execute any main-image lifecycle entry.
-    // It only validates this exact Rust-Scrt1 dynamic-tag shape before that
-    // CRT takes over through the post-relocation record.  The two established
-    // siblings retain the old reject-only main-image rule below.
-    #[cfg(crabc_owned_crt_handoff)]
+    // Neither Scrt1-admitting sibling executes main-image lifecycle entries.
+    // The fixed owned-CRT path validates this exact shape before its record
+    // takes over; the dynamic-main-thread bridge validates the same shape
+    // before Scrt1 makes its direct libc startup call. The two established
+    // general siblings retain the old reject-only main-image rule below.
+    #[cfg(any(crabc_owned_crt_handoff, crabc_dynamic_main_thread_runtime_v1))]
     let mut owned_crt_main_init = None;
-    #[cfg(crabc_owned_crt_handoff)]
+    #[cfg(any(crabc_owned_crt_handoff, crabc_dynamic_main_thread_runtime_v1))]
     let mut owned_crt_main_fini = None;
-    #[cfg(crabc_owned_crt_handoff)]
+    #[cfg(any(crabc_owned_crt_handoff, crabc_dynamic_main_thread_runtime_v1))]
     let mut owned_crt_main_preinit_array = None;
-    #[cfg(crabc_owned_crt_handoff)]
+    #[cfg(any(crabc_owned_crt_handoff, crabc_dynamic_main_thread_runtime_v1))]
     let mut owned_crt_main_preinit_array_len = None;
-    #[cfg(crabc_owned_crt_handoff)]
+    #[cfg(any(crabc_owned_crt_handoff, crabc_dynamic_main_thread_runtime_v1))]
     let mut owned_crt_main_init_array = None;
-    #[cfg(crabc_owned_crt_handoff)]
+    #[cfg(any(crabc_owned_crt_handoff, crabc_dynamic_main_thread_runtime_v1))]
     let mut owned_crt_main_init_array_len = None;
-    #[cfg(crabc_owned_crt_handoff)]
+    #[cfg(any(crabc_owned_crt_handoff, crabc_dynamic_main_thread_runtime_v1))]
     let mut owned_crt_main_fini_array = None;
-    #[cfg(crabc_owned_crt_handoff)]
+    #[cfg(any(crabc_owned_crt_handoff, crabc_dynamic_main_thread_runtime_v1))]
     let mut owned_crt_main_fini_array_len = None;
     let mut strtab_virtual_address = None;
     let mut strtab_byte_len = None;
@@ -1340,7 +1365,7 @@ unsafe fn parse_mapped(
             DT_JMPREL => { if jmprel_virtual_address.replace(value).is_some() { return None; } }
             DT_PLTRELSZ => { if pltrel_byte_len.replace(value).is_some() { return None; } }
             DT_PLTREL => { if plt_is_rela.replace(value == ELF64_RELA).is_some() { return None; } }
-            #[cfg(crabc_owned_crt_handoff)]
+            #[cfg(any(crabc_owned_crt_handoff, crabc_dynamic_main_thread_runtime_v1))]
             DT_INIT if !mapped => { if owned_crt_main_init.replace(value).is_some() { return None; } }
             #[cfg(crabc_bounded_runtime_dlopen)]
             DT_INIT if mapped && allow_bounded_runtime_legacy_tags => {
@@ -1363,7 +1388,7 @@ unsafe fn parse_mapped(
                     return None;
                 }
             }
-            #[cfg(crabc_owned_crt_handoff)]
+            #[cfg(any(crabc_owned_crt_handoff, crabc_dynamic_main_thread_runtime_v1))]
             DT_FINI if !mapped => { if owned_crt_main_fini.replace(value).is_some() { return None; } }
             #[cfg(crabc_bounded_runtime_dlopen)]
             DT_FINI if mapped && allow_bounded_runtime_legacy_tags => {
@@ -1371,27 +1396,27 @@ unsafe fn parse_mapped(
                     return None;
                 }
             }
-            #[cfg(crabc_owned_crt_handoff)]
+            #[cfg(any(crabc_owned_crt_handoff, crabc_dynamic_main_thread_runtime_v1))]
             DT_PREINIT_ARRAY if !mapped => {
                 if owned_crt_main_preinit_array.replace(value).is_some() { return None; }
             }
-            #[cfg(crabc_owned_crt_handoff)]
+            #[cfg(any(crabc_owned_crt_handoff, crabc_dynamic_main_thread_runtime_v1))]
             DT_PREINIT_ARRAYSZ if !mapped => {
                 if owned_crt_main_preinit_array_len.replace(value).is_some() { return None; }
             }
-            #[cfg(crabc_owned_crt_handoff)]
+            #[cfg(any(crabc_owned_crt_handoff, crabc_dynamic_main_thread_runtime_v1))]
             DT_INIT_ARRAY if !mapped => {
                 if owned_crt_main_init_array.replace(value).is_some() { return None; }
             }
-            #[cfg(crabc_owned_crt_handoff)]
+            #[cfg(any(crabc_owned_crt_handoff, crabc_dynamic_main_thread_runtime_v1))]
             DT_INIT_ARRAYSZ if !mapped => {
                 if owned_crt_main_init_array_len.replace(value).is_some() { return None; }
             }
-            #[cfg(crabc_owned_crt_handoff)]
+            #[cfg(any(crabc_owned_crt_handoff, crabc_dynamic_main_thread_runtime_v1))]
             DT_FINI_ARRAY if !mapped => {
                 if owned_crt_main_fini_array.replace(value).is_some() { return None; }
             }
-            #[cfg(crabc_owned_crt_handoff)]
+            #[cfg(any(crabc_owned_crt_handoff, crabc_dynamic_main_thread_runtime_v1))]
             DT_FINI_ARRAYSZ if !mapped => {
                 if owned_crt_main_fini_array_len.replace(value).is_some() { return None; }
             }
@@ -1444,7 +1469,7 @@ unsafe fn parse_mapped(
             _ => {}
         }
     }
-    #[cfg(crabc_owned_crt_handoff)]
+    #[cfg(any(crabc_owned_crt_handoff, crabc_dynamic_main_thread_runtime_v1))]
     if !mapped {
         // Scrt1's private `__crabc_*_array_*_address` bridges own dispatch;
         // the interpreter does not execute main entries or retain their
@@ -1461,9 +1486,9 @@ unsafe fn parse_mapped(
         let fini_array_len = owned_crt_main_fini_array_len?;
         if !virtual_range_in_executable_load(phdr, phnum, init, 1)
             || !virtual_range_in_executable_load(phdr, phnum, fini, 1)
-            || !owned_crt_array_in_load(phdr, phnum, preinit_array, preinit_array_len)
-            || !owned_crt_array_in_load(phdr, phnum, init_array, init_array_len)
-            || !owned_crt_array_in_load(phdr, phnum, fini_array, fini_array_len)
+            || !scrt1_array_in_load(phdr, phnum, preinit_array, preinit_array_len)
+            || !scrt1_array_in_load(phdr, phnum, init_array, init_array_len)
+            || !scrt1_array_in_load(phdr, phnum, fini_array, fini_array_len)
         {
             return None;
         }
@@ -2478,6 +2503,49 @@ unsafe fn relocation_value(
     symbol: usize,
     addend: i64,
 ) -> Option<u64> {
+    // Rust-produced Scrt1.o always retains this optional owned-CRT object
+    // import. The dynamic-main-thread bridge intentionally does not publish
+    // the fixed 32-byte carrier: it admits only this exact ordinary weak-null
+    // form so Scrt1 preserves its musl-shaped null finalizer. Classify it
+    // before generic lookup, otherwise a DSO definition could interpose or a
+    // different relocation form could accidentally become loader policy.
+    #[cfg(crabc_dynamic_main_thread_runtime_v1)]
+    if symbol != 0 && symbol < requestor.symcount {
+        let requested = requestor.symtab.add(symbol * 24);
+        let name_offset = read_u32(requested) as usize;
+        if name_offset < requestor.strsz {
+            let name = requestor.strtab.add(name_offset);
+            if matches!(
+                bounded_nul(name, requestor.strsz - name_offset),
+                Some(length)
+                    if length == b"__crabc_x86_64_owned_crt_handoff".len()
+                        && bytes_eq(
+                            name,
+                            b"__crabc_x86_64_owned_crt_handoff".as_ptr(),
+                            length,
+                        )
+            ) {
+                let is_main = !requestor.mapped
+                    && requestor.base == objects[0].base
+                    && requestor.phdr == objects[0].phdr;
+                let binding = *requested.add(4) >> 4;
+                let symbol_type = *requested.add(4) & 0x0f;
+                let visibility = *requested.add(5) & 0x03;
+                let section = read_u16(requested.add(6));
+                if kind == R_X86_64_GLOB_DAT
+                    && addend == 0
+                    && is_main
+                    && binding == 2
+                    && symbol_type == 1
+                    && visibility == 0
+                    && section == 0
+                {
+                    return Some(0);
+                }
+                return None;
+            }
+        }
+    }
     match kind {
         R_X86_64_RELATIVE if symbol == 0 => add_signed(requestor.base, addend),
         R_X86_64_GLOB_DAT | R_X86_64_JUMP_SLOT => {
@@ -3946,8 +4014,8 @@ unsafe fn virtual_range_in_executable_load(phdr: *const u8, phnum: usize, addres
 /// Validate the exact nonempty pointer-array shape that Rust-produced Scrt1
 /// later reaches through its hidden linker-boundary bridges.  The interpreter
 /// never dispatches these main-image entries itself.
-#[cfg(crabc_owned_crt_handoff)]
-unsafe fn owned_crt_array_in_load(
+#[cfg(any(crabc_owned_crt_handoff, crabc_dynamic_main_thread_runtime_v1))]
+unsafe fn scrt1_array_in_load(
     phdr: *const u8,
     phnum: usize,
     address: u64,

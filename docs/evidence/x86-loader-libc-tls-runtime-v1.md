@@ -3,9 +3,10 @@
 `compat/x86_64/loader-libc-tls-runtime-v1.toml` records the first private
 contract that can eventually join the x86 dynamic loader to libc's pthread/TLS
 runtime. It remains a planned, non-promoting design and validation gate for
-the dynamic product. It now records two implemented, cfg-isolated initial-TLS
-producer/consumer foundations: one fixed graph and one bounded general initial
-graph. It does not claim that static TLS, normal fixed initial-TLS, ordinary
+the dynamic product. It records two cfg-isolated initial-TLS
+producer/consumer foundations (one fixed graph and one bounded general initial
+graph) plus one narrower real-Scrt1 bridge to a private dynamic-libc evidence
+DSO. It does not claim that static TLS, normal fixed initial-TLS, ordinary
 general initial-TLS materialization, or pthread worker fixtures implement the
 general RuntimeV1 lifecycle.
 
@@ -212,6 +213,66 @@ This wire is not a dynamic CRT handoff or product: it has no installed
 interpreter, dynamic PIE/non-PIE product, libc startup carrier, pthread/new
 thread operation, DTV growth/replacement, runtime mapping/`dlopen`, unload,
 general lifecycle, family/capability promotion, or public x86 support.
+
+## Implemented private dynamic main-thread RuntimeV1 bridge
+
+`ldso/src/x86_64_dynamic_main_thread_runtime_v1_source_root.rs` is a fourth,
+explicitly dependent general RuntimeV1 root. It adds only the shape needed by
+the private real-Scrt1 fixture: `crabc_dynamic_main_thread_runtime_v1` keeps
+the existing retained general initial-TLS state and 72-byte RuntimeV1 record,
+then admits the ordinary null weak owned-CRT relocation emitted by the
+Rust-produced `Scrt1.o`. It does not select the older owned-CRT carrier.
+
+That admission is intentionally exact and happens in relocation evaluation
+before normal lookup. Only the unmapped main image's default-visible,
+undefined `STB_WEAK` `STT_OBJECT`
+`__crabc_x86_64_owned_crt_handoff` `R_X86_64_GLOB_DAT` relocation with a zero
+addend receives zero. A strong main import, a weak DSO import, another
+relocation form, or a nonzero addend rejects before `ARCH_SET_FS`. A dependency
+DSO definition of the name cannot interpose: the exact Scrt1 slot still reads
+null, so it cannot accidentally select the 32-byte owned-CRT carrier or a
+loader finalizer.
+
+`crt/build_x86_64.py --dynamic-main-thread-runtime-v1` produces this private
+`Scrt1.o` variant only. Immediately after its ordinary null-owned-handoff
+decode and immediately before `__libc_start_main`, it calls the existing
+main-resident `__crabc_x86_loader_tls_runtime_v1_attach` consumer. A malformed
+descriptor returns failure before preinit, init, main, or the private dynamic
+libc boundary. The loader validates the real main image's `DT_INIT`,
+`DT_FINI`, preinit, init, and fini array tag shape but does not dispatch those
+entries; `Scrt1.o` retains that executable lifecycle ownership.
+
+The fixture-local DSO at
+`libc/src/c_abi/x86_64/dynamic_main_thread_runtime_v1_source_root.rs` exports
+only `__libc_start_main` and `__errno_location`. It requires the musl-shaped
+null sixth `rtld_fini` argument, observes zero dynamic TLS `errno`, invokes
+the callbacks, and exits directly. The real main and that DSO each carry
+`PT_TLS`; the source-root evidence requires `PIMFL` to prove preinit, init,
+main, fini, and final dynamic-libc sequencing with a dynamic errno/TLS write.
+It does not make this minimal DSO an installed `libc.so` or ordinary-exit
+implementation.
+
+Run the two private roots with:
+
+```text
+./scripts/dev-x86_64.sh dynamic-main-thread-runtime-v1
+./scripts/dev-x86_64.sh dynamic-main-thread-runtime-v1-target-root
+```
+
+The direct root also runs magic/version/ABI-size/mode/owner/generation and
+poisoned-DTV negatives with empty output/status 127, uses the no-`ARCH_SET_FS`
+trace for strong-main and weak-DSO owned-record imports, and proves that a DSO
+definition of the owned-record name cannot interpose. The target-root command
+builds the dedicated Cargo `crabc-ldso` feature for the same positive graph.
+Pinned musl remains the ordinary bounded general-TLS layout/value oracle; it
+does not define this private record, direct Scrt1 attachment, or minimal libc
+boundary.
+
+This is deliberately not a general loader lifecycle or dynamic product. It
+does not defer dependency constructors to Scrt1, publish an owned-CRT carrier,
+invoke loader finalizers, add `dlopen`/unload, grow or replace a DTV, create
+workers, install an x86 sysroot, or promote a family, capability, or public
+x86 support claim.
 
 For a new pthread, libc supplies its per-thread initializer to the active
 owner. In dynamic mode, RuntimeV1 produces a fresh complete TLS/TCB/DTV block,

@@ -31,3 +31,8 @@ x86_64-general-initial-tls-interpreter = []
 # select the older fixed-graph RuntimeV1 seam, CRT lifecycle, dlfcn, runtime
 # mapping, worker TLS, or DTV growth.
 x86_64-general-initial-tls-runtime-v1-interpreter = []
+# Private general RuntimeV1 bridge for one Rust-produced Scrt1.o and one
+# main-thread dynamic-libc startup call. It validates only Scrt1's ordinary
+# null-owned-handoff shape; it does not select the fixed owned-CRT carrier,
+# loader finalizers, or a dynamic product.
+x86_64-general-initial-tls-runtime-v1-dynamic-main-thread-interpreter = []

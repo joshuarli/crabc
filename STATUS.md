@@ -998,6 +998,19 @@ not a CRT handoff, installed dynamic product, libc startup carrier,
 pthread/new-thread implementation, DTV growth/replacement, runtime mapping or
 unload, general lifecycle, family/capability promotion, or public x86 support.
 
+`dynamic-main-thread-runtime-v1` is one newer, still-private bridge over that
+same wire. A separately built Rust `Scrt1.o` attaches the main-resident
+RuntimeV1 consumer immediately before a fixture-local dynamic
+`__libc_start_main`; its real main and tiny private dynamic libc prove
+`PIMFL`, dynamic TLS, and dynamic errno. The loader admits only Scrt1's exact
+weak undefined owned-CRT `R_X86_64_GLOB_DAT` slot as null before generic
+lookup: strong-main and weak-DSO forms reject before `ARCH_SET_FS`, while a
+dependency definition cannot interpose. It validates the real main lifecycle
+tag shape but leaves callback dispatch with Scrt1. This is not the planned
+owned-CRT carrier, loader finalizer/dependency-lifecycle handoff, installed
+interpreter/libc product, normal exit runtime, pthread/new-thread TLS,
+DTV growth, `dlopen`/unload, sysroot, promotion, or public x86 support.
+
 The separate `ldso-initial-tls` artifact keeps that original no-TLS proof
 unchanged while adding one fixed TLS-free main PIE -> two GNU-Dynamic TLS DSO
 graph. It proves checked DSO `PT_TLS` parsing and Variant-II copying,

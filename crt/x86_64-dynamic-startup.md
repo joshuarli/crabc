@@ -67,8 +67,16 @@ the candidate callbacks. The separate no-interpreter `ET_EXEC` fixture proves
 the candidate callback bridge and forward/reverse array order. The builder
 also rejects a copied `Scrt1.o` with its private note forged.
 
-This does not select a candidate dynamic loader, loader-to-libc RuntimeV1,
-loader finalizer handoff, main-image initialization through `crabc-ldso`,
-static-link helper closure, candidate libc, loader TLS, `dl*`, installed CRT
-objects, an owned sysroot, or promotion. Those obligations remain explicit in
+The ordinary CRT artifact does not select a candidate dynamic loader,
+loader-to-libc RuntimeV1, loader finalizer handoff, main-image initialization
+through `crabc-ldso`, static-link helper closure, candidate libc, loader TLS,
+`dl*`, installed CRT objects, an owned sysroot, or promotion. One separate
+private evidence configuration,
+`crt/build_x86_64.py --dynamic-main-thread-runtime-v1`, builds only `Scrt1.o`
+with a direct main-resident RuntimeV1 attachment immediately before
+`__libc_start_main`. Its companion loader root accepts only Scrt1's exact null
+weak owned-CRT record and its fixture-local DSO supplies only the narrow
+six-argument startup/errno boundary. It remains distinct from the owned-CRT
+carrier and from any installed loader/libc product, lifecycle, `dl*`, worker,
+DTV-growth, sysroot, or promotion claim. Those obligations remain explicit in
 `compat/x86_64/parity.toml`.

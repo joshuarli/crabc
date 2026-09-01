@@ -1,0 +1,7 @@
+{
+  global:
+    __errno_location;
+    __libc_start_main;
+  local:
+    *;
+};

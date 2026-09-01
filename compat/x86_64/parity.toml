@@ -18058,6 +18058,67 @@ oracle = [
 ]
 
 [[family.verified_artifact]]
+id = "dynamic-main-thread-runtime-v1"
+description = "Private native x86 real-Scrt1 dynamic-main-thread RuntimeV1 bridge within still-planned `ldso.dynamic-runtime`. The separate `x86_64-general-initial-tls-runtime-v1-dynamic-main-thread-interpreter` cfg/root retains the bounded general initial `PT_TLS` graph and its loader-owned 72-byte `__crabc_x86_64_loader_tls_runtime_v1` record, then admits only the exact ordinary Rust-produced `Scrt1.o` null owned-CRT relocation. The private `crt/build_x86_64.py --dynamic-main-thread-runtime-v1` variant calls main-resident `__crabc_x86_loader_tls_runtime_v1_attach` immediately before `__libc_start_main`; a descriptor with bad magic/version/ABI size/mode/owner/generation or a poisoned DTV rejects with status 127 before preinit, init, main, or private dynamic-libc callbacks. The relocation exception is evaluated before generic lookup: only the unmapped main image's default-visible undefined weak object zero-addend `R_X86_64_GLOB_DAT` import of `__crabc_x86_64_owned_crt_handoff` receives null. Strong main and weak DSO forms reject before `ARCH_SET_FS`, and a dependency DSO definition cannot interpose or promote the fixed owned-CRT carrier. The fixture-local dynamic libc exports only `__libc_start_main` and `__errno_location`, requires null `rtld_fini`, and proves main plus DSO dynamic TLS and dynamic errno through real Scrt1 preinit/init/main/fini order `PIMFL`. The loader structurally validates the real main lifecycle tags but does not dispatch or retain them; Scrt1 owns those callbacks. Direct source-root evidence covers the positive launch, all descriptor failures before callbacks, exact ELF imports/relocations, pre-FS record rejection, and definition non-interposition; the Cargo target-root command proves the same positive `crabc-ldso` feature root. Pinned musl 1.2.6 remains the independent ordinary general-TLS layout/value oracle, not an oracle for this private record, direct attachment, or minimal startup DSO. This does not select an owned-CRT carrier, loader-owned finalizer, dependency-lifecycle deferral, installed interpreter/libc product, ordinary exit runtime, pthread/new-thread TLS, DTV growth/replacement, runtime mapping/dlopen, unload, sysroot, family/capability promotion, or public x86 support."
+source_owners = [
+  "ldso/Cargo.toml",
+  "ldso/build.rs",
+  "ldso/src/lib.rs",
+  "ldso/src/x86_64_initial_graph.rs",
+  "ldso/src/x86_64_initial_graph_state.rs",
+  "ldso/src/x86_64_initial_tls_registry.rs",
+  "ldso/src/x86_64_general_initial_graph.rs",
+  "ldso/src/x86_64_general_initial_tls_state.rs",
+  "ldso/src/x86_64_dynamic_main_thread_runtime_v1_source_root.rs",
+  "crt/build_x86_64.py",
+  "crt/src/x86_64_Scrt1.rs",
+  "crt/src/x86_64_dynamic_startup.rs",
+  "crt/x86_64-dynamic-startup.md",
+  "libc/src/c_abi/x86_64/errno.rs",
+  "libc/src/c_abi/x86_64/loader_tls_runtime_v1.rs",
+  "libc/src/c_abi/x86_64/loader_tls_runtime_v1_source_root.rs",
+  "libc/src/c_abi/x86_64/dynamic_main_thread_runtime_v1.rs",
+  "libc/src/c_abi/x86_64/dynamic_main_thread_runtime_v1_source_root.rs",
+  "compat/x86_64/dynamic_main_thread_runtime_v1.map",
+  "compat/x86_64/dynamic_main_thread_runtime_v1_main.c",
+  "compat/x86_64/dynamic_main_thread_runtime_v1_strong_owned_crt_record.c",
+  "compat/x86_64/dynamic_main_thread_runtime_v1_weak_dso_owned_crt_record.c",
+  "compat/x86_64/dynamic_main_thread_runtime_v1_owned_crt_record_definition.c",
+  "compat/x86_64/ldso_general_initial_tls_trace.c",
+  "compat/x86_64/run_loader_libc_general_tls_runtime_v1.sh",
+  "compat/x86_64/run_dynamic_main_thread_runtime_v1.sh",
+  "compat/x86_64/run_dynamic_main_thread_runtime_v1_target_root.sh",
+  "compat/x86_64/loader-libc-tls-runtime-v1.toml",
+  "compat/x86_64/validate_loader_libc_tls_runtime_v1.py",
+  "compat/x86_64/tests/test_dynamic_main_thread_runtime_v1.py",
+  "compat/x86_64/tests/test_loader_libc_tls_runtime_v1.py",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/README.md",
+  "compat/x86_64/validate_parity_ledger.py",
+  "docs/evidence/x86-loader-libc-tls-runtime-v1.md",
+  "STATUS.md",
+  "scripts/check_structure.py",
+  "scripts/dev-x86_64.sh",
+]
+x86_abi_prerequisites = [
+  "The private ET_DYN interpreter receives the untouched Linux x86-64 PT_INTERP initial stack and uses the bounded general initial PT_TLS transaction. Its Cargo target root carries only `x86_64-general-initial-tls-runtime-v1-dynamic-main-thread-interpreter`, no interpreter DT_NEEDED or PT_TLS, and no installed-loader claim.",
+  "The Rust-produced `Scrt1.o` retains its pinned-musl-shaped six-argument __libc_start_main convention and weak optional `__crabc_x86_64_owned_crt_handoff` object. The loader exception permits exactly default-visible STB_WEAK/SHN_UNDEF/STT_OBJECT main-image R_X86_64_GLOB_DAT with addend zero and returns zero before generic lookup; all other forms fail before ARCH_SET_FS.",
+  "The main and private dynamic libc use GNU Dynamic TLS under Linux x86-64 Variant II. The DSO is version-script-limited to __libc_start_main/__errno_location, has no DT_NEEDED, DT_SYMBOLIC, GNU hash, or lifecycle tags, and admits only RELATIVE/GLOB_DAT/JUMP_SLOT/DTPMOD64/DTPOFF64 relocations plus loader-owned __tls_get_addr resolution.",
+  "Scrt1 attaches the existing main-resident observer before the private dynamic libc boundary. The loader validates real main DT_INIT/DT_FINI/preinit/init/fini-array shape without dispatch; the executable owns callback order and the DSO rejects a non-null sixth rtld_fini argument rather than inferring a loader finalizer.",
+]
+x86_header_prerequisites = ["No installed x86 loader, RuntimeV1, libc.so, CRT, pthread, dlfcn, or sysroot declaration is selected. The map file and freestanding C/Rust fixtures are private ELF evidence only."]
+native_evidence = [
+  { state = "verified", command = "./scripts/dev-x86_64.sh dynamic-main-thread-runtime-v1", scope = "Native x86 source-root proof first reruns the pinned-musl ordinary general-TLS diamond and existing RuntimeV1 foundation, then builds the special Rust Scrt1.o, no-ambient-runtime ET_DYN interpreter, private dynamic libc DSO, and real dynamic PIE. It audits exact weak owned-CRT/RuntimeV1 main GLOB_DAT imports, dynamic-libc PT_TLS/export/import/relocation vocabulary, runs PIMFL with dynamic TLS/errno, rejects magic/version/ABI-size/mode/owner/generation/poisoned-DTV before callbacks, traces strong-main and weak-DSO owned-record rejection before ARCH_SET_FS, and proves a dependency record definition cannot interpose. It does not establish an owned-CRT carrier, loader finalizer/dependency lifecycle, installed product, pthreads, DTV growth, dlopen/unload, sysroot, promotion, or public support." },
+  { state = "verified", command = "./scripts/dev-x86_64.sh dynamic-main-thread-runtime-v1-target-root", scope = "Native x86 Cargo target-root proof builds only crabc-ldso's `x86_64-general-initial-tls-runtime-v1-dynamic-main-thread-interpreter` feature and reruns the real-Scrt1 positive private dynamic-libc TLS/errno/lifecycle path. It leaves malformed source variants as dedicated boundary evidence and does not install an interpreter or select an owned carrier, loader lifecycle, dynamic product, pthread, DTV-growth, dlopen/unload, sysroot, promotion, or public x86 support." },
+]
+oracle = [
+  { kind = "c-posix", source = "Pinned musl 1.2.6 x86-64 loader and Scrt1.o", role = "Ordinary initial Variant-II TLS layout/value and x86 null-sixth-argument Scrt1 convention oracle; it is not a private RuntimeV1/owned-record/minimal-libc fallback." },
+  { kind = "elf-abi", source = "System V AMD64 psABI and Linux ELF ABI", role = "ELF64 PT_INTERP/PT_TLS, dynamic tags, weak/strong object GLOB_DAT, GNU Dynamic TLS, dynamic-symbol visibility, and relocation contract." },
+  { kind = "kernel-abi", source = "Linux 5.10 x86-64 ABI", role = "Initial stack, arch_prctl(ARCH_SET_FS/ARCH_GET_FS), exit_group, and native fail-closed status-127 behavior." },
+]
+
+[[family.verified_artifact]]
 id = "ldso-initial-tls"
 description = "Private native x86 Variant-II initial-TLS interpreter artifact within still-planned `ldso.dynamic-runtime`, not the `crabc-ldso` target. A fixed main PIE (without PT_TLS) -> mid.so -> leaf.so graph maps exactly two GNU-Dynamic TLS DSO images. The candidate assigns one-based module IDs only to the TLS-bearing images, lays their PT_TLS images below TP with the musl 1.2.6 initial-layout alignment phase, copies initialized data, zeroes TBSS, installs a private immutable DTV plus module-size table at `%fs`, and sets ARCH_SET_FS only after all graph relocations and before dependency constructors. It accepts only R_X86_64_DTPMOD64/R_X86_64_DTPOFF64 and the fixed graph's __tls_get_addr JUMP_SLOT route; the private resolver rejects absent modules and offsets outside a module's recorded PT_TLS.p_memsz. The TLS-free candidate interpreter has no external runtime dependency; its exact two-DSO DT_NEEDED graph runs under `env -i`, while the pinned musl 1.2.6 static __tls_get_addr object supplies the naked reference main's resolver without a libc DT_NEEDED edge. The runner proves initialized values, 4096-byte alignment, TBSS zeroing and mutation, module-ID/DTV ownership, and that only the candidate resolves the direct main import from its interpreter. It fails closed for p_filesz > p_memsz, non-power-of-two alignment, p_offset/p_vaddr phase mismatch, duplicate PT_TLS, initialized TLS outside a readable file-backed PT_LOAD, nonzero DTPMOD addend, DTPOFF outside PT_TLS.p_memsz, R_X86_64_TPOFF64, and DF_STATIC_TLS. It excludes initial-exec/TPOFF admission beyond that rejection, TLSDESC, DTV growth, dlopen, dynamic thread allocation, pthread/TCB parity, loader/libc RuntimeV1 bridging, a general loader, dynamic CRT/sysroot, full x86-64 parity, and public x86 support."
 source_owners = ["ldso/src/x86_64_initial_graph_source_root.rs", "ldso/src/x86_64_initial_graph.rs", "compat/x86_64/ldso_initial_graph_start.S", "compat/x86_64/ldso_initial_tls_leaf.c", "compat/x86_64/ldso_initial_tls_mid.c", "compat/x86_64/ldso_initial_tls_main.c", "compat/x86_64/run_ldso_initial_tls.sh", "scripts/dev-x86_64.sh"]
