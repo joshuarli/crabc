@@ -108,6 +108,10 @@ class CanonicalUpstreamStressContractTests(unittest.TestCase):
             backend["artifact_attestation"]["cargo_compiler_artifact"]["semantic_profile"],
             "dev",
         )
+        self.assertEqual(
+            backend["artifact_attestation"]["cargo_compiler_artifact"]["cargo_command"][:3],
+            ["cargo", "build", "--locked"],
+        )
 
     def test_contract_records_upstream_seed_watchdog_and_artifact_schemas(self) -> None:
         contract, _ = RUNNER.load_contract()
@@ -161,6 +165,7 @@ class CanonicalUpstreamStressContractTests(unittest.TestCase):
                 "build_record_format": RUNNER.CURRENT_HEAD_BUILD_RECORD_FORMAT,
                 "build_record_schema": RUNNER.CURRENT_HEAD_BUILD_RECORD_SCHEMA,
                 "required_before_stress_compile": True,
+                "git_read_environment": {"GIT_OPTIONAL_LOCKS": "0"},
                 "capture_source": {
                     "kind": "git",
                     "worktree_clean": True,
@@ -726,6 +731,7 @@ class CanonicalUpstreamStressContractTests(unittest.TestCase):
                         "cargo_command": [
                             "cargo",
                             "build",
+                            "--locked",
                             "-p",
                             "crabc-libc",
                             "--features",
@@ -840,6 +846,61 @@ class CanonicalUpstreamStressContractTests(unittest.TestCase):
         self.assertEqual(failure.exception.prerequisite, "current-head-source-drift")
         self.assertEqual(capture_failure.exception.prerequisite, "current-head-source-stability")
 
+    def test_current_head_git_reads_disable_optional_locks(self) -> None:
+        """Git source-state reads must not refresh the host worktree index."""
+
+        revision = "a" * 40
+        revision_record = {
+            "kind": "process",
+            "status": 0,
+            "stdout": RUNNER.bytes_record(f"{revision}\n".encode("ascii")),
+            "stderr": RUNNER.bytes_record(b""),
+        }
+        status_record = {
+            "kind": "process",
+            "status": 0,
+            "stdout": RUNNER.bytes_record(b""),
+            "stderr": RUNNER.bytes_record(b""),
+        }
+        with mock.patch.dict(
+            RUNNER.os.environ,
+            {"HOME": "/attested/home", "PATH": "/attested/bin"},
+            clear=True,
+        ), mock.patch.object(
+            RUNNER.shutil, "which", return_value="/attested/bin/git"
+        ), mock.patch.object(
+            RUNNER, "command_record", side_effect=[revision_record, status_record]
+        ) as git_reads:
+            state = RUNNER.current_head_source_state()
+
+        self.assertEqual(
+            state,
+            {
+                "kind": "git",
+                "revision": revision,
+                "worktree_clean": True,
+                "worktree_status": RUNNER.bytes_record(b""),
+            },
+        )
+        self.assertEqual(
+            [call.args[0] for call in git_reads.call_args_list],
+            [
+                ("/attested/bin/git", "rev-parse", "--verify", "HEAD"),
+                (
+                    "/attested/bin/git",
+                    "status",
+                    "--porcelain=v1",
+                    "--untracked-files=all",
+                    "-z",
+                ),
+            ],
+        )
+        for call in git_reads.call_args_list:
+            environment = call.kwargs["environment"]
+            self.assertEqual(environment["GIT_OPTIONAL_LOCKS"], "0")
+            self.assertEqual(environment["HOME"], "/attested/home")
+            self.assertEqual(environment["PATH"], "/attested/bin")
+
     def test_capture_records_dirty_git_source_for_later_execution_blocking(self) -> None:
         contract, _ = RUNNER.load_contract()
         dirty_source = {
@@ -867,7 +928,7 @@ class CanonicalUpstreamStressContractTests(unittest.TestCase):
                 RUNNER, "current_head_source_state", side_effect=[dirty_source, dirty_source]
             ), mock.patch.object(
                 RUNNER.subprocess, "run", return_value=completed
-            ), mock.patch.object(
+            ) as cargo_run, mock.patch.object(
                 RUNNER,
                 "select_libc_compiler_artifact",
                 return_value={"captured": "compiler-artifact"},
@@ -875,6 +936,13 @@ class CanonicalUpstreamStressContractTests(unittest.TestCase):
                 RUNNER, "expected_cargo_artifact_paths", return_value=artifacts
             ):
                 RUNNER.capture_selected_libc_build(contract, target, build_record)
+
+            self.assertEqual(
+                cargo_run.call_args.args[0],
+                RUNNER.selected_backend_contract(contract)["artifact_attestation"]
+                ["cargo_compiler_artifact"]["cargo_command"],
+            )
+            self.assertIn("--locked", cargo_run.call_args.args[0])
 
             captured = RUNNER.read_current_head_build_record(companion)
             backend = {
@@ -1507,7 +1575,11 @@ class CanonicalUpstreamStressContractTests(unittest.TestCase):
         stress_run = dispatch.rindex("python3 compat/allocator/upstream-stress/run.py")
         self.assertLess(sysroot_build, shadow_build)
         self.assertLess(shadow_build, stress_run)
-        self.assertIn("--message-format=json-render-diagnostics", RUNNER.expected_contract(RUNNER.FIXED_PIN)["backend_inventory"]["backends"][0]["artifact_attestation"]["cargo_compiler_artifact"]["cargo_command"])
+        cargo_command = RUNNER.expected_contract(RUNNER.FIXED_PIN)["backend_inventory"]["backends"][0]["artifact_attestation"]["cargo_compiler_artifact"]["cargo_command"]
+        self.assertIn("--locked", cargo_command)
+        self.assertIn("--message-format=json-render-diagnostics", cargo_command)
+        self.assertIn("run_in_container cargo build --workspace --locked", dispatch)
+        self.assertIn("run_in_container cargo build --workspace --release --locked", dispatch)
         self.assertIn("python3 scripts/run_owned_test_suite.py", dispatch)
         self.assertIn('--libc-build-record "$selected_libc_build_record" "$@"', dispatch)
 

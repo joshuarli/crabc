@@ -654,8 +654,8 @@ case "$command" in
         # Build the owned runtime first, then capture the exact compiler-artifact
         # emitted by the selected nondefault libc build. The runner binds both
         # selected libc outputs to that record before starting stress.
-        run_in_container cargo build --workspace
-        run_in_container cargo build --workspace --release
+        run_in_container cargo build --workspace --locked
+        run_in_container cargo build --workspace --release --locked
         run_in_container python3 scripts/build_owned_sysroot.py
         selected_libc_build_record=".work/target/compat/allocator/upstream-stress/selected-libc-build.json"
         run_in_container python3 compat/allocator/upstream-stress/run.py \

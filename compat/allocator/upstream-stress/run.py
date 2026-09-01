@@ -72,6 +72,7 @@ DIAGNOSTIC_REPORT_SCHEMA = (
     "crabc-mimalloc-canonical-upstream-stress-current-head-diagnostic-report"
 )
 POST_OWNER_EXIT_CONCURRENT_FREE_CASE_ID = "workers-2-scale-1-iterations-1"
+GIT_SOURCE_STATE_READ_ENVIRONMENT = {"GIT_OPTIONAL_LOCKS": "0"}
 FIXED_PIN = {
     "version": "3.5.0",
     "repository": "https://github.com/microsoft/mimalloc.git",
@@ -269,15 +270,28 @@ def workspace_tree_source_state() -> dict[str, Any]:
     }
 
 
+def git_source_state_read_environment() -> dict[str, str]:
+    """Preserve caller settings while making Git source-state reads index-safe."""
+
+    environment = dict(os.environ)
+    environment.update(GIT_SOURCE_STATE_READ_ENVIRONMENT)
+    return environment
+
+
 def current_head_source_state() -> dict[str, Any]:
     """Describe checked-out Git state, or the mounted source tree when Git is absent."""
 
     git = shutil.which("git")
     if git is None:
         return workspace_tree_source_state()
-    revision_record = command_record((git, "rev-parse", "--verify", "HEAD"), cwd=ROOT)
+    environment = git_source_state_read_environment()
+    revision_record = command_record(
+        (git, "rev-parse", "--verify", "HEAD"), cwd=ROOT, environment=environment
+    )
     status_record = command_record(
-        (git, "status", "--porcelain=v1", "--untracked-files=all", "-z"), cwd=ROOT
+        (git, "status", "--porcelain=v1", "--untracked-files=all", "-z"),
+        cwd=ROOT,
+        environment=environment,
     )
     try:
         revision = byte_record_payload(revision_record.get("stdout"), "git revision").decode(
@@ -545,6 +559,7 @@ def expected_contract(pin: Mapping[str, str]) -> dict[str, Any]:
                             "cargo_command": [
                                 "cargo",
                                 "build",
+                                "--locked",
                                 "-p",
                                 "crabc-libc",
                                 "--features",
@@ -669,6 +684,7 @@ def expected_contract(pin: Mapping[str, str]) -> dict[str, Any]:
                 "build_record_format": CURRENT_HEAD_BUILD_RECORD_FORMAT,
                 "build_record_schema": CURRENT_HEAD_BUILD_RECORD_SCHEMA,
                 "required_before_stress_compile": True,
+                "git_read_environment": dict(GIT_SOURCE_STATE_READ_ENVIRONMENT),
                 "capture_source": {
                     "kind": "git",
                     "worktree_clean": True,

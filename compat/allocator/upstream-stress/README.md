@@ -36,6 +36,12 @@ compilation or a stress process. The full report's `current_head` object has
 the same `status`, `record`, and `source` schema and meaning as the diagnostic
 report below.
 
+The two outer workspace builds and the exact selected-libc Cargo capture use
+`--locked`, so this lane cannot silently rewrite the lockfile. Current-head
+Git reads preserve the caller environment while setting `GIT_OPTIONAL_LOCKS=0`;
+that keeps the revision and porcelain-status evidence unchanged while
+preventing an optional host `.git/index` refresh during attestation.
+
 Runner-owned mutable state defaults below `CRABC_WORK_DIR`, or the checkout's
 `.work/` directory when that variable is unset: the pinned archive and tag
 attestation use `.work/allocator-cache/`, fixture output and selected-libc

@@ -50,6 +50,7 @@
             "cargo_command": [
               "cargo",
               "build",
+              "--locked",
               "-p",
               "crabc-libc",
               "--features",
@@ -316,6 +317,9 @@
       "build_record_format": 1,
       "build_record_schema": "crabc-selected-libc-current-head-build",
       "required_before_stress_compile": true,
+      "git_read_environment": {
+        "GIT_OPTIONAL_LOCKS": "0"
+      },
       "capture_source": {
         "kind": "git",
         "worktree_clean": true,
