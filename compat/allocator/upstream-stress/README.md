@@ -9,13 +9,22 @@ apply a patch, copy a source fixture, alter worker scheduling, or move the
 upstream initial-thread transfer cleanup into another thread.
 
 The closed applicable matrix invokes that one binary in fresh processes with
-1, 2, 4, and 8 pthread workers, first at scale/iterations `1 1` and then at
-`2 2`. Each case has one 30-second watchdog and no retry. Cases run in manifest
-order and dispatch stops at the first non-pass; the runner never shrinks or
+1, 2, 4, and 8 pthread workers, first at scale/iterations `1 1`, then at
+`2 2`, and finally at the appended source-CLI large-object cases `101 1`.
+Each case has one 30-second watchdog and no retry. Cases run in manifest order
+and dispatch stops at the first non-pass; the runner never shrinks or
 reschedules a source case. The source itself fixes `srand(0x7feb352d)` and each
 worker's local state starts from `(tid + 1) * 43`; pthread scheduling remains
-nondeterministic and there is no harness seed override. Large-object mode is
-explicitly not claimed.
+nondeterministic and there is no harness seed override.
+
+The unmodified pinned source sets `allow_large_objects` only after source CLI
+parsing when `SCALE > 100`. The four `SCALE=101` rows require its exact
+` (allow large objects)` stdout suffix. `USE_STD_MALLOC` remains the sole
+compile-time symbol; no compile-time large-mode define is accepted. These
+source-CLI rows record source-mode activation and completed bounded workload
+execution, not proof that every probabilistic large allocation succeeded. The
+12-row nondefault `shadow_subset` is not a Gate 5D or Gate 5E acceptance,
+selected-shadow acceptance, or allocator-promotion gate.
 
 The canonical Docker-first dispatch builds the owned sysroot, builds the
 selected shadow libc last, stages the owned loader, and runs the matrix:
@@ -116,10 +125,11 @@ executing it.
 The checked-in manifest inventories the sole applicable target
 (`Linux/AArch64` little-endian, kernel baseline 5.10), the nondefault native
 shadow backend, the source seed policy, per-process watchdog, and report
-schema. Report format 5 records the passed Cargo build record, a required
+schema. Report format 7 records the passed Cargo build record, a required
 current-head companion attestation, and the selected shared and static libc
-artifacts separately. Every file artifact record has `path`, `bytes`, and
-`sha256`; captured
+artifacts separately. Its exact 12-row matrix and format reject legacy
+eight-case reports rather than treating them as current evidence. Every file
+artifact record has `path`, `bytes`, and `sha256`; captured
 stdout/stderr records have `bytes`, `sha256`, and `hex`. The report reserves
 named slots for the contract, pinned archive/source, owned sysroot inputs,
 selected and staged loaders, both libc outputs, the backend build record, and compiled stress

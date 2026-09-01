@@ -47,7 +47,7 @@
     {
       "acceptance": "Bounded churn, opt-in soak, metadata high-water stability, and the source-attested canonical current-head upstream stress matrix are accepted for the claimed M5 lifecycle surface.",
       "blocked_by": [
-        "The bounded C lanes and focused Rust regression remain bounded witnesses, not accepted opt-in soak or metadata high-water completion. A verified current-head canonical upstream matrix is a source/artifact-bound nondefault shadow subset with large_object_mode: not-claimed; it cannot accept large-object coverage or the remaining claimed M5 lifecycle surface. The constrained source-derived test-stress.c route still runs on its creating thread only and cannot accept upstream cross-thread transfer, remote-free, heap, subprocess, or thread-recreation."
+        "The bounded C lanes and focused Rust regression remain bounded witnesses, not accepted opt-in soak or metadata high-water completion. A verified current-head canonical upstream matrix is a source/artifact-bound nondefault 12-row shadow subset with large_object_mode: source-cli-enabled; its four source-CLI rows record bounded activation and workload attempts, not proof that every probabilistic large allocation succeeded. It cannot accept comprehensive large-object coverage or the broader claimed M5 lifecycle surface. The constrained source-derived test-stress.c route still runs on its creating thread only and cannot accept upstream cross-thread transfer, remote-free, heap, subprocess, or thread-recreation."
       ],
       "evidence": [
         "runtime-ticket-zero:128-cycle-churn",

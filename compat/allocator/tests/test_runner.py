@@ -1821,6 +1821,18 @@ class ContractTests(unittest.TestCase):
             summary["gate_ids"],
             ["m5.base", "m5.5a", "m5.5b", "m5.5c", "m5.5d", "m5.5e"],
         )
+        m5_5d = next(gate for gate in contract["gates"] if gate["id"] == "m5.5d")
+        self.assertEqual(m5_5d["evidence"], list(RUNNER.M5_5D_EVIDENCE))
+        self.assertEqual(m5_5d["required"], True)
+        self.assertEqual(len(m5_5d["blocked_by"]), 1)
+        blocker = m5_5d["blocked_by"][0]
+        self.assertIn("12-row shadow subset", blocker)
+        self.assertIn("large_object_mode: source-cli-enabled", blocker)
+        self.assertIn(
+            "not proof that every probabilistic large allocation succeeded", blocker
+        )
+        self.assertIn("broader claimed M5 lifecycle surface", blocker)
+        self.assertNotIn("large_object_mode: not-claimed", blocker)
 
     def test_native_owner_exit_lifecycle_contract_covers_every_reviewed_condition(self) -> None:
         contract = RUNNER.read_json(RUNNER.NATIVE_OWNER_EXIT_LIFECYCLE_CONTRACT)
