@@ -56,6 +56,20 @@ compatibility engineering, not allocator research.
 10. Do not claim completion until every final definition-of-done item in this
     file passes at the same commit.
 
+### 0.1 Local workspace boundary
+
+Run this work from the repository checkout and keep every mutable development
+artifact below its repository-local `.work/` directory. This includes
+temporary files, extracted upstream sources, implementation worktrees, Cargo
+targets, generated sysroots, reports, and fixtures. Create subdirectories as
+needed, for example `.work/tmp/`, `.work/worktrees/`, and `.work/target/`.
+For the canonical checkout this is `/Volumes/dev/d/crabc/.work`.
+
+Do not use `/tmp`, `/private/tmp`, `/var/tmp`, a home-directory scratch path,
+or any other worktree or temporary location outside `.work/`. If a tool's
+default would write outside this boundary, override its path before running
+it; do not proceed with the default.
+
 ---
 
 # 1. Fixed target and scope
@@ -309,7 +323,8 @@ fails at the smallest tested configuration:
 The audited reproducer used the owned driver and loader in this form:
 
 ```sh
-expdir=$(mktemp -d /tmp/crabc-upstream-stress.XXXXXX)
+mkdir -p "$PWD/.work/tmp"
+expdir=$(mktemp -d "$PWD/.work/tmp/crabc-upstream-stress.XXXXXX")
 tar -xzf compat/allocator/.cache/mimalloc-3.5.0.tar.gz -C "$expdir"
 src="$expdir/mimalloc-3.5.0"
 bin="$expdir/upstream-test-stress-stdmalloc"
@@ -851,10 +866,10 @@ module boundaries that are mergeable in the same wave.
 
 ## 6.2 Worktree layout
 
-Use a dedicated sibling directory, for example:
+Use the dedicated repository-local worktree directory, for example:
 
 ```text
-../crabc-native-mimalloc-worktrees/
+.work/worktrees/
   w01-<topic>/
   w02-<topic>/
   ...
@@ -873,7 +888,7 @@ codex/native-mimalloc/wave-01/w15-production-ratchet
 Each worktree must use an isolated build output, for example:
 
 ```sh
-export CARGO_TARGET_DIR="$PWD/target/codex-worktree"
+export CARGO_TARGET_DIR="$PWD/.work/target/codex-worktree"
 ```
 
 The pinned upstream archive and immutable downloaded inputs may be shared.
