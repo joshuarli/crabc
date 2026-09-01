@@ -24,6 +24,18 @@ selected shadow libc last, stages the owned loader, and runs the matrix:
 ./scripts/dev.sh allocator-upstream
 ```
 
+Before the full matrix compiles its archived source or starts a stress process,
+it attests the current-head companion written beside the selected Cargo build
+record. Capture always records the source state before and after Cargo so a
+dirty, changed, or non-Git source remains observable. Full-matrix execution
+requires both captured states and the execution-time state to be the same
+clean Git `HEAD`; it also rebinds the companion to the normal Cargo record and
+both selected libc hashes. A missing, dirty, changed, non-Git, or mismatched
+companion produces an atomic `status: "blocked"` report before source
+compilation or a stress process. The full report's `current_head` object has
+the same `status`, `record`, and `source` schema and meaning as the diagnostic
+report below.
+
 Runner-owned mutable state defaults below `CRABC_WORK_DIR`, or the checkout's
 `.work/` directory when that variable is unset: the pinned archive and tag
 attestation use `.work/allocator-cache/`, fixture output and selected-libc
@@ -41,14 +53,11 @@ For a reproducible, narrowly scoped observation of the current checkout, run:
 
 The dispatch still builds the selected `native-mimalloc-shadow` libc last. Its
 capture phase writes the normal selected Cargo compiler-artifact record plus
-`selected-libc-build-current-head.json`. The companion binds the exact clean
-Git `HEAD` before and after that build to the selected shared and static libc
-hashes and to the normal Cargo record. When a Docker-mounted linked worktree
-cannot resolve its host-side Git metadata, the same companion instead records
-a deterministic source-tree digest that excludes only VCS metadata and known
-generated/cache roots. The diagnostic rechecks either source identity and
-refuses a missing, dirty, changed, or mismatched source/build companion before
-it starts a stress process.
+`selected-libc-build-current-head.json`, recording source state before and
+after Cargo even when it cannot later qualify as current-head evidence. The
+diagnostic applies the same clean, unchanged Git capture-and-execution
+attestation as the full matrix and refuses a missing, dirty, changed, non-Git,
+or mismatched source/build companion before it starts a stress process.
 
 `--diagnose` compiles the same byte-for-byte archived source with the same
 `USE_STD_MALLOC` selection, verifies the same ELF and selected-free route
@@ -69,12 +78,13 @@ never full-matrix, allocator-promotion, large-object, or M5 evidence.
 
 The owned-suite wrapper is required. Before entering it, the canonical
 dispatch builds `crabc-libc` with Cargo's JSON message format and atomically
-records the exact matching compiler-artifact from that invocation. The record
-binds the `crabc-libc` package and library target to the `dev` semantic
-profile, exact `default,native-mimalloc-shadow` features, ordered `libc.so` and
-`libc.a` filenames, and both files' byte counts and SHA-256 hashes. The runner
-does not select from Cargo's global fingerprint cache, so legitimate
-coexisting dev and test fingerprints do not make the selected build ambiguous.
+records the exact matching compiler-artifact from that invocation plus the
+source-state companion. The normal record binds the `crabc-libc` package and
+library target to the `dev` semantic profile, exact
+`default,native-mimalloc-shadow` features, ordered `libc.so` and `libc.a`
+filenames, and both files' byte counts and SHA-256 hashes. The runner does not
+select from Cargo's global fingerprint cache, so legitimate coexisting dev and
+test fingerprints do not make the selected build ambiguous.
 
 The owned-suite wrapper stages the owned canonical loader and debug libc
 aliases for the test process; the lane itself then selects the attested
@@ -100,13 +110,14 @@ executing it.
 The checked-in manifest inventories the sole applicable target
 (`Linux/AArch64` little-endian, kernel baseline 5.10), the nondefault native
 shadow backend, the source seed policy, per-process watchdog, and report
-schema. Report format 4 records the passed Cargo build record plus the selected
-shared and static libc artifacts separately. Every file artifact record has
-`path`, `bytes`, and `sha256`; captured
+schema. Report format 5 records the passed Cargo build record, a required
+current-head companion attestation, and the selected shared and static libc
+artifacts separately. Every file artifact record has `path`, `bytes`, and
+`sha256`; captured
 stdout/stderr records have `bytes`, `sha256`, and `hex`. The report reserves
 named slots for the contract, pinned archive/source, owned sysroot inputs,
 selected and staged loaders, both libc outputs, the backend build record, and compiled stress
-binary. The extracted source artifact is recorded as the stable archive member
+binary; `current_head.record` identifies the separate companion. The extracted source artifact is recorded as the stable archive member
 `mimalloc-3.5.0/test/test-stress.c`; compiler commands and diagnostics replace
 the deleted random extraction directory with
 `<pinned-source>/mimalloc-3.5.0`, so identical observations serialize
@@ -116,8 +127,9 @@ If a native prerequisite is unavailable, the runner still atomically writes a
 report with `status: "blocked"`. Its `blocked` record names the exact missing
 boundary—such as the owned-sysroot manifest/driver, selected shadow libc,
 missing compiler-artifact build record,
-selected loader, owned canonical-loader staging, or native Linux/AArch64 host—
-and declares that no stress process started. Capability status is fail-closed:
+selected loader, owned canonical-loader staging, native Linux/AArch64 host, or
+the current-head source/build attestation—and declares that no stress process
+started. Capability status is fail-closed:
 `not-run`, `blocked`, and `failed` are all non-success states, and `passed` is
 published only after every listed case completes natively with its exact
 expected status and streams. A blocked or partial report is neither a pass nor

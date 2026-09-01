@@ -48,6 +48,22 @@ class CanonicalUpstreamStressContractTests(unittest.TestCase):
             "stderr": RUNNER.bytes_record(str(case["expected_stderr"]).encode()),
         }
 
+    @staticmethod
+    def current_head_attestation() -> dict[str, object]:
+        return {
+            "record": {
+                "bytes": 1,
+                "path": "current-head-build",
+                "sha256": "0" * 64,
+            },
+            "source": {
+                "kind": "git",
+                "revision": "1" * 40,
+                "worktree_clean": True,
+                "worktree_status": RUNNER.bytes_record(b""),
+            },
+        }
+
     def test_closed_contract_keeps_the_archive_source_unmodified(self) -> None:
         contract, pin = RUNNER.load_contract()
         self.assertEqual(pin, RUNNER.FIXED_PIN)
@@ -121,7 +137,7 @@ class CanonicalUpstreamStressContractTests(unittest.TestCase):
         )
         report = contract["report"]
         self.assertEqual(report["schema"], "crabc-mimalloc-canonical-upstream-stress-report")
-        self.assertEqual(report["format"], 4)
+        self.assertEqual(report["format"], 5)
         self.assertEqual(
             report["path"],
             ".work/reports/allocator/upstream-stress/latest.json",
@@ -137,6 +153,26 @@ class CanonicalUpstreamStressContractTests(unittest.TestCase):
             {
                 "artifact": "mimalloc-3.5.0/test/test-stress.c",
                 "extraction_root": "<pinned-source>/mimalloc-3.5.0",
+            },
+        )
+        self.assertEqual(
+            report["current_head"],
+            {
+                "build_record_format": RUNNER.CURRENT_HEAD_BUILD_RECORD_FORMAT,
+                "build_record_schema": RUNNER.CURRENT_HEAD_BUILD_RECORD_SCHEMA,
+                "required_before_stress_compile": True,
+                "capture_source": {
+                    "kind": "git",
+                    "worktree_clean": True,
+                    "unchanged_during_selected_libc_build": True,
+                },
+                "execution_source": {
+                    "kind": "git",
+                    "worktree_clean": True,
+                    "matches_selected_libc_build": True,
+                },
+                "report_fields": ["status", "record", "source"],
+                "status_values": ["not-attested", "attested"],
             },
         )
         self.assertEqual(
@@ -463,7 +499,7 @@ class CanonicalUpstreamStressContractTests(unittest.TestCase):
             report["runtime"]["environment"],
             RUNNER.runtime_environment_record(root / "target"),
         )
-        self.assertEqual(report["current_head"]["source"], current_head["source"])
+        self.assertEqual(report["current_head"], RUNNER.current_head_report(current_head))
 
     def test_diagnostic_blocked_prerequisite_never_claims_a_matrix_result(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -488,6 +524,86 @@ class CanonicalUpstreamStressContractTests(unittest.TestCase):
         self.assertEqual(report["canonical_matrix"]["status"], "not-run")
         self.assertFalse(report["canonical_matrix"]["m5_accepted"])
         self.assertEqual(report["blocked"]["prerequisite"], "current-head-build-record")
+
+    def test_full_matrix_blocks_on_current_head_before_compiling_or_running(self) -> None:
+        contract, pin = RUNNER.load_contract()
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            archive = root / "mimalloc.tar.gz"
+            archive.write_bytes(b"pinned archive")
+            build_record = root / "selected-libc-build.json"
+            build_record.write_text("{}\n", encoding="utf-8")
+            report_path = root / "upstream-stress.json"
+            blocked = RUNNER.BlockedPrerequisite(
+                "current-head-source-state",
+                "canonical upstream stress requires a clean Git source at execution",
+                {"build_record": str(build_record)},
+            )
+            backend = {
+                "build_record": {
+                    "bytes": 1,
+                    "path": "build-record",
+                    "sha256": "0" * 64,
+                },
+                "artifacts": {
+                    "selected_shared_libc": {
+                        "bytes": 1,
+                        "path": "libc.so",
+                        "sha256": "0" * 64,
+                    },
+                    "selected_static_libc": {
+                        "bytes": 1,
+                        "path": "libc.a",
+                        "sha256": "0" * 64,
+                    },
+                },
+                "status": "passed",
+            }
+            with mock.patch.object(RUNNER, "require_native_aarch64"), mock.patch.object(
+                RUNNER, "fetch_archive", return_value=archive
+            ), mock.patch.object(
+                RUNNER,
+                "cached_tag_attestation",
+                return_value={"format": 1, "revision": pin["revision"]},
+            ), mock.patch.object(
+                RUNNER,
+                "require_runtime_inputs",
+                return_value=self.native_runtime_inputs(root),
+            ), mock.patch.object(
+                RUNNER, "attest_selected_backend", return_value=backend
+            ), mock.patch.object(
+                RUNNER, "attest_current_head_build", side_effect=blocked
+            ), mock.patch.object(RUNNER, "command_record") as commands:
+                status = RUNNER.main(
+                    [
+                        "--target-dir",
+                        str(root / "target"),
+                        "--output-dir",
+                        str(root / "output"),
+                        "--libc-build-record",
+                        str(build_record),
+                        "--report",
+                        str(report_path),
+                    ]
+                )
+            report = json.loads(report_path.read_text(encoding="utf-8"))
+
+        self.assertEqual(status, 1)
+        commands.assert_not_called()
+        self.assertEqual(report["format"], 5)
+        self.assertEqual(report["status"], "blocked")
+        self.assertEqual(report["blocked"]["prerequisite"], "current-head-source-state")
+        self.assertFalse(report["capability"]["native_execution_started"])
+        self.assertFalse(report["execution"]["attempted"])
+        self.assertIsNone(report["first_fact"])
+        self.assertFalse(report["blocked"]["stress_process_started"])
+        self.assertEqual(report["current_head"], RUNNER.current_head_report())
+        self.assertEqual(
+            report["requested_runtime"]["current_head_build_record"],
+            RUNNER.relative_path(
+                RUNNER.current_head_build_record_path(build_record), RUNNER.ROOT
+            ),
+        )
 
     def test_build_command_contains_only_the_upstream_standard_allocator_selection(self) -> None:
         contract, _ = RUNNER.load_contract()
@@ -707,9 +823,77 @@ class CanonicalUpstreamStressContractTests(unittest.TestCase):
                 with self.assertRaises(RUNNER.BlockedPrerequisite) as failure:
                     RUNNER.attest_current_head_build(companion, build_record, backend)
 
+            changed_capture = dict(source)
+            changed_capture["revision"] = "c" * 40
+            changed_record = json.loads(companion.read_text(encoding="utf-8"))
+            changed_record["source_after"] = changed_capture
+            changed_record["source_unchanged_during_build"] = False
+            companion.write_text(json.dumps(changed_record), encoding="utf-8")
+            with mock.patch.object(
+                RUNNER, "current_head_source_state", return_value=changed_capture
+            ):
+                with self.assertRaises(RUNNER.BlockedPrerequisite) as capture_failure:
+                    RUNNER.attest_current_head_build(companion, build_record, backend)
+
         self.assertEqual(attestation["source"], source)
         self.assertEqual(attestation["artifacts"], artifacts)
         self.assertEqual(failure.exception.prerequisite, "current-head-source-drift")
+        self.assertEqual(capture_failure.exception.prerequisite, "current-head-source-stability")
+
+    def test_capture_records_dirty_git_source_for_later_execution_blocking(self) -> None:
+        contract, _ = RUNNER.load_contract()
+        dirty_source = {
+            "kind": "git",
+            "revision": "a" * 40,
+            "worktree_clean": False,
+            "worktree_status": RUNNER.bytes_record(b" M libc/src/lib.rs\0"),
+        }
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            target = root / "target"
+            shared = target / "libc.so"
+            static = target / "libc.a"
+            target.mkdir()
+            shared.write_bytes(b"selected shared libc")
+            static.write_bytes(b"selected static libc")
+            build_record = root / "selected-libc-build.json"
+            companion = RUNNER.current_head_build_record_path(build_record)
+            artifacts = {
+                "selected_shared_libc": shared,
+                "selected_static_libc": static,
+            }
+            completed = mock.Mock(returncode=0, stdout=b"", stderr=b"")
+            with mock.patch.object(
+                RUNNER, "current_head_source_state", side_effect=[dirty_source, dirty_source]
+            ), mock.patch.object(
+                RUNNER.subprocess, "run", return_value=completed
+            ), mock.patch.object(
+                RUNNER,
+                "select_libc_compiler_artifact",
+                return_value={"captured": "compiler-artifact"},
+            ), mock.patch.object(
+                RUNNER, "expected_cargo_artifact_paths", return_value=artifacts
+            ):
+                RUNNER.capture_selected_libc_build(contract, target, build_record)
+
+            captured = RUNNER.read_current_head_build_record(companion)
+            backend = {
+                "build_record": RUNNER.file_record(build_record, root=RUNNER.ROOT),
+                "artifacts": {
+                    artifact_id: RUNNER.file_record(path, root=RUNNER.ROOT)
+                    for artifact_id, path in artifacts.items()
+                },
+            }
+            with mock.patch.object(
+                RUNNER, "current_head_source_state", return_value=dirty_source
+            ):
+                with self.assertRaises(RUNNER.BlockedPrerequisite) as failure:
+                    RUNNER.attest_current_head_build(companion, build_record, backend)
+
+        self.assertEqual(captured["source_before"], dirty_source)
+        self.assertEqual(captured["source_after"], dirty_source)
+        self.assertTrue(captured["source_unchanged_during_build"])
+        self.assertEqual(failure.exception.prerequisite, "current-head-source-state")
 
     def test_workspace_source_digest_excludes_only_known_generated_and_vcs_roots(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -862,6 +1046,10 @@ class CanonicalUpstreamStressContractTests(unittest.TestCase):
                     },
                     "status": "passed",
                 },
+            ), mock.patch.object(
+                RUNNER,
+                "attest_current_head_build",
+                return_value=self.current_head_attestation(),
             ), mock.patch.object(
                 RUNNER, "extract_exact_archive", return_value=source_root
             ), mock.patch.object(
@@ -1102,6 +1290,10 @@ class CanonicalUpstreamStressContractTests(unittest.TestCase):
                     },
                     "status": "passed",
                 },
+            ), mock.patch.object(
+                RUNNER,
+                "attest_current_head_build",
+                return_value=self.current_head_attestation(),
             ), mock.patch.object(RUNNER, "extract_exact_archive", return_value=source_root), mock.patch.object(
                 RUNNER, "sha256_file", return_value=contract["fixture"]["sha256"]
             ), mock.patch.object(
@@ -1207,6 +1399,10 @@ class CanonicalUpstreamStressContractTests(unittest.TestCase):
                     },
                     "status": "passed",
                 },
+            ), mock.patch.object(
+                RUNNER,
+                "attest_current_head_build",
+                return_value=self.current_head_attestation(),
             ), mock.patch.object(RUNNER, "extract_exact_archive", return_value=source_root), mock.patch.object(
                 RUNNER, "sha256_file", return_value=contract["fixture"]["sha256"]
             ), mock.patch.object(
@@ -1245,6 +1441,9 @@ class CanonicalUpstreamStressContractTests(unittest.TestCase):
         self.assertEqual(report["capability"]["status"], "passed")
         self.assertTrue(report["capability"]["native_execution_completed"])
         self.assertEqual(report["capability"]["fully_verified_worker_counts"], [1, 2, 4, 8])
+        self.assertEqual(
+            report["current_head"], RUNNER.current_head_report(self.current_head_attestation())
+        )
 
     def test_owned_sysroot_prerequisite_is_a_structured_blocked_report(self) -> None:
         contract, pin = RUNNER.load_contract()
@@ -1316,9 +1515,14 @@ class CanonicalUpstreamStressContractTests(unittest.TestCase):
         contract, pin = RUNNER.load_contract()
         args = RUNNER.parse_arguments([])
         report = RUNNER.report_base(contract, pin, args)
-        self.assertEqual(report["format"], 4)
+        self.assertEqual(report["format"], 5)
         self.assertEqual(report["capability"]["status"], "not-run")
         self.assertFalse(report["capability"]["native_execution_started"])
+        self.assertEqual(report["current_head"], RUNNER.current_head_report())
+        self.assertEqual(
+            report["requested_runtime"]["current_head_build_record"],
+            RUNNER.relative_path(args.current_head_build_record, RUNNER.ROOT),
+        )
         self.assertEqual(
             set(report["artifacts"]),
             {

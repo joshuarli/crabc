@@ -341,6 +341,17 @@ def validate_current_head_source_state(state: object, subject: str) -> dict[str,
     return dict(state)
 
 
+def require_clean_git_source_state(state: object, subject: str) -> dict[str, Any]:
+    """Accept only a clean Git worktree as current-head source evidence."""
+
+    normalized = validate_current_head_source_state(state, subject)
+    if normalized.get("kind") != "git":
+        raise EvidenceError(f"{subject} requires an available Git source state")
+    if not normalized["worktree_clean"]:
+        raise EvidenceError(f"{subject} requires a clean Git source tree")
+    return normalized
+
+
 def stable_source_member_record(
     path: Path, pin: Mapping[str, str], source_member: str
 ) -> dict[str, Any]:
@@ -639,7 +650,7 @@ def expected_contract(pin: Mapping[str, str]) -> dict[str, Any]:
             ],
         },
         "report": {
-            "format": 4,
+            "format": 5,
             "schema": "crabc-mimalloc-canonical-upstream-stress-report",
             "path": ".work/reports/allocator/upstream-stress/latest.json",
             "atomic_publish": True,
@@ -653,6 +664,23 @@ def expected_contract(pin: Mapping[str, str]) -> dict[str, Any]:
             "source_path_normalization": {
                 "artifact": "mimalloc-3.5.0/test/test-stress.c",
                 "extraction_root": "<pinned-source>/mimalloc-3.5.0",
+            },
+            "current_head": {
+                "build_record_format": CURRENT_HEAD_BUILD_RECORD_FORMAT,
+                "build_record_schema": CURRENT_HEAD_BUILD_RECORD_SCHEMA,
+                "required_before_stress_compile": True,
+                "capture_source": {
+                    "kind": "git",
+                    "worktree_clean": True,
+                    "unchanged_during_selected_libc_build": True,
+                },
+                "execution_source": {
+                    "kind": "git",
+                    "worktree_clean": True,
+                    "matches_selected_libc_build": True,
+                },
+                "report_fields": ["status", "record", "source"],
+                "status_values": ["not-attested", "attested"],
             },
             "artifact_ids": [
                 "contract",
@@ -703,7 +731,7 @@ def expected_contract(pin: Mapping[str, str]) -> dict[str, Any]:
                 ],
                 "reason": "The installed driver and CRT/sysroot boundary must pass their owned purity audit. The separately recorded native-allocator blocker is only accepted in its exact documented form because this lane dynamically selects the native-mimalloc-shadow libc after the owned sysroot is built.",
             },
-            "notes": "The caller captures the exact Cargo compiler-artifact emitted while building crabc-libc with native-mimalloc-shadow in the dev profile. The lane attests both named libc outputs against that build record, then compiles the exact archive member through the owned driver, selects the attested debug libc with LD_LIBRARY_PATH, and has no source-level adaptation beyond the upstream USE_STD_MALLOC symbol. It records the owned sysroot purity record and blocks if that record is missing, rejected, or differs from the exact documented native-allocator exception.",
+            "notes": "The caller captures the exact Cargo compiler-artifact emitted while building crabc-libc with native-mimalloc-shadow in the dev profile plus a current-head companion that records source state before and after Cargo. Before compiling the exact archive member or starting a stress process, the lane requires that companion to bind an unchanged clean Git source at capture and execution to both named libc outputs and the Cargo build record. It then selects the attested debug libc with LD_LIBRARY_PATH and has no source-level adaptation beyond the upstream USE_STD_MALLOC symbol. It records the owned sysroot purity record and blocks if that record is missing, rejected, or differs from the exact documented native-allocator exception.",
         },
     }
 
@@ -783,7 +811,10 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
     parser.add_argument(
         "--capture-selected-libc-build",
         type=Path,
-        help="build the selected libc and atomically write its exact Cargo compiler-artifact record",
+        help=(
+            "build the selected libc and atomically write its exact Cargo compiler-artifact "
+            "record plus current-head companion"
+        ),
     )
     parser.add_argument(
         "--current-head-build-record",
@@ -791,7 +822,7 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
         default=None,
         help=(
             "current-head companion to the selected Cargo build record; required by "
-            "one-case diagnostics and written by --capture-selected-libc-build"
+            "stress execution and written by --capture-selected-libc-build"
         ),
     )
     parsed = parser.parse_args(arguments)
@@ -1619,7 +1650,7 @@ def read_current_head_build_record(path: Path) -> dict[str, Any]:
     if not resolved.is_file() or resolved.is_symlink():
         raise BlockedPrerequisite(
             "current-head-build-record",
-            "current-head diagnostic requires the companion record emitted with its "
+            "canonical upstream stress requires the companion record emitted with its "
             "selected libc Cargo build",
             {
                 "build_record": str(resolved),
@@ -1631,7 +1662,7 @@ def read_current_head_build_record(path: Path) -> dict[str, Any]:
     except (OSError, json.JSONDecodeError) as error:
         raise BlockedPrerequisite(
             "current-head-build-record",
-            "current-head diagnostic cannot read its selected libc build companion",
+            "canonical upstream stress cannot read its selected libc build companion",
             {"build_record": str(resolved)},
         ) from error
     if not isinstance(value, dict) or set(value) != {
@@ -1645,7 +1676,7 @@ def read_current_head_build_record(path: Path) -> dict[str, Any]:
     }:
         raise BlockedPrerequisite(
             "current-head-build-record",
-            "current-head diagnostic selected libc build companion schema drifted",
+            "canonical upstream stress selected libc build companion schema drifted",
             {"build_record": str(resolved)},
         )
     if (
@@ -1655,7 +1686,7 @@ def read_current_head_build_record(path: Path) -> dict[str, Any]:
     ):
         raise BlockedPrerequisite(
             "current-head-build-record",
-            "current-head diagnostic selected libc build companion identity drifted",
+            "canonical upstream stress selected libc build companion identity drifted",
             {"build_record": str(resolved)},
         )
     try:
@@ -1668,13 +1699,13 @@ def read_current_head_build_record(path: Path) -> dict[str, Any]:
     except EvidenceError as error:
         raise BlockedPrerequisite(
             "current-head-build-record",
-            "current-head diagnostic selected libc build companion source state drifted",
+            "canonical upstream stress selected libc build companion source state drifted",
             {"build_record": str(resolved)},
         ) from error
     if value["source_unchanged_during_build"] != exactly_matches(source_before, source_after):
         raise BlockedPrerequisite(
             "current-head-build-record",
-            "current-head diagnostic selected libc build companion contradicted its source state",
+            "canonical upstream stress selected libc build companion contradicted its source state",
             {"build_record": str(resolved)},
         )
     record = dict(value)
@@ -1688,48 +1719,45 @@ def attest_current_head_build(
     build_record_path: Path,
     backend_attestation: Mapping[str, Any],
 ) -> dict[str, Any]:
-    """Bind a clean current HEAD, the Cargo record, and the selected runtime files."""
+    """Bind a clean current Git HEAD, the Cargo record, and selected runtime files."""
 
     record_path = current_head_record_path.expanduser().resolve()
     record = read_current_head_build_record(record_path)
-    source_before = record["source_before"]
-    source_after = record["source_after"]
-    supported_source_kinds = {"git", "workspace-tree-sha256"}
-    if (
-        source_before.get("kind") not in supported_source_kinds
-        or source_after.get("kind") not in supported_source_kinds
+    try:
+        source_before = require_clean_git_source_state(
+            record["source_before"], "current-head build companion source before capture"
+        )
+        source_after = require_clean_git_source_state(
+            record["source_after"], "current-head build companion source after capture"
+        )
+    except EvidenceError as error:
+        raise BlockedPrerequisite(
+            "current-head-source-state",
+            "canonical upstream stress requires a clean Git source at selected libc capture",
+            {"build_record": str(record_path)},
+        ) from error
+    if not record["source_unchanged_during_build"] or not exactly_matches(
+        source_before, source_after
     ):
         raise BlockedPrerequisite(
-            "current-head-source-state",
-            "current-head diagnostic requires source provenance for the selected libc build",
-            {"build_record": str(record_path)},
-        )
-    if not record["source_unchanged_during_build"]:
-        raise BlockedPrerequisite(
             "current-head-source-stability",
-            "current-head diagnostic refuses a selected libc built while its source changed",
+            "canonical upstream stress refuses a selected libc built while its source changed",
             {"build_record": str(record_path)},
         )
-    if source_after["kind"] == "git" and not source_after["worktree_clean"]:
-        raise BlockedPrerequisite(
-            "current-head-source-state",
-            "current-head diagnostic requires a clean source tree for the selected libc build",
-            {"build_record": str(record_path), "revision": source_after["revision"]},
+    try:
+        observed_source = require_clean_git_source_state(
+            current_head_source_state(), "current upstream stress execution source"
         )
-    observed_source = current_head_source_state()
-    if observed_source.get("kind") not in supported_source_kinds:
+    except EvidenceError as error:
         raise BlockedPrerequisite(
             "current-head-source-state",
-            "current-head diagnostic cannot attest the source tree at execution time",
+            "canonical upstream stress requires a clean Git source at execution",
             {"build_record": str(record_path)},
-        )
-    source_drifted = not exactly_matches(observed_source, source_after)
-    if observed_source["kind"] == "git" and not observed_source["worktree_clean"]:
-        source_drifted = True
-    if source_drifted:
+        ) from error
+    if not exactly_matches(observed_source, source_after):
         raise BlockedPrerequisite(
             "current-head-source-drift",
-            "current-head diagnostic source no longer matches the selected libc build",
+            "canonical upstream stress source no longer matches the selected libc build",
             {
                 "build_record": str(record_path),
                 "built_source": source_after,
@@ -1740,14 +1768,14 @@ def attest_current_head_build(
     if not build_record.is_file() or build_record.is_symlink():
         raise BlockedPrerequisite(
             "selected-libc-build-record",
-            "current-head diagnostic requires the selected libc Cargo build record",
+            "canonical upstream stress requires the selected libc Cargo build record",
             {"build_record": str(build_record)},
         )
     observed_build_record = file_record(build_record, root=ROOT)
     if not exactly_matches(record["selected_libc_build_record"], observed_build_record):
         raise BlockedPrerequisite(
             "current-head-build-record",
-            "current-head diagnostic selected libc Cargo record drifted after capture",
+            "canonical upstream stress selected libc Cargo record drifted after capture",
             {"build_record": str(build_record)},
         )
     backend_build_record = backend_attestation.get("build_record")
@@ -1758,7 +1786,7 @@ def attest_current_head_build(
         or not exactly_matches(record["artifacts"], backend_artifacts)
     ):
         raise EvidenceError(
-            "current-head diagnostic selected libc companion does not bind the attested runtime artifact"
+            "canonical upstream stress selected libc companion does not bind the attested runtime artifact"
         )
     return {
         "record": file_record(record_path, root=ROOT),
@@ -2086,6 +2114,24 @@ def update_capability(report: dict[str, Any], contract: Mapping[str, Any], statu
     )
 
 
+def current_head_report(
+    attestation: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Render the shared full-matrix and diagnostic source-attestation object."""
+
+    if attestation is None:
+        return {
+            "status": "not-attested",
+            "record": None,
+            "source": None,
+        }
+    return {
+        "status": "attested",
+        "record": attestation["record"],
+        "source": attestation["source"],
+    }
+
+
 def report_base(contract: Mapping[str, Any], pin: Mapping[str, str], args: argparse.Namespace) -> dict[str, Any]:
     fixture = contract["fixture"]
     adaptation = contract["source_adaptation"]
@@ -2134,6 +2180,9 @@ def report_base(contract: Mapping[str, Any], pin: Mapping[str, str], args: argpa
             "target_dir": relative_path(args.target_dir, ROOT),
             "output_dir": relative_path(args.output_dir, ROOT),
             "selected_libc_build_record": relative_path(args.libc_build_record, ROOT),
+            "current_head_build_record": relative_path(
+                args.current_head_build_record, ROOT
+            ),
         },
         "selection": {
             "target": selected_target_contract(contract),
@@ -2146,6 +2195,7 @@ def report_base(contract: Mapping[str, Any], pin: Mapping[str, str], args: argpa
             "system": platform.system(),
         },
         "capability": capability_record(contract),
+        "current_head": current_head_report(),
         "blocked": None,
         "first_fact": None,
         "upstream_pin": dict(pin),
@@ -2223,11 +2273,7 @@ def diagnostic_report_base(
             "kernel_release": platform.release(),
             "system": platform.system(),
         },
-        "current_head": {
-            "status": "not-attested",
-            "record": None,
-            "source": None,
-        },
+        "current_head": current_head_report(),
         "blocked": None,
         "first_fact": None,
         "upstream_pin": dict(pin),
@@ -2288,6 +2334,12 @@ def execute(contract: Mapping[str, Any], pin: Mapping[str, str], args: argparse.
     backend_attestation = attest_selected_backend(
         runtime_inputs.target_dir, build_record_path, contract
     )
+    current_head_attestation = attest_current_head_build(
+        args.current_head_build_record,
+        build_record_path,
+        backend_attestation,
+    )
+    report["current_head"] = current_head_report(current_head_attestation)
     report["artifacts"].update(
         {
             "owned_sysroot_manifest": file_record(runtime_inputs.manifest_path, root=ROOT),
@@ -2461,11 +2513,7 @@ def execute_diagnostic(
         build_record_path,
         backend_attestation,
     )
-    report["current_head"] = {
-        "status": "attested",
-        "record": current_head_attestation["record"],
-        "source": current_head_attestation["source"],
-    }
+    report["current_head"] = current_head_report(current_head_attestation)
     report["artifacts"].update(
         {
             "owned_sysroot_manifest": file_record(runtime_inputs.manifest_path, root=ROOT),

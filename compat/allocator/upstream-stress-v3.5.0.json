@@ -289,7 +289,7 @@
     ]
   },
   "report": {
-    "format": 4,
+    "format": 5,
     "schema": "crabc-mimalloc-canonical-upstream-stress-report",
     "path": ".work/reports/allocator/upstream-stress/latest.json",
     "atomic_publish": true,
@@ -311,6 +311,30 @@
     "source_path_normalization": {
       "artifact": "mimalloc-3.5.0/test/test-stress.c",
       "extraction_root": "<pinned-source>/mimalloc-3.5.0"
+    },
+    "current_head": {
+      "build_record_format": 1,
+      "build_record_schema": "crabc-selected-libc-current-head-build",
+      "required_before_stress_compile": true,
+      "capture_source": {
+        "kind": "git",
+        "worktree_clean": true,
+        "unchanged_during_selected_libc_build": true
+      },
+      "execution_source": {
+        "kind": "git",
+        "worktree_clean": true,
+        "matches_selected_libc_build": true
+      },
+      "report_fields": [
+        "status",
+        "record",
+        "source"
+      ],
+      "status_values": [
+        "not-attested",
+        "attested"
+      ]
     },
     "artifact_ids": [
       "contract",
@@ -376,6 +400,6 @@
       ],
       "reason": "The installed driver and CRT/sysroot boundary must pass their owned purity audit. The separately recorded native-allocator blocker is only accepted in its exact documented form because this lane dynamically selects the native-mimalloc-shadow libc after the owned sysroot is built."
     },
-    "notes": "The caller captures the exact Cargo compiler-artifact emitted while building crabc-libc with native-mimalloc-shadow in the dev profile. The lane attests both named libc outputs against that build record, then compiles the exact archive member through the owned driver, selects the attested debug libc with LD_LIBRARY_PATH, and has no source-level adaptation beyond the upstream USE_STD_MALLOC symbol. It records the owned sysroot purity record and blocks if that record is missing, rejected, or differs from the exact documented native-allocator exception."
+    "notes": "The caller captures the exact Cargo compiler-artifact emitted while building crabc-libc with native-mimalloc-shadow in the dev profile plus a current-head companion that records source state before and after Cargo. Before compiling the exact archive member or starting a stress process, the lane requires that companion to bind an unchanged clean Git source at capture and execution to both named libc outputs and the Cargo build record. It then selects the attested debug libc with LD_LIBRARY_PATH and has no source-level adaptation beyond the upstream USE_STD_MALLOC symbol. It records the owned sysroot purity record and blocks if that record is missing, rejected, or differs from the exact documented native-allocator exception."
   }
 }
