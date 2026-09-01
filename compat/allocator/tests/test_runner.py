@@ -2013,8 +2013,29 @@ class ContractTests(unittest.TestCase):
                 "schema": "crabc-mimalloc-canonical-upstream-stress-consumer",
                 "status": "verified",
                 "evidence_scope": "shadow_subset",
-                "large_object_mode": {"status": "not-claimed"},
-                "matrix": {"case_count": 8, "worker_counts": [1, 2, 4, 8]},
+                "large_object_mode": {
+                    "status": "source-cli-enabled",
+                    "source_enablement": {
+                        "parameter": "SCALE",
+                        "operator": ">",
+                        "threshold": 100,
+                        "expected_stdout_suffix": " (allow large objects)",
+                    },
+                    "matrix_case_ids": [
+                        "workers-1-scale-101-iterations-1",
+                        "workers-2-scale-101-iterations-1",
+                        "workers-4-scale-101-iterations-1",
+                        "workers-8-scale-101-iterations-1",
+                    ],
+                    "reason": (
+                        "The unmodified pinned source sets allow_large_objects only after "
+                        "source CLI parsing when SCALE > 100. Each listed case uses SCALE=101; "
+                        "no compile-time large-mode define is accepted. A passing row records "
+                        "source-mode activation and completed bounded workload execution, not that "
+                        "every probabilistic large allocation succeeded."
+                    ),
+                },
+                "matrix": {"case_count": 12, "worker_counts": [1, 2, 4, 8]},
                 "current_head": {"record": {}, "source": {}},
             },
         }
@@ -3817,8 +3838,8 @@ class CanonicalUpstreamStressConsumerTests(unittest.TestCase):
 
         self.assertEqual(evidence["status"], "verified")
         self.assertEqual(evidence["evidence_scope"], "shadow_subset")
-        self.assertEqual(evidence["matrix"], {"case_count": 8, "worker_counts": [1, 2, 4, 8]})
-        self.assertEqual(evidence["large_object_mode"]["status"], "not-claimed")
+        self.assertEqual(evidence["matrix"], {"case_count": 12, "worker_counts": [1, 2, 4, 8]})
+        self.assertEqual(evidence["large_object_mode"]["status"], "source-cli-enabled")
         self.assertEqual(evidence["current_head"]["source"], fixture["source"])
         self.assertFalse(
             any(
@@ -3927,6 +3948,49 @@ class CanonicalUpstreamStressConsumerTests(unittest.TestCase):
         ):
             RUNNER.validate_canonical_upstream_stress_contract(
                 broadened_scope, RUNNER.load_pin()
+            )
+
+    def test_contract_rejects_promotion_or_source_ownership_scope_drift(self) -> None:
+        contract = RUNNER.read_json(RUNNER.CANONICAL_UPSTREAM_STRESS_CONTRACT)
+
+        promotion_scope = json.loads(json.dumps(contract))
+        promotion_scope["scope"]["not_a_promotion_gate"] = False
+        with self.assertRaisesRegex(
+            RUNNER.CanonicalUpstreamStressRejected, "scope or nonpromotion"
+        ):
+            RUNNER.validate_canonical_upstream_stress_contract(
+                promotion_scope, RUNNER.load_pin()
+            )
+
+        compile_time_large_mode = json.loads(json.dumps(contract))
+        compile_time_large_mode["source_adaptation"]["compile_defines"].append(
+            "ALLOW_LARGE"
+        )
+        with self.assertRaisesRegex(
+            RUNNER.CanonicalUpstreamStressRejected, "source adaptation"
+        ):
+            RUNNER.validate_canonical_upstream_stress_contract(
+                compile_time_large_mode, RUNNER.load_pin()
+            )
+
+        threshold_100_or_lower = json.loads(json.dumps(contract))
+        threshold_100_or_lower["execution"]["large_object_mode"][
+            "source_enablement"
+        ]["threshold"] = 99
+        with self.assertRaisesRegex(
+            RUNNER.CanonicalUpstreamStressRejected, "execution policy"
+        ):
+            RUNNER.validate_canonical_upstream_stress_contract(
+                threshold_100_or_lower, RUNNER.load_pin()
+            )
+
+        moved_initial_thread_cleanup = json.loads(json.dumps(contract))
+        moved_initial_thread_cleanup["execution"]["scheduler_and_ownership"].pop()
+        with self.assertRaisesRegex(
+            RUNNER.CanonicalUpstreamStressRejected, "execution policy"
+        ):
+            RUNNER.validate_canonical_upstream_stress_contract(
+                moved_initial_thread_cleanup, RUNNER.load_pin()
             )
 
     def test_report_validator_rejects_relabelled_runtime_artifact_or_execution_scoped_loader_drift(self) -> None:
@@ -4051,7 +4115,7 @@ class CanonicalUpstreamStressConsumerTests(unittest.TestCase):
         self.assertEqual(companion_evidence["status"], "rejected")
         self.assertIn("companion", companion_evidence["reason"])
 
-    def test_consumer_rejects_partial_or_diagnostic_report(self) -> None:
+    def test_consumer_rejects_missing_forged_or_legacy_large_object_matrix_rows(self) -> None:
         RUNNER.TEMP_ROOT.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(dir=RUNNER.TEMP_ROOT) as temporary:
             fixture = self.write_fixture(Path(temporary))
@@ -4062,6 +4126,42 @@ class CanonicalUpstreamStressConsumerTests(unittest.TestCase):
                 json.dumps(report, sort_keys=True) + "\n", encoding="utf-8"
             )
             partial_evidence = self.validate_fixture(fixture)
+
+        with tempfile.TemporaryDirectory(dir=RUNNER.TEMP_ROOT) as temporary:
+            fixture = self.write_fixture(Path(temporary))
+            report = fixture["report"]
+            assert isinstance(report, dict)
+            forged = report["execution"]["case_results"][-1]
+            forged["case"]["scale"] = 100
+            forged["case"]["arguments"] = ["8", "100", "1"]
+            forged["case"]["id"] = "workers-8-scale-100-iterations-1"
+            forged["observation"]["command"][-2] = "100"
+            forged["observation"]["stdout"] = self.byte_record(
+                b"Using 8 threads with a 100% load-per-thread and 1 iterations\n"
+            )
+            forged_evidence = self.validate_fixture(fixture)
+
+        with tempfile.TemporaryDirectory(dir=RUNNER.TEMP_ROOT) as temporary:
+            fixture = self.write_fixture(Path(temporary))
+            report = fixture["report"]
+            assert isinstance(report, dict)
+            report["execution"]["case_results"][-4:] = reversed(
+                report["execution"]["case_results"][-4:]
+            )
+            reordered_evidence = self.validate_fixture(fixture)
+
+        with tempfile.TemporaryDirectory(dir=RUNNER.TEMP_ROOT) as temporary:
+            fixture = self.write_fixture(Path(temporary))
+            report = fixture["report"]
+            assert isinstance(report, dict)
+            report["format"] = 6
+            report["execution"]["case_results"] = report["execution"]["case_results"][:8]
+            report["execution"]["attempted_process_count"] = 8
+            report["execution"]["case_count"] = 8
+            report["capability"]["passed_case_count"] = 8
+            report["capability"]["required_case_count"] = 8
+            report["first_fact"]["completed_case_count"] = 8
+            legacy_evidence = self.validate_fixture(fixture)
 
         with tempfile.TemporaryDirectory(dir=RUNNER.TEMP_ROOT) as temporary:
             fixture = self.write_fixture(Path(temporary))
@@ -4078,6 +4178,12 @@ class CanonicalUpstreamStressConsumerTests(unittest.TestCase):
 
         self.assertEqual(partial_evidence["status"], "rejected")
         self.assertIn("partial matrix", partial_evidence["reason"])
+        self.assertEqual(forged_evidence["status"], "rejected")
+        self.assertIn("matrix result drifted", forged_evidence["reason"])
+        self.assertEqual(reordered_evidence["status"], "rejected")
+        self.assertIn("matrix result drifted", reordered_evidence["reason"])
+        self.assertEqual(legacy_evidence["status"], "rejected")
+        self.assertIn("schema", legacy_evidence["reason"])
         self.assertEqual(diagnostic_evidence["status"], "rejected")
         self.assertIn("schema", diagnostic_evidence["reason"])
 

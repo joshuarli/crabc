@@ -83,6 +83,11 @@ FIXED_PIN = {
     "revision": "18b08671c9302247bfb682286e6bf3cc1773f801",
     "archive_root": "mimalloc-3.5.0",
 }
+CANONICAL_UPSTREAM_STRESS_WORKERS = (1, 2, 4, 8)
+SOURCE_LARGE_OBJECT_SCALE_THRESHOLD = 100
+SOURCE_LARGE_OBJECT_MATRIX_SCALE = SOURCE_LARGE_OBJECT_SCALE_THRESHOLD + 1
+SOURCE_LARGE_OBJECT_MATRIX_ITERATIONS = 1
+SOURCE_LARGE_OBJECT_STDOUT_SUFFIX = " (allow large objects)"
 
 
 class EvidenceError(RuntimeError):
@@ -469,10 +474,21 @@ def load_mimalloc_pin(path: Path = UPSTREAMS_PATH) -> dict[str, str]:
     return normalized
 
 
+def source_cli_enables_large_objects(scale: int) -> bool:
+    """Mirror the archived source's strict ``SCALE > 100`` enablement check."""
+
+    return scale > SOURCE_LARGE_OBJECT_SCALE_THRESHOLD
+
+
 def expected_matrix_case(workers: int, scale: int, iterations: int) -> dict[str, Any]:
     """Describe one unchanged-source invocation from the closed stress matrix."""
 
     arguments = [str(workers), str(scale), str(iterations)]
+    large_object_suffix = (
+        SOURCE_LARGE_OBJECT_STDOUT_SUFFIX
+        if source_cli_enables_large_objects(scale)
+        else ""
+    )
     return {
         "id": f"workers-{workers}-scale-{scale}-iterations-{iterations}",
         "workers": workers,
@@ -480,7 +496,8 @@ def expected_matrix_case(workers: int, scale: int, iterations: int) -> dict[str,
         "iterations": iterations,
         "arguments": arguments,
         "expected_stdout": (
-            f"Using {workers} threads with a {scale}% load-per-thread and {iterations} iterations\n"
+            f"Using {workers} threads with a {scale}% load-per-thread and {iterations} "
+            f"iterations{large_object_suffix}\n"
         ),
         "expected_stderr": "",
         "expected_exit_status": 0,
@@ -490,11 +507,47 @@ def expected_matrix_case(workers: int, scale: int, iterations: int) -> dict[str,
 def expected_execution_matrix() -> list[dict[str, Any]]:
     """Return the source-argument progression required by the native contract."""
 
-    workers = (1, 2, 4, 8)
     return [
-        *(expected_matrix_case(count, 1, 1) for count in workers),
-        *(expected_matrix_case(count, 2, 2) for count in workers),
+        *(expected_matrix_case(count, 1, 1) for count in CANONICAL_UPSTREAM_STRESS_WORKERS),
+        *(expected_matrix_case(count, 2, 2) for count in CANONICAL_UPSTREAM_STRESS_WORKERS),
+        *(
+            expected_matrix_case(
+                count,
+                SOURCE_LARGE_OBJECT_MATRIX_SCALE,
+                SOURCE_LARGE_OBJECT_MATRIX_ITERATIONS,
+            )
+            for count in CANONICAL_UPSTREAM_STRESS_WORKERS
+        ),
     ]
+
+
+def expected_large_object_mode() -> dict[str, Any]:
+    """Record the exact archived-source large-object activation boundary."""
+
+    return {
+        "status": "source-cli-enabled",
+        "source_enablement": {
+            "parameter": "SCALE",
+            "operator": ">",
+            "threshold": SOURCE_LARGE_OBJECT_SCALE_THRESHOLD,
+            "expected_stdout_suffix": SOURCE_LARGE_OBJECT_STDOUT_SUFFIX,
+        },
+        "matrix_case_ids": [
+            expected_matrix_case(
+                workers,
+                SOURCE_LARGE_OBJECT_MATRIX_SCALE,
+                SOURCE_LARGE_OBJECT_MATRIX_ITERATIONS,
+            )["id"]
+            for workers in CANONICAL_UPSTREAM_STRESS_WORKERS
+        ],
+        "reason": (
+            "The unmodified pinned source sets allow_large_objects only after source CLI "
+            "parsing when SCALE > 100. Each listed case uses SCALE=101; no compile-time "
+            "large-mode define is accepted. A passing row records source-mode activation "
+            "and completed bounded workload execution, not that every probabilistic large "
+            "allocation succeeded."
+        ),
+    }
 
 
 def expected_contract(pin: Mapping[str, str]) -> dict[str, Any]:
@@ -519,7 +572,7 @@ def expected_contract(pin: Mapping[str, str]) -> dict[str, Any]:
     target_id = "linux-aarch64-little-endian"
     backend_id = "crabc-libc-native-mimalloc-shadow"
     return {
-        "format": 6,
+        "format": 7,
         "schema": "crabc-mimalloc-canonical-upstream-stress",
         "scope": {
             "claim": "one canonical executable inventory of the exact pinned upstream test/test-stress.c through the selected native-mimalloc-shadow crabc libc",
@@ -620,7 +673,7 @@ def expected_contract(pin: Mapping[str, str]) -> dict[str, Any]:
                 "post-worker cleanup relocation",
                 "initial-thread cleanup change",
             ],
-            "explanation": "USE_STD_MALLOC is an upstream conditional that binds custom allocation names to calloc, realloc, and free. The archived source is compiled byte-for-byte after its hash is verified. Worker count, scale, and iteration are source command-line arguments, never replacement compile-time scheduler defines.",
+            "explanation": "USE_STD_MALLOC is an upstream conditional that binds custom allocation names to calloc, realloc, and free. The archived source is compiled byte-for-byte after its hash is verified. Worker count, scale, and iteration, including the source's SCALE > 100 large-object enablement, are source command-line arguments, never replacement compile-time scheduler or large-mode defines.",
         },
         "execution": {
             "matrix": expected_execution_matrix(),
@@ -639,10 +692,7 @@ def expected_contract(pin: Mapping[str, str]) -> dict[str, Any]:
             },
             "process_attempts_per_case": 1,
             "stop_after_first_nonpass": True,
-            "large_object_mode": {
-                "status": "not-claimed",
-                "reason": "The selected native-mimalloc-shadow boundary has no accepted upstream large-object stress claim. Every listed scale remains below the upstream source threshold that enables large objects.",
-            },
+            "large_object_mode": expected_large_object_mode(),
             "scheduler_and_ownership": [
                 "The unmodified upstream main_participates value remains false.",
                 "The unmodified upstream run_os_threads creates and joins the requested pthread workers before returning to test_stress.",
@@ -661,11 +711,12 @@ def expected_contract(pin: Mapping[str, str]) -> dict[str, Any]:
             "non_claims": [
                 "Contract validation is not native runtime capability evidence.",
                 "A blocked prerequisite, build failure, link-boundary failure, timeout, signal, stream mismatch, or partial matrix is not a capability pass.",
-                "This nondefault shadow subset is not allocator promotion or large-object stress evidence.",
+                "This nondefault shadow subset does not complete Gate 5D, selected-shadow acceptance, or allocator promotion.",
+                "A passing source-cli-enabled row records source-mode activation and a bounded workload attempt, not a proof that every probabilistic large allocation succeeded.",
             ],
         },
         "report": {
-            "format": 6,
+            "format": 7,
             "schema": "crabc-mimalloc-canonical-upstream-stress-report",
             "path": ".work/reports/allocator/upstream-stress/latest.json",
             "atomic_publish": True,

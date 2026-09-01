@@ -991,7 +991,7 @@ the named reviewed gate state rather than a synthetic post-run placeholder.
 Before rendering that M5 record, `allocator --full` reads only the fixed
 `.work/reports/allocator/upstream-stress/latest.json` canonical report; it does
 not invoke `upstream-stress/run.py` itself. The consumer accepts a report only
-when its format, pin, ordered eight-case source matrix, failure-closed
+when its format, pin, ordered 12-case source matrix, failure-closed
 capability, selected native-shadow backend/build record, live named artifacts,
 and current-head companion all still bind to the current clean Git source. The
 sole execution-scoped artifact is the producer-container's staged
@@ -999,10 +999,15 @@ sole execution-scoped artifact is the producer-container's staged
 selected loader, but the later consumer does not require that transient file.
 Its Git reads set `GIT_OPTIONAL_LOCKS=0`. The durable
 `canonical_upstream_stress` field is `verified`, `unavailable`, or `rejected`.
-Only a `verified` record is surfaced as observed Gate 5D evidence; it remains
-a nondefault `shadow_subset` with `large_object_mode: not-claimed`, so it does
-not promote Gate 5D or Gate 5E. The separate opt-in 1024-cycle soak and
-metadata high-water acceptance remain required.
+Only a `verified` record is surfaced as observed Gate 5D evidence. Its first
+eight rows retain the 1/2/4/8-worker low-scale schedules; four appended
+1/2/4/8-worker `SCALE=101`, `ITER=1` rows exercise the unmodified source's
+strict `SCALE > 100` CLI branch and exact ` (allow large objects)` stdout
+suffix. The record remains a nondefault `shadow_subset` with
+`large_object_mode: source-cli-enabled`: it attests source-mode activation and
+completed bounded workload execution, not that every probabilistic large
+allocation succeeded. It does not promote Gate 5D or Gate 5E. The separate
+opt-in 1024-cycle soak and metadata high-water acceptance remain required.
 
 `allocator --churn` uses that same prefixed evidence adapter but succeeds only
 when one fresh process completes 128 bounded C cycles within its 30-second
@@ -1997,7 +2002,7 @@ snapshot after review; the normal gate never updates its own baseline.
 | `x86_64-api-coverage-v3.5.0.json` and `x86_64_api_coverage.py` | Target-local source-only ledger for the pinned installed headers, source-form modes, test inputs, and symbol dispositions. Its separate native assessment records selected-release object/dynamic presence without changing the unassessed behavior, Rust, or public-runtime boundary. |
 | `x86_64-source-map-v3.5.0.json` and `x86_64_source_map.py` | Target-local pinned-source mapping and ratchet foundation for 34 x86-relevant source units. Its statuses remain explicitly incomplete and never reuse the AArch64 port-map/ratchet. |
 | `upstream-tests-v3.5.0.json` | Exact pinned upstream test/support-file inventory and current execution status. Its v3 status records the reviewed M4 `test-api.c`/`testhelper.h` inputs, one constrained M5 `test-stress.c` source-derived route, and the remaining M5+-blocked sources separately. |
-| `upstream-stress-v3.5.0.json` and `upstream-stress/run.py` | Canonical source-unmodified `test/test-stress.c` native-shadow contract and runner. The dispatch captures the exact matching Cargo compiler-artifact from its selected `crabc-libc` dev build, and the runner binds its package, target, profile, features, ordered `libc.so`/`libc.a` filenames, and file hashes without assuming fingerprint-cache uniqueness. They inventory the sole Linux/AArch64 little-endian target and selected nondefault backend, attest the fixture's ELF identity, exact selected-loader `PT_INTERP`, `DT_NEEDED`, and hashes, run fresh-process 1/2/4/8-pthread cases at two fixed source argument configurations, record the upstream seed/watchdog/artifact schemas, normalize the deleted extraction root out of durable evidence, and fail closed unless every case passes natively. `allocator --full` consumes only the fixed report through a separate strict, lock-free-Git reader; it verifies live artifact and current-head-companion binding but treats the result only as blocked Gate 5D observed evidence. Contract-only validation remains `not-run`, not runtime evidence. |
+| `upstream-stress-v3.5.0.json` and `upstream-stress/run.py` | Canonical source-unmodified `test/test-stress.c` native-shadow contract and runner. The dispatch captures the exact matching Cargo compiler-artifact from its selected `crabc-libc` dev build, and the runner binds its package, target, profile, features, ordered `libc.so`/`libc.a` filenames, and file hashes without assuming fingerprint-cache uniqueness. They inventory the sole Linux/AArch64 little-endian target and selected nondefault backend, attest the fixture's ELF identity, exact selected-loader `PT_INTERP`, `DT_NEEDED`, and hashes, run fresh-process 1/2/4/8-pthread cases at `1 1 1` and `2 2 2`, then append 1/2/4/8-worker `101 1` source-CLI cases. The latter bind pinned `if (SCALE > 100)` activation and the exact ` (allow large objects)` stdout suffix without a compile-time large-mode define; they are bounded source-mode/workload evidence, not proof that every probabilistic large allocation succeeds. The lane records the upstream seed/watchdog/artifact schemas, normalizes the deleted extraction root out of durable evidence, and fails closed unless every case passes natively. `allocator --full` consumes only the fixed report through a separate strict, lock-free-Git reader; it verifies live artifact and current-head-companion binding but treats the result only as blocked Gate 5D observed evidence. Contract-only validation remains `not-run`, not runtime evidence. |
 | `adapted-tests-v3.5.0.json` | Reviewed selected-API omissions, source hashes, patch identity, prefixed symbol inventory, and native link contract for pinned upstream `test-api.c`. |
 | `adapted-tests-x86_64-v3.5.0.json` | Target-local private x86-64 adapter contract. It hashes only the extracted target-neutral patch/selection facts from the M4 record and separately records the staticlib-only `-lunwind -lc` C-link tail, its derived rustc target self-contained search path, executable ELF, PT_INTERP, and empty `DT_NEEDED` expectations. |
 | `adapted/test-api-selected.patch` | Minimal source adaptation applied to the exact extracted upstream file; no copied upstream source fork is stored. |

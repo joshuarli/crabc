@@ -1,5 +1,5 @@
 {
-  "format": 6,
+  "format": 7,
   "schema": "crabc-mimalloc-canonical-upstream-stress",
   "scope": {
     "claim": "one canonical executable inventory of the exact pinned upstream test/test-stress.c through the selected native-mimalloc-shadow crabc libc",
@@ -122,7 +122,7 @@
       "post-worker cleanup relocation",
       "initial-thread cleanup change"
     ],
-    "explanation": "USE_STD_MALLOC is an upstream conditional that binds custom allocation names to calloc, realloc, and free. The archived source is compiled byte-for-byte after its hash is verified. Worker count, scale, and iteration are source command-line arguments, never replacement compile-time scheduler defines."
+    "explanation": "USE_STD_MALLOC is an upstream conditional that binds custom allocation names to calloc, realloc, and free. The archived source is compiled byte-for-byte after its hash is verified. Worker count, scale, and iteration, including the source's SCALE > 100 large-object enablement, are source command-line arguments, never replacement compile-time scheduler or large-mode defines."
   },
   "execution": {
     "matrix": [
@@ -237,6 +237,62 @@
         "expected_stdout": "Using 8 threads with a 2% load-per-thread and 2 iterations\n",
         "expected_stderr": "",
         "expected_exit_status": 0
+      },
+      {
+        "id": "workers-1-scale-101-iterations-1",
+        "workers": 1,
+        "scale": 101,
+        "iterations": 1,
+        "arguments": [
+          "1",
+          "101",
+          "1"
+        ],
+        "expected_stdout": "Using 1 threads with a 101% load-per-thread and 1 iterations (allow large objects)\n",
+        "expected_stderr": "",
+        "expected_exit_status": 0
+      },
+      {
+        "id": "workers-2-scale-101-iterations-1",
+        "workers": 2,
+        "scale": 101,
+        "iterations": 1,
+        "arguments": [
+          "2",
+          "101",
+          "1"
+        ],
+        "expected_stdout": "Using 2 threads with a 101% load-per-thread and 1 iterations (allow large objects)\n",
+        "expected_stderr": "",
+        "expected_exit_status": 0
+      },
+      {
+        "id": "workers-4-scale-101-iterations-1",
+        "workers": 4,
+        "scale": 101,
+        "iterations": 1,
+        "arguments": [
+          "4",
+          "101",
+          "1"
+        ],
+        "expected_stdout": "Using 4 threads with a 101% load-per-thread and 1 iterations (allow large objects)\n",
+        "expected_stderr": "",
+        "expected_exit_status": 0
+      },
+      {
+        "id": "workers-8-scale-101-iterations-1",
+        "workers": 8,
+        "scale": 101,
+        "iterations": 1,
+        "arguments": [
+          "8",
+          "101",
+          "1"
+        ],
+        "expected_stdout": "Using 8 threads with a 101% load-per-thread and 1 iterations (allow large objects)\n",
+        "expected_stderr": "",
+        "expected_exit_status": 0
       }
     ],
     "source_randomness": {
@@ -255,8 +311,20 @@
     "process_attempts_per_case": 1,
     "stop_after_first_nonpass": true,
     "large_object_mode": {
-      "status": "not-claimed",
-      "reason": "The selected native-mimalloc-shadow boundary has no accepted upstream large-object stress claim. Every listed scale remains below the upstream source threshold that enables large objects."
+      "status": "source-cli-enabled",
+      "source_enablement": {
+        "parameter": "SCALE",
+        "operator": ">",
+        "threshold": 100,
+        "expected_stdout_suffix": " (allow large objects)"
+      },
+      "matrix_case_ids": [
+        "workers-1-scale-101-iterations-1",
+        "workers-2-scale-101-iterations-1",
+        "workers-4-scale-101-iterations-1",
+        "workers-8-scale-101-iterations-1"
+      ],
+      "reason": "The unmodified pinned source sets allow_large_objects only after source CLI parsing when SCALE > 100. Each listed case uses SCALE=101; no compile-time large-mode define is accepted. A passing row records source-mode activation and completed bounded workload execution, not that every probabilistic large allocation succeeded."
     },
     "scheduler_and_ownership": [
       "The unmodified upstream main_participates value remains false.",
@@ -286,11 +354,12 @@
     "non_claims": [
       "Contract validation is not native runtime capability evidence.",
       "A blocked prerequisite, build failure, link-boundary failure, timeout, signal, stream mismatch, or partial matrix is not a capability pass.",
-      "This nondefault shadow subset is not allocator promotion or large-object stress evidence."
+      "This nondefault shadow subset does not complete Gate 5D, selected-shadow acceptance, or allocator promotion.",
+      "A passing source-cli-enabled row records source-mode activation and a bounded workload attempt, not a proof that every probabilistic large allocation succeeded."
     ]
   },
   "report": {
-    "format": 6,
+    "format": 7,
     "schema": "crabc-mimalloc-canonical-upstream-stress-report",
     "path": ".work/reports/allocator/upstream-stress/latest.json",
     "atomic_publish": true,

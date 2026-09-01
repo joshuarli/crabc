@@ -67,7 +67,7 @@ class CanonicalUpstreamStressContractTests(unittest.TestCase):
     def test_closed_contract_keeps_the_archive_source_unmodified(self) -> None:
         contract, pin = RUNNER.load_contract()
         self.assertEqual(pin, RUNNER.FIXED_PIN)
-        self.assertEqual(contract["format"], 6)
+        self.assertEqual(contract["format"], 7)
         self.assertEqual(contract["upstream"]["archive_sha256"], pin["sha256"])
         self.assertEqual(contract["fixture"]["archive_member"], "test/test-stress.c")
         self.assertEqual(
@@ -142,7 +142,7 @@ class CanonicalUpstreamStressContractTests(unittest.TestCase):
         )
         report = contract["report"]
         self.assertEqual(report["schema"], "crabc-mimalloc-canonical-upstream-stress-report")
-        self.assertEqual(report["format"], 6)
+        self.assertEqual(report["format"], 7)
         self.assertEqual(
             report["path"],
             ".work/reports/allocator/upstream-stress/latest.json",
@@ -293,7 +293,7 @@ class CanonicalUpstreamStressContractTests(unittest.TestCase):
         self.assertTrue(capability["blocked_is_failure_closed"])
         self.assertIn("all matrix cases", capability["pass_condition"])
 
-    def test_ordered_matrix_preserves_the_smallest_schedule_and_source_cleanup(self) -> None:
+    def test_ordered_matrix_preserves_small_then_source_enabled_large_schedules(self) -> None:
         contract, _ = RUNNER.load_contract()
         execution = contract["execution"]
         assertions = execution["scheduler_and_ownership"]
@@ -302,7 +302,59 @@ class CanonicalUpstreamStressContractTests(unittest.TestCase):
         self.assertEqual([case["workers"] for case in cases[:4]], [1, 2, 4, 8])
         self.assertEqual(
             {(case["scale"], case["iterations"]) for case in cases},
-            {(1, 1), (2, 2)},
+            {(1, 1), (2, 2), (101, 1)},
+        )
+        self.assertEqual(
+            [
+                (
+                    case["id"],
+                    case["arguments"],
+                    case["expected_stdout"],
+                )
+                for case in cases[-4:]
+            ],
+            [
+                (
+                    f"workers-{workers}-scale-101-iterations-1",
+                    [str(workers), "101", "1"],
+                    (
+                        f"Using {workers} threads with a 101% load-per-thread and "
+                        "1 iterations (allow large objects)\n"
+                    ),
+                )
+                for workers in (1, 2, 4, 8)
+            ],
+        )
+        self.assertFalse(RUNNER.source_cli_enables_large_objects(100))
+        self.assertTrue(RUNNER.source_cli_enables_large_objects(101))
+        self.assertEqual(
+            RUNNER.expected_matrix_case(1, 100, 1)["expected_stdout"],
+            "Using 1 threads with a 100% load-per-thread and 1 iterations\n",
+        )
+        self.assertEqual(
+            execution["large_object_mode"],
+            {
+                "status": "source-cli-enabled",
+                "source_enablement": {
+                    "parameter": "SCALE",
+                    "operator": ">",
+                    "threshold": 100,
+                    "expected_stdout_suffix": " (allow large objects)",
+                },
+                "matrix_case_ids": [
+                    "workers-1-scale-101-iterations-1",
+                    "workers-2-scale-101-iterations-1",
+                    "workers-4-scale-101-iterations-1",
+                    "workers-8-scale-101-iterations-1",
+                ],
+                "reason": (
+                    "The unmodified pinned source sets allow_large_objects only after "
+                    "source CLI parsing when SCALE > 100. Each listed case uses SCALE=101; "
+                    "no compile-time large-mode define is accepted. A passing row records "
+                    "source-mode activation and completed bounded workload execution, not that "
+                    "every probabilistic large allocation succeeded."
+                ),
+            },
         )
         self.assertEqual(execution["process_attempts_per_case"], 1)
         self.assertIn("main_participates value remains false.", assertions[0])
@@ -319,7 +371,7 @@ class CanonicalUpstreamStressContractTests(unittest.TestCase):
         )
         self.assertEqual(
             commands[-1],
-            [str(binary), "8", "2", "2"],
+            [str(binary), "8", "101", "1"],
         )
         self.assertTrue(all("-DNTHREADS" not in command for command in commands))
 
@@ -614,7 +666,7 @@ class CanonicalUpstreamStressContractTests(unittest.TestCase):
 
         self.assertEqual(status, 1)
         commands.assert_not_called()
-        self.assertEqual(report["format"], 6)
+        self.assertEqual(report["format"], 7)
         self.assertEqual(report["status"], "blocked")
         self.assertEqual(report["blocked"]["prerequisite"], "current-head-source-state")
         self.assertFalse(report["capability"]["native_execution_started"])
@@ -641,8 +693,13 @@ class CanonicalUpstreamStressContractTests(unittest.TestCase):
         )
         self.assertIn("-DUSE_STD_MALLOC", command)
         self.assertNotIn("-DNTHREADS=1", command)
+        self.assertNotIn("-DALLOW_LARGE", command)
         self.assertNotIn("patch", " ".join(command))
         self.assertEqual(command.count("-D" + "USE_STD_MALLOC"), 1)
+        self.assertEqual(
+            [argument for argument in command if argument.startswith("-D")],
+            ["-DNDEBUG", "-DUSE_STD_MALLOC"],
+        )
 
     def test_runtime_environment_is_closed_and_reported(self) -> None:
         with mock.patch.dict(
@@ -1606,7 +1663,7 @@ class CanonicalUpstreamStressContractTests(unittest.TestCase):
         contract, pin = RUNNER.load_contract()
         args = RUNNER.parse_arguments([])
         report = RUNNER.report_base(contract, pin, args)
-        self.assertEqual(report["format"], 6)
+        self.assertEqual(report["format"], 7)
         self.assertEqual(report["capability"]["status"], "not-run")
         self.assertFalse(report["capability"]["native_execution_started"])
         self.assertEqual(report["current_head"], RUNNER.current_head_report())

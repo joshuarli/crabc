@@ -1637,6 +1637,69 @@ CANONICAL_UPSTREAM_STRESS_EXECUTION_SCOPED_ARTIFACT_IDS = (
     "staged_canonical_loader",
 )
 CANONICAL_UPSTREAM_STRESS_WORKERS = (1, 2, 4, 8)
+CANONICAL_UPSTREAM_STRESS_LARGE_OBJECT_SCALE_THRESHOLD = 100
+CANONICAL_UPSTREAM_STRESS_LARGE_OBJECT_MATRIX_SCALE = (
+    CANONICAL_UPSTREAM_STRESS_LARGE_OBJECT_SCALE_THRESHOLD + 1
+)
+CANONICAL_UPSTREAM_STRESS_LARGE_OBJECT_MATRIX_ITERATIONS = 1
+CANONICAL_UPSTREAM_STRESS_LARGE_OBJECT_STDOUT_SUFFIX = " (allow large objects)"
+
+
+def canonical_upstream_stress_expected_scope() -> dict[str, Any]:
+    """Keep the nonpromotion and first-fact boundary closed in the consumer."""
+
+    return {
+        "claim": (
+            "one canonical executable inventory of the exact pinned upstream "
+            "test/test-stress.c through the selected native-mimalloc-shadow crabc libc"
+        ),
+        "not_a_promotion_gate": True,
+        "purpose": (
+            "record the first unavailable prerequisite, build/link failure, or ordered "
+            "matrix result without changing upstream scheduling, transfer ownership, or "
+            "initial-thread cleanup"
+        ),
+        "first_fact_rule": (
+            "Run each listed case in order in one fresh process with one watchdog. Stop "
+            "after the first non-pass; do not retry, shrink, or reschedule a case. A "
+            "blocked prerequisite starts no stress process."
+        ),
+    }
+
+
+def canonical_upstream_stress_expected_source_adaptation() -> dict[str, Any]:
+    """Pin the only permitted source/build adaptation and its ownership constraints."""
+
+    return {
+        "kind": "upstream-preprocessor-symbol-selection-only",
+        "compile_defines": ["USE_STD_MALLOC"],
+        "patches": [],
+        "forbidden_changes": [
+            "checked-in source copy or patch",
+            "worker scheduling change",
+            "transfer ownership change",
+            "post-worker cleanup relocation",
+            "initial-thread cleanup change",
+        ],
+        "explanation": (
+            "USE_STD_MALLOC is an upstream conditional that binds custom allocation names "
+            "to calloc, realloc, and free. The archived source is compiled byte-for-byte "
+            "after its hash is verified. Worker count, scale, and iteration, including the "
+            "source's SCALE > 100 large-object enablement, are source command-line "
+            "arguments, never replacement compile-time scheduler or large-mode defines."
+        ),
+    }
+
+
+def canonical_upstream_stress_expected_scheduler_and_ownership() -> list[str]:
+    """Pin the unmodified upstream worker, transfer, and final-cleanup order."""
+
+    return [
+        "The unmodified upstream main_participates value remains false.",
+        "The unmodified upstream run_os_threads creates and joins the requested pthread workers before returning to test_stress.",
+        "The unmodified upstream shared transfer buffer carries live allocations between source workers and source iterations.",
+        "After run_os_threads returns, the unmodified initial thread performs free_items cleanup of transferred objects in test_stress.",
+    ]
 
 
 def canonical_upstream_stress_exactly_matches(
@@ -1949,6 +2012,37 @@ def canonical_upstream_stress_clean_git_source(
     return dict(state)
 
 
+def canonical_upstream_stress_source_cli_enables_large_objects(scale: int) -> bool:
+    """Mirror the archived source's strict ``SCALE > 100`` mode boundary."""
+
+    return scale > CANONICAL_UPSTREAM_STRESS_LARGE_OBJECT_SCALE_THRESHOLD
+
+
+def canonical_upstream_stress_expected_matrix_case(
+    workers: int, scale: int, iterations: int
+) -> dict[str, Any]:
+    """Describe one unchanged-source CLI invocation in the fixed consumer mirror."""
+
+    large_object_suffix = (
+        CANONICAL_UPSTREAM_STRESS_LARGE_OBJECT_STDOUT_SUFFIX
+        if canonical_upstream_stress_source_cli_enables_large_objects(scale)
+        else ""
+    )
+    return {
+        "id": f"workers-{workers}-scale-{scale}-iterations-{iterations}",
+        "workers": workers,
+        "scale": scale,
+        "iterations": iterations,
+        "arguments": [str(workers), str(scale), str(iterations)],
+        "expected_stdout": (
+            f"Using {workers} threads with a {scale}% load-per-thread and "
+            f"{iterations} iterations{large_object_suffix}\n"
+        ),
+        "expected_stderr": "",
+        "expected_exit_status": 0,
+    }
+
+
 def canonical_upstream_stress_expected_matrix() -> list[dict[str, Any]]:
     """Fix the producer's complete source schedule in this M5 consumer too."""
 
@@ -1956,21 +2050,48 @@ def canonical_upstream_stress_expected_matrix() -> list[dict[str, Any]]:
     for scale, iterations in ((1, 1), (2, 2)):
         for workers in CANONICAL_UPSTREAM_STRESS_WORKERS:
             matrix.append(
-                {
-                    "id": f"workers-{workers}-scale-{scale}-iterations-{iterations}",
-                    "workers": workers,
-                    "scale": scale,
-                    "iterations": iterations,
-                    "arguments": [str(workers), str(scale), str(iterations)],
-                    "expected_stdout": (
-                        f"Using {workers} threads with a {scale}% load-per-thread and "
-                        f"{iterations} iterations\n"
-                    ),
-                    "expected_stderr": "",
-                    "expected_exit_status": 0,
-                }
+                canonical_upstream_stress_expected_matrix_case(
+                    workers, scale, iterations
+                )
             )
+    for workers in CANONICAL_UPSTREAM_STRESS_WORKERS:
+        matrix.append(
+            canonical_upstream_stress_expected_matrix_case(
+                workers,
+                CANONICAL_UPSTREAM_STRESS_LARGE_OBJECT_MATRIX_SCALE,
+                CANONICAL_UPSTREAM_STRESS_LARGE_OBJECT_MATRIX_ITERATIONS,
+            )
+        )
     return matrix
+
+
+def canonical_upstream_stress_expected_large_object_mode() -> dict[str, Any]:
+    """Fix the producer's source-CLI large-object evidence shape in the consumer."""
+
+    return {
+        "status": "source-cli-enabled",
+        "source_enablement": {
+            "parameter": "SCALE",
+            "operator": ">",
+            "threshold": CANONICAL_UPSTREAM_STRESS_LARGE_OBJECT_SCALE_THRESHOLD,
+            "expected_stdout_suffix": CANONICAL_UPSTREAM_STRESS_LARGE_OBJECT_STDOUT_SUFFIX,
+        },
+        "matrix_case_ids": [
+            canonical_upstream_stress_expected_matrix_case(
+                workers,
+                CANONICAL_UPSTREAM_STRESS_LARGE_OBJECT_MATRIX_SCALE,
+                CANONICAL_UPSTREAM_STRESS_LARGE_OBJECT_MATRIX_ITERATIONS,
+            )["id"]
+            for workers in CANONICAL_UPSTREAM_STRESS_WORKERS
+        ],
+        "reason": (
+            "The unmodified pinned source sets allow_large_objects only after source CLI "
+            "parsing when SCALE > 100. Each listed case uses SCALE=101; no compile-time "
+            "large-mode define is accepted. A passing row records source-mode activation "
+            "and completed bounded workload execution, not that every probabilistic large "
+            "allocation succeeded."
+        ),
+    }
 
 
 def validate_canonical_upstream_stress_contract(
@@ -1996,11 +2117,17 @@ def validate_canonical_upstream_stress_contract(
             "canonical upstream stress contract schema drifted"
         )
     if (
-        contract.get("format") != 6
+        contract.get("format") != 7
         or contract.get("schema") != "crabc-mimalloc-canonical-upstream-stress"
     ):
         raise CanonicalUpstreamStressRejected(
             "canonical upstream stress contract schema drifted"
+        )
+    if not canonical_upstream_stress_exactly_matches(
+        contract.get("scope"), canonical_upstream_stress_expected_scope()
+    ):
+        raise CanonicalUpstreamStressRejected(
+            "canonical upstream stress contract scope or nonpromotion policy drifted"
         )
     expected_upstream = {
         "project": "microsoft/mimalloc",
@@ -2138,12 +2265,9 @@ def validate_canonical_upstream_stress_contract(
         raise CanonicalUpstreamStressRejected(
             "canonical upstream stress contract fixture drifted"
         )
-    adaptation = contract.get("source_adaptation")
-    if (
-        not isinstance(adaptation, dict)
-        or adaptation.get("kind") != "upstream-preprocessor-symbol-selection-only"
-        or adaptation.get("compile_defines") != ["USE_STD_MALLOC"]
-        or adaptation.get("patches") != []
+    if not canonical_upstream_stress_exactly_matches(
+        contract.get("source_adaptation"),
+        canonical_upstream_stress_expected_source_adaptation(),
     ):
         raise CanonicalUpstreamStressRejected(
             "canonical upstream stress contract source adaptation drifted"
@@ -2162,10 +2286,14 @@ def validate_canonical_upstream_stress_contract(
         or not isinstance(execution.get("watchdog"), dict)
         or execution["watchdog"].get("seconds") != 30
         or execution["watchdog"].get("process_retries") != 0
-        or not isinstance(execution.get("large_object_mode"), dict)
-        or execution["large_object_mode"].get("status") != "not-claimed"
-        or not isinstance(execution["large_object_mode"].get("reason"), str)
-        or not execution["large_object_mode"]["reason"]
+        or not canonical_upstream_stress_exactly_matches(
+            execution.get("scheduler_and_ownership"),
+            canonical_upstream_stress_expected_scheduler_and_ownership(),
+        )
+        or not canonical_upstream_stress_exactly_matches(
+            execution.get("large_object_mode"),
+            canonical_upstream_stress_expected_large_object_mode(),
+        )
     ):
         raise CanonicalUpstreamStressRejected(
             "canonical upstream stress contract execution policy drifted"
@@ -2202,7 +2330,7 @@ def validate_canonical_upstream_stress_contract(
     }
     if (
         not isinstance(report_contract, dict)
-        or report_contract.get("format") != 6
+        or report_contract.get("format") != 7
         or report_contract.get("schema")
         != "crabc-mimalloc-canonical-upstream-stress-report"
         or report_contract.get("path")
@@ -2973,7 +3101,7 @@ def consume_canonical_upstream_stress_evidence(
         "report": None,
         "contract": None,
         "evidence_scope": None,
-        "large_object_mode": {"status": "not-claimed"},
+        "large_object_mode": {"status": "not-verified"},
         "matrix": None,
         "current_head": None,
     }
@@ -3669,9 +3797,11 @@ def _m5_canonical_upstream_stress_evidence_verified(report: Mapping[str, Any]) -
         and evidence.get("status") == "verified"
         and evidence.get("evidence_scope") == "shadow_subset"
         and evidence.get("matrix")
-        == {"case_count": 8, "worker_counts": [1, 2, 4, 8]}
-        and isinstance(evidence.get("large_object_mode"), Mapping)
-        and evidence["large_object_mode"].get("status") == "not-claimed"
+        == {"case_count": 12, "worker_counts": [1, 2, 4, 8]}
+        and canonical_upstream_stress_exactly_matches(
+            evidence.get("large_object_mode"),
+            canonical_upstream_stress_expected_large_object_mode(),
+        )
         and isinstance(evidence.get("current_head"), Mapping)
         and isinstance(evidence["current_head"].get("record"), Mapping)
         and isinstance(evidence["current_head"].get("source"), Mapping)
