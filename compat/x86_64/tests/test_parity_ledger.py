@@ -3128,7 +3128,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         headers_layouts = self.family(data, "libc.headers-layouts")
 
         self.assertEqual(
-            manifest["schema"], "crabc.x86_64-headers-layouts-foundation/v9"
+            manifest["schema"], "crabc.x86_64-headers-layouts-foundation/v10"
         )
         self.assertEqual(manifest["status"], "planned")
         self.assertEqual(manifest["family"], "libc.headers-layouts")
@@ -3141,6 +3141,14 @@ class X86ParityLedgerTests(unittest.TestCase):
             headers_layouts["source_owners"],
         )
         self.assertIn("compat/upstreams.toml", headers_layouts["source_owners"])
+        self.assertIn(
+            "compat/x86_64/header_callable_visibility_matrix.toml",
+            headers_layouts["source_owners"],
+        )
+        self.assertIn(
+            "compat/x86_64/run_header_callable_visibility_matrix.sh",
+            headers_layouts["source_owners"],
+        )
         self.assertIn(
             "compat/x86_64/tests/test_event_descriptors_header_abi.py",
             headers_layouts["source_owners"],
@@ -3203,6 +3211,17 @@ class X86ParityLedgerTests(unittest.TestCase):
             report["header_foundation_xattr_header_profile_matrix_row_count"],
             11,
         )
+        self.assertEqual(
+            report["header_foundation_callable_feature_visibility_matrix_row_count"],
+            1337,
+        )
+        callable_visibility = manifest["callable_feature_visibility_matrix"]
+        assert isinstance(callable_visibility, dict)
+        self.assertEqual(
+            callable_visibility["command"],
+            "./scripts/dev-x86_64.sh header-callable-visibility-matrix",
+        )
+        self.assertEqual(callable_visibility["required_result"], "checked-finite-report")
 
         classes = manifest["header_class"]
         assert isinstance(classes, list)
@@ -4073,6 +4092,16 @@ class X86ParityLedgerTests(unittest.TestCase):
         assert isinstance(diagnostics, list) and isinstance(diagnostics[0], dict)
         diagnostics[0]["oracle_not_applicable_rows"] = ["aio.h:c11-strict"]
         with self.assertRaisesRegex(ledger.LedgerError, "oracle-not-applicable rows drifted"):
+            ledger.validate_ledger(data, header_layout_foundation_manifest=manifest)
+
+        data = self.data()
+        manifest = self.header_foundation_manifest()
+        callable_visibility = manifest["callable_feature_visibility_matrix"]
+        assert isinstance(callable_visibility, dict)
+        callable_visibility["record_count"] = 1336
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "callable visibility matrix count contract drifted"
+        ):
             ledger.validate_ledger(data, header_layout_foundation_manifest=manifest)
 
         data = self.data()

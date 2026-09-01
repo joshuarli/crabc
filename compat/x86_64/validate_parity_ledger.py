@@ -29,6 +29,12 @@ from feature_archive_roster import (  # noqa: E402
     parse_feature_archive_roster,
     validate_ledger_bindings,
 )
+from header_callable_visibility_matrix import (  # noqa: E402
+    MatrixError,
+    build_file_report as build_callable_visibility_report,
+    canonical_json as canonical_callable_visibility_json,
+    load_contract as load_callable_visibility_contract,
+)
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -40,6 +46,15 @@ UPSTREAMS_PATH = ROOT / "compat" / "upstreams.toml"
 HEADER_LAYOUT_MANIFEST_PATH = ROOT / "compat" / "x86_64" / "headers-layouts.toml"
 HEADER_LAYOUT_FOUNDATION_MANIFEST_PATH = (
     ROOT / "compat" / "x86_64" / "headers-layouts-foundation.toml"
+)
+HEADER_CALLABLE_VISIBILITY_MATRIX_CONTRACT_PATH = (
+    ROOT / "compat" / "x86_64" / "header_callable_visibility_matrix.toml"
+)
+HEADER_CALLABLE_VISIBILITY_MATRIX_REPORT_PATH = (
+    ROOT / "compat" / "x86_64" / "generated" / "header_callable_visibility_matrix" / "report.json"
+)
+HEADER_CALLABLE_VISIBILITY_MATRIX_RUNNER_PATH = (
+    ROOT / "compat" / "x86_64" / "run_header_callable_visibility_matrix.sh"
 )
 PUBLIC_HEADER_INVENTORY_PATH = ROOT / "compat" / "x86_64" / "public_headers.txt"
 PUBLIC_HEADER_SURFACE_RUNNER_PATH = ROOT / "compat" / "x86_64" / "run_public_header_surface.sh"
@@ -82,7 +97,7 @@ EXPECTED_TARGET = "x86_64-unknown-linux-musl"
 EXPECTED_PLATFORM = "Linux/x86-64 little-endian"
 EXPECTED_KERNEL_MSRV = "5.10"
 EXPECTED_HEADER_LAYOUT_SCHEMA = "crabc.x86_64-headers-layouts/v1"
-EXPECTED_HEADER_LAYOUT_FOUNDATION_SCHEMA = "crabc.x86_64-headers-layouts-foundation/v9"
+EXPECTED_HEADER_LAYOUT_FOUNDATION_SCHEMA = "crabc.x86_64-headers-layouts-foundation/v10"
 EXPECTED_PUBLIC_HEADER_COUNT = 183
 EXPECTED_PUBLIC_HEADER_SHA256 = "2cdcd860a423d99afef8360b6376447cf17ae926f1cd47416be817d421fca80f"
 EXPECTED_PUBLIC_HEADER_UAPI_GAPS = {
@@ -371,6 +386,7 @@ EXPECTED_HEADER_FOUNDATION_CLASS_FACETS = {
         "candidate-transitive-closure",
         "cxx17-consumability",
         "feature-visibility",
+        "callable-feature-visibility",
         "callable-prototype-layout",
         "callable-linkage-ownership",
         "legacy-direct-layout-inputs",
@@ -384,6 +400,7 @@ EXPECTED_HEADER_FOUNDATION_CLASS_FACETS = {
         "candidate-transitive-closure",
         "cxx17-consumability",
         "feature-visibility",
+        "callable-feature-visibility",
         "callable-prototype-layout",
         "callable-linkage-ownership",
     ),
@@ -393,6 +410,7 @@ EXPECTED_HEADER_FOUNDATION_CLASS_FACETS = {
         "candidate-transitive-closure",
         "cxx17-consumability",
         "feature-visibility",
+        "callable-feature-visibility",
         "callable-prototype-layout",
         "callable-linkage-ownership",
     ),
@@ -664,6 +682,12 @@ EXPECTED_HEADER_FOUNDATION_FACETS = {
         "all-pinned-and-project-only-public-headers",
         "libc.headers-layouts",
         ("strict-posix-xopen-gnu-bsd-matrix",),
+    ),
+    "callable-feature-visibility": (
+        "partial-verified",
+        "all-pinned-and-project-only-public-headers",
+        "libc.headers-layouts",
+        ("all-header-callable-feature-visibility-matrix",),
     ),
     "callable-prototype-layout": (
         "planned",
@@ -2352,6 +2376,174 @@ def validate_feature_archive_roster(
         raise LedgerError(str(error)) from error
 
 
+def require_header_callable_visibility_matrix(
+    manifest: Mapping[str, Any],
+) -> int:
+    """Keep the all-header callable visibility report finite and non-promoting."""
+
+    matrix = manifest["callable_feature_visibility_matrix"]
+    require(isinstance(matrix, Mapping), "header-foundation callable visibility matrix must be a table")
+    require(
+        set(matrix)
+        == {
+            "id",
+            "state",
+            "contract",
+            "generated_report",
+            "command",
+            "required_result",
+            "profiles",
+            "pinned_public_header_count",
+            "candidate_public_header_count",
+            "record_count",
+            "scope",
+        },
+        "header-foundation callable visibility matrix keys drifted",
+    )
+    require(
+        matrix["id"] == "all-header-callable-feature-visibility-matrix",
+        "header-foundation callable visibility matrix id drifted",
+    )
+    require(
+        matrix["state"] == "partial-verified"
+        and matrix["required_result"] == "checked-finite-report",
+        "header-foundation callable visibility matrix must remain a checked partial report",
+    )
+    contract_path = repository_path(
+        str(matrix["contract"]), "header-foundation callable visibility matrix contract"
+    )
+    report_path = repository_path(
+        str(matrix["generated_report"]), "header-foundation callable visibility matrix report"
+    )
+    require(
+        contract_path == HEADER_CALLABLE_VISIBILITY_MATRIX_CONTRACT_PATH,
+        "header-foundation callable visibility matrix contract path drifted",
+    )
+    require(
+        report_path == HEADER_CALLABLE_VISIBILITY_MATRIX_REPORT_PATH,
+        "header-foundation callable visibility matrix report path drifted",
+    )
+    command = "./scripts/dev-x86_64.sh header-callable-visibility-matrix"
+    require(matrix["command"] == command, "header-foundation callable visibility matrix command drifted")
+    expected_profiles = (
+        "c11-gnu",
+        "cxx17-gnu",
+        "c11-strict",
+        "c11-posix-2008",
+        "c11-xopen-700",
+        "c11-bsd",
+        "cxx17-strict",
+    )
+    require(
+        tuple(string_list(matrix["profiles"], "header-foundation callable visibility profiles"))
+        == expected_profiles,
+        "header-foundation callable visibility profile roster drifted",
+    )
+    require(
+        matrix["pinned_public_header_count"] == EXPECTED_PUBLIC_HEADER_COUNT
+        and matrix["candidate_public_header_count"]
+        == EXPECTED_PUBLIC_HEADER_COUNT + len(EXPECTED_PUBLIC_HEADER_CANDIDATE_ONLY)
+        and matrix["record_count"] == EXPECTED_CANDIDATE_HEADER_CLOSURE_RECORD_COUNT,
+        "header-foundation callable visibility matrix count contract drifted",
+    )
+    require(
+        isinstance(matrix["scope"], str)
+        and "callable name-and-class visibility" in matrix["scope"]
+        and "prototype and macro-replacement equality" in matrix["scope"]
+        and "archive linkage, runtime behavior, family promotion, and public support" in matrix["scope"],
+        "header-foundation callable visibility matrix must retain its non-completion scope",
+    )
+
+    try:
+        contract = load_callable_visibility_contract()
+        report = build_callable_visibility_report(contract)
+    except MatrixError as error:
+        raise LedgerError(f"callable visibility matrix input is invalid: {error}") from error
+    require(
+        contract.inventory == ROOT / "compat" / "x86_64" / "header_callable_inventory.json"
+        and contract.public_headers == PUBLIC_HEADER_INVENTORY_PATH
+        and contract.generated_report == report_path
+        and contract.profiles == expected_profiles,
+        "callable visibility matrix contract inputs drifted",
+    )
+    rendered = canonical_callable_visibility_json(report)
+    try:
+        checked = report_path.read_text(encoding="utf-8")
+    except OSError as error:
+        raise LedgerError(f"cannot read checked callable visibility matrix: {error}") from error
+    require(
+        checked == rendered,
+        "checked callable visibility matrix is stale; regenerate with --write",
+    )
+    summary = report.get("summary")
+    require(isinstance(summary, Mapping), "callable visibility matrix summary is invalid")
+    require(
+        summary
+        == {
+            "candidate_only_callable_count": 8256,
+            "candidate_public_header_count": 191,
+            "comparable_row_count": 1280,
+            "comparison_counts": {
+                "candidate-only-retained-pending-c-abi-policy": 56,
+                "matched": 720,
+                "mismatch": 560,
+                "oracle-not-applicable": 1,
+            },
+            "complete": False,
+            "incomplete_reasons": [
+                "560 comparable pinned header/profile rows have callable visibility differences",
+                "1 pinned-musl header/profile rows are oracle-not-applicable",
+                "56 project-only header/profile rows remain pending C ABI policy",
+            ],
+            "matched_callable_count": 32128,
+            "mismatch_row_count": 560,
+            "oracle_not_applicable_candidate_visible_callable_count": 39,
+            "oracle_not_applicable_row_count": 1,
+            "pinned_public_header_count": 183,
+            "pinned_row_count": 1281,
+            "profile_count": 7,
+            "project_only_callable_count": 414,
+            "project_only_header_count": 8,
+            "project_only_row_count": 56,
+            "reference_only_callable_count": 2564,
+            "row_count": 1337,
+        },
+        "callable visibility matrix finite baseline drifted",
+    )
+    scope = report.get("scope")
+    require(
+        isinstance(scope, Mapping)
+        and scope.get("compiler_derived_inventory") is True
+        and scope.get("direct_public_include_visibility") is True
+        and scope.get("callable_names_and_classes_only") is True
+        and scope.get("prototype_or_macro_replacement_equality") is False
+        and scope.get("noncallable_abi") is False
+        and scope.get("linkage_or_runtime") is False
+        and scope.get("family_promotion") is False
+        and scope.get("public_support") is False,
+        "callable visibility matrix scope drifted",
+    )
+    require(
+        HEADER_CALLABLE_VISIBILITY_MATRIX_RUNNER_PATH.is_file(),
+        "header callable visibility matrix runner is missing",
+    )
+    runner = HEADER_CALLABLE_VISIBILITY_MATRIX_RUNNER_PATH.read_text(encoding="utf-8")
+    for phrase in (
+        "header_callable_inventory.py",
+        "header_callable_visibility_matrix.py",
+        "--check",
+        "checked finite report",
+        "requires native Linux",
+    ):
+        require(phrase in runner, f"header callable visibility matrix runner omits {phrase}")
+    dispatch = X86_64_DISPATCHER_PATH.read_text(encoding="utf-8")
+    require(
+        "header-callable-visibility-matrix)" in dispatch,
+        "header callable visibility matrix is absent from the native dispatcher",
+    )
+    return int(summary["row_count"])
+
+
 def validate_header_layout_foundation_manifest(
     family: Mapping[str, Any],
     legacy_manifest: Mapping[str, Any],
@@ -2398,6 +2590,7 @@ def validate_header_layout_foundation_manifest(
         "access_header_profile_matrix",
         "xattr_header_profile_matrix",
         "closure_diagnostic",
+        "callable_feature_visibility_matrix",
         "language_profile",
         "profile_obligation",
         "header_class",
@@ -2435,6 +2628,7 @@ def validate_header_layout_foundation_manifest(
             "full_c11_consumer_matrix": True,
             "full_cxx17_consumer_matrix": True,
             "feature_visibility_matrix": False,
+            "callable_feature_visibility_matrix": True,
             "abi_facet_matrix": False,
             "callable_linkage_audit": False,
             "aggregate_family_completion": False,
@@ -2471,6 +2665,7 @@ def validate_header_layout_foundation_manifest(
             "c11_consumer_matrix": True,
             "cxx17_consumer_matrix": True,
             "feature_visibility_matrix": False,
+            "callable_feature_visibility_matrix": True,
             "abi_facet_matrix": False,
             "callable_linkage_audit": False,
             "runtime_completion": False,
@@ -2536,6 +2731,10 @@ def validate_header_layout_foundation_manifest(
         "compat/x86_64/header_callable_inventory.toml",
         "compat/x86_64/header_callable_inventory.py",
         "compat/x86_64/header_callable_inventory.json",
+        "compat/x86_64/header_callable_visibility_matrix.toml",
+        "compat/x86_64/header_callable_visibility_matrix.py",
+        "compat/x86_64/generated/header_callable_visibility_matrix/report.json",
+        "compat/x86_64/run_header_callable_visibility_matrix.sh",
         "compat/x86_64/header_callable_linkage_audit.py",
         "compat/x86_64/run_header_callable_linkage_audit.sh",
         "compat/x86_64/public_headers.txt",
@@ -2576,6 +2775,7 @@ def validate_header_layout_foundation_manifest(
         "compat/x86_64/tests/test_candidate_header_closure.py",
         "compat/x86_64/tests/test_feature_archive_roster.py",
         "compat/x86_64/tests/test_header_callable_inventory.py",
+        "compat/x86_64/tests/test_header_callable_visibility_matrix.py",
         "compat/x86_64/tests/test_uapi_wrapper_matrix.py",
         "compat/x86_64/tests/test_ioctl_header_abi.py",
         "compat/x86_64/tests/test_epoll_header_abi.py",
@@ -2850,6 +3050,8 @@ def validate_header_layout_foundation_manifest(
             phrase in closure_runner,
             f"candidate-header closure runner omits fixed seven-profile contract: {phrase}",
         )
+
+    callable_visibility_matrix_row_count = require_header_callable_visibility_matrix(manifest)
 
     profiles = manifest["language_profile"]
     require(
@@ -4996,6 +5198,7 @@ def validate_header_layout_foundation_manifest(
         "sys_time_direct_header_profile_matrix_row_count": len(observed_sys_time_direct_rows),
         "access_header_profile_matrix_row_count": len(observed_access_header_rows),
         "xattr_header_profile_matrix_row_count": len(observed_xattr_header_rows),
+        "callable_feature_visibility_matrix_row_count": callable_visibility_matrix_row_count,
         "language_profile_count": len(profile_ids),
         "profile_obligation_count": len(obligation_keys),
         "profile_matrix_row_count": profile_matrix_row_count,
@@ -5247,6 +5450,58 @@ def require_public_header_profile_consumability_artifact(
     require(
         "candidate-header-closure)" in dispatch_source,
         "public-header-profile-consumability command is absent from the native dispatcher",
+    )
+
+
+def require_all_header_callable_feature_visibility_artifact(
+    family: Mapping[str, Any],
+) -> None:
+    """Keep the checked red callable matrix distinct from general header parity."""
+
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.headers-layouts].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [
+        entry for entry in artifacts if entry.get("id") == "all-header-callable-feature-visibility"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.headers-layouts must contain exactly one all-header callable visibility artifact",
+    )
+    artifact = matching[0]
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for phrase in (
+        "still-planned `libc.headers-layouts`",
+        "compiler-derived 1,337-row direct-public-include C11/C++17 matrix",
+        "560 current comparable callable name/class mismatch rows",
+        "one current oracle-not-applicable `aio.h` row",
+        "56 project-only header/profile rows",
+        "does not compare prototypes or macro replacements, noncallable declarations, type/layout ABI, archive linkage, runtime behavior, family promotion, or public x86 support",
+    ):
+        require(phrase in description, f"callable visibility artifact description omits {phrase}")
+    owners = set(
+        string_list(artifact["source_owners"], "all-header callable visibility artifact source owners")
+    )
+    for owner in (
+        "compat/x86_64/header_callable_inventory.json",
+        "compat/x86_64/header_callable_visibility_matrix.toml",
+        "compat/x86_64/header_callable_visibility_matrix.py",
+        "compat/x86_64/generated/header_callable_visibility_matrix/report.json",
+        "compat/x86_64/run_header_callable_visibility_matrix.sh",
+        "compat/x86_64/tests/test_header_callable_visibility_matrix.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "scripts/dev-x86_64.sh",
+    ):
+        require(owner in owners, f"callable visibility artifact must own {owner}")
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh header-callable-visibility-matrix"},
+        "callable visibility artifact must use the dedicated native command",
     )
 
 
@@ -71509,6 +71764,9 @@ def validate_ledger(
     require_public_header_profile_consumability_artifact(
         by_id["libc.headers-layouts"]
     )
+    require_all_header_callable_feature_visibility_artifact(
+        by_id["libc.headers-layouts"]
+    )
     require_installed_header_tree_closure_artifact(by_id["libc.headers-layouts"])
     if header_layout_foundation_manifest is None:
         header_layout_foundation_manifest = load_toml(HEADER_LAYOUT_FOUNDATION_MANIFEST_PATH)
@@ -72085,6 +72343,9 @@ def validate_ledger(
         ],
         "header_foundation_xattr_header_profile_matrix_row_count": header_layout_foundation_report[
             "xattr_header_profile_matrix_row_count"
+        ],
+        "header_foundation_callable_feature_visibility_matrix_row_count": header_layout_foundation_report[
+            "callable_feature_visibility_matrix_row_count"
         ],
         "header_foundation_language_profile_count": header_layout_foundation_report[
             "language_profile_count"

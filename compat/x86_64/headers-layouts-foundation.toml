@@ -2,7 +2,7 @@
 #
 # This is deliberately a planning and accounting manifest, not a promotion.
 # `headers-layouts.toml` remains the v1 inventory of fifty-three direct probes.
-# This v9 manifest accounts for every pinned public header and every project-
+# This v10 manifest accounts for every pinned public header and every project-
 # only extension, pins the one Linux-UAPI input needed by its wrapper paths,
 # and records selected UAPI-wrapper, ioctl, x86 sys/io inline-port-I/O, epoll,
 # event-descriptor, timeval-transitive, direct sys/time, and access-header profile ABI slices
@@ -13,7 +13,7 @@
 # `compat/upstreams.toml#linux_5_10_uapi` owns the source/archive and derived
 # x86 `headers_install` identity; it is repeated here and in the Docker build
 # because those independent consumers cannot load TOML from one another.
-schema = "crabc.x86_64-headers-layouts-foundation/v9"
+schema = "crabc.x86_64-headers-layouts-foundation/v10"
 family = "libc.headers-layouts"
 target = "x86_64-unknown-linux-musl"
 platform = "Linux/x86-64 little-endian"
@@ -32,6 +32,7 @@ candidate_transitive_include_closure = true
 full_c11_consumer_matrix = true
 full_cxx17_consumer_matrix = true
 feature_visibility_matrix = false
+callable_feature_visibility_matrix = true
 abi_facet_matrix = false
 callable_linkage_audit = false
 aggregate_family_completion = false
@@ -64,6 +65,7 @@ candidate_transitive_include_closure = true
 c11_consumer_matrix = true
 cxx17_consumer_matrix = true
 feature_visibility_matrix = false
+callable_feature_visibility_matrix = true
 abi_facet_matrix = false
 callable_linkage_audit = false
 runtime_completion = false
@@ -1249,6 +1251,24 @@ record_count = 1337
 oracle_not_applicable_rows = ["aio.h:c11-strict", "aio.h:cxx17-strict"]
 scope = "Raw-GCC project-header-first and pinned-musl reference empty-TU C11/C++17 seven-profile include closure with only raw-GCC builtin and pinned Linux 5.10 UAPI roots. Exactly aio.h:c11-strict and aio.h:cxx17-strict are pinned-musl oracle-not-applicable because its aio.h embeds incomplete struct sigevent without a POSIX/GNU feature request; the candidate still compiles them. This is not feature-visibility, declaration/layout/linkage/runtime/installed-header/public-support evidence."
 
+# The compiler-derived callable inventory is a stronger all-header profile
+# observation than the empty-TU closure, while remaining deliberately smaller
+# than general header ABI parity. It compares direct consumer visibility by
+# callable name and class only; its checked finite red report is evidence, not
+# a waiver or a family promotion.
+[callable_feature_visibility_matrix]
+id = "all-header-callable-feature-visibility-matrix"
+state = "partial-verified"
+contract = "compat/x86_64/header_callable_visibility_matrix.toml"
+generated_report = "compat/x86_64/generated/header_callable_visibility_matrix/report.json"
+command = "./scripts/dev-x86_64.sh header-callable-visibility-matrix"
+required_result = "checked-finite-report"
+profiles = ["c11-gnu", "cxx17-gnu", "c11-strict", "c11-posix-2008", "c11-xopen-700", "c11-bsd", "cxx17-strict"]
+pinned_public_header_count = 183
+candidate_public_header_count = 191
+record_count = 1337
+scope = "Compiler-derived direct-public-include callable name-and-class visibility across all seven C11/C++17 profiles. It records every current pinned-musl/project difference and project-only current surface, but excludes prototype and macro-replacement equality, typedefs, records, constants, noncallable ABI, archive linkage, runtime behavior, family promotion, and public support."
+
 [[language_profile]]
 id = "c11-gnu"
 language = "c"
@@ -1463,7 +1483,7 @@ excluded_paths = ["sys/kd.h", "sys/soundcard.h", "sys/vt.h"]
 expected_count = 180
 language_profiles = ["c11-gnu", "cxx17-gnu", "c11-strict", "c11-posix-2008", "c11-xopen-700", "c11-bsd", "cxx17-strict"]
 future_feature_profiles = []
-abi_facets = ["public-path-inventory", "candidate-tree-presence", "c11-gnu-consumability", "ioctl-header-profile-matrix", "sys-io-header-profile-matrix", "epoll-header-profile-matrix", "event-descriptors-header-profile-matrix", "dirent-header-profile-matrix", "stdlib-header-profile-matrix", "timeval-transitive-header-profile-matrix", "sys-time-direct-header-profile-matrix", "access-header-profile-matrix", "xattr-header-profile-matrix", "candidate-transitive-closure", "cxx17-consumability", "feature-visibility", "callable-prototype-layout", "callable-linkage-ownership", "legacy-direct-layout-inputs", "static-c-cxx-composition"]
+abi_facets = ["public-path-inventory", "candidate-tree-presence", "c11-gnu-consumability", "ioctl-header-profile-matrix", "sys-io-header-profile-matrix", "epoll-header-profile-matrix", "event-descriptors-header-profile-matrix", "dirent-header-profile-matrix", "stdlib-header-profile-matrix", "timeval-transitive-header-profile-matrix", "sys-time-direct-header-profile-matrix", "access-header-profile-matrix", "xattr-header-profile-matrix", "candidate-transitive-closure", "cxx17-consumability", "feature-visibility", "callable-feature-visibility", "callable-prototype-layout", "callable-linkage-ownership", "legacy-direct-layout-inputs", "static-c-cxx-composition"]
 linkage_owners = ["current-static-c-exports", "unlisted-public-callables", "noncallable-header-abi"]
 
 [[header_class]]
@@ -1473,7 +1493,7 @@ paths = ["sys/kd.h", "sys/soundcard.h", "sys/vt.h"]
 expected_count = 3
 language_profiles = ["c11-gnu", "cxx17-gnu", "c11-strict", "c11-posix-2008", "c11-xopen-700", "c11-bsd", "cxx17-strict"]
 future_feature_profiles = []
-abi_facets = ["public-path-inventory", "candidate-tree-presence", "uapi-input-provenance", "uapi-wrapper-profile-matrix", "candidate-transitive-closure", "cxx17-consumability", "feature-visibility", "callable-prototype-layout", "callable-linkage-ownership"]
+abi_facets = ["public-path-inventory", "candidate-tree-presence", "uapi-input-provenance", "uapi-wrapper-profile-matrix", "candidate-transitive-closure", "cxx17-consumability", "feature-visibility", "callable-feature-visibility", "callable-prototype-layout", "callable-linkage-ownership"]
 linkage_owners = ["current-static-c-exports", "unlisted-public-callables", "noncallable-header-abi"]
 
 [[header_class]]
@@ -1483,7 +1503,7 @@ paths = ["daemon.h", "dn_expand.h", "linux/capability.h", "lrand48.h", "pthread_
 expected_count = 8
 language_profiles = ["c11-gnu", "cxx17-gnu", "c11-strict", "c11-posix-2008", "c11-xopen-700", "c11-bsd", "cxx17-strict"]
 future_feature_profiles = []
-abi_facets = ["project-only-extension-policy", "candidate-tree-presence", "candidate-transitive-closure", "cxx17-consumability", "feature-visibility", "callable-prototype-layout", "callable-linkage-ownership"]
+abi_facets = ["project-only-extension-policy", "candidate-tree-presence", "candidate-transitive-closure", "cxx17-consumability", "feature-visibility", "callable-feature-visibility", "callable-prototype-layout", "callable-linkage-ownership"]
 linkage_owners = ["current-static-c-exports", "unlisted-public-callables", "noncallable-header-abi"]
 
 # These wrapper paths are tied to the one declared, fixed Linux 5.10 UAPI
@@ -1660,6 +1680,14 @@ scope = "all-pinned-and-project-only-public-headers"
 owner = "libc.headers-layouts"
 evidence = ["strict-posix-xopen-gnu-bsd-matrix"]
 description = "Feature-test visibility requires an oracle-derived C and C++ matrix, not a single GNU include pass."
+
+[[abi_facet]]
+id = "callable-feature-visibility"
+state = "partial-verified"
+scope = "all-pinned-and-project-only-public-headers"
+owner = "libc.headers-layouts"
+evidence = ["all-header-callable-feature-visibility-matrix"]
+description = "The compiler-derived 1,337-row matrix records direct consumer-visible callable name/class differences across the full C11/C++17 profile cross-product and preserves project-only surface dispositions. It excludes prototype, macro-replacement, noncallable ABI, archive linkage, runtime, generic feature-visibility, and promotion closure."
 
 [[abi_facet]]
 id = "callable-prototype-layout"

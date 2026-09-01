@@ -1491,7 +1491,7 @@ id = "libc.headers-layouts"
 order = 60
 depends_on = ["oracle.musl-toolchain", "libc.errno-tls"]
 category = "c-abi"
-description = "Selected installed C/POSIX headers, typedefs, constants, and data-layout contracts for a selected crabc-libc artifact. `headers-layouts.toml` records the bounded direct-header probe inventory, including one GNU-profile `<aio.h>` declaration/layout and C++-linkage observation for the separately private `aio_error` leaf; `headers-layouts-foundation.toml` accounts for the full public-path, fixed Linux 5.10 UAPI input, selected 21-row wrapper, seven-row ioctl, seven-row x86 sys/io inline-port-I/O, seven-row epoll, 16-row event-descriptor, 11-row dirent, 12-row stdlib, 35-row timeval-transitive, seven-row direct sys/time, eight-row access-header, and 11-row sys/xattr.h ABI slices, plus a verified seven-profile 1,337-row empty-TU consumer closure with two explicit pinned-musl aio.h strict-profile non-applicability rows. The compiler-derived callable inventory now partitions every declared external among the default archive, verified feature archives, declared unverified feature profiles, and no-provider work without changing the red default archive complement. The dirent slice records selected `dirent`/`posix_dent` layouts, seven base plus four GNU/strict `_LARGEFILE64_SOURCE` C/C++ profiles, narrow feature partitions, and requested unmangled C++ spellings; the stdlib slice records selected declarations, strict/POSIX/XOPEN/GNU/BSD/LFS visibility, requested C++ spellings, and direct plus stdio/string-first NULL witnesses. Global feature visibility, declaration/layout, complete archive linkage, runtime, language/profile, ABI-facet, and ownership closure remain required. None is installed-header completion."
+description = "Selected installed C/POSIX headers, typedefs, constants, and data-layout contracts for a selected crabc-libc artifact. `headers-layouts.toml` records the bounded direct-header probe inventory, including one GNU-profile `<aio.h>` declaration/layout and C++-linkage observation for the separately private `aio_error` leaf; `headers-layouts-foundation.toml` accounts for the full public-path, fixed Linux 5.10 UAPI input, selected 21-row wrapper, seven-row ioctl, seven-row x86 sys/io inline-port-I/O, seven-row epoll, 16-row event-descriptor, 11-row dirent, 12-row stdlib, 35-row timeval-transitive, seven-row direct sys/time, eight-row access-header, and 11-row sys/xattr.h ABI slices, plus a verified seven-profile 1,337-row empty-TU consumer closure with two explicit pinned-musl aio.h strict-profile non-applicability rows. The compiler-derived callable inventory now partitions every declared external among the default archive, verified feature archives, declared unverified feature profiles, and no-provider work without changing the red default archive complement; its all-header matrix records direct callable name/class visibility differences and the eight project-only current surfaces without treating either as prototype, noncallable ABI, linkage, or runtime parity. The dirent slice records selected `dirent`/`posix_dent` layouts, seven base plus four GNU/strict `_LARGEFILE64_SOURCE` C/C++ profiles, narrow feature partitions, and requested unmangled C++ spellings; the stdlib slice records selected declarations, strict/POSIX/XOPEN/GNU/BSD/LFS visibility, requested C++ spellings, and direct plus stdio/string-first NULL witnesses. Global feature visibility, declaration/layout, complete archive linkage, runtime, language/profile, ABI-facet, and ownership closure remain required. None is installed-header completion."
 aarch64_gates = ["abi-probe", "build", "test"]
 source_owners = [
   "docker/Dockerfile.x86_64",
@@ -1502,6 +1502,10 @@ source_owners = [
   "compat/x86_64/header_callable_inventory.toml",
   "compat/x86_64/header_callable_inventory.py",
   "compat/x86_64/header_callable_inventory.json",
+  "compat/x86_64/header_callable_visibility_matrix.toml",
+  "compat/x86_64/header_callable_visibility_matrix.py",
+  "compat/x86_64/generated/header_callable_visibility_matrix/report.json",
+  "compat/x86_64/run_header_callable_visibility_matrix.sh",
   "compat/x86_64/header_callable_linkage_audit.py",
   "compat/x86_64/run_header_callable_linkage_audit.sh",
   "compat/x86_64/public_headers.txt",
@@ -1542,6 +1546,7 @@ source_owners = [
   "compat/x86_64/tests/test_candidate_header_closure.py",
   "compat/x86_64/tests/test_feature_archive_roster.py",
   "compat/x86_64/tests/test_header_callable_inventory.py",
+  "compat/x86_64/tests/test_header_callable_visibility_matrix.py",
   "compat/x86_64/tests/test_parity_ledger.py",
   "compat/x86_64/tests/test_uapi_wrapper_matrix.py",
   "compat/x86_64/tests/test_ioctl_header_abi.py",
@@ -1883,6 +1888,7 @@ native_evidence = [
   { state = "required", command = "./scripts/dev-x86_64.sh access-header-abi", scope = "This isolated raw-GCC project-header-first/pinned-musl-reference eight-row direct fcntl.h/unistd.h C/C++ compile matrix checks selected access/faccessat declarations, F_OK/R_OK/W_OK/X_OK and AT_FDCWD/AT_SYMLINK_NOFOLLOW/AT_EACCESS values, GNU-only eaccess/euidaccess visibility across default-C, strict, POSIX, XOPEN, and BSD selections, and C++ declaration C-linkage spelling. It checks header-requested external symbol spelling only, not actual callable artifact linkage. It does not select runtime behavior, all-header closure, runtime completion, family completion, or public support." },
   { state = "required", command = "./scripts/dev-x86_64.sh xattr-header-abi", scope = "This isolated raw-GCC project-header-first/pinned-musl-reference 11-profile direct sys/xattr.h C/C++ compile matrix checks all twelve path, no-follow-path, and descriptor get/list/set/remove declarations; x86 LP64 size_t/ssize_t scalars; XATTR_CREATE/XATTR_REPLACE; unconditional strict/POSIX/X/Open/GNU/BSD visibility; and unmangled C++ declaration C-linkage spelling. It checks header-requested external symbol spelling only, not actual callable artifact linkage. It does not select runtime behavior, all-header closure, runtime completion, family completion, or public support." },
   { state = "required", command = "./scripts/dev-x86_64.sh candidate-header-closure", scope = "This live 1,337-record raw-GCC candidate/pinned-musl reference seven-profile empty-TU include diagnostic requires project/builtin/Linux-5.10-only candidate traces and a complete pass. It records exactly aio.h:c11-strict and aio.h:cxx17-strict as pinned-musl reference-not-applicable after candidate compilation succeeds. It does not select feature visibility, declaration/layout parity, callable linkage, runtime, installed-header completion, or public support." },
+  { state = "required", command = "./scripts/dev-x86_64.sh header-callable-visibility-matrix", scope = "This native compiler-derived 1,337-row direct-public-include callable name/class matrix checks the reviewed finite report against pinned musl and preserves all observed mismatches plus the eight project-only current surfaces. It does not prove prototypes, macro replacements, noncallable ABI, archive linkage, runtime, family promotion, or public support." },
   { state = "required", command = "./scripts/dev-x86_64.sh header-abi-project", scope = "This compile-only fenv/float/fundamental-type slice is partial evidence." },
   { state = "required", command = "./scripts/dev-x86_64.sh math-complex-header-abi", scope = "This project-first/pinned-musl C11/C++ x87 math, complex, and tgmath header-semantics gate runs in SSE and -mfpmath=387 modes. It proves only the named declaration, macro, layout, type-selection, and C-linkage boundary; its C executable intentionally uses pinned musl libm and does not select crabc-libc scalar/complex math or public x86 support." },
   { state = "required", command = "./scripts/dev-x86_64.sh libc-fenv", scope = "This standalone source-only pinned-musl x86 fenv leaf differentially executes the 32-byte x87/MXCSR fenv_t, FE flag, rounding, saved/update, and default-environment behavior. Its separate selected archive use is recorded only by `static-c-bootstrap-primitives`; this command does not make general crabc-libc selectable." },
@@ -2000,6 +2006,34 @@ x86_header_prerequisites = [
 ]
 native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh candidate-header-closure", scope = "Native seven-profile pinned-musl/project-header-first empty-TU closure. The report resolves all 1,337 rows and records exactly two reference-not-applicable aio strict rows after candidate compilation succeeds; it is not feature visibility, declaration/layout, callable linkage, archive, runtime, installed-header, family-promotion, or public-x86 evidence." }]
 oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 x86 installed public-header tree", role = "Complete pathname and isolated C/C++ header-consumer oracle, including the two recorded strict aio.h reference applicability results." }]
+
+[[family.verified_artifact]]
+id = "all-header-callable-feature-visibility"
+description = "Private native x86 all-header callable feature-visibility artifact within still-planned `libc.headers-layouts`. It checks a compiler-derived 1,337-row direct-public-include C11/C++17 matrix against pinned musl 1.2.6, records 560 current comparable callable name/class mismatch rows, one current oracle-not-applicable `aio.h` row, and 56 project-only header/profile rows with explicit pending-C-ABI-policy dispositions. It proves a finite callable visibility baseline only: it does not compare prototypes or macro replacements, noncallable declarations, type/layout ABI, archive linkage, runtime behavior, family promotion, or public x86 support."
+source_owners = [
+  "compat/x86_64/header_callable_inventory.json",
+  "compat/x86_64/header_callable_inventory.py",
+  "compat/x86_64/header_callable_visibility_matrix.toml",
+  "compat/x86_64/header_callable_visibility_matrix.py",
+  "compat/x86_64/generated/header_callable_visibility_matrix/report.json",
+  "compat/x86_64/headers-layouts-foundation.toml",
+  "compat/x86_64/public_headers.txt",
+  "compat/x86_64/run_header_callable_visibility_matrix.sh",
+  "compat/x86_64/tests/test_header_callable_visibility_matrix.py",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "scripts/dev-x86_64.sh",
+]
+x86_abi_prerequisites = [
+  "The checked 1,337-row matrix is (183 pinned-musl public paths plus 8 project-only paths) times seven fixed C11/C++17 profiles; it does not select an ABI, archive, or runtime.",
+  "Pinned musl 1.2.6 remains the callable visibility oracle; a pinned compiler non-applicability is recorded as evidence rather than waived candidate behavior.",
+]
+x86_header_prerequisites = [
+  "Callable units are compiler-observed direct-consumer visible `(classification, name)` pairs from the canonical inventory; `declaring_header` provenance does not replace direct include visibility.",
+  "The report intentionally excludes prototype and macro-replacement equality, noncallable types/constants/records, archive linkage, runtime behavior, family promotion, and public support.",
+]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh header-callable-visibility-matrix", scope = "Native inventory regeneration plus exact checked finite callable-visibility report. A pass preserves all current red mismatch and pending-policy rows; it is not prototype, noncallable ABI, archive, runtime, promotion, or public-support evidence." }]
+oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 x86 installed public-header tree", role = "Direct C/C++ feature-profile callable visibility oracle for the 183 pinned public paths." }]
 
 [[family.verified_artifact]]
 id = "installed-header-tree-closure"

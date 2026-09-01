@@ -234,7 +234,7 @@ class AArch64ParityInventoryTests(unittest.TestCase):
         self.assertEqual(posix_runtime["verified_slice_count"], 6)
         self.assertEqual(
             sum(row["verified_artifact_count"] for row in report["families"]),
-            346,
+            347,
         )
         self.assertEqual(
             sum(row["verified_slice_count"] for row in report["families"]),

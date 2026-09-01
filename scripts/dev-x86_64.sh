@@ -55,6 +55,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   public-header-surface  inventory all pinned x86 public headers for C consumability
   candidate-header-closure  require isolated C11/C++17 public-header include closure
   installed-header-tree-closure  verify the materialized target-owned x86 public-header closure
+  header-callable-visibility-matrix  check all-header callable feature-visibility evidence
   header-callable-linkage-audit  audit declared x86 header callables against the static archive
   uapi-wrapper-matrix  verify the selected Linux 5.10 UAPI wrapper C/C++ ABI profile matrix
   epoll-header-abi  verify the selected x86 packed sys/epoll.h C/C++ ABI profile matrix
@@ -2520,6 +2521,10 @@ run_candidate_header_closure() {
 
 run_installed_header_tree_closure() {
     run_in_container bash /workspace/compat/x86_64/run_installed_header_tree_closure.sh
+}
+
+run_header_callable_visibility_matrix() {
+    run_in_container bash /workspace/compat/x86_64/run_header_callable_visibility_matrix.sh
 }
 
 run_header_callable_linkage_audit() {
@@ -4991,6 +4996,7 @@ case "$command" in
     linux-5-10-uapi) ;;
     candidate-header-closure) ;;
     installed-header-tree-closure) ;;
+    header-callable-visibility-matrix) ;;
     header-callable-linkage-audit) ;;
     uapi-wrapper-matrix) ;;
     epoll-header-abi) ;;
@@ -5133,6 +5139,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "installed-header-tree-closure takes no arguments"
         ensure_image
         run_installed_header_tree_closure
+        ;;
+    header-callable-visibility-matrix)
+        [ "$#" -eq 0 ] || fail "header-callable-visibility-matrix takes no arguments"
+        ensure_image
+        run_header_callable_visibility_matrix
         ;;
     header-callable-linkage-audit)
         [ "$#" -eq 0 ] || fail "header-callable-linkage-audit takes no arguments"
