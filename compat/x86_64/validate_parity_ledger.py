@@ -13,13 +13,28 @@ import hashlib
 import importlib.util
 import json
 import re
+import sys
 import tomllib
 from pathlib import Path
 from typing import Any, Mapping
 
 
+LOCAL_MODULE_DIR = Path(__file__).resolve().parent
+if str(LOCAL_MODULE_DIR) not in sys.path:
+    sys.path.insert(0, str(LOCAL_MODULE_DIR))
+
+from feature_archive_roster import (  # noqa: E402
+    FeatureArchiveRosterError,
+    load_cargo_x86_features,
+    parse_feature_archive_roster,
+    validate_ledger_bindings,
+)
+
+
 ROOT = Path(__file__).resolve().parents[2]
 LEDGER_PATH = ROOT / "compat" / "x86_64" / "parity.toml"
+STATIC_C_ABI_EXPORTS_PATH = ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+X86_64_DISPATCHER_PATH = ROOT / "scripts" / "dev-x86_64.sh"
 STATIC_PRODUCT_CONTRACT_PATH = ROOT / "compat" / "x86_64" / "static-product.toml"
 UPSTREAMS_PATH = ROOT / "compat" / "upstreams.toml"
 HEADER_LAYOUT_MANIFEST_PATH = ROOT / "compat" / "x86_64" / "headers-layouts.toml"
@@ -67,7 +82,7 @@ EXPECTED_TARGET = "x86_64-unknown-linux-musl"
 EXPECTED_PLATFORM = "Linux/x86-64 little-endian"
 EXPECTED_KERNEL_MSRV = "5.10"
 EXPECTED_HEADER_LAYOUT_SCHEMA = "crabc.x86_64-headers-layouts/v1"
-EXPECTED_HEADER_LAYOUT_FOUNDATION_SCHEMA = "crabc.x86_64-headers-layouts-foundation/v8"
+EXPECTED_HEADER_LAYOUT_FOUNDATION_SCHEMA = "crabc.x86_64-headers-layouts-foundation/v9"
 EXPECTED_PUBLIC_HEADER_COUNT = 183
 EXPECTED_PUBLIC_HEADER_SHA256 = "2cdcd860a423d99afef8360b6376447cf17ae926f1cd47416be817d421fca80f"
 EXPECTED_PUBLIC_HEADER_UAPI_GAPS = {
@@ -657,10 +672,10 @@ EXPECTED_HEADER_FOUNDATION_FACETS = {
         ("generated-x86-prototype-layout-matrix",),
     ),
     "callable-linkage-ownership": (
-        "planned",
+        "partial-verified",
         "all-pinned-and-project-only-public-headers",
         "libc.c-abi-compat",
-        ("declared-callable-linkage-audit",),
+        ("generated-callable-provider-partition",),
     ),
     "legacy-direct-layout-inputs": (
         "partial-verified",
@@ -684,10 +699,10 @@ EXPECTED_HEADER_FOUNDATION_LINKAGE_OWNERS = {
         ("compat/x86_64/static_c_abi_exports.txt", "selected-static-artifacts"),
     ),
     "unlisted-public-callables": (
-        "planned",
-        "every public callable declaration not selected by the current static export ratchet",
+        "partial-verified",
+        "every public callable declaration without a verified default-static or feature-archive provider",
         "libc.c-abi-compat",
-        ("declared-callable-linkage-audit",),
+        ("generated-callable-provider-partition",),
     ),
     "noncallable-header-abi": (
         "planned",
@@ -2318,6 +2333,25 @@ def static_c_abi_export_names(path: Path) -> list[str]:
     return names
 
 
+def validate_feature_archive_roster(
+    data: Mapping[str, Any], verified_records: Mapping[str, Mapping[str, Any]]
+) -> dict[str, int]:
+    """Bind every x86 Cargo feature profile to its explicit archive evidence."""
+
+    try:
+        rows = parse_feature_archive_roster(
+            data.get("feature_archive"), load_cargo_x86_features()
+        )
+        return validate_ledger_bindings(
+            rows,
+            static_exports=static_c_abi_export_names(STATIC_C_ABI_EXPORTS_PATH),
+            verified_records=verified_records,
+            dispatcher_path=X86_64_DISPATCHER_PATH,
+        )
+    except FeatureArchiveRosterError as error:
+        raise LedgerError(str(error)) from error
+
+
 def validate_header_layout_foundation_manifest(
     family: Mapping[str, Any],
     legacy_manifest: Mapping[str, Any],
@@ -2325,15 +2359,16 @@ def validate_header_layout_foundation_manifest(
 ) -> dict[str, int]:
     """Validate the planned all-header accounting contract without promoting it.
 
-    The v8 contract resolves every current pathname into one class and expands
+    The v9 contract resolves every current pathname into one class and expands
     every class into explicit language/feature obligations. It pins the one
     Linux-UAPI input, resolves selected UAPI-wrapper, ioctl-header, x86 sys/io
     inline-port-I/O, epoll-header, timeval-transitive, direct sys/time, and
     access-header ABI matrices, and
     verifies a seven-profile empty-TU closure diagnostic with two explicit
-    pinned-musl aio.h strict-profile applicability results, while keeping
-    feature visibility, declaration/layout comparisons, and declared-callable
-    linkage in planned evidence lanes.
+    pinned-musl aio.h strict-profile applicability results. It now records an
+    explicit default/feature/unprovided callable provider partition while
+    keeping complete archive extraction, feature visibility, and general
+    declaration/layout comparisons in planned evidence lanes.
     """
     require(isinstance(manifest, Mapping), "header-foundation manifest must be a table")
     expected_manifest_keys = {
@@ -2497,6 +2532,12 @@ def validate_header_layout_foundation_manifest(
         "compat/upstreams.toml",
         "compat/x86_64/headers-layouts-foundation.toml",
         "compat/x86_64/headers-layouts.toml",
+        "compat/x86_64/feature_archive_roster.py",
+        "compat/x86_64/header_callable_inventory.toml",
+        "compat/x86_64/header_callable_inventory.py",
+        "compat/x86_64/header_callable_inventory.json",
+        "compat/x86_64/header_callable_linkage_audit.py",
+        "compat/x86_64/run_header_callable_linkage_audit.sh",
         "compat/x86_64/public_headers.txt",
         "compat/x86_64/run_linux_5_10_uapi.sh",
         "compat/x86_64/run_uapi_wrapper_matrix.sh",
@@ -2533,6 +2574,8 @@ def validate_header_layout_foundation_manifest(
         "compat/x86_64/header_cxx_closure.cpp",
         "compat/x86_64/static_c_abi_exports.txt",
         "compat/x86_64/tests/test_candidate_header_closure.py",
+        "compat/x86_64/tests/test_feature_archive_roster.py",
+        "compat/x86_64/tests/test_header_callable_inventory.py",
         "compat/x86_64/tests/test_uapi_wrapper_matrix.py",
         "compat/x86_64/tests/test_ioctl_header_abi.py",
         "compat/x86_64/tests/test_epoll_header_abi.py",
@@ -71354,6 +71397,7 @@ def validate_ledger(
     verified_slice_ids: set[str] = set()
     verified_artifact_ids: set[str] = set()
     verified_record_ids: set[str] = set()
+    verified_records: dict[str, Mapping[str, Any]] = {}
     for index, entry in enumerate(families):
         location = f"family[{index}]"
         require(isinstance(entry, Mapping), f"{location} must be a table")
@@ -71408,6 +71452,7 @@ def validate_ledger(
             require(slice_id not in verified_record_ids, f"duplicate verified record id: {slice_id}")
             verified_record_ids.add(slice_id)
             verified_slice_ids.add(slice_id)
+            verified_records[slice_id] = slice_entry
             for capability in nonempty_strings(
                 slice_entry["capabilities"], f"{location}.verified_slice[{slice_id}].capabilities"
             ):
@@ -71443,6 +71488,7 @@ def validate_ledger(
             )
             verified_record_ids.add(artifact_id)
             verified_artifact_ids.add(artifact_id)
+            verified_records[artifact_id] = artifact_entry
         ids.add(identifier)
         orders.append(order)
         by_id[identifier] = entry
@@ -71965,6 +72011,8 @@ def validate_ledger(
             require(dependency in by_id, f"family[{identifier}] depends on unknown family {dependency}")
             require(orders_by_id[dependency] < orders_by_id[identifier], f"family[{identifier}] dependency {dependency} is not earlier")
 
+    feature_archive_report = validate_feature_archive_roster(data, verified_records)
+
     if static_product_contract is None:
         static_product_contract = load_toml(STATIC_PRODUCT_CONTRACT_PATH)
     static_product_report = validate_static_product_contract(
@@ -71985,6 +72033,13 @@ def validate_ledger(
         "status_counts": status_counts,
         "verified_slice_count": len(verified_slice_ids),
         "verified_artifact_count": len(verified_artifact_ids),
+        "feature_archive_count": feature_archive_report["feature_archive_count"],
+        "verified_feature_archive_count": feature_archive_report[
+            "verified_feature_archive_count"
+        ],
+        "planned_feature_archive_count": feature_archive_report[
+            "planned_feature_archive_count"
+        ],
         "static_product": static_product_report,
         "header_layout_probe_count": header_layout_report["probe_count"],
         "public_header_inventory_count": public_header_inventory_count,

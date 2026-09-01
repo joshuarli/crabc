@@ -8,9 +8,11 @@ JSON AST for function declarations, and consumes its preprocessor record for
 callable macros.  The checked JSON has no machine-local paths or timestamps.
 
 The resulting inventory is an accounting input to, rather than evidence of,
-``libc.headers-layouts`` completion.  In particular, a nonempty static export
-complement makes the inventory explicitly incomplete; it cannot silently
-promote a header or runtime family.
+``libc.headers-layouts`` completion. It distinguishes the default archive,
+verified opt-in feature archives, declared-but-unverified feature profiles,
+and truly unprovided declarations. A nonempty default static-export complement
+still makes the inventory explicitly incomplete; feature ownership cannot
+silently promote a header or runtime family.
 """
 
 from __future__ import annotations
@@ -31,8 +33,18 @@ from typing import Any, Iterable, Mapping, Sequence
 
 
 ROOT = Path(__file__).resolve().parents[2]
+LOCAL_MODULE_DIR = ROOT / "compat" / "x86_64"
+if str(LOCAL_MODULE_DIR) not in sys.path:
+    sys.path.insert(0, str(LOCAL_MODULE_DIR))
+
+from feature_archive_roster import (  # noqa: E402
+    FeatureArchiveRosterError,
+    load_feature_archive_roster,
+    partition_candidate_callables,
+)
+
 CONTRACT_PATH = ROOT / "compat" / "x86_64" / "header_callable_inventory.toml"
-SCHEMA = "crabc.x86_64-header-callable-inventory-report/v1"
+SCHEMA = "crabc.x86_64-header-callable-inventory-report/v2"
 TARGET = "x86_64-unknown-linux-musl"
 PLATFORM = "Linux/x86-64 little-endian"
 MUSL_VERSION = "1.2.6"
@@ -58,6 +70,7 @@ class Profile:
 class InventoryContract:
     public_headers: Path
     static_exports: Path
+    parity_ledger: Path
     generated_inventory: Path
     pinned_public_header_count: int
     candidate_public_header_count: int
@@ -95,7 +108,7 @@ def load_contract(path: Path = CONTRACT_PATH) -> InventoryContract:
     except (OSError, tomllib.TOMLDecodeError) as error:
         raise InventoryError(f"cannot load {path.relative_to(ROOT)}: {error}") from error
 
-    require(raw.get("schema") == "crabc.x86_64-header-callable-inventory/v1", "inventory contract schema changed")
+    require(raw.get("schema") == "crabc.x86_64-header-callable-inventory/v2", "inventory contract schema changed")
     require(raw.get("target") == TARGET, "inventory contract target changed")
     require(raw.get("platform") == PLATFORM, "inventory contract platform changed")
     require(raw.get("oracle") == "Pinned musl 1.2.6", "inventory contract oracle changed")
@@ -121,6 +134,7 @@ def load_contract(path: Path = CONTRACT_PATH) -> InventoryContract:
             "candidate_headers_first": True,
             "native_execution_only": True,
             "archive_extraction_required_for_external": True,
+            "feature_archive_provider_accounting": True,
             "family_promotion": False,
             "public_support": False,
         },
@@ -188,6 +202,7 @@ def load_contract(path: Path = CONTRACT_PATH) -> InventoryContract:
     return InventoryContract(
         public_headers=relative_project_path(raw.get("public_headers"), "public_headers"),
         static_exports=relative_project_path(raw.get("static_c_abi_exports"), "static_c_abi_exports"),
+        parity_ledger=relative_project_path(raw.get("parity_ledger"), "parity_ledger"),
         generated_inventory=relative_project_destination(raw.get("generated_inventory"), "generated_inventory"),
         pinned_public_header_count=pinned_count,
         candidate_public_header_count=candidate_count,
@@ -783,6 +798,14 @@ def build_report(
     )
     static_export_set = set(exports)
     complement = sorted(set(candidate_external) - static_export_set)
+    try:
+        provider_partition = partition_candidate_callables(
+            load_feature_archive_roster(contract.parity_ledger),
+            candidate_callables=candidate_external,
+            static_exports=exports,
+        )
+    except FeatureArchiveRosterError as error:
+        raise InventoryError(f"feature archive provider roster is invalid: {error}") from error
     record_counts = Counter(str(record.get("classification")) for record in records)
     run_counts = Counter(str(record.get("status")) for record in profile_runs)
     incomplete_reasons: list[str] = []
@@ -795,7 +818,7 @@ def build_report(
 
     return {
         "schema": SCHEMA,
-        "contract_schema": "crabc.x86_64-header-callable-inventory/v1",
+        "contract_schema": "crabc.x86_64-header-callable-inventory/v2",
         "target": TARGET,
         "platform": PLATFORM,
         "oracle": "Pinned musl 1.2.6",
@@ -807,10 +830,12 @@ def build_report(
             "linux_uapi_version": LINUX_UAPI_VERSION,
             "musl_source_sha256": MUSL_SOURCE_SHA256,
             "musl_version": MUSL_VERSION,
+            "parity_ledger_sha256": sha256_file(contract.parity_ledger),
             "static_c_abi_exports_sha256": sha256_file(contract.static_exports),
         },
         "scope": {
             "archive_extraction_required_for_external": True,
+            "feature_archive_provider_accounting": True,
             "family_promotion": False,
             "header_text_parsing": False,
             "public_support": False,
@@ -830,8 +855,10 @@ def build_report(
             "kind": "candidate-external-callables-absent-from-static-c-abi-export-ratchet",
             "members": complement,
         },
+        "callable_provider_partition": provider_partition.as_report(),
         "summary": {
             "callable_classification_counts": dict(sorted(record_counts.items())),
+            "callable_provider_counts": provider_partition.counts(),
             "candidate_external_callable_count": len(candidate_external),
             "complete": not incomplete_reasons,
             "incomplete_reasons": incomplete_reasons,

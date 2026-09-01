@@ -1,11 +1,14 @@
 #!/usr/bin/env bash
 # Native Linux/x86-64 planned public-header callable linkage audit.
 #
-# The compiler-derived inventory is checked first.  Then this runner builds
-# only the candidate static libc archive and makes `ld` perform ordinary
+# The compiler-derived inventory is checked first, including its explicit
+# default/feature/unprovided provider partition. Then this runner builds only
+# the candidate default static libc archive and makes `ld` perform ordinary
 # per-symbol extraction; it intentionally never uses `--whole-archive` or an
-# ambient libc.  A nonempty finite complement or failed extraction is a red,
-# durable report, not a partial pass or a promotion claim.
+# ambient libc. Existing focused feature runners remain the native archive
+# proof for their exact opt-in profiles. A nonempty default complement or
+# failed extraction is a red, durable report, not a partial pass or a
+# promotion claim.
 set -euo pipefail
 export LC_ALL=C
 

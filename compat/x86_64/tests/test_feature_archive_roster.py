@@ -1,0 +1,119 @@
+#!/usr/bin/env python3
+"""Focused contracts for native x86 feature-archive provider ownership."""
+
+from __future__ import annotations
+
+import importlib.util
+import sys
+import unittest
+from pathlib import Path
+
+
+ROOT = Path(__file__).resolve().parents[3]
+ROSTER_PATH = ROOT / "compat" / "x86_64" / "feature_archive_roster.py"
+
+
+def load_module(name: str, path: Path):
+    spec = importlib.util.spec_from_file_location(name, path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+ROSTER = load_module("feature_archive_roster_test", ROSTER_PATH)
+
+
+def row(
+    identifier: str,
+    *,
+    state: str = "verified",
+    baseline_features: list[str] | None = None,
+    additive_callables: list[str] | None = None,
+    replacement_callables: list[str] | None = None,
+) -> dict[str, object]:
+    value: dict[str, object] = {
+        "id": identifier,
+        "state": state,
+        "runner": f"compat/x86_64/run_{identifier}.sh",
+        "baseline_features": [] if baseline_features is None else baseline_features,
+        "enabled_features": [identifier],
+        "additive_callables": [] if additive_callables is None else additive_callables,
+        "replacement_callables": [] if replacement_callables is None else replacement_callables,
+        "aliases": [],
+    }
+    if state == "verified":
+        value["evidence_record"] = f"evidence.{identifier}"
+        value["dispatch_command"] = identifier
+    return value
+
+
+class FeatureArchiveRosterTests(unittest.TestCase):
+    def test_checked_roster_covers_every_cargo_x86_feature_once(self) -> None:
+        cargo_features = ROSTER.load_cargo_x86_features()
+        rows = ROSTER.load_feature_archive_roster()
+
+        self.assertEqual([item.identifier for item in rows], list(cargo_features))
+        self.assertEqual(len(rows), 18)
+        self.assertEqual(
+            [item.identifier for item in rows if item.state == "planned"],
+            ["x86-resolver-runtime"],
+        )
+        self.assertEqual(
+            next(item for item in rows if item.identifier == "x86-environment-runtime").additive_callables,
+            (),
+        )
+
+    def test_dependent_feature_requires_its_exact_cargo_baseline(self) -> None:
+        cargo_features = {
+            "x86-base": (),
+            "x86-dependent": ("x86-base",),
+        }
+        rows = [row("x86-base"), row("x86-dependent")]
+
+        with self.assertRaisesRegex(
+            ROSTER.FeatureArchiveRosterError,
+            "baseline does not match its Cargo feature dependency closure",
+        ):
+            ROSTER.parse_feature_archive_roster(rows, cargo_features)
+
+    def test_partition_rejects_default_static_additive_ownership(self) -> None:
+        cargo_features = {"x86-extra": ()}
+        rows = ROSTER.parse_feature_archive_roster(
+            [row("x86-extra", additive_callables=["already_default"])],
+            cargo_features,
+        )
+
+        with self.assertRaisesRegex(
+            ROSTER.FeatureArchiveRosterError,
+            "not exclusively owned",
+        ):
+            ROSTER.partition_candidate_callables(
+                rows,
+                candidate_callables={"already_default"},
+                static_exports={"already_default"},
+            )
+
+    def test_partition_keeps_declared_unverified_features_out_of_verified_ownership(self) -> None:
+        cargo_features = {"x86-planned": ()}
+        rows = ROSTER.parse_feature_archive_roster(
+            [row("x86-planned", state="planned", additive_callables=["future_callable"])],
+            cargo_features,
+        )
+        partition = ROSTER.partition_candidate_callables(
+            rows,
+            candidate_callables={"future_callable", "unprovided"},
+            static_exports=set(),
+        )
+
+        self.assertEqual(partition.counts(), {
+            "default_static": 0,
+            "verified_feature_archives": 0,
+            "declared_unverified_feature_archives": 1,
+            "unprovided": 1,
+        })
+
+
+if __name__ == "__main__":
+    unittest.main()

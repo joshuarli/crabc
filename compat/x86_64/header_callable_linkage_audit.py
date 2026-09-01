@@ -2,10 +2,12 @@
 """Audit archive extraction for the generated x86 public callable inventory.
 
 The static export ratchet is only one input.  This harness consumes the
-compiler-derived candidate declarations, lists the finite set that does not
-appear in that ratchet, and then asks ``ld`` to extract the candidate archive
-for each ratcheted external name.  It never uses ``--whole-archive``: a name
-must cause ordinary archive-member selection or it is reported as unresolved.
+compiler-derived candidate declarations, records the explicit default/feature
+archive provider partition, and then asks ``ld`` to extract the default
+candidate archive for each ratcheted external name. It never uses
+``--whole-archive``: a name must cause ordinary archive-member selection or it
+is reported as unresolved. Verified feature profiles retain their existing
+focused runners; this default-archive audit does not pretend to rebuild them.
 
 An incomplete result is intentional evidence for the still-planned header
 closure.  It is not a waived pass, a family transition, or public-support
@@ -29,8 +31,8 @@ from typing import Any, Iterable, Mapping, Sequence
 ROOT = Path(__file__).resolve().parents[2]
 INVENTORY_PATH = ROOT / "compat" / "x86_64" / "header_callable_inventory.json"
 STATIC_EXPORTS_PATH = ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
-INVENTORY_SCHEMA = "crabc.x86_64-header-callable-inventory-report/v1"
-SCHEMA = "crabc.x86_64-header-callable-linkage-audit/v1"
+INVENTORY_SCHEMA = "crabc.x86_64-header-callable-inventory-report/v2"
+SCHEMA = "crabc.x86_64-header-callable-linkage-audit/v2"
 
 
 class LinkageAuditError(ValueError):
@@ -94,6 +96,85 @@ def inventory_static_export_sha256(inventory: Mapping[str, Any]) -> str:
     return value
 
 
+def string_members(value: object, location: str) -> list[str]:
+    require(isinstance(value, list), f"{location} must be an array")
+    members: list[str] = []
+    for index, member in enumerate(value):
+        require(isinstance(member, str) and member, f"{location}[{index}] is invalid")
+        members.append(member)
+    require(members == sorted(members), f"{location} is not ASCII sorted")
+    require(len(members) == len(set(members)), f"{location} has duplicates")
+    return members
+
+
+def callable_provider_partition(
+    inventory: Mapping[str, Any], external: Sequence[str], static_exports: Sequence[str]
+) -> tuple[Mapping[str, Any], dict[str, int]]:
+    """Validate the generated provider accounting against this audit's inputs."""
+
+    partition = inventory.get("callable_provider_partition")
+    require(isinstance(partition, Mapping), "inventory callable provider partition is missing")
+    require(
+        set(partition)
+        == {
+            "kind",
+            "default_static",
+            "verified_feature_archives",
+            "declared_unverified_feature_archives",
+            "unprovided",
+            "replacement_variants",
+        },
+        "inventory callable provider partition keys are invalid",
+    )
+    require(
+        partition.get("kind") == "candidate-external-callable-feature-archive-provider-partition",
+        "inventory callable provider partition kind is invalid",
+    )
+    default_static = partition.get("default_static")
+    require(isinstance(default_static, Mapping) and set(default_static) == {"members"}, "inventory default static provider is invalid")
+    default_members = string_members(default_static.get("members"), "inventory default static members")
+    expected_default = sorted(set(external) & set(static_exports))
+    require(default_members == expected_default, "inventory default static provider drifted from the static export ratchet")
+
+    all_feature_members: set[str] = set()
+    counts: dict[str, int] = {"default_static": len(default_members)}
+    for key in ("verified_feature_archives", "declared_unverified_feature_archives"):
+        providers = partition.get(key)
+        require(isinstance(providers, list), f"inventory {key} is invalid")
+        members: list[str] = []
+        provider_ids: set[str] = set()
+        for index, provider in enumerate(providers):
+            location = f"inventory {key}[{index}]"
+            require(isinstance(provider, Mapping), f"{location} is invalid")
+            require(
+                set(provider) == {"aliases", "evidence_record", "id", "members", "runner", "state"},
+                f"{location} keys are invalid",
+            )
+            identifier = provider.get("id")
+            require(isinstance(identifier, str) and identifier and identifier not in provider_ids, f"{location}.id is invalid")
+            provider_ids.add(identifier)
+            expected_state = "verified" if key == "verified_feature_archives" else "planned"
+            require(provider.get("state") == expected_state, f"{location}.state is invalid")
+            members.extend(string_members(provider.get("members"), f"{location}.members"))
+        require(len(members) == len(set(members)), f"inventory {key} members overlap")
+        overlap = all_feature_members & set(members)
+        require(not overlap, f"inventory feature provider members overlap: {', '.join(sorted(overlap))}")
+        all_feature_members.update(members)
+        counts[key] = len(members)
+
+    unprovided = partition.get("unprovided")
+    require(isinstance(unprovided, Mapping) and set(unprovided) == {"members"}, "inventory unprovided provider is invalid")
+    unprovided_members = string_members(unprovided.get("members"), "inventory unprovided members")
+    expected_unprovided = sorted(set(external) - set(default_members) - all_feature_members)
+    require(unprovided_members == expected_unprovided, "inventory unprovided callable partition drifted")
+    counts["unprovided"] = len(unprovided_members)
+    require(
+        sorted(set(external) - set(default_members)) == sorted(all_feature_members | set(unprovided_members)),
+        "inventory provider partition does not account for the static export complement",
+    )
+    return partition, counts
+
+
 def global_defined_symbols(path: Path, nm: str) -> set[str]:
     result = subprocess.run(
         [nm, "-g", "--defined-only", "--format=posix", str(path)],
@@ -151,6 +232,9 @@ def audit(
     export_set = set(static_exports)
     complement = sorted(set(external) - export_set)
     linked_symbols = sorted(set(external) & export_set)
+    provider_partition, provider_counts = callable_provider_partition(
+        inventory, external, static_exports
+    )
     if archive is None:
         extraction = [
             {
@@ -171,6 +255,8 @@ def audit(
     incomplete_reasons: list[str] = []
     if complement:
         incomplete_reasons.append("static export complement is nonempty")
+    if provider_counts["unprovided"]:
+        incomplete_reasons.append("one or more candidate external callables have no declared archive provider")
     if counts.get("not-run", 0):
         incomplete_reasons.append("archive extraction was not run")
     if counts.get("not-extracted", 0) or counts.get("link-failed", 0):
@@ -182,6 +268,8 @@ def audit(
         "static_export_symbol_digest": actual_digest,
         "scope": {
             "family_promotion": False,
+            "feature_archive_provider_accounting": True,
+            "feature_archive_profiles_extracted_here": False,
             "public_support": False,
             "uses_whole_archive": False,
         },
@@ -191,8 +279,10 @@ def audit(
             "kind": "candidate-external-callables-absent-from-static-c-abi-export-ratchet",
             "members": complement,
         },
+        "callable_provider_partition": provider_partition,
         "archive_extraction": extraction,
         "summary": {
+            "callable_provider_counts": provider_counts,
             "complete": not incomplete_reasons,
             "extraction_status_counts": dict(sorted(counts.items())),
             "incomplete_reasons": incomplete_reasons,

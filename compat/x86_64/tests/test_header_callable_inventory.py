@@ -57,6 +57,10 @@ class HeaderCallableInventoryTests(unittest.TestCase):
             set(contract.oracle_not_applicable),
             {("aio.h", "c11-strict"), ("aio.h", "cxx17-strict")},
         )
+        self.assertEqual(
+            contract.parity_ledger,
+            ROOT / "compat" / "x86_64" / "parity.toml",
+        )
         source = INVENTORY_PATH.read_text(encoding="utf-8")
         self.assertIn("-ast-dump=json", source)
         self.assertIn('"-E", "-dD"', source)
@@ -199,6 +203,60 @@ class HeaderCallableInventoryTests(unittest.TestCase):
             "candidate external callable names are absent from the static export ratchet",
             report["summary"]["incomplete_reasons"],
         )
+        partition = report["callable_provider_partition"]
+        self.assertEqual(
+            partition["kind"],
+            "candidate-external-callable-feature-archive-provider-partition",
+        )
+        provider_counts = report["summary"]["callable_provider_counts"]
+        self.assertEqual(
+            sum(provider_counts.values()),
+            report["summary"]["candidate_external_callable_count"],
+        )
+        self.assertEqual(
+            provider_counts["default_static"] + report["summary"]["static_export_complement_count"],
+            report["summary"]["candidate_external_callable_count"],
+        )
+
+    def test_checked_inventory_partitions_feature_owned_and_unprovided_callables(self) -> None:
+        with CHECKED_INVENTORY.open(encoding="utf-8") as stream:
+            report = json.load(stream)
+
+        partition = report["callable_provider_partition"]
+        verified = {
+            provider["id"]: set(provider["members"])
+            for provider in partition["verified_feature_archives"]
+        }
+        planned = {
+            provider["id"]: set(provider["members"])
+            for provider in partition["declared_unverified_feature_archives"]
+        }
+        unprovided = set(partition["unprovided"]["members"])
+
+        self.assertEqual(
+            verified["x86-filesystem-traversal"],
+            {"ftw", "nftw"},
+        )
+        self.assertEqual(verified["x86-scandir"], {"scandir"})
+        self.assertEqual(
+            verified["x86-legacy-misc"],
+            {"encrypt", "fmtmsg", "setkey"},
+        )
+        self.assertEqual(
+            planned["x86-resolver-runtime"],
+            {
+                "__h_errno_location",
+                "__res_state",
+                "dn_comp",
+                "res_mkquery",
+                "res_query",
+                "res_querydomain",
+                "res_search",
+                "res_send",
+            },
+        )
+        self.assertFalse({"ftw", "nftw", "scandir", "fmtmsg", "setkey", "encrypt"} & unprovided)
+        self.assertIn("fputws", unprovided)
 
     def test_netinet_macro_batch_is_present_with_its_exact_feature_split(self) -> None:
         """Keep this header-only reduction separate from archive-callable work."""
@@ -953,6 +1011,14 @@ class HeaderCallableInventoryTests(unittest.TestCase):
                                 "name": "not_ratcheted",
                             },
                         ],
+                        "callable_provider_partition": {
+                            "kind": "candidate-external-callable-feature-archive-provider-partition",
+                            "default_static": {"members": ["available"]},
+                            "verified_feature_archives": [],
+                            "declared_unverified_feature_archives": [],
+                            "unprovided": {"members": ["not_ratcheted"]},
+                            "replacement_variants": [],
+                        },
                     }
                 ),
                 encoding="utf-8",
@@ -970,6 +1036,10 @@ class HeaderCallableInventoryTests(unittest.TestCase):
         ])
         self.assertFalse(report["summary"]["complete"])
         self.assertIn("static export complement is nonempty", report["summary"]["incomplete_reasons"])
+        self.assertIn(
+            "one or more candidate external callables have no declared archive provider",
+            report["summary"]["incomplete_reasons"],
+        )
 
     def test_runner_is_an_explicit_red_audit_not_a_dispatcher_or_whole_archive_proxy(self) -> None:
         result = subprocess.run(

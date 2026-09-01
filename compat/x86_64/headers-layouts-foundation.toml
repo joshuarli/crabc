@@ -2,7 +2,7 @@
 #
 # This is deliberately a planning and accounting manifest, not a promotion.
 # `headers-layouts.toml` remains the v1 inventory of fifty-three direct probes.
-# This v8 manifest accounts for every pinned public header and every project-
+# This v9 manifest accounts for every pinned public header and every project-
 # only extension, pins the one Linux-UAPI input needed by its wrapper paths,
 # and records selected UAPI-wrapper, ioctl, x86 sys/io inline-port-I/O, epoll,
 # event-descriptor, timeval-transitive, direct sys/time, and access-header profile ABI slices
@@ -13,7 +13,7 @@
 # `compat/upstreams.toml#linux_5_10_uapi` owns the source/archive and derived
 # x86 `headers_install` identity; it is repeated here and in the Docker build
 # because those independent consumers cannot load TOML from one another.
-schema = "crabc.x86_64-headers-layouts-foundation/v8"
+schema = "crabc.x86_64-headers-layouts-foundation/v9"
 family = "libc.headers-layouts"
 target = "x86_64-unknown-linux-musl"
 platform = "Linux/x86-64 little-endian"
@@ -1671,11 +1671,11 @@ description = "Every retained callable declaration, ABI-bearing record, constant
 
 [[abi_facet]]
 id = "callable-linkage-ownership"
-state = "planned"
+state = "partial-verified"
 scope = "all-pinned-and-project-only-public-headers"
 owner = "libc.c-abi-compat"
-evidence = ["declared-callable-linkage-audit"]
-description = "Header compilation never admits a callable as linkable; the final C ABI gate owns the complete declaration-to-artifact audit."
+evidence = ["generated-callable-provider-partition"]
+description = "The generated all-header inventory now partitions every declared external callable among the default archive, verified feature archives, declared unverified feature archives, and no-provider work. It does not complete archive extraction or runtime linkage."
 
 [[abi_facet]]
 id = "legacy-direct-layout-inputs"
@@ -1708,11 +1708,11 @@ description = "The current crate-owned static export ratchet is an input to, not
 
 [[linkage_owner]]
 id = "unlisted-public-callables"
-state = "planned"
-scope = "every public callable declaration not selected by the current static export ratchet"
+state = "partial-verified"
+scope = "every public callable declaration without a verified default-static or feature-archive provider"
 family = "libc.c-abi-compat"
-evidence = ["declared-callable-linkage-audit"]
-description = "The final C ABI compatibility family owns every declared callable that current archive evidence does not name."
+evidence = ["generated-callable-provider-partition"]
+description = "The generated provider partition leaves declared-unverified feature archives and unprovided declarations explicit; the final C ABI compatibility family still owns their extraction, behavior, and closure."
 
 [[linkage_owner]]
 id = "noncallable-header-abi"

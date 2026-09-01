@@ -34,6 +34,21 @@ class X86ParityLedgerTests(unittest.TestCase):
         )
 
     @staticmethod
+    def verified_records(data: dict[str, object]) -> dict[str, dict[str, object]]:
+        records: dict[str, dict[str, object]] = {}
+        families = data["family"]
+        assert isinstance(families, list)
+        for family in families:
+            assert isinstance(family, dict)
+            for kind in ("verified_artifact", "verified_slice"):
+                entries = family.get(kind, [])
+                assert isinstance(entries, list)
+                for entry in entries:
+                    assert isinstance(entry, dict)
+                    records[entry["id"]] = entry
+        return records
+
+    @staticmethod
     def family(data: dict[str, object], identifier: str) -> dict[str, object]:
         entries = data["family"]
         assert isinstance(entries, list)
@@ -52,6 +67,9 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 49)
         self.assertEqual(report["verified_artifact_count"], 346)
+        self.assertEqual(report["feature_archive_count"], 18)
+        self.assertEqual(report["verified_feature_archive_count"], 17)
+        self.assertEqual(report["planned_feature_archive_count"], 1)
         self.assertEqual(report["header_layout_probe_count"], 53)
         self.assertEqual(report["public_header_inventory_count"], 183)
         self.assertEqual(report["header_foundation_header_count"], 191)
@@ -98,6 +116,57 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertGreater(report["header_foundation_static_export_count"], 0)
         self.assertFalse(report["promotion_ready"])
         self.assertFalse(report["public_support"])
+
+    def test_feature_archive_roster_rejects_unverified_or_default_surface_confusion(self) -> None:
+        data = self.data()
+        report = ledger.validate_feature_archive_roster(
+            data, self.verified_records(data)
+        )
+        self.assertEqual(report, {
+            "feature_archive_count": 18,
+            "planned_feature_archive_count": 1,
+            "verified_feature_archive_count": 17,
+        })
+
+        feature_archives = data["feature_archive"]
+        assert isinstance(feature_archives, list)
+        string_duplication = next(
+            entry for entry in feature_archives
+            if entry["id"] == "x86-allocator-string-duplication"
+        )
+        assert isinstance(string_duplication, dict)
+        string_duplication["baseline_features"] = []
+        with self.assertRaisesRegex(
+            ledger.LedgerError,
+            "baseline does not match its Cargo feature dependency closure",
+        ):
+            ledger.validate_feature_archive_roster(data, self.verified_records(data))
+
+        data = self.data()
+        feature_archives = data["feature_archive"]
+        assert isinstance(feature_archives, list)
+        a64l = next(
+            entry for entry in feature_archives if entry["id"] == "x86-a64l"
+        )
+        assert isinstance(a64l, dict)
+        a64l["additive_callables"] = ["clearenv"]
+        with self.assertRaisesRegex(
+            ledger.LedgerError,
+            "already default-static",
+        ):
+            ledger.validate_feature_archive_roster(data, self.verified_records(data))
+
+        data = self.data()
+        feature_archives = data["feature_archive"]
+        assert isinstance(feature_archives, list)
+        resolver = next(
+            entry for entry in feature_archives
+            if entry["id"] == "x86-resolver-runtime"
+        )
+        assert isinstance(resolver, dict)
+        resolver["state"] = "verified"
+        with self.assertRaisesRegex(ledger.LedgerError, "keys drifted"):
+            ledger.validate_feature_archive_roster(data, self.verified_records(data))
 
     def test_string_copy_strdupa_header_contract_stays_non_runtime(self) -> None:
         """Keep the exact macro below archive and allocator ownership."""
@@ -3059,7 +3128,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         headers_layouts = self.family(data, "libc.headers-layouts")
 
         self.assertEqual(
-            manifest["schema"], "crabc.x86_64-headers-layouts-foundation/v8"
+            manifest["schema"], "crabc.x86_64-headers-layouts-foundation/v9"
         )
         self.assertEqual(manifest["status"], "planned")
         self.assertEqual(manifest["family"], "libc.headers-layouts")
