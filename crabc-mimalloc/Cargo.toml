@@ -114,6 +114,13 @@ path = "tests/native_pointer_first_usable_size.rs"
 # behind the scalar audit surface rather than the production allocator ABI.
 required-features = ["native-runtime-test-audit"]
 
+[[test]]
+name = "native_owner_exit_collection_race"
+path = "tests/native_owner_exit_collection_race.rs"
+# This direct owner-exit witness pauses only the existing source head-load/CAS
+# interleaving while raw native pointers take the production PageMap path.
+required-features = ["native-runtime-test-audit"]
+
 [features]
 default = []
 # Private, allocation-backed process context used only by the standalone

@@ -703,7 +703,9 @@ case "$command" in
             -- --test-threads=1
         # These direct tests compile scalar-only lifecycle and admission audits
         # behind their own default-off feature. They establish that pointer-
-        # first post-exit operations leave B teardown independent of A.
+        # first post-exit operations leave B teardown independent of A and
+        # that a live owner-exit source head CAS retries real PageMap-derived
+        # foreign publications.
         run_in_container cargo test -p crabc-mimalloc \
             --features native-runtime-test-audit \
             --test native_multiple_post_exit_completions \
@@ -713,6 +715,7 @@ case "$command" in
             --test native_persistent_worker_fastpath \
             --test native_pointer_first_current_owner_reallocate \
             --test native_pointer_first_usable_size \
+            --test native_owner_exit_collection_race \
             -- --test-threads=1
         # The next-`munmap` injection is a separately gated direct witness:
         # a failed OS terminal release must retain its PageMap source without

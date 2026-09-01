@@ -4148,6 +4148,40 @@ pub struct NativeRuntimeForkAdmissionAudit {
     pub active_later_thread_count: usize,
 }
 
+/// Direct-test guard for one `MI_ABANDON` persistent-owner remote collection.
+///
+/// This feature-gated witness can observe and release the existing source
+/// head-load/CAS interleaving, but carries no allocator, page, PageMap, route,
+/// client address, or lifecycle capability. The only integration regression
+/// that arms it sends raw C-shaped client pointers through `native_free` and
+/// lets the owner reach its ordinary thread-exit path itself.
+#[cfg(feature = "native-runtime-test-audit")]
+#[doc(hidden)]
+pub struct NativeRuntimeOwnerExitCollectionRendezvous {
+    inner: crate::remote_free::OwnerExitCollectionRendezvous,
+}
+
+#[cfg(feature = "native-runtime-test-audit")]
+impl NativeRuntimeOwnerExitCollectionRendezvous {
+    /// Reports whether the `MI_ABANDON` collector read a nonempty remote head
+    /// and stopped immediately before its first detach CAS.
+    #[doc(hidden)]
+    #[inline]
+    pub fn is_paused(&self) -> bool { self.inner.is_paused() }
+
+    /// Releases the source collector exactly once after foreign producers
+    /// have published their distinct live native blocks.
+    #[doc(hidden)]
+    #[inline]
+    pub fn release(&self) -> bool { self.inner.release() }
+
+    /// Reports whether the guarded source detach CAS retried after a foreign
+    /// publication made its captured nonempty head stale.
+    #[doc(hidden)]
+    #[inline]
+    pub fn observed_retry(&self) -> bool { self.inner.observed_retry() }
+}
+
 /// One metadata-backed entry in the private native-shadow post-exit registry.
 /// The atomic word protects only moves through the `UnsafeCell`; no lock
 /// guards general allocation. The route's own `ProcessPageMapPostExitAccess`
@@ -4896,6 +4930,21 @@ pub fn native_runtime_fork_admission_test_audit() -> NativeRuntimeForkAdmissionA
     NativeRuntimeForkAdmissionAudit {
         active_later_thread_count: state & FORK_GATE_COUNT_MASK,
     }
+}
+
+/// Arms one direct-test rendezvous at the existing `MI_ABANDON` owner-side
+/// remote-head detach boundary.
+///
+/// The test must already have arranged a live persistent owner and must keep
+/// the returned guard until it releases or cancels the collector. A second
+/// concurrent arm returns `None`; the hook never creates a scheduler, route,
+/// page owner, or fallback allocator operation.
+#[cfg(feature = "native-runtime-test-audit")]
+#[doc(hidden)]
+pub fn native_runtime_test_arm_owner_exit_collection_rendezvous(
+) -> Option<NativeRuntimeOwnerExitCollectionRendezvous> {
+    crate::remote_free::arm_owner_exit_collection_rendezvous()
+        .map(|inner| NativeRuntimeOwnerExitCollectionRendezvous { inner })
 }
 
 /// One direct-test-only guard that makes the next allocator `munmap` fail.

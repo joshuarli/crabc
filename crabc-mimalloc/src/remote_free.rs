@@ -29,6 +29,8 @@
 // block pointers or owner-local mutation.
 
 use core::ptr::{self, NonNull};
+#[cfg(feature = "native-runtime-test-audit")]
+use core::sync::atomic::{AtomicBool, AtomicU8, AtomicUsize, Ordering};
 
 use crate::atomic::{
     AtomicWord, word_cas_weak_acq_rel, word_load_acquire, word_load_relaxed, word_or_acq_rel,
@@ -43,6 +45,124 @@ use crate::types::{
 
 const THREAD_FREE_OWNED: ThreadFree = 1;
 const THREAD_FREE_BLOCK_MASK: ThreadFree = !THREAD_FREE_OWNED;
+
+// This narrow, default-off rendezvous names only the one source interleaving
+// exercised by the native persistent-owner regression: after
+// `MI_ABANDON`'s `ProductionOwnerExitCallbacks` has read a nonempty remote
+// head and before that collector attempts its first detach CAS.  It neither
+// exposes a page, block, owner, PageMap, nor a general collection control.
+// Normal allocator and libc builds omit both the state and its callers.
+#[cfg(feature = "native-runtime-test-audit")]
+const OWNER_EXIT_COLLECTION_RENDEZVOUS_IDLE: u8 = 0;
+#[cfg(feature = "native-runtime-test-audit")]
+const OWNER_EXIT_COLLECTION_RENDEZVOUS_ARMED: u8 = 1;
+#[cfg(feature = "native-runtime-test-audit")]
+const OWNER_EXIT_COLLECTION_RENDEZVOUS_PAUSED: u8 = 2;
+#[cfg(feature = "native-runtime-test-audit")]
+const OWNER_EXIT_COLLECTION_RENDEZVOUS_RELEASED: u8 = 3;
+
+#[cfg(feature = "native-runtime-test-audit")]
+static OWNER_EXIT_COLLECTION_RENDEZVOUS: AtomicU8 =
+    AtomicU8::new(OWNER_EXIT_COLLECTION_RENDEZVOUS_IDLE);
+#[cfg(feature = "native-runtime-test-audit")]
+static OWNER_EXIT_COLLECTION_RETRY_WITNESS_HEAD: AtomicUsize = AtomicUsize::new(0);
+#[cfg(feature = "native-runtime-test-audit")]
+static OWNER_EXIT_COLLECTION_RETRY_OBSERVED: AtomicBool = AtomicBool::new(false);
+
+/// One direct-test guard for the next nonempty `MI_ABANDON` owner collection.
+///
+/// The guard is deliberately scalar-only. It can observe when the existing
+/// source collector paused at its head-load/CAS boundary and release that
+/// collector; it cannot name or operate on an allocator object, page, route,
+/// client, or PageMap entry. Dropping an unreleased guard makes progress so a
+/// failed assertion cannot strand the owner thread in the test harness.
+#[cfg(feature = "native-runtime-test-audit")]
+#[derive(Debug)]
+pub(crate) struct OwnerExitCollectionRendezvous {
+    _private: (),
+}
+
+#[cfg(feature = "native-runtime-test-audit")]
+impl OwnerExitCollectionRendezvous {
+    /// Returns whether the source collector reached the post-head-load test
+    /// point. A true result proves that the head was nonempty: empty heads
+    /// return from `detach_from_head_with_before_detach_cas` before a hook.
+    #[inline]
+    pub(crate) fn is_paused(&self) -> bool {
+        OWNER_EXIT_COLLECTION_RENDEZVOUS.load(Ordering::Acquire)
+            == OWNER_EXIT_COLLECTION_RENDEZVOUS_PAUSED
+    }
+
+    /// Releases the paused source collector exactly once.
+    #[inline]
+    pub(crate) fn release(&self) -> bool {
+        OWNER_EXIT_COLLECTION_RENDEZVOUS
+            .compare_exchange(
+                OWNER_EXIT_COLLECTION_RENDEZVOUS_PAUSED,
+                OWNER_EXIT_COLLECTION_RENDEZVOUS_RELEASED,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            )
+            .is_ok()
+    }
+
+    /// Returns whether the guarded source detach CAS lost to a producer
+    /// publication after this rendezvous stopped it at the nonempty head.
+    #[inline]
+    pub(crate) fn observed_retry(&self) -> bool {
+        OWNER_EXIT_COLLECTION_RETRY_OBSERVED.load(Ordering::Acquire)
+    }
+}
+
+#[cfg(feature = "native-runtime-test-audit")]
+impl Drop for OwnerExitCollectionRendezvous {
+    fn drop(&mut self) {
+        match OWNER_EXIT_COLLECTION_RENDEZVOUS.load(Ordering::Acquire) {
+            OWNER_EXIT_COLLECTION_RENDEZVOUS_ARMED => {
+                let _ = OWNER_EXIT_COLLECTION_RENDEZVOUS.compare_exchange(
+                    OWNER_EXIT_COLLECTION_RENDEZVOUS_ARMED,
+                    OWNER_EXIT_COLLECTION_RENDEZVOUS_IDLE,
+                    Ordering::AcqRel,
+                    Ordering::Acquire,
+                );
+            }
+            OWNER_EXIT_COLLECTION_RENDEZVOUS_PAUSED => {
+                let _ = OWNER_EXIT_COLLECTION_RENDEZVOUS.compare_exchange(
+                    OWNER_EXIT_COLLECTION_RENDEZVOUS_PAUSED,
+                    OWNER_EXIT_COLLECTION_RENDEZVOUS_RELEASED,
+                    Ordering::AcqRel,
+                    Ordering::Acquire,
+                );
+            }
+            OWNER_EXIT_COLLECTION_RENDEZVOUS_IDLE
+            | OWNER_EXIT_COLLECTION_RENDEZVOUS_RELEASED
+            | _ => {}
+        }
+    }
+}
+
+/// Arms the sole `MI_ABANDON` remote-head rendezvous.
+///
+/// This rejects a second concurrent test rather than sharing a scheduler or
+/// global allocator control plane. The returned guard must remain live until
+/// its collector either resumes or is intentionally cancelled.
+#[cfg(feature = "native-runtime-test-audit")]
+pub(crate) fn arm_owner_exit_collection_rendezvous() -> Option<OwnerExitCollectionRendezvous> {
+    let armed = OWNER_EXIT_COLLECTION_RENDEZVOUS
+        .compare_exchange(
+            OWNER_EXIT_COLLECTION_RENDEZVOUS_IDLE,
+            OWNER_EXIT_COLLECTION_RENDEZVOUS_ARMED,
+            Ordering::AcqRel,
+            Ordering::Acquire,
+        )
+        .is_ok()
+        .then_some(OwnerExitCollectionRendezvous { _private: () });
+    if armed.is_some() {
+        OWNER_EXIT_COLLECTION_RETRY_WITNESS_HEAD.store(0, Ordering::Release);
+        OWNER_EXIT_COLLECTION_RETRY_OBSERVED.store(false, Ordering::Release);
+    }
+    armed
+}
 
 /// Test-only stand-in for one coherent pointer-dispatch observation.
 ///
@@ -1182,6 +1302,75 @@ pub(crate) unsafe fn collect(
     collect_state(state)
 }
 
+/// Runs the normal source collector with the one direct-test owner-exit
+/// rendezvous installed at its existing nonempty head-load/CAS boundary.
+///
+/// This is available only with `native-runtime-test-audit`, and only
+/// `ProductionOwnerExitCallbacks::page_free_collect_force` calls it. The
+/// callback itself remains the production `MI_ABANDON` queue traversal; this
+/// function supplies no alternate list algorithm or collector authority.
+///
+/// # Safety
+///
+/// Identical to [`collect`]: `state` must be the sole live-owner projection
+/// for the page and its source lifetime must cover all concurrent producer
+/// publications and the resulting collection.
+#[cfg(feature = "native-runtime-test-audit")]
+pub(crate) unsafe fn collect_owner_exit_with_test_rendezvous(
+    state: PageRemoteFreeOwnerState,
+) -> Result<usize, RemoteFreeError> {
+    let head_address = state.xthread_free.as_ptr().addr();
+    let mut before_detach_cas = Some(move || owner_exit_collection_before_detach_cas(head_address));
+    collect_state_with_before_detach_cas(state, &mut before_detach_cas)
+}
+
+/// Pauses only after `detach_from_head_with_before_detach_cas` observed one
+/// nonempty head. A late `native_free` can therefore make the captured head
+/// stale before the production CAS, forcing its unchanged loop to retry.
+#[cfg(feature = "native-runtime-test-audit")]
+fn owner_exit_collection_before_detach_cas(head_address: usize) {
+    if OWNER_EXIT_COLLECTION_RENDEZVOUS
+        .compare_exchange(
+            OWNER_EXIT_COLLECTION_RENDEZVOUS_ARMED,
+            OWNER_EXIT_COLLECTION_RENDEZVOUS_PAUSED,
+            Ordering::AcqRel,
+            Ordering::Acquire,
+        )
+        .is_err()
+    {
+        return;
+    }
+
+    OWNER_EXIT_COLLECTION_RETRY_WITNESS_HEAD.store(head_address, Ordering::Release);
+
+    while OWNER_EXIT_COLLECTION_RENDEZVOUS.load(Ordering::Acquire)
+        == OWNER_EXIT_COLLECTION_RENDEZVOUS_PAUSED
+    {
+        core::hint::spin_loop();
+    }
+
+    debug_assert_eq!(
+        OWNER_EXIT_COLLECTION_RENDEZVOUS.load(Ordering::Acquire),
+        OWNER_EXIT_COLLECTION_RENDEZVOUS_RELEASED,
+        "the test guard may release, but no other state can resume a paused owner collector"
+    );
+    OWNER_EXIT_COLLECTION_RENDEZVOUS.store(OWNER_EXIT_COLLECTION_RENDEZVOUS_IDLE, Ordering::Release);
+}
+
+/// Records only a failed CAS on the exact atomic head whose guarded pre-CAS
+/// hook paused. Normal builds omit this scalar observation and retain the
+/// source loop unchanged.
+#[cfg(feature = "native-runtime-test-audit")]
+#[inline]
+fn owner_exit_collection_note_detach_retry(head_address: usize) {
+    if OWNER_EXIT_COLLECTION_RETRY_WITNESS_HEAD
+        .compare_exchange(head_address, 0, Ordering::AcqRel, Ordering::Acquire)
+        .is_ok()
+    {
+        OWNER_EXIT_COLLECTION_RETRY_OBSERVED.store(true, Ordering::Release);
+    }
+}
+
 /// Production-facing live-owner collection sibling to
 /// [`push_live_allocation`].
 ///
@@ -1909,6 +2098,8 @@ where
         if head.cas_weak_acq_rel(&mut previous, replacement) {
             return Ok(previous);
         }
+        #[cfg(feature = "native-runtime-test-audit")]
+        owner_exit_collection_note_detach_retry((head as *const H as *const ()).addr());
     }
 }
 

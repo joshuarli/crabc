@@ -112,7 +112,9 @@ pub mod __crabc_runtime {
     #[cfg(feature = "native-runtime-test-audit")]
     pub use crate::runtime_lifecycle::{
         NativeRuntimeForkAdmissionAudit, NativeRuntimeLifecycleAudit,
+        NativeRuntimeOwnerExitCollectionRendezvous,
         native_runtime_fork_admission_test_audit, native_runtime_lifecycle_test_audit,
+        native_runtime_test_arm_owner_exit_collection_rendezvous,
     };
 
     #[cfg(feature = "native-runtime-test-fault")]

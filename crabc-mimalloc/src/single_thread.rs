@@ -37551,7 +37551,11 @@ impl ProductionOwnerExitCallbacks<'_, '_, '_, '_> {
             .ok_or(PageCollectError::InvalidOwnerState)?;
         // SAFETY: source force collection detaches the producer list through
         // exactly that atomic owner state; no whole page is borrowed.
-        unsafe { remote_free::collect(owner) }.map_err(PageCollectError::Remote)?;
+        #[cfg(feature = "native-runtime-test-audit")]
+        let collected = unsafe { remote_free::collect_owner_exit_with_test_rendezvous(owner) };
+        #[cfg(not(feature = "native-runtime-test-audit"))]
+        let collected = unsafe { remote_free::collect(owner) };
+        collected.map_err(PageCollectError::Remote)?;
         // SAFETY: the remote list is detached above and the current worker
         // owns the local list fields for this exact live page.
         let state = unsafe { Page::local_collect_state_for_owner_at(page, Some(self.thread)) }
