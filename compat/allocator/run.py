@@ -36,10 +36,38 @@ from typing import Any, Iterable, Mapping, Sequence
 
 
 ROOT = Path(__file__).resolve().parents[2]
+
+
+def default_work_root() -> Path:
+    """Return the checkout-local boundary for runner-owned mutable state."""
+
+    configured = os.environ.get("CRABC_WORK_DIR")
+    if not configured:
+        return ROOT / ".work"
+    path = Path(configured).expanduser()
+    return path if path.is_absolute() else ROOT / path
+
+
+WORK_ROOT = default_work_root()
+ARTIFACT_ROOT = WORK_ROOT / "target/compat/allocator"
+REPORT_ROOT = WORK_ROOT / "reports/allocator"
+TEMP_ROOT = WORK_ROOT / "tmp/allocator"
+
+
+def temporary_directory(prefix: str) -> tempfile.TemporaryDirectory:
+    """Create disposable runner state inside the configured work-root boundary."""
+
+    TEMP_ROOT.mkdir(parents=True, exist_ok=True)
+    return tempfile.TemporaryDirectory(prefix=prefix, dir=TEMP_ROOT)
+
+
 ALLOCATOR_ROOT = Path(__file__).resolve().parent
 UPSTREAMS = ROOT / "compat/upstreams.toml"
-CACHE = ALLOCATOR_ROOT / ".cache"
-REPORT_ROOT = ROOT / "compat/reports/allocator"
+CACHE = WORK_ROOT / "allocator-cache"
+ORACLE_ARTIFACT_ROOT = ARTIFACT_ROOT / "oracle"
+RUST_LAYOUT_CARGO_TARGET = ARTIFACT_ROOT / "rust-layout/cargo-target"
+LOOM_CARGO_TARGET = ARTIFACT_ROOT / "loom/cargo-target"
+NATIVE_OWNER_EXIT_CARGO_TARGET = ARTIFACT_ROOT / "native-owner-exit-lifecycle/cargo-target"
 API_CONTRACT = ALLOCATOR_ROOT / "api-v3.5.0.json"
 UPSTREAM_TEST_CONTRACT = ALLOCATOR_ROOT / "upstream-tests-v3.5.0.json"
 ADAPTED_TEST_CONTRACT = ALLOCATOR_ROOT / "adapted-tests-v3.5.0.json"
@@ -110,9 +138,9 @@ RUNTIME_TICKET_ZERO_LIFECYCLE_AUDIT_CONTRACT = {
     },
 }
 TLS_CODEGEN_RUNNER = ALLOCATOR_ROOT / "tls-codegen/run.py"
-TLS_CODEGEN_REPORT = ROOT / "compat/reports/allocator/tls-codegen.json"
+TLS_CODEGEN_REPORT = REPORT_ROOT / "tls-codegen.json"
 X86_64_TLS_CODEGEN_RUNNER = ALLOCATOR_ROOT / "tls-codegen/run-x86_64.py"
-X86_64_TLS_CODEGEN_REPORT = ROOT / "compat/reports/allocator/tls-codegen-x86_64.json"
+X86_64_TLS_CODEGEN_REPORT = REPORT_ROOT / "tls-codegen-x86_64.json"
 PORT_MAP = ALLOCATOR_ROOT / "port-map.toml"
 RATCHET = ALLOCATOR_ROOT / "ratchet-v3.5.0.json"
 M5_GATE_CONTRACT = ALLOCATOR_ROOT / "m5-gate-v3.5.0.json"
@@ -228,6 +256,7 @@ PRODUCTION_RUST_TARGET = "aarch64-unknown-linux-musl"
 X86_64_RUST_TARGET = "x86_64-unknown-linux-musl"
 X86_64_INTERPRETER = "ld-musl-x86_64.so.1"
 X86_64_ORACLE_REPORT_ROOT = REPORT_ROOT / "x86_64"
+X86_64_ORACLE_ARTIFACT_ROOT = ARTIFACT_ROOT / "x86_64"
 
 # The reviewed source selection for the adapter remains in the AArch64 M4
 # contract.  The native x86-64 profile owns a separate target-local adapter
@@ -5029,12 +5058,15 @@ def run_native_owner_exit_lifecycle(
 
     summary = validate_native_owner_exit_lifecycle_contract(contract, pin)
     execution = summary["execution"]
+    environment = os.environ.copy()
+    environment["CARGO_TARGET_DIR"] = str(NATIVE_OWNER_EXIT_CARGO_TARGET)
     records: list[dict[str, Any]] = []
     for check in summary["checks"]:
         command = native_owner_exit_lifecycle_command(execution, check)
         result = command_record(
             command,
             cwd=ROOT,
+            env=environment,
             timeout_seconds=execution["timeout_seconds"],
         )
         require_success(result, f"native owner-exit lifecycle check {check['id']}")
@@ -5768,10 +5800,10 @@ def build_profile(
     name: str,
     flags: Sequence[str],
     *,
-    report_root: Path = REPORT_ROOT,
+    artifact_root: Path = ORACLE_ARTIFACT_ROOT,
     architecture: str = "aarch64",
 ) -> dict[str, Any]:
-    profile_dir = report_root / "oracle" / name
+    profile_dir = artifact_root / name
     profile_dir.mkdir(parents=True, exist_ok=True)
     artifact = profile_dir / "libmimalloc.so"
     command = profile_command(compiler, source, artifact, flags)
@@ -6227,7 +6259,7 @@ def x86_64_normal_engine_artifact() -> dict[str, Any]:
     if not re.search(r"(?m)^#!\[no_std\]\s*$", crate_root.read_text(encoding="utf-8")):
         raise HarnessError("crabc-mimalloc crate root no longer declares #![no_std]")
 
-    with tempfile.TemporaryDirectory(prefix="crabc-mimalloc-engine-x86_64-") as temporary:
+    with temporary_directory(prefix="crabc-mimalloc-engine-x86_64-") as temporary:
         temporary_root = Path(temporary)
         environment = os.environ.copy()
         environment["CARGO_TARGET_DIR"] = str(temporary_root / "target")
@@ -6333,13 +6365,15 @@ def rust_layout_probe(
         "--nocapture",
     ))
     if rust_target == X86_64_RUST_TARGET:
-        with tempfile.TemporaryDirectory(prefix="crabc-mimalloc-direct-x86_64-") as temporary:
+        with temporary_directory(prefix="crabc-mimalloc-direct-x86_64-") as temporary:
             environment = os.environ.copy()
             environment["CARGO_TARGET_DIR"] = str(Path(temporary) / "target")
             environment["CARGO_INCREMENTAL"] = "0"
             record = command_record(command, cwd=ROOT, env=environment)
     else:
-        record = command_record(command, cwd=ROOT)
+        environment = os.environ.copy()
+        environment["CARGO_TARGET_DIR"] = str(RUST_LAYOUT_CARGO_TARGET)
+        record = command_record(command, cwd=ROOT, env=environment)
     require_success(record, "Rust allocator layout probe")
     output = str(record["stdout"]) + "\n" + str(record["stderr"])
     rust_layout = parse_rust_layout(output)
@@ -6396,6 +6430,7 @@ def loom_remote_free_model() -> dict[str, Any]:
     ]
     environment = os.environ.copy()
     environment["CARGO_ENCODED_RUSTFLAGS"] = ""
+    environment["CARGO_TARGET_DIR"] = str(LOOM_CARGO_TARGET)
     record = command_record(command, cwd=ROOT, env=environment)
     require_success(record, "Rust allocator remote-free Loom model")
     output = str(record["stdout"]) + "\n" + str(record["stderr"])
@@ -6457,7 +6492,7 @@ def build_test_adapter(
     """Build and audit the test-only prefixed Rust staticlib and optional cdylib."""
 
     if artifact_root is None:
-        artifact_root = REPORT_ROOT / "test-adapter"
+        artifact_root = ARTIFACT_ROOT / "test-adapter"
     cargo_target = artifact_root / "cargo-target"
     artifact_root.mkdir(parents=True, exist_ok=True)
     clean_command = [
@@ -6610,7 +6645,7 @@ def build_runtime_ticket_zero_adapter(
 ) -> tuple[Path, list[str], dict[str, Any]]:
     """Build and audit the separate no_std runtime page-owner test ABI."""
 
-    artifact_root = REPORT_ROOT / "runtime-ticket-zero-adapter"
+    artifact_root = ARTIFACT_ROOT / "runtime-ticket-zero-adapter"
     cargo_target = artifact_root / "cargo-target"
     artifact_root.mkdir(parents=True, exist_ok=True)
     package = str(contract["adapter_package"])
@@ -6708,7 +6743,7 @@ def run_test_adapter_fixtures(
     """
 
     if artifact_root is None:
-        artifact_root = REPORT_ROOT / "test-adapter"
+        artifact_root = ARTIFACT_ROOT / "test-adapter"
     if target_compile_requirements is None:
         target_compile_requirements = source_contract.get("compile_requirements")
     compile_requirements = target_compile_requirements
@@ -6857,7 +6892,7 @@ def run_adapted_stress_fixture(
     distinct from a claimed multi-thread upstream stress acceptance.
     """
 
-    artifact_root = REPORT_ROOT / "test-adapter"
+    artifact_root = ARTIFACT_ROOT / "test-adapter"
     compile_requirements = contract["compile_requirements"]
     execution = contract["execution"]
     adapted_source_contract = contract["adapted_source"]
@@ -6998,7 +7033,7 @@ def run_native_shadow_stress_fixture(
             "native-shadow stress must run under scripts/run_owned_test_suite.py's canonical-loader staging"
         )
 
-    artifact_root = REPORT_ROOT / "native-shadow-stress"
+    artifact_root = ARTIFACT_ROOT / "native-shadow-stress"
     artifact_root.mkdir(parents=True, exist_ok=True)
     fixture_binary = artifact_root / "upstream-test-stress-native-shadow-pthreads"
     adapted_source = source / str(adapted_source_contract["path"])
@@ -7121,7 +7156,7 @@ def run_native_shadow_stress(*, offline: bool) -> dict[str, Any]:
     archive = fetch_archive(pin, offline)
     contract = read_json(NATIVE_SHADOW_STRESS_CONTRACT)
     summary = validate_native_shadow_stress_contract(contract, pin)
-    with tempfile.TemporaryDirectory(prefix="crabc-native-shadow-stress-") as temporary:
+    with temporary_directory(prefix="crabc-native-shadow-stress-") as temporary:
         source = safe_extract(archive, Path(temporary), pin["archive_root"])
         patch = apply_and_verify_native_shadow_stress_patch(
             source,
@@ -7237,7 +7272,7 @@ def run_runtime_ticket_zero_adapter_fixture(
 ) -> dict[str, Any]:
     """Run one fresh process through the bounded, seeded ticket-zero C witness."""
 
-    artifact_root = REPORT_ROOT / "runtime-ticket-zero-adapter"
+    artifact_root = ARTIFACT_ROOT / "runtime-ticket-zero-adapter"
     fixture_binary = artifact_root / "runtime-ticket-zero-fixture"
     fixture_command = [
         compiler,
@@ -7405,7 +7440,7 @@ def run_x86_64_oracle(
             source,
             name,
             flags,
-            report_root=X86_64_ORACLE_REPORT_ROOT,
+            artifact_root=X86_64_ORACLE_ARTIFACT_ROOT / "oracle",
             architecture="x86_64",
         )
         for name, flags in CONFIGURATION_PROFILES.items()
@@ -7453,7 +7488,7 @@ def run_x86_64_oracle(
     }
     expected_adapter_symbols = adapter_source_contract["expected_adapter_symbols"]
     assert isinstance(expected_adapter_symbols, list)
-    adapter_artifact_root = X86_64_ORACLE_REPORT_ROOT / "test-adapter"
+    adapter_artifact_root = X86_64_ORACLE_ARTIFACT_ROOT / "test-adapter"
     static_library, native_libraries, adapter_build = build_test_adapter(
         readelf,
         nm,
@@ -7533,7 +7568,7 @@ def run_milestone0(
     if architecture == "x86_64":
         x86_64_source_map = x86_64_source_map_contract(archive)
         x86_64_api_coverage = x86_64_api_coverage_contract(archive)
-    with tempfile.TemporaryDirectory(prefix="crabc-mimalloc-") as temporary:
+    with temporary_directory(prefix="crabc-mimalloc-") as temporary:
         source = safe_extract(archive, Path(temporary), pin["archive_root"])
         if architecture == "x86_64":
             if generate_contracts:
@@ -7840,7 +7875,7 @@ def main() -> int:
         if arguments.generate_contracts:
             pin = load_pin()
             archive = fetch_archive(pin, arguments.offline)
-            with tempfile.TemporaryDirectory(prefix="crabc-mimalloc-") as temporary:
+            with temporary_directory(prefix="crabc-mimalloc-") as temporary:
                 source = safe_extract(archive, Path(temporary), pin["archive_root"])
                 contracts = generated_contracts(source, pin)
                 validate_owner_exit_publication_contract(

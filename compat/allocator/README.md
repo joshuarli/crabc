@@ -888,13 +888,23 @@ Run the harness through the pinned Linux/AArch64 development image:
 ./scripts/dev.sh test -p crabc-mimalloc --lib --features loom remote_free::loom_tests -- --test-threads=1
 ```
 
+Runner-owned mutable state stays below `CRABC_WORK_DIR`, or the checkout's
+`.work/` directory when that variable is unset. The pinned archive and tag
+attestation use `.work/allocator-cache/`; compiled C-oracle, adapter, fixture,
+and isolated Cargo outputs use `.work/target/compat/allocator/`; reports use
+`.work/reports/allocator/`; and disposable extracted sources and probe files
+use `.work/tmp/allocator/`. The selected native-shadow runtime remains the
+logical `target/debug` location: the canonical dispatcher maps that repository
+path to the repository-local target volume rather than changing the runtime
+selection contract.
+
 `allocator --quick` is the former ordinary development gate, retained to
 reproduce evidence. It verifies the
 annotated tag and archive identities, regenerates the checked-in contracts in
 memory, checks them and the source-map ratchet, and builds all five exact C
 oracle profiles. Its ignored report is
-`compat/reports/allocator/latest.json`; profile artifacts and layout probes
-are under `compat/reports/allocator/oracle/`. The gate runs the complete
+`.work/reports/allocator/latest.json`; profile artifacts and layout probes
+are under `.work/target/compat/allocator/oracle/`. The gate runs the complete
 `crabc-mimalloc` library unit suite with a marked Rust machine record and
 rejects any mismatch in the currently ported configuration constants,
 page/memory-ID layout, queue block-size table, or bin-selection boundary
@@ -939,7 +949,7 @@ resolver-based or dynamic TLS relocation forms. Its negative-control build
 explicitly clears the production target rustflags and must show that the
 pinned compiler default emits TLSDESC, keeping the production model requirement
 explicit. `allocator-tls` runs this judge alone and writes
-`compat/reports/allocator/tls-codegen.json`.
+`.work/reports/allocator/tls-codegen.json`.
 
 `allocator --full` extends that gate by building and auditing the standalone
 static and shared test adapter, including its exact 16-symbol export boundary,
@@ -970,7 +980,7 @@ shadow-ABI or general concurrent-routing claim. It then runs the same 128-cycle,
 30-second, seed
 `0xd1b54a32d192ed03` ticket-zero lifecycle schedule as `allocator --churn`
 and writes a versioned [`m5-gate-v3.5.0.json`](m5-gate-v3.5.0.json) result to
-`compat/reports/allocator/latest.json`. The report records the bounded base,
+`.work/reports/allocator/latest.json`. The report records the bounded base,
 persistent-worker, live-owner remote-free, and owner-exit evidence as passed
 only when their executed checks pass. It records Gate 5D (soak, stability, and
 upstream stress) and Gate 5E (selected native-shadow acceptance) as explicit
@@ -1070,7 +1080,7 @@ Run it only through the architecture-aware native dispatcher:
 
 The runner rejects emulation by requiring both the native x86-64 guest and
 the dispatcher's native-host provenance. Its report is
-`compat/reports/allocator/x86_64/latest.json` and its profile is
+`.work/reports/allocator/x86_64/latest.json` and its profile is
 `x86_64-native-c-oracle`: the lane checks the target-local declaration
 inventory and source-only API/mode/test/symbol coverage ledger; the exact
 unfeatured x86 normal dependency graph (including
@@ -1936,7 +1946,7 @@ python3 -m unittest compat/allocator/tests/test_runner.py
 ```
 
 The verified archive and tag attestation live in the ignored
-`compat/allocator/.cache/`. Once they are present, `--offline` performs no
+`.work/allocator-cache/`. Once they are present, `--offline` performs no
 network access. Contract or source-map changes require an explicit ratchet
 snapshot after review; the normal gate never updates its own baseline.
 

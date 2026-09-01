@@ -12,7 +12,7 @@
   },
   "source_selection": {
     "base_contract_path": "compat/allocator/adapted-tests-v3.5.0.json",
-    "base_source_selection_sha256": "455fa10a8edb402b8972927192173031e3cd52f8e6e8db2b23af0e4f76a1bebb",
+    "base_source_selection_sha256": "5d68a87d5ec52420e27b102822a64efd20ad310f759e4830ab184152d1b95d2c",
     "base_schema": "crabc-mimalloc-adapted-test-api",
     "expected_adapter_symbol_count": 16,
     "selected_test_count": 33,

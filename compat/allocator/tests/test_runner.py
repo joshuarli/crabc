@@ -24,6 +24,56 @@ sys.modules[SPEC.name] = RUNNER
 SPEC.loader.exec_module(RUNNER)
 
 
+class WorkRootTests(unittest.TestCase):
+    def test_work_root_routes_all_runner_owned_outputs(self) -> None:
+        work_root = RUNNER.default_work_root()
+        self.assertEqual(RUNNER.WORK_ROOT, work_root)
+        self.assertEqual(RUNNER.CACHE, work_root / "allocator-cache")
+        self.assertEqual(RUNNER.REPORT_ROOT, work_root / "reports/allocator")
+        self.assertEqual(
+            RUNNER.ARTIFACT_ROOT,
+            work_root / "target/compat/allocator",
+        )
+        self.assertEqual(RUNNER.TEMP_ROOT, work_root / "tmp/allocator")
+        self.assertEqual(
+            RUNNER.TLS_CODEGEN_REPORT,
+            work_root / "reports/allocator/tls-codegen.json",
+        )
+        self.assertEqual(
+            RUNNER.X86_64_TLS_CODEGEN_REPORT,
+            work_root / "reports/allocator/tls-codegen-x86_64.json",
+        )
+        self.assertEqual(
+            RUNNER.X86_64_ORACLE_REPORT_ROOT,
+            work_root / "reports/allocator/x86_64",
+        )
+        self.assertEqual(
+            RUNNER.X86_64_ORACLE_ARTIFACT_ROOT,
+            work_root / "target/compat/allocator/x86_64",
+        )
+
+    def test_default_work_root_honors_crabc_work_dir(self) -> None:
+        with mock.patch.dict(RUNNER.os.environ, {}, clear=True):
+            self.assertEqual(RUNNER.default_work_root(), RUNNER.ROOT / ".work")
+        with mock.patch.dict(
+            RUNNER.os.environ, {"CRABC_WORK_DIR": "isolated-work"}, clear=True
+        ):
+            self.assertEqual(
+                RUNNER.default_work_root(),
+                RUNNER.ROOT / "isolated-work",
+            )
+        custom = RUNNER.ROOT / ".work/custom-root"
+        with mock.patch.dict(
+            RUNNER.os.environ, {"CRABC_WORK_DIR": str(custom)}, clear=True
+        ):
+            self.assertEqual(RUNNER.default_work_root(), custom)
+
+    def test_runner_temporary_directory_stays_below_the_work_root(self) -> None:
+        with RUNNER.temporary_directory("crabc-allocator-work-root-") as temporary:
+            path = Path(temporary).resolve()
+            self.assertEqual(path.parent, RUNNER.TEMP_ROOT.resolve())
+
+
 def production_dependency_metadata() -> dict[str, object]:
     versions = {
         "crabc-mimalloc": "0.3.0",
@@ -1381,6 +1431,10 @@ class ContractTests(unittest.TestCase):
             ],
         )
         self.assertEqual(command_record.call_args.kwargs["env"]["CARGO_ENCODED_RUSTFLAGS"], "")
+        self.assertEqual(
+            command_record.call_args.kwargs["env"]["CARGO_TARGET_DIR"],
+            str(RUNNER.LOOM_CARGO_TARGET),
+        )
         self.assertEqual(report["cargo_encoded_rustflags"], [])
 
     def test_loom_dependency_and_model_sources_remain_feature_target_gated(self) -> None:
@@ -1806,6 +1860,13 @@ class ContractTests(unittest.TestCase):
         self.assertEqual(command_record.call_count, 15)
         self.assertTrue(
             all(call.kwargs["timeout_seconds"] == 300 for call in command_record.call_args_list)
+        )
+        self.assertTrue(
+            all(
+                call.kwargs["env"]["CARGO_TARGET_DIR"]
+                == str(RUNNER.NATIVE_OWNER_EXIT_CARGO_TARGET)
+                for call in command_record.call_args_list
+            )
         )
 
     def test_m5_owner_exit_evidence_rejects_a_partial_execution_record(self) -> None:
